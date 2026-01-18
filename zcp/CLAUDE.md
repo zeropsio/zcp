@@ -9,8 +9,8 @@ You are on **ZCP** (Zerops Control Plane), not inside containers.
 | Edit files | SSHFS direct | `/var/www/{service}/main.go` |
 | Run commands | SSH | `ssh {service} "go build"` |
 
-Service names vary: appdev/appstage, apidev/apistage, webdev/webstage, etc.
-Network: Hostname = service name. Services connect via `http://{service}:{port}`.
+Service names are user-defined hostnames. Discover: `zcli service list -P $projectId`
+Network: Services connect via `http://{hostname}:{port}` (hostname = service name).
 
 ## Variables
 
@@ -21,7 +21,7 @@ Network: Hostname = service name. Services connect via `http://{service}:{port}`
 | Inside container | `$VAR` | `ssh {svc} "echo \$PORT"` |
 
 ⚠️ `zeropsSubdomain` is already full URL — don't prepend `https://`
-⚠️ For services deployed this session: `ssh {svc} "echo \$VAR"` (ZCP won't have them)
+⚠️ Services capture env vars at START TIME. New/changed vars → restart. If ZCP missing var: `ssh {svc} "echo \$VAR"`
 
 ## Tools
 
@@ -33,6 +33,8 @@ status.sh                       # Check deployment state
 status.sh --wait {svc}          # Wait for deploy completion
 verify.sh {svc} {port} /paths   # Test endpoints
 ```
+
+⚠️ **zcli requires authentication:** Run `zcli login` before any zcli commands (on ZCP or inside containers)
 
 ## Quick Start
 

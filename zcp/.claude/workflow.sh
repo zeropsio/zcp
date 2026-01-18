@@ -151,8 +151,8 @@ workflow.sh show                    # Current status
 workflow.sh complete                # Verify evidence
 workflow.sh reset                   # Clear all state
 
-Topics: discover, develop, deploy, verify, done, vars, trouble,
-        example, gates
+Topics: discover, develop, deploy, verify, done, vars, services,
+        trouble, example, gates
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔍 PHASE: DISCOVER
@@ -698,7 +698,259 @@ Failure output:
 EOF
             ;;
         vars)
-            show_full_help | sed -n '/🔐 VARIABLES/,/📋 WORKFLOW COMMANDS/p' | head -n -1
+            cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔐 ENVIRONMENT VARIABLES - COMPREHENSIVE REFERENCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  CRITICAL: Service names are ARBITRARY (user-defined hostnames)
+   Variables use HOSTNAME, not service type!
+   Must discover actual names via: zcli service list -P $projectId
+
+Variable Structure:
+  Pattern: {hostname}_{VARIABLE}
+  Example: ${myapp_zeropsSubdomain}, ${users-db_password}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 ACCESS PATTERNS BY CONTEXT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─ ZCP → Service Variable ───────────────────────────────────────┐
+│ Pattern: ${hostname}_VARIABLE                                   │
+│                                                                  │
+│ Examples:                                                        │
+│   echo "${myapp_zeropsSubdomain}"                               │
+│   echo "${backend_hostname}"                                     │
+│   curl "${api_zeropsSubdomain}/"                                │
+│                                                                  │
+│ ⚠️  CRITICAL: zeropsSubdomain is FULL URL                       │
+│     curl "${myapp_zeropsSubdomain}/"        ✅ CORRECT          │
+│     curl "https://${myapp_zeropsSubdomain}/" ❌ WRONG (double)  │
+└──────────────────────────────────────────────────────────────────┘
+
+┌─ Inside Service → Own Variables ───────────────────────────────┐
+│ Pattern: $VARIABLE (no prefix inside container)                 │
+│                                                                  │
+│ Examples:                                                        │
+│   ssh myapp "echo \$hostname"          # myapp                  │
+│   ssh myapp "echo \$zeropsSubdomain"   # Full HTTPS URL         │
+│   ssh myapp "echo \$serviceId"         # Service ID             │
+└──────────────────────────────────────────────────────────────────┘
+
+┌─ ZCP → Database Variables ─────────────────────────────────────┐
+│ Pattern: ${dbhostname}_* (use actual DB hostname!)              │
+│                                                                  │
+│ PostgreSQL:                                                      │
+│   ${postgres_connectionString}                                  │
+│   ${postgres_hostname}, ${postgres_user}, ${postgres_password}  │
+│   ${postgres_port}, ${postgres_dbName}                          │
+│                                                                  │
+│ NATS:                                                            │
+│   ${nats_connectionString}                                      │
+│   ${nats_hostname}, ${nats_user}, ${nats_password}              │
+│                                                                  │
+│ Valkey/Redis:                                                    │
+│   ${cache_connectionString}                                     │
+│   ${cache_hostname}, ${cache_port}                              │
+│                                                                  │
+│ Typesense:                                                       │
+│   ${search_connectionString}                                    │
+│   ${search_apiKey}, ${search_hostname}                          │
+│                                                                  │
+│ Usage from ZCP:                                                  │
+│   PGPASSWORD=${postgres_password} psql -h ${postgres_hostname} \│
+│       -U ${postgres_user} -d ${postgres_dbName}                 │
+│   redis-cli -h ${cache_hostname} -p ${cache_port}               │
+└──────────────────────────────────────────────────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  VARIABLE TIMING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Services capture env vars at START TIME. To see new/changed vars → restart.
+
+When ZCP doesn't have a variable (service added after ZCP started):
+  echo "${appdev_PORT}"              # Empty
+  ssh appdev "echo \$PORT"           # Get it from appdev directly
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 COMMON SERVICE VARIABLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Every service has (replace {hostname} with actual service name):
+
+Identity:
+  {hostname}_serviceId          # Unique service ID (for zcli -S flag)
+  {hostname}_hostname           # Service hostname (for ssh, URLs)
+  {hostname}_projectId          # Parent project ID
+
+Network:
+  {hostname}_zeropsSubdomain       # Full HTTPS URL (don't prepend!)
+  {hostname}_zeropsSubdomainString # Template: https://{host}-{num}-${port}...
+
+Security:
+  {hostname}_ZAGENTS_API_KEY    # zcli authentication key
+  {hostname}_envIsolation       # "none" or "service"
+  {hostname}_sshIsolation       # SSH access rules
+
+Metadata (Runtime):
+  {hostname}_appVersionId       # Deployed version ID
+  {hostname}_appVersionName     # Version name (e.g., "main")
+  {hostname}_startCommand       # Start command
+  {hostname}_workingDir         # Working directory
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏗️  BUILD CONTAINER VARIABLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Build containers use RUNTIME_ prefix to access target runtime variables:
+
+  build{name}_RUNTIME_hostname         # Target service hostname
+  build{name}_RUNTIME_serviceId        # Target service ID
+  build{name}_RUNTIME_zeropsSubdomain  # Target service URL
+  build{name}_RUNTIME_DB_HOST          # Target DB connection
+
+This allows builds to know deployment target environment!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔐 ENV ISOLATION MODES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+envIsolation=none (Legacy):
+  • All service variables visible to ZCP with prefix
+  • Enables ${hostname}_variable pattern
+  • Less secure, but simpler for development
+
+envIsolation=service (Recommended):
+  • Strict variable isolation per service
+  • Must explicitly reference: ${service@variable}
+  • Better security, prevents leaks
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 SUMMARY TABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Context          │ Pattern              │ Example
+─────────────────┼──────────────────────┼────────────────────────────
+ZCP → Own        │ $VAR                 │ $projectId
+ZCP → Service    │ ${hostname}_VAR      │ ${myapp_hostname}
+ZCP → Database   │ ${dbname}_*          │ ${postgres_password}
+Service → Own    │ $VAR via SSH         │ ssh myapp "echo \$hostname"
+Service → Service│ http://hostname:port │ http://postgres:5432
+
+See also: workflow.sh --help services (for service naming details)
+EOF
+            ;;
+        services)
+            cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏷️  SERVICE NAMING - CRITICAL UNDERSTANDING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  SERVICE HOSTNAMES ARE ARBITRARY (NOT TIED TO SERVICE TYPE)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 THE CRITICAL DISTINCTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Hostname (User-Defined):
+  • What YOU name the service in zerops.yaml
+  • Can be ANYTHING: myapp, backend, users-db, cache1, api-prod
+  • Used for: SSH, variables, networking
+  • Examples: "myapp", "postgres-main", "redis-cache"
+
+Service Type (Zerops-Defined):
+  • The technology: postgresql, nats, valkey, nodejs, go
+  • Cannot be changed
+  • Internal to Zerops
+  • Examples: "postgresql@17", "valkey@7.2", "go@1.22"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  WHY THIS MATTERS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Variables use HOSTNAME, not type!
+
+If PostgreSQL service is named "users-db":
+  ${users-db_connectionString}   ✅ CORRECT
+  ${postgres_connectionString}   ❌ WRONG
+  ${db_connectionString}         ❌ WRONG (unless you named it "db")
+
+If app service is named "backend":
+  ${backend_zeropsSubdomain}     ✅ CORRECT
+  ssh backend "echo \$hostname"  ✅ CORRECT
+  ${app_zeropsSubdomain}         ❌ WRONG
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 COMMON NAMING PATTERNS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Pattern 1: Type as Hostname (Simple)
+  services:
+    - hostname: db            # Type: postgresql
+    - hostname: cache         # Type: valkey
+    - hostname: nats          # Type: nats
+
+  Variables: ${db_password}, ${cache_connectionString}, ${nats_user}
+
+Pattern 2: Descriptive Names (Production)
+  services:
+    - hostname: users-database      # Type: postgresql
+    - hostname: session-cache       # Type: valkey
+    - hostname: event-queue         # Type: nats
+
+  Variables: ${users-database_password}, ${session-cache_port}
+
+Pattern 3: Environment Suffixes
+  services:
+    - hostname: api-dev       # Type: nodejs (development)
+    - hostname: api-stage     # Type: nodejs (staging)
+    - hostname: api-prod      # Type: nodejs (production)
+
+  Variables: ${api-dev_zeropsSubdomain}, ${api-prod_zeropsSubdomain}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 DISCOVERING ACTUAL SERVICE NAMES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ALWAYS use zcli service list to discover actual hostnames:
+
+  zcli service list -P $projectId
+
+Output shows:
+  ┌───────────┬────────────────┬────────┬─────────────┐
+  │ ID        │ NAME (hostname)│ STATUS │ TYPE        │
+  ├───────────┼────────────────┼────────┼─────────────┤
+  │ abc123... │ myapp          │ ACTIVE │ nodejs      │
+  │ def456... │ backend-api    │ ACTIVE │ go          │
+  │ ghi789... │ users-db       │ ACTIVE │ postgresql  │
+  │ jkl012... │ cache          │ ACTIVE │ valkey      │
+  └───────────┴────────────────┴────────┴─────────────┘
+
+Then use DISCOVERED hostnames:
+  ssh myapp "..."
+  echo "${backend-api_zeropsSubdomain}"
+  PGPASSWORD=${users-db_password} psql ...
+
+⚠️  NEVER assume service names match types!
+⚠️  NEVER hardcode service names in scripts!
+⚠️  ALWAYS discover first with zcli service list!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 THIS IS WHY DISCOVER PHASE IS MANDATORY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You cannot proceed without knowing actual service hostnames!
+
+workflow.sh create_discovery uses DISCOVERED names:
+  workflow.sh create_discovery \
+    "abc123" "myapp" \      ← Actual hostname from zcli service list
+    "def456" "backend-api"  ← NOT type name, actual hostname
+
+This ensures all subsequent operations use correct names.
+
+See also: workflow.sh --help vars (for variable access patterns)
+EOF
             ;;
         trouble)
             show_full_help | sed -n '/🔧 TROUBLESHOOTING/,/📖 COMPLETE EXAMPLE/p' | head -n -1
@@ -714,7 +966,7 @@ EOF
             echo ""
             echo "Available topics:"
             echo "  discover, develop, deploy, verify, done"
-            echo "  vars, trouble, example, gates"
+            echo "  vars, services, trouble, example, gates"
             exit 1
             ;;
     esac
