@@ -1,50 +1,64 @@
 # Zerops Platform
 
-## Orientation
+## Context
 
-You are on **ZCP** (Zerops Control Plane), not inside containers.
+**Zerops** is a PaaS. Each project has services (containers) on a shared private network.
 
-| Operation | How | Example |
-|-----------|-----|---------|
-| Edit files | SSHFS direct | `/var/www/{service}/main.go` |
-| Run commands | SSH | `ssh {service} "go build"` |
+**ZCP** (Zerops Control Plane) is your workspace — a privileged Ubuntu container with:
+- SSHFS mounts to all service filesystems
+- SSH access to execute inside any container
+- Direct network access to all services
+- Full tooling: `rg`, `fd`, `bat`, `jq`, `yq`, `http`, `psql`, `mysql`, `redis-cli`, `agent-browser`
+
+## Your Position
+
+| Access | Method | Example |
+|--------|--------|---------|
+| Files | SSHFS mount | `/var/www/{service}/main.go` |
+| Commands | SSH | `ssh {service} "go build"` |
+| Network | Direct | `curl http://{service}:{port}/` |
 
 Service names are user-defined hostnames. Discover: `zcli service list -P $projectId`
-Network: Services connect via `http://{hostname}:{port}` (hostname = service name).
 
 ## Variables
 
-| Context | Pattern | Example |
-|---------|---------|---------|
-| ZCP → service | `${svc}_VAR` | `${appdev_PORT}` |
-| ZCP → database | `$db_*` | `$db_hostname`, `$db_password` |
-| Inside container | `$VAR` | `ssh {svc} "echo \$PORT"` |
+**Rule:** ZCP has vars prefixed with service name. Containers have unprefixed vars.
+
+**Discovery pattern:**
+```bash
+# On ZCP: Find service-specific vars
+env | grep "^${servicename}_"
+
+# Inside container: All vars unprefixed
+ssh {servicename} "env | grep PORT"
+```
+
+**Common examples:**
+- Service vars: `${appdev_PORT}`, `${myapi_zeropsSubdomain}` (your service name + underscore)
+- Database vars: `$db_hostname`, `$db_password`, `$db_port` (always `db_` prefix)
+- Inside container: `$PORT`, `$zeropsSubdomain` (no prefix)
 
 ⚠️ `zeropsSubdomain` is already full URL — don't prepend `https://`
-⚠️ Services capture env vars at START TIME. New/changed vars → restart. If ZCP missing var: `ssh {svc} "echo \$VAR"`
+⚠️ Services capture env vars at START TIME. New/changed vars → restart service.
+
+## Starting Work
+
+**Will this work be deployed (now or later)?**
+
+| Answer | Command | Use for |
+|--------|---------|---------|
+| **YES** | `workflow.sh init` | Features, fixes to ship, config changes |
+| **NO** | `workflow.sh --quick` | Investigating, exploring, dev-only testing |
+| **UNCERTAIN** | `workflow.sh init` | Default to safety — stop at any phase |
 
 ## Tools
-
 ```bash
+workflow.sh                     # Decision guidance
+workflow.sh init                # Enforced workflow (has gates)
+workflow.sh --quick             # Quick mode (no gates)
 workflow.sh --help              # Full platform reference
-workflow.sh init                # Start enforced workflow
-workflow.sh --quick             # Quick mode (no enforcement)
-status.sh                       # Check deployment state
-status.sh --wait {svc}          # Wait for deploy completion
-verify.sh {svc} {port} /paths   # Test endpoints
+status.sh [--wait {service}]    # Deployment status
+verify.sh {service} {port} /... # Endpoint testing
 ```
 
-⚠️ **zcli requires authentication:** Run `zcli login` before any zcli commands (on ZCP or inside containers)
-
-## Quick Start
-
-```bash
-# Significant changes → enforced workflow
-/var/www/.claude/workflow.sh init
-
-# Bug fixes, exploration → no enforcement
-/var/www/.claude/workflow.sh --quick
-
-# Lost context? Get full reference
-/var/www/.claude/workflow.sh --help
-```
+⚠️ Run `zcli login` before any zcli commands
