@@ -14,8 +14,8 @@
 
 | Access | Method | Example |
 |--------|--------|---------|
-| Files | SSHFS mount | `/var/www/{service}/main.go` |
-| Commands | SSH | `ssh {service} "go build"` |
+| Files | SSHFS mount | `/var/www/{service}/` |
+| Commands | SSH | `ssh {service} "command"` |
 | Network | Direct | `curl http://{service}:{port}/` |
 
 Service names are user-defined hostnames. Discover: `zcli service list -P $projectId`
