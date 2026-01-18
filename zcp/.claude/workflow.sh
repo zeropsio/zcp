@@ -1618,20 +1618,37 @@ main() {
             cmd_reset
             ;;
         "")
-            echo "❌ No command specified"
-            echo ""
-            echo "Usage: workflow.sh {command}"
-            echo ""
-            echo "Commands:"
-            echo "  init                    Start enforced workflow"
-            echo "  --quick                 Quick mode (no enforcement)"
-            echo "  --help [topic]          Show help"
-            echo "  transition_to {phase}   Advance to phase"
-            echo "  create_discovery ...    Record services"
-            echo "  show                    Current status"
-            echo "  complete                Verify evidence"
-            echo "  reset                   Clear state"
-            exit 1
+            cat <<'EOF'
+╔══════════════════════════════════════════════════════════════════╗
+║  ZEROPS WORKFLOW                                                 ║
+╚══════════════════════════════════════════════════════════════════╝
+
+Will this work be deployed (now or later)?
+
+┌─────────────────────────────────────────────────────────────────┐
+│  YES  →  workflow.sh init                                       │
+│          Features, bug fixes to ship, config changes,           │
+│          schema changes, new files/directories                  │
+│                                                                 │
+│          Enforced phases with gates that catch mistakes         │
+│          You can stop at any phase and resume later             │
+├─────────────────────────────────────────────────────────────────┤
+│  NO   →  workflow.sh --quick                                    │
+│          Investigating, exploring code, reading logs,           │
+│          database queries, dev-only testing                     │
+│                                                                 │
+│          Full access, no enforcement, all tools available       │
+├─────────────────────────────────────────────────────────────────┤
+│  UNCERTAIN?  →  workflow.sh init                                │
+│          Default to safety. You can always reset if overkill.   │
+└─────────────────────────────────────────────────────────────────┘
+
+Commands:
+  workflow.sh init          Start enforced workflow
+  workflow.sh --quick       Quick mode (no enforcement)
+  workflow.sh --help        Full platform reference
+  workflow.sh show          Current workflow status
+EOF
             ;;
         *)
             echo "❌ Unknown command: $command"
