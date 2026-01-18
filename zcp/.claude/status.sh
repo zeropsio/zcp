@@ -1,0 +1,246 @@
+#!/bin/bash
+
+# Zerops Deployment Status and Monitoring
+# Shows service status and can wait for deployment completion
+
+set -o pipefail
+
+# ============================================================================
+# HELP
+# ============================================================================
+
+show_help() {
+    cat <<'EOF'
+status.sh - Deployment status and monitoring
+
+USAGE:
+  status.sh                           # Show current state
+  status.sh --wait {service}          # Wait for deployment
+  status.sh --wait {service} --timeout 600
+
+SHOWS:
+  - Service list with app version timestamps
+  - Running/pending processes (builds)
+  - Recent notifications (completions)
+
+WAIT MODE:
+  Polls until deployment completes or timeout.
+  Returns 0 on success, 1 on failure/timeout.
+
+DEPLOYMENT STATUS LOGIC:
+  ┌─────────────────────┬──────────────────┬────────────┐
+  │ Processes           │ Notifications    │ Status     │
+  ├─────────────────────┼──────────────────┼────────────┤
+  │ RUNNING or PENDING  │ -                │ Building   │
+  │ (empty)             │ SUCCESS          │ Complete ✅│
+  │ (empty)             │ ERROR            │ Failed ❌  │
+  │ (empty)             │ (not found)      │ In progress│
+  └─────────────────────┴──────────────────┴────────────┘
+
+EXAMPLES:
+  status.sh
+  status.sh --wait appstage
+  status.sh --wait appstage --timeout 600
+EOF
+}
+
+# ============================================================================
+# UTILITY
+# ============================================================================
+
+parse_table_field() {
+    # zcli outputs Unicode box drawing (│)
+    # Convert to ASCII pipe for parsing
+    local line="$1"
+    local field="$2"
+
+    echo "$line" | sed 's/│/|/g' | cut -d'|' -f"$field" | xargs
+}
+
+get_project_id() {
+    if [ -n "$projectId" ]; then
+        echo "$projectId"
+    else
+        echo ""
+    fi
+}
+
+# ============================================================================
+# STATUS DISPLAY
+# ============================================================================
+
+show_status() {
+    local pid
+    pid=$(get_project_id)
+
+    if [ -z "$pid" ]; then
+        echo "❌ No projectId found in environment"
+        exit 1
+    fi
+
+    cat <<EOF
+╔══════════════════════════════════════════════════════════════════╗
+║  ZEROPS STATUS                                                   ║
+╚══════════════════════════════════════════════════════════════════╝
+
+EOF
+
+    # Services
+    echo "┌─ SERVICES ─────────────────────────────────────────────────────────"
+    zcli service list -P "$pid" 2>/dev/null | grep -v "^Using config" | head -20
+    echo "└────────────────────────────────────────────────────────────────────"
+    echo ""
+
+    # Processes
+    echo "┌─ PROCESSES (running/pending builds) ──────────────────────────────"
+    local processes
+    processes=$(zcli project processes -P "$pid" 2>/dev/null | grep -v "^Using config")
+
+    if echo "$processes" | grep -qi "no processes"; then
+        echo "  (none)"
+    elif [ -z "$processes" ]; then
+        echo "  (none)"
+    else
+        echo "$processes" | head -20
+    fi
+    echo ""
+
+    # Notifications
+    echo "┌─ NOTIFICATIONS (recent) ───────────────────────────────────────────"
+    zcli project notifications -P "$pid" 2>/dev/null | grep -v "^Using config" | head -20
+    echo "└────────────────────────────────────────────────────────────────────"
+}
+
+# ============================================================================
+# WAIT MODE
+# ============================================================================
+
+check_deployment_status() {
+    local service="$1"
+    local pid
+    pid=$(get_project_id)
+
+    if [ -z "$pid" ]; then
+        echo "ERROR:No projectId"
+        return 1
+    fi
+
+    # Check processes
+    local processes
+    processes=$(zcli project processes -P "$pid" 2>/dev/null | grep -v "^Using config")
+
+    # If we have active processes, we're building
+    if echo "$processes" | grep -qE "(RUNNING|PENDING)"; then
+        echo "BUILDING"
+        return 0
+    fi
+
+    # No active processes - check notifications for completion
+    local notifications
+    notifications=$(zcli project notifications -P "$pid" 2>/dev/null | grep -v "^Using config")
+
+    # Look for recent notification mentioning our service
+    if echo "$notifications" | grep -i "$service" | grep -qi "SUCCESS"; then
+        echo "SUCCESS"
+        return 0
+    elif echo "$notifications" | grep -i "$service" | grep -qi "ERROR"; then
+        echo "ERROR"
+        return 0
+    fi
+
+    # No clear status yet
+    echo "IN_PROGRESS"
+    return 0
+}
+
+wait_for_deployment() {
+    local service="$1"
+    local timeout="${2:-300}"  # Default 5 minutes
+
+    echo "⏳ Waiting for $service deployment to complete (timeout: ${timeout}s)..."
+    echo ""
+
+    local elapsed=0
+    local check_interval=5
+
+    while [ $elapsed -lt $timeout ]; do
+        local status
+        status=$(check_deployment_status "$service")
+
+        case "$status" in
+            BUILDING)
+                echo "  [${elapsed}/${timeout}s] Building... (status: RUNNING)"
+                ;;
+            SUCCESS)
+                echo "  [${elapsed}/${timeout}s] ✅ Deployment complete!"
+                echo ""
+                show_status
+                return 0
+                ;;
+            ERROR)
+                echo "  [${elapsed}/${timeout}s] ❌ Deployment failed!"
+                echo ""
+                show_status
+                return 1
+                ;;
+            IN_PROGRESS)
+                echo "  [${elapsed}/${timeout}s] Waiting for completion notification..."
+                ;;
+            ERROR:*)
+                echo "  [${elapsed}/${timeout}s] ❌ ${status#ERROR:}"
+                return 1
+                ;;
+        esac
+
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+    done
+
+    echo ""
+    echo "❌ Timeout waiting for deployment (${timeout}s)"
+    echo ""
+    show_status
+    return 1
+}
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+main() {
+    if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+        show_help
+        exit 0
+    fi
+
+    if [ "$1" = "--wait" ]; then
+        shift
+        local service="$1"
+        local timeout=300
+
+        if [ -z "$service" ]; then
+            echo "❌ Usage: status.sh --wait {service} [--timeout N]"
+            exit 2
+        fi
+
+        shift
+
+        # Parse timeout if provided
+        if [ "$1" = "--timeout" ]; then
+            shift
+            timeout="$1"
+            if [ -z "$timeout" ]; then
+                echo "❌ --timeout requires a value"
+                exit 2
+            fi
+        fi
+
+        wait_for_deployment "$service" "$timeout"
+        exit $?
+    fi
+
+    # No arguments - just show status
+    show_status
+}
+
+main "$@"
