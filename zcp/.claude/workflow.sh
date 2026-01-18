@@ -688,6 +688,12 @@ Success output:
 
   <completed>WORKFLOW_DONE</completed>
 
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 Next task? Run workflow.sh again to decide:
+   workflow.sh init    → deploying
+   workflow.sh --quick → exploring
+
 Failure output:
   ❌ Evidence validation failed:
      • Missing evidence files
@@ -1456,6 +1462,11 @@ cmd_complete() {
         printf '%s\n' "${messages[@]}"
         echo ""
         echo "<completed>WORKFLOW_DONE</completed>"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📋 Next task? Run workflow.sh again to decide:"
+        echo "   workflow.sh init    → deploying"
+        echo "   workflow.sh --quick → exploring"
         return 0
     else
         echo "❌ Evidence validation failed:"
