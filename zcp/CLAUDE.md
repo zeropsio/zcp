@@ -47,18 +47,18 @@ ssh {servicename} "env | grep PORT"
 
 | Answer | Command | Use for |
 |--------|---------|---------|
-| **YES** | `workflow.sh init` | Features, fixes to ship, config changes |
-| **NO** | `workflow.sh --quick` | Investigating, exploring, dev-only testing |
-| **UNCERTAIN** | `workflow.sh init` | Default to safety — stop at any phase |
+| **YES** | `/var/www/.claude/workflow.sh init` | Features, fixes to ship, config changes |
+| **NO** | `/var/www/.claude/workflow.sh --quick` | Investigating, exploring, dev-only testing |
+| **UNCERTAIN** | `/var/www/.claude/workflow.sh init` | Default to safety — stop at any phase |
 
 ## Tools
 ```bash
-workflow.sh                     # Decision guidance
-workflow.sh init                # Enforced workflow (has gates)
-workflow.sh --quick             # Quick mode (no gates)
-workflow.sh --help              # Full platform reference
-status.sh [--wait {service}]    # Deployment status
-verify.sh {service} {port} /... # Endpoint testing
+/var/www/.claude/workflow.sh                     # Decision guidance (run first if unsure)
+/var/www/.claude/workflow.sh init                # Enforced workflow (has gates)
+/var/www/.claude/workflow.sh --quick             # Quick mode (no gates)
+/var/www/.claude/workflow.sh --help              # Full platform reference
+/var/www/.claude/status.sh [--wait {service}]    # Deployment status
+/var/www/.claude/verify.sh {service} {port} /... # Endpoint testing
 ```
 
 ⚠️ Run `zcli login` before any zcli commands

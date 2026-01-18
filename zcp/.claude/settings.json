@@ -37,8 +37,6 @@
       "Bash(ssh db:*)",
       "Bash(PGPASSWORD=* psql:*)"
     ],
-    "deny": [],
-    "ask": []
-  },
-  "includeCoAuthoredBy": true
+    "deny": []
+  }
 }
