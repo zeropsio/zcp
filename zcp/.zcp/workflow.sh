@@ -214,7 +214,7 @@ Authenticate and discover services:
 
   zcli login --region=gomibako \
       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-      "$ZAGENTS_API_KEY"
+      "$ZEROPS_ZAGENT_API_KEY"
 
   zcli service list -P $projectId
 
@@ -288,7 +288,7 @@ Stop dev process:
 Authenticate from dev container:
   ssh {dev} "zcli login --region=gomibako \
       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-      \"\$ZAGENTS_API_KEY\""
+      \"\$ZEROPS_ZAGENT_API_KEY\""
 
 Deploy to stage:
   ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
@@ -420,7 +420,7 @@ Deploy to wrong target       │ Using dev as       │ Always deploy to
 # 2. DISCOVER
 zcli login --region=gomibako \
     --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-    "$ZAGENTS_API_KEY"
+    "$ZEROPS_ZAGENT_API_KEY"
 zcli service list -P $projectId
 .zcp/workflow.sh create_discovery "svc123" "appdev" "svc456" "appstage"
 .zcp/workflow.sh transition_to DISCOVER
@@ -438,7 +438,7 @@ ls -la /var/www/appdev/app /var/www/appdev/templates/
 ssh appdev 'pkill -9 app; fuser -k 8080/tcp 2>/dev/null; true'
 ssh appdev "zcli login --region=gomibako \
     --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-    \"\$ZAGENTS_API_KEY\""
+    \"\$ZEROPS_ZAGENT_API_KEY\""
 ssh appdev "zcli push svc456 --setup=api --versionName=v1.0.0"
 .zcp/status.sh --wait appstage
 
@@ -499,7 +499,7 @@ Purpose: Authenticate to Zerops and discover service IDs
 Commands:
   zcli login --region=gomibako \
       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-      "$ZAGENTS_API_KEY"
+      "$ZEROPS_ZAGENT_API_KEY"
 
   zcli service list -P $projectId
 
@@ -695,7 +695,7 @@ Deployment steps:
 2. Authenticate from dev container:
    ssh {dev} "zcli login --region=gomibako \
        --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-       \"\$ZAGENTS_API_KEY\""
+       \"\$ZEROPS_ZAGENT_API_KEY\""
 
 3. Deploy to stage:
    ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
@@ -917,7 +917,7 @@ Network:
   {hostname}_zeropsSubdomainString # Template: https://{host}-{num}-${port}...
 
 Security:
-  {hostname}_ZAGENTS_API_KEY    # zcli authentication key
+  {hostname}_ZEROPS_ZAGENT_API_KEY    # zcli authentication key
   {hostname}_envIsolation       # "none" or "service"
   {hostname}_sshIsolation       # SSH access rules
 
@@ -1563,7 +1563,7 @@ EOF
 📋 Workflow: INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE
 
 💡 NEXT: DISCOVER phase
-   1. zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZAGENTS_API_KEY"
+   1. zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZEROPS_ZAGENT_API_KEY"
    2. zcli service list -P \$projectId
    3. .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
    4. .zcp/workflow.sh transition_to DISCOVER
@@ -1774,7 +1774,7 @@ output_phase_guidance() {
 📋 Commands:
    zcli login --region=gomibako \
        --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-       "$ZAGENTS_API_KEY"
+       "$ZEROPS_ZAGENT_API_KEY"
 
    zcli service list -P $projectId
 
@@ -1895,7 +1895,7 @@ Stop dev process:
 Authenticate from dev container:
   ssh {dev} "zcli login --region=gomibako \\
       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \\
-      \"\$ZAGENTS_API_KEY\""
+      \"\$ZEROPS_ZAGENT_API_KEY\""
 
 Deploy to stage:
   ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
