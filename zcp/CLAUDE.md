@@ -48,6 +48,13 @@ echo "${db_password}"         # db service's password
 ⚠️ Vars captured at service start. If missing, read from target: `ssh appdev "echo \$PORT"`
 ⚠️ `zeropsSubdomain` is full URL — don't prepend `https://`
 
+### zcli
+
+Run `zcli login` before any other `zcli` command (safe to run multiple times):
+```bash
+zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZAGENTS_API_KEY"
+```
+
 ### Tools
 
 ```bash
