@@ -2154,7 +2154,7 @@ EOF
    zcli login --region=gomibako \
        --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
        "$ZEROPS_ZAGENT_API_KEY"
-   zcli service list -P $projectId
+   zcli service list -P $projectId   ← -P flag required!
 
 2. Record discovery (use IDs from step 1):
    .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
@@ -2172,7 +2172,7 @@ GUIDANCE
             else
                 cat <<'GUIDANCE'
 Discovery missing or stale. Re-run:
-   zcli service list -P $projectId
+   zcli service list -P $projectId   ← -P flag required!
    .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
 GUIDANCE
             fi
@@ -2182,6 +2182,18 @@ GUIDANCE
                 local dev_name
                 dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
                 cat <<GUIDANCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  CRITICAL RULES (you are on ZCP, not inside containers)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Runtime services ($dev_name): ssh $dev_name "command"
+• Managed services (db, cache, etc.): NO SSH!
+  Use client tools directly from ZCP:
+  PGPASSWORD=\$db_password psql -h db -U \$db_user -d \$db_database
+• Variables: \${hostname}_VAR from ZCP, \$VAR inside ssh
+• zcli from ZCP: login first, then -P \$projectId
+  zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZEROPS_ZAGENT_API_KEY"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 1. Build and test on dev ($dev_name)
 2. Verify endpoints work:
    .zcp/verify.sh $dev_name {port} / /api/...
@@ -2198,6 +2210,9 @@ GUIDANCE
                 stage_id=$(jq -r '.stage.id // "STAGE_ID"' "$DISCOVERY_FILE" 2>/dev/null)
                 stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
                 cat <<GUIDANCE
+⚠️  Deploy from dev container (runtime), NOT from ZCP:
+   ssh $dev_name "zcli login ... && zcli push $stage_id --setup={setup}"
+
 1. Check deployFiles in zerops.yaml includes all artifacts
 2. Deploy:
    ssh $dev_name "zcli login ... && zcli push $stage_id --setup={setup}"
@@ -2214,9 +2229,16 @@ GUIDANCE
                 local stage_name
                 stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
                 cat <<GUIDANCE
+⚠️  Stage ($stage_name) is a runtime - SSH works for commands
+   Managed services (db, cache): NO SSH, use client tools from ZCP
+
 1. Verify stage endpoints:
    .zcp/verify.sh $stage_name {port} / /api/...
-2. Then: .zcp/workflow.sh transition_to DONE
+2. Browser check (if frontend):
+   URL=\$(ssh $stage_name "echo \\\$zeropsSubdomain")
+   agent-browser open "\$URL"
+   agent-browser errors   # Must be empty
+3. Then: .zcp/workflow.sh transition_to DONE
 GUIDANCE
             else
                 echo "Stage verified. Run: .zcp/workflow.sh transition_to DONE"
@@ -2226,7 +2248,23 @@ GUIDANCE
             echo "Run: .zcp/workflow.sh complete"
             ;;
         QUICK)
-            echo "Quick mode - no enforcement. Use any tools as needed."
+            cat <<'GUIDANCE'
+Quick mode - no workflow enforcement
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  CRITICAL RULES (you are on ZCP, not inside containers)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Runtime services: ssh {service} "command"
+• Managed services (db, cache, etc.): NO SSH!
+  Use client tools directly from ZCP:
+  PGPASSWORD=$db_password psql -h db -U $db_user -d $db_database
+  redis-cli -h cache
+• Variables: ${hostname}_VAR from ZCP, $VAR inside ssh
+• zcli from ZCP: login first, then -P $projectId
+  zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZAGENT_API_KEY"
+• Files: /var/www/{service}/ via SSHFS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GUIDANCE
             ;;
         *)
             echo "Unknown phase. Run: .zcp/workflow.sh init"
