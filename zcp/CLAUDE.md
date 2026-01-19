@@ -1,20 +1,19 @@
 # Zerops Platform
 
-## Starting Work — RUN FOR EACH TASK
+**Fix errors on dev. Stage is for final validation, not debugging.**
 
-**Will this work be deployed (now or later)?**
+## Starting Work — RUN FOR EACH TASK
 
 | Answer | Command | Use for |
 |--------|---------|---------|
-| **YES** | `/var/www/.claude/workflow.sh init` | Features, fixes to ship, config changes |
-| **NO** | `/var/www/.claude/workflow.sh --quick` | Investigating, exploring, dev-only testing |
-| **UNCERTAIN** | `/var/www/.claude/workflow.sh init` | Default to safety — stop at any phase |
+| **Deploying?** | `/var/www/.claude/workflow.sh init` | Features, fixes, config changes |
+| **Exploring?** | `/var/www/.claude/workflow.sh --quick` | Investigating, reading, dev-only work |
 
-Run one of the above commands BEFORE doing anything else. The workflow script provides all necessary guidance.
+Run one of the above BEFORE doing anything else.
 
 ---
 
-## Reference (read after starting workflow)
+## Reference
 
 ### Context
 
@@ -36,13 +35,18 @@ Run one of the above commands BEFORE doing anything else. The workflow script pr
 
 ### Variables
 
-**Rule:** ZCP has vars prefixed with service name. Containers have unprefixed vars.
+Every service can access:
+- Own vars: `$VAR` (unprefixed)
+- Other services' vars: `${hostname}_VAR` (prefixed with their hostname)
 
-- Service vars on ZCP: `${servicename}_VAR` (e.g., `${appdev_PORT}`)
-- Database vars on ZCP: `$db_hostname`, `$db_password`
-- Inside container via SSH: `$VAR` (no prefix)
+```bash
+echo "$hostname"              # own hostname
+echo "${appdev_PORT}"         # appdev's PORT
+echo "${db_password}"         # db service's password
+```
 
-⚠️ `zeropsSubdomain` is already full URL — don't prepend `https://`
+⚠️ Vars captured at service start. If missing, read from target: `ssh appdev "echo \$PORT"`
+⚠️ `zeropsSubdomain` is full URL — don't prepend `https://`
 
 ### Tools
 

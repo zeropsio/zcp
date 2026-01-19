@@ -478,11 +478,41 @@ EOF
 💻 DEVELOP PHASE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Purpose: Build and test on dev service
+Purpose: Build, test, and iterate until the feature works correctly
 
-Context reminders:
-  📁 Files: /var/www/{dev}/     (edit directly via SSHFS)
-  💻 Run:   ssh {dev} "cmd"     (execute inside container)
+⚠️  CRITICAL MINDSET:
+    Dev is where you iterate. Fix all errors HERE before deploying.
+    Stage is for final validation, not debugging.
+
+    A human developer doesn't deploy broken code to stage to "see if it works."
+    They test locally, fix issues, repeat until it works, THEN deploy to stage.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔄 THE DEVELOP LOOP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Make changes (edit files via SSHFS)                         │
+│  2. Build & restart the app                                     │
+│  3. Test the actual functionality                               │
+│  4. Check for errors (logs, responses, browser console)         │
+│  5. If errors exist → Fix → Go to step 1                        │
+│  6. Only when working → run verify.sh → transition to DEPLOY    │
+└─────────────────────────────────────────────────────────────────┘
+
+This loop may repeat many times. That's normal and expected.
+Deploying broken code to stage to "see if it works" is not acceptable.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📁 Context
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Files: /var/www/{dev}/     (edit directly via SSHFS)
+  Run:   ssh {dev} "cmd"     (execute inside container)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 Build & Run
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Triple-kill pattern (clear orphan processes):
   ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; \
@@ -494,35 +524,75 @@ Build & run:
 
   ⚠️  Set run_in_background=true in Bash tool parameters!
 
-Testing:
-  # Endpoint verification
-  verify.sh {dev} {port} / /status /api/...
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 FUNCTIONAL TESTING (not just HTTP status!)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  # Internal connectivity
-  ssh {dev} "curl -sf http://localhost:{port}/"
+HTTP 200 means "server responded." It does NOT mean "feature works."
 
-  # TCP connectivity
-  timeout 5 bash -c "</dev/tcp/{service}/{port}" && echo OK
+Backend APIs - Read and verify response content:
+  # Don't just check status - examine the actual response
+  ssh {dev} "curl -s http://localhost:{port}/api/endpoint" | jq .
 
-  # External (if subdomain available)
-  curl -sf "${dev_zeropsSubdomain}/endpoint"
+  # Test the operation you implemented
+  ssh {dev} "curl -s -X POST http://localhost:{port}/api/items \
+      -H 'Content-Type: application/json' -d '{\"name\":\"test\"}'"
 
-Logs:
-  ssh {dev} "tail -f /tmp/app.log"
-  ssh {dev} "cat /tmp/app.log"
+  # Verify data persisted correctly
+  ssh {dev} "curl -s http://localhost:{port}/api/items" | jq .
 
-Debugging:
+Frontend - Check for JavaScript/runtime errors:
+  URL=$(ssh {dev} "echo \$zeropsSubdomain")
+  agent-browser open "$URL"
+  agent-browser errors          # ← MUST be empty before deploy
+  agent-browser console         # ← Look for runtime errors
+  agent-browser screenshot      # ← Visual verification
+
+Logs - Look for errors, not just "it started":
+  ssh {dev} "tail -50 /tmp/app.log"
+  ssh {dev} "grep -iE 'error|exception|panic|fatal' /tmp/app.log"
+
+Database - Verify persistence:
+  PGPASSWORD=$db_password psql -h $db_hostname -U $db_user -d $db_database \
+      -c "SELECT * FROM {table} ORDER BY id DESC LIMIT 5;"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+❌ DO NOT proceed to DEPLOY if:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • API response contains error messages or unexpected data
+  • Logs show exceptions, stack traces, or error messages
+  • Browser console has JavaScript errors
+  • UI is broken, not rendering, or has visual bugs
+  • Data isn't persisting or returning correctly
+  • You haven't actually tested the feature you implemented
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ Proceed to DEPLOY only when:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • The feature works as expected on dev
+  • No errors in logs or browser console
+  • You've tested actual functionality, not just "server responds"
+  • You could demo this feature to a user right now
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🐛 Debugging
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
   # Check process running
   ssh {dev} "pgrep -f {proc}"
   ssh {dev} "ps aux | grep {proc}"
 
   # Check port listening
   ssh {dev} "ss -tlnp | grep {port}"
-  ssh {dev} "netstat -tlnp | grep {port}"
+
+  # Follow logs in real-time
+  ssh {dev} "tail -f /tmp/app.log"
 
 Gate requirement:
   • verify.sh must pass (creates /tmp/dev_verify.json)
-  • failures == 0
+  • Feature must work correctly (not just HTTP 200)
 EOF
             ;;
         deploy)
@@ -1155,6 +1225,22 @@ EOF
 💻 Run:   ssh {dev} "cmd"     (execute inside container)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+⚠️  CRITICAL: Dev is where you iterate and fix errors.
+    Stage is for final validation AFTER dev confirms success.
+
+    You MUST verify the feature works correctly on dev before deploying.
+    If you find errors on stage, you did not test properly on dev.
+
+┌─────────────────────────────────────────────────────────────────┐
+│  DEVELOP LOOP (repeat until feature works):                     │
+│                                                                 │
+│  1. Build & Run                                                 │
+│  2. Test functionality (not just HTTP status!)                  │
+│  3. Check for errors (logs, responses, browser console)         │
+│  4. If errors → Fix → Go to step 1                              │
+│  5. Only when working → run verify.sh → transition to DEPLOY    │
+└─────────────────────────────────────────────────────────────────┘
+
 Kill existing process:
   ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'
 
@@ -1163,15 +1249,55 @@ Build & run:
   ssh {dev} './{binary} >> /tmp/app.log 2>&1'
   ↑ Set run_in_background=true in Bash tool parameters
 
-Verify:
-  verify.sh {dev} {port} / /status /api/...
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 FUNCTIONAL TESTING (required before deploy):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Logs:
-  ssh {dev} "tail -f /tmp/app.log"
+HTTP 200 is NOT enough. You must verify the feature WORKS.
+
+Backend APIs:
+  # GET the actual response and check content
+  ssh {dev} "curl -s http://localhost:{port}/api/endpoint" | jq .
+
+  # POST and verify the operation succeeded
+  ssh {dev} "curl -s -X POST http://localhost:{port}/api/items -d '{...}'"
+
+  # Check the data persisted
+  ssh {dev} "curl -s http://localhost:{port}/api/items"
+
+Frontend/Full-stack:
+  URL=$(ssh {dev} "echo \$zeropsSubdomain")
+  agent-browser open "$URL"
+  agent-browser errors          # ← MUST be empty
+  agent-browser console         # ← Check for runtime errors
+  agent-browser screenshot      # ← Visual verification
+
+Logs (check for errors/exceptions):
+  ssh {dev} "tail -50 /tmp/app.log"
+  ssh {dev} "grep -i error /tmp/app.log"
+  ssh {dev} "grep -i exception /tmp/app.log"
+
+Database verification (if applicable):
+  PGPASSWORD=$db_password psql -h $db_hostname -U $db_user -d $db_database \
+      -c "SELECT * FROM {table} ORDER BY id DESC LIMIT 5;"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 Gate: verify.sh must pass (creates /tmp/dev_verify.json)
-📋 Next: workflow.sh transition_to DEPLOY
+❌ DO NOT deploy to stage if:
+   • Response contains error messages
+   • Logs show exceptions or stack traces
+   • Browser console has JavaScript errors
+   • Data isn't persisting correctly
+   • UI is broken or not rendering
+
+✅ Deploy to stage ONLY when:
+   • Feature works as expected on dev
+   • No errors in logs or console
+   • You've tested the actual functionality, not just "server responds"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 When ready (feature works, no errors):
+   verify.sh {dev} {port} / /status /api/...
+   workflow.sh transition_to DEPLOY
 EOF
             ;;
         DEPLOY)

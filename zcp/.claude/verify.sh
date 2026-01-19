@@ -15,6 +15,14 @@ show_help() {
     cat <<'EOF'
 verify.sh - Endpoint verification with evidence generation
 
+⚠️  WARNING: This script only checks HTTP status codes (2xx = pass).
+    HTTP 200 does NOT mean the feature works correctly!
+
+    You MUST also verify:
+    - Backend: Response body contains correct data
+    - Frontend: No JavaScript errors (agent-browser errors)
+    - Database: Data actually persisted
+
 USAGE:
   verify.sh {service} {port} {endpoint} [endpoints...]
   verify.sh --debug {service} {port} {endpoint} [endpoints...]
@@ -28,11 +36,27 @@ OUTPUT:
   Creates /tmp/{service}_verify.json
   Auto-copies to /tmp/dev_verify.json or /tmp/stage_verify.json
 
-TOOL AWARENESS:
-  You can test more than HTTP status codes:
-  - curl response bodies for data verification
-  - Database queries to verify persistence
-  - agent-browser for visual verification
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  ADDITIONAL VERIFICATION REQUIRED (verify.sh is not enough!)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Backend APIs - Check response content:
+  ssh {service} "curl -s http://localhost:{port}/api/endpoint" | jq .
+  # Look for: correct data, no error messages
+
+Frontend - Check for JavaScript errors:
+  agent-browser open "$URL"
+  agent-browser errors       # MUST be empty
+  agent-browser console      # Check for runtime errors
+  agent-browser screenshot   # Visual verification
+
+Logs - Check for exceptions:
+  ssh {service} "grep -iE 'error|exception|panic' /tmp/app.log"
+
+Database - Verify persistence:
+  psql/mysql/redis-cli to query and verify data
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 EVIDENCE FORMAT:
   {
@@ -255,6 +279,20 @@ main() {
 
     # Exit code based on failures
     if [ "$failed" -eq 0 ]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⚠️  HTTP status passed, but you must also verify:"
+        echo ""
+        if check_frontend "$service" 2>/dev/null; then
+            echo "   Frontend: agent-browser errors (must be empty)"
+            echo "             agent-browser console (check for errors)"
+        else
+            echo "   Backend:  curl response body (check data is correct)"
+            echo "             grep -iE 'error|exception' /tmp/app.log"
+        fi
+        echo ""
+        echo "   HTTP 200 ≠ feature works correctly"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         exit 0
     else
         exit 1
