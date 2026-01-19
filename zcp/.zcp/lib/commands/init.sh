@@ -160,6 +160,31 @@ EOF
 }
 
 cmd_quick() {
+    local existing_session
+    existing_session=$(get_session)
+
+    # Don't override existing enforced sessions
+    if [ -n "$existing_session" ]; then
+        local current_mode
+        current_mode=$(get_mode)
+        if [ "$current_mode" != "quick" ]; then
+            echo "⚠️  Active session exists: $existing_session (mode: $current_mode)"
+            echo ""
+            echo "To switch to quick mode, first reset the current session:"
+            echo "   .zcp/workflow.sh reset"
+            echo "   .zcp/workflow.sh --quick"
+            echo ""
+            echo "Or view current status:"
+            echo "   .zcp/workflow.sh show"
+            return 1
+        fi
+        # Already in quick mode, just show status
+        echo "✅ Already in quick mode (session: $existing_session)"
+        echo ""
+        cmd_show
+        return 0
+    fi
+
     local session_id
     session_id="$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
     echo "$session_id" > "$SESSION_FILE"
