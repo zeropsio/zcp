@@ -11,7 +11,7 @@ Agents must test and fix errors on dev before deploying to stage. HTTP 200 doesn
 ## Architecture
 
 ```
-CLAUDE.md (67 lines)          → Platform fundamentals, always in context
+CLAUDE.md                     → Platform fundamentals, always in context
     │
     ▼
 workflow.sh --help            → Full reference, contextual phase guidance
@@ -32,34 +32,95 @@ zcp/
     └── settings.json      # Bash permissions
 ```
 
-## Workflow
+## Workflow Modes
 
+### Full Mode (default)
 ```
 INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE
 ```
 
-**DEVELOP phase enforces the iteration loop:**
-1. Build & run on dev
-2. Test functionality (not just HTTP status)
-3. Check for errors (logs, responses, browser console)
-4. If errors → Fix → Go to step 1
-5. Only when working → deploy to stage
+### Dev-Only Mode
+```
+INIT → DISCOVER → DEVELOP → DONE
+```
+For rapid prototyping without deployment. Upgrade later with `upgrade-to-full`.
 
-## Usage
+### Hotfix Mode
+```
+DEVELOP → DEPLOY → VERIFY → DONE
+```
+Reuses recent discovery (<24h), skips dev verification. For urgent fixes.
+
+### Quick Mode
+No gates, no enforcement. For exploration and debugging.
+
+## Gates
+
+Each transition requires evidence from the current session:
+
+| Transition | Required Evidence |
+|------------|-------------------|
+| DISCOVER → DEVELOP | `discovery.json` with matching session_id, dev ≠ stage |
+| DEVELOP → DEPLOY | `dev_verify.json` with 0 failures |
+| DEPLOY → VERIFY | `deploy_evidence.json` from status.sh --wait |
+| VERIFY → DONE | `stage_verify.json` with 0 failures |
+
+Backward transitions (`--back`) invalidate downstream evidence.
+
+## Commands
 
 ```bash
-# Start workflow
-/var/www/.claude/workflow.sh init      # Enforced (gates)
-/var/www/.claude/workflow.sh --quick   # No enforcement
+# Initialize
+workflow.sh init                    # Full mode with gates
+workflow.sh init --dev-only         # No deployment phase
+workflow.sh init --hotfix           # Skip to DEVELOP, reuse discovery
+workflow.sh --quick                 # No enforcement
 
-# Get help
-/var/www/.claude/workflow.sh --help
-/var/www/.claude/workflow.sh --help develop
+# Transitions
+workflow.sh transition_to DEVELOP
+workflow.sh transition_to --back DEVELOP  # Go backward, invalidates evidence
+
+# Discovery
+workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+workflow.sh create_discovery --single {id} {name}  # Same service for dev/stage
+workflow.sh refresh_discovery       # Validate existing discovery
+
+# State management
+workflow.sh show                    # Current status
+workflow.sh reset                   # Clear everything
+workflow.sh reset --keep-discovery  # Preserve discovery for new session
+
+# Extensions
+workflow.sh extend {import.yml}     # Add services to project
+workflow.sh upgrade-to-full         # Convert dev-only to full deployment
+
+# Help
+workflow.sh --help
+workflow.sh --help {topic}          # discover, develop, deploy, verify, done,
+                                    # vars, services, trouble, example, gates,
+                                    # extend, bootstrap
 ```
+
+## Evidence Files
+
+All stored in `/tmp/` with session tracking:
+
+| File | Created By | Contains |
+|------|------------|----------|
+| `claude_session` | `workflow.sh init` | Session ID |
+| `claude_mode` | `workflow.sh init` | full, dev-only, hotfix, quick |
+| `claude_phase` | `workflow.sh transition_to` | Current phase |
+| `discovery.json` | `workflow.sh create_discovery` | Dev/stage service mapping |
+| `dev_verify.json` | `verify.sh {dev}` | Dev endpoint test results |
+| `stage_verify.json` | `verify.sh {stage}` | Stage endpoint test results |
+| `deploy_evidence.json` | `status.sh --wait` | Deployment completion proof |
 
 ## Key Features
 
-- **Evidence-based gates** - JSON files with session tracking block invalid transitions
-- **Self-documenting** - All tools have `--help` with contextual guidance
-- **Context-resilient** - Tools always available regardless of context state
-- **Platform gotchas** - Troubleshooting table, pre-deployment checklist, inline warnings
+- **Session-scoped evidence** — Prevents stale evidence from previous sessions
+- **Atomic file writes** — Temp file + mv pattern prevents corruption
+- **Multi-platform date parsing** — Supports both GNU and BSD date
+- **Staleness warnings** — Evidence >24h old triggers warning (not blocker)
+- **Single-service mode** — Explicit opt-in for dev=stage with risk acknowledgment
+- **Backward transitions** — Go back phases with automatic evidence invalidation
+- **Self-documenting** — All tools have `--help` with contextual guidance

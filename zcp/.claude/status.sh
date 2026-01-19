@@ -174,6 +174,28 @@ wait_for_deployment() {
             SUCCESS)
                 echo "  [${elapsed}/${timeout}s] ✅ Deployment complete!"
                 echo ""
+                # Record deployment evidence
+                local deploy_session
+                deploy_session=$(cat /tmp/claude_session 2>/dev/null || echo "")
+                if [ -n "$deploy_session" ]; then
+                    if ! jq -n \
+                        --arg sid "$deploy_session" \
+                        --arg svc "$service" \
+                        --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+                        '{
+                            session_id: $sid,
+                            service: $svc,
+                            timestamp: $ts,
+                            status: "SUCCESS"
+                        }' > /tmp/deploy_evidence.json.tmp; then
+                        echo "Warning: Failed to record deployment evidence" >&2
+                        rm -f /tmp/deploy_evidence.json.tmp
+                    else
+                        mv /tmp/deploy_evidence.json.tmp /tmp/deploy_evidence.json
+                        echo "→ Deployment evidence recorded: /tmp/deploy_evidence.json"
+                        echo ""
+                    fi
+                fi
                 show_status
                 return 0
                 ;;

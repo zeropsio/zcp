@@ -12,6 +12,7 @@ PHASE_FILE="/tmp/claude_phase"
 DISCOVERY_FILE="/tmp/discovery.json"
 DEV_VERIFY_FILE="/tmp/dev_verify.json"
 STAGE_VERIFY_FILE="/tmp/stage_verify.json"
+DEPLOY_EVIDENCE_FILE="/tmp/deploy_evidence.json"
 
 # Valid phases
 PHASES=("INIT" "DISCOVER" "DEVELOP" "DEPLOY" "VERIFY" "DONE")
@@ -80,6 +81,49 @@ check_evidence_session() {
     return 1
 }
 
+check_evidence_freshness() {
+    local file="$1"
+    local max_age_hours="${2:-24}"
+
+    if [ ! -f "$file" ]; then
+        return 0  # No file = no staleness check
+    fi
+
+    local timestamp
+    timestamp=$(jq -r '.timestamp // empty' "$file" 2>/dev/null)
+    if [ -z "$timestamp" ]; then
+        return 0  # No timestamp = can't check
+    fi
+
+    # Parse timestamp and calculate age
+    local evidence_epoch now_epoch age_hours
+
+    # Try GNU date first, then BSD date
+    if evidence_epoch=$(date -d "$timestamp" +%s 2>/dev/null); then
+        : # GNU date worked
+    elif evidence_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$timestamp" +%s 2>/dev/null); then
+        : # BSD date worked
+    else
+        return 0  # Can't parse = skip check
+    fi
+
+    now_epoch=$(date +%s)
+    age_hours=$(( (now_epoch - evidence_epoch) / 3600 ))
+
+    if [ "$age_hours" -gt "$max_age_hours" ]; then
+        echo ""
+        echo "⚠️  STALE EVIDENCE WARNING"
+        echo "   File: $file"
+        echo "   Age: ${age_hours} hours (threshold: ${max_age_hours}h)"
+        echo "   Created: $timestamp"
+        echo ""
+        echo "   Consider re-verifying to ensure current system state"
+        echo "   (Proceeding anyway - this is a warning, not a blocker)"
+        echo ""
+    fi
+    return 0
+}
+
 # ============================================================================
 # HELP SYSTEM
 # ============================================================================
@@ -141,18 +185,26 @@ Network: Services connect via hostname = service name
 📋 WORKFLOW COMMANDS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-workflow.sh init                    # Start enforced workflow
-workflow.sh --quick                 # Quick mode (no gates)
-workflow.sh --help                  # This reference
-workflow.sh --help {topic}          # Topic-specific help
-workflow.sh transition_to {phase}   # Advance phase
-workflow.sh create_discovery ...    # Record service discovery
-workflow.sh show                    # Current status
-workflow.sh complete                # Verify evidence
-workflow.sh reset                   # Clear all state
+workflow.sh init                         # Start enforced workflow
+workflow.sh init --dev-only              # Dev mode (no deployment)
+workflow.sh init --hotfix                # Hotfix mode (skip dev verification)
+workflow.sh --quick                      # Quick mode (no gates)
+workflow.sh --help                       # This reference
+workflow.sh --help {topic}               # Topic-specific help
+workflow.sh transition_to {phase}        # Advance phase
+workflow.sh transition_to --back {phase} # Go backward (invalidates evidence)
+workflow.sh create_discovery ...         # Record service discovery
+workflow.sh create_discovery --single {id} {name}  # Single-service mode
+workflow.sh show                         # Current status
+workflow.sh complete                     # Verify evidence
+workflow.sh reset                        # Clear all state
+workflow.sh reset --keep-discovery       # Clear state but preserve discovery
+workflow.sh extend {import.yml}          # Add services to project
+workflow.sh refresh_discovery            # Validate current discovery
+workflow.sh upgrade-to-full              # Upgrade dev-only to full deployment
 
 Topics: discover, develop, deploy, verify, done, vars, services,
-        trouble, example, gates
+        trouble, example, gates, extend, bootstrap
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔍 PHASE: DISCOVER
@@ -1037,13 +1089,328 @@ EOF
         gates)
             show_full_help | sed -n '/🚪 GATES/,$p'
             ;;
+        extend)
+            cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 EXTENDING YOUR PROJECT WITH NEW SERVICES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Common scenario: You have a working app and want to add PostgreSQL,
+Valkey (Redis), NATS, or another managed service.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  THE CHALLENGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Environment variables are captured at ZCP start
+2. New services' vars ($db_host, etc.) won't be visible until restart
+3. discovery.json doesn't auto-update when services are added
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 STEP-BY-STEP FLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. CREATE THE IMPORT FILE
+   ─────────────────────────────────────────────────────────────
+   cat > add-service.yml <<'YAML'
+   services:
+     - hostname: db
+       type: postgresql@16
+       mode: NON_HA
+   YAML
+
+   Service types: postgresql@16, valkey@7, nats@2, mariadb@10
+
+2. IMPORT THE SERVICE
+   ─────────────────────────────────────────────────────────────
+   zcli project import ./add-service.yml -P $projectId
+
+3. WAIT FOR SERVICE TO BE READY
+   ─────────────────────────────────────────────────────────────
+   # Check status
+   zcli service list -P $projectId | grep db
+
+   # Wait for RUNNING state (usually 1-2 minutes for databases)
+   while ! zcli service list -P $projectId | grep -q "db.*RUNNING"; do
+     echo "Waiting for db..."
+     sleep 10
+   done
+
+4. ACCESS CREDENTIALS
+   ─────────────────────────────────────────────────────────────
+   ⚠️  ZCP captured env vars at START. New vars not visible!
+
+   Option A: Restart ZCP (picks up all new env vars)
+     - Close your IDE session
+     - Reconnect to ZCP
+     - New vars will be available as ${db_hostname}, etc.
+
+   Option B: Read directly via SSH (no restart needed)
+     ssh db 'echo $hostname'
+     ssh db 'echo $port'
+     ssh db 'echo $user'
+     ssh db 'echo $password'
+
+5. UPDATE YOUR CODE
+   ─────────────────────────────────────────────────────────────
+   Use connection pattern from the service.
+
+   Go + PostgreSQL:
+     connStr := fmt.Sprintf(
+         "host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+         os.Getenv("db_host"),
+         os.Getenv("db_port"),
+         os.Getenv("db_user"),
+         os.Getenv("db_password"),
+         os.Getenv("db_dbName"),
+     )
+
+   Node + PostgreSQL:
+     const pool = new Pool({
+       host: process.env.db_hostname,
+       port: process.env.db_port,
+       user: process.env.db_user,
+       password: process.env.db_password,
+       database: process.env.db_dbName,
+     });
+
+6. TEST CONNECTION
+   ─────────────────────────────────────────────────────────────
+   # Get credentials via SSH (since ZCP env not updated)
+   DB_HOST=$(ssh db 'echo $hostname')
+   DB_PASS=$(ssh db 'echo $password')
+   DB_USER=$(ssh db 'echo $user')
+   DB_NAME=$(ssh db 'echo $dbName')
+
+   # Test PostgreSQL connection
+   PGPASSWORD=$DB_PASS psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c "SELECT 1"
+
+   # Test Valkey/Redis connection
+   redis-cli -h $(ssh cache 'echo $hostname') -p $(ssh cache 'echo $port') PING
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 CONNECTION PATTERNS BY SERVICE TYPE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PostgreSQL (hostname: db)
+  ${db_hostname}, ${db_port}, ${db_user}, ${db_password}, ${db_dbName}
+  ${db_connectionString}  ← Full connection string
+
+Valkey/Redis (hostname: cache)
+  ${cache_hostname}, ${cache_port}, ${cache_password}
+  ${cache_connectionString}
+
+NATS (hostname: nats)
+  ${nats_hostname}, ${nats_port}, ${nats_user}, ${nats_password}
+  ${nats_connectionString}
+
+Object Storage (hostname: storage)
+  ${storage_accessKeyId}, ${storage_secretAccessKey}
+  ${storage_apiUrl}, ${storage_bucketName}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  ENV VAR TIMING - CRITICAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ZCP captures environment variables at START TIME.
+
+When you add a new service, ZCP does NOT automatically see its vars.
+
+Your options:
+  1. RESTART ZCP: Reconnect to pick up new vars
+  2. SSH READ: ssh {service} 'echo $varname' to get values directly
+
+This is platform behavior, not a bug. Plan for it.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 COMPLETE EXAMPLE: Adding PostgreSQL to Go App
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 1. Create import file
+cat > add-postgres.yml <<'YAML'
+services:
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+YAML
+
+# 2. Import
+zcli project import ./add-postgres.yml -P $projectId
+
+# 3. Wait for ready
+while ! zcli service list -P $projectId | grep -q "db.*RUNNING"; do
+  echo "Waiting for db service..."
+  sleep 10
+done
+echo "Database ready!"
+
+# 4. Get credentials via SSH
+DB_HOST=$(ssh db 'echo $hostname')
+DB_PORT=$(ssh db 'echo $port')
+DB_USER=$(ssh db 'echo $user')
+DB_PASS=$(ssh db 'echo $password')
+DB_NAME=$(ssh db 'echo $dbName')
+
+# 5. Test connection
+PGPASSWORD=$DB_PASS psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -c "SELECT 1"
+
+# 6. Update your Go code to use these env vars
+# The app will read them at runtime after deployment
+EOF
+            ;;
+        bootstrap)
+            cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 BOOTSTRAPPING A NEW PROJECT FROM SCRATCH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You're starting with an empty project. Here's how to go from
+zero to deployed application.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 THE FLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DEFINE → CREATE → DEVELOP → DEPLOY → VERIFY → DONE
+
+Instead of discovery-first (services exist), this is creation-first.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 STEP 1: DEFINE (Create import.yml)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create an import.yml for AI Agent pattern (dev + stage):
+
+cat > import.yml <<'YAML'
+services:
+  # Dev service (edit files here)
+  - hostname: appdev
+    type: go@latest
+    buildFromGit: false
+    enableSubdomainAccess: true
+
+  # Stage service (deploy here)
+  - hostname: appstage
+    type: go@latest
+    buildFromGit: false
+    enableSubdomainAccess: true
+YAML
+
+Language options: go@latest, nodejs@20, php@8, python@3, etc.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 STEP 2: CREATE (Import services)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+zcli project import ./import.yml -P $projectId
+
+Wait for services to be ready:
+
+while zcli service list -P $projectId | grep -qE "PENDING|BUILDING"; do
+  echo "Waiting for services to be ready..."
+  sleep 30
+done
+echo "Services ready!"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💻 STEP 3: DEVELOP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Now services exist. Run normal workflow:
+
+  workflow.sh init
+  zcli service list -P $projectId
+  workflow.sh create_discovery {dev_id} appdev {stage_id} appstage
+  workflow.sh transition_to DISCOVER
+  workflow.sh transition_to DEVELOP
+
+Create your application code at /var/www/appdev/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 COMPLETE EXAMPLE: Go Hello World
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 1. Create import.yml
+cat > import.yml <<'YAML'
+services:
+  - hostname: appdev
+    type: go@latest
+    buildFromGit: false
+    enableSubdomainAccess: true
+  - hostname: appstage
+    type: go@latest
+    buildFromGit: false
+    enableSubdomainAccess: true
+YAML
+
+# 2. Import
+zcli project import ./import.yml -P $projectId
+
+# 3. Wait
+while zcli service list -P $projectId | grep -qE "PENDING|BUILDING"; do
+  sleep 30
+done
+
+# 4. Start workflow
+workflow.sh init
+zcli service list -P $projectId  # Get IDs
+workflow.sh create_discovery "abc123" "appdev" "def456" "appstage"
+workflow.sh transition_to DISCOVER
+workflow.sh transition_to DEVELOP
+
+# 5. Create hello world
+cat > /var/www/appdev/main.go <<'GO'
+package main
+
+import (
+    "fmt"
+    "net/http"
+)
+
+func main() {
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintf(w, "Hello, World!")
+    })
+    http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintf(w, "OK")
+    })
+    http.ListenAndServe(":8080", nil)
+}
+GO
+
+# 6. Create zerops.yaml
+cat > /var/www/appdev/zerops.yaml <<'YAML'
+zerops:
+  - setup: app
+    build:
+      base: go@latest
+      buildCommands:
+        - go build -o app main.go
+      deployFiles:
+        - ./app
+    run:
+      base: go@latest
+      ports:
+        - port: 8080
+      start: ./app
+YAML
+
+# 7. Build, run, verify
+ssh appdev "cd /var/www && go build -o app main.go"
+ssh appdev "/var/www/app >> /tmp/app.log 2>&1"  # run_in_background=true
+verify.sh appdev 8080 / /status
+
+# Continue with normal DEPLOY → VERIFY → DONE flow
+EOF
+            ;;
         *)
             echo "❌ Unknown help topic: $topic"
             echo ""
             echo "Available topics:"
             echo "  discover, develop, deploy, verify, done"
             echo "  vars, services, trouble, example, gates"
-            exit 1
+            echo "  extend, bootstrap"
+            return 1
             ;;
     esac
 }
@@ -1053,6 +1420,7 @@ EOF
 # ============================================================================
 
 cmd_init() {
+    local mode_flag="$1"
     local existing_session
     existing_session=$(get_session)
 
@@ -1065,6 +1433,95 @@ cmd_init() {
         return 0
     fi
 
+    # Handle --dev-only mode
+    if [ "$mode_flag" = "--dev-only" ]; then
+        local session_id
+        session_id="$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
+        echo "$session_id" > "$SESSION_FILE"
+        echo "dev-only" > "$MODE_FILE"
+        echo "INIT" > "$PHASE_FILE"
+
+        cat <<'EOF'
+✅ DEV-ONLY MODE
+
+📋 Flow: INIT → DISCOVER → DEVELOP → DONE
+   (No deployment, no stage verification)
+
+💡 Use this for:
+   - Rapid prototyping
+   - Dev iteration without deployment
+   - Testing before committing to deploy
+
+⚠️  To upgrade to full deployment later:
+   workflow.sh upgrade-to-full
+EOF
+        return 0
+    fi
+
+    # Handle --hotfix mode
+    if [ "$mode_flag" = "--hotfix" ]; then
+        # Check for recent discovery
+        if [ -f "$DISCOVERY_FILE" ]; then
+            local timestamp age_hours
+            timestamp=$(jq -r '.timestamp // empty' "$DISCOVERY_FILE" 2>/dev/null)
+            if [ -n "$timestamp" ]; then
+                local disco_epoch now_epoch
+                # Try GNU date first, then BSD date
+                if disco_epoch=$(date -d "$timestamp" +%s 2>/dev/null); then
+                    : # GNU date worked
+                elif disco_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$timestamp" +%s 2>/dev/null); then
+                    : # BSD date worked
+                fi
+
+                if [ -n "$disco_epoch" ]; then
+                    now_epoch=$(date +%s)
+                    age_hours=$(( (now_epoch - disco_epoch) / 3600 ))
+
+                    local max_age="${HOTFIX_MAX_AGE_HOURS:-24}"
+                    if [ "$age_hours" -lt "$max_age" ]; then
+                        local session_id
+                        session_id="$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
+                        echo "$session_id" > "$SESSION_FILE"
+                        echo "hotfix" > "$MODE_FILE"
+                        echo "DEVELOP" > "$PHASE_FILE"
+
+                        # Update session in discovery
+                        if jq --arg sid "$session_id" '.session_id = $sid' "$DISCOVERY_FILE" > "${DISCOVERY_FILE}.tmp"; then
+                            mv "${DISCOVERY_FILE}.tmp" "$DISCOVERY_FILE"
+                        else
+                            rm -f "${DISCOVERY_FILE}.tmp"
+                            echo "Failed to update discovery.json" >&2
+                            return 1
+                        fi
+
+                        cat <<EOF
+🚨 HOTFIX MODE
+
+✓ Reusing discovery from ${age_hours}h ago
+  Dev:   $(jq -r '.dev.name' "$DISCOVERY_FILE")
+  Stage: $(jq -r '.stage.name' "$DISCOVERY_FILE")
+
+📋 Flow: DEVELOP → DEPLOY → VERIFY → DONE
+   (Skipping discovery and dev verification)
+
+⚠️  REDUCED SAFETY:
+   - No dev verification (you may deploy untested code)
+   - Stage verification still REQUIRED
+
+Ready. Start implementing your hotfix.
+EOF
+                        return 0
+                    fi
+                fi
+            fi
+        fi
+
+        echo "❌ Cannot use hotfix mode"
+        echo "   No recent discovery (< ${HOTFIX_MAX_AGE_HOURS:-24}h) found"
+        echo "   Run: workflow.sh init (normal mode)"
+        return 1
+    fi
+
     # Create new session
     local session_id
     session_id="$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
@@ -1072,6 +1529,34 @@ cmd_init() {
     echo "full" > "$MODE_FILE"
     echo "INIT" > "$PHASE_FILE"
 
+    # Check for preserved discovery and update session_id
+    if [ -f "$DISCOVERY_FILE" ]; then
+        local old_session
+        old_session=$(jq -r '.session_id // empty' "$DISCOVERY_FILE" 2>/dev/null)
+        if [ -n "$old_session" ]; then
+            # Update session_id in existing discovery
+            if jq --arg sid "$session_id" '.session_id = $sid' "$DISCOVERY_FILE" > "${DISCOVERY_FILE}.tmp"; then
+                mv "${DISCOVERY_FILE}.tmp" "$DISCOVERY_FILE"
+            else
+                rm -f "${DISCOVERY_FILE}.tmp"
+                echo "Failed to update discovery.json" >&2
+                return 1
+            fi
+
+            echo "✅ Session: $session_id"
+            echo ""
+            echo "📋 Preserved discovery detected:"
+            echo "   Dev:   $(jq -r '.dev.name' "$DISCOVERY_FILE")"
+            echo "   Stage: $(jq -r '.stage.name' "$DISCOVERY_FILE")"
+            echo ""
+            echo "💡 NEXT: Skip DISCOVER, go directly to DEVELOP"
+            echo "   workflow.sh transition_to DISCOVER"
+            echo "   workflow.sh transition_to DEVELOP"
+            return 0
+        fi
+    fi
+
+    # Normal init (no preserved discovery)
     cat <<EOF
 ✅ Session: $session_id
 
@@ -1113,17 +1598,28 @@ EOF
 
 cmd_transition_to() {
     local target_phase="$1"
+    local back_flag=""
+
+    # Handle --back flag
+    if [ "$1" = "--back" ]; then
+        back_flag="--back"
+        shift
+        target_phase="$1"
+    fi
 
     if [ -z "$target_phase" ]; then
-        echo "❌ Usage: workflow.sh transition_to {phase}"
+        echo "❌ Usage: workflow.sh transition_to [--back] {phase}"
         echo "Phases: DISCOVER, DEVELOP, DEPLOY, VERIFY, DONE"
-        exit 1
+        echo ""
+        echo "Options:"
+        echo "  --back    Go backward (invalidates evidence)"
+        return 1
     fi
 
     if ! validate_phase "$target_phase"; then
         echo "❌ Invalid phase: $target_phase"
         echo "Valid phases: ${PHASES[*]}"
-        exit 1
+        return 1
     fi
 
     local current_phase
@@ -1138,20 +1634,94 @@ cmd_transition_to() {
         return 0
     fi
 
+    # In dev-only mode, truncated flow: DISCOVER → DEVELOP → DONE
+    if [ "$mode" = "dev-only" ]; then
+        case "$target_phase" in
+            DISCOVER|DEVELOP)
+                set_phase "$target_phase"
+                output_phase_guidance "$target_phase"
+                return 0
+                ;;
+            DONE)
+                if [ "$current_phase" = "DEVELOP" ]; then
+                    echo "✅ Dev-only workflow complete"
+                    echo ""
+                    echo "💡 To deploy this work later:"
+                    echo "   workflow.sh upgrade-to-full"
+                    set_phase "$target_phase"
+                    return 0
+                fi
+                ;;
+            DEPLOY|VERIFY)
+                echo "❌ DEPLOY/VERIFY not available in dev-only mode"
+                echo ""
+                echo "💡 To enable deployment:"
+                echo "   workflow.sh upgrade-to-full"
+                return 1
+                ;;
+        esac
+    fi
+
+    # In hotfix mode, skip discovery and dev verification
+    if [ "$mode" = "hotfix" ]; then
+        case "$target_phase" in
+            DEPLOY)
+                # Skip dev verification gate in hotfix mode
+                set_phase "$target_phase"
+                echo "🚨 HOTFIX: Skipping dev verification"
+                output_phase_guidance "$target_phase"
+                return 0
+                ;;
+            VERIFY|DONE)
+                # Still enforce verification in hotfix mode
+                ;;
+        esac
+    fi
+
+    # Handle backward transitions with --back flag
+    if [ "$back_flag" = "--back" ]; then
+        case "$(get_phase)→$target_phase" in
+            VERIFY→DEVELOP|DEPLOY→DEVELOP)
+                rm -f "$STAGE_VERIFY_FILE"
+                rm -f "$DEPLOY_EVIDENCE_FILE" 2>/dev/null
+                echo "⚠️  Backward transition: Stage verification evidence invalidated"
+                echo "   You will need to re-verify stage after redeploying"
+                set_phase "$target_phase"
+                output_phase_guidance "$target_phase"
+                return 0
+                ;;
+            DONE→VERIFY)
+                echo "⚠️  Backward transition: Re-verification mode"
+                set_phase "$target_phase"
+                output_phase_guidance "$target_phase"
+                return 0
+                ;;
+            *)
+                echo "❌ Cannot go back to $target_phase from $(get_phase)"
+                echo ""
+                echo "Allowed backward transitions:"
+                echo "  VERIFY → DEVELOP (invalidates stage evidence)"
+                echo "  DEPLOY → DEVELOP (invalidates stage evidence)"
+                echo "  DONE → VERIFY"
+                return 1
+                ;;
+        esac
+    fi
+
     # In full mode, enforce gates
     case "$target_phase" in
         DISCOVER)
             if [ "$current_phase" != "INIT" ]; then
                 echo "❌ Cannot transition to DISCOVER from $current_phase"
                 echo "📋 Run: workflow.sh init"
-                exit 2
+                return 2
             fi
             ;;
         DEVELOP)
             if [ "$current_phase" != "DISCOVER" ]; then
                 echo "❌ Cannot transition to DEVELOP from $current_phase"
                 echo "📋 Required flow: INIT → DISCOVER → DEVELOP"
-                exit 2
+                return 2
             fi
             if ! check_gate_discover_to_develop; then
                 return 2
@@ -1161,7 +1731,7 @@ cmd_transition_to() {
             if [ "$current_phase" != "DEVELOP" ]; then
                 echo "❌ Cannot transition to DEPLOY from $current_phase"
                 echo "📋 Required flow: DEVELOP → DEPLOY"
-                exit 2
+                return 2
             fi
             if ! check_gate_develop_to_deploy; then
                 return 2
@@ -1171,14 +1741,17 @@ cmd_transition_to() {
             if [ "$current_phase" != "DEPLOY" ]; then
                 echo "❌ Cannot transition to VERIFY from $current_phase"
                 echo "📋 Required flow: DEPLOY → VERIFY"
-                exit 2
+                return 2
+            fi
+            if ! check_gate_deploy_to_verify; then
+                return 2
             fi
             ;;
         DONE)
             if [ "$current_phase" != "VERIFY" ]; then
                 echo "❌ Cannot transition to DONE from $current_phase"
                 echo "📋 Required flow: VERIFY → DONE"
-                exit 2
+                return 2
             fi
             if ! check_gate_verify_to_done; then
                 return 2
@@ -1409,25 +1982,60 @@ cmd_create_discovery() {
     local dev_name="$2"
     local stage_id="$3"
     local stage_name="$4"
+    local single_mode=false
+
+    # Handle --single flag
+    if [ "$dev_id" = "--single" ]; then
+        single_mode=true
+        dev_id="$2"
+        dev_name="$3"
+        stage_id="$2"
+        stage_name="$3"
+
+        if [ -z "$dev_id" ] || [ -z "$dev_name" ]; then
+            echo "❌ Usage: workflow.sh create_discovery --single {service_id} {service_name}"
+            return 1
+        fi
+
+        echo "⚠️  SINGLE-SERVICE MODE"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "Using same service for dev AND stage: $dev_name"
+        echo ""
+        echo "RISKS YOU'RE ACCEPTING:"
+        echo "  1. zcli push may overwrite source files"
+        echo "  2. No isolation between development and deployment"
+        echo "  3. A failed deploy affects your development environment"
+        echo ""
+        echo "WHEN THIS IS SAFE:"
+        echo "  - Build creates separate artifact (Go binary, bundled JS)"
+        echo "  - Small project where dev/stage separation is overkill"
+        echo ""
+        echo "Proceeding with single-service mode..."
+        echo ""
+    fi
 
     if [ -z "$dev_id" ] || [ -z "$dev_name" ] || [ -z "$stage_id" ] || [ -z "$stage_name" ]; then
         echo "❌ Usage: workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}"
         echo ""
         echo "Example:"
         echo "  workflow.sh create_discovery 'abc123' 'appdev' 'def456' 'appstage'"
-        exit 1
+        echo ""
+        echo "Or for single-service mode:"
+        echo "  workflow.sh create_discovery --single 'abc123' 'myservice'"
+        return 1
     fi
 
     if ! command -v jq &>/dev/null; then
         echo "❌ jq required but not found"
-        exit 1
+        return 1
     fi
 
     local session_id
     session_id=$(get_session)
     if [ -z "$session_id" ]; then
         echo "❌ No active session. Run: workflow.sh init"
-        exit 1
+        return 1
     fi
 
     local timestamp
@@ -1440,9 +2048,11 @@ cmd_create_discovery() {
         --arg dname "$dev_name" \
         --arg stid "$stage_id" \
         --arg stname "$stage_name" \
+        --argjson single "$single_mode" \
         '{
             session_id: $sid,
             timestamp: $ts,
+            single_mode: $single,
             dev: {
                 id: $did,
                 name: $dname
@@ -1457,6 +2067,9 @@ cmd_create_discovery() {
     echo ""
     echo "Dev:   $dev_name ($dev_id)"
     echo "Stage: $stage_name ($stage_id)"
+    if [ "$single_mode" = true ]; then
+        echo "Mode:  SINGLE-SERVICE (dev = stage)"
+    fi
     echo ""
     echo "📋 Next: workflow.sh transition_to DISCOVER"
 }
@@ -1511,6 +2124,19 @@ EOF
         echo "  ✗ /tmp/stage_verify.json (stale session)"
     else
         echo "  ✗ /tmp/stage_verify.json (missing)"
+        # Indicate if evidence was invalidated by backward transition
+        if [ "$(get_phase)" = "DEVELOP" ] && [ -f "$DEV_VERIFY_FILE" ]; then
+            echo "    ⚠️  Stage evidence may have been invalidated (backward transition)"
+        fi
+    fi
+
+    # Check deploy evidence
+    if [ -f "$DEPLOY_EVIDENCE_FILE" ] 2>/dev/null; then
+        if check_evidence_session "$DEPLOY_EVIDENCE_FILE"; then
+            echo "  ✓ /tmp/deploy_evidence.json (current session)"
+        else
+            echo "  ✗ /tmp/deploy_evidence.json (stale session)"
+        fi
     fi
 
     echo ""
@@ -1540,7 +2166,7 @@ cmd_complete() {
 
     if [ -z "$session_id" ]; then
         echo "❌ No active session"
-        exit 1
+        return 1
     fi
 
     local all_valid=true
@@ -1606,12 +2232,223 @@ cmd_complete() {
 }
 
 cmd_reset() {
+    local keep_discovery=false
+    if [ "$1" = "--keep-discovery" ]; then
+        keep_discovery=true
+    fi
+
+    # Always clear session state and verification evidence
     rm -f "$SESSION_FILE" "$MODE_FILE" "$PHASE_FILE"
-    rm -f "$DISCOVERY_FILE" "$DEV_VERIFY_FILE" "$STAGE_VERIFY_FILE"
-    echo "✅ All workflow state cleared"
+    rm -f "$DEV_VERIFY_FILE" "$STAGE_VERIFY_FILE" "$DEPLOY_EVIDENCE_FILE"
+
+    if [ "$keep_discovery" = true ]; then
+        if [ -f "$DISCOVERY_FILE" ]; then
+            echo "✓ Discovery preserved"
+            echo "  Dev:   $(jq -r '.dev.name' "$DISCOVERY_FILE")"
+            echo "  Stage: $(jq -r '.stage.name' "$DISCOVERY_FILE")"
+            echo ""
+            echo "💡 Next: workflow.sh init"
+            echo "   Discovery will be reused with new session"
+        else
+            echo "⚠️  No discovery to preserve"
+            rm -f "$DISCOVERY_FILE"
+            echo ""
+            echo "💡 Start fresh: workflow.sh init"
+        fi
+    else
+        rm -f "$DISCOVERY_FILE"
+        echo "✅ All workflow state cleared"
+        echo ""
+        echo "💡 Start fresh: workflow.sh init"
+    fi
+}
+
+cmd_extend() {
+    local import_file="$1"
+
+    if [ -z "$import_file" ] || [ "$import_file" = "--help" ]; then
+        show_topic_help "extend"
+        return 0
+    fi
+
+    if [ ! -f "$import_file" ]; then
+        echo "❌ File not found: $import_file"
+        return 1
+    fi
+
+    # Validate YAML if yq is available
+    if command -v yq &>/dev/null; then
+        if ! yq '.' "$import_file" > /dev/null 2>&1; then
+            echo "❌ Invalid YAML: $import_file"
+            return 1
+        fi
+    fi
+
+    local pid
+    pid=$(cat /tmp/projectId 2>/dev/null || echo "$projectId")
+    if [ -z "$pid" ]; then
+        echo "❌ No projectId found"
+        return 1
+    fi
+
+    echo "📦 Importing services from: $import_file"
     echo ""
-    echo "💡 Start fresh:"
-    echo "   workflow.sh init"
+
+    if ! zcli project import "$import_file" -P "$pid"; then
+        echo "❌ Import failed"
+        return 1
+    fi
+
+    echo ""
+    echo "⏳ Waiting for new services to be ready..."
+
+    local attempts=0
+    local timeout_seconds=600
+    local interval=10
+    local max_attempts=$((timeout_seconds / interval))
+    while zcli service list -P "$pid" 2>/dev/null | grep -qE "PENDING|BUILDING"; do
+        ((attempts++))
+        if [ $attempts -ge $max_attempts ]; then
+            echo "⚠️  Timeout waiting for services (${timeout_seconds}s)"
+            echo "   Check: zcli service list -P $pid"
+            break
+        fi
+        echo "   Still building... (${attempts}/${max_attempts})"
+        sleep $interval
+    done
+
+    echo ""
+    echo "✅ Services ready"
+    echo ""
+    echo "⚠️  IMPORTANT: Environment Variable Timing"
+    echo "   New services' vars are NOT visible in ZCP until restart."
+    echo ""
+    echo "   To access new credentials:"
+    echo "   Option A: Restart ZCP (reconnect your IDE)"
+    echo "   Option B: ssh {service} 'echo \$password'"
+    echo ""
+    echo "💡 See: workflow.sh --help extend"
+}
+
+cmd_upgrade_to_full() {
+    local current_mode
+    current_mode=$(get_mode)
+
+    if [ "$current_mode" = "full" ]; then
+        echo "✅ Already in full mode"
+        return 0
+    fi
+
+    if [ "$current_mode" != "dev-only" ]; then
+        echo "❌ Can only upgrade from dev-only mode"
+        echo "   Current mode: $current_mode"
+        return 1
+    fi
+
+    echo "full" > "$MODE_FILE"
+
+    local phase
+    phase=$(get_phase)
+
+    echo "✅ Upgraded to full mode"
+    echo ""
+    echo "📋 New workflow: DEVELOP → DEPLOY → VERIFY → DONE"
+    echo ""
+
+    if [ "$phase" = "DONE" ]; then
+        # Revert to DEVELOP so they can go through full flow
+        echo "DEVELOP" > "$PHASE_FILE"
+        echo "💡 Reset to DEVELOP phase. Now:"
+        echo "   1. verify.sh {dev} {port} / /status /api/..."
+        echo "   2. workflow.sh transition_to DEPLOY"
+    else
+        echo "💡 Continue from current phase: $phase"
+        echo "   Next: workflow.sh transition_to DEPLOY"
+    fi
+}
+
+cmd_refresh_discovery() {
+    if [ ! -f "$DISCOVERY_FILE" ]; then
+        echo "❌ No existing discovery to refresh"
+        echo "   Run create_discovery first"
+        return 1
+    fi
+
+    local old_dev old_stage session_id
+    old_dev=$(jq -r '.dev.name' "$DISCOVERY_FILE")
+    old_stage=$(jq -r '.stage.name' "$DISCOVERY_FILE")
+    session_id=$(get_session)
+
+    echo "Current discovery:"
+    echo "  Dev:   $old_dev"
+    echo "  Stage: $old_stage"
+    echo ""
+
+    local pid
+    pid=$(cat /tmp/projectId 2>/dev/null || echo "$projectId")
+    if [ -z "$pid" ]; then
+        echo "❌ No projectId found"
+        return 1
+    fi
+
+    echo "Available services:"
+    zcli service list -P "$pid" 2>/dev/null | grep -v "^Using config" | head -15
+    echo ""
+
+    # Check if services still exist
+    local services
+    services=$(zcli service list -P "$pid" 2>/dev/null)
+    local dev_exists=false
+    local stage_exists=false
+
+    if echo "$services" | grep -q "$old_dev"; then
+        dev_exists=true
+    fi
+    if echo "$services" | grep -q "$old_stage"; then
+        stage_exists=true
+    fi
+
+    if $dev_exists && $stage_exists; then
+        echo "✓ Existing dev/stage pair still valid"
+        echo "  No changes needed"
+    else
+        echo "⚠️  Discovery may be stale:"
+        $dev_exists || echo "  - Dev '$old_dev' not found"
+        $stage_exists || echo "  - Stage '$old_stage' not found"
+        echo ""
+        echo "Run create_discovery with updated service IDs"
+    fi
+}
+
+cmd_record_deployment() {
+    local service="$1"
+
+    if [ -z "$service" ]; then
+        echo "❌ Usage: workflow.sh record_deployment {service_name}"
+        return 1
+    fi
+
+    local session_id
+    session_id=$(get_session)
+    if [ -z "$session_id" ]; then
+        echo "❌ No active session. Run: workflow.sh init"
+        return 1
+    fi
+
+    jq -n \
+        --arg sid "$session_id" \
+        --arg svc "$service" \
+        --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        '{
+            session_id: $sid,
+            service: $svc,
+            timestamp: $ts,
+            status: "MANUAL"
+        }' > "$DEPLOY_EVIDENCE_FILE"
+
+    echo "✅ Deployment evidence recorded for $service"
+    echo ""
+    echo "💡 Next: workflow.sh transition_to VERIFY"
 }
 
 # ============================================================================
@@ -1619,102 +2456,254 @@ cmd_reset() {
 # ============================================================================
 
 check_gate_discover_to_develop() {
-    if ! check_evidence_session "$DISCOVERY_FILE"; then
-        cat <<'EOF'
-❌ Cannot transition to DEVELOP
+    local checks_passed=0
+    local checks_total=0
+    local all_passed=true
 
-📋 Gate requirement: /tmp/discovery.json must exist with current session
+    echo "Gate: DISCOVER → DEVELOP"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-💡 Complete DISCOVER first:
-   1. zcli service list -P $projectId
-   2. workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
-   3. workflow.sh transition_to DISCOVER
-EOF
-        return 1
+    # Check 1: discovery.json exists
+    ((checks_total++))
+    if [ -f "$DISCOVERY_FILE" ]; then
+        echo "  ✓ discovery.json exists"
+        ((checks_passed++))
+    else
+        echo "  ✗ discovery.json missing"
+        echo "    → Run: workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}"
+        all_passed=false
     fi
 
-    # Check that stage != dev
-    if command -v jq &>/dev/null; then
-        local dev_name stage_name
+    # Check 2: session_id matches
+    ((checks_total++))
+    if check_evidence_session "$DISCOVERY_FILE"; then
+        echo "  ✓ session_id matches current session"
+        ((checks_passed++))
+    else
+        local current_session=$(get_session)
+        local disco_session=$(jq -r '.session_id // "none"' "$DISCOVERY_FILE" 2>/dev/null)
+        echo "  ✗ session_id mismatch"
+        echo "    → Current session: $current_session"
+        echo "    → Discovery session: $disco_session"
+        echo "    → Run create_discovery again or workflow.sh reset"
+        all_passed=false
+    fi
+
+    # Check 3: dev != stage (unless single_mode)
+    ((checks_total++))
+    if command -v jq &>/dev/null && [ -f "$DISCOVERY_FILE" ]; then
+        local dev_name stage_name single_mode
         dev_name=$(jq -r '.dev.name' "$DISCOVERY_FILE" 2>/dev/null)
         stage_name=$(jq -r '.stage.name' "$DISCOVERY_FILE" 2>/dev/null)
+        single_mode=$(jq -r '.single_mode // false' "$DISCOVERY_FILE" 2>/dev/null)
 
-        if [ "$dev_name" = "$stage_name" ]; then
-            echo "❌ Cannot transition to DEVELOP"
-            echo ""
-            echo "⚠️  Dev and stage services are the same: $dev_name"
-            echo "    This would overwrite your source code!"
-            echo ""
-            echo "💡 Fix discovery.json with different services"
-            return 1
+        if [ "$dev_name" != "$stage_name" ]; then
+            echo "  ✓ dev ≠ stage ($dev_name vs $stage_name)"
+            ((checks_passed++))
+        elif [ "$single_mode" = "true" ]; then
+            echo "  ⚠ single-service mode (dev = stage = $dev_name)"
+            echo "    → Intentional: source corruption risk acknowledged"
+            ((checks_passed++))
+        else
+            echo "  ✗ dev.name == stage.name ('$dev_name')"
+            echo "    → Cannot use same service for dev and stage"
+            echo "    → Source corruption risk: zcli push overwrites /var/www/"
+            echo "    → Use --single flag if you understand the risk"
+            all_passed=false
         fi
+    else
+        echo "  ⚠ Cannot verify dev≠stage (jq unavailable or no discovery)"
+        ((checks_passed++))
     fi
 
-    return 0
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Result: $checks_passed/$checks_total checks passed"
+
+    if [ "$all_passed" = true ]; then
+        check_evidence_freshness "$DISCOVERY_FILE" 24
+        return 0
+    else
+        echo ""
+        echo "❌ Gate FAILED - fix issues above before proceeding"
+        return 1
+    fi
 }
 
 check_gate_develop_to_deploy() {
-    if ! check_evidence_session "$DEV_VERIFY_FILE"; then
-        cat <<'EOF'
-❌ Cannot transition to DEPLOY
+    local checks_passed=0
+    local checks_total=0
+    local all_passed=true
 
-📋 Gate requirement: /tmp/dev_verify.json must exist with current session
+    echo "Gate: DEVELOP → DEPLOY"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-💡 Complete DEVELOP verification first:
-   1. verify.sh {dev} {port} / /status /api/...
-   2. Ensure all endpoints pass
-EOF
-        return 1
+    # Check 1: dev_verify.json exists
+    ((checks_total++))
+    if [ -f "$DEV_VERIFY_FILE" ]; then
+        echo "  ✓ dev_verify.json exists"
+        ((checks_passed++))
+    else
+        echo "  ✗ dev_verify.json missing"
+        echo "    → Run: verify.sh {dev} {port} / /status /api/..."
+        all_passed=false
     fi
 
-    if command -v jq &>/dev/null; then
+    # Check 2: session_id matches
+    ((checks_total++))
+    if check_evidence_session "$DEV_VERIFY_FILE"; then
+        echo "  ✓ session_id matches current session"
+        ((checks_passed++))
+    else
+        echo "  ✗ session_id mismatch"
+        echo "    → Evidence is from a different session"
+        echo "    → Re-run verify.sh for current session"
+        all_passed=false
+    fi
+
+    # Check 3: failures == 0
+    ((checks_total++))
+    if command -v jq &>/dev/null && [ -f "$DEV_VERIFY_FILE" ]; then
         local failures
         failures=$(jq -r '.failed // 0' "$DEV_VERIFY_FILE" 2>/dev/null)
-        if [ "$failures" -ne 0 ]; then
-            echo "❌ Cannot transition to DEPLOY"
-            echo ""
-            echo "⚠️  Dev verification has $failures failure(s)"
-            echo ""
-            echo "💡 Fix the failing endpoints first:"
-            echo "   1. Review verify.sh output"
-            echo "   2. Check logs: ssh {dev} \"tail -f /tmp/app.log\""
-            echo "   3. Fix issues and re-run verify.sh"
-            return 1
+        # Validate numeric before comparison
+        if ! [[ "$failures" =~ ^[0-9]+$ ]]; then
+            echo "  ✗ Cannot read failure count from evidence file"
+            all_passed=false
+        elif [ "$failures" -eq 0 ]; then
+            local passed
+            passed=$(jq -r '.passed // 0' "$DEV_VERIFY_FILE" 2>/dev/null)
+            echo "  ✓ verification passed ($passed endpoints, 0 failures)"
+            ((checks_passed++))
+        else
+            echo "  ✗ verification has $failures failure(s)"
+            echo "    → Fix failing endpoints before deploying"
+            echo "    → Check: jq '.results[] | select(.pass==false)' /tmp/dev_verify.json"
+            all_passed=false
         fi
     fi
 
-    return 0
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Result: $checks_passed/$checks_total checks passed"
+
+    if [ "$all_passed" = true ]; then
+        check_evidence_freshness "$DEV_VERIFY_FILE" 24
+        return 0
+    else
+        echo ""
+        echo "❌ Gate FAILED - fix issues above before proceeding"
+        return 1
+    fi
+}
+
+check_gate_deploy_to_verify() {
+    local checks_passed=0
+    local checks_total=0
+    local all_passed=true
+
+    echo "Gate: DEPLOY → VERIFY"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # Check 1: deploy_evidence.json exists
+    ((checks_total++))
+    if [ -f "$DEPLOY_EVIDENCE_FILE" ]; then
+        echo "  ✓ deploy_evidence.json exists"
+        ((checks_passed++))
+    else
+        echo "  ✗ deploy_evidence.json missing"
+        echo "    → Run: status.sh --wait {stage}"
+        echo "    → Or:  workflow.sh record_deployment {stage}"
+        all_passed=false
+    fi
+
+    # Check 2: session_id matches
+    ((checks_total++))
+    if check_evidence_session "$DEPLOY_EVIDENCE_FILE"; then
+        echo "  ✓ session_id matches current session"
+        ((checks_passed++))
+    else
+        echo "  ✗ session_id mismatch"
+        echo "    → Deployment evidence is from a different session"
+        echo "    → Re-deploy and wait: status.sh --wait {stage}"
+        all_passed=false
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Result: $checks_passed/$checks_total checks passed"
+
+    if [ "$all_passed" = true ]; then
+        check_evidence_freshness "$DEPLOY_EVIDENCE_FILE" 24
+        return 0
+    else
+        echo ""
+        echo "❌ Gate FAILED - fix issues above before proceeding"
+        return 1
+    fi
 }
 
 check_gate_verify_to_done() {
-    if ! check_evidence_session "$STAGE_VERIFY_FILE"; then
-        cat <<'EOF'
-❌ Cannot transition to DONE
+    local checks_passed=0
+    local checks_total=0
+    local all_passed=true
 
-📋 Gate requirement: /tmp/stage_verify.json must exist with current session
+    echo "Gate: VERIFY → DONE"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-💡 Complete VERIFY first:
-   1. verify.sh {stage} {port} / /status /api/...
-   2. Ensure all endpoints pass
-   3. Browser test if frontend exists
-EOF
-        return 1
+    # Check 1: stage_verify.json exists
+    ((checks_total++))
+    if [ -f "$STAGE_VERIFY_FILE" ]; then
+        echo "  ✓ stage_verify.json exists"
+        ((checks_passed++))
+    else
+        echo "  ✗ stage_verify.json missing"
+        echo "    → Run: verify.sh {stage} {port} / /status /api/..."
+        all_passed=false
     fi
 
-    if command -v jq &>/dev/null; then
+    # Check 2: session_id matches
+    ((checks_total++))
+    if check_evidence_session "$STAGE_VERIFY_FILE"; then
+        echo "  ✓ session_id matches current session"
+        ((checks_passed++))
+    else
+        echo "  ✗ session_id mismatch"
+        echo "    → Evidence is from a different session"
+        echo "    → Re-run verify.sh for current session"
+        all_passed=false
+    fi
+
+    # Check 3: failures == 0
+    ((checks_total++))
+    if command -v jq &>/dev/null && [ -f "$STAGE_VERIFY_FILE" ]; then
         local failures
         failures=$(jq -r '.failed // 0' "$STAGE_VERIFY_FILE" 2>/dev/null)
-        if [ "$failures" -ne 0 ]; then
-            echo "❌ Cannot transition to DONE"
-            echo ""
-            echo "⚠️  Stage verification has $failures failure(s)"
-            echo ""
-            echo "💡 Fix the failing endpoints first"
-            return 1
+        # Validate numeric before comparison
+        if ! [[ "$failures" =~ ^[0-9]+$ ]]; then
+            echo "  ✗ Cannot read failure count from evidence file"
+            all_passed=false
+        elif [ "$failures" -eq 0 ]; then
+            local passed
+            passed=$(jq -r '.passed // 0' "$STAGE_VERIFY_FILE" 2>/dev/null)
+            echo "  ✓ verification passed ($passed endpoints, 0 failures)"
+            ((checks_passed++))
+        else
+            echo "  ✗ verification has $failures failure(s)"
+            echo "    → Fix failing endpoints"
+            echo "    → Use: workflow.sh transition_to --back DEVELOP"
+            all_passed=false
         fi
     fi
 
-    return 0
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Result: $checks_passed/$checks_total checks passed"
+
+    if [ "$all_passed" = true ]; then
+        check_evidence_freshness "$STAGE_VERIFY_FILE" 24
+        return 0
+    else
+        echo ""
+        echo "❌ Gate FAILED - fix issues above before proceeding"
+        return 1
+    fi
 }
 
 # ============================================================================
@@ -1727,7 +2716,7 @@ main() {
 
     case "$command" in
         init)
-            cmd_init
+            cmd_init "$@"
             ;;
         --quick)
             cmd_quick
@@ -1752,7 +2741,19 @@ main() {
             cmd_complete
             ;;
         reset)
-            cmd_reset
+            cmd_reset "$@"
+            ;;
+        record_deployment)
+            cmd_record_deployment "$@"
+            ;;
+        extend)
+            cmd_extend "$@"
+            ;;
+        refresh_discovery)
+            cmd_refresh_discovery "$@"
+            ;;
+        upgrade-to-full)
+            cmd_upgrade_to_full
             ;;
         "")
             cat <<'EOF'

@@ -95,6 +95,18 @@ get_session() {
     fi
 }
 
+# Load discovery for accurate service matching
+# Sets globals: DEV_SERVICE_NAME, STAGE_SERVICE_NAME
+get_discovery_names() {
+    if [ -f "/tmp/discovery.json" ]; then
+        DEV_SERVICE_NAME=$(jq -r '.dev.name // empty' "/tmp/discovery.json" 2>/dev/null)
+        STAGE_SERVICE_NAME=$(jq -r '.stage.name // empty' "/tmp/discovery.json" 2>/dev/null)
+    else
+        DEV_SERVICE_NAME=""
+        STAGE_SERVICE_NAME=""
+    fi
+}
+
 # ============================================================================
 # ENDPOINT TESTING
 # ============================================================================
@@ -263,13 +275,34 @@ main() {
 
     echo "Evidence: $evidence_file"
 
-    # Auto-copy to role-specific file
-    if echo "$service" | grep -qi "dev" && ! echo "$service" | grep -qi "stage"; then
+    # Load discovery names for accurate matching
+    get_discovery_names
+
+    # Copy evidence to role-specific file based on discovery.json (exact match)
+    if [ -n "$DEV_SERVICE_NAME" ] && [ "$service" = "$DEV_SERVICE_NAME" ]; then
         cp "$evidence_file" /tmp/dev_verify.json
-        echo "→ Copied to /tmp/dev_verify.json"
-    elif echo "$service" | grep -qi "stage"; then
+        echo "→ Copied to /tmp/dev_verify.json (matches discovery dev: $DEV_SERVICE_NAME)"
+    elif [ -n "$STAGE_SERVICE_NAME" ] && [ "$service" = "$STAGE_SERVICE_NAME" ]; then
         cp "$evidence_file" /tmp/stage_verify.json
-        echo "→ Copied to /tmp/stage_verify.json"
+        echo "→ Copied to /tmp/stage_verify.json (matches discovery stage: $STAGE_SERVICE_NAME)"
+    elif [ -n "$DEV_SERVICE_NAME" ] || [ -n "$STAGE_SERVICE_NAME" ]; then
+        # Discovery exists but service doesn't match
+        echo "⚠️  Service '$service' not in discovery.json"
+        echo "   Expected: dev='$DEV_SERVICE_NAME' or stage='$STAGE_SERVICE_NAME'"
+        echo "   Evidence saved to: $evidence_file (not auto-linked to workflow)"
+        echo ""
+        echo "💡 If this is your dev/stage service, update discovery:"
+        echo "   workflow.sh create_discovery {dev_id} $service {stage_id} {stage_name}"
+    else
+        # No discovery - fall back to pattern matching with warning
+        echo "⚠️  No discovery.json found, using pattern matching fallback"
+        if echo "$service" | grep -qi "dev" && ! echo "$service" | grep -qi "stage"; then
+            cp "$evidence_file" /tmp/dev_verify.json
+            echo "→ Copied to /tmp/dev_verify.json (pattern match: contains 'dev')"
+        elif echo "$service" | grep -qi "stage"; then
+            cp "$evidence_file" /tmp/stage_verify.json
+            echo "→ Copied to /tmp/stage_verify.json (pattern match: contains 'stage')"
+        fi
     fi
 
     # Check for frontend and show reminder
