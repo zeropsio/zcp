@@ -1,9 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(.zcp/workflow.sh:*)",
-      "Bash(.zcp/verify.sh:*)",
-      "Bash(.zcp/status.sh:*)",
+      "Bash(/var/www/.zcp/workflow.sh:*)",
+      "Bash(/var/www/.zcp/verify.sh:*)",
+      "Bash(/var/www/.zcp/status.sh:*)",
       "Bash(mkdir:*)",
       "Bash(curl:*)",
       "Bash(ssh:*)",
