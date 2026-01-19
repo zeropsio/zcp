@@ -29,10 +29,22 @@ You are on ZCP, not inside the app containers.
 
 | To... | Do |
 |-------|----|
-| Edit files | `/var/www/{service}/path` (SSHFS) |
-| Run commands | `ssh {service} "command"` |
+| Edit files | `/var/www/{runtime}/path` (SSHFS) |
+| Run commands | `ssh {runtime} "command"` |
 | Reach services | `http://{service}:{port}` |
 | Test frontend | `agent-browser open "$URL"` |
+
+**Service types:**
+- **Runtime** (go, nodejs, php, python, etc.) — SSH ✓, SSHFS ✓, run your code
+- **Managed** (postgresql, valkey, nats, etc.) — NO SSH, access via client tools from ZCP
+
+```bash
+# Runtime: SSH in to build/run
+ssh appdev "go build && ./app"
+
+# Managed: Use client tools from ZCP directly
+PGPASSWORD=$db_password psql -h db -U $db_user -d $db_database
+```
 
 ## Variables
 
@@ -57,15 +69,17 @@ ssh svc 'echo $VAR'         # Inside service: no prefix
 ## Reference
 
 ```bash
-.zcp/workflow.sh show              # Current phase, what's blocking
-.zcp/workflow.sh --help            # Full platform reference
-.zcp/workflow.sh --help discover   # Find services, record IDs
-.zcp/workflow.sh --help develop    # Build, test, iterate on dev
-.zcp/workflow.sh --help deploy     # Push to stage, deployFiles checklist
-.zcp/workflow.sh --help verify     # Test stage, browser checks
-.zcp/workflow.sh --help vars       # Environment variable patterns
-.zcp/workflow.sh --help services   # Service naming, hostnames vs types
-.zcp/workflow.sh --help trouble    # Common errors and fixes
-.zcp/workflow.sh --help gates      # Phase transition requirements
-.zcp/workflow.sh --help extend     # Add services mid-project
+.zcp/workflow.sh show       # Current phase, what's blocking
+.zcp/workflow.sh --help     # Full platform reference
 ```
+
+Help topics (use `--help {topic}`):
+- `discover` — Find services, record IDs
+- `develop` — Build, test, iterate on dev
+- `deploy` — Push to stage, deployFiles checklist
+- `verify` — Test stage, browser checks
+- `vars` — Environment variable patterns
+- `services` — Service naming, hostnames vs types
+- `trouble` — Common errors and fixes
+- `gates` — Phase transition requirements
+- `extend` — Add services mid-project
