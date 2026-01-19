@@ -256,8 +256,7 @@ Logs (check for errors/exceptions):
   ssh {dev} "grep -i exception /tmp/app.log"
 
 Database verification (if applicable):
-  PGPASSWORD=$db_password psql -h $db_hostname -U $db_user -d $db_database \
-      -c "SELECT * FROM {table} ORDER BY id DESC LIMIT 5;"
+  psql "$db_connectionString" -c "SELECT * FROM {table} ORDER BY id DESC LIMIT 5;"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ❌ DO NOT deploy to stage if:

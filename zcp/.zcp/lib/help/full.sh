@@ -110,6 +110,11 @@ Build & run:
   ssh {dev} './{binary} >> /tmp/app.log 2>&1'
   ↑ Set run_in_background=true in Bash tool parameters
 
+⚠️  CRITICAL: Container already has all env vars (db_hostname, etc.)
+   Just run the app - don't pass DB_HOST, DB_PASS manually!
+   ✅ ssh appdev './app'
+   ❌ ssh appdev "DB_HOST=... DB_PASS=... ./app"
+
 Test endpoints:
   .zcp/verify.sh {dev} {port} / /status /api/...
 
@@ -155,8 +160,9 @@ zerops.yaml structure:
           - port: 8080
         start: ./app
 
-Stop dev process:
-  ssh {dev} 'pkill -9 {proc}; fuser -k {port}/tcp 2>/dev/null; true'
+Stop dev process (triple-kill pattern):
+  ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; \
+             fuser -k {port}/tcp 2>/dev/null; true'
 
 Authenticate from dev container:
   ssh {dev} "zcli login --region=gomibako \
@@ -211,19 +217,18 @@ Service logs:
 🗄️  DATABASE OPERATIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Run from ZCP (not container):
+Run from ZCP (not container). Use connection strings for security:
 
 PostgreSQL:
-  PGPASSWORD=$db_password psql -h $db_hostname -U $db_user -d $db_database
+  psql "$db_connectionString"
 
-Redis:
-  redis-cli -h $redis_hostname -a $redis_password
+Redis/Valkey:
+  redis-cli -u "$cache_connectionString"
 
 MySQL/MariaDB:
-  mysql -h $mysql_hostname -u $mysql_user -p$mysql_password $mysql_database
+  mysql "$mysql_connectionString"
 
-Connection strings also available:
-  $db_connectionString
+⚠️  Prefer connection strings over individual vars - avoids password exposure
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔧 TROUBLESHOOTING
@@ -308,7 +313,7 @@ ssh appdev './app >> /tmp/app.log 2>&1'  # run_in_background=true
 .zcp/workflow.sh transition_to DEPLOY
 cat /var/www/appdev/zerops.yaml | grep -A10 deployFiles
 ls -la /var/www/appdev/app /var/www/appdev/templates/
-ssh appdev 'pkill -9 app; fuser -k 8080/tcp 2>/dev/null; true'
+ssh appdev 'pkill -9 app; killall -9 app 2>/dev/null; fuser -k 8080/tcp 2>/dev/null; true'
 ssh appdev "zcli login --region=gomibako \
     --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
     \"\$ZEROPS_ZAGENT_API_KEY\""

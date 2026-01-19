@@ -62,8 +62,8 @@ cmd_extend() {
     echo "   New services' vars are NOT visible in ZCP until restart."
     echo ""
     echo "   To access new credentials:"
-    echo "   Option A: Restart ZCP (reconnect your IDE)"
-    echo "   Option B: ssh {service} 'echo \$password'"
+    echo "   Option A: Restart ZCP (reconnect your IDE) - recommended"
+    echo "   Option B: Use connection string: ssh db 'echo \$connectionString'"
     echo ""
     echo "💡 See: .zcp/workflow.sh --help extend"
 }

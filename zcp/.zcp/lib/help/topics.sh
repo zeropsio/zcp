@@ -176,8 +176,7 @@ Logs - Look for errors, not just "it started":
   ssh {dev} "grep -iE 'error|exception|panic|fatal' /tmp/app.log"
 
 Database - Verify persistence:
-  PGPASSWORD=$db_password psql -h $db_hostname -U $db_user -d $db_database \
-      -c "SELECT * FROM {table} ORDER BY id DESC LIMIT 5;"
+  psql "$db_connectionString" -c "SELECT * FROM {table} ORDER BY id DESC LIMIT 5;"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ❌ DO NOT proceed to DEPLOY if:
@@ -261,8 +260,9 @@ zerops.yaml structure:
 
 Deployment steps:
 
-1. Stop dev process:
-   ssh {dev} 'pkill -9 {proc}; fuser -k {port}/tcp 2>/dev/null; true'
+1. Stop dev process (triple-kill pattern):
+   ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; \
+              fuser -k {port}/tcp 2>/dev/null; true'
 
 2. Authenticate from dev container:
    ssh {dev} "zcli login --region=gomibako \
@@ -337,8 +337,7 @@ If your app has HTML/CSS/JS/templates:
 Advanced verification:
 
 Database persistence:
-  PGPASSWORD=$db_password psql -h $db_hostname -U $db_user \
-      -d $db_database -c "SELECT * FROM users LIMIT 5;"
+  psql "$db_connectionString" -c "SELECT * FROM users LIMIT 5;"
 
 Functionality testing:
   # Create test data
@@ -412,7 +411,7 @@ show_help_vars() {
 
 Variable Structure:
   Pattern: {hostname}_{VARIABLE}
-  Example: ${myapp_zeropsSubdomain}, ${users-db_password}
+  Example: ${myapp_zeropsSubdomain}, ${usersdb_password}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 ACCESS PATTERNS BY CONTEXT
@@ -460,10 +459,9 @@ Variable Structure:
 │   ${search_connectionString}                                    │
 │   ${search_apiKey}, ${search_hostname}                          │
 │                                                                  │
-│ Usage from ZCP:                                                  │
-│   PGPASSWORD=${postgres_password} psql -h ${postgres_hostname} \│
-│       -U ${postgres_user} -d ${postgres_dbName}                 │
-│   redis-cli -h ${cache_hostname} -p ${cache_port}               │
+│ Usage from ZCP (prefer connection strings):                      │
+│   psql "${postgres_connectionString}"                           │
+│   redis-cli -u "${cache_connectionString}"                      │
 └──────────────────────────────────────────────────────────────────┘
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -559,9 +557,10 @@ show_help_services() {
 
 Hostname (User-Defined):
   • What YOU name the service in zerops.yaml
-  • Can be ANYTHING: myapp, backend, users-db, cache1, api-prod
+  • Can be ANYTHING: myapp, backend, usersdb, cache1, apiprod
+  • ⚠️  Hostnames: lowercase alphanumeric only (a-z, 0-9), no hyphens/underscores
   • Used for: SSH, variables, networking
-  • Examples: "myapp", "postgres-main", "redis-cache"
+  • Examples: "myapp", "postgresmain", "rediscache"
 
 Service Type (Zerops-Defined):
   • The technology: postgresql, nats, valkey, nodejs, go
@@ -575,8 +574,8 @@ Service Type (Zerops-Defined):
 
 Variables use HOSTNAME, not type!
 
-If PostgreSQL service is named "users-db":
-  ${users-db_connectionString}   ✅ CORRECT
+If PostgreSQL service is named "usersdb":
+  ${usersdb_connectionString}    ✅ CORRECT
   ${postgres_connectionString}   ❌ WRONG
   ${db_connectionString}         ❌ WRONG (unless you named it "db")
 
@@ -599,19 +598,19 @@ Pattern 1: Type as Hostname (Simple)
 
 Pattern 2: Descriptive Names (Production)
   services:
-    - hostname: users-database      # Type: postgresql
-    - hostname: session-cache       # Type: valkey
-    - hostname: event-queue         # Type: nats
+    - hostname: usersdb          # Type: postgresql
+    - hostname: sessioncache     # Type: valkey
+    - hostname: eventqueue       # Type: nats
 
-  Variables: ${users-database_password}, ${session-cache_port}
+  Variables: ${usersdb_password}, ${sessioncache_port}
 
 Pattern 3: Environment Suffixes
   services:
-    - hostname: api-dev       # Type: nodejs (development)
-    - hostname: api-stage     # Type: nodejs (staging)
-    - hostname: api-prod      # Type: nodejs (production)
+    - hostname: apidev         # Type: nodejs (development)
+    - hostname: apistage       # Type: nodejs (staging)
+    - hostname: apiprod        # Type: nodejs (production)
 
-  Variables: ${api-dev_zeropsSubdomain}, ${api-prod_zeropsSubdomain}
+  Variables: ${apidev_zeropsSubdomain}, ${apiprod_zeropsSubdomain}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔍 DISCOVERING ACTUAL SERVICE NAMES
@@ -626,15 +625,15 @@ Output shows:
   │ ID        │ NAME (hostname)│ STATUS │ TYPE        │
   ├───────────┼────────────────┼────────┼─────────────┤
   │ abc123... │ myapp          │ ACTIVE │ nodejs      │
-  │ def456... │ backend-api    │ ACTIVE │ go          │
-  │ ghi789... │ users-db       │ ACTIVE │ postgresql  │
+  │ def456... │ backendapi     │ ACTIVE │ go          │
+  │ ghi789... │ usersdb        │ ACTIVE │ postgresql  │
   │ jkl012... │ cache          │ ACTIVE │ valkey      │
   └───────────┴────────────────┴────────┴─────────────┘
 
 Then use DISCOVERED hostnames:
   ssh myapp "..."
-  echo "${backend-api_zeropsSubdomain}"
-  PGPASSWORD=${users-db_password} psql ...
+  echo "${backendapi_zeropsSubdomain}"
+  psql "${usersdb_connectionString}"
 
 ⚠️  NEVER assume service names match types!
 ⚠️  NEVER hardcode service names in scripts!
@@ -648,8 +647,8 @@ You cannot proceed without knowing actual service hostnames!
 
 .zcp/workflow.sh create_discovery uses DISCOVERED names:
   .zcp/workflow.sh create_discovery \
-    "abc123" "myapp" \      ← Actual hostname from zcli service list
-    "def456" "backend-api"  ← NOT type name, actual hostname
+    "abc123" "myapp" \       ← Actual hostname from zcli service list
+    "def456" "backendapi"    ← NOT type name, actual hostname
 
 This ensures all subsequent operations use correct names.
 
@@ -706,34 +705,41 @@ Valkey (Redis), NATS, or another managed service.
 
 4. ACCESS CREDENTIALS
    ─────────────────────────────────────────────────────────────
-   ⚠️  ZCP captured env vars at START. New vars not visible!
+   ⚠️  ZCP captured env vars at START. New service vars not visible!
 
-   Option A: Restart ZCP (picks up all new env vars)
+   Option A: Restart ZCP (recommended - picks up all new env vars)
      - Close your IDE session
      - Reconnect to ZCP
-     - New vars will be available as ${db_hostname}, etc.
+     - New vars available: $db_hostname, $db_connectionString, etc.
 
-   Option B: Read directly via SSH (no restart needed)
-     ssh db 'echo $hostname'
-     ssh db 'echo $port'
-     ssh db 'echo $user'
-     ssh db 'echo $password'
+   Option B: Use connection string (no restart needed)
+     # Database services provide a ready-to-use connection string
+     # Access it via the service's environment
+     ssh db 'echo $connectionString'  # Shows full connection URL
+
+   ⚠️  NEVER echo passwords to terminal. Use connection strings instead.
 
 5. UPDATE YOUR CODE
    ─────────────────────────────────────────────────────────────
-   Use connection pattern from the service.
+   ⚠️  CRITICAL: Your app container ALREADY HAS these variables!
+      Zerops injects them at container start. Don't pass them manually.
 
-   Go + PostgreSQL:
+   Go + PostgreSQL (use connection string):
+     connStr := os.Getenv("db_connectionString")
+     // OR individual vars (already in container env):
      connStr := fmt.Sprintf(
          "host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-         os.Getenv("db_host"),
+         os.Getenv("db_hostname"),
          os.Getenv("db_port"),
          os.Getenv("db_user"),
          os.Getenv("db_password"),
          os.Getenv("db_dbName"),
      )
 
-   Node + PostgreSQL:
+   Node + PostgreSQL (use connection string):
+     const connectionString = process.env.db_connectionString;
+     const pool = new Pool({ connectionString });
+     // OR individual vars (already in container env):
      const pool = new Pool({
        host: process.env.db_hostname,
        port: process.env.db_port,
@@ -742,19 +748,27 @@ Valkey (Redis), NATS, or another managed service.
        database: process.env.db_dbName,
      });
 
-6. TEST CONNECTION
+6. TEST CONNECTION (from ZCP)
    ─────────────────────────────────────────────────────────────
-   # Get credentials via SSH (since ZCP env not updated)
-   DB_HOST=$(ssh db 'echo $hostname')
-   DB_PASS=$(ssh db 'echo $password')
-   DB_USER=$(ssh db 'echo $user')
-   DB_NAME=$(ssh db 'echo $dbName')
+   # Use connection string - secure, no password exposure
+   psql "$db_connectionString" -c "SELECT 1"
 
-   # Test PostgreSQL connection
-   PGPASSWORD=$DB_PASS psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c "SELECT 1"
+   # Or with individual vars (ZCP has them after restart)
+   psql -h "$db_hostname" -U "$db_user" -d "$db_database" -c "SELECT 1"
+   # Password is in PGPASSWORD from $db_connectionString parsing
 
-   # Test Valkey/Redis connection
-   redis-cli -h $(ssh cache 'echo $hostname') -p $(ssh cache 'echo $port') PING
+   # Valkey/Redis
+   redis-cli -u "$cache_connectionString" PING
+
+7. RUN YOUR APP
+   ─────────────────────────────────────────────────────────────
+   ⚠️  CRITICAL: Just run the app. Don't pass env vars manually!
+
+   # ✅ CORRECT - container already has all variables
+   ssh appdev './app'
+
+   # ❌ WRONG - don't do this (unnecessary, exposes secrets)
+   # ssh appdev "DB_HOST=... DB_PASS=... ./app"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 CONNECTION PATTERNS BY SERVICE TYPE
@@ -812,18 +826,13 @@ while ! zcli service list -P $projectId | grep -q "db.*RUNNING"; do
 done
 echo "Database ready!"
 
-# 4. Get credentials via SSH
-DB_HOST=$(ssh db 'echo $hostname')
-DB_PORT=$(ssh db 'echo $port')
-DB_USER=$(ssh db 'echo $user')
-DB_PASS=$(ssh db 'echo $password')
-DB_NAME=$(ssh db 'echo $dbName')
+# 4. Test connection (use connection string - secure)
+psql "$db_connectionString" -c "SELECT 1"
 
-# 5. Test connection
-PGPASSWORD=$DB_PASS psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -c "SELECT 1"
-
-# 6. Update your Go code to use these env vars
-# The app will read them at runtime after deployment
+# 5. Your app reads env vars automatically
+# Zerops injects db_hostname, db_password, etc. into container env
+# Just run: ssh appdev './app'
+# Don't pass DB vars manually - they're already there!
 EOF
 }
 

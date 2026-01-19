@@ -81,8 +81,8 @@ EOF
         echo "  Runtime (SSH ✓):  $dev_name (dev), $stage_name (stage)"
         echo "  Managed (NO SSH): db, cache, etc. → use psql, redis-cli from ZCP"
         echo ""
-        echo "  DB access:  PGPASSWORD=\$db_password psql -h db -U \$db_user -d \$db_database"
-        echo "  Check vars: env | grep db_"
+        echo "  DB access:  psql \"\$db_connectionString\""
+        echo "  Variables:  \$db_hostname, \$db_user, \$db_database, \$db_connectionString"
     fi
 
     echo ""
@@ -194,8 +194,8 @@ Quick mode - no workflow enforcement
 • Runtime services: ssh {service} "command"
 • Managed services (db, cache, etc.): NO SSH!
   Use client tools directly from ZCP:
-  PGPASSWORD=$db_password psql -h db -U $db_user -d $db_database
-  redis-cli -h cache
+  psql "$db_connectionString"
+  redis-cli -u "$cache_connectionString"
 • Variables: ${hostname}_VAR from ZCP, $VAR inside ssh
 • zcli from ZCP: login first, then -P $projectId
   zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZAGENT_API_KEY"
