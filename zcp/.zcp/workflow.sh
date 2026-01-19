@@ -2140,22 +2140,96 @@ EOF
     fi
 
     echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "💡 NEXT STEPS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
 
+    # Give specific guidance based on phase and what's missing
     case "$phase" in
-        INIT|DISCOVER)
-            echo "Next: .zcp/workflow.sh transition_to DISCOVER"
+        INIT)
+            if ! check_evidence_session "$DISCOVERY_FILE"; then
+                cat <<'GUIDANCE'
+1. Discover services:
+   zcli login --region=gomibako \
+       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
+       "$ZEROPS_ZAGENT_API_KEY"
+   zcli service list -P $projectId
+
+2. Record discovery (use IDs from step 1):
+   .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+
+3. Transition:
+   .zcp/workflow.sh transition_to DISCOVER
+GUIDANCE
+            else
+                echo "Discovery exists. Run: .zcp/workflow.sh transition_to DISCOVER"
+            fi
+            ;;
+        DISCOVER)
+            if check_evidence_session "$DISCOVERY_FILE"; then
+                echo "Discovery complete. Run: .zcp/workflow.sh transition_to DEVELOP"
+            else
+                cat <<'GUIDANCE'
+Discovery missing or stale. Re-run:
+   zcli service list -P $projectId
+   .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+GUIDANCE
+            fi
             ;;
         DEVELOP)
-            echo "Next: .zcp/workflow.sh transition_to DEPLOY"
+            if ! check_evidence_session "$DEV_VERIFY_FILE"; then
+                local dev_name
+                dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
+                cat <<GUIDANCE
+1. Build and test on dev ($dev_name)
+2. Verify endpoints work:
+   .zcp/verify.sh $dev_name {port} / /api/...
+3. Then: .zcp/workflow.sh transition_to DEPLOY
+GUIDANCE
+            else
+                echo "Dev verified. Run: .zcp/workflow.sh transition_to DEPLOY"
+            fi
             ;;
         DEPLOY)
-            echo "Next: .zcp/workflow.sh transition_to VERIFY"
+            if ! check_evidence_session "$DEPLOY_EVIDENCE_FILE" 2>/dev/null; then
+                local dev_name stage_id stage_name
+                dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
+                stage_id=$(jq -r '.stage.id // "STAGE_ID"' "$DISCOVERY_FILE" 2>/dev/null)
+                stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
+                cat <<GUIDANCE
+1. Check deployFiles in zerops.yaml includes all artifacts
+2. Deploy:
+   ssh $dev_name "zcli login ... && zcli push $stage_id --setup={setup}"
+3. Wait:
+   .zcp/status.sh --wait $stage_name
+4. Then: .zcp/workflow.sh transition_to VERIFY
+GUIDANCE
+            else
+                echo "Deploy complete. Run: .zcp/workflow.sh transition_to VERIFY"
+            fi
             ;;
         VERIFY)
-            echo "Next: .zcp/workflow.sh transition_to DONE"
+            if ! check_evidence_session "$STAGE_VERIFY_FILE"; then
+                local stage_name
+                stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
+                cat <<GUIDANCE
+1. Verify stage endpoints:
+   .zcp/verify.sh $stage_name {port} / /api/...
+2. Then: .zcp/workflow.sh transition_to DONE
+GUIDANCE
+            else
+                echo "Stage verified. Run: .zcp/workflow.sh transition_to DONE"
+            fi
             ;;
         DONE)
-            echo "Next: .zcp/workflow.sh complete"
+            echo "Run: .zcp/workflow.sh complete"
+            ;;
+        QUICK)
+            echo "Quick mode - no enforcement. Use any tools as needed."
+            ;;
+        *)
+            echo "Unknown phase. Run: .zcp/workflow.sh init"
             ;;
     esac
 }

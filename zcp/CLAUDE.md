@@ -60,6 +60,7 @@ ssh svc 'echo $VAR'         # Inside service: no prefix
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `https://https://...` | zeropsSubdomain is full URL | Don't prepend protocol |
+| zcli unknown flag | zcli doesn't use common flags | Check `zcli {cmd} --help` |
 | Files missing on stage | Not in deployFiles | Update zerops.yaml, redeploy |
 | SSH hangs forever | Foreground process | `run_in_background=true` |
 | Variable empty | Wrong prefix | Use `${hostname}_VAR` |
