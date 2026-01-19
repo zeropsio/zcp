@@ -13,6 +13,16 @@
 
 **Run one. READ its output completely. FOLLOW the rules it shows.** The script guides each phase and enforces gates.
 
+## Lost Context? Run This
+
+If resuming work, entering mid-session, or unsure of current state:
+```bash
+.zcp/workflow.sh show           # State, evidence, next steps
+.zcp/workflow.sh show --guidance # Full context recovery (state + phase guidance)
+.zcp/workflow.sh recover        # Complete recovery: show + guidance + rules
+```
+Then follow the NEXT STEPS section in the output.
+
 ## Context
 
 **Zerops** is a PaaS. Projects contain services (containers) on a shared private network.
@@ -69,14 +79,40 @@ ssh svc 'echo $VAR'         # Inside service: no prefix
 | Variable empty | Wrong prefix | Use `${hostname}_VAR` |
 | Can't transition phase | Missing evidence | `.zcp/workflow.sh show` |
 
+## Critical Rules (memorize these)
+
+| Rule | Pattern |
+|------|---------|
+| Kill orphan processes | `ssh {svc} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'` |
+| Long-running commands | Set `run_in_background=true` in Bash tool |
+| HTTP 200 ≠ working | Check response content, logs, browser console |
+| Deploy from | Dev container (`ssh {dev} "zcli push..."`), NOT from ZCP |
+| deployFiles | Must include ALL artifacts — check before every deploy |
+| zeropsSubdomain | Already full URL — don't prepend `https://` |
+
+## Evidence Files
+
+| File | Purpose |
+|------|---------|
+| `/tmp/claude_session` | Session ID |
+| `/tmp/claude_phase` | Current phase |
+| `/tmp/discovery.json` | Dev/stage service mapping |
+| `/tmp/dev_verify.json` | Dev verification results |
+| `/tmp/stage_verify.json` | Stage verification results |
+| `/tmp/deploy_evidence.json` | Deployment completion proof |
+
 ## Reference
 
 ```bash
-.zcp/workflow.sh show       # Current phase, what's blocking
-.zcp/workflow.sh --help     # Full platform reference
+.zcp/workflow.sh show           # Current phase, what's blocking
+.zcp/workflow.sh show --guidance # Status + full phase guidance
+.zcp/workflow.sh recover        # Complete context recovery
+.zcp/workflow.sh state          # One-line state summary
+.zcp/workflow.sh --help         # Full platform reference
 ```
 
 Help topics (use `--help {topic}`):
+- `cheatsheet` — Quick reference (commands, patterns, rules)
 - `discover` — Find services, record IDs
 - `develop` — Build, test, iterate on dev
 - `deploy` — Push to stage, deployFiles checklist
@@ -86,3 +122,4 @@ Help topics (use `--help {topic}`):
 - `trouble` — Common errors and fixes
 - `gates` — Phase transition requirements
 - `extend` — Add services mid-project
+- `bootstrap` — Create new project from scratch

@@ -2,6 +2,11 @@
 # Status and show commands for Zerops Workflow
 
 cmd_show() {
+    local show_guidance=false
+    if [ "$1" = "--guidance" ]; then
+        show_guidance=true
+    fi
+
     local session_id
     local mode
     local phase
@@ -128,7 +133,10 @@ GUIDANCE
                 local dev_name
                 dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
                 cat <<GUIDANCE
-⚠️  See DISCOVERED SERVICES above for SSH vs client tool rules
+⚠️  DEVELOP PHASE REMINDERS:
+   • Kill orphans: ssh $dev_name 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'
+   • Long commands: run_in_background=true
+   • HTTP 200 ≠ working — check content, logs, console
 
 1. Build and test on dev ($dev_name):
    ssh $dev_name "{build_cmd} && ./{binary}"
@@ -147,8 +155,10 @@ GUIDANCE
                 stage_id=$(jq -r '.stage.id // "STAGE_ID"' "$DISCOVERY_FILE" 2>/dev/null)
                 stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
                 cat <<GUIDANCE
-⚠️  Deploy from dev container (runtime), NOT from ZCP:
-   ssh $dev_name "zcli login ... && zcli push $stage_id --setup={setup}"
+⚠️  DEPLOY PHASE REMINDERS:
+   • Deploy from dev container, NOT ZCP
+   • deployFiles must include ALL artifacts
+   • Check: cat /var/www/$dev_name/zerops.yaml | grep -A10 deployFiles
 
 1. Check deployFiles in zerops.yaml includes all artifacts
 2. Deploy:
@@ -166,8 +176,10 @@ GUIDANCE
                 local stage_name
                 stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
                 cat <<GUIDANCE
-⚠️  Stage ($stage_name) is a runtime - SSH works for commands
-   Managed services (db, cache): NO SSH, use client tools from ZCP
+⚠️  VERIFY PHASE REMINDERS:
+   • HTTP 200 ≠ working — check content, logs, console
+   • zeropsSubdomain is full URL — don't prepend https://
+   • Stage ($stage_name) is runtime — SSH works
 
 1. Verify stage endpoints:
    .zcp/verify.sh $stage_name {port} / /api/...
@@ -207,6 +219,72 @@ GUIDANCE
             echo "Unknown phase. Run: .zcp/workflow.sh init"
             ;;
     esac
+
+    # If --guidance flag, output full phase guidance
+    if [ "$show_guidance" = true ] && [ -n "$phase" ] && [ "$phase" != "NONE" ] && [ "$phase" != "QUICK" ]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📖 PHASE GUIDANCE"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        output_phase_guidance "$phase"
+    fi
+}
+
+cmd_recover() {
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║  FULL CONTEXT RECOVERY                                           ║"
+    echo "╚══════════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # Run show with guidance
+    cmd_show --guidance
+
+    # Output critical rules reminder
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "⚠️  CRITICAL RULES (always remember)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    cat <<'RULES'
+• Kill orphans:     ssh {svc} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'
+• Long commands:    run_in_background=true in Bash tool
+• HTTP 200:         Does NOT mean working — check content, logs, console
+• Deploy from:      Dev container (ssh {dev} "zcli push..."), NOT from ZCP
+• deployFiles:      Must include ALL artifacts — check before every deploy
+• zeropsSubdomain:  Already full URL — don't prepend https://
+RULES
+}
+
+cmd_state() {
+    local session_id mode phase
+    session_id=$(get_session)
+    mode=$(get_mode)
+    phase=$(get_phase)
+
+    local dev_name stage_name dev_verify stage_verify
+    dev_name="?"
+    stage_name="?"
+    dev_verify="missing"
+    stage_verify="missing"
+
+    if [ -f "$DISCOVERY_FILE" ]; then
+        dev_name=$(jq -r '.dev.name // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+        stage_name=$(jq -r '.stage.name // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+    fi
+
+    if check_evidence_session "$DEV_VERIFY_FILE"; then
+        local failures
+        failures=$(jq -r '.failed // 0' "$DEV_VERIFY_FILE" 2>/dev/null)
+        dev_verify="${failures}_failures"
+    fi
+
+    if check_evidence_session "$STAGE_VERIFY_FILE"; then
+        local failures
+        failures=$(jq -r '.failed // 0' "$STAGE_VERIFY_FILE" 2>/dev/null)
+        stage_verify="${failures}_failures"
+    fi
+
+    echo "${phase:-NONE} | ${mode:-none} | dev=${dev_name} stage=${stage_name} | dev_verify=${dev_verify} stage_verify=${stage_verify}"
 }
 
 cmd_complete() {

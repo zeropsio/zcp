@@ -46,13 +46,16 @@ show_topic_help() {
         bootstrap)
             show_help_bootstrap
             ;;
+        cheatsheet)
+            show_help_cheatsheet
+            ;;
         *)
             echo "❌ Unknown help topic: $topic"
             echo ""
             echo "Available topics:"
             echo "  discover, develop, deploy, verify, done"
             echo "  vars, services, trouble, example, gates"
-            echo "  extend, bootstrap"
+            echo "  extend, bootstrap, cheatsheet"
             return 1
             ;;
     esac
@@ -833,6 +836,94 @@ psql "$db_connectionString" -c "SELECT 1"
 # Zerops injects db_hostname, db_password, etc. into container env
 # Just run: ssh appdev './app'
 # Don't pass DB vars manually - they're already there!
+EOF
+}
+
+show_help_cheatsheet() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 CHEATSHEET — Quick Reference
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WORKFLOW COMMANDS
+─────────────────────────────────────────────────────────────────
+.zcp/workflow.sh init              # Start full workflow
+.zcp/workflow.sh init --dev-only   # Dev only (no deploy)
+.zcp/workflow.sh init --hotfix     # Skip dev verification
+.zcp/workflow.sh --quick           # Quick mode (no gates)
+.zcp/workflow.sh show              # Current status
+.zcp/workflow.sh show --guidance   # Status + phase guidance
+.zcp/workflow.sh recover           # Full context recovery
+.zcp/workflow.sh state             # One-line state
+.zcp/workflow.sh transition_to {PHASE}
+.zcp/workflow.sh complete          # Finish workflow
+
+ZCLI LOGIN
+─────────────────────────────────────────────────────────────────
+zcli login --region=gomibako \
+    --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
+    "$ZEROPS_ZAGENT_API_KEY"
+
+zcli service list -P $projectId    # List services (need -P!)
+
+TRIPLE-KILL PATTERN
+─────────────────────────────────────────────────────────────────
+ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'
+
+BUILD & RUN
+─────────────────────────────────────────────────────────────────
+ssh {dev} "{build_command}"
+ssh {dev} './{binary} >> /tmp/app.log 2>&1'
+# ↑ Set run_in_background=true in Bash tool!
+
+DEPLOY
+─────────────────────────────────────────────────────────────────
+# From dev container, NOT ZCP!
+ssh {dev} "zcli login ... && zcli push {stage_id} --setup={setup}"
+
+# Wait for completion
+.zcp/status.sh --wait {stage}
+
+VERIFY
+─────────────────────────────────────────────────────────────────
+.zcp/verify.sh {service} {port} / /status /api/...
+
+BROWSER TESTING
+─────────────────────────────────────────────────────────────────
+URL=$(ssh {dev} "echo \$zeropsSubdomain")   # Don't prepend https://!
+agent-browser open "$URL"
+agent-browser errors                         # Must be empty
+agent-browser console
+agent-browser screenshot
+
+DATABASE ACCESS (from ZCP)
+─────────────────────────────────────────────────────────────────
+psql "$db_connectionString"                  # PostgreSQL
+redis-cli -u "$cache_connectionString"       # Valkey/Redis
+
+VARIABLES
+─────────────────────────────────────────────────────────────────
+$projectId                      # On ZCP
+${hostname}_VAR                 # ZCP → service var
+ssh svc 'echo $VAR'             # Inside service
+
+CRITICAL RULES
+─────────────────────────────────────────────────────────────────
+• HTTP 200 ≠ working — check content, logs, console
+• Deploy from dev container, NOT ZCP
+• deployFiles must include ALL artifacts
+• zeropsSubdomain is full URL — don't prepend https://
+• Long commands: run_in_background=true
+• Managed services (db, cache): NO SSH, use client tools
+
+EVIDENCE FILES
+─────────────────────────────────────────────────────────────────
+/tmp/claude_session             # Session ID
+/tmp/claude_phase               # Current phase
+/tmp/discovery.json             # Service mapping
+/tmp/dev_verify.json            # Dev results
+/tmp/stage_verify.json          # Stage results
+/tmp/deploy_evidence.json       # Deploy proof
 EOF
 }
 

@@ -32,6 +32,14 @@ cmd_transition_to() {
     current_phase=$(get_phase)
     mode=$(get_mode)
 
+    # Check if already in target phase (show guidance anyway)
+    if [ "$current_phase" = "$target_phase" ] && [ "$back_flag" != "--back" ]; then
+        echo "⚠️  Already in $target_phase phase. Showing guidance:"
+        echo ""
+        output_phase_guidance "$target_phase"
+        return 0
+    fi
+
     # In quick mode, allow any transition
     if [ "$mode" = "quick" ]; then
         set_phase "$target_phase"

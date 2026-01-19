@@ -57,7 +57,13 @@ main() {
             cmd_create_discovery "$@"
             ;;
         show)
-            cmd_show
+            cmd_show "$@"
+            ;;
+        recover)
+            cmd_recover
+            ;;
+        state)
+            cmd_state
             ;;
         complete)
             cmd_complete
@@ -121,7 +127,9 @@ EOF
             echo "  --help [topic]              Show help"
             echo "  transition_to [--back] {phase}  Move to phase"
             echo "  create_discovery [--single] ...  Record services"
-            echo "  show                        Current status"
+            echo "  show [--guidance]           Current status (--guidance adds phase details)"
+            echo "  recover                     Full context recovery"
+            echo "  state                       One-line state summary"
             echo "  complete                    Verify and finish"
             echo "  reset [--keep-discovery]    Clear state"
             echo "  extend {file.yml}           Add services"
