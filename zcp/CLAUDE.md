@@ -6,10 +6,10 @@
 
 | Answer | Command | Use for |
 |--------|---------|---------|
-| **Deploying?** | `workflow.sh init` | Features, fixes, config changes |
-| **Exploring?** | `workflow.sh --quick` | Investigating, reading, dev-only work |
-| **Prototyping?** | `workflow.sh init --dev-only` | Dev iteration without deployment |
-| **Hotfix?** | `workflow.sh init --hotfix` | Urgent fix (skips dev verification) |
+| **Deploying?** | `.zcp/workflow.sh init` | Features, fixes, config changes |
+| **Exploring?** | `.zcp/workflow.sh --quick` | Investigating, reading, dev-only work |
+| **Prototyping?** | `.zcp/workflow.sh init --dev-only` | Dev iteration without deployment |
+| **Hotfix?** | `.zcp/workflow.sh init --hotfix` | Urgent fix (skips dev verification) |
 
 Run one of the above BEFORE doing anything else.
 
@@ -59,38 +59,40 @@ zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/ap
 
 ### Tools
 
+Located in `.zcp/` directory:
+
 ```bash
 # Core workflow
-workflow.sh                              # Decision guidance (run first if unsure)
-workflow.sh init                         # Enforced workflow (has gates)
-workflow.sh init --dev-only              # Dev mode (no deployment)
-workflow.sh init --hotfix                # Hotfix mode (skip dev verification)
-workflow.sh --quick                      # Quick mode (no gates)
-workflow.sh --help                       # Full platform reference
-workflow.sh --help {topic}               # Topic help: extend, bootstrap, gates...
+.zcp/workflow.sh                              # Decision guidance (run first if unsure)
+.zcp/workflow.sh init                         # Enforced workflow (has gates)
+.zcp/workflow.sh init --dev-only              # Dev mode (no deployment)
+.zcp/workflow.sh init --hotfix                # Hotfix mode (skip dev verification)
+.zcp/workflow.sh --quick                      # Quick mode (no gates)
+.zcp/workflow.sh --help                       # Full platform reference
+.zcp/workflow.sh --help {topic}               # Topic help: extend, bootstrap, gates...
 
 # Workflow control
-workflow.sh transition_to {phase}        # Advance phase
-workflow.sh transition_to --back {phase} # Go backward (invalidates evidence)
-workflow.sh show                         # Current status
-workflow.sh complete                     # Verify evidence for completion
-workflow.sh reset                        # Clear all state
-workflow.sh reset --keep-discovery       # Clear state, preserve discovery
+.zcp/workflow.sh transition_to {phase}        # Advance phase
+.zcp/workflow.sh transition_to --back {phase} # Go backward (invalidates evidence)
+.zcp/workflow.sh show                         # Current status
+.zcp/workflow.sh complete                     # Verify evidence for completion
+.zcp/workflow.sh reset                        # Clear all state
+.zcp/workflow.sh reset --keep-discovery       # Clear state, preserve discovery
 
 # Discovery
-workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
-workflow.sh create_discovery --single {id} {name}  # Single-service mode
-workflow.sh refresh_discovery            # Validate current discovery
+.zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+.zcp/workflow.sh create_discovery --single {id} {name}  # Single-service mode
+.zcp/workflow.sh refresh_discovery            # Validate current discovery
 
 # Project management
-workflow.sh extend {import.yml}          # Add services to project
-workflow.sh upgrade-to-full              # Upgrade dev-only to full deployment
-workflow.sh record_deployment {stage}    # Manual deployment evidence
+.zcp/workflow.sh extend {import.yml}          # Add services to project
+.zcp/workflow.sh upgrade-to-full              # Upgrade dev-only to full deployment
+.zcp/workflow.sh record_deployment {stage}    # Manual deployment evidence
 
 # Status and verification
-status.sh                                # Deployment status
-status.sh --wait {service}               # Wait for deployment (records evidence)
-verify.sh {service} {port} / /api/...    # Endpoint testing
+.zcp/status.sh                                # Deployment status
+.zcp/status.sh --wait {service}               # Wait for deployment (records evidence)
+.zcp/verify.sh {service} {port} / /api/...    # Endpoint testing
 ```
 
 ### Workflow Modes
@@ -108,22 +110,22 @@ verify.sh {service} {port} / /api/...    # Endpoint testing
 |------------|-------------|
 | DISCOVER → DEVELOP | `discovery.json` exists with current session |
 | DEVELOP → DEPLOY | `dev_verify.json` with 0 failures |
-| DEPLOY → VERIFY | `deploy_evidence.json` (from `status.sh --wait`) |
+| DEPLOY → VERIFY | `deploy_evidence.json` (from `.zcp/status.sh --wait`) |
 | VERIFY → DONE | `stage_verify.json` with 0 failures |
 
 ### Backward Transitions
 
 Use `--back` flag when you need to go backward:
 ```bash
-workflow.sh transition_to --back DEVELOP  # From VERIFY or DEPLOY
-workflow.sh transition_to --back VERIFY   # From DONE
+.zcp/workflow.sh transition_to --back DEVELOP  # From VERIFY or DEPLOY
+.zcp/workflow.sh transition_to --back VERIFY   # From DONE
 ```
 
 This invalidates stage evidence (you'll need to re-verify after redeploying).
 
 ### Adding Services
 
-See `workflow.sh --help extend` for complete guide. Quick version:
+See `.zcp/workflow.sh --help extend` for complete guide. Quick version:
 ```bash
 cat > add-db.yml <<'YAML'
 services:
@@ -131,7 +133,7 @@ services:
     type: postgresql@16
     mode: NON_HA
 YAML
-workflow.sh extend add-db.yml
+.zcp/workflow.sh extend add-db.yml
 ```
 
 New service vars require ZCP restart or SSH read: `ssh db 'echo $password'`

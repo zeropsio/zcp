@@ -185,23 +185,23 @@ Network: Services connect via hostname = service name
 📋 WORKFLOW COMMANDS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-workflow.sh init                         # Start enforced workflow
-workflow.sh init --dev-only              # Dev mode (no deployment)
-workflow.sh init --hotfix                # Hotfix mode (skip dev verification)
-workflow.sh --quick                      # Quick mode (no gates)
-workflow.sh --help                       # This reference
-workflow.sh --help {topic}               # Topic-specific help
-workflow.sh transition_to {phase}        # Advance phase
-workflow.sh transition_to --back {phase} # Go backward (invalidates evidence)
-workflow.sh create_discovery ...         # Record service discovery
-workflow.sh create_discovery --single {id} {name}  # Single-service mode
-workflow.sh show                         # Current status
-workflow.sh complete                     # Verify evidence
-workflow.sh reset                        # Clear all state
-workflow.sh reset --keep-discovery       # Clear state but preserve discovery
-workflow.sh extend {import.yml}          # Add services to project
-workflow.sh refresh_discovery            # Validate current discovery
-workflow.sh upgrade-to-full              # Upgrade dev-only to full deployment
+.zcp/workflow.sh init                         # Start enforced workflow
+.zcp/workflow.sh init --dev-only              # Dev mode (no deployment)
+.zcp/workflow.sh init --hotfix                # Hotfix mode (skip dev verification)
+.zcp/workflow.sh --quick                      # Quick mode (no gates)
+.zcp/workflow.sh --help                       # This reference
+.zcp/workflow.sh --help {topic}               # Topic-specific help
+.zcp/workflow.sh transition_to {phase}        # Advance phase
+.zcp/workflow.sh transition_to --back {phase} # Go backward (invalidates evidence)
+.zcp/workflow.sh create_discovery ...         # Record service discovery
+.zcp/workflow.sh create_discovery --single {id} {name}  # Single-service mode
+.zcp/workflow.sh show                         # Current status
+.zcp/workflow.sh complete                     # Verify evidence
+.zcp/workflow.sh reset                        # Clear all state
+.zcp/workflow.sh reset --keep-discovery       # Clear state but preserve discovery
+.zcp/workflow.sh extend {import.yml}          # Add services to project
+.zcp/workflow.sh refresh_discovery            # Validate current discovery
+.zcp/workflow.sh upgrade-to-full              # Upgrade dev-only to full deployment
 
 Topics: discover, develop, deploy, verify, done, vars, services,
         trouble, example, gates, extend, bootstrap
@@ -219,7 +219,7 @@ Authenticate and discover services:
   zcli service list -P $projectId
 
 Record discovery:
-  workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+  .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
 
 ⚠️  Never use 'zcli scope' - it's buggy
 ⚠️  Use service IDs (from list), not hostnames
@@ -238,7 +238,7 @@ Build & run:
   ↑ Set run_in_background=true in Bash tool parameters
 
 Test endpoints:
-  verify.sh {dev} {port} / /status /api/...
+  .zcp/verify.sh {dev} {port} / /status /api/...
 
 Check logs:
   ssh {dev} "tail -f /tmp/app.log"
@@ -294,13 +294,13 @@ Deploy to stage:
   ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
 
 Wait for completion:
-  status.sh --wait {stage}
+  .zcp/status.sh --wait {stage}
 
 Redeploy/Retry (if needed):
   1. Check: zcli project notifications -P $projectId
   2. Fix the issue
   3. Re-run: ssh {dev} "zcli push {stage_id} --setup={setup}"
-  4. Wait: status.sh --wait {stage}
+  4. Wait: .zcp/status.sh --wait {stage}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ✅ PHASE: VERIFY
@@ -310,7 +310,7 @@ Check deployed artifacts:
   ssh {stage} "ls -la /var/www/"
 
 Verify endpoints:
-  verify.sh {stage} {port} / /status /api/...
+  .zcp/verify.sh {stage} {port} / /status /api/...
 
 Service logs:
   zcli service log -S {stage_service_id} -P $projectId --follow
@@ -380,12 +380,12 @@ SSH hangs                    │ Foreground proc    │ run_in_background
 Requires DISCOVER            │ Skipped phase      │ Run phases in
                              │                    │ order
 ─────────────────────────────┼────────────────────┼─────────────────
-Session mismatch             │ Stale evidence     │ workflow.sh reset
+Session mismatch             │ Stale evidence     │ .zcp/workflow.sh reset
                              │                    │ && init
 ─────────────────────────────┼────────────────────┼─────────────────
-verify.sh silent             │ Script error       │ Use --debug flag
+.zcp/verify.sh silent        │ Script error       │ Use --debug flag
 ─────────────────────────────┼────────────────────┼─────────────────
-Files missing post-deploy    │ Checked too early  │ status.sh --wait
+Files missing post-deploy    │ Checked too early  │ .zcp/status.sh --wait
 ─────────────────────────────┼────────────────────┼─────────────────
 Files missing post-deploy    │ Not in deployFiles │ Update zerops.yaml
                              │                    │ redeploy
@@ -415,24 +415,24 @@ Deploy to wrong target       │ Using dev as       │ Always deploy to
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 # 1. INIT
-/var/www/.claude/workflow.sh init
+.zcp/workflow.sh init
 
 # 2. DISCOVER
 zcli login --region=gomibako \
     --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
     "$ZAGENTS_API_KEY"
 zcli service list -P $projectId
-/var/www/.claude/workflow.sh create_discovery "svc123" "appdev" "svc456" "appstage"
-/var/www/.claude/workflow.sh transition_to DISCOVER
+.zcp/workflow.sh create_discovery "svc123" "appdev" "svc456" "appstage"
+.zcp/workflow.sh transition_to DISCOVER
 
 # 3. DEVELOP
-/var/www/.claude/workflow.sh transition_to DEVELOP
+.zcp/workflow.sh transition_to DEVELOP
 ssh appdev "go build -o app main.go"
 ssh appdev './app >> /tmp/app.log 2>&1'  # run_in_background=true
-/var/www/.claude/verify.sh appdev 8080 / /status /api/items
+.zcp/verify.sh appdev 8080 / /status /api/items
 
 # 4. DEPLOY
-/var/www/.claude/workflow.sh transition_to DEPLOY
+.zcp/workflow.sh transition_to DEPLOY
 cat /var/www/appdev/zerops.yaml | grep -A10 deployFiles
 ls -la /var/www/appdev/app /var/www/appdev/templates/
 ssh appdev 'pkill -9 app; fuser -k 8080/tcp 2>/dev/null; true'
@@ -440,12 +440,12 @@ ssh appdev "zcli login --region=gomibako \
     --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
     \"\$ZAGENTS_API_KEY\""
 ssh appdev "zcli push svc456 --setup=api --versionName=v1.0.0"
-/var/www/.claude/status.sh --wait appstage
+.zcp/status.sh --wait appstage
 
 # 5. VERIFY
-/var/www/.claude/workflow.sh transition_to VERIFY
+.zcp/workflow.sh transition_to VERIFY
 ssh appstage "ls -la /var/www/"
-/var/www/.claude/verify.sh appstage 8080 / /status /api/items
+.zcp/verify.sh appstage 8080 / /status /api/items
 # If frontend:
 URL=$(ssh appstage "echo \$zeropsSubdomain")
 agent-browser open "$URL"
@@ -453,8 +453,8 @@ agent-browser errors
 agent-browser screenshot
 
 # 6. DONE
-/var/www/.claude/workflow.sh transition_to DONE
-/var/www/.claude/workflow.sh complete
+.zcp/workflow.sh transition_to DONE
+.zcp/workflow.sh complete
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚪 GATES
@@ -504,15 +504,15 @@ Commands:
   zcli service list -P $projectId
 
 Record discovery:
-  workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+  .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
 
   Example:
-    workflow.sh create_discovery \
+    .zcp/workflow.sh create_discovery \
         "abc123def456" "appdev" \
         "ghi789jkl012" "appstage"
 
 Transition:
-  workflow.sh transition_to DISCOVER
+  .zcp/workflow.sh transition_to DISCOVER
 
 ⚠️  Critical:
   • Never use 'zcli scope' - it's buggy
@@ -705,17 +705,17 @@ Deployment steps:
    • --versionName optional but recommended
 
 4. Wait for completion:
-   status.sh --wait {stage}
+   .zcp/status.sh --wait {stage}
 
 Redeploy/Retry procedure:
   If deployment fails or needs retry:
   1. zcli project notifications -P $projectId    # Check error
   2. Fix the issue (usually deployFiles or code)
   3. ssh {dev} "zcli push {stage_id} --setup={setup}"
-  4. status.sh --wait {stage}
+  4. .zcp/status.sh --wait {stage}
 
 Gate requirement:
-  • status.sh shows SUCCESS notification
+  • .zcp/status.sh shows SUCCESS notification
   • Deployment fully complete before verification
 EOF
             ;;
@@ -733,7 +733,7 @@ Basic verification:
    ssh {stage} "ls -la /var/www/"
 
 2. Verify endpoints:
-   verify.sh {stage} {port} / /status /api/...
+   .zcp/verify.sh {stage} {port} / /status /api/...
 
 3. Check service logs:
    zcli service log -S {stage_service_id} -P $projectId
@@ -794,7 +794,7 @@ EOF
 Final step: Verify all evidence and output completion promise
 
 Command:
-  workflow.sh complete
+  .zcp/workflow.sh complete
 
 What it checks:
   • All evidence files exist
@@ -813,8 +813,8 @@ Success output:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 Next task? Run workflow.sh again to decide:
-   workflow.sh init    → deploying
-   workflow.sh --quick → exploring
+   .zcp/workflow.sh init    → deploying
+   .zcp/workflow.sh --quick → exploring
 
 Failure output:
   ❌ Evidence validation failed:
@@ -966,7 +966,7 @@ ZCP → Database   │ ${dbname}_*          │ ${postgres_password}
 Service → Own    │ $VAR via SSH         │ ssh myapp "echo \$hostname"
 Service → Service│ http://hostname:port │ http://postgres:5432
 
-See also: workflow.sh --help services (for service naming details)
+See also: .zcp/workflow.sh --help services (for service naming details)
 EOF
             ;;
         services)
@@ -1070,14 +1070,14 @@ Then use DISCOVERED hostnames:
 
 You cannot proceed without knowing actual service hostnames!
 
-workflow.sh create_discovery uses DISCOVERED names:
-  workflow.sh create_discovery \
+.zcp/workflow.sh create_discovery uses DISCOVERED names:
+  .zcp/workflow.sh create_discovery \
     "abc123" "myapp" \      ← Actual hostname from zcli service list
     "def456" "backend-api"  ← NOT type name, actual hostname
 
 This ensures all subsequent operations use correct names.
 
-See also: workflow.sh --help vars (for variable access patterns)
+See also: .zcp/workflow.sh --help vars (for variable access patterns)
 EOF
             ;;
         trouble)
@@ -1318,11 +1318,11 @@ echo "Services ready!"
 
 Now services exist. Run normal workflow:
 
-  workflow.sh init
+  .zcp/workflow.sh init
   zcli service list -P $projectId
-  workflow.sh create_discovery {dev_id} appdev {stage_id} appstage
-  workflow.sh transition_to DISCOVER
-  workflow.sh transition_to DEVELOP
+  .zcp/workflow.sh create_discovery {dev_id} appdev {stage_id} appstage
+  .zcp/workflow.sh transition_to DISCOVER
+  .zcp/workflow.sh transition_to DEVELOP
 
 Create your application code at /var/www/appdev/
 
@@ -1352,11 +1352,11 @@ while zcli service list -P $projectId | grep -qE "PENDING|BUILDING"; do
 done
 
 # 4. Start workflow
-workflow.sh init
+.zcp/workflow.sh init
 zcli service list -P $projectId  # Get IDs
-workflow.sh create_discovery "abc123" "appdev" "def456" "appstage"
-workflow.sh transition_to DISCOVER
-workflow.sh transition_to DEVELOP
+.zcp/workflow.sh create_discovery "abc123" "appdev" "def456" "appstage"
+.zcp/workflow.sh transition_to DISCOVER
+.zcp/workflow.sh transition_to DEVELOP
 
 # 5. Create hello world
 cat > /var/www/appdev/main.go <<'GO'
@@ -1398,7 +1398,7 @@ YAML
 # 7. Build, run, verify
 ssh appdev "cd /var/www && go build -o app main.go"
 ssh appdev "/var/www/app >> /tmp/app.log 2>&1"  # run_in_background=true
-verify.sh appdev 8080 / /status
+.zcp/verify.sh appdev 8080 / /status
 
 # Continue with normal DEPLOY → VERIFY → DONE flow
 EOF
@@ -1453,7 +1453,7 @@ cmd_init() {
    - Testing before committing to deploy
 
 ⚠️  To upgrade to full deployment later:
-   workflow.sh upgrade-to-full
+   .zcp/workflow.sh upgrade-to-full
 EOF
         return 0
     fi
@@ -1518,7 +1518,7 @@ EOF
 
         echo "❌ Cannot use hotfix mode"
         echo "   No recent discovery (< ${HOTFIX_MAX_AGE_HOURS:-24}h) found"
-        echo "   Run: workflow.sh init (normal mode)"
+        echo "   Run: .zcp/workflow.sh init (normal mode)"
         return 1
     fi
 
@@ -1550,8 +1550,8 @@ EOF
             echo "   Stage: $(jq -r '.stage.name' "$DISCOVERY_FILE")"
             echo ""
             echo "💡 NEXT: Skip DISCOVER, go directly to DEVELOP"
-            echo "   workflow.sh transition_to DISCOVER"
-            echo "   workflow.sh transition_to DEVELOP"
+            echo "   .zcp/workflow.sh transition_to DISCOVER"
+            echo "   .zcp/workflow.sh transition_to DEVELOP"
             return 0
         fi
     fi
@@ -1565,12 +1565,12 @@ EOF
 💡 NEXT: DISCOVER phase
    1. zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZAGENTS_API_KEY"
    2. zcli service list -P \$projectId
-   3. workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
-   4. workflow.sh transition_to DISCOVER
+   3. .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+   4. .zcp/workflow.sh transition_to DISCOVER
 
 ⚠️  Cannot skip DISCOVER - creates required evidence
 
-📖 Full reference: workflow.sh --help
+📖 Full reference: .zcp/workflow.sh --help
 EOF
 }
 
@@ -1586,9 +1586,9 @@ cmd_quick() {
 
 💡 Available tools:
    status.sh                    # Check deployment state
-   status.sh --wait {svc}       # Wait for deploy
-   verify.sh {svc} {port} /...  # Test endpoints
-   workflow.sh --help           # Full reference
+   .zcp/status.sh --wait {svc}       # Wait for deploy
+   .zcp/verify.sh {svc} {port} /...  # Test endpoints
+   .zcp/workflow.sh --help           # Full reference
 
 ⚠️  Remember:
    Files: /var/www/{service}/   (SSHFS direct edit)
@@ -1608,7 +1608,7 @@ cmd_transition_to() {
     fi
 
     if [ -z "$target_phase" ]; then
-        echo "❌ Usage: workflow.sh transition_to [--back] {phase}"
+        echo "❌ Usage: .zcp/workflow.sh transition_to [--back] {phase}"
         echo "Phases: DISCOVER, DEVELOP, DEPLOY, VERIFY, DONE"
         echo ""
         echo "Options:"
@@ -1647,7 +1647,7 @@ cmd_transition_to() {
                     echo "✅ Dev-only workflow complete"
                     echo ""
                     echo "💡 To deploy this work later:"
-                    echo "   workflow.sh upgrade-to-full"
+                    echo "   .zcp/workflow.sh upgrade-to-full"
                     set_phase "$target_phase"
                     return 0
                 fi
@@ -1656,7 +1656,7 @@ cmd_transition_to() {
                 echo "❌ DEPLOY/VERIFY not available in dev-only mode"
                 echo ""
                 echo "💡 To enable deployment:"
-                echo "   workflow.sh upgrade-to-full"
+                echo "   .zcp/workflow.sh upgrade-to-full"
                 return 1
                 ;;
         esac
@@ -1713,7 +1713,7 @@ cmd_transition_to() {
         DISCOVER)
             if [ "$current_phase" != "INIT" ]; then
                 echo "❌ Cannot transition to DISCOVER from $current_phase"
-                echo "📋 Run: workflow.sh init"
+                echo "📋 Run: .zcp/workflow.sh init"
                 return 2
             fi
             ;;
@@ -1779,14 +1779,14 @@ output_phase_guidance() {
    zcli service list -P $projectId
 
 📋 Then record discovery:
-   workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+   .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
 
 ⚠️  Never use 'zcli scope' - it's buggy
 ⚠️  Use service IDs (from list), not hostnames
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 Gate: /tmp/discovery.json must exist
-📋 Next: workflow.sh transition_to DEVELOP
+📋 Next: .zcp/workflow.sh transition_to DEVELOP
 EOF
             ;;
         DEVELOP)
@@ -1869,8 +1869,8 @@ Database verification (if applicable):
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 When ready (feature works, no errors):
-   verify.sh {dev} {port} / /status /api/...
-   workflow.sh transition_to DEPLOY
+   .zcp/verify.sh {dev} {port} / /status /api/...
+   .zcp/workflow.sh transition_to DEPLOY
 EOF
             ;;
         DEPLOY)
@@ -1921,11 +1921,11 @@ zerops:
       start: ./app
 
 Wait for completion:
-  status.sh --wait {stage}
+  .zcp/status.sh --wait {stage}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 Gate: status.sh shows SUCCESS notification
-📋 Next: workflow.sh transition_to VERIFY
+📋 Gate: .zcp/status.sh shows SUCCESS notification
+📋 Next: .zcp/workflow.sh transition_to VERIFY
 EOF
             ;;
         VERIFY)
@@ -1936,7 +1936,7 @@ Check deployed artifacts:
   ssh {stage} "ls -la /var/www/"
 
 Verify endpoints:
-  verify.sh {stage} {port} / /status /api/...
+  .zcp/verify.sh {stage} {port} / /status /api/...
 
 Service logs:
   zcli service log -S {stage_service_id} -P $projectId --follow
@@ -1961,7 +1961,7 @@ Service logs:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 Gate: verify.sh must pass (creates /tmp/stage_verify.json)
-📋 Next: workflow.sh transition_to DONE
+📋 Next: .zcp/workflow.sh transition_to DONE
 EOF
             ;;
         DONE)
@@ -1969,7 +1969,7 @@ EOF
 ✅ Phase: DONE
 
 Run completion check:
-  workflow.sh complete
+  .zcp/workflow.sh complete
 
 This will verify all evidence and output the completion promise.
 EOF
@@ -1993,7 +1993,7 @@ cmd_create_discovery() {
         stage_name="$3"
 
         if [ -z "$dev_id" ] || [ -z "$dev_name" ]; then
-            echo "❌ Usage: workflow.sh create_discovery --single {service_id} {service_name}"
+            echo "❌ Usage: .zcp/workflow.sh create_discovery --single {service_id} {service_name}"
             return 1
         fi
 
@@ -2016,13 +2016,13 @@ cmd_create_discovery() {
     fi
 
     if [ -z "$dev_id" ] || [ -z "$dev_name" ] || [ -z "$stage_id" ] || [ -z "$stage_name" ]; then
-        echo "❌ Usage: workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}"
+        echo "❌ Usage: .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}"
         echo ""
         echo "Example:"
-        echo "  workflow.sh create_discovery 'abc123' 'appdev' 'def456' 'appstage'"
+        echo "  .zcp/workflow.sh create_discovery 'abc123' 'appdev' 'def456' 'appstage'"
         echo ""
         echo "Or for single-service mode:"
-        echo "  workflow.sh create_discovery --single 'abc123' 'myservice'"
+        echo "  .zcp/workflow.sh create_discovery --single 'abc123' 'myservice'"
         return 1
     fi
 
@@ -2034,7 +2034,7 @@ cmd_create_discovery() {
     local session_id
     session_id=$(get_session)
     if [ -z "$session_id" ]; then
-        echo "❌ No active session. Run: workflow.sh init"
+        echo "❌ No active session. Run: .zcp/workflow.sh init"
         return 1
     fi
 
@@ -2071,7 +2071,7 @@ cmd_create_discovery() {
         echo "Mode:  SINGLE-SERVICE (dev = stage)"
     fi
     echo ""
-    echo "📋 Next: workflow.sh transition_to DISCOVER"
+    echo "📋 Next: .zcp/workflow.sh transition_to DISCOVER"
 }
 
 cmd_show() {
@@ -2143,19 +2143,19 @@ EOF
 
     case "$phase" in
         INIT|DISCOVER)
-            echo "Next: workflow.sh transition_to DISCOVER"
+            echo "Next: .zcp/workflow.sh transition_to DISCOVER"
             ;;
         DEVELOP)
-            echo "Next: workflow.sh transition_to DEPLOY"
+            echo "Next: .zcp/workflow.sh transition_to DEPLOY"
             ;;
         DEPLOY)
-            echo "Next: workflow.sh transition_to VERIFY"
+            echo "Next: .zcp/workflow.sh transition_to VERIFY"
             ;;
         VERIFY)
-            echo "Next: workflow.sh transition_to DONE"
+            echo "Next: .zcp/workflow.sh transition_to DONE"
             ;;
         DONE)
-            echo "Next: workflow.sh complete"
+            echo "Next: .zcp/workflow.sh complete"
             ;;
     esac
 }
@@ -2217,8 +2217,8 @@ cmd_complete() {
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "📋 Next task? Run workflow.sh again to decide:"
-        echo "   workflow.sh init    → deploying"
-        echo "   workflow.sh --quick → exploring"
+        echo "   .zcp/workflow.sh init    → deploying"
+        echo "   .zcp/workflow.sh --quick → exploring"
         return 0
     else
         echo "❌ Evidence validation failed:"
@@ -2226,7 +2226,7 @@ cmd_complete() {
         echo "   • Session: $session_id"
         printf '%s\n' "${messages[@]}"
         echo ""
-        echo "💡 Fix the issues above and run: workflow.sh complete"
+        echo "💡 Fix the issues above and run: .zcp/workflow.sh complete"
         return 3
     fi
 }
@@ -2247,19 +2247,19 @@ cmd_reset() {
             echo "  Dev:   $(jq -r '.dev.name' "$DISCOVERY_FILE")"
             echo "  Stage: $(jq -r '.stage.name' "$DISCOVERY_FILE")"
             echo ""
-            echo "💡 Next: workflow.sh init"
+            echo "💡 Next: .zcp/workflow.sh init"
             echo "   Discovery will be reused with new session"
         else
             echo "⚠️  No discovery to preserve"
             rm -f "$DISCOVERY_FILE"
             echo ""
-            echo "💡 Start fresh: workflow.sh init"
+            echo "💡 Start fresh: .zcp/workflow.sh init"
         fi
     else
         rm -f "$DISCOVERY_FILE"
         echo "✅ All workflow state cleared"
         echo ""
-        echo "💡 Start fresh: workflow.sh init"
+        echo "💡 Start fresh: .zcp/workflow.sh init"
     fi
 }
 
@@ -2327,7 +2327,7 @@ cmd_extend() {
     echo "   Option A: Restart ZCP (reconnect your IDE)"
     echo "   Option B: ssh {service} 'echo \$password'"
     echo ""
-    echo "💡 See: workflow.sh --help extend"
+    echo "💡 See: .zcp/workflow.sh --help extend"
 }
 
 cmd_upgrade_to_full() {
@@ -2359,11 +2359,11 @@ cmd_upgrade_to_full() {
         # Revert to DEVELOP so they can go through full flow
         echo "DEVELOP" > "$PHASE_FILE"
         echo "💡 Reset to DEVELOP phase. Now:"
-        echo "   1. verify.sh {dev} {port} / /status /api/..."
-        echo "   2. workflow.sh transition_to DEPLOY"
+        echo "   1. .zcp/verify.sh {dev} {port} / /status /api/..."
+        echo "   2. .zcp/workflow.sh transition_to DEPLOY"
     else
         echo "💡 Continue from current phase: $phase"
-        echo "   Next: workflow.sh transition_to DEPLOY"
+        echo "   Next: .zcp/workflow.sh transition_to DEPLOY"
     fi
 }
 
@@ -2424,14 +2424,14 @@ cmd_record_deployment() {
     local service="$1"
 
     if [ -z "$service" ]; then
-        echo "❌ Usage: workflow.sh record_deployment {service_name}"
+        echo "❌ Usage: .zcp/workflow.sh record_deployment {service_name}"
         return 1
     fi
 
     local session_id
     session_id=$(get_session)
     if [ -z "$session_id" ]; then
-        echo "❌ No active session. Run: workflow.sh init"
+        echo "❌ No active session. Run: .zcp/workflow.sh init"
         return 1
     fi
 
@@ -2448,7 +2448,7 @@ cmd_record_deployment() {
 
     echo "✅ Deployment evidence recorded for $service"
     echo ""
-    echo "💡 Next: workflow.sh transition_to VERIFY"
+    echo "💡 Next: .zcp/workflow.sh transition_to VERIFY"
 }
 
 # ============================================================================
@@ -2470,7 +2470,7 @@ check_gate_discover_to_develop() {
         ((checks_passed++))
     else
         echo "  ✗ discovery.json missing"
-        echo "    → Run: workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}"
+        echo "    → Run: .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}"
         all_passed=false
     fi
 
@@ -2485,7 +2485,7 @@ check_gate_discover_to_develop() {
         echo "  ✗ session_id mismatch"
         echo "    → Current session: $current_session"
         echo "    → Discovery session: $disco_session"
-        echo "    → Run create_discovery again or workflow.sh reset"
+        echo "    → Run create_discovery again or .zcp/workflow.sh reset"
         all_passed=false
     fi
 
@@ -2544,7 +2544,7 @@ check_gate_develop_to_deploy() {
         ((checks_passed++))
     else
         echo "  ✗ dev_verify.json missing"
-        echo "    → Run: verify.sh {dev} {port} / /status /api/..."
+        echo "    → Run: .zcp/verify.sh {dev} {port} / /status /api/..."
         all_passed=false
     fi
 
@@ -2610,8 +2610,8 @@ check_gate_deploy_to_verify() {
         ((checks_passed++))
     else
         echo "  ✗ deploy_evidence.json missing"
-        echo "    → Run: status.sh --wait {stage}"
-        echo "    → Or:  workflow.sh record_deployment {stage}"
+        echo "    → Run: .zcp/status.sh --wait {stage}"
+        echo "    → Or:  .zcp/workflow.sh record_deployment {stage}"
         all_passed=false
     fi
 
@@ -2623,7 +2623,7 @@ check_gate_deploy_to_verify() {
     else
         echo "  ✗ session_id mismatch"
         echo "    → Deployment evidence is from a different session"
-        echo "    → Re-deploy and wait: status.sh --wait {stage}"
+        echo "    → Re-deploy and wait: .zcp/status.sh --wait {stage}"
         all_passed=false
     fi
 
@@ -2655,7 +2655,7 @@ check_gate_verify_to_done() {
         ((checks_passed++))
     else
         echo "  ✗ stage_verify.json missing"
-        echo "    → Run: verify.sh {stage} {port} / /status /api/..."
+        echo "    → Run: .zcp/verify.sh {stage} {port} / /status /api/..."
         all_passed=false
     fi
 
@@ -2688,7 +2688,7 @@ check_gate_verify_to_done() {
         else
             echo "  ✗ verification has $failures failure(s)"
             echo "    → Fix failing endpoints"
-            echo "    → Use: workflow.sh transition_to --back DEVELOP"
+            echo "    → Use: .zcp/workflow.sh transition_to --back DEVELOP"
             all_passed=false
         fi
     fi
@@ -2764,34 +2764,34 @@ main() {
 Will this work be deployed (now or later)?
 
 ┌─────────────────────────────────────────────────────────────────┐
-│  YES  →  workflow.sh init                                       │
+│  YES  →  .zcp/workflow.sh init                                       │
 │          Features, bug fixes to ship, config changes,           │
 │          schema changes, new files/directories                  │
 │                                                                 │
 │          Enforced phases with gates that catch mistakes         │
 │          You can stop at any phase and resume later             │
 ├─────────────────────────────────────────────────────────────────┤
-│  NO   →  workflow.sh --quick                                    │
+│  NO   →  .zcp/workflow.sh --quick                                    │
 │          Investigating, exploring code, reading logs,           │
 │          database queries, dev-only testing                     │
 │                                                                 │
 │          Full access, no enforcement, all tools available       │
 ├─────────────────────────────────────────────────────────────────┤
-│  UNCERTAIN?  →  workflow.sh init                                │
+│  UNCERTAIN?  →  .zcp/workflow.sh init                                │
 │          Default to safety. You can always reset if overkill.   │
 └─────────────────────────────────────────────────────────────────┘
 
 Commands:
-  workflow.sh init          Start enforced workflow
-  workflow.sh --quick       Quick mode (no enforcement)
-  workflow.sh --help        Full platform reference
-  workflow.sh show          Current workflow status
+  .zcp/workflow.sh init          Start enforced workflow
+  .zcp/workflow.sh --quick       Quick mode (no enforcement)
+  .zcp/workflow.sh --help        Full platform reference
+  .zcp/workflow.sh show          Current workflow status
 EOF
             ;;
         *)
             echo "❌ Unknown command: $command"
             echo ""
-            echo "Run: workflow.sh --help"
+            echo "Run: .zcp/workflow.sh --help"
             exit 1
             ;;
     esac

@@ -11,12 +11,12 @@ set -o pipefail
 
 show_help() {
     cat <<'EOF'
-status.sh - Deployment status and monitoring
+.zcp/status.sh - Deployment status and monitoring
 
 USAGE:
-  status.sh                           # Show current state
-  status.sh --wait {service}          # Wait for deployment
-  status.sh --wait {service} --timeout 600
+  .zcp/status.sh                           # Show current state
+  .zcp/status.sh --wait {service}          # Wait for deployment
+  .zcp/status.sh --wait {service} --timeout 600
 
 SHOWS:
   - Service list with app version timestamps
@@ -38,9 +38,9 @@ DEPLOYMENT STATUS LOGIC:
   └─────────────────────┴──────────────────┴────────────┘
 
 EXAMPLES:
-  status.sh
-  status.sh --wait appstage
-  status.sh --wait appstage --timeout 600
+  .zcp/status.sh
+  .zcp/status.sh --wait appstage
+  .zcp/status.sh --wait appstage --timeout 600
 EOF
 }
 
@@ -241,7 +241,7 @@ main() {
         local timeout=300
 
         if [ -z "$service" ]; then
-            echo "❌ Usage: status.sh --wait {service} [--timeout N]"
+            echo "❌ Usage: .zcp/status.sh --wait {service} [--timeout N]"
             exit 2
         fi
 

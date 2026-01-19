@@ -1,9 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(/var/www/.claude/workflow.sh:*)",
-      "Bash(/var/www/.claude/verify.sh:*)",
-      "Bash(/var/www/.claude/status.sh:*)",
+      "Bash(.zcp/workflow.sh:*)",
+      "Bash(.zcp/verify.sh:*)",
+      "Bash(.zcp/status.sh:*)",
       "Bash(mkdir:*)",
       "Bash(curl:*)",
       "Bash(ssh:*)",
@@ -12,7 +12,6 @@
       "Bash(node:*)",
       "Bash(npm:*)",
       "Bash(npx:*)",
-      "Bash(puppeteer:*)",
       "Bash(google-chrome:*)",
       "Bash(jq:*)",
       "Bash(yq:*)",
@@ -32,9 +31,6 @@
       "Bash(agent-browser:*)",
       "Bash(go:*)",
       "Bash(sleep:*)",
-      "Bash(ssh appdev:*)",
-      "Bash(ssh appstage:*)",
-      "Bash(ssh db:*)",
       "Bash(PGPASSWORD=* psql:*)"
     ],
     "deny": []

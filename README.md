@@ -14,8 +14,8 @@ Agents must test and fix errors on dev before deploying to stage. HTTP 200 doesn
 CLAUDE.md                     → Platform fundamentals, always in context
     │
     ▼
-workflow.sh --help            → Full reference, contextual phase guidance
-verify.sh / status.sh         → Self-documenting tools
+.zcp/workflow.sh --help       → Full reference, contextual phase guidance
+.zcp/verify.sh / status.sh    → Self-documenting tools
 ```
 
 Knowledge lives in tools via `--help`, surviving context compaction and subagent spawning.
@@ -25,11 +25,12 @@ Knowledge lives in tools via `--help`, surviving context compaction and subagent
 ```
 zcp/
 ├── CLAUDE.md              # Entry point for agents
+├── .zcp/                  # Workflow tools
+│   ├── workflow.sh        # Phase orchestration + help system
+│   ├── verify.sh          # Endpoint testing with evidence
+│   └── status.sh          # Deployment status + wait mode
 └── .claude/
-    ├── workflow.sh        # Phase orchestration + help system
-    ├── verify.sh          # Endpoint testing with evidence
-    ├── status.sh          # Deployment status + wait mode
-    └── settings.json      # Bash permissions
+    └── settings.json      # Claude Code permissions
 ```
 
 ## Workflow Modes
@@ -62,7 +63,7 @@ Each transition requires evidence from the current session:
 |------------|-------------------|
 | DISCOVER → DEVELOP | `discovery.json` with matching session_id, dev ≠ stage |
 | DEVELOP → DEPLOY | `dev_verify.json` with 0 failures |
-| DEPLOY → VERIFY | `deploy_evidence.json` from status.sh --wait |
+| DEPLOY → VERIFY | `deploy_evidence.json` from .zcp/status.sh --wait |
 | VERIFY → DONE | `stage_verify.json` with 0 failures |
 
 Backward transitions (`--back`) invalidate downstream evidence.
@@ -71,34 +72,34 @@ Backward transitions (`--back`) invalidate downstream evidence.
 
 ```bash
 # Initialize
-workflow.sh init                    # Full mode with gates
-workflow.sh init --dev-only         # No deployment phase
-workflow.sh init --hotfix           # Skip to DEVELOP, reuse discovery
-workflow.sh --quick                 # No enforcement
+.zcp/workflow.sh init                    # Full mode with gates
+.zcp/workflow.sh init --dev-only         # No deployment phase
+.zcp/workflow.sh init --hotfix           # Skip to DEVELOP, reuse discovery
+.zcp/workflow.sh --quick                 # No enforcement
 
 # Transitions
-workflow.sh transition_to DEVELOP
-workflow.sh transition_to --back DEVELOP  # Go backward, invalidates evidence
+.zcp/workflow.sh transition_to DEVELOP
+.zcp/workflow.sh transition_to --back DEVELOP  # Go backward, invalidates evidence
 
 # Discovery
-workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
-workflow.sh create_discovery --single {id} {name}  # Same service for dev/stage
-workflow.sh refresh_discovery       # Validate existing discovery
+.zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+.zcp/workflow.sh create_discovery --single {id} {name}  # Same service for dev/stage
+.zcp/workflow.sh refresh_discovery       # Validate existing discovery
 
 # State management
-workflow.sh show                    # Current status
-workflow.sh reset                   # Clear everything
-workflow.sh reset --keep-discovery  # Preserve discovery for new session
+.zcp/workflow.sh show                    # Current status
+.zcp/workflow.sh reset                   # Clear everything
+.zcp/workflow.sh reset --keep-discovery  # Preserve discovery for new session
 
 # Extensions
-workflow.sh extend {import.yml}     # Add services to project
-workflow.sh upgrade-to-full         # Convert dev-only to full deployment
+.zcp/workflow.sh extend {import.yml}     # Add services to project
+.zcp/workflow.sh upgrade-to-full         # Convert dev-only to full deployment
 
 # Help
-workflow.sh --help
-workflow.sh --help {topic}          # discover, develop, deploy, verify, done,
-                                    # vars, services, trouble, example, gates,
-                                    # extend, bootstrap
+.zcp/workflow.sh --help
+.zcp/workflow.sh --help {topic}          # discover, develop, deploy, verify, done,
+                                         # vars, services, trouble, example, gates,
+                                         # extend, bootstrap
 ```
 
 ## Evidence Files
@@ -107,13 +108,13 @@ All stored in `/tmp/` with session tracking:
 
 | File | Created By | Contains |
 |------|------------|----------|
-| `claude_session` | `workflow.sh init` | Session ID |
-| `claude_mode` | `workflow.sh init` | full, dev-only, hotfix, quick |
-| `claude_phase` | `workflow.sh transition_to` | Current phase |
-| `discovery.json` | `workflow.sh create_discovery` | Dev/stage service mapping |
-| `dev_verify.json` | `verify.sh {dev}` | Dev endpoint test results |
-| `stage_verify.json` | `verify.sh {stage}` | Stage endpoint test results |
-| `deploy_evidence.json` | `status.sh --wait` | Deployment completion proof |
+| `claude_session` | `.zcp/workflow.sh init` | Session ID |
+| `claude_mode` | `.zcp/workflow.sh init` | full, dev-only, hotfix, quick |
+| `claude_phase` | `.zcp/workflow.sh transition_to` | Current phase |
+| `discovery.json` | `.zcp/workflow.sh create_discovery` | Dev/stage service mapping |
+| `dev_verify.json` | `.zcp/verify.sh {dev}` | Dev endpoint test results |
+| `stage_verify.json` | `.zcp/verify.sh {stage}` | Stage endpoint test results |
+| `deploy_evidence.json` | `.zcp/status.sh --wait` | Deployment completion proof |
 
 ## Key Features
 

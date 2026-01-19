@@ -13,7 +13,7 @@ DEBUG=false
 
 show_help() {
     cat <<'EOF'
-verify.sh - Endpoint verification with evidence generation
+.zcp/verify.sh - Endpoint verification with evidence generation
 
 ⚠️  WARNING: This script only checks HTTP status codes (2xx = pass).
     HTTP 200 does NOT mean the feature works correctly!
@@ -24,20 +24,20 @@ verify.sh - Endpoint verification with evidence generation
     - Database: Data actually persisted
 
 USAGE:
-  verify.sh {service} {port} {endpoint} [endpoints...]
-  verify.sh --debug {service} {port} {endpoint} [endpoints...]
-  verify.sh --help
+  .zcp/verify.sh {service} {port} {endpoint} [endpoints...]
+  .zcp/verify.sh --debug {service} {port} {endpoint} [endpoints...]
+  .zcp/verify.sh --help
 
 EXAMPLES:
-  verify.sh appdev 8080 / /status /api/items
-  verify.sh --debug appstage 8080 /
+  .zcp/verify.sh appdev 8080 / /status /api/items
+  .zcp/verify.sh --debug appstage 8080 /
 
 OUTPUT:
   Creates /tmp/{service}_verify.json
   Auto-copies to /tmp/dev_verify.json or /tmp/stage_verify.json
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️  ADDITIONAL VERIFICATION REQUIRED (verify.sh is not enough!)
+⚠️  ADDITIONAL VERIFICATION REQUIRED (.zcp/verify.sh is not enough!)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Backend APIs - Check response content:
@@ -194,10 +194,10 @@ main() {
     shift 2
 
     if [ -z "$service" ] || [ -z "$port" ] || [ $# -eq 0 ]; then
-        echo "❌ Usage: verify.sh [--debug] {service} {port} {endpoint} [endpoints...]"
+        echo "❌ Usage: .zcp/verify.sh [--debug] {service} {port} {endpoint} [endpoints...]"
         echo ""
-        echo "Example: verify.sh appdev 8080 / /status /api/items"
-        echo "Help:    verify.sh --help"
+        echo "Example: .zcp/verify.sh appdev 8080 / /status /api/items"
+        echo "Help:    .zcp/verify.sh --help"
         exit 2
     fi
 
@@ -292,7 +292,7 @@ main() {
         echo "   Evidence saved to: $evidence_file (not auto-linked to workflow)"
         echo ""
         echo "💡 If this is your dev/stage service, update discovery:"
-        echo "   workflow.sh create_discovery {dev_id} $service {stage_id} {stage_name}"
+        echo "   .zcp/workflow.sh create_discovery {dev_id} $service {stage_id} {stage_name}"
     else
         # No discovery - fall back to pattern matching with warning
         echo "⚠️  No discovery.json found, using pattern matching fallback"
