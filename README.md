@@ -26,12 +26,28 @@ Knowledge lives in tools via `--help`, surviving context compaction and subagent
 zcp/
 ├── CLAUDE.md              # Entry point for agents
 ├── .zcp/                  # Workflow tools
-│   ├── workflow.sh        # Phase orchestration + help system
+│   ├── workflow.sh        # Main entry point + command router
 │   ├── verify.sh          # Endpoint testing with evidence
-│   └── status.sh          # Deployment status + wait mode
+│   ├── status.sh          # Deployment status + wait mode
+│   └── lib/               # Modular components (AI-readable)
+│       ├── utils.sh       # State management, session, evidence checks
+│       ├── gates.sh       # Phase transition gate checks
+│       ├── help.sh        # Help system loader
+│       ├── commands.sh    # Commands loader
+│       ├── help/
+│       │   ├── full.sh    # Full platform reference
+│       │   └── topics.sh  # Topic-specific help (discover, develop, etc.)
+│       └── commands/
+│           ├── init.sh       # init, quick commands
+│           ├── transition.sh # transition_to, phase guidance
+│           ├── discovery.sh  # create_discovery, refresh_discovery
+│           ├── status.sh     # show, complete, reset
+│           └── extend.sh     # extend, upgrade-to-full, record_deployment
 └── .claude/
     └── settings.json      # Claude Code permissions
 ```
+
+The modular structure allows AI agents to read only relevant files when investigating specific functionality.
 
 ## Workflow Modes
 

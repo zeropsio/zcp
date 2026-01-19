@@ -11,15 +11,15 @@
 | **Yes, urgent hotfix** | `.zcp/workflow.sh init --hotfix` | Production broken, skip dev verification |
 | **No, just looking** | `.zcp/workflow.sh --quick` | Read logs, investigate, understand codebase |
 
-**Run one. Follow its output.** The script guides each phase and enforces gates.
+**Run one. READ its output completely. FOLLOW the rules it shows.** The script guides each phase and enforces gates.
 
 ## Context
 
 **Zerops** is a PaaS. Projects contain services (containers) on a shared private network.
 
 **ZCP** (Zerops Control Plane) is your workspace — a privileged container with:
-- SSHFS mounts to all service filesystems
-- SSH access to execute commands inside any container
+- SSHFS mounts to runtime service filesystems
+- SSH access to runtime containers only (NOT managed services)
 - Direct network access to all services
 - Tooling: `jq`, `yq`, `psql`, `mysql`, `redis-cli`, `zcli`, `agent-browser`
 
@@ -29,8 +29,8 @@ You are on ZCP, not inside the app containers.
 
 | To... | Do |
 |-------|----|
-| Edit files | `/var/www/{runtime}/path` (SSHFS) |
-| Run commands | `ssh {runtime} "command"` |
+| Edit files | `/var/www/{runtime}/...` (SSHFS mount on ZCP) |
+| Run commands | `ssh {runtime} "command"` (lands in `/var/www`) |
 | Reach services | `http://{service}:{port}` |
 | Test frontend | `agent-browser open "$URL"` |
 
@@ -61,6 +61,7 @@ ssh svc 'echo $VAR'         # Inside service: no prefix
 |---------|-------|-----|
 | `https://https://...` | zeropsSubdomain is full URL | Don't prepend protocol |
 | SSH connection refused | Managed service (db, cache) | Use client tools: `psql`, `redis-cli` from ZCP |
+| `cd /var/www/appdev: No such file` | SSH lands in `/var/www` directly | Don't include hostname in path inside container |
 | zcli unknown flag | zcli has custom syntax | Check `zcli {cmd} --help` |
 | zcli no results | Missing project flag | Use `zcli service list -P $projectId` |
 | Files missing on stage | Not in deployFiles | Update zerops.yaml, redeploy |

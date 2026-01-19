@@ -1,0 +1,974 @@
+#!/bin/bash
+# Topic-specific help for Zerops Workflow
+
+# Source full help for extraction functions
+# Use local variable to avoid overwriting parent SCRIPT_DIR
+_HELP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_HELP_DIR/full.sh"
+
+show_topic_help() {
+    local topic="$1"
+
+    case "$topic" in
+        discover)
+            show_help_discover
+            ;;
+        develop)
+            show_help_develop
+            ;;
+        deploy)
+            show_help_deploy
+            ;;
+        verify)
+            show_help_verify
+            ;;
+        done)
+            show_help_done
+            ;;
+        vars)
+            show_help_vars
+            ;;
+        services)
+            show_help_services
+            ;;
+        trouble)
+            show_full_help | sed -n '/🔧 TROUBLESHOOTING/,/📖 COMPLETE EXAMPLE/p' | head -n -1
+            ;;
+        example)
+            show_full_help | sed -n '/📖 COMPLETE EXAMPLE/,/🚪 GATES/p' | head -n -1
+            ;;
+        gates)
+            show_full_help | sed -n '/🚪 GATES/,$p'
+            ;;
+        extend)
+            show_help_extend
+            ;;
+        bootstrap)
+            show_help_bootstrap
+            ;;
+        *)
+            echo "❌ Unknown help topic: $topic"
+            echo ""
+            echo "Available topics:"
+            echo "  discover, develop, deploy, verify, done"
+            echo "  vars, services, trouble, example, gates"
+            echo "  extend, bootstrap"
+            return 1
+            ;;
+    esac
+}
+
+show_help_discover() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 DISCOVER PHASE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Purpose: Authenticate to Zerops and discover service IDs
+
+Commands:
+  zcli login --region=gomibako \
+      --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
+      "$ZEROPS_ZAGENT_API_KEY"
+
+  zcli service list -P $projectId
+
+Record discovery:
+  .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+
+  Example:
+    .zcp/workflow.sh create_discovery \
+        "abc123def456" "appdev" \
+        "ghi789jkl012" "appstage"
+
+Transition:
+  .zcp/workflow.sh transition_to DISCOVER
+
+⚠️  Critical:
+  • Never use 'zcli scope' - it's buggy
+  • Use service IDs from list, not hostnames
+  • Service ID ≠ hostname (ID for -S flag, hostname for ssh)
+
+Gate requirement:
+  • /tmp/discovery.json must exist
+  • deploy_target must be different from dev service name
+EOF
+}
+
+show_help_develop() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💻 DEVELOP PHASE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Purpose: Build, test, and iterate until the feature works correctly
+
+⚠️  CRITICAL MINDSET:
+    Dev is where you iterate. Fix all errors HERE before deploying.
+    Stage is for final validation, not debugging.
+
+    A human developer doesn't deploy broken code to stage to "see if it works."
+    They test locally, fix issues, repeat until it works, THEN deploy to stage.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔄 THE DEVELOP LOOP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Make changes (edit files via SSHFS)                         │
+│  2. Build & restart the app                                     │
+│  3. Test the actual functionality                               │
+│  4. Check for errors (logs, responses, browser console)         │
+│  5. If errors exist → Fix → Go to step 1                        │
+│  6. Only when working → run verify.sh → transition to DEPLOY    │
+└─────────────────────────────────────────────────────────────────┘
+
+This loop may repeat many times. That's normal and expected.
+Deploying broken code to stage to "see if it works" is not acceptable.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📁 Context
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Files: /var/www/{dev}/     (edit directly via SSHFS)
+  Run:   ssh {dev} "cmd"     (execute inside container)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 Build & Run
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Triple-kill pattern (clear orphan processes):
+  ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; \
+             fuser -k {port}/tcp 2>/dev/null; true'
+
+Build & run:
+  ssh {dev} "{build_command}"
+  ssh {dev} './{binary} >> /tmp/app.log 2>&1'
+
+  ⚠️  Set run_in_background=true in Bash tool parameters!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 FUNCTIONAL TESTING (not just HTTP status!)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+HTTP 200 means "server responded." It does NOT mean "feature works."
+
+Backend APIs - Read and verify response content:
+  # Don't just check status - examine the actual response
+  ssh {dev} "curl -s http://localhost:{port}/api/endpoint" | jq .
+
+  # Test the operation you implemented
+  ssh {dev} "curl -s -X POST http://localhost:{port}/api/items \
+      -H 'Content-Type: application/json' -d '{\"name\":\"test\"}'"
+
+  # Verify data persisted correctly
+  ssh {dev} "curl -s http://localhost:{port}/api/items" | jq .
+
+Frontend - Check for JavaScript/runtime errors:
+  URL=$(ssh {dev} "echo \$zeropsSubdomain")
+  agent-browser open "$URL"
+  agent-browser errors          # ← MUST be empty before deploy
+  agent-browser console         # ← Look for runtime errors
+  agent-browser screenshot      # ← Visual verification
+
+Logs - Look for errors, not just "it started":
+  ssh {dev} "tail -50 /tmp/app.log"
+  ssh {dev} "grep -iE 'error|exception|panic|fatal' /tmp/app.log"
+
+Database - Verify persistence:
+  PGPASSWORD=$db_password psql -h $db_hostname -U $db_user -d $db_database \
+      -c "SELECT * FROM {table} ORDER BY id DESC LIMIT 5;"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+❌ DO NOT proceed to DEPLOY if:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • API response contains error messages or unexpected data
+  • Logs show exceptions, stack traces, or error messages
+  • Browser console has JavaScript errors
+  • UI is broken, not rendering, or has visual bugs
+  • Data isn't persisting or returning correctly
+  • You haven't actually tested the feature you implemented
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ Proceed to DEPLOY only when:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • The feature works as expected on dev
+  • No errors in logs or browser console
+  • You've tested actual functionality, not just "server responds"
+  • You could demo this feature to a user right now
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🐛 Debugging
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # Check process running
+  ssh {dev} "pgrep -f {proc}"
+  ssh {dev} "ps aux | grep {proc}"
+
+  # Check port listening
+  ssh {dev} "ss -tlnp | grep {port}"
+
+  # Follow logs in real-time
+  ssh {dev} "tail -f /tmp/app.log"
+
+Gate requirement:
+  • verify.sh must pass (creates /tmp/dev_verify.json)
+  • Feature must work correctly (not just HTTP 200)
+EOF
+}
+
+show_help_deploy() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 DEPLOY PHASE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  PRE-DEPLOYMENT CHECKLIST - DO THIS FIRST:
+
+1. Verify deployFiles configuration:
+   cat /var/www/{dev}/zerops.yaml | grep -A10 deployFiles
+
+2. Verify ALL artifacts exist:
+   ls -la /var/www/{dev}/app
+   ls -la /var/www/{dev}/templates/
+   ls -la /var/www/{dev}/static/
+   ls -la /var/www/{dev}/config/
+
+3. If you created new directories, ADD them to deployFiles!
+   Edit /var/www/{dev}/zerops.yaml
+
+⚠️  Most common failure: Agent builds files but forgets to update deployFiles
+
+zerops.yaml structure:
+  zerops:
+    - setup: api              # ← This is the --setup value
+      build:
+        base: go@1.22
+        buildCommands:
+          - go build -o app main.go
+        deployFiles:          # ← CRITICAL SECTION
+          - ./app
+          - ./templates       # Don't forget if you created these!
+          - ./static
+          - ./config
+      run:
+        base: go@1.22
+        ports:
+          - port: 8080
+        start: ./app
+
+Deployment steps:
+
+1. Stop dev process:
+   ssh {dev} 'pkill -9 {proc}; fuser -k {port}/tcp 2>/dev/null; true'
+
+2. Authenticate from dev container:
+   ssh {dev} "zcli login --region=gomibako \
+       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
+       \"\$ZEROPS_ZAGENT_API_KEY\""
+
+3. Deploy to stage:
+   ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
+
+   • {stage_service_id} = ID from discovery (not hostname!)
+   • {setup} = setup name from zerops.yaml
+   • --versionName optional but recommended
+
+4. Wait for completion:
+   .zcp/status.sh --wait {stage}
+
+Redeploy/Retry procedure:
+  If deployment fails or needs retry:
+  1. zcli project notifications -P $projectId    # Check error
+  2. Fix the issue (usually deployFiles or code)
+  3. ssh {dev} "zcli push {stage_id} --setup={setup}"
+  4. .zcp/status.sh --wait {stage}
+
+Gate requirement:
+  • .zcp/status.sh shows SUCCESS notification
+  • Deployment fully complete before verification
+EOF
+}
+
+show_help_verify() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ VERIFY PHASE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Purpose: Verify deployment on stage service
+
+Basic verification:
+
+1. Check deployed artifacts:
+   ssh {stage} "ls -la /var/www/"
+
+2. Verify endpoints:
+   .zcp/verify.sh {stage} {port} / /status /api/...
+
+3. Check service logs:
+   zcli service log -S {stage_service_id} -P $projectId
+   zcli service log -S {stage_service_id} -P $projectId --follow
+
+⚠️  BROWSER TESTING (MANDATORY for frontends):
+
+If your app has HTML/CSS/JS/templates:
+
+  URL=$(ssh {stage} "echo \$zeropsSubdomain")
+  agent-browser open "$URL"          # Don't prepend https://!
+  agent-browser errors               # Must show no errors
+  agent-browser console              # Check runtime errors
+  agent-browser network requests     # Verify assets load
+  agent-browser screenshot           # Visual evidence
+
+⚠️  CRITICAL: HTTP 200 ≠ working UI
+   CSS/JS errors return 200 but break the app.
+   Screenshots can show broken layout that curl cannot detect.
+
+💡 Tool awareness - You CAN:
+   • See screenshots and reason about visual issues
+   • Test functionality with curl, not just status codes
+   • Query database to verify data persistence
+   • Check network requests for failed asset loads
+   • Test actual user workflows, not just server health
+
+Advanced verification:
+
+Database persistence:
+  PGPASSWORD=$db_password psql -h $db_hostname -U $db_user \
+      -d $db_database -c "SELECT * FROM users LIMIT 5;"
+
+Functionality testing:
+  # Create test data
+  curl -X POST "${stage_zeropsSubdomain}/api/items" \
+      -H "Content-Type: application/json" \
+      -d '{"name":"test"}'
+
+  # Verify it persisted
+  curl -sf "${stage_zeropsSubdomain}/api/items" | jq
+
+Performance testing:
+  time curl -sf "${stage_zeropsSubdomain}/" > /dev/null
+
+Gate requirement:
+  • verify.sh must pass (creates /tmp/stage_verify.json)
+  • failures == 0
+  • Browser testing complete (if frontend)
+EOF
+}
+
+show_help_done() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎉 DONE PHASE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Final step: Verify all evidence and output completion promise
+
+Command:
+  .zcp/workflow.sh complete
+
+What it checks:
+  • All evidence files exist
+  • All evidence has matching session_id
+  • All verify files have failures == 0
+
+Success output:
+  ✅ Evidence validated:
+     • Session: 20260118160000-1234-5678
+     • Discovery: /tmp/discovery.json ✓
+     • Dev verify: /tmp/dev_verify.json (0 failures) ✓
+     • Stage verify: /tmp/stage_verify.json (0 failures) ✓
+
+  <completed>WORKFLOW_DONE</completed>
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 Next task? Run workflow.sh again to decide:
+   .zcp/workflow.sh init    → deploying
+   .zcp/workflow.sh --quick → exploring
+
+Failure output:
+  ❌ Evidence validation failed:
+     • Missing evidence files
+     • Session ID mismatches
+     • Verification failures
+
+  💡 Instructions to fix the issue
+EOF
+}
+
+show_help_vars() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔐 ENVIRONMENT VARIABLES - COMPREHENSIVE REFERENCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  CRITICAL: Service names are ARBITRARY (user-defined hostnames)
+   Variables use HOSTNAME, not service type!
+   Must discover actual names via: zcli service list -P $projectId
+
+Variable Structure:
+  Pattern: {hostname}_{VARIABLE}
+  Example: ${myapp_zeropsSubdomain}, ${users-db_password}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 ACCESS PATTERNS BY CONTEXT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+┌─ ZCP → Service Variable ───────────────────────────────────────┐
+│ Pattern: ${hostname}_VARIABLE                                   │
+│                                                                  │
+│ Examples:                                                        │
+│   echo "${myapp_zeropsSubdomain}"                               │
+│   echo "${backend_hostname}"                                     │
+│   curl "${api_zeropsSubdomain}/"                                │
+│                                                                  │
+│ ⚠️  CRITICAL: zeropsSubdomain is FULL URL                       │
+│     curl "${myapp_zeropsSubdomain}/"        ✅ CORRECT          │
+│     curl "https://${myapp_zeropsSubdomain}/" ❌ WRONG (double)  │
+└──────────────────────────────────────────────────────────────────┘
+
+┌─ Inside Service → Own Variables ───────────────────────────────┐
+│ Pattern: $VARIABLE (no prefix inside container)                 │
+│                                                                  │
+│ Examples:                                                        │
+│   ssh myapp "echo \$hostname"          # myapp                  │
+│   ssh myapp "echo \$zeropsSubdomain"   # Full HTTPS URL         │
+│   ssh myapp "echo \$serviceId"         # Service ID             │
+└──────────────────────────────────────────────────────────────────┘
+
+┌─ ZCP → Database Variables ─────────────────────────────────────┐
+│ Pattern: ${dbhostname}_* (use actual DB hostname!)              │
+│                                                                  │
+│ PostgreSQL:                                                      │
+│   ${postgres_connectionString}                                  │
+│   ${postgres_hostname}, ${postgres_user}, ${postgres_password}  │
+│   ${postgres_port}, ${postgres_dbName}                          │
+│                                                                  │
+│ NATS:                                                            │
+│   ${nats_connectionString}                                      │
+│   ${nats_hostname}, ${nats_user}, ${nats_password}              │
+│                                                                  │
+│ Valkey/Redis:                                                    │
+│   ${cache_connectionString}                                     │
+│   ${cache_hostname}, ${cache_port}                              │
+│                                                                  │
+│ Typesense:                                                       │
+│   ${search_connectionString}                                    │
+│   ${search_apiKey}, ${search_hostname}                          │
+│                                                                  │
+│ Usage from ZCP:                                                  │
+│   PGPASSWORD=${postgres_password} psql -h ${postgres_hostname} \│
+│       -U ${postgres_user} -d ${postgres_dbName}                 │
+│   redis-cli -h ${cache_hostname} -p ${cache_port}               │
+└──────────────────────────────────────────────────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  VARIABLE TIMING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Services capture env vars at START TIME. To see new/changed vars → restart.
+
+When ZCP doesn't have a variable (service added after ZCP started):
+  echo "${appdev_PORT}"              # Empty
+  ssh appdev "echo \$PORT"           # Get it from appdev directly
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 COMMON SERVICE VARIABLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Every service has (replace {hostname} with actual service name):
+
+Identity:
+  {hostname}_serviceId          # Unique service ID (for zcli -S flag)
+  {hostname}_hostname           # Service hostname (for ssh, URLs)
+  {hostname}_projectId          # Parent project ID
+
+Network:
+  {hostname}_zeropsSubdomain       # Full HTTPS URL (don't prepend!)
+  {hostname}_zeropsSubdomainString # Template: https://{host}-{num}-${port}...
+
+Security:
+  {hostname}_ZEROPS_ZAGENT_API_KEY    # zcli authentication key
+  {hostname}_envIsolation       # "none" or "service"
+  {hostname}_sshIsolation       # SSH access rules
+
+Metadata (Runtime):
+  {hostname}_appVersionId       # Deployed version ID
+  {hostname}_appVersionName     # Version name (e.g., "main")
+  {hostname}_startCommand       # Start command
+  {hostname}_workingDir         # Working directory
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏗️  BUILD CONTAINER VARIABLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Build containers use RUNTIME_ prefix to access target runtime variables:
+
+  build{name}_RUNTIME_hostname         # Target service hostname
+  build{name}_RUNTIME_serviceId        # Target service ID
+  build{name}_RUNTIME_zeropsSubdomain  # Target service URL
+  build{name}_RUNTIME_DB_HOST          # Target DB connection
+
+This allows builds to know deployment target environment!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔐 ENV ISOLATION MODES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+envIsolation=none (Legacy):
+  • All service variables visible to ZCP with prefix
+  • Enables ${hostname}_variable pattern
+  • Less secure, but simpler for development
+
+envIsolation=service (Recommended):
+  • Strict variable isolation per service
+  • Must explicitly reference: ${service@variable}
+  • Better security, prevents leaks
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 SUMMARY TABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Context          │ Pattern              │ Example
+─────────────────┼──────────────────────┼────────────────────────────
+ZCP → Own        │ $VAR                 │ $projectId
+ZCP → Service    │ ${hostname}_VAR      │ ${myapp_hostname}
+ZCP → Database   │ ${dbname}_*          │ ${postgres_password}
+Service → Own    │ $VAR via SSH         │ ssh myapp "echo \$hostname"
+Service → Service│ http://hostname:port │ http://postgres:5432
+
+See also: .zcp/workflow.sh --help services (for service naming details)
+EOF
+}
+
+show_help_services() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏷️  SERVICE NAMING - CRITICAL UNDERSTANDING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  SERVICE HOSTNAMES ARE ARBITRARY (NOT TIED TO SERVICE TYPE)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 THE CRITICAL DISTINCTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Hostname (User-Defined):
+  • What YOU name the service in zerops.yaml
+  • Can be ANYTHING: myapp, backend, users-db, cache1, api-prod
+  • Used for: SSH, variables, networking
+  • Examples: "myapp", "postgres-main", "redis-cache"
+
+Service Type (Zerops-Defined):
+  • The technology: postgresql, nats, valkey, nodejs, go
+  • Cannot be changed
+  • Internal to Zerops
+  • Examples: "postgresql@17", "valkey@7.2", "go@1.22"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  WHY THIS MATTERS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Variables use HOSTNAME, not type!
+
+If PostgreSQL service is named "users-db":
+  ${users-db_connectionString}   ✅ CORRECT
+  ${postgres_connectionString}   ❌ WRONG
+  ${db_connectionString}         ❌ WRONG (unless you named it "db")
+
+If app service is named "backend":
+  ${backend_zeropsSubdomain}     ✅ CORRECT
+  ssh backend "echo \$hostname"  ✅ CORRECT
+  ${app_zeropsSubdomain}         ❌ WRONG
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 COMMON NAMING PATTERNS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Pattern 1: Type as Hostname (Simple)
+  services:
+    - hostname: db            # Type: postgresql
+    - hostname: cache         # Type: valkey
+    - hostname: nats          # Type: nats
+
+  Variables: ${db_password}, ${cache_connectionString}, ${nats_user}
+
+Pattern 2: Descriptive Names (Production)
+  services:
+    - hostname: users-database      # Type: postgresql
+    - hostname: session-cache       # Type: valkey
+    - hostname: event-queue         # Type: nats
+
+  Variables: ${users-database_password}, ${session-cache_port}
+
+Pattern 3: Environment Suffixes
+  services:
+    - hostname: api-dev       # Type: nodejs (development)
+    - hostname: api-stage     # Type: nodejs (staging)
+    - hostname: api-prod      # Type: nodejs (production)
+
+  Variables: ${api-dev_zeropsSubdomain}, ${api-prod_zeropsSubdomain}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 DISCOVERING ACTUAL SERVICE NAMES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ALWAYS use zcli service list to discover actual hostnames:
+
+  zcli service list -P $projectId
+
+Output shows:
+  ┌───────────┬────────────────┬────────┬─────────────┐
+  │ ID        │ NAME (hostname)│ STATUS │ TYPE        │
+  ├───────────┼────────────────┼────────┼─────────────┤
+  │ abc123... │ myapp          │ ACTIVE │ nodejs      │
+  │ def456... │ backend-api    │ ACTIVE │ go          │
+  │ ghi789... │ users-db       │ ACTIVE │ postgresql  │
+  │ jkl012... │ cache          │ ACTIVE │ valkey      │
+  └───────────┴────────────────┴────────┴─────────────┘
+
+Then use DISCOVERED hostnames:
+  ssh myapp "..."
+  echo "${backend-api_zeropsSubdomain}"
+  PGPASSWORD=${users-db_password} psql ...
+
+⚠️  NEVER assume service names match types!
+⚠️  NEVER hardcode service names in scripts!
+⚠️  ALWAYS discover first with zcli service list!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 THIS IS WHY DISCOVER PHASE IS MANDATORY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You cannot proceed without knowing actual service hostnames!
+
+.zcp/workflow.sh create_discovery uses DISCOVERED names:
+  .zcp/workflow.sh create_discovery \
+    "abc123" "myapp" \      ← Actual hostname from zcli service list
+    "def456" "backend-api"  ← NOT type name, actual hostname
+
+This ensures all subsequent operations use correct names.
+
+See also: .zcp/workflow.sh --help vars (for variable access patterns)
+EOF
+}
+
+show_help_extend() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 EXTENDING YOUR PROJECT WITH NEW SERVICES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Common scenario: You have a working app and want to add PostgreSQL,
+Valkey (Redis), NATS, or another managed service.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  THE CHALLENGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Environment variables are captured at ZCP start
+2. New services' vars ($db_host, etc.) won't be visible until restart
+3. discovery.json doesn't auto-update when services are added
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 STEP-BY-STEP FLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. CREATE THE IMPORT FILE
+   ─────────────────────────────────────────────────────────────
+   cat > add-service.yml <<'YAML'
+   services:
+     - hostname: db
+       type: postgresql@16
+       mode: NON_HA
+   YAML
+
+   Service types: postgresql@16, valkey@7, nats@2, mariadb@10
+
+2. IMPORT THE SERVICE
+   ─────────────────────────────────────────────────────────────
+   zcli project import ./add-service.yml -P $projectId
+
+3. WAIT FOR SERVICE TO BE READY
+   ─────────────────────────────────────────────────────────────
+   # Check status
+   zcli service list -P $projectId | grep db
+
+   # Wait for RUNNING state (usually 1-2 minutes for databases)
+   while ! zcli service list -P $projectId | grep -q "db.*RUNNING"; do
+     echo "Waiting for db..."
+     sleep 10
+   done
+
+4. ACCESS CREDENTIALS
+   ─────────────────────────────────────────────────────────────
+   ⚠️  ZCP captured env vars at START. New vars not visible!
+
+   Option A: Restart ZCP (picks up all new env vars)
+     - Close your IDE session
+     - Reconnect to ZCP
+     - New vars will be available as ${db_hostname}, etc.
+
+   Option B: Read directly via SSH (no restart needed)
+     ssh db 'echo $hostname'
+     ssh db 'echo $port'
+     ssh db 'echo $user'
+     ssh db 'echo $password'
+
+5. UPDATE YOUR CODE
+   ─────────────────────────────────────────────────────────────
+   Use connection pattern from the service.
+
+   Go + PostgreSQL:
+     connStr := fmt.Sprintf(
+         "host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+         os.Getenv("db_host"),
+         os.Getenv("db_port"),
+         os.Getenv("db_user"),
+         os.Getenv("db_password"),
+         os.Getenv("db_dbName"),
+     )
+
+   Node + PostgreSQL:
+     const pool = new Pool({
+       host: process.env.db_hostname,
+       port: process.env.db_port,
+       user: process.env.db_user,
+       password: process.env.db_password,
+       database: process.env.db_dbName,
+     });
+
+6. TEST CONNECTION
+   ─────────────────────────────────────────────────────────────
+   # Get credentials via SSH (since ZCP env not updated)
+   DB_HOST=$(ssh db 'echo $hostname')
+   DB_PASS=$(ssh db 'echo $password')
+   DB_USER=$(ssh db 'echo $user')
+   DB_NAME=$(ssh db 'echo $dbName')
+
+   # Test PostgreSQL connection
+   PGPASSWORD=$DB_PASS psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c "SELECT 1"
+
+   # Test Valkey/Redis connection
+   redis-cli -h $(ssh cache 'echo $hostname') -p $(ssh cache 'echo $port') PING
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 CONNECTION PATTERNS BY SERVICE TYPE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PostgreSQL (hostname: db)
+  ${db_hostname}, ${db_port}, ${db_user}, ${db_password}, ${db_dbName}
+  ${db_connectionString}  ← Full connection string
+
+Valkey/Redis (hostname: cache)
+  ${cache_hostname}, ${cache_port}, ${cache_password}
+  ${cache_connectionString}
+
+NATS (hostname: nats)
+  ${nats_hostname}, ${nats_port}, ${nats_user}, ${nats_password}
+  ${nats_connectionString}
+
+Object Storage (hostname: storage)
+  ${storage_accessKeyId}, ${storage_secretAccessKey}
+  ${storage_apiUrl}, ${storage_bucketName}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  ENV VAR TIMING - CRITICAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ZCP captures environment variables at START TIME.
+
+When you add a new service, ZCP does NOT automatically see its vars.
+
+Your options:
+  1. RESTART ZCP: Reconnect to pick up new vars
+  2. SSH READ: ssh {service} 'echo $varname' to get values directly
+
+This is platform behavior, not a bug. Plan for it.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 COMPLETE EXAMPLE: Adding PostgreSQL to Go App
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 1. Create import file
+cat > add-postgres.yml <<'YAML'
+services:
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+YAML
+
+# 2. Import
+zcli project import ./add-postgres.yml -P $projectId
+
+# 3. Wait for ready
+while ! zcli service list -P $projectId | grep -q "db.*RUNNING"; do
+  echo "Waiting for db service..."
+  sleep 10
+done
+echo "Database ready!"
+
+# 4. Get credentials via SSH
+DB_HOST=$(ssh db 'echo $hostname')
+DB_PORT=$(ssh db 'echo $port')
+DB_USER=$(ssh db 'echo $user')
+DB_PASS=$(ssh db 'echo $password')
+DB_NAME=$(ssh db 'echo $dbName')
+
+# 5. Test connection
+PGPASSWORD=$DB_PASS psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -c "SELECT 1"
+
+# 6. Update your Go code to use these env vars
+# The app will read them at runtime after deployment
+EOF
+}
+
+show_help_bootstrap() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 BOOTSTRAPPING A NEW PROJECT FROM SCRATCH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You're starting with an empty project. Here's how to go from
+zero to deployed application.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 THE FLOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DEFINE → CREATE → DEVELOP → DEPLOY → VERIFY → DONE
+
+Instead of discovery-first (services exist), this is creation-first.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 STEP 1: DEFINE (Create import.yml)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Create an import.yml for AI Agent pattern (dev + stage):
+
+cat > import.yml <<'YAML'
+services:
+  # Dev service (edit files here)
+  - hostname: appdev
+    type: go@latest
+    buildFromGit: false
+    enableSubdomainAccess: true
+
+  # Stage service (deploy here)
+  - hostname: appstage
+    type: go@latest
+    buildFromGit: false
+    enableSubdomainAccess: true
+YAML
+
+Language options: go@latest, nodejs@20, php@8, python@3, etc.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 STEP 2: CREATE (Import services)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+zcli project import ./import.yml -P $projectId
+
+Wait for services to be ready:
+
+while zcli service list -P $projectId | grep -qE "PENDING|BUILDING"; do
+  echo "Waiting for services to be ready..."
+  sleep 30
+done
+echo "Services ready!"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💻 STEP 3: DEVELOP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Now services exist. Run normal workflow:
+
+  .zcp/workflow.sh init
+  zcli service list -P $projectId
+  .zcp/workflow.sh create_discovery {dev_id} appdev {stage_id} appstage
+  .zcp/workflow.sh transition_to DISCOVER
+  .zcp/workflow.sh transition_to DEVELOP
+
+Create your application code at /var/www/appdev/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 COMPLETE EXAMPLE: Go Hello World
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 1. Create import.yml
+cat > import.yml <<'YAML'
+services:
+  - hostname: appdev
+    type: go@latest
+    buildFromGit: false
+    enableSubdomainAccess: true
+  - hostname: appstage
+    type: go@latest
+    buildFromGit: false
+    enableSubdomainAccess: true
+YAML
+
+# 2. Import
+zcli project import ./import.yml -P $projectId
+
+# 3. Wait
+while zcli service list -P $projectId | grep -qE "PENDING|BUILDING"; do
+  sleep 30
+done
+
+# 4. Start workflow
+.zcp/workflow.sh init
+zcli service list -P $projectId  # Get IDs
+.zcp/workflow.sh create_discovery "abc123" "appdev" "def456" "appstage"
+.zcp/workflow.sh transition_to DISCOVER
+.zcp/workflow.sh transition_to DEVELOP
+
+# 5. Create hello world
+cat > /var/www/appdev/main.go <<'GO'
+package main
+
+import (
+    "fmt"
+    "net/http"
+)
+
+func main() {
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintf(w, "Hello, World!")
+    })
+    http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintf(w, "OK")
+    })
+    http.ListenAndServe(":8080", nil)
+}
+GO
+
+# 6. Create zerops.yaml
+cat > /var/www/appdev/zerops.yaml <<'YAML'
+zerops:
+  - setup: app
+    build:
+      base: go@latest
+      buildCommands:
+        - go build -o app main.go
+      deployFiles:
+        - ./app
+    run:
+      base: go@latest
+      ports:
+        - port: 8080
+      start: ./app
+YAML
+
+# 7. Build, run, verify
+ssh appdev "cd /var/www && go build -o app main.go"
+ssh appdev "/var/www/app >> /tmp/app.log 2>&1"  # run_in_background=true
+.zcp/verify.sh appdev 8080 / /status
+
+# Continue with normal DEPLOY → VERIFY → DONE flow
+EOF
+}
