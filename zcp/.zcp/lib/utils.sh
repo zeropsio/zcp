@@ -17,8 +17,8 @@ DEPLOY_EVIDENCE_FILE="/tmp/deploy_evidence.json"
 CONTEXT_FILE="/tmp/claude_context.json"
 
 # Persistent storage (survives container restart)
-# Default to .zcp-state in current directory, allow override via env
-STATE_DIR="${ZCP_STATE_DIR:-.zcp-state}"
+# Default to .zcp/state (inside .zcp dir), allow override via env
+STATE_DIR="${ZCP_STATE_DIR:-${SCRIPT_DIR}/state}"
 WORKFLOW_STATE_DIR="$STATE_DIR/workflow"
 WORKFLOW_ITERATIONS_DIR="$WORKFLOW_STATE_DIR/iterations"
 PERSISTENT_ENABLED=false

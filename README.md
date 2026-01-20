@@ -63,13 +63,13 @@ zcp/
 │           ├── iterate.sh    # iterate command (post-DONE continuation)
 │           ├── retarget.sh   # retarget command (change deployment target)
 │           └── context.sh    # intent, note commands (rich context)
-├── .zcp-state/            # Persistent storage (survives container restart)
-│   ├── workflow/          # Current workflow state
-│   │   ├── evidence/      # Persisted evidence files
-│   │   ├── iterations/    # Archived iteration history
-│   │   ├── context.json   # Last error, notes
-│   │   └── intent.txt     # Workflow intent
-│   └── archive/           # Completed/abandoned workflows
+│       └── state/         # Persistent storage (survives container restart)
+│           ├── workflow/  # Current workflow state
+│           │   ├── evidence/      # Persisted evidence files
+│           │   ├── iterations/    # Archived iteration history
+│           │   ├── context.json   # Last error, notes
+│           │   └── intent.txt     # Workflow intent
+│           └── archive/   # Completed/abandoned workflows
 └── .claude/
     └── settings.json      # Claude Code permissions
 ```
@@ -155,7 +155,7 @@ Backward transitions (`--back`) invalidate downstream evidence.
 
 ## Evidence Files
 
-All stored in `/tmp/` (with write-through to `.zcp-state/` for persistence):
+All stored in `/tmp/` (with write-through to `.zcp/state/` for persistence):
 
 | File | Created By | Contains |
 |------|------------|----------|
@@ -182,7 +182,7 @@ All stored in `/tmp/` (with write-through to `.zcp-state/` for persistence):
 
 ### Resilient Workflow Features (New)
 
-- **Persistent storage** — State survives container restarts via `.zcp-state/`
+- **Persistent storage** — State survives container restarts via `.zcp/state/`
 - **Automatic context capture** — Verification failures and deploy errors recorded automatically
 - **Iteration support** — Continue work after DONE without losing history
 - **Rich context** — Intent and notes for better resumability after long breaks
@@ -296,7 +296,7 @@ When a workflow completes but you need changes:
 
 ### Persistence
 
-State survives container restarts via `.zcp-state/`:
+State survives container restarts via `.zcp/state/`:
 - Restored automatically on startup if `/tmp/` is empty
 - Write-through: every state change writes to both locations
 - Keeps last 10 iterations, auto-cleans older ones
