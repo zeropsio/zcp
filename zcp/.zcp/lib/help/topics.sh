@@ -735,7 +735,7 @@ Storage:
 
 2. IMPORT THE SERVICE
    ─────────────────────────────────────────────────────────────
-   zcli project import ./add-service.yml -P $projectId
+   zcli project service-import ./add-service.yml -P \$projectId
 
 3. WAIT FOR SERVICE TO BE READY
    ─────────────────────────────────────────────────────────────
@@ -841,7 +841,7 @@ services:
 YAML
 
 # 2. Import
-zcli project import ./add-postgres.yml -P $projectId
+zcli project service-import ./add-postgres.yml -P \$projectId
 
 # 3. Wait for ready
 while ! zcli service list -P $projectId | grep -q "db.*RUNNING"; do
@@ -1042,7 +1042,7 @@ Example: Bootstrap a Go app with PostgreSQL
 
 Save the import YAML and run:
 
-  zcli project import ./import.yml -P $projectId
+  zcli project service-import ./import.yml -P \$projectId
 
 Wait for services to be ready:
 
@@ -1115,7 +1115,7 @@ services:
 YAML
 
 # 2. Import
-zcli project import ./import.yml -P $projectId
+zcli project service-import ./import.yml -P \$projectId
 
 # 3. Wait
 while zcli service list -P $projectId | grep -qE "PENDING|BUILDING"; do

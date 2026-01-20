@@ -68,7 +68,7 @@ cmd_extend() {
     echo "📦 Importing services from: $import_file"
     echo ""
 
-    if ! zcli project import "$import_file" -P "$pid"; then
+    if ! zcli project service-import "$import_file" -P "$pid"; then
         echo "❌ Import failed"
         return 1
     fi
