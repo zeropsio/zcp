@@ -204,7 +204,16 @@ GUIDANCE
             fi
             ;;
         DONE)
-            echo "Run: .zcp/workflow.sh complete"
+            cat <<'GUIDANCE'
+✅ Workflow complete.
+
+To continue working (bug fix, new feature, iteration):
+   .zcp/workflow.sh iterate "description"     Start new iteration
+   .zcp/workflow.sh iterate --to VERIFY       Skip to verify (no code changes)
+
+To finish:
+   .zcp/workflow.sh complete                  Mark session complete
+GUIDANCE
             ;;
         QUICK)
             cat <<'GUIDANCE'

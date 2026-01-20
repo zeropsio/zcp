@@ -1,7 +1,7 @@
 # Zerops Platform
 
 **Fix errors on dev. Stage is for final validation, not debugging.**
-**Workflows iterate. After DONE, run `init` again — it guides you.**
+**Workflows iterate. Run `show` anytime — it tells you what to do next.**
 
 ## Start Here — RUN ONE
 
