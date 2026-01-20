@@ -16,6 +16,13 @@ STAGE_VERIFY_FILE="/tmp/stage_verify.json"
 DEPLOY_EVIDENCE_FILE="/tmp/deploy_evidence.json"
 CONTEXT_FILE="/tmp/claude_context.json"
 
+# New gate evidence files (Gates 0-3)
+RECIPE_REVIEW_FILE="/tmp/recipe_review.json"
+SERVICE_PLAN_FILE="/tmp/service_plan.json"
+SERVICES_IMPORTED_FILE="/tmp/services_imported.json"
+CONFIG_VALIDATED_FILE="/tmp/config_validated.json"
+DEV_SNAPSHOT_FILE="/tmp/dev_snapshot.json"
+
 # Persistent storage (survives container restart)
 # Default to .zcp/state (inside .zcp dir), allow override via env
 STATE_DIR="${ZCP_STATE_DIR:-${SCRIPT_DIR}/state}"
@@ -411,6 +418,94 @@ restore_from_persistent() {
     fi
 
     return 0
+}
+
+# ============================================================================
+# SERVICE DETECTION (Bootstrap vs Standard Flow)
+# ============================================================================
+
+# Check if runtime services exist in the project
+# Returns: 0 if runtime services exist, 1 if no runtime services (need bootstrap)
+# Sets global: DETECTED_SERVICES_JSON with service list
+check_runtime_services_exist() {
+    local pid
+    pid=$(cat /tmp/projectId 2>/dev/null || echo "${projectId:-}")
+
+    # If no project ID, can't check - assume need bootstrap
+    if [ -z "$pid" ]; then
+        echo "⚠️  No project ID found - cannot detect services" >&2
+        return 1
+    fi
+
+    # Check if zcli is available
+    if ! command -v zcli &>/dev/null; then
+        echo "⚠️  zcli not found - cannot detect services" >&2
+        return 1
+    fi
+
+    # Get service list with proper error handling
+    local services_json
+    local zcli_exit_code
+    services_json=$(zcli service list -P "$pid" --json 2>&1)
+    zcli_exit_code=$?
+
+    if [ $zcli_exit_code -ne 0 ]; then
+        # Check for specific error types
+        if echo "$services_json" | grep -qi "unauthorized\|auth\|login\|token"; then
+            echo "⚠️  zcli authentication error - run zcli login first" >&2
+        elif echo "$services_json" | grep -qi "not found\|404"; then
+            echo "⚠️  Project not found: $pid" >&2
+        else
+            echo "⚠️  zcli error: ${services_json:0:100}" >&2
+        fi
+        DETECTED_SERVICES_JSON="[]"
+        return 1
+    fi
+
+    # Validate JSON response
+    if ! echo "$services_json" | jq -e . >/dev/null 2>&1; then
+        echo "⚠️  zcli returned invalid JSON" >&2
+        DETECTED_SERVICES_JSON="[]"
+        return 1
+    fi
+
+    # Export for use by callers
+    DETECTED_SERVICES_JSON="$services_json"
+
+    # Check if we have any runtime services (not ZCP, not managed)
+    # Runtime types: go, nodejs, php, python, rust, bun, dotnet, java, nginx, static
+    local runtime_count
+    runtime_count=$(echo "$services_json" | jq '[.[] | select(
+        .type != null and (
+            (.type | startswith("go@")) or
+            (.type | startswith("nodejs@")) or
+            (.type | startswith("php@")) or
+            (.type | startswith("python@")) or
+            (.type | startswith("rust@")) or
+            (.type | startswith("bun@")) or
+            (.type | startswith("dotnet@")) or
+            (.type | startswith("java@")) or
+            (.type | startswith("nginx@")) or
+            (.type | startswith("static@")) or
+            (.type | startswith("alpine@"))
+        )
+    )] | length' 2>/dev/null || echo "0")
+
+    if [ "$runtime_count" -gt 0 ]; then
+        return 0  # Runtime services exist - standard flow
+    else
+        return 1  # No runtime services - need bootstrap
+    fi
+}
+
+# Get detected services summary (call after check_runtime_services_exist)
+get_services_summary() {
+    if [ -z "$DETECTED_SERVICES_JSON" ] || [ "$DETECTED_SERVICES_JSON" = "[]" ]; then
+        echo "No services detected"
+        return
+    fi
+
+    echo "$DETECTED_SERVICES_JSON" | jq -r '.[] | "  • \(.hostname) (\(.type // "unknown")) - \(.status // "unknown")"' 2>/dev/null
 }
 
 # Sync current /tmp/ state to persistent storage

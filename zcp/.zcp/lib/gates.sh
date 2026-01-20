@@ -1,6 +1,117 @@
 #!/bin/bash
 # Gate checks for Zerops Workflow phase transitions
 
+# ============================================================================
+# Gate 0: INIT → DISCOVER (Recipe Review)
+# ============================================================================
+
+check_gate_init_to_discover() {
+    local checks_passed=0
+    local checks_total=0
+    local all_passed=true
+    local mode
+    mode=$(get_mode)
+
+    echo "Gate: INIT → DISCOVER"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # In hotfix mode, warn but don't block
+    if [ "$mode" = "hotfix" ]; then
+        if [ ! -f "$RECIPE_REVIEW_FILE" ]; then
+            echo "  ⚠️  HOTFIX MODE: Recipe review skipped"
+            echo "    → Consider running: .zcp/recipe-search.sh quick {runtime}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            return 0
+        fi
+    fi
+
+    # In quick mode, skip gate
+    if [ "$mode" = "quick" ]; then
+        echo "  ⚠️  QUICK MODE: Gate skipped"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        return 0
+    fi
+
+    # Check 1: recipe_review.json exists
+    ((checks_total++))
+    if [ -f "$RECIPE_REVIEW_FILE" ]; then
+        echo "  ✓ recipe_review.json exists"
+        ((checks_passed++))
+    else
+        echo "  ✗ recipe_review.json missing"
+        echo "    → Run: .zcp/recipe-search.sh quick {runtime} [managed-service]"
+        echo "    → Example: .zcp/recipe-search.sh quick go postgresql"
+        all_passed=false
+    fi
+
+    # Check 2: verified flag is true
+    ((checks_total++))
+    if command -v jq &>/dev/null && [ -f "$RECIPE_REVIEW_FILE" ]; then
+        local verified
+        verified=$(jq -r '.verified // false' "$RECIPE_REVIEW_FILE" 2>/dev/null)
+        if [ "$verified" = "true" ]; then
+            echo "  ✓ recipe review verified"
+            ((checks_passed++))
+        else
+            echo "  ✗ recipe review not verified"
+            echo "    → Re-run recipe-search.sh quick"
+            all_passed=false
+        fi
+    elif [ -f "$RECIPE_REVIEW_FILE" ]; then
+        echo "  ⚠ Cannot verify (jq unavailable)"
+        ((checks_passed++))
+    fi
+
+    # Check 3: patterns_extracted exists
+    ((checks_total++))
+    if command -v jq &>/dev/null && [ -f "$RECIPE_REVIEW_FILE" ]; then
+        if jq -e '.patterns_extracted' "$RECIPE_REVIEW_FILE" >/dev/null 2>&1; then
+            echo "  ✓ patterns extracted"
+            ((checks_passed++))
+        else
+            echo "  ✗ patterns not extracted"
+            echo "    → Re-run recipe-search.sh quick"
+            all_passed=false
+        fi
+    elif [ -f "$RECIPE_REVIEW_FILE" ]; then
+        echo "  ⚠ Cannot verify patterns (jq unavailable)"
+        ((checks_passed++))
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Result: $checks_passed/$checks_total checks passed"
+
+    if [ "$all_passed" = true ]; then
+        # Show what was discovered
+        echo ""
+        echo "📋 Discovered patterns:"
+        if command -v jq &>/dev/null && [ -f "$RECIPE_REVIEW_FILE" ]; then
+            local runtime managed
+            runtime=$(jq -r '.runtimes_identified[0] // "unknown"' "$RECIPE_REVIEW_FILE" 2>/dev/null)
+            managed=$(jq -r '.managed_services_identified[0] // "none"' "$RECIPE_REVIEW_FILE" 2>/dev/null)
+            echo "   Runtime: $runtime"
+            echo "   Managed: $managed"
+        fi
+        return 0
+    else
+        echo ""
+        echo "❌ Gate FAILED - review recipes before proceeding"
+        echo ""
+        echo "The Recipe Search Tool prevents 10+ common mistakes by:"
+        echo "  • Providing correct version strings (go@1 not go@latest)"
+        echo "  • Showing valid YAML fields and structure"
+        echo "  • Extracting production patterns (alpine, cache, etc.)"
+        echo ""
+        echo "This gate exists because every single documented mistake"
+        echo "could have been prevented by reviewing recipes first."
+        return 1
+    fi
+}
+
+# ============================================================================
+# Gate 1: DISCOVER → DEVELOP
+# ============================================================================
+
 check_gate_discover_to_develop() {
     local checks_passed=0
     local checks_total=0

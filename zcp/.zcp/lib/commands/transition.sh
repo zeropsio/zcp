@@ -129,6 +129,10 @@ cmd_transition_to() {
                 echo "📋 Run: .zcp/workflow.sh init"
                 return 2
             fi
+            # Gate 0: Recipe Discovery
+            if ! check_gate_init_to_discover; then
+                return 2
+            fi
             ;;
         DEVELOP)
             if [ "$current_phase" != "DISCOVER" ]; then
@@ -176,31 +180,161 @@ cmd_transition_to() {
     output_phase_guidance "$target_phase"
 }
 
+# ============================================================================
+# DISCOVER PHASE GUIDANCE (Detects Bootstrap vs Standard Flow)
+# ============================================================================
+
+output_discover_guidance() {
+    echo "✅ Phase: DISCOVER"
+    echo ""
+
+    # Try to detect if runtime services already exist
+    local has_services=false
+    local detection_error=""
+
+    if check_runtime_services_exist 2>/dev/null; then
+        has_services=true
+    else
+        # Capture why detection failed for user guidance
+        if [ -z "${projectId:-}" ] && [ ! -f /tmp/projectId ]; then
+            detection_error="No project ID available"
+        elif [ -z "$DETECTED_SERVICES_JSON" ] || [ "$DETECTED_SERVICES_JSON" = "[]" ]; then
+            detection_error="No runtime services found or zcli error"
+        fi
+    fi
+
+    if [ "$has_services" = true ]; then
+        # STANDARD FLOW: Services exist, just discover and record them
+        cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 STANDARD FLOW: Runtime services detected
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+EOF
+        echo "Existing services:"
+        get_services_summary
+        echo ""
+
+        cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 Record discovery:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   zcli service list -P $projectId
+
+   .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+
+⚠️  Use service IDs (from list), not hostnames
+⚠️  Never use 'zcli scope' - it's buggy
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 Gate: /tmp/discovery.json must exist
+📋 Next: .zcp/workflow.sh transition_to DEVELOP
+EOF
+
+    else
+        # BOOTSTRAP FLOW: No services, need to create them
+        cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 BOOTSTRAP FLOW: No runtime services found
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EOF
+        # Show detection context if available
+        if [ -n "$detection_error" ]; then
+            echo ""
+            echo "ℹ️  Detection: $detection_error"
+        fi
+        cat <<'EOF'
+
+You need to CREATE services before you can discover them.
+Follow these steps IN ORDER:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 STEP 1: Review recipes (REQUIRED - Gate 0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   .zcp/recipe-search.sh quick {runtime} [managed-service]
+
+   Example: .zcp/recipe-search.sh quick go postgresql
+
+   This creates /tmp/recipe_review.json with:
+   • Valid version strings (go@1 not go@latest)
+   • Correct YAML structure
+   • Production patterns (alpine, cache, etc.)
+   • Environment variable patterns
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 STEP 2: Plan service topology (RECOMMENDED)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   .zcp/workflow.sh plan_services {runtime} [managed-service]
+
+   Example: .zcp/workflow.sh plan_services go postgresql
+
+   This creates /tmp/service_plan.json with:
+   • Service hostnames (appdev, appstage, db)
+   • Runtime versions based on recipes
+   • Setup configurations (dev vs prod)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 STEP 3: Create import.yml (REQUIRED)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   Based on the service plan, create import.yml:
+
+   project:
+     name: $projectId
+   services:
+     - hostname: appdev
+       type: go@1
+       enableSubdomainAccess: true
+       zeropsSetup: dev         # ← Links to zerops.yml setup: dev
+     - hostname: appstage
+       type: go@1
+       enableSubdomainAccess: true
+       zeropsSetup: prod        # ← Links to zerops.yml setup: prod
+     - hostname: db
+       type: postgresql@17
+       mode: NON_HA
+
+   ⚠️  zeropsSetup links service to zerops.yml build config
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 STEP 4: Import services (REQUIRED)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   .zcp/workflow.sh extend import.yml
+
+   This will:
+   • Create the services in Zerops
+   • Wait for them to be ready
+   • Create /tmp/services_imported.json evidence
+
+   ⚠️  After import, restart ZCP to get new env vars!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 STEP 5: Record discovery (REQUIRED)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   zcli service list -P $projectId
+
+   .zcp/workflow.sh create_discovery {dev_id} appdev {stage_id} appstage
+
+⚠️  Use service IDs (from list), not hostnames
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 Gate: /tmp/discovery.json must exist
+📋 Next: .zcp/workflow.sh transition_to DEVELOP
+EOF
+    fi
+}
+
 output_phase_guidance() {
     local phase="$1"
 
     case "$phase" in
         DISCOVER)
-            cat <<'EOF'
-✅ Phase: DISCOVER
-
-📋 Commands:
-   zcli login --region=gomibako \
-       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-       "$ZEROPS_ZCP_API_KEY"
-
-   zcli service list -P $projectId
-
-📋 Then record discovery:
-   .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
-
-⚠️  Never use 'zcli scope' - it's buggy
-⚠️  Use service IDs (from list), not hostnames
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 Gate: /tmp/discovery.json must exist
-📋 Next: .zcp/workflow.sh transition_to DEVELOP
-EOF
+            output_discover_guidance
             ;;
         DEVELOP)
             cat <<'EOF'

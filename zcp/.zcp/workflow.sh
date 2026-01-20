@@ -80,6 +80,15 @@ main() {
         extend)
             cmd_extend "$@"
             ;;
+        plan_services)
+            cmd_plan_services "$@"
+            ;;
+        snapshot_dev)
+            cmd_snapshot_dev "$@"
+            ;;
+        validate_config|validate_code)
+            "$SCRIPT_DIR/validate-config.sh" "$@"
+            ;;
         refresh_discovery)
             cmd_refresh_discovery "$@"
             ;;
@@ -152,6 +161,11 @@ EOF
             echo "  refresh_discovery           Validate discovery"
             echo "  upgrade-to-full             Upgrade dev-only to full"
             echo "  record_deployment {svc}     Manual deploy evidence"
+            echo ""
+            echo "Planning Commands:"
+            echo "  plan_services {rt} [db]     Plan service topology"
+            echo "  snapshot_dev [name]         Create dev snapshot (Gate 5)"
+            echo "  validate_config {yml}       Validate zerops.yml (Gate 3)"
             echo ""
             echo "Continuity Commands:"
             echo "  iterate [--to PHASE] [summary]  Start new iteration from DONE"

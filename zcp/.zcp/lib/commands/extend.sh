@@ -1,6 +1,42 @@
 #!/bin/bash
 # Extension commands for Zerops Workflow
 
+create_import_evidence() {
+    local import_file="$1"
+    local session_id
+    session_id=$(get_session)
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    local pid
+    pid=$(cat /tmp/projectId 2>/dev/null || echo "$projectId")
+
+    # Get service list
+    local services_json="[]"
+    if command -v zcli &>/dev/null && [ -n "$pid" ]; then
+        services_json=$(zcli service list -P "$pid" --json 2>/dev/null | \
+            jq '[.[] | {hostname: .hostname, id: .id, type: .type, status: .status}]' 2>/dev/null || echo "[]")
+    fi
+
+    local evidence
+    evidence=$(jq -n \
+        --arg sid "$session_id" \
+        --arg ts "$timestamp" \
+        --arg if "$import_file" \
+        --argjson svcs "$services_json" \
+        '{
+            session_id: $sid,
+            timestamp: $ts,
+            import_file: $if,
+            import_successful: true,
+            services_created: $svcs,
+            ready_for_deployment: true
+        }')
+
+    safe_write_json "$SERVICES_IMPORTED_FILE" "$evidence"
+    echo "✓ Import evidence created: $SERVICES_IMPORTED_FILE"
+}
+
 cmd_extend() {
     local import_file="$1"
 
@@ -57,6 +93,10 @@ cmd_extend() {
 
     echo ""
     echo "✅ Services ready"
+
+    # Create evidence for Gate 2
+    create_import_evidence "$import_file"
+
     echo ""
     echo "⚠️  IMPORTANT: Environment Variable Timing"
     echo "   New services' vars are NOT visible in ZCP until restart."

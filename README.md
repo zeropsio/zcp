@@ -2,6 +2,23 @@
 
 An AI agent workflow orchestration framework for the Zerops PaaS platform. Guides AI agents (primarily Claude) through structured, evidence-based development and deployment workflows.
 
+## Repository Structure
+
+```
+/Users/fxck/www/zcp/          ← Repository root (you are here)
+├── README.md                  ← This file
+└── zcp/                       ← DEPLOYMENT PACKAGE (copy this to projects)
+    ├── CLAUDE.md              ← Agent entry point
+    ├── .zcp/                  ← Workflow tools
+    │   ├── recipe-search.sh   ← Recipe discovery tool (Gate 0)
+    │   ├── validate-config.sh ← Config validation (Gate 3)
+    │   └── ...
+    └── .claude/               ← Claude Code settings
+```
+
+When deploying to a Zerops project, copy the contents of `zcp/` to the project root.
+All paths in this document assume you're working within the `zcp/` directory.
+
 ## Purpose
 
 **Safe, predictable AI-driven deployments through enforced quality gates.**
@@ -44,11 +61,13 @@ zcp/
 ├── CLAUDE.md              # Entry point for agents
 ├── .zcp/                  # Workflow tools
 │   ├── workflow.sh        # Main entry point + command router
+│   ├── recipe-search.sh   # Recipe & docs search tool (Gate 0)
+│   ├── validate-config.sh # zerops.yml validation (Gate 3)
 │   ├── verify.sh          # Endpoint testing with evidence + auto context capture
 │   ├── status.sh          # Deployment status + wait mode + auto context capture
 │   └── lib/               # Modular components (AI-readable)
 │       ├── utils.sh       # State management, persistence, locking, context capture
-│       ├── gates.sh       # Phase transition gate checks
+│       ├── gates.sh       # Phase transition gate checks (Gates 0-7)
 │       ├── help.sh        # Help system loader
 │       ├── commands.sh    # Commands loader
 │       ├── help/
@@ -59,7 +78,8 @@ zcp/
 │           ├── transition.sh # transition_to, phase guidance
 │           ├── discovery.sh  # create_discovery, refresh_discovery
 │           ├── status.sh     # show, complete, reset
-│           ├── extend.sh     # extend, upgrade-to-full, record_deployment
+│           ├── extend.sh     # extend, upgrade-to-full, record_deployment, import evidence
+│           ├── planning.sh   # plan_services, snapshot_dev (Gates 1, 5.5)
 │           ├── iterate.sh    # iterate command (post-DONE continuation)
 │           ├── retarget.sh   # retarget command (change deployment target)
 │           └── context.sh    # intent, note commands (rich context)
@@ -98,16 +118,179 @@ Reuses recent discovery (<24h), skips dev verification. For urgent fixes.
 ### Quick Mode
 No gates, no enforcement. For exploration and debugging.
 
+## Bootstrap vs Standard Flow (Auto-Detected)
+
+The workflow **automatically detects** whether runtime services exist and provides appropriate guidance:
+
+| Situation | Detection | Flow |
+|-----------|-----------|------|
+| **Services exist** | `zcli service list` finds runtime services | Standard: just record discovery |
+| **No services** | No runtime services found | Bootstrap: must create services first |
+
+**How it works:**
+1. Run `.zcp/workflow.sh init`
+2. Run `.zcp/workflow.sh transition_to DISCOVER`
+3. The system checks for existing runtime services
+4. Based on detection, shows either **Standard** or **Bootstrap** guidance
+
+### Standard Flow (Services Exist)
+
+```
+INIT → recipes → DISCOVER → record discovery → DEVELOP → ...
+```
+
+When runtime services already exist, you skip service creation:
+1. Review recipes (Gate 0)
+2. List services: `zcli service list -P $projectId`
+3. Record: `.zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}`
+
+### Bootstrap Flow (No Services)
+
+```
+INIT → recipes → plan → import.yml → extend → DISCOVER → record → DEVELOP → ...
+```
+
+When no runtime services exist, you must create them:
+1. **Review recipes** (Gate 0): `.zcp/recipe-search.sh quick {runtime} [managed-service]`
+2. **Plan services** (recommended): `.zcp/workflow.sh plan_services {runtime} [managed-service]`
+3. **Create import.yml** with `zeropsSetup` linking services to zerops.yml configs
+4. **Import services**: `.zcp/workflow.sh extend import.yml`
+5. **Restart ZCP** to get new environment variables
+6. **Record discovery**: `.zcp/workflow.sh create_discovery {dev_id} appdev {stage_id} appstage`
+
+### Key Insight
+
+> **There is no "bootstrap" phase.** Projects always start with ZCP already present.
+> The workflow detects project state and guides appropriately.
+> **Init = Extend** — always adding to an existing project.
+
+## Typical Workflow
+
+A complete workflow with all gates looks like this:
+
+```bash
+# 1. INIT: Start workflow session
+.zcp/workflow.sh init
+
+# 2. Gate 0: Review recipes FIRST (mandatory)
+.zcp/recipe-search.sh quick go postgresql
+#    → Creates /tmp/recipe_review.json
+
+# 3. DISCOVER: Transition (Gate 0 checked)
+.zcp/workflow.sh transition_to DISCOVER
+zcli service list -P $projectId
+.zcp/workflow.sh create_discovery {dev_id} appdev {stage_id} appstage
+
+# 4. Gate 1 (optional): Plan services
+.zcp/workflow.sh plan_services go postgresql
+#    → Creates /tmp/service_plan.json
+
+# 5. DEVELOP: Transition (Gate 4 checked)
+.zcp/workflow.sh transition_to DEVELOP
+# Edit code at /var/www/appdev/
+# Build and test: ssh appdev "go build && ./app"
+
+# 6. Gate 3 (optional): Validate config before deploy
+.zcp/validate-config.sh /var/www/appdev/zerops.yml
+#    → Creates /tmp/config_validated.json
+
+# 7. Verify dev works
+.zcp/verify.sh appdev 8080 / /status /api/health
+#    → Creates /tmp/dev_verify.json
+
+# 8. Gate 5.5 (optional): Create snapshot for rollback
+.zcp/workflow.sh snapshot_dev "v1.0.0"
+#    → Creates /tmp/dev_snapshot.json
+
+# 9. DEPLOY: Transition (Gate 5 checked - dev_verify.json)
+.zcp/workflow.sh transition_to DEPLOY
+ssh appdev "zcli push {stage_service_id} --setup=prod"
+.zcp/status.sh --wait appstage
+#    → Creates /tmp/deploy_evidence.json
+
+# 10. VERIFY: Transition (Gate 6 checked)
+.zcp/workflow.sh transition_to VERIFY
+.zcp/verify.sh appstage 8080 / /status /api/health
+#    → Creates /tmp/stage_verify.json
+
+# 11. DONE: Transition (Gate 7 checked)
+.zcp/workflow.sh transition_to DONE
+.zcp/workflow.sh complete
+```
+
+**Minimum required flow**: Steps 1, 2, 3, 5, 7, 9, 10, 11 (Gates 0, 4, 5, 6, 7)
+
 ## Gates
 
-Each transition requires evidence from the current session:
+The workflow enforces quality gates at each phase transition. Gates 0-3 are new "upstream" gates that catch mistakes early; Gates 4-7 are the original gates.
 
-| Transition | Required Evidence |
-|------------|-------------------|
-| DISCOVER → DEVELOP | `discovery.json` with matching session_id, dev ≠ stage |
-| DEVELOP → DEPLOY | `dev_verify.json` with 0 failures |
-| DEPLOY → VERIFY | `deploy_evidence.json` from .zcp/status.sh --wait |
-| VERIFY → DONE | `stage_verify.json` with 0 failures |
+### Gate Overview
+
+| Gate | Transition | Evidence File | Created By | Prevents |
+|------|------------|---------------|------------|----------|
+| **Gate 0** | INIT → DISCOVER | `recipe_review.json` | `.zcp/recipe-search.sh quick` | Invalid versions, wrong YAML structure |
+| Gate 1 | (Optional) | `service_plan.json` | `.zcp/workflow.sh plan_services` | Poor service topology |
+| Gate 2 | (Auto) | `services_imported.json` | `.zcp/workflow.sh extend` | Missing import audit trail |
+| Gate 3 | (Optional) | `config_validated.json` | `.zcp/validate-config.sh` | Config errors before deploy |
+| **Gate 4** | DISCOVER → DEVELOP | `discovery.json` | `.zcp/workflow.sh create_discovery` | Wrong service targeting |
+| **Gate 5** | DEVELOP → DEPLOY | `dev_verify.json` | `.zcp/verify.sh {dev}` | Deploying broken code |
+| Gate 5.5 | (Optional) | `dev_snapshot.json` | `.zcp/workflow.sh snapshot_dev` | No rollback point |
+| **Gate 6** | DEPLOY → VERIFY | `deploy_evidence.json` | `.zcp/status.sh --wait` | Verifying incomplete deploy |
+| **Gate 7** | VERIFY → DONE | `stage_verify.json` | `.zcp/verify.sh {stage}` | Shipping broken features |
+
+**Bold gates** are enforced (blocking). Others are optional but create audit trails.
+
+### Gate 0: Recipe Discovery (Critical)
+
+Gate 0 alone prevents 5 of the 13 documented common mistakes. **Run this first**:
+
+```bash
+.zcp/recipe-search.sh quick {runtime} [managed-service]
+# Example: .zcp/recipe-search.sh quick go postgresql
+```
+
+This creates `/tmp/recipe_review.json` with:
+- Valid version strings (`go@1` not `go@latest`)
+- Correct YAML structure (`zerops:` wrapper, `setup:` names)
+- Production patterns (alpine runtime, `cache: true`)
+- Environment variable patterns (granular, not connection strings)
+
+The DISCOVER transition is blocked until recipe review is complete.
+
+### Gate 3: Config Validation
+
+Before deployment, validate your `zerops.yml`:
+
+```bash
+.zcp/validate-config.sh /var/www/{app}/zerops.yml
+```
+
+Checks:
+- Has `zerops:` top-level wrapper
+- Separate dev and prod setups
+- `cache: true` in both builds (5-10x faster rebuilds)
+- Prod uses alpine runtime (40x smaller images)
+- Dev uses `zsc noop --silent` (manual control)
+- Explicit `envVariables` (not implicit)
+- Granular env vars (`DB_HOST`, not `DATABASE_URL`)
+
+### Mistakes Prevented by Gates
+
+| # | Mistake | Gate |
+|---|---------|------|
+| 1 | `go@latest` instead of `go@1` | Gate 0 |
+| 2 | Invalid YAML field `buildFromGit: false` | Gate 0 |
+| 3 | Missing `zerops:` wrapper | Gate 3 |
+| 4 | Wrong build command syntax | Gate 0 |
+| 5 | No `cache: true` | Gate 3 |
+| 6 | Go runtime for prod (not alpine) | Gate 3 |
+| 7 | Connection string vs granular vars | Gate 3 |
+| 8 | Identical dev/prod setups | Gate 3 |
+| 9 | Implicit build (no main.go ref) | Gate 0 |
+| 10 | No `zeropsSetup` service linking | Gate 1 |
+| 11-13 | Runtime/workflow errors | Gates 5-7 |
+
+**Gates 0 + 3 together catch 77% of all documented mistakes.**
 
 Backward transitions (`--back`) invalidate downstream evidence.
 
@@ -120,8 +303,24 @@ Backward transitions (`--back`) invalidate downstream evidence.
 .zcp/workflow.sh init --hotfix           # Skip to DEVELOP, reuse discovery
 .zcp/workflow.sh --quick                 # No enforcement
 
+# Recipe Discovery (Gate 0 - run FIRST)
+.zcp/recipe-search.sh quick {runtime} [managed-service]
+.zcp/recipe-search.sh pattern {service-type}
+.zcp/recipe-search.sh version {service-type}
+.zcp/recipe-search.sh field {yaml-section}
+
+# Service Planning (Gate 1 - optional)
+.zcp/workflow.sh plan_services {runtime} [managed-service]
+
+# Config Validation (Gate 3 - before deploy)
+.zcp/validate-config.sh {zerops.yml}     # Alias: validate_code
+
+# Dev Snapshot (Gate 5.5 - optional rollback point)
+.zcp/workflow.sh snapshot_dev [version-name]
+
 # Transitions
-.zcp/workflow.sh transition_to DEVELOP
+.zcp/workflow.sh transition_to DISCOVER  # Requires Gate 0 (recipe review)
+.zcp/workflow.sh transition_to DEVELOP   # Requires Gate 4 (discovery)
 .zcp/workflow.sh transition_to --back DEVELOP  # Go backward, invalidates evidence
 
 # Discovery
@@ -143,7 +342,7 @@ Backward transitions (`--back`) invalidate downstream evidence.
 .zcp/workflow.sh note "observation"      # Add timestamped note
 
 # Extensions
-.zcp/workflow.sh extend {import.yml}     # Add services to project
+.zcp/workflow.sh extend {import.yml}     # Add services to project (creates Gate 2 evidence)
 .zcp/workflow.sh upgrade-to-full         # Convert dev-only to full deployment
 
 # Help
@@ -157,18 +356,28 @@ Backward transitions (`--back`) invalidate downstream evidence.
 
 All stored in `/tmp/` (with write-through to `.zcp/state/` for persistence):
 
+### State Files
 | File | Created By | Contains |
 |------|------------|----------|
 | `claude_session` | `.zcp/workflow.sh init` | Session ID |
 | `claude_mode` | `.zcp/workflow.sh init` | full, dev-only, hotfix, quick |
 | `claude_phase` | `.zcp/workflow.sh transition_to` | Current phase |
 | `claude_iteration` | `.zcp/workflow.sh iterate` | Current iteration number |
+| `claude_intent.txt` | `.zcp/workflow.sh intent` | Workflow intent/goal |
 | `claude_context.json` | Auto-captured | Last error, notes |
-| `claude_intent.txt` | `.zcp/workflow.sh intent` | Workflow intent |
-| `discovery.json` | `.zcp/workflow.sh create_discovery` | Dev/stage service mapping |
-| `dev_verify.json` | `.zcp/verify.sh {dev}` | Dev endpoint test results |
-| `stage_verify.json` | `.zcp/verify.sh {stage}` | Stage endpoint test results |
-| `deploy_evidence.json` | `.zcp/status.sh --wait` | Deployment completion proof |
+
+### Gate Evidence Files
+| File | Gate | Created By | Purpose |
+|------|------|------------|---------|
+| `recipe_review.json` | Gate 0 | `.zcp/recipe-search.sh quick` | Recipe patterns, versions, validation rules |
+| `service_plan.json` | Gate 1 | `.zcp/workflow.sh plan_services` | Service topology decisions |
+| `services_imported.json` | Gate 2 | `.zcp/workflow.sh extend` | Import audit trail |
+| `config_validated.json` | Gate 3 | `.zcp/validate-config.sh` | Config validation results |
+| `discovery.json` | Gate 4 | `.zcp/workflow.sh create_discovery` | Dev/stage service mapping |
+| `dev_verify.json` | Gate 5 | `.zcp/verify.sh {dev}` | Dev endpoint test results |
+| `dev_snapshot.json` | Gate 5.5 | `.zcp/workflow.sh snapshot_dev` | Rollback point |
+| `deploy_evidence.json` | Gate 6 | `.zcp/status.sh --wait` | Deployment completion proof |
+| `stage_verify.json` | Gate 7 | `.zcp/verify.sh {stage}` | Stage endpoint test results |
 
 ## Key Features
 
@@ -321,9 +530,12 @@ The `.claude/settings.json` file pre-authorizes common commands:
 
 ### Adding New Gates
 
-1. Add check function in `.zcp/lib/gates.sh`
-2. Wire into `transition.sh` logic
-3. Document required evidence in help
+1. Add evidence file path in `.zcp/lib/utils.sh`
+2. Add check function in `.zcp/lib/gates.sh`
+3. Wire into `transition.sh` logic
+4. Create command/script that generates evidence (if not standalone)
+5. Register command in `workflow.sh` and `commands.sh`
+6. Document required evidence in help and README
 
 ### Testing Changes
 
@@ -341,10 +553,31 @@ Key functions available for new commands:
 | Function | Purpose |
 |----------|---------|
 | `get_session`, `get_mode`, `get_phase` | Read current state |
-| `set_phase`, `set_iteration` | Update state |
+| `get_iteration`, `set_iteration` | Manage iteration counter |
+| `set_phase` | Update workflow phase |
 | `safe_write_json` | Atomic JSON write with error handling |
 | `write_evidence` | Write-through to /tmp/ and persistent storage |
 | `auto_capture_context` | Record errors for workflow continuity |
 | `with_lock` | BSD-compatible file locking |
 | `check_evidence_session` | Validate evidence belongs to current session |
 | `check_evidence_freshness` | Warn if evidence >24h old |
+| `sync_to_persistent` | Sync /tmp/ state to persistent storage |
+| `restore_from_persistent` | Restore state after container restart |
+| `init_persistent_storage` | Initialize .zcp/state/ directories |
+
+### Evidence File Variables (lib/utils.sh)
+
+```bash
+# Original gate evidence
+DISCOVERY_FILE="/tmp/discovery.json"
+DEV_VERIFY_FILE="/tmp/dev_verify.json"
+STAGE_VERIFY_FILE="/tmp/stage_verify.json"
+DEPLOY_EVIDENCE_FILE="/tmp/deploy_evidence.json"
+
+# New gate evidence (Gates 0-3, 5.5)
+RECIPE_REVIEW_FILE="/tmp/recipe_review.json"
+SERVICE_PLAN_FILE="/tmp/service_plan.json"
+SERVICES_IMPORTED_FILE="/tmp/services_imported.json"
+CONFIG_VALIDATED_FILE="/tmp/config_validated.json"
+DEV_SNAPSHOT_FILE="/tmp/dev_snapshot.json"
+```
