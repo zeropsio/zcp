@@ -13,7 +13,7 @@ DEBUG=false
 
 show_help() {
     cat <<'EOF'
-verify.sh - Endpoint verification with evidence generation
+.zcp/verify.sh - Endpoint verification with evidence generation
 
 ⚠️  WARNING: This script only checks HTTP status codes (2xx = pass).
     HTTP 200 does NOT mean the feature works correctly!
@@ -24,20 +24,20 @@ verify.sh - Endpoint verification with evidence generation
     - Database: Data actually persisted
 
 USAGE:
-  verify.sh {service} {port} {endpoint} [endpoints...]
-  verify.sh --debug {service} {port} {endpoint} [endpoints...]
-  verify.sh --help
+  .zcp/verify.sh {service} {port} {endpoint} [endpoints...]
+  .zcp/verify.sh --debug {service} {port} {endpoint} [endpoints...]
+  .zcp/verify.sh --help
 
 EXAMPLES:
-  verify.sh appdev 8080 / /status /api/items
-  verify.sh --debug appstage 8080 /
+  .zcp/verify.sh appdev 8080 / /status /api/items
+  .zcp/verify.sh --debug appstage 8080 /
 
 OUTPUT:
   Creates /tmp/{service}_verify.json
   Auto-copies to /tmp/dev_verify.json or /tmp/stage_verify.json
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️  ADDITIONAL VERIFICATION REQUIRED (verify.sh is not enough!)
+⚠️  ADDITIONAL VERIFICATION REQUIRED (.zcp/verify.sh is not enough!)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Backend APIs - Check response content:
@@ -95,6 +95,18 @@ get_session() {
     fi
 }
 
+# Load discovery for accurate service matching
+# Sets globals: DEV_SERVICE_NAME, STAGE_SERVICE_NAME
+get_discovery_names() {
+    if [ -f "/tmp/discovery.json" ]; then
+        DEV_SERVICE_NAME=$(jq -r '.dev.name // empty' "/tmp/discovery.json" 2>/dev/null)
+        STAGE_SERVICE_NAME=$(jq -r '.stage.name // empty' "/tmp/discovery.json" 2>/dev/null)
+    else
+        DEV_SERVICE_NAME=""
+        STAGE_SERVICE_NAME=""
+    fi
+}
+
 # ============================================================================
 # ENDPOINT TESTING
 # ============================================================================
@@ -105,25 +117,32 @@ test_endpoint() {
     local endpoint="$3"
 
     debug_log "Testing endpoint: $endpoint"
-    debug_log "Command: ssh $service \"curl -sf -o /dev/null -w '%{http_code}' http://localhost:$port$endpoint\""
+    debug_log "Command: ssh $service \"curl -s -w '\\n%{http_code}' http://localhost:$port$endpoint\""
 
-    local status_code
-    status_code=$(ssh "$service" "curl -sf -o /dev/null -w '%{http_code}' http://localhost:$port$endpoint" 2>/dev/null)
+    # Get both body and status code (body, newline, status_code)
+    local output
+    output=$(ssh "$service" "curl -s -w '\n%{http_code}' http://localhost:$port$endpoint" 2>/dev/null)
     local curl_exit=$?
+
+    # Parse status code (last line) and body (everything before)
+    local status_code="${output##*$'\n'}"
+    local body="${output%$'\n'*}"
 
     debug_log "Result: $status_code (curl exit: $curl_exit)"
 
     # If curl succeeded and we got a 2xx status, it's a pass
     if [ $curl_exit -eq 0 ] && [ -n "$status_code" ] && [ "$status_code" -ge 200 ] && [ "$status_code" -lt 300 ]; then
         debug_log "Pass: true"
-        echo "$status_code:true"
+        echo "$status_code:true:"
     else
         debug_log "Pass: false"
         # Return whatever status we got, or 000 if curl failed completely
         if [ -z "$status_code" ]; then
             status_code="000"
         fi
-        echo "$status_code:false"
+        # Include truncated body for context capture (first 200 chars)
+        local truncated="${body:0:200}"
+        echo "$status_code:false:$truncated"
     fi
 }
 
@@ -182,10 +201,10 @@ main() {
     shift 2
 
     if [ -z "$service" ] || [ -z "$port" ] || [ $# -eq 0 ]; then
-        echo "❌ Usage: verify.sh [--debug] {service} {port} {endpoint} [endpoints...]"
+        echo "❌ Usage: .zcp/verify.sh [--debug] {service} {port} {endpoint} [endpoints...]"
         echo ""
-        echo "Example: verify.sh appdev 8080 / /status /api/items"
-        echo "Help:    verify.sh --help"
+        echo "Example: .zcp/verify.sh appdev 8080 / /status /api/items"
+        echo "Help:    .zcp/verify.sh --help"
         exit 2
     fi
 
@@ -210,13 +229,21 @@ main() {
 
     echo "=== Verifying $service:$port ==="
 
+    # Track first failure for context capture
+    local first_failure_endpoint=""
+    local first_failure_status=""
+    local first_failure_body=""
+
     # Test each endpoint
     for endpoint in "$@"; do
         local result
         result=$(test_endpoint "$service" "$port" "$endpoint")
 
-        local status_code="${result%%:*}"
-        local pass="${result##*:}"
+        # Parse result: status_code:pass:body_snippet
+        local status_code pass body_snippet
+        status_code=$(echo "$result" | cut -d: -f1)
+        pass=$(echo "$result" | cut -d: -f2)
+        body_snippet=$(echo "$result" | cut -d: -f3-)
 
         if [ "$pass" = "true" ]; then
             echo "  ✅ $endpoint → $status_code"
@@ -224,6 +251,13 @@ main() {
         else
             echo "  ❌ $endpoint → $status_code"
             failed=$((failed + 1))
+
+            # Capture first failure for context
+            if [ -z "$first_failure_endpoint" ]; then
+                first_failure_endpoint="$endpoint"
+                first_failure_status="$status_code"
+                first_failure_body="$body_snippet"
+            fi
         fi
 
         # Build JSON result
@@ -233,6 +267,16 @@ main() {
             --argjson p "$([ "$pass" = "true" ] && echo true || echo false)" \
             '{endpoint: $ep, status: ($st | tonumber), pass: $p}')")
     done
+
+    # Auto-capture context on failure (for workflow continuity)
+    if [ -n "$first_failure_endpoint" ]; then
+        # Source utils.sh for auto_capture_context if not already sourced
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
+            source "$SCRIPT_DIR/lib/utils.sh"
+            auto_capture_context "verify_failure" "$first_failure_endpoint" "$first_failure_status" "$first_failure_body"
+        fi
+    fi
 
     echo ""
     echo "Passed: $passed | Failed: $failed"
@@ -263,13 +307,34 @@ main() {
 
     echo "Evidence: $evidence_file"
 
-    # Auto-copy to role-specific file
-    if echo "$service" | grep -qi "dev" && ! echo "$service" | grep -qi "stage"; then
+    # Load discovery names for accurate matching
+    get_discovery_names
+
+    # Copy evidence to role-specific file based on discovery.json (exact match)
+    if [ -n "$DEV_SERVICE_NAME" ] && [ "$service" = "$DEV_SERVICE_NAME" ]; then
         cp "$evidence_file" /tmp/dev_verify.json
-        echo "→ Copied to /tmp/dev_verify.json"
-    elif echo "$service" | grep -qi "stage"; then
+        echo "→ Copied to /tmp/dev_verify.json (matches discovery dev: $DEV_SERVICE_NAME)"
+    elif [ -n "$STAGE_SERVICE_NAME" ] && [ "$service" = "$STAGE_SERVICE_NAME" ]; then
         cp "$evidence_file" /tmp/stage_verify.json
-        echo "→ Copied to /tmp/stage_verify.json"
+        echo "→ Copied to /tmp/stage_verify.json (matches discovery stage: $STAGE_SERVICE_NAME)"
+    elif [ -n "$DEV_SERVICE_NAME" ] || [ -n "$STAGE_SERVICE_NAME" ]; then
+        # Discovery exists but service doesn't match
+        echo "⚠️  Service '$service' not in discovery.json"
+        echo "   Expected: dev='$DEV_SERVICE_NAME' or stage='$STAGE_SERVICE_NAME'"
+        echo "   Evidence saved to: $evidence_file (not auto-linked to workflow)"
+        echo ""
+        echo "💡 If this is your dev/stage service, update discovery:"
+        echo "   .zcp/workflow.sh create_discovery {dev_id} $service {stage_id} {stage_name}"
+    else
+        # No discovery - fall back to pattern matching with warning
+        echo "⚠️  No discovery.json found, using pattern matching fallback"
+        if echo "$service" | grep -qi "dev" && ! echo "$service" | grep -qi "stage"; then
+            cp "$evidence_file" /tmp/dev_verify.json
+            echo "→ Copied to /tmp/dev_verify.json (pattern match: contains 'dev')"
+        elif echo "$service" | grep -qi "stage"; then
+            cp "$evidence_file" /tmp/stage_verify.json
+            echo "→ Copied to /tmp/stage_verify.json (pattern match: contains 'stage')"
+        fi
     fi
 
     # Check for frontend and show reminder

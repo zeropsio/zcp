@@ -11,12 +11,12 @@ set -o pipefail
 
 show_help() {
     cat <<'EOF'
-status.sh - Deployment status and monitoring
+.zcp/status.sh - Deployment status and monitoring
 
 USAGE:
-  status.sh                           # Show current state
-  status.sh --wait {service}          # Wait for deployment
-  status.sh --wait {service} --timeout 600
+  .zcp/status.sh                           # Show current state
+  .zcp/status.sh --wait {service}          # Wait for deployment
+  .zcp/status.sh --wait {service} --timeout 600
 
 SHOWS:
   - Service list with app version timestamps
@@ -38,9 +38,9 @@ DEPLOYMENT STATUS LOGIC:
   └─────────────────────┴──────────────────┴────────────┘
 
 EXAMPLES:
-  status.sh
-  status.sh --wait appstage
-  status.sh --wait appstage --timeout 600
+  .zcp/status.sh
+  .zcp/status.sh --wait appstage
+  .zcp/status.sh --wait appstage --timeout 600
 EOF
 }
 
@@ -174,12 +174,40 @@ wait_for_deployment() {
             SUCCESS)
                 echo "  [${elapsed}/${timeout}s] ✅ Deployment complete!"
                 echo ""
+                # Record deployment evidence
+                local deploy_session
+                deploy_session=$(cat /tmp/claude_session 2>/dev/null || echo "")
+                if [ -n "$deploy_session" ]; then
+                    if ! jq -n \
+                        --arg sid "$deploy_session" \
+                        --arg svc "$service" \
+                        --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+                        '{
+                            session_id: $sid,
+                            service: $svc,
+                            timestamp: $ts,
+                            status: "SUCCESS"
+                        }' > /tmp/deploy_evidence.json.tmp; then
+                        echo "Warning: Failed to record deployment evidence" >&2
+                        rm -f /tmp/deploy_evidence.json.tmp
+                    else
+                        mv /tmp/deploy_evidence.json.tmp /tmp/deploy_evidence.json
+                        echo "→ Deployment evidence recorded: /tmp/deploy_evidence.json"
+                        echo ""
+                    fi
+                fi
                 show_status
                 return 0
                 ;;
             ERROR)
                 echo "  [${elapsed}/${timeout}s] ❌ Deployment failed!"
                 echo ""
+                # Auto-capture context for workflow continuity
+                SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
+                    source "$SCRIPT_DIR/lib/utils.sh"
+                    auto_capture_context "deploy_failure" "$service" "ERROR" "Deployment failed"
+                fi
                 show_status
                 return 1
                 ;;
@@ -199,6 +227,12 @@ wait_for_deployment() {
     echo ""
     echo "❌ Timeout waiting for deployment (${timeout}s)"
     echo ""
+    # Auto-capture context for workflow continuity
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
+        source "$SCRIPT_DIR/lib/utils.sh"
+        auto_capture_context "deploy_timeout" "$service" "TIMEOUT" "Deployment timed out after ${timeout}s"
+    fi
     show_status
     return 1
 }
@@ -219,7 +253,7 @@ main() {
         local timeout=300
 
         if [ -z "$service" ]; then
-            echo "❌ Usage: status.sh --wait {service} [--timeout N]"
+            echo "❌ Usage: .zcp/status.sh --wait {service} [--timeout N]"
             exit 2
         fi
 
