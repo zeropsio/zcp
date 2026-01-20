@@ -117,25 +117,32 @@ test_endpoint() {
     local endpoint="$3"
 
     debug_log "Testing endpoint: $endpoint"
-    debug_log "Command: ssh $service \"curl -sf -o /dev/null -w '%{http_code}' http://localhost:$port$endpoint\""
+    debug_log "Command: ssh $service \"curl -s -w '\\n%{http_code}' http://localhost:$port$endpoint\""
 
-    local status_code
-    status_code=$(ssh "$service" "curl -sf -o /dev/null -w '%{http_code}' http://localhost:$port$endpoint" 2>/dev/null)
+    # Get both body and status code (body, newline, status_code)
+    local output
+    output=$(ssh "$service" "curl -s -w '\n%{http_code}' http://localhost:$port$endpoint" 2>/dev/null)
     local curl_exit=$?
+
+    # Parse status code (last line) and body (everything before)
+    local status_code="${output##*$'\n'}"
+    local body="${output%$'\n'*}"
 
     debug_log "Result: $status_code (curl exit: $curl_exit)"
 
     # If curl succeeded and we got a 2xx status, it's a pass
     if [ $curl_exit -eq 0 ] && [ -n "$status_code" ] && [ "$status_code" -ge 200 ] && [ "$status_code" -lt 300 ]; then
         debug_log "Pass: true"
-        echo "$status_code:true"
+        echo "$status_code:true:"
     else
         debug_log "Pass: false"
         # Return whatever status we got, or 000 if curl failed completely
         if [ -z "$status_code" ]; then
             status_code="000"
         fi
-        echo "$status_code:false"
+        # Include truncated body for context capture (first 200 chars)
+        local truncated="${body:0:200}"
+        echo "$status_code:false:$truncated"
     fi
 }
 
@@ -222,13 +229,21 @@ main() {
 
     echo "=== Verifying $service:$port ==="
 
+    # Track first failure for context capture
+    local first_failure_endpoint=""
+    local first_failure_status=""
+    local first_failure_body=""
+
     # Test each endpoint
     for endpoint in "$@"; do
         local result
         result=$(test_endpoint "$service" "$port" "$endpoint")
 
-        local status_code="${result%%:*}"
-        local pass="${result##*:}"
+        # Parse result: status_code:pass:body_snippet
+        local status_code pass body_snippet
+        status_code=$(echo "$result" | cut -d: -f1)
+        pass=$(echo "$result" | cut -d: -f2)
+        body_snippet=$(echo "$result" | cut -d: -f3-)
 
         if [ "$pass" = "true" ]; then
             echo "  ✅ $endpoint → $status_code"
@@ -236,6 +251,13 @@ main() {
         else
             echo "  ❌ $endpoint → $status_code"
             failed=$((failed + 1))
+
+            # Capture first failure for context
+            if [ -z "$first_failure_endpoint" ]; then
+                first_failure_endpoint="$endpoint"
+                first_failure_status="$status_code"
+                first_failure_body="$body_snippet"
+            fi
         fi
 
         # Build JSON result
@@ -245,6 +267,16 @@ main() {
             --argjson p "$([ "$pass" = "true" ] && echo true || echo false)" \
             '{endpoint: $ep, status: ($st | tonumber), pass: $p}')")
     done
+
+    # Auto-capture context on failure (for workflow continuity)
+    if [ -n "$first_failure_endpoint" ]; then
+        # Source utils.sh for auto_capture_context if not already sourced
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
+            source "$SCRIPT_DIR/lib/utils.sh"
+            auto_capture_context "verify_failure" "$first_failure_endpoint" "$first_failure_status" "$first_failure_body"
+        fi
+    fi
 
     echo ""
     echo "Passed: $passed | Failed: $failed"

@@ -1,6 +1,7 @@
 # Zerops Platform
 
 **Fix errors on dev. Stage is for final validation, not debugging.**
+**Workflows iterate. After DONE, run `init` again — it guides you.**
 
 ## Start Here — RUN ONE
 
@@ -18,7 +19,7 @@
 If resuming work, entering mid-session, or unsure of current state:
 ```bash
 .zcp/workflow.sh show           # State, evidence, next steps
-.zcp/workflow.sh show --guidance # Full context recovery (state + phase guidance)
+.zcp/workflow.sh show --full    # Extended context (intent, notes, last error)
 .zcp/workflow.sh recover        # Complete recovery: show + guidance + rules
 ```
 Then follow the NEXT STEPS section in the output.
@@ -64,6 +65,7 @@ $ZEROPS_ZAGENT_API_KEY      # Auth key for zcli
 ${service_VAR}              # Other service's var: prefix with hostname
 ssh svc 'echo $VAR'         # Inside service: no prefix
 ```
+Full patterns: `.zcp/workflow.sh --help vars`
 
 ## Gotchas
 
@@ -90,24 +92,12 @@ ssh svc 'echo $VAR'         # Inside service: no prefix
 | deployFiles | Must include ALL artifacts — check before every deploy |
 | zeropsSubdomain | Already full URL — don't prepend `https://` |
 
-## Evidence Files
-
-| File | Purpose |
-|------|---------|
-| `/tmp/claude_session` | Session ID |
-| `/tmp/claude_phase` | Current phase |
-| `/tmp/discovery.json` | Dev/stage service mapping |
-| `/tmp/dev_verify.json` | Dev verification results |
-| `/tmp/stage_verify.json` | Stage verification results |
-| `/tmp/deploy_evidence.json` | Deployment completion proof |
-
 ## Reference
 
 ```bash
 .zcp/workflow.sh show           # Current phase, what's blocking
-.zcp/workflow.sh show --guidance # Status + full phase guidance
+.zcp/workflow.sh show --full    # Status + extended context (intent, notes, last error)
 .zcp/workflow.sh recover        # Complete context recovery
-.zcp/workflow.sh state          # One-line state summary
 .zcp/workflow.sh --help         # Full platform reference
 ```
 

@@ -202,6 +202,12 @@ wait_for_deployment() {
             ERROR)
                 echo "  [${elapsed}/${timeout}s] ❌ Deployment failed!"
                 echo ""
+                # Auto-capture context for workflow continuity
+                SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
+                    source "$SCRIPT_DIR/lib/utils.sh"
+                    auto_capture_context "deploy_failure" "$service" "ERROR" "Deployment failed"
+                fi
                 show_status
                 return 1
                 ;;
@@ -221,6 +227,12 @@ wait_for_deployment() {
     echo ""
     echo "❌ Timeout waiting for deployment (${timeout}s)"
     echo ""
+    # Auto-capture context for workflow continuity
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
+        source "$SCRIPT_DIR/lib/utils.sh"
+        auto_capture_context "deploy_timeout" "$service" "TIMEOUT" "Deployment timed out after ${timeout}s"
+    fi
     show_status
     return 1
 }

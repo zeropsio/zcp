@@ -3,26 +3,36 @@
 
 cmd_show() {
     local show_guidance=false
-    if [ "$1" = "--guidance" ]; then
-        show_guidance=true
-    fi
+    local show_full=false
+
+    # Parse flags
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --guidance) show_guidance=true; shift ;;
+            --full) show_full=true; shift ;;
+            *) shift ;;
+        esac
+    done
 
     local session_id
     local mode
     local phase
+    local iteration
 
     session_id=$(get_session)
     mode=$(get_mode)
     phase=$(get_phase)
+    iteration=$(get_iteration 2>/dev/null || echo "1")
 
     cat <<EOF
 ╔══════════════════════════════════════════════════════════════════╗
 ║  WORKFLOW STATUS                                                 ║
 ╚══════════════════════════════════════════════════════════════════╝
 
-Session:  ${session_id:-none}
-Mode:     ${mode:-none}
-Phase:    ${phase:-none}
+Session:    ${session_id:-none}
+Mode:       ${mode:-none}
+Phase:      ${phase:-none}
+Iteration:  ${iteration}
 
 Evidence:
 EOF
@@ -219,6 +229,70 @@ GUIDANCE
             echo "Unknown phase. Run: .zcp/workflow.sh init"
             ;;
     esac
+
+    # Show last error if any (automatically captured from verify/deploy failures)
+    local last_error
+    last_error=$(get_last_error 2>/dev/null)
+    if [ -n "$last_error" ]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⚠️  LAST ERROR"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "  $last_error"
+    fi
+
+    # If --full flag, show extended context
+    if [ "$show_full" = true ]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📜 EXTENDED CONTEXT"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        # Show intent if set
+        local intent
+        intent=$(get_intent 2>/dev/null)
+        if [ -n "$intent" ]; then
+            echo "Intent: \"$intent\""
+        else
+            echo "Intent: (not set)"
+        fi
+
+        # Show iteration history summary
+        local history_file="$WORKFLOW_STATE_DIR/iteration_history.json"
+        if [ -f "$history_file" ]; then
+            local iter_count
+            iter_count=$(jq -r '.iterations | length' "$history_file" 2>/dev/null || echo "0")
+            echo "Iteration history: $iter_count iteration(s) recorded"
+
+            # Show last iteration summary
+            local last_summary
+            last_summary=$(jq -r '.iterations[-1].summary // ""' "$history_file" 2>/dev/null)
+            if [ -n "$last_summary" ]; then
+                echo "Current iteration: \"$last_summary\""
+            fi
+        fi
+
+        # Show recent notes if any
+        local notes_count
+        notes_count=$(jq -r '.notes | length' "$CONTEXT_FILE" 2>/dev/null || echo "0")
+        if [ "$notes_count" -gt 0 ]; then
+            echo ""
+            echo "Recent notes:"
+            jq -r '.notes[-3:][] | "  [\(.at | split("T")[1] | split(".")[0])] \(.text)"' "$CONTEXT_FILE" 2>/dev/null
+        fi
+
+        # Show context file timestamp
+        if [ -f "$CONTEXT_FILE" ]; then
+            local ctx_ts
+            ctx_ts=$(jq -r '.last_error.timestamp // empty' "$CONTEXT_FILE" 2>/dev/null)
+            if [ -n "$ctx_ts" ]; then
+                echo ""
+                echo "Last context update: $ctx_ts"
+            fi
+        fi
+    fi
 
     # If --guidance flag, output full phase guidance
     if [ "$show_guidance" = true ] && [ -n "$phase" ] && [ "$phase" != "NONE" ] && [ "$phase" != "QUICK" ]; then

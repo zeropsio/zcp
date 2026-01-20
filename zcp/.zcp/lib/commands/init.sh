@@ -8,6 +8,35 @@ cmd_init() {
 
     # Idempotent init - don't create duplicate sessions
     if [ -n "$existing_session" ]; then
+        local current_phase
+        current_phase=$(get_phase)
+
+        # Special handling for DONE phase - suggest iterate instead
+        if [ "$current_phase" = "DONE" ]; then
+            echo "╔══════════════════════════════════════════════════════════════════╗"
+            echo "║  SESSION ACTIVE - WORKFLOW COMPLETE                              ║"
+            echo "╚══════════════════════════════════════════════════════════════════╝"
+            echo ""
+            echo "Session: $existing_session"
+            echo "Phase:   DONE"
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "💡 OPTIONS"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "  iterate [summary]        Start new iteration (recommended)"
+            echo "                           Preserves discovery, archives evidence"
+            echo ""
+            echo "  iterate --to VERIFY      Skip to verify (no code changes needed)"
+            echo ""
+            echo "  reset --keep-discovery   Full reset, preserve service mapping"
+            echo ""
+            echo "  show                     View current status"
+            echo ""
+            echo "Example: .zcp/workflow.sh iterate \"Add delete confirmation\""
+            return 0
+        fi
+
         echo "✅ Session already active: $existing_session"
         echo ""
         echo "╔══════════════════════════════════════════════════════════════════╗"

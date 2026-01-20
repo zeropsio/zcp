@@ -36,6 +36,9 @@ main() {
     local command="$1"
     shift
 
+    # Initialize persistent storage on startup
+    init_persistent_storage 2>/dev/null
+
     case "$command" in
         init)
             cmd_init "$@"
@@ -83,6 +86,19 @@ main() {
         upgrade-to-full)
             cmd_upgrade_to_full
             ;;
+        # === CONTINUITY COMMANDS ===
+        iterate)
+            cmd_iterate "$@"
+            ;;
+        retarget)
+            cmd_retarget "$@"
+            ;;
+        intent)
+            cmd_intent "$@"
+            ;;
+        note)
+            cmd_note "$@"
+            ;;
         "")
             cat <<'EOF'
 ╔══════════════════════════════════════════════════════════════════╗
@@ -127,7 +143,7 @@ EOF
             echo "  --help [topic]              Show help"
             echo "  transition_to [--back] {phase}  Move to phase"
             echo "  create_discovery [--single] ...  Record services"
-            echo "  show [--guidance]           Current status (--guidance adds phase details)"
+            echo "  show [--guidance|--full]    Current status"
             echo "  recover                     Full context recovery"
             echo "  state                       One-line state summary"
             echo "  complete                    Verify and finish"
@@ -136,6 +152,12 @@ EOF
             echo "  refresh_discovery           Validate discovery"
             echo "  upgrade-to-full             Upgrade dev-only to full"
             echo "  record_deployment {svc}     Manual deploy evidence"
+            echo ""
+            echo "Continuity Commands:"
+            echo "  iterate [--to PHASE] [summary]  Start new iteration from DONE"
+            echo "  retarget {dev|stage} {id} {name}  Change deployment target"
+            echo "  intent [text]               Set/show workflow intent"
+            echo "  note [text]                 Add/show workflow notes"
             return 1
             ;;
     esac
