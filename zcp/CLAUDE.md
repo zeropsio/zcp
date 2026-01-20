@@ -61,7 +61,7 @@ PGPASSWORD=$db_password psql -h db -U $db_user -d $db_database
 
 ```bash
 $projectId                  # Project ID (ZCP has this)
-$ZEROPS_ZAGENT_API_KEY      # Auth key for zcli
+$ZEROPS_ZCP_API_KEY      # Auth key for zcli
 ${service_VAR}              # Other service's var: prefix with hostname
 ssh svc 'echo $VAR'         # Inside service: no prefix
 ```

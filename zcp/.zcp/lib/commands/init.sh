@@ -177,7 +177,7 @@ EOF
 📋 Workflow: INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE
 
 💡 NEXT: DISCOVER phase
-   1. zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZEROPS_ZAGENT_API_KEY"
+   1. zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZEROPS_ZCP_API_KEY"
    2. zcli service list -P \$projectId
    3. .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
    4. .zcp/workflow.sh transition_to DISCOVER

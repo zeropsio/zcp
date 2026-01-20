@@ -114,7 +114,7 @@ EOF
 1. Discover services:
    zcli login --region=gomibako \
        --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-       "$ZEROPS_ZAGENT_API_KEY"
+       "$ZEROPS_ZCP_API_KEY"
    zcli service list -P $projectId   ← -P flag required!
 
 2. Record discovery (use IDs from step 1):
@@ -220,7 +220,7 @@ Quick mode - no workflow enforcement
   redis-cli -u "$cache_connectionString"
 • Variables: ${hostname}_VAR from ZCP, $VAR inside ssh
 • zcli from ZCP: login first, then -P $projectId
-  zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZAGENT_API_KEY"
+  zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZCP_API_KEY"
 • Files: /var/www/{service}/ via SSHFS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 GUIDANCE

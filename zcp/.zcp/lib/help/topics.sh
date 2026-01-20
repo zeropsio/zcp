@@ -72,7 +72,7 @@ Purpose: Authenticate to Zerops and discover service IDs
 Commands:
   zcli login --region=gomibako \
       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-      "$ZEROPS_ZAGENT_API_KEY"
+      "$ZEROPS_ZCP_API_KEY"
 
   zcli service list -P $projectId
 
@@ -270,7 +270,7 @@ Deployment steps:
 2. Authenticate from dev container:
    ssh {dev} "zcli login --region=gomibako \
        --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-       \"\$ZEROPS_ZAGENT_API_KEY\""
+       \"\$ZEROPS_ZCP_API_KEY\""
 
 3. Deploy to stage:
    ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
@@ -493,7 +493,7 @@ Network:
   {hostname}_zeropsSubdomainString # Template: https://{host}-{num}-${port}...
 
 Security:
-  {hostname}_ZEROPS_ZAGENT_API_KEY    # zcli authentication key
+  {hostname}_ZEROPS_ZCP_API_KEY    # zcli authentication key
   {hostname}_envIsolation       # "none" or "service"
   {hostname}_sshIsolation       # SSH access rules
 
@@ -862,7 +862,7 @@ ZCLI LOGIN
 ─────────────────────────────────────────────────────────────────
 zcli login --region=gomibako \
     --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-    "$ZEROPS_ZAGENT_API_KEY"
+    "$ZEROPS_ZCP_API_KEY"
 
 zcli service list -P $projectId    # List services (need -P!)
 

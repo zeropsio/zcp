@@ -187,7 +187,7 @@ output_phase_guidance() {
 📋 Commands:
    zcli login --region=gomibako \
        --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-       "$ZEROPS_ZAGENT_API_KEY"
+       "$ZEROPS_ZCP_API_KEY"
 
    zcli service list -P $projectId
 
@@ -307,7 +307,7 @@ Stop dev process:
 Authenticate from dev container:
   ssh {dev} "zcli login --region=gomibako \\
       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \\
-      \"\$ZEROPS_ZAGENT_API_KEY\""
+      \"\$ZEROPS_ZCP_API_KEY\""
 
 Deploy to stage:
   ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
