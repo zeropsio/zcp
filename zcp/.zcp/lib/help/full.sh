@@ -217,16 +217,18 @@ Service logs:
 🗄️  DATABASE OPERATIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Run from ZCP (not container). Use connection strings for security:
+⚠️  CRITICAL: Run database tools from ZCP directly, NOT via SSH!
 
-PostgreSQL:
+Runtime containers (appdev, etc.) are MINIMAL — they don't have psql, mysql,
+or redis-cli installed. Only ZCP has these tools.
+
+✅ CORRECT (from ZCP):
   psql "$db_connectionString"
-
-Redis/Valkey:
   redis-cli -u "$cache_connectionString"
-
-MySQL/MariaDB:
   mysql "$mysql_connectionString"
+
+❌ WRONG (will fail with "command not found"):
+  ssh appdev "psql ..."   # Runtime containers don't have psql!
 
 ⚠️  Prefer connection strings over individual vars - avoids password exposure
 
@@ -273,7 +275,8 @@ unexpected EOF               │ Network issue      │ Check zcli project
 ─────────────────────────────┼────────────────────┼─────────────────
 zcli scope errors            │ Buggy command      │ Never use it
 ─────────────────────────────┼────────────────────┼─────────────────
-psql: not found              │ Wrong context      │ Run DB from ZCP
+psql: not found (via SSH)    │ Runtime containers │ Run DB tools from ZCP
+                             │ don't have DB tools│ directly (not via ssh)
 ─────────────────────────────┼────────────────────┼─────────────────
 Double https:// in URL       │ zeropsSubdomain    │ Don't prepend
                              │ is full URL        │ protocol

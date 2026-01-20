@@ -49,12 +49,17 @@ You are on ZCP, not inside the app containers.
 - **Runtime** (go, nodejs, php, python, etc.) — SSH ✓, SSHFS ✓, run your code
 - **Managed** (postgresql, valkey, nats, etc.) — NO SSH, access via client tools from ZCP
 
+⚠️ **Runtime containers are MINIMAL** — they run your app code only. They do NOT have database tools (`psql`, `mysql`, `redis-cli`). Only ZCP has these tools pre-installed.
+
 ```bash
-# Runtime: SSH in to build/run
+# Runtime: SSH in to build/run YOUR CODE
 ssh appdev "go build && ./app"
 
-# Managed: Use client tools from ZCP directly
-PGPASSWORD=$db_password psql -h db -U $db_user -d $db_database
+# Database queries: Run from ZCP directly (NOT via ssh!)
+psql "$db_connectionString"
+
+# ❌ WRONG - runtime containers don't have psql
+# ssh appdev "psql ..."   # Will fail: "psql: command not found"
 ```
 
 ## Variables
@@ -72,6 +77,7 @@ Full patterns: `.zcp/workflow.sh --help vars`
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `https://https://...` | zeropsSubdomain is full URL | Don't prepend protocol |
+| `psql: command not found` (via SSH) | Runtime containers don't have DB tools | Run `psql` from ZCP directly, not via ssh |
 | SSH connection refused | Managed service (db, cache) | Use client tools: `psql`, `redis-cli` from ZCP |
 | `cd /var/www/appdev: No such file` | SSH lands in `/var/www` directly | Don't include hostname in path inside container |
 | zcli unknown flag | zcli has custom syntax | Check `zcli {cmd} --help` |

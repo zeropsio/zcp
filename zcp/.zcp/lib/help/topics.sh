@@ -178,8 +178,9 @@ Logs - Look for errors, not just "it started":
   ssh {dev} "tail -50 /tmp/app.log"
   ssh {dev} "grep -iE 'error|exception|panic|fatal' /tmp/app.log"
 
-Database - Verify persistence:
+Database - Verify persistence (run from ZCP, NOT via ssh!):
   psql "$db_connectionString" -c "SELECT * FROM {table} ORDER BY id DESC LIMIT 5;"
+  # ⚠️  Don't use: ssh {dev} "psql ..." — runtime containers don't have psql!
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ❌ DO NOT proceed to DEPLOY if:
@@ -896,10 +897,11 @@ agent-browser errors                         # Must be empty
 agent-browser console
 agent-browser screenshot
 
-DATABASE ACCESS (from ZCP)
+DATABASE ACCESS (from ZCP directly — NOT via ssh!)
 ─────────────────────────────────────────────────────────────────
 psql "$db_connectionString"                  # PostgreSQL
 redis-cli -u "$cache_connectionString"       # Valkey/Redis
+# ⚠️  Runtime containers don't have DB tools — run these from ZCP!
 
 VARIABLES
 ─────────────────────────────────────────────────────────────────
@@ -914,7 +916,8 @@ CRITICAL RULES
 • deployFiles must include ALL artifacts
 • zeropsSubdomain is full URL — don't prepend https://
 • Long commands: run_in_background=true
-• Managed services (db, cache): NO SSH, use client tools
+• DB tools (psql, redis-cli): Run from ZCP, NOT via ssh to runtime
+• Runtime containers are minimal — no dev tools installed
 
 EVIDENCE FILES
 ─────────────────────────────────────────────────────────────────
