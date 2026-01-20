@@ -670,6 +670,34 @@ Common scenario: You have a working app and want to add PostgreSQL,
 Valkey (Redis), NATS, or another managed service.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 LIVE DOCUMENTATION (fetch for latest info)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Import YAML reference (all fields, options):
+  https://docs.zerops.io/references/import.md
+
+Service type list (all available types):
+  https://docs.zerops.io/references/import-yaml/type-list
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 AVAILABLE SERVICE TYPES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Databases:
+  postgresql@14, postgresql@16, postgresql@17
+  mariadb@10.6, keydb@6, valkey@7.2
+  qdrant@1.10, qdrant@1.12
+
+Search Engines:
+  elasticsearch@8.16, meilisearch@1.10, typesense@27.1
+
+Message Brokers:
+  kafka@3.8, nats@2.10
+
+Storage:
+  object-storage, shared-storage
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️  THE CHALLENGE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -690,7 +718,20 @@ Valkey (Redis), NATS, or another managed service.
        mode: NON_HA
    YAML
 
-   Service types: postgresql@16, valkey@7, nats@2, mariadb@10
+   Common import fields:
+     hostname          # Service name (max 25 chars, lowercase alphanumeric)
+     type              # Service type (see list above)
+     mode              # HA or NON_HA (default: NON_HA)
+     priority          # Creation order (higher = created first)
+     envSecrets        # Secret environment variables
+     objectStorageSize # For object-storage type (in GB)
+     objectStoragePolicy # public-read or private
+
+   Vertical autoscaling:
+     minCpu, maxCpu, minRam, maxRam, minDisk, maxDisk
+
+   Horizontal autoscaling:
+     minContainers, maxContainers (1-10)
 
 2. IMPORT THE SERVICE
    ─────────────────────────────────────────────────────────────
@@ -730,44 +771,23 @@ Valkey (Redis), NATS, or another managed service.
 
    Go + PostgreSQL (use connection string):
      connStr := os.Getenv("db_connectionString")
-     // OR individual vars (already in container env):
-     connStr := fmt.Sprintf(
-         "host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-         os.Getenv("db_hostname"),
-         os.Getenv("db_port"),
-         os.Getenv("db_user"),
-         os.Getenv("db_password"),
-         os.Getenv("db_dbName"),
-     )
 
    Node + PostgreSQL (use connection string):
      const connectionString = process.env.db_connectionString;
      const pool = new Pool({ connectionString });
-     // OR individual vars (already in container env):
-     const pool = new Pool({
-       host: process.env.db_hostname,
-       port: process.env.db_port,
-       user: process.env.db_user,
-       password: process.env.db_password,
-       database: process.env.db_dbName,
-     });
 
-6. TEST CONNECTION (from ZCP)
+6. TEST CONNECTION (from ZCP directly - NOT via ssh!)
    ─────────────────────────────────────────────────────────────
    # Use connection string - secure, no password exposure
    psql "$db_connectionString" -c "SELECT 1"
 
-   # Or with individual vars (ZCP has them after restart)
-   psql -h "$db_hostname" -U "$db_user" -d "$db_database" -c "SELECT 1"
-   # Password is in PGPASSWORD from $db_connectionString parsing
-
    # Valkey/Redis
    redis-cli -u "$cache_connectionString" PING
 
+   # ⚠️  Runtime containers don't have DB tools - run from ZCP!
+
 7. RUN YOUR APP
    ─────────────────────────────────────────────────────────────
-   ⚠️  CRITICAL: Just run the app. Don't pass env vars manually!
-
    # ✅ CORRECT - container already has all variables
    ssh appdev './app'
 
@@ -780,7 +800,7 @@ Valkey (Redis), NATS, or another managed service.
 
 PostgreSQL (hostname: db)
   ${db_hostname}, ${db_port}, ${db_user}, ${db_password}, ${db_dbName}
-  ${db_connectionString}  ← Full connection string
+  ${db_connectionString}  ← Full connection string (preferred)
 
 Valkey/Redis (hostname: cache)
   ${cache_hostname}, ${cache_port}, ${cache_password}
@@ -830,7 +850,7 @@ while ! zcli service list -P $projectId | grep -q "db.*RUNNING"; do
 done
 echo "Database ready!"
 
-# 4. Test connection (use connection string - secure)
+# 4. Test connection from ZCP (NOT via ssh!)
 psql "$db_connectionString" -c "SELECT 1"
 
 # 5. Your app reads env vars automatically
@@ -940,49 +960,97 @@ You're starting with an empty project. Here's how to go from
 zero to deployed application.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 ZEROPS RECIPE SYSTEM (RECOMMENDED)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Zerops provides ready-made recipes with dev/stage pairs for AI Agent
+workflows. FETCH these URLs to get complete, working configurations:
+
+FIND A RECIPE:
+  Browse all:     https://stage-vega.zerops.dev/recipes.md
+  By language:    https://stage-vega.zerops.dev/recipes.md?lf={lang}
+  By category:    https://stage-vega.zerops.dev/recipes.md?category={cat}
+
+  Language filters (?lf=):
+    golang, nodejs, php, python, rust, java, dotnet, bun, deno
+    laravel, django, phoenix, symfony, nestjs, nextjs, nuxt, react
+
+  Category filters (?category=):
+    hello-world-examples    ← Simple starters
+    starter-kit             ← Full stack templates
+    cms, crm, e-commerce, ai-ml, observability
+
+GET AI AGENT VARIANT (has dev/stage pairs):
+  https://stage-vega.zerops.dev/recipes/{name}.md?environment=ai-agent
+
+  Examples:
+    recipes/go-hello-world.md?environment=ai-agent
+    recipes/laravel-jetstream.md?environment=ai-agent
+    recipes/nestjs-hello-world.md?environment=ai-agent
+
+The AI Agent environment includes:
+  • appdev service (development, Ubuntu, tools pre-installed)
+  • appstage service (production build)
+  • Database/cache services if needed
+  • Proper zerops.yaml with dev and prod setups
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 THE FLOW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-DEFINE → CREATE → DEVELOP → DEPLOY → VERIFY → DONE
-
-Instead of discovery-first (services exist), this is creation-first.
+FIND RECIPE → FETCH CONFIG → IMPORT → DEVELOP → DEPLOY → VERIFY → DONE
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📝 STEP 1: DEFINE (Create import.yml)
+📝 STEP 1: FIND AND FETCH RECIPE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Create an import.yml for AI Agent pattern (dev + stage):
+Example: Bootstrap a Go app with PostgreSQL
 
-cat > import.yml <<'YAML'
-services:
-  # Dev service (edit files here)
-  - hostname: appdev
-    type: go@latest
-    buildFromGit: false
-    enableSubdomainAccess: true
+1. Fetch the recipe list for Go:
+   URL: https://stage-vega.zerops.dev/recipes.md?lf=golang
 
-  # Stage service (deploy here)
-  - hostname: appstage
-    type: go@latest
-    buildFromGit: false
-    enableSubdomainAccess: true
-YAML
+2. Fetch the AI Agent variant of go-hello-world:
+   URL: https://stage-vega.zerops.dev/recipes/go-hello-world.md?environment=ai-agent
 
-Language options: go@latest, nodejs@20, php@8, python@3, etc.
+3. Extract the import YAML from the recipe (example):
+
+   project:
+     name: go-hello-world-agent
+
+   services:
+     - hostname: appstage
+       type: go@1
+       zeropsSetup: prod
+       buildFromGit: https://github.com/zerops-recipe-apps/go-hello-world-app
+       enableSubdomainAccess: true
+
+     - hostname: appdev
+       type: go@1
+       zeropsSetup: dev
+       buildFromGit: https://github.com/zerops-recipe-apps/go-hello-world-app
+       enableSubdomainAccess: true
+       verticalAutoscaling:
+         minRam: 0.5
+
+     - hostname: db
+       type: postgresql@17
+       mode: NON_HA
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📦 STEP 2: CREATE (Import services)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-zcli project import ./import.yml -P $projectId
+Save the import YAML and run:
+
+  zcli project import ./import.yml -P $projectId
 
 Wait for services to be ready:
 
-while zcli service list -P $projectId | grep -qE "PENDING|BUILDING"; do
-  echo "Waiting for services to be ready..."
-  sleep 30
-done
-echo "Services ready!"
+  while zcli service list -P $projectId | grep -qE "PENDING|BUILDING"; do
+    echo "Waiting for services to be ready..."
+    sleep 30
+  done
+  echo "Services ready!"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 💻 STEP 3: DEVELOP
@@ -999,19 +1067,50 @@ Now services exist. Run normal workflow:
 Create your application code at /var/www/appdev/
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📖 COMPLETE EXAMPLE: Go Hello World
+📦 AVAILABLE RUNTIME TYPES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Runtimes:
+  go@1, nodejs@18, nodejs@20, nodejs@22
+  php-nginx@8.1, php-nginx@8.2, php-nginx@8.3, php-nginx@8.4
+  php-apache@8.1, php-apache@8.2, php-apache@8.3, php-apache@8.4
+  python@3.11, python@3.12
+  bun, deno, dotnet@6, dotnet@7, dotnet@8, dotnet@9
+  elixir, gleam, java@17, java@21, rust
+
+Static:
+  nginx@1.22, static@1.0
+
+Containers:
+  alpine@3.17, alpine@3.18, alpine@3.19, alpine@3.20
+  ubuntu@22.04, ubuntu@24.04
+
+Full list: https://docs.zerops.io/references/import-yaml/type-list
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 ADDITIONAL REFERENCES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Import YAML reference (all fields):
+  https://docs.zerops.io/references/import.md
+
+zerops.yaml specification (build/deploy config):
+  https://docs.zerops.io/zerops-yaml/specification.md
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 MANUAL EXAMPLE: Go Hello World (no recipe)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If you prefer to create manually without fetching a recipe:
 
 # 1. Create import.yml
 cat > import.yml <<'YAML'
 services:
   - hostname: appdev
-    type: go@latest
-    buildFromGit: false
+    type: go@1
     enableSubdomainAccess: true
   - hostname: appstage
-    type: go@latest
-    buildFromGit: false
+    type: go@1
     enableSubdomainAccess: true
 YAML
 
@@ -1055,21 +1154,21 @@ cat > /var/www/appdev/zerops.yaml <<'YAML'
 zerops:
   - setup: app
     build:
-      base: go@latest
+      base: go@1
       buildCommands:
         - go build -o app main.go
       deployFiles:
         - ./app
     run:
-      base: go@latest
+      base: go@1
       ports:
         - port: 8080
       start: ./app
 YAML
 
 # 7. Build, run, verify
-ssh appdev "cd /var/www && go build -o app main.go"
-ssh appdev "/var/www/app >> /tmp/app.log 2>&1"  # run_in_background=true
+ssh appdev "go build -o app main.go"
+ssh appdev "./app >> /tmp/app.log 2>&1"  # run_in_background=true
 .zcp/verify.sh appdev 8080 / /status
 
 # Continue with normal DEPLOY → VERIFY → DONE flow
