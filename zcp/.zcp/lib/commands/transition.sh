@@ -277,25 +277,54 @@ Follow these steps IN ORDER:
    • Setup configurations (dev vs prod)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 STEP 3: Create import.yml (REQUIRED)
+📋 STEP 3: Get/Create import.yml (REQUIRED)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EOF
 
-   Based on the service plan, create import.yml:
+        # Check if we have a ready-made import.yml from recipe
+        local has_ready_import="false"
+        local pattern_source=""
+        if [ -f "$RECIPE_REVIEW_FILE" ]; then
+            has_ready_import=$(jq -r '.has_ready_import_yml // false' "$RECIPE_REVIEW_FILE" 2>/dev/null)
+            pattern_source=$(jq -r '.pattern_source // ""' "$RECIPE_REVIEW_FILE" 2>/dev/null)
+        fi
+
+        if [ "$has_ready_import" = "true" ]; then
+            cat <<'EOF'
+
+   ✅ Hello-world recipe found with ready-made import.yml!
+
+   1. Read /tmp/fetched_recipe.md
+   2. Find the import.yml section (look for "project:" and "services:")
+   3. Copy it to import.yml (adjust hostnames if needed: appdev, appstage)
+   4. Ensure startWithoutCode: true for dev services
+
+   ⚠️  USE THE RECIPE'S IMPORT.YML - don't invent your own!
+EOF
+        else
+            cat <<'EOF'
+
+   Documentation fallback - construct import.yml manually:
 
    project:
      name: $projectId
    services:
      - hostname: appdev
        type: go@1
+       startWithoutCode: true
        enableSubdomainAccess: true
-       zeropsSetup: dev         # ← Links to zerops.yml setup: dev
      - hostname: appstage
        type: go@1
        enableSubdomainAccess: true
-       zeropsSetup: prod        # ← Links to zerops.yml setup: prod
      - hostname: db
        type: postgresql@17
        mode: NON_HA
+
+   Reference: /tmp/fetched_docs.md for version strings and patterns
+EOF
+        fi
+
+        cat <<'EOF'
 
    ⚠️  zeropsSetup links service to zerops.yml build config
 

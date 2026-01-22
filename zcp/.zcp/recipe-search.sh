@@ -1422,9 +1422,17 @@ EOF
     echo "This file satisfies Gate 0 (RECIPE_DISCOVERY) requirements."
     echo ""
     echo "Next steps:"
-    echo "  1. Review patterns in: $evidence_file"
-    echo "  2. Create import.yml using the patterns"
-    echo "  3. Run: .zcp/workflow.sh extend import.yml"
+    echo -e "  ${GREEN}1. .zcp/workflow.sh transition_to DISCOVER${NC}"
+    echo "     (This shows the full bootstrap flow with detailed guidance)"
+    echo ""
+    echo "The DISCOVER phase will guide you through:"
+    if [ "$has_ready_import" = "true" ]; then
+      echo "  • Using import.yml from /tmp/fetched_recipe.md (ready-made!)"
+    else
+      echo "  • Creating import.yml from /tmp/fetched_docs.md patterns"
+    fi
+    echo "  • Running .zcp/workflow.sh extend import.yml"
+    echo "  • Recording discovery with create_discovery"
   elif [ "$api_searched" = "true" ] && [ "$api_found" = "false" ]; then
     # API was searched but no recipe found
     echo -e "${YELLOW}⚠ No Zerops recipe exists for: ${runtime}${NC}"

@@ -3,6 +3,11 @@
 **Fix errors on dev. Stage is for final validation, not debugging.**
 **Workflows iterate. Run `show` anytime — it tells you what to do next.**
 
+⛔ **CRITICAL: Workflow commands tell you what to do next.**
+Each workflow command outputs specific guidance. Follow it — don't skip steps.
+You can track WHAT the user wants, but let the workflow tell you HOW.
+The workflow detects current state and adapts — your pre-made steps cannot.
+
 ## Start Here — RUN ONE
 
 | Will you write/change code? | Command | Examples |
@@ -13,6 +18,8 @@
 | **No, just looking** | `.zcp/workflow.sh --quick` | Read logs, investigate, understand codebase |
 
 **Run one. READ its output completely. FOLLOW the rules it shows.** The script guides each phase and enforces gates.
+
+⚠️ **DO NOT pre-plan tasks before running workflow commands.** The workflow output tells you what to do next. Creating your own todo list and ignoring the workflow guidance will cause you to miss critical steps and fail.
 
 ## Lost Context? Run This
 
@@ -106,7 +113,6 @@ Full patterns: `.zcp/workflow.sh --help vars`
 .zcp/workflow.sh show --full    # Status + extended context (intent, notes, last error)
 .zcp/workflow.sh recover        # Complete context recovery
 .zcp/workflow.sh --help         # Full platform reference
-.zcp/recipe-search.sh quick {runtime} [managed]  # Get valid patterns before creating services
 ```
 
 Help topics (use `--help {topic}`):
