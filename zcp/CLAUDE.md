@@ -106,6 +106,7 @@ Full patterns: `.zcp/workflow.sh --help vars`
 .zcp/workflow.sh show --full    # Status + extended context (intent, notes, last error)
 .zcp/workflow.sh recover        # Complete context recovery
 .zcp/workflow.sh --help         # Full platform reference
+.zcp/recipe-search.sh quick {runtime} [managed]  # Get valid patterns before creating services
 ```
 
 Help topics (use `--help {topic}`):

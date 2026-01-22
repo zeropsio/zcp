@@ -244,11 +244,11 @@ show_help_deploy() {
 
 ⚠️  Most common failure: Agent builds files but forgets to update deployFiles
 
-zerops.yaml structure:
+zerops.yaml structure (use base values from recipe_review.json):
   zerops:
     - setup: api              # ← This is the --setup value
       build:
-        base: go@1.22
+        base: {from recipe_review.json patterns_extracted.runtime_patterns}
         buildCommands:
           - go build -o app main.go
         deployFiles:          # ← CRITICAL SECTION
@@ -257,7 +257,7 @@ zerops.yaml structure:
           - ./static
           - ./config
       run:
-        base: go@1.22
+        base: {from recipe - use alpine for prod}
         ports:
           - port: 8080
         start: ./app
@@ -570,7 +570,7 @@ Service Type (Zerops-Defined):
   • The technology: postgresql, nats, valkey, nodejs, go
   • Cannot be changed
   • Internal to Zerops
-  • Examples: "postgresql@17", "valkey@7.2", "go@1.22"
+  • Get valid versions: .zcp/recipe-search.sh quick {runtime}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️  WHY THIS MATTERS
@@ -670,6 +670,25 @@ Common scenario: You have a working app and want to add PostgreSQL,
 Valkey (Redis), NATS, or another managed service.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  PREREQUISITES (REQUIRED)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Start a session:
+   .zcp/workflow.sh init
+
+2. Review recipes for valid patterns:
+   .zcp/recipe-search.sh quick {runtime} [managed-service]
+   Example: .zcp/recipe-search.sh quick go postgresql
+
+   This provides:
+   • Correct version strings (e.g. runtime@version, never @latest)
+   • Valid YAML structure and fields
+   • startWithoutCode requirement for runtime services
+   • Production patterns from official recipes
+
+The extend command WILL FAIL without these steps.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📚 LIVE DOCUMENTATION (fetch for latest info)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -678,24 +697,6 @@ Import YAML reference (all fields, options):
 
 Service type list (all available types):
   https://docs.zerops.io/references/import-yaml/type-list
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📦 AVAILABLE SERVICE TYPES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Databases:
-  postgresql@14, postgresql@16, postgresql@17
-  mariadb@10.6, keydb@6, valkey@7.2
-  qdrant@1.10, qdrant@1.12
-
-Search Engines:
-  elasticsearch@8.16, meilisearch@1.10, typesense@27.1
-
-Message Brokers:
-  kafka@3.8, nats@2.10
-
-Storage:
-  object-storage, shared-storage
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️  THE CHALLENGE
@@ -711,12 +712,15 @@ Storage:
 
 1. CREATE THE IMPORT FILE
    ─────────────────────────────────────────────────────────────
-   cat > add-service.yml <<'YAML'
+   Use patterns from recipe-search.sh output to create import.yml.
+   The recipe search provides correct version strings and required fields.
+
+   Structure (use versions from recipe_review.json):
    services:
-     - hostname: db
-       type: postgresql@16
+     - hostname: {name}
+       type: {from recipe search}
        mode: NON_HA
-   YAML
+       startWithoutCode: true  # Required for runtime services
 
    Common import fields:
      hostname          # Service name (max 25 chars, lowercase alphanumeric)
@@ -832,11 +836,15 @@ This is platform behavior, not a bug. Plan for it.
 📖 COMPLETE EXAMPLE: Adding PostgreSQL to Go App
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# 1. Create import file
+# 0. Get valid patterns first (Gate 0 requirement)
+.zcp/recipe-search.sh quick go postgresql
+# Check /tmp/recipe_review.json for valid_versions
+
+# 1. Create import file (use version from recipe search)
 cat > add-postgres.yml <<'YAML'
 services:
   - hostname: db
-    type: postgresql@16
+    type: {postgresql version from recipe_review.json}
     mode: NON_HA
 YAML
 
@@ -980,13 +988,15 @@ FIND A RECIPE:
     starter-kit             ← Full stack templates
     cms, crm, e-commerce, ai-ml, observability
 
-GET AI AGENT VARIANT (has dev/stage pairs):
-  https://stage-vega.zerops.dev/recipes/{name}.md?environment=ai-agent
+GET AI AGENT VARIANT (TWO FETCHES REQUIRED):
 
-  Examples:
-    recipes/go-hello-world.md?environment=ai-agent
-    recipes/laravel-jetstream.md?environment=ai-agent
-    recipes/nestjs-hello-world.md?environment=ai-agent
+  FETCH 1 - Get import.yml to find service hostnames:
+    https://stage-vega.zerops.dev/recipes/{name}.md?environment=ai-agent
+
+  FETCH 2 - Get zerops.yml for specific service:
+    https://stage-vega.zerops.dev/recipes/{name}.md?environment=ai-agent&guideFlow=integrate&guideEnv=ai-agent&guideApp={hostname}
+
+  guideApp must match a hostname from FETCH 1's import.yml (e.g., appstage, app)
 
 The AI Agent environment includes:
   • appdev service (development, Ubuntu, tools pre-installed)
@@ -995,10 +1005,30 @@ The AI Agent environment includes:
   • Proper zerops.yaml with dev and prod setups
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 LOCAL RECIPE SEARCH (REQUIRED FOR GATE 0)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Before creating import.yml, run the local recipe search tool:
+
+  .zcp/recipe-search.sh quick {runtime} [managed-service]
+
+Examples:
+  .zcp/recipe-search.sh quick go postgresql
+  .zcp/recipe-search.sh quick nodejs valkey
+
+This creates /tmp/recipe_review.json with:
+  • Correct version strings (e.g. runtime@version, never @latest)
+  • Valid YAML structure and required fields
+  • startWithoutCode requirement for runtime services
+  • Production patterns (alpine runtime, cache: true)
+
+Gate 0 BLOCKS service imports until this is done.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 THE FLOW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-FIND RECIPE → FETCH CONFIG → IMPORT → DEVELOP → DEPLOY → VERIFY → DONE
+INIT → RECIPE SEARCH → IMPORT → DEVELOP → DEPLOY → VERIFY → DONE
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📝 STEP 1: FIND AND FETCH RECIPE
@@ -1006,34 +1036,32 @@ FIND RECIPE → FETCH CONFIG → IMPORT → DEVELOP → DEPLOY → VERIFY → DO
 
 Example: Bootstrap a Go app with PostgreSQL
 
-1. Fetch the recipe list for Go:
-   URL: https://stage-vega.zerops.dev/recipes.md?lf=golang
+1. Fetch the recipe list:
+   URL: https://stage-vega.zerops.dev/recipes.md?category=hello-world-examples
 
-2. Fetch the AI Agent variant of go-hello-world:
-   URL: https://stage-vega.zerops.dev/recipes/go-hello-world.md?environment=ai-agent
+2. Fetch the AI Agent variant with full zerops.yml:
+   URL: https://stage-vega.zerops.dev/recipes/go-hello-world.md?environment=ai-agent&guideFlow=integrate&guideEnv=ai-agent&guideApp=appstage
 
 3. Extract the import YAML from the recipe (example):
 
-   project:
-     name: go-hello-world-agent
+   Use patterns from .zcp/recipe-search.sh quick {runtime} {managed}
 
+   Structure (versions/repos from recipe_review.json):
    services:
      - hostname: appstage
-       type: go@1
+       type: {runtime from recipe search}
        zeropsSetup: prod
-       buildFromGit: https://github.com/zerops-recipe-apps/go-hello-world-app
+       buildFromGit: {if available in recipe}
        enableSubdomainAccess: true
 
      - hostname: appdev
-       type: go@1
+       type: {runtime from recipe search}
        zeropsSetup: dev
-       buildFromGit: https://github.com/zerops-recipe-apps/go-hello-world-app
+       startWithoutCode: true  # OR buildFromGit if available
        enableSubdomainAccess: true
-       verticalAutoscaling:
-         minRam: 0.5
 
      - hostname: db
-       type: postgresql@17
+       type: {managed service from recipe search}
        mode: NON_HA
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1067,27 +1095,6 @@ Now services exist. Run normal workflow:
 Create your application code at /var/www/appdev/
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📦 AVAILABLE RUNTIME TYPES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Runtimes:
-  go@1, nodejs@18, nodejs@20, nodejs@22
-  php-nginx@8.1, php-nginx@8.2, php-nginx@8.3, php-nginx@8.4
-  php-apache@8.1, php-apache@8.2, php-apache@8.3, php-apache@8.4
-  python@3.11, python@3.12
-  bun, deno, dotnet@6, dotnet@7, dotnet@8, dotnet@9
-  elixir, gleam, java@17, java@21, rust
-
-Static:
-  nginx@1.22, static@1.0
-
-Containers:
-  alpine@3.17, alpine@3.18, alpine@3.19, alpine@3.20
-  ubuntu@22.04, ubuntu@24.04
-
-Full list: https://docs.zerops.io/references/import-yaml/type-list
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📚 ADDITIONAL REFERENCES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1098,19 +1105,22 @@ zerops.yaml specification (build/deploy config):
   https://docs.zerops.io/zerops-yaml/specification.md
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📖 MANUAL EXAMPLE: Go Hello World (no recipe)
+📖 MANUAL EXAMPLE: Go Hello World
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-If you prefer to create manually without fetching a recipe:
+# 0. Get valid patterns (REQUIRED - Gate 0)
+.zcp/recipe-search.sh quick go
 
-# 1. Create import.yml
+# 1. Create import.yml (use version from recipe_review.json)
 cat > import.yml <<'YAML'
 services:
   - hostname: appdev
-    type: go@1
+    type: {go version from recipe_review.json}
+    startWithoutCode: true
     enableSubdomainAccess: true
   - hostname: appstage
-    type: go@1
+    type: {go version from recipe_review.json}
+    startWithoutCode: true
     enableSubdomainAccess: true
 YAML
 
@@ -1149,18 +1159,18 @@ func main() {
 }
 GO
 
-# 6. Create zerops.yaml
+# 6. Create zerops.yaml (use base values from recipe_review.json)
 cat > /var/www/appdev/zerops.yaml <<'YAML'
 zerops:
   - setup: app
     build:
-      base: go@1
+      base: {from recipe_review.json - dev_runtime_base}
       buildCommands:
         - go build -o app main.go
       deployFiles:
         - ./app
     run:
-      base: go@1
+      base: {from recipe_review.json - prod_runtime_base}
       ports:
         - port: 8080
       start: ./app

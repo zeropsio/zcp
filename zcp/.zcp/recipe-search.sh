@@ -17,22 +17,327 @@ NC='\033[0m' # No Color
 # Recipe repository structure (known patterns)
 RECIPE_BASE_URL="https://github.com/zerops-recipe-apps"
 DOCS_BASE_URL="https://docs.zerops.io"
+RECIPE_API_URL="https://stage-vega.zerops.dev"
+RECIPE_DATA_API="https://api-d89-1337.prg1.zerops.app/api"
+
+# Fetch recipe from API when local patterns don't exist
+fetch_recipe_from_api() {
+    local runtime="$1"
+    local recipe_name="$2"
+
+    if ! command -v curl &>/dev/null; then
+        echo -e "${YELLOW}⚠ curl not available, cannot fetch from API${NC}"
+        return 1
+    fi
+
+    echo -e "${BOLD}Fetching recipe from API...${NC}"
+
+    # FETCH 1: Get import.yml to find hostname
+    local fetch1_url="${RECIPE_API_URL}/recipes/${recipe_name}.md?environment=ai-agent"
+    echo "  → Fetching: $fetch1_url"
+
+    local import_response
+    import_response=$(curl -sf "$fetch1_url" 2>/dev/null)
+    if [ -z "$import_response" ]; then
+        echo -e "${RED}✗ Failed to fetch recipe${NC}"
+        return 1
+    fi
+
+    # Save fetch 1 response
+    echo "$import_response" > /tmp/fetched_recipe_import.md
+
+    # Extract hostname from import.yml section
+    # Look for "hostname:" in the YAML code block
+    local hostname
+    hostname=$(echo "$import_response" | grep -E "^\s*hostname:" | head -1 | sed 's/.*hostname:\s*//' | tr -d ' "')
+
+    if [ -z "$hostname" ]; then
+        # Try alternate patterns
+        hostname=$(echo "$import_response" | grep -oE "hostname: [a-z0-9]+" | head -1 | sed 's/hostname: //')
+    fi
+
+    if [ -z "$hostname" ]; then
+        # Look for common names in the content
+        if echo "$import_response" | grep -q 'appstage'; then
+            hostname="appstage"
+        elif echo "$import_response" | grep -q 'app:'; then
+            hostname="app"
+        else
+            echo -e "${YELLOW}⚠ Could not determine hostname from recipe${NC}"
+            hostname="appstage"  # Default fallback
+        fi
+    fi
+
+    echo "  → Found hostname: $hostname"
+
+    # FETCH 2: Get zerops.yml with guideApp
+    local fetch2_url="${RECIPE_API_URL}/recipes/${recipe_name}.md?environment=ai-agent&guideFlow=integrate&guideEnv=ai-agent&guideApp=${hostname}"
+    echo "  → Fetching zerops.yml: $fetch2_url"
+
+    local full_response
+    full_response=$(curl -sf "$fetch2_url" 2>/dev/null)
+    if [ -z "$full_response" ]; then
+        echo -e "${YELLOW}⚠ Could not fetch full recipe, using first response${NC}"
+        full_response="$import_response"
+    fi
+
+    # Save to temp file for parsing
+    echo "$full_response" > /tmp/fetched_recipe.md
+    echo -e "${GREEN}✓ Recipe fetched and saved to /tmp/fetched_recipe.md${NC}"
+
+    # Extract key patterns from the response and save to temp JSON for create_evidence_file
+    extract_patterns_from_response "$runtime" "$full_response"
+
+    # Mark that we have fetched data
+    echo "$runtime" > /tmp/fetched_runtime
+
+    return 0
+}
+
+# Extract patterns from API response
+extract_patterns_from_response() {
+    local runtime="$1"
+    local response="$2"
+
+    echo ""
+    echo -e "${BOLD}Extracted from API:${NC}"
+
+    # Try to find version strings - look for common runtimes (including @latest)
+    local versions
+    versions=$(echo "$response" | grep -oE "(go|golang|nodejs|node|php|python|bun|rust|dotnet|java|alpine)@[0-9a-z.]+" | sort -u | head -10)
+    local versions_json="[]"
+    if [ -n "$versions" ]; then
+        echo -e "${GREEN}Versions found:${NC}"
+        versions_json="["
+        while read v; do
+            echo "  - $v"
+            versions_json+="\"$v\","
+        done <<< "$versions"
+        versions_json="${versions_json%,}]"
+    fi
+
+    # Find the main runtime base from "base:" or "type:" in YAML
+    local runtime_base
+    # First try to get from "base:" in zerops.yml
+    runtime_base=$(echo "$response" | grep -E "^\s*base:" | head -1 | sed 's/.*base:\s*//' | tr -d ' "')
+    if [ -z "$runtime_base" ]; then
+        # Try to get from "type:" in import.yml
+        runtime_base=$(echo "$response" | grep -E "^\s*type:" | head -1 | sed 's/.*type:\s*//' | tr -d ' "')
+    fi
+    if [ -z "$runtime_base" ]; then
+        # Fallback: get first version found
+        runtime_base=$(echo "$versions" | head -1)
+    fi
+
+    if [ -n "$runtime_base" ]; then
+        echo -e "${GREEN}Runtime base:${NC} $runtime_base"
+    fi
+
+    # Try to find alpine base (production runtime)
+    local alpine
+    alpine=$(echo "$response" | grep -oE "alpine@[0-9.]+" | head -1)
+    if [ -n "$alpine" ]; then
+        echo -e "${GREEN}Prod runtime:${NC} $alpine"
+    fi
+
+    # Check for startWithoutCode
+    local has_start_without_code="false"
+    if echo "$response" | grep -q "startWithoutCode"; then
+        echo -e "${GREEN}startWithoutCode:${NC} found in recipe"
+        has_start_without_code="true"
+    fi
+
+    # Check for buildFromGit
+    local git_url=""
+    git_url=$(echo "$response" | grep -oE "buildFromGit: [^ ]+" | head -1 | sed 's/buildFromGit: //')
+    if [ -n "$git_url" ]; then
+        echo -e "${GREEN}buildFromGit:${NC} $git_url"
+    fi
+
+    # Check for cache setting
+    local has_cache="false"
+    if echo "$response" | grep -qE "cache:\s*(true|node_modules|vendor|\.venv)"; then
+        echo -e "${GREEN}cache:${NC} found in recipe"
+        has_cache="true"
+    fi
+
+    # Extract deployFiles patterns
+    local deploy_files
+    deploy_files=$(echo "$response" | grep -A5 "deployFiles:" | grep -E "^\s*-" | head -5 | sed 's/^\s*-\s*//' | tr '\n' ',' | sed 's/,$//')
+    if [ -n "$deploy_files" ]; then
+        echo -e "${GREEN}deployFiles:${NC} $deploy_files"
+    fi
+
+    echo ""
+    echo -e "${CYAN}Full recipe saved to: /tmp/fetched_recipe.md${NC}"
+    echo "Review this file for complete import.yml and zerops.yml patterns."
+
+    # For the evidence file, use the first non-alpine version as the runtime base
+    local evidence_runtime_base="$runtime_base"
+    if [ -z "$evidence_runtime_base" ] || echo "$evidence_runtime_base" | grep -q "alpine"; then
+        evidence_runtime_base=$(echo "$versions" | grep -v "alpine" | head -1)
+    fi
+    [ -z "$evidence_runtime_base" ] && evidence_runtime_base="${runtime}@1"
+
+    # Use alpine if found, otherwise use runtime base for prod
+    local prod_base="${alpine:-$evidence_runtime_base}"
+
+    # Save extracted patterns to temp JSON for create_evidence_file
+    cat > /tmp/fetched_patterns.json <<EOF
+{
+    "runtime": "${runtime}",
+    "runtime_base": "${evidence_runtime_base}",
+    "alpine_base": "${alpine:-null}",
+    "prod_base": "${prod_base}",
+    "versions_found": ${versions_json},
+    "has_start_without_code": ${has_start_without_code},
+    "has_cache": ${has_cache},
+    "build_from_git": "${git_url}",
+    "deploy_files": "${deploy_files}",
+    "fetched": true,
+    "source": "api"
+}
+EOF
+}
+
+# Fetch documentation from docs.zerops.io as fallback when no recipe exists
+# Uses llms.txt structure: every runtime has /runtime/overview.md and /runtime/how-to/build-pipeline.md
+fetch_docs_fallback() {
+    local runtime="$1"
+
+    if ! command -v curl &>/dev/null; then
+        echo -e "${YELLOW}⚠ curl not available${NC}"
+        return 1
+    fi
+
+    echo -e "${BOLD}Fetching from documentation...${NC}"
+
+    # Fetch overview page
+    local overview_url="${DOCS_BASE_URL}/${runtime}/overview.md"
+    echo "  → Fetching: $overview_url"
+
+    local overview_response
+    overview_response=$(curl -sf "$overview_url" 2>/dev/null)
+
+    if [ -z "$overview_response" ]; then
+        echo -e "${RED}✗ Documentation not found for: ${runtime}${NC}"
+        return 1
+    fi
+
+    # Fetch build-pipeline page for more details
+    local pipeline_url="${DOCS_BASE_URL}/${runtime}/how-to/build-pipeline.md"
+    echo "  → Fetching: $pipeline_url"
+
+    local pipeline_response
+    pipeline_response=$(curl -sf "$pipeline_url" 2>/dev/null)
+
+    # Combine responses
+    local combined_response="$overview_response"
+    if [ -n "$pipeline_response" ]; then
+        combined_response="${overview_response}
+
+---
+
+${pipeline_response}"
+    fi
+
+    # Save to temp file
+    echo "$combined_response" > /tmp/fetched_docs.md
+    echo -e "${GREEN}✓ Documentation fetched and saved to /tmp/fetched_docs.md${NC}"
+
+    # Extract patterns from documentation
+    extract_patterns_from_docs "$runtime" "$combined_response"
+
+    return 0
+}
+
+# Extract patterns from documentation (different format than recipe API)
+extract_patterns_from_docs() {
+    local runtime="$1"
+    local response="$2"
+
+    echo ""
+    echo -e "${BOLD}Extracted from documentation:${NC}"
+
+    # Try to find version strings (including @latest)
+    local versions
+    versions=$(echo "$response" | grep -oE "(${runtime}|go|golang|nodejs|node|php|python|bun|rust|dotnet|java|alpine)@[0-9a-z.]+" | sort -u | head -10)
+    local versions_json="[]"
+    if [ -n "$versions" ]; then
+        echo -e "${GREEN}Versions found:${NC}"
+        versions_json="["
+        while read v; do
+            echo "  - $v"
+            versions_json+="\"$v\","
+        done <<< "$versions"
+        versions_json="${versions_json%,}]"
+    fi
+
+    # Find runtime base from documentation examples
+    local runtime_base
+    runtime_base=$(echo "$response" | grep -oE "${runtime}@[0-9.]+" | head -1)
+    if [ -z "$runtime_base" ]; then
+        runtime_base=$(echo "$versions" | grep -v "alpine" | head -1)
+    fi
+
+    if [ -n "$runtime_base" ]; then
+        echo -e "${GREEN}Runtime base:${NC} $runtime_base"
+    else
+        runtime_base="${runtime}@1"
+        echo -e "${YELLOW}Runtime base (default):${NC} $runtime_base"
+    fi
+
+    # Check for zerops.yml examples in docs
+    if echo "$response" | grep -q "zerops:"; then
+        echo -e "${GREEN}zerops.yml examples:${NC} found in documentation"
+    fi
+
+    # Check for import.yml examples
+    if echo "$response" | grep -q "hostname:"; then
+        echo -e "${GREEN}import.yml examples:${NC} found in documentation"
+    fi
+
+    echo ""
+    echo -e "${CYAN}Full documentation saved to: /tmp/fetched_docs.md${NC}"
+    echo "Review this file for configuration examples."
+
+    # For the evidence file
+    local evidence_runtime_base="$runtime_base"
+    [ -z "$evidence_runtime_base" ] && evidence_runtime_base="${runtime}@1"
+
+    # Save extracted patterns to temp JSON for create_evidence_file
+    cat > /tmp/fetched_patterns.json <<EOF
+{
+    "runtime": "${runtime}",
+    "runtime_base": "${evidence_runtime_base}",
+    "alpine_base": null,
+    "prod_base": "${evidence_runtime_base}",
+    "versions_found": ${versions_json},
+    "has_start_without_code": false,
+    "has_cache": false,
+    "build_from_git": "",
+    "deploy_files": "",
+    "fetched": true,
+    "source": "docs"
+}
+EOF
+}
 
 # Helper function to get recipe patterns (bash 3 compatible)
+# NOTE: Only list recipes that ACTUALLY EXIST at stage-vega.zerops.dev/recipes.md
+# Last verified: 2026-01-22
 get_recipe_patterns() {
     local runtime="$1"
     case "$runtime" in
-        go) echo "go-hello-world go-hello-world-remote" ;;
-        nodejs) echo "nodejs-hello-world nodejs-express" ;;
-        php) echo "php-hello-world php-laravel" ;;
-        python) echo "python-hello-world python-django python-flask" ;;
-        rust) echo "rust-hello-world" ;;
+        # VERIFIED EXISTING RECIPES from API:
+        go) echo "go-hello-world" ;;
         bun) echo "bun-hello-world" ;;
-        nginx) echo "nginx-static" ;;
-        postgresql) echo "go-hello-world-remote nodejs-postgresql" ;;
-        valkey|redis) echo "nodejs-valkey" ;;
-        elasticsearch) echo "elasticsearch-example" ;;
-        nats) echo "nats-example" ;;
+        nodejs|node) echo "nestjs-hello-world" ;;
+        php) echo "laravel-jetstream" ;;
+        python) echo "django" ;;
+        # These have recipes that USE them but aren't runtime recipes:
+        postgresql|postgres) echo "go-hello-world" ;;  # go recipe includes postgresql
+        valkey|redis) echo "laravel-jetstream" ;;      # laravel recipe includes valkey
         *) echo "" ;;
     esac
 }
@@ -55,7 +360,8 @@ get_docs_paths() {
 }
 
 # List of known runtimes for help display
-KNOWN_RUNTIMES="go nodejs php python rust bun nginx postgresql valkey redis elasticsearch nats"
+# Only list runtimes that have VERIFIED recipes at stage-vega.zerops.dev
+KNOWN_RUNTIMES="go bun nodejs php python"
 
 show_help() {
   cat <<EOF
@@ -392,6 +698,141 @@ ${YELLOW}Reference:${NC}
 EOF
       ;;
 
+    bun)
+      cat <<EOF
+${BOLD}Bun Runtime Patterns:${NC}
+
+${GREEN}Valid Versions:${NC}
+  - bun@1
+
+${GREEN}Production Runtime:${NC}
+  base: bun@1
+  start: bun run start
+
+${GREEN}Development Runtime:${NC}
+  os: ubuntu
+  base: bun@1
+  start: zsc noop --silent  # Manual control
+
+${GREEN}Build Configuration:${NC}
+  build:
+    base: bun@1
+    buildCommands:
+      - bun install
+      - bun run build  # If needed
+    deployFiles:
+      - package.json
+      - bun.lockb
+      - node_modules
+      - dist  # Or src
+    cache: node_modules
+
+${GREEN}Environment Variables:${NC}
+  envVariables:
+    DB_HOST: \${db_hostname}
+    DB_PORT: \${db_port}
+    DB_USER: \${db_user}
+    DB_PASS: \${db_password}
+    DB_NAME: \${db_dbName}
+
+${GREEN}Import Configuration:${NC}
+  - hostname: appdev
+    type: bun@1
+    zeropsSetup: dev
+    startWithoutCode: true
+    enableSubdomainAccess: true
+
+${YELLOW}Reference:${NC}
+  Recipe: ${RECIPE_BASE_URL}/bun-hello-world
+EOF
+      ;;
+
+    php)
+      cat <<EOF
+${BOLD}PHP Runtime Patterns:${NC}
+
+${GREEN}Valid Versions:${NC}
+  - php-nginx@8.4
+  - php-apache@8.4
+
+${GREEN}Production Runtime:${NC}
+  base: php-nginx@8.4
+  start: (handled by nginx)
+
+${GREEN}Development Runtime:${NC}
+  os: ubuntu
+  base: php-nginx@8.4
+  start: zsc noop --silent
+
+${GREEN}Build Configuration:${NC}
+  build:
+    base: php-nginx@8.4
+    buildCommands:
+      - composer install --no-dev --optimize-autoloader
+    deployFiles:
+      - vendor
+      - public
+      - app
+      - config
+      - routes
+    cache: vendor
+
+${GREEN}Environment Variables:${NC}
+  envVariables:
+    DB_HOST: \${db_hostname}
+    DB_PORT: \${db_port}
+    DB_USER: \${db_user}
+    DB_PASS: \${db_password}
+    DB_NAME: \${db_dbName}
+    CACHE_DRIVER: redis
+    REDIS_HOST: \${cache_hostname}
+
+${YELLOW}Reference:${NC}
+  Recipe: ${RECIPE_BASE_URL}/laravel-jetstream
+  Docs: ${DOCS_BASE_URL}/php/how-to/build-pipeline
+EOF
+      ;;
+
+    python)
+      cat <<EOF
+${BOLD}Python Runtime Patterns:${NC}
+
+${GREEN}Valid Versions:${NC}
+  - python@3.12
+
+${GREEN}Production Runtime:${NC}
+  base: python@3.12
+  start: gunicorn myapp.wsgi:application
+
+${GREEN}Development Runtime:${NC}
+  os: ubuntu
+  base: python@3.12
+  start: zsc noop --silent
+
+${GREEN}Build Configuration:${NC}
+  build:
+    base: python@3.12
+    buildCommands:
+      - pip install -r requirements.txt
+    deployFiles:
+      - .
+    cache: .venv
+
+${GREEN}Environment Variables:${NC}
+  envVariables:
+    DB_HOST: \${db_hostname}
+    DB_PORT: \${db_port}
+    DB_USER: \${db_user}
+    DB_PASS: \${db_password}
+    DB_NAME: \${db_dbName}
+    DJANGO_SETTINGS_MODULE: myapp.settings
+
+${YELLOW}Reference:${NC}
+  Recipe: ${RECIPE_BASE_URL}/django
+  Docs: ${DOCS_BASE_URL}/python/how-to/build-pipeline
+EOF
+      ;;
+
     *)
       echo -e "${YELLOW}⚠ No pattern template for: $service_type${NC}"
       echo ""
@@ -581,6 +1022,114 @@ EOF
   echo ""
 }
 
+# No local patterns - always fetch from API or docs
+has_local_patterns() {
+  # Always return false - recipe API and docs are the only sources of truth
+  return 1
+}
+
+# Find the framework slug from the API (handles aliases like go->golang)
+find_framework_slug() {
+  local search="$1"
+
+  local frameworks
+  frameworks=$(curl -sf "${RECIPE_DATA_API}/recipe-language-frameworks?pagination%5BpageSize%5D=200" 2>/dev/null)
+
+  if [ -z "$frameworks" ]; then
+    return 1
+  fi
+
+  # Try exact slug match first, then name match (case insensitive)
+  local slug
+  slug=$(echo "$frameworks" | jq -r --arg s "$search" '.data[] | select(.slug == $s or (.name | ascii_downcase) == ($s | ascii_downcase)) | .slug' | head -1)
+
+  # Handle common aliases
+  if [ -z "$slug" ]; then
+    case "$search" in
+      go) slug="golang" ;;
+      node|nodejs) slug="node-js" ;;
+      dotnet) slug="net" ;;
+    esac
+  fi
+
+  [ -n "$slug" ] && echo "$slug"
+}
+
+# Find recipe for a runtime from API
+# Returns: recipe_slug:category_type (e.g., "go-hello-world:hello-world" or "django:framework")
+# Logic:
+#   - Base runtimes (python, go, etc.) → only use hello-world recipes, else fallback to docs
+#   - Explicit frameworks (django, laravel) → use framework recipe
+find_recipe_for_runtime() {
+  local runtime="$1"
+
+  echo -e "${CYAN}Searching recipe API...${NC}" >&2
+
+  # Step 1: Check if this is an explicit framework search (e.g., "django", "laravel")
+  # by looking for a recipe with this exact slug
+  local direct_recipe_url="${RECIPE_DATA_API}/recipes?filters%5Bslug%5D=${runtime}&populate%5BrecipeCategories%5D=true"
+  local direct_response
+  direct_response=$(curl -sf "$direct_recipe_url" 2>/dev/null)
+
+  if [ -n "$direct_response" ]; then
+    local direct_slug direct_category
+    direct_slug=$(echo "$direct_response" | jq -r '.data[0].slug // empty')
+    direct_category=$(echo "$direct_response" | jq -r '.data[0].recipeCategories[0].slug // empty')
+
+    if [ -n "$direct_slug" ] && [ "$direct_category" = "framework-oss-examples" ]; then
+      # User searched for a framework directly (e.g., "django")
+      echo -e "${GREEN}Found framework recipe: ${direct_slug}${NC}" >&2
+      echo "${direct_slug}:framework"
+      return 0
+    fi
+  fi
+
+  # Step 2: Find the framework slug for runtime search
+  local framework_slug
+  framework_slug=$(find_framework_slug "$runtime")
+
+  if [ -z "$framework_slug" ]; then
+    echo -e "${YELLOW}⚠ Unknown runtime: ${runtime}${NC}" >&2
+    return 1
+  fi
+
+  echo -e "${CYAN}Found framework: ${framework_slug}${NC}" >&2
+
+  # Step 3: Query recipes for this framework
+  local recipes_url="${RECIPE_DATA_API}/recipes?filters%5BrecipeCategories%5D%5Bslug%5D%5B%24ne%5D=service-utility&filters%5BrecipeLanguageFrameworks%5D%5Bslug%5D%5B%24in%5D=${framework_slug}&populate%5BrecipeCategories%5D=true&populate%5BrecipeLanguageFrameworks%5D=true"
+
+  local recipes_response
+  recipes_response=$(curl -sf "$recipes_url" 2>/dev/null)
+
+  if [ -z "$recipes_response" ]; then
+    echo -e "${YELLOW}⚠ Could not fetch recipes${NC}" >&2
+    return 1
+  fi
+
+  # Step 4: For runtime searches, ONLY use hello-world recipes
+  # (framework recipes should not be used for basic runtime skeleton)
+  local hello_world_recipe
+  hello_world_recipe=$(echo "$recipes_response" | jq -r '.data[] | select(.recipeCategories[]?.slug == "hello-world-examples") | .slug' | head -1)
+
+  if [ -n "$hello_world_recipe" ]; then
+    echo -e "${GREEN}Found hello-world recipe: ${hello_world_recipe}${NC}" >&2
+    echo "${hello_world_recipe}:hello-world"
+    return 0
+  fi
+
+  # No hello-world recipe for this runtime - caller should fall back to docs
+  local framework_recipes
+  framework_recipes=$(echo "$recipes_response" | jq -r '.data[] | select(.recipeCategories[]?.slug == "framework-oss-examples") | .slug' | tr '\n' ', ' | sed 's/,$//')
+
+  if [ -n "$framework_recipes" ]; then
+    echo -e "${YELLOW}⚠ Only framework recipes exist (${framework_recipes}) - use docs for basic ${runtime} skeleton${NC}" >&2
+  else
+    echo -e "${YELLOW}⚠ No recipes for: ${runtime}${NC}" >&2
+  fi
+
+  return 1
+}
+
 # Quick search: recipe + pattern extraction
 quick_search() {
   local runtime="$1"
@@ -591,19 +1140,77 @@ quick_search() {
   echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo ""
 
-  # Search for recipes
-  search_recipe "$runtime" "$managed_service"
+  local api_recipe_found="false"
+  local recipe_type="none"  # hello-world, framework, or docs
 
-  echo ""
-  echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  # Search recipe API
+  local recipe_result
+  recipe_result=$(find_recipe_for_runtime "$runtime")
 
-  # Extract patterns
-  extract_patterns "$runtime"
+  if [ -n "$recipe_result" ]; then
+    # Parse result: recipe_slug:category_type
+    local recipe_slug="${recipe_result%%:*}"
+    recipe_type="${recipe_result##*:}"
+
+    echo ""
+    if [ "$recipe_type" = "hello-world" ]; then
+      echo -e "${GREEN}✓ Found hello-world recipe: ${recipe_slug}${NC}"
+      echo "  (Ideal for skeleton dev/stage setup)"
+    else
+      echo -e "${YELLOW}⚠ Found framework recipe: ${recipe_slug}${NC}"
+      echo "  (Framework-specific - may have extra config, consider using docs for basic runtime)"
+    fi
+    echo ""
+
+    api_recipe_found="true"
+    fetch_recipe_from_api "$runtime" "$recipe_slug"
+
+    # Store recipe type for evidence
+    echo "$recipe_type" > /tmp/recipe_type
+  else
+    echo ""
+    echo -e "${YELLOW}⚠ No recipe exists for ${runtime}${NC}"
+    echo "Falling back to documentation..."
+    echo ""
+
+    # Try to fetch from documentation instead
+    if fetch_docs_fallback "$runtime"; then
+      api_recipe_found="true"
+      recipe_type="docs"
+      echo "docs" > /tmp/recipe_type
+    else
+      echo ""
+      echo -e "${RED}✗ Could not fetch documentation for: ${runtime}${NC}"
+      echo ""
+      # Mark that we searched but found nothing
+      echo "none" > /tmp/recipe_type
+    fi
+  fi
+
+  # Store search status for create_evidence_file
+  echo "true:${api_recipe_found}" > /tmp/api_search_status
 
   if [[ -n "$managed_service" ]]; then
     echo ""
     echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    extract_patterns "$managed_service"
+    echo -e "${BOLD}Managed service: ${managed_service}${NC}"
+    echo ""
+    echo "Fetching documentation for ${managed_service}..."
+    # Fetch managed service docs
+    local managed_url="${DOCS_BASE_URL}/${managed_service}/overview.md"
+    local managed_docs
+    managed_docs=$(curl -sf "$managed_url" 2>/dev/null)
+    if [ -n "$managed_docs" ]; then
+      echo -e "${GREEN}✓ Documentation found${NC}"
+      echo "  → ${DOCS_BASE_URL}/${managed_service}/overview"
+      # Extract version from docs
+      local managed_version
+      managed_version=$(echo "$managed_docs" | grep -oE "${managed_service}@[0-9a-z.]+" | head -1)
+      [ -n "$managed_version" ] && echo "  → Version: $managed_version"
+    else
+      echo -e "${YELLOW}⚠ Documentation not found at: ${managed_url}${NC}"
+      echo "  Try: ${DOCS_BASE_URL}/${managed_service}/overview"
+    fi
   fi
 
   echo ""
@@ -634,55 +1241,102 @@ create_evidence_file() {
   fi
   recipes_json="${recipes_json%,}}"
 
-  # Build patterns based on runtime
-  local runtime_pattern=""
-  case "$runtime" in
-    go)
-      runtime_pattern='{
-        "valid_versions": ["go@1", "go@1.22", "golang@1"],
-        "prod_runtime_base": "alpine@3.21",
-        "dev_runtime_base": "go@1",
-        "dev_os": "ubuntu",
-        "build_cache": true,
-        "explicit_build_file": "main.go"
-      }'
-      ;;
-    nodejs)
-      runtime_pattern='{
-        "valid_versions": ["nodejs@20", "nodejs@22"],
-        "prod_runtime_base": "nodejs@22",
-        "dev_runtime_base": "nodejs@22",
-        "build_cache": "node_modules"
-      }'
-      ;;
-  esac
-
-  # Build managed service pattern
-  local managed_pattern="{}"
-  if [[ -n "$managed_service" ]]; then
-    case "$managed_service" in
-      postgresql|postgres)
-        managed_pattern='{
-          "postgresql": {
-            "valid_versions": ["postgresql@16", "postgresql@17"],
-            "recommended_version": "postgresql@17",
-            "provides_vars": ["db_hostname", "db_port", "db_user", "db_password", "db_dbName"]
-          }
-        }'
-        ;;
-      valkey|redis)
-        managed_pattern='{
-          "valkey": {
-            "valid_versions": ["valkey@7.2"],
-            "provides_vars": ["cache_hostname", "cache_port", "cache_password", "cache_connectionString"]
-          }
-        }'
-        ;;
-    esac
+  # Check for fetched patterns from API
+  local fetched_patterns=""
+  if [ -f /tmp/fetched_patterns.json ]; then
+    fetched_patterns=$(cat /tmp/fetched_patterns.json)
   fi
+
+  # Build patterns based on runtime (or use fetched data)
+  local runtime_pattern="{}"
+
+  # First check if we have fetched patterns for this runtime
+  if [ -n "$fetched_patterns" ] && echo "$fetched_patterns" | grep -q "\"runtime\": \"$runtime\""; then
+    # Use fetched patterns
+    local fetched_versions
+    fetched_versions=$(echo "$fetched_patterns" | grep -o '"versions_found": \[[^]]*\]' | sed 's/"versions_found": //')
+    local fetched_base
+    fetched_base=$(echo "$fetched_patterns" | grep -o '"runtime_base": "[^"]*"' | sed 's/"runtime_base": "//' | tr -d '"')
+    local fetched_alpine
+    fetched_alpine=$(echo "$fetched_patterns" | grep -o '"alpine_base": "[^"]*"' | sed 's/"alpine_base": "//' | tr -d '"')
+    local fetched_cache
+    fetched_cache=$(echo "$fetched_patterns" | grep -o '"has_cache": [a-z]*' | sed 's/"has_cache": //')
+    local fetched_source
+    fetched_source=$(echo "$fetched_patterns" | grep -o '"source": "[^"]*"' | sed 's/"source": "//' | tr -d '"')
+
+    [ -z "$fetched_versions" ] && fetched_versions='["'$runtime'@1"]'
+    [ -z "$fetched_base" ] && fetched_base="${runtime}@1"
+    [ "$fetched_alpine" = "null" ] && fetched_alpine=""
+    [ -z "$fetched_cache" ] && fetched_cache="true"
+    [ -z "$fetched_source" ] && fetched_source="api"
+
+    runtime_pattern="{
+      \"valid_versions\": ${fetched_versions},
+      \"dev_runtime_base\": \"${fetched_base}\",
+      \"prod_runtime_base\": \"${fetched_alpine:-${fetched_base}}\",
+      \"dev_os\": \"ubuntu\",
+      \"build_cache\": ${fetched_cache},
+      \"source\": \"${fetched_source}\"
+    }"
+  fi
+  # No local patterns - recipe API and docs are the only sources of truth
+
+  # Managed service patterns also come from fetched data
+  local managed_pattern="{}"
 
   local managed_json="null"
   [ -n "$managed_service" ] && managed_json="[\"${managed_service}\"]"
+
+  # Determine if we have complete patterns
+  local is_verified="true"
+  local fetch_required="null"
+  local pattern_source="none"
+
+  # Determine source and guidance based on recipe type
+  local has_ready_import="false"
+  local config_guidance=""
+
+  # Read recipe type from temp file (set by quick_search)
+  local recipe_type="none"
+  if [ -f /tmp/recipe_type ]; then
+    recipe_type=$(cat /tmp/recipe_type)
+    rm -f /tmp/recipe_type
+  fi
+
+  # Check if we have patterns
+  if [ "$runtime_pattern" = "{}" ]; then
+    is_verified="false"
+    pattern_source="none"
+    config_guidance="No patterns available - check documentation manually at ${DOCS_BASE_URL}/${runtime}/overview"
+    fetch_required="\"${DOCS_BASE_URL}/${runtime}/overview\""
+  elif [ "$recipe_type" = "hello-world" ]; then
+    # Hello-world recipe - ideal for skeleton imports
+    pattern_source="recipe_hello_world"
+    has_ready_import="true"
+    config_guidance="Hello-world recipe provides clean dev/stage skeleton - use /tmp/fetched_recipe.md directly"
+    is_verified="true"
+  elif [ "$recipe_type" = "framework" ]; then
+    # Framework recipe - may have extra framework-specific config
+    pattern_source="recipe_framework"
+    has_ready_import="true"
+    config_guidance="Framework recipe found - may have framework-specific config. For basic runtime skeleton, consider using docs at ${DOCS_BASE_URL}/${runtime}/overview instead"
+    is_verified="true"
+  elif [ "$recipe_type" = "docs" ] || echo "$runtime_pattern" | grep -q '"source": "docs"'; then
+    # Documentation fallback
+    pattern_source="documentation"
+    has_ready_import="false"
+    config_guidance="Documentation provides examples - construct your own import.yml with dev (appdev) and stage (appstage) services. Review /tmp/fetched_docs.md"
+    is_verified="true"
+  else
+    # API source but unknown type
+    pattern_source="recipe_api"
+    has_ready_import="true"
+    config_guidance="Recipe found - use /tmp/fetched_recipe.md for import.yml and zerops.yml"
+    is_verified="true"
+  fi
+
+  # Clean up temp files
+  rm -f /tmp/fetched_patterns.json /tmp/fetched_runtime 2>/dev/null
 
   # Get session_id for evidence validation consistency
   local session_id
@@ -742,20 +1396,62 @@ create_evidence_file() {
     "Build commands MUST reference entry file explicitly"
   ],
 
-  "verified": true,
+  "verified": ${is_verified},
+  "fetch_required": ${fetch_required},
+  "pattern_source": "${pattern_source}",
+  "has_ready_import_yml": ${has_ready_import},
+  "configuration_guidance": "${config_guidance}",
   "tool": "recipe-search.sh",
-  "tool_version": "1.0"
+  "tool_version": "1.1"
 }
 EOF
 
   echo -e "${GREEN}✓ Evidence file created: $evidence_file${NC}"
   echo ""
-  echo "This file satisfies Gate 0 (RECIPE_DISCOVERY) requirements."
+
+  # Check if API search was done
+  local api_status=""
+  if [ -f /tmp/api_search_status ]; then
+    api_status=$(cat /tmp/api_search_status)
+    rm -f /tmp/api_search_status
+  fi
+  local api_searched=$(echo "$api_status" | cut -d: -f1)
+  local api_found=$(echo "$api_status" | cut -d: -f2)
+
+  if [ "$is_verified" = "true" ]; then
+    echo "This file satisfies Gate 0 (RECIPE_DISCOVERY) requirements."
+    echo ""
+    echo "Next steps:"
+    echo "  1. Review patterns in: $evidence_file"
+    echo "  2. Create import.yml using the patterns"
+    echo "  3. Run: .zcp/workflow.sh extend import.yml"
+  elif [ "$api_searched" = "true" ] && [ "$api_found" = "false" ]; then
+    # API was searched but no recipe found
+    echo -e "${YELLOW}⚠ No Zerops recipe exists for: ${runtime}${NC}"
+    echo ""
+    echo "The Zerops recipe API was searched but no recipe for '${runtime}' exists."
+    echo ""
+    echo "To proceed, check the documentation:"
+    echo "  ${DOCS_BASE_URL}/${runtime}/overview"
+    echo ""
+    echo "Then create import.yml and zerops.yml manually based on:"
+    echo "  ${DOCS_BASE_URL}/references/import"
+    echo "  ${DOCS_BASE_URL}/references/zeropsyml"
+    echo ""
+    echo "Gate 0 will pass once you have working configuration."
+  else
+    # No local patterns and API wasn't searched (shouldn't happen now)
+    echo -e "${YELLOW}⚠ Patterns incomplete for: ${runtime}${NC}"
+    echo ""
+    echo "Check documentation:"
+    echo "  ${DOCS_BASE_URL}/${runtime}/overview"
+    echo ""
+    echo "Gate 0 will pass once you have working configuration."
+  fi
   echo ""
-  echo "Next steps:"
-  echo "  1. Review patterns in: $evidence_file"
-  echo "  2. Proceed to Gate 1: .zcp/workflow.sh plan_services"
-  echo ""
+
+  # Clean up temp files
+  rm -f /tmp/api_search_result 2>/dev/null
 }
 
 # Main command router

@@ -45,6 +45,33 @@ cmd_extend() {
         return 0
     fi
 
+    # Check for active session
+    local session_id
+    session_id=$(get_session)
+    if [ -z "$session_id" ]; then
+        echo "❌ No active session"
+        echo ""
+        echo "   Run first: .zcp/workflow.sh init"
+        echo ""
+        echo "   The init command starts a session and Gate 0 will guide you"
+        echo "   to run recipe-search.sh before creating import files."
+        return 1
+    fi
+
+    # Check Gate 0 (recipe review) - required before extending
+    if [ ! -f "$RECIPE_REVIEW_FILE" ]; then
+        echo "❌ Gate 0: Recipe review required before importing services"
+        echo ""
+        echo "   Run: .zcp/recipe-search.sh quick {runtime} [managed-service]"
+        echo "   Example: .zcp/recipe-search.sh quick go postgresql"
+        echo ""
+        echo "   This provides valid patterns for your import.yml:"
+        echo "   • Correct version strings (go@1 not go@latest)"
+        echo "   • Required fields (startWithoutCode, envVariables, etc.)"
+        echo "   • Production patterns from official recipes"
+        return 1
+    fi
+
     if [ ! -f "$import_file" ]; then
         echo "❌ File not found: $import_file"
         return 1

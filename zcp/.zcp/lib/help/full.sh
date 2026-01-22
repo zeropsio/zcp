@@ -143,11 +143,11 @@ Internal connectivity test:
 
 ⚠️  Common failure: Files built but not in deployFiles = missing on stage
 
-zerops.yaml structure:
+zerops.yaml structure (use base values from recipe_review.json):
   zerops:
     - setup: api              # ← --setup value
       build:
-        base: go@1.22
+        base: {from recipe - dev_runtime_base}
         buildCommands:
           - go build -o app main.go
         deployFiles:
@@ -155,7 +155,7 @@ zerops.yaml structure:
           - ./templates       # Don't forget!
           - ./static
       run:
-        base: go@1.22
+        base: {from recipe - prod_runtime_base, e.g. alpine}
         ports:
           - port: 8080
         start: ./app
