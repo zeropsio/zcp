@@ -86,6 +86,7 @@ Full patterns: `.zcp/workflow.sh --help vars`
 | SSH hangs forever | Foreground process | `run_in_background=true` |
 | Variable empty | Wrong prefix | Use `${hostname}_VAR` |
 | Can't transition phase | Missing evidence | `.zcp/workflow.sh show` |
+| `/var/www/{svc}` empty after import | No SSHFS mount (needs `startWithoutCode: true` in import first) | `sudo -E zsc unit create sshfs-{svc} 'sshfs -f -o reconnect,StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3 {svc}:/var/www /var/www/{svc}'` |
 
 ## Critical Rules (memorize these)
 

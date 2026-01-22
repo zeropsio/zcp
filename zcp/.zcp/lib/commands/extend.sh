@@ -97,6 +97,32 @@ cmd_extend() {
     # Create evidence for Gate 2
     create_import_evidence "$import_file"
 
+    # Detect runtime services that need SSHFS mounts
+    local runtime_services
+    runtime_services=$(zcli service list -P "$pid" --json 2>/dev/null | \
+        jq -r '.[] | select(.type | test("^(go|nodejs|php|python|rust|dotnet|java|static|nginx)@")) | .hostname' 2>/dev/null || true)
+
+    if [ -n "$runtime_services" ]; then
+        echo ""
+        echo "📂 SSHFS MOUNTS FOR RUNTIME SERVICES"
+        echo ""
+        echo "   ⚠️  PREREQUISITE: Service must have code deployed first!"
+        echo "   Your import.yml must include ONE of:"
+        echo "     • startWithoutCode: true  (recommended for dev)"
+        echo "     • buildFromGit: ...       (if recipe has matching repo)"
+        echo ""
+        echo "   Once service is RUNNING, create mount:"
+        echo ""
+        for svc in $runtime_services; do
+            # Check if mount already exists
+            if [ ! -d "/var/www/$svc" ] || [ -z "$(ls -A /var/www/$svc 2>/dev/null)" ]; then
+                echo "   sudo -E zsc unit create sshfs-$svc 'sshfs -f -o reconnect,StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3 $svc:/var/www /var/www/$svc'"
+            fi
+        done
+        echo ""
+        echo "   This creates persistent mounts that survive restarts."
+    fi
+
     echo ""
     echo "⚠️  IMPORTANT: Environment Variable Timing"
     echo "   New services' vars are NOT visible in ZCP until restart."
