@@ -39,6 +39,7 @@ create_import_evidence() {
 
 cmd_extend() {
     local import_file="$1"
+    local skip_validation="${2:-}"
 
     if [ -z "$import_file" ] || [ "$import_file" = "--help" ]; then
         show_topic_help "extend"
@@ -67,7 +68,7 @@ cmd_extend() {
         echo ""
         echo "   This provides valid patterns for your import.yml:"
         echo "   • Correct version strings (go@1 not go@latest)"
-        echo "   • Required fields (startWithoutCode, envVariables, etc.)"
+        echo "   • Required fields (buildFromGit, zeropsSetup, etc.)"
         echo "   • Production patterns from official recipes"
         return 1
     fi
@@ -77,12 +78,44 @@ cmd_extend() {
         return 1
     fi
 
-    # Validate YAML if yq is available
-    if command -v yq &>/dev/null; then
-        if ! yq '.' "$import_file" > /dev/null 2>&1; then
-            echo "❌ Invalid YAML: $import_file"
+    # =========================================================================
+    # GATE 0.5: IMPORT VALIDATION (prevents READY_TO_DEPLOY failures)
+    # =========================================================================
+    # This gate was added after a documented failure where an agent:
+    # - Read the recipe showing buildFromGit and zeropsSetup
+    # - Created import.yml WITHOUT these critical fields
+    # - Caused services to be stuck in READY_TO_DEPLOY (empty containers)
+    # =========================================================================
+
+    if [ "$skip_validation" != "--skip-validation" ]; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Gate 0.5: Import Validation"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        # Run the validator
+        if ! "$SCRIPT_DIR/../validate-import.sh" "$import_file"; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "❌ IMPORT BLOCKED - Fix validation errors first"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "Why this gate exists:"
+            echo "  A past failure occurred where import.yml was created without"
+            echo "  buildFromGit and zeropsSetup, causing empty READY_TO_DEPLOY"
+            echo "  services that couldn't run any code."
+            echo ""
+            echo "To bypass (NOT recommended):"
+            echo "  .zcp/workflow.sh extend $import_file --skip-validation"
+            echo ""
             return 1
         fi
+
+        echo ""
+    else
+        echo "⚠️  Skipping import validation (--skip-validation flag)"
+        echo "   You're responsible for ensuring import.yml is correct."
+        echo ""
     fi
 
     local pid
@@ -123,6 +156,47 @@ cmd_extend() {
 
     # Create evidence for Gate 2
     create_import_evidence "$import_file"
+
+    # =========================================================================
+    # POST-IMPORT STATUS CHECK: Detect READY_TO_DEPLOY (missing buildFromGit)
+    # =========================================================================
+    # If services are stuck in READY_TO_DEPLOY, it usually means:
+    # 1. import.yml was missing buildFromGit (they have no code)
+    # 2. OR startWithoutCode:true was intentional (dev mode)
+    # This check warns the agent so they can fix before wasting time debugging
+    # =========================================================================
+
+    local ready_to_deploy_services
+    ready_to_deploy_services=$(zcli service list -P "$pid" --json 2>/dev/null | \
+        jq -r '.[] | select(.status == "READY_TO_DEPLOY") | "\(.hostname) (\(.type))"' 2>/dev/null)
+
+    if [ -n "$ready_to_deploy_services" ]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⚠️  WARNING: Services in READY_TO_DEPLOY status"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "$ready_to_deploy_services" | while read -r line; do
+            echo "  • $line"
+        done
+        echo ""
+        echo "This means these services have NO CODE deployed."
+        echo ""
+        echo "If this is EXPECTED (dev mode with SSHFS):"
+        echo "  1. Mount the service: .zcp/mount.sh {service}"
+        echo "  2. Add your code to /var/www/{service}/"
+        echo "  3. The service will start when code is present"
+        echo ""
+        echo "If this is UNEXPECTED:"
+        echo "  Your import.yml is likely missing 'buildFromGit'."
+        echo "  The recipe showed this field but it wasn't included."
+        echo ""
+        echo "  To fix:"
+        echo "  1. Delete these services and re-import with buildFromGit"
+        echo "  2. Or deploy code manually: ssh {service} 'zcli push'"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    fi
 
     # Detect DEV runtime services that need SSHFS mounts (not stage - stage gets code via zcli push)
     local dev_services

@@ -18,6 +18,7 @@ CONTEXT_FILE="/tmp/claude_context.json"
 
 # New gate evidence files (Gates 0-3)
 RECIPE_REVIEW_FILE="/tmp/recipe_review.json"
+IMPORT_VALIDATED_FILE="/tmp/import_validated.json"  # Gate 0.5: Import validation
 SERVICE_PLAN_FILE="/tmp/service_plan.json"
 SERVICES_IMPORTED_FILE="/tmp/services_imported.json"
 CONFIG_VALIDATED_FILE="/tmp/config_validated.json"

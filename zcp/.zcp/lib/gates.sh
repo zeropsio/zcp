@@ -109,6 +109,149 @@ check_gate_init_to_discover() {
 }
 
 # ============================================================================
+# Gate 0.5: Import Validation (called by extend command)
+# ============================================================================
+# This gate was added after a documented failure where an agent:
+# - Read the recipe showing buildFromGit and zeropsSetup
+# - Created import.yml WITHOUT these critical fields
+# - Caused services to be stuck in READY_TO_DEPLOY (empty containers)
+#
+# The gate enforces: "USE THE RECIPE'S IMPORT.YML - don't invent your own!"
+# ============================================================================
+
+check_gate_import_validation() {
+    local import_file="$1"
+    local checks_passed=0
+    local checks_total=0
+    local all_passed=true
+
+    echo "Gate 0.5: Import Validation"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # Check 1: import file exists
+    ((checks_total++))
+    if [ -f "$import_file" ]; then
+        echo "  ✓ Import file exists: $import_file"
+        ((checks_passed++))
+    else
+        echo "  ✗ Import file not found: $import_file"
+        all_passed=false
+    fi
+
+    # Check 2: YAML syntax valid
+    ((checks_total++))
+    if command -v yq &>/dev/null; then
+        if yq '.' "$import_file" > /dev/null 2>&1; then
+            echo "  ✓ YAML syntax valid"
+            ((checks_passed++))
+        else
+            echo "  ✗ Invalid YAML syntax"
+            all_passed=false
+        fi
+    else
+        echo "  ⚠ yq not available - skipping YAML check"
+        ((checks_passed++))
+    fi
+
+    # Check 3: Runtime services have code source
+    ((checks_total++))
+    if command -v yq &>/dev/null && [ -f "$import_file" ]; then
+        local runtime_without_code=0
+        local service_count
+        service_count=$(yq '.services | length // 0' "$import_file" 2>/dev/null || echo "0")
+
+        local i=0
+        while [ $i -lt "$service_count" ]; do
+            local type hostname build_from_git start_without_code
+            type=$(yq ".services[$i].type // empty" "$import_file" 2>/dev/null)
+            hostname=$(yq ".services[$i].hostname // empty" "$import_file" 2>/dev/null)
+            build_from_git=$(yq ".services[$i].buildFromGit // empty" "$import_file" 2>/dev/null)
+            start_without_code=$(yq ".services[$i].startWithoutCode // empty" "$import_file" 2>/dev/null)
+
+            # Check if it's a runtime type
+            if echo "$type" | grep -qE "^(go|nodejs|php|python|rust|bun|dotnet|java|nginx|static|alpine)@"; then
+                # Runtime must have buildFromGit OR startWithoutCode
+                if [ -z "$build_from_git" ] || [ "$build_from_git" = "null" ]; then
+                    if [ "$start_without_code" != "true" ]; then
+                        ((runtime_without_code++))
+                        echo "    ⚠ $hostname: no buildFromGit or startWithoutCode"
+                    fi
+                fi
+            fi
+            ((i++))
+        done
+
+        if [ $runtime_without_code -eq 0 ]; then
+            echo "  ✓ All runtime services have code source"
+            ((checks_passed++))
+        else
+            echo "  ✗ $runtime_without_code runtime service(s) missing code source"
+            echo "    → Add buildFromGit: <repo-url> or startWithoutCode: true"
+            all_passed=false
+        fi
+    else
+        echo "  ⚠ Cannot validate code source (yq unavailable)"
+        ((checks_passed++))
+    fi
+
+    # Check 4: Runtime services have zeropsSetup
+    ((checks_total++))
+    if command -v yq &>/dev/null && [ -f "$import_file" ]; then
+        local runtime_without_setup=0
+        local service_count
+        service_count=$(yq '.services | length // 0' "$import_file" 2>/dev/null || echo "0")
+
+        local i=0
+        while [ $i -lt "$service_count" ]; do
+            local type hostname zerops_setup
+            type=$(yq ".services[$i].type // empty" "$import_file" 2>/dev/null)
+            hostname=$(yq ".services[$i].hostname // empty" "$import_file" 2>/dev/null)
+            zerops_setup=$(yq ".services[$i].zeropsSetup // empty" "$import_file" 2>/dev/null)
+
+            # Check if it's a runtime type
+            if echo "$type" | grep -qE "^(go|nodejs|php|python|rust|bun|dotnet|java|nginx|static|alpine)@"; then
+                if [ -z "$zerops_setup" ] || [ "$zerops_setup" = "null" ]; then
+                    ((runtime_without_setup++))
+                    echo "    ⚠ $hostname: no zeropsSetup"
+                fi
+            fi
+            ((i++))
+        done
+
+        if [ $runtime_without_setup -eq 0 ]; then
+            echo "  ✓ All runtime services have zeropsSetup"
+            ((checks_passed++))
+        else
+            echo "  ✗ $runtime_without_setup runtime service(s) missing zeropsSetup"
+            echo "    → Add zeropsSetup: dev or zeropsSetup: prod"
+            all_passed=false
+        fi
+    else
+        echo "  ⚠ Cannot validate zeropsSetup (yq unavailable)"
+        ((checks_passed++))
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Result: $checks_passed/$checks_total checks passed"
+
+    if [ "$all_passed" = true ]; then
+        return 0
+    else
+        echo ""
+        echo "❌ Gate FAILED - import.yml validation errors"
+        echo ""
+        echo "This gate prevents a documented failure where:"
+        echo "  • Agent read recipe showing buildFromGit/zeropsSetup"
+        echo "  • Agent created import.yml WITHOUT these fields"
+        echo "  • Services ended up in READY_TO_DEPLOY (empty)"
+        echo ""
+        echo "Fix: Use the recipe's import.yml directly, or add missing fields"
+        echo "Run: .zcp/validate-import.sh $import_file"
+        return 1
+    fi
+}
+
+# ============================================================================
 # Gate 1: DISCOVER → DEVELOP
 # ============================================================================
 

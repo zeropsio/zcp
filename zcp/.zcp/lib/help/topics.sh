@@ -49,13 +49,16 @@ show_topic_help() {
         cheatsheet)
             show_help_cheatsheet
             ;;
+        import-validation|validate-import)
+            show_help_import_validation
+            ;;
         *)
             echo "❌ Unknown help topic: $topic"
             echo ""
             echo "Available topics:"
             echo "  discover, develop, deploy, verify, done"
             echo "  vars, services, trouble, example, gates"
-            echo "  extend, bootstrap, cheatsheet"
+            echo "  extend, bootstrap, cheatsheet, import-validation"
             return 1
             ;;
     esac
@@ -951,10 +954,18 @@ EVIDENCE FILES
 ─────────────────────────────────────────────────────────────────
 /tmp/claude_session             # Session ID
 /tmp/claude_phase               # Current phase
+/tmp/recipe_review.json         # Gate 0: Recipe patterns
+/tmp/import_validated.json      # Gate 0.5: Import validation
 /tmp/discovery.json             # Service mapping
 /tmp/dev_verify.json            # Dev results
 /tmp/stage_verify.json          # Stage results
 /tmp/deploy_evidence.json       # Deploy proof
+
+IMPORT VALIDATION (Gate 0.5)
+─────────────────────────────────────────────────────────────────
+.zcp/validate-import.sh import.yml          # Validate before import
+.zcp/workflow.sh extend import.yml          # Auto-validates
+.zcp/workflow.sh --help import-validation   # Full documentation
 EOF
 }
 
@@ -1182,5 +1193,156 @@ ssh appdev "./app >> /tmp/app.log 2>&1"  # run_in_background=true
 .zcp/verify.sh appdev 8080 / /status
 
 # Continue with normal DEPLOY → VERIFY → DONE flow
+EOF
+}
+
+show_help_import_validation() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔒 GATE 0.5: IMPORT VALIDATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This gate prevents a documented failure where import.yml was created
+without critical fields, causing services to be stuck in READY_TO_DEPLOY.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+❌ THE FAILURE THAT CREATED THIS GATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+An agent:
+  1. Read the recipe showing buildFromGit and zeropsSetup
+  2. Created import.yml WITHOUT these critical fields
+  3. Services ended up in READY_TO_DEPLOY (empty containers)
+  4. Couldn't mount SSHFS (no code to mount)
+  5. Couldn't run the app (nothing to run)
+
+Root cause: Treating import.yml as "service creation only" instead of
+"service creation WITH initial deployment configuration."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ WHAT THE VALIDATOR CHECKS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For RUNTIME services (go, nodejs, php, python, etc.):
+
+1. CODE SOURCE (CRITICAL)
+   Must have EITHER:
+     buildFromGit: <repo-url>      # Zerops clones & deploys
+     OR
+     startWithoutCode: true        # Dev mode with SSHFS mount
+
+   Without either, the service is an empty container that can't run.
+
+2. ZEROPS SETUP (CRITICAL)
+   Must have:
+     zeropsSetup: dev              # Links to zerops.yml setup: dev
+     OR
+     zeropsSetup: prod             # Links to zerops.yml setup: prod
+
+   This tells Zerops WHICH build/run configuration to use.
+
+For MANAGED services (postgresql, valkey, etc.):
+   No code fields required - they run automatically.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 CORRECT IMPORT.YML STRUCTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Using buildFromGit (recommended for initial deploy):
+
+  services:
+    - hostname: appstage
+      type: go@1
+      zeropsSetup: prod                    # ← Links to zerops.yml
+      buildFromGit: https://github.com/... # ← Initial code source
+      enableSubdomainAccess: true
+
+    - hostname: appdev
+      type: go@1
+      zeropsSetup: dev                     # ← Links to zerops.yml
+      buildFromGit: https://github.com/... # ← Same repo, different setup
+      enableSubdomainAccess: true
+
+    - hostname: db
+      type: postgresql@17
+      mode: NON_HA                         # Managed: no code fields needed
+
+Using startWithoutCode (dev with manual mount):
+
+  services:
+    - hostname: appdev
+      type: go@1
+      zeropsSetup: dev
+      startWithoutCode: true               # ← Will use SSHFS mount
+      enableSubdomainAccess: true
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 HOW TO USE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Manual validation:
+  .zcp/validate-import.sh import.yml
+
+With zerops.yml cross-check:
+  .zcp/validate-import.sh import.yml /var/www/app/zerops.yml
+
+Automatic (via extend command):
+  .zcp/workflow.sh extend import.yml
+  # Validation runs automatically before import
+
+Bypass (NOT recommended):
+  .zcp/workflow.sh extend import.yml --skip-validation
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  UNDERSTANDING READY_TO_DEPLOY STATUS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If you see services in READY_TO_DEPLOY after import:
+
+  zcli service list -P $projectId
+  # Shows: appdev READY_TO_DEPLOY go@1
+
+This means:
+  • Container exists but has NO CODE
+  • Cannot reach ACTIVE status
+  • Waiting for initial deployment
+
+Causes:
+  1. import.yml missing buildFromGit (most common)
+  2. startWithoutCode: true but no manual deployment yet
+
+Fixes:
+  A. Delete and re-import with buildFromGit
+  B. Deploy code manually: ssh {dev} "zcli push ..."
+  C. Use mount + startWithoutCode for dev workflow
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📖 THE GOLDEN RULE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  USE THE RECIPE'S IMPORT.YML - DON'T INVENT YOUR OWN!
+
+The recipe's import.yml is:
+  • Tested and known to work
+  • Contains all required fields
+  • Follows production best practices
+
+When documentation says "use this pattern," USE IT EXACTLY.
+Cherry-picking fields leads to broken deployments.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 EVIDENCE FILE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Creates: /tmp/import_validated.json
+
+Contains:
+  • session_id (for workflow tracking)
+  • services validated
+  • critical errors found
+  • specific issues per service
+  • validation rules applied
+
+Use this file to understand exactly what failed validation.
 EOF
 }

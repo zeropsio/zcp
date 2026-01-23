@@ -120,6 +120,7 @@ psql "$(env_from appdev db_connectionString)" -c "SELECT 1"
 | zcli "service not found" | Used name instead of ID | zcli needs IDs: `-S {service_id}` not `servicename` |
 | zcli no results | Missing project flag | Use `zcli service list -P $projectId` |
 | Files missing on stage | Not in deployFiles | Update zerops.yaml, redeploy |
+| Services in READY_TO_DEPLOY | Missing buildFromGit/startWithoutCode | Fix import.yml, re-import |
 | SSH hangs forever | Foreground process | `run_in_background=true` |
 | Variable empty | Wrong prefix | Use `${hostname}_VAR` |
 | Can't transition phase | Missing evidence | `.zcp/workflow.sh show` |
@@ -144,6 +145,7 @@ psql "$(env_from appdev db_connectionString)" -c "SELECT 1"
 .zcp/workflow.sh show --full    # Status + extended context (intent, notes, last error)
 .zcp/workflow.sh recover        # Complete context recovery
 .zcp/workflow.sh --help         # Full platform reference
+.zcp/validate-import.sh <file>  # Validate import.yml before importing
 ```
 
 Help topics (use `--help {topic}`):
