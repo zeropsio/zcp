@@ -115,7 +115,8 @@ psql "$(env_from appdev db_connectionString)" -c "SELECT 1"
 | `psql: command not found` (via SSH) | Runtime containers don't have DB tools | Run `psql` from ZCP directly, not via ssh |
 | SSH connection refused | Managed service (db, cache) | Use client tools: `psql`, `redis-cli` from ZCP |
 | `cd /var/www/appdev: No such file` | SSH lands in `/var/www` directly | Don't include hostname in path inside container |
-| zcli unknown flag | zcli has custom syntax | Check `zcli {cmd} --help` |
+| zcli wrong syntax | Guessed instead of checked | **ALWAYS** run `zcli {cmd} --help` first |
+| zcli "service not found" | Used name instead of ID | zcli needs IDs: `-S {service_id}` not `servicename` |
 | zcli no results | Missing project flag | Use `zcli service list -P $projectId` |
 | Files missing on stage | Not in deployFiles | Update zerops.yaml, redeploy |
 | SSH hangs forever | Foreground process | `run_in_background=true` |
@@ -127,6 +128,7 @@ psql "$(env_from appdev db_connectionString)" -c "SELECT 1"
 
 | Rule | Pattern |
 |------|---------|
+| zcli syntax | NEVER guess — run `zcli {cmd} --help` FIRST, uses IDs not names |
 | Kill orphan processes | `ssh {svc} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'` |
 | Long-running commands | Set `run_in_background=true` in Bash tool |
 | HTTP 200 ≠ working | Check response content, logs, browser console |
