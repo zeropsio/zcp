@@ -79,6 +79,34 @@ ssh svc 'echo $VAR'         # Inside service: no prefix
 ```
 Full patterns: `.zcp/workflow.sh --help vars`
 
+## Security: Environment Variables
+
+⛔ **NEVER expose secrets in output or commands**
+
+| ❌ WRONG | ✅ RIGHT |
+|----------|----------|
+| `ssh svc 'env \| grep db'` | `ssh svc 'echo $db_connectionString'` |
+| `ssh svc 'printenv'` | Fetch specific var only |
+| `psql "postgres://user:PASSWORD@..."` | `psql "$(env_from svc db_connectionString)"` |
+| Hardcoding passwords in commands | Pass via substitution |
+
+**Rules:**
+1. NEVER use `env`, `printenv`, or `env | grep` via SSH - dumps secrets to output
+2. NEVER hardcode credentials in commands - they appear in logs/history
+3. ALWAYS fetch specific variables: `ssh svc 'echo $VAR_NAME'`
+4. ALWAYS pass secrets via substitution: `cmd "$(ssh svc 'echo $SECRET')"`
+
+**Helper function** (use this):
+```bash
+source .zcp/lib/env.sh
+psql "$(env_from appdev db_connectionString)" -c "SELECT 1"
+```
+
+**Why this matters:**
+- Command output is displayed/logged
+- Hardcoded secrets appear in shell history
+- `env` dumps ALL secrets, not just the one you need
+
 ## Gotchas
 
 | Symptom | Cause | Fix |
@@ -93,7 +121,7 @@ Full patterns: `.zcp/workflow.sh --help vars`
 | SSH hangs forever | Foreground process | `run_in_background=true` |
 | Variable empty | Wrong prefix | Use `${hostname}_VAR` |
 | Can't transition phase | Missing evidence | `.zcp/workflow.sh show` |
-| `/var/www/{svc}` empty after import | No SSHFS mount (needs `startWithoutCode: true` in import first) | `sudo -E zsc unit create sshfs-{svc} 'sshfs -f -o reconnect,StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3 {svc}:/var/www /var/www/{svc}'` |
+| `/var/www/{dev}` empty after import | No SSHFS mount (dev only) | `.zcp/mount.sh {dev}` |
 
 ## Critical Rules (memorize these)
 
