@@ -171,21 +171,88 @@ EOF
     fi
 
     # Normal init (no preserved discovery)
-    cat <<EOF
-✅ Session: $session_id
+    # Check if runtime services exist to determine bootstrap vs standard flow
+    local has_runtime_services=false
+    local pid
+    pid=$(cat /tmp/projectId 2>/dev/null || echo "${projectId:-}")
 
-📋 Workflow: INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE
+    if [ -n "$pid" ] && command -v zcli &>/dev/null; then
+        local service_check
+        service_check=$(zcli service list -P "$pid" --json 2>/dev/null | \
+            jq '[.[] | select(.type | test("^(go|nodejs|php|python|rust|bun|dotnet|java|nginx|static|alpine)@"))] | length' 2>/dev/null || echo "0")
+        [ "$service_check" -gt 0 ] && has_runtime_services=true
+    fi
 
-💡 NEXT: DISCOVER phase
-   1. zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZEROPS_ZCP_API_KEY"
-   2. zcli service list -P \$projectId
-   3. .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
-   4. .zcp/workflow.sh transition_to DISCOVER
+    echo "✅ Session: $session_id"
+    echo ""
+    echo "📋 Workflow: INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE"
+    echo ""
 
-⚠️  Cannot skip DISCOVER - creates required evidence
+    if [ "$has_runtime_services" = true ]; then
+        # Standard flow - services exist
+        cat <<'EOF'
+💡 NEXT: DISCOVER phase (services detected)
+
+   ┌─────────────────────────────────────────────────────────────────┐
+   │ 1. .zcp/workflow.sh transition_to DISCOVER                      │
+   │    (Follow the guidance it outputs - tells you exact steps)     │
+   └─────────────────────────────────────────────────────────────────┘
+
+⚠️  Let the workflow guide you. Each transition shows what to do next.
 
 📖 Full reference: .zcp/workflow.sh --help
 EOF
+    else
+        # Bootstrap flow - no services
+        cat <<'EOF'
+🆕 BOOTSTRAP MODE DETECTED (no runtime services found)
+
+   You need to CREATE services before you can discover them.
+
+   ┌─────────────────────────────────────────────────────────────────┐
+   │ STEP 1: Recipe Search (Gate 0 - REQUIRED)                       │
+   │                                                                  │
+   │   .zcp/recipe-search.sh quick {runtime} [managed-service]       │
+   │                                                                  │
+   │   Example: .zcp/recipe-search.sh quick go postgresql            │
+   │                                                                  │
+   │   This fetches patterns and creates /tmp/recipe_review.json     │
+   │   ⚠️  DO NOT skip this - Gate 0 blocks import without it       │
+   └─────────────────────────────────────────────────────────────────┘
+
+   ┌─────────────────────────────────────────────────────────────────┐
+   │ STEP 2: Create import.yml                                       │
+   │                                                                  │
+   │   USE THE RECIPE'S IMPORT.YML from /tmp/fetched_recipe.md       │
+   │   ⚠️  Don't invent your own - copy it exactly!                 │
+   │                                                                  │
+   │   Critical fields for runtime services:                         │
+   │     - buildFromGit: <repo-url>   (OR startWithoutCode: true)   │
+   │     - zeropsSetup: dev/prod      (links to zerops.yml)         │
+   └─────────────────────────────────────────────────────────────────┘
+
+   ┌─────────────────────────────────────────────────────────────────┐
+   │ STEP 3: Import services (Gate 0.5 validates automatically)      │
+   │                                                                  │
+   │   .zcp/workflow.sh extend import.yml                            │
+   │                                                                  │
+   │   This validates your import.yml and runs zcli import           │
+   └─────────────────────────────────────────────────────────────────┘
+
+   ┌─────────────────────────────────────────────────────────────────┐
+   │ STEP 4: Continue with DISCOVER                                  │
+   │                                                                  │
+   │   .zcp/workflow.sh transition_to DISCOVER                       │
+   │   (Shows next steps with discovered service IDs)                │
+   └─────────────────────────────────────────────────────────────────┘
+
+⚠️  COMMON MISTAKE: Skipping recipe-search.sh and creating import.yml
+    without buildFromGit/zeropsSetup → services stuck in READY_TO_DEPLOY
+
+📖 Bootstrap guide: .zcp/workflow.sh --help bootstrap
+📖 Full reference:  .zcp/workflow.sh --help
+EOF
+    fi
 }
 
 cmd_quick() {

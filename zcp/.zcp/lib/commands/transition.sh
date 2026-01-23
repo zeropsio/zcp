@@ -292,41 +292,59 @@ EOF
         if [ "$has_ready_import" = "true" ]; then
             cat <<'EOF'
 
-   ✅ Hello-world recipe found with ready-made import.yml!
+   ✅ Recipe found with ready-made import.yml!
 
    1. Read /tmp/fetched_recipe.md
-   2. Find the import.yml section (look for "project:" and "services:")
-   3. Copy it to import.yml (adjust hostnames if needed: appdev, appstage)
-   4. Ensure startWithoutCode: true for dev services
+   2. Find the import.yml section (look for "services:")
+   3. Copy it EXACTLY to import.yml - don't cherry-pick fields!
 
-   ⚠️  USE THE RECIPE'S IMPORT.YML - don't invent your own!
+   ⚠️  USE THE RECIPE'S IMPORT.YML - DON'T INVENT YOUR OWN!
+
+   The recipe's import.yml includes CRITICAL fields:
+     • buildFromGit: <repo-url>  → Initial code deployment
+     • zeropsSetup: dev/prod     → Links to zerops.yml build config
+
+   ❌ A past failure occurred when these were omitted:
+      Services ended up in READY_TO_DEPLOY (empty containers)
 EOF
         else
             cat <<'EOF'
 
    Documentation fallback - construct import.yml manually:
 
-   project:
-     name: $projectId
    services:
-     - hostname: appdev
-       type: go@1
-       startWithoutCode: true
-       enableSubdomainAccess: true
      - hostname: appstage
        type: go@1
+       zeropsSetup: prod                    # ← CRITICAL: links to zerops.yml
+       buildFromGit: https://github.com/...  # ← CRITICAL: initial code
        enableSubdomainAccess: true
+
+     - hostname: appdev
+       type: go@1
+       zeropsSetup: dev                     # ← CRITICAL: links to zerops.yml
+       buildFromGit: https://github.com/...  # ← OR use startWithoutCode: true
+       enableSubdomainAccess: true
+
      - hostname: db
        type: postgresql@17
        mode: NON_HA
 
-   Reference: /tmp/fetched_docs.md for version strings and patterns
+   Reference: /tmp/fetched_docs.md for version strings
 EOF
         fi
 
         cat <<'EOF'
 
-   ⚠️  zeropsSetup links service to zerops.yml build config
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ⚠️  CRITICAL FIELDS FOR RUNTIME SERVICES:
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   buildFromGit: <url>     Zerops clones & deploys from this repo
+       OR
+   startWithoutCode: true  Dev mode - use SSHFS mount for code
+
+   zeropsSetup: dev/prod   Links import.yml to zerops.yml setup block
+                           Without this, Zerops doesn't know HOW to build
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 STEP 4: Import services (REQUIRED)

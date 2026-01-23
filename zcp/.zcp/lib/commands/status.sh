@@ -109,19 +109,43 @@ EOF
     # Give specific guidance based on phase and what's missing
     case "$phase" in
         INIT)
-            if ! check_evidence_session "$DISCOVERY_FILE"; then
+            # Check if runtime services exist (bootstrap vs standard)
+            local has_runtime_services=false
+            local pid
+            pid=$(cat /tmp/projectId 2>/dev/null || echo "${projectId:-}")
+
+            if [ -n "$pid" ] && command -v zcli &>/dev/null; then
+                local service_check
+                service_check=$(zcli service list -P "$pid" --json 2>/dev/null | \
+                    jq '[.[] | select(.type | test("^(go|nodejs|php|python|rust|bun|dotnet|java|nginx|static|alpine)@"))] | length' 2>/dev/null || echo "0")
+                [ "$service_check" -gt 0 ] && has_runtime_services=true
+            fi
+
+            if [ "$has_runtime_services" = false ]; then
+                # Bootstrap mode - no services
                 cat <<'GUIDANCE'
-1. Discover services:
-   zcli login --region=gomibako \
-       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-       "$ZEROPS_ZCP_API_KEY"
-   zcli service list -P $projectId   ← -P flag required!
+🆕 BOOTSTRAP MODE - No runtime services detected
 
-2. Record discovery (use IDs from step 1):
-   .zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}
+   STEP 1: Recipe Search (Gate 0 - REQUIRED)
+   .zcp/recipe-search.sh quick {runtime} [managed-service]
+   Example: .zcp/recipe-search.sh quick go postgresql
 
-3. Transition:
+   STEP 2: Create import.yml using /tmp/fetched_recipe.md
+   ⚠️  Copy the recipe's import.yml - don't invent your own!
+   Critical fields: buildFromGit OR startWithoutCode, zeropsSetup
+
+   STEP 3: Import services
+   .zcp/workflow.sh extend import.yml
+
+   STEP 4: Continue
    .zcp/workflow.sh transition_to DISCOVER
+GUIDANCE
+            elif ! check_evidence_session "$DISCOVERY_FILE"; then
+                cat <<'GUIDANCE'
+Services detected. Discover them:
+
+   .zcp/workflow.sh transition_to DISCOVER
+   (Follow the guidance it outputs)
 GUIDANCE
             else
                 echo "Discovery exists. Run: .zcp/workflow.sh transition_to DISCOVER"
