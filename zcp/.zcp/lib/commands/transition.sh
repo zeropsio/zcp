@@ -188,7 +188,52 @@ output_discover_guidance() {
     echo "✅ Phase: DISCOVER"
     echo ""
 
-    # Try to detect if runtime services already exist
+    # STEP 1: Check if we need to login first
+    # Try a simple zcli command to test authentication
+    local pid
+    pid=$(cat /tmp/projectId 2>/dev/null || echo "${projectId:-}")
+
+    if [ -z "$pid" ]; then
+        cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  NO PROJECT ID FOUND
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Cannot detect services without project ID.
+Check that $projectId is set or /tmp/projectId exists.
+
+This usually means you're not running on ZCP.
+EOF
+        return
+    fi
+
+    # Check if zcli is available and authenticated
+    local zcli_test_result
+    zcli_test_result=$(zcli service list -P "$pid" --json 2>&1)
+    local zcli_exit=$?
+
+    # Check for auth errors specifically
+    if [ $zcli_exit -ne 0 ] && echo "$zcli_test_result" | grep -qiE "unauthorized|auth|login|token|403"; then
+        cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔐 LOGIN REQUIRED FIRST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+zcli is not authenticated. Run:
+
+   zcli login $ZEROPS_ZCP_API_KEY
+
+Then re-run:
+
+   .zcp/workflow.sh transition_to DISCOVER
+
+The workflow will then detect your services and show
+the appropriate next steps (bootstrap or standard flow).
+EOF
+        return
+    fi
+
+    # Now try to detect services (zcli should be working)
     local has_services=false
     local detection_error=""
 
@@ -196,10 +241,8 @@ output_discover_guidance() {
         has_services=true
     else
         # Capture why detection failed for user guidance
-        if [ -z "${projectId:-}" ] && [ ! -f /tmp/projectId ]; then
-            detection_error="No project ID available"
-        elif [ -z "$DETECTED_SERVICES_JSON" ] || [ "$DETECTED_SERVICES_JSON" = "[]" ]; then
-            detection_error="No runtime services found or zcli error"
+        if [ -z "$DETECTED_SERVICES_JSON" ] || [ "$DETECTED_SERVICES_JSON" = "[]" ]; then
+            detection_error="No runtime services found"
         fi
     fi
 
