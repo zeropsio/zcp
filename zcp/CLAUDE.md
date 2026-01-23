@@ -51,6 +51,7 @@ You are on ZCP, not inside the app containers.
 | Run commands | `ssh {runtime} "command"` (lands in `/var/www`) |
 | Reach services | `http://{service}:{port}` |
 | Test frontend | `agent-browser open "$URL"` |
+| Check status + builds | `zcli service list -P $projectId` (shows services AND running processes) |
 
 **Service types:**
 - **Runtime** (go, nodejs, php, python, etc.) — SSH ✓, SSHFS ✓, run your code
