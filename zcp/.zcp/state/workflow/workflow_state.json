@@ -1,0 +1,68 @@
+{
+  "session_id": "20260124145850-4000-21418",
+  "mode": "full",
+  "iteration": 1,
+  "updated_at": "2026-01-24T14:15:57Z",
+  "synthesis_mode": true,
+  "phase": {
+    "current": "COMPOSE",
+    "index": 2,
+    "total": 8,
+    "remaining": [
+      "EXTEND",
+      "SYNTHESIZE",
+      "DEVELOP",
+      "DEPLOY",
+      "VERIFY",
+      "DONE"
+    ]
+  },
+  "progress": {
+    "percent": 12,
+    "bar": "██░░░░░░░░░░░░░░░░░░",
+    "message": "YOU ARE NOT DONE. 6 phases remaining."
+  },
+  "evidence": {
+    "recipe_review": {
+      "status": "pending"
+    },
+    "synthesis_plan": {
+      "status": "complete",
+      "at": "2026-01-24T14:15:57Z"
+    },
+    "synthesized_import": {
+      "status": "complete"
+    },
+    "services_imported": {
+      "status": "pending"
+    },
+    "synthesis_complete": {
+      "status": "pending"
+    },
+    "discovery": {
+      "status": "pending"
+    },
+    "dev_verify": {
+      "status": "pending"
+    },
+    "deploy_evidence": {
+      "status": "pending"
+    },
+    "stage_verify": {
+      "status": "pending"
+    }
+  },
+  "discovery": null,
+  "next_action": {
+    "command": ".zcp/workflow.sh transition_to EXTEND",
+    "description": "Transition to EXTEND phase"
+  },
+  "context": {
+    "intent": "",
+    "last_error": null
+  },
+  "completion": {
+    "signal": "<completed>WORKFLOW_DONE</completed>",
+    "condition": "All evidence complete AND phase == DONE AND complete command run"
+  }
+}

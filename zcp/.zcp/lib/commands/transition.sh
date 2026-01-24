@@ -14,7 +14,10 @@ cmd_transition_to() {
 
     if [ -z "$target_phase" ]; then
         echo "❌ Usage: .zcp/workflow.sh transition_to [--back] {phase}"
-        echo "Phases: DISCOVER, DEVELOP, DEPLOY, VERIFY, DONE"
+        echo "Phases: COMPOSE, EXTEND, SYNTHESIZE, DISCOVER, DEVELOP, DEPLOY, VERIFY, DONE"
+        echo ""
+        echo "Synthesis mode: INIT → COMPOSE → EXTEND → SYNTHESIZE → DEVELOP → DEPLOY → VERIFY → DONE"
+        echo "Standard mode:  INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE"
         echo ""
         echo "Options:"
         echo "  --back    Go backward (invalidates evidence)"
@@ -123,6 +126,39 @@ cmd_transition_to() {
 
     # In full mode, enforce gates
     case "$target_phase" in
+        COMPOSE)
+            if [ "$current_phase" != "INIT" ]; then
+                echo "❌ Cannot transition to COMPOSE from $current_phase"
+                echo "📋 Run: .zcp/workflow.sh init"
+                return 2
+            fi
+            # Gate 0: Recipe Review required before compose
+            if ! check_gate_init_to_discover; then
+                return 2
+            fi
+            ;;
+        EXTEND)
+            if [ "$current_phase" != "COMPOSE" ]; then
+                echo "❌ Cannot transition to EXTEND from $current_phase"
+                echo "📋 Required flow: INIT → COMPOSE → EXTEND"
+                return 2
+            fi
+            # Gate: Synthesis plan must exist
+            if ! check_gate_compose_to_extend; then
+                return 2
+            fi
+            ;;
+        SYNTHESIZE)
+            if [ "$current_phase" != "EXTEND" ]; then
+                echo "❌ Cannot transition to SYNTHESIZE from $current_phase"
+                echo "📋 Required flow: COMPOSE → EXTEND → SYNTHESIZE"
+                return 2
+            fi
+            # Gate: Services must be imported
+            if ! check_gate_extend_to_synthesize; then
+                return 2
+            fi
+            ;;
         DISCOVER)
             if [ "$current_phase" != "INIT" ]; then
                 echo "❌ Cannot transition to DISCOVER from $current_phase"
@@ -135,13 +171,21 @@ cmd_transition_to() {
             fi
             ;;
         DEVELOP)
-            if [ "$current_phase" != "DISCOVER" ]; then
+            # Can come from DISCOVER (standard) or SYNTHESIZE (synthesis mode)
+            if [ "$current_phase" != "DISCOVER" ] && [ "$current_phase" != "SYNTHESIZE" ]; then
                 echo "❌ Cannot transition to DEVELOP from $current_phase"
-                echo "📋 Required flow: INIT → DISCOVER → DEVELOP"
+                echo "📋 Required flow: DISCOVER → DEVELOP (standard) or SYNTHESIZE → DEVELOP (synthesis)"
                 return 2
             fi
-            if ! check_gate_discover_to_develop; then
-                return 2
+            # Gate depends on source phase
+            if [ "$current_phase" = "DISCOVER" ]; then
+                if ! check_gate_discover_to_develop; then
+                    return 2
+                fi
+            elif [ "$current_phase" = "SYNTHESIZE" ]; then
+                if ! check_gate_synthesis; then
+                    return 2
+                fi
             fi
             ;;
         DEPLOY)
@@ -177,7 +221,126 @@ cmd_transition_to() {
     esac
 
     set_phase "$target_phase"
+    sync_to_persistent
     output_phase_guidance "$target_phase"
+}
+
+# ============================================================================
+# SYNTHESIS PHASE GUIDANCE - COMPOSE
+# ============================================================================
+
+output_compose_guidance() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  PHASE: COMPOSE
+
+  Generate synthesis plan and infrastructure definition.
+
+  COMMAND:
+    .zcp/workflow.sh compose --runtime {runtime} --services {services}
+
+  EXAMPLES:
+    .zcp/workflow.sh compose --runtime go --services postgresql
+    .zcp/workflow.sh compose --runtime nodejs --services postgresql,valkey
+    .zcp/workflow.sh compose --runtime python
+
+  OUTPUT:
+    /tmp/synthesis_plan.json      ← Service topology, env mappings
+    /tmp/synthesized_import.yml   ← Import file for extend
+
+  NEXT: .zcp/workflow.sh transition_to EXTEND
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EOF
+
+    # Emit WIGGUM state
+    emit_wiggum_state_block
+}
+
+# ============================================================================
+# SYNTHESIS PHASE GUIDANCE - EXTEND
+# ============================================================================
+
+output_extend_guidance() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  PHASE: EXTEND
+
+  Import services to Zerops and wait for RUNNING.
+
+  COMMAND:
+    .zcp/workflow.sh extend /tmp/synthesized_import.yml
+
+  AFTER SERVICES RUNNING:
+    Create code files in /var/www/{dev}/:
+    - zerops.yml (with zerops: wrapper)
+    - main.{ext} (connectivity proof code)
+    - {deps_file} (go.mod, package.json, etc.)
+
+    Reference /tmp/synthesis_plan.json for:
+    - Environment variable mappings
+    - Required files list
+    - Service connections
+
+  NEXT: After creating code → .zcp/workflow.sh verify_synthesis
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EOF
+
+    # Emit WIGGUM state
+    emit_wiggum_state_block
+}
+
+# ============================================================================
+# SYNTHESIS PHASE GUIDANCE - SYNTHESIZE
+# ============================================================================
+
+output_synthesize_guidance() {
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  PHASE: SYNTHESIZE
+
+  Validate agent-created code structure.
+
+  COMMAND:
+    .zcp/workflow.sh verify_synthesis
+
+  CHECKS:
+    ✓ zerops.yml exists with zerops: wrapper
+    ✓ Main code file exists
+    ✓ Dependency file exists
+    ✓ Session ID matches
+
+  NEXT: .zcp/workflow.sh transition_to DEVELOP
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EOF
+
+    # Emit WIGGUM state
+    emit_wiggum_state_block
+}
+
+# ============================================================================
+# WIGGUM STATE BLOCK OUTPUT
+# ============================================================================
+
+emit_wiggum_state_block() {
+    echo ""
+    echo "┌─────────────────────────────────────────────────────────────────────────────┐"
+    echo "│  WORKFLOW STATE (JSON)                                                       │"
+    echo "└─────────────────────────────────────────────────────────────────────────────┘"
+    echo ""
+
+    # Update and emit workflow state
+    if type update_workflow_state &>/dev/null; then
+        update_workflow_state 2>/dev/null
+        if [ -f "$WORKFLOW_STATE_FILE" ]; then
+            cat "$WORKFLOW_STATE_FILE" 2>/dev/null | jq '.' 2>/dev/null || cat "$WORKFLOW_STATE_FILE" 2>/dev/null
+        fi
+    fi
 }
 
 # ============================================================================
@@ -423,6 +586,15 @@ output_phase_guidance() {
     local phase="$1"
 
     case "$phase" in
+        COMPOSE)
+            output_compose_guidance
+            ;;
+        EXTEND)
+            output_extend_guidance
+            ;;
+        SYNTHESIZE)
+            output_synthesize_guidance
+            ;;
         DISCOVER)
             output_discover_guidance
             ;;

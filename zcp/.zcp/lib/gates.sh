@@ -1,8 +1,13 @@
 #!/bin/bash
 # Gate checks for Zerops Workflow phase transitions
+#
+# Each gate validates prerequisites before allowing phase transitions.
+# Gates output structured recovery hints (JSON to stderr) for WIGGUM
+# (Workflow Infrastructure for Guided Gates and Unified Management)
+# to enable automated error recovery.
 
 # ============================================================================
-# Gate 0: INIT → DISCOVER (Recipe Review)
+# Gate 0: INIT → DISCOVER/COMPOSE (Recipe Review)
 # ============================================================================
 
 check_gate_init_to_discover() {
@@ -502,6 +507,237 @@ check_gate_verify_to_done() {
     else
         echo ""
         echo "❌ Gate FAILED - fix issues above before proceeding"
+        return 1
+    fi
+}
+
+# ============================================================================
+# Gate S: Synthesis Complete (SYNTHESIZE → DEVELOP)
+# ============================================================================
+# Validates that agent-created code exists and is properly structured
+
+check_gate_synthesis() {
+    local synthesis_file="$SYNTHESIS_COMPLETE_FILE"
+    local checks_passed=0
+    local checks_total=0
+    local all_passed=true
+
+    echo "Gate S: SYNTHESIZE → DEVELOP"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # Check 1: synthesis_complete.json exists
+    ((checks_total++))
+    if [ -f "$synthesis_file" ]; then
+        echo "  ✓ synthesis_complete.json exists"
+        ((checks_passed++))
+    else
+        echo "  ✗ synthesis_complete.json missing"
+        echo "    → Run: .zcp/workflow.sh verify_synthesis"
+        echo "    → Prerequisites:"
+        echo "      - Services must be RUNNING"
+        echo "      - Code files must exist in /var/www/{dev}/"
+        echo "      - zerops.yml must have zerops: wrapper"
+        all_passed=false
+
+        # Output JSON fix instructions
+        cat <<EOF >&2
+
+{
+  "gate": "GATE_S",
+  "status": "BLOCKED",
+  "reason": "Synthesis not verified",
+  "evidence_required": "$synthesis_file",
+  "fix": {
+    "command": ".zcp/workflow.sh verify_synthesis",
+    "prerequisites": [
+      "Services must be RUNNING",
+      "Code files must exist in /var/www/{dev}/",
+      "zerops.yml must have zerops: wrapper"
+    ]
+  }
+}
+EOF
+        return 2
+    fi
+
+    # Check 2: session_id matches
+    ((checks_total++))
+    if check_evidence_session "$synthesis_file"; then
+        echo "  ✓ session_id matches current session"
+        ((checks_passed++))
+    else
+        local current_session=$(get_session)
+        local evidence_session=$(jq -r '.session_id // "none"' "$synthesis_file" 2>/dev/null)
+        echo "  ✗ session_id mismatch"
+        echo "    → Current session: $current_session"
+        echo "    → Evidence session: $evidence_session"
+        echo "    → Re-run: .zcp/workflow.sh verify_synthesis"
+        all_passed=false
+
+        cat <<EOF >&2
+
+{
+  "gate": "GATE_S",
+  "status": "BLOCKED",
+  "reason": "Synthesis evidence from different session",
+  "current_session": "$current_session",
+  "evidence_session": "$evidence_session",
+  "fix": {
+    "command": ".zcp/workflow.sh verify_synthesis",
+    "note": "Re-run to update evidence with current session"
+  }
+}
+EOF
+        return 2
+    fi
+
+    # Check 3: status is complete
+    ((checks_total++))
+    if command -v jq &>/dev/null && [ -f "$synthesis_file" ]; then
+        local status
+        status=$(jq -r '.status // "unknown"' "$synthesis_file" 2>/dev/null)
+        if [ "$status" = "complete" ]; then
+            local files_count
+            files_count=$(jq -r '.files_verified | length' "$synthesis_file" 2>/dev/null || echo "0")
+            echo "  ✓ synthesis complete ($files_count files verified)"
+            ((checks_passed++))
+        else
+            echo "  ✗ synthesis status: $status (expected: complete)"
+            echo "    → Check errors in synthesis_complete.json"
+            all_passed=false
+        fi
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Result: $checks_passed/$checks_total checks passed"
+
+    if [ "$all_passed" = true ]; then
+        return 0
+    else
+        echo ""
+        echo "❌ Gate FAILED - verify synthesis before proceeding"
+        return 1
+    fi
+}
+
+# ============================================================================
+# Gate: COMPOSE → EXTEND (Synthesis Plan)
+# ============================================================================
+
+check_gate_compose_to_extend() {
+    local synthesis_plan="$SYNTHESIS_PLAN_FILE"
+    local checks_passed=0
+    local checks_total=0
+    local all_passed=true
+
+    echo "Gate: COMPOSE → EXTEND"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # Check 1: synthesis_plan.json exists
+    ((checks_total++))
+    if [ -f "$synthesis_plan" ]; then
+        echo "  ✓ synthesis_plan.json exists"
+        ((checks_passed++))
+    else
+        echo "  ✗ synthesis_plan.json missing"
+        echo "    → Run: .zcp/workflow.sh compose --runtime {runtime} --services {services}"
+        all_passed=false
+    fi
+
+    # Check 2: synthesized_import.yml exists
+    ((checks_total++))
+    if [ -f "$SYNTHESIZED_IMPORT_FILE" ]; then
+        echo "  ✓ synthesized_import.yml exists"
+        ((checks_passed++))
+    else
+        echo "  ✗ synthesized_import.yml missing"
+        echo "    → Run: .zcp/workflow.sh compose --runtime {runtime} --services {services}"
+        all_passed=false
+    fi
+
+    # Check 3: session_id matches (if file exists)
+    ((checks_total++))
+    if [ -f "$synthesis_plan" ]; then
+        if check_evidence_session "$synthesis_plan"; then
+            echo "  ✓ session_id matches current session"
+            ((checks_passed++))
+        else
+            echo "  ✗ session_id mismatch - re-run compose"
+            all_passed=false
+        fi
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Result: $checks_passed/$checks_total checks passed"
+
+    if [ "$all_passed" = true ]; then
+        return 0
+    else
+        echo ""
+        echo "❌ Gate FAILED - run compose command first"
+        return 1
+    fi
+}
+
+# ============================================================================
+# Gate: EXTEND → SYNTHESIZE (Services Imported)
+# ============================================================================
+
+check_gate_extend_to_synthesize() {
+    local services_imported="$SERVICES_IMPORTED_FILE"
+    local checks_passed=0
+    local checks_total=0
+    local all_passed=true
+
+    echo "Gate: EXTEND → SYNTHESIZE"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # Check 1: services_imported.json exists
+    ((checks_total++))
+    if [ -f "$services_imported" ]; then
+        echo "  ✓ services_imported.json exists"
+        ((checks_passed++))
+    else
+        echo "  ✗ services_imported.json missing"
+        echo "    → Run: .zcp/workflow.sh extend $SYNTHESIZED_IMPORT_FILE"
+        all_passed=false
+    fi
+
+    # Check 2: session_id matches
+    ((checks_total++))
+    if [ -f "$services_imported" ]; then
+        if check_evidence_session "$services_imported"; then
+            echo "  ✓ session_id matches current session"
+            ((checks_passed++))
+        else
+            echo "  ✗ session_id mismatch - re-run extend"
+            all_passed=false
+        fi
+    fi
+
+    # Check 3: services are RUNNING
+    ((checks_total++))
+    if [ -f "$services_imported" ] && command -v jq &>/dev/null; then
+        local all_running
+        all_running=$(jq -r '.services | all(.status == "RUNNING")' "$services_imported" 2>/dev/null || echo "false")
+        if [ "$all_running" = "true" ]; then
+            echo "  ✓ all services are RUNNING"
+            ((checks_passed++))
+        else
+            echo "  ✗ not all services are RUNNING"
+            echo "    → Wait for services: .zcp/status.sh --wait {service}"
+            all_passed=false
+        fi
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Result: $checks_passed/$checks_total checks passed"
+
+    if [ "$all_passed" = true ]; then
+        return 0
+    else
+        echo ""
+        echo "❌ Gate FAILED - ensure services are imported and running"
         return 1
     fi
 }

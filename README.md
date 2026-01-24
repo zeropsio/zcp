@@ -67,7 +67,8 @@ zcp/
 │   ├── status.sh          # Deployment status + wait mode + auto context capture
 │   └── lib/               # Modular components (AI-readable)
 │       ├── utils.sh       # State management, persistence, locking, context capture
-│       ├── gates.sh       # Phase transition gate checks (Gates 0-7)
+│       ├── gates.sh       # Phase transition gate checks (Gates 0-7, S)
+│       ├── state.sh       # WIGGUM¹ state management (synthesis mode)
 │       ├── help.sh        # Help system loader
 │       ├── commands.sh    # Commands loader
 │       ├── help/
@@ -82,7 +83,8 @@ zcp/
 │           ├── planning.sh   # plan_services, snapshot_dev (Gates 1, 5.5)
 │           ├── iterate.sh    # iterate command (post-DONE continuation)
 │           ├── retarget.sh   # retarget command (change deployment target)
-│           └── context.sh    # intent, note commands (rich context)
+│           ├── context.sh    # intent, note commands (rich context)
+│           └── compose.sh    # Synthesis commands (compose, verify_synthesis)
 │       └── state/         # Persistent storage (survives container restart)
 │           ├── workflow/  # Current workflow state
 │           │   ├── evidence/      # Persisted evidence files
@@ -117,6 +119,12 @@ Reuses recent discovery (<24h), skips dev verification. For urgent fixes.
 
 ### Quick Mode
 No gates, no enforcement. For exploration and debugging.
+
+### Synthesis Mode (Bootstrap from Scratch)
+```
+INIT → COMPOSE → EXTEND → SYNTHESIZE → DEVELOP → DEPLOY → VERIFY → DONE
+```
+For creating new services from scratch when no runtime services exist. Generates infrastructure definitions and validates agent-created code before standard development flow.
 
 ## Bootstrap vs Standard Flow (Auto-Detected)
 
@@ -238,6 +246,14 @@ The workflow enforces quality gates at each phase transition. Gates 0-3 are new 
 | **Gate 6** | DEPLOY → VERIFY | `deploy_evidence.json` | `.zcp/status.sh --wait` | Verifying incomplete deploy |
 | **Gate 7** | VERIFY → DONE | `stage_verify.json` | `.zcp/verify.sh {stage}` | Shipping broken features |
 
+**Synthesis Mode Gates** (used when bootstrapping new services):
+
+| Gate | Transition | Evidence File | Created By | Prevents |
+|------|------------|---------------|------------|----------|
+| **Gate C→E** | COMPOSE → EXTEND | `synthesis_plan.json` | `.zcp/workflow.sh compose` | Missing infrastructure plan |
+| **Gate E→S** | EXTEND → SYNTHESIZE | `services_imported.json` | `.zcp/workflow.sh extend` | Deploying to non-existent services |
+| **Gate S** | SYNTHESIZE → DEVELOP | `synthesis_complete.json` | `.zcp/workflow.sh verify_synthesis` | Invalid code structure |
+
 **Bold gates** are enforced (blocking). Others are optional but create audit trails.
 
 ### Gate 0: Recipe Discovery (Critical)
@@ -318,6 +334,10 @@ Backward transitions (`--back`) invalidate downstream evidence.
 # Dev Snapshot (Gate 5.5 - optional rollback point)
 .zcp/workflow.sh snapshot_dev [version-name]
 
+# Synthesis (Bootstrap from scratch)
+.zcp/workflow.sh compose --runtime {rt} [--services {s}]  # Generate synthesis plan
+.zcp/workflow.sh verify_synthesis                          # Validate synthesized code
+
 # Transitions
 .zcp/workflow.sh transition_to DISCOVER  # Requires Gate 0 (recipe review)
 .zcp/workflow.sh transition_to DEVELOP   # Requires Gate 4 (discovery)
@@ -354,7 +374,7 @@ Backward transitions (`--back`) invalidate downstream evidence.
 
 ## Evidence Files
 
-All stored in `/tmp/` (with write-through to `.zcp/state/` for persistence):
+All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/state/` for persistence):
 
 ### State Files
 | File | Created By | Contains |
@@ -378,6 +398,10 @@ All stored in `/tmp/` (with write-through to `.zcp/state/` for persistence):
 | `dev_snapshot.json` | Gate 5.5 | `.zcp/workflow.sh snapshot_dev` | Rollback point |
 | `deploy_evidence.json` | Gate 6 | `.zcp/status.sh --wait` | Deployment completion proof |
 | `stage_verify.json` | Gate 7 | `.zcp/verify.sh {stage}` | Stage endpoint test results |
+| `synthesis_plan.json` | Gate C→E | `.zcp/workflow.sh compose` | Service topology, env mappings |
+| `synthesized_import.yml` | Gate C→E | `.zcp/workflow.sh compose` | Import file for extend |
+| `synthesis_complete.json` | Gate S | `.zcp/workflow.sh verify_synthesis` | Code structure validation |
+| `workflow_state.json` | — | Auto-generated | WIGGUM workflow state (synthesis mode) |
 
 ## Key Features
 
@@ -396,8 +420,9 @@ All stored in `/tmp/` (with write-through to `.zcp/state/` for persistence):
 - **Iteration support** — Continue work after DONE without losing history
 - **Rich context** — Intent and notes for better resumability after long breaks
 - **BSD-compatible locking** — File locking works on both Linux (flock) and macOS (mkdir)
-- **Write-through caching** — Evidence written to both `/tmp/` and persistent storage
-- **Graceful degradation** — Falls back to `/tmp/` if persistent storage unavailable
+- **Write-through caching** — Evidence written to both temp dir and persistent storage
+- **Graceful degradation** — Falls back to temp dir if persistent storage unavailable
+- **Configurable temp directory** — Set `ZCP_TMP_DIR` env var to override default `/tmp/`
 
 ## Environment Context
 
@@ -568,16 +593,29 @@ Key functions available for new commands:
 ### Evidence File Variables (lib/utils.sh)
 
 ```bash
+# Configurable temp directory (defaults to /tmp)
+ZCP_TMP_DIR="${ZCP_TMP_DIR:-/tmp}"
+
 # Original gate evidence
-DISCOVERY_FILE="/tmp/discovery.json"
-DEV_VERIFY_FILE="/tmp/dev_verify.json"
-STAGE_VERIFY_FILE="/tmp/stage_verify.json"
-DEPLOY_EVIDENCE_FILE="/tmp/deploy_evidence.json"
+DISCOVERY_FILE="${ZCP_TMP_DIR}/discovery.json"
+DEV_VERIFY_FILE="${ZCP_TMP_DIR}/dev_verify.json"
+STAGE_VERIFY_FILE="${ZCP_TMP_DIR}/stage_verify.json"
+DEPLOY_EVIDENCE_FILE="${ZCP_TMP_DIR}/deploy_evidence.json"
 
 # New gate evidence (Gates 0-3, 5.5)
-RECIPE_REVIEW_FILE="/tmp/recipe_review.json"
-SERVICE_PLAN_FILE="/tmp/service_plan.json"
-SERVICES_IMPORTED_FILE="/tmp/services_imported.json"
-CONFIG_VALIDATED_FILE="/tmp/config_validated.json"
-DEV_SNAPSHOT_FILE="/tmp/dev_snapshot.json"
+RECIPE_REVIEW_FILE="${ZCP_TMP_DIR}/recipe_review.json"
+SERVICE_PLAN_FILE="${ZCP_TMP_DIR}/service_plan.json"
+SERVICES_IMPORTED_FILE="${ZCP_TMP_DIR}/services_imported.json"
+CONFIG_VALIDATED_FILE="${ZCP_TMP_DIR}/config_validated.json"
+DEV_SNAPSHOT_FILE="${ZCP_TMP_DIR}/dev_snapshot.json"
+
+# WIGGUM state files (Synthesis mode)
+WORKFLOW_STATE_FILE="${ZCP_TMP_DIR}/workflow_state.json"
+SYNTHESIS_PLAN_FILE="${ZCP_TMP_DIR}/synthesis_plan.json"
+SYNTHESIS_COMPLETE_FILE="${ZCP_TMP_DIR}/synthesis_complete.json"
+SYNTHESIZED_IMPORT_FILE="${ZCP_TMP_DIR}/synthesized_import.yml"
 ```
+
+---
+
+¹ **WIGGUM** = Workflow Infrastructure for Guided Gates and Unified Management
