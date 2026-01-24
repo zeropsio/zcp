@@ -181,6 +181,20 @@ cmd_bootstrap() {
             return 1
         fi
 
+        # Check zcli authentication first
+        if ! zcli service list -P "$projectId" --json &>/dev/null; then
+            cat <<'ZCLI_AUTH'
+⛔ zcli is not authenticated. Run this first:
+
+   zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZCP_API_KEY"
+
+Then re-run:
+
+   .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
+ZCLI_AUTH
+            return 1
+        fi
+
         # Check project state
         local state
         state=$(detect_project_state)
@@ -200,6 +214,7 @@ cmd_bootstrap() {
                 ;;
             ERROR)
                 echo "ERROR: Could not detect project state" >&2
+                echo "Check: is projectId set? is zcli authenticated?" >&2
                 return 1
                 ;;
         esac

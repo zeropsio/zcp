@@ -16,7 +16,7 @@ The workflow detects current state and adapts — your pre-made steps cannot.
 | **Yes, dev only** | `.zcp/workflow.sh init --dev-only` | Prototype, experiment, not ready for stage |
 | **Yes, urgent hotfix** | `.zcp/workflow.sh init --hotfix` | Production broken, skip dev verification |
 | **No, just looking** | `.zcp/workflow.sh --quick` | Read logs, investigate, understand codebase |
-| **No services yet** | `.zcp/workflow.sh bootstrap --runtime go --services postgresql` | New project: create services + scaffolding first |
+| **No services yet** | `.zcp/workflow.sh bootstrap --runtime go --services postgresql` | New project: creates services, then run `init` |
 
 **Run one. READ its output completely. FOLLOW the rules it shows.** The script guides each phase and enforces gates.
 
