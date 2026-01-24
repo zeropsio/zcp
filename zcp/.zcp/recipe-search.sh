@@ -5,14 +5,20 @@
 set -o pipefail
 # Note: -e removed intentionally - grep returns 1 on no match, which is valid
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m' # No Color
+# Source utils.sh for shared functions and color definitions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
+    source "$SCRIPT_DIR/lib/utils.sh"
+else
+    # Fallback colors if utils.sh not available
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    NC='\033[0m'
+fi
 
 # Recipe repository structure (known patterns)
 RECIPE_BASE_URL="https://github.com/zerops-recipe-apps"
@@ -1020,12 +1026,6 @@ EOF
   esac
 
   echo ""
-}
-
-# No local patterns - always fetch from API or docs
-has_local_patterns() {
-  # Always return false - recipe API and docs are the only sources of truth
-  return 1
 }
 
 # Find the framework slug from the API (handles aliases like go->golang)

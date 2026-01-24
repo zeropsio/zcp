@@ -1,28 +1,40 @@
 #!/bin/bash
+# shellcheck shell=bash
+# shellcheck disable=SC2034  # Variables used by sourced scripts
+
 # Utility functions for Zerops Workflow Management System
 
 # ============================================================================
 # STATE FILE PATHS
 # ============================================================================
 
-# Cache files (fast, ephemeral - /tmp/)
-SESSION_FILE="/tmp/claude_session"
-MODE_FILE="/tmp/claude_mode"
-PHASE_FILE="/tmp/claude_phase"
-ITERATION_FILE="/tmp/claude_iteration"
-DISCOVERY_FILE="/tmp/discovery.json"
-DEV_VERIFY_FILE="/tmp/dev_verify.json"
-STAGE_VERIFY_FILE="/tmp/stage_verify.json"
-DEPLOY_EVIDENCE_FILE="/tmp/deploy_evidence.json"
-CONTEXT_FILE="/tmp/claude_context.json"
+# Configurable temp directory (defaults to /tmp)
+ZCP_TMP_DIR="${ZCP_TMP_DIR:-/tmp}"
+
+# Cache files (fast, ephemeral - uses ZCP_TMP_DIR)
+SESSION_FILE="${ZCP_TMP_DIR}/claude_session"
+MODE_FILE="${ZCP_TMP_DIR}/claude_mode"
+PHASE_FILE="${ZCP_TMP_DIR}/claude_phase"
+ITERATION_FILE="${ZCP_TMP_DIR}/claude_iteration"
+DISCOVERY_FILE="${ZCP_TMP_DIR}/discovery.json"
+DEV_VERIFY_FILE="${ZCP_TMP_DIR}/dev_verify.json"
+STAGE_VERIFY_FILE="${ZCP_TMP_DIR}/stage_verify.json"
+DEPLOY_EVIDENCE_FILE="${ZCP_TMP_DIR}/deploy_evidence.json"
+CONTEXT_FILE="${ZCP_TMP_DIR}/claude_context.json"
 
 # New gate evidence files (Gates 0-3)
-RECIPE_REVIEW_FILE="/tmp/recipe_review.json"
-IMPORT_VALIDATED_FILE="/tmp/import_validated.json"  # Gate 0.5: Import validation
-SERVICE_PLAN_FILE="/tmp/service_plan.json"
-SERVICES_IMPORTED_FILE="/tmp/services_imported.json"
-CONFIG_VALIDATED_FILE="/tmp/config_validated.json"
-DEV_SNAPSHOT_FILE="/tmp/dev_snapshot.json"
+RECIPE_REVIEW_FILE="${ZCP_TMP_DIR}/recipe_review.json"
+IMPORT_VALIDATED_FILE="${ZCP_TMP_DIR}/import_validated.json"  # Gate 0.5: Import validation
+SERVICE_PLAN_FILE="${ZCP_TMP_DIR}/service_plan.json"
+SERVICES_IMPORTED_FILE="${ZCP_TMP_DIR}/services_imported.json"
+CONFIG_VALIDATED_FILE="${ZCP_TMP_DIR}/config_validated.json"
+DEV_SNAPSHOT_FILE="${ZCP_TMP_DIR}/dev_snapshot.json"
+
+# WIGGUM state files (Bootstrap Synthesis)
+WORKFLOW_STATE_FILE="${ZCP_TMP_DIR}/workflow_state.json"
+SYNTHESIS_PLAN_FILE="${ZCP_TMP_DIR}/synthesis_plan.json"
+SYNTHESIS_COMPLETE_FILE="${ZCP_TMP_DIR}/synthesis_complete.json"
+SYNTHESIZED_IMPORT_FILE="${ZCP_TMP_DIR}/synthesized_import.yml"
 
 # Persistent storage (survives container restart)
 # Default to .zcp/state (inside .zcp dir), allow override via env
@@ -31,8 +43,24 @@ WORKFLOW_STATE_DIR="$STATE_DIR/workflow"
 WORKFLOW_ITERATIONS_DIR="$WORKFLOW_STATE_DIR/iterations"
 PERSISTENT_ENABLED=false
 
-# Valid phases
-PHASES=("INIT" "DISCOVER" "DEVELOP" "DEPLOY" "VERIFY" "DONE")
+# Valid phases (includes synthesis phases)
+PHASES=("INIT" "COMPOSE" "EXTEND" "SYNTHESIZE" "DISCOVER" "DEVELOP" "DEPLOY" "VERIFY" "DONE")
+
+# ============================================================================
+# TERMINAL COLORS (shared across scripts)
+# ============================================================================
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
+NC='\033[0m'  # No Color
+
+# WIGGUM persistent state
+WORKFLOW_STATE_PERSISTENT="$WORKFLOW_STATE_DIR/workflow_state.json"
 
 # ============================================================================
 # PERSISTENT STORAGE INITIALIZATION
@@ -133,8 +161,8 @@ write_evidence() {
     local name="$1"
     local content="$2"
 
-    # Always write to /tmp/ (fast cache)
-    safe_write_json "/tmp/${name}.json" "$content" || return 1
+    # Always write to temp cache (fast)
+    safe_write_json "${ZCP_TMP_DIR}/${name}.json" "$content" || return 1
 
     # Also write to persistent if available
     if [ "$PERSISTENT_ENABLED" = true ] && [ -d "$WORKFLOW_STATE_DIR" ]; then
@@ -394,12 +422,18 @@ restore_from_persistent() {
     # Restore evidence files
     local evidence_dir="$WORKFLOW_STATE_DIR/evidence"
     if [ -d "$evidence_dir" ]; then
-        for f in discovery dev_verify stage_verify deploy_evidence; do
-            if [ ! -f "/tmp/${f}.json" ] && [ -f "$evidence_dir/${f}.json" ]; then
-                cp "$evidence_dir/${f}.json" "/tmp/${f}.json"
+        for f in discovery dev_verify stage_verify deploy_evidence synthesis_complete; do
+            if [ ! -f "${ZCP_TMP_DIR}/${f}.json" ] && [ -f "$evidence_dir/${f}.json" ]; then
+                cp "$evidence_dir/${f}.json" "${ZCP_TMP_DIR}/${f}.json"
                 restored=true
             fi
         done
+    fi
+
+    # Restore WIGGUM workflow state
+    if [ ! -f "$WORKFLOW_STATE_FILE" ] && [ -f "$WORKFLOW_STATE_PERSISTENT" ]; then
+        cp "$WORKFLOW_STATE_PERSISTENT" "$WORKFLOW_STATE_FILE"
+        restored=true
     fi
 
     # Restore context
@@ -409,8 +443,8 @@ restore_from_persistent() {
     fi
 
     # Restore intent
-    if [ ! -f "/tmp/claude_intent.txt" ] && [ -f "$WORKFLOW_STATE_DIR/intent.txt" ]; then
-        cp "$WORKFLOW_STATE_DIR/intent.txt" "/tmp/claude_intent.txt"
+    if [ ! -f "${ZCP_TMP_DIR}/claude_intent.txt" ] && [ -f "$WORKFLOW_STATE_DIR/intent.txt" ]; then
+        cp "$WORKFLOW_STATE_DIR/intent.txt" "${ZCP_TMP_DIR}/claude_intent.txt"
         restored=true
     fi
 
@@ -430,7 +464,7 @@ restore_from_persistent() {
 # Sets global: DETECTED_SERVICES_JSON with service list
 check_runtime_services_exist() {
     local pid
-    pid=$(cat /tmp/projectId 2>/dev/null || echo "${projectId:-}")
+    pid=$(cat "${ZCP_TMP_DIR}/projectId" 2>/dev/null || echo "${projectId:-}")
 
     # If no project ID, can't check - assume need bootstrap
     if [ -z "$pid" ]; then
@@ -524,11 +558,14 @@ sync_to_persistent() {
     [ -f "$ITERATION_FILE" ] && cp "$ITERATION_FILE" "$WORKFLOW_STATE_DIR/iteration"
 
     # Sync evidence
-    for f in discovery dev_verify stage_verify deploy_evidence; do
-        [ -f "/tmp/${f}.json" ] && cp "/tmp/${f}.json" "$WORKFLOW_STATE_DIR/evidence/${f}.json"
+    for f in discovery dev_verify stage_verify deploy_evidence synthesis_complete; do
+        [ -f "${ZCP_TMP_DIR}/${f}.json" ] && cp "${ZCP_TMP_DIR}/${f}.json" "$WORKFLOW_STATE_DIR/evidence/${f}.json"
     done
+
+    # Sync WIGGUM workflow state
+    [ -f "$WORKFLOW_STATE_FILE" ] && cp "$WORKFLOW_STATE_FILE" "$WORKFLOW_STATE_PERSISTENT"
 
     # Sync context and intent
     [ -f "$CONTEXT_FILE" ] && cp "$CONTEXT_FILE" "$WORKFLOW_STATE_DIR/context.json"
-    [ -f "/tmp/claude_intent.txt" ] && cp "/tmp/claude_intent.txt" "$WORKFLOW_STATE_DIR/intent.txt"
+    [ -f "${ZCP_TMP_DIR}/claude_intent.txt" ] && cp "${ZCP_TMP_DIR}/claude_intent.txt" "$WORKFLOW_STATE_DIR/intent.txt"
 }

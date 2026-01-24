@@ -77,7 +77,8 @@ Network: Services connect via hostname = service name
 .zcp/workflow.sh upgrade-to-full              # Upgrade dev-only to full deployment
 
 Topics: discover, develop, deploy, verify, done, vars, services,
-        trouble, example, gates, extend, bootstrap
+        trouble, example, gates, extend, bootstrap, cheatsheet,
+        import-validation
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔍 PHASE: DISCOVER

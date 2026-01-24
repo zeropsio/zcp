@@ -87,13 +87,11 @@ debug_log() {
     fi
 }
 
-get_session() {
-    if [ -f "/tmp/claude_session" ]; then
-        cat "/tmp/claude_session"
-    else
-        echo "$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
-    fi
-}
+# Source utils.sh for shared functions (get_session, etc.)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
+    source "$SCRIPT_DIR/lib/utils.sh"
+fi
 
 # Load discovery for accurate service matching
 # Sets globals: DEV_SERVICE_NAME, STAGE_SERVICE_NAME

@@ -1,4 +1,6 @@
 #!/bin/bash
+# shellcheck shell=bash
+# shellcheck disable=SC2034  # Variables used by sourced scripts
 
 # Zerops Workflow Management System
 # Self-documenting phase orchestration with enforcement gates
@@ -38,6 +40,13 @@ main() {
 
     # Initialize persistent storage on startup
     init_persistent_storage 2>/dev/null
+
+    # Check for required dependencies
+    if ! command -v jq &>/dev/null; then
+        echo "Error: jq is required but not installed" >&2
+        echo "Install with: brew install jq (macOS) or apt install jq (Linux)" >&2
+        exit 1
+    fi
 
     case "$command" in
         init)
@@ -85,6 +94,13 @@ main() {
             ;;
         snapshot_dev)
             cmd_snapshot_dev "$@"
+            ;;
+        # === SYNTHESIS COMMANDS ===
+        compose)
+            cmd_compose "$@"
+            ;;
+        verify_synthesis)
+            cmd_verify_synthesis "$@"
             ;;
         validate_config|validate_code)
             "$SCRIPT_DIR/validate-config.sh" "$@"
@@ -166,6 +182,10 @@ EOF
             echo "  plan_services {rt} [db]     Plan service topology"
             echo "  snapshot_dev [name]         Create dev snapshot (Gate 5)"
             echo "  validate_config {yml}       Validate zerops.yml (Gate 3)"
+            echo ""
+            echo "Synthesis Commands (Bootstrap):"
+            echo "  compose --runtime <rt> [--services <s>]  Generate synthesis plan"
+            echo "  verify_synthesis            Validate synthesized code structure"
             echo ""
             echo "Continuity Commands:"
             echo "  iterate [--to PHASE] [summary]  Start new iteration from DONE"

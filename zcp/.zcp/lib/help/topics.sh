@@ -32,10 +32,10 @@ show_topic_help() {
             show_help_services
             ;;
         trouble)
-            show_full_help | sed -n '/🔧 TROUBLESHOOTING/,/📖 COMPLETE EXAMPLE/p' | head -n -1
+            show_full_help | sed -n '/🔧 TROUBLESHOOTING/,/📖 COMPLETE EXAMPLE/p' | sed '$d'
             ;;
         example)
-            show_full_help | sed -n '/📖 COMPLETE EXAMPLE/,/🚪 GATES/p' | head -n -1
+            show_full_help | sed -n '/📖 COMPLETE EXAMPLE/,/🚪 GATES/p' | sed '$d'
             ;;
         gates)
             show_full_help | sed -n '/🚪 GATES/,$p'
