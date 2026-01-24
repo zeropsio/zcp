@@ -95,7 +95,7 @@ cmd_create_discovery() {
         echo "Mode:  SINGLE-SERVICE (dev = stage)"
     fi
     echo ""
-    echo "📋 Next: .zcp/workflow.sh transition_to DISCOVER"
+    echo "📋 Next: .zcp/workflow.sh transition_to DEVELOP"
 }
 
 cmd_refresh_discovery() {

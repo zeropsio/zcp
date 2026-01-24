@@ -144,11 +144,11 @@ Internal connectivity test:
 
 ⚠️  Common failure: Files built but not in deployFiles = missing on stage
 
-zerops.yaml structure (use base values from recipe_review.json):
+zerops.yaml structure:
   zerops:
     - setup: api              # ← --setup value
       build:
-        base: {from recipe - dev_runtime_base}
+        base: go@1            # See: jq -r '.patterns_extracted.runtime_patterns.go.dev_runtime_base' /tmp/recipe_review.json
         buildCommands:
           - go build -o app main.go
         deployFiles:
@@ -156,7 +156,7 @@ zerops.yaml structure (use base values from recipe_review.json):
           - ./templates       # Don't forget!
           - ./static
       run:
-        base: {from recipe - prod_runtime_base, e.g. alpine}
+        base: go@1            # Or alpine@3.21 for smaller image
         ports:
           - port: 8080
         start: ./app
@@ -342,7 +342,13 @@ agent-browser screenshot
 🚪 GATES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-DISCOVER → DEVELOP:
+INIT → DISCOVER (Gate 0):
+  • /tmp/recipe_review.json exists
+  • Recipe review verified (verified: true)
+  • Patterns extracted from recipe
+  → Run: .zcp/recipe-search.sh quick {runtime} [managed-service]
+
+DISCOVER → DEVELOP (Gate 1):
   • /tmp/discovery.json exists with current session_id
   • deploy_target != dev service name
 

@@ -250,11 +250,11 @@ show_help_deploy() {
 
 ⚠️  Most common failure: Agent builds files but forgets to update deployFiles
 
-zerops.yaml structure (use base values from recipe_review.json):
+zerops.yaml structure:
   zerops:
     - setup: api              # ← This is the --setup value
       build:
-        base: {from recipe_review.json patterns_extracted.runtime_patterns}
+        base: go@1            # Get from: jq -r '.patterns_extracted.runtime_patterns.go.dev_runtime_base' /tmp/recipe_review.json
         buildCommands:
           - go build -o app main.go
         deployFiles:          # ← CRITICAL SECTION
@@ -263,7 +263,7 @@ zerops.yaml structure (use base values from recipe_review.json):
           - ./static
           - ./config
       run:
-        base: {from recipe - use alpine for prod}
+        base: go@1            # Or alpine@3.21 for smaller prod image
         ports:
           - port: 8080
         start: ./app
@@ -1173,18 +1173,20 @@ func main() {
 }
 GO
 
-# 6. Create zerops.yaml (use base values from recipe_review.json)
+# 6. Create zerops.yaml
+# Get runtime base: jq -r '.patterns_extracted.runtime_patterns.go.dev_runtime_base' /tmp/recipe_review.json
+# Example output: go@1
 cat > /var/www/appdev/zerops.yaml <<'YAML'
 zerops:
   - setup: app
     build:
-      base: {from recipe_review.json - dev_runtime_base}
+      base: go@1
       buildCommands:
         - go build -o app main.go
       deployFiles:
         - ./app
     run:
-      base: {from recipe_review.json - prod_runtime_base}
+      base: go@1
       ports:
         - port: 8080
       start: ./app
