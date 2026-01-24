@@ -68,22 +68,27 @@ zcp/
 │   └── lib/               # Modular components (AI-readable)
 │       ├── utils.sh       # State management, persistence, locking, context capture
 │       ├── gates.sh       # Phase transition gate checks (Gates 0-7, S)
-│       ├── state.sh       # WIGGUM¹ state management (synthesis mode)
+│       ├── state.sh       # WIGGUM¹ state management
 │       ├── help.sh        # Help system loader
 │       ├── commands.sh    # Commands loader
 │       ├── help/
 │       │   ├── full.sh    # Full platform reference
 │       │   └── topics.sh  # Topic-specific help (discover, develop, etc.)
-│       └── commands/
-│           ├── init.sh       # init, quick commands
-│           ├── transition.sh # transition_to, phase guidance
-│           ├── discovery.sh  # create_discovery, refresh_discovery
-│           ├── status.sh     # show, complete, reset
-│           ├── extend.sh     # extend, upgrade-to-full, record_deployment, import evidence
-│           ├── iterate.sh    # iterate command (post-DONE continuation)
-│           ├── retarget.sh   # retarget command (change deployment target)
-│           ├── context.sh    # intent, note commands (rich context)
-│           └── compose.sh    # Synthesis commands (compose, verify_synthesis)
+│       ├── commands/
+│       │   ├── init.sh       # init, quick commands
+│       │   ├── transition.sh # transition_to, phase guidance
+│       │   ├── discovery.sh  # create_discovery, refresh_discovery
+│       │   ├── status.sh     # show, complete, reset
+│       │   ├── extend.sh     # extend, upgrade-to-full, record_deployment, import evidence
+│       │   ├── iterate.sh    # iterate command (post-DONE continuation)
+│       │   ├── retarget.sh   # retarget command (change deployment target)
+│       │   ├── context.sh    # intent, note commands (rich context)
+│       │   └── compose.sh    # Deprecated synthesis commands (redirects to bootstrap)
+│       ├── bootstrap/     # Bootstrap orchestration (new project setup)
+│       │   ├── orchestrator.sh  # Main bootstrap command with checkpoints
+│       │   ├── detect.sh        # Project state detection (FRESH/CONFORMANT/NON_CONFORMANT)
+│       │   ├── import-gen.sh    # Import.yml generation
+│       │   └── zerops-yml-gen.sh # zerops.yml skeleton generation
 │       └── state/         # Persistent storage (survives container restart)
 │           ├── workflow/  # Current workflow state
 │           │   ├── evidence/      # Persisted evidence files
@@ -119,11 +124,15 @@ Reuses recent discovery (<24h), skips dev verification. For urgent fixes.
 ### Quick Mode
 No gates, no enforcement. For exploration and debugging.
 
-### Synthesis Mode (Bootstrap from Scratch)
+### Bootstrap Mode (New Project Setup)
+
+For creating new services from scratch when no runtime services exist:
+
+```bash
+.zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
 ```
-INIT → COMPOSE → EXTEND → SYNTHESIZE → DEVELOP → DEPLOY → VERIFY → DONE
-```
-For creating new services from scratch when no runtime services exist. Generates infrastructure definitions and validates agent-created code before standard development flow.
+
+Bootstrap is a **pre-workflow step** that creates services and scaffolding, then hands off to the agent for code creation. After bootstrap completes, use the standard workflow.
 
 ## Bootstrap vs Standard Flow (Auto-Detected)
 
@@ -229,13 +238,14 @@ The workflow enforces quality gates at each phase transition.
 | **Gate 3** | DEPLOY → VERIFY | `deploy_evidence.json` | `.zcp/status.sh --wait` | Verifying incomplete deploy |
 | **Gate 4** | VERIFY → DONE | `stage_verify.json` | `.zcp/verify.sh {stage}` | Shipping broken features |
 
-**Synthesis Mode Gates** (used when bootstrapping new services):
+**Bootstrap Evidence** (pre-workflow service creation):
 
-| Gate | Transition | Evidence File | Created By | Prevents |
-|------|------------|---------------|------------|----------|
-| **Gate C→E** | COMPOSE → EXTEND | `synthesis_plan.json` | `.zcp/workflow.sh compose` | Missing infrastructure plan |
-| **Gate E→S** | EXTEND → SYNTHESIZE | `services_imported.json` | `.zcp/workflow.sh extend` | Deploying to non-existent services |
-| **Gate S** | SYNTHESIZE → DEVELOP | `synthesis_complete.json` | `.zcp/workflow.sh verify_synthesis` | Invalid code structure |
+| Evidence | File | Created By | Purpose |
+|----------|------|------------|---------|
+| Plan | `bootstrap_plan.json` | `.zcp/workflow.sh bootstrap` | Runtime + services specification |
+| Import | `bootstrap_import.yml` | Bootstrap orchestrator | Generated import.yml |
+| Coordination | `bootstrap_coordination.json` | Bootstrap orchestrator | Checkpoint tracking for resume |
+| Complete | `bootstrap_complete.json` | Bootstrap orchestrator | Agent handoff with task list |
 
 **Bold gates** are enforced (blocking). Others are optional but create audit trails.
 
@@ -311,9 +321,9 @@ Backward transitions (`--back`) invalidate downstream evidence.
 # Import Validation (Gate 0.5 - automatic with extend)
 .zcp/validate-import.sh {import.yml}     # Validates before import
 
-# Synthesis (Bootstrap from scratch)
-.zcp/workflow.sh compose --runtime {rt} [--services {s}]  # Generate synthesis plan
-.zcp/workflow.sh verify_synthesis                          # Validate synthesized code
+# Bootstrap (New project from scratch)
+.zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
+.zcp/workflow.sh bootstrap --resume      # Resume interrupted bootstrap
 
 # Transitions
 .zcp/workflow.sh transition_to DISCOVER  # Requires Gate 0 (recipe review)
@@ -346,7 +356,7 @@ Backward transitions (`--back`) invalidate downstream evidence.
 .zcp/workflow.sh --help
 .zcp/workflow.sh --help {topic}          # discover, develop, deploy, verify, done,
                                          # vars, services, trouble, example, gates,
-                                         # extend, bootstrap, cheatsheet, import-validation, synthesis
+                                         # extend, bootstrap, cheatsheet, import-validation
 ```
 
 ## Evidence Files
@@ -373,11 +383,12 @@ All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/s
 | `config_validated.json` | Gate 2 | Integrated in DEVELOP→DEPLOY | Config validation (automatic) |
 | `deploy_evidence.json` | Gate 3 | `.zcp/status.sh --wait` | Deployment completion proof |
 | `stage_verify.json` | Gate 4 | `.zcp/verify.sh {stage}` | Stage endpoint test results |
-| `services_imported.json` | Synthesis | `.zcp/workflow.sh extend` | Import audit trail |
-| `synthesis_plan.json` | Gate C→E | `.zcp/workflow.sh compose` | Service topology, env mappings |
-| `synthesized_import.yml` | Gate C→E | `.zcp/workflow.sh compose` | Import file for extend |
-| `synthesis_complete.json` | Gate S | `.zcp/workflow.sh verify_synthesis` | Code structure validation |
-| `workflow_state.json` | — | Auto-generated | WIGGUM workflow state (synthesis mode) |
+| `services_imported.json` | — | `.zcp/workflow.sh extend` | Import audit trail |
+| `bootstrap_plan.json` | Bootstrap | `.zcp/workflow.sh bootstrap` | Runtime + services specification |
+| `bootstrap_import.yml` | Bootstrap | Bootstrap orchestrator | Generated import.yml |
+| `bootstrap_coordination.json` | Bootstrap | Bootstrap orchestrator | Checkpoint tracking for resume |
+| `bootstrap_complete.json` | Bootstrap | Bootstrap orchestrator | Agent handoff with task list |
+| `workflow_state.json` | — | Auto-generated | WIGGUM workflow state |
 
 ## Key Features
 
@@ -584,11 +595,14 @@ IMPORT_VALIDATED_FILE="${ZCP_TMP_DIR}/import_validated.json"
 SERVICES_IMPORTED_FILE="${ZCP_TMP_DIR}/services_imported.json"
 CONFIG_VALIDATED_FILE="${ZCP_TMP_DIR}/config_validated.json"
 
-# WIGGUM state files (Synthesis mode)
+# WIGGUM state files
 WORKFLOW_STATE_FILE="${ZCP_TMP_DIR}/workflow_state.json"
-SYNTHESIS_PLAN_FILE="${ZCP_TMP_DIR}/synthesis_plan.json"
-SYNTHESIS_COMPLETE_FILE="${ZCP_TMP_DIR}/synthesis_complete.json"
-SYNTHESIZED_IMPORT_FILE="${ZCP_TMP_DIR}/synthesized_import.yml"
+
+# Bootstrap evidence files
+BOOTSTRAP_PLAN_FILE="${ZCP_TMP_DIR}/bootstrap_plan.json"
+BOOTSTRAP_IMPORT_FILE="${ZCP_TMP_DIR}/bootstrap_import.yml"
+BOOTSTRAP_COORDINATION_FILE="${ZCP_TMP_DIR}/bootstrap_coordination.json"
+BOOTSTRAP_COMPLETE_FILE="${ZCP_TMP_DIR}/bootstrap_complete.json"
 ```
 
 ---

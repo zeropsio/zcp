@@ -273,7 +273,22 @@ Quick mode - no workflow enforcement
 GUIDANCE
             ;;
         *)
-            echo "Unknown phase. Run: .zcp/workflow.sh init"
+            cat <<'NO_SESSION'
+⛔ NO ACTIVE WORKFLOW SESSION
+
+You must start a workflow before doing anything else.
+DO NOT run zcli commands directly - the workflow guides you.
+
+┌─────────────────────────────────────────────────────────────────┐
+│  NEW PROJECT (no services yet)?                                 │
+│  → .zcp/workflow.sh bootstrap --runtime go --services postgresql│
+│                                                                 │
+│  EXISTING PROJECT (services already exist)?                     │
+│  → .zcp/workflow.sh init                                        │
+└─────────────────────────────────────────────────────────────────┘
+
+Read CLAUDE.md "Start Here" table for all options.
+NO_SESSION
             ;;
     esac
 

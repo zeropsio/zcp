@@ -263,7 +263,7 @@ EOF
 
 zcli is not authenticated. Run:
 
-   zcli login $ZEROPS_ZCP_API_KEY
+   zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZEROPS_ZCP_API_KEY"
 
 Then re-run:
 
