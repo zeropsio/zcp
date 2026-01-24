@@ -11,3 +11,6 @@ Thumbs.db
 
 # Local settings
 .claude/settings.local.json
+
+# ZCP runtime state
+.zcp/state/
