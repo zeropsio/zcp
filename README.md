@@ -5,7 +5,7 @@ An AI agent workflow orchestration framework for the Zerops PaaS platform. Guide
 ## Repository Structure
 
 ```
-/Users/fxck/www/zcp/          ← Repository root (you are here)
+zcp-repo/                      ← Repository root (you are here)
 ├── README.md                  ← This file
 └── zcp/                       ← DEPLOYMENT PACKAGE (copy this to projects)
     ├── CLAUDE.md              ← Agent entry point
@@ -369,7 +369,7 @@ Backward transitions (`--back`) invalidate downstream evidence.
 .zcp/workflow.sh --help
 .zcp/workflow.sh --help {topic}          # discover, develop, deploy, verify, done,
                                          # vars, services, trouble, example, gates,
-                                         # extend, bootstrap
+                                         # extend, bootstrap, cheatsheet, import-validation
 ```
 
 ## Evidence Files

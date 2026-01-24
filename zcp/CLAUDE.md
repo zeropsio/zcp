@@ -161,5 +161,5 @@ Help topics (use `--help {topic}`):
 - `gates` — Phase transition requirements
 - `extend` — Add services mid-project
 - `bootstrap` — Create new project from scratch
-- `synthesis` — Bootstrap flow: COMPOSE → EXTEND → SYNTHESIZE
+- `import-validation` — Validate import.yml before importing
 

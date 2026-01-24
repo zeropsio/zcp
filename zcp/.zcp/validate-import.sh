@@ -14,14 +14,7 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/utils.sh"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+# Colors are now defined in utils.sh
 
 RECIPE_FILE="$RECIPE_REVIEW_FILE"
 FETCHED_RECIPE="/tmp/fetched_recipe.md"

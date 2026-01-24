@@ -48,15 +48,6 @@ EOF
 # UTILITY
 # ============================================================================
 
-parse_table_field() {
-    # zcli outputs Unicode box drawing (│)
-    # Convert to ASCII pipe for parsing
-    local line="$1"
-    local field="$2"
-
-    echo "$line" | sed 's/│/|/g' | cut -d'|' -f"$field" | xargs
-}
-
 get_project_id() {
     if [ -n "$projectId" ]; then
         echo "$projectId"

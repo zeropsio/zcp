@@ -134,19 +134,7 @@ cmd_iterate() {
     output_phase_guidance "$target_phase"
 }
 
-# Get current iteration number (default 1)
-get_iteration() {
-    if [ -f "$ITERATION_FILE" ]; then
-        cat "$ITERATION_FILE"
-    else
-        echo "1"
-    fi
-}
-
-# Set iteration number
-set_iteration() {
-    echo "$1" > "$ITERATION_FILE"
-}
+# Note: get_iteration() and set_iteration() are defined in utils.sh
 
 # Archive evidence from current iteration
 archive_iteration_evidence() {
