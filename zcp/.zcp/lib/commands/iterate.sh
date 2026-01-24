@@ -205,3 +205,23 @@ cleanup_old_iterations() {
         done
     fi
 }
+
+# Mark current iteration as complete
+# Called from cmd_complete when workflow reaches DONE
+mark_iteration_complete() {
+    local iteration
+    iteration=$(get_iteration 2>/dev/null || echo "1")
+    local history_file="$WORKFLOW_STATE_DIR/iteration_history.json"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    if [ -f "$history_file" ] && command -v jq &>/dev/null; then
+        local updated
+        updated=$(jq --arg n "$iteration" --arg ts "$timestamp" \
+            '(.iterations[] | select(.n == ($n | tonumber)) | .completed) = $ts' \
+            "$history_file" 2>/dev/null)
+        if [ -n "$updated" ]; then
+            echo "$updated" > "$history_file"
+        fi
+    fi
+}

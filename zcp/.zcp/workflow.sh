@@ -89,12 +89,6 @@ main() {
         extend)
             cmd_extend "$@"
             ;;
-        plan_services)
-            cmd_plan_services "$@"
-            ;;
-        snapshot_dev)
-            cmd_snapshot_dev "$@"
-            ;;
         # === SYNTHESIS COMMANDS ===
         compose)
             cmd_compose "$@"
@@ -177,11 +171,6 @@ EOF
             echo "  refresh_discovery           Validate discovery"
             echo "  upgrade-to-full             Upgrade dev-only to full"
             echo "  record_deployment {svc}     Manual deploy evidence"
-            echo ""
-            echo "Planning Commands:"
-            echo "  plan_services {rt} [db]     Plan service topology"
-            echo "  snapshot_dev [name]         Create dev snapshot (Gate 5)"
-            echo "  validate_config {yml}       Validate zerops.yml (Gate 3)"
             echo ""
             echo "Synthesis Commands (Bootstrap):"
             echo "  compose --runtime <rt> [--services <s>]  Generate synthesis plan"

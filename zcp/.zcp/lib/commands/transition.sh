@@ -112,6 +112,29 @@ cmd_transition_to() {
                 output_phase_guidance "$target_phase"
                 return 0
                 ;;
+            # Synthesis flow backward transitions
+            SYNTHESIZE→EXTEND)
+                rm -f "$SYNTHESIS_COMPLETE_FILE"
+                echo "⚠️  Backward transition: Synthesis evidence invalidated"
+                set_phase "$target_phase"
+                output_phase_guidance "$target_phase"
+                return 0
+                ;;
+            EXTEND→COMPOSE)
+                rm -f "$SERVICES_IMPORTED_FILE"
+                rm -f "$SYNTHESIZED_IMPORT_FILE"
+                echo "⚠️  Backward transition: Import evidence invalidated"
+                set_phase "$target_phase"
+                output_phase_guidance "$target_phase"
+                return 0
+                ;;
+            DEVELOP→SYNTHESIZE)
+                rm -f "$DEV_VERIFY_FILE"
+                echo "⚠️  Backward transition: Dev verification invalidated"
+                set_phase "$target_phase"
+                output_phase_guidance "$target_phase"
+                return 0
+                ;;
             *)
                 echo "❌ Cannot go back to $target_phase from $(get_phase)"
                 echo ""
@@ -119,6 +142,9 @@ cmd_transition_to() {
                 echo "  VERIFY → DEVELOP (invalidates stage evidence)"
                 echo "  DEPLOY → DEVELOP (invalidates stage evidence)"
                 echo "  DONE → VERIFY"
+                echo "  SYNTHESIZE → EXTEND (invalidates synthesis evidence)"
+                echo "  EXTEND → COMPOSE (invalidates import evidence)"
+                echo "  DEVELOP → SYNTHESIZE (invalidates dev verification)"
                 return 1
                 ;;
         esac
@@ -130,6 +156,13 @@ cmd_transition_to() {
             if [ "$current_phase" != "INIT" ]; then
                 echo "❌ Cannot transition to COMPOSE from $current_phase"
                 echo "📋 Run: .zcp/workflow.sh init"
+                return 2
+            fi
+            # Mutual exclusion: Cannot use COMPOSE if already in DISCOVER flow
+            if [ -f "$DISCOVERY_FILE" ]; then
+                echo "❌ Cannot use COMPOSE after creating discovery"
+                echo "   You're in standard mode. Use: transition_to DISCOVER"
+                echo "   To reset: .zcp/workflow.sh reset"
                 return 2
             fi
             # Gate 0: Recipe Review required before compose
@@ -163,6 +196,13 @@ cmd_transition_to() {
             if [ "$current_phase" != "INIT" ]; then
                 echo "❌ Cannot transition to DISCOVER from $current_phase"
                 echo "📋 Run: .zcp/workflow.sh init"
+                return 2
+            fi
+            # Mutual exclusion: Cannot use DISCOVER after running compose
+            if [ -f "$SYNTHESIS_PLAN_FILE" ]; then
+                echo "❌ Cannot use DISCOVER after running compose"
+                echo "   You're in synthesis mode. Use: transition_to COMPOSE"
+                echo "   To reset: .zcp/workflow.sh reset"
                 return 2
             fi
             # Gate 0: Recipe Discovery
@@ -470,20 +510,24 @@ Follow these steps IN ORDER:
    • Environment variable patterns
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 STEP 2: Plan service topology (RECOMMENDED)
+📋 STEP 2: Use Synthesis Flow (RECOMMENDED)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-   .zcp/workflow.sh plan_services {runtime} [managed-service]
+   For NEW projects, use synthesis flow instead:
 
-   Example: .zcp/workflow.sh plan_services go postgresql
+   .zcp/workflow.sh transition_to COMPOSE
+   .zcp/workflow.sh compose --runtime go --services postgresql
 
-   This creates /tmp/service_plan.json with:
-   • Service hostnames (appdev, appstage, db)
-   • Runtime versions based on recipes
-   • Setup configurations (dev vs prod)
+   This generates:
+   • /tmp/synthesis_plan.json (topology, env mappings)
+   • /tmp/synthesized_import.yml (ready-to-import file)
+
+   Then: .zcp/workflow.sh extend /tmp/synthesized_import.yml
+
+   See: .zcp/workflow.sh --help synthesis
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 STEP 3: Get/Create import.yml (REQUIRED)
+📋 STEP 3 (manual): Get/Create import.yml
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EOF
 

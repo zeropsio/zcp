@@ -246,26 +246,44 @@ cmd_upgrade_to_full() {
         return 1
     fi
 
-    echo "full" > "$MODE_FILE"
-
     local phase
     phase=$(get_phase)
 
+    # Check dev work is complete
+    if [ "$phase" != "DONE" ]; then
+        echo "❌ Complete dev-only workflow first (reach DONE phase)"
+        echo "   Current phase: $phase"
+        echo ""
+        echo "   Complete dev iteration first, then upgrade."
+        return 1
+    fi
+
+    # Check dev verification exists
+    if [ ! -f "$DEV_VERIFY_FILE" ]; then
+        echo "❌ Dev verification required before upgrading"
+        echo "   Run: .zcp/verify.sh {dev} {port} /"
+        return 1
+    fi
+
+    echo "Upgrading to full deployment mode..."
+
+    # Change mode using set_mode (which calls sync_state)
+    set_mode "full"
+
+    # Reset to DEVELOP (not DONE)
+    set_phase "DEVELOP"
+
     echo "✅ Upgraded to full mode"
     echo ""
-    echo "📋 New workflow: DEVELOP → DEPLOY → VERIFY → DONE"
+    echo "Next steps:"
+    echo "  1. .zcp/workflow.sh transition_to DEPLOY"
+    echo "  2. Deploy to stage"
+    echo "  3. .zcp/workflow.sh transition_to VERIFY"
+    echo "  4. Verify stage"
+    echo "  5. .zcp/workflow.sh transition_to DONE"
     echo ""
 
-    if [ "$phase" = "DONE" ]; then
-        # Revert to DEVELOP so they can go through full flow
-        echo "DEVELOP" > "$PHASE_FILE"
-        echo "💡 Reset to DEVELOP phase. Now:"
-        echo "   1. .zcp/verify.sh {dev} {port} / /status /api/..."
-        echo "   2. .zcp/workflow.sh transition_to DEPLOY"
-    else
-        echo "💡 Continue from current phase: $phase"
-        echo "   Next: .zcp/workflow.sh transition_to DEPLOY"
-    fi
+    output_phase_guidance "DEVELOP"
 }
 
 cmd_record_deployment() {

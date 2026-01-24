@@ -521,6 +521,11 @@ cmd_complete() {
     fi
 
     if [ "$all_valid" = true ]; then
+        # Mark iteration as complete in history
+        if type mark_iteration_complete &>/dev/null; then
+            mark_iteration_complete
+        fi
+
         echo "✅ Evidence validated:"
         echo "   • Session: $session_id"
         printf '%s\n' "${messages[@]}"

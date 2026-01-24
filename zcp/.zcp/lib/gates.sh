@@ -247,6 +247,15 @@ check_gate_init_to_discover() {
 
 check_gate_import_validation() {
     local import_file="$1"
+    local mode
+    mode=$(get_mode)
+
+    # Quick mode bypasses gate
+    if [ "$mode" = "quick" ]; then
+        echo "⚠️  QUICK MODE: Gate 0.5 bypassed"
+        return 0
+    fi
+
     local checks_passed=0
     local checks_total=0
     local all_passed=true
@@ -382,6 +391,15 @@ check_gate_import_validation() {
 # ============================================================================
 
 check_gate_discover_to_develop() {
+    local mode
+    mode=$(get_mode)
+
+    # Quick mode bypasses gate
+    if [ "$mode" = "quick" ]; then
+        echo "⚠️  QUICK MODE: Gate bypassed"
+        return 0
+    fi
+
     gate_start "Gate: DISCOVER → DEVELOP"
 
     # Check 1: discovery.json exists
@@ -415,6 +433,15 @@ check_gate_discover_to_develop() {
 }
 
 check_gate_develop_to_deploy() {
+    local mode
+    mode=$(get_mode)
+
+    # Quick mode bypasses gate
+    if [ "$mode" = "quick" ]; then
+        echo "⚠️  QUICK MODE: Gate bypassed"
+        return 0
+    fi
+
     gate_start "Gate: DEVELOP → DEPLOY"
 
     # Check 1: dev_verify.json exists
@@ -427,10 +454,43 @@ check_gate_develop_to_deploy() {
     # Check 3: failures == 0
     gate_check_no_failures "$DEV_VERIFY_FILE" "verification"
 
+    # Check 4: Config validation (integrated Gate 3)
+    # Validates zerops.yml before allowing deployment
+    if [ -f "$DISCOVERY_FILE" ] && command -v jq &>/dev/null; then
+        local dev_service
+        dev_service=$(jq -r '.dev.name' "$DISCOVERY_FILE" 2>/dev/null)
+        if [ -n "$dev_service" ] && [ "$dev_service" != "null" ]; then
+            local config_file="/var/www/$dev_service/zerops.yml"
+            if [ -f "$config_file" ]; then
+                if command -v yq &>/dev/null; then
+                    if yq e '.zerops' "$config_file" > /dev/null 2>&1; then
+                        gate_pass "zerops.yml has valid structure"
+                    else
+                        gate_fail "zerops.yml missing 'zerops:' wrapper" \
+                            "Add 'zerops:' as top-level key in $config_file"
+                    fi
+                else
+                    gate_warn "Cannot validate zerops.yml (yq unavailable)"
+                fi
+            else
+                gate_warn "zerops.yml not found at $config_file"
+            fi
+        fi
+    fi
+
     gate_finish "$DEV_VERIFY_FILE" 24
 }
 
 check_gate_deploy_to_verify() {
+    local mode
+    mode=$(get_mode)
+
+    # Quick mode bypasses gate
+    if [ "$mode" = "quick" ]; then
+        echo "⚠️  QUICK MODE: Gate bypassed"
+        return 0
+    fi
+
     gate_start "Gate: DEPLOY → VERIFY"
 
     # Check 1: deploy_evidence.json exists
@@ -444,6 +504,15 @@ check_gate_deploy_to_verify() {
 }
 
 check_gate_verify_to_done() {
+    local mode
+    mode=$(get_mode)
+
+    # Quick mode bypasses gate
+    if [ "$mode" = "quick" ]; then
+        echo "⚠️  QUICK MODE: Gate bypassed"
+        return 0
+    fi
+
     gate_start "Gate: VERIFY → DONE"
 
     # Check 1: stage_verify.json exists
@@ -465,6 +534,15 @@ check_gate_verify_to_done() {
 # Validates that agent-created code exists and is properly structured
 
 check_gate_synthesis() {
+    local mode
+    mode=$(get_mode)
+
+    # Quick mode bypasses gate
+    if [ "$mode" = "quick" ]; then
+        echo "⚠️  QUICK MODE: Gate S bypassed"
+        return 0
+    fi
+
     local synthesis_file="$SYNTHESIS_COMPLETE_FILE"
     local checks_passed=0
     local checks_total=0
@@ -573,6 +651,15 @@ EOF
 # ============================================================================
 
 check_gate_compose_to_extend() {
+    local mode
+    mode=$(get_mode)
+
+    # Quick mode bypasses gate
+    if [ "$mode" = "quick" ]; then
+        echo "⚠️  QUICK MODE: Gate bypassed"
+        return 0
+    fi
+
     local synthesis_plan="$SYNTHESIS_PLAN_FILE"
     local checks_passed=0
     local checks_total=0
@@ -632,6 +719,15 @@ check_gate_compose_to_extend() {
 # ============================================================================
 
 check_gate_extend_to_synthesize() {
+    local mode
+    mode=$(get_mode)
+
+    # Quick mode bypasses gate
+    if [ "$mode" = "quick" ]; then
+        echo "⚠️  QUICK MODE: Gate bypassed"
+        return 0
+    fi
+
     local services_imported="$SERVICES_IMPORTED_FILE"
     local checks_passed=0
     local checks_total=0

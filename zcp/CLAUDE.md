@@ -16,7 +16,7 @@ The workflow detects current state and adapts — your pre-made steps cannot.
 | **Yes, dev only** | `.zcp/workflow.sh init --dev-only` | Prototype, experiment, not ready for stage |
 | **Yes, urgent hotfix** | `.zcp/workflow.sh init --hotfix` | Production broken, skip dev verification |
 | **No, just looking** | `.zcp/workflow.sh --quick` | Read logs, investigate, understand codebase |
-| **Yes, no services yet** | `.zcp/workflow.sh init` → `transition_to COMPOSE` | Bootstrap: create services from scratch |
+| **Yes, no services yet (synthesis)** | `.zcp/workflow.sh init` → `transition_to COMPOSE` | Bootstrap: create services + code from scratch |
 
 **Run one. READ its output completely. FOLLOW the rules it shows.** The script guides each phase and enforces gates.
 
@@ -160,6 +160,5 @@ Help topics (use `--help {topic}`):
 - `trouble` — Common errors and fixes
 - `gates` — Phase transition requirements
 - `extend` — Add services mid-project
-- `bootstrap` — Create new project from scratch
+- `bootstrap` — Create new project from scratch (synthesis flow)
 - `import-validation` — Validate import.yml before importing
-

@@ -25,10 +25,8 @@ CONTEXT_FILE="${ZCP_TMP_DIR}/claude_context.json"
 # New gate evidence files (Gates 0-3)
 RECIPE_REVIEW_FILE="${ZCP_TMP_DIR}/recipe_review.json"
 IMPORT_VALIDATED_FILE="${ZCP_TMP_DIR}/import_validated.json"  # Gate 0.5: Import validation
-SERVICE_PLAN_FILE="${ZCP_TMP_DIR}/service_plan.json"
 SERVICES_IMPORTED_FILE="${ZCP_TMP_DIR}/services_imported.json"
 CONFIG_VALIDATED_FILE="${ZCP_TMP_DIR}/config_validated.json"
-DEV_SNAPSHOT_FILE="${ZCP_TMP_DIR}/dev_snapshot.json"
 
 # WIGGUM state files (Bootstrap Synthesis)
 WORKFLOW_STATE_FILE="${ZCP_TMP_DIR}/workflow_state.json"
@@ -43,8 +41,8 @@ WORKFLOW_STATE_DIR="$STATE_DIR/workflow"
 WORKFLOW_ITERATIONS_DIR="$WORKFLOW_STATE_DIR/iterations"
 PERSISTENT_ENABLED=false
 
-# Valid phases (includes synthesis phases)
-PHASES=("INIT" "COMPOSE" "EXTEND" "SYNTHESIZE" "DISCOVER" "DEVELOP" "DEPLOY" "VERIFY" "DONE")
+# Note: Phase definitions are in state.sh (PHASES_FULL_SYNTHESIS, PHASES_FULL_STANDARD, etc.)
+# validate_phase() uses inline phase list for validation
 
 # ============================================================================
 # TERMINAL COLORS (shared across scripts)
@@ -265,13 +263,34 @@ get_phase() {
     fi
 }
 
+# Sync state to persistent storage and WIGGUM
+# Called after any state change to maintain consistency
+sync_state() {
+    # Sync to persistent storage
+    sync_to_persistent
+
+    # Update WIGGUM JSON (if available - state.sh may not be loaded yet)
+    if type update_workflow_state &>/dev/null; then
+        update_workflow_state 2>/dev/null
+    fi
+}
+
 set_phase() {
     echo "$1" > "$PHASE_FILE"
+    sync_state
+}
+
+set_mode() {
+    echo "$1" > "$MODE_FILE"
+    sync_state
 }
 
 validate_phase() {
     local phase="$1"
-    for p in "${PHASES[@]}"; do
+    # All valid phases (includes synthesis phases)
+    local all_phases="INIT COMPOSE EXTEND SYNTHESIZE DISCOVER DEVELOP DEPLOY VERIFY DONE"
+
+    for p in $all_phases; do
         if [ "$p" = "$phase" ]; then
             return 0
         fi
@@ -308,6 +327,8 @@ check_evidence_session() {
 check_evidence_freshness() {
     local file="$1"
     local max_age_hours="${2:-24}"
+    local mode
+    mode=$(get_mode 2>/dev/null || echo "full")
 
     if [ ! -f "$file" ]; then
         return 0  # No file = no staleness check
@@ -335,15 +356,22 @@ check_evidence_freshness() {
     age_hours=$(( (now_epoch - evidence_epoch) / 3600 ))
 
     if [ "$age_hours" -gt "$max_age_hours" ]; then
-        echo ""
-        echo "⚠️  STALE EVIDENCE WARNING"
-        echo "   File: $file"
-        echo "   Age: ${age_hours} hours (threshold: ${max_age_hours}h)"
-        echo "   Created: $timestamp"
-        echo ""
-        echo "   Consider re-verifying to ensure current system state"
-        echo "   (Proceeding anyway - this is a warning, not a blocker)"
-        echo ""
+        if [ "$mode" = "hotfix" ]; then
+            echo ""
+            echo "⚠️  STALE EVIDENCE WARNING (hotfix mode - proceeding)"
+            echo "   File: $file"
+            echo "   Age: ${age_hours} hours (threshold: ${max_age_hours}h)"
+            echo ""
+            return 0  # Hotfix allows stale evidence
+        else
+            echo ""
+            echo "❌ STALE EVIDENCE: $file is ${age_hours}h old (max: ${max_age_hours}h)"
+            echo "   Created: $timestamp"
+            echo ""
+            echo "   Re-run the command to generate fresh evidence"
+            echo ""
+            return 1  # Block in normal mode
+        fi
     fi
     return 0
 }
