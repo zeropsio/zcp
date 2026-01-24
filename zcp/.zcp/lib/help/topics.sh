@@ -53,7 +53,10 @@ show_topic_help() {
             show_help_import_validation
             ;;
         synthesis)
-            show_help_synthesis
+            # Deprecated - redirect to bootstrap
+            echo "⚠️  Synthesis flow is deprecated. Use bootstrap instead."
+            echo ""
+            show_help_bootstrap
             ;;
         *)
             echo "❌ Unknown help topic: $topic"
@@ -61,7 +64,7 @@ show_topic_help() {
             echo "Available topics:"
             echo "  discover, develop, deploy, verify, done"
             echo "  vars, services, trouble, example, gates"
-            echo "  extend, bootstrap, cheatsheet, import-validation, synthesis"
+            echo "  extend, bootstrap, cheatsheet, import-validation"
             return 1
             ;;
     esac
@@ -1352,116 +1355,4 @@ Use this file to understand exactly what failed validation.
 EOF
 }
 
-show_help_synthesis() {
-    cat <<'EOF'
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔧 SYNTHESIS FLOW: Bootstrapping New Projects
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Use synthesis flow when starting with NO SERVICES (empty project).
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 SYNTHESIS FLOW PHASES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-INIT → COMPOSE → EXTEND → SYNTHESIZE → DEVELOP → DEPLOY → VERIFY → DONE
-
-┌──────────┬──────────────────────────────────────────────────────┐
-│ Phase    │ Purpose                                               │
-├──────────┼──────────────────────────────────────────────────────┤
-│ COMPOSE  │ Define requirements (runtime, managed services)      │
-│ EXTEND   │ Import services from generated import.yml            │
-│ SYNTHESIZE│ Create application code in dev service              │
-│ DEVELOP+ │ Same as standard flow from here                      │
-└──────────┴──────────────────────────────────────────────────────┘
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔄 STANDARD VS SYNTHESIS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-STANDARD FLOW (existing services):
-  INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE
-
-SYNTHESIS FLOW (no services):
-  INIT → COMPOSE → EXTEND → SYNTHESIZE → DEVELOP → DEPLOY → VERIFY → DONE
-
-⚠️  These flows are MUTUALLY EXCLUSIVE:
-  • Creating discovery.json blocks COMPOSE
-  • Running compose blocks DISCOVER
-
-To switch flows: .zcp/workflow.sh reset
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📝 SYNTHESIS COMMANDS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# Start synthesis flow
-.zcp/workflow.sh init
-.zcp/workflow.sh transition_to COMPOSE
-
-# Compose: Generate synthesis plan
-.zcp/workflow.sh compose --runtime go --services postgresql
-
-# Extend: Import the generated services
-.zcp/workflow.sh extend /tmp/synthesized_import.yml
-
-# Synthesize: Transition after services are RUNNING
-.zcp/workflow.sh transition_to SYNTHESIZE
-
-# Verify synthesis before moving to DEVELOP
-.zcp/workflow.sh verify_synthesis
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚪 SYNTHESIS GATES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Gate: COMPOSE → EXTEND
-  • synthesis_plan.json must exist
-
-Gate: EXTEND → SYNTHESIZE
-  • services_imported.json must exist
-  • All services must be RUNNING
-
-Gate S: SYNTHESIZE → DEVELOP
-  • synthesis_complete.json must exist
-  • Required files verified
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-↩️  BACKWARD TRANSITIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-.zcp/workflow.sh transition_to --back EXTEND
-  # From SYNTHESIZE → EXTEND (invalidates synthesis)
-
-.zcp/workflow.sh transition_to --back COMPOSE
-  # From EXTEND → COMPOSE (invalidates import)
-
-.zcp/workflow.sh transition_to --back SYNTHESIZE
-  # From DEVELOP → SYNTHESIZE (invalidates dev verification)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📖 COMPLETE EXAMPLE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# 1. Start
-.zcp/workflow.sh init
-.zcp/recipe-search.sh quick go postgresql
-
-# 2. Compose
-.zcp/workflow.sh transition_to COMPOSE
-.zcp/workflow.sh compose --runtime go --services postgresql
-
-# 3. Extend (import services)
-.zcp/workflow.sh extend /tmp/synthesized_import.yml
-# Wait for services to reach RUNNING status
-
-# 4. Synthesize (create code)
-.zcp/workflow.sh transition_to SYNTHESIZE
-# Create application code at /var/www/appdev/
-.zcp/workflow.sh verify_synthesis
-
-# 5. Continue with standard DEVELOP → DEPLOY → VERIFY → DONE
-.zcp/workflow.sh transition_to DEVELOP
-# ... rest of standard workflow
-EOF
-}
+# show_help_synthesis() removed - synthesis flow deprecated, use bootstrap instead

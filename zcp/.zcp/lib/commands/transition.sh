@@ -14,13 +14,16 @@ cmd_transition_to() {
 
     if [ -z "$target_phase" ]; then
         echo "❌ Usage: .zcp/workflow.sh transition_to [--back] {phase}"
-        echo "Phases: COMPOSE, EXTEND, SYNTHESIZE, DISCOVER, DEVELOP, DEPLOY, VERIFY, DONE"
+        echo "Phases: DISCOVER, DEVELOP, DEPLOY, VERIFY, DONE"
         echo ""
-        echo "Synthesis mode: INIT → COMPOSE → EXTEND → SYNTHESIZE → DEVELOP → DEPLOY → VERIFY → DONE"
-        echo "Standard mode:  INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE"
+        echo "Full mode:     INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE"
+        echo "Dev-only mode: INIT → DISCOVER → DEVELOP → DONE"
         echo ""
         echo "Options:"
         echo "  --back    Go backward (invalidates evidence)"
+        echo ""
+        echo "For new projects, use bootstrap first:"
+        echo "  .zcp/workflow.sh bootstrap --runtime <type> --services <list>"
         return 1
     fi
 
@@ -112,29 +115,6 @@ cmd_transition_to() {
                 output_phase_guidance "$target_phase"
                 return 0
                 ;;
-            # Synthesis flow backward transitions
-            SYNTHESIZE→EXTEND)
-                rm -f "$SYNTHESIS_COMPLETE_FILE"
-                echo "⚠️  Backward transition: Synthesis evidence invalidated"
-                set_phase "$target_phase"
-                output_phase_guidance "$target_phase"
-                return 0
-                ;;
-            EXTEND→COMPOSE)
-                rm -f "$SERVICES_IMPORTED_FILE"
-                rm -f "$SYNTHESIZED_IMPORT_FILE"
-                echo "⚠️  Backward transition: Import evidence invalidated"
-                set_phase "$target_phase"
-                output_phase_guidance "$target_phase"
-                return 0
-                ;;
-            DEVELOP→SYNTHESIZE)
-                rm -f "$DEV_VERIFY_FILE"
-                echo "⚠️  Backward transition: Dev verification invalidated"
-                set_phase "$target_phase"
-                output_phase_guidance "$target_phase"
-                return 0
-                ;;
             *)
                 echo "❌ Cannot go back to $target_phase from $(get_phase)"
                 echo ""
@@ -142,9 +122,6 @@ cmd_transition_to() {
                 echo "  VERIFY → DEVELOP (invalidates stage evidence)"
                 echo "  DEPLOY → DEVELOP (invalidates stage evidence)"
                 echo "  DONE → VERIFY"
-                echo "  SYNTHESIZE → EXTEND (invalidates synthesis evidence)"
-                echo "  EXTEND → COMPOSE (invalidates import evidence)"
-                echo "  DEVELOP → SYNTHESIZE (invalidates dev verification)"
                 return 1
                 ;;
         esac
@@ -152,57 +129,20 @@ cmd_transition_to() {
 
     # In full mode, enforce gates
     case "$target_phase" in
-        COMPOSE)
-            if [ "$current_phase" != "INIT" ]; then
-                echo "❌ Cannot transition to COMPOSE from $current_phase"
-                echo "📋 Run: .zcp/workflow.sh init"
-                return 2
-            fi
-            # Mutual exclusion: Cannot use COMPOSE if already in DISCOVER flow
-            if [ -f "$DISCOVERY_FILE" ]; then
-                echo "❌ Cannot use COMPOSE after creating discovery"
-                echo "   You're in standard mode. Use: transition_to DISCOVER"
-                echo "   To reset: .zcp/workflow.sh reset"
-                return 2
-            fi
-            # Gate 0: Recipe Review required before compose
-            if ! check_gate_init_to_discover; then
-                return 2
-            fi
-            ;;
-        EXTEND)
-            if [ "$current_phase" != "COMPOSE" ]; then
-                echo "❌ Cannot transition to EXTEND from $current_phase"
-                echo "📋 Required flow: INIT → COMPOSE → EXTEND"
-                return 2
-            fi
-            # Gate: Synthesis plan must exist
-            if ! check_gate_compose_to_extend; then
-                return 2
-            fi
-            ;;
-        SYNTHESIZE)
-            if [ "$current_phase" != "EXTEND" ]; then
-                echo "❌ Cannot transition to SYNTHESIZE from $current_phase"
-                echo "📋 Required flow: COMPOSE → EXTEND → SYNTHESIZE"
-                return 2
-            fi
-            # Gate: Services must be imported
-            if ! check_gate_extend_to_synthesize; then
-                return 2
-            fi
+        COMPOSE|EXTEND|SYNTHESIZE)
+            # DEPRECATED: These phases are removed. Use bootstrap instead.
+            echo "❌ $target_phase phase is deprecated."
+            echo ""
+            echo "Use the bootstrap command instead:"
+            echo "  .zcp/workflow.sh bootstrap --runtime <type> --services <list>"
+            echo ""
+            echo "For help: .zcp/workflow.sh bootstrap --help"
+            return 2
             ;;
         DISCOVER)
             if [ "$current_phase" != "INIT" ]; then
                 echo "❌ Cannot transition to DISCOVER from $current_phase"
                 echo "📋 Run: .zcp/workflow.sh init"
-                return 2
-            fi
-            # Mutual exclusion: Cannot use DISCOVER after running compose
-            if [ -f "$SYNTHESIS_PLAN_FILE" ]; then
-                echo "❌ Cannot use DISCOVER after running compose"
-                echo "   You're in synthesis mode. Use: transition_to COMPOSE"
-                echo "   To reset: .zcp/workflow.sh reset"
                 return 2
             fi
             # Gate 0: Recipe Discovery
@@ -211,21 +151,13 @@ cmd_transition_to() {
             fi
             ;;
         DEVELOP)
-            # Can come from DISCOVER (standard) or SYNTHESIZE (synthesis mode)
-            if [ "$current_phase" != "DISCOVER" ] && [ "$current_phase" != "SYNTHESIZE" ]; then
+            if [ "$current_phase" != "DISCOVER" ]; then
                 echo "❌ Cannot transition to DEVELOP from $current_phase"
-                echo "📋 Required flow: DISCOVER → DEVELOP (standard) or SYNTHESIZE → DEVELOP (synthesis)"
+                echo "📋 Required flow: DISCOVER → DEVELOP"
                 return 2
             fi
-            # Gate depends on source phase
-            if [ "$current_phase" = "DISCOVER" ]; then
-                if ! check_gate_discover_to_develop; then
-                    return 2
-                fi
-            elif [ "$current_phase" = "SYNTHESIZE" ]; then
-                if ! check_gate_synthesis; then
-                    return 2
-                fi
+            if ! check_gate_discover_to_develop; then
+                return 2
             fi
             ;;
         DEPLOY)
@@ -266,102 +198,9 @@ cmd_transition_to() {
 }
 
 # ============================================================================
-# SYNTHESIS PHASE GUIDANCE - COMPOSE
+# REMOVED: Synthesis phase guidance functions
 # ============================================================================
-
-output_compose_guidance() {
-    cat <<'EOF'
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  PHASE: COMPOSE
-
-  Generate synthesis plan and infrastructure definition.
-
-  COMMAND:
-    .zcp/workflow.sh compose --runtime {runtime} --services {services}
-
-  EXAMPLES:
-    .zcp/workflow.sh compose --runtime go --services postgresql
-    .zcp/workflow.sh compose --runtime nodejs --services postgresql,valkey
-    .zcp/workflow.sh compose --runtime python
-
-  OUTPUT:
-    /tmp/synthesis_plan.json      ← Service topology, env mappings
-    /tmp/synthesized_import.yml   ← Import file for extend
-
-  NEXT: .zcp/workflow.sh transition_to EXTEND
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EOF
-
-    # Emit WIGGUM state
-    emit_wiggum_state_block
-}
-
-# ============================================================================
-# SYNTHESIS PHASE GUIDANCE - EXTEND
-# ============================================================================
-
-output_extend_guidance() {
-    cat <<'EOF'
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  PHASE: EXTEND
-
-  Import services to Zerops and wait for RUNNING.
-
-  COMMAND:
-    .zcp/workflow.sh extend /tmp/synthesized_import.yml
-
-  AFTER SERVICES RUNNING:
-    Create code files in /var/www/{dev}/:
-    - zerops.yml (with zerops: wrapper)
-    - main.{ext} (connectivity proof code)
-    - {deps_file} (go.mod, package.json, etc.)
-
-    Reference /tmp/synthesis_plan.json for:
-    - Environment variable mappings
-    - Required files list
-    - Service connections
-
-  NEXT: After creating code → .zcp/workflow.sh verify_synthesis
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EOF
-
-    # Emit WIGGUM state
-    emit_wiggum_state_block
-}
-
-# ============================================================================
-# SYNTHESIS PHASE GUIDANCE - SYNTHESIZE
-# ============================================================================
-
-output_synthesize_guidance() {
-    cat <<'EOF'
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  PHASE: SYNTHESIZE
-
-  Validate agent-created code structure.
-
-  COMMAND:
-    .zcp/workflow.sh verify_synthesis
-
-  CHECKS:
-    ✓ zerops.yml exists with zerops: wrapper
-    ✓ Main code file exists
-    ✓ Dependency file exists
-    ✓ Session ID matches
-
-  NEXT: .zcp/workflow.sh transition_to DEVELOP
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EOF
-
-    # Emit WIGGUM state
-    emit_wiggum_state_block
-}
+# Use bootstrap instead: .zcp/workflow.sh bootstrap --runtime <type> --services <list>
 
 # ============================================================================
 # WIGGUM STATE BLOCK OUTPUT
@@ -510,21 +349,19 @@ Follow these steps IN ORDER:
    • Environment variable patterns
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 STEP 2: Use Synthesis Flow (RECOMMENDED)
+📋 STEP 2: Use Bootstrap for New Projects
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-   For NEW projects, use synthesis flow instead:
+   For NEW projects without services, use bootstrap:
 
-   .zcp/workflow.sh transition_to COMPOSE
-   .zcp/workflow.sh compose --runtime go --services postgresql
+   .zcp/workflow.sh bootstrap --runtime go --services postgresql
 
-   This generates:
-   • /tmp/synthesis_plan.json (topology, env mappings)
-   • /tmp/synthesized_import.yml (ready-to-import file)
+   This creates services, scaffolding, and guides the agent to:
+   • Complete zerops.yml with build commands
+   • Write minimal status page code
+   • Push and test
 
-   Then: .zcp/workflow.sh extend /tmp/synthesized_import.yml
-
-   See: .zcp/workflow.sh --help synthesis
+   See: .zcp/workflow.sh bootstrap --help
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 STEP 3 (manual): Get/Create import.yml
@@ -630,15 +467,6 @@ output_phase_guidance() {
     local phase="$1"
 
     case "$phase" in
-        COMPOSE)
-            output_compose_guidance
-            ;;
-        EXTEND)
-            output_extend_guidance
-            ;;
-        SYNTHESIZE)
-            output_synthesize_guidance
-            ;;
         DISCOVER)
             output_discover_guidance
             ;;

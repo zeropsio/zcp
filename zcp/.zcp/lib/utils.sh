@@ -28,8 +28,16 @@ IMPORT_VALIDATED_FILE="${ZCP_TMP_DIR}/import_validated.json"  # Gate 0.5: Import
 SERVICES_IMPORTED_FILE="${ZCP_TMP_DIR}/services_imported.json"
 CONFIG_VALIDATED_FILE="${ZCP_TMP_DIR}/config_validated.json"
 
-# WIGGUM state files (Bootstrap Synthesis)
+# WIGGUM state files
 WORKFLOW_STATE_FILE="${ZCP_TMP_DIR}/workflow_state.json"
+
+# Bootstrap evidence files (new approach)
+BOOTSTRAP_PLAN_FILE="${ZCP_TMP_DIR}/bootstrap_plan.json"
+BOOTSTRAP_IMPORT_FILE="${ZCP_TMP_DIR}/bootstrap_import.yml"
+BOOTSTRAP_COORDINATION_FILE="${ZCP_TMP_DIR}/bootstrap_coordination.json"
+BOOTSTRAP_COMPLETE_FILE="${ZCP_TMP_DIR}/bootstrap_complete.json"
+
+# DEPRECATED: Synthesis files (kept for backward compatibility cleanup)
 SYNTHESIS_PLAN_FILE="${ZCP_TMP_DIR}/synthesis_plan.json"
 SYNTHESIS_COMPLETE_FILE="${ZCP_TMP_DIR}/synthesis_complete.json"
 SYNTHESIZED_IMPORT_FILE="${ZCP_TMP_DIR}/synthesized_import.yml"
@@ -41,7 +49,7 @@ WORKFLOW_STATE_DIR="$STATE_DIR/workflow"
 WORKFLOW_ITERATIONS_DIR="$WORKFLOW_STATE_DIR/iterations"
 PERSISTENT_ENABLED=false
 
-# Note: Phase definitions are in state.sh (PHASES_FULL_SYNTHESIS, PHASES_FULL_STANDARD, etc.)
+# Note: Phase definitions are in state.sh (PHASES_FULL_STANDARD, PHASES_DEV_ONLY)
 # validate_phase() uses inline phase list for validation
 
 # ============================================================================
@@ -287,8 +295,8 @@ set_mode() {
 
 validate_phase() {
     local phase="$1"
-    # All valid phases (includes synthesis phases)
-    local all_phases="INIT COMPOSE EXTEND SYNTHESIZE DISCOVER DEVELOP DEPLOY VERIFY DONE"
+    # Valid phases (standard workflow only - synthesis phases deprecated)
+    local all_phases="INIT DISCOVER DEVELOP DEPLOY VERIFY DONE"
 
     for p in $all_phases; do
         if [ "$p" = "$phase" ]; then

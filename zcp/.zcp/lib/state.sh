@@ -12,9 +12,10 @@
 # All state operations go through this file - single source of truth.
 #
 # Key responsibilities:
-#   - Phase sequence management (standard vs synthesis flows)
+#   - Phase sequence management (standard and dev-only flows)
 #   - Workflow state JSON generation and persistence
 #   - Recovery hints for blocked gates
+#   - Bootstrap mode detection
 # =============================================================================
 
 # Ensure utils.sh variables are available
@@ -28,30 +29,20 @@ fi
 # PHASE DEFINITIONS
 # =============================================================================
 
-# Full synthesis mode phases (in order)
-PHASES_FULL_SYNTHESIS=("INIT" "COMPOSE" "EXTEND" "SYNTHESIZE" "DEVELOP" "DEPLOY" "VERIFY" "DONE")
+# Bootstrap runs BEFORE the standard workflow as a pre-workflow setup step.
+# After bootstrap completes, run: .zcp/workflow.sh init
 
-# Standard mode (no synthesis)
+# Full standard mode phases (in order)
 PHASES_FULL_STANDARD=("INIT" "DISCOVER" "DEVELOP" "DEPLOY" "VERIFY" "DONE")
 
-# Dev-only mode
+# Dev-only mode (shorter sequence, no stage deployment)
 PHASES_DEV_ONLY=("INIT" "DISCOVER" "DEVELOP" "DONE")
-
-# Dev-only synthesis mode
-PHASES_DEV_ONLY_SYNTHESIS=("INIT" "COMPOSE" "EXTEND" "SYNTHESIZE" "DEVELOP" "DONE")
 
 # Get phase sequence for current mode
 get_phase_sequence() {
     local mode="${1:-$(get_mode 2>/dev/null || echo "full")}"
-    local synthesis="${2:-false}"
 
-    if [ "$synthesis" = "true" ]; then
-        if [ "$mode" = "dev-only" ]; then
-            echo "${PHASES_DEV_ONLY_SYNTHESIS[@]}"
-        else
-            echo "${PHASES_FULL_SYNTHESIS[@]}"
-        fi
-    elif [ "$mode" = "dev-only" ]; then
+    if [ "$mode" = "dev-only" ]; then
         echo "${PHASES_DEV_ONLY[@]}"
     else
         echo "${PHASES_FULL_STANDARD[@]}"
@@ -62,10 +53,9 @@ get_phase_sequence() {
 get_phase_index() {
     local phase="$1"
     local mode="${2:-$(get_mode 2>/dev/null || echo "full")}"
-    local synthesis="${3:-false}"
 
     local -a phases
-    IFS=' ' read -ra phases <<< "$(get_phase_sequence "$mode" "$synthesis")"
+    IFS=' ' read -ra phases <<< "$(get_phase_sequence "$mode")"
 
     local i=1
     for p in "${phases[@]}"; do
@@ -81,10 +71,9 @@ get_phase_index() {
 # Get total phases
 get_total_phases() {
     local mode="${1:-$(get_mode 2>/dev/null || echo "full")}"
-    local synthesis="${2:-false}"
 
     local -a phases
-    IFS=' ' read -ra phases <<< "$(get_phase_sequence "$mode" "$synthesis")"
+    IFS=' ' read -ra phases <<< "$(get_phase_sequence "$mode")"
     echo "${#phases[@]}"
 }
 
@@ -92,10 +81,9 @@ get_total_phases() {
 get_remaining_phases() {
     local current="$1"
     local mode="${2:-$(get_mode 2>/dev/null || echo "full")}"
-    local synthesis="${3:-false}"
 
     local -a phases
-    IFS=' ' read -ra phases <<< "$(get_phase_sequence "$mode" "$synthesis")"
+    IFS=' ' read -ra phases <<< "$(get_phase_sequence "$mode")"
 
     local found=false
     local remaining=()
@@ -119,10 +107,9 @@ get_remaining_phases() {
 calculate_progress() {
     local phase="$1"
     local mode="${2:-$(get_mode 2>/dev/null || echo "full")}"
-    local synthesis="${3:-false}"
 
-    local index=$(get_phase_index "$phase" "$mode" "$synthesis")
-    local total=$(get_total_phases "$mode" "$synthesis")
+    local index=$(get_phase_index "$phase" "$mode")
+    local total=$(get_total_phases "$mode")
 
     if [ "$total" -eq 0 ]; then
         echo "0"
@@ -158,21 +145,27 @@ get_evidence_file_info() {
     local name="$1"
     local tmp="${ZCP_TMP_DIR:-/tmp}"
     case "$name" in
+        # Standard workflow evidence
         recipe_review) echo "${tmp}/recipe_review.json|Gate 0|.zcp/recipe-search.sh quick" ;;
-        synthesis_plan) echo "${tmp}/synthesis_plan.json|Compose|.zcp/workflow.sh compose" ;;
-        synthesized_import) echo "${tmp}/synthesized_import.yml|Compose|.zcp/workflow.sh compose" ;;
-        services_imported) echo "${tmp}/services_imported.json|Gate 2|.zcp/workflow.sh extend" ;;
-        synthesis_complete) echo "${tmp}/synthesis_complete.json|Gate S|.zcp/workflow.sh verify_synthesis" ;;
         discovery) echo "${tmp}/discovery.json|Gate 1|.zcp/workflow.sh create_discovery" ;;
-        dev_verify) echo "${tmp}/dev_verify.json|Gate 5|.zcp/verify.sh {dev}" ;;
-        deploy_evidence) echo "${tmp}/deploy_evidence.json|Gate 6|.zcp/status.sh --wait" ;;
-        stage_verify) echo "${tmp}/stage_verify.json|Gate 7|.zcp/verify.sh {stage}" ;;
+        dev_verify) echo "${tmp}/dev_verify.json|Gate 2|.zcp/verify.sh {dev}" ;;
+        deploy_evidence) echo "${tmp}/deploy_evidence.json|Gate 3|.zcp/status.sh --wait" ;;
+        stage_verify) echo "${tmp}/stage_verify.json|Gate 4|.zcp/verify.sh {stage}" ;;
+
+        # Bootstrap evidence (created by bootstrap command)
+        bootstrap_plan) echo "${tmp}/bootstrap_plan.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
+        bootstrap_import) echo "${tmp}/bootstrap_import.yml|Bootstrap|.zcp/workflow.sh bootstrap" ;;
+        bootstrap_coordination) echo "${tmp}/bootstrap_coordination.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
+        bootstrap_complete) echo "${tmp}/bootstrap_complete.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
         *) echo "" ;;
     esac
 }
 
-# List of all evidence names for iteration
-EVIDENCE_NAMES="recipe_review synthesis_plan synthesized_import services_imported synthesis_complete discovery dev_verify deploy_evidence stage_verify"
+# List of all evidence names for iteration (standard workflow only)
+EVIDENCE_NAMES="recipe_review discovery dev_verify deploy_evidence stage_verify"
+
+# Bootstrap evidence names (separate tracking)
+BOOTSTRAP_EVIDENCE_NAMES="bootstrap_plan bootstrap_import bootstrap_coordination bootstrap_complete"
 
 get_evidence_status() {
     local name="$1"
@@ -228,35 +221,13 @@ get_evidence_timestamp() {
 determine_next_action() {
     local phase=$(get_phase 2>/dev/null || echo "INIT")
     local mode=$(get_mode 2>/dev/null || echo "full")
-    local synthesis=$(check_synthesis_mode)
 
     case "$phase" in
         "INIT")
             if [ "$(get_evidence_status recipe_review)" != "complete" ]; then
-                echo '{"command":".zcp/recipe-search.sh quick {runtime} [managed-service]","description":"Review recipes and extract patterns (Gate 0)","on_success":{"next":".zcp/workflow.sh compose --runtime {runtime} --services {services}"},"on_failure":{"check":"Is the runtime type valid?","common_issues":["Invalid runtime type","Network error fetching recipes"]}}'
+                echo '{"command":".zcp/recipe-search.sh quick {runtime} [managed-service]","description":"Review recipes and extract patterns (Gate 0)","on_success":{"next":".zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}"},"on_failure":{"check":"Is the runtime type valid?","common_issues":["Invalid runtime type","Network error fetching recipes"]}}'
             else
-                echo '{"command":".zcp/workflow.sh transition_to COMPOSE","description":"Transition to COMPOSE phase","on_success":{"next":"Run compose command"}}'
-            fi
-            ;;
-        "COMPOSE")
-            if [ "$(get_evidence_status synthesis_plan)" != "complete" ]; then
-                echo "{\"command\":\".zcp/workflow.sh compose --runtime {runtime} --services {services}\",\"description\":\"Generate synthesis plan and import.yml\",\"on_success\":{\"next\":\".zcp/workflow.sh extend ${ZCP_TMP_DIR:-/tmp}/synthesized_import.yml\"},\"on_failure\":{\"check\":\"Are runtime and services specified?\",\"common_issues\":[\"Missing --runtime flag\",\"Invalid service type\"]}}"
-            else
-                echo '{"command":".zcp/workflow.sh transition_to EXTEND","description":"Transition to EXTEND phase"}'
-            fi
-            ;;
-        "EXTEND")
-            if [ "$(get_evidence_status services_imported)" != "complete" ]; then
-                echo "{\"command\":\".zcp/workflow.sh extend ${ZCP_TMP_DIR:-/tmp}/synthesized_import.yml\",\"description\":\"Import services to Zerops\",\"on_success\":{\"next\":\"Create code in /var/www/{dev}/\"},\"on_failure\":{\"check\":\"Is import.yml valid?\",\"analyze\":\"cat ${ZCP_TMP_DIR:-/tmp}/synthesized_import.yml\",\"common_issues\":[\"Invalid YAML syntax\",\"Missing startWithoutCode or buildFromGit\",\"Service type not available\"]}}"
-            else
-                echo '{"command":"Create code files in /var/www/{dev}/","description":"Agent creates zerops.yml, main code, dependencies","type":"agent_action","files_required":["zerops.yml","main.{ext}","{deps_file}"],"on_success":{"next":".zcp/workflow.sh verify_synthesis"}}'
-            fi
-            ;;
-        "SYNTHESIZE")
-            if [ "$(get_evidence_status synthesis_complete)" != "complete" ]; then
-                echo '{"command":".zcp/workflow.sh verify_synthesis","description":"Validate synthesized code structure","on_success":{"next":".zcp/workflow.sh transition_to DEVELOP"},"on_failure":{"check":"Do all required files exist?","analyze":"ls -la /var/www/{dev}/","common_issues":["Missing zerops.yml","Missing main code file","zerops.yml missing zerops: wrapper"]}}'
-            else
-                echo '{"command":".zcp/workflow.sh transition_to DEVELOP","description":"Transition to DEVELOP phase"}'
+                echo '{"command":".zcp/workflow.sh transition_to DISCOVER","description":"Transition to DISCOVER phase","on_success":{"next":"Record service discovery"}}'
             fi
             ;;
         "DISCOVER")
@@ -296,9 +267,9 @@ determine_next_action() {
     esac
 }
 
-# Check if in synthesis mode
-check_synthesis_mode() {
-    if [ -f "${ZCP_TMP_DIR:-/tmp}/synthesis_plan.json" ]; then
+# Check if bootstrap was run
+check_bootstrap_mode() {
+    if [ -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json" ]; then
         echo "true"
     else
         echo "false"
@@ -314,14 +285,14 @@ generate_workflow_state() {
     local mode=$(get_mode 2>/dev/null || echo "full")
     local phase=$(get_phase 2>/dev/null || echo "INIT")
     local iteration=$(get_iteration 2>/dev/null || echo "1")
-    local synthesis=$(check_synthesis_mode)
+    local bootstrap=$(check_bootstrap_mode)
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    local phase_index=$(get_phase_index "$phase" "$mode" "$synthesis")
-    local total_phases=$(get_total_phases "$mode" "$synthesis")
-    local progress=$(calculate_progress "$phase" "$mode" "$synthesis")
+    local phase_index=$(get_phase_index "$phase" "$mode")
+    local total_phases=$(get_total_phases "$mode")
+    local progress=$(calculate_progress "$phase" "$mode")
     local progress_bar=$(generate_progress_bar "$progress")
-    local remaining=$(get_remaining_phases "$phase" "$mode" "$synthesis")
+    local remaining=$(get_remaining_phases "$phase" "$mode")
 
     local next_action=$(determine_next_action)
 
@@ -380,7 +351,7 @@ generate_workflow_state() {
   "mode": "$mode",
   "iteration": $iteration,
   "updated_at": "$timestamp",
-  "synthesis_mode": $synthesis,
+  "bootstrap_completed": $bootstrap,
 
   "phase": {
     "current": "$phase",
@@ -484,7 +455,7 @@ display_wiggum_status() {
     local progress=$(echo "$state" | jq -r '.progress.percent')
     local bar=$(echo "$state" | jq -r '.progress.bar')
     local remaining=$(echo "$state" | jq -r '.phase.remaining | length')
-    local synthesis=$(echo "$state" | jq -r '.synthesis_mode')
+    local bootstrap=$(echo "$state" | jq -r '.bootstrap_completed')
     local next_cmd=$(echo "$state" | jq -r '.next_action.command')
 
     echo ""
@@ -494,7 +465,7 @@ display_wiggum_status() {
     echo ""
     echo "  Phase:    $phase"
     echo "  Progress: $bar ${progress}%"
-    echo "  Mode:     $(echo "$state" | jq -r '.mode')$(if [ "$synthesis" = "true" ]; then echo " (synthesis)"; fi)"
+    echo "  Mode:     $(echo "$state" | jq -r '.mode')$(if [ "$bootstrap" = "true" ]; then echo " (bootstrapped)"; fi)"
     echo ""
 
     if [ "$phase" != "DONE" ]; then

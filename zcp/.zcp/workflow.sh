@@ -89,7 +89,12 @@ main() {
         extend)
             cmd_extend "$@"
             ;;
-        # === SYNTHESIS COMMANDS ===
+        # === BOOTSTRAP COMMAND (replaces synthesis) ===
+        bootstrap)
+            source "$SCRIPT_DIR/lib/bootstrap/orchestrator.sh"
+            cmd_bootstrap "$@"
+            ;;
+        # === SYNTHESIS COMMANDS (DEPRECATED - use bootstrap) ===
         compose)
             cmd_compose "$@"
             ;;
@@ -145,8 +150,12 @@ Other modes:
   .zcp/workflow.sh init --dev-only   # Dev iteration without deployment
   .zcp/workflow.sh init --hotfix     # Skip dev verification (use recent discovery)
 
+New project? Bootstrap first:
+  .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
+
 Commands:
   .zcp/workflow.sh show              # Current status
+  .zcp/workflow.sh bootstrap --help  # Bootstrap help
   .zcp/workflow.sh --help            # Full reference
   .zcp/workflow.sh --help {topic}    # Topic help (discover, develop, deploy, verify, done, vars, services, extend, bootstrap)
 EOF
@@ -172,9 +181,9 @@ EOF
             echo "  upgrade-to-full             Upgrade dev-only to full"
             echo "  record_deployment {svc}     Manual deploy evidence"
             echo ""
-            echo "Synthesis Commands (Bootstrap):"
-            echo "  compose --runtime <rt> [--services <s>]  Generate synthesis plan"
-            echo "  verify_synthesis            Validate synthesized code structure"
+            echo "Bootstrap Commands:"
+            echo "  bootstrap --runtime <rt> [--services <s>] [--prefix <p>]  Create services + scaffolding"
+            echo "  bootstrap --resume          Resume interrupted bootstrap"
             echo ""
             echo "Continuity Commands:"
             echo "  iterate [--to PHASE] [summary]  Start new iteration from DONE"

@@ -151,83 +151,19 @@ GUIDANCE
                 echo "Discovery exists. Run: .zcp/workflow.sh transition_to DISCOVER"
             fi
             ;;
-        COMPOSE)
-            if [ -f "$SYNTHESIS_PLAN_FILE" ]; then
-                local runtime managed_count
-                runtime=$(jq -r '.requirements.runtime // .code_requirements.runtime // "unknown"' "$SYNTHESIS_PLAN_FILE" 2>/dev/null)
-                managed_count=$(jq -r '.services.managed | length' "$SYNTHESIS_PLAN_FILE" 2>/dev/null || echo "0")
-                cat <<GUIDANCE
-✅ Synthesis plan created: $runtime + $managed_count managed service(s)
-
-   NEXT: Import the generated services
-   .zcp/workflow.sh extend $SYNTHESIZED_IMPORT_FILE
-
-   This will create the services and wait for RUNNING status.
-GUIDANCE
-            else
-                cat <<'GUIDANCE'
-🔧 COMPOSE PHASE - Generate synthesis plan
-
-   Run the compose command with your requirements:
-   .zcp/workflow.sh compose --runtime <runtime> [--services <managed>]
-
-   Examples:
-   .zcp/workflow.sh compose --runtime go --services postgresql
-   .zcp/workflow.sh compose --runtime nodejs --services postgresql,valkey
-
-   Supported runtimes: go, nodejs, python, php, rust, bun
-   Supported services: postgresql, mariadb, keydb, valkey, rabbitmq, nats, minio, qdrant
-GUIDANCE
-            fi
-            ;;
-        EXTEND)
+        COMPOSE|EXTEND|SYNTHESIZE)
             cat <<'GUIDANCE'
-📦 EXTEND PHASE - Services being imported
+⚠️  DEPRECATED PHASE
 
-   If services are still deploying:
-   zcli service list -P $projectId   # Check status
+   The synthesis phases (COMPOSE, EXTEND, SYNTHESIZE) have been replaced.
+   Use the bootstrap command instead:
 
-   Once all services show RUNNING:
-   .zcp/workflow.sh transition_to SYNTHESIZE
+   .zcp/workflow.sh bootstrap --runtime <type> --services <list>
 
-   If import failed, check the error and re-run:
-   .zcp/workflow.sh extend /tmp/synthesized_import.yml
+   For help: .zcp/workflow.sh bootstrap --help
+
+   To start fresh: .zcp/workflow.sh reset
 GUIDANCE
-            ;;
-        SYNTHESIZE)
-            if [ -f "$SYNTHESIS_PLAN_FILE" ]; then
-                local runtime dev_svc
-                runtime=$(jq -r '.requirements.runtime // .code_requirements.runtime // "unknown"' "$SYNTHESIS_PLAN_FILE" 2>/dev/null)
-                dev_svc=$(jq -r '.dev_service // "appdev"' "$SYNTHESIS_PLAN_FILE" 2>/dev/null)
-                cat <<GUIDANCE
-🔨 SYNTHESIZE PHASE - Create application code
-
-   Your task: Create the application files in /var/www/$dev_svc/
-
-   Required files for $runtime:
-GUIDANCE
-                case "$runtime" in
-                    go) echo "   - zerops.yml, main.go, go.mod" ;;
-                    nodejs) echo "   - zerops.yml, index.js, package.json" ;;
-                    python) echo "   - zerops.yml, main.py, requirements.txt" ;;
-                    php) echo "   - zerops.yml, index.php, composer.json" ;;
-                    rust) echo "   - zerops.yml, src/main.rs, Cargo.toml" ;;
-                    bun) echo "   - zerops.yml, index.ts, package.json" ;;
-                    *) echo "   - zerops.yml + runtime-specific files" ;;
-                esac
-                cat <<GUIDANCE
-
-   Use environment variables from the synthesis plan:
-   jq '.env_mapping' $SYNTHESIS_PLAN_FILE
-
-   When files are created, validate:
-   .zcp/workflow.sh verify_synthesis
-
-   Then: .zcp/workflow.sh transition_to DEVELOP
-GUIDANCE
-            else
-                echo "⚠️  No synthesis plan found. Run: .zcp/workflow.sh compose first"
-            fi
             ;;
         DISCOVER)
             if check_evidence_session "$DISCOVERY_FILE"; then
