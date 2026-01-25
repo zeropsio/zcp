@@ -73,8 +73,55 @@ cmd_show() {
             echo ""
             echo "⛔ DO NOT run 'workflow init' or 'transition_to' until bootstrap-done!"
         else
-            # Scaffolding not done yet - need to resume
-            cat <<'BOOTSTRAP_EARLY'
+            # Scaffolding not done yet - check if work was done manually
+            # This handles the case where bootstrap stopped but user completed tasks manually
+            local coordination_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_coordination.json"
+            local manual_work_detected=false
+            local manual_info=""
+
+            # Check if services were imported (step 3 complete)
+            local services_imported_status
+            services_imported_status=$(jq -r '.checkpoints.services_imported.status // ""' "$coordination_file" 2>/dev/null)
+            if [ -f "$coordination_file" ] && [ "$services_imported_status" = "complete" ]; then
+                # Check for manual work: zerops.yml or code files exist
+                local dev_hostname
+                dev_hostname=$(jq -r '.hostname_prefix // "app"' "${ZCP_TMP_DIR:-/tmp}/bootstrap_plan.json" 2>/dev/null)
+                dev_hostname="${dev_hostname}dev"
+                local mount_path="/var/www/$dev_hostname"
+
+                if [ -d "$mount_path" ]; then
+                    local has_files=false
+                    # Check for common patterns
+                    if [ -f "$mount_path/zerops.yml" ] || [ -f "$mount_path/zerops.yaml" ]; then
+                        has_files=true
+                        manual_info="zerops.yml found"
+                    fi
+                    if [ -f "$mount_path/main.go" ] || [ -f "$mount_path/index.js" ] || [ -f "$mount_path/app.py" ]; then
+                        has_files=true
+                        manual_info="${manual_info:+$manual_info, }application code found"
+                    fi
+
+                    if [ "$has_files" = true ]; then
+                        manual_work_detected=true
+                    fi
+                fi
+            fi
+
+            if [ "$manual_work_detected" = true ]; then
+                cat <<MANUAL_WORK
+⚠️  Bootstrap incomplete but MANUAL WORK DETECTED
+
+   Found: $manual_info
+
+   It looks like you completed bootstrap tasks manually.
+   To unlock workflow transitions, run:
+
+      .zcp/workflow.sh bootstrap-done
+
+   This validates your work and transitions to normal workflow.
+MANUAL_WORK
+            else
+                cat <<'BOOTSTRAP_EARLY'
 Scaffolding not yet complete. Run:
 
    .zcp/workflow.sh bootstrap --resume
@@ -83,11 +130,14 @@ This will:
   1. Search recipes for patterns
   2. Generate import.yml
   3. Import services and wait for RUNNING
-  4. Enable subdomains
-  5. Generate zerops.yml skeleton
+  4. Generate zerops.yml skeleton
 
 Then you'll get specific tasks to complete.
+
+💡 If you already completed work manually:
+   .zcp/workflow.sh bootstrap-done
 BOOTSTRAP_EARLY
+            fi
         fi
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

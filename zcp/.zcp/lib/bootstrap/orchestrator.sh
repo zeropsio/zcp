@@ -401,44 +401,43 @@ ZCLI_AUTH
         echo -e "${GREEN}[CHECKPOINT]${NC} Services imported and running"
     fi
 
-    # === STEP 4: Enable Subdomains ===
-    if ! is_step_complete "subdomains_enabled"; then
-        echo ""
-        echo -e "${CYAN}=== STEP 4: Enable Subdomains ===${NC}"
-
-        local dev_hostname stage_hostname
-        dev_hostname=$(jq -r '.dev_hostname' "$BOOTSTRAP_PLAN_FILE")
-        stage_hostname=$(jq -r '.stage_hostname' "$BOOTSTRAP_PLAN_FILE")
-
-        local services_json dev_id stage_id
-        services_json=$(jq -r '.checkpoints.services_imported.data' "$BOOTSTRAP_COORDINATION_FILE")
-        dev_id=$(echo "$services_json" | jq -r --arg h "$dev_hostname" '(.services // [])[] | select(.name == $h) | .id')
-        stage_id=$(echo "$services_json" | jq -r --arg h "$stage_hostname" '(.services // [])[] | select(.name == $h) | .id')
-
-        local dev_url stage_url
-        dev_url=$(enable_subdomain "$dev_id" "$dev_hostname")
-        stage_url=$(enable_subdomain "$stage_id" "$stage_hostname")
-
-        write_checkpoint "subdomains_enabled" "complete" "$(jq -n --arg d "$dev_url" --arg s "$stage_url" '{dev_url: $d, stage_url: $s}')"
-        echo -e "${GREEN}[CHECKPOINT]${NC} Subdomains enabled"
-        echo "  Dev:   $dev_url"
-        echo "  Stage: $stage_url"
-    fi
-
-    # === STEP 5: Generate zerops.yml Skeleton ===
+    # === STEP 4: Generate zerops.yml Skeleton ===
+    # NOTE: Subdomain enabling moved to agent tasks (requires deployed code)
     if ! is_step_complete "zerops_yml_generated"; then
         echo ""
-        echo -e "${CYAN}=== STEP 5: Generate zerops.yml Skeleton ===${NC}"
+        echo -e "${CYAN}=== STEP 4: Generate zerops.yml Skeleton ===${NC}"
 
         local dev_hostname
         dev_hostname=$(jq -r '.dev_hostname' "$BOOTSTRAP_PLAN_FILE")
 
         local mount_path="/var/www/$dev_hostname"
+
+        # Check if mount point exists - may need SSHFS mount
         if [ ! -d "$mount_path" ]; then
-            echo -e "${YELLOW}Mount point not ready: $mount_path${NC}"
+            echo -e "${YELLOW}Mount point does not exist: $mount_path${NC}"
             echo "Run: .zcp/mount.sh $dev_hostname"
             echo "Then: .zcp/workflow.sh bootstrap --resume"
             return 1
+        fi
+
+        # Check if mount is accessible (SSHFS might be mounted but stale)
+        if ! ls "$mount_path" >/dev/null 2>&1; then
+            echo -e "${YELLOW}Mount point not accessible: $mount_path${NC}"
+            echo "The SSHFS mount may be stale. Try:"
+            echo "  fusermount -u $mount_path 2>/dev/null || true"
+            echo "  .zcp/mount.sh $dev_hostname"
+            echo "Then: .zcp/workflow.sh bootstrap --resume"
+            return 1
+        fi
+
+        # Empty directory is EXPECTED with startWithoutCode: true
+        # This is NOT an error - the directory is intentionally empty
+        local file_count
+        file_count=$(ls -A "$mount_path" 2>/dev/null | wc -l)
+        if [ "$file_count" -eq 0 ]; then
+            echo -e "${GREEN}✓${NC} Mount ready at $mount_path (empty - expected with startWithoutCode: true)"
+        else
+            echo -e "${GREEN}✓${NC} Mount ready at $mount_path ($file_count files)"
         fi
 
         generate_zerops_yml_skeleton "$dev_hostname" "8080"
@@ -502,12 +501,27 @@ ZCLI_AUTH
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo -e "${CYAN}📋 TASK 3: Push and test dev${NC}"
-    echo "   ssh $dev_hostname 'zcli push \$(hostname) --setup=dev'"
+    echo -e "${CYAN}📋 TASK 3: Push dev, enable subdomain, test${NC}"
+    echo "   # First, login from inside dev container:"
+    echo "   ssh $dev_hostname 'zcli login --region=gomibako --regionUrl=\"https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli\" \"\$ZEROPS_ZCP_API_KEY\"'"
+    echo ""
+    echo "   # Push dev (from dev container, to itself):"
+    echo "   ssh $dev_hostname 'zcli push \$(hostname) --setup=dev --noGit'"
+    echo ""
+    echo "   # Enable subdomain (from ZCP):"
+    echo "   zcli service enable-subdomain -S $dev_id"
+    echo ""
+    echo "   # Verify:"
     echo "   .zcp/verify.sh $dev_hostname 8080 / /status"
     echo ""
-    echo -e "${CYAN}📋 TASK 4: Push and test stage${NC}"
-    echo "   ssh $dev_hostname 'zcli push $stage_id --setup=prod'"
+    echo -e "${CYAN}📋 TASK 4: Push stage, enable subdomain, test${NC}"
+    echo "   # Push to stage (FROM dev container, TO stage service):"
+    echo "   ssh $dev_hostname 'zcli push $stage_id --setup=prod --noGit'"
+    echo ""
+    echo "   # Enable subdomain (from ZCP):"
+    echo "   zcli service enable-subdomain -S $stage_id"
+    echo ""
+    echo "   # Verify:"
     echo "   .zcp/verify.sh $stage_hostname 8080 / /status"
     echo ""
     echo -e "${CYAN}📋 TASK 5: Mark complete${NC}"
@@ -543,8 +557,8 @@ ZCLI_AUTH
             agent_tasks: [
                 "TASK 1: Edit /var/www/\($dev_hostname)/zerops.yml - fill in buildCommands, deployFiles, start",
                 "TASK 2: Create application code in /var/www/\($dev_hostname)/ - minimal status page",
-                "TASK 3: Push to dev: ssh \($dev_hostname) \"zcli push $(hostname) --setup=dev\"",
-                "TASK 4: Push to stage: ssh \($dev_hostname) \"zcli push \($stage_id) --setup=prod\"",
+                "TASK 3: Push dev - run from inside dev: ssh \($dev_hostname) then zcli login && zcli push [hostname] --setup=dev --noGit, then from ZCP: zcli service enable-subdomain -S \($dev_id), then .zcp/verify.sh \($dev_hostname) 8080",
+                "TASK 4: Push stage - run from inside dev: ssh \($dev_hostname) then zcli push \($stage_id) --setup=prod --noGit, then from ZCP: zcli service enable-subdomain -S \($stage_id), then .zcp/verify.sh \($stage_hostname) 8080",
                 "TASK 5: Run: .zcp/workflow.sh bootstrap-done"
             ],
             next_command: ".zcp/workflow.sh bootstrap-done"
@@ -587,12 +601,12 @@ WHAT IT DOES:
     1. Runs recipe-search for runtime patterns
     2. Generates import.yml with managed services (priority: 10) and runtimes
     3. Imports services and waits for RUNNING
-    4. Enables subdomains for dev and stage
-    5. Generates zerops.yml skeleton with env var references
-    6. Hands off to agent to:
+    4. Generates zerops.yml skeleton with env var references
+    5. Hands off to agent to:
        - Complete zerops.yml with build commands from recipe patterns
        - Write minimal status page code
-       - Push and test
+       - Push to dev, enable subdomain, test
+       - Push to stage, enable subdomain, test
 
 IMPORTANT:
     - Agent writes all application code (no templates)

@@ -271,6 +271,28 @@ zerops.yaml structure:
           - port: 8080
         start: ./app
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  ZCLI PUSH - REQUIRED FLAGS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ALWAYS include these flags to avoid common errors:
+
+  zcli push {service_id} --setup={setup} --noGit
+
+--setup={setup}  REQUIRED when zerops.yml has multiple setups (dev/prod)
+                 Error without: "Cannot find corresponding setup in zerops.yaml"
+
+--noGit          REQUIRED if directory is not a git repository
+                 Error without: "folder is not initialized via git init"
+
+Alternative to --noGit: Initialize git first
+  cd /var/www/{dev} && git init && git add . && git commit -m "init"
+  Then: zcli push {service_id} --setup={setup}
+
+⚠️  Don't pipe zcli output! Causes "allowed only in interactive terminal"
+    ❌ zcli service list | grep foo
+    ✅ zcli service list
+
 Deployment steps:
 
 1. Stop dev process (triple-kill pattern):
@@ -283,10 +305,11 @@ Deployment steps:
        \"\$ZEROPS_ZCP_API_KEY\""
 
 3. Deploy to stage:
-   ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
+   ssh {dev} "zcli push {stage_service_id} --setup={setup} --noGit --versionName=v1.0.0"
 
    • {stage_service_id} = ID from discovery (not hostname!)
-   • {setup} = setup name from zerops.yaml
+   • {setup} = setup name from zerops.yaml (REQUIRED for multi-setup)
+   • --noGit = skip git checks (or init git first)
    • --versionName optional but recommended
 
 4. Wait for completion:
@@ -956,6 +979,27 @@ CRITICAL RULES
 • DB tools (psql, redis-cli): Run from ZCP, NOT via ssh to runtime
 • Runtime containers are minimal — no dev tools installed
 
+ZCLI PUSH - REQUIRED FLAGS
+─────────────────────────────────────────────────────────────────
+zcli push {id} --setup={setup} --noGit   # Always include both!
+
+• --setup required when zerops.yml has multiple setups (dev/prod)
+• --noGit required if no git repo (or run git init first)
+• Don't pipe zcli output — causes "allowed only in interactive terminal"
+
+SUBDOMAIN SEQUENCE
+─────────────────────────────────────────────────────────────────
+❌ Import → Enable subdomain → Deploy    (FAILS - no HTTP config)
+✅ Import → Deploy zerops.yml → Enable subdomain (WORKS)
+
+Subdomain requires HTTP ports from zerops.yml deployment first!
+
+EXPECTED WARNINGS (NOT ERRORS)
+─────────────────────────────────────────────────────────────────
+• "Unexpected EOF" during deploy — operation likely succeeded, check status
+• Empty mount with startWithoutCode: true — this is correct behavior
+• Slow first `go run` in dev — downloads Go toolchain, use `go build` instead
+
 EVIDENCE FILES
 ─────────────────────────────────────────────────────────────────
 /tmp/claude_session             # Session ID
@@ -1201,6 +1245,42 @@ ssh appdev "./app >> /tmp/app.log 2>&1"  # run_in_background=true
 .zcp/verify.sh appdev 8080 / /status
 
 # Continue with normal DEPLOY → VERIFY → DONE flow
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  SUBDOMAIN SEQUENCE (CRITICAL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Subdomain can only be enabled AFTER HTTP ports are configured!
+
+❌ WRONG ORDER (fails with "Service stack is not http or https"):
+   1. Import service with startWithoutCode: true
+   2. zcli service enable-subdomain -S {id}  ← FAILS!
+   3. Deploy zerops.yml
+
+✅ CORRECT ORDER:
+   1. Import service with startWithoutCode: true
+   2. Deploy zerops.yml (contains ports with httpSupport: true)
+   3. zcli service enable-subdomain -S {id}  ← Works!
+
+The zerops.yml deployment configures HTTP ports. Only then can
+subdomains be enabled.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  ZCLI PUSH FLAGS (CRITICAL)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When pushing to a service, use these flags:
+
+  zcli push {service_id} --setup={setup} --noGit
+
+--setup={setup}  Required when zerops.yml has multiple setups (dev/prod)
+--noGit          Required if directory is not a git repository
+
+Alternative to --noGit - initialize git first:
+  git init && git add . && git commit -m "init"
+  zcli push {service_id} --setup={setup}
+
+⚠️  Empty mount with startWithoutCode: true is EXPECTED behavior!
 EOF
 }
 
