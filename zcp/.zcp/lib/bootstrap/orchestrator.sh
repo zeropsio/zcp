@@ -13,6 +13,22 @@ source "$SCRIPT_DIR/zerops-yml-gen.sh"
 # Note: utils.sh is sourced by workflow.sh before this script runs
 # This gives us: get_session, ZCP_TMP_DIR, STATE_DIR, colors, etc.
 
+# Color fallbacks (in case utils.sh wasn't sourced or colors not exported)
+# These provide defaults for set -u compatibility
+CYAN="${CYAN:-\033[0;36m}"
+GREEN="${GREEN:-\033[0;32m}"
+YELLOW="${YELLOW:-\033[1;33m}"
+RED="${RED:-\033[0;31m}"
+BOLD="${BOLD:-\033[1m}"
+NC="${NC:-\033[0m}"
+
+# Path fallbacks (in case utils.sh wasn't sourced)
+ZCP_TMP_DIR="${ZCP_TMP_DIR:-/tmp}"
+SESSION_FILE="${SESSION_FILE:-${ZCP_TMP_DIR}/claude_session}"
+MODE_FILE="${MODE_FILE:-${ZCP_TMP_DIR}/claude_mode}"
+PHASE_FILE="${PHASE_FILE:-${ZCP_TMP_DIR}/claude_phase}"
+STATE_DIR="${STATE_DIR:-${SCRIPT_DIR}/state}"
+
 # Evidence file paths
 BOOTSTRAP_PLAN_FILE="${ZCP_TMP_DIR:-/tmp}/bootstrap_plan.json"
 BOOTSTRAP_IMPORT_FILE="${ZCP_TMP_DIR:-/tmp}/bootstrap_import.yml"
@@ -80,19 +96,24 @@ write_checkpoint() {
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
     # Validate data is valid JSON, fallback to empty object if not
-    if [ -z "$data" ] || ! echo "$data" | jq -e . >/dev/null 2>&1; then
+    # Read from stdin if data looks corrupted (contains newlines or is too long for arg)
+    if [ -z "$data" ]; then
+        data='{}'
+    elif ! echo "$data" | jq -e . >/dev/null 2>&1; then
         echo "WARNING: Invalid JSON data for checkpoint '$step', using empty object" >&2
         data='{}'
     fi
 
-    # Use jq args to safely inject values (avoids shell quoting issues)
-    update_coordination "$(jq -n \
+    # Use jq with proper JSON parsing to avoid shell quoting issues
+    local update_expr
+    update_expr=$(jq -n \
         --arg step "$step" \
         --arg status "$status" \
         --arg ts "$timestamp" \
         --argjson data "$data" \
-        '. + {checkpoints: ((.checkpoints // {}) + {($step): {status: $status, at: $ts, data: $data}})}'
-    )"
+        '. + {checkpoints: ((.checkpoints // {}) + {($step): {status: $status, at: $ts, data: $data}})}')
+
+    update_coordination "$update_expr"
 }
 
 # Extract JSON from zcli output (skips log lines before JSON)
@@ -314,7 +335,7 @@ ZCLI_AUTH
             fi
         fi
 
-        write_checkpoint "recipe_search" "complete" '{"file": "/tmp/recipe_review.json"}'
+        write_checkpoint "recipe_search" "complete" "$(jq -n --arg f "/tmp/recipe_review.json" '{file: $f}')"
         echo -e "${GREEN}[CHECKPOINT]${NC} Recipe search complete"
     fi
 
@@ -338,7 +359,7 @@ ZCLI_AUTH
         echo ""
         cat "$BOOTSTRAP_IMPORT_FILE"
 
-        write_checkpoint "import_generated" "complete" "{\"file\": \"$BOOTSTRAP_IMPORT_FILE\"}"
+        write_checkpoint "import_generated" "complete" "$(jq -n --arg f "$BOOTSTRAP_IMPORT_FILE" '{file: $f}')"
         echo -e "${GREEN}[CHECKPOINT]${NC} Import file generated"
     fi
 
@@ -349,7 +370,7 @@ ZCLI_AUTH
 
         zcli project service-import "$BOOTSTRAP_IMPORT_FILE" -P "$projectId" || {
             echo "ERROR: Service import failed" >&2
-            write_checkpoint "services_imported" "failed" '{"error": "zcli import failed"}'
+            write_checkpoint "services_imported" "failed" "$(jq -n '{error: "zcli import failed"}')"
             return 1
         }
 
@@ -360,7 +381,8 @@ ZCLI_AUTH
         local services_json
         services_json=$(get_services_json)
 
-        write_checkpoint "services_imported" "complete" "$services_json"
+        # Pass JSON via process substitution to avoid shell quoting issues
+        write_checkpoint "services_imported" "complete" "$(echo "$services_json" | jq -c .)"
         echo -e "${GREEN}[CHECKPOINT]${NC} Services imported and running"
     fi
 
@@ -382,8 +404,7 @@ ZCLI_AUTH
         dev_url=$(enable_subdomain "$dev_id" "$dev_hostname")
         stage_url=$(enable_subdomain "$stage_id" "$stage_hostname")
 
-        write_checkpoint "subdomains_enabled" "complete" \
-            "$(jq -n --arg d "$dev_url" --arg s "$stage_url" '{dev_url: $d, stage_url: $s}')"
+        write_checkpoint "subdomains_enabled" "complete" "$(jq -n --arg d "$dev_url" --arg s "$stage_url" '{dev_url: $d, stage_url: $s}')"
         echo -e "${GREEN}[CHECKPOINT]${NC} Subdomains enabled"
         echo "  Dev:   $dev_url"
         echo "  Stage: $stage_url"
@@ -408,8 +429,7 @@ ZCLI_AUTH
         generate_zerops_yml_skeleton "$dev_hostname" "8080"
         echo "Generated: $mount_path/zerops.yml"
 
-        write_checkpoint "zerops_yml_generated" "complete" \
-            "$(jq -n --arg f "$mount_path/zerops.yml" '{file: $f}')"
+        write_checkpoint "zerops_yml_generated" "complete" "$(jq -n --arg f "$mount_path/zerops.yml" '{file: $f}')"
         echo -e "${GREEN}[CHECKPOINT]${NC} zerops.yml skeleton generated"
     fi
 
