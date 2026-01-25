@@ -14,9 +14,9 @@ get_env_references() {
 
     # Find managed services and generate env refs
     echo "$services" | jq -r '
-        .[] |
+        .services[] |
         select(.type | test("^(postgresql|mysql|mariadb|mongodb|valkey|keydb|rabbitmq|nats|elasticsearch|minio)@")) |
-        .hostname as $h |
+        .name as $h |
         .type | split("@")[0] as $t |
 
         # Generate env var lines based on service type

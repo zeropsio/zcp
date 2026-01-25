@@ -22,7 +22,9 @@ detect_project_state() {
     fi
 
     # Handle empty/null
-    if [ -z "$services" ] || [ "$services" = "null" ] || [ "$services" = "[]" ]; then
+    local services_arr
+    services_arr=$(echo "$services" | jq '.services // []')
+    if [ -z "$services_arr" ] || [ "$services_arr" = "null" ] || [ "$services_arr" = "[]" ]; then
         echo "FRESH"
         return 0
     fi
@@ -31,7 +33,7 @@ detect_project_state() {
     local runtime_pattern="^(go|nodejs|php|python|rust|bun|dotnet|java|nginx|static|alpine)@"
     local runtime_count
     runtime_count=$(echo "$services" | jq --arg p "$runtime_pattern" \
-        '[.[] | select(.type | test($p))] | length')
+        '[.services[] | select(.type | test($p))] | length')
 
     if [ "$runtime_count" -eq 0 ]; then
         echo "FRESH"
@@ -41,8 +43,8 @@ detect_project_state() {
     # Check for actual dev/stage PAIRS (not just any dev + any stage)
     local has_pairs
     has_pairs=$(echo "$services" | jq '
-        [.[] | .hostname | select(test("dev$")) | sub("dev$"; "")] as $dev_prefixes |
-        [.[] | .hostname | select(test("stage$")) | sub("stage$"; "")] as $stage_prefixes |
+        [.services[] | .name | select(test("dev$")) | sub("dev$"; "")] as $dev_prefixes |
+        [.services[] | .name | select(test("stage$")) | sub("stage$"; "")] as $stage_prefixes |
         [$dev_prefixes[] | select(. as $p | $stage_prefixes | index($p) != null)] | length > 0
     ')
 

@@ -390,7 +390,7 @@ check_post_import_status() {
 
     # Check for READY_TO_DEPLOY services (indicates missing buildFromGit)
     local ready_to_deploy
-    ready_to_deploy=$(echo "$services_json" | jq -r '.[] | select(.status == "READY_TO_DEPLOY") | .hostname' 2>/dev/null)
+    ready_to_deploy=$(echo "$services_json" | jq -r '.services[] | select(.status == "READY_TO_DEPLOY") | .name' 2>/dev/null)
 
     if [ -n "$ready_to_deploy" ]; then
         echo -e "${RED}⚠️  SERVICES IN READY_TO_DEPLOY STATUS:${NC}"
@@ -418,8 +418,8 @@ check_post_import_status() {
 
         # Show service status summary
         local active building
-        active=$(echo "$services_json" | jq -r '[.[] | select(.status == "ACTIVE")] | length' 2>/dev/null)
-        building=$(echo "$services_json" | jq -r '[.[] | select(.status == "BUILDING")] | length' 2>/dev/null)
+        active=$(echo "$services_json" | jq -r '[.services[] | select(.status == "ACTIVE")] | length' 2>/dev/null)
+        building=$(echo "$services_json" | jq -r '[.services[] | select(.status == "BUILDING")] | length' 2>/dev/null)
 
         echo "  Active: $active"
         [ "$building" -gt 0 ] && echo "  Building: $building"

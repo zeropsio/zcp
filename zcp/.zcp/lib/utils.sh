@@ -546,7 +546,7 @@ check_runtime_services_exist() {
     # Check if we have any runtime services (not ZCP, not managed)
     # Runtime types: go, nodejs, php, python, rust, bun, dotnet, java, nginx, static
     local runtime_count
-    runtime_count=$(echo "$services_json" | jq '[.[] | select(
+    runtime_count=$(echo "$services_json" | jq '[.services[] | select(
         .type != null and (
             (.type | startswith("go@")) or
             (.type | startswith("nodejs@")) or
@@ -576,7 +576,7 @@ get_services_summary() {
         return
     fi
 
-    echo "$DETECTED_SERVICES_JSON" | jq -r '.[] | "  • \(.hostname) (\(.type // "unknown")) - \(.status // "unknown")"' 2>/dev/null
+    echo "$DETECTED_SERVICES_JSON" | jq -r '.services[] | "  • \(.name) (\(.type // "unknown")) - \(.status // "unknown")"' 2>/dev/null
 }
 
 # Sync current /tmp/ state to persistent storage

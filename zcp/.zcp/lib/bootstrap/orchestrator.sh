@@ -113,7 +113,7 @@ wait_for_services() {
         services=$(zcli service list -P "$projectId" --json 2>/dev/null)
 
         local pending
-        pending=$(echo "$services" | jq '[.[] | select(.status != "RUNNING" and .status != "ACTIVE")] | length')
+        pending=$(echo "$services" | jq '[.services[] | select(.status != "RUNNING" and .status != "ACTIVE")] | length')
 
         if [ "$pending" = "0" ]; then
             echo "All services RUNNING"
@@ -128,16 +128,17 @@ wait_for_services() {
 # Enable subdomain for a service
 enable_subdomain() {
     local service_id="$1"
+    local hostname="$2"
 
     zcli service enable-subdomain -S "$service_id" 2>&1 || {
         echo "WARNING: Could not enable subdomain for $service_id" >&2
         return 1
     }
 
-    # Get the subdomain URL
+    # Get the subdomain URL from inside the service
     sleep 2
     local url
-    url=$(zcli service show -S "$service_id" --json 2>/dev/null | jq -r '.zeropsSubdomain // empty')
+    url=$(ssh "$hostname" 'echo $zeropsSubdomain' 2>/dev/null)
     echo "$url"
 }
 
@@ -325,12 +326,12 @@ ZCLI_AUTH
 
         local services_json dev_id stage_id
         services_json=$(jq -r '.checkpoints.services_imported.data' "$BOOTSTRAP_COORDINATION_FILE")
-        dev_id=$(echo "$services_json" | jq -r --arg h "$dev_hostname" '.[] | select(.hostname == $h) | .id')
-        stage_id=$(echo "$services_json" | jq -r --arg h "$stage_hostname" '.[] | select(.hostname == $h) | .id')
+        dev_id=$(echo "$services_json" | jq -r --arg h "$dev_hostname" '.services[] | select(.name == $h) | .id')
+        stage_id=$(echo "$services_json" | jq -r --arg h "$stage_hostname" '.services[] | select(.name == $h) | .id')
 
         local dev_url stage_url
-        dev_url=$(enable_subdomain "$dev_id")
-        stage_url=$(enable_subdomain "$stage_id")
+        dev_url=$(enable_subdomain "$dev_id" "$dev_hostname")
+        stage_url=$(enable_subdomain "$stage_id" "$stage_hostname")
 
         write_checkpoint "subdomains_enabled" "complete" \
             "$(jq -n --arg d "$dev_url" --arg s "$stage_url" '{dev_url: $d, stage_url: $s}')"
@@ -395,8 +396,8 @@ ZCLI_AUTH
     # Get service IDs for instructions
     local services_json dev_id stage_id
     services_json=$(jq -r '.checkpoints.services_imported.data' "$BOOTSTRAP_COORDINATION_FILE")
-    dev_id=$(echo "$services_json" | jq -r --arg h "$dev_hostname" '.[] | select(.hostname == $h) | .id')
-    stage_id=$(echo "$services_json" | jq -r --arg h "$stage_hostname" '.[] | select(.hostname == $h) | .id')
+    dev_id=$(echo "$services_json" | jq -r --arg h "$dev_hostname" '.services[] | select(.name == $h) | .id')
+    stage_id=$(echo "$services_json" | jq -r --arg h "$stage_hostname" '.services[] | select(.name == $h) | .id')
 
     echo ""
     echo "3. PUSH dev→dev to activate:"
