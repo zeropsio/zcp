@@ -15,6 +15,7 @@ create_import_evidence() {
     local services_json="[]"
     if command -v zcli &>/dev/null && [ -n "$pid" ]; then
         services_json=$(zcli service list -P "$pid" --format json 2>/dev/null | \
+            sed 's/\x1b\[[0-9;]*m//g' | \
             jq '[.services[] | {name: .name, id: .id, type: .type, status: .status}]' 2>/dev/null || echo "[]")
     fi
 
@@ -168,6 +169,7 @@ cmd_extend() {
 
     local ready_to_deploy_services
     ready_to_deploy_services=$(zcli service list -P "$pid" --format json 2>/dev/null | \
+        sed 's/\x1b\[[0-9;]*m//g' | \
         jq -r '.services[] | select(.status == "READY_TO_DEPLOY") | "\(.name) (\(.type))"' 2>/dev/null)
 
     if [ -n "$ready_to_deploy_services" ]; then
@@ -201,6 +203,7 @@ cmd_extend() {
     # Detect DEV runtime services that need SSHFS mounts (not stage - stage gets code via zcli push)
     local dev_services
     dev_services=$(zcli service list -P "$pid" --format json 2>/dev/null | \
+        sed 's/\x1b\[[0-9;]*m//g' | \
         jq -r '.services[] | select(.type | test("^(go|nodejs|php|python|rust|dotnet|java|static|nginx|alpine|bun)@")) | select(.name | test("stage") | not) | .name' 2>/dev/null || true)
 
     if [ -n "$dev_services" ]; then

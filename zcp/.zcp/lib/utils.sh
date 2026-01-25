@@ -5,6 +5,21 @@
 # Utility functions for Zerops Workflow Management System
 
 # ============================================================================
+# ZCLI HELPERS
+# ============================================================================
+
+# Strip ANSI color codes from output (zcli outputs colors that break JSON parsing)
+strip_ansi() {
+    sed 's/\x1b\[[0-9;]*m//g'
+}
+
+# Run zcli service list and return clean JSON
+zcli_service_list_json() {
+    local project_id="$1"
+    zcli service list -P "$project_id" --format json 2>&1 | strip_ansi
+}
+
+# ============================================================================
 # STATE FILE PATHS
 # ============================================================================
 
@@ -515,10 +530,11 @@ check_runtime_services_exist() {
     fi
 
     # Get service list with proper error handling
+    # Strip ANSI codes that zcli outputs (breaks JSON parsing)
     local services_json
     local zcli_exit_code
-    services_json=$(zcli service list -P "$pid" --format json 2>&1)
-    zcli_exit_code=$?
+    services_json=$(zcli service list -P "$pid" --format json 2>&1 | strip_ansi)
+    zcli_exit_code=${PIPESTATUS[0]}
 
     if [ $zcli_exit_code -ne 0 ]; then
         # Check for specific error types

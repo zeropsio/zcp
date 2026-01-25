@@ -74,19 +74,17 @@ write_checkpoint() {
     local step="$1"
     local status="$2"
     local data="${3:-{}}"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    update_coordination "$(cat <<EOF
-        . + {
-            checkpoints: ((.checkpoints // {}) + {
-                "$step": {
-                    status: "$status",
-                    at: "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-                    data: $data
-                }
-            })
-        }
-EOF
-)"
+    # Use jq args to safely inject values (avoids shell quoting issues)
+    update_coordination "$(jq -n \
+        --arg step "$step" \
+        --arg status "$status" \
+        --arg ts "$timestamp" \
+        --argjson data "$data" \
+        '. + {checkpoints: ((.checkpoints // {}) + {($step): {status: $status, at: $ts, data: $data}})}'
+    )"
 }
 
 # Check if step completed
@@ -110,7 +108,7 @@ wait_for_services() {
         fi
 
         local services
-        services=$(zcli service list -P "$projectId" --format json 2>/dev/null)
+        services=$(zcli service list -P "$projectId" --format json 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
 
         local pending
         pending=$(echo "$services" | jq '[.services[] | select(.status != "RUNNING" and .status != "ACTIVE")] | length')
@@ -310,7 +308,7 @@ ZCLI_AUTH
         echo ""
         echo -e "${CYAN}=== STEP 3: Import Services ===${NC}"
 
-        zcli project service-import "$BOOTSTRAP_IMPORT_FILE" || {
+        zcli project service-import "$BOOTSTRAP_IMPORT_FILE" -P "$projectId" || {
             echo "ERROR: Service import failed" >&2
             write_checkpoint "services_imported" "failed" '{"error": "zcli import failed"}'
             return 1
@@ -321,7 +319,7 @@ ZCLI_AUTH
 
         # Get service IDs
         local services_json
-        services_json=$(zcli service list -P "$projectId" --format json)
+        services_json=$(zcli service list -P "$projectId" --format json | sed 's/\x1b\[[0-9;]*m//g')
 
         write_checkpoint "services_imported" "complete" "$services_json"
         echo -e "${GREEN}[CHECKPOINT]${NC} Services imported and running"

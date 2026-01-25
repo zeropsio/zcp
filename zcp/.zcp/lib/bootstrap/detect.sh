@@ -11,9 +11,10 @@ detect_project_state() {
     fi
 
     # Get services with proper error handling
+    # Strip ANSI codes that zcli outputs (breaks JSON parsing)
     local services exit_code
-    services=$(zcli service list -P "$projectId" --format json 2>&1)
-    exit_code=$?
+    services=$(zcli service list -P "$projectId" --format json 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+    exit_code=${PIPESTATUS[0]}
 
     if [ $exit_code -ne 0 ]; then
         echo "ERROR"
