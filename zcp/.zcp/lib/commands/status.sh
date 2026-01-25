@@ -24,29 +24,73 @@ cmd_show() {
     phase=$(get_phase)
     iteration=$(get_iteration 2>/dev/null || echo "1")
 
-    # Check for incomplete bootstrap - show prominent warning
+    # Check for incomplete bootstrap - show prominent warning with SPECIFIC next steps
     local bootstrap_complete_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json"
-    if [ "$mode" = "bootstrap" ] && [ ! -f "$bootstrap_complete_file" ]; then
-        cat <<'BOOTSTRAP_WARNING'
-╔══════════════════════════════════════════════════════════════════╗
-║  ⚠️  BOOTSTRAP IN PROGRESS - NOT COMPLETE                         ║
-╚══════════════════════════════════════════════════════════════════╝
+    local bootstrap_handoff_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json"
+    local bootstrap_status=""
 
-Bootstrap started but hasn't finished. The full flow is:
+    if [ -f "$bootstrap_complete_file" ]; then
+        bootstrap_status=$(jq -r '.status // ""' "$bootstrap_complete_file" 2>/dev/null)
+    fi
 
-  1. Recipe search        6. Push dev→dev      11. Enable subdomain stage
-  2. Generate import.yml  7. Enable subdomain  12. Test stage
-  3. Import + wait        8. Write code        13. Handoff
-  4. Mount dev            9. Test dev
-  5. Generate zerops.yml  10. Push dev→stage
+    if [ "$mode" = "bootstrap" ] && [ "$bootstrap_status" != "completed" ]; then
+        echo "╔══════════════════════════════════════════════════════════════════╗"
+        echo "║  ⚠️  BOOTSTRAP IN PROGRESS - NOT COMPLETE                         ║"
+        echo "╚══════════════════════════════════════════════════════════════════╝"
+        echo ""
 
-⛔ DO NOT run workflow transitions manually!
-   Transitions are BLOCKED until bootstrap completes.
+        # Check if handoff exists - scaffolding done, agent tasks pending
+        if [ -f "$bootstrap_handoff_file" ]; then
+            echo "✅ Scaffolding complete. Services created and running."
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "📋 YOUR TASKS NOW (do these in order):"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
 
-   To continue: .zcp/workflow.sh bootstrap --resume
+            # Show specific tasks from handoff
+            local task_num=1
+            jq -r '.agent_tasks[]' "$bootstrap_handoff_file" 2>/dev/null | while read -r task; do
+                echo "  $task_num. $task"
+                task_num=$((task_num + 1))
+            done
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BOOTSTRAP_WARNING
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+            # Show service info for convenience
+            local dev_hostname stage_hostname dev_id stage_id
+            dev_hostname=$(jq -r '.plan.dev_hostname // "appdev"' "$bootstrap_handoff_file" 2>/dev/null)
+            stage_hostname=$(jq -r '.plan.stage_hostname // "appstage"' "$bootstrap_handoff_file" 2>/dev/null)
+            dev_id=$(jq -r '.service_ids.dev // ""' "$bootstrap_handoff_file" 2>/dev/null)
+            stage_id=$(jq -r '.service_ids.stage // ""' "$bootstrap_handoff_file" 2>/dev/null)
+
+            echo ""
+            echo "Service info:"
+            echo "  Dev:   $dev_hostname (ID: $dev_id)"
+            echo "  Stage: $stage_hostname (ID: $stage_id)"
+            echo "  Files: /var/www/$dev_hostname/"
+            echo ""
+            echo "⛔ DO NOT run 'workflow init' or 'transition_to' until bootstrap-done!"
+        else
+            # Scaffolding not done yet - need to resume
+            cat <<'BOOTSTRAP_EARLY'
+Scaffolding not yet complete. Run:
+
+   .zcp/workflow.sh bootstrap --resume
+
+This will:
+  1. Search recipes for patterns
+  2. Generate import.yml
+  3. Import services and wait for RUNNING
+  4. Enable subdomains
+  5. Generate zerops.yml skeleton
+
+Then you'll get specific tasks to complete.
+BOOTSTRAP_EARLY
+        fi
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     fi
 
     cat <<EOF

@@ -160,7 +160,7 @@ wait_for_services() {
         services=$(get_services_json)
 
         local pending
-        pending=$(echo "$services" | jq '[.services[] | select(.status != "RUNNING" and .status != "ACTIVE")] | length')
+        pending=$(echo "$services" | jq '[(.services // [])[] | select(.status != "RUNNING" and .status != "ACTIVE")] | length')
 
         if [ "$pending" = "0" ]; then
             echo "All services RUNNING"
@@ -321,7 +321,7 @@ ZCLI_AUTH
         if [ ! -f "${ZCP_TMP_DIR:-/tmp}/recipe_review.json" ]; then
             echo "Running recipe-search for $runtime_type..."
             local svc_list
-            svc_list=$(jq -r '.managed_services | join(" ")' "$BOOTSTRAP_PLAN_FILE")
+            svc_list=$(jq -r '(.managed_services // []) | join(" ")' "$BOOTSTRAP_PLAN_FILE")
 
             # recipe-search.sh is in the parent .zcp directory
             local recipe_script="$SCRIPT_DIR/../../recipe-search.sh"
@@ -345,7 +345,7 @@ ZCLI_AUTH
 
         local rt svc pfx
         rt=$(jq -r '.runtime' "$BOOTSTRAP_PLAN_FILE")
-        svc=$(jq -r '.managed_services | join(",")' "$BOOTSTRAP_PLAN_FILE")
+        svc=$(jq -r '(.managed_services // []) | join(",")' "$BOOTSTRAP_PLAN_FILE")
         pfx=$(jq -r '.hostname_prefix' "$BOOTSTRAP_PLAN_FILE")
 
         local gen_args="--runtime $rt --prefix $pfx"
@@ -412,8 +412,8 @@ ZCLI_AUTH
 
         local services_json dev_id stage_id
         services_json=$(jq -r '.checkpoints.services_imported.data' "$BOOTSTRAP_COORDINATION_FILE")
-        dev_id=$(echo "$services_json" | jq -r --arg h "$dev_hostname" '.services[] | select(.name == $h) | .id')
-        stage_id=$(echo "$services_json" | jq -r --arg h "$stage_hostname" '.services[] | select(.name == $h) | .id')
+        dev_id=$(echo "$services_json" | jq -r --arg h "$dev_hostname" '(.services // [])[] | select(.name == $h) | .id')
+        stage_id=$(echo "$services_json" | jq -r --arg h "$stage_hostname" '(.services // [])[] | select(.name == $h) | .id')
 
         local dev_url stage_url
         dev_url=$(enable_subdomain "$dev_id" "$dev_hostname")
@@ -453,56 +453,72 @@ ZCLI_AUTH
     dev_hostname=$(jq -r '.dev_hostname' "$BOOTSTRAP_PLAN_FILE")
     stage_hostname=$(jq -r '.stage_hostname' "$BOOTSTRAP_PLAN_FILE")
 
-    echo ""
-    echo -e "${BOLD}==========================================${NC}"
-    echo -e "${BOLD}  BOOTSTRAP SCAFFOLDING COMPLETE${NC}"
-    echo -e "${BOLD}==========================================${NC}"
-    echo ""
-    echo -e "${CYAN}Agent task now:${NC}"
-    echo ""
-    echo "1. COMPLETE zerops.yml at /var/www/${dev_hostname}/zerops.yml"
-    echo "   - Fill in buildCommands from /tmp/recipe_review.json patterns"
-    echo "   - Fill in deployFiles from recipe patterns"
-    echo "   - Fill in start command for prod setup"
-    echo ""
-    echo "2. CREATE APPLICATION CODE"
-    echo "   Goal: Minimal status page that:"
-    echo "   - GET / returns {\"service\": \"<hostname>\", \"status\": \"running\"}"
-    echo "   - GET /status returns health checks for each managed service"
-    echo "   - Managed services to ping:"
-
-    local managed_svcs
-    managed_svcs=$(jq -r '.managed_services[]' "$BOOTSTRAP_PLAN_FILE" 2>/dev/null)
-    for svc in $managed_svcs; do
-        echo "     - $svc (use granular env vars: DB_HOST, DB_PORT, etc.)"
-    done
-
     # Get service IDs for instructions
     local services_json dev_id stage_id
     services_json=$(jq -r '.checkpoints.services_imported.data' "$BOOTSTRAP_COORDINATION_FILE")
-    dev_id=$(echo "$services_json" | jq -r --arg h "$dev_hostname" '.services[] | select(.name == $h) | .id')
-    stage_id=$(echo "$services_json" | jq -r --arg h "$stage_hostname" '.services[] | select(.name == $h) | .id')
+    dev_id=$(echo "$services_json" | jq -r --arg h "$dev_hostname" '(.services // [])[] | select(.name == $h) | .id')
+    stage_id=$(echo "$services_json" | jq -r --arg h "$stage_hostname" '(.services // [])[] | select(.name == $h) | .id')
 
     echo ""
-    echo "3. PUSH dev→dev to activate:"
-    echo "   ssh $dev_hostname 'zcli push \$(hostname) --setup=dev'"
+    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║  ✅ SCAFFOLDING COMPLETE - Services created and running          ║${NC}"
+    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "4. TEST dev endpoints:"
+    echo "Services:"
+    echo "  Dev:   $dev_hostname (ID: $dev_id)"
+    echo "  Stage: $stage_hostname (ID: $stage_id)"
+    echo "  Files: /var/www/$dev_hostname/"
+    echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║  📋 START TASK 1 NOW - Complete zerops.yml                       ║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "Edit: /var/www/${dev_hostname}/zerops.yml"
+    echo ""
+    echo "Fill in from /tmp/recipe_review.json:"
+    echo "  - buildCommands (how to compile)"
+    echo "  - deployFiles (what to deploy)"
+    echo "  - start command"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo -e "${CYAN}📋 TASK 2: Create application code${NC}"
+    echo ""
+    echo "Write in: /var/www/${dev_hostname}/"
+    echo "Goal: Minimal status page with:"
+    echo "  - GET / returns {\"service\": \"$dev_hostname\", \"status\": \"running\"}"
+    echo "  - GET /status returns health checks"
+
+    local managed_svcs
+    managed_svcs=$(jq -r '(.managed_services // [])[]' "$BOOTSTRAP_PLAN_FILE" 2>/dev/null)
+    if [ -n "$managed_svcs" ]; then
+        echo ""
+        echo "Managed services to ping:"
+        for svc in $managed_svcs; do
+            echo "  - $svc (use granular env vars: DB_HOST, DB_PORT, etc.)"
+        done
+    fi
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo -e "${CYAN}📋 TASK 3: Push and test dev${NC}"
+    echo "   ssh $dev_hostname 'zcli push \$(hostname) --setup=dev'"
     echo "   .zcp/verify.sh $dev_hostname 8080 / /status"
     echo ""
-    echo "5. PUSH dev→stage for production:"
+    echo -e "${CYAN}📋 TASK 4: Push and test stage${NC}"
     echo "   ssh $dev_hostname 'zcli push $stage_id --setup=prod'"
-    echo ""
-    echo "6. TEST stage endpoints:"
     echo "   .zcp/verify.sh $stage_hostname 8080 / /status"
     echo ""
-    echo "7. MARK BOOTSTRAP COMPLETE (required before workflow transitions):"
+    echo -e "${CYAN}📋 TASK 5: Mark complete${NC}"
     echo "   .zcp/workflow.sh bootstrap-done"
     echo ""
-    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}⚠️  DO NOT run 'workflow init' or 'transition_to' until step 7!${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}⛔ DO NOT run 'workflow init' or 'transition_to' until TASK 5!${NC}"
     echo -e "${YELLOW}   Workflow transitions are BLOCKED until bootstrap-done.${NC}"
-    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "Run '.zcp/workflow.sh show' anytime to see pending tasks."
     echo ""
 
     # Write HANDOFF evidence (NOT complete - agent must run bootstrap-done after tasks)
@@ -513,6 +529,8 @@ ZCLI_AUTH
         --slurpfile plan "$BOOTSTRAP_PLAN_FILE" \
         --arg dev_id "$dev_id" \
         --arg stage_id "$stage_id" \
+        --arg dev_hostname "$dev_hostname" \
+        --arg stage_hostname "$stage_hostname" \
         '{
             session_id: $session,
             timestamp: $ts,
@@ -523,13 +541,11 @@ ZCLI_AUTH
                 stage: $stage_id
             },
             agent_tasks: [
-                "Complete zerops.yml with build commands from recipe-search",
-                "Create minimal status page with managed service health checks",
-                "Push dev→dev to activate environment",
-                "Test dev endpoints with verify.sh",
-                "Push dev→stage for production",
-                "Test stage endpoints with verify.sh",
-                "Run: .zcp/workflow.sh bootstrap-done"
+                "TASK 1: Edit /var/www/\($dev_hostname)/zerops.yml - fill in buildCommands, deployFiles, start",
+                "TASK 2: Create application code in /var/www/\($dev_hostname)/ - minimal status page",
+                "TASK 3: Push to dev: ssh \($dev_hostname) \"zcli push $(hostname) --setup=dev\"",
+                "TASK 4: Push to stage: ssh \($dev_hostname) \"zcli push \($stage_id) --setup=prod\"",
+                "TASK 5: Run: .zcp/workflow.sh bootstrap-done"
             ],
             next_command: ".zcp/workflow.sh bootstrap-done"
         }' > "$handoff_file"

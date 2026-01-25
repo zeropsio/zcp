@@ -48,6 +48,45 @@ main() {
         exit 1
     fi
 
+    # Check zcli authentication for commands that need it
+    # Skip for: --help, "", reset (state-only ops)
+    case "$command" in
+        --help|""|reset)
+            # These commands don't need zcli auth
+            ;;
+        *)
+            # All other commands may need zcli - check auth
+            if ! command -v zcli &>/dev/null; then
+                echo "❌ zcli not found" >&2
+                echo "   Install: https://docs.zerops.io/references/cli" >&2
+                exit 1
+            fi
+
+            # Quick auth check - try a lightweight command
+            local zcli_test
+            zcli_test=$(zcli project list 2>&1)
+            local zcli_exit=$?
+
+            if [ $zcli_exit -ne 0 ] && echo "$zcli_test" | grep -qiE "unauthorized|unauthenticated|auth|login|token|403|not logged"; then
+                cat <<'ZCLI_AUTH_ERROR'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔐 ZCLI NOT AUTHENTICATED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Run this first:
+
+   zcli login --region=gomibako \
+       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
+       "$ZEROPS_ZCP_API_KEY"
+
+Then re-run your command.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ZCLI_AUTH_ERROR
+                exit 1
+            fi
+            ;;
+    esac
+
     case "$command" in
         init)
             cmd_init "$@"
