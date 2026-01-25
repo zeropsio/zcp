@@ -5,8 +5,10 @@
 # Get env var references for managed services
 # Uses: zcli service list to find actual managed service hostnames
 get_env_references() {
-    local services
-    services=$(zcli service list -P "$projectId" --format json 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+    local raw_output services
+    raw_output=$(zcli service list -P "$projectId" --format json 2>/dev/null)
+    # Extract JSON (skip log lines before JSON, strip ANSI)
+    services=$(echo "$raw_output" | sed 's/\x1b\[[0-9;]*m//g' | awk '/^\s*[\{\[]/{found=1} found{print}')
 
     if [ -z "$services" ] || [ "$services" = "null" ]; then
         return

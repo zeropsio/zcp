@@ -2,6 +2,8 @@
 # .zcp/lib/bootstrap/orchestrator.sh
 # Main bootstrap orchestrator
 
+set -euo pipefail  # Fail fast on errors, undefined vars, pipe failures
+
 # Source dependencies
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/detect.sh"
@@ -77,6 +79,12 @@ write_checkpoint() {
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+    # Validate data is valid JSON, fallback to empty object if not
+    if [ -z "$data" ] || ! echo "$data" | jq -e . >/dev/null 2>&1; then
+        echo "WARNING: Invalid JSON data for checkpoint '$step', using empty object" >&2
+        data='{}'
+    fi
+
     # Use jq args to safely inject values (avoids shell quoting issues)
     update_coordination "$(jq -n \
         --arg step "$step" \
@@ -85,6 +93,27 @@ write_checkpoint() {
         --argjson data "$data" \
         '. + {checkpoints: ((.checkpoints // {}) + {($step): {status: $status, at: $ts, data: $data}})}'
     )"
+}
+
+# Extract JSON from zcli output (skips log lines before JSON)
+extract_json() {
+    # zcli outputs log messages before JSON even with --format json
+    # Strip ANSI codes, then find first line starting with { or [ and output from there
+    local input
+    input=$(sed 's/\x1b\[[0-9;]*m//g')
+    # Find and output from first JSON line
+    echo "$input" | awk '/^\s*[\{\[]/{found=1} found{print}'
+}
+
+# Get services as clean JSON
+get_services_json() {
+    local result
+    result=$(zcli service list -P "$projectId" --format json 2>/dev/null | extract_json)
+    if [ -z "$result" ] || ! echo "$result" | jq -e . >/dev/null 2>&1; then
+        echo '{"services":[]}'
+    else
+        echo "$result"
+    fi
 }
 
 # Check if step completed
@@ -108,7 +137,7 @@ wait_for_services() {
         fi
 
         local services
-        services=$(zcli service list -P "$projectId" --format json 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+        services=$(get_services_json)
 
         local pending
         pending=$(echo "$services" | jq '[.services[] | select(.status != "RUNNING" and .status != "ACTIVE")] | length')
@@ -230,6 +259,16 @@ ZCLI_AUTH
                 ;;
         esac
 
+        # Initialize session if not exists (bootstrap can be first command run)
+        if [ -z "$(get_session)" ]; then
+            local session_id
+            session_id="$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
+            echo "$session_id" > "$SESSION_FILE"
+            echo "bootstrap" > "$MODE_FILE"
+            echo "INIT" > "$PHASE_FILE"
+            echo "Bootstrap session created: $session_id"
+        fi
+
         # Initialize plan
         init_bootstrap_plan "$runtime" "$services" "$prefix"
 
@@ -317,9 +356,9 @@ ZCLI_AUTH
         echo "Waiting for services to be RUNNING..."
         wait_for_services || return 1
 
-        # Get service IDs
+        # Get service IDs (using helper to extract clean JSON)
         local services_json
-        services_json=$(zcli service list -P "$projectId" --format json | sed 's/\x1b\[[0-9;]*m//g')
+        services_json=$(get_services_json)
 
         write_checkpoint "services_imported" "complete" "$services_json"
         echo -e "${GREEN}[CHECKPOINT]${NC} Services imported and running"

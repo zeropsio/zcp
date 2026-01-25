@@ -118,6 +118,7 @@ EOF
                 local service_check
                 service_check=$(zcli service list -P "$pid" --format json 2>/dev/null | \
                     sed 's/\x1b\[[0-9;]*m//g' | \
+                    awk '/^\s*[\{\[]/{found=1} found{print}' | \
                     jq '[.services[] | select(.type | test("^(go|nodejs|php|python|rust|bun|dotnet|java|nginx|static|alpine)@"))] | length' 2>/dev/null || echo "0")
                 [ "$service_check" -gt 0 ] && has_runtime_services=true
             fi

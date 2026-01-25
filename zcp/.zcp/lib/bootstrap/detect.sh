@@ -11,20 +11,23 @@ detect_project_state() {
     fi
 
     # Get services with proper error handling
-    # Strip ANSI codes that zcli outputs (breaks JSON parsing)
-    local services exit_code
-    services=$(zcli service list -P "$projectId" --format json 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
-    exit_code=${PIPESTATUS[0]}
+    # Strip ANSI codes and log lines that zcli outputs (breaks JSON parsing)
+    local raw_output exit_code services
+    raw_output=$(zcli service list -P "$projectId" --format json 2>&1)
+    exit_code=$?
 
     if [ $exit_code -ne 0 ]; then
         echo "ERROR"
-        echo "zcli failed: $services" >&2
+        echo "zcli failed: $raw_output" >&2
         return 1
     fi
 
+    # Extract JSON (skip log lines before JSON, strip ANSI)
+    services=$(echo "$raw_output" | sed 's/\x1b\[[0-9;]*m//g' | awk '/^\s*[\{\[]/{found=1} found{print}')
+
     # Handle empty/null
     local services_arr
-    services_arr=$(echo "$services" | jq '.services // []')
+    services_arr=$(echo "$services" | jq '.services // []' 2>/dev/null)
     if [ -z "$services_arr" ] || [ "$services_arr" = "null" ] || [ "$services_arr" = "[]" ]; then
         echo "FRESH"
         return 0
