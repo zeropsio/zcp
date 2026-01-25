@@ -12,7 +12,7 @@ detect_project_state() {
 
     # Get services with proper error handling
     local services exit_code
-    services=$(zcli service list -P "$projectId" --json 2>&1)
+    services=$(zcli service list -P "$projectId" --format json 2>&1)
     exit_code=$?
 
     if [ $exit_code -ne 0 ]; then

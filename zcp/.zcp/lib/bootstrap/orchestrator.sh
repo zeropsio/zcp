@@ -110,7 +110,7 @@ wait_for_services() {
         fi
 
         local services
-        services=$(zcli service list -P "$projectId" --json 2>/dev/null)
+        services=$(zcli service list -P "$projectId" --format json 2>/dev/null)
 
         local pending
         pending=$(echo "$services" | jq '[.services[] | select(.status != "RUNNING" and .status != "ACTIVE")] | length')
@@ -182,9 +182,15 @@ cmd_bootstrap() {
             return 1
         fi
 
-        # Check zcli authentication first
-        if ! zcli service list -P "$projectId" --json &>/dev/null; then
-            cat <<'ZCLI_AUTH'
+        # Check zcli authentication and project access
+        local zcli_test_result zcli_exit
+        zcli_test_result=$(zcli service list -P "$projectId" --format json 2>&1)
+        zcli_exit=$?
+
+        if [ $zcli_exit -ne 0 ]; then
+            # Check for specific error types
+            if echo "$zcli_test_result" | grep -qiE "unauthorized|auth|login|token|403"; then
+                cat <<'ZCLI_AUTH'
 ⛔ zcli is not authenticated. Run this first:
 
    zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZCP_API_KEY"
@@ -193,6 +199,12 @@ Then re-run:
 
    .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
 ZCLI_AUTH
+            elif [ -z "$projectId" ]; then
+                echo "⛔ projectId is not set. Are you running inside ZCP?" >&2
+            else
+                echo "⛔ zcli service list failed:" >&2
+                echo "$zcli_test_result" >&2
+            fi
             return 1
         fi
 
@@ -309,7 +321,7 @@ ZCLI_AUTH
 
         # Get service IDs
         local services_json
-        services_json=$(zcli service list -P "$projectId" --json)
+        services_json=$(zcli service list -P "$projectId" --format json)
 
         write_checkpoint "services_imported" "complete" "$services_json"
         echo -e "${GREEN}[CHECKPOINT]${NC} Services imported and running"

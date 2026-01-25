@@ -381,7 +381,7 @@ check_post_import_status() {
     echo ""
 
     local services_json
-    services_json=$(zcli service list -P "$pid" --json 2>/dev/null)
+    services_json=$(zcli service list -P "$pid" --format json 2>/dev/null)
 
     if [ -z "$services_json" ]; then
         echo "Could not fetch service list"

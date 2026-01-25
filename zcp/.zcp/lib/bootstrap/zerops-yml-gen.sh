@@ -6,7 +6,7 @@
 # Uses: zcli service list to find actual managed service hostnames
 get_env_references() {
     local services
-    services=$(zcli service list -P "$projectId" --json 2>/dev/null)
+    services=$(zcli service list -P "$projectId" --format json 2>/dev/null)
 
     if [ -z "$services" ] || [ "$services" = "null" ]; then
         return

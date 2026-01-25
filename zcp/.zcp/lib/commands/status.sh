@@ -116,7 +116,7 @@ EOF
 
             if [ -n "$pid" ] && command -v zcli &>/dev/null; then
                 local service_check
-                service_check=$(zcli service list -P "$pid" --json 2>/dev/null | \
+                service_check=$(zcli service list -P "$pid" --format json 2>/dev/null | \
                     jq '[.services[] | select(.type | test("^(go|nodejs|php|python|rust|bun|dotnet|java|nginx|static|alpine)@"))] | length' 2>/dev/null || echo "0")
                 [ "$service_check" -gt 0 ] && has_runtime_services=true
             fi

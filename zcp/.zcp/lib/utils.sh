@@ -517,7 +517,7 @@ check_runtime_services_exist() {
     # Get service list with proper error handling
     local services_json
     local zcli_exit_code
-    services_json=$(zcli service list -P "$pid" --json 2>&1)
+    services_json=$(zcli service list -P "$pid" --format json 2>&1)
     zcli_exit_code=$?
 
     if [ $zcli_exit_code -ne 0 ]; then

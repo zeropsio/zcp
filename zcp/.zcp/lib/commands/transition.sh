@@ -251,7 +251,7 @@ EOF
 
     # Check if zcli is available and authenticated
     local zcli_test_result
-    zcli_test_result=$(zcli service list -P "$pid" --json 2>&1)
+    zcli_test_result=$(zcli service list -P "$pid" --format json 2>&1)
     local zcli_exit=$?
 
     # Check for auth errors specifically
