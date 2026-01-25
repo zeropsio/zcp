@@ -38,6 +38,54 @@ cmd_transition_to() {
     current_phase=$(get_phase)
     mode=$(get_mode)
 
+    # GATE: Bootstrap mode - must complete ALL bootstrap tasks before transitions
+    if [ "$mode" = "bootstrap" ]; then
+        local bootstrap_complete_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json"
+        local bootstrap_status=""
+
+        # Check file exists AND has status "completed" (not just "agent_handoff")
+        if [ -f "$bootstrap_complete_file" ]; then
+            bootstrap_status=$(jq -r '.status // ""' "$bootstrap_complete_file" 2>/dev/null)
+        fi
+
+        if [ "$bootstrap_status" != "completed" ]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "❌ BOOTSTRAP IN PROGRESS - NOT COMPLETE"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "Workflow transitions are BLOCKED until bootstrap completes."
+            echo ""
+
+            # Check if handoff exists (orchestrator done, agent tasks pending)
+            local handoff_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json"
+            if [ -f "$handoff_file" ]; then
+                echo "Bootstrap scaffolding is done, but agent tasks are not complete."
+                echo ""
+                echo "Complete these tasks first:"
+                jq -r '.agent_tasks[]' "$handoff_file" 2>/dev/null | while read -r task; do
+                    echo "   • $task"
+                done
+                echo ""
+                echo "Then run:"
+                echo "   .zcp/workflow.sh bootstrap-done"
+            else
+                echo "Bootstrap hasn't started or crashed early."
+                echo ""
+                echo "To start/resume bootstrap:"
+                echo "   .zcp/workflow.sh bootstrap --resume"
+            fi
+
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            return 1
+        fi
+
+        # Bootstrap truly complete - switch to full mode for normal workflow
+        echo "Bootstrap complete. Switching to full workflow mode."
+        set_mode "full"
+        mode="full"
+    fi
+
     # Check if already in target phase (show guidance anyway)
     if [ "$current_phase" = "$target_phase" ] && [ "$back_flag" != "--back" ]; then
         echo "⚠️  Already in $target_phase phase. Showing guidance:"

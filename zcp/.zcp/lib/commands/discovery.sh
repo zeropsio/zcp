@@ -2,6 +2,39 @@
 # Discovery commands for Zerops Workflow
 
 cmd_create_discovery() {
+    # GATE: Bootstrap mode - must complete ALL bootstrap tasks before discovery
+    local mode
+    mode=$(get_mode 2>/dev/null)
+    if [ "$mode" = "bootstrap" ]; then
+        local bootstrap_complete_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json"
+        local bootstrap_status=""
+
+        # Check file exists AND has status "completed"
+        if [ -f "$bootstrap_complete_file" ]; then
+            bootstrap_status=$(jq -r '.status // ""' "$bootstrap_complete_file" 2>/dev/null)
+        fi
+
+        if [ "$bootstrap_status" != "completed" ]; then
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "❌ BOOTSTRAP IN PROGRESS - NOT COMPLETE"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+
+            local handoff_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json"
+            if [ -f "$handoff_file" ]; then
+                echo "Complete agent tasks first, then run:"
+                echo "   .zcp/workflow.sh bootstrap-done"
+            else
+                echo "To complete bootstrap:"
+                echo "   .zcp/workflow.sh bootstrap --resume"
+            fi
+
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            return 1
+        fi
+    fi
+
     local dev_id="$1"
     local dev_name="$2"
     local stage_id="$3"

@@ -89,10 +89,14 @@ main() {
         extend)
             cmd_extend "$@"
             ;;
-        # === BOOTSTRAP COMMAND (replaces synthesis) ===
+        # === BOOTSTRAP COMMANDS (replaces synthesis) ===
         bootstrap)
             source "$SCRIPT_DIR/lib/bootstrap/orchestrator.sh"
             cmd_bootstrap "$@"
+            ;;
+        bootstrap-done)
+            source "$SCRIPT_DIR/lib/bootstrap/orchestrator.sh"
+            cmd_bootstrap_done "$@"
             ;;
         # === SYNTHESIS COMMANDS (DEPRECATED - use bootstrap) ===
         compose)
@@ -184,6 +188,7 @@ EOF
             echo "Bootstrap Commands:"
             echo "  bootstrap --runtime <rt> [--services <s>] [--prefix <p>]  Create services + scaffolding"
             echo "  bootstrap --resume          Resume interrupted bootstrap"
+            echo "  bootstrap-done              Mark bootstrap complete (unlocks workflow)"
             echo ""
             echo "Continuity Commands:"
             echo "  iterate [--to PHASE] [summary]  Start new iteration from DONE"

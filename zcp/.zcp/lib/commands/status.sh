@@ -24,6 +24,31 @@ cmd_show() {
     phase=$(get_phase)
     iteration=$(get_iteration 2>/dev/null || echo "1")
 
+    # Check for incomplete bootstrap - show prominent warning
+    local bootstrap_complete_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json"
+    if [ "$mode" = "bootstrap" ] && [ ! -f "$bootstrap_complete_file" ]; then
+        cat <<'BOOTSTRAP_WARNING'
+╔══════════════════════════════════════════════════════════════════╗
+║  ⚠️  BOOTSTRAP IN PROGRESS - NOT COMPLETE                         ║
+╚══════════════════════════════════════════════════════════════════╝
+
+Bootstrap started but hasn't finished. The full flow is:
+
+  1. Recipe search        6. Push dev→dev      11. Enable subdomain stage
+  2. Generate import.yml  7. Enable subdomain  12. Test stage
+  3. Import + wait        8. Write code        13. Handoff
+  4. Mount dev            9. Test dev
+  5. Generate zerops.yml  10. Push dev→stage
+
+⛔ DO NOT run workflow transitions manually!
+   Transitions are BLOCKED until bootstrap completes.
+
+   To continue: .zcp/workflow.sh bootstrap --resume
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BOOTSTRAP_WARNING
+    fi
+
     cat <<EOF
 ╔══════════════════════════════════════════════════════════════════╗
 ║  WORKFLOW STATUS                                                 ║

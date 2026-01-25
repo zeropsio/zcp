@@ -120,6 +120,7 @@ zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/ap
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
+| zcli "unexpected EOF" | Transient backend issue (often false positive) | Check if operation succeeded anyway: `zcli service list -P $projectId` |
 | zcli "unauthenticated user" | Not logged in | Run zcli login with region (see above) |
 | `https://https://...` | zeropsSubdomain is full URL | Don't prepend protocol |
 | `psql: command not found` (via SSH) | Runtime containers don't have DB tools | Run `psql` from ZCP directly, not via ssh |
