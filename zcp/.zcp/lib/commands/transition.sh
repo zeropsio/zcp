@@ -75,8 +75,8 @@ cmd_transition_to() {
                 checkpoint=$(jq -r '.checkpoint // "unknown"' "$state_file" 2>/dev/null)
                 echo "Bootstrap in progress at checkpoint: $checkpoint"
                 echo ""
-                echo "To resume:"
-                echo "   .zcp/workflow.sh bootstrap --resume"
+                echo "To check next step:"
+                echo "   .zcp/bootstrap.sh resume"
             else
                 echo "Bootstrap hasn't started."
                 echo ""

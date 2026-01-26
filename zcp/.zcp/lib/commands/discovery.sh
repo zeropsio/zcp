@@ -25,8 +25,8 @@ cmd_create_discovery() {
                 echo "Complete agent tasks first, then run:"
                 echo "   .zcp/workflow.sh bootstrap-done"
             else
-                echo "To complete bootstrap:"
-                echo "   .zcp/workflow.sh bootstrap --resume"
+                echo "To check next step:"
+                echo "   .zcp/bootstrap.sh resume"
             fi
 
             echo ""

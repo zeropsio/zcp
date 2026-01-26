@@ -130,7 +130,7 @@ ZCLI_AUTH_ERROR
             ;;
         # === BOOTSTRAP COMMANDS (agent-orchestrated architecture) ===
         bootstrap)
-            exec "$SCRIPT_DIR/bootstrap.sh" orchestrate "$@"
+            exec "$SCRIPT_DIR/bootstrap.sh" init "$@"
             ;;
         bootstrap-done)
             exec "$SCRIPT_DIR/bootstrap.sh" done "$@"
@@ -223,8 +223,9 @@ EOF
             echo "  record_deployment {svc}     Manual deploy evidence"
             echo ""
             echo "Bootstrap Commands:"
-            echo "  bootstrap --runtime <rt> [--services <s>] [--prefix <p>]  Create services + scaffolding"
-            echo "  bootstrap --resume          Resume interrupted bootstrap"
+            echo "  bootstrap --runtime <rt> [--services <s>] [--prefix <p>]  Initialize bootstrap"
+            echo "  .zcp/bootstrap.sh step <name>   Run individual step"
+            echo "  .zcp/bootstrap.sh resume        Get next step to run"
             echo "  bootstrap-done              Mark bootstrap complete (unlocks workflow)"
             echo ""
             echo "Continuity Commands:"

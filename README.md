@@ -85,10 +85,11 @@ zcp/
 │       │   ├── context.sh    # intent, note commands (rich context)
 │       │   └── compose.sh    # Deprecated synthesis commands (redirects to bootstrap)
 │       ├── bootstrap/     # Bootstrap orchestration (new project setup)
-│       │   ├── orchestrator.sh  # Main bootstrap command with checkpoints
+│       │   ├── state.sh         # Bootstrap state management
+│       │   ├── output.sh        # JSON response formatting
 │       │   ├── detect.sh        # Project state detection (FRESH/CONFORMANT/NON_CONFORMANT)
 │       │   ├── import-gen.sh    # Import.yml generation
-│       │   └── zerops-yml-gen.sh # zerops.yml skeleton generation
+│       │   └── steps/           # Individual bootstrap steps (plan, recipe-search, etc.)
 │       └── state/         # Persistent storage (survives container restart)
 │           ├── workflow/  # Current workflow state
 │           │   ├── evidence/      # Persisted evidence files
@@ -129,10 +130,19 @@ No gates, no enforcement. For exploration and debugging.
 For creating new services from scratch when no runtime services exist:
 
 ```bash
+# Initialize bootstrap (creates plan, returns immediately)
 .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
+
+# Then run steps individually for visibility and error handling
+.zcp/bootstrap.sh step recipe-search
+.zcp/bootstrap.sh step generate-import
+.zcp/bootstrap.sh step import-services
+.zcp/bootstrap.sh step wait-services   # Poll until status=complete
+.zcp/bootstrap.sh step mount-dev appdev
+.zcp/bootstrap.sh step finalize
 ```
 
-Bootstrap is a **pre-workflow step** that creates services and scaffolding, then hands off to the agent for code creation. After bootstrap completes, use the standard workflow.
+Bootstrap is **agent-orchestrated** — the agent runs each step individually, sees progress, and handles errors. After bootstrap completes, use the standard workflow.
 
 ## Bootstrap vs Standard Flow (Auto-Detected)
 
@@ -323,7 +333,9 @@ Backward transitions (`--back`) invalidate downstream evidence.
 
 # Bootstrap (New project from scratch)
 .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
-.zcp/workflow.sh bootstrap --resume      # Resume interrupted bootstrap
+.zcp/bootstrap.sh step {step-name}       # Run individual step
+.zcp/bootstrap.sh status                 # Check progress
+.zcp/bootstrap.sh resume                 # Get next step to run
 
 # Transitions
 .zcp/workflow.sh transition_to DISCOVER  # Requires Gate 0 (recipe review)

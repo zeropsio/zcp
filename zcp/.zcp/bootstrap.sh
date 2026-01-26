@@ -3,11 +3,11 @@
 # Bootstrap command dispatcher - agent-orchestrated architecture
 #
 # Commands:
+#   init [args]          - Initialize bootstrap (runs plan only, agent continues)
 #   step <name> [args]   - Run individual step (JSON response)
 #   status [--services]  - Show bootstrap status (JSON)
 #   reset                - Clear all bootstrap state
 #   resume               - Get next step to execute
-#   orchestrate [args]   - Run full bootstrap (called by workflow.sh bootstrap)
 #   done                 - Validate completion (called by workflow.sh bootstrap-done)
 
 set -euo pipefail
@@ -141,25 +141,26 @@ cmd_resume() {
     }'
 }
 
-# Orchestrate full bootstrap (sequential steps with progress output)
-cmd_orchestrate() {
+# Initialize bootstrap (agent-orchestrated mode) - runs only plan step
+cmd_init() {
     local runtime="" services="" prefix="app" ha_mode="false"
 
+    # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --runtime) runtime="$2"; shift 2 ;;
             --services) services="$2"; shift 2 ;;
             --prefix) prefix="$2"; shift 2 ;;
             --ha) ha_mode="true"; shift ;;
-            -h|--help) show_orchestrate_help; return 0 ;;
+            -h|--help) show_init_help; return 0 ;;
             *) echo "Unknown option: $1" >&2; return 1 ;;
         esac
     done
 
-    # Require runtime
+    # Validate runtime required
     if [ -z "$runtime" ]; then
         echo "ERROR: --runtime required" >&2
-        echo "Usage: .zcp/bootstrap.sh orchestrate --runtime go --services postgresql" >&2
+        echo "Usage: .zcp/workflow.sh bootstrap --runtime go --services postgresql" >&2
         exit 1
     fi
 
@@ -170,13 +171,8 @@ cmd_orchestrate() {
     if [ "${zcli_exit:-0}" -ne 0 ]; then
         if echo "$zcli_test_result" | grep -qiE "unauthorized|auth|login|token|403"; then
             cat >&2 <<'ZCLI_AUTH'
-zcli is not authenticated. Run this first:
-
+zcli is not authenticated. Run:
    zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZCP_API_KEY"
-
-Then re-run:
-
-   .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
 ZCLI_AUTH
             exit 1
         elif [ -z "$projectId" ]; then
@@ -192,15 +188,14 @@ ZCLI_AUTH
     case "$project_state" in
         CONFORMANT)
             echo "Project already has dev/stage pairs."
-            echo "Use standard workflow: .zcp/workflow.sh init"
+            echo "Use: .zcp/workflow.sh init"
             return 0
             ;;
         NON_CONFORMANT)
             echo "WARNING: Project has services but no dev/stage pairs."
-            echo "Bootstrap will add new runtime pair alongside existing services."
             ;;
         FRESH)
-            echo "Fresh project detected. Starting full bootstrap."
+            echo "Fresh project detected."
             ;;
         ERROR)
             echo "ERROR: Could not detect project state" >&2
@@ -208,97 +203,64 @@ ZCLI_AUTH
             ;;
     esac
 
-    echo ""
-    echo "=========================================="
-    echo "  BOOTSTRAP: Agent-Orchestrated Mode"
-    echo "=========================================="
-    echo ""
-    echo "Runtime: $runtime"
-    echo "Services: ${services:-none}"
-    echo "Prefix: $prefix"
-    echo ""
-
-    # Run steps sequentially
-    local step_args
-
-    # Step 1: Plan
-    echo "--- Step 1/7: Plan ---"
-    step_args="--runtime $runtime --prefix $prefix"
+    # Run ONLY the plan step
+    local step_args="--runtime $runtime --prefix $prefix"
     [ -n "$services" ] && step_args="$step_args --services $services"
     [ "$ha_mode" = "true" ] && step_args="$step_args --ha"
+
+    echo ""
+    echo "Creating bootstrap plan..."
     run_step "plan" $step_args
-    echo ""
 
-    # Step 2: Recipe Search
-    echo "--- Step 2/7: Recipe Search ---"
-    run_step "recipe-search"
+    # Output guidance for agent
     echo ""
-
-    # Step 3: Generate Import
-    echo "--- Step 3/7: Generate Import ---"
-    run_step "generate-import"
+    echo "=============================================="
+    echo "  BOOTSTRAP INITIALIZED - AGENT CONTINUE"
+    echo "=============================================="
     echo ""
-
-    # Step 4: Import Services
-    echo "--- Step 4/7: Import Services ---"
-    run_step "import-services"
+    echo "Plan created. Run these steps in order:"
     echo ""
-
-    # Step 5: Wait Services
-    echo "--- Step 5/7: Wait Services ---"
-    local wait_result wait_status
-    while true; do
-        wait_result=$(run_step "wait-services")
-        wait_status=$(echo "$wait_result" | jq -r '.status')
-        echo "$wait_result" | jq -r '.message'
-
-        if [ "$wait_status" = "complete" ]; then
-            break
-        elif [ "$wait_status" = "failed" ]; then
-            echo "ERROR: Services failed to start" >&2
-            echo "$wait_result"
-            exit 1
-        fi
-
-        sleep 10
-    done
+    echo "  1. .zcp/bootstrap.sh step recipe-search"
+    echo "  2. .zcp/bootstrap.sh step generate-import"
+    echo "  3. .zcp/bootstrap.sh step import-services"
+    echo "  4. .zcp/bootstrap.sh step wait-services  # Loop until status=complete"
+    echo "  5. .zcp/bootstrap.sh step mount-dev {hostname}"
+    echo "  6. .zcp/bootstrap.sh step finalize"
     echo ""
+    echo "Or check progress anytime:"
+    echo "  .zcp/bootstrap.sh status"
+    echo "  .zcp/bootstrap.sh resume  # Returns next step to run"
+    echo ""
+}
 
-    # Step 6: Mount Dev (for each dev hostname)
-    echo "--- Step 6/7: Mount Dev ---"
-    local plan_data dev_hostnames
-    plan_data=$(get_plan)
-    dev_hostnames=$(echo "$plan_data" | jq -r '.dev_hostnames[]' 2>/dev/null || echo "$plan_data" | jq -r '.dev_hostname')
+# Help for init command
+show_init_help() {
+    cat <<'EOF'
+BOOTSTRAP INIT - Initialize agent-orchestrated bootstrap
 
-    for hostname in $dev_hostnames; do
-        echo "Mounting $hostname..."
-        run_step "mount-dev" "$hostname"
-    done
-    echo ""
+USAGE:
+    .zcp/workflow.sh bootstrap --runtime <type> [--services <list>] [--prefix <name>]
 
-    # Step 7: Finalize
-    echo "--- Step 7/7: Finalize ---"
-    local finalize_result
-    finalize_result=$(run_step "finalize")
-    echo ""
+OPTIONS:
+    --runtime <type>     Runtime type: go, nodejs, python, php, rust, bun, java, dotnet
+    --services <list>    Managed services: postgresql,valkey,elasticsearch (comma-separated)
+    --prefix <name>      Hostname prefix (default: app) creates appdev, appstage
+    --ha                 Use HA mode for managed services
 
-    # Output handoff information
-    echo "=========================================="
-    echo "  INFRASTRUCTURE COMPLETE"
-    echo "=========================================="
-    echo ""
-    echo "Service handoffs for code generation:"
-    echo "$finalize_result" | jq -r '.data.service_handoffs[] | "  - \(.dev_hostname): \(.mount_path)"'
-    echo ""
-    echo "Next: Agent should spawn subagents for code generation"
-    echo "      or handle directly for single-service bootstraps."
-    echo ""
-    echo "When all code is deployed, run:"
-    echo "  .zcp/workflow.sh bootstrap-done"
-    echo ""
+EXAMPLES:
+    .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
+    .zcp/workflow.sh bootstrap --runtime nodejs --prefix api
 
-    # Output the finalize result for agent parsing
-    echo "$finalize_result"
+This command initializes bootstrap and returns immediately with guidance.
+Agent then runs steps individually for visibility and error handling:
+
+    .zcp/bootstrap.sh step recipe-search
+    .zcp/bootstrap.sh step generate-import
+    .zcp/bootstrap.sh step import-services
+    .zcp/bootstrap.sh step wait-services   # Poll until complete
+    .zcp/bootstrap.sh step mount-dev <hostname>
+    .zcp/bootstrap.sh step finalize
+EOF
 }
 
 # Validate bootstrap completion
@@ -404,37 +366,6 @@ cmd_done() {
     json_response "done" "Bootstrap complete" '{"verified": true}'
 }
 
-# Help for orchestrate command
-show_orchestrate_help() {
-    cat <<'EOF'
-BOOTSTRAP ORCHESTRATE - Run full bootstrap sequence
-
-USAGE:
-    .zcp/bootstrap.sh orchestrate --runtime <type> [--services <list>] [--prefix <name>]
-
-OPTIONS:
-    --runtime <type>     Runtime type: go, nodejs, python, php, rust, bun, java, dotnet
-    --services <list>    Managed services: postgresql,valkey,elasticsearch (comma-separated)
-    --prefix <name>      Hostname prefix (default: app) creates appdev, appstage
-    --ha                 Use HA mode for managed services
-
-EXAMPLES:
-    .zcp/bootstrap.sh orchestrate --runtime go --services postgresql,valkey
-    .zcp/bootstrap.sh orchestrate --runtime nodejs --prefix api
-
-This command runs all bootstrap steps sequentially:
-    1. plan           - Create bootstrap plan
-    2. recipe-search  - Fetch runtime patterns
-    3. generate-import - Generate import.yml
-    4. import-services - Import services via zcli
-    5. wait-services   - Wait for services to be RUNNING
-    6. mount-dev       - Mount dev service(s) via SSHFS
-    7. finalize        - Create handoff data for code generation
-
-After orchestrate completes, agent handles code generation.
-EOF
-}
-
 # Main help
 show_help() {
     cat <<'EOF'
@@ -444,11 +375,11 @@ USAGE:
     .zcp/bootstrap.sh <command> [args]
 
 COMMANDS:
+    init [args]          Initialize bootstrap, run plan only (default for workflow.sh bootstrap)
     step <name> [args]   Run individual step (returns JSON)
     status [--services]  Show bootstrap status (JSON)
     reset                Clear all bootstrap state
     resume               Get next step to execute
-    orchestrate [args]   Run full bootstrap (used by workflow.sh bootstrap)
     done                 Validate completion (used by workflow.sh bootstrap-done)
 
 STEPS:
@@ -461,16 +392,16 @@ STEPS:
     finalize             Create per-service handoffs for code generation
 
 EXAMPLES:
-    # Run individual steps (agent-orchestrated)
-    .zcp/bootstrap.sh step plan --runtime go --services postgresql --prefix api
+    # Initialize bootstrap (via workflow.sh)
+    .zcp/workflow.sh bootstrap --runtime go --services postgresql
+
+    # Run individual steps
     .zcp/bootstrap.sh step recipe-search
+    .zcp/bootstrap.sh step generate-import
     .zcp/bootstrap.sh step mount-dev apidev
 
     # Check status
     .zcp/bootstrap.sh status
-
-    # Full orchestration (called by workflow.sh)
-    .zcp/bootstrap.sh orchestrate --runtime go --services postgresql
 
     # Mark complete
     .zcp/bootstrap.sh done
@@ -511,8 +442,8 @@ main() {
         resume)
             cmd_resume
             ;;
-        orchestrate)
-            cmd_orchestrate "$@"
+        init)
+            cmd_init "$@"
             ;;
         done)
             cmd_done

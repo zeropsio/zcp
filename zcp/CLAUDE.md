@@ -29,6 +29,71 @@ Then follow the NEXT STEPS in its output. The show command reveals:
 | No services yet | `.zcp/workflow.sh bootstrap --runtime go --services postgresql` |
 | Previous work done, new task | `.zcp/workflow.sh iterate "summary"` |
 
+## Bootstrap (New Projects)
+
+When no services exist, bootstrap creates infrastructure:
+
+```bash
+# Start bootstrap - creates plan, returns immediately
+.zcp/workflow.sh bootstrap --runtime go --services postgresql
+```
+
+Then run steps individually for visibility and error handling:
+
+```bash
+# Step 2: Fetch runtime patterns
+.zcp/bootstrap.sh step recipe-search
+
+# Step 3: Generate import.yml
+.zcp/bootstrap.sh step generate-import
+
+# Step 4: Import services (sends request)
+.zcp/bootstrap.sh step import-services
+
+# Step 5: Wait for services (POLL this - may take 1-5 min)
+while true; do
+    result=$(.zcp/bootstrap.sh step wait-services)
+    status=$(echo "$result" | jq -r '.status')
+    if [ "$status" = "complete" ]; then break; fi
+    if [ "$status" = "failed" ]; then echo "ERROR"; exit 1; fi
+    echo "Waiting... $(echo "$result" | jq -r '.message')"
+    sleep 10
+done
+
+# Step 6: Mount dev filesystem
+.zcp/bootstrap.sh step mount-dev appdev
+
+# Step 7: Create handoff for code generation
+.zcp/bootstrap.sh step finalize
+```
+
+Each step returns JSON:
+```json
+{
+  "status": "complete|in_progress|failed",
+  "step": "step-name",
+  "checkpoint": "current-checkpoint",
+  "data": { ... },
+  "next": "next-step-name",
+  "message": "Human readable"
+}
+```
+
+### Error Handling
+
+If a step fails:
+1. Read the error from `.data.error`
+2. Check `.data.recovery_options[]` for suggestions
+3. Fix the issue
+4. Re-run the failed step (state tracks completion)
+
+### Check Progress
+
+```bash
+.zcp/bootstrap.sh status      # Full status JSON
+.zcp/bootstrap.sh resume      # Returns next step to run
+```
+
 **READ output completely. FOLLOW the rules it shows.** The script guides each phase and enforces gates.
 
 ⛔ **CRITICAL: Workflow commands tell you what to do next.**
