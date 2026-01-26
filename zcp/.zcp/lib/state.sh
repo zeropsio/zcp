@@ -155,7 +155,8 @@ get_evidence_file_info() {
         # Bootstrap evidence (created by bootstrap command)
         bootstrap_plan) echo "${tmp}/bootstrap_plan.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
         bootstrap_import) echo "${tmp}/bootstrap_import.yml|Bootstrap|.zcp/workflow.sh bootstrap" ;;
-        bootstrap_coordination) echo "${tmp}/bootstrap_coordination.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
+        bootstrap_state) echo "${tmp}/bootstrap_state.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
+        bootstrap_handoff) echo "${tmp}/bootstrap_handoff.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
         bootstrap_complete) echo "${tmp}/bootstrap_complete.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
         *) echo "" ;;
     esac
@@ -165,7 +166,7 @@ get_evidence_file_info() {
 EVIDENCE_NAMES="recipe_review discovery dev_verify deploy_evidence stage_verify"
 
 # Bootstrap evidence names (separate tracking)
-BOOTSTRAP_EVIDENCE_NAMES="bootstrap_plan bootstrap_import bootstrap_coordination bootstrap_complete"
+BOOTSTRAP_EVIDENCE_NAMES="bootstrap_plan bootstrap_import bootstrap_state bootstrap_handoff bootstrap_complete"
 
 get_evidence_status() {
     local name="$1"

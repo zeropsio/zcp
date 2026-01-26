@@ -10,7 +10,7 @@ set -euo pipefail
 json_response() {
     local step="$1"
     local message="$2"
-    local data="${3:-{}}"
+    local data="${3:-"{}"}"
     local next="${4:-null}"
     local checkpoint="${5:-$step}"
 
@@ -47,7 +47,7 @@ json_response() {
 json_progress() {
     local step="$1"
     local message="$2"
-    local data="${3:-{}}"
+    local data="${3:-"{}"}"
     local next="${4:-$step}"
 
     # Validate data is valid JSON
@@ -75,8 +75,8 @@ json_progress() {
 json_error() {
     local step="$1"
     local error_msg="$2"
-    local data="${3:-{}}"
-    local recovery_options="${4:-[]}"
+    local data="${3:-"{}"}"
+    local recovery_options="${4:-"[]"}"
 
     # Validate data is valid JSON
     if ! echo "$data" | jq -e . >/dev/null 2>&1; then
@@ -109,7 +109,7 @@ json_needs_action() {
     local step="$1"
     local message="$2"
     local action_required="$3"
-    local data="${4:-{}}"
+    local data="${4:-"{}"}"
 
     # Validate data is valid JSON
     if ! echo "$data" | jq -e . >/dev/null 2>&1; then

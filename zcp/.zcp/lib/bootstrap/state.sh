@@ -90,7 +90,7 @@ set_checkpoint() {
 record_step() {
     local step="$1"
     local status="$2"
-    local data="${3:-{}}"
+    local data="${3:-"{}"}"
 
     # Validate data is valid JSON
     if ! echo "$data" | jq -e . >/dev/null 2>&1; then

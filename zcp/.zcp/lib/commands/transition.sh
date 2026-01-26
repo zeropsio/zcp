@@ -56,23 +56,32 @@ cmd_transition_to() {
             echo "Workflow transitions are BLOCKED until bootstrap completes."
             echo ""
 
-            # Check if handoff exists (orchestrator done, agent tasks pending)
+            # Check if handoff exists (infrastructure done, code generation pending)
             local handoff_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json"
+            local state_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
             if [ -f "$handoff_file" ]; then
-                echo "Bootstrap scaffolding is done, but agent tasks are not complete."
+                echo "Infrastructure is ready, but code generation not complete."
                 echo ""
-                echo "Complete these tasks first:"
-                jq -r '.agent_tasks[]' "$handoff_file" 2>/dev/null | while read -r task; do
-                    echo "   • $task"
-                done
+                echo "Services to set up:"
+                jq -r '.service_handoffs[] | "   • \(.dev_hostname): \(.mount_path)/"' "$handoff_file" 2>/dev/null
                 echo ""
-                echo "Then run:"
-                echo "   .zcp/workflow.sh bootstrap-done"
-            else
-                echo "Bootstrap hasn't started or crashed early."
+                echo "Tasks:"
+                echo "   1. Create zerops.yml with build/deploy/run config"
+                echo "   2. Write application code"
+                echo "   3. Push and verify dev/stage"
+                echo "   4. Run: .zcp/workflow.sh bootstrap-done"
+            elif [ -f "$state_file" ]; then
+                local checkpoint
+                checkpoint=$(jq -r '.checkpoint // "unknown"' "$state_file" 2>/dev/null)
+                echo "Bootstrap in progress at checkpoint: $checkpoint"
                 echo ""
-                echo "To start/resume bootstrap:"
+                echo "To resume:"
                 echo "   .zcp/workflow.sh bootstrap --resume"
+            else
+                echo "Bootstrap hasn't started."
+                echo ""
+                echo "To start:"
+                echo "   .zcp/workflow.sh bootstrap --runtime <type> --services <list>"
             fi
 
             echo ""

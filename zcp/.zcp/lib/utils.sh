@@ -46,10 +46,11 @@ CONFIG_VALIDATED_FILE="${ZCP_TMP_DIR}/config_validated.json"
 # WIGGUM state files
 WORKFLOW_STATE_FILE="${ZCP_TMP_DIR}/workflow_state.json"
 
-# Bootstrap evidence files (new approach)
+# Bootstrap evidence files (agent-orchestrated architecture)
 BOOTSTRAP_PLAN_FILE="${ZCP_TMP_DIR}/bootstrap_plan.json"
 BOOTSTRAP_IMPORT_FILE="${ZCP_TMP_DIR}/bootstrap_import.yml"
-BOOTSTRAP_COORDINATION_FILE="${ZCP_TMP_DIR}/bootstrap_coordination.json"
+BOOTSTRAP_STATE_FILE="${ZCP_TMP_DIR}/bootstrap_state.json"
+BOOTSTRAP_HANDOFF_FILE="${ZCP_TMP_DIR}/bootstrap_handoff.json"
 BOOTSTRAP_COMPLETE_FILE="${ZCP_TMP_DIR}/bootstrap_complete.json"
 
 # DEPRECATED: Synthesis files (kept for backward compatibility cleanup)

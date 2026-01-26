@@ -24,7 +24,8 @@ cmd_show() {
     phase=$(get_phase)
     iteration=$(get_iteration 2>/dev/null || echo "1")
 
-    # Check for incomplete bootstrap - show prominent warning with SPECIFIC next steps
+    # Check for incomplete bootstrap using new state file
+    local bootstrap_state_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
     local bootstrap_complete_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json"
     local bootstrap_handoff_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json"
     local bootstrap_status=""
@@ -39,105 +40,81 @@ cmd_show() {
         echo "╚══════════════════════════════════════════════════════════════════╝"
         echo ""
 
-        # Check if handoff exists - scaffolding done, agent tasks pending
-        if [ -f "$bootstrap_handoff_file" ]; then
-            echo "✅ Scaffolding complete. Services created and running."
+        # Check bootstrap state to determine progress
+        local checkpoint=""
+        if [ -f "$bootstrap_state_file" ]; then
+            checkpoint=$(jq -r '.checkpoint // ""' "$bootstrap_state_file" 2>/dev/null)
+        fi
+
+        # Check if handoff exists - infrastructure done, code generation pending
+        if [ -f "$bootstrap_handoff_file" ] && [ "$checkpoint" = "finalize" ]; then
+            echo "✅ Infrastructure complete. Code generation pending."
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "📋 YOUR TASKS NOW (do these in order):"
+            echo "📋 YOUR TASKS NOW:"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
 
-            # Show specific tasks from handoff
-            local task_num=1
-            jq -r '.agent_tasks[]' "$bootstrap_handoff_file" 2>/dev/null | while read -r task; do
-                echo "  $task_num. $task"
-                task_num=$((task_num + 1))
-            done
+            # Show service handoffs from new format
+            jq -r '.service_handoffs[] | "  • \(.dev_hostname): Write code in \(.mount_path)/"' "$bootstrap_handoff_file" 2>/dev/null
+            echo ""
+            echo "  1. Create zerops.yml with build/deploy/run config"
+            echo "  2. Write application code (minimal status page)"
+            echo "  3. Push to dev, verify: .zcp/verify.sh {hostname} 8080"
+            echo "  4. Push to stage, verify"
+            echo "  5. Mark complete: .zcp/workflow.sh bootstrap-done"
 
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-            # Show service info for convenience
-            local dev_hostname stage_hostname dev_id stage_id
-            dev_hostname=$(jq -r '.plan.dev_hostname // "appdev"' "$bootstrap_handoff_file" 2>/dev/null)
-            stage_hostname=$(jq -r '.plan.stage_hostname // "appstage"' "$bootstrap_handoff_file" 2>/dev/null)
-            dev_id=$(jq -r '.service_ids.dev // ""' "$bootstrap_handoff_file" 2>/dev/null)
-            stage_id=$(jq -r '.service_ids.stage // ""' "$bootstrap_handoff_file" 2>/dev/null)
-
+            # Show service info from handoff
             echo ""
             echo "Service info:"
-            echo "  Dev:   $dev_hostname (ID: $dev_id)"
-            echo "  Stage: $stage_hostname (ID: $stage_id)"
-            echo "  Files: /var/www/$dev_hostname/"
+            jq -r '.service_handoffs[] | "  \(.dev_hostname) (dev) → \(.stage_hostname) (stage)"' "$bootstrap_handoff_file" 2>/dev/null
+            jq -r '.service_handoffs[0] | "  Files: \(.mount_path)/"' "$bootstrap_handoff_file" 2>/dev/null
             echo ""
-            echo "⛔ DO NOT run 'workflow init' or 'transition_to' until bootstrap-done!"
-        else
-            # Scaffolding not done yet - check if work was done manually
-            # This handles the case where bootstrap stopped but user completed tasks manually
-            local coordination_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_coordination.json"
-            local manual_work_detected=false
-            local manual_info=""
+            echo "⛔ DO NOT run 'workflow init' until bootstrap-done!"
+        elif [ -f "$bootstrap_state_file" ] && [ -n "$checkpoint" ]; then
+            # Bootstrap in progress - show current step
+            echo "Bootstrap at checkpoint: $checkpoint"
+            echo ""
 
-            # Check if services were imported (step 3 complete)
-            local services_imported_status
-            services_imported_status=$(jq -r '.checkpoints.services_imported.status // ""' "$coordination_file" 2>/dev/null)
-            if [ -f "$coordination_file" ] && [ "$services_imported_status" = "complete" ]; then
-                # Check for manual work: zerops.yml or code files exist
-                local dev_hostname
-                dev_hostname=$(jq -r '.hostname_prefix // "app"' "${ZCP_TMP_DIR:-/tmp}/bootstrap_plan.json" 2>/dev/null)
-                dev_hostname="${dev_hostname}dev"
-                local mount_path="/var/www/$dev_hostname"
+            # Check for manual work
+            local dev_hostname mount_path manual_work_detected=false manual_info=""
+            dev_hostname=$(jq -r '.plan.dev_hostname // "appdev"' "$bootstrap_state_file" 2>/dev/null)
+            mount_path="/var/www/$dev_hostname"
 
-                if [ -d "$mount_path" ]; then
-                    local has_files=false
-                    # Check for common patterns
-                    if [ -f "$mount_path/zerops.yml" ] || [ -f "$mount_path/zerops.yaml" ]; then
-                        has_files=true
-                        manual_info="zerops.yml found"
-                    fi
-                    if [ -f "$mount_path/main.go" ] || [ -f "$mount_path/index.js" ] || [ -f "$mount_path/app.py" ]; then
-                        has_files=true
-                        manual_info="${manual_info:+$manual_info, }application code found"
-                    fi
-
-                    if [ "$has_files" = true ]; then
-                        manual_work_detected=true
-                    fi
+            if [ -d "$mount_path" ]; then
+                if [ -f "$mount_path/zerops.yml" ] || [ -f "$mount_path/zerops.yaml" ]; then
+                    manual_work_detected=true
+                    manual_info="zerops.yml found"
+                fi
+                if [ -f "$mount_path/main.go" ] || [ -f "$mount_path/index.js" ] || [ -f "$mount_path/app.py" ]; then
+                    manual_work_detected=true
+                    manual_info="${manual_info:+$manual_info, }application code found"
                 fi
             fi
 
             if [ "$manual_work_detected" = true ]; then
-                cat <<MANUAL_WORK
-⚠️  Bootstrap incomplete but MANUAL WORK DETECTED
-
-   Found: $manual_info
-
-   It looks like you completed bootstrap tasks manually.
-   To unlock workflow transitions, run:
-
-      .zcp/workflow.sh bootstrap-done
-
-   This validates your work and transitions to normal workflow.
-MANUAL_WORK
+                echo "⚠️  Manual work detected: $manual_info"
+                echo ""
+                echo "To validate and complete:"
+                echo "   .zcp/workflow.sh bootstrap-done"
             else
-                cat <<'BOOTSTRAP_EARLY'
-Scaffolding not yet complete. Run:
-
-   .zcp/workflow.sh bootstrap --resume
-
-This will:
-  1. Search recipes for patterns
-  2. Generate import.yml
-  3. Import services and wait for RUNNING
-  4. Generate zerops.yml skeleton
-
-Then you'll get specific tasks to complete.
-
-💡 If you already completed work manually:
-   .zcp/workflow.sh bootstrap-done
-BOOTSTRAP_EARLY
+                echo "To resume bootstrap:"
+                echo "   .zcp/workflow.sh bootstrap --resume"
             fi
+        else
+            # No state file - bootstrap not started or cleared
+            cat <<'BOOTSTRAP_START'
+Bootstrap not started or state cleared.
+
+To start fresh:
+   .zcp/workflow.sh bootstrap --runtime <type> --services <list>
+
+Example:
+   .zcp/workflow.sh bootstrap --runtime go --services postgresql
+BOOTSTRAP_START
         fi
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -245,21 +222,22 @@ EOF
             if [ "$has_runtime_services" = false ]; then
                 # Bootstrap mode - no services
                 cat <<'GUIDANCE'
-🆕 BOOTSTRAP MODE - No runtime services detected
+🆕 NO RUNTIME SERVICES - Bootstrap required
 
-   STEP 1: Recipe Search (Gate 0 - REQUIRED)
-   .zcp/recipe-search.sh quick {runtime} [managed-service]
-   Example: .zcp/recipe-search.sh quick go postgresql
+   Run the bootstrap command:
+   .zcp/workflow.sh bootstrap --runtime <type> --services <list>
 
-   STEP 2: Create import.yml using /tmp/fetched_recipe.md
-   ⚠️  Copy the recipe's import.yml - don't invent your own!
-   Critical fields: buildFromGit OR startWithoutCode, zeropsSetup
+   Example:
+   .zcp/workflow.sh bootstrap --runtime go --services postgresql
 
-   STEP 3: Import services
-   .zcp/workflow.sh extend import.yml
+   This will:
+   • Search recipes for patterns
+   • Generate and import services
+   • Wait for services to be RUNNING
+   • Mount dev filesystem
+   • Hand off to you for code generation
 
-   STEP 4: Continue
-   .zcp/workflow.sh transition_to DISCOVER
+   For help: .zcp/workflow.sh bootstrap --help
 GUIDANCE
             elif ! check_evidence_session "$DISCOVERY_FILE"; then
                 cat <<'GUIDANCE'
