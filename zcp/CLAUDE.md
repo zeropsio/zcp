@@ -1,36 +1,48 @@
 # Zerops Platform
 
 **Fix errors on dev. Stage is for final validation, not debugging.**
-**Start with a command from "Start Here" table below. Run `show` to check progress mid-workflow.**
+
+## FIRST STEP — ALWAYS
+
+⛔ **For EVERY new user request, run this FIRST:**
+
+```bash
+.zcp/workflow.sh show
+```
+
+Then follow the NEXT STEPS in its output. The show command reveals:
+- No workflow → run `init` (or `bootstrap` if no services)
+- DONE state → run `iterate` to start new iteration
+- Active phase → continue from current phase
+- What's blocking → specific guidance
+
+**DO NOT skip this step.** DO NOT pre-plan before checking workflow state.
+
+## Workflow Commands Reference
+
+| Situation | Command |
+|-----------|---------|
+| Start new work (deploy to stage) | `.zcp/workflow.sh init` |
+| Start new work (dev only) | `.zcp/workflow.sh init --dev-only` |
+| Urgent hotfix | `.zcp/workflow.sh init --hotfix` |
+| Just exploring | `.zcp/workflow.sh --quick` |
+| No services yet | `.zcp/workflow.sh bootstrap --runtime go --services postgresql` |
+| Previous work done, new task | `.zcp/workflow.sh iterate "summary"` |
+
+**READ output completely. FOLLOW the rules it shows.** The script guides each phase and enforces gates.
 
 ⛔ **CRITICAL: Workflow commands tell you what to do next.**
 Each workflow command outputs specific guidance. Follow it — don't skip steps.
 You can track WHAT the user wants, but let the workflow tell you HOW.
 The workflow detects current state and adapts — your pre-made steps cannot.
 
-## Start Here — RUN ONE
+## Lost Context?
 
-| Will you write/change code? | Command | Examples |
-|-----------------------------|---------|----------|
-| **Yes, deploy to stage** | `.zcp/workflow.sh init` | Build feature, fix bug, any code change |
-| **Yes, dev only** | `.zcp/workflow.sh init --dev-only` | Prototype, experiment, not ready for stage |
-| **Yes, urgent hotfix** | `.zcp/workflow.sh init --hotfix` | Production broken, skip dev verification |
-| **No, just looking** | `.zcp/workflow.sh --quick` | Read logs, investigate, understand codebase |
-| **No services yet** | `.zcp/workflow.sh bootstrap --runtime go --services postgresql` | New project: creates services, then run `init` |
-
-**Run one. READ its output completely. FOLLOW the rules it shows.** The script guides each phase and enforces gates.
-
-⚠️ **DO NOT pre-plan tasks before running workflow commands.** The workflow output tells you what to do next. Creating your own todo list and ignoring the workflow guidance will cause you to miss critical steps and fail.
-
-## Lost Context? Run This
-
-If resuming work, entering mid-session, or unsure of current state:
+Same as above — run `show`. For more detail:
 ```bash
-.zcp/workflow.sh show           # State, evidence, next steps
 .zcp/workflow.sh show --full    # Extended context (intent, notes, last error)
 .zcp/workflow.sh recover        # Complete recovery: show + guidance + rules
 ```
-Then follow the NEXT STEPS section in the output.
 
 ## Context
 

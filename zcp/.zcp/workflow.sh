@@ -128,14 +128,12 @@ ZCLI_AUTH_ERROR
         extend)
             cmd_extend "$@"
             ;;
-        # === BOOTSTRAP COMMANDS (replaces synthesis) ===
+        # === BOOTSTRAP COMMANDS (agent-orchestrated architecture) ===
         bootstrap)
-            source "$SCRIPT_DIR/lib/bootstrap/orchestrator.sh"
-            cmd_bootstrap "$@"
+            exec "$SCRIPT_DIR/bootstrap.sh" orchestrate "$@"
             ;;
         bootstrap-done)
-            source "$SCRIPT_DIR/lib/bootstrap/orchestrator.sh"
-            cmd_bootstrap_done "$@"
+            exec "$SCRIPT_DIR/bootstrap.sh" done "$@"
             ;;
         # === SYNTHESIS COMMANDS (DEPRECATED - use bootstrap) ===
         compose)
