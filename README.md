@@ -2,23 +2,6 @@
 
 An AI agent workflow orchestration framework for the Zerops PaaS platform. Guides AI agents (primarily Claude) through structured, evidence-based development and deployment workflows.
 
-## Repository Structure
-
-```
-zcp-repo/                      ← Repository root (you are here)
-├── README.md                  ← This file
-└── zcp/                       ← DEPLOYMENT PACKAGE (copy this to projects)
-    ├── CLAUDE.md              ← Agent entry point
-    ├── .zcp/                  ← Workflow tools
-    │   ├── recipe-search.sh   ← Recipe discovery tool (Gate 0)
-    │   ├── validate-config.sh ← Config validation (Gate 3)
-    │   └── ...
-    └── .claude/               ← Claude Code settings
-```
-
-When deploying to a Zerops project, copy the contents of `zcp/` to the project root.
-All paths in this document assume you're working within the `zcp/` directory.
-
 ## Purpose
 
 **Safe, predictable AI-driven deployments through enforced quality gates.**
@@ -35,26 +18,97 @@ This system solves the problem of AI agents making mistakes during complex deplo
 
 Agents must test and fix errors on dev before deploying to stage. HTTP 200 doesn't mean the feature works—check response content, logs, and browser console.
 
-## Architecture
+---
+
+## System Architecture
 
 ```
-CLAUDE.md                     → Platform fundamentals, always in context
-    │
-    ▼
-.zcp/workflow.sh --help       → Full reference, contextual phase guidance
-.zcp/verify.sh / status.sh    → Self-documenting tools
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              ZEROPS PROJECT                                      │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐      │
+│   │   appdev    │    │  appstage   │    │ postgresql  │    │   valkey    │      │
+│   │  (runtime)  │    │  (runtime)  │    │  (managed)  │    │  (managed)  │      │
+│   │             │    │             │    │             │    │             │      │
+│   │  SSH ✓      │    │  SSH ✓      │    │  NO SSH     │    │  NO SSH     │      │
+│   │  SSHFS ✓    │    │  SSHFS ✓    │    │  psql only  │    │  redis-cli  │      │
+│   └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘      │
+│          │                  │                  │                  │             │
+│          └──────────────────┴──────────────────┴──────────────────┘             │
+│                              Private Network                                     │
+│                                     │                                            │
+├─────────────────────────────────────┼────────────────────────────────────────────┤
+│                                     │                                            │
+│   ┌─────────────────────────────────┴────────────────────────────────────────┐   │
+│   │                              ZCP                                          │   │
+│   │                    (Zerops Control Plane)                                 │   │
+│   │                                                                           │   │
+│   │   SSHFS Mounts:  /var/www/appdev/   /var/www/appstage/                   │   │
+│   │   Tools:         zcli, jq, yq, psql, redis-cli, agent-browser            │   │
+│   │   Env Vars:      $projectId, $ZEROPS_ZCP_API_KEY, ${svc}_VAR             │   │
+│   │                                                                           │   │
+│   │   ┌───────────────────────────────────────────────────────────────────┐   │   │
+│   │   │  .zcp/workflow.sh  ←  Agent Entry Point                           │   │   │
+│   │   │       │                                                            │   │   │
+│   │   │       ├── lib/commands/     (command handlers)                    │   │   │
+│   │   │       ├── lib/gates.sh      (transition enforcement)              │   │   │
+│   │   │       ├── lib/bootstrap/    (service creation)                    │   │   │
+│   │   │       └── lib/state/        (persistent storage)                  │   │   │
+│   │   └───────────────────────────────────────────────────────────────────┘   │   │
+│   │                                                                           │   │
+│   │   ┌───────────────────────────────────────────────────────────────────┐   │   │
+│   │   │  CLAUDE.md  ←  Agent reads this FIRST                             │   │   │
+│   │   └───────────────────────────────────────────────────────────────────┘   │   │
+│   └───────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                   │
+└───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Knowledge lives in tools via `--help`, surviving context compaction and subagent spawning.
+### Access Patterns
 
-### Design Philosophy
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ From ZCP Container                                                              │
+├─────────────────┬──────────────────────────────────────────────────────────────┤
+│ Runtime Service │ ssh appdev "go build"          # Execute commands            │
+│                 │ /var/www/appdev/               # Direct filesystem access    │
+│                 │ curl http://appdev:8080        # Network access              │
+├─────────────────┼──────────────────────────────────────────────────────────────┤
+│ Managed Service │ psql "$db_connectionString"    # Client tools only           │
+│                 │ redis-cli -h valkey            # No SSH, no filesystem       │
+├─────────────────┼──────────────────────────────────────────────────────────────┤
+│ Variables       │ ${appdev_PORT}                 # ZCP accessing service var   │
+│                 │ ssh appdev "echo \$PORT"       # Inside service via SSH      │
+└─────────────────┴──────────────────────────────────────────────────────────────┘
+```
 
-1. **Evidence over trust** — Gates check for JSON evidence files, not agent assertions
-2. **Session isolation** — Evidence files contain session IDs; stale evidence is rejected
-3. **Atomic operations** — File writes use temp+mv pattern to prevent corruption
-4. **Self-documentation** — All tools have `--help`; agents never need external docs
+### Service Types
 
-## Files
+| Type | SSH | SSHFS | Access From ZCP |
+|------|-----|-------|-----------------|
+| **Runtime** (go, nodejs, php, python) | ✓ | ✓ | `ssh {service} "command"` |
+| **Managed** (postgresql, valkey, nats) | ✗ | ✗ | `psql "$db_connectionString"` |
+
+---
+
+## Repository Structure
+
+```
+zcp-repo/                      ← Repository root (you are here)
+├── README.md                  ← This file
+└── zcp/                       ← DEPLOYMENT PACKAGE (copy this to projects)
+    ├── CLAUDE.md              ← Agent entry point
+    ├── .zcp/                  ← Workflow tools
+    │   ├── recipe-search.sh   ← Recipe discovery tool (Gate 0)
+    │   ├── validate-config.sh ← Config validation (Gate 3)
+    │   └── ...
+    └── .claude/               ← Claude Code settings
+```
+
+When deploying to a Zerops project, copy the contents of `zcp/` to the project root.
+
+### File Structure
 
 ```
 zcp/
@@ -68,7 +122,7 @@ zcp/
 │   └── lib/               # Modular components (AI-readable)
 │       ├── utils.sh       # State management, persistence, locking, context capture
 │       ├── gates.sh       # Phase transition gate checks (Gates 0-7, S)
-│       ├── state.sh       # WIGGUM¹ state management
+│       ├── state.sh       # WIGGUM state management
 │       ├── help.sh        # Help system loader
 │       ├── commands.sh    # Commands loader
 │       ├── help/
@@ -101,97 +155,241 @@ zcp/
     └── settings.json      # Claude Code permissions
 ```
 
-The modular structure allows AI agents to read only relevant files when investigating specific functionality.
+---
+
+## Master Decision Tree
+
+**Start every request here.** This tree determines the correct workflow path.
+
+```
+                              User Request
+                                   │
+                                   ▼
+                        .zcp/workflow.sh show
+                                   │
+           ┌───────────────────────┼───────────────────────┐
+           │                       │                       │
+           ▼                       ▼                       ▼
+    No Workflow Active      Active Workflow          DONE State
+           │                       │                       │
+           ▼                       │                       ▼
+  zcli service list -P $projectId  │            .zcp/workflow.sh iterate
+           │                       │                  "summary"
+    ┌──────┴──────┐                │                       │
+    │             │                │                       ▼
+    ▼             ▼                │              Returns to DEVELOP
+No Services  Services Exist        │             (preserves discovery)
+    │             │                │
+    ▼             ▼                │
+ BOOTSTRAP    STANDARD             │
+    │             │                │
+    ▼             ▼                │
+bootstrap     init [flags]         │
+--runtime X   --dev-only           │
+--services Y  --hotfix             │
+              --quick              │
+                                   │
+                                   ▼
+                          ┌────────────────────────────────────────┐
+                          │         PHASE-SPECIFIC ACTIONS         │
+                          ├────────────────────────────────────────┤
+                          │ INIT      → transition_to DISCOVER     │
+                          │ DISCOVER  → create_discovery, then     │
+                          │             transition_to DEVELOP      │
+                          │ DEVELOP   → code, verify.sh, then      │
+                          │             transition_to DEPLOY       │
+                          │ DEPLOY    → zcli push, status.sh, then │
+                          │             transition_to VERIFY       │
+                          │ VERIFY    → verify.sh, browser, then   │
+                          │             transition_to DONE         │
+                          │ BOOTSTRAP → .zcp/bootstrap.sh resume   │
+                          └────────────────────────────────────────┘
+```
+
+---
 
 ## Workflow Modes
 
-### Full Mode (default)
+### Full Mode (Default)
+
+The complete evidence-gated workflow for production deployments.
+
 ```
-INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  .zcp/workflow.sh init                                                          │
+│                                                                                  │
+│  INIT ──────────────────────────────────────────────────────────────────────►   │
+│    │                                                                             │
+│    │  Gate 0: recipe_review.json (recipe-search.sh quick)                       │
+│    ▼                                                                             │
+│  DISCOVER ──────────────────────────────────────────────────────────────────►   │
+│    │  • zcli service list -P $projectId                                         │
+│    │  • create_discovery {dev_id} appdev {stage_id} appstage                    │
+│    │                                                                             │
+│    │  Gate 1: discovery.json                                                    │
+│    ▼                                                                             │
+│  DEVELOP ───────────────────────────────────────────────────────────────────►   │
+│    │  • Edit code at /var/www/appdev/                                           │
+│    │  • ssh appdev "go build && ./app"                                          │
+│    │  • .zcp/verify.sh appdev 8080 / /health                                    │
+│    │                                                                             │
+│    │  Gate 2: dev_verify.json + config validation                               │
+│    ▼                                                                             │
+│  DEPLOY ────────────────────────────────────────────────────────────────────►   │
+│    │  • ssh appdev "zcli push {stage_id} --setup=prod"                          │
+│    │  • .zcp/status.sh --wait appstage                                          │
+│    │                                                                             │
+│    │  Gate 3: deploy_evidence.json                                              │
+│    ▼                                                                             │
+│  VERIFY ────────────────────────────────────────────────────────────────────►   │
+│    │  • .zcp/verify.sh appstage 8080 / /health                                  │
+│    │  • agent-browser open "$URL" (visual confirmation)                         │
+│    │                                                                             │
+│    │  Gate 4: stage_verify.json                                                 │
+│    ▼                                                                             │
+│  DONE ──────────────────────────────────────────────────────────────────────►   │
+│    │  • .zcp/workflow.sh complete                                               │
+│    │                                                                             │
+│    └──► .zcp/workflow.sh iterate "next task" ──► back to DEVELOP                │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Dev-Only Mode
-```
-INIT → DISCOVER → DEVELOP → DONE
-```
-For rapid prototyping without deployment. Upgrade later with `upgrade-to-full`.
+### Alternative Modes
 
-### Hotfix Mode
 ```
-DEVELOP → DEPLOY → VERIFY → DONE
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  DEV-ONLY MODE (.zcp/workflow.sh init --dev-only)                               │
+│  ───────────────────────────────────────────────────────────────────────────    │
+│  INIT ──► DISCOVER ──► DEVELOP ──► DONE                                         │
+│                            │                                                     │
+│                            └── No DEPLOY/VERIFY phases                          │
+│                            └── upgrade-to-full available later                  │
+│                                                                                  │
+│  Use case: Rapid prototyping, no deployment needed yet                          │
+│                                                                                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  HOTFIX MODE (.zcp/workflow.sh init --hotfix)                                   │
+│  ───────────────────────────────────────────────────────────────────────────    │
+│  INIT ──► DEVELOP ──► DEPLOY ──► VERIFY ──► DONE                                │
+│              │                                                                   │
+│              └── Skips DISCOVER (reuses <24h discovery)                         │
+│              └── Skips dev_verify gate                                          │
+│                                                                                  │
+│  Use case: Urgent fixes, skip verification, speed is critical                   │
+│                                                                                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  QUICK MODE (.zcp/workflow.sh --quick)                                          │
+│  ───────────────────────────────────────────────────────────────────────────    │
+│  No phases, no gates, no evidence required                                      │
+│  Agent can do anything without workflow tracking                                │
+│                                                                                  │
+│  Use case: Exploration, debugging, reading code                                 │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
-Reuses recent discovery (<24h), skips dev verification. For urgent fixes.
 
-### Quick Mode
-No gates, no enforcement. For exploration and debugging.
+---
 
-### Bootstrap Mode (New Project Setup)
+## Bootstrap Flow (New Project Setup)
 
-For creating new services from scratch when no runtime services exist:
+When no runtime services exist, the agent orchestrates service creation step-by-step.
+
+### Bootstrap vs Standard (Auto-Detected)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                  │
+│  .zcp/workflow.sh init  →  System checks: zcli service list -P $projectId       │
+│                                                                                  │
+│         ┌───────────────────────────┬────────────────────────────────┐          │
+│         │                           │                                │          │
+│         ▼                           ▼                                ▼          │
+│     FRESH                      CONFORMANT                    NON_CONFORMANT     │
+│  (No services)              (Has dev/stage pairs)         (Has services, but    │
+│         │                           │                      no proper pairs)     │
+│         │                           │                                │          │
+│         ▼                           ▼                                ▼          │
+│    BOOTSTRAP                    STANDARD                        BOOTSTRAP       │
+│    (create all)                 (init)                      (add missing)       │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+> **Key Insight:** There is no "bootstrap" phase. Projects always start with ZCP already present.
+> The workflow detects project state and guides appropriately. **Init = Extend** — always adding to an existing project.
+
+### Bootstrap Orchestration
+
+**Agent-orchestrated**: The agent runs each step individually for visibility and error handling.
+
+```
+.zcp/workflow.sh bootstrap --runtime go --services postgresql
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  BOOTSTRAP STEPS (Agent calls each individually)                                 │
+│                                                                                  │
+│  ┌─────────┐    ┌──────────────┐    ┌─────────────────┐    ┌───────────────┐    │
+│  │  plan   │───►│recipe-search │───►│ generate-import │───►│import-services│    │
+│  │(instant)│    │  (2-3 sec)   │    │    (instant)    │    │   (instant)   │    │
+│  └─────────┘    └──────────────┘    └─────────────────┘    └───────────────┘    │
+│                                                                   │              │
+│  ┌──────────────────────────────────────────────────────────────┐ │              │
+│  │                                                              │ │              │
+│  │  ┌──────────┐    ┌───────────┐    ┌──────────┐              │ │              │
+│  │  │ finalize │◄───│ mount-dev │◄───│wait-svc  │◄─────────────┘ │              │
+│  │  │(instant) │    │ (instant) │    │ (poll)   │                │              │
+│  │  └──────────┘    └───────────┘    └──────────┘                │              │
+│  │       │                                                       │              │
+│  └───────┼───────────────────────────────────────────────────────┘              │
+│          │                                                                       │
+│          ▼                                                                       │
+│  Agent writes code, deploys, then:                                              │
+│  .zcp/workflow.sh bootstrap-done                                                │
+│          │                                                                       │
+│          ▼                                                                       │
+│  Standard Workflow unlocked                                                      │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Step-by-Step Execution
 
 ```bash
-# Initialize bootstrap (creates plan, returns immediately)
-.zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
+# Initialize (creates plan, returns immediately)
+.zcp/workflow.sh bootstrap --runtime go --services postgresql
 
-# Then run steps individually for visibility and error handling
-.zcp/bootstrap.sh step recipe-search
-.zcp/bootstrap.sh step generate-import
-.zcp/bootstrap.sh step import-services
-.zcp/bootstrap.sh step wait-services   # Poll until status=complete
-.zcp/bootstrap.sh step mount-dev appdev
-.zcp/bootstrap.sh step finalize
+# Agent runs steps individually for visibility
+.zcp/bootstrap.sh step recipe-search      # Fetch patterns
+.zcp/bootstrap.sh step generate-import    # Create import.yml
+.zcp/bootstrap.sh step import-services    # Send to Zerops API
+.zcp/bootstrap.sh step wait-services      # Poll until services ready
+.zcp/bootstrap.sh step mount-dev appdev   # SSHFS mount
+.zcp/bootstrap.sh step finalize           # Create handoff data
+
+# Agent writes code, deploys, then marks complete
+.zcp/workflow.sh bootstrap-done
 ```
 
-Bootstrap is **agent-orchestrated** — the agent runs each step individually, sees progress, and handles errors. After bootstrap completes, use the standard workflow.
+### Bootstrap Scenarios
 
-## Bootstrap vs Standard Flow (Auto-Detected)
+| Scenario | Command/Action | Outcome |
+|----------|---------------|---------|
+| Fresh project | `bootstrap --runtime go` | Creates dev/stage pairs |
+| Interrupted | `.zcp/bootstrap.sh resume` | Returns next pending step |
+| Step fails | Fix issue, re-run same step | Idempotent recovery |
+| Check progress | `.zcp/bootstrap.sh status` | Shows checkpoint, pending steps |
+| Already conformant | `bootstrap ...` | Returns "use init" guidance |
 
-The workflow **automatically detects** whether runtime services exist and provides appropriate guidance:
-
-| Situation | Detection | Flow |
-|-----------|-----------|------|
-| **Services exist** | `zcli service list` finds runtime services | Standard: just record discovery |
-| **No services** | No runtime services found | Bootstrap: must create services first |
-
-**How it works:**
-1. Run `.zcp/workflow.sh init`
-2. Run `.zcp/workflow.sh transition_to DISCOVER`
-3. The system checks for existing runtime services
-4. Based on detection, shows either **Standard** or **Bootstrap** guidance
-
-### Standard Flow (Services Exist)
-
-```
-INIT → recipes → DISCOVER → record discovery → DEVELOP → ...
-```
-
-When runtime services already exist, you skip service creation:
-1. Review recipes (Gate 0)
-2. List services: `zcli service list -P $projectId`
-3. Record: `.zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}`
-
-### Bootstrap Flow (No Services)
-
-```
-INIT → recipes → plan → import.yml → extend → DISCOVER → record → DEVELOP → ...
-```
-
-When no runtime services exist, you must create them:
-1. **Review recipes** (Gate 0): `.zcp/recipe-search.sh quick {runtime} [managed-service]`
-2. **Create import.yml** with `zeropsSetup` linking services to zerops.yml configs
-3. **Import services**: `.zcp/workflow.sh extend import.yml`
-4. **Restart ZCP** to get new environment variables
-5. **Record discovery**: `.zcp/workflow.sh create_discovery {dev_id} appdev {stage_id} appstage`
-
-### Key Insight
-
-> **There is no "bootstrap" phase.** Projects always start with ZCP already present.
-> The workflow detects project state and guides appropriately.
-> **Init = Extend** — always adding to an existing project.
+---
 
 ## Typical Workflow
 
-A complete workflow with all gates looks like this:
+A complete workflow with all gates:
 
 ```bash
 # 1. INIT: Start workflow session
@@ -231,33 +429,51 @@ ssh appdev "zcli push {stage_service_id} --setup=prod"
 .zcp/workflow.sh complete
 ```
 
-**Minimum required flow**: Steps 1, 2, 3, 4, 5, 6, 7, 8
+---
 
-## Gates
+## Gate System
 
-The workflow enforces quality gates at each phase transition.
+Gates enforce quality checkpoints. Each gate blocks until evidence exists.
 
 ### Gate Overview
 
-| Gate | Transition | Evidence File | Created By | Prevents |
-|------|------------|---------------|------------|----------|
-| **Gate 0** | INIT → DISCOVER | `recipe_review.json` | `.zcp/recipe-search.sh quick` | Invalid versions, wrong YAML structure |
-| **Gate 0.5** | extend command | `import_validated.json` | `.zcp/validate-import.sh` | Invalid import.yml structure |
-| **Gate 1** | DISCOVER → DEVELOP | `discovery.json` | `.zcp/workflow.sh create_discovery` | Wrong service targeting |
-| **Gate 2** | DEVELOP → DEPLOY | `dev_verify.json` + config | `.zcp/verify.sh {dev}` | Deploying broken code, config errors |
-| **Gate 3** | DEPLOY → VERIFY | `deploy_evidence.json` | `.zcp/status.sh --wait` | Verifying incomplete deploy |
-| **Gate 4** | VERIFY → DONE | `stage_verify.json` | `.zcp/verify.sh {stage}` | Shipping broken features |
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              GATE ENFORCEMENT                                    │
+├────────┬─────────────────────────┬─────────────────────────┬────────────────────┤
+│ Gate   │ Transition              │ Evidence File           │ Created By         │
+├────────┼─────────────────────────┼─────────────────────────┼────────────────────┤
+│ 0      │ INIT → DISCOVER         │ recipe_review.json      │ recipe-search.sh   │
+│ 0.5    │ extend command          │ import_validated.json   │ validate-import.sh │
+│ 1      │ DISCOVER → DEVELOP      │ discovery.json          │ create_discovery   │
+│ 2      │ DEVELOP → DEPLOY        │ dev_verify.json + cfg   │ verify.sh {dev}    │
+│ 3      │ DEPLOY → VERIFY         │ deploy_evidence.json    │ status.sh --wait   │
+│ 4      │ VERIFY → DONE           │ stage_verify.json       │ verify.sh {stage}  │
+└────────┴─────────────────────────┴─────────────────────────┴────────────────────┘
 
-**Bootstrap Evidence** (pre-workflow service creation):
+Evidence Validation:
+  • Session ID must match current session (prevents stale evidence)
+  • Timestamp must be < 24h old (freshness check)
+  • Backward transitions (--back) invalidate downstream evidence
+```
 
-| Evidence | File | Created By | Purpose |
-|----------|------|------------|---------|
-| Plan | `bootstrap_plan.json` | `.zcp/workflow.sh bootstrap` | Runtime + services specification |
-| Import | `bootstrap_import.yml` | Bootstrap orchestrator | Generated import.yml |
-| Coordination | `bootstrap_coordination.json` | Bootstrap orchestrator | Checkpoint tracking for resume |
-| Complete | `bootstrap_complete.json` | Bootstrap orchestrator | Agent handoff with task list |
+### Gate Flow Visualization
 
-**Bold gates** are enforced (blocking). Others are optional but create audit trails.
+```
+                   Gate 0                    Gate 1                    Gate 2
+                      │                         │                         │
+    ┌─────┐     ┌─────▼─────┐     ┌─────┐     ┌─▼───┐     ┌─────┐     ┌──▼──┐
+    │INIT │────►│recipe.json│────►│DISC │────►│disc │────►│ DEV │────►│ dev │
+    └─────┘     │  exists?  │     │OVER │     │.json│     │ELOP │     │ ver │
+                └───────────┘     └─────┘     │exist│     └─────┘     │ify? │
+                      │NO              ▲      └─────┘           ▲     └─────┘
+                      ▼                │           │            │         │NO
+                   BLOCKED             │           │            │         ▼
+                                       │           └────────────┘      BLOCKED
+                                       │                  │
+                                       └──────────────────┘
+                                            Gate checks
+```
 
 ### Gate 0: Recipe Discovery (Critical)
 
@@ -274,9 +490,7 @@ This creates `/tmp/recipe_review.json` with:
 - Production patterns (alpine runtime, `cache: true`)
 - Environment variable patterns (granular, not connection strings)
 
-The DISCOVER transition is blocked until recipe review is complete.
-
-### Gate 3: Config Validation
+### Gate 2: Config Validation
 
 Before deployment, validate your `zerops.yml`:
 
@@ -311,7 +525,108 @@ Checks:
 
 **Gates 0 + 2 together catch 77% of all documented mistakes.**
 
-Backward transitions (`--back`) invalidate downstream evidence.
+---
+
+## State Management
+
+### State Files (Persistent)
+
+```
+.zcp/state/                         ← Survives container restart
+├── workflow/
+│   ├── session                     ← Current session ID
+│   ├── mode                        ← full|dev-only|hotfix|quick
+│   ├── phase                       ← Current phase
+│   ├── iteration                   ← Iteration counter
+│   ├── intent.txt                  ← Workflow goal
+│   ├── context.json                ← Last error, notes
+│   └── evidence/                   ← Persisted gate evidence
+├── iterations/                     ← Archived iteration history
+└── archive/                        ← Completed workflows
+```
+
+### State Lifecycle
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          STATE SYNCHRONIZATION                                │
+│                                                                               │
+│    /tmp/ (fast)                                .zcp/state/ (persistent)       │
+│         │                                              │                      │
+│         │◄────── restore_from_persistent ──────────────┤ (on startup)        │
+│         │                                              │                      │
+│         ├─────── write_evidence ──────────────────────►│ (write-through)     │
+│         │                                              │                      │
+│         ├─────── sync_to_persistent ──────────────────►│ (periodic)          │
+│         │                                              │                      │
+│    [All tools read/write here]            [Survives restart]                 │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Continuity Operations
+
+### Iteration (After DONE)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  .zcp/workflow.sh iterate "Add delete button"                                 │
+│                                                                               │
+│     DONE state                                                                │
+│         │                                                                     │
+│         ▼                                                                     │
+│  ┌─────────────────────┐                                                     │
+│  │  Archives evidence  │                                                     │
+│  │  Increments counter │                                                     │
+│  │  Preserves discovery│                                                     │
+│  │  Resets to DEVELOP  │                                                     │
+│  └─────────────────────┘                                                     │
+│         │                                                                     │
+│         ▼                                                                     │
+│     DEVELOP ──► DEPLOY ──► VERIFY ──► DONE                                   │
+│                                                                               │
+│  Options:                                                                     │
+│    iterate --to VERIFY "CSS fix"    ← Skip to specific phase                 │
+│    iterate --to DEPLOY "Config"     ← Skip to deployment                     │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Retarget (Change Deployment Target)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  .zcp/workflow.sh retarget stage {new_id} {new_name}                         │
+│                                                                               │
+│     Current state                                                             │
+│         │                                                                     │
+│         ▼                                                                     │
+│  ┌─────────────────────────────────┐                                         │
+│  │  Updates discovery.json         │                                         │
+│  │  Preserves dev_verify.json      │   ← Dev work is still valid            │
+│  │  Invalidates deploy_evidence    │   ← Must redeploy to new target        │
+│  │  Invalidates stage_verify       │   ← Must re-verify                     │
+│  └─────────────────────────────────┘                                         │
+│                                                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Recovery (After Crash/Restart)
+
+```bash
+# Always run this first when resuming
+.zcp/workflow.sh show
+
+# Extended context (intent, notes, error history)
+.zcp/workflow.sh show --full
+
+# Full recovery (restores from persistent state)
+.zcp/workflow.sh recover
+```
+
+---
 
 ## Commands
 
@@ -371,11 +686,14 @@ Backward transitions (`--back`) invalidate downstream evidence.
                                          # extend, bootstrap, cheatsheet, import-validation
 ```
 
+---
+
 ## Evidence Files
 
 All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/state/` for persistence):
 
 ### State Files
+
 | File | Created By | Contains |
 |------|------------|----------|
 | `claude_session` | `.zcp/workflow.sh init` | Session ID |
@@ -386,6 +704,7 @@ All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/s
 | `claude_context.json` | Auto-captured | Last error, notes |
 
 ### Gate Evidence Files
+
 | File | Gate | Created By | Purpose |
 |------|------|------------|---------|
 | `recipe_review.json` | Gate 0 | `.zcp/recipe-search.sh quick` | Recipe patterns, versions, validation rules |
@@ -396,49 +715,53 @@ All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/s
 | `deploy_evidence.json` | Gate 3 | `.zcp/status.sh --wait` | Deployment completion proof |
 | `stage_verify.json` | Gate 4 | `.zcp/verify.sh {stage}` | Stage endpoint test results |
 | `services_imported.json` | — | `.zcp/workflow.sh extend` | Import audit trail |
-| `bootstrap_plan.json` | Bootstrap | `.zcp/workflow.sh bootstrap` | Runtime + services specification |
-| `bootstrap_import.yml` | Bootstrap | Bootstrap orchestrator | Generated import.yml |
-| `bootstrap_coordination.json` | Bootstrap | Bootstrap orchestrator | Checkpoint tracking for resume |
-| `bootstrap_complete.json` | Bootstrap | Bootstrap orchestrator | Agent handoff with task list |
-| `workflow_state.json` | — | Auto-generated | WIGGUM workflow state |
 
-## Key Features
+### Bootstrap Evidence Files
 
-- **Session-scoped evidence** — Prevents stale evidence from previous sessions
-- **Atomic file writes** — Temp file + mv pattern prevents corruption
-- **Multi-platform date parsing** — Supports both GNU and BSD date
-- **Evidence freshness** — Evidence >24h old is blocked (except in hotfix mode)
-- **Single-service mode** — Explicit opt-in for dev=stage with risk acknowledgment
-- **Backward transitions** — Go back phases with automatic evidence invalidation
-- **Self-documenting** — All tools have `--help` with contextual guidance
+| File | Created By | Purpose |
+|------|------------|---------|
+| `bootstrap_plan.json` | `.zcp/workflow.sh bootstrap` | Runtime + services specification |
+| `bootstrap_import.yml` | Bootstrap orchestrator | Generated import.yml |
+| `bootstrap_coordination.json` | Bootstrap orchestrator | Checkpoint tracking for resume |
+| `bootstrap_complete.json` | Bootstrap orchestrator | Agent handoff with task list |
+| `workflow_state.json` | Auto-generated | WIGGUM workflow state |
 
-### Resilient Workflow Features (New)
+---
 
-- **Persistent storage** — State survives container restarts via `.zcp/state/`
-- **Automatic context capture** — Verification failures and deploy errors recorded automatically
-- **Iteration support** — Continue work after DONE without losing history
-- **Rich context** — Intent and notes for better resumability after long breaks
-- **BSD-compatible locking** — File locking works on both Linux (flock) and macOS (mkdir)
-- **Write-through caching** — Evidence written to both temp dir and persistent storage
-- **Graceful degradation** — Falls back to temp dir if persistent storage unavailable
-- **Configurable temp directory** — Set `ZCP_TMP_DIR` env var to override default `/tmp/`
+## Quick Reference
 
-## Environment Context
+### Command Cheatsheet
 
-**Zerops** is a PaaS where projects contain services (containers) on a shared private network.
+| Action | Command |
+|--------|---------|
+| **Start** | `.zcp/workflow.sh init` |
+| **Check state** | `.zcp/workflow.sh show` |
+| **Recipe review** | `.zcp/recipe-search.sh quick {runtime} [service]` |
+| **Transition** | `.zcp/workflow.sh transition_to {PHASE}` |
+| **Record discovery** | `.zcp/workflow.sh create_discovery {dev_id} {dev} {stage_id} {stage}` |
+| **Verify endpoints** | `.zcp/verify.sh {service} {port} / /health` |
+| **Wait for deploy** | `.zcp/status.sh --wait {service}` |
+| **Continue after DONE** | `.zcp/workflow.sh iterate "summary"` |
+| **Get help** | `.zcp/workflow.sh --help [topic]` |
 
-**ZCP (Zerops Control Plane)** is the agent's workspace — a privileged container with:
-- **SSHFS mounts** to runtime service filesystems at `/var/www/{service}/`
-- **SSH access** to runtime containers (NOT managed services like databases)
-- **Direct network access** to all services via hostname
-- **Pre-installed tools**: `jq`, `yq`, `psql`, `mysql`, `redis-cli`, `zcli`, `agent-browser`
+### Mode Selection
 
-### Service Types
+| Situation | Mode | Command |
+|-----------|------|---------|
+| Production deployment | Full | `init` |
+| Prototyping | Dev-only | `init --dev-only` |
+| Emergency fix | Hotfix | `init --hotfix` |
+| Exploration | Quick | `--quick` |
+| New project | Bootstrap | `bootstrap --runtime X --services Y` |
 
-| Type | SSH | SSHFS | Access From ZCP |
-|------|-----|-------|-----------------|
-| **Runtime** (go, nodejs, php, python) | ✓ | ✓ | `ssh {service} "command"` |
-| **Managed** (postgresql, valkey, nats) | ✗ | ✗ | `psql "$db_connectionString"` |
+### Service Access
+
+| Service Type | Access Method | Example |
+|--------------|---------------|---------|
+| Runtime | SSH + SSHFS | `ssh appdev "go build"` |
+| PostgreSQL | psql | `psql "$db_connectionString"` |
+| Valkey/Redis | redis-cli | `redis-cli -h valkey` |
+| MySQL | mysql | `mysql -h mysql -u $db_user -p` |
 
 ### Variable Patterns
 
@@ -448,12 +771,55 @@ All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/s
 | Inside service via SSH | `$VAR` | `ssh appdev "echo \$PORT"` |
 | Database connection | `$db_*` | `$db_connectionString` |
 
-## Technology Stack
+---
 
-- **Shell**: Bash 4+ (GNU/BSD compatible)
-- **Data formats**: JSON (via `jq`), YAML (via `yq`)
-- **CLI tools**: `zcli` (Zerops CLI), `psql`, `mysql`, `redis-cli`, `curl`
-- **Browser testing**: `agent-browser` for visual verification
+## Design Principles
+
+| Principle | Implementation |
+|-----------|----------------|
+| **Evidence over trust** | Gates check JSON files, not agent assertions |
+| **Session isolation** | Evidence contains session ID; stale = rejected |
+| **Self-documenting** | All tools have `--help`; survives context loss |
+| **Dev first** | Fix errors on dev, stage is for validation only |
+| **Atomic operations** | File writes use temp+mv pattern |
+| **Persistent state** | `.zcp/state/` survives container restart |
+| **Agent visibility** | Bootstrap returns control after each step |
+
+---
+
+## Common Patterns
+
+### Deploy from Dev to Stage
+
+```bash
+# Always deploy FROM dev container TO stage service
+ssh {dev} "zcli push {stage_service_id} --setup=prod"
+
+# Never deploy from ZCP directly - source files are on dev container
+```
+
+### Verify Before Deploy
+
+```bash
+# Run on dev first
+.zcp/verify.sh appdev 8080 / /api/health /api/status
+
+# Check response content, not just HTTP 200
+# HTTP 200 with error body = still broken
+```
+
+### Handle Long-Running Processes
+
+```bash
+# SSH will hang if process runs in foreground
+# Use background execution
+ssh appdev "nohup ./myapp &"
+
+# Or use Zerops runtime management
+ssh appdev "zsc start"
+```
+
+---
 
 ## Critical Gotchas
 
@@ -466,73 +832,27 @@ All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/s
 | Files missing on stage | Not in `deployFiles` | Update zerops.yaml |
 | zcli no results | Missing project flag | Use `-P $projectId` |
 
-## Deployment Pattern
+---
 
-```bash
-# Always deploy FROM dev container TO stage service
-ssh {dev} "zcli push {stage_service_id} --setup={setup}"
+## Key Features
 
-# Never deploy from ZCP directly - source files are on dev container
-```
+- **Session-scoped evidence** — Prevents stale evidence from previous sessions
+- **Atomic file writes** — Temp file + mv pattern prevents corruption
+- **Multi-platform date parsing** — Supports both GNU and BSD date
+- **Evidence freshness** — Evidence >24h old is blocked (except in hotfix mode)
+- **Single-service mode** — Explicit opt-in for dev=stage with risk acknowledgment
+- **Backward transitions** — Go back phases with automatic evidence invalidation
+- **Self-documenting** — All tools have `--help` with contextual guidance
+- **Persistent storage** — State survives container restarts via `.zcp/state/`
+- **Automatic context capture** — Verification failures and deploy errors recorded automatically
+- **Iteration support** — Continue work after DONE without losing history
+- **Rich context** — Intent and notes for better resumability after long breaks
+- **BSD-compatible locking** — File locking works on both Linux (flock) and macOS (mkdir)
+- **Write-through caching** — Evidence written to both temp dir and persistent storage
+- **Graceful degradation** — Falls back to temp dir if persistent storage unavailable
+- **Configurable temp directory** — Set `ZCP_TMP_DIR` env var to override default `/tmp/`
 
-## Workflow Continuity
-
-The system is designed for interrupted, non-linear work across sessions.
-
-### Recovery After Interruption
-
-```bash
-# Always run this when starting or resuming work
-.zcp/workflow.sh show
-
-# For extended context (intent, notes, history)
-.zcp/workflow.sh show --full
-```
-
-The system automatically captures:
-- Verification failures (endpoint, status code, response body)
-- Deploy failures and timeouts
-- All displayed in `show` output
-
-### Iteration After DONE
-
-When a workflow completes but you need changes:
-
-```bash
-# Start new iteration (archives current evidence, resets to DEVELOP)
-.zcp/workflow.sh iterate "Fix delete button"
-
-# Skip directly to VERIFY (no code changes needed)
-.zcp/workflow.sh iterate --to VERIFY "Fix CSS alignment"
-
-# Skip to DEPLOY (only need to redeploy)
-.zcp/workflow.sh iterate --to DEPLOY "Config change"
-```
-
-### Changing Targets Mid-Workflow
-
-```bash
-# Change stage target without full reset
-.zcp/workflow.sh retarget stage {new_service_id} {new_service_name}
-# Preserves dev verification, invalidates deploy/stage evidence
-```
-
-### Rich Context for Resumability
-
-```bash
-# Set intent at workflow start
-.zcp/workflow.sh intent "Add user authentication with JWT"
-
-# Add notes when encountering issues
-.zcp/workflow.sh note "Token encoding might be wrong - check jwt.go:42"
-```
-
-### Persistence
-
-State survives container restarts via `.zcp/state/`:
-- Restored automatically on startup if `/tmp/` is empty
-- Write-through: every state change writes to both locations
-- Keeps last 10 iterations, auto-cleans older ones
+---
 
 ## Claude Code Integration
 
@@ -542,6 +862,8 @@ The `.claude/settings.json` file pre-authorizes common commands:
 - Database clients: `psql`, `mysql`, `redis-cli`
 - Build tools: `npm`, `node`, `go`
 - Browser testing: `agent-browser`
+
+---
 
 ## For Agent Developers
 
@@ -619,4 +941,13 @@ BOOTSTRAP_COMPLETE_FILE="${ZCP_TMP_DIR}/bootstrap_complete.json"
 
 ---
 
-¹ **WIGGUM** = Workflow Infrastructure for Guided Gates and Unified Management
+## Technology Stack
+
+- **Shell**: Bash 4+ (GNU/BSD compatible)
+- **Data formats**: JSON (via `jq`), YAML (via `yq`)
+- **CLI tools**: `zcli` (Zerops CLI), `psql`, `mysql`, `redis-cli`, `curl`
+- **Browser testing**: `agent-browser` for visual verification
+
+---
+
+WIGGUM = Workflow Infrastructure for Guided Gates and Unified Management
