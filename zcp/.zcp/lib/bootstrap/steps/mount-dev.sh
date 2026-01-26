@@ -55,7 +55,7 @@ step_mount_dev() {
             mounts_data=$(echo "$mounts_data" | jq --arg h "$hostname" --argjson d "$data" '.mounts[$h] = $d')
             record_step "mount-dev" "complete" "$mounts_data"
 
-            json_response "mount-dev" "Already mounted: $mount_path" "$data" "null"
+            json_response "mount-dev" "Already mounted: $mount_path" "$data" "finalize"
             return 0
         fi
     fi
@@ -100,7 +100,7 @@ step_mount_dev() {
             mounts_data=$(echo "$mounts_data" | jq --arg h "$hostname" --argjson d "$data" '.mounts[$h] = $d')
             record_step "mount-dev" "complete" "$mounts_data"
 
-            json_response "mount-dev" "Mounted $mount_path" "$data" "null"
+            json_response "mount-dev" "Mounted $mount_path" "$data" "finalize"
         else
             # Mount failed
             json_needs_action "mount-dev" "Mount failed for $hostname" "Run: $mount_script $hostname" \

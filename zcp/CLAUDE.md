@@ -65,6 +65,36 @@ done
 
 # Step 7: Create handoff for code generation
 .zcp/bootstrap.sh step finalize
+
+# Step 8: Get subagent instructions
+result=$(.zcp/bootstrap.sh step spawn-subagents)
+# Parse the instructions from result.data.instructions[]
+
+# Step 9: Spawn subagents for code generation
+# For EACH service pair in the instructions, spawn a subagent:
+# Use Task tool with subagent_type=general-purpose
+# Subagent receives: handoff JSON + subagent_prompt from instructions
+# Subagent tasks:
+#   1. Create zerops.yml (use recipe_patterns for correct structure)
+#   2. Deploy config to dev
+#   3. Enable subdomain on dev
+#   4. Generate status page code (minimal, demonstrates managed service connections)
+#   5. Test dev endpoints
+#   6. Deploy to stage
+#   7. Enable subdomain on stage
+#   8. Test stage endpoints
+#   9. Mark complete: set_service_state {hostname} phase complete
+
+# Step 10: Wait for all subagents, finalize
+while true; do
+    result=$(.zcp/bootstrap.sh step aggregate-results)
+    status=$(echo "$result" | jq -r '.status')
+    if [ "$status" = "complete" ]; then break; fi
+    if [ "$status" = "failed" ]; then echo "ERROR"; exit 1; fi
+    echo "Waiting... $(echo "$result" | jq -r '.message')"
+    sleep 10
+done
+# Bootstrap complete - workflow is now in DEVELOP phase
 ```
 
 Each step returns JSON:

@@ -210,7 +210,7 @@ step_finalize() {
         msg="Infrastructure ready - $handoff_count service pairs for code generation"
     fi
 
-    json_response "finalize" "$msg" "$data" "null"
+    json_response "finalize" "$msg" "$data" "spawn-subagents"
 }
 
 export -f step_finalize

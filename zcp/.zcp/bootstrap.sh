@@ -48,6 +48,8 @@ BOOTSTRAP_STEPS=(
     "wait-services"
     "mount-dev"
     "finalize"
+    "spawn-subagents"
+    "aggregate-results"
 )
 
 # Get next step after a given step
@@ -239,6 +241,9 @@ ZCLI_AUTH
     echo "  4. .zcp/bootstrap.sh step wait-services  # Loop until status=complete"
     echo "  5. .zcp/bootstrap.sh step mount-dev {hostname}"
     echo "  6. .zcp/bootstrap.sh step finalize"
+    echo "  7. .zcp/bootstrap.sh step spawn-subagents  # Returns subagent instructions"
+    echo "  8. Spawn subagents via Task tool (per instructions)"
+    echo "  9. .zcp/bootstrap.sh step aggregate-results  # Wait for completion"
     echo ""
     echo "Or check progress anytime:"
     echo "  .zcp/bootstrap.sh status"
@@ -273,6 +278,9 @@ Agent then runs steps individually for visibility and error handling:
     .zcp/bootstrap.sh step wait-services   # Poll until complete
     .zcp/bootstrap.sh step mount-dev <hostname>
     .zcp/bootstrap.sh step finalize
+    .zcp/bootstrap.sh step spawn-subagents  # Returns instructions for subagents
+    # Spawn subagents via Task tool (one per service pair)
+    .zcp/bootstrap.sh step aggregate-results  # Wait for all subagents, complete bootstrap
 EOF
 }
 
@@ -403,6 +411,8 @@ STEPS:
     wait-services        Wait for services to reach RUNNING state
     mount-dev <hostname> Mount dev service via SSHFS
     finalize             Create per-service handoffs for code generation
+    spawn-subagents      Output instructions for spawning code generation subagents
+    aggregate-results    Wait for subagents, create discovery.json, complete bootstrap
 
 EXAMPLES:
     # Initialize bootstrap (via workflow.sh)

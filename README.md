@@ -143,7 +143,16 @@ zcp/
 │       │   ├── output.sh        # JSON response formatting
 │       │   ├── detect.sh        # Project state detection (FRESH/CONFORMANT/NON_CONFORMANT)
 │       │   ├── import-gen.sh    # Import.yml generation
-│       │   └── steps/           # Individual bootstrap steps (plan, recipe-search, etc.)
+│       │   └── steps/           # Individual bootstrap steps
+│       │       ├── plan.sh              # Create bootstrap plan
+│       │       ├── recipe-search.sh     # Fetch runtime patterns
+│       │       ├── generate-import.sh   # Generate import.yml
+│       │       ├── import-services.sh   # Import via zcli
+│       │       ├── wait-services.sh     # Poll until RUNNING
+│       │       ├── mount-dev.sh         # SSHFS mount
+│       │       ├── finalize.sh          # Create handoff data
+│       │       ├── spawn-subagents.sh   # Output subagent instructions
+│       │       └── aggregate-results.sh # Wait for completion, create discovery
 │       └── state/         # Persistent storage (survives container restart)
 │           ├── workflow/  # Current workflow state
 │           │   ├── evidence/      # Persisted evidence files
@@ -348,11 +357,32 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 │  └───────┼───────────────────────────────────────────────────────┘              │
 │          │                                                                       │
 │          ▼                                                                       │
-│  Agent writes code, deploys, then:                                              │
-│  .zcp/workflow.sh bootstrap-done                                                │
+│  ┌────────────────┐                                                             │
+│  │spawn-subagents │─── Returns instructions for agent to spawn subagents        │
+│  │   (instant)    │    (one per service pair, can run in parallel)              │
+│  └────────────────┘                                                             │
 │          │                                                                       │
 │          ▼                                                                       │
-│  Standard Workflow unlocked                                                      │
+│  ┌────────────────────────────────────────────────────────────┐                 │
+│  │  SUBAGENTS (spawned via Task tool, run in parallel)        │                 │
+│  │  Each subagent:                                            │                 │
+│  │    1. Creates zerops.yml                                   │                 │
+│  │    2. Deploys config to dev                                │                 │
+│  │    3. Generates status page code                           │                 │
+│  │    4. Tests dev                                            │                 │
+│  │    5. Deploys to stage                                     │                 │
+│  │    6. Tests stage                                          │                 │
+│  │    7. Marks complete via set_service_state                 │                 │
+│  └────────────────────────────────────────────────────────────┘                 │
+│          │                                                                       │
+│          ▼                                                                       │
+│  ┌───────────────────┐                                                          │
+│  │ aggregate-results │─── Waits for all subagents, creates discovery.json       │
+│  │     (poll)        │    Sets workflow to DEVELOP phase                        │
+│  └───────────────────┘                                                          │
+│          │                                                                       │
+│          ▼                                                                       │
+│  Standard Workflow unlocked (DEVELOP phase)                                      │
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -370,9 +400,14 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 .zcp/bootstrap.sh step wait-services      # Poll until services ready
 .zcp/bootstrap.sh step mount-dev appdev   # SSHFS mount
 .zcp/bootstrap.sh step finalize           # Create handoff data
+.zcp/bootstrap.sh step spawn-subagents    # Get subagent instructions
 
-# Agent writes code, deploys, then marks complete
-.zcp/workflow.sh bootstrap-done
+# For each service pair, spawn a subagent via Task tool
+# Subagent: creates zerops.yml, deploys, writes code, tests, marks complete
+
+# Wait for all subagents to complete
+.zcp/bootstrap.sh step aggregate-results  # Poll until all complete
+# Creates discovery.json, sets workflow to DEVELOP phase
 ```
 
 ### Bootstrap Scenarios
@@ -384,6 +419,8 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 | Step fails | Fix issue, re-run same step | Idempotent recovery |
 | Check progress | `.zcp/bootstrap.sh status` | Shows checkpoint, pending steps |
 | Already conformant | `bootstrap ...` | Returns "use init" guidance |
+| Subagents pending | `aggregate-results` | Returns in_progress, poll again |
+| All subagents done | `aggregate-results` | Creates discovery.json, completes |
 
 ---
 
@@ -723,7 +760,8 @@ All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/s
 | `bootstrap_plan.json` | `.zcp/workflow.sh bootstrap` | Runtime + services specification |
 | `bootstrap_import.yml` | Bootstrap orchestrator | Generated import.yml |
 | `bootstrap_coordination.json` | Bootstrap orchestrator | Checkpoint tracking for resume |
-| `bootstrap_complete.json` | Bootstrap orchestrator | Agent handoff with task list |
+| `bootstrap_handoff.json` | `finalize` step | Per-service handoff data for subagents |
+| `bootstrap_complete.json` | `aggregate-results` step | Bootstrap completion evidence |
 | `workflow_state.json` | Auto-generated | WIGGUM workflow state |
 
 ---
@@ -936,6 +974,7 @@ WORKFLOW_STATE_FILE="${ZCP_TMP_DIR}/workflow_state.json"
 BOOTSTRAP_PLAN_FILE="${ZCP_TMP_DIR}/bootstrap_plan.json"
 BOOTSTRAP_IMPORT_FILE="${ZCP_TMP_DIR}/bootstrap_import.yml"
 BOOTSTRAP_COORDINATION_FILE="${ZCP_TMP_DIR}/bootstrap_coordination.json"
+BOOTSTRAP_HANDOFF_FILE="${ZCP_TMP_DIR}/bootstrap_handoff.json"
 BOOTSTRAP_COMPLETE_FILE="${ZCP_TMP_DIR}/bootstrap_complete.json"
 ```
 

@@ -311,7 +311,7 @@ generate_status_json() {
     local steps_complete
     steps_complete=$(echo "$state" | jq '[.steps | to_entries[] | select(.value.status == "complete")] | length')
 
-    local total_steps=7  # plan, recipe-search, generate-import, import-services, wait-services, mount-dev, finalize
+    local total_steps=9  # plan, recipe-search, generate-import, import-services, wait-services, mount-dev, finalize, spawn-subagents, aggregate-results
 
     local services_status
     services_status=$(get_all_services_status)
