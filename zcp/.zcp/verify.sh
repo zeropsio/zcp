@@ -4,6 +4,10 @@
 # Tests HTTP endpoints and creates JSON evidence files
 
 set -o pipefail
+umask 077
+
+# Trap for cleanup on exit
+trap 'rm -f "/tmp/verify_tmp.$$" 2>/dev/null' EXIT INT TERM
 
 DEBUG=false
 
@@ -91,6 +95,11 @@ debug_log() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
     source "$SCRIPT_DIR/lib/utils.sh"
+fi
+
+# Source validation functions (CRITICAL-3: hostname validation)
+if [ -f "$SCRIPT_DIR/lib/validate.sh" ]; then
+    source "$SCRIPT_DIR/lib/validate.sh"
 fi
 
 # Load discovery for accurate service matching
@@ -204,6 +213,32 @@ main() {
         echo "Example: .zcp/verify.sh appdev 8080 / /status /api/items"
         echo "Help:    .zcp/verify.sh --help"
         exit 2
+    fi
+
+    # CRITICAL-3: Validate service hostname before SSH (prevents injection)
+    if type validate_ssh_hostname &>/dev/null; then
+        if ! validate_ssh_hostname "$service"; then
+            exit 1
+        fi
+    else
+        # Fallback validation
+        if [[ ! "$service" =~ ^[a-zA-Z0-9_-]+$ ]] || [[ "$service" == *"@"* ]]; then
+            echo "❌ Invalid service name: '$service'" >&2
+            echo "   Must contain only alphanumeric characters, underscores, and hyphens" >&2
+            exit 1
+        fi
+    fi
+
+    # Validate port number (M-3)
+    if type validate_port &>/dev/null; then
+        if ! validate_port "$port"; then
+            exit 1
+        fi
+    else
+        if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+            echo "❌ Invalid port: '$port' (must be 1-65535)" >&2
+            exit 1
+        fi
     fi
 
     # Check jq availability

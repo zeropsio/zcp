@@ -8,8 +8,13 @@
 # Inputs: Service IDs (from import-services)
 # Outputs: Service statuses, ready when all RUNNING
 
-# Track start time for timeout
-WAIT_START_FILE="${ZCP_TMP_DIR:-/tmp}/bootstrap_wait_start"
+# HIGH-11: Track start time for timeout (session-scoped to prevent race conditions)
+# Use session ID from bootstrap state for scoping
+_get_wait_start_file() {
+    local session_id
+    session_id=$(cat "${ZCP_TMP_DIR:-/tmp}/claude_session" 2>/dev/null || echo "$$")
+    echo "${ZCP_TMP_DIR:-/tmp}/bootstrap_wait_start_${session_id}"
+}
 
 step_wait_services() {
     local timeout="${1:-600}"  # Default 10 minute timeout
@@ -20,19 +25,23 @@ step_wait_services() {
         return 1
     fi
 
+    # HIGH-11: Use session-scoped wait start file
+    local wait_start_file
+    wait_start_file=$(_get_wait_start_file)
+
     # Track elapsed time
     local start_time elapsed_seconds
-    if [ -f "$WAIT_START_FILE" ]; then
-        start_time=$(cat "$WAIT_START_FILE")
+    if [ -f "$wait_start_file" ]; then
+        start_time=$(cat "$wait_start_file")
     else
         start_time=$(date +%s)
-        echo "$start_time" > "$WAIT_START_FILE"
+        echo "$start_time" > "$wait_start_file"
     fi
     elapsed_seconds=$(($(date +%s) - start_time))
 
     # Check timeout
     if [ $elapsed_seconds -gt $timeout ]; then
-        rm -f "$WAIT_START_FILE"
+        rm -f "$wait_start_file"
         json_error "wait-services" "Timeout waiting for services (${timeout}s)" \
             "{\"elapsed_seconds\": $elapsed_seconds, \"timeout\": true}" \
             '["Check zcli service list", "Check project notifications", "Retry: .zcp/bootstrap.sh step wait-services"]'
@@ -62,15 +71,15 @@ step_wait_services() {
     local total_count=0
     local service_ids='{}'
 
-    # Check all services (not just runtime services)
-    local all_services
-    all_services=$(echo "$services_json" | jq -r '.services[] | "\(.name):\(.status):\(.id)"')
+    # HIGH-9: Use JSON array output instead of colon-delimited (prevents parsing failures)
+    local service_count
+    service_count=$(echo "$services_json" | jq '.services | length')
 
-    for service_info in $all_services; do
+    for ((i=0; i<service_count; i++)); do
         local name status id
-        name=$(echo "$service_info" | cut -d: -f1)
-        status=$(echo "$service_info" | cut -d: -f2)
-        id=$(echo "$service_info" | cut -d: -f3)
+        name=$(echo "$services_json" | jq -r ".services[$i].name // \"\"")
+        status=$(echo "$services_json" | jq -r ".services[$i].status // \"\"")
+        id=$(echo "$services_json" | jq -r ".services[$i].id // \"\"")
 
         # Check if this is one of our bootstrap services
         local is_bootstrap_service=false
@@ -137,7 +146,7 @@ step_wait_services() {
 
     # Check if all ready
     if [ $ready_count -eq $total_count ]; then
-        rm -f "$WAIT_START_FILE"
+        rm -f "$wait_start_file"
 
         local data
         data=$(jq -n \

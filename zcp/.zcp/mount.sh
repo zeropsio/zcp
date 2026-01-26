@@ -1,6 +1,15 @@
 #!/bin/bash
 # Create SSHFS mount for a dev service
 
+set -o pipefail
+umask 077
+
+# Source validation functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/lib/validate.sh" ]; then
+    source "$SCRIPT_DIR/lib/validate.sh"
+fi
+
 # Handle --help
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     cat <<'EOF'
@@ -37,6 +46,21 @@ if [ -z "$1" ]; then
 fi
 
 svc="$1"
+
+# CRITICAL: Validate service name to prevent command injection (CRITICAL-1)
+if type validate_service_name &>/dev/null; then
+    if ! validate_service_name "$svc"; then
+        echo "Use --help for valid service name format"
+        exit 1
+    fi
+else
+    # Fallback validation if validate.sh not loaded
+    if [[ ! "$svc" =~ ^[a-zA-Z][a-zA-Z0-9_-]{0,62}$ ]]; then
+        echo "ERROR: Invalid service name: '$svc'" >&2
+        echo "       Must start with letter, contain only [a-zA-Z0-9_-], max 63 chars" >&2
+        exit 1
+    fi
+fi
 
 # Check if already mounted (mount point exists AND is accessible via SSHFS)
 # Note: empty directory is valid with startWithoutCode: true

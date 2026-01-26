@@ -50,7 +50,7 @@ cmd_init() {
     # Handle --dev-only mode
     if [ "$mode_flag" = "--dev-only" ]; then
         local session_id
-        session_id="$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
+        session_id=$(generate_secure_session_id)
         echo "$session_id" > "$SESSION_FILE"
         echo "dev-only" > "$MODE_FILE"
         echo "INIT" > "$PHASE_FILE"
@@ -94,16 +94,16 @@ EOF
                     local max_age="${HOTFIX_MAX_AGE_HOURS:-24}"
                     if [ "$age_hours" -lt "$max_age" ]; then
                         local session_id
-                        session_id="$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
+                        session_id=$(generate_secure_session_id)
                         echo "$session_id" > "$SESSION_FILE"
                         echo "hotfix" > "$MODE_FILE"
                         echo "DEVELOP" > "$PHASE_FILE"
 
                         # Update session in discovery
-                        if jq --arg sid "$session_id" '.session_id = $sid' "$DISCOVERY_FILE" > "${DISCOVERY_FILE}.tmp"; then
-                            mv "${DISCOVERY_FILE}.tmp" "$DISCOVERY_FILE"
+                        if jq --arg sid "$session_id" '.session_id = $sid' "$DISCOVERY_FILE" > "${DISCOVERY_FILE}.tmp.$$"; then
+                            mv "${DISCOVERY_FILE}.tmp.$$" "$DISCOVERY_FILE"
                         else
-                            rm -f "${DISCOVERY_FILE}.tmp"
+                            rm -f "${DISCOVERY_FILE}.tmp.$$"
                             echo "Failed to update discovery.json" >&2
                             return 1
                         fi
@@ -138,7 +138,7 @@ EOF
 
     # Create new session
     local session_id
-    session_id="$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
+    session_id=$(generate_secure_session_id)
     echo "$session_id" > "$SESSION_FILE"
     echo "full" > "$MODE_FILE"
     echo "INIT" > "$PHASE_FILE"
@@ -149,10 +149,10 @@ EOF
         old_session=$(jq -r '.session_id // empty' "$DISCOVERY_FILE" 2>/dev/null)
         if [ -n "$old_session" ]; then
             # Update session_id in existing discovery
-            if jq --arg sid "$session_id" '.session_id = $sid' "$DISCOVERY_FILE" > "${DISCOVERY_FILE}.tmp"; then
-                mv "${DISCOVERY_FILE}.tmp" "$DISCOVERY_FILE"
+            if jq --arg sid "$session_id" '.session_id = $sid' "$DISCOVERY_FILE" > "${DISCOVERY_FILE}.tmp.$$"; then
+                mv "${DISCOVERY_FILE}.tmp.$$" "$DISCOVERY_FILE"
             else
-                rm -f "${DISCOVERY_FILE}.tmp"
+                rm -f "${DISCOVERY_FILE}.tmp.$$"
                 echo "Failed to update discovery.json" >&2
                 return 1
             fi
@@ -224,7 +224,7 @@ cmd_quick() {
     fi
 
     local session_id
-    session_id="$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
+    session_id=$(generate_secure_session_id)
     echo "$session_id" > "$SESSION_FILE"
     echo "quick" > "$MODE_FILE"
     echo "QUICK" > "$PHASE_FILE"

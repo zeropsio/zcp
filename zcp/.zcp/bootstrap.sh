@@ -12,6 +12,19 @@
 
 set -euo pipefail
 
+# HIGH-5: Secure default umask
+umask 077
+
+# HIGH-4: Signal handlers for cleanup
+cleanup() {
+    local exit_code=$?
+    rm -f "${ZCP_TMP_DIR:-/tmp}"/*.tmp.$$ 2>/dev/null
+    exit $exit_code
+}
+trap cleanup EXIT
+trap 'trap - EXIT; cleanup; exit 130' INT
+trap 'trap - EXIT; cleanup; exit 143' TERM
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source utilities (for ZCP_TMP_DIR, STATE_DIR, colors, etc.)

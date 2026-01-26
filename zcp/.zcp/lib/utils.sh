@@ -137,12 +137,18 @@ with_lock() {
             fi
         done
 
-        # Ensure cleanup on exit
-        trap "rmdir '$lock_dir' 2>/dev/null" EXIT
-        "$@"
+        # M-19: Use subshell for better cleanup guarantee
+        # This ensures lock is released even if the command is interrupted
+        (
+            # Save and restore original trap handlers
+            _cleanup_lock() { rmdir "$lock_dir" 2>/dev/null || true; }
+            trap _cleanup_lock EXIT INT TERM
+
+            "$@"
+        )
         local rc=$?
-        rmdir "$lock_dir" 2>/dev/null
-        trap - EXIT
+        # Extra cleanup in case subshell didn't run trap
+        rmdir "$lock_dir" 2>/dev/null || true
         return $rc
     fi
 }
@@ -163,15 +169,18 @@ safe_write_json() {
         return 1
     fi
 
-    if ! echo "$content" > "${file}.tmp" 2>/dev/null; then
+    # CRITICAL-4: Use PID-unique temp file to prevent race conditions
+    local tmp_file="${file}.tmp.$$"
+
+    if ! echo "$content" > "$tmp_file" 2>/dev/null; then
         echo "ERROR: Cannot write to $file (disk full?)" >&2
-        rm -f "${file}.tmp"
+        rm -f "$tmp_file"
         return 1
     fi
 
-    if ! mv "${file}.tmp" "$file" 2>/dev/null; then
+    if ! mv "$tmp_file" "$file" 2>/dev/null; then
         echo "ERROR: Cannot finalize $file" >&2
-        rm -f "${file}.tmp"
+        rm -f "$tmp_file"
         return 1
     fi
 
@@ -300,26 +309,54 @@ sync_state() {
 }
 
 set_phase() {
-    echo "$1" > "$PHASE_FILE"
+    local phase="$1"
+
+    # M-10: Validate phase before setting
+    if ! validate_phase "$phase"; then
+        echo "ERROR: Invalid phase: $phase" >&2
+        return 1
+    fi
+
+    # M-11: Check for write failure
+    if ! echo "$phase" > "$PHASE_FILE"; then
+        echo "ERROR: Cannot write to phase file" >&2
+        return 1
+    fi
     sync_state
 }
 
 set_mode() {
-    echo "$1" > "$MODE_FILE"
+    local mode="$1"
+
+    # M-10: Validate mode before setting
+    case "$mode" in
+        quick|dev-only|full|hotfix|bootstrap)
+            ;;
+        *)
+            echo "ERROR: Invalid mode: $mode" >&2
+            return 1
+            ;;
+    esac
+
+    # M-11: Check for write failure
+    if ! echo "$mode" > "$MODE_FILE"; then
+        echo "ERROR: Cannot write to mode file" >&2
+        return 1
+    fi
     sync_state
 }
 
 validate_phase() {
     local phase="$1"
     # Valid phases (standard workflow only - synthesis phases deprecated)
-    local all_phases="INIT DISCOVER DEVELOP DEPLOY VERIFY DONE"
-
-    for p in $all_phases; do
-        if [ "$p" = "$phase" ]; then
+    case "$phase" in
+        INIT|DISCOVER|DEVELOP|DEPLOY|VERIFY|DONE|QUICK)
             return 0
-        fi
-    done
-    return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 check_evidence_session() {
@@ -336,9 +373,10 @@ check_evidence_session() {
         return 1
     fi
 
+    # HIGH-17: Return failure when jq is not available (validation cannot proceed)
     if ! command -v jq &>/dev/null; then
-        echo "⚠️  Warning: jq not found, cannot validate evidence"
-        return 0
+        echo "⚠️  Warning: jq not found, cannot validate evidence - treating as invalid" >&2
+        return 1
     fi
 
     evidence_session=$(jq -r '.session_id // empty' "$file" 2>/dev/null)
@@ -354,14 +392,18 @@ check_evidence_freshness() {
     local mode
     mode=$(get_mode 2>/dev/null || echo "full")
 
+    # HIGH-18: Return failure when file doesn't exist (caller should handle)
     if [ ! -f "$file" ]; then
-        return 0  # No file = no staleness check
+        echo "⚠️  Evidence file not found: $file" >&2
+        return 1
     fi
 
     local timestamp
     timestamp=$(jq -r '.timestamp // empty' "$file" 2>/dev/null)
+    # HIGH-18: Return failure when timestamp is missing
     if [ -z "$timestamp" ]; then
-        return 0  # No timestamp = can't check
+        echo "⚠️  Evidence file missing timestamp: $file" >&2
+        return 1
     fi
 
     # Parse timestamp and calculate age
@@ -373,7 +415,9 @@ check_evidence_freshness() {
     elif evidence_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$timestamp" +%s 2>/dev/null); then
         : # BSD date worked
     else
-        return 0  # Can't parse = skip check
+        # HIGH-18: Return failure when timestamp can't be parsed
+        echo "⚠️  Cannot parse timestamp in evidence: $file" >&2
+        return 1
     fi
 
     now_epoch=$(date +%s)
@@ -424,12 +468,22 @@ get_iteration() {
 set_iteration() {
     local n="$1"
 
-    # Write to /tmp/
-    echo "$n" > "$ITERATION_FILE"
+    # Validate iteration is a positive number
+    if [[ ! "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ]; then
+        echo "ERROR: Invalid iteration number: $n" >&2
+        return 1
+    fi
 
-    # Write to persistent storage if available
+    # M-12: Use atomic write to prevent race conditions
+    local tmp_file="${ITERATION_FILE}.tmp.$$"
+    echo "$n" > "$tmp_file"
+    mv "$tmp_file" "$ITERATION_FILE"
+
+    # Write to persistent storage if available (also atomic)
     if [ "$PERSISTENT_ENABLED" = true ] && [ -d "$WORKFLOW_STATE_DIR" ]; then
-        echo "$n" > "$WORKFLOW_STATE_DIR/iteration"
+        tmp_file="$WORKFLOW_STATE_DIR/iteration.tmp.$$"
+        echo "$n" > "$tmp_file"
+        mv "$tmp_file" "$WORKFLOW_STATE_DIR/iteration"
     fi
 }
 
@@ -521,6 +575,12 @@ check_runtime_services_exist() {
     # If no project ID, can't check - assume need bootstrap
     if [ -z "$pid" ]; then
         echo "⚠️  No project ID found - cannot detect services" >&2
+        return 1
+    fi
+
+    # HIGH-19: Validate project ID format to prevent injection
+    if [[ ! "$pid" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "⚠️  Invalid project ID format: $pid" >&2
         return 1
     fi
 

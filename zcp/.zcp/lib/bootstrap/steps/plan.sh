@@ -33,6 +33,27 @@ step_plan() {
     IFS=',' read -ra runtime_array <<< "$runtime"
     IFS=',' read -ra prefix_array <<< "$prefix"
 
+    # HIGH-10: Validate each runtime
+    local valid_runtimes="go nodejs python php rust bun java dotnet nginx static alpine"
+    for rt in "${runtime_array[@]}"; do
+        local is_valid=false
+        for valid in $valid_runtimes; do
+            [ "$rt" = "$valid" ] && is_valid=true
+        done
+        if [ "$is_valid" = false ]; then
+            json_error "plan" "Invalid runtime: $rt" '{}' '["Use: go, nodejs, python, php, rust, bun, java, dotnet, nginx, static, alpine"]'
+            return 1
+        fi
+    done
+
+    # HIGH-10: Validate each prefix (lowercase alphanumeric, hyphens allowed but not at start/end)
+    for pfx in "${prefix_array[@]}"; do
+        if [[ ! "$pfx" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || [ ${#pfx} -gt 58 ]; then
+            json_error "plan" "Invalid prefix: $pfx" '{}' '["Must be lowercase alphanumeric, may contain hyphens, max 58 chars"]'
+            return 1
+        fi
+    done
+
     # If fewer prefixes than runtimes, use first prefix for all
     local num_runtimes=${#runtime_array[@]}
     local num_prefixes=${#prefix_array[@]}
@@ -92,7 +113,7 @@ step_plan() {
     local session_id
     session_id=$(cat "${ZCP_TMP_DIR:-/tmp}/claude_session" 2>/dev/null || echo "")
     if [ -z "$session_id" ]; then
-        session_id="$(date +%Y%m%d%H%M%S)-$RANDOM-$RANDOM"
+        session_id=$(generate_secure_session_id 2>/dev/null || echo "$(date +%Y%m%d%H%M%S)-$$-$RANDOM$RANDOM")
         echo "$session_id" > "${ZCP_TMP_DIR:-/tmp}/claude_session"
         echo "bootstrap" > "${ZCP_TMP_DIR:-/tmp}/claude_mode"
         echo "INIT" > "${ZCP_TMP_DIR:-/tmp}/claude_phase"

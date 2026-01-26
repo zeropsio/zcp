@@ -38,24 +38,27 @@ cmd_retarget() {
         return 1
     fi
 
-    # Get current values
+    # Get current values (CRITICAL-5: Use --arg for dynamic field access)
     local old_name old_id
-    old_name=$(jq -r ".${target_env}.name // \"?\"" "$DISCOVERY_FILE" 2>/dev/null)
-    old_id=$(jq -r ".${target_env}.id // \"?\"" "$DISCOVERY_FILE" 2>/dev/null)
+    old_name=$(jq -r --arg env "$target_env" '.[$env].name // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+    old_id=$(jq -r --arg env "$target_env" '.[$env].id // "?"' "$DISCOVERY_FILE" 2>/dev/null)
 
     # Update discovery.json
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    if ! jq --arg id "$service_id" --arg name "$service_name" --arg ts "$timestamp" \
-        ".${target_env}.id = \$id | .${target_env}.name = \$name | .timestamp = \$ts" \
-        "$DISCOVERY_FILE" > "${DISCOVERY_FILE}.tmp"; then
+    # CRITICAL-5: Use --arg for target_env to prevent jq injection
+    # Use PID-unique temp file (CRITICAL-4)
+    local tmp_file="${DISCOVERY_FILE}.tmp.$$"
+    if ! jq --arg env "$target_env" --arg id "$service_id" --arg name "$service_name" --arg ts "$timestamp" \
+        '.[$env].id = $id | .[$env].name = $name | .timestamp = $ts' \
+        "$DISCOVERY_FILE" > "$tmp_file"; then
         echo "❌ Failed to update discovery.json"
-        rm -f "${DISCOVERY_FILE}.tmp"
+        rm -f "$tmp_file"
         return 1
     fi
 
-    mv "${DISCOVERY_FILE}.tmp" "$DISCOVERY_FILE"
+    mv "$tmp_file" "$DISCOVERY_FILE"
 
     # Invalidate relevant evidence based on target
     local invalidated=()

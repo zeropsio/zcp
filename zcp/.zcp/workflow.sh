@@ -21,6 +21,20 @@
 
 set -o pipefail
 
+# HIGH-5: Secure default umask
+umask 077
+
+# HIGH-4: Signal handlers for cleanup
+cleanup() {
+    local exit_code=$?
+    # Clean up any temp files created by this script
+    rm -f "${ZCP_TMP_DIR:-/tmp}"/*.tmp.$$ 2>/dev/null
+    exit $exit_code
+}
+trap cleanup EXIT
+trap 'trap - EXIT; cleanup; exit 130' INT
+trap 'trap - EXIT; cleanup; exit 143' TERM
+
 # Get script directory for sourcing modules
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

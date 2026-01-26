@@ -16,6 +16,12 @@ step_mount_dev() {
         return 1
     fi
 
+    # HIGH-12: Validate hostname to prevent path traversal
+    if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        json_error "mount-dev" "Invalid hostname format: $hostname" '{}' '["Hostname must contain only alphanumeric characters, hyphens, and underscores"]'
+        return 1
+    fi
+
     local mount_path="/var/www/$hostname"
 
     # Check if already mounted and accessible

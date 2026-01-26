@@ -89,12 +89,13 @@ set_intent() {
     if [ "$PERSISTENT_ENABLED" = true ] || mkdir -p "$WORKFLOW_STATE_DIR" 2>/dev/null; then
         echo "$intent" > "$WORKFLOW_STATE_DIR/intent.txt"
 
-        # Also update manifest if it exists
+        # Also update manifest if it exists (H-14: PID-unique temp file)
         if [ -f "$WORKFLOW_STATE_DIR/manifest.json" ]; then
+            local tmp_manifest="$WORKFLOW_STATE_DIR/manifest.json.tmp.$$"
             jq --arg intent "$intent" --arg ts "$timestamp" \
                 '.intent = $intent | .updated = $ts' \
-                "$WORKFLOW_STATE_DIR/manifest.json" > "$WORKFLOW_STATE_DIR/manifest.json.tmp" && \
-                mv "$WORKFLOW_STATE_DIR/manifest.json.tmp" "$WORKFLOW_STATE_DIR/manifest.json"
+                "$WORKFLOW_STATE_DIR/manifest.json" > "$tmp_manifest" && \
+                mv "$tmp_manifest" "$WORKFLOW_STATE_DIR/manifest.json"
         fi
     fi
 }
@@ -113,21 +114,22 @@ add_note() {
         # Add to existing notes array
         jq --argjson note "$note_entry" \
             'if .notes then .notes += [$note] else .notes = [$note] end' \
-            "$CONTEXT_FILE" > "${CONTEXT_FILE}.tmp" && \
-            mv "${CONTEXT_FILE}.tmp" "$CONTEXT_FILE"
+            "$CONTEXT_FILE" > "${CONTEXT_FILE}.tmp.$$" && \
+            mv "${CONTEXT_FILE}.tmp.$$" "$CONTEXT_FILE"
     else
         # Create new context file with note
         jq -n --argjson note "$note_entry" '{notes: [$note]}' > "$CONTEXT_FILE"
     fi
 
-    # Also persist if enabled
+    # Also persist if enabled (H-14: PID-unique temp files)
     if [ "$PERSISTENT_ENABLED" = true ] && [ -d "$WORKFLOW_STATE_DIR" ]; then
         local persistent_context="$WORKFLOW_STATE_DIR/context.json"
         if [ -f "$persistent_context" ]; then
+            local tmp_ctx="${persistent_context}.tmp.$$"
             jq --argjson note "$note_entry" \
                 'if .notes then .notes += [$note] else .notes = [$note] end' \
-                "$persistent_context" > "${persistent_context}.tmp" && \
-                mv "${persistent_context}.tmp" "$persistent_context"
+                "$persistent_context" > "$tmp_ctx" && \
+                mv "$tmp_ctx" "$persistent_context"
         else
             jq -n --argjson note "$note_entry" '{notes: [$note]}' > "$persistent_context"
         fi
@@ -178,19 +180,20 @@ cleanup_old_notes() {
         count=$(jq -r '.notes | length' "$CONTEXT_FILE" 2>/dev/null || echo "0")
 
         if [ "$count" -gt 20 ]; then
-            jq '.notes = .notes[-20:]' "$CONTEXT_FILE" > "${CONTEXT_FILE}.tmp" && \
-                mv "${CONTEXT_FILE}.tmp" "$CONTEXT_FILE"
+            jq '.notes = .notes[-20:]' "$CONTEXT_FILE" > "${CONTEXT_FILE}.tmp.$$" && \
+                mv "${CONTEXT_FILE}.tmp.$$" "$CONTEXT_FILE"
         fi
     fi
 
-    # Same for persistent
+    # Same for persistent (H-14: PID-unique temp file)
     if [ -f "$WORKFLOW_STATE_DIR/context.json" ]; then
         local count
         count=$(jq -r '.notes | length' "$WORKFLOW_STATE_DIR/context.json" 2>/dev/null || echo "0")
 
         if [ "$count" -gt 20 ]; then
-            jq '.notes = .notes[-20:]' "$WORKFLOW_STATE_DIR/context.json" > "$WORKFLOW_STATE_DIR/context.json.tmp" && \
-                mv "$WORKFLOW_STATE_DIR/context.json.tmp" "$WORKFLOW_STATE_DIR/context.json"
+            local tmp_file="$WORKFLOW_STATE_DIR/context.json.tmp.$$"
+            jq '.notes = .notes[-20:]' "$WORKFLOW_STATE_DIR/context.json" > "$tmp_file" && \
+                mv "$tmp_file" "$WORKFLOW_STATE_DIR/context.json"
         fi
     fi
 }

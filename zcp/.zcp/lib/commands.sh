@@ -4,6 +4,9 @@
 # Use local variable to avoid overwriting parent SCRIPT_DIR
 _CMD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Source validation functions first (for security checks)
+source "$_CMD_LIB_DIR/validate.sh"
+
 # Source WIGGUM state management first
 source "$_CMD_LIB_DIR/state.sh"
 

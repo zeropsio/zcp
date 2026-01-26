@@ -22,11 +22,30 @@ atomic_write() {
 
     local dir
     dir=$(dirname "$file")
-    mkdir -p "$dir" 2>/dev/null || true
+
+    # M-18: Add error handling for directory creation
+    if ! mkdir -p "$dir" 2>/dev/null; then
+        echo "ERROR: Cannot create directory: $dir" >&2
+        return 1
+    fi
 
     local tmp_file="${file}.tmp.$$"
-    echo "$content" > "$tmp_file"
-    mv "$tmp_file" "$file"
+
+    # M-18: Check write operation
+    if ! echo "$content" > "$tmp_file"; then
+        echo "ERROR: Cannot write to temp file: $tmp_file" >&2
+        rm -f "$tmp_file" 2>/dev/null
+        return 1
+    fi
+
+    # M-18: Check move operation
+    if ! mv "$tmp_file" "$file"; then
+        echo "ERROR: Cannot move temp file to: $file" >&2
+        rm -f "$tmp_file" 2>/dev/null
+        return 1
+    fi
+
+    return 0
 }
 
 # Read bootstrap state file
@@ -43,7 +62,7 @@ get_bootstrap_state() {
 # Usage: init_state '{"plan": {...}}'
 init_state() {
     local plan_data="$1"
-    local session_id="${2:-$(date +%Y%m%d%H%M%S)-$RANDOM}"
+    local session_id="${2:-$(generate_secure_session_id 2>/dev/null || echo "$(date +%Y%m%d%H%M%S)-$$-$RANDOM")}"
 
     init_bootstrap_state
 
@@ -160,6 +179,12 @@ set_service_state() {
     local key="$2"
     local value="$3"
 
+    # CRITICAL-7: Validate hostname to prevent path traversal
+    if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "ERROR: Invalid hostname format: $hostname" >&2
+        return 1
+    fi
+
     local service_dir="${BOOTSTRAP_STATE_DIR}/services/${hostname}"
     mkdir -p "$service_dir" 2>/dev/null || true
 
@@ -187,6 +212,14 @@ set_service_state() {
 # Usage: get_service_state "apidev"
 get_service_state() {
     local hostname="$1"
+
+    # CRITICAL-7: Validate hostname to prevent path traversal
+    if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "ERROR: Invalid hostname format: $hostname" >&2
+        echo '{}'
+        return 1
+    fi
+
     local status_file="${BOOTSTRAP_STATE_DIR}/services/${hostname}/status.json"
 
     if [ -f "$status_file" ]; then
@@ -202,6 +235,12 @@ set_service_result() {
     local hostname="$1"
     local result="$2"
 
+    # CRITICAL-7: Validate hostname to prevent path traversal
+    if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "ERROR: Invalid hostname format: $hostname" >&2
+        return 1
+    fi
+
     local service_dir="${BOOTSTRAP_STATE_DIR}/services/${hostname}"
     mkdir -p "$service_dir" 2>/dev/null || true
 
@@ -209,6 +248,7 @@ set_service_result() {
 }
 
 # Get all services status (aggregate for orchestrator)
+# CRITICAL-6: Use jq for safe JSON construction to prevent injection
 get_all_services_status() {
     local services_dir="${BOOTSTRAP_STATE_DIR}/services"
 
@@ -217,27 +257,26 @@ get_all_services_status() {
         return
     fi
 
-    local result='{'
-    local first=true
+    local result='{}'
 
     for service_dir in "$services_dir"/*/; do
         if [ -d "$service_dir" ]; then
             local hostname
             hostname=$(basename "$service_dir")
+
+            # Validate hostname before using it
+            if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+                continue
+            fi
+
             local status
             status=$(get_service_state "$hostname")
 
-            if [ "$first" = true ]; then
-                first=false
-            else
-                result+=','
-            fi
-
-            result+="\"$hostname\": $status"
+            # Use jq for safe JSON construction
+            result=$(echo "$result" | jq --arg h "$hostname" --argjson s "$status" '. + {($h): $s}')
         fi
     done
 
-    result+='}'
     echo "$result"
 }
 
