@@ -22,6 +22,9 @@ RED="${RED:-\033[0;31m}"
 BOLD="${BOLD:-\033[1m}"
 NC="${NC:-\033[0m}"
 
+# Error trap for debugging silent failures
+trap 'echo -e "${RED}ERROR:${NC} Bootstrap failed at line $LINENO. Command: $BASH_COMMAND" >&2' ERR
+
 # Path fallbacks (in case utils.sh wasn't sourced)
 ZCP_TMP_DIR="${ZCP_TMP_DIR:-/tmp}"
 SESSION_FILE="${SESSION_FILE:-${ZCP_TMP_DIR}/claude_session}"
@@ -216,7 +219,13 @@ cmd_bootstrap() {
                 return 1
             fi
         fi
-        echo "Resuming bootstrap from last checkpoint..."
+        echo ""
+        echo -e "${BOLD}╔══════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${BOLD}║  BOOTSTRAP RESUMING - THIS IS A SYNCHRONOUS SCRIPT              ║${NC}"
+        echo -e "${BOLD}║  ⏳ WAIT FOR 'BOOTSTRAP COMPLETE' OR 'BOOTSTRAP FAILED'          ║${NC}"
+        echo -e "${BOLD}║  DO NOT RUN OTHER COMMANDS UNTIL YOU SEE THE FINAL STATUS       ║${NC}"
+        echo -e "${BOLD}╚══════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
         # Fall through to orchestration - read plan file too
         if [ -f "$STATE_DIR/bootstrap/plan.json" ]; then
             cp "$STATE_DIR/bootstrap/plan.json" "$BOOTSTRAP_PLAN_FILE"
@@ -308,69 +317,101 @@ ZCLI_AUTH
                 status: "in_progress",
                 checkpoints: {}
             }' > "$BOOTSTRAP_COORDINATION_FILE"
+
+        echo ""
+        echo -e "${BOLD}╔══════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${BOLD}║  BOOTSTRAP STARTING - THIS IS A SYNCHRONOUS SCRIPT              ║${NC}"
+        echo -e "${BOLD}║  ⏳ WAIT FOR 'BOOTSTRAP COMPLETE' OR 'BOOTSTRAP FAILED'          ║${NC}"
+        echo -e "${BOLD}║  DO NOT RUN OTHER COMMANDS UNTIL YOU SEE THE FINAL STATUS       ║${NC}"
+        echo -e "${BOLD}╚══════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
     fi
 
     # === STEP 1: Recipe Search ===
     if ! is_step_complete "recipe_search"; then
         echo ""
         echo -e "${CYAN}=== STEP 1: Recipe Search ===${NC}"
+        echo "  [1.1] Reading runtime from plan..."
 
         local runtime_type
         runtime_type=$(jq -r '.runtime' "$BOOTSTRAP_PLAN_FILE")
+        echo "  [1.2] Runtime: $runtime_type"
 
         if [ ! -f "${ZCP_TMP_DIR:-/tmp}/recipe_review.json" ]; then
-            echo "Running recipe-search for $runtime_type..."
+            echo "  [1.3] Running recipe-search..."
             local svc_list
             svc_list=$(jq -r '(.managed_services // []) | join(" ")' "$BOOTSTRAP_PLAN_FILE")
 
-            # recipe-search.sh is in the parent .zcp directory
             local recipe_script="$SCRIPT_DIR/../../recipe-search.sh"
             if [ -f "$recipe_script" ]; then
                 "$recipe_script" quick "$runtime_type" $svc_list || {
-                    echo "WARNING: Recipe search failed, continuing with defaults" >&2
+                    echo "  [1.4] Recipe search returned warning (using defaults)"
                 }
             else
-                echo "WARNING: recipe-search.sh not found at $recipe_script, using defaults" >&2
+                echo "  [1.4] recipe-search.sh not found (using defaults)"
             fi
+        else
+            echo "  [1.3] Recipe file already exists"
         fi
 
         write_checkpoint "recipe_search" "complete" "$(jq -n --arg f "/tmp/recipe_review.json" '{file: $f}')"
-        echo -e "${GREEN}[CHECKPOINT]${NC} Recipe search complete"
+        echo -e "${GREEN}[CHECKPOINT]${NC} Step 1 complete - Recipe search done"
+    else
+        echo ""
+        echo -e "${CYAN}=== STEP 1: Recipe Search ===${NC}"
+        echo -e "${GREEN}[SKIPPED]${NC} Already complete"
     fi
 
     # === STEP 2: Generate Import ===
     if ! is_step_complete "import_generated"; then
         echo ""
         echo -e "${CYAN}=== STEP 2: Generate import.yml ===${NC}"
+        echo "  [2.1] Reading plan parameters..."
 
         local rt svc pfx
         rt=$(jq -r '.runtime' "$BOOTSTRAP_PLAN_FILE")
         svc=$(jq -r '(.managed_services // []) | join(",")' "$BOOTSTRAP_PLAN_FILE")
         pfx=$(jq -r '.hostname_prefix' "$BOOTSTRAP_PLAN_FILE")
+        echo "  [2.2] Runtime: $rt, Services: $svc, Prefix: $pfx"
 
         local gen_args="--runtime $rt --prefix $pfx"
         [ -n "$svc" ] && gen_args="$gen_args --services $svc"
         [ "$ha_mode" = "true" ] && gen_args="$gen_args --ha"
 
-        generate_import_yml $gen_args --output "$BOOTSTRAP_IMPORT_FILE"
+        echo "  [2.3] Generating import.yml..."
+        if ! generate_import_yml $gen_args --output "$BOOTSTRAP_IMPORT_FILE"; then
+            echo ""
+            echo -e "${RED}╔══════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${RED}║  ❌ BOOTSTRAP FAILED - Could not generate import.yml             ║${NC}"
+            echo -e "${RED}╚══════════════════════════════════════════════════════════════════╝${NC}"
+            echo ""
+            echo "AGENT: Check the error above and fix the issue, then:"
+            echo "  .zcp/workflow.sh bootstrap --resume"
+            return 1
+        fi
 
-        echo "Generated: $BOOTSTRAP_IMPORT_FILE"
+        echo "  [2.4] Generated: $BOOTSTRAP_IMPORT_FILE"
         echo ""
         cat "$BOOTSTRAP_IMPORT_FILE"
 
         write_checkpoint "import_generated" "complete" "$(jq -n --arg f "$BOOTSTRAP_IMPORT_FILE" '{file: $f}')"
-        echo -e "${GREEN}[CHECKPOINT]${NC} Import file generated"
+        echo -e "${GREEN}[CHECKPOINT]${NC} Step 2 complete - import.yml generated"
+    else
+        echo ""
+        echo -e "${CYAN}=== STEP 2: Generate import.yml ===${NC}"
+        echo -e "${GREEN}[SKIPPED]${NC} Already complete"
     fi
 
     # === STEP 3: Import Services ===
     if ! is_step_complete "services_imported"; then
         echo ""
         echo -e "${CYAN}=== STEP 3: Import Services ===${NC}"
+        echo "  [3.1] Checking for existing services..."
 
-        # Check if expected services already exist (resume after partial failure)
         local dev_hostname stage_hostname
         dev_hostname=$(jq -r '.dev_hostname' "$BOOTSTRAP_PLAN_FILE")
         stage_hostname=$(jq -r '.stage_hostname' "$BOOTSTRAP_PLAN_FILE")
+        echo "  [3.2] Expected: $dev_hostname, $stage_hostname"
 
         local existing_services
         existing_services=$(get_services_json)
@@ -379,26 +420,38 @@ ZCLI_AUTH
         stage_exists=$(echo "$existing_services" | jq -r --arg h "$stage_hostname" '.services[] | select(.name == $h) | .name' 2>/dev/null)
 
         if [ -n "$dev_exists" ] && [ -n "$stage_exists" ]; then
-            echo "Services already exist (resuming after partial failure)"
-            echo "  Found: $dev_hostname, $stage_hostname"
+            echo "  [3.3] Services already exist (resuming)"
         else
-            # Run import - ignore EOF errors (transient backend issue, assume success)
-            echo "Importing services..."
+            echo "  [3.3] Importing services via zcli..."
             zcli project service-import "$BOOTSTRAP_IMPORT_FILE" -P "$projectId" 2>&1 || {
-                echo "⚠️  Import returned error (often false positive due to EOF), continuing..."
+                echo "  [3.4] Import returned warning (EOF errors are normal, continuing...)"
             }
         fi
 
-        echo "Waiting for services to be RUNNING..."
-        wait_for_services || return 1
+        echo "  [3.5] Waiting for services to reach RUNNING state..."
+        if ! wait_for_services; then
+            echo ""
+            echo -e "${RED}╔══════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${RED}║  ❌ BOOTSTRAP FAILED - Services not running                      ║${NC}"
+            echo -e "${RED}╚══════════════════════════════════════════════════════════════════╝${NC}"
+            echo ""
+            echo "AGENT: Check service status and errors:"
+            echo "  1. zcli service list -P \$projectId"
+            echo "  2. zcli project notifications -P \$projectId"
+            echo "  3. Fix any issues, then: .zcp/workflow.sh bootstrap --resume"
+            return 1
+        fi
+        echo "  [3.6] All services RUNNING"
 
-        # Get service IDs (using helper to extract clean JSON)
         local services_json
         services_json=$(get_services_json)
 
-        # Pass JSON via process substitution to avoid shell quoting issues
         write_checkpoint "services_imported" "complete" "$(echo "$services_json" | jq -c .)"
-        echo -e "${GREEN}[CHECKPOINT]${NC} Services imported and running"
+        echo -e "${GREEN}[CHECKPOINT]${NC} Step 3 complete - Services imported and running"
+    else
+        echo ""
+        echo -e "${CYAN}=== STEP 3: Import Services ===${NC}"
+        echo -e "${GREEN}[SKIPPED]${NC} Already complete"
     fi
 
     # === STEP 4: Generate zerops.yml Skeleton ===
@@ -406,45 +459,112 @@ ZCLI_AUTH
     if ! is_step_complete "zerops_yml_generated"; then
         echo ""
         echo -e "${CYAN}=== STEP 4: Generate zerops.yml Skeleton ===${NC}"
+        echo "  [4.1] Reading plan..."
 
         local dev_hostname
         dev_hostname=$(jq -r '.dev_hostname' "$BOOTSTRAP_PLAN_FILE")
+        echo "  [4.2] Dev hostname: $dev_hostname"
 
         local mount_path="/var/www/$dev_hostname"
+        echo "  [4.3] Checking mount at: $mount_path"
 
         # Check if mount point exists - may need SSHFS mount
         if [ ! -d "$mount_path" ]; then
-            echo -e "${YELLOW}Mount point does not exist: $mount_path${NC}"
-            echo "Run: .zcp/mount.sh $dev_hostname"
-            echo "Then: .zcp/workflow.sh bootstrap --resume"
+            echo ""
+            echo -e "${RED}╔══════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${RED}║  ❌ BOOTSTRAP FAILED - Mount point missing                       ║${NC}"
+            echo -e "${RED}╚══════════════════════════════════════════════════════════════════╝${NC}"
+            echo ""
+            echo "Mount point does not exist: $mount_path"
+            echo ""
+            echo "AGENT: Run these commands to fix:"
+            echo "  1. .zcp/mount.sh $dev_hostname"
+            echo "  2. .zcp/workflow.sh bootstrap --resume"
             return 1
         fi
+        echo "  [4.4] Mount point exists"
 
         # Check if mount is accessible (SSHFS might be mounted but stale)
         if ! ls "$mount_path" >/dev/null 2>&1; then
-            echo -e "${YELLOW}Mount point not accessible: $mount_path${NC}"
-            echo "The SSHFS mount may be stale. Try:"
-            echo "  fusermount -u $mount_path 2>/dev/null || true"
-            echo "  .zcp/mount.sh $dev_hostname"
-            echo "Then: .zcp/workflow.sh bootstrap --resume"
+            echo ""
+            echo -e "${RED}╔══════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${RED}║  ❌ BOOTSTRAP FAILED - Mount not accessible                      ║${NC}"
+            echo -e "${RED}╚══════════════════════════════════════════════════════════════════╝${NC}"
+            echo ""
+            echo "Mount point not accessible: $mount_path"
+            echo ""
+            echo "AGENT: Run these commands to fix:"
+            echo "  1. fusermount -u $mount_path 2>/dev/null || true"
+            echo "  2. .zcp/mount.sh $dev_hostname"
+            echo "  3. .zcp/workflow.sh bootstrap --resume"
             return 1
         fi
+        echo "  [4.5] Mount is accessible"
 
         # Empty directory is EXPECTED with startWithoutCode: true
-        # This is NOT an error - the directory is intentionally empty
-        local file_count
-        file_count=$(ls -A "$mount_path" 2>/dev/null | wc -l)
+        local file_count=0
+        local files_output
+        if files_output=$(ls -A "$mount_path" 2>/dev/null); then
+            file_count=$(echo "$files_output" | grep -c . || true)
+        fi
         if [ "$file_count" -eq 0 ]; then
-            echo -e "${GREEN}✓${NC} Mount ready at $mount_path (empty - expected with startWithoutCode: true)"
+            echo "  [4.6] Mount empty (expected with startWithoutCode: true)"
         else
-            echo -e "${GREEN}✓${NC} Mount ready at $mount_path ($file_count files)"
+            echo "  [4.6] Mount has $file_count files"
         fi
 
-        generate_zerops_yml_skeleton "$dev_hostname" "8080"
-        echo "Generated: $mount_path/zerops.yml"
+        # Test SSHFS write capability
+        echo "  [4.7] Testing write access..."
+        if ! touch "$mount_path/.zcp_write_test" 2>/dev/null; then
+            echo ""
+            echo -e "${RED}╔══════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${RED}║  ❌ BOOTSTRAP FAILED - Cannot write to mount                     ║${NC}"
+            echo -e "${RED}╚══════════════════════════════════════════════════════════════════╝${NC}"
+            echo ""
+            echo "Cannot write to: $mount_path"
+            echo ""
+            echo "AGENT: The SSHFS mount is read-only or disconnected."
+            echo "  1. Check if service is running: zcli service list -P \$projectId"
+            echo "  2. Remount: .zcp/mount.sh $dev_hostname"
+            echo "  3. Resume: .zcp/workflow.sh bootstrap --resume"
+            return 1
+        fi
+        rm -f "$mount_path/.zcp_write_test" 2>/dev/null
+        echo "  [4.8] Write access confirmed"
 
-        write_checkpoint "zerops_yml_generated" "complete" "$(jq -n --arg f "$mount_path/zerops.yml" '{file: $f}')"
-        echo -e "${GREEN}[CHECKPOINT]${NC} zerops.yml skeleton generated"
+        # Generate zerops.yml
+        echo "  [4.9] Generating zerops.yml skeleton..."
+        local gen_result
+        gen_result=$(generate_zerops_yml_skeleton "$dev_hostname" "8080" 2>&1) || true
+
+        if [ -f "$mount_path/zerops.yml" ]; then
+            echo "  [4.10] zerops.yml created successfully"
+            write_checkpoint "zerops_yml_generated" "complete" "$(jq -n --arg f "$mount_path/zerops.yml" '{file: $f}')"
+            echo -e "${GREEN}[CHECKPOINT]${NC} Step 4 complete - zerops.yml skeleton generated"
+        else
+            echo ""
+            echo -e "${RED}╔══════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${RED}║  ❌ BOOTSTRAP FAILED - zerops.yml not created                    ║${NC}"
+            echo -e "${RED}╚══════════════════════════════════════════════════════════════════╝${NC}"
+            echo ""
+            echo "Failed to create: $mount_path/zerops.yml"
+            if [ -n "$gen_result" ]; then
+                echo "Error: $gen_result"
+            fi
+            echo ""
+            echo "AGENT: Create zerops.yml manually, then resume:"
+            echo "  1. Read /tmp/recipe_review.json for patterns"
+            echo "  2. Create $mount_path/zerops.yml with build/deploy/run config"
+            echo "  3. .zcp/workflow.sh bootstrap --resume"
+            echo ""
+            echo "Or mark step complete manually:"
+            echo "  echo '{\"checkpoints\":{\"zerops_yml_generated\":{\"status\":\"complete\"}}}' | jq -s '.[0] * .[1]' $BOOTSTRAP_COORDINATION_FILE - > /tmp/coord_new.json && mv /tmp/coord_new.json $BOOTSTRAP_COORDINATION_FILE"
+            return 1
+        fi
+    else
+        echo ""
+        echo -e "${CYAN}=== STEP 4: Generate zerops.yml Skeleton ===${NC}"
+        echo -e "${GREEN}[SKIPPED]${NC} Already complete"
     fi
 
     # === HANDOFF TO AGENT ===
@@ -460,16 +580,21 @@ ZCLI_AUTH
 
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║  ✅ SCAFFOLDING COMPLETE - Services created and running          ║${NC}"
+    echo -e "${GREEN}║  ✅ BOOTSTRAP COMPLETE - ALL 4 STEPS FINISHED SUCCESSFULLY       ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "Services:"
+    echo "Services created:"
     echo "  Dev:   $dev_hostname (ID: $dev_id)"
     echo "  Stage: $stage_hostname (ID: $stage_id)"
     echo "  Files: /var/www/$dev_hostname/"
     echo ""
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}  AGENT: YOU MUST NOW COMPLETE THESE 5 TASKS IN ORDER             ${NC}"
+    echo -e "${YELLOW}  DO NOT RUN ANY OTHER COMMANDS UNTIL ALL TASKS ARE DONE          ${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║  📋 START TASK 1 NOW - Complete zerops.yml                       ║${NC}"
+    echo -e "${CYAN}║  📋 TASK 1: Complete zerops.yml                                  ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo "Edit: /var/www/${dev_hostname}/zerops.yml"
@@ -533,6 +658,10 @@ ZCLI_AUTH
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo "Run '.zcp/workflow.sh show' anytime to see pending tasks."
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}  END OF BOOTSTRAP SCRIPT - START TASK 1 NOW                       ${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
     # Write HANDOFF evidence (NOT complete - agent must run bootstrap-done after tasks)

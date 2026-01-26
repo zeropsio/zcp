@@ -24,6 +24,7 @@ NOTES:
   - Only works with runtime services (go, nodejs, php, python, etc.)
   - Managed services (postgresql, valkey, etc.) cannot be mounted
   - Run after service import to enable SSHFS editing on dev
+  - Empty directory is EXPECTED with startWithoutCode: true (this is correct!)
 EOF
     exit 0
 fi
@@ -37,20 +38,35 @@ fi
 
 svc="$1"
 
-# Check if already mounted
-if [ -d "/var/www/$svc" ] && [ -n "$(ls -A /var/www/$svc 2>/dev/null)" ]; then
+# Check if already mounted (mount point exists AND is accessible via SSHFS)
+# Note: empty directory is valid with startWithoutCode: true
+if [ -d "/var/www/$svc" ] && mountpoint -q "/var/www/$svc" 2>/dev/null; then
     echo "✓ /var/www/$svc already mounted"
     exit 0
+fi
+
+# Fallback check if mountpoint command not available
+if [ -d "/var/www/$svc" ] && ls "/var/www/$svc" >/dev/null 2>&1 && [ -e "/var/www/$svc/.." ]; then
+    # If we can access parent via mount, it's likely mounted
+    if mount | grep -q "/var/www/$svc"; then
+        echo "✓ /var/www/$svc already mounted"
+        exit 0
+    fi
 fi
 
 echo "Creating mount for $svc..."
 mkdir -p "/var/www/$svc"
 sudo -E zsc unit create "sshfs-$svc" "sshfs -f -o reconnect,StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3 $svc:/var/www /var/www/$svc"
 
-# Verify
+# Verify mount is accessible
 sleep 1
-if [ -n "$(ls -A /var/www/$svc 2>/dev/null)" ]; then
-    echo "✓ Mounted at /var/www/$svc"
+if ls "/var/www/$svc" >/dev/null 2>&1; then
+    local_files=$(ls -A "/var/www/$svc" 2>/dev/null | wc -l)
+    if [ "$local_files" -eq 0 ]; then
+        echo "✓ Mounted at /var/www/$svc (empty - expected with startWithoutCode: true)"
+    else
+        echo "✓ Mounted at /var/www/$svc ($local_files files)"
+    fi
 else
-    echo "⚠ Mount created but directory empty - service may not be running yet"
+    echo "⚠ Mount may not be accessible - check service status"
 fi

@@ -97,6 +97,12 @@ generate_zerops_yml_skeleton() {
         fi
     } > "$output_file"
 
+    # Verify the file was actually created
+    if [ ! -f "$output_file" ]; then
+        echo "ERROR: Failed to write $output_file" >&2
+        return 1
+    fi
+
     echo "$output_file"
 }
 
