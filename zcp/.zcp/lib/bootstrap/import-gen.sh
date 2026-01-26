@@ -105,10 +105,12 @@ generate_import_yml() {
             done
         fi
 
-        # Dev runtime
+        # Dev runtime - low baseline, use 'zsc scale' before builds
         echo "  - hostname: ${prefix}dev"
         echo "    type: $runtime_version"
         echo "    startWithoutCode: true"
+        echo "    verticalAutoscaling:"
+        echo "      minRam: 0.5"
         echo "    # NOTE: enableSubdomainAccess NOT valid with startWithoutCode"
         echo "    # Use: zcli service enable-subdomain -S {id} after import"
         echo ""

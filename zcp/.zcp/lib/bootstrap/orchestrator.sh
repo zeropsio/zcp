@@ -686,8 +686,8 @@ ZCLI_AUTH
             agent_tasks: [
                 "TASK 1: Edit /var/www/\($dev_hostname)/zerops.yml - fill in buildCommands, deployFiles, start",
                 "TASK 2: Create application code in /var/www/\($dev_hostname)/ - minimal status page",
-                "TASK 3: Push dev - run from inside dev: ssh \($dev_hostname) then zcli login && zcli push [hostname] --setup=dev --noGit, then from ZCP: zcli service enable-subdomain -S \($dev_id), then .zcp/verify.sh \($dev_hostname) 8080",
-                "TASK 4: Push stage - run from inside dev: ssh \($dev_hostname) then zcli push \($stage_id) --setup=prod --noGit, then from ZCP: zcli service enable-subdomain -S \($stage_id), then .zcp/verify.sh \($stage_hostname) 8080",
+                "TASK 3: Push dev - ssh \($dev_hostname), then: zcli login && zcli push [hostname] --setup=dev --noGit, then from ZCP: zcli service enable-subdomain -S \($dev_id) && .zcp/verify.sh \($dev_hostname) 8080",
+                "TASK 4: Push stage - ssh \($dev_hostname), then: zcli push \($stage_id) --setup=prod --noGit, then from ZCP: zcli service enable-subdomain -S \($stage_id) && .zcp/verify.sh \($stage_hostname) 8080",
                 "TASK 5: Run: .zcp/workflow.sh bootstrap-done"
             ],
             next_command: ".zcp/workflow.sh bootstrap-done"

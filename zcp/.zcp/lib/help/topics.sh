@@ -153,6 +153,13 @@ Triple-kill pattern (clear orphan processes):
   ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; \
              fuser -k {port}/tcp 2>/dev/null; true'
 
+Scale up for heavy builds (local compilation on dev):
+  ssh {dev} 'zsc scale ram 1GiB 10m'   # Temporary boost for 10 min
+  ssh {dev} 'zsc scale ram auto'       # Reset to normal
+
+  ⚠️  Only needed for LOCAL builds on dev container.
+      zcli push uses separate Zerops build containers (no scaling needed).
+
 Build & run:
   ssh {dev} "{build_command}"
   ssh {dev} './{binary} >> /tmp/app.log 2>&1'
@@ -933,6 +940,7 @@ ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2
 
 BUILD & RUN
 ─────────────────────────────────────────────────────────────────
+ssh {dev} 'zsc scale ram 1GiB 10m'     # Scale up for heavy local builds
 ssh {dev} "{build_command}"
 ssh {dev} './{binary} >> /tmp/app.log 2>&1'
 # ↑ Set run_in_background=true in Bash tool!
