@@ -82,7 +82,12 @@ _check_services_status() {
     local service_ids='{}'
 
     local service_count
-    service_count=$(echo "$services_json" | jq '.services | length')
+    service_count=$(echo "$services_json" | jq '(.services // []) | length')
+
+    # Ensure service_count is a valid number
+    if ! [[ "$service_count" =~ ^[0-9]+$ ]]; then
+        service_count=0
+    fi
 
     for ((i=0; i<service_count; i++)); do
         local name status id
@@ -116,10 +121,18 @@ _check_services_status() {
         if [ "$is_bootstrap_service" = true ]; then
             total_count=$((total_count + 1))
 
-            local is_ready="false"
+            local is_ready=false
             if [ "$status" = "RUNNING" ] || [ "$status" = "ACTIVE" ]; then
                 ready_count=$((ready_count + 1))
-                is_ready="true"
+                is_ready=true
+            fi
+
+            # Ensure valid JSON base before updating
+            if ! echo "$service_statuses" | jq -e . >/dev/null 2>&1; then
+                service_statuses='{}'
+            fi
+            if ! echo "$service_ids" | jq -e . >/dev/null 2>&1; then
+                service_ids='{}'
             fi
 
             service_statuses=$(echo "$service_statuses" | jq \
@@ -159,11 +172,15 @@ _check_services_status() {
 # Output JSON response based on status
 _output_status() {
     local status_code="$1"
-    local service_statuses="${_WS_SERVICE_STATUSES:-{}}"
-    local service_ids="${_WS_SERVICE_IDS:-{}}"
+    local service_statuses="${_WS_SERVICE_STATUSES}"
+    local service_ids="${_WS_SERVICE_IDS}"
     local ready_count="${_WS_READY_COUNT:-0}"
     local total_count="${_WS_TOTAL_COUNT:-0}"
     local elapsed="${_WS_ELAPSED:-0}"
+
+    # Ensure valid JSON (empty string != unset, so :- doesn't help)
+    [ -z "$service_statuses" ] && service_statuses='{}'
+    [ -z "$service_ids" ] && service_ids='{}'
 
     case "$status_code" in
         0)  # All ready
