@@ -404,10 +404,26 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 
 # For each service pair, spawn a subagent via Task tool
 # Subagent: creates zerops.yml, deploys, writes code, tests, marks complete
+# Subagent MUST run: .zcp/mark-complete.sh {hostname} when done
 
-# Wait for all subagents to complete
+# Wait for all subagents to complete (with polling and auto-detection)
+.zcp/wait-for-subagents.sh --timeout 600
+# OR poll manually:
 .zcp/bootstrap.sh step aggregate-results  # Poll until all complete
 # Creates discovery.json, sets workflow to DEVELOP phase
+```
+
+### Subagent State Tracking
+
+Subagents mark completion by running `.zcp/mark-complete.sh {hostname}`. If this fails:
+
+```bash
+# aggregate-results auto-detects: if zerops.yml + source code exist → auto-mark complete
+.zcp/bootstrap.sh step aggregate-results
+
+# Manual recovery if needed:
+.zcp/mark-complete.sh appdev
+.zcp/bootstrap.sh step aggregate-results
 ```
 
 ### Bootstrap Scenarios
@@ -420,7 +436,9 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 | Check progress | `.zcp/bootstrap.sh status` | Shows checkpoint, pending steps |
 | Already conformant | `bootstrap ...` | Returns "use init" guidance |
 | Subagents pending | `aggregate-results` | Returns in_progress, poll again |
+| **State file missing** | `mark-complete {hostname}` | Manually mark, then aggregate |
 | All subagents done | `aggregate-results` | Creates discovery.json, completes |
+| Wait with polling | `wait-for-subagents.sh` | Polls until complete or timeout |
 
 ---
 
@@ -688,6 +706,9 @@ Checks:
 .zcp/bootstrap.sh step {step-name}       # Run individual step
 .zcp/bootstrap.sh status                 # Check progress
 .zcp/bootstrap.sh resume                 # Get next step to run
+.zcp/wait-for-subagents.sh               # Wait for subagents with polling
+.zcp/mark-complete.sh {hostname}         # Mark service bootstrap complete
+.zcp/mark-complete.sh --status           # Show all service states
 
 # Transitions
 .zcp/workflow.sh transition_to DISCOVER  # Requires Gate 0 (recipe review)

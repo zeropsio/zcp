@@ -115,11 +115,12 @@ Available in: /tmp/recipe_review.json
 
 8. **Test stage via subdomain**
 
-9. **Mark complete**
+9. **Mark complete** (CRITICAL - do this last!)
    \`\`\`bash
-   source .zcp/lib/bootstrap/state.sh
-   set_service_state "${dev_hostname}" "phase" "complete"
+   .zcp/mark-complete.sh ${dev_hostname}
    \`\`\`
+   This creates the state file that aggregate-results checks.
+   If this fails for any reason, the main agent can run it manually.
 PROMPT
 )
 
@@ -151,7 +152,7 @@ PROMPT
                     "Deploy to stage (from dev workspace): ssh \($hostname) \"zcli push \($stage_id)\"",
                     "Enable subdomain on stage",
                     "Test stage via subdomain",
-                    "Mark complete: set_service_state \($hostname) phase complete"
+                    "Mark complete: .zcp/mark-complete.sh \($hostname)"
                 ]
             }')
 
@@ -170,11 +171,17 @@ PROMPT
             spawn_method: "Use Task tool with subagent_type=general-purpose for each service pair",
             parallel_execution: "Launch all subagents in parallel for maximum efficiency",
             after_all_complete: "Run: .zcp/bootstrap.sh step aggregate-results",
+            recovery_if_pending: [
+                "If aggregate-results shows pending services:",
+                "1. Verify files exist: ls /var/www/{hostname}/zerops.yml",
+                "2. Mark complete manually: .zcp/mark-complete.sh {hostname}",
+                "3. Re-run: .zcp/bootstrap.sh step aggregate-results"
+            ],
             notes: [
                 "Each subagent receives full handoff data and recipe patterns",
                 "Subagents work independently on their service pair",
-                "Use set_service_state to track progress",
-                "aggregate-results step checks all services are complete"
+                "Subagents MUST run: .zcp/mark-complete.sh {hostname} when done",
+                "aggregate-results checks state files AND can auto-detect from files"
             ]
         }')
 

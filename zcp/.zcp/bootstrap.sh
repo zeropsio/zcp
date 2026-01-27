@@ -402,6 +402,8 @@ COMMANDS:
     reset                Clear all bootstrap state
     resume               Get next step to execute
     done                 Validate completion (used by workflow.sh bootstrap-done)
+    mark-complete <host> Mark a service as complete (for recovery)
+    wait-subagents       Wait for all subagents to complete (with polling)
 
 STEPS:
     plan                 Create bootstrap plan (--runtime, --services, --prefix)
@@ -422,6 +424,12 @@ EXAMPLES:
     .zcp/bootstrap.sh step recipe-search
     .zcp/bootstrap.sh step generate-import
     .zcp/bootstrap.sh step mount-dev apidev
+
+    # Wait for subagents (after spawning via Task tool)
+    .zcp/bootstrap.sh wait-subagents --timeout 600
+
+    # Manual recovery if subagent didn't mark complete
+    .zcp/bootstrap.sh mark-complete appdev
 
     # Check status
     .zcp/bootstrap.sh status
@@ -470,6 +478,20 @@ main() {
             ;;
         done)
             cmd_done
+            ;;
+        mark-complete)
+            # Delegate to mark-complete.sh script
+            local hostname="${1:-}"
+            if [ -z "$hostname" ]; then
+                echo "ERROR: hostname required" >&2
+                echo "Usage: .zcp/bootstrap.sh mark-complete <hostname>" >&2
+                exit 1
+            fi
+            exec "$SCRIPT_DIR/mark-complete.sh" "$hostname"
+            ;;
+        wait-subagents)
+            # Delegate to wait-for-subagents.sh script
+            exec "$SCRIPT_DIR/wait-for-subagents.sh" "$@"
             ;;
         -h|--help|help|"")
             show_help

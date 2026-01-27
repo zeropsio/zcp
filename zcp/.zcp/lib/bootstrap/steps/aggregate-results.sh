@@ -6,8 +6,65 @@
 # per-service state. When all services are complete, it creates the discovery.json
 # file and completes the bootstrap process.
 #
-# Inputs: Per-service state from subagents (via set_service_state)
+# FALLBACK DETECTION: If state file is missing but evidence files exist
+# (zerops.yml, source code), this step will auto-mark the service complete.
+# This handles cases where subagent couldn't write the state file.
+#
+# Inputs: Per-service state from subagents (via set_service_state or mark-complete.sh)
 # Outputs: discovery.json, bootstrap_complete.json, workflow ready for DEVELOP
+
+# Verify completion by checking actual files exist
+# Returns 0 if evidence of completion exists, 1 otherwise
+verify_completion_by_files() {
+    local dev_hostname="$1"
+    local mount_path="/var/www/$dev_hostname"
+
+    # Must have zerops.yml
+    if [ ! -f "$mount_path/zerops.yml" ]; then
+        return 1
+    fi
+
+    # Must have some source code
+    local has_code=false
+    for pattern in main.go index.js app.py main.py server.go index.ts app.ts; do
+        if [ -f "$mount_path/$pattern" ]; then
+            has_code=true
+            break
+        fi
+    done
+
+    # Also check for any source files if specific patterns don't match
+    if [ "$has_code" = false ]; then
+        if find "$mount_path" -maxdepth 2 -type f \( -name "*.go" -o -name "*.js" -o -name "*.py" -o -name "*.ts" -o -name "*.rs" \) 2>/dev/null | grep -q .; then
+            has_code=true
+        fi
+    fi
+
+    if [ "$has_code" = false ]; then
+        return 1
+    fi
+
+    # All checks passed - evidence of completion exists
+    return 0
+}
+
+# Auto-mark a service complete using mark-complete.sh
+auto_mark_complete() {
+    local dev_hostname="$1"
+    local script_dir="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}"
+    local mark_script="$script_dir/mark-complete.sh"
+
+    if [ -x "$mark_script" ]; then
+        "$mark_script" "$dev_hostname" >/dev/null 2>&1
+        return $?
+    else
+        # Fallback: write directly if script not found
+        local state_dir="${BOOTSTRAP_STATE_DIR:-$script_dir/state/bootstrap}/services/$dev_hostname"
+        mkdir -p "$state_dir" 2>/dev/null || return 1
+        echo "{\"phase\":\"complete\",\"completed_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"auto_detected\":true}" > "$state_dir/status.json"
+        return $?
+    fi
+}
 
 step_aggregate_results() {
     local handoff_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json"
@@ -51,12 +108,30 @@ step_aggregate_results() {
         local phase
         phase=$(echo "$service_state" | jq -r '.phase // "unknown"')
 
+        # FALLBACK DETECTION: If phase is unknown but files exist, auto-mark complete
+        # This handles cases where subagent couldn't write state file (shell context issues)
+        local auto_detected=false
+        if [ "$phase" = "unknown" ] || [ "$phase" = "null" ] || [ -z "$phase" ]; then
+            local mount_path
+            mount_path=$(echo "$handoffs" | jq -r ".[$i].mount_path // \"/var/www/$dev_hostname\"")
+
+            if verify_completion_by_files "$dev_hostname"; then
+                # Files exist! Auto-mark as complete
+                if auto_mark_complete "$dev_hostname"; then
+                    phase="complete"
+                    auto_detected=true
+                    service_state=$(get_service_state "$dev_hostname" 2>/dev/null || echo '{"phase":"complete","auto_detected":true}')
+                fi
+            fi
+        fi
+
         local result
         result=$(jq -n \
             --arg h "$dev_hostname" \
             --arg p "$phase" \
+            --argjson auto "$auto_detected" \
             --argjson s "$service_state" \
-            '{hostname: $h, phase: $p, state: $s}')
+            '{hostname: $h, phase: $p, auto_detected: $auto, state: $s}')
 
         results=$(echo "$results" | jq --argjson r "$result" '. + [$r]')
 
@@ -91,7 +166,16 @@ step_aggregate_results() {
                 total: $total,
                 pending: $pending,
                 results: $results,
-                action: "Wait for subagents to complete, then re-run this step"
+                action: "Wait for subagents to complete, then re-run this step",
+                recovery: {
+                    description: "If subagent reported success but state file missing:",
+                    steps: [
+                        "1. Verify files exist: ls /var/www/{hostname}/zerops.yml",
+                        "2. Mark complete manually: .zcp/mark-complete.sh {hostname}",
+                        "3. Re-run: .zcp/bootstrap.sh step aggregate-results"
+                    ],
+                    note: "Auto-detection will mark complete if zerops.yml + source code exist"
+                }
             }')
 
         json_progress "aggregate-results" \
