@@ -397,7 +397,7 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 .zcp/bootstrap.sh step recipe-search      # Fetch patterns
 .zcp/bootstrap.sh step generate-import    # Create import.yml
 .zcp/bootstrap.sh step import-services    # Send to Zerops API
-.zcp/bootstrap.sh step wait-services      # Poll until services ready
+.zcp/bootstrap.sh step wait-services --wait  # Polls automatically until ready!
 .zcp/bootstrap.sh step mount-dev appdev   # SSHFS mount
 .zcp/bootstrap.sh step finalize           # Create handoff data
 .zcp/bootstrap.sh step spawn-subagents    # Get subagent instructions
@@ -412,6 +412,26 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 .zcp/bootstrap.sh step aggregate-results  # Poll until all complete
 # Creates discovery.json, sets workflow to DEVELOP phase
 ```
+
+### CRITICAL: Never Write Shell Loops
+
+**DO NOT write `while` loops in bash commands.** They fail with `(eval):1: parse error`.
+
+```bash
+# WRONG - will fail with parse error:
+while true; do
+    result=$(.zcp/bootstrap.sh step wait-services)
+    ...
+done
+
+# CORRECT - use --wait flag:
+.zcp/bootstrap.sh step wait-services --wait
+```
+
+All polling commands have `--wait` flags that handle looping internally:
+- `.zcp/bootstrap.sh step wait-services --wait` - Wait for services to be RUNNING
+- `.zcp/wait-for-subagents.sh` - Wait for subagents to complete
+- `.zcp/status.sh --wait {service}` - Wait for deployment to complete
 
 ### Subagent State Tracking
 

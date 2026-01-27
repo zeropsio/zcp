@@ -238,7 +238,7 @@ ZCLI_AUTH
     echo "  1. .zcp/bootstrap.sh step recipe-search"
     echo "  2. .zcp/bootstrap.sh step generate-import"
     echo "  3. .zcp/bootstrap.sh step import-services"
-    echo "  4. .zcp/bootstrap.sh step wait-services  # Loop until status=complete"
+    echo "  4. .zcp/bootstrap.sh step wait-services --wait  # Polls automatically!"
     echo "  5. .zcp/bootstrap.sh step mount-dev {hostname}"
     echo "  6. .zcp/bootstrap.sh step finalize"
     echo "  7. .zcp/bootstrap.sh step spawn-subagents  # Returns subagent instructions"

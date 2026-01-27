@@ -2,34 +2,44 @@
 # .zcp/lib/bootstrap/steps/wait-services.sh
 # Step: Wait for services to reach RUNNING state
 #
-# This step is designed for repeated calls (polling).
-# Returns in_progress until all services are RUNNING.
+# TWO MODES:
+#   1. Single check (default): Returns immediately with current status
+#   2. Polling mode (--wait): Loops internally until complete or timeout
+#
+# IMPORTANT: Agents should use --wait mode to avoid writing shell loops!
+# DO NOT write while loops in bash - use --wait flag instead!
+#
+# Usage:
+#   .zcp/bootstrap.sh step wait-services              # Single check (returns immediately)
+#   .zcp/bootstrap.sh step wait-services --wait       # Poll until ready (RECOMMENDED)
+#   .zcp/bootstrap.sh step wait-services --wait 300   # Poll with custom timeout
 #
 # Inputs: Service IDs (from import-services)
 # Outputs: Service statuses, ready when all RUNNING
 
-# HIGH-11: Track start time for timeout (session-scoped to prevent race conditions)
-# Use session ID from bootstrap state for scoping
+# Track start time for timeout (session-scoped to prevent race conditions)
 _get_wait_start_file() {
     local session_id
     session_id=$(cat "${ZCP_TMP_DIR:-/tmp}/claude_session" 2>/dev/null || echo "$$")
     echo "${ZCP_TMP_DIR:-/tmp}/bootstrap_wait_start_${session_id}"
 }
 
-step_wait_services() {
-    local timeout="${1:-600}"  # Default 10 minute timeout
+# Internal: Check service status once, return result code
+# Returns: 0 = all ready, 1 = error, 2 = still waiting
+_check_services_status() {
+    local timeout="$1"
+    local silent="${2:-false}"
 
     # Check projectId
     if [ -z "${projectId:-}" ]; then
-        json_error "wait-services" "projectId not set" '{}' '[]'
+        [ "$silent" = false ] && json_error "wait-services" "projectId not set" '{}' '[]'
         return 1
     fi
 
-    # HIGH-11: Use session-scoped wait start file
+    # Track elapsed time
     local wait_start_file
     wait_start_file=$(_get_wait_start_file)
 
-    # Track elapsed time
     local start_time elapsed_seconds
     if [ -f "$wait_start_file" ]; then
         start_time=$(cat "$wait_start_file")
@@ -40,11 +50,11 @@ step_wait_services() {
     elapsed_seconds=$(($(date +%s) - start_time))
 
     # Check timeout
-    if [ $elapsed_seconds -gt $timeout ]; then
+    if [ "$elapsed_seconds" -gt "$timeout" ]; then
         rm -f "$wait_start_file"
-        json_error "wait-services" "Timeout waiting for services (${timeout}s)" \
+        [ "$silent" = false ] && json_error "wait-services" "Timeout waiting for services (${timeout}s)" \
             "{\"elapsed_seconds\": $elapsed_seconds, \"timeout\": true}" \
-            '["Check zcli service list", "Check project notifications", "Retry: .zcp/bootstrap.sh step wait-services"]'
+            '["Check zcli service list", "Check project notifications"]'
         return 1
     fi
 
@@ -53,7 +63,7 @@ step_wait_services() {
     services_json=$(zcli service list -P "$projectId" --format json 2>&1 | extract_zcli_json)
 
     if [ -z "$services_json" ] || ! echo "$services_json" | jq -e . >/dev/null 2>&1; then
-        json_error "wait-services" "Failed to get service list" '{}' '["Check zcli authentication", "Run: zcli service list"]'
+        [ "$silent" = false ] && json_error "wait-services" "Failed to get service list" '{}' '["Check zcli authentication"]'
         return 1
     fi
 
@@ -71,7 +81,6 @@ step_wait_services() {
     local total_count=0
     local service_ids='{}'
 
-    # HIGH-9: Use JSON array output instead of colon-delimited (prevents parsing failures)
     local service_count
     service_count=$(echo "$services_json" | jq '.services | length')
 
@@ -95,7 +104,6 @@ step_wait_services() {
         local managed
         managed=$(echo "$plan" | jq -r '.managed_services[]' 2>/dev/null || echo "")
         for m in $managed; do
-            # Managed services use hostnames like "db", "cache"
             case "$m" in
                 postgresql*|mysql*|mariadb*|mongodb*) [ "$name" = "db" ] && is_bootstrap_service=true ;;
                 valkey*|keydb*) [ "$name" = "cache" ] && is_bootstrap_service=true ;;
@@ -127,58 +135,145 @@ step_wait_services() {
         fi
     done
 
-    # If no bootstrap services found yet, services might still be creating
-    if [ $total_count -eq 0 ]; then
-        local data
-        data=$(jq -n \
-            --argjson elapsed "$elapsed_seconds" \
-            '{
-                services: {},
-                ready_count: 0,
-                total_count: 0,
-                elapsed_seconds: $elapsed,
-                note: "Services not yet visible - still creating"
-            }')
+    # Export for caller
+    export _WS_SERVICE_STATUSES="$service_statuses"
+    export _WS_SERVICE_IDS="$service_ids"
+    export _WS_READY_COUNT="$ready_count"
+    export _WS_TOTAL_COUNT="$total_count"
+    export _WS_ELAPSED="$elapsed_seconds"
 
-        json_progress "wait-services" "Waiting for services to appear (${elapsed_seconds}s elapsed)" "$data" "wait-services"
-        return 0
+    # If no bootstrap services found yet, services might still be creating
+    if [ "$total_count" -eq 0 ]; then
+        return 2  # Still waiting
     fi
 
     # Check if all ready
-    if [ $ready_count -eq $total_count ]; then
+    if [ "$ready_count" -eq "$total_count" ]; then
         rm -f "$wait_start_file"
+        return 0  # All ready
+    fi
 
-        local data
-        data=$(jq -n \
-            --argjson services "$service_statuses" \
-            --argjson ids "$service_ids" \
-            '{
-                services: $services,
-                service_ids: $ids
-            }')
+    return 2  # Still waiting
+}
 
-        record_step "wait-services" "complete" "$data"
+# Output JSON response based on status
+_output_status() {
+    local status_code="$1"
+    local service_statuses="${_WS_SERVICE_STATUSES:-{}}"
+    local service_ids="${_WS_SERVICE_IDS:-{}}"
+    local ready_count="${_WS_READY_COUNT:-0}"
+    local total_count="${_WS_TOTAL_COUNT:-0}"
+    local elapsed="${_WS_ELAPSED:-0}"
 
-        # Save wait status to temp for compatibility
-        echo "$data" > "${ZCP_TMP_DIR:-/tmp}/bootstrap_wait_status.json"
+    case "$status_code" in
+        0)  # All ready
+            local data
+            data=$(jq -n \
+                --argjson services "$service_statuses" \
+                --argjson ids "$service_ids" \
+                '{
+                    services: $services,
+                    service_ids: $ids
+                }')
 
-        json_response "wait-services" "All $total_count services RUNNING" "$data" "mount-dev"
+            record_step "wait-services" "complete" "$data"
+            echo "$data" > "${ZCP_TMP_DIR:-/tmp}/bootstrap_wait_status.json"
+            json_response "wait-services" "All $total_count services RUNNING" "$data" "mount-dev"
+            ;;
+        2)  # Still waiting
+            if [ "$total_count" -eq 0 ]; then
+                local data
+                data=$(jq -n \
+                    --argjson elapsed "$elapsed" \
+                    '{
+                        services: {},
+                        ready_count: 0,
+                        total_count: 0,
+                        elapsed_seconds: $elapsed,
+                        note: "Services not yet visible - still creating"
+                    }')
+                json_progress "wait-services" "Waiting for services to appear (${elapsed}s elapsed)" "$data" "wait-services"
+            else
+                local data
+                data=$(jq -n \
+                    --argjson services "$service_statuses" \
+                    --argjson ready "$ready_count" \
+                    --argjson total "$total_count" \
+                    --argjson elapsed "$elapsed" \
+                    '{
+                        services: $services,
+                        ready_count: $ready,
+                        total_count: $total,
+                        elapsed_seconds: $elapsed,
+                        hint: "Use --wait flag for automatic polling: .zcp/bootstrap.sh step wait-services --wait"
+                    }')
+                json_progress "wait-services" "Waiting: $ready_count/$total_count services ready (${elapsed}s elapsed)" "$data" "wait-services"
+            fi
+            ;;
+    esac
+}
+
+# Main entry point
+step_wait_services() {
+    local wait_mode=false
+    local timeout=600  # Default 10 minutes
+    local poll_interval=5
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --wait)
+                wait_mode=true
+                shift
+                ;;
+            --timeout)
+                timeout="$2"
+                shift 2
+                ;;
+            [0-9]*)
+                # Legacy: first number is timeout
+                timeout="$1"
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    if [ "$wait_mode" = true ]; then
+        # POLLING MODE: Loop internally until complete
+        echo "Waiting for services to be ready (timeout: ${timeout}s)..." >&2
+
+        while true; do
+            _check_services_status "$timeout" true
+            local result=$?
+
+            case $result in
+                0)  # All ready
+                    _output_status 0
+                    return 0
+                    ;;
+                1)  # Error/timeout
+                    _output_status 1
+                    return 1
+                    ;;
+                2)  # Still waiting
+                    local ready="${_WS_READY_COUNT:-0}"
+                    local total="${_WS_TOTAL_COUNT:-0}"
+                    local elapsed="${_WS_ELAPSED:-0}"
+                    printf "\r  [%3d/%3ds] %s/%s services ready...   " "$elapsed" "$timeout" "$ready" "$total" >&2
+                    sleep "$poll_interval"
+                    ;;
+            esac
+        done
     else
-        local data
-        data=$(jq -n \
-            --argjson services "$service_statuses" \
-            --argjson ready "$ready_count" \
-            --argjson total "$total_count" \
-            --argjson elapsed "$elapsed_seconds" \
-            '{
-                services: $services,
-                ready_count: $ready,
-                total_count: $total,
-                elapsed_seconds: $elapsed
-            }')
-
-        json_progress "wait-services" "Waiting: $ready_count/$total_count services ready (${elapsed_seconds}s elapsed)" "$data" "wait-services"
+        # SINGLE CHECK MODE: Return immediately
+        _check_services_status "$timeout" false
+        local result=$?
+        _output_status $result
+        return 0
     fi
 }
 
-export -f step_wait_services
+export -f step_wait_services _check_services_status _output_status _get_wait_start_file
