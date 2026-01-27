@@ -11,6 +11,8 @@
 Follow its output. It tells you exactly what to do next.
 **DO NOT pre-plan.** The workflow detects state and adapts.
 
+**Exception**: During bootstrap (no services), follow the step chain instead. See "Bootstrap Flow" below.
+
 ## Quick Reference
 
 | Situation | Command |
@@ -21,6 +23,46 @@ Follow its output. It tells you exactly what to do next.
 | Just exploring | `.zcp/workflow.sh --quick` |
 | No services yet | `.zcp/workflow.sh bootstrap --runtime {rt} --services {svc}` |
 | Continue after DONE | `.zcp/workflow.sh iterate "summary"` |
+
+## Bootstrap Flow (No Services Yet)
+
+When bootstrapping, **follow the `next` field** in each step's JSON output. Do NOT run `workflow.sh show` until bootstrap is complete.
+
+```bash
+# 1. Initialize bootstrap
+.zcp/workflow.sh bootstrap --runtime go --services postgresql
+
+# 2. Follow the chain - each step outputs JSON with "next" field
+.zcp/bootstrap.sh step recipe-search      # next: generate-import
+.zcp/bootstrap.sh step generate-import    # next: import-services
+.zcp/bootstrap.sh step import-services    # next: wait-services
+.zcp/bootstrap.sh step wait-services      # next: mount-dev
+.zcp/bootstrap.sh step mount-dev          # next: finalize
+.zcp/bootstrap.sh step finalize           # next: spawn-subagents
+.zcp/bootstrap.sh step spawn-subagents    # next: aggregate-results (CRITICAL - see below)
+
+# 3. spawn-subagents outputs instructions - SPAWN SUBAGENTS via Task tool
+# 4. After all subagents complete:
+.zcp/bootstrap.sh step aggregate-results  # next: null (done)
+```
+
+### spawn-subagents Step (CRITICAL)
+
+This step outputs JSON with `data.instructions[]` - one per service pair. Each has a `subagent_prompt` field containing complete context for code generation.
+
+**You MUST spawn subagents using the Task tool:**
+
+```
+For each instruction in data.instructions[]:
+  Use Task tool with:
+    - subagent_type: "general-purpose"
+    - prompt: instruction.subagent_prompt  (the full prompt from JSON)
+    - description: "Bootstrap {hostname}"
+```
+
+**Launch all subagents in parallel** (single message with multiple Task calls).
+
+After all subagents complete, run `aggregate-results` to finish bootstrap.
 
 ## Your Position
 
