@@ -11,8 +11,6 @@
 Follow its output. It tells you exactly what to do next.
 **DO NOT pre-plan.** The workflow detects state and adapts.
 
-**Exception**: During bootstrap (no services), follow the step chain instead. See "Bootstrap Flow" below.
-
 ## Quick Reference
 
 | Situation | Command |
@@ -26,43 +24,31 @@ Follow its output. It tells you exactly what to do next.
 
 ## Bootstrap Flow (No Services Yet)
 
-When bootstrapping, **follow the `next` field** in each step's JSON output. Do NOT run `workflow.sh show` until bootstrap is complete.
+Follow `next` field in each step's JSON output. Run `.zcp/workflow.sh show` anytime for guidance.
 
 ```bash
-# 1. Initialize bootstrap
 .zcp/workflow.sh bootstrap --runtime go --services postgresql
-
-# 2. Follow the chain - each step outputs JSON with "next" field
-.zcp/bootstrap.sh step recipe-search      # next: generate-import
-.zcp/bootstrap.sh step generate-import    # next: import-services
-.zcp/bootstrap.sh step import-services    # next: wait-services
-.zcp/bootstrap.sh step wait-services      # next: mount-dev
-.zcp/bootstrap.sh step mount-dev          # next: finalize
-.zcp/bootstrap.sh step finalize           # next: spawn-subagents
-.zcp/bootstrap.sh step spawn-subagents    # next: aggregate-results (CRITICAL - see below)
-
-# 3. spawn-subagents outputs instructions - SPAWN SUBAGENTS via Task tool
-# 4. After all subagents complete:
-.zcp/bootstrap.sh step aggregate-results  # next: null (done)
+.zcp/bootstrap.sh step recipe-search      # → generate-import
+.zcp/bootstrap.sh step generate-import    # → import-services
+.zcp/bootstrap.sh step import-services    # → wait-services
+.zcp/bootstrap.sh step wait-services      # → mount-dev
+.zcp/bootstrap.sh step mount-dev          # → finalize
+.zcp/bootstrap.sh step finalize           # → spawn-subagents
+.zcp/bootstrap.sh step spawn-subagents    # → (spawn via Task tool)
+.zcp/bootstrap.sh step aggregate-results  # → done
 ```
 
-### spawn-subagents Step (CRITICAL)
+### spawn-subagents (CRITICAL)
 
-This step outputs JSON with `data.instructions[]` - one per service pair. Each has a `subagent_prompt` field containing complete context for code generation.
+Outputs JSON with `data.instructions[]`. Each has `subagent_prompt` - complete context for code generation.
 
-**You MUST spawn subagents using the Task tool:**
-
+**Spawn via Task tool:**
 ```
-For each instruction in data.instructions[]:
-  Use Task tool with:
-    - subagent_type: "general-purpose"
-    - prompt: instruction.subagent_prompt  (the full prompt from JSON)
-    - description: "Bootstrap {hostname}"
+For each instruction:
+  Task tool: subagent_type="general-purpose", prompt=instruction.subagent_prompt
 ```
 
-**Launch all subagents in parallel** (single message with multiple Task calls).
-
-After all subagents complete, run `aggregate-results` to finish bootstrap.
+Launch all in parallel (single message, multiple Task calls).
 
 ## Your Position
 

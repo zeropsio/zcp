@@ -46,34 +46,62 @@ cmd_show() {
             checkpoint=$(jq -r '.checkpoint // ""' "$bootstrap_state_file" 2>/dev/null)
         fi
 
-        # Check if handoff exists - infrastructure done, code generation pending
-        if [ -f "$bootstrap_handoff_file" ] && [ "$checkpoint" = "finalize" ]; then
-            echo "✅ Infrastructure complete. Code generation pending."
+        # Check checkpoint to determine what step to run next
+        if [ "$checkpoint" = "finalize" ]; then
+            # Finalize done → run spawn-subagents
+            echo "✅ Infrastructure complete (finalize done)."
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "📋 YOUR TASKS NOW:"
+            echo "📋 NEXT STEP: Run spawn-subagents"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
+            echo "  .zcp/bootstrap.sh step spawn-subagents"
+            echo ""
+            echo "This outputs JSON with subagent instructions. Then spawn subagents"
+            echo "via Task tool using the 'subagent_prompt' from each instruction."
+            echo ""
+            echo "⛔ DO NOT write code yourself - spawn subagents to do it!"
 
-            # Show service handoffs from new format
-            jq -r '.service_handoffs[] | "  • \(.dev_hostname): Write code in \(.mount_path)/"' "$bootstrap_handoff_file" 2>/dev/null
-            echo ""
-            echo "  1. Create zerops.yml with build/deploy/run config"
-            echo "  2. Write application code (minimal status page)"
-            echo "  3. Push to dev, verify: .zcp/verify.sh {hostname} 8080"
-            echo "  4. Push to stage, verify"
-            echo "  5. Mark complete: .zcp/workflow.sh bootstrap-done"
-
+        elif [ "$checkpoint" = "spawn-subagents" ]; then
+            # Spawn-subagents done → spawn subagents via Task tool, then aggregate-results
+            echo "✅ Subagent instructions ready."
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "📋 NEXT: Spawn subagents via Task tool"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "Read the spawn-subagents output and for each instruction:"
+            echo ""
+            echo "  Use Task tool with:"
+            echo "    - subagent_type: \"general-purpose\""
+            echo "    - prompt: instruction.subagent_prompt"
+            echo "    - description: \"Bootstrap {hostname}\""
+            echo ""
+            echo "Launch ALL subagents in parallel (single message, multiple Task calls)."
+            echo ""
+            echo "After subagents complete:"
+            echo "  .zcp/bootstrap.sh step aggregate-results"
+            echo ""
 
             # Show service info from handoff
+            if [ -f "$bootstrap_handoff_file" ]; then
+                echo "Service pairs to bootstrap:"
+                jq -r '.service_handoffs[] | "  • \(.dev_hostname) → \(.stage_hostname)"' "$bootstrap_handoff_file" 2>/dev/null
+            fi
+
+        elif [ -f "$bootstrap_handoff_file" ]; then
+            # Handoff exists but checkpoint not finalize/spawn-subagents - likely aggregate-results pending
+            echo "✅ Subagents should be running or complete."
             echo ""
-            echo "Service info:"
-            jq -r '.service_handoffs[] | "  \(.dev_hostname) (dev) → \(.stage_hostname) (stage)"' "$bootstrap_handoff_file" 2>/dev/null
-            jq -r '.service_handoffs[0] | "  Files: \(.mount_path)/"' "$bootstrap_handoff_file" 2>/dev/null
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "📋 NEXT: Check subagent completion"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
-            echo "⛔ DO NOT run 'workflow init' until bootstrap-done!"
+            echo "  .zcp/bootstrap.sh step aggregate-results"
+            echo ""
+            echo "This checks if all subagents completed successfully."
+            echo "If pending, it will tell you which services are still in progress."
+
         elif [ -f "$bootstrap_state_file" ] && [ -n "$checkpoint" ]; then
             # Bootstrap in progress - show current step
             echo "Bootstrap at checkpoint: $checkpoint"
