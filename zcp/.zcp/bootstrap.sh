@@ -284,6 +284,45 @@ Agent then runs steps individually for visibility and error handling:
 EOF
 }
 
+# Cleanup bootstrap temp files (archive and remove)
+cmd_cleanup() {
+    local archive_dir="$SCRIPT_DIR/state/archive"
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
+
+    echo "Archiving bootstrap state..."
+
+    # Create archive directory
+    mkdir -p "$archive_dir" 2>/dev/null
+
+    # Archive bootstrap state if exists
+    if [ -d "$BOOTSTRAP_STATE_DIR" ]; then
+        local archive_file="$archive_dir/bootstrap_${timestamp}.tar.gz"
+        tar -czf "$archive_file" -C "$(dirname "$BOOTSTRAP_STATE_DIR")" "$(basename "$BOOTSTRAP_STATE_DIR")" 2>/dev/null
+        echo "  Archived state to: $archive_file"
+    fi
+
+    # Remove temp files
+    local removed=0
+    for f in bootstrap_state.json bootstrap_plan.json bootstrap_handoff.json bootstrap_complete.json \
+             bootstrap_import.yml recipe_review.json fetched_recipe.md fetched_docs.md \
+             *_complete.json *_verify.json; do
+        if [ -f "${ZCP_TMP_DIR:-/tmp}/$f" ]; then
+            rm -f "${ZCP_TMP_DIR:-/tmp}/$f"
+            removed=$((removed + 1))
+        fi
+    done
+
+    # Clear bootstrap state directory
+    if [ -d "$BOOTSTRAP_STATE_DIR" ]; then
+        rm -rf "$BOOTSTRAP_STATE_DIR"
+    fi
+
+    echo "  Removed $removed temp files"
+    echo ""
+    echo "Cleanup complete. Run 'bootstrap init' to start fresh."
+}
+
 # Validate bootstrap completion
 cmd_done() {
     local state
@@ -404,6 +443,7 @@ COMMANDS:
     done                 Validate completion (used by workflow.sh bootstrap-done)
     mark-complete <host> Mark a service as complete (for recovery)
     wait-subagents       Wait for all subagents to complete (with polling)
+    cleanup              Archive and remove temp files (use after bootstrap done)
 
 STEPS:
     plan                 Create bootstrap plan (--runtime, --services, --prefix)
@@ -492,6 +532,9 @@ main() {
         wait-subagents)
             # Delegate to wait-for-subagents.sh script
             exec "$SCRIPT_DIR/wait-for-subagents.sh" "$@"
+            ;;
+        cleanup)
+            cmd_cleanup
             ;;
         -h|--help|help|"")
             show_help

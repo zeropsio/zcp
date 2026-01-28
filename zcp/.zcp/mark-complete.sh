@@ -169,6 +169,14 @@ mark_complete() {
         echo -e "${YELLOW}⚠️  Force mode: skipping verification check${NC}"
     fi
 
+    # Check for completion file (subagent should write this for URL handoff)
+    local completion_file="/tmp/${hostname}_complete.json"
+    if [ ! -f "$completion_file" ]; then
+        echo -e "${YELLOW}⚠️  Missing completion file: $completion_file${NC}" >&2
+        echo "  URLs will not be available in discovery.json" >&2
+        echo "  Write this file before mark-complete for full data" >&2
+    fi
+
     # Create directory
     if ! mkdir -p "$service_dir" 2>/dev/null; then
         echo -e "${RED}ERROR: Cannot create state directory: $service_dir${NC}" >&2

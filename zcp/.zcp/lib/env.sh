@@ -19,3 +19,20 @@ env_from() {
     ssh "$service" "echo \$$var" 2>/dev/null
 }
 
+# Get the subdomain URL for a service
+# Usage: get_service_url <service>
+# Example: curl "$(get_service_url appdev)/health"
+#
+# NOTE: zcli service list does NOT return URLs!
+# URLs are only available as $zeropsSubdomain inside containers.
+get_service_url() {
+    local service="$1"
+
+    if [ -z "$service" ]; then
+        echo "Usage: get_service_url <service>" >&2
+        return 1
+    fi
+
+    ssh "$service" 'echo $zeropsSubdomain' 2>/dev/null
+}
+

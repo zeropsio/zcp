@@ -2,15 +2,15 @@
 # .zcp/lib/bootstrap/steps/aggregate-results.sh
 # Step: Wait for all subagents to complete, create discovery.json, transition to DEVELOP
 #
-# This step aggregates results from all spawned subagents by checking their
-# per-service state. When all services are complete, it creates the discovery.json
-# file and completes the bootstrap process.
+# DISPLAY-ONLY: This step reads cached data from subagent completion files.
+# It does NOT re-test endpoints, re-fetch URLs, or make redundant API calls.
+# Subagents write /tmp/{hostname}_complete.json with all needed data.
 #
-# FALLBACK DETECTION: If state file is missing but evidence files exist
-# (zerops.yml, source code), this step will auto-mark the service complete.
-# This handles cases where subagent couldn't write the state file.
+# FALLBACK DETECTION: If completion file is missing but state file exists
+# (from mark-complete.sh), uses state. If both missing but files exist
+# (zerops.yml, source code), auto-marks complete.
 #
-# Inputs: Per-service state from subagents (via set_service_state or mark-complete.sh)
+# Inputs: /tmp/{hostname}_complete.json from subagents, state files
 # Outputs: discovery.json, bootstrap_complete.json, workflow ready for DEVELOP
 
 # Verify completion by checking actual files exist
@@ -63,6 +63,19 @@ auto_mark_complete() {
         mkdir -p "$state_dir" 2>/dev/null || return 1
         echo "{\"phase\":\"complete\",\"completed_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"auto_detected\":true}" > "$state_dir/status.json"
         return $?
+    fi
+}
+
+# Read completion data from subagent's completion file
+# Returns JSON with URLs and verification data, or empty object if not found
+read_completion_data() {
+    local dev_hostname="$1"
+    local completion_file="${ZCP_TMP_DIR:-/tmp}/${dev_hostname}_complete.json"
+
+    if [ -f "$completion_file" ]; then
+        cat "$completion_file"
+    else
+        echo '{}'
     fi
 }
 
@@ -208,7 +221,7 @@ step_aggregate_results() {
     local session_id
     session_id=$(cat "${ZCP_TMP_DIR:-/tmp}/claude_session" 2>/dev/null || echo "bootstrap-$(date +%s)")
 
-    # Build services array from all handoffs
+    # Build services array from handoffs + completion data (URLs from subagent)
     local services='[]'
     local i=0
     local any_single_mode="false"
@@ -224,6 +237,16 @@ step_aggregate_results() {
         stage_name=$(echo "$handoff" | jq -r '.stage_hostname')
         runtime=$(echo "$handoff" | jq -r '.runtime // "unknown"')
 
+        # Read completion data (URLs, verification) from subagent's file
+        # This is the SINGLE SOURCE OF TRUTH - no re-fetching
+        local completion_data
+        completion_data=$(read_completion_data "$dev_name")
+
+        local dev_url stage_url verification
+        dev_url=$(echo "$completion_data" | jq -r '.dev_url // ""')
+        stage_url=$(echo "$completion_data" | jq -r '.stage_url // ""')
+        verification=$(echo "$completion_data" | jq -c '.verification // {}')
+
         # Check single_mode per service pair
         local single_mode="false"
         if [ "$dev_id" = "$stage_id" ]; then
@@ -238,11 +261,15 @@ step_aggregate_results() {
             --arg stage_id "$stage_id" \
             --arg stage_name "$stage_name" \
             --arg runtime "$runtime" \
+            --arg dev_url "$dev_url" \
+            --arg stage_url "$stage_url" \
+            --argjson verification "$verification" \
             --argjson single "$single_mode" \
             '{
-                dev: { id: $dev_id, name: $dev_name },
-                stage: { id: $stage_id, name: $stage_name },
+                dev: { id: $dev_id, name: $dev_name, url: $dev_url },
+                stage: { id: $stage_id, name: $stage_name, url: $stage_url },
                 runtime: $runtime,
+                verification: $verification,
                 single_mode: $single
             }')
 
@@ -259,20 +286,29 @@ step_aggregate_results() {
     primary_stage_id=$(echo "$first" | jq -r '.stage_id')
     primary_stage_name=$(echo "$first" | jq -r '.stage_hostname')
 
+    # Get URLs from completion data (cached by subagent)
+    local primary_completion
+    primary_completion=$(read_completion_data "$primary_dev_name")
+    local primary_dev_url primary_stage_url
+    primary_dev_url=$(echo "$primary_completion" | jq -r '.dev_url // ""')
+    primary_stage_url=$(echo "$primary_completion" | jq -r '.stage_url // ""')
+
     local primary_single_mode="false"
     if [ "$primary_dev_id" = "$primary_stage_id" ]; then
         primary_single_mode="true"
     fi
 
-    # Create discovery.json
+    # Create discovery.json (includes URLs from subagent - no re-fetching)
     local discovery
     discovery=$(jq -n \
         --arg session "$session_id" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg dev_id "$primary_dev_id" \
         --arg dev_name "$primary_dev_name" \
+        --arg dev_url "$primary_dev_url" \
         --arg stage_id "$primary_stage_id" \
         --arg stage_name "$primary_stage_name" \
+        --arg stage_url "$primary_stage_url" \
         --argjson single "$primary_single_mode" \
         --argjson services "$services" \
         --argjson service_count "$count" \
@@ -280,8 +316,8 @@ step_aggregate_results() {
             session_id: $session,
             timestamp: $ts,
             single_mode: $single,
-            dev: { id: $dev_id, name: $dev_name },
-            stage: { id: $stage_id, name: $stage_name },
+            dev: { id: $dev_id, name: $dev_name, url: $dev_url },
+            stage: { id: $stage_id, name: $stage_name, url: $stage_url },
             services: $services,
             service_count: $service_count
         }')
@@ -357,9 +393,15 @@ step_aggregate_results() {
     next_steps_text=$(echo "$next_steps" | jq -r '.[] | "  • " + .')
 
     local msg
-    msg="Bootstrap complete — $count service pair(s) ready, workflow in DEVELOP phase.
+    msg="Bootstrap complete — $count service pair(s) ready.
 
-Present these next steps to the user and wait for instructions:
+ALL DATA IS IN discovery.json — DO NOT:
+• Run zcli service list (URLs already captured)
+• SSH to fetch subdomains (already in discovery)
+• Re-test endpoints (verification data included)
+• Read individual verify files (already aggregated)
+
+Present these next steps to the user and WAIT:
 ${next_steps_text}"
 
     json_response "aggregate-results" "$msg" "$data" "null"

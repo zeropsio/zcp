@@ -211,21 +211,48 @@ show_no_server_error() {
     local service="$1"
     local port="$2"
 
-    cat <<EOF
+    # Detect runtime from files in /var/www
+    local runtime="unknown"
+    if ssh "$service" "test -f /var/www/go.mod" 2>/dev/null; then
+        runtime="go"
+    elif ssh "$service" "test -f /var/www/package.json" 2>/dev/null; then
+        runtime="nodejs"
+    elif ssh "$service" "test -f /var/www/requirements.txt || test -f /var/www/app.py" 2>/dev/null; then
+        runtime="python"
+    fi
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️  NO SERVER LISTENING ON PORT $port
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "⚠️  NO SERVER LISTENING ON PORT $port"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Dev services use 'start: zsc noop --silent' — no auto-start."
+    echo ""
+    echo "START THE SERVER:"
 
-Dev services use 'start: zsc noop --silent' — no auto-start.
+    case "$runtime" in
+        go)
+            echo "  ssh $service \"cd /var/www && nohup go run . > /tmp/app.log 2>&1 &\""
+            ;;
+        nodejs)
+            echo "  ssh $service \"cd /var/www && nohup node index.js > /tmp/app.log 2>&1 &\""
+            ;;
+        python)
+            echo "  ssh $service \"cd /var/www && nohup python app.py > /tmp/app.log 2>&1 &\""
+            ;;
+        *)
+            echo "  ssh $service \"cd /var/www && nohup <your-command> > /tmp/app.log 2>&1 &\""
+            ;;
+    esac
 
-YOU MUST START THE SERVER MANUALLY:
-  1. SSH in and run the appropriate command for your runtime
-  2. Verify port: ssh $service "netstat -tlnp | grep $port"
-  3. Then re-run: .zcp/verify.sh $service $port ...
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EOF
+    echo ""
+    echo "VERIFY PORT:"
+    echo "  ssh $service \"netstat -tlnp 2>/dev/null | grep $port || ss -tlnp | grep $port\""
+    echo ""
+    echo "THEN RE-RUN:"
+    echo "  .zcp/verify.sh $service $port ..."
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 # ============================================================================
@@ -418,13 +445,14 @@ main() {
     # Load discovery names for accurate matching
     get_discovery_names
 
-    # Copy evidence to role-specific file based on discovery.json (exact match)
+    # Symlink evidence to role-specific file based on discovery.json (exact match)
+    # Using symlinks instead of copies to avoid duplication
     if [ -n "$DEV_SERVICE_NAME" ] && [ "$service" = "$DEV_SERVICE_NAME" ]; then
-        cp "$evidence_file" /tmp/dev_verify.json
-        echo "→ Copied to /tmp/dev_verify.json (matches discovery dev: $DEV_SERVICE_NAME)"
+        ln -sf "$evidence_file" /tmp/dev_verify.json
+        echo "→ Linked to /tmp/dev_verify.json (matches discovery dev: $DEV_SERVICE_NAME)"
     elif [ -n "$STAGE_SERVICE_NAME" ] && [ "$service" = "$STAGE_SERVICE_NAME" ]; then
-        cp "$evidence_file" /tmp/stage_verify.json
-        echo "→ Copied to /tmp/stage_verify.json (matches discovery stage: $STAGE_SERVICE_NAME)"
+        ln -sf "$evidence_file" /tmp/stage_verify.json
+        echo "→ Linked to /tmp/stage_verify.json (matches discovery stage: $STAGE_SERVICE_NAME)"
     elif [ -n "$DEV_SERVICE_NAME" ] || [ -n "$STAGE_SERVICE_NAME" ]; then
         # Discovery exists but service doesn't match
         echo "⚠️  Service '$service' not in discovery.json"
@@ -437,11 +465,11 @@ main() {
         # No discovery - fall back to pattern matching with warning
         echo "⚠️  No discovery.json found, using pattern matching fallback"
         if echo "$service" | grep -qi "dev" && ! echo "$service" | grep -qi "stage"; then
-            cp "$evidence_file" /tmp/dev_verify.json
-            echo "→ Copied to /tmp/dev_verify.json (pattern match: contains 'dev')"
+            ln -sf "$evidence_file" /tmp/dev_verify.json
+            echo "→ Linked to /tmp/dev_verify.json (pattern match: contains 'dev')"
         elif echo "$service" | grep -qi "stage"; then
-            cp "$evidence_file" /tmp/stage_verify.json
-            echo "→ Copied to /tmp/stage_verify.json (pattern match: contains 'stage')"
+            ln -sf "$evidence_file" /tmp/stage_verify.json
+            echo "→ Linked to /tmp/stage_verify.json (pattern match: contains 'stage')"
         fi
     fi
 
