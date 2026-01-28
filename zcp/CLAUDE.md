@@ -115,6 +115,28 @@ psql "$(env_from appdev db_connectionString)"
 | Long-running SSH commands | Set `run_in_background=true` in Bash tool, or SSH hangs |
 | HTTP 200 ≠ working | Check response content, logs, browser |
 
+## Dev Server Management
+
+**Dev uses `start: zsc noop --silent` — nothing runs automatically.**
+
+After deploying to dev, start the server manually:
+```bash
+ssh {dev} "cd /var/www && nohup <your-run-command> > /tmp/app.log 2>&1 &"
+```
+
+Before running `verify.sh`:
+```bash
+# Check port is listening
+ssh {dev} "netstat -tlnp | grep 8080"
+
+# Test locally first
+ssh {dev} "curl -s http://localhost:8080/"
+```
+
+**If verify.sh returns HTTP 000** → server not running → start it first.
+
+**Stage is different**: Stage uses a real start command (e.g., `./app`) — Zerops runs it automatically.
+
 ## Key Gotchas
 
 | Symptom | Fix |
@@ -124,6 +146,7 @@ psql "$(env_from appdev db_connectionString)"
 | `https://https://...` | `zeropsSubdomain` is already full URL — don't prepend protocol |
 | SSH hangs forever | Set `run_in_background=true` in Bash tool |
 | zcli "unauthenticated user" | See zcli auth below |
+| **HTTP 000 on dev** | **Server not running — start it manually (see Dev Server Management)** |
 
 ## zcli Authentication
 

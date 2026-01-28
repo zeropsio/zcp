@@ -85,13 +85,89 @@ check_complete() {
     return 1
 }
 
+# Check if verification passed for this service
+check_verification_passed() {
+    local hostname="$1"
+    local verify_file="/tmp/${hostname}_verify.json"
+
+    # If no verification file exists, can't confirm
+    if [ ! -f "$verify_file" ]; then
+        echo "no_evidence"
+        return 2
+    fi
+
+    # Check for preflight failure
+    local preflight_failed
+    preflight_failed=$(jq -r '.preflight_failed // false' "$verify_file" 2>/dev/null)
+    if [ "$preflight_failed" = "true" ]; then
+        echo "preflight_failed"
+        return 1
+    fi
+
+    # Check pass/fail counts
+    local passed failed
+    passed=$(jq -r '.passed // 0' "$verify_file" 2>/dev/null)
+    failed=$(jq -r '.failed // 0' "$verify_file" 2>/dev/null)
+
+    if [ "$failed" -gt 0 ]; then
+        echo "failed:$failed"
+        return 1
+    fi
+
+    if [ "$passed" -eq 0 ]; then
+        echo "no_tests"
+        return 1
+    fi
+
+    echo "passed:$passed"
+    return 0
+}
+
 # Mark a service as complete
 mark_complete() {
     local hostname="$1"
+    local force="${2:-false}"
     local service_dir="$STATE_DIR/$hostname"
     local status_file="$service_dir/status.json"
     local timestamp
     timestamp=$(get_timestamp)
+
+    # VERIFICATION GATE: Check if dev verification passed
+    if [ "$force" != "true" ] && [ "$force" != "--force" ]; then
+        local verify_status
+        verify_status=$(check_verification_passed "$hostname")
+        local verify_exit=$?
+
+        case "$verify_exit" in
+            0)
+                echo -e "${GREEN}✓ Verification passed ($verify_status)${NC}"
+                ;;
+            1)
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
+                echo -e "${RED}❌ CANNOT MARK COMPLETE: Verification failed${NC}" >&2
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}" >&2
+                echo "" >&2
+                echo "  Status: $verify_status" >&2
+                echo "  Evidence: /tmp/${hostname}_verify.json" >&2
+                echo "" >&2
+                if [ "$verify_status" = "preflight_failed" ]; then
+                    echo "  Problem: No server was listening on the port" >&2
+                    echo "  Fix: Start the dev server manually, then re-verify" >&2
+                fi
+                echo "" >&2
+                echo "  To force (NOT RECOMMENDED): .zcp/mark-complete.sh --force $hostname" >&2
+                return 1
+                ;;
+            2)
+                echo -e "${YELLOW}⚠️  No verification evidence found${NC}" >&2
+                echo "  Run: .zcp/verify.sh $hostname 8080 / /health /status" >&2
+                echo "  Or force: .zcp/mark-complete.sh --force $hostname" >&2
+                return 1
+                ;;
+        esac
+    else
+        echo -e "${YELLOW}⚠️  Force mode: skipping verification check${NC}"
+    fi
 
     # Create directory
     if ! mkdir -p "$service_dir" 2>/dev/null; then
@@ -206,13 +282,20 @@ show_help() {
 
 USAGE:
     .zcp/mark-complete.sh <hostname>              Mark service as complete
+    .zcp/mark-complete.sh --force <hostname>      Mark complete (skip verification)
     .zcp/mark-complete.sh --check <hostname>      Check if service is complete
     .zcp/mark-complete.sh --phase <hostname> <phase>  Set specific phase
     .zcp/mark-complete.sh --status                Show all service states
     .zcp/mark-complete.sh --help                  Show this help
 
+VERIFICATION GATE:
+    By default, mark-complete checks /tmp/{hostname}_verify.json.
+    If verification failed or is missing, completion is blocked.
+    Use --force to override (NOT RECOMMENDED).
+
 EXAMPLES:
     .zcp/mark-complete.sh appdev
+    .zcp/mark-complete.sh --force appdev
     .zcp/mark-complete.sh --check appdev
     .zcp/mark-complete.sh --phase appdev deploying
     .zcp/mark-complete.sh --status
@@ -264,6 +347,14 @@ main() {
             ;;
         --status)
             show_status
+            ;;
+        --force)
+            if [ -z "${2:-}" ]; then
+                echo "Usage: $0 --force <hostname>" >&2
+                exit 1
+            fi
+            validate_hostname "$2" || exit 1
+            mark_complete "$2" "--force"
             ;;
         "")
             echo "Usage: $0 <hostname>" >&2

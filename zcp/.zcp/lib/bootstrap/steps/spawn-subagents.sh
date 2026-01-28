@@ -346,12 +346,29 @@ ${managed_env_block:-        # (none)}
 | 7 | Deploy dev | \`ssh ${dev_hostname} "cd /var/www && zcli push ${dev_id} --setup=dev --deploy-git-folder"\` |
 | 8 | Wait dev | \`.zcp/status.sh --wait ${dev_hostname}\` |
 | 9 | Subdomain dev | \`zcli service enable-subdomain -P \$projectId ${dev_id}\` |
-| 10 | Verify dev | \`.zcp/verify.sh ${dev_hostname} 8080 / /health /status\` |
-| 11 | Deploy stage | \`ssh ${dev_hostname} "cd /var/www && zcli push ${stage_id} --setup=prod"\` |
-| 12 | Wait stage | \`.zcp/status.sh --wait ${stage_hostname}\` |
-| 13 | Subdomain stage | \`zcli service enable-subdomain -P \$projectId ${stage_id}\` |
-| 14 | Verify stage | \`.zcp/verify.sh ${stage_hostname} 8080 / /health /status\` |
-| 15 | **Done** | \`.zcp/mark-complete.sh ${dev_hostname}\` — then end session |
+| 10 | **Start dev server** | See below — dev uses \`zsc noop\`, nothing runs automatically |
+| 11 | Verify dev | \`.zcp/verify.sh ${dev_hostname} 8080 / /health /status\` |
+| 12 | Deploy stage | \`ssh ${dev_hostname} "cd /var/www && zcli push ${stage_id} --setup=prod"\` |
+| 13 | Wait stage | \`.zcp/status.sh --wait ${stage_hostname}\` |
+| 14 | Subdomain stage | \`zcli service enable-subdomain -P \$projectId ${stage_id}\` |
+| 15 | Verify stage | \`.zcp/verify.sh ${stage_hostname} 8080 / /health /status\` |
+| 16 | **Done** | \`.zcp/mark-complete.sh ${dev_hostname}\` — then end session |
+
+## CRITICAL: Task 10 — Dev Server Manual Start
+
+Dev setup uses \`start: zsc noop --silent\` — **nothing runs automatically**.
+
+After deploy + subdomain (tasks 7-9), the container is running but **port 8080 has nothing listening**.
+
+**You must start the server manually:**
+1. SSH into dev and run the appropriate start command for your runtime
+2. Verify port is listening: \`ssh ${dev_hostname} "netstat -tlnp 2>/dev/null | grep 8080 || ss -tlnp | grep 8080"\`
+3. Test locally first: \`ssh ${dev_hostname} "curl -s http://localhost:8080/"\`
+4. Then run verify.sh (task 11)
+
+**If verify.sh returns HTTP 000** → server not running → start it first.
+
+**Stage is different**: Stage uses \`start: ./app\` (or equivalent) — Zerops runs it automatically.
 
 ## Platform Rules
 
@@ -370,7 +387,8 @@ ${managed_env_block:-        # (none)}
 |---------|-----|
 | "not a git repository" | \`ssh ${dev_hostname} "cd /var/www && git config --global user.email 'zcp@zerops.io' && git config --global user.name 'ZCP' && git init && git add -A && git commit -m 'Fix'"\` |
 | "unauthenticated" | Re-run Task 5 |
-| Endpoints fail | \`zcli service log -P \$projectId ${dev_id}\` |
+| **HTTP 000 on dev** | **Server not running — see Task 10, start it manually** |
+| Endpoints fail (not 000) | \`zcli service log -P \$projectId ${dev_id}\` |
 
 ## Done
 
@@ -406,6 +424,7 @@ PROMPT
                     "Deploy to dev: ssh \($hostname) \"cd /var/www && zcli push \($dev_id) --setup=dev --deploy-git-folder\"",
                     "Wait for dev: .zcp/status.sh --wait \($hostname)",
                     "Enable dev subdomain",
+                    "START DEV SERVER MANUALLY (zsc noop = nothing runs automatically)",
                     "Test dev: .zcp/verify.sh \($hostname) 8080 / /health /status",
                     "Deploy to stage: ssh \($hostname) \"cd /var/www && zcli push \($stage_id) --setup=prod\"",
                     "Wait for stage: .zcp/status.sh --wait \($stage_hostname)",

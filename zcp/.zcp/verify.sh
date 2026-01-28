@@ -188,6 +188,47 @@ EOF
 }
 
 # ============================================================================
+# PRE-FLIGHT CHECK: Is port actually listening?
+# ============================================================================
+
+check_port_listening() {
+    local service="$1"
+    local port="$2"
+
+    debug_log "Pre-flight: checking if port $port is listening on $service"
+
+    # Check if port is listening (try netstat first, fall back to ss)
+    local listening
+    listening=$(ssh "$service" "netstat -tlnp 2>/dev/null | grep -E ':$port\s' || ss -tlnp 2>/dev/null | grep -E ':$port\s'" 2>/dev/null)
+
+    if [ -z "$listening" ]; then
+        return 1  # Nothing listening
+    fi
+    return 0  # Port is listening
+}
+
+show_no_server_error() {
+    local service="$1"
+    local port="$2"
+
+    cat <<EOF
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  NO SERVER LISTENING ON PORT $port
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Dev services use 'start: zsc noop --silent' — no auto-start.
+
+YOU MUST START THE SERVER MANUALLY:
+  1. SSH in and run the appropriate command for your runtime
+  2. Verify port: ssh $service "netstat -tlnp | grep $port"
+  3. Then re-run: .zcp/verify.sh $service $port ...
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EOF
+}
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -247,6 +288,39 @@ main() {
         exit 1
     fi
 
+    # PRE-FLIGHT: Check if port is listening before attempting verification
+    echo "Pre-flight: checking port $port..."
+    if ! check_port_listening "$service" "$port"; then
+        show_no_server_error "$service" "$port"
+
+        # Get session for evidence file
+        local session_id
+        session_id=$(get_session 2>/dev/null || echo "unknown")
+
+        # Create evidence file showing pre-flight failure
+        local preflight_file="/tmp/${service}_verify.json"
+        jq -n \
+            --arg sid "$session_id" \
+            --arg svc "$service" \
+            --argjson prt "$port" \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+                session_id: $sid,
+                service: $svc,
+                port: $prt,
+                timestamp: $ts,
+                preflight_failed: true,
+                preflight_reason: "No process listening on port",
+                results: [],
+                passed: 0,
+                failed: 0
+            }' > "$preflight_file"
+
+        echo "Evidence: $preflight_file (preflight_failed: true)"
+        exit 1
+    fi
+    echo "  ✓ Port $port is listening"
+
     # Get session
     local session_id
     session_id=$(get_session)
@@ -260,6 +334,7 @@ main() {
     local failed=0
     local results=()
 
+    echo ""
     echo "=== Verifying $service:$port ==="
 
     # Track first failure for context capture
