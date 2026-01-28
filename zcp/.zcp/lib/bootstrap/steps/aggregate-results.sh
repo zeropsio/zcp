@@ -352,12 +352,15 @@ step_aggregate_results() {
 
     record_step "aggregate-results" "complete" "$data"
 
+    # Build msg with next_steps baked in so the agent presents them directly
+    local next_steps_text
+    next_steps_text=$(echo "$next_steps" | jq -r '.[] | "  • " + .')
+
     local msg
-    if [ "$count" -eq 1 ]; then
-        msg="Bootstrap complete - 1 service pair ready, workflow in DEVELOP phase"
-    else
-        msg="Bootstrap complete - $count service pairs ready, workflow in DEVELOP phase"
-    fi
+    msg="Bootstrap complete — $count service pair(s) ready, workflow in DEVELOP phase.
+
+Present these next steps to the user and wait for instructions:
+${next_steps_text}"
 
     json_response "aggregate-results" "$msg" "$data" "null"
 }
