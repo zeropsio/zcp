@@ -319,19 +319,35 @@ step_aggregate_results() {
     echo "full" > "${ZCP_TMP_DIR:-/tmp}/claude_mode"
     echo "DEVELOP" > "${ZCP_TMP_DIR:-/tmp}/claude_phase"
 
+    # Build next_steps guidance with correct commands
+    local next_steps
+    next_steps=$(jq -n \
+        --arg dev_name "$primary_dev_name" \
+        --arg dev_id "$primary_dev_id" \
+        --arg stage_id "$primary_stage_id" \
+        '[
+            "Edit files directly in /var/www/\($dev_name)/",
+            "Run builds: ssh \($dev_name) \"cd /var/www && go build\" (or runtime equivalent)",
+            "Deploy to dev: ssh \($dev_name) \"cd /var/www && zcli push \($dev_id) --setup=dev --deploy-git-folder\"",
+            "Deploy to stage: ssh \($dev_name) \"cd /var/www && zcli push \($stage_id) --setup=prod\"",
+            "Run .zcp/workflow.sh show anytime for guidance"
+        ]')
+
     # Record step completion
     local data
     data=$(jq -n \
         --argjson count "$count" \
         --argjson discovery "$discovery" \
         --argjson results "$results" \
+        --argjson next_steps "$next_steps" \
         '{
             all_complete: true,
             services_count: $count,
             discovery: $discovery,
             results: $results,
             workflow_phase: "DEVELOP",
-            workflow_mode: "full"
+            workflow_mode: "full",
+            next_steps: $next_steps
         }')
 
     record_step "aggregate-results" "complete" "$data"

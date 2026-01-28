@@ -160,17 +160,17 @@ step_spawn_subagents() {
                 env_prefix=$(echo "$managed_services" | jq -r ".[$j].env_prefix")
                 hostname="$svc_name"
 
-                managed_env_block+="    ${env_prefix}_HOST: \${${hostname}_hostname}
-    ${env_prefix}_PORT: \${${hostname}_port}
-    ${env_prefix}_USER: \${${hostname}_user}
-    ${env_prefix}_PASS: \${${hostname}_password}
+                managed_env_block+="        ${env_prefix}_HOST: \${${hostname}_hostname}
+        ${env_prefix}_PORT: \${${hostname}_port}
+        ${env_prefix}_USER: \${${hostname}_user}
+        ${env_prefix}_PASS: \${${hostname}_password}
 "
                 # Add DB name for databases
                 local svc_type
                 svc_type=$(echo "$managed_services" | jq -r ".[$j].type")
                 case "$svc_type" in
                     postgresql*|mysql*|mariadb*|mongodb*)
-                        managed_env_block+="    ${env_prefix}_NAME: \${${hostname}_dbName}
+                        managed_env_block+="        ${env_prefix}_NAME: \${${hostname}_dbName}
 "
                         ;;
                 esac
@@ -263,193 +263,65 @@ Use these as references to construct your own zerops.yml."
                 ;;
         esac
 
-        # Build the comprehensive subagent prompt
+        # Build the subagent prompt - optimized for signal density
         local prompt
         prompt=$(cat <<PROMPT
-# Bootstrap Subagent: ${dev_hostname}/${stage_hostname}
+# Bootstrap: ${dev_hostname} / ${stage_hostname}
 
-You are a subagent spawned to bootstrap a service pair. You have NO prior conversation context.
-Everything you need is in this prompt. Read it completely before acting.
+You are bootstrapping a Zerops service pair. This prompt is self-contained—no prior context exists.
 
----
+## Environment
 
-## SECTION 1: ENVIRONMENT CONTEXT
+You're on **ZCP** (control plane), not inside app containers.
 
-### Where You Are Running
-- You are on **ZCP** (Zerops Control Plane), a container with management tools
-- You are NOT inside the application containers
+| Location | Path | How to use |
+|----------|------|------------|
+| ZCP (here) | \`${mount_path}/\` | Write files directly |
+| Container | \`/var/www/\` | \`ssh ${dev_hostname} "cd /var/www && ..."\` |
 
-### File Access
-- **SSHFS Mount**: Files at \`${mount_path}/\` on ZCP are mounted from the dev container
-- Write files here: \`${mount_path}/zerops.yml\`, \`${mount_path}/main.go\`, etc.
-- These files appear at \`/var/www/\` INSIDE the container (no hostname prefix!)
+Files written to \`${mount_path}/\` appear at \`/var/www/\` inside the container.
 
-### Command Execution
-- **Local commands** (on ZCP): \`zcli\`, \`curl\`, \`.zcp/verify.sh\`
-- **Remote commands** (in container): \`ssh ${dev_hostname} "command"\`
-- Build/run commands MUST go through SSH
+## Your Services
 
-### Critical Path Difference
-| Location | Path |
-|----------|------|
-| On ZCP (where you write files) | \`${mount_path}/\` |
-| Inside container (via SSH) | \`/var/www/\` |
+| Role | Hostname | ID | zerops.yml setup |
+|------|----------|----|------------------|
+| Dev | ${dev_hostname} | ${dev_id} | \`dev\` |
+| Stage | ${stage_hostname} | ${stage_id} | \`prod\` |
 
-Example:
-- Write: \`${mount_path}/main.go\` (on ZCP)
-- Build: \`ssh ${dev_hostname} "cd /var/www && go build"\` (via SSH, note /var/www not ${mount_path})
+**⚠️ Setup names are \`dev\` and \`prod\`—NOT hostnames.** This is the #1 mistake.
 
----
+## Managed Services
+${env_var_mappings:-None.}
 
-## SECTION 2: DOMAIN MODEL
-
-### Key Concepts
-
-| Term | Meaning | Example |
-|------|---------|---------|
-| **hostname** | Service identifier in Zerops | \`${dev_hostname}\`, \`${stage_hostname}\` |
-| **service_id** | UUID for zcli commands | \`${dev_id}\` |
-| **setup** | Named config block in zerops.yml | \`dev\`, \`prod\` (NOT hostnames!) |
-| **mount_path** | Where files appear on ZCP | \`${mount_path}\` |
-
-### CRITICAL: Setup Names vs Hostnames
-
-**Setups are SEMANTIC names, NOT hostnames!**
-
-\`\`\`yaml
-# CORRECT - semantic names
-zerops:
-  - setup: dev     # ← Semantic name for development config
-  - setup: prod    # ← Semantic name for production config
-
-# WRONG - DO NOT use hostnames as setup names
-zerops:
-  - setup: ${dev_hostname}    # ← WRONG!
-  - setup: ${stage_hostname}  # ← WRONG!
-\`\`\`
-
-The link between hostname and setup happens in import.yml via \`zeropsSetup:\`:
-- Service \`${dev_hostname}\` uses \`zeropsSetup: dev\`
-- Service \`${stage_hostname}\` uses \`zeropsSetup: prod\`
-
-### Your Service Pair
-
-| Role | Hostname | Service ID | Uses Setup |
-|------|----------|------------|------------|
-| Development | \`${dev_hostname}\` | \`${dev_id}\` | \`dev\` |
-| Production | \`${stage_hostname}\` | \`${stage_id}\` | \`prod\` |
-
----
-
-## SECTION 3: MANAGED SERVICES
-
-${env_var_mappings:-No managed services configured.}
-
----
-
-## SECTION 4: RUNTIME-SPECIFIC GUIDANCE
-
-Runtime: **${runtime}** (${runtime_version})
-
-${runtime_guidance}
-
----
-
-## SECTION 5: ANTI-PATTERNS (DO NOT DO THESE)
-
-### ❌ WRONG: Using hostnames as setup names
-\`\`\`yaml
-# WRONG
-- setup: ${dev_hostname}
-- setup: ${stage_hostname}
-\`\`\`
-
-### ❌ WRONG: Running build commands on ZCP
-\`\`\`bash
-# WRONG - this runs on ZCP, not in container
-cd ${mount_path} && go build
-\`\`\`
-
-### ❌ WRONG: Using mount_path inside SSH
-\`\`\`bash
-# WRONG - ${mount_path} doesn't exist inside container
-ssh ${dev_hostname} "cd ${mount_path} && go build"
-\`\`\`
-
-### ❌ WRONG: Pushing without git init
-\`\`\`bash
-# WRONG - zcli push requires a git repo
-ssh ${dev_hostname} "zcli push ${dev_id}"
-\`\`\`
-
-### ❌ WRONG: Pushing without --setup
-\`\`\`bash
-# WRONG - which setup to use?
-ssh ${dev_hostname} "cd /var/www && zcli push ${dev_id}"
-\`\`\`
-
-### ❌ WRONG: Forgetting zcli authentication
-\`\`\`bash
-# WRONG - zcli may not be authenticated in container
-ssh ${dev_hostname} "zcli push ..."
-\`\`\`
-
-### ✅ CORRECT Pattern
-\`\`\`bash
-# Authenticate zcli in container
-ssh ${dev_hostname} 'zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY"'
-
-# Initialize git, commit, push with correct setup
-ssh ${dev_hostname} "cd /var/www && git init && git add -A && git commit -m 'Bootstrap' && zcli push ${dev_id} --setup=dev"
-\`\`\`
-
----
-
-## SECTION 6: ZEROPS.YML CONFIGURATION
+## Runtime: ${runtime} (${runtime_version})
 ${recipe_source_info}
 
-### Key Configuration Values (from recipe patterns)
+Reference: \`/tmp/fetched_recipe.md\` (or \`/tmp/fetched_docs.md\`)
 
-| Setting | Dev Setup | Prod Setup |
-|---------|-----------|------------|
-| Runtime base | \`${runtime_version}\` | \`${prod_runtime_base}\` |
-| Start command | \`${dev_start}\` | \`${prod_start}\` |
-| Deploy files | Full source (\`.\`) | Built artifacts only |
-
-### Required Structure
-
-Create \`${mount_path}/zerops.yml\` with this structure:
+## zerops.yml Template
 
 \`\`\`yaml
 zerops:
-  # Development setup - full source, manual control
   - setup: dev
     build:
       base: ${runtime_version}
-      # Copy buildCommands from /tmp/fetched_recipe.md if available
-      buildCommands:
-        - <see fetched recipe or runtime docs>
-      deployFiles:
-        - .
+      buildCommands: [<from recipe>]
+      deployFiles: [.]
       cache: true
     run:
-      os: ubuntu
       base: ${runtime_version}
       ports:
         - port: 8080
           httpSupport: true
       envVariables:
-${managed_env_block:-        # No managed services}
+${managed_env_block:-        # (none)}
       start: ${dev_start}
 
-  # Production setup - optimized for deployment
   - setup: prod
     build:
       base: ${runtime_version}
-      buildCommands:
-        - <see fetched recipe or runtime docs>
-      deployFiles:
-        - <binary or dist files>
+      buildCommands: [<from recipe>]
+      deployFiles: [<binary>]
       cache: true
     run:
       base: ${prod_runtime_base}
@@ -457,288 +329,52 @@ ${managed_env_block:-        # No managed services}
         - port: 8080
           httpSupport: true
       envVariables:
-${managed_env_block:-        # No managed services}
+${managed_env_block:-        # (none)}
       start: ${prod_start}
 \`\`\`
 
-**IMPORTANT**: Use \`/tmp/fetched_recipe.md\` as a REFERENCE to understand the patterns,
-then construct your own zerops.yml adapted to your application's specific needs.
-
----
-
-## SECTION 7: TASK SEQUENCE
-
-Execute these tasks IN ORDER. Each has prerequisites and verification.
-
-### Task 1: Create zerops.yml
-
-**Action**: Write the zerops.yml file with correct structure
-
-**Prerequisites**: None
-
-**Steps**:
-1. **FIRST**: Read \`/tmp/fetched_recipe.md\` (or \`/tmp/fetched_docs.md\`) as a REFERENCE
-2. Study the patterns: base images, build commands, deploy files, cache settings
-3. **Construct your own zerops.yml** using the structure in SECTION 6 + patterns you learned
-4. **ALWAYS**: Setup names must be \`dev\` and \`prod\` (NOT hostnames like appdev/appstage!)
-5. **ALWAYS**: Add your managed service env vars to both setups
-
-**Write to**: \`${mount_path}/zerops.yml\`
-
-**Verification**:
-- File exists at ${mount_path}/zerops.yml
-- Has exactly two setups named 'dev' and 'prod'
-- Dev setup has \`start: ${dev_start}\`
-- Prod setup has \`start: ${prod_start}\`
-
----
-
-### Task 2: Create Application Code
-
-**Action**: Write a minimal HTTP server with health endpoints
-
-**Prerequisites**: Task 1 complete
-
-**Requirements**:
-- Listen on port 8080
-- GET / → HTML welcome page
-- GET /health → {"status": "ok"}
-- GET /status → {"status": "ok", "service": "${dev_hostname}", "runtime": "${runtime}"}
-
-**Verification**: Source files exist at ${mount_path}/
-
----
-
-### Task 3: Create Runtime Dependencies
-
-**Action**: Initialize package manager files
-
-**Prerequisites**: Task 2 complete
-
-**Command** (via SSH):
-\`\`\`bash
-ssh ${dev_hostname} "cd /var/www && <runtime-specific init command>"
-\`\`\`
-
-**Verification**: Dependency files exist (go.mod, package.json, etc.)
-
----
-
-### Task 4: Authenticate zcli in Container
-
-**Action**: Login zcli inside the dev container
-
-**Prerequisites**: Task 3 complete
-
-**Command**:
-\`\`\`bash
-ssh ${dev_hostname} 'zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY"'
-\`\`\`
-
-**Verification**: Command exits without error
-
----
-
-### Task 5: Initialize Git Repository
-
-**Action**: Create git repo and initial commit
-
-**Prerequisites**: Task 4 complete
-
-**Command**:
-\`\`\`bash
-ssh ${dev_hostname} "cd /var/www && git init && git add -A && git commit -m 'Bootstrap ${dev_hostname}'"
-\`\`\`
-
-**Verification**: .git directory exists, commit created
-
----
-
-### Task 6: Deploy to Dev
-
-**Action**: Push code to dev service using the 'dev' setup
-
-**Prerequisites**: Tasks 1-5 complete
-
-**Command**:
-\`\`\`bash
-ssh ${dev_hostname} "cd /var/www && zcli push ${dev_id} --setup=dev"
-\`\`\`
-
-**Verification**: zcli reports successful deployment
-
----
-
-### Task 7: Wait for Dev Deployment
-
-**Action**: Wait until dev service is running
-
-**Prerequisites**: Task 6 complete
-
-**Command**:
-\`\`\`bash
-.zcp/status.sh --wait ${dev_hostname}
-\`\`\`
-
-**Verification**: Service status is RUNNING
-
----
-
-### Task 8: Enable Dev Subdomain
-
-**Action**: Enable public subdomain access for dev
-
-**Prerequisites**: Task 7 complete
-
-**Command**:
-\`\`\`bash
-zcli service enable-subdomain -P \$projectId ${dev_id}
-\`\`\`
-
-**Verification**: Command succeeds
-
----
-
-### Task 9: Test Dev Endpoints
-
-**Action**: Verify dev service responds correctly
-
-**Prerequisites**: Task 8 complete
-
-**Command**:
-\`\`\`bash
-.zcp/verify.sh ${dev_hostname} 8080 / /health /status
-\`\`\`
-
-**Verification**: All endpoints return expected responses
-
----
-
-### Task 10: Deploy to Stage
-
-**Action**: Push code to stage service using the 'prod' setup
-
-**Prerequisites**: Task 9 complete (dev verified working)
-
-**Command**:
-\`\`\`bash
-ssh ${dev_hostname} "cd /var/www && zcli push ${stage_id} --setup=prod"
-\`\`\`
-
-**Verification**: zcli reports successful deployment
-
----
-
-### Task 11: Wait for Stage Deployment
-
-**Action**: Wait until stage service is running
-
-**Prerequisites**: Task 10 complete
-
-**Command**:
-\`\`\`bash
-.zcp/status.sh --wait ${stage_hostname}
-\`\`\`
-
-**Verification**: Service status is RUNNING
-
----
-
-### Task 12: Enable Stage Subdomain
-
-**Action**: Enable public subdomain access for stage
-
-**Prerequisites**: Task 11 complete
-
-**Command**:
-\`\`\`bash
-zcli service enable-subdomain -P \$projectId ${stage_id}
-\`\`\`
-
-**Verification**: Command succeeds
-
----
-
-### Task 13: Test Stage Endpoints
-
-**Action**: Verify stage service responds correctly
-
-**Prerequisites**: Task 12 complete
-
-**Command**:
-\`\`\`bash
-.zcp/verify.sh ${stage_hostname} 8080 / /health /status
-\`\`\`
-
-**Verification**: All endpoints return expected responses
-
----
-
-### Task 14: Mark Complete (CRITICAL)
-
-**Action**: Signal completion to the main agent
-
-**Prerequisites**: All previous tasks complete
-
-**Command**:
-\`\`\`bash
-.zcp/mark-complete.sh ${dev_hostname}
-\`\`\`
-
-**Verification**: Command exits successfully
-
-**NOTE**: If this fails, the main agent can detect completion by checking for zerops.yml and source files.
-
----
-
-## SECTION 8: RECOVERY PROCEDURES
-
-### If zcli push fails with "not a git repository"
-\`\`\`bash
-ssh ${dev_hostname} "cd /var/www && git init && git add -A && git commit -m 'Fix'"
-\`\`\`
-
-### If zcli push fails with "unauthenticated"
-\`\`\`bash
-ssh ${dev_hostname} 'zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY"'
-\`\`\`
-
-### If build fails
-1. Check zerops.yml syntax (proper YAML indentation)
-2. Verify buildCommands are correct for ${runtime}
-3. Test locally first: \`ssh ${dev_hostname} "cd /var/www && <build-command>"\`
-
-### If endpoints don't respond
-1. Check if process is running: \`ssh ${dev_hostname} "ps aux | grep app"\`
-2. Check logs: \`zcli service log -P \$projectId ${dev_id}\`
-3. Verify port 8080 is being used
-
----
-
-## SECTION 9: SUCCESS CRITERIA
-
-Your task is complete when:
-1. ✅ zerops.yml exists with 'dev' and 'prod' setups (NOT hostname names!)
-2. ✅ Application code exists and compiles/runs
-3. ✅ Dev service deployed and responding at /health
-4. ✅ Stage service deployed and responding at /health
-5. ✅ .zcp/mark-complete.sh ${dev_hostname} has been run
-
----
-
-## QUICK REFERENCE
-
-| What | Command |
-|------|---------|
-| Write files | Direct to ${mount_path}/ |
-| Run in container | ssh ${dev_hostname} "cd /var/www && ..." |
-| Auth zcli | ssh ${dev_hostname} 'zcli login ... "\$ZEROPS_ZCP_API_KEY"' |
-| Deploy to dev | ssh ${dev_hostname} "cd /var/www && zcli push ${dev_id} --setup=dev" |
-| Deploy to stage | ssh ${dev_hostname} "cd /var/www && zcli push ${stage_id} --setup=prod" |
-| Wait for deploy | .zcp/status.sh --wait {hostname} |
-| Test endpoints | .zcp/verify.sh {hostname} 8080 / /health |
-| Mark done | .zcp/mark-complete.sh ${dev_hostname} |
-
+## Tasks
+
+| # | Task | Command/Action |
+|---|------|----------------|
+| 1 | Read recipe | \`cat /tmp/fetched_recipe.md\` — understand patterns |
+| 2 | Write zerops.yml | To \`${mount_path}/zerops.yml\` — setups: \`dev\`, \`prod\` |
+| 3 | Write app code | HTTP server on :8080 with \`/\`, \`/health\`, \`/status\` |
+| 4 | Init deps | \`ssh ${dev_hostname} "cd /var/www && <init>"\` |
+| 5 | Auth zcli | \`ssh ${dev_hostname} 'zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY"'\` |
+| 6 | Git init | \`ssh ${dev_hostname} "cd /var/www && git config --global user.email 'zcp@zerops.io' && git config --global user.name 'ZCP' && git init && git add -A && git commit -m 'Bootstrap'"\` |
+| 7 | Deploy dev | \`ssh ${dev_hostname} "cd /var/www && zcli push ${dev_id} --setup=dev --deploy-git-folder"\` |
+| 8 | Wait dev | \`.zcp/status.sh --wait ${dev_hostname}\` |
+| 9 | Subdomain dev | \`zcli service enable-subdomain -P \$projectId ${dev_id}\` |
+| 10 | Verify dev | \`.zcp/verify.sh ${dev_hostname} 8080 / /health /status\` |
+| 11 | Deploy stage | \`ssh ${dev_hostname} "cd /var/www && zcli push ${stage_id} --setup=prod"\` |
+| 12 | Wait stage | \`.zcp/status.sh --wait ${stage_hostname}\` |
+| 13 | Subdomain stage | \`zcli service enable-subdomain -P \$projectId ${stage_id}\` |
+| 14 | Verify stage | \`.zcp/verify.sh ${stage_hostname} 8080 / /health /status\` |
+| 15 | **Done** | \`.zcp/mark-complete.sh ${dev_hostname}\` — then end session |
+
+## Platform Rules
+
+**zcli service commands:** \`list\`, \`push\`, \`deploy\`, \`enable-subdomain\`, \`log\`, \`start\`, \`stop\`
+— no \`get\`/\`info\`/\`status\`. Use \`.zcp/status.sh\` for status.
+
+**Database tools** (psql, redis-cli): Run from ZCP, not via SSH.
+
+**Long SSH commands**: Set \`run_in_background=true\` if >30s.
+
+**Never** \`env\`/\`printenv\` — leaks secrets. Fetch specific vars only.
+
+## Recovery
+
+| Problem | Fix |
+|---------|-----|
+| "not a git repository" | \`ssh ${dev_hostname} "cd /var/www && git config --global user.email 'zcp@zerops.io' && git config --global user.name 'ZCP' && git init && git add -A && git commit -m 'Fix'"\` |
+| "unauthenticated" | Re-run Task 5 |
+| Endpoints fail | \`zcli service log -P \$projectId ${dev_id}\` |
+
+## Done
+
+After \`.zcp/mark-complete.sh\` succeeds → end session. Main agent handles aggregation.
 PROMPT
 )
 
@@ -767,7 +403,7 @@ PROMPT
                     "Initialize runtime dependencies (go mod init, npm init, etc.)",
                     "Authenticate zcli in container",
                     "Initialize git repository",
-                    "Deploy to dev: ssh \($hostname) \"cd /var/www && zcli push \($dev_id) --setup=dev\"",
+                    "Deploy to dev: ssh \($hostname) \"cd /var/www && zcli push \($dev_id) --setup=dev --deploy-git-folder\"",
                     "Wait for dev: .zcp/status.sh --wait \($hostname)",
                     "Enable dev subdomain",
                     "Test dev: .zcp/verify.sh \($hostname) 8080 / /health /status",
