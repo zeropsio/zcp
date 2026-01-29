@@ -150,6 +150,7 @@ zcp/
 │       │       ├── import-services.sh   # Import via zcli
 │       │       ├── wait-services.sh     # Poll until RUNNING
 │       │       ├── mount-dev.sh         # SSHFS mount
+│       │       ├── discover-services.sh # Discover actual env vars (NEW)
 │       │       ├── finalize.sh          # Create handoff data
 │       │       ├── spawn-subagents.sh   # Output subagent instructions
 │       │       └── aggregate-results.sh # Wait for completion, create discovery
@@ -349,11 +350,11 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 │                                                                   │              │
 │  ┌──────────────────────────────────────────────────────────────┐ │              │
 │  │                                                              │ │              │
-│  │  ┌──────────┐    ┌───────────┐    ┌──────────┐              │ │              │
-│  │  │ finalize │◄───│ mount-dev │◄───│wait-svc  │◄─────────────┘ │              │
-│  │  │(instant) │    │ (instant) │    │ (poll)   │                │              │
-│  │  └──────────┘    └───────────┘    └──────────┘                │              │
-│  │       │                                                       │              │
+│  │  ┌──────────┐   ┌─────────────┐   ┌───────────┐  ┌────────┐ │ │              │
+│  │  │ finalize │◄──│discover-svc │◄──│ mount-dev │◄─│wait-svc│◄┘ │              │
+│  │  │(instant) │   │  (instant)  │   │ (instant) │  │ (poll) │   │              │
+│  │  └──────────┘   └─────────────┘   └───────────┘  └────────┘   │              │
+│  │       │              (NEW)                                    │              │
 │  └───────┼───────────────────────────────────────────────────────┘              │
 │          │                                                                       │
 │          ▼                                                                       │
@@ -400,6 +401,7 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 .zcp/bootstrap.sh step import-services    # Send to Zerops API
 .zcp/bootstrap.sh step wait-services --wait  # Polls automatically until ready!
 .zcp/bootstrap.sh step mount-dev appdev   # SSHFS mount
+.zcp/bootstrap.sh step discover-services  # Discover actual env vars (NEW)
 .zcp/bootstrap.sh step finalize           # Create handoff data
 .zcp/bootstrap.sh step spawn-subagents    # Get subagent instructions
 
@@ -802,6 +804,7 @@ All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/s
 | `bootstrap_plan.json` | `.zcp/workflow.sh bootstrap` | Runtime + services specification |
 | `bootstrap_import.yml` | Bootstrap orchestrator | Generated import.yml |
 | `bootstrap_coordination.json` | Bootstrap orchestrator | Checkpoint tracking for resume |
+| `service_discovery.json` | `discover-services` step | Actual env vars from running services |
 | `bootstrap_handoff.json` | `finalize` step | Per-service handoff data for subagents |
 | `{hostname}_complete.json` | Subagent (Task 17) | URLs, verification data for handoff |
 | `bootstrap_complete.json` | `aggregate-results` step | Bootstrap completion evidence |

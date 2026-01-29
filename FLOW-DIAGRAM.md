@@ -62,9 +62,10 @@
 │   │   ┌─────────────────────────────────────────────────┘               │   │
 │   │   │                                                                  │   │
 │   │   ▼                                                                  │   │
-│   │   ┌──────────┐    ┌─────────────────┐                               │   │
-│   │   │ finalize │───►│ spawn-subagents │                               │   │
-│   │   └──────────┘    └────────┬────────┘                               │   │
+│   │   ┌───────────────────┐    ┌──────────┐    ┌─────────────────┐      │   │
+│   │   │ discover-services │───►│ finalize │───►│ spawn-subagents │      │   │
+│   │   │  (env var query)  │    └──────────┘    └────────┬────────┘      │   │
+│   │   └───────────────────┘                             │               │   │
 │   │                            │                                         │   │
 │   └────────────────────────────┼─────────────────────────────────────────┘   │
 │                                ▼                                             │
@@ -93,6 +94,7 @@
 | `import-services` | Send to Zerops API (instant) |
 | `wait-services` | Poll until RUNNING |
 | `mount-dev` | SSHFS mount (instant) |
+| `discover-services` | Query actual env vars from services (NEW) |
 | `finalize` | Create handoff data (instant) |
 | `spawn-subagents` | Output subagent instructions |
 | `aggregate-results` | Wait for completion, create discovery |
