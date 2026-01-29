@@ -400,10 +400,10 @@ Follow these steps IN ORDER:
    Example: .zcp/recipe-search.sh quick go postgresql
 
    This creates /tmp/recipe_review.json with:
-   • Valid version strings (go@1 not go@latest)
    • Correct YAML structure
    • Production patterns (alpine, cache, etc.)
    • Environment variable patterns
+   Note: Version strings now come from docs.zerops.io/data.json via plan.json
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 STEP 2: Use Bootstrap for New Projects

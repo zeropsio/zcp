@@ -148,7 +148,7 @@ zerops.yaml structure:
   zerops:
     - setup: api              # ← --setup value
       build:
-        base: go@1            # See: jq -r '.patterns_extracted.runtime_patterns.go.dev_runtime_base' /tmp/recipe_review.json
+        base: go@1            # Versions from plan.json: jq -r '.runtimes[0].version' /tmp/bootstrap_plan.json
         buildCommands:
           - go build -o app main.go
         deployFiles:

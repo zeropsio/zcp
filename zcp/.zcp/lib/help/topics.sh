@@ -264,7 +264,7 @@ zerops.yaml structure:
   zerops:
     - setup: api              # ← This is the --setup value
       build:
-        base: go@1            # Get from: jq -r '.patterns_extracted.runtime_patterns.go.dev_runtime_base' /tmp/recipe_review.json
+        base: go@1            # Versions from plan.json: jq -r '.runtimes[0].version' /tmp/bootstrap_plan.json
         buildCommands:
           - go build -o app main.go
         deployFiles:          # ← CRITICAL SECTION
@@ -754,7 +754,7 @@ Service type list (all available types):
    Use patterns from recipe-search.sh output to create import.yml.
    The recipe search provides correct version strings and required fields.
 
-   Structure (use versions from recipe_review.json):
+   Structure (versions from plan.json / data.json):
    services:
      - hostname: {name}
        type: {from recipe search}
@@ -877,13 +877,13 @@ This is platform behavior, not a bug. Plan for it.
 
 # 0. Get valid patterns first (Gate 0 requirement)
 .zcp/recipe-search.sh quick go postgresql
-# Check /tmp/recipe_review.json for valid_versions
+# Version is stored in plan.json from data.json
 
-# 1. Create import file (use version from recipe search)
+# 1. Create import file (version from plan.json)
 cat > add-postgres.yml <<'YAML'
 services:
   - hostname: db
-    type: {postgresql version from recipe_review.json}
+    type: {version from plan.json: .managed_services[].version}
     mode: NON_HA
 YAML
 
@@ -1086,10 +1086,10 @@ Examples:
   .zcp/recipe-search.sh quick nodejs valkey
 
 This creates /tmp/recipe_review.json with:
-  • Correct version strings (e.g. runtime@version, never @latest)
   • Valid YAML structure and required fields
   • startWithoutCode requirement for runtime services
   • Production patterns (alpine runtime, cache: true)
+Note: Version strings now come from docs.zerops.io/data.json via plan.json
 
 Gate 0 BLOCKS service imports until this is done.
 
@@ -1115,7 +1115,7 @@ Example: Bootstrap a Go app with PostgreSQL
 
    Use patterns from .zcp/recipe-search.sh quick {runtime} {managed}
 
-   Structure (versions/repos from recipe_review.json):
+   Structure (versions from plan.json / data.json):
    services:
      - hostname: appstage
        type: {runtime from recipe search}
@@ -1180,15 +1180,15 @@ zerops.yaml specification (build/deploy config):
 # 0. Get valid patterns (REQUIRED - Gate 0)
 .zcp/recipe-search.sh quick go
 
-# 1. Create import.yml (use version from recipe_review.json)
+# 1. Create import.yml (version from plan.json / data.json)
 cat > import.yml <<'YAML'
 services:
   - hostname: appdev
-    type: {go version from recipe_review.json}
+    type: {version from plan.json: .runtimes[0].version}
     startWithoutCode: true
     enableSubdomainAccess: true
   - hostname: appstage
-    type: {go version from recipe_review.json}
+    type: {version from plan.json: .runtimes[0].version}
     startWithoutCode: true
     enableSubdomainAccess: true
 YAML
@@ -1229,7 +1229,7 @@ func main() {
 GO
 
 # 6. Create zerops.yaml
-# Get runtime base: jq -r '.patterns_extracted.runtime_patterns.go.dev_runtime_base' /tmp/recipe_review.json
+# Get runtime version: jq -r '.runtimes[0].version' /tmp/bootstrap_plan.json
 # Example output: go@1
 cat > /var/www/appdev/zerops.yaml <<'YAML'
 zerops:

@@ -71,47 +71,49 @@ type_exists() {
     jq -e --arg t "$type_name" 'has($t)' "$CACHE_FILE" >/dev/null 2>&1
 }
 
-# Known runtime types (fallback when data.json unavailable)
-KNOWN_RUNTIMES="go golang nodejs bun python php rust java dotnet"
-KNOWN_SERVICES="postgresql mariadb mysql valkey keydb rabbitmq nats elasticsearch meilisearch typesense kafka clickhouse qdrant objectstorage sharedstorage mongodb"
-
-# Check if type is a known runtime (fallback mode)
-is_known_runtime() {
+# Get default import version from data.json
+# Returns first element of first import array: .import[0][0]
+get_default_version() {
     local type_name="$1"
-    [[ " $KNOWN_RUNTIMES " =~ " $type_name " ]]
+    ensure_data_json || return 1
+    jq -r --arg t "$type_name" '.[$t].import[0][0] // empty' "$CACHE_FILE"
 }
 
-# Check if type is a known service (fallback mode)
-is_known_service() {
+# Get base images array for runtime types
+# Returns first base array: .base[0]
+get_base_images() {
     local type_name="$1"
-    [[ " $KNOWN_SERVICES " =~ " $type_name " ]]
+    ensure_data_json || return 1
+    jq -c --arg t "$type_name" '.[$t].base[0] // []' "$CACHE_FILE"
+}
+
+# Check if type has base images (is a runtime that can build code)
+is_runtime_type() {
+    local type_name="$1"
+    ensure_data_json || return 1
+    local has_base
+    has_base=$(jq -r --arg t "$type_name" '.[$t] | has("base")' "$CACHE_FILE" 2>/dev/null)
+    [ "$has_base" = "true" ]
 }
 
 # Determine if type is a runtime (can run user code) or managed service
-# Runtimes have "build" configuration, managed services don't
+# Uses is_runtime_type() which checks for "base" field in data.json
 get_type_category() {
     local type_name="$1"
     ensure_data_json || { echo "unknown"; return; }
 
-    # Check if it has build-related fields (indicates runtime)
-    # Runtimes in data.json typically have "base" arrays for build/run
-    local has_base
-    has_base=$(jq -r --arg t "$type_name" '.[$t] | has("base")' "$CACHE_FILE" 2>/dev/null || echo "false")
-
-    if [ "$has_base" = "true" ]; then
-        # Could be runtime or managed - check if it's a known managed service pattern
-        case "$type_name" in
-            postgresql|mariadb|valkey|keydb|rabbitmq|nats|elasticsearch|meilisearch|typesense|kafka|clickhouse|qdrant|objectstorage|sharedstorage)
-                echo "managed"
-                ;;
-            *)
-                echo "runtime"
-                ;;
-        esac
+    if is_runtime_type "$type_name"; then
+        echo "runtime"
     else
-        echo "unknown"
+        # Has entry in data.json but no base = managed service
+        if type_exists "$type_name"; then
+            echo "managed"
+        else
+            echo "unknown"
+        fi
     fi
 }
+
 
 # Resolve a type name (apply alias if exists)
 resolve_type() {
@@ -143,18 +145,27 @@ get_suggestions() {
 }
 
 # Main resolution function
+# Returns JSON with types, versions, and base images
 resolve_types() {
     local input="$*"
     input=$(echo "$input" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')
 
-    # Try to get data.json, but continue in fallback mode if unavailable
-    local fallback_mode="false"
+    # REQUIRE data.json - no fallback mode
     if ! ensure_data_json; then
-        fallback_mode="true"
-        echo "WARNING: data.json unavailable - using fallback mode" >&2
+        jq -n '{
+            success: false,
+            runtimes: [],
+            services: [],
+            errors: ["Cannot fetch data.json - network required"],
+            warnings: [],
+            flags: {runtime: "", services: ""}
+        }'
+        return 1
     fi
 
     local runtimes=() services=() errors=() warnings=()
+    local runtime_objects='[]'
+    local service_objects='[]'
 
     for term in $input; do
         [[ "$term" == --* ]] && continue
@@ -162,48 +173,57 @@ resolve_types() {
 
         local base_type="${term%%@*}"
 
-        # Apply alias first (always works)
+        # Apply alias first
         local resolved="${ALIASES[$base_type]:-$base_type}"
-        [ "$term" != "$resolved" ] && warnings+=("'$term' resolved to '$resolved'")
+        [ "$base_type" != "$resolved" ] && warnings+=("'$base_type' resolved to '$resolved'")
 
-        if [ "$fallback_mode" = "true" ]; then
-            # Fallback: use hardcoded known types
-            if is_known_runtime "$resolved"; then
-                [[ ! " ${runtimes[*]:-} " =~ " ${resolved} " ]] && runtimes+=("$resolved")
-            elif is_known_service "$resolved"; then
-                [[ ! " ${services[*]:-} " =~ " ${resolved} " ]] && services+=("$resolved")
+        # Validate against data.json
+        if type_exists "$resolved"; then
+            local category version base_json
+            category=$(get_type_category "$resolved")
+            version=$(get_default_version "$resolved")
+
+            if [ -z "$version" ]; then
+                errors+=("No import version found for '$resolved'")
+                continue
+            fi
+
+            if [ "$category" = "runtime" ]; then
+                if [[ ! " ${runtimes[*]:-} " =~ " ${resolved} " ]]; then
+                    runtimes+=("$resolved")
+                    base_json=$(get_base_images "$resolved")
+                    runtime_objects=$(echo "$runtime_objects" | jq \
+                        --arg t "$resolved" \
+                        --arg v "$version" \
+                        --argjson b "$base_json" \
+                        '. + [{type: $t, version: $v, base: $b}]')
+                fi
             else
-                # Unknown in fallback mode - assume it's a service (safer default)
-                warnings+=("'$resolved' not recognized - treating as service")
-                [[ ! " ${services[*]:-} " =~ " ${resolved} " ]] && services+=("$resolved")
+                if [[ ! " ${services[*]:-} " =~ " ${resolved} " ]]; then
+                    services+=("$resolved")
+                    service_objects=$(echo "$service_objects" | jq \
+                        --arg t "$resolved" \
+                        --arg v "$version" \
+                        '. + [{type: $t, version: $v}]')
+                fi
             fi
         else
-            # Normal mode: validate against data.json
-            if type_exists "$resolved"; then
-                local category
-                category=$(get_type_category "$resolved")
-
-                if [ "$category" = "runtime" ]; then
-                    [[ ! " ${runtimes[*]:-} " =~ " ${resolved} " ]] && runtimes+=("$resolved")
-                else
-                    [[ ! " ${services[*]:-} " =~ " ${resolved} " ]] && services+=("$resolved")
-                fi
+            local suggestions
+            suggestions=$(get_suggestions "$term")
+            if [ -n "$suggestions" ]; then
+                errors+=("Unknown type: '$term'. Try: $suggestions")
             else
-                local suggestions
-                suggestions=$(get_suggestions "$term")
-                if [ -n "$suggestions" ]; then
-                    errors+=("Unknown: '$term'. Try: $suggestions")
-                else
-                    errors+=("Unknown: '$term'")
-                fi
+                errors+=("Unknown type: '$term'")
             fi
         fi
     done
 
-    # Build JSON
-    local runtimes_json services_json errors_json warnings_json
-    runtimes_json=$(printf '%s\n' "${runtimes[@]:-}" | jq -R . | jq -s 'map(select(. != ""))')
-    services_json=$(printf '%s\n' "${services[@]:-}" | jq -R . | jq -s 'map(select(. != ""))')
+    # Build JSON output
+    local runtimes_csv services_csv
+    runtimes_csv=$(printf '%s\n' "${runtimes[@]:-}" | grep -v '^$' | paste -sd ',' -)
+    services_csv=$(printf '%s\n' "${services[@]:-}" | grep -v '^$' | paste -sd ',' -)
+
+    local errors_json warnings_json
     errors_json=$(printf '%s\n' "${errors[@]:-}" | jq -R . | jq -s 'map(select(. != ""))')
     warnings_json=$(printf '%s\n' "${warnings[@]:-}" | jq -R . | jq -s 'map(select(. != ""))')
 
@@ -212,11 +232,13 @@ resolve_types() {
     [ ${#runtimes[@]} -eq 0 ] && { success="false"; errors_json=$(echo "$errors_json" | jq '. + ["No runtimes specified"]'); }
 
     jq -n \
-        --argjson runtimes "$runtimes_json" \
-        --argjson services "$services_json" \
+        --argjson runtimes "$runtime_objects" \
+        --argjson services "$service_objects" \
         --argjson errors "$errors_json" \
         --argjson warnings "$warnings_json" \
         --argjson success "$success" \
+        --arg rt_csv "$runtimes_csv" \
+        --arg svc_csv "$services_csv" \
         '{
             success: $success,
             runtimes: $runtimes,
@@ -224,8 +246,8 @@ resolve_types() {
             errors: $errors,
             warnings: $warnings,
             flags: {
-                runtime: ($runtimes | join(",")),
-                services: ($services | join(","))
+                runtime: $rt_csv,
+                services: $svc_csv
             }
         }'
 }
@@ -267,7 +289,7 @@ EOF
     esac
 }
 
-export -f ensure_data_json data_json_available type_exists is_known_runtime is_known_service get_type_category resolve_type resolve_types
+export -f ensure_data_json data_json_available type_exists get_default_version get_base_images is_runtime_type get_type_category resolve_type get_suggestions resolve_types
 
 # Only run main if executed directly (not sourced)
 # The || true prevents errexit from triggering when sourced

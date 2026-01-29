@@ -18,22 +18,32 @@ fetch_runtime_recipe() {
     # Process result
     if [ -f "${tmp_dir}/fetched_recipe.md" ]; then
         mv "${tmp_dir}/fetched_recipe.md" "${tmp_dir}/recipe_${runtime}.md" 2>/dev/null || true
-        local rt_version="${runtime}@1"
+
+        # Get version from plan - use null-safe array access with .[]?
+        local rt_version
+        rt_version=$(get_plan 2>/dev/null | jq -r --arg r "$runtime" '.runtimes[]? | select(.type == $r) | .version // empty' 2>/dev/null)
+        [ -z "$rt_version" ] && rt_version="${runtime}@1"
+
         if [ -f "${tmp_dir}/fetched_patterns.json" ]; then
-            rt_version=$(jq -r '.runtime_base // "'"${runtime}@1"'"' "${tmp_dir}/fetched_patterns.json" 2>/dev/null)
             mv "${tmp_dir}/fetched_patterns.json" "${tmp_dir}/patterns_${runtime}.json" 2>/dev/null || true
         fi
         echo "{\"runtime\":\"$runtime\",\"version\":\"$rt_version\",\"recipe_file\":\"${tmp_dir}/recipe_${runtime}.md\",\"found\":true}" > "$result_file"
     elif [ -f "${tmp_dir}/fetched_docs.md" ]; then
         mv "${tmp_dir}/fetched_docs.md" "${tmp_dir}/recipe_${runtime}.md" 2>/dev/null || true
-        local rt_version="${runtime}@1"
+
+        local rt_version
+        rt_version=$(get_plan 2>/dev/null | jq -r --arg r "$runtime" '.runtimes[]? | select(.type == $r) | .version // empty' 2>/dev/null)
+        [ -z "$rt_version" ] && rt_version="${runtime}@1"
+
         if [ -f "${tmp_dir}/fetched_patterns.json" ]; then
-            rt_version=$(jq -r '.runtime_base // "'"${runtime}@1"'"' "${tmp_dir}/fetched_patterns.json" 2>/dev/null)
             mv "${tmp_dir}/fetched_patterns.json" "${tmp_dir}/patterns_${runtime}.json" 2>/dev/null || true
         fi
         echo "{\"runtime\":\"$runtime\",\"version\":\"$rt_version\",\"recipe_file\":\"${tmp_dir}/recipe_${runtime}.md\",\"source\":\"docs\",\"found\":true}" > "$result_file"
     else
-        echo "{\"runtime\":\"$runtime\",\"version\":\"${runtime}@1\",\"recipe_file\":null,\"source\":\"default\",\"found\":false}" > "$result_file"
+        local rt_version
+        rt_version=$(get_plan 2>/dev/null | jq -r --arg r "$runtime" '.runtimes[]? | select(.type == $r) | .version // empty' 2>/dev/null)
+        [ -z "$rt_version" ] && rt_version="${runtime}@1"
+        echo "{\"runtime\":\"$runtime\",\"version\":\"$rt_version\",\"recipe_file\":null,\"source\":\"default\",\"found\":false}" > "$result_file"
     fi
 }
 
@@ -49,8 +59,11 @@ fetch_service_doc() {
 
     if [ -n "$svc_doc" ]; then
         echo "$svc_doc" > "${tmp_dir}/service_${svc}.md"
+
+        # Get version from plan (passed via environment or state)
+        # Use null-safe array access with .[]? to handle empty/null arrays
         local svc_version
-        svc_version=$(echo "$svc_doc" | grep -oE "${svc}@[0-9a-z.]+" | head -1)
+        svc_version=$(get_plan 2>/dev/null | jq -r --arg s "$svc" '.managed_services[]? | select(.type == $s) | .version // empty' 2>/dev/null)
         [ -z "$svc_version" ] && svc_version="${svc}@latest"
 
         # Determine env vars based on service type

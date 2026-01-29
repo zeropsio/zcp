@@ -377,9 +377,9 @@ get_docs_paths() {
     esac
 }
 
-# List of known runtimes for help display
-# Only list runtimes that have VERIFIED recipes at stage-vega.zerops.dev
-KNOWN_RUNTIMES="go bun nodejs php python"
+# Known runtimes come from resolve-types.sh / data.json
+# This list is only for help display fallback
+KNOWN_RUNTIMES_HELP="go bun nodejs php python"
 
 show_help() {
   cat <<EOF
@@ -464,7 +464,7 @@ ${BOLD}KNOWN RECIPES:${NC}
 EOF
 
   echo ""
-  for runtime in $KNOWN_RUNTIMES; do
+  for runtime in $KNOWN_RUNTIMES_HELP; do
     local patterns
     patterns=$(get_recipe_patterns "$runtime")
     [ -n "$patterns" ] && echo -e "  ${CYAN}$runtime${NC}: $patterns"
@@ -1216,8 +1216,13 @@ quick_search() {
       echo -e "${GREEN}✓ Documentation found${NC}"
       echo "  → ${DOCS_BASE_URL}/${managed_service}/overview"
       # Extract version from docs
+      # Get version from resolve-types.sh if available, otherwise extract from docs
       local managed_version
-      managed_version=$(echo "$managed_docs" | grep -oE "${managed_service}@[0-9a-z.]+" | head -1)
+      if type get_default_version &>/dev/null; then
+          managed_version=$(get_default_version "$managed_service")
+      else
+          managed_version=$(echo "$managed_docs" | grep -oE "${managed_service}@[0-9a-z.]+" | head -1)
+      fi
       [ -n "$managed_version" ] && echo "  → Version: $managed_version"
     else
       echo -e "${YELLOW}⚠ Documentation not found at: ${managed_url}${NC}"

@@ -41,60 +41,59 @@ step_plan() {
     # ============================================================
     # AUTOMATIC TYPE RESOLUTION (via resolve-types.sh)
     # ============================================================
-    # Resolves aliases and validates against data.json
-    # "go bun postgres valkey nats" → runtimes: [go, bun], services: [postgresql, valkey, nats]
+    # Returns full objects with versions from data.json
 
     local all_inputs="$runtime"
     [ -n "$services" ] && all_inputs="$all_inputs $services"
 
     local resolved_json
     if type resolve_types &>/dev/null; then
-        # Normalize: replace commas with spaces for resolution
         all_inputs=$(echo "$all_inputs" | tr ',' ' ')
         resolved_json=$(resolve_types $all_inputs)
 
-        # Check if resolution succeeded
         local resolution_success
         resolution_success=$(echo "$resolved_json" | jq -r '.success')
 
         if [ "$resolution_success" != "true" ]; then
             local errors
             errors=$(echo "$resolved_json" | jq -r '.errors | join("; ")')
-            json_error "plan" "Type resolution failed: $errors" "$resolved_json" '["Run: .zcp/lib/bootstrap/resolve-types.sh --list"]'
+            json_error "plan" "Type resolution failed: $errors" "$resolved_json" '["Ensure network access to docs.zerops.io", "Run: .zcp/lib/bootstrap/resolve-types.sh --list"]'
             return 1
         fi
-
-        # Extract resolved values
-        local resolved_runtimes resolved_services
-        resolved_runtimes=$(echo "$resolved_json" | jq -r '.flags.runtime')
-        resolved_services=$(echo "$resolved_json" | jq -r '.flags.services')
 
         # Show warnings about alias resolution
         local warnings
         warnings=$(echo "$resolved_json" | jq -r '.warnings[]' 2>/dev/null)
-        if [ -n "$warnings" ]; then
-            echo "Type resolution: $warnings" >&2
-        fi
-
-        # Use resolved values
-        runtime="$resolved_runtimes"
-        services="$resolved_services"
+        [ -n "$warnings" ] && echo "Type resolution: $warnings" >&2
+    else
+        json_error "plan" "resolve-types.sh not loaded" '{}' '["Source resolve-types.sh first"]'
+        return 1
     fi
 
-    # Parse multiple runtimes if comma-separated
-    local runtime_array=()
-    local prefix_array=()
+    # Extract runtime objects with versions
+    local runtime_objects
+    runtime_objects=$(echo "$resolved_json" | jq '.runtimes')
 
-    IFS=',' read -ra runtime_array <<< "$runtime"
+    # Extract service objects with versions
+    local service_objects
+    service_objects=$(echo "$resolved_json" | jq '.services')
+
+    # Get type names for prefix matching
+    local runtime_names
+    runtime_names=$(echo "$runtime_objects" | jq -r '.[].type' | tr '\n' ' ')
+    local runtime_array=()
+    read -ra runtime_array <<< "$runtime_names"
+
+    local prefix_array=()
     IFS=',' read -ra prefix_array <<< "$prefix"
 
     # Validate we have at least one runtime
     if [ ${#runtime_array[@]} -eq 0 ] || [ -z "${runtime_array[0]}" ]; then
-        json_error "plan" "No valid runtimes specified" '{}' '["At least one runtime required: --runtime go", "Run: .zcp/lib/bootstrap/resolve-types.sh --list"]'
+        json_error "plan" "No valid runtimes specified" '{}' '["At least one runtime required: --runtime go"]'
         return 1
     fi
 
-    # HIGH-10: Validate each prefix (lowercase alphanumeric, hyphens allowed but not at start/end)
+    # Validate prefixes
     for pfx in "${prefix_array[@]}"; do
         if [[ ! "$pfx" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || [ ${#pfx} -gt 58 ]; then
             json_error "plan" "Invalid prefix: $pfx" '{}' '["Must be lowercase alphanumeric, may contain hyphens, max 58 chars"]'
@@ -121,29 +120,15 @@ step_plan() {
         stage_hostnames+=("${prefix_array[$i]}stage")
     done
 
-    # Parse managed services
-    local managed_services=()
-    if [ -n "$services" ]; then
-        IFS=',' read -ra managed_services <<< "$services"
-    fi
-
-    # Build plan JSON
-    local dev_hostnames_json stage_hostnames_json managed_json runtimes_json
-
-    runtimes_json=$(printf '%s\n' "${runtime_array[@]}" | jq -R . | jq -s .)
+    # Build JSON arrays for hostnames
+    local dev_hostnames_json stage_hostnames_json
     dev_hostnames_json=$(printf '%s\n' "${dev_hostnames[@]}" | jq -R . | jq -s .)
     stage_hostnames_json=$(printf '%s\n' "${stage_hostnames[@]}" | jq -R . | jq -s .)
 
-    if [ ${#managed_services[@]} -gt 0 ]; then
-        managed_json=$(printf '%s\n' "${managed_services[@]}" | jq -R . | jq -s .)
-    else
-        managed_json='[]'
-    fi
-
     local plan_data
     plan_data=$(jq -n \
-        --argjson runtimes "$runtimes_json" \
-        --argjson managed "$managed_json" \
+        --argjson runtimes "$runtime_objects" \
+        --argjson managed "$service_objects" \
         --argjson dev_hosts "$dev_hostnames_json" \
         --argjson stage_hosts "$stage_hostnames_json" \
         --arg ha "$ha_mode" \

@@ -15,31 +15,25 @@ step_generate_import() {
         return 1
     fi
 
-    # Extract parameters from plan - handle both single and multi-runtime plans
-    local runtimes services prefixes ha_mode
+    # Extract runtime versions from plan objects
+    # Plan now has: {runtimes: [{type, version, base}], managed_services: [{type, version}]}
+    local runtime_versions service_versions
 
-    # Extract ALL runtimes as comma-separated (fall back to single .runtime for backwards compat)
-    runtimes=$(echo "$plan" | jq -r 'if .runtimes then .runtimes | join(",") else .runtime // "go" end')
-    services=$(echo "$plan" | jq -r '.managed_services | join(",")' 2>/dev/null || echo "")
+    # Build runtime version map: {"go": "go@1.22", "bun": "bun@1.2"}
+    # Uses null-safe access with fallback to empty object
+    runtime_versions=$(echo "$plan" | jq '(.runtimes // []) | [.[] | {(.type): .version}] | add // {}')
+
+    # Build service version map: {"valkey": "valkey@7.2", "postgresql": "postgresql@17"}
+    service_versions=$(echo "$plan" | jq '(.managed_services // []) | [.[] | {(.type): .version}] | add // {}')
+
+    # Extract prefixes from dev_hostnames
+    local prefixes
+    prefixes=$(echo "$plan" | jq -r 'if .dev_hostnames then .dev_hostnames | map(sub("dev$"; "")) | join(",") else "app" end')
+
+    local ha_mode
     ha_mode=$(echo "$plan" | jq -r '.ha_mode // false')
 
-    # Extract prefixes from dev_hostnames array (strip "dev" suffix)
-    # Fall back to single dev_hostname for backwards compat
-    prefixes=$(echo "$plan" | jq -r 'if .dev_hostnames then .dev_hostnames | map(sub("dev$"; "")) | join(",") else (.dev_hostname // "appdev") | sub("dev$"; "") end')
-
-    # Validate we got data
-    if [ -z "$runtimes" ] || [ "$runtimes" = "null" ]; then
-        json_error "generate-import" "No runtimes in plan" '{}' '["Run plan step first"]'
-        return 1
-    fi
-
-    # Build generate_import_yml args with arrays
-    local gen_args="--runtime $runtimes --prefix $prefixes"
-    [ -n "$services" ] && [ "$services" != "null" ] && gen_args="$gen_args --services $services"
-    [ "$ha_mode" = "true" ] && gen_args="$gen_args --ha"
-
     local import_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_import.yml"
-    gen_args="$gen_args --output $import_file"
 
     # Source import-gen.sh and generate
     local import_gen="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh"
@@ -50,7 +44,16 @@ step_generate_import() {
     if [ -f "$import_gen" ]; then
         source "$import_gen"
         local result
-        result=$(generate_import_yml $gen_args)
+        # Direct function call - avoid eval with JSON arguments
+        local gen_ha_flag=""
+        [ "$ha_mode" = "true" ] && gen_ha_flag="--ha"
+
+        result=$(generate_import_yml \
+            --runtime-versions "$runtime_versions" \
+            --service-versions "$service_versions" \
+            --prefix "$prefixes" \
+            --output "$import_file" \
+            $gen_ha_flag)
 
         if [ -f "$import_file" ]; then
             # Get list of services that will be created

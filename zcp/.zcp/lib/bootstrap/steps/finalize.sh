@@ -41,12 +41,22 @@ step_finalize() {
     local recipe_search_data
     recipe_search_data=$(get_step_data "recipe-search")
 
-    # Get runtimes and hostnames
-    local runtimes dev_hostnames stage_hostnames managed_services
-    runtimes=$(echo "$plan" | jq -r '.runtimes // [.runtimes[0]] | .[]' 2>/dev/null || echo "$plan" | jq -r '.runtimes[0]')
+    # Get runtimes with versions from plan (new format: [{type, version, base}])
+    local runtime_objects
+    runtime_objects=$(echo "$plan" | jq '.runtimes // []')
+
+    # Get managed services with versions (new format: [{type, version}])
+    local service_objects
+    service_objects=$(echo "$plan" | jq '.managed_services // []')
+
+    # Extract hostname lists
+    local dev_hostnames stage_hostnames
     dev_hostnames=$(echo "$plan" | jq -r '.dev_hostnames // [.dev_hostname] | .[]')
     stage_hostnames=$(echo "$plan" | jq -r '.stage_hostnames // [.stage_hostname] | .[]')
-    managed_services=$(echo "$plan" | jq '.managed_services // []')
+
+    # Extract runtime names for iteration
+    local runtimes
+    runtimes=$(echo "$runtime_objects" | jq -r '.[].type' 2>/dev/null)
 
     # Build per-service handoffs
     local handoffs='[]'
@@ -92,74 +102,69 @@ step_finalize() {
         local mount_path
         mount_path=$(echo "$mounts" | jq -r --arg h "$dev_host" '.[$h].mount_path // "/var/www/\($h)"')
 
-        # Get runtime version from recipe patterns (P2: also get recipe file path)
-        local runtime_version recipe_file
-        runtime_version=$(echo "$recipe_patterns" | jq -r \
-            --arg rt "$runtime" \
-            '.patterns_extracted.runtime_patterns[$rt].dev_runtime_base // "\($rt)@1"' 2>/dev/null || echo "${runtime}@1")
+        # Get runtime info from plan objects (use .[]? for null-safe iteration)
+        local runtime_obj runtime_version base_images recipe_file
+        runtime_obj=$(echo "$runtime_objects" | jq --arg rt "$runtime" '.[]? | select(.type == $rt)')
+        # Use jq --arg for variable interpolation in fallback
+        runtime_version=$(echo "$runtime_obj" | jq -r --arg rt "$runtime" '.version // ($rt + "@1")')
+        base_images=$(echo "$runtime_obj" | jq -c '.base // []')
 
-        # P2: Get runtime-specific recipe file from recipe-search step
+        # Recipe file from recipe-search step
         local runtime_recipes
         runtime_recipes=$(echo "$recipe_search_data" | jq '.runtime_recipes // {}')
         recipe_file=$(echo "$runtime_recipes" | jq -r --arg rt "$runtime" '.[$rt].recipe_file // ""')
         [ -z "$recipe_file" ] && recipe_file="${ZCP_TMP_DIR:-/tmp}/recipe_${runtime}.md"
 
-        # Also try to get version from runtime_recipes if available
-        local rr_version
-        rr_version=$(echo "$runtime_recipes" | jq -r --arg rt "$runtime" '.[$rt].version // ""')
-        [ -n "$rr_version" ] && runtime_version="$rr_version"
-
-        # Build managed services info with env prefix mapping AND topology details (P2)
+        # Build managed services info with env prefix mapping AND topology details
         local managed_info='[]'
-        local managed_list
-        managed_list=$(echo "$managed_services" | jq -r '.[]' 2>/dev/null || echo "")
 
         # Get service docs from recipe-search step (uses recipe_search_data from earlier)
         local service_docs_data
         service_docs_data=$(echo "$recipe_search_data" | jq '.service_docs // {}')
 
-        for svc in $managed_list; do
-            local svc_name svc_type env_prefix env_vars reference_doc
+        # Use while read to safely iterate JSON objects (avoids word-splitting issues)
+        while IFS= read -r svc_obj; do
+            [ -z "$svc_obj" ] && continue
+
+            local svc svc_type svc_name env_prefix env_vars reference_doc
+
+            svc=$(echo "$svc_obj" | jq -r '.type')
+            svc_type=$(echo "$svc_obj" | jq -r '.version')
+
             case "$svc" in
                 postgresql*|mysql*|mariadb*|mongodb*)
                     svc_name="db"
-                    svc_type=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
                     env_prefix="DB"
                     env_vars='["hostname", "port", "user", "password", "dbName", "connectionString"]'
                     ;;
                 valkey*|keydb*)
                     svc_name="cache"
-                    svc_type=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
                     env_prefix="REDIS"
                     env_vars='["hostname", "port", "password", "connectionString"]'
                     ;;
                 rabbitmq*|nats*)
                     svc_name="queue"
-                    svc_type=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
                     env_prefix="AMQP"
                     env_vars='["hostname", "port", "user", "password"]'
                     ;;
                 elasticsearch*)
                     svc_name="search"
-                    svc_type=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
                     env_prefix="ES"
                     env_vars='["hostname", "port", "user", "password"]'
                     ;;
-                minio*)
+                minio*|objectstorage*)
                     svc_name="storage"
-                    svc_type=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
                     env_prefix="S3"
                     env_vars='["hostname", "port", "accessKey", "secretKey"]'
                     ;;
                 *)
                     svc_name="$svc"
-                    svc_type="${svc}@latest"
                     env_prefix=$(echo "$svc" | tr '[:lower:]' '[:upper:]')
                     env_vars='["hostname", "port", "user", "password"]'
                     ;;
             esac
 
-            # P2: Get reference doc path from service_docs if available
+            # Get reference doc path from service_docs if available
             reference_doc=$(echo "$service_docs_data" | jq -r --arg s "$svc" '.[$s].doc_file // ""')
             [ -z "$reference_doc" ] && reference_doc="${ZCP_TMP_DIR:-/tmp}/service_${svc}.md"
 
@@ -170,7 +175,7 @@ step_finalize() {
                 --argjson ev "$env_vars" \
                 --arg rd "$reference_doc" \
                 '. + [{name: $n, type: $t, env_prefix: $e, env_vars: $ev, reference_doc: $rd}]')
-        done
+        done < <(echo "$service_objects" | jq -c '.[]')
 
         # Build handoff for this service pair (P2: enhanced with recipe_file)
         local handoff
