@@ -103,14 +103,14 @@ step_recipe_search() {
         return 1
     fi
 
-    # Get ALL runtimes from plan
+    # Get ALL runtimes from plan (new format has objects with .type field)
     local runtimes_list
-    runtimes_list=$(echo "$plan" | jq -r '.runtimes // [.runtime] | .[]' 2>/dev/null)
-    [ -z "$runtimes_list" ] && runtimes_list=$(echo "$plan" | jq -r '.runtimes[0] // "go"')
+    runtimes_list=$(echo "$plan" | jq -r 'if .runtimes[0].type then .runtimes[].type else (.runtimes // []) | .[] end' 2>/dev/null)
+    [ -z "$runtimes_list" ] && runtimes_list=$(echo "$plan" | jq -r '.runtimes[0].type // .runtimes[0] // "go"')
 
-    # Get ALL managed services
+    # Get ALL managed services (new format has objects with .type field)
     local managed_services_list
-    managed_services_list=$(echo "$plan" | jq -r '.managed_services // [] | .[]' 2>/dev/null)
+    managed_services_list=$(echo "$plan" | jq -r 'if .managed_services[0].type then .managed_services[].type else (.managed_services // []) | .[] end' 2>/dev/null)
 
     # Find recipe-search.sh script
     local recipe_script="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/recipe-search.sh"
