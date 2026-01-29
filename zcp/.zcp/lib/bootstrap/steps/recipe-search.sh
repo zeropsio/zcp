@@ -2,11 +2,86 @@
 # .zcp/lib/bootstrap/steps/recipe-search.sh
 # Step: Fetch patterns from recipe repository
 #
-# Inputs: Plan (from state)
-# Outputs: recipe_review.json with runtime patterns
+# PARALLELIZED: All fetches run concurrently for speed
+# Total time = longest single fetch (~20-30s) instead of sum (~60-120s)
+
+# Fetch a single runtime recipe (called in background)
+fetch_runtime_recipe() {
+    local runtime="$1"
+    local recipe_script="$2"
+    local tmp_dir="$3"
+    local result_file="${tmp_dir}/recipe_result_${runtime}.json"
+
+    # Run recipe search
+    "$recipe_script" quick "$runtime" >/dev/null 2>&1 || true
+
+    # Process result
+    if [ -f "${tmp_dir}/fetched_recipe.md" ]; then
+        mv "${tmp_dir}/fetched_recipe.md" "${tmp_dir}/recipe_${runtime}.md" 2>/dev/null || true
+        local rt_version="${runtime}@1"
+        if [ -f "${tmp_dir}/fetched_patterns.json" ]; then
+            rt_version=$(jq -r '.runtime_base // "'"${runtime}@1"'"' "${tmp_dir}/fetched_patterns.json" 2>/dev/null)
+            mv "${tmp_dir}/fetched_patterns.json" "${tmp_dir}/patterns_${runtime}.json" 2>/dev/null || true
+        fi
+        echo "{\"runtime\":\"$runtime\",\"version\":\"$rt_version\",\"recipe_file\":\"${tmp_dir}/recipe_${runtime}.md\",\"found\":true}" > "$result_file"
+    elif [ -f "${tmp_dir}/fetched_docs.md" ]; then
+        mv "${tmp_dir}/fetched_docs.md" "${tmp_dir}/recipe_${runtime}.md" 2>/dev/null || true
+        local rt_version="${runtime}@1"
+        if [ -f "${tmp_dir}/fetched_patterns.json" ]; then
+            rt_version=$(jq -r '.runtime_base // "'"${runtime}@1"'"' "${tmp_dir}/fetched_patterns.json" 2>/dev/null)
+            mv "${tmp_dir}/fetched_patterns.json" "${tmp_dir}/patterns_${runtime}.json" 2>/dev/null || true
+        fi
+        echo "{\"runtime\":\"$runtime\",\"version\":\"$rt_version\",\"recipe_file\":\"${tmp_dir}/recipe_${runtime}.md\",\"source\":\"docs\",\"found\":true}" > "$result_file"
+    else
+        echo "{\"runtime\":\"$runtime\",\"version\":\"${runtime}@1\",\"recipe_file\":null,\"source\":\"default\",\"found\":false}" > "$result_file"
+    fi
+}
+
+# Fetch a single service doc (called in background)
+fetch_service_doc() {
+    local svc="$1"
+    local tmp_dir="$2"
+    local result_file="${tmp_dir}/service_result_${svc}.json"
+
+    local svc_doc_url="https://docs.zerops.io/${svc}/overview.md"
+    local svc_doc
+    svc_doc=$(curl -sf --max-time 15 "$svc_doc_url" 2>/dev/null) || true
+
+    if [ -n "$svc_doc" ]; then
+        echo "$svc_doc" > "${tmp_dir}/service_${svc}.md"
+        local svc_version
+        svc_version=$(echo "$svc_doc" | grep -oE "${svc}@[0-9a-z.]+" | head -1)
+        [ -z "$svc_version" ] && svc_version="${svc}@latest"
+
+        # Determine env vars based on service type
+        local env_vars='["hostname", "port", "user", "password"]'
+        case "$svc" in
+            postgresql*|mysql*|mariadb*|mongodb*)
+                env_vars='["hostname", "port", "user", "password", "dbName", "connectionString"]'
+                ;;
+            valkey*|keydb*)
+                env_vars='["hostname", "port", "password", "connectionString"]'
+                ;;
+            rabbitmq*|nats*)
+                env_vars='["hostname", "port", "user", "password"]'
+                ;;
+            elasticsearch*)
+                env_vars='["hostname", "port", "user", "password"]'
+                ;;
+            minio*)
+                env_vars='["hostname", "port", "accessKey", "secretKey"]'
+                ;;
+        esac
+
+        echo "{\"service\":\"$svc\",\"version\":\"$svc_version\",\"doc_file\":\"${tmp_dir}/service_${svc}.md\",\"env_vars\":$env_vars,\"found\":true}" > "$result_file"
+    else
+        echo "{\"service\":\"$svc\",\"version\":\"${svc}@latest\",\"doc_file\":null,\"source\":\"default\",\"found\":false}" > "$result_file"
+    fi
+}
+
+export -f fetch_runtime_recipe fetch_service_doc
 
 step_recipe_search() {
-    # Get plan from state
     local plan
     plan=$(get_plan)
 
@@ -15,13 +90,10 @@ step_recipe_search() {
         return 1
     fi
 
-    # Get ALL runtimes from plan (P0 FIX: removed head -1)
+    # Get ALL runtimes from plan
     local runtimes_list
     runtimes_list=$(echo "$plan" | jq -r '.runtimes // [.runtime] | .[]' 2>/dev/null)
-
-    if [ -z "$runtimes_list" ]; then
-        runtimes_list=$(echo "$plan" | jq -r '.runtimes[0] // "go"')
-    fi
+    [ -z "$runtimes_list" ] && runtimes_list=$(echo "$plan" | jq -r '.runtimes[0] // "go"')
 
     # Get ALL managed services
     local managed_services_list
@@ -29,137 +101,99 @@ step_recipe_search() {
 
     # Find recipe-search.sh script
     local recipe_script="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/recipe-search.sh"
-    if [ ! -f "$recipe_script" ]; then
-        recipe_script="$(dirname "${BASH_SOURCE[0]}")/../../../recipe-search.sh"
-    fi
+    [ ! -f "$recipe_script" ] && recipe_script="$(dirname "${BASH_SOURCE[0]}")/../../../recipe-search.sh"
 
     local tmp_dir="${ZCP_TMP_DIR:-/tmp}"
-    local runtime_recipes='{}'
-    local service_versions='{}'
-    local service_docs='{}'
-    local runtimes_processed=0
-    local runtimes_found=0
+    local pids=()
+    local runtimes_count=0
+    local services_count=0
+
+    # Clean up old result files
+    rm -f "${tmp_dir}"/recipe_result_*.json "${tmp_dir}"/service_result_*.json 2>/dev/null
+
+    echo "Starting parallel recipe fetches..." >&2
 
     if [ -f "$recipe_script" ]; then
-        # P0 FIX: Loop through ALL runtimes
+        # Launch ALL runtime fetches in parallel
         for runtime in $runtimes_list; do
-            runtimes_processed=$((runtimes_processed + 1))
-            echo "Fetching recipe for runtime: $runtime" >&2
-
-            # Run recipe search for this runtime
-            local search_output
-            search_output=$("$recipe_script" quick "$runtime" 2>&1) || true
-
-            # Check if recipe was fetched
-            if [ -f "${tmp_dir}/fetched_recipe.md" ]; then
-                # Move to runtime-specific file
-                mv "${tmp_dir}/fetched_recipe.md" "${tmp_dir}/recipe_${runtime}.md" 2>/dev/null || true
-                runtimes_found=$((runtimes_found + 1))
-
-                # Get version from patterns
-                local rt_version
-                if [ -f "${tmp_dir}/fetched_patterns.json" ]; then
-                    rt_version=$(jq -r '.runtime_base // "'"${runtime}@1"'"' "${tmp_dir}/fetched_patterns.json" 2>/dev/null)
-                    mv "${tmp_dir}/fetched_patterns.json" "${tmp_dir}/patterns_${runtime}.json" 2>/dev/null || true
-                else
-                    rt_version="${runtime}@1"
-                fi
-
-                runtime_recipes=$(echo "$runtime_recipes" | jq \
-                    --arg rt "$runtime" \
-                    --arg v "$rt_version" \
-                    --arg f "${tmp_dir}/recipe_${runtime}.md" \
-                    '. + {($rt): {version: $v, recipe_file: $f}}')
-            elif [ -f "${tmp_dir}/fetched_docs.md" ]; then
-                # Docs fallback
-                mv "${tmp_dir}/fetched_docs.md" "${tmp_dir}/recipe_${runtime}.md" 2>/dev/null || true
-                runtimes_found=$((runtimes_found + 1))
-
-                local rt_version="${runtime}@1"
-                if [ -f "${tmp_dir}/fetched_patterns.json" ]; then
-                    rt_version=$(jq -r '.runtime_base // "'"${runtime}@1"'"' "${tmp_dir}/fetched_patterns.json" 2>/dev/null)
-                    mv "${tmp_dir}/fetched_patterns.json" "${tmp_dir}/patterns_${runtime}.json" 2>/dev/null || true
-                fi
-
-                runtime_recipes=$(echo "$runtime_recipes" | jq \
-                    --arg rt "$runtime" \
-                    --arg v "$rt_version" \
-                    --arg f "${tmp_dir}/recipe_${runtime}.md" \
-                    '. + {($rt): {version: $v, recipe_file: $f, source: "docs"}}')
-            else
-                # No recipe found for this runtime
-                runtime_recipes=$(echo "$runtime_recipes" | jq \
-                    --arg rt "$runtime" \
-                    '. + {($rt): {version: ($rt + "@1"), recipe_file: null, source: "default"}}')
-            fi
+            runtimes_count=$((runtimes_count + 1))
+            echo "  → Fetching recipe: $runtime (background)" >&2
+            fetch_runtime_recipe "$runtime" "$recipe_script" "$tmp_dir" &
+            pids+=($!)
         done
 
-        # P1 FIX: Fetch docs for ALL managed services
+        # Launch ALL service doc fetches in parallel
         for svc in $managed_services_list; do
-            echo "Fetching docs for managed service: $svc" >&2
+            services_count=$((services_count + 1))
+            echo "  → Fetching docs: $svc (background)" >&2
+            fetch_service_doc "$svc" "$tmp_dir" &
+            pids+=($!)
+        done
 
-            local svc_doc_url="https://docs.zerops.io/${svc}/overview.md"
-            local svc_doc
-            svc_doc=$(curl -sf "$svc_doc_url" 2>/dev/null)
+        # Wait for ALL fetches to complete
+        echo "Waiting for ${#pids[@]} parallel fetches..." >&2
+        for pid in "${pids[@]}"; do
+            wait "$pid" 2>/dev/null || true
+        done
+        echo "All fetches complete." >&2
 
-            if [ -n "$svc_doc" ]; then
-                echo "$svc_doc" > "${tmp_dir}/service_${svc}.md"
+        # Collect runtime results
+        local runtime_recipes='{}'
+        local runtimes_found=0
+        for runtime in $runtimes_list; do
+            local result_file="${tmp_dir}/recipe_result_${runtime}.json"
+            if [ -f "$result_file" ]; then
+                local found version recipe_file source
+                found=$(jq -r '.found' "$result_file" 2>/dev/null)
+                version=$(jq -r '.version' "$result_file" 2>/dev/null)
+                recipe_file=$(jq -r '.recipe_file' "$result_file" 2>/dev/null)
+                source=$(jq -r '.source // "recipe"' "$result_file" 2>/dev/null)
 
-                # Extract version from docs
-                local svc_version
-                svc_version=$(echo "$svc_doc" | grep -oE "${svc}@[0-9a-z.]+" | head -1)
-                [ -z "$svc_version" ] && svc_version="${svc}@latest"
+                [ "$found" = "true" ] && runtimes_found=$((runtimes_found + 1))
 
-                # Extract env vars pattern from docs
-                local env_vars='[]'
-                case "$svc" in
-                    postgresql*|mysql*|mariadb*|mongodb*)
-                        env_vars='["hostname", "port", "user", "password", "dbName", "connectionString"]'
-                        ;;
-                    valkey*|keydb*)
-                        env_vars='["hostname", "port", "password", "connectionString"]'
-                        ;;
-                    rabbitmq*|nats*)
-                        env_vars='["hostname", "port", "user", "password"]'
-                        ;;
-                    elasticsearch*)
-                        env_vars='["hostname", "port", "user", "password"]'
-                        ;;
-                    minio*)
-                        env_vars='["hostname", "port", "accessKey", "secretKey"]'
-                        ;;
-                esac
+                runtime_recipes=$(echo "$runtime_recipes" | jq \
+                    --arg rt "$runtime" \
+                    --arg v "$version" \
+                    --arg f "$recipe_file" \
+                    --arg s "$source" \
+                    '. + {($rt): {version: $v, recipe_file: (if $f == "null" then null else $f end), source: $s}}')
 
-                service_docs=$(echo "$service_docs" | jq \
-                    --arg s "$svc" \
-                    --arg v "$svc_version" \
-                    --arg f "${tmp_dir}/service_${svc}.md" \
-                    --argjson e "$env_vars" \
-                    '. + {($s): {version: $v, doc_file: $f, env_vars: $e}}')
-
-                service_versions=$(echo "$service_versions" | jq \
-                    --arg s "$svc" --arg v "$svc_version" '. + {($s): $v}')
-            else
-                # Doc fetch failed - use defaults
-                local svc_version
-                svc_version=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
-
-                service_versions=$(echo "$service_versions" | jq \
-                    --arg s "$svc" --arg v "$svc_version" '. + {($s): $v}')
-                service_docs=$(echo "$service_docs" | jq \
-                    --arg s "$svc" \
-                    --arg v "$svc_version" \
-                    '. + {($s): {version: $v, doc_file: null, source: "default"}}')
+                rm -f "$result_file"
             fi
         done
 
-        # Build comprehensive result
+        # Collect service results
+        local service_versions='{}'
+        local service_docs='{}'
+        for svc in $managed_services_list; do
+            local result_file="${tmp_dir}/service_result_${svc}.json"
+            if [ -f "$result_file" ]; then
+                local version doc_file env_vars
+                version=$(jq -r '.version' "$result_file" 2>/dev/null)
+                doc_file=$(jq -r '.doc_file' "$result_file" 2>/dev/null)
+                env_vars=$(jq -c '.env_vars // []' "$result_file" 2>/dev/null)
+
+                service_versions=$(echo "$service_versions" | jq \
+                    --arg s "$svc" --arg v "$version" '. + {($s): $v}')
+
+                service_docs=$(echo "$service_docs" | jq \
+                    --arg s "$svc" \
+                    --arg v "$version" \
+                    --arg f "$doc_file" \
+                    --argjson e "$env_vars" \
+                    '. + {($s): {version: $v, doc_file: (if $f == "null" then null else $f end), env_vars: $e}}')
+
+                rm -f "$result_file"
+            fi
+        done
+
+        # Build result
         local data
         data=$(jq -n \
             --argjson rr "$runtime_recipes" \
             --argjson sv "$service_versions" \
             --argjson sd "$service_docs" \
-            --arg rp "$runtimes_processed" \
+            --arg rp "$runtimes_count" \
             --arg rf "$runtimes_found" \
             '{
                 runtime_recipes: $rr,
@@ -171,24 +205,22 @@ step_recipe_search() {
 
         record_step "recipe-search" "complete" "$data"
 
-        local msg="Found patterns for ${runtimes_found}/${runtimes_processed} runtimes"
-        [ -n "$managed_services_list" ] && msg="$msg, fetched docs for managed services"
+        local msg="Found patterns for ${runtimes_found}/${runtimes_count} runtimes"
+        [ -n "$managed_services_list" ] && msg="$msg + ${services_count} service docs"
+        msg="$msg (parallel fetch)"
 
         json_response "recipe-search" "$msg" "$data" "generate-import"
     else
         # Recipe search script not found - use defaults
         local data
-        data=$(jq -n \
-            --arg rt "$(echo "$runtimes_list" | head -1)" \
-            '{
-                runtime_recipes: {},
-                service_versions: {},
-                service_docs: {},
-                warning: "recipe-search.sh not found - using defaults"
-            }')
+        data=$(jq -n '{
+            runtime_recipes: {},
+            service_versions: {},
+            service_docs: {},
+            warning: "recipe-search.sh not found - using defaults"
+        }')
 
         record_step "recipe-search" "complete" "$data"
-
         json_response "recipe-search" "Recipe search skipped (using defaults)" "$data" "generate-import"
     fi
 }

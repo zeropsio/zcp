@@ -38,7 +38,7 @@ Follow `next` field in each step's JSON output. Run `.zcp/workflow.sh show` anyt
 # Multiple runtimes (creates dev/stage pairs for EACH runtime):
 .zcp/workflow.sh bootstrap --runtime go,bun --prefix app,bun --services postgresql,valkey,nats
 
-.zcp/bootstrap.sh step recipe-search      # → generate-import (fetches recipes for ALL runtimes)
+.zcp/bootstrap.sh step recipe-search      # → generate-import (⚠️ 20-30s - parallel fetch, WAIT for JSON)
 .zcp/bootstrap.sh step generate-import    # → import-services
 .zcp/bootstrap.sh step import-services    # → wait-services
 .zcp/bootstrap.sh step wait-services      # → mount-dev
@@ -47,6 +47,21 @@ Follow `next` field in each step's JSON output. Run `.zcp/workflow.sh show` anyt
 .zcp/bootstrap.sh step spawn-subagents    # → (spawn via Task tool)
 .zcp/bootstrap.sh step aggregate-results  # → done
 ```
+
+### Bootstrap Timing (IMPORTANT)
+
+| Step | Time | Notes |
+|------|------|-------|
+| plan | instant | |
+| **recipe-search** | **20-30s** | Fetches recipes in parallel. **Use `timeout: 60000` in Bash tool.** |
+| generate-import | instant | |
+| import-services | 1-2s | API call |
+| wait-services | 30-120s | Polls until RUNNING. **Use `timeout: 180000`.** |
+| mount-dev | 1-2s | |
+| finalize | instant | |
+| spawn-subagents | instant | |
+
+**Don't assume a step is stuck just because it's slow.** Wait for the JSON response.
 
 ### spawn-subagents (CRITICAL)
 
