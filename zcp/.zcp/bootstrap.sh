@@ -260,14 +260,15 @@ USAGE:
     .zcp/workflow.sh bootstrap --runtime <type> [--services <list>] [--prefix <name>]
 
 OPTIONS:
-    --runtime <type>     Runtime type: go, nodejs, python, php, rust, bun, java, dotnet
-    --services <list>    Managed services: postgresql,valkey,elasticsearch (comma-separated)
-    --prefix <name>      Hostname prefix (default: app) creates appdev, appstage
+    --runtime <type>     Runtime type(s), comma-separated. Aliases auto-resolved.
+    --services <list>    Managed services, comma-separated. Aliases auto-resolved.
+    --prefix <name>      Hostname prefix(es): app → appdev/appstage
     --ha                 Use HA mode for managed services
 
 EXAMPLES:
     .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
-    .zcp/workflow.sh bootstrap --runtime nodejs --prefix api
+    .zcp/workflow.sh bootstrap --runtime go,bun --prefix app,bun --services postgres,valkey,nats
+    .zcp/resolve-types.sh --list   # Show all available types and aliases
 
 This command initializes bootstrap and returns immediately with guidance.
 Agent then runs steps individually for visibility and error handling:

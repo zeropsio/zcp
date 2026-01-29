@@ -20,15 +20,25 @@ Follow its output. It tells you exactly what to do next.
 | Urgent hotfix | `.zcp/workflow.sh init --hotfix` |
 | Just exploring | `.zcp/workflow.sh --quick` |
 | No services yet | `.zcp/workflow.sh bootstrap --runtime {rt} --services {svc}` |
+| Multiple runtimes | `.zcp/workflow.sh bootstrap --runtime go,bun --prefix app,bun --services postgresql,valkey,nats` |
 | Continue after DONE | `.zcp/workflow.sh iterate "summary"` |
 
 ## Bootstrap Flow (No Services Yet)
 
+**User says:** "add go + bun + postgres + valkey + nats"
+**You run:** `.zcp/workflow.sh bootstrap --runtime go,bun --prefix app,bun --services postgresql,valkey,nats`
+
+Type aliases (postgres→postgresql, redis→valkey) are resolved automatically. To see available types: `.zcp/resolve-types.sh --list`
+
 Follow `next` field in each step's JSON output. Run `.zcp/workflow.sh show` anytime for guidance.
 
 ```bash
+# Single runtime:
 .zcp/workflow.sh bootstrap --runtime go --services postgresql
-.zcp/bootstrap.sh step recipe-search      # → generate-import
+# Multiple runtimes (creates dev/stage pairs for EACH runtime):
+.zcp/workflow.sh bootstrap --runtime go,bun --prefix app,bun --services postgresql,valkey,nats
+
+.zcp/bootstrap.sh step recipe-search      # → generate-import (fetches recipes for ALL runtimes)
 .zcp/bootstrap.sh step generate-import    # → import-services
 .zcp/bootstrap.sh step import-services    # → wait-services
 .zcp/bootstrap.sh step wait-services      # → mount-dev

@@ -4,17 +4,29 @@
 #
 # Inputs: --runtime, --services, --prefix, --ha
 # Outputs: Plan JSON with service hostnames and configuration
+#
+# AUTOMATIC TYPE RESOLUTION:
+# - "postgres" → "postgresql"
+# - "redis" → "valkey"
+# - "node" → "nodejs"
+# - Validates against data.json for authoritative type list
 
 # Note: output.sh and state.sh are sourced by bootstrap.sh before this runs
+
+# Source resolve-types for automatic type resolution
+RESOLVE_SCRIPT="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/resolve-types.sh"
+if [ -f "$RESOLVE_SCRIPT" ]; then
+    source "$RESOLVE_SCRIPT"
+fi
 
 step_plan() {
     local runtime="" services="" prefix="app" ha_mode="false"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --runtime) runtime="$2"; shift 2 ;;
+            --runtime|--runtimes) runtime="$2"; shift 2 ;;
             --services) services="$2"; shift 2 ;;
-            --prefix) prefix="$2"; shift 2 ;;
+            --prefix|--prefixes) prefix="$2"; shift 2 ;;
             --ha) ha_mode="true"; shift ;;
             *) shift ;;
         esac
@@ -22,8 +34,51 @@ step_plan() {
 
     # Validate required inputs
     if [ -z "$runtime" ]; then
-        json_error "plan" "Missing required --runtime argument" '{}' '["Specify runtime: --runtime go", "Supported: go, nodejs, python, php, rust, bun, java, dotnet"]'
+        json_error "plan" "Missing required --runtime argument" '{}' '["Specify runtime: --runtime go", "Supported: go, nodejs, python, php, rust, bun, java, dotnet", "Aliases: node→nodejs, postgres→postgresql, redis→valkey"]'
         return 1
+    fi
+
+    # ============================================================
+    # AUTOMATIC TYPE RESOLUTION (via resolve-types.sh)
+    # ============================================================
+    # Resolves aliases and validates against data.json
+    # "go bun postgres valkey nats" → runtimes: [go, bun], services: [postgresql, valkey, nats]
+
+    local all_inputs="$runtime"
+    [ -n "$services" ] && all_inputs="$all_inputs $services"
+
+    local resolved_json
+    if type resolve_types &>/dev/null; then
+        # Normalize: replace commas with spaces for resolution
+        all_inputs=$(echo "$all_inputs" | tr ',' ' ')
+        resolved_json=$(resolve_types $all_inputs)
+
+        # Check if resolution succeeded
+        local resolution_success
+        resolution_success=$(echo "$resolved_json" | jq -r '.success')
+
+        if [ "$resolution_success" != "true" ]; then
+            local errors
+            errors=$(echo "$resolved_json" | jq -r '.errors | join("; ")')
+            json_error "plan" "Type resolution failed: $errors" "$resolved_json" '["Run: .zcp/lib/bootstrap/resolve-types.sh --list"]'
+            return 1
+        fi
+
+        # Extract resolved values
+        local resolved_runtimes resolved_services
+        resolved_runtimes=$(echo "$resolved_json" | jq -r '.flags.runtime')
+        resolved_services=$(echo "$resolved_json" | jq -r '.flags.services')
+
+        # Show warnings about alias resolution
+        local warnings
+        warnings=$(echo "$resolved_json" | jq -r '.warnings[]' 2>/dev/null)
+        if [ -n "$warnings" ]; then
+            echo "Type resolution: $warnings" >&2
+        fi
+
+        # Use resolved values
+        runtime="$resolved_runtimes"
+        services="$resolved_services"
     fi
 
     # Parse multiple runtimes if comma-separated
@@ -33,18 +88,11 @@ step_plan() {
     IFS=',' read -ra runtime_array <<< "$runtime"
     IFS=',' read -ra prefix_array <<< "$prefix"
 
-    # HIGH-10: Validate each runtime
-    local valid_runtimes="go nodejs python php rust bun java dotnet nginx static alpine"
-    for rt in "${runtime_array[@]}"; do
-        local is_valid=false
-        for valid in $valid_runtimes; do
-            [ "$rt" = "$valid" ] && is_valid=true
-        done
-        if [ "$is_valid" = false ]; then
-            json_error "plan" "Invalid runtime: $rt" '{}' '["Use: go, nodejs, python, php, rust, bun, java, dotnet, nginx, static, alpine"]'
-            return 1
-        fi
-    done
+    # Validate we have at least one runtime
+    if [ ${#runtime_array[@]} -eq 0 ] || [ -z "${runtime_array[0]}" ]; then
+        json_error "plan" "No valid runtimes specified" '{}' '["At least one runtime required: --runtime go", "Run: .zcp/lib/bootstrap/resolve-types.sh --list"]'
+        return 1
+    fi
 
     # HIGH-10: Validate each prefix (lowercase alphanumeric, hyphens allowed but not at start/end)
     for pfx in "${prefix_array[@]}"; do

@@ -207,6 +207,7 @@ Other modes:
 
 New project? Bootstrap first:
   .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
+  .zcp/workflow.sh bootstrap --runtime go,bun --prefix app,bun --services postgresql,valkey,nats
 
 Commands:
   .zcp/workflow.sh show              # Current status
