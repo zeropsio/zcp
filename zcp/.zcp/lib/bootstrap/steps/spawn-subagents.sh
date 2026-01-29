@@ -467,7 +467,7 @@ ${managed_env_block:-        # (none)}
 | 2 | Write zerops.yml | To \`${mount_path}/zerops.yml\` — setups: \`dev\`, \`prod\` |
 | 3 | Write app code | HTTP server on :8080 with \`/\`, \`/health\`, \`/status\` |
 | 4 | Init deps | \`ssh ${dev_hostname} "cd /var/www && <init>"\` |
-| 5 | Write .gitignore | \`.zcp/lib/gitignore-template.sh > ${mount_path}/.gitignore\` |
+| 5 | Write .gitignore | Write \`${mount_path}/.gitignore\` appropriate for ${runtime} |
 | 6 | Git init | \`ssh ${dev_hostname} "cd /var/www && git config --global user.email 'zcp@zerops.io' && git config --global user.name 'ZCP' && git init && git add -A && git commit -m 'Bootstrap'"\` |
 | 7 | Deploy dev | \`ssh ${dev_hostname} 'cd /var/www && zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY" && zcli push ${dev_id} --setup=dev --deploy-git-folder'\` |
 | 8 | Wait dev | \`.zcp/status.sh --wait ${dev_hostname}\` |
