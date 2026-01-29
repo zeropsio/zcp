@@ -34,7 +34,8 @@ generate_import_yml() {
 
     # Extract runtimes and their versions
     local runtime_types
-    runtime_types=$(echo "$runtime_versions" | jq -r 'keys[]')
+    # CRITICAL: Use keys_unsorted to preserve insertion order for runtime-to-prefix mapping
+    runtime_types=$(echo "$runtime_versions" | jq -r 'keys_unsorted[]')
 
     if [ -z "$runtime_types" ]; then
         echo "ERROR: --runtime-versions required with at least one runtime" >&2
@@ -67,7 +68,8 @@ generate_import_yml() {
 
         # Managed services FIRST with priority: 10
         local svc_types
-        svc_types=$(echo "$service_versions" | jq -r 'keys[]')
+        # CRITICAL: Use keys_unsorted to preserve insertion order
+        svc_types=$(echo "$service_versions" | jq -r 'keys_unsorted[]')
 
         for svc_name in $svc_types; do
             [ -z "$svc_name" ] && continue
@@ -96,7 +98,7 @@ generate_import_yml() {
             echo "    type: $runtime_version"
             echo "    startWithoutCode: true"
             echo "    verticalAutoscaling:"
-            echo "      minRam: 0.5"
+            echo "      minRam: 1.0"  # Increased from 0.5 to prevent Go compilation OOM
             echo ""
 
             # Stage runtime

@@ -9,10 +9,121 @@
 # Inputs: bootstrap_handoff.json from finalize step
 # Outputs: Self-contained subagent instructions with complete context
 
-# Build environment variable mappings for managed services (P3: enhanced with topology)
-# Returns a string describing how to reference each service's vars in zerops.yml
+# Build environment variable section from DISCOVERED data
+# No hardcoding - uses actual discovery results from discover-services step
+# This replaces the old build_env_var_mappings() which assumed what vars existed
+build_env_var_section() {
+    local discovery_file="${ZCP_TMP_DIR:-/tmp}/service_discovery.json"
+
+    if [ ! -f "$discovery_file" ]; then
+        echo "**WARNING**: No service discovery data found. Run discover-services step first."
+        echo ""
+        echo "Falling back to common patterns - verify these exist in your environment:"
+        return
+    fi
+
+    local services
+    services=$(jq -r '.services | keys[]' "$discovery_file" 2>/dev/null)
+
+    if [ -z "$services" ]; then
+        echo "No managed services discovered."
+        return
+    fi
+
+    local result=""
+
+    for svc in $services; do
+        local vars has_pass has_user has_conn has_db var_list
+
+        # Get list of variables for this service
+        var_list=$(jq -r --arg s "$svc" '.services[$s].variables[]' "$discovery_file" 2>/dev/null | tr '\n' ', ' | sed 's/,$//')
+
+        if [ -z "$var_list" ]; then
+            continue
+        fi
+
+        # Check what's available (from discovery metadata or by checking var names)
+        has_pass=$(jq -r --arg s "$svc" '.services[$s].has_password // (.services[$s].variables | map(select(endswith("_password") or endswith("_pass"))) | length > 0)' "$discovery_file" 2>/dev/null)
+        has_user=$(jq -r --arg s "$svc" '.services[$s].has_user // (.services[$s].variables | map(select(endswith("_user"))) | length > 0)' "$discovery_file" 2>/dev/null)
+        has_conn=$(jq -r --arg s "$svc" '.services[$s].has_connection_string // (.services[$s].variables | map(select(contains("connectionString"))) | length > 0)' "$discovery_file" 2>/dev/null)
+        has_db=$(jq -r --arg s "$svc" '.services[$s].has_db_name // (.services[$s].variables | map(select(endswith("_dbName"))) | length > 0)' "$discovery_file" 2>/dev/null)
+
+        result+="
+### ${svc}
+
+**Available variables** (discovered from running service):
+\`\`\`
+${var_list}
+\`\`\`
+"
+
+        # Add guidance based on what's ACTUALLY available
+        if [ "$has_conn" = "true" ]; then
+            result+="
+**Recommendation**: Use \`\${${svc}_connectionString}\` - it contains everything needed for connection.
+"
+        fi
+
+        if [ "$has_pass" = "false" ]; then
+            result+="
+**Note**: No password variable exists - this service runs without authentication in the private network.
+"
+        fi
+
+        result+="
+**In zerops.yml** (use ONLY the variables that exist above):
+\`\`\`yaml
+envVariables:
+  # Map to your app's expected variable names
+  # Example: YOUR_VAR_NAME: \${${svc}_variableName}
+"
+
+        # Add specific examples based on what exists
+        if echo "$var_list" | grep -q "${svc}_hostname"; then
+            result+="  HOST: \${${svc}_hostname}
+"
+        fi
+        if echo "$var_list" | grep -q "${svc}_port"; then
+            result+="  PORT: \${${svc}_port}
+"
+        fi
+        if [ "$has_user" = "true" ]; then
+            result+="  USER: \${${svc}_user}
+"
+        fi
+        if [ "$has_pass" = "true" ]; then
+            result+="  PASS: \${${svc}_password}
+"
+        fi
+        if [ "$has_db" = "true" ]; then
+            result+="  DB_NAME: \${${svc}_dbName}
+"
+        fi
+        if [ "$has_conn" = "true" ]; then
+            result+="  # Or use connection string: \${${svc}_connectionString}
+"
+        fi
+
+        result+="\`\`\`
+"
+    done
+
+    echo "$result"
+}
+
+# Legacy wrapper for compatibility - calls new discovery-based function
 build_env_var_mappings() {
     local managed_services="$1"
+    # Try discovery first
+    local discovery_result
+    discovery_result=$(build_env_var_section)
+
+    if [ -n "$discovery_result" ] && ! echo "$discovery_result" | grep -q "WARNING"; then
+        echo "$discovery_result"
+        return
+    fi
+
+    # Fallback to managed_services data if discovery not available
     local managed_count
     managed_count=$(echo "$managed_services" | jq 'length')
 
@@ -21,61 +132,42 @@ build_env_var_mappings() {
         return
     fi
 
-    local result=""
+    local result="**Note**: Using plan data (discovery not run). Verify variables exist before using.
+"
     local i=0
     while [ "$i" -lt "$managed_count" ]; do
-        local svc_name svc_type env_prefix hostname env_vars reference_doc
+        local svc_name svc_type hostname
         svc_name=$(echo "$managed_services" | jq -r ".[$i].name")
         svc_type=$(echo "$managed_services" | jq -r ".[$i].type")
-        env_prefix=$(echo "$managed_services" | jq -r ".[$i].env_prefix")
-        # P3: Get enhanced topology data
-        env_vars=$(echo "$managed_services" | jq -r ".[$i].env_vars // []")
-        reference_doc=$(echo "$managed_services" | jq -r ".[$i].reference_doc // \"\"")
-
-        # Derive hostname from service name
         hostname="$svc_name"
 
         result+="
 ### ${svc_name} (${svc_type})
-**Hostname:** ${hostname}
-**Available env vars:** "
 
-        # List all env vars dynamically
-        local var_count var_idx=0
-        var_count=$(echo "$env_vars" | jq 'length')
-        while [ "$var_idx" -lt "$var_count" ]; do
-            local var_name
-            var_name=$(echo "$env_vars" | jq -r ".[$var_idx]")
-            result+="\${${hostname}_${var_name}}"
-            [ $((var_idx + 1)) -lt "$var_count" ] && result+=", "
-            var_idx=$((var_idx + 1))
-        done
-
-        # P3: Add reference doc if available
-        if [ -n "$reference_doc" ] && [ "$reference_doc" != "null" ] && [ -f "$reference_doc" ]; then
-            result+="
-**Reference:** \`${reference_doc}\` (read this for Zerops-specific patterns)"
-        fi
-
-        result+="
-
-Map these in zerops.yml envVariables section as:
-\`\`\`yaml
-envVariables:
-  ${env_prefix}_HOST: \${${hostname}_hostname}
-  ${env_prefix}_PORT: \${${hostname}_port}
-  ${env_prefix}_USER: \${${hostname}_user}
-  ${env_prefix}_PASS: \${${hostname}_password}"
-
+Common variables (verify these exist):
+- \${${hostname}_hostname}
+- \${${hostname}_port}
+"
         case "$svc_type" in
             postgresql*|mysql*|mariadb*|mongodb*)
-                result+="
-  ${env_prefix}_NAME: \${${hostname}_dbName}"
+                result+="- \${${hostname}_user}
+- \${${hostname}_password}
+- \${${hostname}_dbName}
+- \${${hostname}_connectionString}
+"
+                ;;
+            valkey*|keydb*|redis*)
+                result+="- \${${hostname}_connectionString}
+**Note**: May not have password in private network - check discovery.
+"
+                ;;
+            nats*|rabbitmq*)
+                result+="- \${${hostname}_user}
+- \${${hostname}_password}
+- \${${hostname}_connectionString}
+"
                 ;;
         esac
-
-        result+="\`\`\`
-"
         i=$((i + 1))
     done
 
@@ -307,7 +399,12 @@ Files written to \`${mount_path}/\` appear at \`/var/www/\` inside the container
 
 **⚠️ Setup names are \`dev\` and \`prod\`—NOT hostnames.** This is the #1 mistake.
 
-## Managed Services
+## Managed Services - DISCOVERED Environment Variables
+
+**CRITICAL**: The following variables were discovered from the ACTUAL running services.
+Use ONLY the variables listed below. Do NOT assume other variables exist.
+If a variable isn't listed (e.g., password), the service doesn't require it.
+
 ${env_var_mappings:-None.}
 
 ## Runtime: ${runtime} (${runtime_version})
@@ -547,4 +644,4 @@ PROMPT
     json_response "spawn-subagents" "$msg" "$data" "aggregate-results"
 }
 
-export -f step_spawn_subagents build_env_var_mappings build_runtime_guidance
+export -f step_spawn_subagents build_env_var_mappings build_env_var_section build_runtime_guidance

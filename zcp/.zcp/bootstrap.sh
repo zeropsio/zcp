@@ -40,6 +40,7 @@ source "$SCRIPT_DIR/lib/bootstrap/import-gen.sh"
 init_bootstrap_state
 
 # Step definitions and their order
+# UPDATED: Added discover-services between mount-dev and finalize for dynamic env var discovery
 BOOTSTRAP_STEPS=(
     "plan"
     "recipe-search"
@@ -47,6 +48,7 @@ BOOTSTRAP_STEPS=(
     "import-services"
     "wait-services"
     "mount-dev"
+    "discover-services"
     "finalize"
     "spawn-subagents"
     "aggregate-results"
@@ -235,15 +237,16 @@ ZCLI_AUTH
     echo ""
     echo "Plan created. Run these steps in order:"
     echo ""
-    echo "  1. .zcp/bootstrap.sh step recipe-search       # ⚠️ 20-30s - use timeout:60000"
+    echo "  1. .zcp/bootstrap.sh step recipe-search        # ⚠️ 20-30s - use timeout:60000"
     echo "  2. .zcp/bootstrap.sh step generate-import"
     echo "  3. .zcp/bootstrap.sh step import-services"
-    echo "  4. .zcp/bootstrap.sh step wait-services       # ⚠️ 30-120s - use timeout:180000"
-    echo "  5. .zcp/bootstrap.sh step mount-dev {hostname}  # Repeat for each dev hostname"
-    echo "  6. .zcp/bootstrap.sh step finalize"
-    echo "  7. .zcp/bootstrap.sh step spawn-subagents     # Returns subagent instructions"
-    echo "  8. Spawn subagents via Task tool (per instructions)"
-    echo "  9. .zcp/bootstrap.sh step aggregate-results   # Wait for completion"
+    echo "  4. .zcp/bootstrap.sh step wait-services        # ⚠️ 30-120s - use timeout:180000"
+    echo "  5. .zcp/bootstrap.sh step mount-dev {hostname} # Repeat for each dev hostname"
+    echo "  6. .zcp/bootstrap.sh step discover-services    # NEW: Discover actual env vars"
+    echo "  7. .zcp/bootstrap.sh step finalize"
+    echo "  8. .zcp/bootstrap.sh step spawn-subagents      # Returns subagent instructions"
+    echo "  9. Spawn subagents via Task tool (per instructions)"
+    echo " 10. .zcp/bootstrap.sh step aggregate-results    # Wait for completion"
     echo ""
     echo "TIMING: recipe-search and wait-services are SLOW. Use Bash timeout parameter."
     echo ""
@@ -278,10 +281,11 @@ Agent then runs steps individually for visibility and error handling:
     .zcp/bootstrap.sh step recipe-search
     .zcp/bootstrap.sh step generate-import
     .zcp/bootstrap.sh step import-services
-    .zcp/bootstrap.sh step wait-services   # Poll until complete
+    .zcp/bootstrap.sh step wait-services      # Poll until complete
     .zcp/bootstrap.sh step mount-dev <hostname>
+    .zcp/bootstrap.sh step discover-services  # Discover actual env vars
     .zcp/bootstrap.sh step finalize
-    .zcp/bootstrap.sh step spawn-subagents  # Returns instructions for subagents
+    .zcp/bootstrap.sh step spawn-subagents    # Returns instructions for subagents
     # Spawn subagents via Task tool (one per service pair)
     .zcp/bootstrap.sh step aggregate-results  # Wait for all subagents, complete bootstrap
 EOF
@@ -455,6 +459,7 @@ STEPS:
     import-services      Import services via zcli
     wait-services        Wait for services to reach RUNNING state
     mount-dev <hostname> Mount dev service via SSHFS
+    discover-services    Discover actual env vars from running services (NEW)
     finalize             Create per-service handoffs for code generation
     spawn-subagents      Output instructions for spawning code generation subagents
     aggregate-results    Wait for subagents, create discovery.json, complete bootstrap

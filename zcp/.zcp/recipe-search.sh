@@ -695,17 +695,26 @@ ${GREEN}Import Configuration:${NC}
     type: valkey@7.2
     mode: NON_HA
 
-${GREEN}Environment Variables Provided:${NC}
-  \${cache_hostname}
-  \${cache_port}
-  \${cache_password}
-  \${cache_connectionString}
+${GREEN}Environment Variables:${NC}
+  Run discovery to see actual available variables:
+  ssh <dev_hostname> 'env | grep "^cache_" | cut -d= -f1'
+
+  Common variables (verify before using):
+  - \${cache_hostname}
+  - \${cache_port}
+  - \${cache_connectionString}
+  - \${cache_connectionTlsString}
+
+${YELLOW}⚠ Note:${NC} Password may NOT exist in private network deployments.
+  Valkey in private networks often runs without authentication.
+  Always verify with discovery - don't assume cache_password exists.
 
 ${GREEN}Usage in Runtime Services:${NC}
   envVariables:
     REDIS_HOST: \${cache_hostname}
     REDIS_PORT: \${cache_port}
-    REDIS_PASSWORD: \${cache_password}
+    # Only add password if discovery shows it exists:
+    # REDIS_PASSWORD: \${cache_password}
 
 ${GREEN}Connection from ZCP:${NC}
   redis-cli -u "\$cache_connectionString" PING
