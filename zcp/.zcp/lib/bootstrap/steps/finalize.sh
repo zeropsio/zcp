@@ -115,12 +115,19 @@ step_finalize() {
         recipe_file=$(echo "$runtime_recipes" | jq -r --arg rt "$runtime" '.[$rt].recipe_file // ""')
         [ -z "$recipe_file" ] && recipe_file="${ZCP_TMP_DIR:-/tmp}/recipe_${runtime}.md"
 
-        # Build managed services info with env prefix mapping AND topology details
+        # Build managed services info - USE DISCOVERY DATA when available
         local managed_info='[]'
 
         # Get service docs from recipe-search step (uses recipe_search_data from earlier)
         local service_docs_data
         service_docs_data=$(echo "$recipe_search_data" | jq '.service_docs // {}')
+
+        # CRITICAL: Load discovery data to get ACTUAL env vars (not assumptions)
+        local discovery_file="${ZCP_TMP_DIR:-/tmp}/service_discovery.json"
+        local discovery_data='{}'
+        if [ -f "$discovery_file" ]; then
+            discovery_data=$(cat "$discovery_file")
+        fi
 
         # Use while read to safely iterate JSON objects (avoids word-splitting issues)
         while IFS= read -r svc_obj; do
@@ -131,38 +138,63 @@ step_finalize() {
             svc=$(echo "$svc_obj" | jq -r '.type')
             svc_type=$(echo "$svc_obj" | jq -r '.version')
 
+            # Determine service name and prefix based on type
             case "$svc" in
                 postgresql*|mysql*|mariadb*|mongodb*)
                     svc_name="db"
                     env_prefix="DB"
-                    env_vars='["hostname", "port", "user", "password", "dbName", "connectionString"]'
                     ;;
                 valkey*|keydb*)
                     svc_name="cache"
                     env_prefix="REDIS"
-                    env_vars='["hostname", "port", "password", "connectionString"]'
                     ;;
                 rabbitmq*|nats*)
                     svc_name="queue"
                     env_prefix="AMQP"
-                    env_vars='["hostname", "port", "user", "password"]'
                     ;;
                 elasticsearch*)
                     svc_name="search"
                     env_prefix="ES"
-                    env_vars='["hostname", "port", "user", "password"]'
                     ;;
                 minio*|objectstorage*)
                     svc_name="storage"
                     env_prefix="S3"
-                    env_vars='["hostname", "port", "accessKey", "secretKey"]'
                     ;;
                 *)
                     svc_name="$svc"
                     env_prefix=$(echo "$svc" | tr '[:lower:]' '[:upper:]')
-                    env_vars='["hostname", "port", "user", "password"]'
                     ;;
             esac
+
+            # CRITICAL: Get env_vars from DISCOVERY data, not hardcoded assumptions
+            # Discovery data has format: services.<hostname>.variables = ["cache_hostname", "cache_port", ...]
+            # We strip the prefix to get clean var names: ["hostname", "port", ...]
+            local discovered_vars
+            discovered_vars=$(echo "$discovery_data" | jq -r --arg s "$svc_name" \
+                '.services[$s].variables // [] | map(. | split("_") | .[1:] | join("_")) | unique')
+
+            if [ "$discovered_vars" != "[]" ] && [ "$discovered_vars" != "null" ] && [ -n "$discovered_vars" ]; then
+                # Use discovered vars (stripped of prefix)
+                env_vars="$discovered_vars"
+            else
+                # Fallback to minimal assumptions only if discovery failed
+                # NOTE: These are COMMON vars - actual availability may differ!
+                case "$svc" in
+                    postgresql*|mysql*|mariadb*|mongodb*)
+                        env_vars='["hostname", "port", "connectionString"]'
+                        ;;
+                    valkey*|keydb*)
+                        # CRITICAL: Don't assume password exists for Valkey!
+                        env_vars='["hostname", "port", "connectionString"]'
+                        ;;
+                    rabbitmq*|nats*)
+                        env_vars='["hostname", "port", "connectionString"]'
+                        ;;
+                    *)
+                        env_vars='["hostname", "port"]'
+                        ;;
+                esac
+            fi
 
             # Get reference doc path from service_docs if available
             reference_doc=$(echo "$service_docs_data" | jq -r --arg s "$svc" '.[$s].doc_file // ""')

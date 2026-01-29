@@ -56,7 +56,7 @@
 │   │   ▼                                                                  │   │
 │   │   ┌─────────────────┐    ┌───────────────┐    ┌───────────┐         │   │
 │   │   │ import-services │───►│ wait-services │───►│ mount-dev │         │   │
-│   │   └─────────────────┘    │   (polling)   │    └─────┬─────┘         │   │
+│   │   │   (60-120s)     │    │   (polling)   │    └─────┬─────┘         │   │
 │   │                          └───────────────┘          │               │   │
 │   │                                                     │               │   │
 │   │   ┌─────────────────────────────────────────────────┘               │   │
@@ -91,7 +91,7 @@
 | `plan` | Create bootstrap plan (instant) |
 | `recipe-search` | Fetch runtime patterns (2-3 sec) |
 | `generate-import` | Create import.yml (instant) |
-| `import-services` | Send to Zerops API (instant) |
+| `import-services` | Send to Zerops API (60-120s) |
 | `wait-services` | Poll until RUNNING |
 | `mount-dev` | SSHFS mount (instant) |
 | `discover-services` | Query actual env vars from services (NEW) |

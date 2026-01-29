@@ -239,7 +239,7 @@ ZCLI_AUTH
     echo ""
     echo "  1. .zcp/bootstrap.sh step recipe-search        # ⚠️ 20-30s - use timeout:60000"
     echo "  2. .zcp/bootstrap.sh step generate-import"
-    echo "  3. .zcp/bootstrap.sh step import-services"
+    echo "  3. .zcp/bootstrap.sh step import-services      # ⚠️ 60-120s - use timeout:180000"
     echo "  4. .zcp/bootstrap.sh step wait-services        # ⚠️ 30-120s - use timeout:180000"
     echo "  5. .zcp/bootstrap.sh step mount-dev {hostname} # Repeat for each dev hostname"
     echo "  6. .zcp/bootstrap.sh step discover-services    # NEW: Discover actual env vars"

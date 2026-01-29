@@ -345,7 +345,7 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 │                                                                                  │
 │  ┌─────────┐    ┌──────────────┐    ┌─────────────────┐    ┌───────────────┐    │
 │  │  plan   │───►│recipe-search │───►│ generate-import │───►│import-services│    │
-│  │(instant)│    │  (2-3 sec)   │    │    (instant)    │    │   (instant)   │    │
+│  │(instant)│    │  (2-3 sec)   │    │    (instant)    │    │  (60-120s)    │    │
 │  └─────────┘    └──────────────┘    └─────────────────┘    └───────────────┘    │
 │                                                                   │              │
 │  ┌──────────────────────────────────────────────────────────────┐ │              │
@@ -396,9 +396,9 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 .zcp/workflow.sh bootstrap --runtime go --services postgresql
 
 # Agent runs steps individually for visibility
-.zcp/bootstrap.sh step recipe-search      # Fetch patterns
+.zcp/bootstrap.sh step recipe-search      # Fetch patterns (use timeout:60000)
 .zcp/bootstrap.sh step generate-import    # Create import.yml
-.zcp/bootstrap.sh step import-services    # Send to Zerops API
+.zcp/bootstrap.sh step import-services    # Send to Zerops API (use timeout:180000)
 .zcp/bootstrap.sh step wait-services --wait  # Polls automatically until ready!
 .zcp/bootstrap.sh step mount-dev appdev   # SSHFS mount
 .zcp/bootstrap.sh step discover-services  # Discover actual env vars (NEW)
