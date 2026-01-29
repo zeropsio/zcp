@@ -37,6 +37,10 @@ step_finalize() {
     local mounts
     mounts=$(echo "$mount_data" | jq '.mounts // {}')
 
+    # P2: Get recipe-search step data for runtime recipes and service docs
+    local recipe_search_data
+    recipe_search_data=$(get_step_data "recipe-search")
+
     # Get runtimes and hostnames
     local runtimes dev_hostnames stage_hostnames managed_services
     runtimes=$(echo "$plan" | jq -r '.runtimes // [.runtimes[0]] | .[]' 2>/dev/null || echo "$plan" | jq -r '.runtimes[0]')
@@ -88,60 +92,87 @@ step_finalize() {
         local mount_path
         mount_path=$(echo "$mounts" | jq -r --arg h "$dev_host" '.[$h].mount_path // "/var/www/\($h)"')
 
-        # Get runtime version from recipe patterns
-        local runtime_version
+        # Get runtime version from recipe patterns (P2: also get recipe file path)
+        local runtime_version recipe_file
         runtime_version=$(echo "$recipe_patterns" | jq -r \
             --arg rt "$runtime" \
             '.patterns_extracted.runtime_patterns[$rt].dev_runtime_base // "\($rt)@1"' 2>/dev/null || echo "${runtime}@1")
 
-        # Build managed services info with env prefix mapping
+        # P2: Get runtime-specific recipe file from recipe-search step
+        local runtime_recipes
+        runtime_recipes=$(echo "$recipe_search_data" | jq '.runtime_recipes // {}')
+        recipe_file=$(echo "$runtime_recipes" | jq -r --arg rt "$runtime" '.[$rt].recipe_file // ""')
+        [ -z "$recipe_file" ] && recipe_file="${ZCP_TMP_DIR:-/tmp}/recipe_${runtime}.md"
+
+        # Also try to get version from runtime_recipes if available
+        local rr_version
+        rr_version=$(echo "$runtime_recipes" | jq -r --arg rt "$runtime" '.[$rt].version // ""')
+        [ -n "$rr_version" ] && runtime_version="$rr_version"
+
+        # Build managed services info with env prefix mapping AND topology details (P2)
         local managed_info='[]'
         local managed_list
         managed_list=$(echo "$managed_services" | jq -r '.[]' 2>/dev/null || echo "")
 
+        # Get service docs from recipe-search step (uses recipe_search_data from earlier)
+        local service_docs_data
+        service_docs_data=$(echo "$recipe_search_data" | jq '.service_docs // {}')
+
         for svc in $managed_list; do
-            local svc_name svc_type env_prefix
+            local svc_name svc_type env_prefix env_vars reference_doc
             case "$svc" in
                 postgresql*|mysql*|mariadb*|mongodb*)
                     svc_name="db"
                     svc_type=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
                     env_prefix="DB"
+                    env_vars='["hostname", "port", "user", "password", "dbName", "connectionString"]'
                     ;;
                 valkey*|keydb*)
                     svc_name="cache"
                     svc_type=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
                     env_prefix="REDIS"
+                    env_vars='["hostname", "port", "password", "connectionString"]'
                     ;;
                 rabbitmq*|nats*)
                     svc_name="queue"
                     svc_type=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
                     env_prefix="AMQP"
+                    env_vars='["hostname", "port", "user", "password"]'
                     ;;
                 elasticsearch*)
                     svc_name="search"
                     svc_type=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
                     env_prefix="ES"
+                    env_vars='["hostname", "port", "user", "password"]'
                     ;;
                 minio*)
                     svc_name="storage"
                     svc_type=$(source "${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/lib/bootstrap/import-gen.sh" 2>/dev/null && get_service_version "$svc" || echo "${svc}@latest")
                     env_prefix="S3"
+                    env_vars='["hostname", "port", "accessKey", "secretKey"]'
                     ;;
                 *)
                     svc_name="$svc"
                     svc_type="${svc}@latest"
                     env_prefix=$(echo "$svc" | tr '[:lower:]' '[:upper:]')
+                    env_vars='["hostname", "port", "user", "password"]'
                     ;;
             esac
+
+            # P2: Get reference doc path from service_docs if available
+            reference_doc=$(echo "$service_docs_data" | jq -r --arg s "$svc" '.[$s].doc_file // ""')
+            [ -z "$reference_doc" ] && reference_doc="${ZCP_TMP_DIR:-/tmp}/service_${svc}.md"
 
             managed_info=$(echo "$managed_info" | jq \
                 --arg n "$svc_name" \
                 --arg t "$svc_type" \
                 --arg e "$env_prefix" \
-                '. + [{name: $n, type: $t, env_prefix: $e}]')
+                --argjson ev "$env_vars" \
+                --arg rd "$reference_doc" \
+                '. + [{name: $n, type: $t, env_prefix: $e, env_vars: $ev, reference_doc: $rd}]')
         done
 
-        # Build handoff for this service pair
+        # Build handoff for this service pair (P2: enhanced with recipe_file)
         local handoff
         handoff=$(jq -n \
             --arg dev_host "$dev_host" \
@@ -151,6 +182,7 @@ step_finalize() {
             --arg mount "$mount_path" \
             --arg rt "$runtime" \
             --arg rtv "$runtime_version" \
+            --arg rf "$recipe_file" \
             --argjson managed "$managed_info" \
             --argjson patterns "$recipe_patterns" \
             '{
@@ -161,6 +193,7 @@ step_finalize() {
                 mount_path: $mount,
                 runtime: $rt,
                 runtime_version: $rtv,
+                recipe_file: $rf,
                 managed_services: $managed,
                 recipe_patterns: $patterns
             }')

@@ -9,7 +9,7 @@
 # Inputs: bootstrap_handoff.json from finalize step
 # Outputs: Self-contained subagent instructions with complete context
 
-# Build environment variable mappings for managed services
+# Build environment variable mappings for managed services (P3: enhanced with topology)
 # Returns a string describing how to reference each service's vars in zerops.yml
 build_env_var_mappings() {
     local managed_services="$1"
@@ -24,30 +24,38 @@ build_env_var_mappings() {
     local result=""
     local i=0
     while [ "$i" -lt "$managed_count" ]; do
-        local svc_name svc_type env_prefix hostname
+        local svc_name svc_type env_prefix hostname env_vars reference_doc
         svc_name=$(echo "$managed_services" | jq -r ".[$i].name")
         svc_type=$(echo "$managed_services" | jq -r ".[$i].type")
         env_prefix=$(echo "$managed_services" | jq -r ".[$i].env_prefix")
+        # P3: Get enhanced topology data
+        env_vars=$(echo "$managed_services" | jq -r ".[$i].env_vars // []")
+        reference_doc=$(echo "$managed_services" | jq -r ".[$i].reference_doc // \"\"")
 
         # Derive hostname from service name
         hostname="$svc_name"
 
         result+="
 ### ${svc_name} (${svc_type})
-Zerops provides these variables from the '${hostname}' service:
-- \${${hostname}_hostname} → Host address
-- \${${hostname}_port} → Port number
-- \${${hostname}_user} → Username
-- \${${hostname}_password} → Password"
+**Hostname:** ${hostname}
+**Available env vars:** "
 
-        # Add database-specific vars
-        case "$svc_type" in
-            postgresql*|mysql*|mariadb*|mongodb*)
-                result+="
-- \${${hostname}_dbName} → Database name
-- \${${hostname}_connectionString} → Full connection string"
-                ;;
-        esac
+        # List all env vars dynamically
+        local var_count var_idx=0
+        var_count=$(echo "$env_vars" | jq 'length')
+        while [ "$var_idx" -lt "$var_count" ]; do
+            local var_name
+            var_name=$(echo "$env_vars" | jq -r ".[$var_idx]")
+            result+="\${${hostname}_${var_name}}"
+            [ $((var_idx + 1)) -lt "$var_count" ] && result+=", "
+            var_idx=$((var_idx + 1))
+        done
+
+        # P3: Add reference doc if available
+        if [ -n "$reference_doc" ] && [ "$reference_doc" != "null" ] && [ -f "$reference_doc" ]; then
+            result+="
+**Reference:** \`${reference_doc}\` (read this for Zerops-specific patterns)"
+        fi
 
         result+="
 
@@ -74,25 +82,32 @@ envVariables:
     echo "$result"
 }
 
-# Build runtime-specific guidance
+# Build runtime-specific guidance (P3: uses runtime-specific recipe file)
 # This now just points to the fetched files - no hardcoded patterns
 build_runtime_guidance() {
     local runtime="$1"
     local runtime_version="$2"
+    local recipe_file="${3:-}"  # P3: Now accepts recipe file path
+
+    local recipe_source
+    if [ -n "$recipe_file" ] && [ -f "$recipe_file" ]; then
+        recipe_source="**Recipe file**: \`${recipe_file}\` ✓ (read this for ${runtime}-specific patterns)"
+    else
+        recipe_source="**Recipe file**: Not found - check documentation"
+    fi
 
     cat <<GUIDANCE
 ### ${runtime} Runtime (${runtime_version})
 
-**Configuration source**: Check the fetched files for authoritative patterns:
-- \`/tmp/fetched_recipe.md\` - If a recipe was found
-- \`/tmp/fetched_docs.md\` - If using documentation fallback
+${recipe_source}
 
 **Documentation**: https://docs.zerops.io/${runtime}/how-to/build-pipeline
 
 **General workflow** (via SSH, inside /var/www):
-1. Initialize dependencies (runtime-specific - check fetched files)
-2. Verify it builds/runs locally
-3. Then proceed with zcli push
+1. Read the recipe file for ${runtime}-specific build commands and structure
+2. Initialize dependencies (runtime-specific - check recipe file)
+3. Verify it builds/runs locally
+4. Then proceed with zcli push
 GUIDANCE
 }
 
@@ -128,7 +143,7 @@ step_spawn_subagents() {
         local handoff
         handoff=$(echo "$handoffs" | jq ".[$i]")
 
-        local dev_hostname stage_hostname dev_id stage_id mount_path runtime runtime_version
+        local dev_hostname stage_hostname dev_id stage_id mount_path runtime runtime_version recipe_file
         dev_hostname=$(echo "$handoff" | jq -r '.dev_hostname')
         stage_hostname=$(echo "$handoff" | jq -r '.stage_hostname')
         dev_id=$(echo "$handoff" | jq -r '.dev_id')
@@ -136,6 +151,8 @@ step_spawn_subagents() {
         mount_path=$(echo "$handoff" | jq -r '.mount_path')
         runtime=$(echo "$handoff" | jq -r '.runtime')
         runtime_version=$(echo "$handoff" | jq -r '.runtime_version // "'"${runtime}@1"'"')
+        # P3: Get runtime-specific recipe file
+        recipe_file=$(echo "$handoff" | jq -r '.recipe_file // ""')
 
         # Get managed services for env var mappings
         local managed_services
@@ -143,9 +160,9 @@ step_spawn_subagents() {
         local env_var_mappings
         env_var_mappings=$(build_env_var_mappings "$managed_services")
 
-        # Get runtime-specific guidance (uses hardcoded fallback for prerequisites)
+        # Get runtime-specific guidance (P3: passes recipe_file)
         local runtime_guidance
-        runtime_guidance=$(build_runtime_guidance "$runtime" "$runtime_version")
+        runtime_guidance=$(build_runtime_guidance "$runtime" "$runtime_version" "$recipe_file")
 
         # Build managed services list for zerops.yml template
         local managed_env_block=""
@@ -296,9 +313,9 @@ ${env_var_mappings:-None.}
 ## Runtime: ${runtime} (${runtime_version})
 ${recipe_source_info}
 
-Reference: \`/tmp/fetched_recipe.md\` (or \`/tmp/fetched_docs.md\`)
+**Recipe file:** \`${recipe_file}\`
 
-If file doesn't exist, check \`/tmp/fetched_docs.md\` or use:
+If the recipe file doesn't exist, use documentation:
 https://docs.zerops.io/${runtime}/how-to/build-pipeline
 
 ## zerops.yml Template
@@ -340,7 +357,7 @@ ${managed_env_block:-        # (none)}
 
 | # | Task | Command/Action |
 |---|------|----------------|
-| 1 | Read recipe | \`cat /tmp/fetched_recipe.md\` — understand patterns |
+| 1 | Read recipe | \`cat ${recipe_file}\` — understand ${runtime} patterns |
 | 2 | Write zerops.yml | To \`${mount_path}/zerops.yml\` — setups: \`dev\`, \`prod\` |
 | 3 | Write app code | HTTP server on :8080 with \`/\`, \`/health\`, \`/status\` |
 | 4 | Init deps | \`ssh ${dev_hostname} "cd /var/www && <init>"\` |
@@ -452,6 +469,7 @@ PROMPT
             --arg stage_id "$stage_id" \
             --arg mount_path "$mount_path" \
             --arg runtime "$runtime" \
+            --arg recipe_file "$recipe_file" \
             --arg prompt "$prompt" \
             --argjson handoff "$handoff" \
             '{
@@ -461,6 +479,7 @@ PROMPT
                 stage_id: $stage_id,
                 mount_path: $mount_path,
                 runtime: $runtime,
+                recipe_file: $recipe_file,
                 handoff: $handoff,
                 subagent_prompt: $prompt,
                 tasks: [

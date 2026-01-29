@@ -32,33 +32,56 @@ step_import_services() {
     local plan
     plan=$(get_plan)
 
-    local dev_hostname stage_hostname
-    dev_hostname=$(echo "$plan" | jq -r '.dev_hostname // "appdev"')
-    stage_hostname=$(echo "$plan" | jq -r '.stage_hostname // "appstage"')
+    # Get ALL dev and stage hostnames (support both array and singular forms)
+    local dev_hostnames stage_hostnames
+    dev_hostnames=$(echo "$plan" | jq -r 'if .dev_hostnames then .dev_hostnames[] else .dev_hostname // "appdev" end' 2>/dev/null)
+    stage_hostnames=$(echo "$plan" | jq -r 'if .stage_hostnames then .stage_hostnames[] else .stage_hostname // "appstage" end' 2>/dev/null)
 
     # Check for existing services
     local existing_services
     existing_services=$(zcli service list -P "$projectId" --format json 2>&1 | extract_zcli_json)
 
-    local dev_exists stage_exists
-    dev_exists=$(echo "$existing_services" | jq -r --arg h "$dev_hostname" '.services[] | select(.name == $h) | .name' 2>/dev/null || echo "")
-    stage_exists=$(echo "$existing_services" | jq -r --arg h "$stage_hostname" '.services[] | select(.name == $h) | .name' 2>/dev/null || echo "")
+    # Check if ALL dev/stage hostnames already exist
+    local all_exist=true
+    local existing_list=()
 
-    if [ -n "$dev_exists" ] && [ -n "$stage_exists" ]; then
-        # Services already exist - skip import
+    for dev_hostname in $dev_hostnames; do
+        local dev_exists
+        dev_exists=$(echo "$existing_services" | jq -r --arg h "$dev_hostname" '.services[] | select(.name == $h) | .name' 2>/dev/null || echo "")
+        if [ -z "$dev_exists" ]; then
+            all_exist=false
+        else
+            existing_list+=("$dev_hostname")
+        fi
+    done
+
+    for stage_hostname in $stage_hostnames; do
+        local stage_exists
+        stage_exists=$(echo "$existing_services" | jq -r --arg h "$stage_hostname" '.services[] | select(.name == $h) | .name' 2>/dev/null || echo "")
+        if [ -z "$stage_exists" ]; then
+            all_exist=false
+        else
+            existing_list+=("$stage_hostname")
+        fi
+    done
+
+    if [ "$all_exist" = true ] && [ ${#existing_list[@]} -gt 0 ]; then
+        # All services already exist - skip import
+        local existing_json
+        existing_json=$(printf '%s\n' "${existing_list[@]}" | jq -R . | jq -s .)
+
         local data
         data=$(jq -n \
-            --arg dev "$dev_hostname" \
-            --arg stage "$stage_hostname" \
+            --argjson existing "$existing_json" \
             '{
                 import_result: "skipped",
                 reason: "Services already exist",
-                services_existing: [$dev, $stage]
+                services_existing: $existing
             }')
 
         record_step "import-services" "complete" "$data"
 
-        json_response "import-services" "Services already exist ($dev_hostname, $stage_hostname)" "$data" "wait-services"
+        json_response "import-services" "All services already exist (${existing_list[*]})" "$data" "wait-services"
         return 0
     fi
 

@@ -15,17 +15,26 @@ step_generate_import() {
         return 1
     fi
 
-    # Extract parameters from plan
-    local runtime services prefix ha_mode
+    # Extract parameters from plan - handle both single and multi-runtime plans
+    local runtimes services prefixes ha_mode
 
-    # Handle both single and multi-runtime plans
-    runtime=$(echo "$plan" | jq -r '.runtimes[0] // .runtime // "go"')
+    # Extract ALL runtimes as comma-separated (fall back to single .runtime for backwards compat)
+    runtimes=$(echo "$plan" | jq -r 'if .runtimes then .runtimes | join(",") else .runtime // "go" end')
     services=$(echo "$plan" | jq -r '.managed_services | join(",")' 2>/dev/null || echo "")
-    prefix=$(echo "$plan" | jq -r '.dev_hostname | sub("dev$"; "")' 2>/dev/null || echo "app")
     ha_mode=$(echo "$plan" | jq -r '.ha_mode // false')
 
-    # Build generate_import_yml args
-    local gen_args="--runtime $runtime --prefix $prefix"
+    # Extract prefixes from dev_hostnames array (strip "dev" suffix)
+    # Fall back to single dev_hostname for backwards compat
+    prefixes=$(echo "$plan" | jq -r 'if .dev_hostnames then .dev_hostnames | map(sub("dev$"; "")) | join(",") else (.dev_hostname // "appdev") | sub("dev$"; "") end')
+
+    # Validate we got data
+    if [ -z "$runtimes" ] || [ "$runtimes" = "null" ]; then
+        json_error "generate-import" "No runtimes in plan" '{}' '["Run plan step first"]'
+        return 1
+    fi
+
+    # Build generate_import_yml args with arrays
+    local gen_args="--runtime $runtimes --prefix $prefixes"
     [ -n "$services" ] && [ "$services" != "null" ] && gen_args="$gen_args --services $services"
     [ "$ha_mode" = "true" ] && gen_args="$gen_args --ha"
 

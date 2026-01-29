@@ -372,13 +372,14 @@ When no runtime services exist, the agent orchestrates service creation step-by-
 │  │    4. Tests dev                                            │                 │
 │  │    5. Deploys to stage                                     │                 │
 │  │    6. Tests stage                                          │                 │
-│  │    7. Marks complete via set_service_state                 │                 │
+│  │    7. Writes /tmp/{hostname}_complete.json (URLs, verify)  │                 │
+│  │    8. Marks complete via mark-complete.sh                  │                 │
 │  └────────────────────────────────────────────────────────────┘                 │
 │          │                                                                       │
 │          ▼                                                                       │
 │  ┌───────────────────┐                                                          │
-│  │ aggregate-results │─── Waits for all subagents, creates discovery.json       │
-│  │     (poll)        │    Sets workflow to DEVELOP phase                        │
+│  │ aggregate-results │─── Reads completion files, creates discovery.json        │
+│  │   (display-only)  │    URLs from subagent data (no re-testing)               │
 │  └───────────────────┘                                                          │
 │          │                                                                       │
 │          ▼                                                                       │
@@ -802,6 +803,7 @@ All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/s
 | `bootstrap_import.yml` | Bootstrap orchestrator | Generated import.yml |
 | `bootstrap_coordination.json` | Bootstrap orchestrator | Checkpoint tracking for resume |
 | `bootstrap_handoff.json` | `finalize` step | Per-service handoff data for subagents |
+| `{hostname}_complete.json` | Subagent (Task 17) | URLs, verification data for handoff |
 | `bootstrap_complete.json` | `aggregate-results` step | Bootstrap completion evidence |
 | `workflow_state.json` | Auto-generated | WIGGUM workflow state |
 
