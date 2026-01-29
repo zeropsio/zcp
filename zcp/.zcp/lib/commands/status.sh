@@ -313,7 +313,7 @@ GUIDANCE
                 cat <<GUIDANCE
 ⚠️  DEVELOP PHASE REMINDERS:
    • Kill orphans: ssh $dev_name 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'
-   • Long commands: run_in_background=true
+   • Server start: run_in_background=true (NOT for builds/push!)
    • HTTP 200 ≠ working — check content, logs, console
 
 1. Build and test on dev ($dev_name):
@@ -513,7 +513,7 @@ cmd_recover() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     cat <<'RULES'
 • Kill orphans:     ssh {svc} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'
-• Long commands:    run_in_background=true in Bash tool
+• Server start:     run_in_background=true (NOT for builds/push!)
 • HTTP 200:         Does NOT mean working — check content, logs, console
 • Deploy from:      Dev container (ssh {dev} "zcli push..."), NOT from ZCP
 • deployFiles:      Must include ALL artifacts — check before every deploy

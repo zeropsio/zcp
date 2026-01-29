@@ -556,9 +556,10 @@ Kill existing process:
   ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'
 
 Build & run:
-  ssh {dev} "{build_command}"
+  ssh {dev} "{build_command}"              # Runs synchronously (see logs)
   ssh {dev} './{binary} >> /tmp/app.log 2>&1'
-  ↑ Set run_in_background=true in Bash tool parameters
+  ↑ run_in_background=true (server blocks forever)
+    NOT for builds/push — run those synchronously!
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔍 FUNCTIONAL TESTING (required before deploy):

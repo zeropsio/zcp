@@ -535,7 +535,8 @@ Run data processing (jq) on ZCP: \`ssh svc "curl ..." \| jq .\`
 
 **Database tools** (psql, redis-cli): Run from ZCP, not via SSH.
 
-**Long SSH commands**: Set \`run_in_background=true\` if >30s.
+**\`run_in_background=true\`**: ONLY for commands that **block indefinitely** (starting servers).
+NOT for zcli push, builds, or installs — run those synchronously to see logs.
 
 **Never** \`env\`/\`printenv\` — leaks secrets. Fetch specific vars only.
 

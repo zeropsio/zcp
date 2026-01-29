@@ -22,7 +22,8 @@ You are on ZCP (Zerops Control Plane), NOT inside containers.
 ┌─ Command Execution (SSH) ──────────────────────────────────────┐
 │ Pattern: ssh {service} "command"                                │
 │ Example: ssh appdev "go build -o app main.go"                   │
-│ ⚠️  Use run_in_background=true in Bash tool for long processes │
+│ ⚠️  run_in_background=true ONLY for server processes that      │
+│     block forever. NOT for builds/push (run those sync).        │
 └──────────────────────────────────────────────────────────────────┘
 
 Service names vary by project:
@@ -107,9 +108,9 @@ Kill existing processes:
              fuser -k {port}/tcp 2>/dev/null; true'
 
 Build & run:
-  ssh {dev} "{build_command}"
+  ssh {dev} "{build_command}"              # Runs synchronously (see logs)
   ssh {dev} './{binary} >> /tmp/app.log 2>&1'
-  ↑ Set run_in_background=true in Bash tool parameters
+  ↑ run_in_background=true (server blocks forever)
 
 ⚠️  CRITICAL: Container already has all env vars (db_hostname, etc.)
    Just run the app - don't pass DB_HOST, DB_PASS manually!
@@ -255,8 +256,8 @@ Address in use               │ Orphan process     │ Triple-kill:
                              │                    │ pkill; killall;
                              │                    │ fuser -k; true
 ─────────────────────────────┼────────────────────┼─────────────────
-SSH hangs                    │ Foreground proc    │ run_in_background
-                             │                    │ =true
+SSH hangs on server start    │ Server blocks      │ run_in_background
+                             │ forever            │ =true (servers only)
 ─────────────────────────────┼────────────────────┼─────────────────
 Requires DISCOVER            │ Skipped phase      │ Run phases in
                              │                    │ order
@@ -310,7 +311,7 @@ zcli service list -P $projectId
 # 3. DEVELOP
 .zcp/workflow.sh transition_to DEVELOP
 ssh appdev "go build -o app main.go"
-ssh appdev './app >> /tmp/app.log 2>&1'  # run_in_background=true
+ssh appdev './app >> /tmp/app.log 2>&1'  # run_in_background=true (server!)
 .zcp/verify.sh appdev 8080 / /status /api/items
 
 # 4. DEPLOY

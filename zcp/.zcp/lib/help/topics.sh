@@ -161,10 +161,11 @@ Scale up for heavy builds (local compilation on dev):
       zcli push uses separate Zerops build containers (no scaling needed).
 
 Build & run:
-  ssh {dev} "{build_command}"
+  ssh {dev} "{build_command}"              # Runs synchronously (see logs)
   ssh {dev} './{binary} >> /tmp/app.log 2>&1'
 
-  ⚠️  Set run_in_background=true in Bash tool parameters!
+  ⚠️  run_in_background=true for server (blocks forever)
+      NOT for builds/push — run those synchronously to see logs!
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔍 FUNCTIONAL TESTING (not just HTTP status!)
@@ -943,7 +944,7 @@ BUILD & RUN
 ssh {dev} 'zsc scale ram 1GiB 10m'     # Scale up for heavy local builds
 ssh {dev} "{build_command}"
 ssh {dev} './{binary} >> /tmp/app.log 2>&1'
-# ↑ Set run_in_background=true in Bash tool!
+# ↑ run_in_background=true (server blocks forever)
 
 DEPLOY
 ─────────────────────────────────────────────────────────────────
@@ -983,7 +984,7 @@ CRITICAL RULES
 • Deploy from dev container, NOT ZCP
 • deployFiles must include ALL artifacts
 • zeropsSubdomain is full URL — don't prepend https://
-• Long commands: run_in_background=true
+• Server start: run_in_background=true (NOT for builds/push!)
 • DB tools (psql, redis-cli): Run from ZCP, NOT via ssh to runtime
 • Runtime containers are minimal — no dev tools installed
 
@@ -1249,7 +1250,7 @@ YAML
 
 # 7. Build, run, verify
 ssh appdev "go build -o app main.go"
-ssh appdev "./app >> /tmp/app.log 2>&1"  # run_in_background=true
+ssh appdev "./app >> /tmp/app.log 2>&1"  # run_in_background=true (server!)
 .zcp/verify.sh appdev 8080 / /status
 
 # Continue with normal DEPLOY → VERIFY → DONE flow

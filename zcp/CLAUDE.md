@@ -75,8 +75,19 @@ curl "$(get_service_url appstage)/health"        # Get service URL
 | Run `show` first | Workflow tells you what's next |
 | `zcli {cmd} --help` before using | Syntax varies, uses IDs not names |
 | Deploy from dev container | `ssh dev "zcli push..."` — source files are there |
-| Long-running SSH commands | `run_in_background=true` in Bash tool, or SSH hangs |
 | HTTP 200 ≠ working | Check response content, logs, browser |
+
+**`run_in_background=true`** — ONLY for commands that **block indefinitely**:
+```bash
+# ✅ YES - these block forever (server processes)
+ssh dev "./app"                    # Server runs indefinitely
+ssh dev "tail -f /tmp/app.log"     # Follows forever
+
+# ❌ NO - these complete on their own (run synchronously to see logs!)
+ssh dev "zcli push ..."            # Streams build logs, completes
+ssh dev "go build ..."             # Completes when compiled
+ssh dev "npm install"              # Completes when deps installed
+```
 
 ## Dev vs Stage
 
@@ -99,7 +110,7 @@ ssh {dev} "cd /var/www && nohup ./app > /tmp/app.log 2>&1 &"
 | Symptom | Fix |
 |---------|-----|
 | `psql: command not found` via SSH | Run from ZCP directly, not via ssh |
-| SSH hangs forever | `run_in_background=true` in Bash tool |
+| SSH hangs on server start | `run_in_background=true` (server blocks forever) |
 | `https://https://...` | `zeropsSubdomain` is already full URL |
 | HTTP 000 on dev | Server not running — start manually |
 | zcli "unauthenticated" | See zcli auth below |
