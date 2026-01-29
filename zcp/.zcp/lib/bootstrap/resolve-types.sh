@@ -221,4 +221,6 @@ EOF
 
 export -f ensure_data_json type_exists get_type_category resolve_type resolve_types
 
-[[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
+# Only run main if executed directly (not sourced)
+# The || true prevents errexit from triggering when sourced
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@" || true
