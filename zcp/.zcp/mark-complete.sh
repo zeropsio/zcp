@@ -85,6 +85,66 @@ check_complete() {
     return 1
 }
 
+# Auto-generate completion evidence from verify evidence + container env vars
+# This replaces manual JSON writing by subagents
+auto_generate_completion() {
+    local hostname="$1"
+    local completion_file="/tmp/${hostname}_complete.json"
+
+    # Skip if already exists
+    [ -f "$completion_file" ] && return 0
+
+    # Derive stage hostname (pattern: devname -> stagename)
+    local stage_hostname="${hostname/dev/stage}"
+
+    # Get URLs from containers (zeropsSubdomain env var)
+    local dev_url stage_url
+    dev_url=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$hostname" 'echo $zeropsSubdomain' 2>/dev/null || echo "")
+    stage_url=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$stage_hostname" 'echo $zeropsSubdomain' 2>/dev/null || echo "")
+
+    # Get verification results from evidence files
+    local dev_verify="/tmp/${hostname}_verify.json"
+    local stage_verify="/tmp/${stage_hostname}_verify.json"
+
+    local dev_passed=0 dev_failed=0 stage_passed=0 stage_failed=0
+
+    if [ -f "$dev_verify" ]; then
+        dev_passed=$(jq -r '.passed // 0' "$dev_verify" 2>/dev/null || echo "0")
+        dev_failed=$(jq -r '.failed // 0' "$dev_verify" 2>/dev/null || echo "0")
+    fi
+
+    if [ -f "$stage_verify" ]; then
+        stage_passed=$(jq -r '.passed // 0' "$stage_verify" 2>/dev/null || echo "0")
+        stage_failed=$(jq -r '.failed // 0' "$stage_verify" 2>/dev/null || echo "0")
+    fi
+
+    # Generate completion JSON
+    jq -n \
+        --arg dev "$hostname" \
+        --arg stage "$stage_hostname" \
+        --arg dev_url "$dev_url" \
+        --arg stage_url "$stage_url" \
+        --argjson dev_passed "$dev_passed" \
+        --argjson dev_failed "$dev_failed" \
+        --argjson stage_passed "$stage_passed" \
+        --argjson stage_failed "$stage_failed" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{
+            dev_hostname: $dev,
+            stage_hostname: $stage,
+            dev_url: $dev_url,
+            stage_url: $stage_url,
+            verification: {
+                dev: {passed: $dev_passed, failed: $dev_failed},
+                stage: {passed: $stage_passed, failed: $stage_failed}
+            },
+            completed_at: $ts,
+            auto_generated: true
+        }' > "$completion_file"
+
+    echo "Auto-generated completion evidence: $completion_file"
+}
+
 # Check if verification passed for this service
 check_verification_passed() {
     local hostname="$1"
@@ -131,6 +191,9 @@ mark_complete() {
     local status_file="$service_dir/status.json"
     local timestamp
     timestamp=$(get_timestamp)
+
+    # AUTO-GENERATE completion evidence if not present (Issue 2)
+    auto_generate_completion "$hostname"
 
     # VERIFICATION GATE: Check if dev verification passed
     if [ "$force" != "true" ] && [ "$force" != "--force" ]; then

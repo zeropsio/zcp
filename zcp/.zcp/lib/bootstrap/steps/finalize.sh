@@ -18,11 +18,11 @@ step_finalize() {
         return 1
     fi
 
-    # Get recipe patterns
-    local recipe_patterns='{}'
-    local recipe_file="${ZCP_TMP_DIR:-/tmp}/recipe_review.json"
-    if [ -f "$recipe_file" ]; then
-        recipe_patterns=$(cat "$recipe_file")
+    # Get recipe patterns - will be fetched per-runtime below
+    local global_recipe_patterns='{}'
+    local global_recipe_file="${ZCP_TMP_DIR:-/tmp}/recipe_review.json"
+    if [ -f "$global_recipe_file" ]; then
+        global_recipe_patterns=$(cat "$global_recipe_file")
     fi
 
     # Get service IDs from wait-services step
@@ -208,6 +208,20 @@ step_finalize() {
                 --arg rd "$reference_doc" \
                 '. + [{name: $n, type: $t, env_prefix: $e, env_vars: $ev, reference_doc: $rd}]')
         done < <(echo "$service_objects" | jq -c '.[]')
+
+        # Get per-runtime recipe patterns (Issue 7: prevent cross-contamination)
+        local recipe_patterns="$global_recipe_patterns"
+        local runtime_recipe_file="${ZCP_TMP_DIR:-/tmp}/recipe_${runtime}.json"
+        local runtime_patterns_file="${ZCP_TMP_DIR:-/tmp}/patterns_${runtime}.json"
+
+        # Prefer runtime-specific patterns if available
+        if [ -f "$runtime_patterns_file" ]; then
+            recipe_patterns=$(cat "$runtime_patterns_file")
+        elif [ -f "$runtime_recipe_file" ]; then
+            # Try to extract patterns from the recipe file if it's JSON
+            local extracted
+            extracted=$(jq '.' "$runtime_recipe_file" 2>/dev/null) && recipe_patterns="$extracted"
+        fi
 
         # Build handoff for this service pair (P2: enhanced with recipe_file)
         local handoff

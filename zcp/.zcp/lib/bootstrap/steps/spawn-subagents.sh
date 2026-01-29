@@ -298,6 +298,15 @@ step_spawn_subagents() {
         local patterns_for_runtime
         patterns_for_runtime=$(echo "$recipe_patterns" | jq -c --arg rt "$runtime" '.patterns_extracted.runtime_patterns[$rt] // {}')
 
+        # VALIDATION: Check if we actually have patterns for this runtime (Issue 7)
+        if [ "$patterns_for_runtime" = "{}" ] || [ "$patterns_for_runtime" = "null" ]; then
+            local available_patterns
+            available_patterns=$(echo "$recipe_patterns" | jq -r '.patterns_extracted.runtime_patterns | keys | join(", ")' 2>/dev/null || echo "none")
+            echo "WARNING: No recipe patterns found for runtime '$runtime'" >&2
+            echo "  Available patterns: $available_patterns" >&2
+            echo "  Subagent should use documentation: https://docs.zerops.io/${runtime}/how-to/build-pipeline" >&2
+        fi
+
         # Extract from patterns_extracted.dev_vs_prod
         local dev_vs_prod
         dev_vs_prod=$(echo "$recipe_patterns" | jq -c '.patterns_extracted.dev_vs_prod // {}')
@@ -458,21 +467,19 @@ ${managed_env_block:-        # (none)}
 | 2 | Write zerops.yml | To \`${mount_path}/zerops.yml\` — setups: \`dev\`, \`prod\` |
 | 3 | Write app code | HTTP server on :8080 with \`/\`, \`/health\`, \`/status\` |
 | 4 | Init deps | \`ssh ${dev_hostname} "cd /var/www && <init>"\` |
-| 5 | Auth zcli | \`ssh ${dev_hostname} 'zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY"'\` |
+| 5 | Write .gitignore | \`.zcp/lib/gitignore-template.sh > ${mount_path}/.gitignore\` |
 | 6 | Git init | \`ssh ${dev_hostname} "cd /var/www && git config --global user.email 'zcp@zerops.io' && git config --global user.name 'ZCP' && git init && git add -A && git commit -m 'Bootstrap'"\` |
-| 7 | Deploy dev | \`ssh ${dev_hostname} "cd /var/www && zcli push ${dev_id} --setup=dev --deploy-git-folder"\` |
+| 7 | Deploy dev | \`ssh ${dev_hostname} 'cd /var/www && zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY" && zcli push ${dev_id} --setup=dev --deploy-git-folder'\` |
 | 8 | Wait dev | \`.zcp/status.sh --wait ${dev_hostname}\` |
 | 9 | Subdomain dev | \`zcli service enable-subdomain -P \$projectId ${dev_id}\` |
 | 10 | Start dev server | SSH in, run appropriate start command for runtime (see below) |
-| 10.5 | Verify port | \`ssh ${dev_hostname} "netstat -tlnp 2>/dev/null \| grep 8080 \|\| ss -tlnp \| grep 8080"\` — must show LISTEN |
-| 11 | Test local | \`ssh ${dev_hostname} "curl -s http://localhost:8080/"\` — must return response |
-| 12 | Verify dev | \`.zcp/verify.sh ${dev_hostname} 8080 / /health /status\` |
-| 13 | Deploy stage | \`ssh ${dev_hostname} "cd /var/www && zcli push ${stage_id} --setup=prod"\` |
+| 11 | Wait for server | \`.zcp/wait-for-server.sh ${dev_hostname} 8080 120\` — waits up to 120s |
+| 12 | Verify dev | \`.zcp/verify.sh ${dev_hostname} 8080 / /health /status\` — includes port preflight |
+| 13 | Deploy stage | \`ssh ${dev_hostname} 'cd /var/www && zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY" && zcli push ${stage_id} --setup=prod'\` |
 | 14 | Wait stage | \`.zcp/status.sh --wait ${stage_hostname}\` |
 | 15 | Subdomain stage | \`zcli service enable-subdomain -P \$projectId ${stage_id}\` |
 | 16 | Verify stage | \`.zcp/verify.sh ${stage_hostname} 8080 / /health /status\` |
-| 17 | Write completion | Write \`/tmp/${dev_hostname}_complete.json\` (see below) |
-| 18 | **Done** | \`.zcp/mark-complete.sh ${dev_hostname}\` — then end session |
+| 17 | **Done** | \`.zcp/mark-complete.sh ${dev_hostname}\` — completion evidence auto-generated |
 
 ## CRITICAL: Task 10 — Dev Server Manual Start
 
@@ -487,33 +494,22 @@ After deploy + subdomain (tasks 7-9), the container is running but **port 8080 h
 | Node.js | \`ssh ${dev_hostname} "cd /var/www && nohup node index.js > /tmp/app.log 2>&1 &"\` |
 | Python | \`ssh ${dev_hostname} "cd /var/www && nohup python app.py > /tmp/app.log 2>&1 &"\` |
 
-**Then verify (Tasks 10.5 and 11)** — port must show LISTEN, curl must return response.
+**Then wait (Task 11)** — first startup may take 60-120s for dependency download:
+\`\`\`bash
+.zcp/wait-for-server.sh ${dev_hostname} 8080 120
+\`\`\`
 
-**If verify.sh returns HTTP 000** → server not running → start it first.
+**If verify.sh reports "NO SERVER LISTENING"** → server not running → start it first.
 
 **Stage is different**: Stage uses \`start: ./app\` (or equivalent) — Zerops runs it automatically.
 
-## Task 17 — Write Completion JSON
-
-Before calling mark-complete.sh, write \`/tmp/${dev_hostname}_complete.json\`:
-
-\`\`\`json
-{
-  "dev_hostname": "${dev_hostname}",
-  "stage_hostname": "${stage_hostname}",
-  "dev_url": "<from ssh ${dev_hostname} 'echo \$zeropsSubdomain'>",
-  "stage_url": "<from ssh ${stage_hostname} 'echo \$zeropsSubdomain'>",
-  "verification": {
-    "dev": {"passed": 3, "failed": 0},
-    "stage": {"passed": 3, "failed": 0}
-  },
-  "completed_at": "<ISO timestamp>"
-}
-\`\`\`
-
-This is the **single source of truth** — main agent reads this instead of re-testing.
-
 ## Platform Rules
+
+**Generated files — NEVER write these:**
+- Lock files: \`go.sum\`, \`bun.lock\`, \`package-lock.json\`, \`yarn.lock\`, \`Cargo.lock\`
+- Dependency directories: \`node_modules/\`, \`vendor/\`, \`.venv/\`
+
+Write manifests only (package.json, go.mod). Let package managers generate locks via SSH commands.
 
 **Getting service URLs:**
 \`\`\`bash
@@ -548,8 +544,9 @@ Run data processing (jq) on ZCP: \`ssh svc "curl ..." \| jq .\`
 | Problem | Fix |
 |---------|-----|
 | "not a git repository" | \`ssh ${dev_hostname} "cd /var/www && git config --global user.email 'zcp@zerops.io' && git config --global user.name 'ZCP' && git init && git add -A && git commit -m 'Fix'"\` |
-| "unauthenticated" | Re-run Task 5 |
+| "unauthenticated" | Re-run the combined auth+push command (Task 7 or 13) |
 | **HTTP 000 on dev** | **Server not running — see Task 10, start it manually** |
+| Server won't start | \`.zcp/wait-for-server.sh ${dev_hostname} 8080\` then check logs |
 | Endpoints fail (not 000) | \`zcli service log -P \$projectId ${dev_id}\` |
 
 ## Done
@@ -583,21 +580,19 @@ PROMPT
                     "Create zerops.yml with dev/prod setups (NOT hostname names!)",
                     "Create application code (HTTP server on 8080)",
                     "Initialize runtime dependencies (go mod init, npm init, etc.)",
-                    "Authenticate zcli in container",
+                    "Write .gitignore (prevents node_modules from being committed)",
                     "Initialize git repository",
-                    "Deploy to dev: ssh \($hostname) \"cd /var/www && zcli push \($dev_id) --setup=dev --deploy-git-folder\"",
+                    "Deploy to dev with fresh auth: ssh \($hostname) 'cd /var/www && zcli login ... && zcli push \($dev_id) --setup=dev'",
                     "Wait for dev: .zcp/status.sh --wait \($hostname)",
                     "Enable dev subdomain",
                     "Start dev server manually (nohup ... &)",
-                    "Verify port listening (netstat/ss)",
-                    "Test local: ssh \($hostname) \"curl -s http://localhost:8080/\"",
+                    "Wait for server: .zcp/wait-for-server.sh \($hostname) 8080 120",
                     "Verify dev: .zcp/verify.sh \($hostname) 8080 / /health /status",
-                    "Deploy to stage: ssh \($hostname) \"cd /var/www && zcli push \($stage_id) --setup=prod\"",
+                    "Deploy to stage with fresh auth: ssh \($hostname) 'cd /var/www && zcli login ... && zcli push \($stage_id) --setup=prod'",
                     "Wait for stage: .zcp/status.sh --wait \($stage_hostname)",
                     "Enable stage subdomain",
                     "Verify stage: .zcp/verify.sh \($stage_hostname) 8080 / /health /status",
-                    "Write completion JSON: /tmp/\($hostname)_complete.json",
-                    "Mark complete: .zcp/mark-complete.sh \($hostname)"
+                    "Mark complete: .zcp/mark-complete.sh \($hostname) (completion evidence auto-generated)"
                 ]
             }')
 

@@ -134,16 +134,23 @@ After deploying to dev, start the server manually:
 ssh {dev} "cd /var/www && nohup <your-run-command> > /tmp/app.log 2>&1 &"
 ```
 
-Before running `verify.sh`:
-```bash
-# Check port is listening
-ssh {dev} "netstat -tlnp | grep 8080"
+**Waiting for server startup:**
 
-# Test locally first
-ssh {dev} "curl -s http://localhost:8080/"
+First-time startup may take 60-120s (dependency download). Use the wait helper:
+
+```bash
+.zcp/wait-for-server.sh {hostname} 8080 120
 ```
 
-**If verify.sh returns HTTP 000** → server not running → start it first.
+This polls until port is listening, with progress indicators and log monitoring.
+
+Before running `verify.sh`, ensure the server is started (see above).
+
+verify.sh performs preflight checks automatically:
+- Port listening check (fails fast with guidance if not)
+- HTTP endpoint tests with evidence generation
+
+**If verify.sh reports "NO SERVER LISTENING"** → start the server first.
 
 **Stage is different**: Stage uses a real start command (e.g., `./app`) — Zerops runs it automatically.
 
@@ -164,6 +171,43 @@ If zcli fails with "unauthenticated user":
 ```bash
 zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZCP_API_KEY"
 ```
+
+## zcli Authentication Resilience
+
+zcli tokens do NOT persist reliably across:
+- Container restarts
+- Deploy operations
+- Long-running sessions
+
+### For SSH Commands (Subagents)
+
+Combine auth + push in the same command chain:
+
+```bash
+# CORRECT: Auth + push together (single SSH call)
+ssh {service} 'cd /var/www && zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "$ZEROPS_ZCP_API_KEY" && zcli push {id} --setup={setup} --deploy-git-folder'
+
+# WRONG: Auth earlier, push later (token may expire)
+ssh {service} 'zcli login ...'
+# ... other commands ...
+ssh {service} 'zcli push ...'  # May fail with "unauthenticated"
+```
+
+### For ZCP Scripts
+
+Source the wrapper for automatic retry:
+
+```bash
+source .zcp/lib/zcli-wrapper.sh
+
+# Auto-retries with re-auth on failure
+zcli_with_auth service list -P $projectId
+
+# For SSH-executed commands
+zcli_ssh_with_auth hostname "push $id --setup=dev"
+```
+
+**Recovery:** If push fails with "unauthenticated", re-run the combined auth+push command.
 
 ## Help
 
