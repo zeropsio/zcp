@@ -582,17 +582,17 @@ PROMPT
                     "Initialize runtime dependencies (go mod init, npm init, etc.)",
                     "Write .gitignore (prevents node_modules from being committed)",
                     "Initialize git repository",
-                    "Deploy to dev with fresh auth: ssh \($hostname) 'cd /var/www && zcli login ... && zcli push \($dev_id) --setup=dev'",
+                    "Deploy to dev with fresh auth: ssh \($hostname) \"cd /var/www && zcli login ... && zcli push \($dev_id) --setup=dev\"",
                     "Wait for dev: .zcp/status.sh --wait \($hostname)",
                     "Enable dev subdomain",
-                    "Start dev server manually (nohup ... &)",
+                    "Start dev server manually with nohup in background",
                     "Wait for server: .zcp/wait-for-server.sh \($hostname) 8080 120",
                     "Verify dev: .zcp/verify.sh \($hostname) 8080 / /health /status",
-                    "Deploy to stage with fresh auth: ssh \($hostname) 'cd /var/www && zcli login ... && zcli push \($stage_id) --setup=prod'",
+                    "Deploy to stage with fresh auth: ssh \($hostname) \"cd /var/www && zcli login ... && zcli push \($stage_id) --setup=prod\"",
                     "Wait for stage: .zcp/status.sh --wait \($stage_hostname)",
                     "Enable stage subdomain",
                     "Verify stage: .zcp/verify.sh \($stage_hostname) 8080 / /health /status",
-                    "Mark complete: .zcp/mark-complete.sh \($hostname) (completion evidence auto-generated)"
+                    "Mark complete: .zcp/mark-complete.sh \($hostname) - completion evidence auto-generated"
                 ]
             }')
 
@@ -636,7 +636,13 @@ PROMPT
         msg="Spawn $count subagents - comprehensive instructions for each service pair"
     fi
 
-    json_response "spawn-subagents" "$msg" "$data" "aggregate-results"
+    # Write to dedicated file for easy discovery (matches bootstrap_handoff.json pattern)
+    local response
+    response=$(json_response "spawn-subagents" "$msg" "$data" "aggregate-results")
+    echo "$response" > "${ZCP_TMP_DIR:-/tmp}/bootstrap_spawn.json"
+
+    # Output to stdout
+    echo "$response"
 }
 
 export -f step_spawn_subagents build_env_var_mappings build_env_var_section build_runtime_guidance
