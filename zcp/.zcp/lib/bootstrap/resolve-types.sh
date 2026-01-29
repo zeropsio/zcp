@@ -35,14 +35,22 @@ declare -A ALIASES=(
 
 # Ensure data.json is cached
 ensure_data_json() {
-    local now
+    local now cache_time
     now=$(date +%s)
 
     if [ -f "$CACHE_FILE" ]; then
-        local cache_time
-        cache_time=$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
+        # Get file modification time (portable across BSD/GNU stat)
+        if stat -c %Y "$CACHE_FILE" >/dev/null 2>&1; then
+            # GNU stat (Linux)
+            cache_time=$(stat -c %Y "$CACHE_FILE")
+        elif stat -f %m "$CACHE_FILE" >/dev/null 2>&1; then
+            # BSD stat (macOS)
+            cache_time=$(stat -f %m "$CACHE_FILE")
+        else
+            cache_time=0
+        fi
         local age=$((now - cache_time))
-        [ $age -lt $CACHE_TTL ] && return 0
+        [ "$age" -lt "$CACHE_TTL" ] && return 0
     fi
 
     curl -sf "$DOCS_DATA_URL" -o "$CACHE_FILE" 2>/dev/null || {
@@ -51,11 +59,32 @@ ensure_data_json() {
     }
 }
 
+# Check if data.json is available
+data_json_available() {
+    [ -f "$CACHE_FILE" ] && [ -s "$CACHE_FILE" ]
+}
+
 # Check if type exists in data.json
 type_exists() {
     local type_name="$1"
     ensure_data_json || return 1
     jq -e --arg t "$type_name" 'has($t)' "$CACHE_FILE" >/dev/null 2>&1
+}
+
+# Known runtime types (fallback when data.json unavailable)
+KNOWN_RUNTIMES="go golang nodejs bun python php rust java dotnet"
+KNOWN_SERVICES="postgresql mariadb mysql valkey keydb rabbitmq nats elasticsearch meilisearch typesense kafka clickhouse qdrant objectstorage sharedstorage mongodb"
+
+# Check if type is a known runtime (fallback mode)
+is_known_runtime() {
+    local type_name="$1"
+    [[ " $KNOWN_RUNTIMES " =~ " $type_name " ]]
+}
+
+# Check if type is a known service (fallback mode)
+is_known_service() {
+    local type_name="$1"
+    [[ " $KNOWN_SERVICES " =~ " $type_name " ]]
 }
 
 # Determine if type is a runtime (can run user code) or managed service
@@ -118,10 +147,12 @@ resolve_types() {
     local input="$*"
     input=$(echo "$input" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')
 
-    ensure_data_json || {
-        echo '{"success":false,"errors":["Could not fetch data.json"]}'
-        return 1
-    }
+    # Try to get data.json, but continue in fallback mode if unavailable
+    local fallback_mode="false"
+    if ! ensure_data_json; then
+        fallback_mode="true"
+        echo "WARNING: data.json unavailable - using fallback mode" >&2
+    fi
 
     local runtimes=() services=() errors=() warnings=()
 
@@ -129,25 +160,42 @@ resolve_types() {
         [[ "$term" == --* ]] && continue
         [ -z "$term" ] && continue
 
-        local resolved
-        if resolved=$(resolve_type "$term"); then
-            local category
-            category=$(get_type_category "$resolved")
+        local base_type="${term%%@*}"
 
-            if [ "$category" = "runtime" ]; then
+        # Apply alias first (always works)
+        local resolved="${ALIASES[$base_type]:-$base_type}"
+        [ "$term" != "$resolved" ] && warnings+=("'$term' resolved to '$resolved'")
+
+        if [ "$fallback_mode" = "true" ]; then
+            # Fallback: use hardcoded known types
+            if is_known_runtime "$resolved"; then
                 [[ ! " ${runtimes[*]:-} " =~ " ${resolved} " ]] && runtimes+=("$resolved")
+            elif is_known_service "$resolved"; then
+                [[ ! " ${services[*]:-} " =~ " ${resolved} " ]] && services+=("$resolved")
             else
+                # Unknown in fallback mode - assume it's a service (safer default)
+                warnings+=("'$resolved' not recognized - treating as service")
                 [[ ! " ${services[*]:-} " =~ " ${resolved} " ]] && services+=("$resolved")
             fi
-
-            [ "$term" != "$resolved" ] && warnings+=("'$term' resolved to '$resolved'")
         else
-            local suggestions
-            suggestions=$(get_suggestions "$term")
-            if [ -n "$suggestions" ]; then
-                errors+=("Unknown: '$term'. Try: $suggestions")
+            # Normal mode: validate against data.json
+            if type_exists "$resolved"; then
+                local category
+                category=$(get_type_category "$resolved")
+
+                if [ "$category" = "runtime" ]; then
+                    [[ ! " ${runtimes[*]:-} " =~ " ${resolved} " ]] && runtimes+=("$resolved")
+                else
+                    [[ ! " ${services[*]:-} " =~ " ${resolved} " ]] && services+=("$resolved")
+                fi
             else
-                errors+=("Unknown: '$term'")
+                local suggestions
+                suggestions=$(get_suggestions "$term")
+                if [ -n "$suggestions" ]; then
+                    errors+=("Unknown: '$term'. Try: $suggestions")
+                else
+                    errors+=("Unknown: '$term'")
+                fi
             fi
         fi
     done
@@ -219,7 +267,7 @@ EOF
     esac
 }
 
-export -f ensure_data_json type_exists get_type_category resolve_type resolve_types
+export -f ensure_data_json data_json_available type_exists is_known_runtime is_known_service get_type_category resolve_type resolve_types
 
 # Only run main if executed directly (not sourced)
 # The || true prevents errexit from triggering when sourced
