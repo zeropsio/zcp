@@ -83,28 +83,52 @@ gate_check_session() {
     fi
 }
 
-# Check verification has zero failures
+# Check verification has zero failures (including pre-flight failures)
 # Usage: gate_check_no_failures "$FILE" "context"
 gate_check_no_failures() {
     local file="$1"
     local context="${2:-verification}"
-    if command -v jq &>/dev/null && [ -f "$file" ]; then
-        local failures
-        failures=$(jq -r '.failed // 0' "$file" 2>/dev/null)
-        if ! [[ "$failures" =~ ^[0-9]+$ ]]; then
-            gate_fail "Cannot read failure count from evidence file"
-            return 1
-        elif [ "$failures" -eq 0 ]; then
-            local passed
-            passed=$(jq -r '.passed // 0' "$file" 2>/dev/null)
-            gate_pass "$context passed ($passed endpoints, 0 failures)"
-            return 0
-        else
-            gate_fail "$context has $failures failure(s)" "Fix failing endpoints before proceeding"
-            return 1
-        fi
+
+    if [ ! -f "$file" ]; then
+        gate_fail "No $context evidence file found" "Run verification first"
+        return 1
     fi
-    return 1
+
+    if ! command -v jq &>/dev/null; then
+        gate_fail "jq required for evidence validation"
+        return 1
+    fi
+
+    # Check for preflight failure FIRST (FIX-04: new check)
+    local preflight_failed
+    preflight_failed=$(jq -r '.preflight_failed // false' "$file" 2>/dev/null)
+    if [ "$preflight_failed" = "true" ]; then
+        local reason
+        reason=$(jq -r '.preflight_reason // "Unknown pre-flight failure"' "$file" 2>/dev/null)
+        gate_fail "Pre-flight check failed: $reason" "Ensure process is running on port"
+        return 1
+    fi
+
+    # Check for test failures
+    local failures
+    failures=$(jq -r '.failed // 0' "$file" 2>/dev/null)
+    if ! [[ "$failures" =~ ^[0-9]+$ ]]; then
+        gate_fail "Cannot read failure count from evidence file"
+        return 1
+    elif [ "$failures" -gt 0 ]; then
+        gate_fail "$context has $failures failure(s)" "Fix failing endpoints before proceeding"
+        return 1
+    fi
+
+    # Check for zero passes (suspicious - might be empty test)
+    local passed
+    passed=$(jq -r '.passed // 0' "$file" 2>/dev/null)
+    if [ "$passed" -eq 0 ] && [ "$failures" -eq 0 ]; then
+        gate_warn "No endpoints tested" "Ensure verification ran correctly"
+    fi
+
+    gate_pass "$context passed ($passed endpoints, 0 failures)"
+    return 0
 }
 
 # Finish gate and return result
@@ -124,6 +148,67 @@ gate_finish() {
         echo ""
         echo "❌ Gate FAILED - fix issues above before proceeding"
         return 1
+    fi
+}
+
+# ============================================================================
+# MULTI-SERVICE VERIFICATION (FIX-02)
+# ============================================================================
+
+# Multi-service verification check
+# Checks that ALL services in discovery.json have verify files
+# Usage: gate_check_all_services_verified "dev" "_verify.json"
+gate_check_all_services_verified() {
+    local role="$1"  # "dev" or "stage"
+    local file_suffix="${2:-_verify.json}"
+
+    if [ ! -f "$DISCOVERY_FILE" ]; then
+        return 0  # No discovery, fall back to single-service behavior
+    fi
+
+    local service_count
+    service_count=$(jq -r '.service_count // 1' "$DISCOVERY_FILE" 2>/dev/null)
+
+    if [ "$service_count" -le 1 ]; then
+        return 0  # Single service, handled by existing checks
+    fi
+
+    # Multi-service: check each service's verify file
+    local verified=0
+    local missing_services=""
+
+    while IFS= read -r service_name; do
+        [ -z "$service_name" ] && continue
+
+        local verify_file="${ZCP_TMP_DIR:-/tmp}/${service_name}${file_suffix}"
+        if [ -f "$verify_file" ]; then
+            # Check session and failures
+            if check_evidence_session "$verify_file" 2>/dev/null; then
+                local failures
+                failures=$(jq -r '.failed // 0' "$verify_file" 2>/dev/null)
+                local preflight_failed
+                preflight_failed=$(jq -r '.preflight_failed // false' "$verify_file" 2>/dev/null)
+
+                if [ "$failures" -eq 0 ] && [ "$preflight_failed" != "true" ]; then
+                    verified=$((verified + 1))
+                else
+                    missing_services="$missing_services $service_name(failed)"
+                fi
+            else
+                missing_services="$missing_services $service_name(stale)"
+            fi
+        else
+            missing_services="$missing_services $service_name(missing)"
+        fi
+    done < <(jq -r ".services[].${role}.name" "$DISCOVERY_FILE" 2>/dev/null)
+
+    if [ "$verified" -lt "$service_count" ]; then
+        gate_fail "$verified/$service_count ${role} services verified" \
+            "Missing:$missing_services - Verify each: .zcp/verify.sh {hostname} 8080 /"
+        return 1
+    else
+        gate_pass "All $service_count ${role} services verified"
+        return 0
     fi
 }
 
@@ -478,6 +563,19 @@ check_gate_develop_to_deploy() {
         fi
     fi
 
+    # FIX-02: Multi-service verification enforcement
+    gate_check_all_services_verified "dev" "_verify.json"
+
+    # Gap 45: Check if multi-service with dependencies
+    if [ -f "$DISCOVERY_FILE" ]; then
+        local has_deps
+        has_deps=$(jq -r '[.services[] | select(.depends_on)] | length' "$DISCOVERY_FILE" 2>/dev/null)
+
+        if [ "$has_deps" -gt 0 ]; then
+            gate_warn "Deploy order dependencies detected - deploy services in order shown by 'workflow.sh show'"
+        fi
+    fi
+
     gate_finish "$DEV_VERIFY_FILE" 24
 }
 
@@ -524,6 +622,9 @@ check_gate_verify_to_done() {
 
     # Check 3: failures == 0
     gate_check_no_failures "$STAGE_VERIFY_FILE" "verification"
+
+    # FIX-02: Multi-service stage verification
+    gate_check_all_services_verified "stage" "_verify.json"
 
     gate_finish "$STAGE_VERIFY_FILE" 24
 }

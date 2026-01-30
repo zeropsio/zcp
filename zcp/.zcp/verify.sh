@@ -78,6 +78,16 @@ EVIDENCE FORMAT:
 
 DEBUG MODE:
   Use --debug flag to see detailed command execution
+
+PORT DETECTION:
+  If unsure which port, check zerops.yml:
+    cat /var/www/{service}/zerops.yml | grep -A5 'ports:'
+
+  Or use yq (note: different setups may have different ports):
+    # For dev setup:
+    yq '.zerops[] | select(.setup == "dev") | .run.ports[0].port' /var/www/{service}/zerops.yml
+    # For prod setup:
+    yq '.zerops[] | select(.setup == "prod") | .run.ports[0].port' /var/www/{service}/zerops.yml
 EOF
 }
 
@@ -101,6 +111,74 @@ fi
 if [ -f "$SCRIPT_DIR/lib/validate.sh" ]; then
     source "$SCRIPT_DIR/lib/validate.sh"
 fi
+
+# ============================================================================
+# PORT DETECTION (Gap 32: Wrong Port Verified)
+# ============================================================================
+
+# Extract port from zerops.yml for a service
+# Handles multi-setup files with dev/prod configurations
+get_port_from_zerops_yml() {
+    local hostname="$1"
+    local setup_name="${2:-}"  # Optional: dev, prod, etc.
+    local config_file="/var/www/${hostname}/zerops.yml"
+
+    if [ ! -f "$config_file" ]; then
+        echo ""
+        return 1
+    fi
+
+    if ! command -v yq &>/dev/null; then
+        echo ""
+        return 1
+    fi
+
+    local port=""
+
+    # IMPORTANT: zerops.yml has multiple setups with different run sections
+    # Structure:
+    #   zerops:
+    #     - setup: dev
+    #       run:
+    #         ports:
+    #           - port: 8080
+    #     - setup: prod
+    #       run:
+    #         ports:
+    #           - port: 3000
+
+    if [ -n "$setup_name" ]; then
+        # Match by explicit setup name
+        port=$(yq e ".zerops[] | select(.setup == \"$setup_name\") | .run.ports[0].port // empty" "$config_file" 2>/dev/null)
+    fi
+
+    # Fallback 1: Try matching by hostname field
+    if [ -z "$port" ] || [ "$port" = "null" ]; then
+        port=$(yq e ".zerops[] | select(.hostname == \"$hostname\") | .run.ports[0].port // empty" "$config_file" 2>/dev/null)
+    fi
+
+    # Fallback 2: Infer setup from hostname pattern (dev/stage suffix)
+    if [ -z "$port" ] || [ "$port" = "null" ]; then
+        if [[ "$hostname" == *"dev"* ]]; then
+            port=$(yq e '.zerops[] | select(.setup == "dev") | .run.ports[0].port // empty' "$config_file" 2>/dev/null)
+        elif [[ "$hostname" == *"stage"* ]] || [[ "$hostname" == *"prod"* ]]; then
+            port=$(yq e '.zerops[] | select(.setup == "prod") | .run.ports[0].port // empty' "$config_file" 2>/dev/null)
+        fi
+    fi
+
+    # Fallback 3: Take first setup's port (last resort)
+    if [ -z "$port" ] || [ "$port" = "null" ]; then
+        port=$(yq e '.zerops[0].run.ports[0].port // empty' "$config_file" 2>/dev/null)
+    fi
+
+    if [ -n "$port" ] && [ "$port" != "null" ]; then
+        echo "$port"
+        return 0
+    fi
+
+    echo ""
+    return 1
+}
 
 # Load discovery for accurate service matching
 # Sets globals: DEV_SERVICE_NAME, STAGE_SERVICE_NAME
@@ -211,6 +289,10 @@ show_no_server_error() {
     local service="$1"
     local port="$2"
 
+    # Try to get expected port from zerops.yml (Gap 32: Port mismatch detection)
+    local expected_port
+    expected_port=$(get_port_from_zerops_yml "$service" 2>/dev/null)
+
     # Detect runtime from files in /var/www
     local runtime="unknown"
     if ssh "$service" "test -f /var/www/go.mod" 2>/dev/null; then
@@ -225,6 +307,19 @@ show_no_server_error() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "⚠️  NO SERVER LISTENING ON PORT $port"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # Gap 32: Check for port mismatch
+    if [ -n "$expected_port" ] && [ "$expected_port" != "$port" ]; then
+        echo ""
+        echo "⚠️  PORT MISMATCH DETECTED"
+        echo "   You tried:     $port"
+        echo "   zerops.yml:    $expected_port"
+        echo ""
+        echo "   Try: .zcp/verify.sh $service $expected_port /"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    fi
+
     echo ""
     echo "Dev services use 'start: zsc noop --silent' — no auto-start."
     echo ""
@@ -445,31 +540,53 @@ main() {
     # Load discovery names for accurate matching
     get_discovery_names
 
-    # Symlink evidence to role-specific file based on discovery.json (exact match)
-    # Using symlinks instead of copies to avoid duplication
+    # FIX-06: Multi-service aware symlink logic
+    local discovery_file="/tmp/discovery.json"
+    local service_count=1
+    if [ -f "$discovery_file" ]; then
+        service_count=$(jq -r '.service_count // 1' "$discovery_file" 2>/dev/null)
+    fi
+
+    # Symlink evidence to role-specific file based on discovery.json
     if [ -n "$DEV_SERVICE_NAME" ] && [ "$service" = "$DEV_SERVICE_NAME" ]; then
         ln -sf "$evidence_file" /tmp/dev_verify.json
         echo "→ Linked to /tmp/dev_verify.json (matches discovery dev: $DEV_SERVICE_NAME)"
     elif [ -n "$STAGE_SERVICE_NAME" ] && [ "$service" = "$STAGE_SERVICE_NAME" ]; then
         ln -sf "$evidence_file" /tmp/stage_verify.json
         echo "→ Linked to /tmp/stage_verify.json (matches discovery stage: $STAGE_SERVICE_NAME)"
-    elif [ -n "$DEV_SERVICE_NAME" ] || [ -n "$STAGE_SERVICE_NAME" ]; then
-        # Discovery exists but service doesn't match
-        echo "⚠️  Service '$service' not in discovery.json"
-        echo "   Expected: dev='$DEV_SERVICE_NAME' or stage='$STAGE_SERVICE_NAME'"
-        echo "   Evidence saved to: $evidence_file (not auto-linked to workflow)"
-        echo ""
-        echo "💡 If this is your dev/stage service, update discovery:"
-        echo "   .zcp/workflow.sh create_discovery {dev_id} $service {stage_id} {stage_name}"
     else
-        # No discovery - fall back to pattern matching with warning
-        echo "⚠️  No discovery.json found, using pattern matching fallback"
-        if echo "$service" | grep -qi "dev" && ! echo "$service" | grep -qi "stage"; then
-            ln -sf "$evidence_file" /tmp/dev_verify.json
-            echo "→ Linked to /tmp/dev_verify.json (pattern match: contains 'dev')"
-        elif echo "$service" | grep -qi "stage"; then
-            ln -sf "$evidence_file" /tmp/stage_verify.json
-            echo "→ Linked to /tmp/stage_verify.json (pattern match: contains 'stage')"
+        # Check if this is a multi-service scenario
+        if [ "$service_count" -gt 1 ] && [ -f "$discovery_file" ]; then
+            # Check if service is any dev service in services[]
+            if jq -e ".services[] | select(.dev.name == \"$service\")" "$discovery_file" &>/dev/null; then
+                echo "→ Multi-service: Evidence saved to $evidence_file"
+                echo "   (Gate will check this file directly for dev verification)"
+            # Check if service is any stage service in services[]
+            elif jq -e ".services[] | select(.stage.name == \"$service\")" "$discovery_file" &>/dev/null; then
+                echo "→ Multi-service: Evidence saved to $evidence_file"
+                echo "   (Gate will check this file directly for stage verification)"
+            else
+                echo "⚠️  Service '$service' not found in discovery.json services[]"
+                echo "   Evidence saved to: $evidence_file"
+            fi
+        elif [ -n "$DEV_SERVICE_NAME" ] || [ -n "$STAGE_SERVICE_NAME" ]; then
+            # Single service but doesn't match - warn
+            echo "⚠️  Service '$service' not in discovery.json"
+            echo "   Expected: dev='$DEV_SERVICE_NAME' or stage='$STAGE_SERVICE_NAME'"
+            echo "   Evidence saved to: $evidence_file (not auto-linked to workflow)"
+            echo ""
+            echo "💡 If this is your dev/stage service, update discovery:"
+            echo "   .zcp/workflow.sh create_discovery {dev_id} $service {stage_id} {stage_name}"
+        else
+            # No discovery - fall back to pattern matching with warning
+            echo "⚠️  No discovery.json found, using pattern matching fallback"
+            if echo "$service" | grep -qi "dev" && ! echo "$service" | grep -qi "stage"; then
+                ln -sf "$evidence_file" /tmp/dev_verify.json
+                echo "→ Linked to /tmp/dev_verify.json (pattern match: contains 'dev')"
+            elif echo "$service" | grep -qi "stage"; then
+                ln -sf "$evidence_file" /tmp/stage_verify.json
+                echo "→ Linked to /tmp/stage_verify.json (pattern match: contains 'stage')"
+            fi
         fi
     fi
 

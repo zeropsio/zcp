@@ -121,6 +121,12 @@ ZCLI_AUTH_ERROR
         create_discovery)
             cmd_create_discovery "$@"
             ;;
+        create_discovery_multi)
+            cmd_create_discovery_multi "$@"
+            ;;
+        detect_shared_database)
+            cmd_detect_shared_database
+            ;;
         show)
             cmd_show "$@"
             ;;
@@ -129,6 +135,9 @@ ZCLI_AUTH_ERROR
             ;;
         state)
             cmd_state
+            ;;
+        context)
+            cmd_context
             ;;
         complete)
             cmd_complete
@@ -229,6 +238,7 @@ EOF
             echo "  create_discovery [--single] ...  Record services"
             echo "  show [--guidance|--full]    Current status"
             echo "  recover                     Full context recovery"
+            echo "  context                     Exportable context dump (FIX-05)"
             echo "  state                       One-line state summary"
             echo "  complete                    Verify and finish"
             echo "  reset [--keep-discovery]    Clear state"
@@ -244,7 +254,7 @@ EOF
             echo "  bootstrap-done              Mark bootstrap complete (unlocks workflow)"
             echo ""
             echo "Continuity Commands:"
-            echo "  iterate [--to PHASE] [summary]  Start new iteration from DONE"
+            echo "  iterate [--service {name}] [--to PHASE] [summary]  Start new iteration"
             echo "  retarget {dev|stage} {id} {name}  Change deployment target"
             echo "  intent [text]               Set/show workflow intent"
             echo "  note [text]                 Add/show workflow notes"

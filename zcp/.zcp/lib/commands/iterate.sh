@@ -5,12 +5,17 @@
 cmd_iterate() {
     local summary=""
     local target_phase="DEVELOP"
+    local target_service=""
 
     # Parse arguments
     while [ $# -gt 0 ]; do
         case "$1" in
             --to)
                 target_phase="$2"
+                shift 2
+                ;;
+            --service)
+                target_service="$2"
                 shift 2
                 ;;
             *)
@@ -58,12 +63,44 @@ cmd_iterate() {
         return 1
     fi
 
+    # Gap 50: Validate --service flag if specified
+    if [ -n "$target_service" ]; then
+        if [ ! -f "$DISCOVERY_FILE" ]; then
+            echo "❌ No discovery.json - cannot use --service"
+            return 1
+        fi
+
+        # Check service exists (could be dev.name or stage.name)
+        local found_dev found_stage
+        found_dev=$(jq -r --arg svc "$target_service" \
+            '.services[] | select(.dev.name == $svc) | .dev.name' \
+            "$DISCOVERY_FILE" 2>/dev/null)
+        found_stage=$(jq -r --arg svc "$target_service" \
+            '.services[] | select(.stage.name == $svc) | .stage.name' \
+            "$DISCOVERY_FILE" 2>/dev/null)
+
+        if [ -z "$found_dev" ] && [ -z "$found_stage" ]; then
+            echo "❌ Service '$target_service' not found in discovery"
+            echo ""
+            echo "Available services:"
+            jq -r '.services[] | "  • \(.dev.name) / \(.stage.name)"' "$DISCOVERY_FILE"
+            return 1
+        fi
+
+        # Show which role matched
+        if [ -n "$found_dev" ]; then
+            echo "  Matched dev service: $found_dev"
+        elif [ -n "$found_stage" ]; then
+            echo "  Matched stage service: $found_stage"
+        fi
+    fi
+
     # Get current iteration (default to 1 if not set)
     local current_iteration
     current_iteration=$(get_iteration)
 
-    # Archive current evidence
-    archive_iteration_evidence "$current_iteration"
+    # Archive current evidence (Gap 50: pass focused service if specified)
+    archive_iteration_evidence "$current_iteration" "$target_service"
 
     # Increment iteration
     local next_iteration=$((current_iteration + 1))
@@ -129,6 +166,19 @@ cmd_iterate() {
         echo "Ready to implement: \"$summary\""
     fi
 
+    # Gap 50: Show focused iteration info
+    if [ -n "$target_service" ]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🎯 FOCUSED ITERATION: $target_service"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "Only verify/deploy this service. Other services unchanged."
+        echo ""
+        echo "⚠️  Gate will still check ALL services at transition."
+        echo "   Existing evidence for other services will be preserved."
+    fi
+
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     output_phase_guidance "$target_phase"
@@ -137,19 +187,48 @@ cmd_iterate() {
 # Note: get_iteration() and set_iteration() are defined in utils.sh
 
 # Archive evidence from current iteration
+# Gap 50: If focused_service is specified, only archive that service's evidence
 archive_iteration_evidence() {
     local n="$1"
+    local focused_service="$2"  # Optional: only archive this service's evidence
     local iter_dir="$WORKFLOW_ITERATIONS_DIR/$n"
 
     # Create iteration directory
     mkdir -p "$iter_dir"
 
-    # Move evidence files to archive
-    for file in dev_verify stage_verify deploy_evidence; do
-        if [ -f "/tmp/${file}.json" ]; then
-            mv "/tmp/${file}.json" "$iter_dir/${file}.json"
+    # If focused iteration, only archive the focused service's evidence
+    if [ -n "$focused_service" ]; then
+        # Archive only focused service evidence
+        local verify_file="/tmp/${focused_service}_verify.json"
+        if [ -f "$verify_file" ]; then
+            mv "$verify_file" "$iter_dir/${focused_service}_verify.json"
         fi
-    done
+
+        # IMPORTANT: Clean up symlinks pointing to the archived file
+        # verify.sh creates symlinks: /tmp/dev_verify.json -> /tmp/{service}_verify.json
+        # Moving the target leaves dangling symlinks that break gate checks
+        for link in /tmp/dev_verify.json /tmp/stage_verify.json; do
+            if [ -L "$link" ]; then
+                local target
+                target=$(readlink "$link" 2>/dev/null)
+                # Check if symlink pointed to the file we just archived
+                if [ "$target" = "$verify_file" ] || [ "$target" = "/tmp/${focused_service}_verify.json" ]; then
+                    rm -f "$link"
+                    echo "  → Removed dangling symlink: $link"
+                fi
+            fi
+        done
+
+        # Keep other services' evidence in place
+        echo "  → Preserved evidence for non-focused services"
+    else
+        # Original behavior: archive all evidence
+        for file in dev_verify stage_verify deploy_evidence; do
+            if [ -f "/tmp/${file}.json" ]; then
+                mv "/tmp/${file}.json" "$iter_dir/${file}.json"
+            fi
+        done
+    fi
 
     # Also save context if available
     if [ -f "$CONTEXT_FILE" ]; then

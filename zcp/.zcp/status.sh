@@ -17,6 +17,7 @@ USAGE:
   .zcp/status.sh                           # Show current state
   .zcp/status.sh --wait {service}          # Wait for deployment
   .zcp/status.sh --wait {service} --timeout 600
+  .zcp/status.sh --check-queue {service}   # Check deploy queue status
 
 SHOWS:
   - Service list with app version timestamps
@@ -37,6 +38,14 @@ DEPLOYMENT STATUS LOGIC:
   │ (empty)             │ (not found)      │ In progress│
   └─────────────────────┴──────────────────┴────────────┘
 
+QUEUE DETECTION (Gap 44):
+  When multiple deploys to the same service are in progress,
+  Zerops queues them. If the first deploy fails, queued deploys
+  are cancelled.
+
+  Use --check-queue before deploying to see if another deploy
+  is in progress or queued.
+
 EXAMPLES:
   .zcp/status.sh
   .zcp/status.sh --wait appstage
@@ -54,6 +63,105 @@ get_project_id() {
     else
         echo ""
     fi
+}
+
+# ============================================================================
+# QUEUE DETECTION (Gap 44: Concurrent Deploy Conflict)
+# ============================================================================
+
+# Check if a service has queued deploys
+# Returns: IDLE, BUILDING, or QUEUED:N (where N is queue count)
+check_deploy_queue() {
+    local service="$1"
+    local pid
+    pid=$(get_project_id)
+
+    if [ -z "$pid" ]; then
+        echo "ERROR:No projectId"
+        return 1
+    fi
+
+    # Get service info with queue status
+    local service_json
+    service_json=$(zcli service list -P "$pid" --format json 2>/dev/null | \
+        sed 's/\x1b\[[0-9;]*m//g' | \
+        jq --arg svc "$service" '.services[] | select(.name == $svc)' 2>/dev/null)
+
+    if [ -z "$service_json" ]; then
+        echo "NOT_FOUND"
+        return 1
+    fi
+
+    # Check for queued processes
+    # NOTE: .processes[] contains deploy queue entries
+    local process_count
+    process_count=$(echo "$service_json" | jq '.processes | length // 0' 2>/dev/null)
+
+    # Also check for explicit status if available
+    local building_count
+    building_count=$(echo "$service_json" | jq '[.processes[]? | select(.status == "BUILDING" or .status == "PENDING")] | length // 0' 2>/dev/null)
+
+    if [ "$building_count" -gt 1 ] || [ "$process_count" -gt 1 ]; then
+        echo "QUEUED:$process_count"
+        return 0
+    elif [ "$building_count" -eq 1 ] || [ "$process_count" -eq 1 ]; then
+        echo "BUILDING"
+        return 0
+    else
+        echo "IDLE"
+        return 0
+    fi
+}
+
+# Show queue status for a service
+show_queue_status() {
+    local service="$1"
+    local queue_status
+    queue_status=$(check_deploy_queue "$service")
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📦 DEPLOY QUEUE STATUS: $service"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    case "$queue_status" in
+        QUEUED:*)
+            local queue_count="${queue_status#QUEUED:}"
+            echo "  ⏳ Status: QUEUED"
+            echo "  📊 Deploys in queue: $queue_count"
+            echo ""
+            echo "  ⚠️  Another deploy is in progress."
+            echo "     Your deploy will be queued and start after current one completes."
+            echo "     If current deploy FAILS, queued deploys are CANCELLED."
+            echo ""
+            echo "  💡 Recommendation: Wait for current deploy to complete before starting new one."
+            ;;
+        BUILDING)
+            echo "  🔨 Status: BUILDING"
+            echo "  📊 One deploy in progress"
+            echo ""
+            echo "  ⚠️  A deploy is currently in progress."
+            echo "     Starting another deploy now will queue it."
+            ;;
+        IDLE)
+            echo "  ✅ Status: IDLE"
+            echo "  📊 No active deploys"
+            echo ""
+            echo "  Ready to deploy."
+            ;;
+        NOT_FOUND)
+            echo "  ❌ Service not found: $service"
+            echo ""
+            echo "  Check service name with: zcli service list -P \$projectId"
+            ;;
+        ERROR:*)
+            echo "  ❌ Error: ${queue_status#ERROR:}"
+            ;;
+    esac
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 # ============================================================================
@@ -158,9 +266,22 @@ wait_for_deployment() {
         local status
         status=$(check_deployment_status "$service")
 
+        # Gap 44: Check if we're queued behind another deploy
+        local queue_status
+        queue_status=$(check_deploy_queue "$service")
+
         case "$status" in
             BUILDING)
-                echo "  [${elapsed}/${timeout}s] Building... (status: RUNNING)"
+                case "$queue_status" in
+                    QUEUED:*)
+                        local queue_count="${queue_status#QUEUED:}"
+                        echo "  [${elapsed}/${timeout}s] ⏳ Queued (${queue_count} deploys in queue)"
+                        echo "    → Your deploy will start after current one completes"
+                        ;;
+                    *)
+                        echo "  [${elapsed}/${timeout}s] Building... (status: RUNNING)"
+                        ;;
+                esac
                 ;;
             SUCCESS)
                 echo "  [${elapsed}/${timeout}s] ✅ Deployment complete!"
@@ -235,6 +356,19 @@ wait_for_deployment() {
 main() {
     if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
         show_help
+        exit 0
+    fi
+
+    if [ "$1" = "--check-queue" ]; then
+        shift
+        local service="$1"
+
+        if [ -z "$service" ]; then
+            echo "❌ Usage: .zcp/status.sh --check-queue {service}"
+            exit 2
+        fi
+
+        show_queue_status "$service"
         exit 0
     fi
 

@@ -1,6 +1,63 @@
 #!/bin/bash
 # Status and show commands for Zerops Workflow
 
+# ============================================================================
+# RUNTIME DEFAULTS (FIX-03: Resolve placeholders)
+# ============================================================================
+
+# Get runtime-specific defaults for guidance (sets variables via eval)
+# Usage: eval "$(get_runtime_defaults "go")"
+# Sets: proc, binary, build, port
+get_runtime_defaults() {
+    local runtime="$1"
+    case "$runtime" in
+        go|go@*)
+            echo "proc=app binary=app build='go build -o app' port=8080"
+            ;;
+        nodejs|nodejs@*|node|node@*)
+            echo "proc=node binary='node index.js' build='npm install && npm run build' port=8080"
+            ;;
+        bun|bun@*)
+            echo "proc=bun binary='bun run index.ts' build='bun install' port=8080"
+            ;;
+        python|python@*)
+            echo "proc=python binary='python app.py' build='pip install -r requirements.txt' port=8080"
+            ;;
+        rust|rust@*)
+            echo "proc=app binary='./target/release/app' build='cargo build --release' port=8080"
+            ;;
+        php|php@*)
+            echo "proc=php binary='php -S 0.0.0.0:8080' build='composer install' port=8080"
+            ;;
+        dotnet|dotnet@*)
+            echo "proc=dotnet binary='dotnet run' build='dotnet build' port=8080"
+            ;;
+        java|java@*)
+            echo "proc=java binary='java -jar app.jar' build='mvn package' port=8080"
+            ;;
+        *)
+            echo "proc=app binary='./app' build='<see zerops.yml>' port=8080"
+            ;;
+    esac
+}
+
+# Read build command from zerops.yml if available
+get_build_from_zerops_yml() {
+    local hostname="$1"
+    local config_file="/var/www/${hostname}/zerops.yml"
+
+    if [ -f "$config_file" ] && command -v yq &>/dev/null; then
+        # Try to extract buildCommands
+        local build_cmd
+        build_cmd=$(yq e ".zerops[] | select(.hostname == \"$hostname\" or .setup) | .build.buildCommands[0] // empty" "$config_file" 2>/dev/null)
+        if [ -n "$build_cmd" ]; then
+            echo "$build_cmd"
+            return 0
+        fi
+    fi
+    return 1
+}
+
 cmd_show() {
     local show_guidance=false
     local show_full=false
@@ -208,19 +265,106 @@ EOF
         fi
     fi
 
-    # Show discovered services if discovery exists
+    # Show discovered services if discovery exists (FIX-01: Multi-service display)
     if [ -f "$DISCOVERY_FILE" ]; then
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "📦 DISCOVERED SERVICES"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        local dev_name dev_id stage_name stage_id
-        dev_name=$(jq -r '.dev.name // "?"' "$DISCOVERY_FILE" 2>/dev/null)
-        dev_id=$(jq -r '.dev.id // "?"' "$DISCOVERY_FILE" 2>/dev/null)
-        stage_name=$(jq -r '.stage.name // "?"' "$DISCOVERY_FILE" 2>/dev/null)
-        stage_id=$(jq -r '.stage.id // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+
+        # Read service count and determine display mode
+        local service_count
+        service_count=$(jq -r '.service_count // 1' "$DISCOVERY_FILE" 2>/dev/null)
+
+        if [ "$service_count" -gt 1 ]; then
+            # Multi-service mode: show all services
+            echo "📦 DISCOVERED SERVICES ($service_count pairs)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+
+            # Gap 45: Check if deploy_order exists
+            local has_deploy_order
+            has_deploy_order=$(jq -r '[.services[] | select(.deploy_order)] | length' "$DISCOVERY_FILE" 2>/dev/null)
+
+            if [ "$has_deploy_order" -gt 0 ]; then
+                # Show with deploy order
+                printf "  %-5s %-12s %-20s %-20s %-15s\n" "ORDER" "RUNTIME" "DEV" "STAGE" "DEPENDS ON"
+                printf "  %-5s %-12s %-20s %-20s %-15s\n" "─────" "───────" "────────────────────" "────────────────────" "─────────────"
+                jq -r '.services | sort_by(.deploy_order // 99) | .[] |
+                    "  \(.deploy_order // "?")\t\(.runtime // "?")\t\(.dev.name // "?")\t\(.stage.name // "?")\t\(.depends_on // [] | join(","))"' \
+                    "$DISCOVERY_FILE" 2>/dev/null | \
+                    while IFS=$'\t' read -r order runtime dev_name stage_name deps; do
+                        printf "  %-5s %-12s %-20s %-20s %-15s\n" "$order" "$runtime" "$dev_name" "$stage_name" "${deps:-—}"
+                    done
+            else
+                # No deploy order, show standard format
+                printf "  %-12s %-20s %-20s\n" "RUNTIME" "DEV" "STAGE"
+                printf "  %-12s %-20s %-20s\n" "───────" "────────────────────" "────────────────────"
+                jq -r '.services[] | "  \(.runtime // "?")\t\(.dev.name // "?")\t\(.stage.name // "?")"' "$DISCOVERY_FILE" 2>/dev/null | \
+                    while IFS=$'\t' read -r runtime dev_name stage_name; do
+                        printf "  %-12s %-20s %-20s\n" "$runtime" "$dev_name" "$stage_name"
+                    done
+            fi
+            echo ""
+
+            # For backward compat, also set first service vars
+            local dev_name dev_id stage_name stage_id
+            dev_name=$(jq -r '.services[0].dev.name // .dev.name // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+            dev_id=$(jq -r '.services[0].dev.id // .dev.id // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+            stage_name=$(jq -r '.services[0].stage.name // .stage.name // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+            stage_id=$(jq -r '.services[0].stage.id // .stage.id // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+
+            echo "  Primary (first): $dev_name → $stage_name"
+
+            # Gap 48: Show internal connectivity guidance for multi-service
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "CONNECTION CONNECTIVITY"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "  Services communicate via internal network (vxlan):"
+            echo "    http://{hostname}:{port}"
+            echo ""
+            echo "  Test connectivity between services:"
+            echo "    .zcp/check-connectivity.sh {from} {to} {port}"
+            echo ""
+            echo "  Example:"
+            echo "    .zcp/check-connectivity.sh apidev workerdev 8080 /health"
+
+            # Gap 45: Show deploy order guidance if dependencies detected
+            if [ "$has_deploy_order" -gt 0 ]; then
+                echo ""
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "📦 DEPLOY ORDER (dependencies detected)"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+                echo "⚠️  Deploy in this order. Wait for each before starting next:"
+                echo ""
+
+                # Generate sequential commands using process substitution to avoid subshell
+                local step_num=1
+                while IFS='|' read -r svc_dev_name svc_stage_id svc_stage_name; do
+                    echo "Step $step_num: $svc_stage_name"
+                    echo "   ssh $svc_dev_name \"zcli push $svc_stage_id --setup=prod\""
+                    echo "   .zcp/status.sh --wait $svc_stage_name"
+                    echo ""
+                    step_num=$((step_num + 1))
+                done < <(jq -r '.services | sort_by(.deploy_order // 99) | .[] |
+                    "\(.dev.name)|\(.stage.id)|\(.stage.name)"' "$DISCOVERY_FILE")
+            fi
+        else
+            # Single-service mode: original behavior
+            echo "📦 DISCOVERED SERVICES"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            local dev_name dev_id stage_name stage_id
+            dev_name=$(jq -r '.dev.name // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+            dev_id=$(jq -r '.dev.id // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+            stage_name=$(jq -r '.stage.name // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+            stage_id=$(jq -r '.stage.id // "?"' "$DISCOVERY_FILE" 2>/dev/null)
+            echo ""
+            echo "  Dev:   $dev_name ($dev_id)"
+            echo "  Stage: $stage_name ($stage_id)"
+        fi
         echo ""
-        echo "  Runtime (SSH ✓):  $dev_name (dev), $stage_name (stage)"
+        echo "  Runtime (SSH ✓):  Use ssh {hostname} for shell access"
         echo "  Managed (NO SSH): db, cache, etc. → use psql, redis-cli from ZCP"
         echo ""
         echo "  DB access:  psql \"\$db_connectionString\""
@@ -308,65 +452,193 @@ GUIDANCE
             ;;
         DEVELOP)
             if ! check_evidence_session "$DEV_VERIFY_FILE"; then
-                local dev_name
-                dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
-                cat <<GUIDANCE
-⚠️  DEVELOP PHASE REMINDERS:
-   • Kill orphans: ssh $dev_name 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'
-   • Server start: run_in_background=true (NOT for builds/push!)
-   • HTTP 200 ≠ working — check content, logs, console
+                # FIX-03: Multi-service aware guidance with resolved placeholders
+                local service_count
+                service_count=$(jq -r '.service_count // 1' "$DISCOVERY_FILE" 2>/dev/null)
 
-1. Build and test on dev ($dev_name):
-   ssh $dev_name "{build_cmd} && ./{binary}"
-2. Verify endpoints:
-   .zcp/verify.sh $dev_name {port} / /api/...
-3. Then: .zcp/workflow.sh transition_to DEPLOY
-GUIDANCE
+                echo "⚠️  DEVELOP PHASE REMINDERS:"
+                echo "   • Server start: run_in_background=true (NOT for builds/push!)"
+                echo "   • HTTP 200 ≠ working — check content, logs, console"
+                echo ""
+
+                if [ "$service_count" -gt 1 ]; then
+                    # Multi-service mode: show guidance for EACH service
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "📦 SERVICES TO DEVELOP ($service_count total)"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo ""
+
+                    local i=0
+                    while [ "$i" -lt "$service_count" ]; do
+                        local svc_dev_name svc_runtime
+                        svc_dev_name=$(jq -r ".services[$i].dev.name // \"service$i\"" "$DISCOVERY_FILE" 2>/dev/null)
+                        svc_runtime=$(jq -r ".services[$i].runtime // \"unknown\"" "$DISCOVERY_FILE" 2>/dev/null)
+
+                        # Get defaults for this runtime
+                        local proc binary build port
+                        eval "$(get_runtime_defaults "$svc_runtime")"
+
+                        # Try to get actual build from zerops.yml
+                        local actual_build
+                        if actual_build=$(get_build_from_zerops_yml "$svc_dev_name" 2>/dev/null); then
+                            build="$actual_build"
+                        fi
+
+                        echo "[$((i+1))] $svc_dev_name ($svc_runtime)"
+                        echo "────────────────────────────────────────────────────────────────"
+                        echo "   Kill:   ssh $svc_dev_name 'pkill -9 $proc; fuser -k $port/tcp 2>/dev/null; true'"
+                        echo "   Build:  ssh $svc_dev_name \"cd /var/www && $build\""
+                        echo "   Run:    ssh $svc_dev_name \"cd /var/www && $binary\""
+                        echo "   Verify: .zcp/verify.sh $svc_dev_name $port / /health"
+                        echo ""
+
+                        i=$((i + 1))
+                    done
+
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "GATE REQUIREMENT: ALL $service_count services must pass verification"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                else
+                    # Single-service mode
+                    local dev_name runtime
+                    dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
+                    runtime=$(jq -r '.services[0].runtime // "unknown"' "$DISCOVERY_FILE" 2>/dev/null)
+
+                    local proc binary build port
+                    eval "$(get_runtime_defaults "$runtime")"
+
+                    local actual_build
+                    if actual_build=$(get_build_from_zerops_yml "$dev_name" 2>/dev/null); then
+                        build="$actual_build"
+                    fi
+
+                    echo "Service: $dev_name ($runtime)"
+                    echo ""
+                    echo "1. Kill existing process:"
+                    echo "   ssh $dev_name 'pkill -9 $proc; fuser -k $port/tcp 2>/dev/null; true'"
+                    echo ""
+                    echo "2. Build and run:"
+                    echo "   ssh $dev_name \"cd /var/www && $build && $binary\""
+                    echo ""
+                    echo "3. Verify endpoints:"
+                    echo "   .zcp/verify.sh $dev_name $port / /health /status"
+                fi
+                echo ""
+                echo "Then: .zcp/workflow.sh transition_to DEPLOY"
             else
                 echo "Dev verified. Run: .zcp/workflow.sh transition_to DEPLOY"
             fi
             ;;
         DEPLOY)
             if ! check_evidence_session "$DEPLOY_EVIDENCE_FILE" 2>/dev/null; then
-                local dev_name stage_id stage_name
-                dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
-                stage_id=$(jq -r '.stage.id // "STAGE_ID"' "$DISCOVERY_FILE" 2>/dev/null)
-                stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
-                cat <<GUIDANCE
-⚠️  DEPLOY PHASE REMINDERS:
-   • Deploy from dev container, NOT ZCP
-   • deployFiles must include ALL artifacts
-   • Check: cat /var/www/$dev_name/zerops.yaml | grep -A10 deployFiles
+                # FIX-03: Multi-service aware deploy guidance
+                local service_count
+                service_count=$(jq -r '.service_count // 1' "$DISCOVERY_FILE" 2>/dev/null)
 
-1. Check deployFiles in zerops.yaml includes all artifacts
-2. Deploy:
-   ssh $dev_name "zcli login ... && zcli push $stage_id --setup={setup}"
-3. Wait:
-   .zcp/status.sh --wait $stage_name
-4. Then: .zcp/workflow.sh transition_to VERIFY
-GUIDANCE
+                echo "⚠️  DEPLOY PHASE REMINDERS:"
+                echo "   • Deploy from dev container, NOT ZCP"
+                echo "   • deployFiles must include ALL artifacts"
+                echo ""
+
+                if [ "$service_count" -gt 1 ]; then
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "📦 SERVICES TO DEPLOY ($service_count total)"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo ""
+
+                    local i=0
+                    while [ "$i" -lt "$service_count" ]; do
+                        local svc_dev_name svc_stage_id svc_stage_name
+                        svc_dev_name=$(jq -r ".services[$i].dev.name" "$DISCOVERY_FILE" 2>/dev/null)
+                        svc_stage_id=$(jq -r ".services[$i].stage.id" "$DISCOVERY_FILE" 2>/dev/null)
+                        svc_stage_name=$(jq -r ".services[$i].stage.name" "$DISCOVERY_FILE" 2>/dev/null)
+
+                        echo "[$((i+1))] $svc_dev_name → $svc_stage_name"
+                        echo "────────────────────────────────────────────────────────────────"
+                        echo "   Check: cat /var/www/$svc_dev_name/zerops.yml | grep -A10 deployFiles"
+                        echo "   Push:  ssh $svc_dev_name \"zcli push $svc_stage_id --setup=prod\""
+                        echo "   Wait:  .zcp/status.sh --wait $svc_stage_name"
+                        echo ""
+
+                        i=$((i + 1))
+                    done
+                else
+                    local dev_name stage_id stage_name
+                    dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
+                    stage_id=$(jq -r '.stage.id // "STAGE_ID"' "$DISCOVERY_FILE" 2>/dev/null)
+                    stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
+
+                    echo "1. Check deployFiles in zerops.yml includes all artifacts:"
+                    echo "   cat /var/www/$dev_name/zerops.yml | grep -A10 deployFiles"
+                    echo ""
+                    echo "2. Deploy to stage:"
+                    echo "   ssh $dev_name \"zcli push $stage_id --setup=prod\""
+                    echo ""
+                    echo "3. Wait for completion:"
+                    echo "   .zcp/status.sh --wait $stage_name"
+                fi
+                echo ""
+                echo "Then: .zcp/workflow.sh transition_to VERIFY"
             else
                 echo "Deploy complete. Run: .zcp/workflow.sh transition_to VERIFY"
             fi
             ;;
         VERIFY)
             if ! check_evidence_session "$STAGE_VERIFY_FILE"; then
-                local stage_name
-                stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
-                cat <<GUIDANCE
-⚠️  VERIFY PHASE REMINDERS:
-   • HTTP 200 ≠ working — check content, logs, console
-   • zeropsSubdomain is full URL — don't prepend https://
-   • Stage ($stage_name) is runtime — SSH works
+                # FIX-03: Multi-service aware verify guidance
+                local service_count
+                service_count=$(jq -r '.service_count // 1' "$DISCOVERY_FILE" 2>/dev/null)
 
-1. Verify stage endpoints:
-   .zcp/verify.sh $stage_name {port} / /api/...
-2. Browser check (if frontend):
-   URL=\$(ssh $stage_name "echo \\\$zeropsSubdomain")
-   agent-browser open "\$URL"
-   agent-browser errors   # Must be empty
-3. Then: .zcp/workflow.sh transition_to DONE
-GUIDANCE
+                echo "⚠️  VERIFY PHASE REMINDERS:"
+                echo "   • HTTP 200 ≠ working — check content, logs, console"
+                echo "   • zeropsSubdomain is full URL — don't prepend https://"
+                echo ""
+
+                if [ "$service_count" -gt 1 ]; then
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "📦 SERVICES TO VERIFY ($service_count total)"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo ""
+
+                    local i=0
+                    while [ "$i" -lt "$service_count" ]; do
+                        local svc_stage_name svc_runtime
+                        svc_stage_name=$(jq -r ".services[$i].stage.name" "$DISCOVERY_FILE" 2>/dev/null)
+                        svc_runtime=$(jq -r ".services[$i].runtime // \"unknown\"" "$DISCOVERY_FILE" 2>/dev/null)
+
+                        local proc binary build port
+                        eval "$(get_runtime_defaults "$svc_runtime")"
+
+                        echo "[$((i+1))] $svc_stage_name ($svc_runtime)"
+                        echo "────────────────────────────────────────────────────────────────"
+                        echo "   Verify: .zcp/verify.sh $svc_stage_name $port / /health"
+                        echo "   Logs:   ssh $svc_stage_name \"tail -50 /var/log/*.log\""
+                        echo ""
+
+                        i=$((i + 1))
+                    done
+
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "GATE REQUIREMENT: ALL $service_count services must pass verification"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                else
+                    local stage_name runtime
+                    stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
+                    runtime=$(jq -r '.services[0].runtime // "unknown"' "$DISCOVERY_FILE" 2>/dev/null)
+
+                    local proc binary build port
+                    eval "$(get_runtime_defaults "$runtime")"
+
+                    echo "1. Verify stage endpoints:"
+                    echo "   .zcp/verify.sh $stage_name $port / /health /status"
+                    echo ""
+                    echo "2. Browser check (if frontend):"
+                    echo "   URL=\$(ssh $stage_name \"echo \\\$zeropsSubdomain\")"
+                    echo "   agent-browser open \"\$URL\""
+                    echo "   agent-browser errors   # Must be empty"
+                fi
+                echo ""
+                echo "Then: .zcp/workflow.sh transition_to DONE"
             else
                 echo "Stage verified. Run: .zcp/workflow.sh transition_to DONE"
             fi
@@ -659,4 +931,177 @@ cmd_reset() {
         echo ""
         echo "💡 Start fresh: .zcp/workflow.sh init"
     fi
+}
+
+# ============================================================================
+# CONTEXT RECOVERY COMMAND (FIX-05)
+# ============================================================================
+# Outputs all recoverable context after session loss (context compaction,
+# container restart). Can be sourced to restore environment variables.
+
+cmd_context() {
+    echo "# ═══════════════════════════════════════════════════════════════════"
+    echo "# ZCP SESSION CONTEXT RECOVERY"
+    echo "# Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "# Copy this to restore context after session loss"
+    echo "# ═══════════════════════════════════════════════════════════════════"
+    echo ""
+
+    # Session info
+    if [ -f "$SESSION_FILE" ]; then
+        echo "# Session ID: $(cat "$SESSION_FILE")"
+    fi
+    if [ -f "$MODE_FILE" ]; then
+        echo "# Mode: $(cat "$MODE_FILE")"
+    fi
+    if [ -f "$PHASE_FILE" ]; then
+        echo "# Phase: $(cat "$PHASE_FILE")"
+    fi
+    echo ""
+
+    # Service context
+    if [ -f "$DISCOVERY_FILE" ]; then
+        echo "# === DISCOVERED SERVICES ==="
+        local service_count
+        service_count=$(jq -r '.service_count // 1' "$DISCOVERY_FILE" 2>/dev/null)
+        echo "# Service Count: $service_count"
+        echo ""
+
+        local i=0
+        while [ "$i" -lt "$service_count" ]; do
+            local dev_name dev_id stage_name stage_id runtime
+            dev_name=$(jq -r ".services[$i].dev.name // .dev.name" "$DISCOVERY_FILE" 2>/dev/null)
+            dev_id=$(jq -r ".services[$i].dev.id // .dev.id" "$DISCOVERY_FILE" 2>/dev/null)
+            stage_name=$(jq -r ".services[$i].stage.name // .stage.name" "$DISCOVERY_FILE" 2>/dev/null)
+            stage_id=$(jq -r ".services[$i].stage.id // .stage.id" "$DISCOVERY_FILE" 2>/dev/null)
+            runtime=$(jq -r ".services[$i].runtime // \"unknown\"" "$DISCOVERY_FILE" 2>/dev/null)
+
+            echo "# Service $((i+1)): $dev_name ($runtime)"
+            echo "export SVC${i}_DEV_NAME=\"$dev_name\""
+            echo "export SVC${i}_DEV_ID=\"$dev_id\""
+            echo "export SVC${i}_STAGE_NAME=\"$stage_name\""
+            echo "export SVC${i}_STAGE_ID=\"$stage_id\""
+            echo "export SVC${i}_RUNTIME=\"$runtime\""
+            echo ""
+
+            i=$((i + 1))
+        done
+
+        # First service as default (backward compat)
+        echo "# Default service (first)"
+        echo "export DEV_NAME=\"$(jq -r '.dev.name // .services[0].dev.name' "$DISCOVERY_FILE")\""
+        echo "export DEV_ID=\"$(jq -r '.dev.id // .services[0].dev.id' "$DISCOVERY_FILE")\""
+        echo "export STAGE_NAME=\"$(jq -r '.stage.name // .services[0].stage.name' "$DISCOVERY_FILE")\""
+        echo "export STAGE_ID=\"$(jq -r '.stage.id // .services[0].stage.id' "$DISCOVERY_FILE")\""
+    else
+        echo "# WARNING: No discovery.json found"
+    fi
+
+    echo ""
+    echo "# === STANDARD ZEROPS VALUES ==="
+    echo "export PORT=8080"
+    echo "export SETUP_DEV=dev"
+    echo "export SETUP_PROD=prod"
+
+    # Bootstrap handoff if available
+    if [ -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json" ]; then
+        echo ""
+        echo "# === BOOTSTRAP HANDOFF ==="
+        jq -r '.service_handoffs[] | "# Mount: \(.mount_path) → \(.dev_hostname)"' \
+            "${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json" 2>/dev/null
+    fi
+
+    echo ""
+    echo "# === EVIDENCE STATUS ==="
+    for f in dev_verify.json stage_verify.json deploy_evidence.json; do
+        local fpath="${ZCP_TMP_DIR:-/tmp}/$f"
+        if [ -f "$fpath" ]; then
+            if check_evidence_session "$fpath" 2>/dev/null; then
+                echo "# ✓ $f (valid)"
+            else
+                echo "# ⚠ $f (stale session)"
+            fi
+        else
+            echo "# ✗ $f (missing)"
+        fi
+    done
+
+    echo ""
+    echo "# === RUNTIME DEFAULTS ==="
+    echo "# Use these when runtime-specific commands are needed:"
+    if [ -f "$DISCOVERY_FILE" ]; then
+        local runtime
+        runtime=$(jq -r '.services[0].runtime // "unknown"' "$DISCOVERY_FILE" 2>/dev/null)
+        get_runtime_defaults_for_context "$runtime"
+    fi
+}
+
+# Helper: Get runtime-specific defaults for context recovery
+get_runtime_defaults_for_context() {
+    local runtime="$1"
+    case "$runtime" in
+        go|go@*)
+            echo "# Runtime: Go"
+            echo "export PROC_NAME=app"
+            echo "export BINARY_NAME=app"
+            echo "export BUILD_CMD='go build -o app'"
+            echo "export DEFAULT_PORT=8080"
+            ;;
+        nodejs|nodejs@*|node|node@*)
+            echo "# Runtime: Node.js"
+            echo "export PROC_NAME=node"
+            echo "export BINARY_NAME='node index.js'"
+            echo "export BUILD_CMD='npm install && npm run build'"
+            echo "export DEFAULT_PORT=8080"
+            ;;
+        bun|bun@*)
+            echo "# Runtime: Bun"
+            echo "export PROC_NAME=bun"
+            echo "export BINARY_NAME='bun run index.ts'"
+            echo "export BUILD_CMD='bun install'"
+            echo "export DEFAULT_PORT=8080"
+            ;;
+        python|python@*)
+            echo "# Runtime: Python"
+            echo "export PROC_NAME=python"
+            echo "export BINARY_NAME='python app.py'"
+            echo "export BUILD_CMD='pip install -r requirements.txt'"
+            echo "export DEFAULT_PORT=8080"
+            ;;
+        rust|rust@*)
+            echo "# Runtime: Rust"
+            echo "export PROC_NAME=app"
+            echo "export BINARY_NAME='./target/release/app'"
+            echo "export BUILD_CMD='cargo build --release'"
+            echo "export DEFAULT_PORT=8080"
+            ;;
+        php|php@*)
+            echo "# Runtime: PHP"
+            echo "export PROC_NAME=php"
+            echo "export BINARY_NAME='php -S 0.0.0.0:8080'"
+            echo "export BUILD_CMD='composer install'"
+            echo "export DEFAULT_PORT=8080"
+            ;;
+        dotnet|dotnet@*)
+            echo "# Runtime: .NET"
+            echo "export PROC_NAME=dotnet"
+            echo "export BINARY_NAME='dotnet run'"
+            echo "export BUILD_CMD='dotnet build'"
+            echo "export DEFAULT_PORT=8080"
+            ;;
+        java|java@*)
+            echo "# Runtime: Java"
+            echo "export PROC_NAME=java"
+            echo "export BINARY_NAME='java -jar app.jar'"
+            echo "export BUILD_CMD='mvn package'"
+            echo "export DEFAULT_PORT=8080"
+            ;;
+        *)
+            echo "# Runtime: Unknown ($runtime)"
+            echo "export PROC_NAME=app"
+            echo "export BINARY_NAME='./app'"
+            echo "export BUILD_CMD='<see zerops.yml>'"
+            echo "export DEFAULT_PORT=8080"
+            ;;
+    esac
 }

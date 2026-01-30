@@ -528,6 +528,12 @@ output_phase_guidance() {
             output_discover_guidance
             ;;
         DEVELOP)
+            # Gap 46: Check for shared database and show migration guidance
+            local shared_db=false
+            if [ -f "$DISCOVERY_FILE" ]; then
+                shared_db=$(jq -r '.shared_database // false' "$DISCOVERY_FILE" 2>/dev/null)
+            fi
+
             cat <<'EOF'
 ✅ Phase: DEVELOP
 
@@ -610,6 +616,32 @@ Database verification (if applicable):
    .zcp/verify.sh {dev} {port} / /status /api/...
    .zcp/workflow.sh transition_to DEPLOY
 EOF
+            # Gap 46: Show migration guidance if shared database detected
+            if [ "$shared_db" = "true" ]; then
+                cat <<'MIGRATION_GUIDANCE'
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🗄️  DATABASE MIGRATIONS (shared database detected)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Choose ONE service to run migrations. In its zerops.yml:
+
+  run:
+    initCommands:
+      - zsc execOnce "${appVersionId}-migrate" "./migrate.sh"
+
+Other services should NOT run migrations.
+
+Pattern: zsc execOnce "unique-id" "command"
+  • Runs once per service (idempotent across containers)
+  • Use $appVersionId for automatic refresh on each deploy
+  • Format: "${appVersionId}-{task}" ensures fresh execution per deploy
+  • Docs: https://docs.zerops.io/references/zsc#execonce
+
+⚠️  Do NOT use manual versioning like "migrate-v1", "migrate-v2"
+   This requires manual bumping and is error-prone.
+MIGRATION_GUIDANCE
+            fi
             ;;
         DEPLOY)
             cat <<'EOF'
