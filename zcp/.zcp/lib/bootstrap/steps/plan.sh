@@ -101,13 +101,18 @@ step_plan() {
         fi
     done
 
-    # If fewer prefixes than runtimes, use first prefix for all
+    # If fewer prefixes than runtimes, use runtime type as prefix
     local num_runtimes=${#runtime_array[@]}
     local num_prefixes=${#prefix_array[@]}
 
     if [ $num_prefixes -lt $num_runtimes ]; then
-        for ((i=num_prefixes; i<num_runtimes; i++)); do
-            prefix_array+=("${prefix_array[0]}")
+        # Clear default "app" if we have multiple runtimes and only default prefix
+        if [ $num_prefixes -eq 1 ] && [ "${prefix_array[0]}" = "app" ]; then
+            prefix_array=()
+        fi
+        # Use runtime type as prefix for each runtime without explicit prefix
+        for ((i=${#prefix_array[@]}; i<num_runtimes; i++)); do
+            prefix_array+=("${runtime_array[$i]}")
         done
     fi
 
