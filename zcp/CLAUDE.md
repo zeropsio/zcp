@@ -1,14 +1,12 @@
 # Zerops Platform
 
-**Follow the flow. Nothing else.**
-
 ```bash
 .zcp/workflow.sh show
 ```
 
-This tells you what to do. Do exactly that. Don't explore, don't glob, don't read other files, don't run zcli commands — until the flow tells you to.
+**The flow is the authority.** It tells you what to do next. Trust it completely.
 
-The flow provides exact commands with correct IDs and flags. Copy them.
+If the flow shows a pattern, adapt it and run it. Don't research first — try first. If it fails, then debug.
 
 After context compaction: `.zcp/workflow.sh recover`
 
