@@ -1,12 +1,14 @@
 # Zerops Platform
 
-**Follow the flow. Always.**
+**Follow the flow. Nothing else.**
 
 ```bash
 .zcp/workflow.sh show
 ```
 
-Run this first, every time. It tells you what phase you're in and what to do next.
+This tells you what to do. Do exactly that. Don't explore, don't glob, don't read other files, don't run zcli commands — until the flow tells you to.
+
+The flow provides exact commands with correct IDs and flags. Copy them.
 
 After context compaction: `.zcp/workflow.sh recover`
 
@@ -72,6 +74,7 @@ Shell variables like `$cache_hostname` **do not exist** in ZCP shell.
 | `psql: command not found` via SSH | Run from ZCP, not via ssh |
 | Variable is empty | Use `.zcp/env.sh` or SSH to fetch |
 | HTTP 000 on dev | Server not running |
+| `https://https://...` | `zeropsSubdomain` already includes protocol |
 
 ---
 
