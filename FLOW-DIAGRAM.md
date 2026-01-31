@@ -103,18 +103,26 @@
 
 ## Entry Decision Tree
 
+The flow auto-detects the project state. Just run `.zcp/workflow.sh show`:
+
 ```
-┌──────────────────┐
-│ zcli service list │
-└────────┬─────────┘
-         │
-   ┌─────┴─────┬─────────────────┐
-   ▼           ▼                 ▼
-FRESH      CONFORMANT      NON_CONFORMANT
-   │           │                 │
-   ▼           ▼                 ▼
-BOOTSTRAP → STANDARD         BOOTSTRAP
-(create)     (init)         (add missing)
+┌───────────────────────┐
+│ .zcp/workflow.sh show │  ← Agent runs this
+└───────────┬───────────┘
+            │
+            ▼
+   ┌────────────────────┐
+   │ Flow auto-detects: │  ← Internal (agent doesn't see)
+   │ zcli service list  │
+   └────────┬───────────┘
+            │
+   ┌────────┴────────┬─────────────────┐
+   ▼                 ▼                 ▼
+FRESH            CONFORMANT      NON_CONFORMANT
+   │                 │                 │
+   ▼                 ▼                 ▼
+Shows:           Shows:            Shows:
+"bootstrap"      "init"           "bootstrap"
 ```
 
 ---

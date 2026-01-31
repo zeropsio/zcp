@@ -343,7 +343,7 @@ EOF
                 local step_num=1
                 while IFS='|' read -r svc_dev_name svc_stage_id svc_stage_name; do
                     echo "Step $step_num: $svc_stage_name"
-                    echo "   ssh $svc_dev_name \"zcli push $svc_stage_id --setup=prod\""
+                    echo "   .zcp/deploy.sh stage $svc_dev_name"
                     echo "   .zcp/status.sh --wait $svc_stage_name"
                     echo ""
                     step_num=$((step_num + 1))
@@ -555,9 +555,9 @@ GUIDANCE
 
                         echo "[$((i+1))] $svc_dev_name → $svc_stage_name"
                         echo "────────────────────────────────────────────────────────────────"
-                        echo "   Check: cat /var/www/$svc_dev_name/zerops.yml | grep -A10 deployFiles"
-                        echo "   Push:  ssh $svc_dev_name \"zcli push $svc_stage_id --setup=prod\""
-                        echo "   Wait:  .zcp/status.sh --wait $svc_stage_name"
+                        echo "   Check:  cat /var/www/$svc_dev_name/zerops.yml | grep -A10 deployFiles"
+                        echo "   Deploy: .zcp/deploy.sh stage $svc_dev_name"
+                        echo "   Wait:   .zcp/status.sh --wait $svc_stage_name"
                         echo ""
 
                         i=$((i + 1))
@@ -572,7 +572,7 @@ GUIDANCE
                     echo "   cat /var/www/$dev_name/zerops.yml | grep -A10 deployFiles"
                     echo ""
                     echo "2. Deploy to stage:"
-                    echo "   ssh $dev_name \"zcli push $stage_id --setup=prod\""
+                    echo "   .zcp/deploy.sh stage"
                     echo ""
                     echo "3. Wait for completion:"
                     echo "   .zcp/status.sh --wait $stage_name"
@@ -689,7 +689,7 @@ DO NOT run zcli commands directly - the workflow guides you.
 │  → .zcp/workflow.sh init                                        │
 └─────────────────────────────────────────────────────────────────┘
 
-Read CLAUDE.md "Start Here" table for all options.
+Adapt the pattern to your needs (e.g., --runtime go,bun --services postgresql,valkey).
 NO_SESSION
             ;;
     esac

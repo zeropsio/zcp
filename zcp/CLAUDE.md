@@ -4,9 +4,16 @@
 .zcp/workflow.sh show
 ```
 
-**The flow is the authority.** It tells you what to do next. Trust it completely.
+**The flow is the authority.** Do what it says. Nothing else.
 
-If the flow shows a pattern, adapt it and run it. Don't research first — try first. If it fails, then debug.
+When the flow shows options, pick one and run it. Don't verify which applies — just try. The command will error if wrong.
+
+When the flow shows a pattern, adapt it to your request:
+- Flow: `--runtime go --services postgresql`
+- Request: "go + bun + postgres + valkey + nats"
+- Run: `--runtime go,bun --services postgresql,valkey,nats`
+
+**Never** run commands to "check first" (zcli service list, ls, glob). The flow already knows the state.
 
 After context compaction: `.zcp/workflow.sh recover`
 
