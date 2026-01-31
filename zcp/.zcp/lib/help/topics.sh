@@ -245,7 +245,17 @@ show_help_deploy() {
 🚀 DEPLOY PHASE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+QUICKEST WAY - Use the deploy helper:
+
+  .zcp/deploy.sh stage              # Deploy ALL services
+  .zcp/deploy.sh stage appdev       # Deploy specific service
+  .zcp/deploy.sh --commands stage   # Show commands without executing
+
+This handles auth, service IDs, and correct flags automatically.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️  PRE-DEPLOYMENT CHECKLIST - DO THIS FIRST:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 1. Verify deployFiles configuration:
    cat /var/www/{dev}/zerops.yaml | grep -A10 deployFiles
@@ -265,7 +275,7 @@ zerops.yaml structure:
   zerops:
     - setup: api              # ← This is the --setup value
       build:
-        base: go@1            # Versions from plan.json: jq -r '.runtimes[0].version' /tmp/bootstrap_plan.json
+        base: go@1            # Versions from plan.json
         buildCommands:
           - go build -o app main.go
         deployFiles:          # ← CRITICAL SECTION
@@ -280,22 +290,29 @@ zerops.yaml structure:
         start: ./app
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️  ZCLI PUSH - REQUIRED FLAGS
+⚠️  ZCLI PUSH - RECOMMENDED APPROACH
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-ALWAYS include these flags to avoid common errors:
+PREFERRED (git-based deploy):
+
+  ssh {dev} "cd /var/www && zcli push {service_id} --setup={setup} --deploy-git-folder"
+
+--setup={setup}        REQUIRED when zerops.yml has multiple setups (dev/prod)
+--deploy-git-folder    Uses git for versioning and .gitignore patterns
+
+This is the STANDARD approach. Directories should be git-initialized.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ALTERNATIVE (only if git not available):
 
   zcli push {service_id} --setup={setup} --noGit
 
---setup={setup}  REQUIRED when zerops.yml has multiple setups (dev/prod)
-                 Error without: "Cannot find corresponding setup in zerops.yaml"
+--noGit    Skips git checks (use only if directory is NOT a git repo)
 
---noGit          REQUIRED if directory is not a git repository
-                 Error without: "folder is not initialized via git init"
-
-Alternative to --noGit: Initialize git first
-  cd /var/www/{dev} && git init && git add . && git commit -m "init"
-  Then: zcli push {service_id} --setup={setup}
+Most projects are git-initialized. If you see "folder is not initialized
+via git init", either:
+  A. Initialize git: git init && git add . && git commit -m "init"
+  B. Use --noGit (not recommended, loses version tracking)
 
 ⚠️  Don't pipe zcli output! Causes "allowed only in interactive terminal"
     ❌ zcli service list | grep foo

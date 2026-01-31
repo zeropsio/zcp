@@ -770,6 +770,104 @@ NO_SESSION
 }
 
 cmd_recover() {
+    local critical_only=false
+
+    # Parse flags
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --critical|-c)
+                critical_only=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    if [ "$critical_only" = true ]; then
+        # CRITICAL MODE: Copy-paste ready commands only
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "CRITICAL RECOVERY - COPY-PASTE COMMANDS"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        local phase
+        phase=$(get_phase 2>/dev/null || echo "NONE")
+        echo "Current Phase: $phase"
+        echo ""
+
+        # Service info from discovery
+        if [ -f "$DISCOVERY_FILE" ]; then
+            local service_count
+            service_count=$(jq -r '.service_count // 1' "$DISCOVERY_FILE" 2>/dev/null)
+
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "SERVICES ($service_count)"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+
+            local i=0
+            while [ "$i" -lt "$service_count" ]; do
+                local dev_name dev_id stage_name stage_id
+                if [ "$service_count" -eq 1 ]; then
+                    dev_name=$(jq -r '.dev.name' "$DISCOVERY_FILE")
+                    dev_id=$(jq -r '.dev.id' "$DISCOVERY_FILE")
+                    stage_name=$(jq -r '.stage.name' "$DISCOVERY_FILE")
+                    stage_id=$(jq -r '.stage.id' "$DISCOVERY_FILE")
+                else
+                    dev_name=$(jq -r ".services[$i].dev.name" "$DISCOVERY_FILE")
+                    dev_id=$(jq -r ".services[$i].dev.id" "$DISCOVERY_FILE")
+                    stage_name=$(jq -r ".services[$i].stage.name" "$DISCOVERY_FILE")
+                    stage_id=$(jq -r ".services[$i].stage.id" "$DISCOVERY_FILE")
+                fi
+
+                echo "Service $((i+1)):"
+                echo "  DEV:   $dev_name  (ID: $dev_id)"
+                echo "  STAGE: $stage_name  (ID: $stage_id)"
+                echo ""
+                i=$((i + 1))
+            done
+
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "DEPLOYMENT COMMANDS"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "# Use the deploy helper:"
+            echo ".zcp/deploy.sh stage"
+            echo ""
+            echo "# Or manual command:"
+            i=0
+            while [ "$i" -lt "$service_count" ]; do
+                local dev_name stage_id
+                if [ "$service_count" -eq 1 ]; then
+                    dev_name=$(jq -r '.dev.name' "$DISCOVERY_FILE")
+                    stage_id=$(jq -r '.stage.id' "$DISCOVERY_FILE")
+                else
+                    dev_name=$(jq -r ".services[$i].dev.name" "$DISCOVERY_FILE")
+                    stage_id=$(jq -r ".services[$i].stage.id" "$DISCOVERY_FILE")
+                fi
+                echo "ssh $dev_name 'cd /var/www && zcli login --region=gomibako --regionUrl=\"https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli\" \"\$ZEROPS_ZCP_API_KEY\" && zcli push $stage_id --setup=prod --deploy-git-folder'"
+                echo ""
+                i=$((i + 1))
+            done
+        else
+            echo "No discovery.json found."
+            echo ""
+            echo "Run: .zcp/workflow.sh show"
+            echo "     .zcp/workflow.sh init"
+        fi
+
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "VERIFICATION"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo ".zcp/verify.sh {service} 8080 / /health"
+        echo ""
+        return 0
+    fi
+
+    # FULL MODE: Original behavior
     echo "╔══════════════════════════════════════════════════════════════════╗"
     echo "║  FULL CONTEXT RECOVERY                                           ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
@@ -791,6 +889,11 @@ cmd_recover() {
 • deployFiles:      Must include ALL artifacts — check before every deploy
 • zeropsSubdomain:  Already full URL — don't prepend https://
 RULES
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "💡 For copy-paste commands only: .zcp/workflow.sh recover --critical"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 cmd_state() {
@@ -827,6 +930,26 @@ cmd_state() {
 
 cmd_complete() {
     local session_id
+    local strict_mode=false
+    local skip_verify=false
+
+    # Parse flags
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --strict)
+                strict_mode=true
+                shift
+                ;;
+            --skip-verify)
+                skip_verify=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
     session_id=$(get_session)
 
     if [ -z "$session_id" ]; then
@@ -873,6 +996,40 @@ cmd_complete() {
         all_valid=false
     fi
 
+    # STRICT MODE: Actually verify endpoints are reachable
+    if [ "$strict_mode" = true ] && [ "$all_valid" = true ] && [ "$skip_verify" = false ]; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🔍 STRICT MODE: Live endpoint verification"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        if [ -f "$DISCOVERY_FILE" ]; then
+            local stage_name port
+            stage_name=$(jq -r '.stage.name // .services[0].stage.name // ""' "$DISCOVERY_FILE" 2>/dev/null)
+            # Try to get port from stage verify file
+            port=$(jq -r '.port // 8080' "$STAGE_VERIFY_FILE" 2>/dev/null)
+
+            if [ -n "$stage_name" ]; then
+                echo "   Checking $stage_name:$port..."
+
+                # Quick connectivity check via SSH
+                local check_result
+                check_result=$(ssh "$stage_name" "curl -sf -o /dev/null -w '%{http_code}' http://localhost:$port/ 2>/dev/null" 2>/dev/null || echo "000")
+
+                if [ "$check_result" = "200" ] || [ "$check_result" = "201" ] || [ "$check_result" = "204" ]; then
+                    messages+=("   • Live check: $stage_name:$port → HTTP $check_result ✓")
+                else
+                    messages+=("   ✗ Live check: $stage_name:$port → HTTP $check_result (FAILED)")
+                    all_valid=false
+                    echo ""
+                    echo "⚠️  Stage service is not responding correctly!"
+                    echo "   Check: ssh $stage_name 'tail -50 /var/log/*.log'"
+                    echo ""
+                fi
+            fi
+        fi
+    fi
+
     if [ "$all_valid" = true ]; then
         # Mark iteration as complete in history
         if type mark_iteration_complete &>/dev/null; then
@@ -897,6 +1054,10 @@ cmd_complete() {
         printf '%s\n' "${messages[@]}"
         echo ""
         echo "💡 Fix the issues above and run: .zcp/workflow.sh complete"
+        if [ "$strict_mode" = false ]; then
+            echo ""
+            echo "💡 For stricter verification: .zcp/workflow.sh complete --strict"
+        fi
         return 3
     fi
 }

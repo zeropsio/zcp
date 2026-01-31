@@ -131,7 +131,7 @@ ZCLI_AUTH_ERROR
             cmd_show "$@"
             ;;
         recover)
-            cmd_recover
+            cmd_recover "$@"
             ;;
         state)
             cmd_state
@@ -140,7 +140,7 @@ ZCLI_AUTH_ERROR
             cmd_context
             ;;
         complete)
-            cmd_complete
+            cmd_complete "$@"
             ;;
         reset)
             cmd_reset "$@"

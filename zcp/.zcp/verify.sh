@@ -378,6 +378,26 @@ main() {
         exit 2
     fi
 
+    # RECOVERY DETECTION: Warn if no active workflow session
+    local session
+    session=$(get_session 2>/dev/null || echo "")
+    if [ -z "$session" ]; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⚠️  NO ACTIVE WORKFLOW SESSION"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "   Verification will proceed but evidence won't link to a session."
+        echo ""
+        echo "   If you lost context (compaction, restart):"
+        echo "   → .zcp/workflow.sh recover"
+        echo ""
+        echo "   If starting fresh:"
+        echo "   → .zcp/workflow.sh init"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+    fi
+
     # CRITICAL-3: Validate service hostname before SSH (prevents injection)
     if type validate_ssh_hostname &>/dev/null; then
         if ! validate_ssh_hostname "$service"; then
