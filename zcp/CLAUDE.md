@@ -2,15 +2,18 @@
 .zcp/workflow.sh show
 ```
 
-**The flow is the authority.** Do what it says. Nothing else.
+Do what it outputs. Now.
 
-After context compaction: `.zcp/workflow.sh recover`
+The flow:
+- knows the state (don't check first)
+- provides the plan (don't plan first)
+- gives exact commands (don't invent)
+
+Context lost? `.zcp/workflow.sh recover`
 
 ---
 
 # Zerops Platform
-
----
 
 ## Your Position
 

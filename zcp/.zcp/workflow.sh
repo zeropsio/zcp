@@ -93,7 +93,7 @@ Run this first:
        --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
        "$ZEROPS_ZCP_API_KEY"
 
-Then re-run your command.
+Then re-run: .zcp/workflow.sh show
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ZCLI_AUTH_ERROR
                 exit 1
