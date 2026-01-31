@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # .zcp/lib/bootstrap/steps/aggregate-results.sh
-# Step: Wait for all subagents to complete, create discovery.json, transition to DEVELOP
+# Step: Wait for all subagents to complete, create evidence files, transition to DONE
 #
 # DISPLAY-ONLY: This step reads cached data from subagent completion files.
 # It does NOT re-test endpoints, re-fetch URLs, or make redundant API calls.
@@ -11,7 +11,8 @@
 # (zerops.yml, source code), auto-marks complete.
 #
 # Inputs: /tmp/{hostname}_complete.json from subagents, state files
-# Outputs: discovery.json, bootstrap_complete.json, workflow ready for DEVELOP
+# Outputs: discovery.json, dev_verify.json, stage_verify.json, deploy_evidence.json,
+#          bootstrap_complete.json, workflow ready for DONE (use iterate to start work)
 
 # Verify completion by checking actual files exist
 # Returns 0 if evidence of completion exists, 1 otherwise
@@ -330,6 +331,132 @@ step_aggregate_results() {
         cp "${ZCP_TMP_DIR:-/tmp}/discovery.json" "$STATE_DIR/workflow/evidence/" 2>/dev/null || true
     fi
 
+    # =========================================================================
+    # SYNTHESIZE EVIDENCE FILES from subagent completion data
+    # This ensures workflow ends in same state as normal DONE phase
+    # =========================================================================
+
+    # Aggregate dev verification results
+    local dev_verify_results='[]'
+    local dev_total_passed=0
+    local dev_total_failed=0
+    local i=0
+    while [ "$i" -lt "$count" ]; do
+        local dev_name
+        dev_name=$(echo "$handoffs" | jq -r ".[$i].dev_hostname")
+        local completion_data
+        completion_data=$(read_completion_data "$dev_name")
+
+        local dev_passed dev_failed
+        dev_passed=$(echo "$completion_data" | jq -r '.verification.dev.passed // 0')
+        dev_failed=$(echo "$completion_data" | jq -r '.verification.dev.failed // 0')
+        dev_total_passed=$((dev_total_passed + dev_passed))
+        dev_total_failed=$((dev_total_failed + dev_failed))
+
+        local dev_result
+        dev_result=$(jq -n \
+            --arg service "$dev_name" \
+            --argjson passed "$dev_passed" \
+            --argjson failed "$dev_failed" \
+            '{service: $service, passed: $passed, failed: $failed}')
+        dev_verify_results=$(echo "$dev_verify_results" | jq --argjson r "$dev_result" '. + [$r]')
+
+        i=$((i + 1))
+    done
+
+    # Create dev_verify.json
+    local dev_verify_json
+    dev_verify_json=$(jq -n \
+        --arg session "$session_id" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --argjson passed "$dev_total_passed" \
+        --argjson failed "$dev_total_failed" \
+        --argjson results "$dev_verify_results" \
+        --argjson service_count "$count" \
+        '{
+            session_id: $session,
+            timestamp: $ts,
+            passed: $passed,
+            failed: $failed,
+            service_count: $service_count,
+            results: $results,
+            aggregated_from: "bootstrap"
+        }')
+    echo "$dev_verify_json" > "${ZCP_TMP_DIR:-/tmp}/dev_verify.json"
+
+    # Aggregate stage verification results
+    local stage_verify_results='[]'
+    local stage_total_passed=0
+    local stage_total_failed=0
+    i=0
+    while [ "$i" -lt "$count" ]; do
+        local dev_name stage_name
+        dev_name=$(echo "$handoffs" | jq -r ".[$i].dev_hostname")
+        stage_name=$(echo "$handoffs" | jq -r ".[$i].stage_hostname")
+        local completion_data
+        completion_data=$(read_completion_data "$dev_name")
+
+        local stage_passed stage_failed
+        stage_passed=$(echo "$completion_data" | jq -r '.verification.stage.passed // 0')
+        stage_failed=$(echo "$completion_data" | jq -r '.verification.stage.failed // 0')
+        stage_total_passed=$((stage_total_passed + stage_passed))
+        stage_total_failed=$((stage_total_failed + stage_failed))
+
+        local stage_result
+        stage_result=$(jq -n \
+            --arg service "$stage_name" \
+            --argjson passed "$stage_passed" \
+            --argjson failed "$stage_failed" \
+            '{service: $service, passed: $passed, failed: $failed}')
+        stage_verify_results=$(echo "$stage_verify_results" | jq --argjson r "$stage_result" '. + [$r]')
+
+        i=$((i + 1))
+    done
+
+    # Create stage_verify.json
+    local stage_verify_json
+    stage_verify_json=$(jq -n \
+        --arg session "$session_id" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --argjson passed "$stage_total_passed" \
+        --argjson failed "$stage_total_failed" \
+        --argjson results "$stage_verify_results" \
+        --argjson service_count "$count" \
+        '{
+            session_id: $session,
+            timestamp: $ts,
+            passed: $passed,
+            failed: $failed,
+            service_count: $service_count,
+            results: $results,
+            aggregated_from: "bootstrap"
+        }')
+    echo "$stage_verify_json" > "${ZCP_TMP_DIR:-/tmp}/stage_verify.json"
+
+    # Create deploy_evidence.json
+    local deploy_evidence
+    deploy_evidence=$(jq -n \
+        --arg session "$session_id" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --argjson service_count "$count" \
+        --argjson services "$services" \
+        '{
+            session_id: $session,
+            timestamp: $ts,
+            status: "deployed",
+            service_count: $service_count,
+            services: $services,
+            aggregated_from: "bootstrap"
+        }')
+    echo "$deploy_evidence" > "${ZCP_TMP_DIR:-/tmp}/deploy_evidence.json"
+
+    # Persist evidence files to state directory
+    if [ -n "$STATE_DIR" ]; then
+        cp "${ZCP_TMP_DIR:-/tmp}/dev_verify.json" "$STATE_DIR/workflow/evidence/" 2>/dev/null || true
+        cp "${ZCP_TMP_DIR:-/tmp}/stage_verify.json" "$STATE_DIR/workflow/evidence/" 2>/dev/null || true
+        cp "${ZCP_TMP_DIR:-/tmp}/deploy_evidence.json" "$STATE_DIR/workflow/evidence/" 2>/dev/null || true
+    fi
+
     # Create bootstrap_complete.json
     local complete_data
     complete_data=$(jq -n \
@@ -351,22 +478,18 @@ step_aggregate_results() {
         cp "${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json" "$BOOTSTRAP_STATE_DIR/complete.json" 2>/dev/null || true
     fi
 
-    # Set workflow state files
+    # Set workflow state files - DONE phase (bootstrap is complete, use iterate for new work)
     echo "full" > "${ZCP_TMP_DIR:-/tmp}/claude_mode"
-    echo "DEVELOP" > "${ZCP_TMP_DIR:-/tmp}/claude_phase"
+    echo "DONE" > "${ZCP_TMP_DIR:-/tmp}/claude_phase"
 
-    # Build next_steps guidance with correct commands
+    # Build next_steps guidance - user should use iterate to start new work
     local next_steps
     next_steps=$(jq -n \
-        --arg dev_name "$primary_dev_name" \
-        --arg dev_id "$primary_dev_id" \
-        --arg stage_id "$primary_stage_id" \
         '[
-            "Edit files directly in /var/www/\($dev_name)/",
-            "Run builds: ssh \($dev_name) \"cd /var/www && go build\" (or runtime equivalent)",
-            "Deploy to dev: ssh \($dev_name) \"cd /var/www && zcli push \($dev_id) --setup=dev --deploy-git-folder\"",
-            "Deploy to stage: ssh \($dev_name) \"cd /var/www && zcli push \($stage_id) --setup=prod\"",
-            "Run .zcp/workflow.sh show anytime for guidance"
+            "Bootstrap complete! Services are deployed with a status page.",
+            "To start your first task: .zcp/workflow.sh iterate \"description of what you want to build\"",
+            "This starts a new DEVELOP → DEPLOY → VERIFY → DONE cycle.",
+            "Run .zcp/workflow.sh show anytime for guidance."
         ]')
 
     # Record step completion
@@ -376,33 +499,51 @@ step_aggregate_results() {
         --argjson discovery "$discovery" \
         --argjson results "$results" \
         --argjson next_steps "$next_steps" \
+        --argjson dev_passed "$dev_total_passed" \
+        --argjson dev_failed "$dev_total_failed" \
+        --argjson stage_passed "$stage_total_passed" \
+        --argjson stage_failed "$stage_total_failed" \
         '{
             all_complete: true,
             services_count: $count,
             discovery: $discovery,
             results: $results,
-            workflow_phase: "DEVELOP",
+            workflow_phase: "DONE",
             workflow_mode: "full",
+            evidence_created: {
+                dev_verify: {passed: $dev_passed, failed: $dev_failed},
+                stage_verify: {passed: $stage_passed, failed: $stage_failed},
+                deploy_evidence: true
+            },
             next_steps: $next_steps
         }')
 
     record_step "aggregate-results" "complete" "$data"
 
-    # Build msg with next_steps baked in so the agent presents them directly
-    local next_steps_text
-    next_steps_text=$(echo "$next_steps" | jq -r '.[] | "  • " + .')
-
+    # Build msg with clear guidance for using iterate
     local msg
-    msg="Bootstrap complete — $count service pair(s) ready.
+    msg="✅ Bootstrap complete — $count service pair(s) deployed and verified.
 
-ALL DATA IS IN discovery.json — DO NOT:
-• Run zcli service list (URLs already captured)
-• SSH to fetch subdomains (already in discovery)
-• Re-test endpoints (verification data included)
-• Read individual verify files (already aggregated)
+WORKFLOW STATE: DONE
+  • All evidence files created (dev_verify, stage_verify, deploy_evidence)
+  • Services have basic status pages deployed
+  • Ready for your first real task
 
-Present these next steps to the user and WAIT:
-${next_steps_text}"
+TO START WORKING:
+  .zcp/workflow.sh iterate \"description of what to build\"
+
+This will:
+  1. Archive bootstrap evidence
+  2. Start fresh DEVELOP phase
+  3. Guide you through DEVELOP → DEPLOY → VERIFY → DONE
+
+Example:
+  .zcp/workflow.sh iterate \"Build user authentication with JWT\"
+
+DO NOT:
+  • Skip iterate and start editing (workflow won't track progress)
+  • Run init (you're already initialized)
+  • Re-run bootstrap commands"
 
     json_response "aggregate-results" "$msg" "$data" "null"
 }
