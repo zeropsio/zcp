@@ -34,7 +34,7 @@ step_plan() {
 
     # Validate required inputs
     if [ -z "$runtime" ]; then
-        json_error "plan" "Missing required --runtime argument" '{}' '["Specify runtime: --runtime go", "Supported: go, nodejs, python, php, rust, bun, java, dotnet", "Aliases: node→nodejs, postgres→postgresql, redis→valkey"]'
+        json_error "plan" "Missing required --runtime argument" '{}' '["Specify runtime: --runtime <types>", "Run .zcp/workflow.sh show to see valid types"]'
         return 1
     fi
 
@@ -89,7 +89,7 @@ step_plan() {
 
     # Validate we have at least one runtime
     if [ ${#runtime_array[@]} -eq 0 ] || [ -z "${runtime_array[0]}" ]; then
-        json_error "plan" "No valid runtimes specified" '{}' '["At least one runtime required: --runtime go"]'
+        json_error "plan" "No valid runtimes specified" '{}' '["At least one runtime required. Run .zcp/workflow.sh show to see valid types"]'
         return 1
     fi
 

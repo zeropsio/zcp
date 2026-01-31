@@ -198,10 +198,9 @@ cmd_show() {
 Bootstrap not started or state cleared.
 
 To start fresh:
-   .zcp/workflow.sh bootstrap --runtime <type> --services <list>
+   .zcp/workflow.sh bootstrap --runtime <types> --services <types>
 
-Example:
-   .zcp/workflow.sh bootstrap --runtime go --services postgresql
+Use user's exact words for runtime and service names.
 BOOTSTRAP_START
         fi
         echo ""
@@ -400,10 +399,9 @@ EOF
 🆕 NO RUNTIME SERVICES - Bootstrap required
 
    Run the bootstrap command:
-   .zcp/workflow.sh bootstrap --runtime <type> --services <list>
+   .zcp/workflow.sh bootstrap --runtime <types> --services <types>
 
-   Example:
-   .zcp/workflow.sh bootstrap --runtime go --services postgresql
+   Use user's exact words for runtime and service names.
 
    This will:
    • Search recipes for patterns
@@ -675,22 +673,39 @@ Quick mode - no workflow enforcement
 GUIDANCE
             ;;
         *)
-            cat <<'NO_SESSION'
-⛔ NO ACTIVE WORKFLOW SESSION
+            echo "⛔ NO ACTIVE WORKFLOW SESSION"
+            echo ""
+            echo "You must start a workflow before doing anything else."
+            echo ""
+            echo "┌───────────────────────────────────────────────────────────────────────┐"
+            echo "│  NEW PROJECT (no services yet)?                                     │"
+            echo "│  → .zcp/workflow.sh bootstrap --runtime <types> --services <types>  │"
+            echo "│                                                                     │"
+            echo "│  EXISTING PROJECT (services already exist)?                         │"
+            echo "│  → .zcp/workflow.sh init                                            │"
+            echo "└───────────────────────────────────────────────────────────────────────┘"
+            echo ""
 
-You must start a workflow before doing anything else.
-DO NOT run zcli commands directly - the workflow guides you.
+            # Dynamic type listing from data.json
+            local script_dir
+            script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+            if [ -f "$script_dir/lib/bootstrap/resolve-types.sh" ]; then
+                source "$script_dir/lib/bootstrap/resolve-types.sh"
+                if ensure_data_json 2>/dev/null; then
+                    local runtimes services
+                    runtimes=$(jq -r '[to_entries[] | select(.value | has("base")) | .key] | sort | join(", ")' "$CACHE_FILE" 2>/dev/null)
+                    services=$(jq -r '[to_entries[] | select(.value | has("base") | not) | .key] | sort | join(", ")' "$CACHE_FILE" 2>/dev/null)
 
-┌─────────────────────────────────────────────────────────────────┐
-│  NEW PROJECT (no services yet)?                                 │
-│  → .zcp/workflow.sh bootstrap --runtime go --services postgresql│
-│                                                                 │
-│  EXISTING PROJECT (services already exist)?                     │
-│  → .zcp/workflow.sh init                                        │
-└─────────────────────────────────────────────────────────────────┘
-
-Adapt the pattern to your needs (e.g., --runtime go,bun --services postgresql,valkey).
-NO_SESSION
+                    if [ -n "$runtimes" ]; then
+                        echo "Runtimes: $runtimes"
+                    fi
+                    if [ -n "$services" ]; then
+                        echo "Services: $services"
+                    fi
+                    echo ""
+                    echo "Use user's exact words for --runtime and --services flags."
+                fi
+            fi
             ;;
     esac
 

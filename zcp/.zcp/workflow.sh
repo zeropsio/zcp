@@ -215,8 +215,8 @@ Other modes:
   .zcp/workflow.sh init --hotfix     # Skip dev verification (use recent discovery)
 
 New project? Bootstrap first:
-  .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
-  .zcp/workflow.sh bootstrap --runtime go,bun --prefix app,bun --services postgresql,valkey,nats
+  .zcp/workflow.sh bootstrap --runtime <types> --services <types>
+  Use user's exact words. Run: .zcp/workflow.sh show (lists valid types)
 
 Commands:
   .zcp/workflow.sh show              # Current status

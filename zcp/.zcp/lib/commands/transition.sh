@@ -411,9 +411,9 @@ Follow these steps IN ORDER:
 
    For NEW projects without services, use bootstrap:
 
-   .zcp/workflow.sh bootstrap --runtime go --services postgresql
+   .zcp/workflow.sh bootstrap --runtime <types> --services <types>
 
-   This creates services, scaffolding, and guides the agent to:
+   Use user's exact words. This creates services and guides the agent to:
    • Complete zerops.yml with build commands
    • Write minimal status page code
    • Push and test

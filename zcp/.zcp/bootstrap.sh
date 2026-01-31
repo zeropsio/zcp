@@ -177,7 +177,7 @@ cmd_init() {
     # Validate runtime required
     if [ -z "$runtime" ]; then
         echo "ERROR: --runtime required" >&2
-        echo "Usage: .zcp/workflow.sh bootstrap --runtime go --services postgresql" >&2
+        echo "Usage: .zcp/workflow.sh bootstrap --runtime <types> --services <types>" >&2
         exit 1
     fi
 
@@ -270,10 +270,9 @@ OPTIONS:
     --prefix <name>      Hostname prefix(es): app → appdev/appstage
     --ha                 Use HA mode for managed services
 
-EXAMPLES:
-    .zcp/workflow.sh bootstrap --runtime go --services postgresql,valkey
-    .zcp/workflow.sh bootstrap --runtime go,bun --prefix app,bun --services postgres,valkey,nats
-    .zcp/resolve-types.sh --list   # Show all available types and aliases
+SYNTAX:
+    .zcp/workflow.sh bootstrap --runtime <types> --services <types>
+    Use user's exact words. Run: .zcp/workflow.sh show (lists valid types)
 
 This command initializes bootstrap and returns immediately with guidance.
 Agent then runs steps individually for visibility and error handling:
@@ -466,7 +465,7 @@ STEPS:
 
 EXAMPLES:
     # Initialize bootstrap (via workflow.sh)
-    .zcp/workflow.sh bootstrap --runtime go --services postgresql
+    .zcp/workflow.sh bootstrap --runtime <types> --services <types>
 
     # Run individual steps
     .zcp/bootstrap.sh step recipe-search
