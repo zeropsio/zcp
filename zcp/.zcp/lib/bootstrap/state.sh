@@ -2,20 +2,25 @@
 # .zcp/lib/bootstrap/state.sh
 # Bootstrap state and checkpoint management
 # Handles atomic writes, state persistence, and per-service state
+#
+# Approach E: Hybrid Chain + Recovery workflow state management
 
 set -euo pipefail
 
-# State file paths (derived from utils.sh patterns)
-BOOTSTRAP_STATE_DIR="${STATE_DIR:-${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/state}/bootstrap"
+# State file paths
+BOOTSTRAP_STATE_DIR="${STATE_DIR:-${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../..}/state}/bootstrap"
 BOOTSTRAP_STATE_FILE="${BOOTSTRAP_STATE_DIR}/state.json"
+
+# NEW: Workflow state file for Approach E
+WORKFLOW_STATE_FILE="${ZCP_STATE_DIR:-${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../..}/state}/workflow.json"
 
 # Initialize bootstrap state directory
 init_bootstrap_state() {
     mkdir -p "$BOOTSTRAP_STATE_DIR/services" 2>/dev/null || true
+    mkdir -p "$(dirname "$WORKFLOW_STATE_FILE")" 2>/dev/null || true
 }
 
 # Atomic write to file - write to temp then move
-# Usage: atomic_write "content" "/path/to/file"
 atomic_write() {
     local content="$1"
     local file="$2"
@@ -23,7 +28,6 @@ atomic_write() {
     local dir
     dir=$(dirname "$file")
 
-    # M-18: Add error handling for directory creation
     if ! mkdir -p "$dir" 2>/dev/null; then
         echo "ERROR: Cannot create directory: $dir" >&2
         return 1
@@ -31,14 +35,12 @@ atomic_write() {
 
     local tmp_file="${file}.tmp.$$"
 
-    # M-18: Check write operation
     if ! echo "$content" > "$tmp_file"; then
         echo "ERROR: Cannot write to temp file: $tmp_file" >&2
         rm -f "$tmp_file" 2>/dev/null
         return 1
     fi
 
-    # M-18: Check move operation
     if ! mv "$tmp_file" "$file"; then
         echo "ERROR: Cannot move temp file to: $file" >&2
         rm -f "$tmp_file" 2>/dev/null
@@ -48,10 +50,101 @@ atomic_write() {
     return 0
 }
 
+# =============================================================================
+# APPROACH E: WORKFLOW STATE MANAGEMENT
+# =============================================================================
+
+# Generate a UUID with fallbacks for portability
+generate_uuid() {
+    if command -v uuidgen &>/dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    elif [[ -f /proc/sys/kernel/random/uuid ]]; then
+        cat /proc/sys/kernel/random/uuid
+    elif command -v python3 &>/dev/null; then
+        python3 -c 'import uuid; print(uuid.uuid4())'
+    else
+        # Fallback: timestamp + PID + random
+        echo "$(date +%s)-$$-${RANDOM}${RANDOM}"
+    fi
+}
+
+# Check if workflow exists
+workflow_exists() {
+    [[ -f "$WORKFLOW_STATE_FILE" ]]
+}
+
+# Check if step exists in workflow
+# Usage: step_exists <step_name>
+step_exists() {
+    local step_name="$1"
+
+    [[ ! -f "$WORKFLOW_STATE_FILE" ]] && return 1
+
+    jq -e --arg name "$step_name" '.steps[] | select(.name == $name)' "$WORKFLOW_STATE_FILE" > /dev/null 2>&1
+}
+
+# Update step status in workflow state
+# Usage: update_step_status <step_name> <status>
+update_step_status() {
+    local step_name="$1"
+    local new_status="$2"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    [[ ! -f "$WORKFLOW_STATE_FILE" ]] && return 1
+
+    local tmp_file="${WORKFLOW_STATE_FILE}.tmp.$$"
+
+    case "$new_status" in
+        "in_progress")
+            jq --arg name "$step_name" --arg ts "$timestamp" '
+                .steps |= map(
+                    if .name == $name then
+                        .status = "in_progress" | .started_at = $ts
+                    else . end
+                ) |
+                .current_step = (.steps | to_entries | map(select(.value.name == $name)) | .[0].key + 1)
+            ' "$WORKFLOW_STATE_FILE" > "$tmp_file"
+            ;;
+        "complete")
+            jq --arg name "$step_name" --arg ts "$timestamp" '
+                .steps |= map(
+                    if .name == $name then
+                        .status = "complete" | .completed_at = $ts
+                    else . end
+                )
+            ' "$WORKFLOW_STATE_FILE" > "$tmp_file"
+            ;;
+        "failed")
+            jq --arg name "$step_name" --arg ts "$timestamp" '
+                .steps |= map(
+                    if .name == $name then
+                        .status = "failed" | .failed_at = $ts
+                    else . end
+                )
+            ' "$WORKFLOW_STATE_FILE" > "$tmp_file"
+            ;;
+        *)
+            echo "ERROR: Unknown status: $new_status" >&2
+            return 1
+            ;;
+    esac
+
+    mv "$tmp_file" "$WORKFLOW_STATE_FILE"
+}
+
+# Reset workflow state
+reset_workflow() {
+    rm -f "$WORKFLOW_STATE_FILE" 2>/dev/null || true
+}
+
+# =============================================================================
+# LEGACY STATE MANAGEMENT (backward compatibility)
+# =============================================================================
+
 # Read bootstrap state file
-# Returns: JSON state object or empty object if not exists
 get_bootstrap_state() {
-    if [ -f "$BOOTSTRAP_STATE_FILE" ]; then
+    if [[ -f "$BOOTSTRAP_STATE_FILE" ]]; then
         cat "$BOOTSTRAP_STATE_FILE"
     else
         echo '{}'
@@ -59,10 +152,9 @@ get_bootstrap_state() {
 }
 
 # Initialize new bootstrap state
-# Usage: init_state '{"plan": {...}}'
 init_state() {
     local plan_data="$1"
-    local session_id="${2:-$(generate_secure_session_id 2>/dev/null || echo "$(date +%Y%m%d%H%M%S)-$$-$RANDOM")}"
+    local session_id="${2:-$(generate_uuid)}"
 
     init_bootstrap_state
 
@@ -81,8 +173,6 @@ init_state() {
         }')
 
     atomic_write "$state" "$BOOTSTRAP_STATE_FILE"
-
-    # Also write to temp for compatibility
     atomic_write "$state" "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
 }
 
@@ -92,7 +182,6 @@ get_checkpoint() {
 }
 
 # Set checkpoint
-# Usage: set_checkpoint "recipe-search"
 set_checkpoint() {
     local checkpoint="$1"
 
@@ -104,14 +193,12 @@ set_checkpoint() {
     atomic_write "$state" "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
 }
 
-# Record step completion
-# Usage: record_step "plan" "complete" '{"data": "here"}'
+# Record step completion (legacy format)
 record_step() {
     local step="$1"
     local status="$2"
     local data="${3:-"{}"}"
 
-    # Validate data is valid JSON
     if ! echo "$data" | jq -e . >/dev/null 2>&1; then
         data='{}'
     fi
@@ -129,26 +216,38 @@ record_step() {
         --argjson data "$data" \
         '.steps[$step] = {status: $status, at: $ts, data: $data}')
 
-    # Update checkpoint if step completed successfully
-    if [ "$status" = "complete" ]; then
+    if [[ "$status" == "complete" ]]; then
         state=$(echo "$state" | jq --arg cp "$step" '.checkpoint = $cp')
     fi
 
     atomic_write "$state" "$BOOTSTRAP_STATE_FILE"
     atomic_write "$state" "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
+
+    # Also update workflow state if it exists
+    if workflow_exists; then
+        update_step_status "$step" "$status"
+    fi
 }
 
-# Check if step is complete
-# Usage: is_step_complete "recipe-search" && echo "yes"
+# Check if step is complete (legacy)
 is_step_complete() {
     local step="$1"
+
+    # First check workflow state (Approach E)
+    if workflow_exists; then
+        local status
+        status=$(jq -r --arg name "$step" \
+            '.steps[] | select(.name == $name) | .status' "$WORKFLOW_STATE_FILE" 2>/dev/null)
+        [[ "$status" == "complete" ]] && return 0
+    fi
+
+    # Fall back to legacy state
     local status
     status=$(get_bootstrap_state | jq -r --arg s "$step" '.steps[$s].status // ""')
-    [ "$status" = "complete" ]
+    [[ "$status" == "complete" ]]
 }
 
 # Get step data
-# Usage: get_step_data "plan"
 get_step_data() {
     local step="$1"
     get_bootstrap_state | jq --arg s "$step" '.steps[$s].data // {}'
@@ -160,7 +259,6 @@ get_plan() {
 }
 
 # Update plan in state
-# Usage: update_plan '{"key": "value"}'
 update_plan() {
     local plan_update="$1"
 
@@ -172,14 +270,15 @@ update_plan() {
     atomic_write "$state" "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
 }
 
-# Per-service state management (for subagents)
-# Usage: set_service_state "apidev" "phase" "deploying"
+# =============================================================================
+# PER-SERVICE STATE (for subagents)
+# =============================================================================
+
 set_service_state() {
     local hostname="$1"
     local key="$2"
     local value="$3"
 
-    # CRITICAL-7: Validate hostname to prevent path traversal
     if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         echo "ERROR: Invalid hostname format: $hostname" >&2
         return 1
@@ -190,7 +289,7 @@ set_service_state() {
 
     local status_file="${service_dir}/status.json"
     local status
-    if [ -f "$status_file" ]; then
+    if [[ -f "$status_file" ]]; then
         status=$(cat "$status_file")
     else
         status='{}'
@@ -208,12 +307,9 @@ set_service_state() {
     atomic_write "$status" "$status_file"
 }
 
-# Get per-service state
-# Usage: get_service_state "apidev"
 get_service_state() {
     local hostname="$1"
 
-    # CRITICAL-7: Validate hostname to prevent path traversal
     if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         echo "ERROR: Invalid hostname format: $hostname" >&2
         echo '{}'
@@ -222,20 +318,17 @@ get_service_state() {
 
     local status_file="${BOOTSTRAP_STATE_DIR}/services/${hostname}/status.json"
 
-    if [ -f "$status_file" ]; then
+    if [[ -f "$status_file" ]]; then
         cat "$status_file"
     else
         echo '{}'
     fi
 }
 
-# Set service result (final outcome)
-# Usage: set_service_result "apidev" '{"success": true, "files": [...]}'
 set_service_result() {
     local hostname="$1"
     local result="$2"
 
-    # CRITICAL-7: Validate hostname to prevent path traversal
     if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         echo "ERROR: Invalid hostname format: $hostname" >&2
         return 1
@@ -247,12 +340,10 @@ set_service_result() {
     atomic_write "$result" "${service_dir}/result.json"
 }
 
-# Get all services status (aggregate for orchestrator)
-# CRITICAL-6: Use jq for safe JSON construction to prevent injection
 get_all_services_status() {
     local services_dir="${BOOTSTRAP_STATE_DIR}/services"
 
-    if [ ! -d "$services_dir" ]; then
+    if [[ ! -d "$services_dir" ]]; then
         echo '{}'
         return
     fi
@@ -260,11 +351,10 @@ get_all_services_status() {
     local result='{}'
 
     for service_dir in "$services_dir"/*/; do
-        if [ -d "$service_dir" ]; then
+        if [[ -d "$service_dir" ]]; then
             local hostname
             hostname=$(basename "$service_dir")
 
-            # Validate hostname before using it
             if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
                 continue
             fi
@@ -272,7 +362,6 @@ get_all_services_status() {
             local status
             status=$(get_service_state "$hostname")
 
-            # Use jq for safe JSON construction
             result=$(echo "$result" | jq --arg h "$hostname" --argjson s "$status" '. + {($h): $s}')
         fi
     done
@@ -280,9 +369,10 @@ get_all_services_status() {
     echo "$result"
 }
 
-# Clear bootstrap state (for reset)
+# Clear all bootstrap state
 clear_bootstrap_state() {
     rm -rf "$BOOTSTRAP_STATE_DIR" 2>/dev/null || true
+    rm -f "$WORKFLOW_STATE_FILE" 2>/dev/null || true
     rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json" 2>/dev/null || true
     rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_plan.json" 2>/dev/null || true
     rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_import.yml" 2>/dev/null || true
@@ -295,7 +385,7 @@ generate_status_json() {
     local state
     state=$(get_bootstrap_state)
 
-    if [ "$state" = '{}' ]; then
+    if [[ "$state" == '{}' ]]; then
         jq -n '{
             active: false,
             checkpoint: null,
@@ -311,7 +401,7 @@ generate_status_json() {
     local steps_complete
     steps_complete=$(echo "$state" | jq '[.steps | to_entries[] | select(.value.status == "complete")] | length')
 
-    local total_steps=9  # plan, recipe-search, generate-import, import-services, wait-services, mount-dev, finalize, spawn-subagents, aggregate-results
+    local total_steps=10
 
     local services_status
     services_status=$(get_all_services_status)
@@ -335,8 +425,9 @@ generate_status_json() {
 }
 
 # Export functions
-export -f init_bootstrap_state atomic_write get_bootstrap_state init_state
-export -f get_checkpoint set_checkpoint record_step is_step_complete get_step_data
+export -f init_bootstrap_state atomic_write
+export -f generate_uuid workflow_exists step_exists update_step_status reset_workflow
+export -f get_bootstrap_state init_state get_checkpoint set_checkpoint record_step is_step_complete get_step_data
 export -f get_plan update_plan
 export -f set_service_state get_service_state set_service_result get_all_services_status
 export -f clear_bootstrap_state generate_status_json

@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
 # .zcp/bootstrap.sh
-# Bootstrap command dispatcher - agent-orchestrated architecture
+# Bootstrap command dispatcher - Approach E: Hybrid Chain + Recovery
 #
 # Commands:
-#   init [args]          - Initialize bootstrap (runs plan only, agent continues)
-#   step <name> [args]   - Run individual step (JSON response)
-#   status [--services]  - Show bootstrap status (JSON)
-#   reset                - Clear all bootstrap state
-#   resume               - Get next step to execute
-#   done                 - Validate completion (called by workflow.sh bootstrap-done)
+#   step <name>   Execute a specific workflow step (with gate validation)
+#   resume        Show current state and next command
+#   status        Full diagnostic output (human use)
+#   init [args]   Initialize bootstrap workflow
+#   reset         Clear all bootstrap state
 
 set -euo pipefail
 
-# HIGH-5: Secure default umask
+# Secure default umask
 umask 077
 
-# HIGH-4: Signal handlers for cleanup
+# Signal handlers for cleanup
 cleanup() {
     local exit_code=$?
     rm -f "${ZCP_TMP_DIR:-/tmp}"/*.tmp.$$ 2>/dev/null
@@ -27,7 +26,11 @@ trap 'trap - EXIT; cleanup; exit 143' TERM
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Source utilities (for ZCP_TMP_DIR, STATE_DIR, colors, etc.)
+# Export for use by sourced scripts
+export ZCP_SCRIPT_DIR="$SCRIPT_DIR"
+export ZCP_STATE_DIR="$SCRIPT_DIR/state"
+
+# Source utilities
 source "$SCRIPT_DIR/lib/utils.sh"
 
 # Source bootstrap modules
@@ -39,8 +42,9 @@ source "$SCRIPT_DIR/lib/bootstrap/import-gen.sh"
 # Initialize state directory
 init_bootstrap_state
 
-# Step definitions and their order
-# UPDATED: Added discover-services between mount-dev and finalize for dynamic env var discovery
+# =============================================================================
+# STEP DEFINITIONS (single source of truth)
+# =============================================================================
 BOOTSTRAP_STEPS=(
     "plan"
     "recipe-search"
@@ -54,111 +58,230 @@ BOOTSTRAP_STEPS=(
     "aggregate-results"
 )
 
-# Get next step after a given step
-get_next_step() {
-    local current="$1"
-    local found=false
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
 
+# Check if step name is valid
+is_valid_step() {
+    local step_name="$1"
     for step in "${BOOTSTRAP_STEPS[@]}"; do
-        if [ "$found" = true ]; then
-            echo "$step"
-            return
-        fi
-        if [ "$step" = "$current" ]; then
-            found=true
-        fi
+        [[ "$step" == "$step_name" ]] && return 0
     done
-
-    echo "null"
+    return 1
 }
 
-# Run a specific step
-run_step() {
+# Get step index (0-based)
+get_step_index() {
     local step_name="$1"
-    shift
+    local i=0
+    for step in "${BOOTSTRAP_STEPS[@]}"; do
+        [[ "$step" == "$step_name" ]] && echo "$i" && return
+        ((i++))
+    done
+    echo "-1"
+}
 
+# Get step by index
+get_step_by_index() {
+    local index="$1"
+    if [[ $index -ge 0 ]] && [[ $index -lt ${#BOOTSTRAP_STEPS[@]} ]]; then
+        echo "${BOOTSTRAP_STEPS[$index]}"
+    fi
+}
+
+# Initialize workflow.json from BOOTSTRAP_STEPS array
+init_workflow_state() {
+    local steps_json="["
+    local i=1
+    for step in "${BOOTSTRAP_STEPS[@]}"; do
+        [[ $i -gt 1 ]] && steps_json+=","
+        steps_json+="{\"index\":$i,\"name\":\"$step\",\"status\":\"pending\"}"
+        ((i++))
+    done
+    steps_json+="]"
+
+    local workflow_id
+    workflow_id=$(generate_uuid)
+
+    local state
+    state=$(jq -n \
+        --arg wid "$workflow_id" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --argjson steps "$steps_json" \
+        --argjson total "${#BOOTSTRAP_STEPS[@]}" \
+        '{
+            workflow_id: $wid,
+            started_at: $ts,
+            current_step: 1,
+            total_steps: $total,
+            steps: $steps
+        }')
+
+    mkdir -p "$ZCP_STATE_DIR" 2>/dev/null || true
+    atomic_write "$state" "$ZCP_STATE_DIR/workflow.json"
+}
+
+# =============================================================================
+# COMMAND: step <name>
+# Execute a specific step with gate validation and idempotency
+# =============================================================================
+cmd_step() {
+    local step_name="${1:-}"
+    shift || true
+
+    if [[ -z "$step_name" ]]; then
+        echo "Error: Step name required"
+        echo "Usage: .zcp/bootstrap.sh step <name>"
+        exit 1
+    fi
+
+    # Validate step exists
+    if ! is_valid_step "$step_name"; then
+        echo ""
+        echo "✗ Unknown step: ${step_name}"
+        echo ""
+        emit_resume
+        exit 1
+    fi
+
+    # Ensure workflow state exists
+    if ! workflow_exists; then
+        echo ""
+        echo "✗ No active workflow"
+        echo ""
+        echo "Start → .zcp/bootstrap.sh init"
+        echo ""
+        exit 1
+    fi
+
+    # Gate validation: previous step must be complete
+    local step_index
+    step_index=$(get_step_index "$step_name")
+
+    if [[ $step_index -gt 0 ]]; then
+        local prev_step
+        prev_step=$(get_step_by_index $((step_index - 1)))
+
+        if [[ -n "$prev_step" ]] && ! is_step_complete "$prev_step"; then
+            emit_gate_error "$step_name" "$prev_step"
+            exit 1
+        fi
+    fi
+
+    # Idempotency: if already complete, just show next step
+    if is_step_complete "$step_name"; then
+        emit_already_complete "$step_name"
+        exit 0
+    fi
+
+    # Mark step as in_progress
+    update_step_status "$step_name" "in_progress"
+
+    # Execute the step
     local step_script="$SCRIPT_DIR/lib/bootstrap/steps/${step_name}.sh"
 
-    if [ ! -f "$step_script" ]; then
-        json_error "$step_name" "Step not found: $step_name" '{}' '["Check step name spelling", "Run: .zcp/bootstrap.sh --help"]'
+    if [[ ! -f "$step_script" ]]; then
+        update_step_status "$step_name" "failed"
+        emit_error "$step_name" "Step implementation not found" "Check ${step_script} exists"
         exit 1
     fi
 
     source "$step_script"
 
-    # Each step script defines a step_<name> function (with - replaced by _)
+    # Step functions use legacy naming: step_<name>
     local func_name="step_${step_name//-/_}"
 
     if ! type "$func_name" &>/dev/null; then
-        json_error "$step_name" "Step function not found: $func_name" '{}' '[]'
+        update_step_status "$step_name" "failed"
+        emit_error "$step_name" "Step function not found: $func_name" "Check step implementation"
         exit 1
     fi
 
-    "$func_name" "$@"
+    # Capture step output (steps still output JSON for data, we convert to text)
+    local step_output
+    local step_exit_code=0
+
+    step_output=$("$func_name" "$@" 2>&1) || step_exit_code=$?
+
+    if [[ $step_exit_code -eq 0 ]]; then
+        # Validate JSON output from step
+        if ! echo "$step_output" | jq -e . >/dev/null 2>&1; then
+            # Output is not valid JSON - treat as plain text success
+            update_step_status "$step_name" "complete"
+            record_step "$step_name" "complete" "{}"
+            emit_success "$step_name"
+            return 0
+        fi
+
+        # Check if step output indicates success
+        local status
+        status=$(echo "$step_output" | jq -r '.status // "complete"' 2>/dev/null || echo "complete")
+
+        if [[ "$status" == "complete" ]]; then
+            update_step_status "$step_name" "complete"
+            record_step "$step_name" "complete" "$(echo "$step_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
+            emit_success "$step_name"
+        elif [[ "$status" == "in_progress" ]]; then
+            # Step needs to be re-run (e.g., wait-services polling)
+            local message
+            message=$(echo "$step_output" | jq -r '.message // "In progress"' 2>/dev/null)
+            echo ""
+            echo "⟳ ${step_name}: ${message}"
+            echo ""
+            echo "Run → .zcp/bootstrap.sh step ${step_name}"
+            echo ""
+        else
+            # Step failed
+            update_step_status "$step_name" "failed"
+            local error_msg
+            error_msg=$(echo "$step_output" | jq -r '.message // .data.error // "Step failed"' 2>/dev/null)
+            emit_error "$step_name" "$error_msg" "Check logs and resolve the issue"
+            exit 1
+        fi
+    else
+        update_step_status "$step_name" "failed"
+        emit_error "$step_name" "Step execution failed (exit code: ${step_exit_code})" "Check logs and resolve the issue"
+        exit 1
+    fi
 }
 
-# Show bootstrap status
-cmd_status() {
-    local show_services=false
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --services) show_services=true; shift ;;
-            *) shift ;;
-        esac
-    done
-
-    generate_status_json
-}
-
-# Reset bootstrap state
-cmd_reset() {
-    clear_bootstrap_state
-    echo '{"status": "reset", "message": "Bootstrap state cleared"}'
-}
-
-# Get next step to run (for resume)
+# =============================================================================
+# COMMAND: resume
+# Show current state and provide next command
+# =============================================================================
 cmd_resume() {
-    local state
-    state=$(get_bootstrap_state)
+    emit_resume
+}
 
-    if [ "$state" = '{}' ]; then
-        jq -n '{
-            status: "no_bootstrap",
-            next: "plan",
-            message: "No bootstrap in progress - start with plan step"
-        }'
-        return
+# =============================================================================
+# COMMAND: status
+# Full diagnostic output for humans
+# =============================================================================
+cmd_status() {
+    if ! workflow_exists; then
+        echo "No active workflow."
+        echo ""
+        echo "Start with: .zcp/bootstrap.sh init --runtime <type>"
+        exit 0
     fi
 
-    local checkpoint
-    checkpoint=$(echo "$state" | jq -r '.checkpoint // "none"')
-
-    # Find next incomplete step
-    for step in "${BOOTSTRAP_STEPS[@]}"; do
-        if ! is_step_complete "$step"; then
-            jq -n \
-                --arg step "$step" \
-                --arg checkpoint "$checkpoint" \
-                '{
-                    status: "resume",
-                    next: $step,
-                    checkpoint: $checkpoint,
-                    message: "Resume from step: \($step)"
-                }'
-            return
-        fi
-    done
-
-    # All steps complete
-    jq -n '{
-        status: "complete",
-        next: null,
-        message: "All infrastructure steps complete - ready for code generation"
-    }'
+    echo "=== Workflow Status ==="
+    echo ""
+    jq -r '
+        "Workflow ID: \(.workflow_id)",
+        "Started: \(.started_at)",
+        "Progress: \(.current_step)/\(.total_steps)",
+        "",
+        "Steps:",
+        (.steps[] | "  [\(.status | if . == "complete" then "✓" elif . == "in_progress" then "→" elif . == "failed" then "✗" else " " end)] \(.name)")
+    ' "$ZCP_STATE_DIR/workflow.json"
 }
 
-# Initialize bootstrap (agent-orchestrated mode) - runs only plan step
+# =============================================================================
+# COMMAND: init
+# Initialize bootstrap workflow
+# =============================================================================
 cmd_init() {
     local runtime="" services="" prefix="app" ha_mode="false"
 
@@ -175,373 +298,186 @@ cmd_init() {
     done
 
     # Validate runtime required
-    if [ -z "$runtime" ]; then
+    if [[ -z "$runtime" ]]; then
         echo "ERROR: --runtime required" >&2
-        echo "Usage: .zcp/workflow.sh bootstrap --runtime <types> --services <types>" >&2
+        echo "Usage: .zcp/bootstrap.sh init --runtime <types> [--services <types>]" >&2
         exit 1
     fi
 
     # Check zcli authentication
-    local zcli_test_result zcli_exit
+    local zcli_test_result zcli_exit=0
     zcli_test_result=$(zcli service list -P "$projectId" --format json 2>&1) || zcli_exit=$?
 
-    if [ "${zcli_exit:-0}" -ne 0 ]; then
+    if [[ $zcli_exit -ne 0 ]]; then
         if echo "$zcli_test_result" | grep -qiE "unauthorized|auth|login|token|403"; then
             cat >&2 <<'ZCLI_AUTH'
 zcli is not authenticated. Run:
    zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZCP_API_KEY"
 ZCLI_AUTH
             exit 1
-        elif [ -z "$projectId" ]; then
+        elif [[ -z "$projectId" ]]; then
             echo "projectId is not set. Are you running inside ZCP?" >&2
             exit 1
         fi
     fi
 
-    # Check project state
-    local project_state
-    project_state=$(detect_project_state)
+    # Initialize workflow state
+    init_workflow_state
 
-    case "$project_state" in
-        CONFORMANT)
-            echo "Project already has dev/stage pairs."
-            echo "Use: .zcp/workflow.sh init"
-            return 0
-            ;;
-        NON_CONFORMANT)
-            echo "WARNING: Project has services but no dev/stage pairs."
-            ;;
-        FRESH)
-            echo "Fresh project detected."
-            ;;
-        ERROR)
-            echo "ERROR: Could not detect project state" >&2
+    # Run the plan step with arguments (use array to prevent word splitting)
+    local -a step_args=("--runtime" "$runtime" "--prefix" "$prefix")
+    [[ -n "$services" ]] && step_args+=("--services" "$services")
+    [[ "$ha_mode" == "true" ]] && step_args+=("--ha")
+
+    # Source and run plan step
+    source "$SCRIPT_DIR/lib/bootstrap/steps/plan.sh"
+    update_step_status "plan" "in_progress"
+
+    local plan_output
+    local plan_exit=0
+    plan_output=$(step_plan "${step_args[@]}" 2>&1) || plan_exit=$?
+
+    if [[ $plan_exit -eq 0 ]]; then
+        local status
+        status=$(echo "$plan_output" | jq -r '.status // "complete"' 2>/dev/null || echo "complete")
+        if [[ "$status" == "complete" ]]; then
+            update_step_status "plan" "complete"
+            record_step "plan" "complete" "$(echo "$plan_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
+
+            echo ""
+            echo "✓ Workflow initialized"
+            echo ""
+            echo "Next → .zcp/bootstrap.sh step recipe-search"
+            echo ""
+        else
+            update_step_status "plan" "failed"
+            emit_error "plan" "Plan step failed" "Check arguments and retry"
             exit 1
-            ;;
-    esac
+        fi
+    else
+        update_step_status "plan" "failed"
+        emit_error "plan" "Plan step failed (exit: $plan_exit)" "Check arguments and retry"
+        exit 1
+    fi
+}
 
-    # Run ONLY the plan step
-    local step_args="--runtime $runtime --prefix $prefix"
-    [ -n "$services" ] && step_args="$step_args --services $services"
-    [ "$ha_mode" = "true" ] && step_args="$step_args --ha"
-
+# =============================================================================
+# COMMAND: reset
+# Clear all bootstrap state
+# =============================================================================
+cmd_reset() {
+    clear_bootstrap_state
     echo ""
-    echo "Creating bootstrap plan..."
-    run_step "plan" $step_args
-
-    # Output guidance for agent
+    echo "✓ Workflow state cleared"
     echo ""
-    echo "=============================================="
-    echo "  BOOTSTRAP INITIALIZED - AGENT CONTINUE"
-    echo "=============================================="
-    echo ""
-    echo "Plan created. Run these steps in order:"
-    echo ""
-    echo "  1. .zcp/bootstrap.sh step recipe-search        # ⚠️ 20-30s - use timeout:60000"
-    echo "  2. .zcp/bootstrap.sh step generate-import"
-    echo "  3. .zcp/bootstrap.sh step import-services      # ⚠️ 60-120s - use timeout:180000"
-    echo "  4. .zcp/bootstrap.sh step wait-services        # ⚠️ 30-120s - use timeout:180000"
-    echo "  5. .zcp/bootstrap.sh step mount-dev {hostname} # Repeat for each dev hostname"
-    echo "  6. .zcp/bootstrap.sh step discover-services    # NEW: Discover actual env vars"
-    echo "  7. .zcp/bootstrap.sh step finalize"
-    echo "  8. .zcp/bootstrap.sh step spawn-subagents      # Returns subagent instructions"
-    echo "  9. Spawn subagents via Task tool (per instructions)"
-    echo " 10. .zcp/bootstrap.sh step aggregate-results    # Wait for completion"
-    echo ""
-    echo "TIMING: recipe-search and wait-services are SLOW. Use Bash timeout parameter."
-    echo ""
-    echo "Or check progress anytime:"
-    echo "  .zcp/bootstrap.sh status"
-    echo "  .zcp/bootstrap.sh resume  # Returns next step to run"
+    echo "Start → .zcp/bootstrap.sh init --runtime <type>"
     echo ""
 }
 
-# Help for init command
+# =============================================================================
+# COMMAND: done
+# Validate bootstrap completion
+# =============================================================================
+cmd_done() {
+    if ! workflow_exists; then
+        emit_error "done" "No bootstrap in progress" "Run: .zcp/bootstrap.sh init --runtime <type>"
+        exit 1
+    fi
+
+    # Check if all steps are complete
+    local all_complete
+    all_complete=$(jq -r '[.steps[].status] | all(. == "complete")' "$ZCP_STATE_DIR/workflow.json" 2>/dev/null || echo "false")
+
+    if [[ "$all_complete" == "true" ]]; then
+        emit_complete
+    else
+        echo ""
+        echo "✗ Workflow not complete"
+        echo ""
+        emit_resume
+        exit 1
+    fi
+}
+
+# =============================================================================
+# HELP
+# =============================================================================
 show_init_help() {
     cat <<'EOF'
-BOOTSTRAP INIT - Initialize agent-orchestrated bootstrap
+BOOTSTRAP INIT - Initialize workflow
 
 USAGE:
-    .zcp/workflow.sh bootstrap --runtime <type> [--services <list>] [--prefix <name>]
+    .zcp/bootstrap.sh init --runtime <type> [--services <list>] [--prefix <name>]
 
 OPTIONS:
-    --runtime <type>     Runtime type(s), comma-separated. Aliases auto-resolved.
-    --services <list>    Managed services, comma-separated. Aliases auto-resolved.
-    --prefix <name>      Hostname prefix(es): app → appdev/appstage
+    --runtime <type>     Runtime type(s), comma-separated
+    --services <list>    Managed services, comma-separated
+    --prefix <name>      Hostname prefix: app → appdev/appstage
     --ha                 Use HA mode for managed services
-
-SYNTAX:
-    .zcp/workflow.sh bootstrap --runtime <types> --services <types>
-    Use user's exact words. Run: .zcp/workflow.sh show (lists valid types)
-
-This command initializes bootstrap and returns immediately with guidance.
-Agent then runs steps individually for visibility and error handling:
-
-    .zcp/bootstrap.sh step recipe-search
-    .zcp/bootstrap.sh step generate-import
-    .zcp/bootstrap.sh step import-services
-    .zcp/bootstrap.sh step wait-services      # Poll until complete
-    .zcp/bootstrap.sh step mount-dev <hostname>
-    .zcp/bootstrap.sh step discover-services  # Discover actual env vars
-    .zcp/bootstrap.sh step finalize
-    .zcp/bootstrap.sh step spawn-subagents    # Returns instructions for subagents
-    # Spawn subagents via Task tool (one per service pair)
-    .zcp/bootstrap.sh step aggregate-results  # Wait for all subagents, complete bootstrap
 EOF
 }
 
-# Cleanup bootstrap temp files (archive and remove)
-cmd_cleanup() {
-    local archive_dir="$SCRIPT_DIR/state/archive"
-    local timestamp
-    timestamp=$(date +%Y%m%d_%H%M%S)
-
-    echo "Archiving bootstrap state..."
-
-    # Create archive directory
-    mkdir -p "$archive_dir" 2>/dev/null
-
-    # Archive bootstrap state if exists
-    if [ -d "$BOOTSTRAP_STATE_DIR" ]; then
-        local archive_file="$archive_dir/bootstrap_${timestamp}.tar.gz"
-        tar -czf "$archive_file" -C "$(dirname "$BOOTSTRAP_STATE_DIR")" "$(basename "$BOOTSTRAP_STATE_DIR")" 2>/dev/null
-        echo "  Archived state to: $archive_file"
-    fi
-
-    # Remove temp files
-    local removed=0
-    for f in bootstrap_state.json bootstrap_plan.json bootstrap_handoff.json bootstrap_complete.json \
-             bootstrap_import.yml recipe_review.json fetched_recipe.md fetched_docs.md \
-             *_complete.json *_verify.json; do
-        if [ -f "${ZCP_TMP_DIR:-/tmp}/$f" ]; then
-            rm -f "${ZCP_TMP_DIR:-/tmp}/$f"
-            removed=$((removed + 1))
-        fi
-    done
-
-    # Clear bootstrap state directory
-    if [ -d "$BOOTSTRAP_STATE_DIR" ]; then
-        rm -rf "$BOOTSTRAP_STATE_DIR"
-    fi
-
-    echo "  Removed $removed temp files"
-    echo ""
-    echo "Cleanup complete. Run 'bootstrap init' to start fresh."
-}
-
-# Validate bootstrap completion
-cmd_done() {
-    local state
-    state=$(get_bootstrap_state)
-
-    if [ "$state" = '{}' ]; then
-        json_error "done" "No bootstrap in progress" '{}' '["Run: .zcp/workflow.sh bootstrap --runtime <type>"]'
-        exit 1
-    fi
-
-    local plan
-    plan=$(echo "$state" | jq '.plan')
-
-    # Get dev hostnames from plan
-    local dev_hostnames
-    dev_hostnames=$(echo "$plan" | jq -r '.dev_hostnames[]' 2>/dev/null || echo "$plan" | jq -r '.dev_hostname')
-
-    echo "Verifying bootstrap completion..."
-    echo ""
-
-    local all_passed=true
-    local checks=()
-
-    for hostname in $dev_hostnames; do
-        local mount_path="/var/www/$hostname"
-
-        # Check 1: zerops.yml exists
-        local zerops_yml="$mount_path/zerops.yml"
-        if [ ! -f "$zerops_yml" ]; then
-            echo "FAIL: zerops.yml not found: $zerops_yml"
-            all_passed=false
-            checks+=("zerops.yml missing for $hostname")
-        else
-            local yml_size
-            yml_size=$(wc -c < "$zerops_yml")
-            if [ "$yml_size" -lt 100 ]; then
-                echo "WARN: zerops.yml looks incomplete ($yml_size bytes): $zerops_yml"
-                checks+=("zerops.yml incomplete for $hostname")
-            else
-                echo "OK: zerops.yml exists ($yml_size bytes)"
-            fi
-        fi
-
-        # Check 2: Some code exists
-        local has_code=false
-        for pattern in main.go index.js app.py main.py server.go cmd/main.go src/index.ts; do
-            if [ -f "$mount_path/$pattern" ]; then
-                has_code=true
-                echo "OK: Application code found: $pattern"
-                break
-            fi
-        done
-
-        if [ "$has_code" = false ]; then
-            # Check for any source files
-            local code_files
-            code_files=$(find "$mount_path" -maxdepth 2 -type f \( -name "*.go" -o -name "*.js" -o -name "*.py" -o -name "*.rs" -o -name "*.ts" \) 2>/dev/null | head -3)
-            if [ -n "$code_files" ]; then
-                echo "OK: Found source files"
-            else
-                echo "FAIL: No source code found in $mount_path"
-                all_passed=false
-                checks+=("No code for $hostname")
-            fi
-        fi
-    done
-
-    echo ""
-
-    if [ "$all_passed" = false ]; then
-        local checks_json
-        checks_json=$(printf '%s\n' "${checks[@]}" | jq -R . | jq -s .)
-        json_error "done" "Bootstrap verification failed" "{\"checks\": $checks_json}" '["Complete zerops.yml", "Write application code", "Push and verify deployments"]'
-        exit 1
-    fi
-
-    # Write completion evidence
-    local complete_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json"
-    jq -n \
-        --arg session "$(cat "${ZCP_TMP_DIR:-/tmp}/claude_session" 2>/dev/null || echo "unknown")" \
-        --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-        --argjson plan "$plan" \
-        '{
-            session_id: $session,
-            completed_at: $ts,
-            status: "completed",
-            plan: $plan
-        }' > "$complete_file"
-
-    # Also persist to state
-    cp "$complete_file" "$BOOTSTRAP_STATE_DIR/complete.json" 2>/dev/null || true
-
-    echo "=========================================="
-    echo "  BOOTSTRAP COMPLETE"
-    echo "=========================================="
-    echo ""
-    echo "For every new development task, run:"
-    echo "  .zcp/workflow.sh init"
-    echo ""
-
-    json_response "done" "Bootstrap complete" '{"verified": true}'
-}
-
-# Main help
 show_help() {
     cat <<'EOF'
-.zcp/bootstrap.sh - Bootstrap command dispatcher
+.zcp/bootstrap.sh - Bootstrap workflow dispatcher
 
 USAGE:
     .zcp/bootstrap.sh <command> [args]
 
 COMMANDS:
-    init [args]          Initialize bootstrap, run plan only (default for workflow.sh bootstrap)
-    step <name> [args]   Run individual step (returns JSON)
-    status [--services]  Show bootstrap status (JSON)
-    reset                Clear all bootstrap state
-    resume               Get next step to execute
-    done                 Validate completion (used by workflow.sh bootstrap-done)
-    mark-complete <host> Mark a service as complete (for recovery)
-    wait-subagents       Wait for all subagents to complete (with polling)
-    cleanup              Archive and remove temp files (use after bootstrap done)
+    step <name>         Execute a specific workflow step
+    resume              Show current state and next command
+    status              Full diagnostic output
+    init [args]         Initialize bootstrap workflow
+    reset               Clear all bootstrap state
+    done                Validate completion
+    mark-complete <h>   Mark a subagent's service as complete
+    wait-subagents      Wait for all spawned subagents to finish
 
-STEPS:
-    plan                 Create bootstrap plan (--runtime, --services, --prefix)
-    recipe-search        Fetch runtime patterns from recipe API
-    generate-import      Generate import.yml from plan
-    import-services      Import services via zcli
-    wait-services        Wait for services to reach RUNNING state
-    mount-dev <hostname> Mount dev service via SSHFS
-    discover-services    Discover actual env vars from running services (NEW)
-    finalize             Create per-service handoffs for code generation
-    spawn-subagents      Output instructions for spawning code generation subagents
-    aggregate-results    Wait for subagents, create discovery.json, complete bootstrap
-
-EXAMPLES:
-    # Initialize bootstrap (via workflow.sh)
-    .zcp/workflow.sh bootstrap --runtime <types> --services <types>
-
-    # Run individual steps
-    .zcp/bootstrap.sh step recipe-search
-    .zcp/bootstrap.sh step generate-import
-    .zcp/bootstrap.sh step mount-dev apidev
-
-    # Wait for subagents (after spawning via Task tool)
-    .zcp/bootstrap.sh wait-subagents --timeout 600
-
-    # Manual recovery if subagent didn't mark complete
-    .zcp/bootstrap.sh mark-complete appdev
-
-    # Check status
-    .zcp/bootstrap.sh status
-
-    # Mark complete
-    .zcp/bootstrap.sh done
-
-Each step returns JSON with this contract:
-{
-    "status": "complete" | "in_progress" | "failed" | "needs_action",
-    "step": "<step_name>",
-    "data": { ... step-specific data ... },
-    "next": "<suggested_next_step>" | null,
-    "message": "Human-readable status"
-}
+WORKFLOW:
+    After init, follow the commands shown in output.
+    Each step outputs the exact next command to run.
+    If confused, run: .zcp/bootstrap.sh resume
 EOF
 }
 
-# Main dispatcher
+# =============================================================================
+# MAIN DISPATCHER
+# =============================================================================
 main() {
     local command="${1:-}"
     shift 2>/dev/null || true
 
     case "$command" in
         step)
-            local step_name="${1:-}"
-            shift 2>/dev/null || true
-            if [ -z "$step_name" ]; then
-                echo "ERROR: step name required" >&2
-                echo "Usage: .zcp/bootstrap.sh step <name> [args]" >&2
-                exit 1
-            fi
-            run_step "$step_name" "$@"
-            ;;
-        status)
-            cmd_status "$@"
-            ;;
-        reset)
-            cmd_reset
+            cmd_step "$@"
             ;;
         resume)
             cmd_resume
             ;;
+        status)
+            cmd_status "$@"
+            ;;
         init)
             cmd_init "$@"
+            ;;
+        reset)
+            cmd_reset
             ;;
         done)
             cmd_done
             ;;
         mark-complete)
-            # Delegate to mark-complete.sh script
             local hostname="${1:-}"
-            if [ -z "$hostname" ]; then
-                echo "ERROR: hostname required" >&2
+            if [[ -z "$hostname" ]]; then
+                echo "Error: hostname required" >&2
                 echo "Usage: .zcp/bootstrap.sh mark-complete <hostname>" >&2
                 exit 1
             fi
             exec "$SCRIPT_DIR/mark-complete.sh" "$hostname"
             ;;
         wait-subagents)
-            # Delegate to wait-for-subagents.sh script
             exec "$SCRIPT_DIR/wait-for-subagents.sh" "$@"
-            ;;
-        cleanup)
-            cmd_cleanup
             ;;
         -h|--help|help|"")
             show_help
