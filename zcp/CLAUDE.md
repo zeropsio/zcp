@@ -1,21 +1,14 @@
-# Zerops Platform
-
 ```bash
 .zcp/workflow.sh show
 ```
 
 **The flow is the authority.** Do what it says. Nothing else.
 
-When the flow shows options, pick one and run it. Don't verify which applies — just try. The command will error if wrong.
-
-When the flow shows a pattern, adapt it to your request:
-- Flow: `--runtime go --services postgresql`
-- Request: "go + bun + postgres + valkey + nats"
-- Run: `--runtime go,bun --services postgresql,valkey,nats`
-
-**Never** run commands to "check first" (zcli service list, ls, glob). The flow already knows the state.
-
 After context compaction: `.zcp/workflow.sh recover`
+
+---
+
+# Zerops Platform
 
 ---
 
@@ -67,8 +60,8 @@ Shell variables like `$cache_hostname` **do not exist** in ZCP shell.
 
 ## Rules
 
-- `zcli {cmd} --help` before using — syntax varies, uses IDs not names
-- Deploy from dev container — `ssh dev "zcli push..."` — source files are there
+- zcli uses service IDs, not hostnames — the flow provides correct values
+- Deploys run from dev container (source files live there), not from ZCP
 - HTTP 200 ≠ working — check response content, not just status
 - `run_in_background=true` — **only** for commands that block forever (servers), **not** for builds/deploys (you need the logs)
 

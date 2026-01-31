@@ -6,8 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/var/www/.zcp/lib/security-hook.sh",
-            "statusMessage": "Security check"
+            "command": "/var/www/.zcp/lib/security-hook.sh"
           }
         ]
       }
