@@ -39,13 +39,31 @@ RECIPE_API_URL="https://stage-vega.zerops.dev"
 RECIPE_DATA_API="https://api-d89-1337.prg1.zerops.app/api"
 
 # Fetch recipe from API when local patterns don't exist
+# Usage: fetch_recipe_from_api <runtime> <recipe_name> [output_prefix]
+# When output_prefix is specified, files are written as:
+#   /tmp/recipe_<prefix>.md instead of /tmp/fetched_recipe.md
+#   /tmp/patterns_<prefix>.json instead of /tmp/fetched_patterns.json
 fetch_recipe_from_api() {
     local runtime="$1"
     local recipe_name="$2"
+    local output_prefix="${3:-}"  # Optional: if empty, use legacy paths
 
     if ! command -v curl &>/dev/null; then
         echo -e "${YELLOW}⚠ curl not available, cannot fetch from API${NC}"
         return 1
+    fi
+
+    # Determine output paths based on prefix
+    local recipe_file patterns_file runtime_marker
+    if [ -n "$output_prefix" ]; then
+        recipe_file="/tmp/recipe_${output_prefix}.md"
+        patterns_file="/tmp/patterns_${output_prefix}.json"
+        runtime_marker="/tmp/fetched_runtime_${output_prefix}"
+    else
+        # Legacy paths for backward compatibility
+        recipe_file="/tmp/fetched_recipe.md"
+        patterns_file="/tmp/fetched_patterns.json"
+        runtime_marker="/tmp/fetched_runtime"
     fi
 
     echo -e "${BOLD}Fetching recipe from API...${NC}"
@@ -61,8 +79,9 @@ fetch_recipe_from_api() {
         return 1
     fi
 
-    # Save fetch 1 response
-    echo "$import_response" > /tmp/fetched_recipe_import.md
+    # Save fetch 1 response (import file uses same prefix pattern)
+    local import_file="/tmp/recipe_import_${output_prefix:-fetched}.md"
+    echo "$import_response" > "$import_file"
 
     # Extract hostname from import.yml section
     # Look for "hostname:" in the YAML code block
@@ -100,22 +119,34 @@ fetch_recipe_from_api() {
     fi
 
     # Save to temp file for parsing
-    echo "$full_response" > /tmp/fetched_recipe.md
-    echo -e "${GREEN}✓ Recipe fetched and saved to /tmp/fetched_recipe.md${NC}"
+    echo "$full_response" > "$recipe_file"
+    echo -e "${GREEN}✓ Recipe fetched and saved to ${recipe_file}${NC}"
 
     # Extract key patterns from the response and save to temp JSON for create_evidence_file
-    extract_patterns_from_response "$runtime" "$full_response"
+    extract_patterns_from_response "$runtime" "$full_response" "$output_prefix"
 
     # Mark that we have fetched data
-    echo "$runtime" > /tmp/fetched_runtime
+    echo "$runtime" > "$runtime_marker"
 
     return 0
 }
 
 # Extract patterns from API response
+# Usage: extract_patterns_from_response <runtime> <response> [output_prefix]
 extract_patterns_from_response() {
     local runtime="$1"
     local response="$2"
+    local output_prefix="${3:-}"
+
+    # Determine output paths based on prefix
+    local patterns_file recipe_file_display
+    if [ -n "$output_prefix" ]; then
+        patterns_file="/tmp/patterns_${output_prefix}.json"
+        recipe_file_display="/tmp/recipe_${output_prefix}.md"
+    else
+        patterns_file="/tmp/fetched_patterns.json"
+        recipe_file_display="/tmp/fetched_recipe.md"
+    fi
 
     echo ""
     echo -e "${BOLD}Extracted from API:${NC}"
@@ -187,7 +218,7 @@ extract_patterns_from_response() {
     fi
 
     echo ""
-    echo -e "${CYAN}Full recipe saved to: /tmp/fetched_recipe.md${NC}"
+    echo -e "${CYAN}Full recipe saved to: ${recipe_file_display}${NC}"
     echo "Review this file for complete import.yml and zerops.yml patterns."
 
     # For the evidence file, use the first non-alpine version as the runtime base
@@ -201,7 +232,7 @@ extract_patterns_from_response() {
     local prod_base="${alpine:-$evidence_runtime_base}"
 
     # Save extracted patterns to temp JSON for create_evidence_file
-    cat > /tmp/fetched_patterns.json <<EOF
+    cat > "$patterns_file" <<EOF
 {
     "runtime": "${runtime}",
     "runtime_base": "${evidence_runtime_base}",
@@ -220,12 +251,22 @@ EOF
 
 # Fetch documentation from docs.zerops.io as fallback when no recipe exists
 # Uses llms.txt structure: every runtime has /runtime/overview.md and /runtime/how-to/build-pipeline.md
+# Usage: fetch_docs_fallback <runtime> [output_prefix]
 fetch_docs_fallback() {
     local runtime="$1"
+    local output_prefix="${2:-}"
 
     if ! command -v curl &>/dev/null; then
         echo -e "${YELLOW}⚠ curl not available${NC}"
         return 1
+    fi
+
+    # Determine output paths based on prefix
+    local docs_file
+    if [ -n "$output_prefix" ]; then
+        docs_file="/tmp/recipe_${output_prefix}.md"  # Use recipe_ prefix for consistency
+    else
+        docs_file="/tmp/fetched_docs.md"
     fi
 
     echo -e "${BOLD}Fetching from documentation...${NC}"
@@ -260,19 +301,31 @@ ${pipeline_response}"
     fi
 
     # Save to temp file
-    echo "$combined_response" > /tmp/fetched_docs.md
-    echo -e "${GREEN}✓ Documentation fetched and saved to /tmp/fetched_docs.md${NC}"
+    echo "$combined_response" > "$docs_file"
+    echo -e "${GREEN}✓ Documentation fetched and saved to ${docs_file}${NC}"
 
     # Extract patterns from documentation
-    extract_patterns_from_docs "$runtime" "$combined_response"
+    extract_patterns_from_docs "$runtime" "$combined_response" "$output_prefix"
 
     return 0
 }
 
 # Extract patterns from documentation (different format than recipe API)
+# Usage: extract_patterns_from_docs <runtime> <response> [output_prefix]
 extract_patterns_from_docs() {
     local runtime="$1"
     local response="$2"
+    local output_prefix="${3:-}"
+
+    # Determine output paths based on prefix
+    local patterns_file docs_file_display
+    if [ -n "$output_prefix" ]; then
+        patterns_file="/tmp/patterns_${output_prefix}.json"
+        docs_file_display="/tmp/recipe_${output_prefix}.md"
+    else
+        patterns_file="/tmp/fetched_patterns.json"
+        docs_file_display="/tmp/fetched_docs.md"
+    fi
 
     echo ""
     echo -e "${BOLD}Extracted from documentation:${NC}"
@@ -316,7 +369,7 @@ extract_patterns_from_docs() {
     fi
 
     echo ""
-    echo -e "${CYAN}Full documentation saved to: /tmp/fetched_docs.md${NC}"
+    echo -e "${CYAN}Full documentation saved to: ${docs_file_display}${NC}"
     echo "Review this file for configuration examples."
 
     # For the evidence file
@@ -324,7 +377,7 @@ extract_patterns_from_docs() {
     [ -z "$evidence_runtime_base" ] && evidence_runtime_base="${runtime}@1"
 
     # Save extracted patterns to temp JSON for create_evidence_file
-    cat > /tmp/fetched_patterns.json <<EOF
+    cat > "$patterns_file" <<EOF
 {
     "runtime": "${runtime}",
     "runtime_base": "${evidence_runtime_base}",
@@ -1152,9 +1205,41 @@ find_recipe_for_runtime() {
 }
 
 # Quick search: recipe + pattern extraction
+# Usage: quick_search <runtime> [managed_service] [--output-prefix <prefix>]
+# When --output-prefix is specified, files are written as:
+#   /tmp/recipe_<prefix>.md instead of /tmp/fetched_recipe.md
+#   /tmp/patterns_<prefix>.json instead of /tmp/fetched_patterns.json
+# This prevents race conditions when running multiple quick_search in parallel.
 quick_search() {
-  local runtime="$1"
-  local managed_service="${2:-}"
+  local runtime=""
+  local managed_service=""
+  local output_prefix=""
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output-prefix)
+        output_prefix="$2"
+        shift 2
+        ;;
+      *)
+        if [ -z "$runtime" ]; then
+          runtime="$1"
+        elif [ -z "$managed_service" ]; then
+          managed_service="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [ -z "$runtime" ]; then
+    echo -e "${RED}Error: runtime argument required${NC}"
+    return 1
+  fi
+
+  # Default output_prefix to runtime if not specified
+  [ -z "$output_prefix" ] && output_prefix="$runtime"
 
   echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
   echo -e "${BOLD}Quick Recipe Search: $runtime${NC}" "${managed_service:+${BOLD}+ $managed_service${NC}}"
@@ -1184,10 +1269,10 @@ quick_search() {
     echo ""
 
     api_recipe_found="true"
-    fetch_recipe_from_api "$runtime" "$recipe_slug"
+    fetch_recipe_from_api "$runtime" "$recipe_slug" "$output_prefix"
 
-    # Store recipe type for evidence
-    echo "$recipe_type" > /tmp/recipe_type
+    # Store recipe type for evidence (use prefix to isolate)
+    echo "$recipe_type" > "/tmp/recipe_type_${output_prefix}"
   else
     echo ""
     echo -e "${YELLOW}⚠ No recipe exists for ${runtime}${NC}"
@@ -1195,21 +1280,21 @@ quick_search() {
     echo ""
 
     # Try to fetch from documentation instead
-    if fetch_docs_fallback "$runtime"; then
+    if fetch_docs_fallback "$runtime" "$output_prefix"; then
       api_recipe_found="true"
       recipe_type="docs"
-      echo "docs" > /tmp/recipe_type
+      echo "docs" > "/tmp/recipe_type_${output_prefix}"
     else
       echo ""
       echo -e "${RED}✗ Could not fetch documentation for: ${runtime}${NC}"
       echo ""
       # Mark that we searched but found nothing
-      echo "none" > /tmp/recipe_type
+      echo "none" > "/tmp/recipe_type_${output_prefix}"
     fi
   fi
 
-  # Store search status for create_evidence_file
-  echo "true:${api_recipe_found}" > /tmp/api_search_status
+  # Store search status for create_evidence_file (use prefix to isolate)
+  echo "true:${api_recipe_found}" > "/tmp/api_search_status_${output_prefix}"
 
   if [[ -n "$managed_service" ]]; then
     echo ""
@@ -1243,13 +1328,29 @@ quick_search() {
   echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
   # Create evidence file for Gate 0
-  create_evidence_file "$runtime" "$managed_service"
+  create_evidence_file "$runtime" "$managed_service" "$output_prefix"
 }
 
 # Create evidence file (Gate 0 compliance)
+# Usage: create_evidence_file <runtime> [managed_service] [output_prefix]
 create_evidence_file() {
   local runtime="$1"
   local managed_service="${2:-}"
+  local output_prefix="${3:-}"
+
+  # Determine file paths based on prefix
+  local patterns_file recipe_type_file api_status_file recipe_file_display
+  if [ -n "$output_prefix" ]; then
+    patterns_file="/tmp/patterns_${output_prefix}.json"
+    recipe_type_file="/tmp/recipe_type_${output_prefix}"
+    api_status_file="/tmp/api_search_status_${output_prefix}"
+    recipe_file_display="/tmp/recipe_${output_prefix}.md"
+  else
+    patterns_file="/tmp/fetched_patterns.json"
+    recipe_type_file="/tmp/recipe_type"
+    api_status_file="/tmp/api_search_status"
+    recipe_file_display="/tmp/fetched_recipe.md"
+  fi
 
   local evidence_file="/tmp/recipe_review.json"
 
@@ -1267,10 +1368,10 @@ create_evidence_file() {
   fi
   recipes_json="${recipes_json%,}}"
 
-  # Check for fetched patterns from API
+  # Check for fetched patterns from API (use prefix-specific file)
   local fetched_patterns=""
-  if [ -f /tmp/fetched_patterns.json ]; then
-    fetched_patterns=$(cat /tmp/fetched_patterns.json)
+  if [ -f "$patterns_file" ]; then
+    fetched_patterns=$(cat "$patterns_file")
   fi
 
   # Build patterns based on runtime (or use fetched data)
@@ -1322,11 +1423,11 @@ create_evidence_file() {
   local has_ready_import="false"
   local config_guidance=""
 
-  # Read recipe type from temp file (set by quick_search)
+  # Read recipe type from temp file (set by quick_search) - use prefix-specific file
   local recipe_type="none"
-  if [ -f /tmp/recipe_type ]; then
-    recipe_type=$(cat /tmp/recipe_type)
-    rm -f /tmp/recipe_type
+  if [ -f "$recipe_type_file" ]; then
+    recipe_type=$(cat "$recipe_type_file")
+    rm -f "$recipe_type_file"
   fi
 
   # Check if we have patterns
@@ -1339,7 +1440,7 @@ create_evidence_file() {
     # Hello-world recipe - ideal for skeleton imports
     pattern_source="recipe_hello_world"
     has_ready_import="true"
-    config_guidance="Hello-world recipe provides clean dev/stage skeleton - use /tmp/fetched_recipe.md directly"
+    config_guidance="Hello-world recipe provides clean dev/stage skeleton - use ${recipe_file_display} directly"
     is_verified="true"
   elif [ "$recipe_type" = "framework" ]; then
     # Framework recipe - may have extra framework-specific config
@@ -1351,18 +1452,18 @@ create_evidence_file() {
     # Documentation fallback
     pattern_source="documentation"
     has_ready_import="false"
-    config_guidance="Documentation provides examples - construct your own import.yml with dev (appdev) and stage (appstage) services. Review /tmp/fetched_docs.md"
+    config_guidance="Documentation provides examples - construct your own import.yml with dev (appdev) and stage (appstage) services. Review ${recipe_file_display}"
     is_verified="true"
   else
     # API source but unknown type
     pattern_source="recipe_api"
     has_ready_import="true"
-    config_guidance="Recipe found - use /tmp/fetched_recipe.md for import.yml and zerops.yml"
+    config_guidance="Recipe found - use ${recipe_file_display} for import.yml and zerops.yml"
     is_verified="true"
   fi
 
-  # Clean up temp files
-  rm -f /tmp/fetched_patterns.json /tmp/fetched_runtime 2>/dev/null
+  # Clean up temp files (use prefix-specific paths)
+  rm -f "$patterns_file" "/tmp/fetched_runtime_${output_prefix:-legacy}" 2>/dev/null
 
   # Get session_id for evidence validation consistency
   local session_id
@@ -1435,11 +1536,11 @@ EOF
   echo -e "${GREEN}✓ Evidence file created: $evidence_file${NC}"
   echo ""
 
-  # Check if API search was done
+  # Check if API search was done (use prefix-specific file)
   local api_status=""
-  if [ -f /tmp/api_search_status ]; then
-    api_status=$(cat /tmp/api_search_status)
-    rm -f /tmp/api_search_status
+  if [ -f "$api_status_file" ]; then
+    api_status=$(cat "$api_status_file")
+    rm -f "$api_status_file"
   fi
   local api_searched=$(echo "$api_status" | cut -d: -f1)
   local api_found=$(echo "$api_status" | cut -d: -f2)
@@ -1453,9 +1554,9 @@ EOF
     echo ""
     echo "The DISCOVER phase will guide you through:"
     if [ "$has_ready_import" = "true" ]; then
-      echo "  • Using import.yml from /tmp/fetched_recipe.md (ready-made!)"
+      echo "  • Using import.yml from ${recipe_file_display} (ready-made!)"
     else
-      echo "  • Creating import.yml from /tmp/fetched_docs.md patterns"
+      echo "  • Creating import.yml from ${recipe_file_display} patterns"
     fi
     echo "  • Running .zcp/workflow.sh extend import.yml"
     echo "  • Recording discovery with create_discovery"

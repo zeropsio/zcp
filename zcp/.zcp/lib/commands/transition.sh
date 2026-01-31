@@ -438,7 +438,7 @@ EOF
 
    ✅ Recipe found with ready-made import.yml!
 
-   1. Read /tmp/fetched_recipe.md
+   1. Read the recipe file (check /tmp/recipe_*.md for your runtime)
    2. Find the import.yml section (look for "services:")
    3. Copy it EXACTLY to import.yml - don't cherry-pick fields!
 
@@ -473,7 +473,7 @@ EOF
        type: postgresql@17
        mode: NON_HA
 
-   Reference: /tmp/fetched_docs.md for version strings
+   Reference: Check /tmp/recipe_*.md for your runtime's documentation
 EOF
         fi
 

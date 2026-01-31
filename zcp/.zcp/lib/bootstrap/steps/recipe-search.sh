@@ -6,43 +6,35 @@
 # Total time = longest single fetch (~20-30s) instead of sum (~60-120s)
 
 # Fetch a single runtime recipe (called in background)
+# Uses --output-prefix to write directly to runtime-specific files,
+# preventing race conditions when running multiple fetches in parallel.
 fetch_runtime_recipe() {
     local runtime="$1"
     local recipe_script="$2"
     local tmp_dir="$3"
     local result_file="${tmp_dir}/recipe_result_${runtime}.json"
 
-    # Run recipe search
-    "$recipe_script" quick "$runtime" >/dev/null 2>&1 || true
+    # Run recipe search with --output-prefix to write directly to runtime-specific files
+    # This prevents race conditions when multiple runtimes are fetched in parallel
+    "$recipe_script" quick "$runtime" --output-prefix "$runtime" >/dev/null 2>&1 || true
 
-    # Process result
-    if [ -f "${tmp_dir}/fetched_recipe.md" ]; then
-        mv "${tmp_dir}/fetched_recipe.md" "${tmp_dir}/recipe_${runtime}.md" 2>/dev/null || true
+    # Check for recipe file (now written directly to recipe_${runtime}.md)
+    local recipe_file="${tmp_dir}/recipe_${runtime}.md"
+    local patterns_file="${tmp_dir}/patterns_${runtime}.json"
 
-        # Get version from plan - use null-safe array access with .[]?
-        local rt_version
-        rt_version=$(get_plan 2>/dev/null | jq -r --arg r "$runtime" '.runtimes[]? | select(.type == $r) | .version // empty' 2>/dev/null)
-        [ -z "$rt_version" ] && rt_version="${runtime}@1"
+    # Get version from plan - use null-safe array access with .[]?
+    local rt_version
+    rt_version=$(get_plan 2>/dev/null | jq -r --arg r "$runtime" '.runtimes[]? | select(.type == $r) | .version // empty' 2>/dev/null)
+    [ -z "$rt_version" ] && rt_version="${runtime}@1"
 
-        if [ -f "${tmp_dir}/fetched_patterns.json" ]; then
-            mv "${tmp_dir}/fetched_patterns.json" "${tmp_dir}/patterns_${runtime}.json" 2>/dev/null || true
+    if [ -f "$recipe_file" ]; then
+        # Determine source from patterns file if it exists
+        local source="recipe"
+        if [ -f "$patterns_file" ]; then
+            source=$(jq -r '.source // "recipe"' "$patterns_file" 2>/dev/null || echo "recipe")
         fi
-        echo "{\"runtime\":\"$runtime\",\"version\":\"$rt_version\",\"recipe_file\":\"${tmp_dir}/recipe_${runtime}.md\",\"found\":true}" > "$result_file"
-    elif [ -f "${tmp_dir}/fetched_docs.md" ]; then
-        mv "${tmp_dir}/fetched_docs.md" "${tmp_dir}/recipe_${runtime}.md" 2>/dev/null || true
-
-        local rt_version
-        rt_version=$(get_plan 2>/dev/null | jq -r --arg r "$runtime" '.runtimes[]? | select(.type == $r) | .version // empty' 2>/dev/null)
-        [ -z "$rt_version" ] && rt_version="${runtime}@1"
-
-        if [ -f "${tmp_dir}/fetched_patterns.json" ]; then
-            mv "${tmp_dir}/fetched_patterns.json" "${tmp_dir}/patterns_${runtime}.json" 2>/dev/null || true
-        fi
-        echo "{\"runtime\":\"$runtime\",\"version\":\"$rt_version\",\"recipe_file\":\"${tmp_dir}/recipe_${runtime}.md\",\"source\":\"docs\",\"found\":true}" > "$result_file"
+        echo "{\"runtime\":\"$runtime\",\"version\":\"$rt_version\",\"recipe_file\":\"${recipe_file}\",\"source\":\"${source}\",\"found\":true}" > "$result_file"
     else
-        local rt_version
-        rt_version=$(get_plan 2>/dev/null | jq -r --arg r "$runtime" '.runtimes[]? | select(.type == $r) | .version // empty' 2>/dev/null)
-        [ -z "$rt_version" ] && rt_version="${runtime}@1"
         echo "{\"runtime\":\"$runtime\",\"version\":\"$rt_version\",\"recipe_file\":null,\"source\":\"default\",\"found\":false}" > "$result_file"
     fi
 }

@@ -316,13 +316,13 @@ step_spawn_subagents() {
         config_guidance=$(echo "$recipe_patterns" | jq -r '.configuration_guidance // ""')
         pattern_source=$(echo "$recipe_patterns" | jq -r '.pattern_source // "unknown"')
 
-        # Check for fetched files
-        local fetched_recipe_file="${ZCP_TMP_DIR:-/tmp}/fetched_recipe.md"
-        local fetched_docs_file="${ZCP_TMP_DIR:-/tmp}/fetched_docs.md"
-        local has_fetched_recipe="false"
-        local has_fetched_docs="false"
-        [ -f "$fetched_recipe_file" ] && has_fetched_recipe="true"
-        [ -f "$fetched_docs_file" ] && has_fetched_docs="true"
+        # Check for runtime-specific recipe file (written by recipe-search.sh with --output-prefix)
+        # Note: We no longer use shared fetched_recipe.md/fetched_docs.md files to avoid race conditions
+        local runtime_recipe_file="${ZCP_TMP_DIR:-/tmp}/recipe_${runtime}.md"
+        local has_recipe_file="false"
+        [ -f "$runtime_recipe_file" ] && has_recipe_file="true"
+        # Use recipe_file from handoff if specified, otherwise fall back to runtime-specific path
+        [ -z "$recipe_file" ] || [ "$recipe_file" = "null" ] && recipe_file="$runtime_recipe_file"
 
         # Extract values from recipe patterns (all come from recipe-search.sh)
         local prod_runtime_base dev_runtime_base dev_start prod_start dev_os
@@ -337,13 +337,14 @@ step_spawn_subagents() {
         prod_start=$(echo "$dev_vs_prod" | jq -r '.prod.start // "./app"')
 
         # Build recipe source info for the prompt
+        # Note: recipe_file is now runtime-specific (e.g., /tmp/recipe_go.md) to avoid race conditions
         local recipe_source_info=""
         case "$pattern_source" in
             recipe_hello_world|recipe_framework|recipe_api)
                 recipe_source_info="
 **PATTERN SOURCE: Zerops recipe API (${pattern_source})**
 
-The file \`/tmp/fetched_recipe.md\` contains a reference zerops.yml for ${runtime}.
+The file \`${recipe_file}\` contains a reference zerops.yml for ${runtime}.
 
 ⚠️ **DO NOT COPY IT VERBATIM** - Use it as a reference to understand:
 - What base images to use (build and run)
@@ -359,7 +360,7 @@ Configuration guidance: ${config_guidance}"
                 recipe_source_info="
 **PATTERN SOURCE: Documentation (docs.zerops.io)**
 
-The file \`/tmp/fetched_docs.md\` contains examples for ${runtime}.
+The file \`${recipe_file}\` contains examples for ${runtime}.
 
 ⚠️ **These are examples, not templates** - Use them to understand:
 - Correct base images and versions
@@ -374,7 +375,7 @@ Configuration guidance: ${config_guidance}"
                 recipe_source_info="
 **Pattern source: ${pattern_source}**
 
-Check files in /tmp/ for fetched patterns, or see:
+Check \`${recipe_file}\` for fetched patterns, or see:
 https://docs.zerops.io/${runtime}/how-to/build-pipeline
 
 Use these as references to construct your own zerops.yml."
