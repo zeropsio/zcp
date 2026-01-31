@@ -119,19 +119,13 @@ More gotchas: `.zcp/workflow.sh --help trouble`
 
 ## zcli Authentication
 
-Tokens expire unpredictably. Use the wrapper for auto-retry:
+Tokens expire unpredictably. Re-authenticate when you see "unauthenticated":
 
-```bash
-source .zcp/lib/zcli-wrapper.sh
-zcli_with_auth service list -P $projectId        # Auto re-auth on failure
-```
-
-**Manual re-auth** (if needed):
 ```bash
 zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZCP_API_KEY"
 ```
 
-**For SSH deploy commands (subagents):** Combine auth + push in single call — tokens don't persist:
+**For SSH deploy commands:** Combine auth + push in single call — tokens don't persist:
 ```bash
 ssh {dev} 'cd /var/www && zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "$ZEROPS_ZCP_API_KEY" && zcli push {id} --setup={setup} --deploy-git-folder'
 ```

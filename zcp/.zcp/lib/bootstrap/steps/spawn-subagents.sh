@@ -493,7 +493,15 @@ After deploy + subdomain (tasks 7-9), the container is running but **port 8080 h
 |---------|---------|
 | Go | \`ssh ${dev_hostname} "cd /var/www && nohup go run . > /tmp/app.log 2>&1 &"\` |
 | Node.js | \`ssh ${dev_hostname} "cd /var/www && nohup node index.js > /tmp/app.log 2>&1 &"\` |
+| Bun | \`ssh ${dev_hostname} "cd /var/www && nohup bun run index.ts > /tmp/app.log 2>&1 &"\` |
 | Python | \`ssh ${dev_hostname} "cd /var/www && nohup python app.py > /tmp/app.log 2>&1 &"\` |
+
+**To restart (kill first, then start):**
+\`\`\`bash
+# Triple-kill pattern: kills by name, by name again, by port — always succeeds
+ssh ${dev_hostname} 'pkill -9 -f "bun\\|node\\|go\\|python"; fuser -k 8080/tcp 2>/dev/null; true'
+# Then start normally with nohup
+\`\`\`
 
 **Then wait (Task 11)** — first startup may take 60-120s for dependency download:
 \`\`\`bash
@@ -548,7 +556,8 @@ NOT for zcli push, builds, or installs — run those synchronously to see logs.
 | "not a git repository" | \`ssh ${dev_hostname} "cd /var/www && git config --global user.email 'zcp@zerops.io' && git config --global user.name 'ZCP' && git init && git add -A && git commit -m 'Fix'"\` |
 | "unauthenticated" | Re-run the combined auth+push command (Task 7 or 13) |
 | **HTTP 000 on dev** | **Server not running — see Task 10, start it manually** |
-| Server won't start | \`.zcp/wait-for-server.sh ${dev_hostname} 8080\` then check logs |
+| Server won't start | Check logs: \`ssh ${dev_hostname} "cat /tmp/app.log"\` |
+| Need to restart server | Kill first: \`ssh ${dev_hostname} 'pkill -9 -f "bun\\|node\\|go"; fuser -k 8080/tcp 2>/dev/null; true'\` then start |
 | Endpoints fail (not 000) | \`zcli service log -P \$projectId ${dev_id}\` |
 
 ## Done
