@@ -85,6 +85,61 @@ check_complete() {
     return 1
 }
 
+# Detect what was implemented by examining the codebase
+detect_implementation() {
+    local hostname="$1"
+    local mount_path="/var/www/$hostname"
+
+    local runtime="" main_file="" endpoints="" services=""
+
+    # Detect runtime and main file
+    if [ -f "$mount_path/main.go" ] || [ -f "$mount_path/server.go" ]; then
+        runtime="go"
+        main_file=$(ls "$mount_path"/*.go 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "main.go")
+    elif [ -f "$mount_path/index.ts" ] || [ -f "$mount_path/server.ts" ]; then
+        runtime="bun/typescript"
+        main_file=$(ls "$mount_path"/*.ts 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "index.ts")
+    elif [ -f "$mount_path/index.js" ] || [ -f "$mount_path/server.js" ]; then
+        runtime="node"
+        main_file=$(ls "$mount_path"/*.js 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "index.js")
+    elif [ -f "$mount_path/app.py" ] || [ -f "$mount_path/main.py" ]; then
+        runtime="python"
+        main_file=$(ls "$mount_path"/*.py 2>/dev/null | head -1 | xargs basename 2>/dev/null || echo "app.py")
+    elif [ -f "$mount_path/main.rs" ]; then
+        runtime="rust"
+        main_file="main.rs"
+    fi
+
+    # Detect endpoints from zerops.yml or source
+    endpoints="/, /health, /status"
+
+    # Detect managed service connections from zerops.yml
+    if [ -f "$mount_path/zerops.yml" ]; then
+        # Look for service references in envVariables
+        local db_ref cache_ref queue_ref
+        db_ref=$(grep -E '\$\{(db|postgres|mysql|mongo)' "$mount_path/zerops.yml" 2>/dev/null | head -1)
+        cache_ref=$(grep -E '\$\{(cache|valkey|redis)' "$mount_path/zerops.yml" 2>/dev/null | head -1)
+        queue_ref=$(grep -E '\$\{(queue|nats|rabbit)' "$mount_path/zerops.yml" 2>/dev/null | head -1)
+
+        [ -n "$db_ref" ] && services="${services}database, "
+        [ -n "$cache_ref" ] && services="${services}cache, "
+        [ -n "$queue_ref" ] && services="${services}queue, "
+        services="${services%, }"  # Remove trailing comma
+    fi
+
+    # Build summary
+    local summary=""
+    if [ -n "$runtime" ]; then
+        summary="$runtime HTTP server"
+        [ -n "$services" ] && summary="$summary with $services connectivity"
+        summary="$summary (${main_file})"
+    else
+        summary="HTTP server (unknown runtime)"
+    fi
+
+    echo "$summary"
+}
+
 # Auto-generate completion evidence from verify evidence + container env vars
 # This replaces manual JSON writing by subagents
 auto_generate_completion() {
@@ -118,6 +173,10 @@ auto_generate_completion() {
         stage_failed=$(jq -r '.failed // 0' "$stage_verify" 2>/dev/null || echo "0")
     fi
 
+    # Detect what was implemented
+    local implementation
+    implementation=$(detect_implementation "$hostname")
+
     # Generate completion JSON
     jq -n \
         --arg dev "$hostname" \
@@ -128,6 +187,7 @@ auto_generate_completion() {
         --argjson dev_failed "$dev_failed" \
         --argjson stage_passed "$stage_passed" \
         --argjson stage_failed "$stage_failed" \
+        --arg impl "$implementation" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '{
             dev_hostname: $dev,
@@ -138,6 +198,7 @@ auto_generate_completion() {
                 dev: {passed: $dev_passed, failed: $dev_failed},
                 stage: {passed: $stage_passed, failed: $stage_failed}
             },
+            implementation: $impl,
             completed_at: $ts,
             auto_generated: true
         }' > "$completion_file"

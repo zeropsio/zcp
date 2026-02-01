@@ -96,55 +96,78 @@ emit_error() {
 
 # -----------------------------------------------------------------------------
 # emit_complete
-# Terminal output — workflow finished, show summary and next steps
-# Always shows discovery context as failsafe (survives context loss)
+# Terminal output — workflow finished, show comprehensive summary
+# Provides all data needed for agent to summarize final state properly
 # -----------------------------------------------------------------------------
 emit_complete() {
     local discovery_file="${ZCP_TMP_DIR:-/tmp}/discovery.json"
+    local dev_verify_file="${ZCP_TMP_DIR:-/tmp}/dev_verify.json"
+    local stage_verify_file="${ZCP_TMP_DIR:-/tmp}/stage_verify.json"
 
     echo ""
     echo "═══════════════════════════════════════════════════════════════"
     echo "✓ Bootstrap complete"
     echo "═══════════════════════════════════════════════════════════════"
 
-    # Always try to show discovery summary
-    if [[ -f "$discovery_file" ]]; then
-        local service_count
-        service_count=$(jq -r '.service_count // 0' "$discovery_file" 2>/dev/null)
-
-        if [[ "$service_count" -gt 0 ]]; then
-            echo ""
-            echo "Services ($service_count pair(s)):"
-            jq -r '.services[] | "  \(.dev.name) → \(.stage.name) (\(.runtime // "?"))"' "$discovery_file" 2>/dev/null
-
-            # Show URLs if available
-            local has_urls
-            has_urls=$(jq -r '[.services[].stage.url // empty] | length' "$discovery_file" 2>/dev/null)
-            if [[ "$has_urls" -gt 0 ]]; then
-                echo ""
-                echo "Stage URLs:"
-                jq -r '.services[] | select(.stage.url != "" and .stage.url != null) | "  \(.stage.name): \(.stage.url)"' "$discovery_file" 2>/dev/null
-            fi
-        else
-            echo ""
-            echo "⚠️  discovery.json exists but has no services"
-            echo "   Bootstrap may not have completed properly."
-        fi
-    else
+    if [[ ! -f "$discovery_file" ]]; then
         echo ""
-        echo "⚠️  No discovery.json found"
-        echo "   Bootstrap may not have completed successfully."
+        echo "⚠️  No discovery.json found - bootstrap may have failed"
+        echo ""
+        return
+    fi
+
+    local service_count
+    service_count=$(jq -r '.service_count // 0' "$discovery_file" 2>/dev/null)
+
+    if [[ "$service_count" -eq 0 ]]; then
+        echo ""
+        echo "⚠️  No services in discovery.json - bootstrap may have failed"
+        echo ""
+        return
+    fi
+
+    # -------------------------------------------------------------------------
+    # SERVICES WITH IMPLEMENTATION DETAILS
+    # -------------------------------------------------------------------------
+    echo ""
+    echo "SERVICES:"
+    jq -r '.services[] |
+        "  \(.dev.name) → \(.stage.name)",
+        "    impl:  \(.implementation // "\(.runtime // "?") HTTP server")",
+        "    dev:   id=\(.dev.id)  \(.dev.url // "")",
+        "    stage: id=\(.stage.id)  \(.stage.url // "")"' "$discovery_file" 2>/dev/null
+
+    # -------------------------------------------------------------------------
+    # VERIFICATION STATUS
+    # -------------------------------------------------------------------------
+    local dev_passed=0 dev_failed=0 stage_passed=0 stage_failed=0
+
+    if [[ -f "$dev_verify_file" ]]; then
+        dev_passed=$(jq -r '.passed // 0' "$dev_verify_file" 2>/dev/null)
+        dev_failed=$(jq -r '.failed // 0' "$dev_verify_file" 2>/dev/null)
+    fi
+    if [[ -f "$stage_verify_file" ]]; then
+        stage_passed=$(jq -r '.passed // 0' "$stage_verify_file" 2>/dev/null)
+        stage_failed=$(jq -r '.failed // 0' "$stage_verify_file" 2>/dev/null)
     fi
 
     echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "NEXT: Start your first task"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if [[ "$dev_failed" -gt 0 ]] || [[ "$stage_failed" -gt 0 ]]; then
+        echo "VERIFICATION: ⚠️  FAILURES DETECTED"
+        echo "  dev:   $dev_passed passed, $dev_failed failed"
+        echo "  stage: $stage_passed passed, $stage_failed failed"
+    else
+        echo "VERIFICATION: ✓ All passed"
+        echo "  dev: $dev_passed tests  |  stage: $stage_passed tests"
+    fi
+
+    # -------------------------------------------------------------------------
+    # NEXT STEPS
+    # -------------------------------------------------------------------------
     echo ""
-    echo "  .zcp/workflow.sh iterate \"description of what to build\""
-    echo ""
-    echo "Or check status:"
-    echo "  .zcp/workflow.sh show"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "NEXT: .zcp/workflow.sh iterate \"description of what to build\""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 }
 

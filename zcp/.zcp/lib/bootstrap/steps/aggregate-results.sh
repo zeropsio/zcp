@@ -282,10 +282,11 @@ step_aggregate_results() {
         local completion_data
         completion_data=$(read_completion_data "$dev_name")
 
-        local dev_url stage_url verification
+        local dev_url stage_url verification implementation
         dev_url=$(echo "$completion_data" | jq -r '.dev_url // ""')
         stage_url=$(echo "$completion_data" | jq -r '.stage_url // ""')
         verification=$(echo "$completion_data" | jq -c '.verification // {}')
+        implementation=$(echo "$completion_data" | jq -r '.implementation // ""')
 
         # Check single_mode per service pair
         local single_mode="false"
@@ -303,12 +304,14 @@ step_aggregate_results() {
             --arg runtime "$runtime" \
             --arg dev_url "$dev_url" \
             --arg stage_url "$stage_url" \
+            --arg impl "$implementation" \
             --argjson verification "$verification" \
             --argjson single "$single_mode" \
             '{
                 dev: { id: $dev_id, name: $dev_name, url: $dev_url },
                 stage: { id: $stage_id, name: $stage_name, url: $stage_url },
                 runtime: $runtime,
+                implementation: $impl,
                 verification: $verification,
                 single_mode: $single
             }')
