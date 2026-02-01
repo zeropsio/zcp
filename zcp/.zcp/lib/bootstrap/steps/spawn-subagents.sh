@@ -256,36 +256,9 @@ step_spawn_subagents() {
         local runtime_guidance
         runtime_guidance=$(build_runtime_guidance "$runtime" "$runtime_version" "$recipe_file")
 
-        # Build managed services list for zerops.yml template
-        local managed_env_block=""
+        # Count managed services (env block built by subagent, not us)
         local managed_count
         managed_count=$(echo "$managed_services" | jq 'length')
-
-        if [ "$managed_count" -gt 0 ]; then
-            local j=0
-            while [ "$j" -lt "$managed_count" ]; do
-                local svc_name env_prefix hostname
-                svc_name=$(echo "$managed_services" | jq -r ".[$j].name")
-                env_prefix=$(echo "$managed_services" | jq -r ".[$j].env_prefix")
-                hostname="$svc_name"
-
-                managed_env_block+="        ${env_prefix}_HOST: \${${hostname}_hostname}
-        ${env_prefix}_PORT: \${${hostname}_port}
-        ${env_prefix}_USER: \${${hostname}_user}
-        ${env_prefix}_PASS: \${${hostname}_password}
-"
-                # Add DB name for databases
-                local svc_type
-                svc_type=$(echo "$managed_services" | jq -r ".[$j].type")
-                case "$svc_type" in
-                    postgresql*|mysql*|mariadb*|mongodb*)
-                        managed_env_block+="        ${env_prefix}_NAME: \${${hostname}_dbName}
-"
-                        ;;
-                esac
-                j=$((j + 1))
-            done
-        fi
 
         # ============================================================
         # EXTRACT PATTERNS FROM RECIPE (recipe-search.sh provides these)
@@ -409,13 +382,29 @@ Files written to \`${mount_path}/\` appear at \`/var/www/\` inside the container
 
 **⚠️ Setup names are \`dev\` and \`prod\`—NOT hostnames.** This is the #1 mistake.
 
-## Managed Services - DISCOVERED Environment Variables
+## Discovered Environment Variables
 
-**CRITICAL**: The following variables were discovered from the ACTUAL running services.
-Use ONLY the variables listed below. Do NOT assume other variables exist.
-If a variable isn't listed (e.g., password), the service doesn't require it.
+**CRITICAL**: These are the ONLY variables that exist. Build your zerops.yml envVariables using ONLY these keys.
 
-${env_var_mappings:-None.}
+${env_var_mappings:-No managed services.}
+
+### How to Map Variables
+
+In zerops.yml, map discovered variables to what your app expects:
+
+\`\`\`yaml
+envVariables:
+  # Format: YOUR_APP_VAR: \${discovered_key}
+  DATABASE_URL: \${db_connectionString}    # if db_connectionString exists
+  REDIS_HOST: \${cache_hostname}           # if cache_hostname exists
+  REDIS_PORT: \${cache_port}               # if cache_port exists
+  # Do NOT add variables that weren't discovered (e.g., cache_password if not listed)
+\`\`\`
+
+Choose mappings based on:
+1. What keys are available above
+2. What your ${runtime} app expects (connection string vs individual vars)
+3. Standard conventions for the libraries you're using
 
 ## Runtime: ${runtime} (${runtime_version})
 ${recipe_source_info}
@@ -441,7 +430,8 @@ zerops:
         - port: 8080
           httpSupport: true
       envVariables:
-${managed_env_block:-        # (none)}
+        # Map from discovered variables (see table above)
+        # Example: YOUR_VAR: \${service_key}
       start: ${dev_start}
 
   - setup: prod
@@ -456,7 +446,7 @@ ${managed_env_block:-        # (none)}
         - port: 8080
           httpSupport: true
       envVariables:
-${managed_env_block:-        # (none)}
+        # Same mappings as dev
       start: ${prod_start}
 \`\`\`
 
@@ -482,35 +472,78 @@ ${managed_env_block:-        # (none)}
 | 16 | Verify stage | \`.zcp/verify.sh ${stage_hostname} 8080 / /health /status\` |
 | 17 | **Done** | \`.zcp/mark-complete.sh ${dev_hostname}\` — completion evidence auto-generated |
 
-## CRITICAL: Task 10 — Dev Server Manual Start
+## App Specification
 
-Dev setup uses \`start: zsc noop --silent\` — **nothing runs automatically**.
+Your app must expose these endpoints:
 
-After deploy + subdomain (tasks 7-9), the container is running but **port 8080 has nothing listening**.
+| Endpoint | Response | Purpose |
+|----------|----------|---------|
+| \`/\` | \`"Service: ${dev_hostname}"\` | Landing page |
+| \`/health\` | \`{"status":"ok"}\` or \`200 OK\` | Liveness probe |
+| \`/status\` | JSON (see below) | Connectivity proof |
 
-**Start command by runtime:**
+### \`/status\` Endpoint Requirements
+
+The \`/status\` endpoint must **prove connectivity** to managed services.
+
+**Required behavior**:
+- Actually connect to each managed service (ping DB, ping Redis, etc.)
+- Report success/failure for each
+- Return valid JSON
+
+**Example structure** (adapt to your runtime's conventions):
+\`\`\`json
+{
+  "service": "${dev_hostname}",
+  "connections": {
+    "db": "ok",
+    "cache": "ok"
+  }
+}
+\`\`\`
+
+**If no managed services**: Return \`{"service": "${dev_hostname}", "status": "ok"}\`.
+
+The key is **proving real connectivity**, not matching an exact schema. Use your runtime's idioms.
+
+## Development Loop
+
+Dev setup uses \`start: zsc noop --silent\` — the container runs but nothing listens on 8080.
+
+**Before deploying, verify your code works locally:**
+
+1. **Start server in background**:
+   \`\`\`bash
+   ssh ${dev_hostname} "cd /var/www && nohup ${dev_start} > /tmp/app.log 2>&1 &"
+   \`\`\`
+
+2. **Quick verification**:
+   \`\`\`bash
+   ssh ${dev_hostname} "curl -s localhost:8080/health"
+   ssh ${dev_hostname} "curl -s localhost:8080/status" | jq .
+   \`\`\`
+
+3. **If broken** — check logs, fix, restart:
+   \`\`\`bash
+   ssh ${dev_hostname} "cat /tmp/app.log"
+   # Fix code...
+   ssh ${dev_hostname} 'pkill -9 -f "bun\\|node\\|go\\|python"; fuser -k 8080/tcp 2>/dev/null; true'
+   ssh ${dev_hostname} "cd /var/www && nohup ${dev_start} > /tmp/app.log 2>&1 &"
+   \`\`\`
+
+4. **When working** — proceed to formal verification and deploy
+
+**Start commands by runtime**:
 | Runtime | Command |
 |---------|---------|
-| Go | \`ssh ${dev_hostname} "cd /var/www && nohup go run . > /tmp/app.log 2>&1 &"\` |
-| Node.js | \`ssh ${dev_hostname} "cd /var/www && nohup node index.js > /tmp/app.log 2>&1 &"\` |
-| Bun | \`ssh ${dev_hostname} "cd /var/www && nohup bun run index.ts > /tmp/app.log 2>&1 &"\` |
-| Python | \`ssh ${dev_hostname} "cd /var/www && nohup python app.py > /tmp/app.log 2>&1 &"\` |
+| Go | \`go run .\` |
+| Node.js | \`node index.js\` |
+| Bun | \`bun run index.ts\` |
+| Python | \`python app.py\` |
 
-**To restart (kill first, then start):**
-\`\`\`bash
-# Triple-kill pattern: kills by name, by name again, by port — always succeeds
-ssh ${dev_hostname} 'pkill -9 -f "bun\\|node\\|go\\|python"; fuser -k 8080/tcp 2>/dev/null; true'
-# Then start normally with nohup
-\`\`\`
+**If verify.sh reports "NO SERVER LISTENING"** → server not running → start it (step 1).
 
-**Then wait (Task 11)** — first startup may take 60-120s for dependency download:
-\`\`\`bash
-.zcp/wait-for-server.sh ${dev_hostname} 8080 120
-\`\`\`
-
-**If verify.sh reports "NO SERVER LISTENING"** → server not running → start it first.
-
-**Stage is different**: Stage uses \`start: ./app\` (or equivalent) — Zerops runs it automatically.
+**Stage is different**: Stage uses \`start: ./app\` (or equivalent) — Zerops runs it automatically. No manual start needed.
 
 ## Platform Rules
 
