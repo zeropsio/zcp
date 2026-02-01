@@ -365,7 +365,7 @@ step_aggregate_results() {
     echo "$discovery" > "${ZCP_TMP_DIR:-/tmp}/discovery.json"
 
     # Also persist to state directory (STATE_DIR is set by utils.sh sourced from bootstrap.sh)
-    if [ -n "$STATE_DIR" ]; then
+    if [ -n "${STATE_DIR:-}" ]; then
         mkdir -p "$STATE_DIR/workflow/evidence" 2>/dev/null || true
         cp "${ZCP_TMP_DIR:-/tmp}/discovery.json" "$STATE_DIR/workflow/evidence/" 2>/dev/null || true
     fi
@@ -490,7 +490,7 @@ step_aggregate_results() {
     echo "$deploy_evidence" > "${ZCP_TMP_DIR:-/tmp}/deploy_evidence.json"
 
     # Persist evidence files to state directory
-    if [ -n "$STATE_DIR" ]; then
+    if [ -n "${STATE_DIR:-}" ]; then
         cp "${ZCP_TMP_DIR:-/tmp}/dev_verify.json" "$STATE_DIR/workflow/evidence/" 2>/dev/null || true
         cp "${ZCP_TMP_DIR:-/tmp}/stage_verify.json" "$STATE_DIR/workflow/evidence/" 2>/dev/null || true
         cp "${ZCP_TMP_DIR:-/tmp}/deploy_evidence.json" "$STATE_DIR/workflow/evidence/" 2>/dev/null || true
@@ -512,7 +512,7 @@ step_aggregate_results() {
     echo "$complete_data" > "${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json"
 
     # Also persist to bootstrap state (BOOTSTRAP_STATE_DIR is set by state.sh sourced from bootstrap.sh)
-    if [ -n "$BOOTSTRAP_STATE_DIR" ]; then
+    if [ -n "${BOOTSTRAP_STATE_DIR:-}" ]; then
         mkdir -p "$BOOTSTRAP_STATE_DIR" 2>/dev/null || true
         cp "${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json" "$BOOTSTRAP_STATE_DIR/complete.json" 2>/dev/null || true
     fi
