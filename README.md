@@ -137,7 +137,8 @@ zcp/
 │       │   ├── iterate.sh    # iterate command (post-DONE continuation)
 │       │   ├── retarget.sh   # retarget command (change deployment target)
 │       │   └── context.sh    # intent, note commands (rich context)
-│       ├── unified-state.sh # Unified state management (session, phase, bootstrap)
+│       ├── state.sh       # Single source of truth for state (session, phase, bootstrap)
+│       ├── view.sh        # WIGGUM display layer (progress, evidence, next action)
 │       ├── bootstrap/     # Bootstrap orchestration (new project setup)
 │       │   ├── output.sh        # JSON response formatting
 │       │   ├── detect.sh        # Project state detection (FRESH/CONFORMANT/NON_CONFORMANT)
@@ -777,12 +778,12 @@ All stored in `$ZCP_TMP_DIR` (defaults to `/tmp/`, with write-through to `.zcp/s
 
 | File | Created By | Contains |
 |------|------------|----------|
-| `claude_session` | `.zcp/workflow.sh init` | Session ID |
-| `claude_mode` | `.zcp/workflow.sh init` | full, dev-only, hotfix, quick |
-| `claude_phase` | `.zcp/workflow.sh transition_to` | Current phase |
-| `claude_iteration` | `.zcp/workflow.sh iterate` | Current iteration number |
-| `claude_intent.txt` | `.zcp/workflow.sh intent` | Workflow intent/goal |
-| `claude_context.json` | Auto-captured | Last error, notes |
+| `zcp_session` | `.zcp/workflow.sh init` | Session ID |
+| `zcp_mode` | `.zcp/workflow.sh init` | full, dev-only, hotfix, quick |
+| `zcp_phase` | `.zcp/workflow.sh transition_to` | Current phase |
+| `zcp_iteration` | `.zcp/workflow.sh iterate` | Current iteration number |
+| `zcp_intent.txt` | `.zcp/workflow.sh intent` | Workflow intent/goal |
+| `zcp_context.json` | Auto-captured | Last error, notes |
 
 ### Gate Evidence Files
 

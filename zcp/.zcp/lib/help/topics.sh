@@ -1022,8 +1022,8 @@ EXPECTED WARNINGS (NOT ERRORS)
 
 EVIDENCE FILES
 ─────────────────────────────────────────────────────────────────
-/tmp/claude_session             # Session ID
-/tmp/claude_phase               # Current phase
+/tmp/zcp_session                # Session ID
+/tmp/zcp_phase                  # Current phase
 /tmp/recipe_review.json         # Gate 0: Recipe patterns
 /tmp/import_validated.json      # Gate 0.5: Import validation
 /tmp/discovery.json             # Service mapping

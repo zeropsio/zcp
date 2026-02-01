@@ -260,7 +260,7 @@ step_finalize() {
     local handoff_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json"
     local handoff_data
     handoff_data=$(jq -n \
-        --arg session "$(cat "${ZCP_TMP_DIR:-/tmp}/claude_session" 2>/dev/null || echo "unknown")" \
+        --arg session "$(cat "${ZCP_TMP_DIR:-/tmp}/zcp_session" 2>/dev/null || echo "unknown")" \
         --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
         --argjson handoffs "$handoffs" \
         '{

@@ -38,7 +38,7 @@ source "$SCRIPT_DIR/lib/utils.sh"
 
 # Source bootstrap modules
 source "$SCRIPT_DIR/lib/bootstrap/output.sh"
-source "$SCRIPT_DIR/lib/unified-state.sh"
+source "$SCRIPT_DIR/lib/state.sh"
 source "$SCRIPT_DIR/lib/bootstrap/detect.sh"
 source "$SCRIPT_DIR/lib/bootstrap/import-gen.sh"
 

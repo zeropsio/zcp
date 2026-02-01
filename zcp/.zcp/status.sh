@@ -623,7 +623,7 @@ record_deployment_evidence() {
 
     # Get session ID
     local deploy_session
-    deploy_session=$(cat "${ZCP_TMP}/claude_session" 2>/dev/null || echo "")
+    deploy_session=$(cat "${ZCP_TMP}/zcp_session" 2>/dev/null || echo "")
 
     if [ -z "$deploy_session" ]; then
         echo "⚠️  No session ID found - evidence will have empty session_id"

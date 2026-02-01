@@ -259,7 +259,7 @@ step_aggregate_results() {
 
     # All complete - create discovery.json with all services
     local session_id
-    session_id=$(cat "${ZCP_TMP_DIR:-/tmp}/claude_session" 2>/dev/null || echo "bootstrap-$(date +%s)")
+    session_id=$(cat "${ZCP_TMP_DIR:-/tmp}/zcp_session" 2>/dev/null || echo "bootstrap-$(date +%s)")
 
     # Build services array from handoffs + completion data (URLs from subagent)
     local services='[]'
@@ -517,9 +517,9 @@ step_aggregate_results() {
         cp "${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json" "$BOOTSTRAP_STATE_DIR/complete.json" 2>/dev/null || true
     fi
 
-    # Set workflow state files - DONE phase (bootstrap is complete, use iterate for new work)
-    echo "full" > "${ZCP_TMP_DIR:-/tmp}/claude_mode"
-    echo "DONE" > "${ZCP_TMP_DIR:-/tmp}/claude_phase"
+    # Set workflow state via unified API - DONE phase (bootstrap is complete, use iterate for new work)
+    set_mode "full"
+    set_phase "DONE"
 
     # Build next_steps guidance - user should use iterate to start new work
     local next_steps

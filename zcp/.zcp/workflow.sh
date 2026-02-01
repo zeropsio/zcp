@@ -43,7 +43,7 @@ source "$SCRIPT_DIR/lib/utils.sh"
 source "$SCRIPT_DIR/lib/help.sh"
 source "$SCRIPT_DIR/lib/gates.sh"
 source "$SCRIPT_DIR/lib/commands.sh"
-source "$SCRIPT_DIR/lib/unified-state.sh"
+source "$SCRIPT_DIR/lib/state.sh"
 
 # ============================================================================
 # MAIN

@@ -27,15 +27,15 @@ zcli_service_list_json() {
 ZCP_TMP_DIR="${ZCP_TMP_DIR:-/tmp}"
 
 # Cache files (fast, ephemeral - uses ZCP_TMP_DIR)
-SESSION_FILE="${ZCP_TMP_DIR}/claude_session"
-MODE_FILE="${ZCP_TMP_DIR}/claude_mode"
-PHASE_FILE="${ZCP_TMP_DIR}/claude_phase"
-ITERATION_FILE="${ZCP_TMP_DIR}/claude_iteration"
+SESSION_FILE="${ZCP_TMP_DIR}/zcp_session"
+MODE_FILE="${ZCP_TMP_DIR}/zcp_mode"
+PHASE_FILE="${ZCP_TMP_DIR}/zcp_phase"
+ITERATION_FILE="${ZCP_TMP_DIR}/zcp_iteration"
 DISCOVERY_FILE="${ZCP_TMP_DIR}/discovery.json"
 DEV_VERIFY_FILE="${ZCP_TMP_DIR}/dev_verify.json"
 STAGE_VERIFY_FILE="${ZCP_TMP_DIR}/stage_verify.json"
 DEPLOY_EVIDENCE_FILE="${ZCP_TMP_DIR}/deploy_evidence.json"
-CONTEXT_FILE="${ZCP_TMP_DIR}/claude_context.json"
+CONTEXT_FILE="${ZCP_TMP_DIR}/zcp_context.json"
 
 # New gate evidence files (Gates 0-3)
 RECIPE_REVIEW_FILE="${ZCP_TMP_DIR}/recipe_review.json"
@@ -272,76 +272,6 @@ clear_last_error() {
     [ -f "$WORKFLOW_STATE_DIR/context.json" ] && rm -f "$WORKFLOW_STATE_DIR/context.json"
 }
 
-get_session() {
-    if [ -f "$SESSION_FILE" ]; then
-        cat "$SESSION_FILE"
-    fi
-}
-
-get_mode() {
-    if [ -f "$MODE_FILE" ]; then
-        cat "$MODE_FILE"
-    fi
-}
-
-get_phase() {
-    if [ -f "$PHASE_FILE" ]; then
-        cat "$PHASE_FILE"
-    else
-        echo "NONE"
-    fi
-}
-
-# Sync state to persistent storage and WIGGUM
-# Called after any state change to maintain consistency
-sync_state() {
-    # Sync to persistent storage
-    sync_to_persistent
-
-    # Update WIGGUM JSON (if available - state.sh may not be loaded yet)
-    if type update_workflow_state &>/dev/null; then
-        update_workflow_state 2>/dev/null
-    fi
-}
-
-set_phase() {
-    local phase="$1"
-
-    # M-10: Validate phase before setting
-    if ! validate_phase "$phase"; then
-        echo "ERROR: Invalid phase: $phase" >&2
-        return 1
-    fi
-
-    # M-11: Check for write failure
-    if ! echo "$phase" > "$PHASE_FILE"; then
-        echo "ERROR: Cannot write to phase file" >&2
-        return 1
-    fi
-    sync_state
-}
-
-set_mode() {
-    local mode="$1"
-
-    # M-10: Validate mode before setting
-    case "$mode" in
-        quick|dev-only|full|hotfix|bootstrap)
-            ;;
-        *)
-            echo "ERROR: Invalid mode: $mode" >&2
-            return 1
-            ;;
-    esac
-
-    # M-11: Check for write failure
-    if ! echo "$mode" > "$MODE_FILE"; then
-        echo "ERROR: Cannot write to mode file" >&2
-        return 1
-    fi
-    sync_state
-}
-
 validate_phase() {
     local phase="$1"
     # Valid phases (standard workflow only - synthesis phases deprecated)
@@ -441,49 +371,6 @@ check_evidence_freshness() {
 }
 
 # ============================================================================
-# ITERATION MANAGEMENT
-# ============================================================================
-
-get_iteration() {
-    # Check /tmp/ first
-    if [ -f "$ITERATION_FILE" ]; then
-        cat "$ITERATION_FILE"
-        return 0
-    fi
-
-    # Check persistent storage
-    if [ -f "$WORKFLOW_STATE_DIR/iteration" ]; then
-        cat "$WORKFLOW_STATE_DIR/iteration"
-        return 0
-    fi
-
-    # Default to 1
-    echo "1"
-}
-
-set_iteration() {
-    local n="$1"
-
-    # Validate iteration is a positive number
-    if [[ ! "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ]; then
-        echo "ERROR: Invalid iteration number: $n" >&2
-        return 1
-    fi
-
-    # M-12: Use atomic write to prevent race conditions
-    local tmp_file="${ITERATION_FILE}.tmp.$$"
-    echo "$n" > "$tmp_file"
-    mv "$tmp_file" "$ITERATION_FILE"
-
-    # Write to persistent storage if available (also atomic)
-    if [ "$PERSISTENT_ENABLED" = true ] && [ -d "$WORKFLOW_STATE_DIR" ]; then
-        tmp_file="$WORKFLOW_STATE_DIR/iteration.tmp.$$"
-        echo "$n" > "$tmp_file"
-        mv "$tmp_file" "$WORKFLOW_STATE_DIR/iteration"
-    fi
-}
-
-# ============================================================================
 # PERSISTENT STORAGE RESTORATION
 # ============================================================================
 
@@ -545,8 +432,8 @@ restore_from_persistent() {
     fi
 
     # Restore intent
-    if [ ! -f "${ZCP_TMP_DIR}/claude_intent.txt" ] && [ -f "$WORKFLOW_STATE_DIR/intent.txt" ]; then
-        cp "$WORKFLOW_STATE_DIR/intent.txt" "${ZCP_TMP_DIR}/claude_intent.txt"
+    if [ ! -f "${ZCP_TMP_DIR}/zcp_intent.txt" ] && [ -f "$WORKFLOW_STATE_DIR/intent.txt" ]; then
+        cp "$WORKFLOW_STATE_DIR/intent.txt" "${ZCP_TMP_DIR}/zcp_intent.txt"
         restored=true
     fi
 
@@ -676,5 +563,5 @@ sync_to_persistent() {
 
     # Sync context and intent
     [ -f "$CONTEXT_FILE" ] && cp "$CONTEXT_FILE" "$WORKFLOW_STATE_DIR/context.json"
-    [ -f "${ZCP_TMP_DIR}/claude_intent.txt" ] && cp "${ZCP_TMP_DIR}/claude_intent.txt" "$WORKFLOW_STATE_DIR/intent.txt"
+    [ -f "${ZCP_TMP_DIR}/zcp_intent.txt" ] && cp "${ZCP_TMP_DIR}/zcp_intent.txt" "$WORKFLOW_STATE_DIR/intent.txt"
 }

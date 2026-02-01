@@ -1,487 +1,362 @@
 #!/usr/bin/env bash
-# shellcheck shell=bash
-# shellcheck disable=SC2034  # Variables used by sourced scripts
+# lib/state.sh - Unified State Management API
+# Single source of truth for ZCP workflow state.
+# Note: This is a library - it does NOT set shell options to avoid overriding caller's settings
+
+ZCP_STATE_FILE="${ZCP_TMP_DIR:-/tmp}/zcp_state.json"
+ZCP_STATE_PERSISTENT="${ZCP_STATE_DIR:-${SCRIPT_DIR:-$(pwd)}/state}/zcp_state.json"
 
 # =============================================================================
-# WIGGUM - Workflow Infrastructure for Guided Gates and Unified Management
-# =============================================================================
-#
-# State management layer for ZCP workflow orchestration.
-# Handles phase transitions, evidence tracking, and state persistence.
-#
-# All state operations go through this file - single source of truth.
-#
-# Key responsibilities:
-#   - Phase sequence management (standard and dev-only flows)
-#   - Workflow state JSON generation and persistence
-#   - Recovery hints for blocked gates
-#   - Bootstrap mode detection
+# CORE UTILITIES
 # =============================================================================
 
-# Ensure utils.sh variables are available
-# WORKFLOW_STATE_FILE and WORKFLOW_STATE_PERSISTENT defined in utils.sh
-if [ -z "$WORKFLOW_STATE_FILE" ]; then
-    echo "Error: state.sh must be sourced after utils.sh" >&2
-    return 1 2>/dev/null || exit 1
-fi
-
-# =============================================================================
-# PHASE DEFINITIONS
-# =============================================================================
-
-# Bootstrap runs BEFORE the standard workflow as a pre-workflow setup step.
-# After bootstrap completes, run: .zcp/workflow.sh init
-
-# Full standard mode phases (in order)
-PHASES_FULL_STANDARD=("INIT" "DISCOVER" "DEVELOP" "DEPLOY" "VERIFY" "DONE")
-
-# Dev-only mode (shorter sequence, no stage deployment)
-PHASES_DEV_ONLY=("INIT" "DISCOVER" "DEVELOP" "DONE")
-
-# Get phase sequence for current mode
-get_phase_sequence() {
-    local mode="${1:-$(get_mode 2>/dev/null || echo "full")}"
-
-    if [ "$mode" = "dev-only" ]; then
-        echo "${PHASES_DEV_ONLY[@]}"
+generate_uuid() {
+    if command -v uuidgen &>/dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    elif [[ -f /proc/sys/kernel/random/uuid ]]; then
+        cat /proc/sys/kernel/random/uuid
+    elif command -v python3 &>/dev/null; then
+        python3 -c 'import uuid; print(uuid.uuid4())'
     else
-        echo "${PHASES_FULL_STANDARD[@]}"
+        echo "$(date +%s)-$$-${RANDOM}${RANDOM}"
     fi
 }
 
-# Get phase index (1-based for display)
-get_phase_index() {
-    local phase="$1"
-    local mode="${2:-$(get_mode 2>/dev/null || echo "full")}"
-
-    local -a phases
-    IFS=' ' read -ra phases <<< "$(get_phase_sequence "$mode")"
-
-    local i=1
-    for p in "${phases[@]}"; do
-        if [ "$p" = "$phase" ]; then
-            echo "$i"
-            return
-        fi
-        ((i++))
-    done
-    echo "0"
-}
-
-# Get total phases
-get_total_phases() {
-    local mode="${1:-$(get_mode 2>/dev/null || echo "full")}"
-
-    local -a phases
-    IFS=' ' read -ra phases <<< "$(get_phase_sequence "$mode")"
-    echo "${#phases[@]}"
-}
-
-# Get remaining phases
-get_remaining_phases() {
-    local current="$1"
-    local mode="${2:-$(get_mode 2>/dev/null || echo "full")}"
-
-    local -a phases
-    IFS=' ' read -ra phases <<< "$(get_phase_sequence "$mode")"
-
-    local found=false
-    local remaining=()
-
-    for p in "${phases[@]}"; do
-        if [ "$found" = "true" ]; then
-            remaining+=("$p")
-        fi
-        if [ "$p" = "$current" ]; then
-            found=true
-        fi
-    done
-
-    echo "${remaining[@]}"
-}
-
-# =============================================================================
-# PROGRESS CALCULATION
-# =============================================================================
-
-calculate_progress() {
-    local phase="$1"
-    local mode="${2:-$(get_mode 2>/dev/null || echo "full")}"
-
-    local index=$(get_phase_index "$phase" "$mode")
-    local total=$(get_total_phases "$mode")
-
-    if [ "$total" -eq 0 ]; then
-        echo "0"
-        return
+atomic_write() {
+    local content="$1"
+    local file="$2"
+    local dir
+    dir=$(dirname "$file")
+    if ! mkdir -p "$dir" 2>/dev/null; then
+        echo "ERROR: Cannot create directory $dir" >&2
+        return 1
     fi
-
-    # Calculate percentage (phase completion = at start of phase)
-    # So INIT=0%, after INIT=12.5%, etc for 8 phases
-    local percent=$(( (index - 1) * 100 / total ))
-    echo "$percent"
-}
-
-generate_progress_bar() {
-    local percent="$1"
-    local width=20
-    local filled=$(( percent * width / 100 ))
-    local empty=$(( width - filled ))
-
-    local bar=""
-    for ((i=0; i<filled; i++)); do bar+="█"; done
-    for ((i=0; i<empty; i++)); do bar+="░"; done
-
-    echo "$bar"
+    local tmp_file="${file}.tmp.$$"
+    if ! echo "$content" > "$tmp_file" 2>/dev/null; then
+        echo "ERROR: Cannot write to $file" >&2
+        rm -f "$tmp_file"
+        return 1
+    fi
+    if ! mv "$tmp_file" "$file" 2>/dev/null; then
+        echo "ERROR: Cannot finalize $file" >&2
+        rm -f "$tmp_file"
+        return 1
+    fi
+    return 0
 }
 
 # =============================================================================
-# EVIDENCE STATUS
+# UNIFIED STATE OPERATIONS
 # =============================================================================
 
-# Evidence file definitions - bash 3.x compatible using functions
-# get_evidence_file returns: file_path|gate_name|create_command
-get_evidence_file_info() {
-    local name="$1"
-    local tmp="${ZCP_TMP_DIR:-/tmp}"
-    case "$name" in
-        # Standard workflow evidence
-        recipe_review) echo "${tmp}/recipe_review.json|Gate 0|.zcp/recipe-search.sh quick" ;;
-        discovery) echo "${tmp}/discovery.json|Gate 1|.zcp/workflow.sh create_discovery" ;;
-        dev_verify) echo "${tmp}/dev_verify.json|Gate 2|.zcp/verify.sh {dev}" ;;
-        deploy_evidence) echo "${tmp}/deploy_evidence.json|Gate 3|.zcp/status.sh --wait" ;;
-        stage_verify) echo "${tmp}/stage_verify.json|Gate 4|.zcp/verify.sh {stage}" ;;
+zcp_init() {
+    local session_id="${1:-$(generate_uuid)}"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local state
+    state=$(jq -n \
+        --arg sid "$session_id" \
+        --arg ts "$timestamp" \
+        '{
+            version: "2.0",
+            session_id: $sid,
+            mode: "full",
+            updated_at: $ts,
+            workflow: {
+                phase: "NONE",
+                iteration: 1,
+                started_at: $ts,
+                bootstrap_complete: false,
+                services: {}
+            },
+            bootstrap: {
+                active: false,
+                workflow_id: null,
+                current_step: 0,
+                steps: [],
+                services: {}
+            },
+            evidence: {},
+            context: { intent: "", notes: [], last_error: null }
+        }')
+    atomic_write "$state" "$ZCP_STATE_FILE"
+    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+    echo "$session_id"
+}
 
-        # Bootstrap evidence (created by bootstrap command)
-        bootstrap_plan) echo "${tmp}/bootstrap_plan.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
-        bootstrap_import) echo "${tmp}/bootstrap_import.yml|Bootstrap|.zcp/workflow.sh bootstrap" ;;
-        bootstrap_state) echo "${tmp}/bootstrap_state.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
-        bootstrap_handoff) echo "${tmp}/bootstrap_handoff.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
-        bootstrap_complete) echo "${tmp}/bootstrap_complete.json|Bootstrap|.zcp/workflow.sh bootstrap" ;;
-        *) echo "" ;;
+zcp_state() {
+    if [[ -f "$ZCP_STATE_FILE" ]]; then
+        cat "$ZCP_STATE_FILE"
+    elif [[ -f "$ZCP_STATE_PERSISTENT" ]]; then
+        cat "$ZCP_STATE_PERSISTENT"
+    else
+        echo '{}'
+    fi
+}
+
+zcp_get() {
+    local path="$1"
+    zcp_state | jq -r "$path // empty" 2>/dev/null
+}
+
+zcp_set() {
+    local path="$1"
+    local value="$2"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local state
+    state=$(zcp_state)
+    state=$(echo "$state" | jq --arg ts "$timestamp" "$path = $value | .updated_at = \$ts")
+    atomic_write "$state" "$ZCP_STATE_FILE"
+    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+}
+
+zcp_exists() { [[ -f "$ZCP_STATE_FILE" ]] || [[ -f "$ZCP_STATE_PERSISTENT" ]]; }
+zcp_clear() { rm -f "$ZCP_STATE_FILE" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true; }
+
+# =============================================================================
+# SESSION/MODE/PHASE (overrides utils.sh versions with unified state backing)
+# =============================================================================
+
+get_session() { zcp_get '.session_id'; }
+
+get_mode() {
+    local mode
+    mode=$(zcp_get '.mode')
+    [[ -z "$mode" ]] && echo "full" || echo "$mode"
+}
+
+set_mode() {
+    local mode="$1"
+    case "$mode" in
+        quick|dev-only|full|hotfix|bootstrap) ;;
+        *) echo "ERROR: Invalid mode: $mode" >&2; return 1 ;;
     esac
+    zcp_set '.mode' "\"$mode\""
 }
 
-# List of all evidence names for iteration (standard workflow only)
-EVIDENCE_NAMES="recipe_review discovery dev_verify deploy_evidence stage_verify"
-
-# Bootstrap evidence names (separate tracking)
-BOOTSTRAP_EVIDENCE_NAMES="bootstrap_plan bootstrap_import bootstrap_state bootstrap_handoff bootstrap_complete"
-
-get_evidence_status() {
-    local name="$1"
-    local info=$(get_evidence_file_info "$name")
-    local file="${info%%|*}"
-
-    if [ ! -f "$file" ]; then
-        echo "pending"
-        return
-    fi
-
-    # Check session match for JSON files
-    if [[ "$file" == *.json ]]; then
-        local session=$(get_session 2>/dev/null || echo "")
-        local evidence_session=$(jq -r '.session_id // empty' "$file" 2>/dev/null)
-
-        if [ -n "$session" ] && [ -n "$evidence_session" ] && [ "$session" != "$evidence_session" ]; then
-            echo "stale"
-            return
-        fi
-
-        # Check for failures in verify files
-        if [[ "$name" == *"verify"* ]]; then
-            local failed=$(jq -r '.failed // 0' "$file" 2>/dev/null)
-            if [ "$failed" != "0" ] && [ "$failed" != "null" ]; then
-                echo "failed"
-                return
-            fi
-        fi
-    fi
-
-    echo "complete"
+get_phase() {
+    local phase
+    phase=$(zcp_get '.workflow.phase')
+    [[ -z "$phase" ]] || [[ "$phase" == "null" ]] && echo "NONE" || echo "$phase"
 }
 
-get_evidence_timestamp() {
-    local name="$1"
-    local info=$(get_evidence_file_info "$name")
-    local file="${info%%|*}"
-
-    if [ ! -f "$file" ]; then
-        echo ""
-        return
-    fi
-
-    jq -r '.timestamp // empty' "$file" 2>/dev/null
-}
-
-# =============================================================================
-# NEXT ACTION DETERMINATION
-# =============================================================================
-
-# Determines next action based on current state
-determine_next_action() {
-    local phase=$(get_phase 2>/dev/null || echo "INIT")
-    local mode=$(get_mode 2>/dev/null || echo "full")
-
+set_phase() {
+    local phase="$1"
     case "$phase" in
-        "INIT")
-            if [ "$(get_evidence_status recipe_review)" != "complete" ]; then
-                echo '{"command":".zcp/recipe-search.sh quick {runtime} [managed-service]","description":"Review recipes and extract patterns (Gate 0)","on_success":{"next":".zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}"},"on_failure":{"check":"Is the runtime type valid?","common_issues":["Invalid runtime type","Network error fetching recipes"]}}'
-            else
-                echo '{"command":".zcp/workflow.sh transition_to DISCOVER","description":"Transition to DISCOVER phase","on_success":{"next":"Record service discovery"}}'
-            fi
-            ;;
-        "DISCOVER")
-            if [ "$(get_evidence_status discovery)" != "complete" ]; then
-                echo '{"command":".zcp/workflow.sh create_discovery {dev_id} {dev_name} {stage_id} {stage_name}","description":"Record service discovery","on_success":{"next":".zcp/workflow.sh transition_to DEVELOP"},"on_failure":{"check":"Are service IDs correct?","analyze":"zcli service list -P $projectId","common_issues":["Wrong service IDs","Services not running"]}}'
-            else
-                echo '{"command":".zcp/workflow.sh transition_to DEVELOP","description":"Transition to DEVELOP phase"}'
-            fi
-            ;;
-        "DEVELOP")
-            if [ "$(get_evidence_status dev_verify)" != "complete" ]; then
-                echo '{"command":".zcp/verify.sh {dev} 8080 / /status","description":"Verify dev endpoints work","prerequisites":["Build and start app: ssh {dev} \"go build -o app && ./app &\""],"on_success":{"next":".zcp/workflow.sh transition_to DEPLOY"},"on_failure":{"analyze":"ssh {dev} \"cat /var/log/app.log | tail -50\"","common_issues":["App not running","Database connection failed","Port conflict"]}}'
-            else
-                echo '{"command":".zcp/workflow.sh transition_to DEPLOY","description":"Transition to DEPLOY phase"}'
-            fi
-            ;;
-        "DEPLOY")
-            if [ "$(get_evidence_status deploy_evidence)" != "complete" ]; then
-                echo '{"command":"ssh {dev} \"zcli push {stage_id} --setup=api\" && .zcp/status.sh --wait {stage}","description":"Deploy to stage and wait for completion","on_success":{"next":".zcp/workflow.sh transition_to VERIFY"},"on_failure":{"analyze":"ssh {dev} \"zcli service log {stage_id}\"","common_issues":["Build failed on stage","Missing deployFiles","Authentication expired"]}}'
-            else
-                echo '{"command":".zcp/workflow.sh transition_to VERIFY","description":"Transition to VERIFY phase"}'
-            fi
-            ;;
-        "VERIFY")
-            if [ "$(get_evidence_status stage_verify)" != "complete" ]; then
-                echo '{"command":".zcp/verify.sh {stage} 8080 / /status","description":"Verify stage endpoints work","on_success":{"next":".zcp/workflow.sh transition_to DONE"},"on_failure":{"analyze":"Check stage logs and compare to dev","common_issues":["Different environment variables","Missing database migration","Network policy blocking"]}}'
-            else
-                echo '{"command":".zcp/workflow.sh transition_to DONE","description":"Transition to DONE phase"}'
-            fi
-            ;;
-        "DONE")
-            echo '{"command":".zcp/workflow.sh complete","description":"Mark workflow complete","on_success":{"output":"<completed>WORKFLOW_DONE</completed>"}}'
-            ;;
-        *)
-            echo '{"command":".zcp/workflow.sh show","description":"Check current state"}'
-            ;;
+        NONE|INIT|DISCOVER|DEVELOP|DEPLOY|VERIFY|DONE|QUICK) ;;
+        *) echo "ERROR: Invalid phase: $phase" >&2; return 1 ;;
     esac
+    zcp_set '.workflow.phase' "\"$phase\""
 }
 
+get_iteration() {
+    local iter
+    iter=$(zcp_get '.workflow.iteration')
+    [[ -z "$iter" ]] || [[ "$iter" == "null" ]] && echo "1" || echo "$iter"
+}
+
+set_iteration() {
+    local n="$1"
+    [[ ! "$n" =~ ^[0-9]+$ ]] || [[ "$n" -lt 1 ]] && { echo "ERROR: Invalid iteration: $n" >&2; return 1; }
+    zcp_set '.workflow.iteration' "$n"
+}
+
+check_bootstrap_mode() {
+    local completed
+    completed=$(zcp_get '.workflow.bootstrap_complete')
+    if [[ "$completed" == "true" ]]; then
+        echo "true"
+    else
+        [[ -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json" ]] && echo "true" || echo "false"
+    fi
+}
 
 # =============================================================================
-# WORKFLOW STATE GENERATION
+# BOOTSTRAP STATE MANAGEMENT
 # =============================================================================
 
-generate_workflow_state() {
-    local session=$(get_session 2>/dev/null || echo "unknown")
-    local mode=$(get_mode 2>/dev/null || echo "full")
-    local phase=$(get_phase 2>/dev/null || echo "INIT")
-    local iteration=$(get_iteration 2>/dev/null || echo "1")
-    local bootstrap=$(check_bootstrap_mode)
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-    local phase_index=$(get_phase_index "$phase" "$mode")
-    local total_phases=$(get_total_phases "$mode")
-    local progress=$(calculate_progress "$phase" "$mode")
-    local progress_bar=$(generate_progress_bar "$progress")
-    local remaining=$(get_remaining_phases "$phase" "$mode")
-
-    local next_action=$(determine_next_action)
-
-    # Build evidence status
-    local evidence_json="{"
-    local first=true
-    for name in $EVIDENCE_NAMES; do
-        local status=$(get_evidence_status "$name")
-        local at=$(get_evidence_timestamp "$name")
-
-        if [ "$first" = "true" ]; then
-            first=false
-        else
-            evidence_json+=","
-        fi
-
-        evidence_json+="\"$name\":{\"status\":\"$status\""
-        if [ -n "$at" ]; then
-            evidence_json+=",\"at\":\"$at\""
-        fi
-        evidence_json+="}"
+init_bootstrap() {
+    local plan_data="$1"
+    local steps_csv="${2:-plan,recipe-search,generate-import,import-services,wait-services,mount-dev,discover-services,finalize,spawn-subagents,aggregate-results}"
+    local workflow_id session_id timestamp
+    workflow_id=$(generate_uuid)
+    session_id=$(zcp_get '.session_id')
+    [[ -z "$session_id" ]] || [[ "$session_id" == "null" ]] && session_id=$(zcp_init)
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local steps_json="[]"
+    local index=1
+    IFS=',' read -ra step_names <<< "$steps_csv"
+    for name in "${step_names[@]}"; do
+        steps_json=$(echo "$steps_json" | jq --arg name "$name" --argjson idx "$index" '. + [{name: $name, index: $idx, status: "pending", data: null}]')
+        ((index++))
     done
-    evidence_json+="}"
-
-    # Get intent if exists (use jq for proper JSON escaping)
-    local intent=""
-    local tmp="${ZCP_TMP_DIR:-/tmp}"
-    if [ -f "${tmp}/claude_intent.txt" ]; then
-        # jq -Rs reads raw input and outputs as JSON string (with proper escaping)
-        # Then strip the surrounding quotes for embedding in our JSON
-        intent=$(jq -Rs '.' "${tmp}/claude_intent.txt" 2>/dev/null | sed 's/^"//;s/"$//' || echo "")
-    fi
-
-    # Get last error if exists
-    local last_error="null"
-    if [ -f "${tmp}/claude_context.json" ]; then
-        last_error=$(jq '.last_error // null' "${tmp}/claude_context.json" 2>/dev/null || echo "null")
-    fi
-
-    # Build discovery info if exists
-    local discovery_json="null"
-    if [ -f "${tmp}/discovery.json" ]; then
-        discovery_json=$(cat "${tmp}/discovery.json" 2>/dev/null | jq -c '.' 2>/dev/null || echo "null")
-    fi
-
-    # Build remaining array
-    local remaining_array="[]"
-    if [ -n "$remaining" ]; then
-        remaining_array=$(echo "$remaining" | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -s . 2>/dev/null || echo "[]")
-    fi
-
-    # Construct full state
-    cat <<EOF
-{
-  "session_id": "$session",
-  "mode": "$mode",
-  "iteration": $iteration,
-  "updated_at": "$timestamp",
-  "bootstrap_completed": $bootstrap,
-
-  "phase": {
-    "current": "$phase",
-    "index": $phase_index,
-    "total": $total_phases,
-    "remaining": $remaining_array
-  },
-
-  "progress": {
-    "percent": $progress,
-    "bar": "$progress_bar",
-    "message": "$(if [ "$phase" != "DONE" ]; then echo "YOU ARE NOT DONE. $((total_phases - phase_index)) phases remaining."; else echo "Workflow complete."; fi)"
-  },
-
-  "evidence": $evidence_json,
-
-  "discovery": $discovery_json,
-
-  "next_action": $next_action,
-
-  "context": {
-    "intent": "$intent",
-    "last_error": $last_error
-  },
-
-  "completion": {
-    "signal": "<completed>WORKFLOW_DONE</completed>",
-    "condition": "All evidence complete AND phase == DONE AND complete command run"
-  }
-}
-EOF
+    local state
+    state=$(zcp_state)
+    state=$(echo "$state" | jq \
+        --arg wid "$workflow_id" \
+        --arg ts "$timestamp" \
+        --argjson plan "$plan_data" \
+        --argjson steps "$steps_json" \
+        '.mode = "bootstrap" | .bootstrap.active = true | .bootstrap.workflow_id = $wid | .bootstrap.started_at = $ts | .bootstrap.current_step = 1 | .bootstrap.plan = $plan | .bootstrap.steps = $steps | .bootstrap.services = {} | .updated_at = $ts')
+    atomic_write "$state" "$ZCP_STATE_FILE"
+    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
 }
 
-# =============================================================================
-# STATE OPERATIONS
-# =============================================================================
+get_state() { zcp_get '.bootstrap'; }
+bootstrap_active() { [[ "$(zcp_get '.bootstrap.active')" == "true" ]]; }
+get_plan() { zcp_get '.bootstrap.plan'; }
+get_step() { local name="$1"; zcp_state | jq --arg n "$name" '.bootstrap.steps[] | select(.name == $n)'; }
+get_step_data() { local name="$1"; zcp_state | jq --arg n "$name" '(.bootstrap.steps[] | select(.name == $n) | .data) // {}'; }
+is_step_complete() { local name="$1"; [[ "$(zcp_state | jq -r --arg n "$name" '(.bootstrap.steps[] | select(.name == $n) | .status) // "pending"')" == "complete" ]]; }
+get_next_step() { zcp_state | jq -r '(.bootstrap.steps[] | select(.status != "complete") | .name) // empty' | head -1; }
+get_current_step_index() { zcp_get '.bootstrap.current_step'; }
 
-# Update and persist state
-update_workflow_state() {
-    local state=$(generate_workflow_state)
-
-    # Write to ephemeral
-    echo "$state" | jq '.' > "$WORKFLOW_STATE_FILE" 2>/dev/null || echo "$state" > "$WORKFLOW_STATE_FILE"
-
-    # Write to persistent
-    local persistent_dir=$(dirname "$WORKFLOW_STATE_PERSISTENT")
-    if mkdir -p "$persistent_dir" 2>/dev/null; then
-        echo "$state" | jq '.' > "$WORKFLOW_STATE_PERSISTENT" 2>/dev/null || echo "$state" > "$WORKFLOW_STATE_PERSISTENT"
-    fi
+get_step_index() {
+    local name="$1"
+    zcp_state | jq -r --arg n "$name" '(.bootstrap.steps | to_entries | .[] | select(.value.name == $n) | .key) // -1'
 }
 
-# Emit state to stdout (for agent consumption)
-emit_workflow_state() {
-    local format="${1:-full}"
+get_step_by_index() {
+    local idx="$1"
+    zcp_state | jq -r --argjson i "$idx" '(.bootstrap.steps[$i].name) // empty'
+}
 
-    update_workflow_state
-
-    case "$format" in
-        "full")
-            cat "$WORKFLOW_STATE_FILE" 2>/dev/null || generate_workflow_state
-            ;;
-        "compact")
-            jq -c '.' "$WORKFLOW_STATE_FILE" 2>/dev/null || generate_workflow_state | jq -c '.'
-            ;;
-        "next")
-            jq '.next_action' "$WORKFLOW_STATE_FILE" 2>/dev/null
-            ;;
-        "progress")
-            jq '{phase: .phase.current, progress: .progress, next: .next_action.command}' "$WORKFLOW_STATE_FILE" 2>/dev/null
-            ;;
+set_step_status() {
+    local name="$1"
+    local status="$2"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local ts_field
+    case "$status" in
+        in_progress) ts_field="started_at" ;;
+        complete) ts_field="completed_at" ;;
+        failed) ts_field="failed_at" ;;
+        *) ts_field="" ;;
     esac
-}
-
-# Read current state
-read_workflow_state() {
-    if [ -f "$WORKFLOW_STATE_FILE" ]; then
-        cat "$WORKFLOW_STATE_FILE"
-    elif [ -f "$WORKFLOW_STATE_PERSISTENT" ]; then
-        cat "$WORKFLOW_STATE_PERSISTENT"
+    local state
+    state=$(zcp_state)
+    if [[ -n "$ts_field" ]]; then
+        state=$(echo "$state" | jq --arg n "$name" --arg s "$status" --arg ts "$timestamp" --arg tf "$ts_field" '.bootstrap.steps |= map(if .name == $n then .status = $s | .[$tf] = $ts else . end) | .updated_at = $ts')
     else
-        generate_workflow_state
+        state=$(echo "$state" | jq --arg n "$name" --arg s "$status" --arg ts "$timestamp" '.bootstrap.steps |= map(if .name == $n then .status = $s else . end) | .updated_at = $ts')
     fi
+    local new_index
+    new_index=$(echo "$state" | jq --arg n "$name" '.bootstrap.steps | to_entries | map(select(.value.name == $n)) | .[0].key + 1')
+    state=$(echo "$state" | jq --argjson idx "$new_index" '.bootstrap.current_step = $idx')
+    atomic_write "$state" "$ZCP_STATE_FILE"
+    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
 }
 
-# Get specific field from state
-get_workflow_state_field() {
-    local field="$1"
-    read_workflow_state | jq -r "$field"
+set_step_data() {
+    local name="$1"
+    local data="$2"
+    echo "$data" | jq -e . >/dev/null 2>&1 || data='{}'
+    local state
+    state=$(zcp_state)
+    state=$(echo "$state" | jq --arg n "$name" --argjson d "$data" '.bootstrap.steps |= map(if .name == $n then .data = $d else . end)')
+    atomic_write "$state" "$ZCP_STATE_FILE"
+}
+
+complete_step() {
+    local name="$1"
+    local data="${2:-"{}"}"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    echo "$data" | jq -e . >/dev/null 2>&1 || data='{}'
+    local state
+    state=$(zcp_state)
+    state=$(echo "$state" | jq --arg n "$name" --arg ts "$timestamp" --argjson d "$data" '.bootstrap.steps |= map(if .name == $n then .status = "complete" | .completed_at = $ts | .data = $d else . end) | .updated_at = $ts')
+    atomic_write "$state" "$ZCP_STATE_FILE"
+    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+}
+
+update_plan() {
+    local plan_update="$1"
+    local state
+    state=$(zcp_state)
+    state=$(echo "$state" | jq --argjson u "$plan_update" '.bootstrap.plan = (.bootstrap.plan + $u)')
+    atomic_write "$state" "$ZCP_STATE_FILE"
 }
 
 # =============================================================================
-# WIGGUM DISPLAY
+# SERVICE STATE (unified + file-based for subagent isolation)
 # =============================================================================
 
-# Display WIGGUM-style status output
-display_wiggum_status() {
-    update_workflow_state
-
-    local state=$(read_workflow_state)
-    local phase=$(echo "$state" | jq -r '.phase.current')
-    local progress=$(echo "$state" | jq -r '.progress.percent')
-    local bar=$(echo "$state" | jq -r '.progress.bar')
-    local remaining=$(echo "$state" | jq -r '.phase.remaining | length')
-    local bootstrap=$(echo "$state" | jq -r '.bootstrap_completed')
-    local next_cmd=$(echo "$state" | jq -r '.next_action.command')
-
-    echo ""
-    echo "┌─────────────────────────────────────────────────────────────────────────────┐"
-    echo "│  WORKFLOW STATE                                                              │"
-    echo "└─────────────────────────────────────────────────────────────────────────────┘"
-    echo ""
-    echo "  Phase:    $phase"
-    echo "  Progress: $bar ${progress}%"
-    echo "  Mode:     $(echo "$state" | jq -r '.mode')$(if [ "$bootstrap" = "true" ]; then echo " (bootstrapped)"; fi)"
-    echo ""
-
-    if [ "$phase" != "DONE" ]; then
-        echo "  ⚠️  YOU ARE NOT DONE. $remaining phases remaining."
-        echo ""
-        echo "  Remaining: $(echo "$state" | jq -r '.phase.remaining | join(" → ")')"
-    else
-        echo "  ✅ Workflow complete."
-    fi
-
-    echo ""
-    echo "┌─────────────────────────────────────────────────────────────────────────────┐"
-    echo "│  NEXT ACTION                                                                 │"
-    echo "└─────────────────────────────────────────────────────────────────────────────┘"
-    echo ""
-    echo "  Command: $next_cmd"
-    echo "  $(echo "$state" | jq -r '.next_action.description')"
-    echo ""
-
-    # Show JSON state
-    echo "┌─────────────────────────────────────────────────────────────────────────────┐"
-    echo "│  FULL STATE (JSON)                                                           │"
-    echo "└─────────────────────────────────────────────────────────────────────────────┘"
-    echo ""
-    echo "$state" | jq '.'
+set_service_status() {
+    local hostname="$1"
+    local status="$2"
+    local data="${3:-"{}"}"
+    echo "$data" | jq -e . >/dev/null 2>&1 || data='{}'
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local state
+    state=$(zcp_state)
+    state=$(echo "$state" | jq --arg h "$hostname" --arg s "$status" --arg ts "$timestamp" --argjson d "$data" '.bootstrap.services[$h] = {status: $s, updated_at: $ts, data: $d} | .updated_at = $ts')
+    atomic_write "$state" "$ZCP_STATE_FILE"
 }
+
+get_service_status() { local hostname="$1"; zcp_state | jq --arg h "$hostname" '.bootstrap.services[$h] // {status: "unknown"}'; }
+get_all_services() { zcp_get '.bootstrap.services'; }
+
+# File-based per-service state for subagent isolation (used by mark-complete.sh)
+set_service_state() {
+    local hostname="$1"
+    local key="$2"
+    local value="$3"
+    [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]] && { echo "ERROR: Invalid hostname: $hostname" >&2; return 1; }
+    local service_dir="${ZCP_STATE_DIR:-${SCRIPT_DIR:-$(pwd)}/state}/bootstrap/services/${hostname}"
+    mkdir -p "$service_dir" 2>/dev/null || true
+    local status_file="${service_dir}/status.json"
+    local status='{}'
+    [[ -f "$status_file" ]] && status=$(cat "$status_file")
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    status=$(echo "$status" | jq --arg key "$key" --arg val "$value" --arg ts "$timestamp" '.[$key] = $val | .last_update = $ts')
+    atomic_write "$status" "$status_file"
+}
+
+get_service_state() {
+    local hostname="$1"
+    [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]] && { echo '{}'; return 1; }
+    local status_file="${ZCP_STATE_DIR:-${SCRIPT_DIR:-$(pwd)}/state}/bootstrap/services/${hostname}/status.json"
+    [[ -f "$status_file" ]] && cat "$status_file" || echo '{}'
+}
+
+# =============================================================================
+# BOOTSTRAP LIFECYCLE
+# =============================================================================
+
+clear_bootstrap() {
+    local state
+    state=$(zcp_state)
+    state=$(echo "$state" | jq '.bootstrap.active = false | .bootstrap.workflow_id = null | .bootstrap.current_step = 0 | .bootstrap.steps = [] | .bootstrap.services = {}')
+    atomic_write "$state" "$ZCP_STATE_FILE"
+    rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json" "${ZCP_TMP_DIR:-/tmp}/bootstrap_plan.json" "${ZCP_TMP_DIR:-/tmp}/bootstrap_import.yml" "${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json" 2>/dev/null || true
+}
+
+complete_bootstrap() {
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local services
+    services=$(zcp_get '.bootstrap.services')
+    [[ -z "$services" ]] && services='{}'
+    local state
+    state=$(zcp_state)
+    state=$(echo "$state" | jq --arg ts "$timestamp" --argjson svc "$services" '.bootstrap.active = false | .bootstrap.completed_at = $ts | .workflow.bootstrap_complete = true | .workflow.services = $svc | .mode = "full" | .updated_at = $ts')
+    atomic_write "$state" "$ZCP_STATE_FILE"
+    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+    echo '{"status":"complete","completed_at":"'"$timestamp"'"}' > "${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json"
+}
+
+# =============================================================================
+# EXPORTS
+# =============================================================================
+
+export ZCP_STATE_FILE ZCP_STATE_PERSISTENT
+export -f generate_uuid atomic_write zcp_init zcp_state zcp_get zcp_set zcp_exists zcp_clear
+export -f get_session get_mode set_mode get_phase set_phase get_iteration set_iteration check_bootstrap_mode
+export -f init_bootstrap get_state bootstrap_active get_plan get_step get_step_data is_step_complete get_next_step get_current_step_index
+export -f get_step_index get_step_by_index set_step_status set_step_data complete_step update_plan
+export -f set_service_status get_service_status get_all_services set_service_state get_service_state
+export -f clear_bootstrap complete_bootstrap

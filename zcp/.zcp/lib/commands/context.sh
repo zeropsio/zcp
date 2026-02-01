@@ -63,8 +63,8 @@ get_intent() {
     local intent_file="$WORKFLOW_STATE_DIR/intent.txt"
 
     # Check /tmp/ first for backward compat
-    if [ -f "/tmp/claude_intent.txt" ]; then
-        cat "/tmp/claude_intent.txt"
+    if [ -f "${ZCP_TMP_DIR:-/tmp}/zcp_intent.txt" ]; then
+        cat "${ZCP_TMP_DIR:-/tmp}/zcp_intent.txt"
         return 0
     fi
 
@@ -83,7 +83,7 @@ set_intent() {
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
     # Write to /tmp/
-    echo "$intent" > "/tmp/claude_intent.txt"
+    echo "$intent" > "${ZCP_TMP_DIR:-/tmp}/zcp_intent.txt"
 
     # Write to persistent storage if available
     if [ "$PERSISTENT_ENABLED" = true ] || mkdir -p "$WORKFLOW_STATE_DIR" 2>/dev/null; then

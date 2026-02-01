@@ -7,8 +7,8 @@ _CMD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Source validation functions first (for security checks)
 source "$_CMD_LIB_DIR/validate.sh"
 
-# Source WIGGUM state management first
-source "$_CMD_LIB_DIR/state.sh"
+# Source WIGGUM display layer
+source "$_CMD_LIB_DIR/view.sh"
 
 # Source all command modules
 source "$_CMD_LIB_DIR/commands/init.sh"

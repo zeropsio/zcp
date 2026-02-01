@@ -1467,7 +1467,7 @@ create_evidence_file() {
 
   # Get session_id for evidence validation consistency
   local session_id
-  session_id=$(cat /tmp/claude_session 2>/dev/null || echo "standalone-$(date +%s)")
+  session_id=$(cat "${ZCP_TMP_DIR:-/tmp}/zcp_session" 2>/dev/null || echo "standalone-$(date +%s)")
 
   cat > "$evidence_file" <<EOF
 {

@@ -147,17 +147,7 @@ step_plan() {
             stage_hostname: $stage_hosts[0]
         }')
 
-    # Get or create session
-    local session_id
-    session_id=$(cat "${ZCP_TMP_DIR:-/tmp}/claude_session" 2>/dev/null || echo "")
-    if [ -z "$session_id" ]; then
-        session_id=$(generate_secure_session_id 2>/dev/null || echo "$(date +%Y%m%d%H%M%S)-$$-$RANDOM$RANDOM")
-        echo "$session_id" > "${ZCP_TMP_DIR:-/tmp}/claude_session"
-        echo "bootstrap" > "${ZCP_TMP_DIR:-/tmp}/claude_mode"
-        echo "INIT" > "${ZCP_TMP_DIR:-/tmp}/claude_phase"
-    fi
-
-    # Initialize bootstrap with plan
+    # Initialize bootstrap with plan (handles session creation via unified state)
     init_bootstrap "$plan_data"
 
     # Also write plan to temp file for compatibility

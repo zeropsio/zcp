@@ -20,7 +20,7 @@
 # Track start time for timeout (session-scoped to prevent race conditions)
 _get_wait_start_file() {
     local session_id
-    session_id=$(cat "${ZCP_TMP_DIR:-/tmp}/claude_session" 2>/dev/null || echo "$$")
+    session_id=$(cat "${ZCP_TMP_DIR:-/tmp}/zcp_session" 2>/dev/null || echo "$$")
     echo "${ZCP_TMP_DIR:-/tmp}/bootstrap_wait_start_${session_id}"
 }
 
