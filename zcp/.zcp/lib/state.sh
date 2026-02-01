@@ -268,14 +268,6 @@ determine_next_action() {
     esac
 }
 
-# Check if bootstrap was run
-check_bootstrap_mode() {
-    if [ -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json" ]; then
-        echo "true"
-    else
-        echo "false"
-    fi
-}
 
 # =============================================================================
 # WORKFLOW STATE GENERATION

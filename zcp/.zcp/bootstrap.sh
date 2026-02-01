@@ -38,7 +38,7 @@ source "$SCRIPT_DIR/lib/utils.sh"
 
 # Source bootstrap modules
 source "$SCRIPT_DIR/lib/bootstrap/output.sh"
-source "$SCRIPT_DIR/lib/bootstrap/state.sh"
+source "$SCRIPT_DIR/lib/unified-state.sh"
 source "$SCRIPT_DIR/lib/bootstrap/detect.sh"
 source "$SCRIPT_DIR/lib/bootstrap/import-gen.sh"
 
@@ -116,7 +116,7 @@ cmd_step() {
     fi
 
     # Ensure workflow state exists
-    if ! workflow_exists; then
+    if ! bootstrap_active; then
         echo ""
         echo "✗ No active workflow"
         echo ""
@@ -146,13 +146,13 @@ cmd_step() {
     fi
 
     # Mark step as in_progress
-    update_step_status "$step_name" "in_progress"
+    set_step_status "$step_name" "in_progress"
 
     # Execute the step
     local step_script="$SCRIPT_DIR/lib/bootstrap/steps/${step_name}.sh"
 
     if [[ ! -f "$step_script" ]]; then
-        update_step_status "$step_name" "failed"
+        set_step_status "$step_name" "failed"
         emit_error "$step_name" "Step implementation not found" "Check ${step_script} exists"
         exit 1
     fi
@@ -163,7 +163,7 @@ cmd_step() {
     local func_name="step_${step_name//-/_}"
 
     if ! type "$func_name" &>/dev/null; then
-        update_step_status "$step_name" "failed"
+        set_step_status "$step_name" "failed"
         emit_error "$step_name" "Step function not found: $func_name" "Check step implementation"
         exit 1
     fi
@@ -210,14 +210,14 @@ cmd_step() {
             echo ""
         else
             # Step failed
-            update_step_status "$step_name" "failed"
+            set_step_status "$step_name" "failed"
             local error_msg
             error_msg=$(echo "$step_output" | jq -r '.message // .data.error // "Step failed"' 2>/dev/null)
             emit_error "$step_name" "$error_msg" "Check logs and resolve the issue"
             exit 1
         fi
     else
-        update_step_status "$step_name" "failed"
+        set_step_status "$step_name" "failed"
         emit_error "$step_name" "Step execution failed (exit code: ${step_exit_code})" "Check logs and resolve the issue"
         exit 1
     fi
@@ -306,7 +306,7 @@ ZCLI_AUTH
 
     # Source and run plan step
     source "$SCRIPT_DIR/lib/bootstrap/steps/plan.sh"
-    update_step_status "plan" "in_progress"
+    set_step_status "plan" "in_progress"
 
     local plan_output
     local plan_exit=0
@@ -339,7 +339,7 @@ ZCLI_AUTH
 # Clear all bootstrap state
 # =============================================================================
 cmd_reset() {
-    clear_bootstrap_state
+    clear_bootstrap
     echo ""
     echo "✓ Workflow state cleared"
     echo ""

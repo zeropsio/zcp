@@ -29,6 +29,7 @@
 | Gate | Transition | Evidence Required |
 |------|------------|-------------------|
 | 0 | INIT → DISCOVER | `recipe_review.json` |
+| B | BOOTSTRAP → WORKFLOW | `zcp_state.json` (bootstrap_complete) |
 | 1 | DISCOVER → DEVELOP | `discovery.json` |
 | 2 | DEVELOP → DEPLOY | `dev_verify.json` + config validation |
 | 3 | DEPLOY → VERIFY | `deploy_evidence.json` |
