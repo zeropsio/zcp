@@ -140,6 +140,77 @@ emit_resume() {
 }
 
 # -----------------------------------------------------------------------------
+# emit_spawn_instructions <step_output_json>
+# Special output for spawn-subagents step - must show Task tool instructions
+# -----------------------------------------------------------------------------
+emit_spawn_instructions() {
+    local step_output="$1"
+    local count instructions
+
+    count=$(echo "$step_output" | jq -r '.data.subagent_count // 0' 2>/dev/null)
+    instructions=$(echo "$step_output" | jq -r '.data.instructions // []' 2>/dev/null)
+
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo "  SPAWN ${count} SUBAGENT(S) - Action Required"
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "Use the Task tool to spawn subagents. For EACH service pair below,"
+    echo "create a Task with subagent_type='general-purpose' and the provided prompt."
+    echo ""
+
+    local i=0
+    while [[ $i -lt $count ]]; do
+        local hostname mount_path runtime prompt
+        hostname=$(echo "$instructions" | jq -r ".[$i].hostname" 2>/dev/null)
+        mount_path=$(echo "$instructions" | jq -r ".[$i].mount_path" 2>/dev/null)
+        runtime=$(echo "$instructions" | jq -r ".[$i].runtime" 2>/dev/null)
+
+        echo "───────────────────────────────────────────────────────────────────"
+        echo "  Subagent $((i+1)): ${hostname} (${runtime})"
+        echo "───────────────────────────────────────────────────────────────────"
+        echo ""
+        echo "  Mount path: ${mount_path}"
+        echo "  Prompt file: ${ZCP_TMP_DIR:-/tmp}/bootstrap_spawn.json"
+        echo ""
+        echo "  Extract prompt with:"
+        echo "    jq -r '.data.instructions[${i}].subagent_prompt' ${ZCP_TMP_DIR:-/tmp}/bootstrap_spawn.json"
+        echo ""
+
+        ((i++))
+    done
+
+    echo ""
+    echo "After spawning ALL subagents, wait for completion:"
+    echo ""
+    echo "  .zcp/bootstrap.sh step aggregate-results"
+    echo ""
+    echo "Or use the polling script:"
+    echo ""
+    echo "  .zcp/wait-for-subagents.sh --timeout 600"
+    echo ""
+}
+
+# -----------------------------------------------------------------------------
+# emit_needs_action <step_name> <step_output_json>
+# Output for steps that complete but require agent action
+# -----------------------------------------------------------------------------
+emit_needs_action() {
+    local step_name="$1"
+    local step_output="$2"
+    local action message
+
+    action=$(echo "$step_output" | jq -r '.data.action_required // "See output"' 2>/dev/null)
+    message=$(echo "$step_output" | jq -r '.message // "Action required"' 2>/dev/null)
+
+    echo ""
+    echo "⚠ ${step_name}: ${message}"
+    echo ""
+    echo "Action: ${action}"
+    echo ""
+}
+
+# -----------------------------------------------------------------------------
 # emit_gate_error <attempted_step> <required_step>
 # Output when agent tries to skip steps
 # -----------------------------------------------------------------------------
@@ -360,5 +431,6 @@ json_merge() {
 
 # Export all functions
 export -f emit_success emit_already_complete emit_error emit_complete emit_resume
+export -f emit_spawn_instructions emit_needs_action
 export -f emit_gate_error get_next_step get_previous_step get_step_status
 export -f json_response json_progress json_error json_needs_action extract_zcli_json json_merge

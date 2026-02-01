@@ -221,7 +221,18 @@ cmd_step() {
         if [[ "$status" == "complete" ]]; then
             update_step_status "$step_name" "complete"
             record_step "$step_name" "complete" "$(echo "$step_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
-            emit_success "$step_name"
+
+            # Special handling for spawn-subagents: output the instructions
+            if [[ "$step_name" == "spawn-subagents" ]]; then
+                emit_spawn_instructions "$step_output"
+            else
+                emit_success "$step_name"
+            fi
+        elif [[ "$status" == "needs_action" ]]; then
+            # Step completed but requires agent action (e.g., spawn subagents)
+            update_step_status "$step_name" "complete"
+            record_step "$step_name" "complete" "$(echo "$step_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
+            emit_needs_action "$step_name" "$step_output"
         elif [[ "$status" == "in_progress" ]]; then
             # Step needs to be re-run (e.g., wait-services polling)
             local message
