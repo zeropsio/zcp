@@ -52,12 +52,6 @@ show_topic_help() {
         import-validation|validate-import)
             show_help_import_validation
             ;;
-        synthesis)
-            # Deprecated - redirect to bootstrap
-            echo "⚠️  Synthesis flow is deprecated. Use bootstrap instead."
-            echo ""
-            show_help_bootstrap
-            ;;
         *)
             echo "❌ Unknown help topic: $topic"
             echo ""
@@ -1461,4 +1455,3 @@ Use this file to understand exactly what failed validation.
 EOF
 }
 
-# show_help_synthesis() removed - synthesis flow deprecated, use bootstrap instead

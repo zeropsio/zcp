@@ -630,13 +630,61 @@ check_gate_verify_to_done() {
 }
 
 # ============================================================================
-# REMOVED: Synthesis Gates (use bootstrap instead)
+# Gate B: BOOTSTRAP -> WORKFLOW
 # ============================================================================
-# The following gates were removed as part of the bootstrap refactor:
-#   - check_gate_synthesis()         (SYNTHESIZE → DEVELOP)
-#   - check_gate_compose_to_extend() (COMPOSE → EXTEND)
-#   - check_gate_extend_to_synthesize() (EXTEND → SYNTHESIZE)
-#
-# Use the bootstrap command instead:
-#   .zcp/workflow.sh bootstrap --runtime <type> --services <list>
-# ============================================================================
+
+check_gate_bootstrap_to_workflow() {
+    local mode
+    mode=$(get_mode 2>/dev/null || echo "full")
+    [[ "$mode" == "quick" ]] && { echo "  ⚠️  QUICK MODE: Gate bypassed"; return 0; }
+
+    gate_start "Gate B: BOOTSTRAP → WORKFLOW"
+
+    local unified="${ZCP_TMP_DIR:-/tmp}/zcp_state.json"
+    local legacy="${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json"
+    local state_src=""
+
+    if [[ -f "$unified" ]]; then
+        state_src="unified"
+    elif [[ -f "$legacy" ]]; then
+        state_src="legacy"
+    else
+        gate_fail "No bootstrap evidence" "Run: .zcp/workflow.sh bootstrap --runtime <type>"
+        gate_finish
+        return 1
+    fi
+    gate_pass "Bootstrap evidence found ($state_src)"
+
+    if [[ "$state_src" == "unified" ]]; then
+        local bc
+        bc=$(jq -r '.workflow.bootstrap_complete // false' "$unified" 2>/dev/null)
+        if [[ "$bc" == "true" ]]; then
+            gate_pass "Bootstrap complete in unified state"
+        else
+            local ba
+            ba=$(jq -r '.bootstrap.active // false' "$unified" 2>/dev/null)
+            if [[ "$ba" == "true" ]]; then
+                gate_fail "Bootstrap in progress" ".zcp/bootstrap.sh resume"
+            else
+                gate_fail "Bootstrap not done" ".zcp/bootstrap.sh done"
+            fi
+        fi
+        local incomplete
+        incomplete=$(jq -r '[.bootstrap.steps[] | select(.status != "complete")] | length' "$unified" 2>/dev/null)
+        if [[ "$incomplete" == "0" ]] || [[ -z "$incomplete" ]]; then
+            gate_pass "All steps complete"
+        else
+            local names
+            names=$(jq -r '[.bootstrap.steps[] | select(.status != "complete") | .name] | join(", ")' "$unified" 2>/dev/null)
+            gate_fail "$incomplete step(s) incomplete: $names" ".zcp/bootstrap.sh step <name>"
+        fi
+    else
+        local st
+        st=$(jq -r '.status // "unknown"' "$legacy" 2>/dev/null)
+        [[ "$st" == "complete" ]] && gate_pass "Legacy complete" || gate_fail "Legacy status: $st" ".zcp/bootstrap.sh done"
+        gate_warn "Step verification skipped (legacy)"
+    fi
+
+    gate_finish
+}
+export -f check_gate_bootstrap_to_workflow

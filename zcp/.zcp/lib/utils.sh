@@ -53,10 +53,6 @@ BOOTSTRAP_STATE_FILE="${ZCP_TMP_DIR}/bootstrap_state.json"
 BOOTSTRAP_HANDOFF_FILE="${ZCP_TMP_DIR}/bootstrap_handoff.json"
 BOOTSTRAP_COMPLETE_FILE="${ZCP_TMP_DIR}/bootstrap_complete.json"
 
-# DEPRECATED: Synthesis files (kept for backward compatibility cleanup)
-SYNTHESIS_PLAN_FILE="${ZCP_TMP_DIR}/synthesis_plan.json"
-SYNTHESIS_COMPLETE_FILE="${ZCP_TMP_DIR}/synthesis_complete.json"
-SYNTHESIZED_IMPORT_FILE="${ZCP_TMP_DIR}/synthesized_import.yml"
 
 # Persistent storage (survives container restart)
 # Default to .zcp/state (inside .zcp dir), allow override via env
@@ -528,7 +524,7 @@ restore_from_persistent() {
     # Restore evidence files
     local evidence_dir="$WORKFLOW_STATE_DIR/evidence"
     if [ -d "$evidence_dir" ]; then
-        for f in discovery dev_verify stage_verify deploy_evidence synthesis_complete; do
+        for f in discovery dev_verify stage_verify deploy_evidence; do
             if [ ! -f "${ZCP_TMP_DIR}/${f}.json" ] && [ -f "$evidence_dir/${f}.json" ]; then
                 cp "$evidence_dir/${f}.json" "${ZCP_TMP_DIR}/${f}.json"
                 restored=true
@@ -671,7 +667,7 @@ sync_to_persistent() {
     [ -f "$ITERATION_FILE" ] && cp "$ITERATION_FILE" "$WORKFLOW_STATE_DIR/iteration"
 
     # Sync evidence
-    for f in discovery dev_verify stage_verify deploy_evidence synthesis_complete; do
+    for f in discovery dev_verify stage_verify deploy_evidence; do
         [ -f "${ZCP_TMP_DIR}/${f}.json" ] && cp "${ZCP_TMP_DIR}/${f}.json" "$WORKFLOW_STATE_DIR/evidence/${f}.json"
     done
 

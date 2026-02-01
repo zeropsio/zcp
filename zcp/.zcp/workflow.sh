@@ -43,6 +43,7 @@ source "$SCRIPT_DIR/lib/utils.sh"
 source "$SCRIPT_DIR/lib/help.sh"
 source "$SCRIPT_DIR/lib/gates.sh"
 source "$SCRIPT_DIR/lib/commands.sh"
+source "$SCRIPT_DIR/lib/unified-state.sh"
 
 # ============================================================================
 # MAIN
@@ -103,6 +104,14 @@ ZCLI_AUTH_ERROR
 
     case "$command" in
         init)
+            # Gate B: Validate bootstrap if applicable
+            if [[ "$(check_bootstrap_mode 2>/dev/null)" == "true" ]]; then
+                if ! check_gate_bootstrap_to_workflow; then
+                    echo ""
+                    echo "❌ Bootstrap validation failed"
+                    exit 1
+                fi
+            fi
             cmd_init "$@"
             ;;
         --quick)
@@ -157,13 +166,6 @@ ZCLI_AUTH_ERROR
             ;;
         bootstrap-done)
             exec "$SCRIPT_DIR/bootstrap.sh" done "$@"
-            ;;
-        # === SYNTHESIS COMMANDS (DEPRECATED - use bootstrap) ===
-        compose)
-            cmd_compose "$@"
-            ;;
-        verify_synthesis)
-            cmd_verify_synthesis "$@"
             ;;
         validate_config|validate_code)
             "$SCRIPT_DIR/validate-config.sh" "$@"

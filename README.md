@@ -136,10 +136,9 @@ zcp/
 │       │   ├── extend.sh     # extend, upgrade-to-full, record_deployment, import evidence
 │       │   ├── iterate.sh    # iterate command (post-DONE continuation)
 │       │   ├── retarget.sh   # retarget command (change deployment target)
-│       │   ├── context.sh    # intent, note commands (rich context)
-│       │   └── compose.sh    # Deprecated synthesis commands (redirects to bootstrap)
+│       │   └── context.sh    # intent, note commands (rich context)
+│       ├── unified-state.sh # Unified state management (session, phase, bootstrap)
 │       ├── bootstrap/     # Bootstrap orchestration (new project setup)
-│       │   ├── state.sh         # Bootstrap state management
 │       │   ├── output.sh        # JSON response formatting
 │       │   ├── detect.sh        # Project state detection (FRESH/CONFORMANT/NON_CONFORMANT)
 │       │   ├── import-gen.sh    # Import.yml generation
@@ -523,6 +522,7 @@ Gates enforce quality checkpoints. Each gate blocks until evidence exists.
 ├────────┼─────────────────────────┼─────────────────────────┼────────────────────┤
 │ 0      │ INIT → DISCOVER         │ recipe_review.json      │ recipe-search.sh   │
 │ 0.5    │ extend command          │ import_validated.json   │ validate-import.sh │
+│ B      │ BOOTSTRAP → WORKFLOW    │ zcp_state.json          │ complete_bootstrap │
 │ 1      │ DISCOVER → DEVELOP      │ discovery.json          │ create_discovery   │
 │ 2      │ DEVELOP → DEPLOY        │ dev_verify.json + cfg   │ verify.sh {dev}    │
 │ 3      │ DEPLOY → VERIFY         │ deploy_evidence.json    │ status.sh --wait   │
