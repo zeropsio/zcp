@@ -142,36 +142,65 @@ emit_resume() {
 # -----------------------------------------------------------------------------
 # emit_spawn_instructions <step_output_json>
 # Special output for spawn-subagents step - tells agent to use Task tool
+# Agent-optimized: clear keywords, structured format, no decorative noise
 # -----------------------------------------------------------------------------
 emit_spawn_instructions() {
     local step_output="$1"
-    local count
+    local count instructions
 
     count=$(echo "$step_output" | jq -r '.data.subagent_count // 0' 2>/dev/null)
+    instructions=$(echo "$step_output" | jq -c '.data.instructions // []' 2>/dev/null)
 
     echo ""
-    echo "╔═══════════════════════════════════════════════════════════════════╗"
-    echo "║  ⚠️  ACTION REQUIRED: SPAWN ${count} SUBAGENT(S)                   ║"
-    echo "╠═══════════════════════════════════════════════════════════════════╣"
-    echo "║                                                                   ║"
-    echo "║  STOP! Do NOT run any more bootstrap steps.                       ║"
-    echo "║                                                                   ║"
-    echo "║  You MUST now use the Task tool to spawn ${count} subagent(s).     ║"
-    echo "║                                                                   ║"
-    echo "║  1. Read the prompts from: /tmp/bootstrap_spawn.json              ║"
-    echo "║  2. For EACH entry in .data.instructions[], spawn a Task          ║"
-    echo "║  3. Wait for ALL subagents to complete                            ║"
-    echo "║  4. THEN run: .zcp/bootstrap.sh step aggregate-results            ║"
-    echo "║                                                                   ║"
-    echo "╚═══════════════════════════════════════════════════════════════════╝"
+    echo "ACTION_REQUIRED: SPAWN_SUBAGENTS"
     echo ""
-    echo "Subagent prompts saved to: /tmp/bootstrap_spawn.json"
+    echo "You must now use the Task tool to spawn ${count} subagent(s)."
+    echo "Do NOT run any more .zcp/bootstrap.sh commands until subagents complete."
     echo ""
-    echo "To extract prompt for subagent N (0-indexed):"
-    echo "  jq -r '.data.instructions[N].subagent_prompt' /tmp/bootstrap_spawn.json"
-    echo ""
-    echo "Example Task tool call:"
-    echo "  Task(subagent_type='general-purpose', prompt=<extracted_prompt>)"
+
+    # Output specific instructions for each subagent
+    local i=0
+    while [[ $i -lt $count ]]; do
+        local hostname runtime dev_id stage_id
+        hostname=$(echo "$instructions" | jq -r ".[$i].hostname" 2>/dev/null)
+        runtime=$(echo "$instructions" | jq -r ".[$i].runtime" 2>/dev/null)
+        dev_id=$(echo "$instructions" | jq -r ".[$i].dev_id" 2>/dev/null)
+        stage_id=$(echo "$instructions" | jq -r ".[$i].stage_id" 2>/dev/null)
+
+        echo "SUBAGENT_$((i+1))_OF_${count}:"
+        echo "  hostname: ${hostname}"
+        echo "  runtime: ${runtime}"
+        echo "  dev_id: ${dev_id}"
+        echo "  stage_id: ${stage_id}"
+        echo "  prompt_file: /tmp/subagent_prompt_${i}.txt"
+        echo ""
+        echo "  Task tool parameters:"
+        echo "    subagent_type: general-purpose"
+        echo "    description: Bootstrap ${hostname} ${runtime} service"
+        echo "    prompt: <read contents of /tmp/subagent_prompt_${i}.txt>"
+        echo ""
+
+        ((i++))
+    done
+
+    echo "SEQUENCE:"
+    echo "  1. Read /tmp/subagent_prompt_0.txt"
+    echo "  2. Call Task tool with that prompt (subagent_type=general-purpose)"
+    if [[ $count -gt 1 ]]; then
+        echo "  3. Read /tmp/subagent_prompt_1.txt"
+        echo "  4. Call Task tool with that prompt (subagent_type=general-purpose)"
+    fi
+    if [[ $count -gt 2 ]]; then
+        local j=2
+        local step=5
+        while [[ $j -lt $count ]]; do
+            echo "  ${step}. Read /tmp/subagent_prompt_${j}.txt and spawn Task"
+            ((j++))
+            ((step++))
+        done
+    fi
+    echo "  $(( count * 2 + 1 )). Wait for all Task tools to return"
+    echo "  $(( count * 2 + 2 )). Run: .zcp/bootstrap.sh step aggregate-results"
     echo ""
 }
 

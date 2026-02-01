@@ -652,6 +652,15 @@ PROMPT
     response=$(json_response "spawn-subagents" "$msg" "$data" "aggregate-results")
     echo "$response" > "${ZCP_TMP_DIR:-/tmp}/bootstrap_spawn.json"
 
+    # ALSO write each prompt to a separate file for easier access
+    # Agent can just: cat /tmp/subagent_prompt_0.txt
+    local j=0
+    while [ "$j" -lt "$count" ]; do
+        local prompt_file="${ZCP_TMP_DIR:-/tmp}/subagent_prompt_${j}.txt"
+        echo "$instructions" | jq -r ".[$j].subagent_prompt" > "$prompt_file"
+        j=$((j + 1))
+    done
+
     # Output to stdout
     echo "$response"
 }
