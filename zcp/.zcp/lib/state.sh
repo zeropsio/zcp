@@ -81,6 +81,13 @@ zcp_init() {
         }')
     atomic_write "$state" "$ZCP_STATE_FILE"
     [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+
+    # Backward compatibility: also write to legacy files
+    # This ensures code that still reads from old files works correctly
+    echo "$session_id" > "${ZCP_TMP_DIR:-/tmp}/zcp_session" 2>/dev/null || true
+    echo "full" > "${ZCP_TMP_DIR:-/tmp}/zcp_mode" 2>/dev/null || true
+    echo "NONE" > "${ZCP_TMP_DIR:-/tmp}/zcp_phase" 2>/dev/null || true
+
     echo "$session_id"
 }
 
@@ -133,6 +140,8 @@ set_mode() {
         *) echo "ERROR: Invalid mode: $mode" >&2; return 1 ;;
     esac
     zcp_set '.mode' "\"$mode\""
+    # Backward compat: sync to legacy file
+    echo "$mode" > "${ZCP_TMP_DIR:-/tmp}/zcp_mode" 2>/dev/null || true
 }
 
 get_phase() {
@@ -148,6 +157,8 @@ set_phase() {
         *) echo "ERROR: Invalid phase: $phase" >&2; return 1 ;;
     esac
     zcp_set '.workflow.phase' "\"$phase\""
+    # Backward compat: sync to legacy file
+    echo "$phase" > "${ZCP_TMP_DIR:-/tmp}/zcp_phase" 2>/dev/null || true
 }
 
 get_iteration() {

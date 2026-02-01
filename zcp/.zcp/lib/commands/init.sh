@@ -51,9 +51,10 @@ cmd_init() {
     if [ "$mode_flag" = "--dev-only" ]; then
         local session_id
         session_id=$(generate_secure_session_id)
-        echo "$session_id" > "$SESSION_FILE"
-        echo "dev-only" > "$MODE_FILE"
-        echo "INIT" > "$PHASE_FILE"
+        # Initialize unified state
+        zcp_init "$session_id"
+        set_mode "dev-only"
+        set_phase "INIT"
 
         cat <<'EOF'
 ✅ DEV-ONLY MODE
@@ -95,9 +96,10 @@ EOF
                     if [ "$age_hours" -lt "$max_age" ]; then
                         local session_id
                         session_id=$(generate_secure_session_id)
-                        echo "$session_id" > "$SESSION_FILE"
-                        echo "hotfix" > "$MODE_FILE"
-                        echo "DEVELOP" > "$PHASE_FILE"
+                        # Initialize unified state
+                        zcp_init "$session_id"
+                        set_mode "hotfix"
+                        set_phase "DEVELOP"
 
                         # Update session in discovery
                         if jq --arg sid "$session_id" '.session_id = $sid' "$DISCOVERY_FILE" > "${DISCOVERY_FILE}.tmp.$$"; then
@@ -139,9 +141,10 @@ EOF
     # Create new session
     local session_id
     session_id=$(generate_secure_session_id)
-    echo "$session_id" > "$SESSION_FILE"
-    echo "full" > "$MODE_FILE"
-    echo "INIT" > "$PHASE_FILE"
+    # Initialize unified state
+    zcp_init "$session_id"
+    set_mode "full"
+    set_phase "INIT"
 
     # Check for preserved discovery and update session_id
     if [ -f "$DISCOVERY_FILE" ]; then
@@ -163,9 +166,14 @@ EOF
             echo "   Dev:   $(jq -r '.dev.name' "$DISCOVERY_FILE")"
             echo "   Stage: $(jq -r '.stage.name' "$DISCOVERY_FILE")"
             echo ""
-            echo "💡 NEXT: Skip DISCOVER, go directly to DEVELOP"
-            echo "   .zcp/workflow.sh transition_to DISCOVER"
-            echo "   .zcp/workflow.sh transition_to DEVELOP"
+            echo "💡 EXISTING PROJECT - Gate 0 will be skipped"
+            echo ""
+            echo "   Run these commands:"
+            echo "   .zcp/workflow.sh transition_to DISCOVER   ← Gate 0 skipped (discovery exists)"
+            echo "   .zcp/workflow.sh transition_to DEVELOP    ← Continue to development"
+            echo ""
+            echo "   Or use iterate if you just completed a workflow:"
+            echo "   .zcp/workflow.sh iterate \"description\""
             return 0
         fi
     fi
@@ -225,9 +233,10 @@ cmd_quick() {
 
     local session_id
     session_id=$(generate_secure_session_id)
-    echo "$session_id" > "$SESSION_FILE"
-    echo "quick" > "$MODE_FILE"
-    echo "QUICK" > "$PHASE_FILE"
+    # Initialize unified state
+    zcp_init "$session_id"
+    set_mode "quick"
+    set_phase "QUICK"
 
     cat <<'EOF'
 ✅ Quick mode - no enforcement

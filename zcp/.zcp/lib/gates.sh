@@ -226,6 +226,51 @@ check_gate_init_to_discover() {
     echo "Gate: INIT → DISCOVER"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+    # EXISTING PROJECT CHECK: Skip Gate 0 if valid discovery exists
+    # This enables iteration on existing projects without requiring recipe review
+    if [ -f "$DISCOVERY_FILE" ]; then
+        # Check if discovery has matching session OR is recent (< 24h)
+        if check_evidence_session "$DISCOVERY_FILE" 2>/dev/null; then
+            echo "  ✓ Existing project: discovery.json matches current session"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "Gate 0 SKIPPED - existing project iteration"
+            return 0
+        fi
+
+        # Also allow if discovery is fresh (even if session doesn't match)
+        # This handles the case where discovery was preserved across sessions
+        local disco_timestamp
+        disco_timestamp=$(jq -r '.timestamp // empty' "$DISCOVERY_FILE" 2>/dev/null)
+        if [ -n "$disco_timestamp" ]; then
+            local disco_epoch now_epoch age_hours
+            # Try GNU date first, then BSD date
+            if disco_epoch=$(date -d "$disco_timestamp" +%s 2>/dev/null) || \
+               disco_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$disco_timestamp" +%s 2>/dev/null); then
+                now_epoch=$(date +%s)
+                age_hours=$(( (now_epoch - disco_epoch) / 3600 ))
+
+                if [ "$age_hours" -lt 24 ]; then
+                    echo "  ✓ Existing project: discovery.json is ${age_hours}h old (< 24h)"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "Gate 0 SKIPPED - existing project iteration"
+
+                    # Update session_id in discovery to current session
+                    local current_session
+                    current_session=$(get_session)
+                    if [ -n "$current_session" ]; then
+                        jq --arg sid "$current_session" '.session_id = $sid' "$DISCOVERY_FILE" > "${DISCOVERY_FILE}.tmp" && \
+                            mv "${DISCOVERY_FILE}.tmp" "$DISCOVERY_FILE"
+                    fi
+                    return 0
+                fi
+            fi
+        fi
+
+        # Discovery exists but is stale - show warning but still require Gate 0
+        echo "  ⚠ discovery.json exists but is stale (> 24h)"
+        echo "    Consider: Is this the same project? If so, update discovery."
+    fi
+
     # In hotfix mode, warn but don't block
     if [ "$mode" = "hotfix" ]; then
         if [ ! -f "$RECIPE_REVIEW_FILE" ]; then
