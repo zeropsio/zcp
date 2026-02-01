@@ -101,10 +101,15 @@ debug_log() {
     fi
 }
 
-# Source utils.sh for shared functions (get_session, etc.)
+# Source utils.sh for shared functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
     source "$SCRIPT_DIR/lib/utils.sh"
+fi
+
+# Source state.sh for get_session function
+if [ -f "$SCRIPT_DIR/lib/state.sh" ]; then
+    source "$SCRIPT_DIR/lib/state.sh"
 fi
 
 # Source validation functions (CRITICAL-3: hostname validation)

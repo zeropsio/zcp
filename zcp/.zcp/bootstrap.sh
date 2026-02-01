@@ -306,7 +306,9 @@ ZCLI_AUTH
 
     # Source and run plan step
     source "$SCRIPT_DIR/lib/bootstrap/steps/plan.sh"
-    set_step_status "plan" "in_progress"
+
+    # Note: plan.sh calls init_bootstrap() which initializes state,
+    # so we cannot call set_step_status before running step_plan
 
     local plan_output
     local plan_exit=0
@@ -316,7 +318,8 @@ ZCLI_AUTH
         local status
         status=$(echo "$plan_output" | jq -r '.status // "complete"' 2>/dev/null || echo "complete")
         if [[ "$status" == "complete" ]]; then
-            # plan.sh handles its own state via init_bootstrap() + complete_step()
+            # Mark plan step as complete
+            complete_step "plan" "$(echo "$plan_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
             echo ""
             echo "✓ Workflow initialized"
             echo ""

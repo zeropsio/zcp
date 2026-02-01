@@ -78,13 +78,55 @@ emit_error() {
 
 # -----------------------------------------------------------------------------
 # emit_complete
-# Terminal output — workflow finished, no next action
+# Terminal output — workflow finished, show summary and next steps
+# Always shows discovery context as failsafe (survives context loss)
 # -----------------------------------------------------------------------------
 emit_complete() {
+    local discovery_file="${ZCP_TMP_DIR:-/tmp}/discovery.json"
+
     echo ""
-    echo "═══════════════════════════════════════"
-    echo "✓ Workflow complete"
-    echo "═══════════════════════════════════════"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "✓ Bootstrap complete"
+    echo "═══════════════════════════════════════════════════════════════"
+
+    # Always try to show discovery summary
+    if [[ -f "$discovery_file" ]]; then
+        local service_count
+        service_count=$(jq -r '.service_count // 0' "$discovery_file" 2>/dev/null)
+
+        if [[ "$service_count" -gt 0 ]]; then
+            echo ""
+            echo "Services ($service_count pair(s)):"
+            jq -r '.services[] | "  \(.dev.name) → \(.stage.name) (\(.runtime // "?"))"' "$discovery_file" 2>/dev/null
+
+            # Show URLs if available
+            local has_urls
+            has_urls=$(jq -r '[.services[].stage.url // empty] | length' "$discovery_file" 2>/dev/null)
+            if [[ "$has_urls" -gt 0 ]]; then
+                echo ""
+                echo "Stage URLs:"
+                jq -r '.services[] | select(.stage.url != "" and .stage.url != null) | "  \(.stage.name): \(.stage.url)"' "$discovery_file" 2>/dev/null
+            fi
+        else
+            echo ""
+            echo "⚠️  discovery.json exists but has no services"
+            echo "   Bootstrap may not have completed properly."
+        fi
+    else
+        echo ""
+        echo "⚠️  No discovery.json found"
+        echo "   Bootstrap may not have completed successfully."
+    fi
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "NEXT: Start your first task"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  .zcp/workflow.sh iterate \"description of what to build\""
+    echo ""
+    echo "Or check status:"
+    echo "  .zcp/workflow.sh show"
     echo ""
 }
 
