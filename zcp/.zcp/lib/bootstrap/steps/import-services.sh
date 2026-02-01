@@ -79,8 +79,6 @@ step_import_services() {
                 services_existing: $existing
             }')
 
-        record_step "import-services" "complete" "$data"
-
         json_response "import-services" "All services already exist (${existing_list[*]})" "$data" "wait-services"
         return 0
     fi
@@ -104,7 +102,6 @@ step_import_services() {
                     services_created: 0
                 }')
 
-            record_step "import-services" "complete" "$data"
             json_response "import-services" "Services already exist" "$data" "wait-services"
             return 0
         else
@@ -126,8 +123,6 @@ step_import_services() {
             import_result: $result,
             services_created: $count
         }')
-
-    record_step "import-services" "complete" "$data"
 
     json_response "import-services" "Import initiated for $expected_services services" "$data" "wait-services"
 }

@@ -12,7 +12,6 @@
 
 set -euo pipefail
 
-WORKFLOW_STATE_FILE="${ZCP_STATE_DIR:-${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../..}/state}/workflow.json"
 SCRIPT_PATH=".zcp/bootstrap.sh"
 
 # -----------------------------------------------------------------------------
@@ -94,9 +93,7 @@ emit_complete() {
 # Recovery output — show state + single next command
 # -----------------------------------------------------------------------------
 emit_resume() {
-    local current_step current_name total_steps
-
-    if [[ ! -f "$WORKFLOW_STATE_FILE" ]]; then
+    if ! bootstrap_active; then
         echo ""
         echo "No active workflow."
         echo ""
@@ -105,13 +102,14 @@ emit_resume() {
         return 0
     fi
 
-    current_step=$(jq -r '.current_step // 1' "$WORKFLOW_STATE_FILE")
-    current_name=$(jq -r ".steps[$((current_step - 1))].name // \"unknown\"" "$WORKFLOW_STATE_FILE")
-    total_steps=$(jq -r '.total_steps // 0' "$WORKFLOW_STATE_FILE")
+    local state current_step current_name
+    state=$(get_state)
+    current_step=$(echo "$state" | jq -r '.current_step // 1')
+    current_name=$(echo "$state" | jq -r ".steps[$((current_step - 1))].name // \"unknown\"")
 
     # Check if workflow is already complete
     local all_complete
-    all_complete=$(jq -r '[.steps[].status] | all(. == "complete")' "$WORKFLOW_STATE_FILE" 2>/dev/null || echo "false")
+    all_complete=$(echo "$state" | jq -r '[.steps[].status] | all(. == "complete")')
     if [[ "$all_complete" == "true" ]]; then
         emit_complete
         return 0
@@ -121,18 +119,14 @@ emit_resume() {
     echo "Resume Point: ${current_name}"
     echo ""
     echo "Completed:"
-
-    # Show completed steps
-    jq -r '.steps[] | select(.status == "complete") | "  ✓ \(.name)"' "$WORKFLOW_STATE_FILE" 2>/dev/null || true
+    echo "$state" | jq -r '.steps[] | select(.status == "complete") | "  ✓ \(.name)"'
 
     echo ""
     echo "Remaining:"
-
-    # Show remaining steps with current marker
-    jq -r '.steps[] | select(.status != "complete") |
+    echo "$state" | jq -r '.steps[] | select(.status != "complete") |
         if .status == "in_progress" then "  → \(.name) ← CURRENT"
         elif .status == "failed" then "  ✗ \(.name) ← FAILED"
-        else "  ○ \(.name)" end' "$WORKFLOW_STATE_FILE" 2>/dev/null || true
+        else "  ○ \(.name)" end'
 
     echo ""
     echo "Run → ${SCRIPT_PATH} step ${current_name}"
@@ -244,22 +238,21 @@ emit_gate_error() {
 # -----------------------------------------------------------------------------
 get_next_step() {
     local current_name="$1"
-    local current_index next_index total
+    local state current_index next_index total
 
-    [[ ! -f "$WORKFLOW_STATE_FILE" ]] && return
+    state=$(get_state)
+    [[ "$state" == '{}' ]] && return
 
-    current_index=$(jq -r --arg name "$current_name" \
-        '.steps | to_entries[] | select(.value.name == $name) | .key' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-    total=$(jq -r '.total_steps' "$WORKFLOW_STATE_FILE" 2>/dev/null)
+    current_index=$(echo "$state" | jq -r --arg name "$current_name" \
+        '.steps | to_entries[] | select(.value.name == $name) | .key')
+    total=$(echo "$state" | jq -r '.steps | length')
 
     [[ -z "$current_index" ]] && return
 
     next_index=$((current_index + 1))
 
     if [[ $next_index -lt $total ]]; then
-        jq -r ".steps[$next_index].name" "$WORKFLOW_STATE_FILE" 2>/dev/null
-    else
-        echo ""
+        echo "$state" | jq -r ".steps[$next_index].name"
     fi
 }
 
@@ -269,20 +262,18 @@ get_next_step() {
 # -----------------------------------------------------------------------------
 get_previous_step() {
     local current_name="$1"
-    local current_index prev_index
+    local state current_index
 
-    [[ ! -f "$WORKFLOW_STATE_FILE" ]] && return
+    state=$(get_state)
+    [[ "$state" == '{}' ]] && return
 
-    current_index=$(jq -r --arg name "$current_name" \
-        '.steps | to_entries[] | select(.value.name == $name) | .key' "$WORKFLOW_STATE_FILE" 2>/dev/null)
+    current_index=$(echo "$state" | jq -r --arg name "$current_name" \
+        '.steps | to_entries[] | select(.value.name == $name) | .key')
 
     [[ -z "$current_index" ]] && return
 
     if [[ $current_index -gt 0 ]]; then
-        prev_index=$((current_index - 1))
-        jq -r ".steps[$prev_index].name" "$WORKFLOW_STATE_FILE" 2>/dev/null
-    else
-        echo ""
+        echo "$state" | jq -r ".steps[$((current_index - 1))].name"
     fi
 }
 
@@ -292,11 +283,8 @@ get_previous_step() {
 # -----------------------------------------------------------------------------
 get_step_status() {
     local step_name="$1"
-
-    [[ ! -f "$WORKFLOW_STATE_FILE" ]] && echo "pending" && return
-
-    jq -r --arg name "$step_name" \
-        '.steps[] | select(.name == $name) | .status // "pending"' "$WORKFLOW_STATE_FILE" 2>/dev/null
+    get_state | jq -r --arg name "$step_name" \
+        '(.steps[] | select(.name == $name) | .status) // "pending"'
 }
 
 # =============================================================================

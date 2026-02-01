@@ -638,8 +638,6 @@ PROMPT
             ]
         }')
 
-    record_step "spawn-subagents" "complete" "$data"
-
     local msg
     if [ "$count" -eq 1 ]; then
         msg="Spawn 1 subagent with comprehensive bootstrap instructions"

@@ -208,8 +208,6 @@ step_recipe_search() {
                 runtimes_with_recipes: ($rf | tonumber)
             }')
 
-        record_step "recipe-search" "complete" "$data"
-
         local msg="Found patterns for ${runtimes_found}/${runtimes_count} runtimes"
         [ -n "$managed_services_list" ] && msg="$msg + ${services_count} service docs"
         msg="$msg (parallel fetch)"
@@ -225,7 +223,6 @@ step_recipe_search() {
             warning: "recipe-search.sh not found - using defaults"
         }')
 
-        record_step "recipe-search" "complete" "$data"
         json_response "recipe-search" "Recipe search skipped (using defaults)" "$data" "generate-import"
     fi
 }

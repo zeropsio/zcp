@@ -1,60 +1,20 @@
 #!/usr/bin/env bash
 # .zcp/lib/bootstrap/state.sh
-# Bootstrap state and checkpoint management
-# Handles atomic writes, state persistence, and per-service state
+# Bootstrap state management - UNIFIED STATE API
+# Single source of truth: /tmp/bootstrap_state.json
 #
-# Approach E: Hybrid Chain + Recovery workflow state management
+# This replaces the dual state system with a single unified state file.
 
 set -euo pipefail
 
-# State file paths
-BOOTSTRAP_STATE_DIR="${STATE_DIR:-${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../..}/state}/bootstrap"
-BOOTSTRAP_STATE_FILE="${BOOTSTRAP_STATE_DIR}/state.json"
-
-# NEW: Workflow state file for Approach E
-WORKFLOW_STATE_FILE="${ZCP_STATE_DIR:-${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../..}/state}/workflow.json"
-
-# Initialize bootstrap state directory
-init_bootstrap_state() {
-    mkdir -p "$BOOTSTRAP_STATE_DIR/services" 2>/dev/null || true
-    mkdir -p "$(dirname "$WORKFLOW_STATE_FILE")" 2>/dev/null || true
-}
-
-# Atomic write to file - write to temp then move
-atomic_write() {
-    local content="$1"
-    local file="$2"
-
-    local dir
-    dir=$(dirname "$file")
-
-    if ! mkdir -p "$dir" 2>/dev/null; then
-        echo "ERROR: Cannot create directory: $dir" >&2
-        return 1
-    fi
-
-    local tmp_file="${file}.tmp.$$"
-
-    if ! echo "$content" > "$tmp_file"; then
-        echo "ERROR: Cannot write to temp file: $tmp_file" >&2
-        rm -f "$tmp_file" 2>/dev/null
-        return 1
-    fi
-
-    if ! mv "$tmp_file" "$file"; then
-        echo "ERROR: Cannot move temp file to: $file" >&2
-        rm -f "$tmp_file" 2>/dev/null
-        return 1
-    fi
-
-    return 0
-}
+# Single state file - temp directory for reliability (always writable, no SSHFS issues)
+STATE_FILE="${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
 
 # =============================================================================
-# APPROACH E: WORKFLOW STATE MANAGEMENT
+# UNIFIED STATE API
 # =============================================================================
 
-# Generate a UUID with fallbacks for portability
+# Generate UUID with fallbacks
 generate_uuid() {
     if command -v uuidgen &>/dev/null; then
         uuidgen | tr '[:upper:]' '[:lower:]'
@@ -63,139 +23,234 @@ generate_uuid() {
     elif command -v python3 &>/dev/null; then
         python3 -c 'import uuid; print(uuid.uuid4())'
     else
-        # Fallback: timestamp + PID + random
         echo "$(date +%s)-$$-${RANDOM}${RANDOM}"
     fi
 }
 
-# Check if workflow exists
-workflow_exists() {
-    [[ -f "$WORKFLOW_STATE_FILE" ]]
+# Atomic write to file
+atomic_write() {
+    local content="$1"
+    local file="$2"
+    local dir
+    dir=$(dirname "$file")
+    mkdir -p "$dir" 2>/dev/null || return 1
+    local tmp_file="${file}.tmp.$$"
+    echo "$content" > "$tmp_file" && mv "$tmp_file" "$file"
 }
 
-# Check if step exists in workflow
-# Usage: step_exists <step_name>
-step_exists() {
-    local step_name="$1"
+# -----------------------------------------------------------------------------
+# BOOTSTRAP LIFECYCLE
+# -----------------------------------------------------------------------------
 
-    [[ ! -f "$WORKFLOW_STATE_FILE" ]] && return 1
+# Initialize bootstrap with plan and step definitions
+# Usage: init_bootstrap "$plan_json" "step1,step2,step3,..."
+init_bootstrap() {
+    local plan_data="$1"
+    local steps_csv="${2:-plan,recipe-search,generate-import,import-services,wait-services,mount-dev,discover-services,finalize,spawn-subagents,aggregate-results}"
 
-    jq -e --arg name "$step_name" '.steps[] | select(.name == $name)' "$WORKFLOW_STATE_FILE" > /dev/null 2>&1
-}
-
-# Update step status in workflow state
-# Usage: update_step_status <step_name> <status>
-update_step_status() {
-    local step_name="$1"
-    local new_status="$2"
-    local timestamp
+    local workflow_id session_id timestamp
+    workflow_id=$(generate_uuid)
+    session_id=$(generate_uuid)
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-    [[ ! -f "$WORKFLOW_STATE_FILE" ]] && return 1
+    # Build steps array
+    local steps_json="[]"
+    local index=1
+    IFS=',' read -ra step_names <<< "$steps_csv"
+    for name in "${step_names[@]}"; do
+        steps_json=$(echo "$steps_json" | jq \
+            --arg name "$name" \
+            --argjson idx "$index" \
+            '. + [{name: $name, index: $idx, status: "pending", data: null}]')
+        ((index++))
+    done
 
-    local tmp_file="${WORKFLOW_STATE_FILE}.tmp.$$"
+    local state
+    state=$(jq -n \
+        --arg wid "$workflow_id" \
+        --arg sid "$session_id" \
+        --arg ts "$timestamp" \
+        --argjson plan "$plan_data" \
+        --argjson steps "$steps_json" \
+        '{
+            workflow_id: $wid,
+            session_id: $sid,
+            started_at: $ts,
+            current_step: 1,
+            plan: $plan,
+            steps: $steps,
+            services: {}
+        }')
 
-    case "$new_status" in
-        "in_progress")
-            jq --arg name "$step_name" --arg ts "$timestamp" '
-                .steps |= map(
-                    if .name == $name then
-                        .status = "in_progress" | .started_at = $ts
-                    else . end
-                ) |
-                .current_step = (.steps | to_entries | map(select(.value.name == $name)) | .[0].key + 1)
-            ' "$WORKFLOW_STATE_FILE" > "$tmp_file"
-            ;;
-        "complete")
-            jq --arg name "$step_name" --arg ts "$timestamp" '
-                .steps |= map(
-                    if .name == $name then
-                        .status = "complete" | .completed_at = $ts
-                    else . end
-                )
-            ' "$WORKFLOW_STATE_FILE" > "$tmp_file"
-            ;;
-        "failed")
-            jq --arg name "$step_name" --arg ts "$timestamp" '
-                .steps |= map(
-                    if .name == $name then
-                        .status = "failed" | .failed_at = $ts
-                    else . end
-                )
-            ' "$WORKFLOW_STATE_FILE" > "$tmp_file"
-            ;;
-        *)
-            echo "ERROR: Unknown status: $new_status" >&2
-            return 1
-            ;;
-    esac
-
-    mv "$tmp_file" "$WORKFLOW_STATE_FILE"
+    atomic_write "$state" "$STATE_FILE"
 }
 
-# Reset workflow state
-reset_workflow() {
-    rm -f "$WORKFLOW_STATE_FILE" 2>/dev/null || true
+# Clear all bootstrap state
+clear_bootstrap() {
+    rm -f "$STATE_FILE" 2>/dev/null || true
+    rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_plan.json" 2>/dev/null || true
+    rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_import.yml" 2>/dev/null || true
+    rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json" 2>/dev/null || true
+    rm -f "${ZCP_TMP_DIR:-/tmp}/recipe_review.json" 2>/dev/null || true
+    rm -f "${ZCP_TMP_DIR:-/tmp}/service_discovery.json" 2>/dev/null || true
+    # Clean up per-service completion files
+    rm -f "${ZCP_TMP_DIR:-/tmp}"/*_complete.json 2>/dev/null || true
 }
 
-# =============================================================================
-# LEGACY STATE MANAGEMENT (backward compatibility)
-# =============================================================================
+# -----------------------------------------------------------------------------
+# STATE READERS
+# -----------------------------------------------------------------------------
 
-# Read bootstrap state file
-get_bootstrap_state() {
-    if [[ -f "$BOOTSTRAP_STATE_FILE" ]]; then
-        cat "$BOOTSTRAP_STATE_FILE"
+# Get entire state object
+get_state() {
+    if [[ -f "$STATE_FILE" ]]; then
+        cat "$STATE_FILE"
     else
         echo '{}'
     fi
 }
 
-# Initialize new bootstrap state
-init_state() {
-    local plan_data="$1"
-    local session_id="${2:-$(generate_uuid)}"
+# Check if bootstrap is active
+bootstrap_active() {
+    [[ -f "$STATE_FILE" ]]
+}
 
-    init_bootstrap_state
+# Get plan from state
+get_plan() {
+    get_state | jq '.plan // {}'
+}
+
+# Get step object by name
+get_step() {
+    local name="$1"
+    get_state | jq --arg n "$name" '.steps[] | select(.name == $n)'
+}
+
+# Get step data by name
+get_step_data() {
+    local name="$1"
+    get_state | jq --arg n "$name" '(.steps[] | select(.name == $n) | .data) // {}'
+}
+
+# Check if step is complete
+is_step_complete() {
+    local name="$1"
+    local status
+    status=$(get_state | jq -r --arg n "$name" '(.steps[] | select(.name == $n) | .status) // "pending"')
+    [[ "$status" == "complete" ]]
+}
+
+# Get next pending step name
+get_next_step() {
+    get_state | jq -r '(.steps[] | select(.status != "complete") | .name) // empty' | head -1
+}
+
+# Get current step index
+get_current_step_index() {
+    get_state | jq -r '.current_step // 1'
+}
+
+# -----------------------------------------------------------------------------
+# STATE WRITERS
+# -----------------------------------------------------------------------------
+
+# Set step status (pending, in_progress, complete, failed)
+set_step_status() {
+    local name="$1"
+    local status="$2"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
     local state
-    state=$(jq -n \
-        --arg session "$session_id" \
-        --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-        --argjson plan "$plan_data" \
-        '{
-            session_id: $session,
-            started_at: $ts,
-            checkpoint: "plan",
-            plan: $plan,
-            steps: {},
-            code_generation: null
-        }')
+    state=$(get_state)
 
-    atomic_write "$state" "$BOOTSTRAP_STATE_FILE"
-    atomic_write "$state" "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
+    local ts_field
+    case "$status" in
+        in_progress) ts_field="started_at" ;;
+        complete) ts_field="completed_at" ;;
+        failed) ts_field="failed_at" ;;
+        *) ts_field="" ;;
+    esac
+
+    if [[ -n "$ts_field" ]]; then
+        state=$(echo "$state" | jq \
+            --arg n "$name" \
+            --arg s "$status" \
+            --arg ts "$timestamp" \
+            --arg tf "$ts_field" \
+            '.steps |= map(if .name == $n then .status = $s | .[$tf] = $ts else . end)')
+    else
+        state=$(echo "$state" | jq \
+            --arg n "$name" \
+            --arg s "$status" \
+            '.steps |= map(if .name == $n then .status = $s else . end)')
+    fi
+
+    # Update current_step pointer
+    local new_index
+    new_index=$(echo "$state" | jq --arg n "$name" '.steps | to_entries | map(select(.value.name == $n)) | .[0].key + 1')
+    state=$(echo "$state" | jq --argjson idx "$new_index" '.current_step = $idx')
+
+    atomic_write "$state" "$STATE_FILE"
 }
 
-# Get current checkpoint
-get_checkpoint() {
-    get_bootstrap_state | jq -r '.checkpoint // "none"'
-}
+# Set step data
+set_step_data() {
+    local name="$1"
+    local data="$2"
 
-# Set checkpoint
-set_checkpoint() {
-    local checkpoint="$1"
+    # Validate JSON
+    if ! echo "$data" | jq -e . >/dev/null 2>&1; then
+        data='{}'
+    fi
 
     local state
-    state=$(get_bootstrap_state)
-    state=$(echo "$state" | jq --arg cp "$checkpoint" '.checkpoint = $cp')
+    state=$(get_state)
+    state=$(echo "$state" | jq \
+        --arg n "$name" \
+        --argjson d "$data" \
+        '.steps |= map(if .name == $n then .data = $d else . end)')
 
-    atomic_write "$state" "$BOOTSTRAP_STATE_FILE"
-    atomic_write "$state" "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
+    atomic_write "$state" "$STATE_FILE"
 }
 
-# Record step completion (legacy format)
-record_step() {
-    local step="$1"
+# Combined: set status and data atomically
+complete_step() {
+    local name="$1"
+    local data="${2:-"{}"}"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    if ! echo "$data" | jq -e . >/dev/null 2>&1; then
+        data='{}'
+    fi
+
+    local state
+    state=$(get_state)
+    state=$(echo "$state" | jq \
+        --arg n "$name" \
+        --arg ts "$timestamp" \
+        --argjson d "$data" \
+        '.steps |= map(if .name == $n then .status = "complete" | .completed_at = $ts | .data = $d else . end)')
+
+    atomic_write "$state" "$STATE_FILE"
+}
+
+# Update plan
+update_plan() {
+    local plan_update="$1"
+    local state
+    state=$(get_state)
+    state=$(echo "$state" | jq --argjson u "$plan_update" '.plan = (.plan + $u)')
+    atomic_write "$state" "$STATE_FILE"
+}
+
+# -----------------------------------------------------------------------------
+# SERVICE STATE (for subagents)
+# -----------------------------------------------------------------------------
+
+set_service_status() {
+    local hostname="$1"
     local status="$2"
     local data="${3:-"{}"}"
 
@@ -203,76 +258,92 @@ record_step() {
         data='{}'
     fi
 
-    local state
-    state=$(get_bootstrap_state)
-
     local timestamp
-    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+    local state
+    state=$(get_state)
     state=$(echo "$state" | jq \
-        --arg step "$step" \
-        --arg status "$status" \
+        --arg h "$hostname" \
+        --arg s "$status" \
         --arg ts "$timestamp" \
-        --argjson data "$data" \
-        '.steps[$step] = {status: $status, at: $ts, data: $data}')
+        --argjson d "$data" \
+        '.services[$h] = {status: $s, updated_at: $ts, data: $d}')
+
+    atomic_write "$state" "$STATE_FILE"
+}
+
+get_service_status() {
+    local hostname="$1"
+    get_state | jq --arg h "$hostname" '.services[$h] // {status: "unknown"}'
+}
+
+get_all_services() {
+    get_state | jq '.services // {}'
+}
+
+# -----------------------------------------------------------------------------
+# LEGACY COMPATIBILITY LAYER
+# -----------------------------------------------------------------------------
+# These functions map old API names to new ones for backward compatibility
+# with existing step scripts that haven't been updated yet.
+
+# Legacy: init_state -> calls init_bootstrap
+init_state() {
+    local plan_data="$1"
+    local session_id="${2:-}"
+    init_bootstrap "$plan_data"
+}
+
+# Legacy: record_step -> calls complete_step (orchestrator handles this now)
+record_step() {
+    local step="$1"
+    local status="$2"
+    local data="${3:-"{}"}"
 
     if [[ "$status" == "complete" ]]; then
-        state=$(echo "$state" | jq --arg cp "$step" '.checkpoint = $cp')
-    fi
-
-    atomic_write "$state" "$BOOTSTRAP_STATE_FILE"
-    atomic_write "$state" "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
-
-    # Also update workflow state if it exists
-    if workflow_exists; then
-        update_step_status "$step" "$status"
+        complete_step "$step" "$data"
+    else
+        set_step_status "$step" "$status"
+        set_step_data "$step" "$data"
     fi
 }
 
-# Check if step is complete (legacy)
-is_step_complete() {
-    local step="$1"
-
-    # First check workflow state (Approach E)
-    if workflow_exists; then
-        local status
-        status=$(jq -r --arg name "$step" \
-            '.steps[] | select(.name == $name) | .status' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-        [[ "$status" == "complete" ]] && return 0
-    fi
-
-    # Fall back to legacy state
-    local status
-    status=$(get_bootstrap_state | jq -r --arg s "$step" '.steps[$s].status // ""')
-    [[ "$status" == "complete" ]]
+# Legacy: get_bootstrap_state -> calls get_state
+get_bootstrap_state() {
+    get_state
 }
 
-# Get step data
-get_step_data() {
-    local step="$1"
-    get_bootstrap_state | jq --arg s "$step" '.steps[$s].data // {}'
+# Legacy: workflow_exists -> calls bootstrap_active
+workflow_exists() {
+    bootstrap_active
 }
 
-# Get plan from state
-get_plan() {
-    get_bootstrap_state | jq '.plan // {}'
+# Legacy: update_step_status -> calls set_step_status
+update_step_status() {
+    set_step_status "$1" "$2"
 }
 
-# Update plan in state
-update_plan() {
-    local plan_update="$1"
+# Legacy: clear_bootstrap_state -> calls clear_bootstrap
+clear_bootstrap_state() {
+    clear_bootstrap
+}
 
+# Legacy: get/set_checkpoint - derived from step status
+get_checkpoint() {
     local state
-    state=$(get_bootstrap_state)
-    state=$(echo "$state" | jq --argjson update "$plan_update" '.plan = (.plan + $update)')
-
-    atomic_write "$state" "$BOOTSTRAP_STATE_FILE"
-    atomic_write "$state" "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json"
+    state=$(get_state)
+    # Return the name of the last completed step
+    echo "$state" | jq -r '(.steps | map(select(.status == "complete")) | .[-1].name) // "none"'
 }
 
-# =============================================================================
-# PER-SERVICE STATE (for subagents)
-# =============================================================================
+set_checkpoint() {
+    # No-op in unified system - checkpoint is implicit from step status
+    :
+}
+
+# Legacy: per-service state functions for subagents
+# These use a separate directory structure for backward compatibility
 
 set_service_state() {
     local hostname="$1"
@@ -284,7 +355,7 @@ set_service_state() {
         return 1
     fi
 
-    local service_dir="${BOOTSTRAP_STATE_DIR}/services/${hostname}"
+    local service_dir="${ZCP_STATE_DIR:-/tmp}/bootstrap/services/${hostname}"
     mkdir -p "$service_dir" 2>/dev/null || true
 
     local status_file="${service_dir}/status.json"
@@ -311,12 +382,11 @@ get_service_state() {
     local hostname="$1"
 
     if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        echo "ERROR: Invalid hostname format: $hostname" >&2
         echo '{}'
         return 1
     fi
 
-    local status_file="${BOOTSTRAP_STATE_DIR}/services/${hostname}/status.json"
+    local status_file="${ZCP_STATE_DIR:-/tmp}/bootstrap/services/${hostname}/status.json"
 
     if [[ -f "$status_file" ]]; then
         cat "$status_file"
@@ -330,18 +400,17 @@ set_service_result() {
     local result="$2"
 
     if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        echo "ERROR: Invalid hostname format: $hostname" >&2
         return 1
     fi
 
-    local service_dir="${BOOTSTRAP_STATE_DIR}/services/${hostname}"
+    local service_dir="${ZCP_STATE_DIR:-/tmp}/bootstrap/services/${hostname}"
     mkdir -p "$service_dir" 2>/dev/null || true
 
     atomic_write "$result" "${service_dir}/result.json"
 }
 
 get_all_services_status() {
-    local services_dir="${BOOTSTRAP_STATE_DIR}/services"
+    local services_dir="${ZCP_STATE_DIR:-/tmp}/bootstrap/services"
 
     if [[ ! -d "$services_dir" ]]; then
         echo '{}'
@@ -369,65 +438,45 @@ get_all_services_status() {
     echo "$result"
 }
 
-# Clear all bootstrap state
-clear_bootstrap_state() {
-    rm -rf "$BOOTSTRAP_STATE_DIR" 2>/dev/null || true
-    rm -f "$WORKFLOW_STATE_FILE" 2>/dev/null || true
-    rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_state.json" 2>/dev/null || true
-    rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_plan.json" 2>/dev/null || true
-    rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_import.yml" 2>/dev/null || true
-    rm -f "${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json" 2>/dev/null || true
-    rm -f "${ZCP_TMP_DIR:-/tmp}/recipe_review.json" 2>/dev/null || true
-}
+# -----------------------------------------------------------------------------
+# STATUS DISPLAY
+# -----------------------------------------------------------------------------
 
-# Generate status JSON for bootstrap.sh status command
 generate_status_json() {
     local state
-    state=$(get_bootstrap_state)
+    state=$(get_state)
 
     if [[ "$state" == '{}' ]]; then
-        jq -n '{
-            active: false,
-            checkpoint: null,
-            can_resume: false,
-            message: "No bootstrap in progress"
-        }'
+        jq -n '{active: false, message: "No bootstrap in progress"}'
         return
     fi
 
-    local checkpoint
-    checkpoint=$(echo "$state" | jq -r '.checkpoint // "none"')
-
-    local steps_complete
-    steps_complete=$(echo "$state" | jq '[.steps | to_entries[] | select(.value.status == "complete")] | length')
-
-    local total_steps=10
-
-    local services_status
-    services_status=$(get_all_services_status)
-
-    echo "$state" | jq \
-        --arg cp "$checkpoint" \
-        --argjson steps_done "$steps_complete" \
-        --argjson total "$total_steps" \
-        --argjson services "$services_status" \
-        '{
-            active: true,
-            checkpoint: $cp,
-            can_resume: true,
-            steps_complete: $steps_done,
-            total_steps: $total,
-            started_at: .started_at,
-            plan: .plan,
-            services: $services,
-            message: "Bootstrap at checkpoint: \($cp) (\($steps_done)/\($total) steps)"
-        }'
+    echo "$state" | jq '{
+        active: true,
+        workflow_id: .workflow_id,
+        current_step: .current_step,
+        total_steps: (.steps | length),
+        steps_complete: ([.steps[] | select(.status == "complete")] | length),
+        started_at: .started_at,
+        plan: .plan,
+        services: .services
+    }'
 }
 
-# Export functions
-export -f init_bootstrap_state atomic_write
-export -f generate_uuid workflow_exists step_exists update_step_status reset_workflow
-export -f get_bootstrap_state init_state get_checkpoint set_checkpoint record_step is_step_complete get_step_data
-export -f get_plan update_plan
+# -----------------------------------------------------------------------------
+# EXPORTS
+# -----------------------------------------------------------------------------
+
+export STATE_FILE
+export -f generate_uuid atomic_write
+export -f init_bootstrap clear_bootstrap
+export -f get_state bootstrap_active get_plan get_step get_step_data
+export -f is_step_complete get_next_step get_current_step_index
+export -f set_step_status set_step_data complete_step update_plan
+export -f set_service_status get_service_status get_all_services
+export -f generate_status_json
+
+# Legacy exports for backward compatibility
+export -f init_state record_step get_bootstrap_state workflow_exists
+export -f update_step_status clear_bootstrap_state get_checkpoint set_checkpoint
 export -f set_service_state get_service_state set_service_result get_all_services_status
-export -f clear_bootstrap_state generate_status_json

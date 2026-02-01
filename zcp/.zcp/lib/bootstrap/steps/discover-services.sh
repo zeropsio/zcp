@@ -56,7 +56,6 @@ step_discover_services() {
                 note: "No managed services configured - nothing to discover"
             }')
 
-        record_step "discover-services" "complete" "$empty_result"
         json_response "discover-services" "No managed services to discover" "$empty_result" "finalize"
         return 0
     fi
@@ -117,8 +116,6 @@ step_discover_services() {
         }')
 
     echo "$result" > "$discovery_file"
-
-    record_step "discover-services" "complete" "$result"
 
     # Count discovered services with variables
     local svc_count

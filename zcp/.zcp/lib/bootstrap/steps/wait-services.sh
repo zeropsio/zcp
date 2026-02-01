@@ -193,7 +193,6 @@ _output_status() {
                     service_ids: $ids
                 }')
 
-            record_step "wait-services" "complete" "$data"
             echo "$data" > "${ZCP_TMP_DIR:-/tmp}/bootstrap_wait_status.json"
             json_response "wait-services" "All $total_count services RUNNING" "$data" "mount-dev"
             ;;

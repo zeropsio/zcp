@@ -27,8 +27,11 @@ trap 'trap - EXIT; cleanup; exit 143' TERM
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Export for use by sourced scripts
+# CRITICAL: Export SCRIPT_DIR too - state.sh uses it for BOOTSTRAP_STATE_DIR fallback
+export SCRIPT_DIR
 export ZCP_SCRIPT_DIR="$SCRIPT_DIR"
 export ZCP_STATE_DIR="$SCRIPT_DIR/state"
+export STATE_DIR="$SCRIPT_DIR/state"
 
 # Source utilities
 source "$SCRIPT_DIR/lib/utils.sh"
@@ -39,8 +42,7 @@ source "$SCRIPT_DIR/lib/bootstrap/state.sh"
 source "$SCRIPT_DIR/lib/bootstrap/detect.sh"
 source "$SCRIPT_DIR/lib/bootstrap/import-gen.sh"
 
-# Initialize state directory
-init_bootstrap_state
+# State is now managed via unified STATE_FILE in state.sh
 
 # =============================================================================
 # STEP DEFINITIONS (single source of truth)
@@ -88,38 +90,6 @@ get_step_by_index() {
     if [[ $index -ge 0 ]] && [[ $index -lt ${#BOOTSTRAP_STEPS[@]} ]]; then
         echo "${BOOTSTRAP_STEPS[$index]}"
     fi
-}
-
-# Initialize workflow.json from BOOTSTRAP_STEPS array
-init_workflow_state() {
-    local steps_json="["
-    local i=1
-    for step in "${BOOTSTRAP_STEPS[@]}"; do
-        [[ $i -gt 1 ]] && steps_json+=","
-        steps_json+="{\"index\":$i,\"name\":\"$step\",\"status\":\"pending\"}"
-        ((i++))
-    done
-    steps_json+="]"
-
-    local workflow_id
-    workflow_id=$(generate_uuid)
-
-    local state
-    state=$(jq -n \
-        --arg wid "$workflow_id" \
-        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        --argjson steps "$steps_json" \
-        --argjson total "${#BOOTSTRAP_STEPS[@]}" \
-        '{
-            workflow_id: $wid,
-            started_at: $ts,
-            current_step: 1,
-            total_steps: $total,
-            steps: $steps
-        }')
-
-    mkdir -p "$ZCP_STATE_DIR" 2>/dev/null || true
-    atomic_write "$state" "$ZCP_STATE_DIR/workflow.json"
 }
 
 # =============================================================================
@@ -208,8 +178,7 @@ cmd_step() {
         # Validate JSON output from step
         if ! echo "$step_output" | jq -e . >/dev/null 2>&1; then
             # Output is not valid JSON - treat as plain text success
-            update_step_status "$step_name" "complete"
-            record_step "$step_name" "complete" "{}"
+            complete_step "$step_name" "{}"
             emit_success "$step_name"
             return 0
         fi
@@ -219,8 +188,7 @@ cmd_step() {
         status=$(echo "$step_output" | jq -r '.status // "complete"' 2>/dev/null || echo "complete")
 
         if [[ "$status" == "complete" ]]; then
-            update_step_status "$step_name" "complete"
-            record_step "$step_name" "complete" "$(echo "$step_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
+            complete_step "$step_name" "$(echo "$step_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
 
             # Special handling for spawn-subagents: output the instructions
             if [[ "$step_name" == "spawn-subagents" ]]; then
@@ -229,9 +197,7 @@ cmd_step() {
                 emit_success "$step_name"
             fi
         elif [[ "$status" == "needs_action" ]]; then
-            # Step completed but requires agent action (e.g., spawn subagents)
-            update_step_status "$step_name" "complete"
-            record_step "$step_name" "complete" "$(echo "$step_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
+            complete_step "$step_name" "$(echo "$step_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
             emit_needs_action "$step_name" "$step_output"
         elif [[ "$status" == "in_progress" ]]; then
             # Step needs to be re-run (e.g., wait-services polling)
@@ -270,7 +236,7 @@ cmd_resume() {
 # Full diagnostic output for humans
 # =============================================================================
 cmd_status() {
-    if ! workflow_exists; then
+    if ! bootstrap_active; then
         echo "No active workflow."
         echo ""
         echo "Start with: .zcp/bootstrap.sh init --runtime <type>"
@@ -279,14 +245,14 @@ cmd_status() {
 
     echo "=== Workflow Status ==="
     echo ""
-    jq -r '
+    get_state | jq -r '
         "Workflow ID: \(.workflow_id)",
         "Started: \(.started_at)",
-        "Progress: \(.current_step)/\(.total_steps)",
+        "Progress: \(.current_step)/\(.steps | length)",
         "",
         "Steps:",
         (.steps[] | "  [\(.status | if . == "complete" then "✓" elif . == "in_progress" then "→" elif . == "failed" then "✗" else " " end)] \(.name)")
-    ' "$ZCP_STATE_DIR/workflow.json"
+    '
 }
 
 # =============================================================================
@@ -332,10 +298,8 @@ ZCLI_AUTH
         fi
     fi
 
-    # Initialize workflow state
-    init_workflow_state
-
     # Run the plan step with arguments (use array to prevent word splitting)
+    # Note: plan.sh calls init_bootstrap() to initialize state
     local -a step_args=("--runtime" "$runtime" "--prefix" "$prefix")
     [[ -n "$services" ]] && step_args+=("--services" "$services")
     [[ "$ha_mode" == "true" ]] && step_args+=("--ha")
@@ -352,21 +316,19 @@ ZCLI_AUTH
         local status
         status=$(echo "$plan_output" | jq -r '.status // "complete"' 2>/dev/null || echo "complete")
         if [[ "$status" == "complete" ]]; then
-            update_step_status "plan" "complete"
-            record_step "plan" "complete" "$(echo "$plan_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
-
+            # plan.sh handles its own state via init_bootstrap() + complete_step()
             echo ""
             echo "✓ Workflow initialized"
             echo ""
             echo "Next → .zcp/bootstrap.sh step recipe-search"
             echo ""
         else
-            update_step_status "plan" "failed"
+            set_step_status "plan" "failed"
             emit_error "plan" "Plan step failed" "Check arguments and retry"
             exit 1
         fi
     else
-        update_step_status "plan" "failed"
+        set_step_status "plan" "failed"
         emit_error "plan" "Plan step failed (exit: $plan_exit)" "Check arguments and retry"
         exit 1
     fi
@@ -390,14 +352,14 @@ cmd_reset() {
 # Validate bootstrap completion
 # =============================================================================
 cmd_done() {
-    if ! workflow_exists; then
+    if ! bootstrap_active; then
         emit_error "done" "No bootstrap in progress" "Run: .zcp/bootstrap.sh init --runtime <type>"
         exit 1
     fi
 
     # Check if all steps are complete
     local all_complete
-    all_complete=$(jq -r '[.steps[].status] | all(. == "complete")' "$ZCP_STATE_DIR/workflow.json" 2>/dev/null || echo "false")
+    all_complete=$(get_state | jq -r '[.steps[].status] | all(. == "complete")')
 
     if [[ "$all_complete" == "true" ]]; then
         emit_complete

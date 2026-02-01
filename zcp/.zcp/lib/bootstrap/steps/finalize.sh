@@ -285,8 +285,6 @@ step_finalize() {
             service_handoffs: $h
         }')
 
-    record_step "finalize" "complete" "$data"
-
     local msg
     if [ "$handoff_count" -eq 1 ]; then
         msg="Infrastructure ready - 1 service pair for code generation"

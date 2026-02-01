@@ -557,8 +557,6 @@ step_aggregate_results() {
             next_steps: $next_steps
         }')
 
-    record_step "aggregate-results" "complete" "$data"
-
     # Build msg with clear guidance for using iterate
     local msg
     msg="✅ Bootstrap complete — $count service pair(s) deployed and verified.

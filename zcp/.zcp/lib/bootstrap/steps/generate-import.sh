@@ -69,8 +69,6 @@ step_generate_import() {
                     services: ($s | split(","))
                 }')
 
-            record_step "generate-import" "complete" "$data"
-
             json_response "generate-import" "Generated import.yml with services: $service_list" "$data" "import-services"
         else
             json_error "generate-import" "Failed to create import.yml" '{}' '["Check import-gen.sh", "Verify plan parameters"]'

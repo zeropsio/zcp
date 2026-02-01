@@ -157,11 +157,8 @@ step_plan() {
         echo "INIT" > "${ZCP_TMP_DIR:-/tmp}/claude_phase"
     fi
 
-    # Initialize bootstrap state
-    init_state "$plan_data" "$session_id"
-
-    # Record step completion
-    record_step "plan" "complete" "$plan_data"
+    # Initialize bootstrap with plan
+    init_bootstrap "$plan_data"
 
     # Also write plan to temp file for compatibility
     echo "$plan_data" > "${ZCP_TMP_DIR:-/tmp}/bootstrap_plan.json"

@@ -106,7 +106,6 @@ step_mount_dev() {
     done
 
     if [ "$all_success" = true ]; then
-        record_step "mount-dev" "complete" "$mounts_data"
         local msg="Mounted ${mounted_count} service(s): ${hostnames[*]}"
         json_response "mount-dev" "$msg" "$mounts_data" "discover-services"
     else
