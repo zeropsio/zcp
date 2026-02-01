@@ -141,53 +141,37 @@ emit_resume() {
 
 # -----------------------------------------------------------------------------
 # emit_spawn_instructions <step_output_json>
-# Special output for spawn-subagents step - must show Task tool instructions
+# Special output for spawn-subagents step - tells agent to use Task tool
 # -----------------------------------------------------------------------------
 emit_spawn_instructions() {
     local step_output="$1"
-    local count instructions
+    local count
 
     count=$(echo "$step_output" | jq -r '.data.subagent_count // 0' 2>/dev/null)
-    instructions=$(echo "$step_output" | jq -r '.data.instructions // []' 2>/dev/null)
 
     echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "  SPAWN ${count} SUBAGENT(S) - Action Required"
-    echo "═══════════════════════════════════════════════════════════════════"
+    echo "╔═══════════════════════════════════════════════════════════════════╗"
+    echo "║  ⚠️  ACTION REQUIRED: SPAWN ${count} SUBAGENT(S)                   ║"
+    echo "╠═══════════════════════════════════════════════════════════════════╣"
+    echo "║                                                                   ║"
+    echo "║  STOP! Do NOT run any more bootstrap steps.                       ║"
+    echo "║                                                                   ║"
+    echo "║  You MUST now use the Task tool to spawn ${count} subagent(s).     ║"
+    echo "║                                                                   ║"
+    echo "║  1. Read the prompts from: /tmp/bootstrap_spawn.json              ║"
+    echo "║  2. For EACH entry in .data.instructions[], spawn a Task          ║"
+    echo "║  3. Wait for ALL subagents to complete                            ║"
+    echo "║  4. THEN run: .zcp/bootstrap.sh step aggregate-results            ║"
+    echo "║                                                                   ║"
+    echo "╚═══════════════════════════════════════════════════════════════════╝"
     echo ""
-    echo "Use the Task tool to spawn subagents. For EACH service pair below,"
-    echo "create a Task with subagent_type='general-purpose' and the provided prompt."
+    echo "Subagent prompts saved to: /tmp/bootstrap_spawn.json"
     echo ""
-
-    local i=0
-    while [[ $i -lt $count ]]; do
-        local hostname mount_path runtime prompt
-        hostname=$(echo "$instructions" | jq -r ".[$i].hostname" 2>/dev/null)
-        mount_path=$(echo "$instructions" | jq -r ".[$i].mount_path" 2>/dev/null)
-        runtime=$(echo "$instructions" | jq -r ".[$i].runtime" 2>/dev/null)
-
-        echo "───────────────────────────────────────────────────────────────────"
-        echo "  Subagent $((i+1)): ${hostname} (${runtime})"
-        echo "───────────────────────────────────────────────────────────────────"
-        echo ""
-        echo "  Mount path: ${mount_path}"
-        echo "  Prompt file: ${ZCP_TMP_DIR:-/tmp}/bootstrap_spawn.json"
-        echo ""
-        echo "  Extract prompt with:"
-        echo "    jq -r '.data.instructions[${i}].subagent_prompt' ${ZCP_TMP_DIR:-/tmp}/bootstrap_spawn.json"
-        echo ""
-
-        ((i++))
-    done
-
+    echo "To extract prompt for subagent N (0-indexed):"
+    echo "  jq -r '.data.instructions[N].subagent_prompt' /tmp/bootstrap_spawn.json"
     echo ""
-    echo "After spawning ALL subagents, wait for completion:"
-    echo ""
-    echo "  .zcp/bootstrap.sh step aggregate-results"
-    echo ""
-    echo "Or use the polling script:"
-    echo ""
-    echo "  .zcp/wait-for-subagents.sh --timeout 600"
+    echo "Example Task tool call:"
+    echo "  Task(subagent_type='general-purpose', prompt=<extracted_prompt>)"
     echo ""
 }
 

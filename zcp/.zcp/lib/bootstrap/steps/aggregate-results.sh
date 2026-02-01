@@ -169,18 +169,57 @@ step_aggregate_results() {
         local pending_json
         pending_json=$(printf '%s\n' "${pending[@]}" | jq -R . | jq -s .)
 
+        # Check if ALL services are in "unknown" state - means subagents never ran
+        local all_unknown=true
+        for p in "${pending[@]}"; do
+            local phase="${p#*:}"
+            if [[ "$phase" != "unknown" ]] && [[ "$phase" != "null" ]] && [[ -n "$phase" ]]; then
+                all_unknown=false
+                break
+            fi
+        done
+
+        local action_msg recovery_msg
+        if [ "$complete" -eq 0 ] && [ "$all_unknown" = true ]; then
+            # NO subagents have run at all - they were never spawned
+            action_msg="SUBAGENTS WERE NEVER SPAWNED! You must use the Task tool to spawn them."
+            recovery_msg="Read /tmp/bootstrap_spawn.json and spawn subagents via Task tool FIRST"
+
+            # Output a clear error instead of just in_progress
+            echo ""
+            echo "╔═══════════════════════════════════════════════════════════════════╗"
+            echo "║  ❌ ERROR: No subagents were spawned!                              ║"
+            echo "╠═══════════════════════════════════════════════════════════════════╣"
+            echo "║                                                                   ║"
+            echo "║  The spawn-subagents step output instructions, but you did not    ║"
+            echo "║  use the Task tool to actually spawn the subagents.               ║"
+            echo "║                                                                   ║"
+            echo "║  GO BACK and spawn subagents:                                     ║"
+            echo "║  1. Read: /tmp/bootstrap_spawn.json                               ║"
+            echo "║  2. For each .data.instructions[], use Task tool to spawn         ║"
+            echo "║  3. Wait for subagents to complete                                ║"
+            echo "║  4. THEN run aggregate-results again                              ║"
+            echo "║                                                                   ║"
+            echo "╚═══════════════════════════════════════════════════════════════════╝"
+            echo ""
+        else
+            action_msg="Wait for subagents to complete, then re-run this step"
+            recovery_msg="If subagent reported success but state file missing, use mark-complete.sh"
+        fi
+
         local data
         data=$(jq -n \
             --argjson complete "$complete" \
             --argjson total "$count" \
             --argjson pending "$pending_json" \
             --argjson results "$results" \
+            --arg action "$action_msg" \
             '{
                 complete: $complete,
                 total: $total,
                 pending: $pending,
                 results: $results,
-                action: "Wait for subagents to complete, then re-run this step",
+                action: $action,
                 recovery: {
                     description: "If subagent reported success but state file missing:",
                     steps: [
