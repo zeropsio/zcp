@@ -38,6 +38,7 @@ emit_success() {
 # -----------------------------------------------------------------------------
 # emit_already_complete <step_name>
 # Output when step was already completed (idempotent re-run)
+# Special handling for spawn-subagents: always show instructions from cache
 # -----------------------------------------------------------------------------
 emit_already_complete() {
     local step_name="$1"
@@ -47,6 +48,23 @@ emit_already_complete() {
     echo ""
     echo "✓ ${step_name} already complete"
     echo ""
+
+    # Special handling: spawn-subagents must ALWAYS show instructions
+    # Agent may have missed them on first run or lost context
+    if [[ "$step_name" == "spawn-subagents" ]]; then
+        local spawn_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_spawn.json"
+        if [[ -f "$spawn_file" ]]; then
+            emit_spawn_instructions "$(cat "$spawn_file")"
+            return 0
+        else
+            echo "⚠️  Spawn instructions file not found: $spawn_file"
+            echo "   Re-run finalize then spawn-subagents:"
+            echo "   .zcp/bootstrap.sh step finalize"
+            echo "   .zcp/bootstrap.sh step spawn-subagents"
+            echo ""
+            return 0
+        fi
+    fi
 
     if [[ -n "$next_step" ]]; then
         echo "Next → ${SCRIPT_PATH} step ${next_step}"

@@ -175,6 +175,18 @@ cmd_step() {
     step_output=$("$func_name" "$@" 2>&1) || step_exit_code=$?
 
     if [[ $step_exit_code -eq 0 ]]; then
+        # Special case: spawn-subagents writes to file, always use that
+        # This avoids issues with stderr warnings mixed into step_output
+        if [[ "$step_name" == "spawn-subagents" ]]; then
+            local spawn_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_spawn.json"
+            if [[ -f "$spawn_file" ]]; then
+                complete_step "$step_name" "$(jq '.data // {}' "$spawn_file" 2>/dev/null || echo '{}')"
+                emit_spawn_instructions "$(cat "$spawn_file")"
+                return 0
+            fi
+            # If file doesn't exist, fall through to normal handling
+        fi
+
         # Validate JSON output from step
         if ! echo "$step_output" | jq -e . >/dev/null 2>&1; then
             # Output is not valid JSON - treat as plain text success
@@ -189,13 +201,7 @@ cmd_step() {
 
         if [[ "$status" == "complete" ]]; then
             complete_step "$step_name" "$(echo "$step_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
-
-            # Special handling for spawn-subagents: output the instructions
-            if [[ "$step_name" == "spawn-subagents" ]]; then
-                emit_spawn_instructions "$step_output"
-            else
-                emit_success "$step_name"
-            fi
+            emit_success "$step_name"
         elif [[ "$status" == "needs_action" ]]; then
             complete_step "$step_name" "$(echo "$step_output" | jq '.data // {}' 2>/dev/null || echo '{}')"
             emit_needs_action "$step_name" "$step_output"
