@@ -528,13 +528,14 @@ step_aggregate_results() {
     local next_steps
     next_steps=$(jq -n \
         '[
-            "Bootstrap complete! Services are deployed with a status page.",
-            "To start your first task: .zcp/workflow.sh iterate \"description of what you want to build\"",
-            "This starts a new DEVELOP → DEPLOY → VERIFY → DONE cycle.",
-            "Run .zcp/workflow.sh show anytime for guidance."
+            "⛔ STOP! Before doing ANY work, you MUST run the iterate command first.",
+            "MANDATORY: .zcp/workflow.sh iterate \"description of what you want to build\"",
+            "This is NOT optional - the workflow will NOT track your progress without it.",
+            "Do NOT skip this step. Do NOT start editing files. Run iterate FIRST."
         ]')
 
     # Record step completion
+    # CRITICAL: required_action tells agents what they MUST do before any other work
     local data
     data=$(jq -n \
         --argjson count "$count" \
@@ -557,33 +558,42 @@ step_aggregate_results() {
                 stage_verify: {passed: $stage_passed, failed: $stage_failed},
                 deploy_evidence: true
             },
+            required_action: {
+                command: ".zcp/workflow.sh iterate \"<task description>\"",
+                blocking: true,
+                reason: "Workflow will NOT track progress without running iterate first",
+                must_run_before: ["editing files", "writing code", "making any changes"]
+            },
             next_steps: $next_steps
         }')
 
-    # Build msg with clear guidance for using iterate
+    # Build msg with VERY clear guidance for using iterate - agents must not skip this
+    # Put REQUIRED ACTION first so it's the first thing seen when summarizing
     local msg
-    msg="✅ Bootstrap complete — $count service pair(s) deployed and verified.
+    msg="⛔⛔⛔ REQUIRED ACTION - READ THIS FIRST ⛔⛔⛔
 
-WORKFLOW STATE: DONE
-  • All evidence files created (dev_verify, stage_verify, deploy_evidence)
-  • Services have basic status pages deployed
-  • Ready for your first real task
+When the user gives you a task, your FIRST action MUST be:
 
-TO START WORKING:
-  .zcp/workflow.sh iterate \"description of what to build\"
+  .zcp/workflow.sh iterate \"<the task they described>\"
 
-This will:
-  1. Archive bootstrap evidence
-  2. Start fresh DEVELOP phase
-  3. Guide you through DEVELOP → DEPLOY → VERIFY → DONE
+Do NOT start editing files or writing code until you run iterate.
+This is blocking - the workflow will not track your work otherwise.
 
-Example:
-  .zcp/workflow.sh iterate \"Build user authentication with JWT\"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-DO NOT:
-  • Skip iterate and start editing (workflow won't track progress)
-  • Run init (you're already initialized)
-  • Re-run bootstrap commands"
+✅ Bootstrap complete — $count service pair(s) deployed and verified.
+
+Infrastructure is ready. Services have status pages deployed.
+
+TO START YOUR FIRST REAL TASK:
+  1. User tells you what to build
+  2. YOU run: .zcp/workflow.sh iterate \"what they told you\"
+  3. THEN you can start implementing
+
+Example flow:
+  User: \"Build the Starfield visualization\"
+  You:  .zcp/workflow.sh iterate \"Build the Starfield visualization\"
+  Then: Start implementing..."
 
     json_response "aggregate-results" "$msg" "$data" "null"
 }

@@ -254,15 +254,29 @@ step_finalize() {
 
     # Write handoff file
     local handoff_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json"
+
+    # Critical notes for subagent context (machine-readable)
+    local critical_notes
+    critical_notes=$(jq -n '[
+        "Dev services use zsc noop --silent - application will NOT auto-start after deploy",
+        "You MUST start the app via SSH before verifying: ssh {dev} \"cd /var/www && nohup <cmd> > /tmp/app.log 2>&1 &\"",
+        "Tool availability: jq, yq, psql, redis-cli are on ZCP only - NOT inside containers",
+        "Correct pattern: ssh {dev} \"curl ...\" | jq .  (pipe OUTSIDE SSH, not inside)",
+        "HTTP 000 from verify.sh means server not running - start it first",
+        "Stage services auto-start (start: ./app) - no manual start needed for stage"
+    ]')
+
     local handoff_data
     handoff_data=$(jq -n \
         --arg session "$(cat "${ZCP_TMP_DIR:-/tmp}/zcp_session" 2>/dev/null || echo "unknown")" \
         --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        --argjson notes "$critical_notes" \
         --argjson handoffs "$handoffs" \
         '{
             session_id: $session,
             timestamp: $ts,
             status: "ready_for_code_generation",
+            critical_notes: $notes,
             service_handoffs: $handoffs
         }')
 

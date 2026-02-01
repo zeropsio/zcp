@@ -643,14 +643,32 @@ GUIDANCE
             ;;
         DONE)
             cat <<'GUIDANCE'
-✅ Workflow complete.
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  ⛔ MANDATORY: Run iterate BEFORE doing any work                               ║
+╠═══════════════════════════════════════════════════════════════════════════════╣
+║                                                                               ║
+║  .zcp/workflow.sh iterate "description of what to build"                      ║
+║                                                                               ║
+║  This is NOT optional. You MUST run this command before:                      ║
+║    • Editing any files                                                        ║
+║    • Writing any code                                                         ║
+║    • Making any changes                                                       ║
+║                                                                               ║
+║  The iterate command:                                                         ║
+║    • Starts the DEVELOP phase                                                 ║
+║    • Enables workflow tracking                                                ║
+║    • Archives previous evidence                                               ║
+║                                                                               ║
+║  Without iterate, your work will NOT be tracked by the workflow.              ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
 
-To continue working (bug fix, new feature, iteration):
-   .zcp/workflow.sh iterate "description"     Start new iteration
-   .zcp/workflow.sh iterate --to VERIFY       Skip to verify (no code changes)
+Example:
+   .zcp/workflow.sh iterate "Build user authentication with JWT"
+   .zcp/workflow.sh iterate --to VERIFY "CSS fix only"   (skip to verify)
 
-To finish:
-   .zcp/workflow.sh complete                  Mark session complete
+To mark session fully complete (no more work):
+   .zcp/workflow.sh complete
 GUIDANCE
             ;;
         QUICK)

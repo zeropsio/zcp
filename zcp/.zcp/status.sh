@@ -557,6 +557,19 @@ wait_for_deployment() {
             SUCCESS)
                 echo "  [${elapsed}/${timeout}s] ✅ Deployment complete!"
                 echo ""
+                # Check if this is a dev service (heuristic: name contains 'dev')
+                if [[ "$service" == *"dev"* ]]; then
+                    echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "  ⚠️  Dev services use manual start (zsc noop --silent)"
+                    echo ""
+                    echo "  Before verifying, start your application:"
+                    echo "    ssh $service \"cd /var/www && nohup <your-start-cmd> > /tmp/app.log 2>&1 &\""
+                    echo ""
+                    echo "  Then verify:"
+                    echo "    .zcp/verify.sh $service 8080 / /health /status"
+                    echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo ""
+                fi
                 record_deployment_evidence "$service" "SUCCESS"
                 show_status
                 WAIT_MODE_ACTIVE=false
