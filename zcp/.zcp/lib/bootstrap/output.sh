@@ -234,7 +234,7 @@ emit_spawn_instructions() {
         echo "    prompt: <read contents of /tmp/subagent_prompt_${i}.txt>"
         echo ""
 
-        ((i++))
+        ((i++)) || true
     done
 
     echo "SEQUENCE:"
