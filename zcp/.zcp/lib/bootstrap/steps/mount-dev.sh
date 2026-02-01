@@ -1,117 +1,120 @@
 #!/usr/bin/env bash
 # .zcp/lib/bootstrap/steps/mount-dev.sh
-# Step: Set up SSHFS mount for a dev service
+# Step: Set up SSHFS mount for dev service(s)
 #
-# Inputs: hostname (positional argument)
-# Outputs: Mount path, writable status
+# Inputs: hostname (optional - if omitted, mounts ALL dev services from plan)
+# Outputs: Mount path(s), writable status
 #
 # This step delegates to mount.sh for the actual mount operation.
-# It can be called multiple times for multi-service bootstraps.
 
-step_mount_dev() {
-    local hostname="${1:-}"
-
-    if [ -z "$hostname" ]; then
-        json_error "mount-dev" "Hostname required" '{}' '["Specify hostname: .zcp/bootstrap.sh step mount-dev apidev"]'
-        return 1
-    fi
-
-    # HIGH-12: Validate hostname to prevent path traversal
-    if [[ ! "$hostname" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        json_error "mount-dev" "Invalid hostname format: $hostname" '{}' '["Hostname must contain only alphanumeric characters, hyphens, and underscores"]'
-        return 1
-    fi
-
+# Mount a single hostname (internal helper)
+_mount_single_dev() {
+    local hostname="$1"
     local mount_path="/var/www/$hostname"
 
     # Check if already mounted and accessible
     if [ -d "$mount_path" ] && ls "$mount_path" >/dev/null 2>&1; then
-        # Check if it's actually a mount (not just a directory)
         if mountpoint -q "$mount_path" 2>/dev/null || mount | grep -q "$mount_path"; then
-            # Test write access
             local writable="false"
             if touch "$mount_path/.zcp_test" 2>/dev/null; then
                 rm -f "$mount_path/.zcp_test"
                 writable="true"
             fi
-
-            local data
-            data=$(jq -n \
-                --arg h "$hostname" \
-                --arg p "$mount_path" \
-                --argjson w "$writable" \
-                '{
-                    hostname: $h,
-                    mount_path: $p,
-                    writable: $w
-                }')
-
-            # Update mounts in state (aggregate all mounts)
-            local mounts_data
-            mounts_data=$(get_step_data "mount-dev")
-            if [ "$mounts_data" = '{}' ]; then
-                mounts_data='{"mounts": {}}'
-            fi
-            mounts_data=$(echo "$mounts_data" | jq --arg h "$hostname" --argjson d "$data" '.mounts[$h] = $d')
-            record_step "mount-dev" "complete" "$mounts_data"
-
-            json_response "mount-dev" "Already mounted: $mount_path" "$data" "finalize"
+            echo "{\"hostname\": \"$hostname\", \"mount_path\": \"$mount_path\", \"writable\": $writable, \"status\": \"already_mounted\"}"
             return 0
         fi
     fi
 
-    # Need to create mount - call mount.sh
+    # Need to create mount
     local mount_script="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../..}/mount.sh"
     if [ ! -f "$mount_script" ]; then
         mount_script="$(dirname "${BASH_SOURCE[0]}")/../../../mount.sh"
     fi
 
     if [ -f "$mount_script" ]; then
-        local mount_output
-        mount_output=$("$mount_script" "$hostname" 2>&1) || true
-
-        # Verify mount worked
+        "$mount_script" "$hostname" >/dev/null 2>&1 || true
         sleep 1
+
         if [ -d "$mount_path" ] && ls "$mount_path" >/dev/null 2>&1; then
-            # Test write access
             local writable="false"
             if touch "$mount_path/.zcp_test" 2>/dev/null; then
                 rm -f "$mount_path/.zcp_test"
                 writable="true"
             fi
+            echo "{\"hostname\": \"$hostname\", \"mount_path\": \"$mount_path\", \"writable\": $writable, \"status\": \"mounted\"}"
+            return 0
+        fi
+    fi
 
-            local data
-            data=$(jq -n \
-                --arg h "$hostname" \
-                --arg p "$mount_path" \
-                --argjson w "$writable" \
-                '{
-                    hostname: $h,
-                    mount_path: $p,
-                    writable: $w
-                }')
+    echo "{\"hostname\": \"$hostname\", \"mount_path\": \"$mount_path\", \"status\": \"failed\"}"
+    return 1
+}
 
-            # Update mounts in state
-            local mounts_data
-            mounts_data=$(get_step_data "mount-dev")
-            if [ "$mounts_data" = '{}' ]; then
-                mounts_data='{"mounts": {}}'
-            fi
-            mounts_data=$(echo "$mounts_data" | jq --arg h "$hostname" --argjson d "$data" '.mounts[$h] = $d')
-            record_step "mount-dev" "complete" "$mounts_data"
+step_mount_dev() {
+    local hostname="${1:-}"
+    local hostnames=()
 
-            json_response "mount-dev" "Mounted $mount_path" "$data" "finalize"
-        else
-            # Mount failed
-            json_needs_action "mount-dev" "Mount failed for $hostname" "Run: $mount_script $hostname" \
-                "{\"hostname\": \"$hostname\", \"mount_path\": \"$mount_path\", \"output\": \"$mount_output\"}"
+    # If no hostname provided, get all dev hostnames from plan
+    if [ -z "$hostname" ]; then
+        local plan
+        plan=$(get_plan)
+
+        if [ -z "$plan" ] || [ "$plan" = '{}' ]; then
+            json_error "mount-dev" "No plan found - run init first" '{}' '[]'
+            return 1
+        fi
+
+        # Get dev hostnames (handles both array and single value)
+        while IFS= read -r h; do
+            [[ -n "$h" ]] && hostnames+=("$h")
+        done < <(echo "$plan" | jq -r '.dev_hostnames // [.dev_hostname] | .[]' 2>/dev/null)
+
+        if [ ${#hostnames[@]} -eq 0 ]; then
+            json_error "mount-dev" "No dev hostnames found in plan" '{}' '[]'
             return 1
         fi
     else
-        # mount.sh not found - provide manual instructions
-        json_needs_action "mount-dev" "mount.sh not found" \
-            "Run: mkdir -p $mount_path && sudo -E zsc unit create sshfs-$hostname \"sshfs -f -o reconnect $hostname:/var/www $mount_path\"" \
-            "{\"hostname\": \"$hostname\", \"mount_path\": \"$mount_path\"}"
+        hostnames=("$hostname")
+    fi
+
+    # Mount all hostnames
+    local mounts_data='{"mounts": {}}'
+    local all_success=true
+    local failed_hosts=()
+    local mounted_count=0
+
+    for h in "${hostnames[@]}"; do
+        # Validate hostname to prevent path traversal
+        if [[ ! "$h" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            failed_hosts+=("$h (invalid format)")
+            all_success=false
+            continue
+        fi
+
+        local result
+        result=$(_mount_single_dev "$h")
+        local status
+        status=$(echo "$result" | jq -r '.status' 2>/dev/null)
+
+        if [[ "$status" == "mounted" ]] || [[ "$status" == "already_mounted" ]]; then
+            mounts_data=$(echo "$mounts_data" | jq --arg h "$h" --argjson d "$result" '.mounts[$h] = $d')
+            ((mounted_count++))
+        else
+            failed_hosts+=("$h")
+            all_success=false
+        fi
+    done
+
+    if [ "$all_success" = true ]; then
+        record_step "mount-dev" "complete" "$mounts_data"
+        local msg="Mounted ${mounted_count} service(s): ${hostnames[*]}"
+        json_response "mount-dev" "$msg" "$mounts_data" "discover-services"
+    else
+        local failed_list
+        failed_list=$(printf '%s\n' "${failed_hosts[@]}" | jq -R . | jq -s .)
+        json_error "mount-dev" "Failed to mount: ${failed_hosts[*]}" \
+            "{\"mounted\": $mounted_count, \"failed\": $failed_list}" \
+            '["Check SSH connectivity", "Verify service is running"]'
         return 1
     fi
 }
