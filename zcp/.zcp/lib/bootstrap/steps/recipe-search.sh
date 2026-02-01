@@ -142,6 +142,18 @@ step_recipe_search() {
         done
         echo "All fetches complete." >&2
 
+        # Per-runtime evidence files are at /tmp/recipe_review_${runtime}.json
+        # finalize.sh reads these directly - no merging needed
+        echo "Evidence files created:" >&2
+        for runtime in $runtimes_list; do
+            local prefix_evidence="${tmp_dir}/recipe_review_${runtime}.json"
+            if [ -f "$prefix_evidence" ]; then
+                echo "  ✓ $prefix_evidence" >&2
+            else
+                echo "  ✗ $prefix_evidence (missing)" >&2
+            fi
+        done
+
         # Collect runtime results
         local runtime_recipes='{}'
         local runtimes_found=0

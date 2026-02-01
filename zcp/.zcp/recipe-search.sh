@@ -1352,7 +1352,13 @@ create_evidence_file() {
     recipe_file_display="/tmp/fetched_recipe.md"
   fi
 
-  local evidence_file="/tmp/recipe_review.json"
+  # Evidence file: use prefix if specified to avoid race conditions in parallel execution
+  local evidence_file
+  if [ -n "$output_prefix" ]; then
+    evidence_file="/tmp/recipe_review_${output_prefix}.json"
+  else
+    evidence_file="/tmp/recipe_review.json"
+  fi
 
   echo -e "${BOLD}Creating evidence file: $evidence_file${NC}"
   echo ""
