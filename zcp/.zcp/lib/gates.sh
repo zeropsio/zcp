@@ -83,15 +83,16 @@ gate_check_session() {
     fi
 }
 
-# Check verification has zero failures (including pre-flight failures)
-# Now supports both HTTP and process/log verification types
-# Usage: gate_check_no_failures "$FILE" "context"
-gate_check_no_failures() {
+# Check verification evidence (supports both attestation and legacy HTTP/process/logs)
+# Usage: gate_check_verification "$FILE" "context"
+# Also aliased as gate_check_no_failures for backward compatibility
+gate_check_verification() {
     local file="$1"
     local context="${2:-verification}"
 
     if [ ! -f "$file" ]; then
-        gate_fail "No $context evidence file found" "Run verification first"
+        gate_fail "No $context evidence" \
+            "Run: .zcp/verify.sh {service} \"what you verified\""
         return 1
     fi
 
@@ -100,53 +101,63 @@ gate_check_no_failures() {
         return 1
     fi
 
-    # Check verification type
     local verify_type
     verify_type=$(jq -r '.verification_type // "http"' "$file" 2>/dev/null)
 
-    # Check for preflight failure (HTTP mode only)
-    if [ "$verify_type" = "http" ]; then
-        local preflight_failed
-        preflight_failed=$(jq -r '.preflight_failed // false' "$file" 2>/dev/null)
-        if [ "$preflight_failed" = "true" ]; then
-            local reason
-            reason=$(jq -r '.preflight_reason // "Unknown pre-flight failure"' "$file" 2>/dev/null)
-            gate_fail "Pre-flight check failed: $reason" "Ensure process is running on port"
-            return 1
-        fi
-    fi
-
-    # Check for test failures (all modes)
-    local failures
-    failures=$(jq -r '.failed // 0' "$file" 2>/dev/null)
-    if ! [[ "$failures" =~ ^[0-9]+$ ]]; then
-        gate_fail "Cannot read failure count from evidence file"
-        return 1
-    elif [ "$failures" -gt 0 ]; then
-        gate_fail "$context has $failures failure(s)" "Fix failing checks before proceeding"
-        return 1
-    fi
-
-    # Check for zero passes (suspicious - might be empty test)
-    local passed
-    passed=$(jq -r '.passed // 0' "$file" 2>/dev/null)
-    if [ "$passed" -eq 0 ] && [ "$failures" -eq 0 ]; then
-        gate_warn "No checks performed" "Ensure verification ran correctly"
-    fi
-
-    # Report based on verification type
     case "$verify_type" in
-        process)
-            gate_pass "$context passed (process verification: $passed checks)"
-            ;;
-        logs)
-            gate_pass "$context passed (log verification: $passed checks)"
+        attestation)
+            local attestation
+            attestation=$(jq -r '.attestation // empty' "$file" 2>/dev/null)
+
+            if [ -z "$attestation" ]; then
+                gate_fail "Empty attestation" \
+                    "Run: .zcp/verify.sh {service} \"what you verified\""
+                return 1
+            fi
+
+            gate_pass "$context: ${attestation:0:50}..."
+            return 0
             ;;
         *)
-            gate_pass "$context passed ($passed endpoints, 0 failures)"
+            # Legacy HTTP/process/logs - check passed > 0, failed == 0
+
+            # Check for preflight failure (HTTP mode only)
+            if [ "$verify_type" = "http" ]; then
+                local preflight_failed
+                preflight_failed=$(jq -r '.preflight_failed // false' "$file" 2>/dev/null)
+                if [ "$preflight_failed" = "true" ]; then
+                    local reason
+                    reason=$(jq -r '.preflight_reason // "Unknown pre-flight failure"' "$file" 2>/dev/null)
+                    gate_fail "Pre-flight check failed: $reason" "Ensure process is running on port"
+                    return 1
+                fi
+            fi
+
+            local passed failed
+            passed=$(jq -r '.passed // 0' "$file" 2>/dev/null)
+            failed=$(jq -r '.failed // 0' "$file" 2>/dev/null)
+
+            if ! [[ "$failed" =~ ^[0-9]+$ ]]; then
+                gate_fail "Cannot read failure count from evidence file"
+                return 1
+            elif [ "$failed" -gt 0 ]; then
+                gate_fail "$context has $failed failure(s)"
+                return 1
+            fi
+
+            if [ "$passed" -eq 0 ]; then
+                gate_warn "No checks recorded"
+            fi
+
+            gate_pass "$context passed (legacy mode)"
+            return 0
             ;;
     esac
-    return 0
+}
+
+# Backward compatibility alias
+gate_check_no_failures() {
+    gate_check_verification "$@"
 }
 
 # Finish gate and return result
@@ -222,7 +233,7 @@ gate_check_all_services_verified() {
 
     if [ "$verified" -lt "$service_count" ]; then
         gate_fail "$verified/$service_count ${role} services verified" \
-            "Missing:$missing_services - Verify each: .zcp/verify.sh {hostname} 8080 /"
+            "Missing:$missing_services - HTTP: .zcp/verify.sh {hostname} 8080 / | Worker: --process {hostname} {proc}"
         return 1
     else
         gate_pass "All $service_count ${role} services verified"
@@ -594,7 +605,7 @@ check_gate_develop_to_deploy() {
 
     # Check 1: dev_verify.json exists
     gate_check_file "$DEV_VERIFY_FILE" "dev_verify.json" \
-        "Run: .zcp/verify.sh {dev} {port} / /status /api/..."
+        "HTTP service: .zcp/verify.sh {dev} {port} / ... | Worker: .zcp/verify.sh --process {dev} {proc}"
 
     # Check 2: session_id matches
     gate_check_session "$DEV_VERIFY_FILE"

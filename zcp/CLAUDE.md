@@ -29,7 +29,7 @@ You're on **ZCP** (control plane), not inside app containers.
 │  Runtime services (go, nodejs, php...)                      │
 │    • SSH ✓  →  ssh appdev "go build"                        │
 │    • Your code runs here                                    │
-│    • NO database tools installed                            │
+│    • Minimal: no jq, psql, redis-cli — those are on ZCP     │
 ├─────────────────────────────────────────────────────────────┤
 │  Managed services (postgresql, valkey...)                   │
 │    • NO SSH — access from ZCP only                          │
@@ -39,14 +39,22 @@ You're on **ZCP** (control plane), not inside app containers.
 
 ---
 
+## Source of Truth: /tmp/discovery.json
+
+**Everything is here.** Service IDs, names, URLs, env vars. Check first, don't guess.
+
+```bash
+jq '.' /tmp/discovery.json   # Full context
+```
+
 ## Environment Variables
 
 Shell variables like `$cache_hostname` **do not exist** in ZCP shell.
 
-| Location | Access pattern |
+| Priority | Access pattern |
 |----------|----------------|
-| Inside container | `ssh appdev 'echo $PORT'` |
-| From ZCP | `.zcp/env.sh {service} {var}` |
+| 1. Discovery | `jq '.discovered_env_vars.db' /tmp/discovery.json` |
+| 2. SSH (if needed) | `ssh appdev 'echo $db_connectionString'` |
 | In zerops.yml | `${service_variableName}` (template syntax) |
 
 ---
@@ -78,17 +86,61 @@ Shell variables like `$cache_hostname` **do not exist** in ZCP shell.
 - Deploys run from dev container (source files live there), not from ZCP
 - HTTP 200 ≠ working — check response content, not just status
 - `run_in_background=true` — **only** for commands that block forever (servers), **not** for builds/deploys (you need the logs)
+- **Before deploy:** `cat zerops.yml` and verify deployFiles, envVariables, start command
+
+## Verification
+
+**verify.sh records what YOU verified.** It does not automatically verify anything.
+
+### Flow
+1. Run `.zcp/verify.sh {service}` - see available tools
+2. Use the tools to verify your work
+3. Run `.zcp/verify.sh {service} "what you verified"`
+
+### What To Verify (You Decide)
+
+| You Wrote | Verify With |
+|-----------|-------------|
+| TypeScript/Bun | `ssh {dev} "bun x tsc --noEmit"` |
+| Go code | `ssh {dev} "go build -n ."` |
+| HTTP endpoint | `curl` + check response content |
+| SSE endpoint | Check `content-type: text/event-stream` |
+| Worker/cron | `ps aux \| grep {proc}`, check logs |
+| Frontend | `agent-browser errors` must be empty |
+
+### Attestation Examples
+
+```bash
+# Good - specific, shows what was actually checked
+.zcp/verify.sh bundev "tsc clean, /events returns text/event-stream, tail -30 logs clean"
+.zcp/verify.sh goworker "process running (ps aux), processed test message, no panics in log"
+.zcp/verify.sh frontend "browser errors empty, screenshot shows correct layout"
+
+# Bad - vague, doesn't show verification
+.zcp/verify.sh bundev "looks good"
+.zcp/verify.sh bundev "tested"
+```
+
+### Helper Commands
+
+| Command | Purpose |
+|---------|---------|
+| `.zcp/verify.sh {service}` | Show verification tools |
+| `.zcp/verify.sh --check {service} {port}` | Check if port listening |
+| `.zcp/verify.sh {service} "..."` | Record attestation |
 
 ## Gotchas
 
 | Symptom | Cause |
 |---------|-------|
 | `zcli project services list` | Wrong command → `zcli service list -P $projectId` |
+| `jq: command not found` via SSH | Pipe to ZCP: `ssh dev "curl ..." \| jq .` |
 | `psql: command not found` via SSH | Run from ZCP, not via ssh |
-| Variable is empty | Use `.zcp/env.sh` or SSH to fetch |
+| Variable is empty | Check `/tmp/discovery.json` first, then SSH |
 | HTTP 000 on dev | Server not running |
 | `https://https://...` | `zeropsSubdomain` already includes protocol |
 | SSH: Connection refused | Container OOM/restarting — check below |
+| Gate fails after verify.sh | Empty attestation — include what you actually verified |
 
 ---
 

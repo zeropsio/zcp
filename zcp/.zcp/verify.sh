@@ -1,603 +1,159 @@
 #!/bin/bash
 
-# Zerops Endpoint Verification with Evidence Generation
-# Tests HTTP endpoints and creates JSON evidence files
+# Zerops Verification - Attestation Based
+# Agent verifies using tools, then records what was verified
 
 set -o pipefail
-umask 077
-
-# Trap for cleanup on exit
-trap 'rm -f "/tmp/verify_tmp.$$" 2>/dev/null' EXIT INT TERM
-
-DEBUG=false
-
-# ============================================================================
-# HELP
-# ============================================================================
-
-show_help() {
-    cat <<'EOF'
-.zcp/verify.sh - Endpoint verification with evidence generation
-
-⚠️  WARNING: This script only checks HTTP status codes (2xx = pass).
-    HTTP 200 does NOT mean the feature works correctly!
-
-    You MUST also verify:
-    - Backend: Response body contains correct data
-    - Frontend: No JavaScript errors (agent-browser errors)
-    - Database: Data actually persisted
-
-USAGE:
-  .zcp/verify.sh {service} {port} {endpoint} [endpoints...]
-  .zcp/verify.sh --debug {service} {port} {endpoint} [endpoints...]
-  .zcp/verify.sh --help
-
-EXAMPLES:
-  .zcp/verify.sh appdev 8080 / /status /api/items
-  .zcp/verify.sh --debug appstage 8080 /
-
-OUTPUT:
-  Creates /tmp/{service}_verify.json
-  Auto-copies to /tmp/dev_verify.json or /tmp/stage_verify.json
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️  ADDITIONAL VERIFICATION REQUIRED (.zcp/verify.sh is not enough!)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Backend APIs - Check response content:
-  ssh {service} "curl -s http://localhost:{port}/api/endpoint" | jq .
-  # Look for: correct data, no error messages
-
-Frontend - Check for JavaScript errors:
-  agent-browser open "$URL"
-  agent-browser errors       # MUST be empty
-  agent-browser console      # Check for runtime errors
-  agent-browser screenshot   # Visual verification
-
-Logs - Check for exceptions:
-  ssh {service} "grep -iE 'error|exception|panic' /tmp/app.log"
-
-Database - Verify persistence:
-  psql/mysql/redis-cli to query and verify data
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-EVIDENCE FORMAT:
-  {
-    "session_id": "20260118160000-1234-5678",
-    "service": "appdev",
-    "port": 8080,
-    "timestamp": "2026-01-18T16:05:00Z",
-    "results": [
-      {"endpoint": "/", "status": 200, "pass": true},
-      {"endpoint": "/status", "status": 200, "pass": true}
-    ],
-    "passed": 2,
-    "failed": 0
-  }
-
-DEBUG MODE:
-  Use --debug flag to see detailed command execution
-
-PORT DETECTION:
-  If unsure which port, check zerops.yml:
-    cat /var/www/{service}/zerops.yml | grep -A5 'ports:'
-
-  Or use yq (note: different setups may have different ports):
-    # For dev setup:
-    yq '.zerops[] | select(.setup == "dev") | .run.ports[0].port' /var/www/{service}/zerops.yml
-    # For prod setup:
-    yq '.zerops[] | select(.setup == "prod") | .run.ports[0].port' /var/www/{service}/zerops.yml
-EOF
-}
-
-# ============================================================================
-# PROCESS VERIFICATION (for workers/cron jobs)
-# ============================================================================
-
-verify_process() {
-    local service="$1"
-    local process_name="$2"
-    local log_path="${3:-/tmp/app.log}"  # Optional log path, defaults to /tmp/app.log
-
-    # SECURITY: Validate process_name to prevent command injection
-    # Only allow alphanumeric, underscore, hyphen, dot, and forward slash
-    if [[ ! "$process_name" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
-        echo "❌ Invalid process name: '$process_name'" >&2
-        echo "   Must contain only alphanumeric characters, dots, hyphens, underscores, slashes" >&2
-        return 1
-    fi
-
-    # SECURITY: Validate log_path
-    if [[ ! "$log_path" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
-        echo "❌ Invalid log path: '$log_path'" >&2
-        return 1
-    fi
-
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🔧 PROCESS VERIFICATION: $service"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-
-    # Check if process is running (process_name is now validated safe)
-    local ps_output
-    ps_output=$(ssh "$service" "ps aux | grep -E '$process_name' | grep -v grep" 2>/dev/null)
-
-    local process_running=false
-    if [ -n "$ps_output" ]; then
-        process_running=true
-        echo "  ✅ Process '$process_name' is running"
-        echo "$ps_output" | head -3 | while read -r line; do
-            echo "     $line"
-        done
-    else
-        echo "  ❌ Process '$process_name' not found"
-        echo ""
-        echo "     If SSH failed or keeps timing out, container may be OOM/crashing:"
-        echo "     → zcli service log -S \$(jq -r '.dev.id' /tmp/discovery.json) -P \$projectId --limit 50"
-        echo "     → ssh $service \"zsc scale ram 4GiB 30m\"  # Scale up if OOMing"
-    fi
-
-    # Check for crash loops (process restart count in last hour)
-    local log_errors
-    log_errors=$(ssh "$service" "grep -ciE 'panic|fatal|crash' '$log_path' 2>/dev/null || echo 0")
-
-    if [ "$log_errors" -gt 0 ]; then
-        echo "  ⚠️  Found $log_errors error(s) in $log_path"
-    else
-        echo "  ✅ No panics/crashes in logs ($log_path)"
-    fi
-
-    # Get session for evidence
-    local session_id
-    session_id=$(get_session 2>/dev/null || echo "unknown")
-
-    # Create evidence file
-    local evidence_file="/tmp/${service}_verify.json"
-    local passed=0
-    local failed=0
-
-    [ "$process_running" = true ] && passed=$((passed + 1)) || failed=$((failed + 1))
-    [ "$log_errors" -eq 0 ] && passed=$((passed + 1)) || failed=$((failed + 1))
-
-    jq -n \
-        --arg sid "$session_id" \
-        --arg svc "$service" \
-        --arg proc "$process_name" \
-        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        --argjson running "$process_running" \
-        --argjson errors "$log_errors" \
-        --argjson passed "$passed" \
-        --argjson failed "$failed" \
-        '{
-            session_id: $sid,
-            service: $svc,
-            verification_type: "process",
-            process_name: $proc,
-            timestamp: $ts,
-            results: [
-                {check: "process_running", passed: $running},
-                {check: "no_crashes", passed: ($errors == 0)}
-            ],
-            passed: $passed,
-            failed: $failed
-        }' > "$evidence_file"
-
-    echo ""
-    echo "Evidence: $evidence_file"
-    echo "Passed: $passed | Failed: $failed"
-
-    [ "$failed" -eq 0 ] && return 0 || return 1
-}
-
-# ============================================================================
-# LOG VERIFICATION (pattern matching in logs)
-# ============================================================================
-
-verify_logs() {
-    local service="$1"
-    local log_file="$2"
-    local pattern="$3"
-
-    # SECURITY: Validate log_file path to prevent command injection
-    if [[ ! "$log_file" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
-        echo "❌ Invalid log file path: '$log_file'" >&2
-        echo "   Must contain only alphanumeric characters, dots, hyphens, underscores, slashes" >&2
-        return 1
-    fi
-
-    # SECURITY: Validate pattern - allow common regex chars but block shell metacharacters
-    # Allowed: alphanumeric, |, ., *, +, ?, ^, $, [], (), {}, \, -, _, space
-    if [[ "$pattern" =~ [\;\`\$\&\<\>] ]]; then
-        echo "❌ Invalid pattern: contains disallowed shell metacharacters" >&2
-        echo "   Pattern: '$pattern'" >&2
-        return 1
-    fi
-
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "📋 LOG VERIFICATION: $service"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-
-    # Check log file exists (log_file is now validated safe)
-    local log_exists
-    log_exists=$(ssh "$service" "[ -f '$log_file' ] && echo yes || echo no" 2>/dev/null)
-
-    if [ "$log_exists" != "yes" ]; then
-        echo "  ❌ Log file not found: $log_file"
-
-        # Get session for evidence
-        local session_id
-        session_id=$(get_session 2>/dev/null || echo "unknown")
-
-        # Create evidence file showing failure
-        local evidence_file="/tmp/${service}_verify.json"
-        jq -n \
-            --arg sid "$session_id" \
-            --arg svc "$service" \
-            --arg log "$log_file" \
-            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{
-                session_id: $sid,
-                service: $svc,
-                verification_type: "logs",
-                log_file: $log,
-                timestamp: $ts,
-                results: [{check: "log_file_exists", passed: false}],
-                passed: 0,
-                failed: 1
-            }' > "$evidence_file"
-
-        echo "Evidence: $evidence_file"
-        return 1
-    fi
-
-    echo "  ✅ Log file exists: $log_file"
-
-    # Check for pattern
-    local pattern_found
-    pattern_found=$(ssh "$service" "grep -cE '$pattern' '$log_file' 2>/dev/null || echo 0")
-
-    if [ "$pattern_found" -gt 0 ]; then
-        echo "  ✅ Pattern '$pattern' found ($pattern_found matches)"
-    else
-        echo "  ❌ Pattern '$pattern' not found"
-    fi
-
-    # Check for errors
-    local error_count
-    error_count=$(ssh "$service" "grep -ciE 'error|exception|panic|fatal' '$log_file' 2>/dev/null || echo 0")
-
-    if [ "$error_count" -eq 0 ]; then
-        echo "  ✅ No errors in log"
-    else
-        echo "  ⚠️  Found $error_count error(s) in log"
-        ssh "$service" "grep -iE 'error|exception|panic|fatal' '$log_file' | tail -3" 2>/dev/null | while read -r line; do
-            echo "     $line"
-        done
-    fi
-
-    # Get session for evidence
-    local session_id
-    session_id=$(get_session 2>/dev/null || echo "unknown")
-
-    # Create evidence file
-    local evidence_file="/tmp/${service}_verify.json"
-    local passed=0
-    local failed=0
-
-    [ "$pattern_found" -gt 0 ] && passed=$((passed + 1)) || failed=$((failed + 1))
-    [ "$error_count" -eq 0 ] && passed=$((passed + 1)) || failed=$((failed + 1))
-
-    jq -n \
-        --arg sid "$session_id" \
-        --arg svc "$service" \
-        --arg log "$log_file" \
-        --arg pat "$pattern" \
-        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        --argjson matches "$pattern_found" \
-        --argjson errors "$error_count" \
-        --argjson passed "$passed" \
-        --argjson failed "$failed" \
-        '{
-            session_id: $sid,
-            service: $svc,
-            verification_type: "logs",
-            log_file: $log,
-            pattern: $pat,
-            timestamp: $ts,
-            results: [
-                {check: "pattern_found", matches: $matches, passed: ($matches > 0)},
-                {check: "no_errors", errors: $errors, passed: ($errors == 0)}
-            ],
-            passed: $passed,
-            failed: $failed
-        }' > "$evidence_file"
-
-    echo ""
-    echo "Evidence: $evidence_file"
-    echo "Passed: $passed | Failed: $failed"
-
-    [ "$failed" -eq 0 ] && return 0 || return 1
-}
-
-# ============================================================================
-# UTILITY
-# ============================================================================
-
-debug_log() {
-    if [ "$DEBUG" = true ]; then
-        echo "[DEBUG] $*" >&2
-    fi
-}
-
-# Source utils.sh for shared functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
-    source "$SCRIPT_DIR/lib/utils.sh"
-fi
-
-# Source state.sh for get_session function
-if [ -f "$SCRIPT_DIR/lib/state.sh" ]; then
-    source "$SCRIPT_DIR/lib/state.sh"
-fi
-
-# Source validation functions (CRITICAL-3: hostname validation)
-if [ -f "$SCRIPT_DIR/lib/validate.sh" ]; then
-    source "$SCRIPT_DIR/lib/validate.sh"
-fi
+source "$SCRIPT_DIR/lib/state.sh" 2>/dev/null || true
 
 # ============================================================================
-# PORT DETECTION (Gap 32: Wrong Port Verified)
+# RECORD ATTESTATION
 # ============================================================================
 
-# Extract port from zerops.yml for a service
-# Handles multi-setup files with dev/prod configurations
-get_port_from_zerops_yml() {
-    local hostname="$1"
-    local setup_name="${2:-}"  # Optional: dev, prod, etc.
-    local config_file="/var/www/${hostname}/zerops.yml"
+record_attestation() {
+    local service="$1"
+    local attestation="$2"
 
-    if [ ! -f "$config_file" ]; then
-        echo ""
+    if [ -z "$attestation" ]; then
+        echo "❌ Attestation required"
+        echo "Usage: .zcp/verify.sh {service} \"what you verified\""
         return 1
     fi
 
-    if ! command -v yq &>/dev/null; then
-        echo ""
-        return 1
-    fi
+    local session_id
+    session_id=$(get_session 2>/dev/null || echo "unknown")
+    local evidence_file="/tmp/${service}_verify.json"
 
-    local port=""
+    jq -n \
+        --arg sid "$session_id" \
+        --arg svc "$service" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg att "$attestation" \
+        '{
+            session_id: $sid,
+            service: $svc,
+            timestamp: $ts,
+            verification_type: "attestation",
+            attestation: $att,
+            passed: 1,
+            failed: 0
+        }' > "$evidence_file"
 
-    # IMPORTANT: zerops.yml has multiple setups with different run sections
-    # Structure:
-    #   zerops:
-    #     - setup: dev
-    #       run:
-    #         ports:
-    #           - port: 8080
-    #     - setup: prod
-    #       run:
-    #         ports:
-    #           - port: 3000
+    echo "✅ Verified: $evidence_file"
 
-    if [ -n "$setup_name" ]; then
-        # Match by explicit setup name
-        port=$(yq e ".zerops[] | select(.setup == \"$setup_name\") | .run.ports[0].port // empty" "$config_file" 2>/dev/null)
-    fi
+    # Auto-link based on discovery
+    if [ -f "/tmp/discovery.json" ]; then
+        local dev_name stage_name
+        dev_name=$(jq -r '.dev.name // empty' /tmp/discovery.json 2>/dev/null)
+        stage_name=$(jq -r '.stage.name // empty' /tmp/discovery.json 2>/dev/null)
 
-    # Fallback 1: Try matching by hostname field
-    if [ -z "$port" ] || [ "$port" = "null" ]; then
-        port=$(yq e ".zerops[] | select(.hostname == \"$hostname\") | .run.ports[0].port // empty" "$config_file" 2>/dev/null)
-    fi
-
-    # Fallback 2: Infer setup from hostname pattern (dev/stage suffix)
-    if [ -z "$port" ] || [ "$port" = "null" ]; then
-        if [[ "$hostname" == *"dev"* ]]; then
-            port=$(yq e '.zerops[] | select(.setup == "dev") | .run.ports[0].port // empty' "$config_file" 2>/dev/null)
-        elif [[ "$hostname" == *"stage"* ]] || [[ "$hostname" == *"prod"* ]]; then
-            port=$(yq e '.zerops[] | select(.setup == "prod") | .run.ports[0].port // empty' "$config_file" 2>/dev/null)
+        if [ "$service" = "$dev_name" ]; then
+            ln -sf "$evidence_file" /tmp/dev_verify.json
+            echo "→ Linked to /tmp/dev_verify.json"
+        elif [ "$service" = "$stage_name" ]; then
+            ln -sf "$evidence_file" /tmp/stage_verify.json
+            echo "→ Linked to /tmp/stage_verify.json"
         fi
     fi
-
-    # Fallback 3: Take first setup's port (last resort)
-    if [ -z "$port" ] || [ "$port" = "null" ]; then
-        port=$(yq e '.zerops[0].run.ports[0].port // empty' "$config_file" 2>/dev/null)
-    fi
-
-    if [ -n "$port" ] && [ "$port" != "null" ]; then
-        echo "$port"
-        return 0
-    fi
-
-    echo ""
-    return 1
-}
-
-# Load discovery for accurate service matching
-# Sets globals: DEV_SERVICE_NAME, STAGE_SERVICE_NAME
-get_discovery_names() {
-    if [ -f "/tmp/discovery.json" ]; then
-        DEV_SERVICE_NAME=$(jq -r '.dev.name // empty' "/tmp/discovery.json" 2>/dev/null)
-        STAGE_SERVICE_NAME=$(jq -r '.stage.name // empty' "/tmp/discovery.json" 2>/dev/null)
-    else
-        DEV_SERVICE_NAME=""
-        STAGE_SERVICE_NAME=""
-    fi
 }
 
 # ============================================================================
-# ENDPOINT TESTING
+# DIAGNOSTIC HELPERS (optional, non-blocking)
 # ============================================================================
 
-test_endpoint() {
+check_port() {
     local service="$1"
     local port="$2"
-    local endpoint="$3"
 
-    debug_log "Testing endpoint: $endpoint"
-    debug_log "Command: ssh $service \"curl -s -w '\\n%{http_code}' http://localhost:$port$endpoint\""
-
-    # Get both body and status code (body, newline, status_code)
-    local output
-    output=$(ssh "$service" "curl -s -w '\n%{http_code}' http://localhost:$port$endpoint" 2>/dev/null)
-    local curl_exit=$?
-
-    # Parse status code (last line) and body (everything before)
-    local status_code="${output##*$'\n'}"
-    local body="${output%$'\n'*}"
-
-    debug_log "Result: $status_code (curl exit: $curl_exit)"
-
-    # If curl succeeded and we got a 2xx status, it's a pass
-    if [ $curl_exit -eq 0 ] && [ -n "$status_code" ] && [ "$status_code" -ge 200 ] && [ "$status_code" -lt 300 ]; then
-        debug_log "Pass: true"
-        echo "$status_code:true:"
-    else
-        debug_log "Pass: false"
-        # Return whatever status we got, or 000 if curl failed completely
-        if [ -z "$status_code" ]; then
-            status_code="000"
-        fi
-        # Include truncated body for context capture (first 200 chars)
-        local truncated="${body:0:200}"
-        echo "$status_code:false:$truncated"
+    if [ -z "$port" ]; then
+        echo "Usage: .zcp/verify.sh --check {service} {port}"
+        return 1
     fi
-}
 
-# ============================================================================
-# FRONTEND DETECTION
-# ============================================================================
-
-check_frontend() {
-    local service="$1"
-
-    debug_log "Checking for frontend indicators in $service"
-
-    # Check for common frontend directories/files
-    if ssh "$service" "ls /var/www/templates /var/www/static /var/www/index.html /var/www/public 2>/dev/null" 2>/dev/null | grep -q .; then
+    echo "Checking port $port on $service..."
+    if ssh "$service" "netstat -tlnp 2>/dev/null | grep -q ':$port ' || ss -tlnp 2>/dev/null | grep -q ':$port '" 2>/dev/null; then
+        echo "  ✓ Port $port is listening"
         return 0
+    else
+        echo "  ✗ Nothing on port $port"
+        echo "  → Start your server first"
+        return 1
     fi
-    return 1
 }
 
-show_frontend_reminder() {
+show_tools() {
     local service="$1"
+
+    # Get runtime from discovery if available
+    local runtime="unknown"
+    if [ -f "/tmp/discovery.json" ]; then
+        runtime=$(jq -r '.runtime // "unknown"' /tmp/discovery.json 2>/dev/null)
+    fi
 
     cat <<EOF
 
-⚠️  FRONTEND DETECTED - Browser testing recommended
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 VERIFICATION TOOLS FOR: $service
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-   URL=\$(ssh $service "echo \\\$zeropsSubdomain")
-   agent-browser open "\$URL"
-   agent-browser errors
-   agent-browser console
-   agent-browser screenshot
-
-   💡 HTTP 200 ≠ working UI
-      Screenshots can reveal broken layouts that curl cannot detect
 EOF
-}
 
-# ============================================================================
-# PRE-FLIGHT CHECK: Is port actually listening?
-# ============================================================================
-
-check_port_listening() {
-    local service="$1"
-    local port="$2"
-
-    debug_log "Pre-flight: checking if port $port is listening on $service"
-
-    # Check if port is listening (try netstat first, fall back to ss)
-    local listening
-    listening=$(ssh "$service" "netstat -tlnp 2>/dev/null | grep -E ':$port\s' || ss -tlnp 2>/dev/null | grep -E ':$port\s'" 2>/dev/null)
-
-    if [ -z "$listening" ]; then
-        return 1  # Nothing listening
-    fi
-    return 0  # Port is listening
-}
-
-show_no_server_error() {
-    local service="$1"
-    local port="$2"
-
-    # Try to get expected port from zerops.yml (Gap 32: Port mismatch detection)
-    local expected_port
-    expected_port=$(get_port_from_zerops_yml "$service" 2>/dev/null)
-
-    # Detect runtime from files in /var/www
-    local runtime="unknown"
-    if ssh "$service" "test -f /var/www/go.mod" 2>/dev/null; then
-        runtime="go"
-    elif ssh "$service" "test -f /var/www/package.json" 2>/dev/null; then
-        runtime="nodejs"
-    elif ssh "$service" "test -f /var/www/requirements.txt || test -f /var/www/app.py" 2>/dev/null; then
-        runtime="python"
-    fi
-
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "⚠️  NO SERVER LISTENING ON PORT $port"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-    # Gap 32: Check for port mismatch
-    if [ -n "$expected_port" ] && [ "$expected_port" != "$port" ]; then
-        echo ""
-        echo "⚠️  PORT MISMATCH DETECTED"
-        echo "   You tried:     $port"
-        echo "   zerops.yml:    $expected_port"
-        echo ""
-        echo "   Try: .zcp/verify.sh $service $expected_port /"
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    fi
-
-    echo ""
-    echo "Dev services use 'start: zsc noop --silent' — no auto-start."
-    echo ""
-    echo "START THE SERVER:"
-
+    # Type checking based on runtime
+    echo "TYPE/BUILD CHECK:"
     case "$runtime" in
-        go)
-            echo "  ssh $service \"cd /var/www && nohup go run . > /tmp/app.log 2>&1 &\""
+        go|go@*)
+            echo "  ssh $service \"cd /var/www && go build -n .\"      # Dry-run build"
+            echo "  ssh $service \"cd /var/www && go vet ./...\"       # Static analysis"
             ;;
-        nodejs)
-            echo "  ssh $service \"cd /var/www && nohup node index.js > /tmp/app.log 2>&1 &\""
+        bun|bun@*)
+            echo "  ssh $service \"cd /var/www && bun x tsc --noEmit\" # Type check"
             ;;
-        python)
-            echo "  ssh $service \"cd /var/www && nohup python app.py > /tmp/app.log 2>&1 &\""
+        nodejs|nodejs@*|node|node@*)
+            echo "  ssh $service \"cd /var/www && npx tsc --noEmit\"   # Type check"
+            ;;
+        python|python@*)
+            echo "  ssh $service \"cd /var/www && python -m py_compile *.py\""
             ;;
         *)
-            echo "  ssh $service \"cd /var/www && nohup <your-command> > /tmp/app.log 2>&1 &\""
+            echo "  ssh $service \"cd /var/www && <build-command>\""
             ;;
     esac
 
-    echo ""
-    echo "VERIFY PORT:"
-    echo "  ssh $service \"netstat -tlnp 2>/dev/null | grep $port || ss -tlnp | grep $port\""
-    echo ""
-    echo "THEN RE-RUN:"
-    echo "  .zcp/verify.sh $service $port ..."
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🔴 IF SSH FAILS OR PROCESS KEEPS DYING: Container may be OOM/crashing"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo "  1. Check CONTAINER logs (not app logs!) — shows OOM kills:"
-    echo "     zcli service log -S \$(jq -r '.dev.id' /tmp/discovery.json) -P \$projectId --limit 50"
-    echo ""
-    echo "  2. Scale up RAM if OOMing:"
-    echo "     ssh $service \"zsc scale ram 4GiB 30m\""
-    echo ""
-    echo "  3. Check app logs after fixing:"
-    echo "     ssh $service \"tail -50 /tmp/app.log\""
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    cat <<EOF
+
+HTTP ENDPOINTS:
+  ssh $service "curl -s http://localhost:{port}/"
+  ssh $service "curl -s http://localhost:{port}/health | jq ."
+  ssh $service "curl -sI http://localhost:{port}/events | grep content-type"
+
+LOGS:
+  ssh $service "tail -30 /tmp/app.log"
+  ssh $service "grep -iE 'error|panic|exception' /tmp/app.log"
+  zcli service log -S {service_id} -P \$projectId --limit 50
+
+PROCESS (workers/cron):
+  ssh $service "ps aux | grep {process_name}"
+
+BROWSER (frontend):
+  URL=\$(ssh $service "echo \$zeropsSubdomain")
+  agent-browser open "\$URL"
+  agent-browser errors      # MUST be empty
+  agent-browser screenshot
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ WHEN VERIFIED - Record what you checked:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  .zcp/verify.sh $service "brief description of verification"
+
+Examples:
+  .zcp/verify.sh $service "tsc clean, /health returns ok, no errors in logs"
+  .zcp/verify.sh $service "worker process running, processed test job, logs clean"
+  .zcp/verify.sh $service "browser errors empty, UI renders correctly"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EOF
 }
 
 # ============================================================================
@@ -605,335 +161,51 @@ show_no_server_error() {
 # ============================================================================
 
 main() {
-    # Parse flags
-    if [ "$1" = "--help" ]; then
-        show_help
-        exit 0
-    fi
+    case "$1" in
+        --help|-h)
+            cat <<'EOF'
+.zcp/verify.sh - Record verification attestation
 
-    if [ "$1" = "--debug" ]; then
-        DEBUG=true
-        shift
-    fi
+USAGE:
+  .zcp/verify.sh {service} "what you verified"    # Record attestation (required)
+  .zcp/verify.sh {service}                        # Show available tools
+  .zcp/verify.sh --tools {service}                # Show available tools
+  .zcp/verify.sh --check {service} {port}         # Check if port listening
 
-    # Check for --process mode (for workers/cron jobs)
-    if [ "$1" = "--process" ]; then
-        shift
-        local service="$1"
-        local process_name="$2"
-        local log_path="${3:-/tmp/app.log}"  # Optional 3rd arg for log path
+EXAMPLES:
+  .zcp/verify.sh bundev "tsc passed, /events streams correctly, logs clean"
+  .zcp/verify.sh goworker "process running, processed 3 jobs, no errors"
+  .zcp/verify.sh nginx-fe "browser errors empty, assets load, no 404s"
 
-        if [ -z "$service" ] || [ -z "$process_name" ]; then
-            echo "❌ Usage: .zcp/verify.sh --process {service} {process_name} [log_path]"
-            echo "Example: .zcp/verify.sh --process godev app"
-            echo "Example: .zcp/verify.sh --process godev app /var/log/app.log"
-            exit 2
-        fi
+This tool does NOT automatically verify anything.
+YOU verify using the tools shown, then record what you verified.
+EOF
+            ;;
+        --tools)
+            show_tools "$2"
+            ;;
+        --check)
+            check_port "$2" "$3"
+            ;;
+        *)
+            local service="$1"
+            shift
+            local attestation="$*"
 
-        verify_process "$service" "$process_name" "$log_path"
-        exit $?
-    fi
-
-    # Check for --logs mode (pattern matching in logs)
-    if [ "$1" = "--logs" ]; then
-        shift
-        local service="$1"
-        local log_file="$2"
-        shift 2
-
-        # Parse --pattern flag
-        local pattern="Started|Ready|Listening"
-        while [ $# -gt 0 ]; do
-            case "$1" in
-                --pattern)
-                    pattern="$2"
-                    shift 2
-                    ;;
-                *)
-                    shift
-                    ;;
-            esac
-        done
-
-        if [ -z "$service" ] || [ -z "$log_file" ]; then
-            echo "❌ Usage: .zcp/verify.sh --logs {service} {log_file} [--pattern 'regex']"
-            echo "Example: .zcp/verify.sh --logs godev /tmp/app.log --pattern 'Started|Ready'"
-            exit 2
-        fi
-
-        verify_logs "$service" "$log_file" "$pattern"
-        exit $?
-    fi
-
-    local service="$1"
-    local port="$2"
-    shift 2
-
-    if [ -z "$service" ] || [ -z "$port" ] || [ $# -eq 0 ]; then
-        echo "❌ Usage: .zcp/verify.sh [--debug] {service} {port} {endpoint} [endpoints...]"
-        echo ""
-        echo "Example: .zcp/verify.sh appdev 8080 / /status /api/items"
-        echo "Help:    .zcp/verify.sh --help"
-        exit 2
-    fi
-
-    # RECOVERY DETECTION: Warn if no active workflow session
-    local session
-    session=$(get_session 2>/dev/null || echo "")
-    if [ -z "$session" ]; then
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "⚠️  NO ACTIVE WORKFLOW SESSION"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "   Verification will proceed but evidence won't link to a session."
-        echo ""
-        echo "   If you lost context (compaction, restart):"
-        echo "   → .zcp/workflow.sh recover"
-        echo ""
-        echo "   If starting fresh:"
-        echo "   → .zcp/workflow.sh init"
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-    fi
-
-    # CRITICAL-3: Validate service hostname before SSH (prevents injection)
-    if type validate_ssh_hostname &>/dev/null; then
-        if ! validate_ssh_hostname "$service"; then
-            exit 1
-        fi
-    else
-        # Fallback validation
-        if [[ ! "$service" =~ ^[a-zA-Z0-9_-]+$ ]] || [[ "$service" == *"@"* ]]; then
-            echo "❌ Invalid service name: '$service'" >&2
-            echo "   Must contain only alphanumeric characters, underscores, and hyphens" >&2
-            exit 1
-        fi
-    fi
-
-    # Validate port number (M-3)
-    if type validate_port &>/dev/null; then
-        if ! validate_port "$port"; then
-            exit 1
-        fi
-    else
-        if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-            echo "❌ Invalid port: '$port' (must be 1-65535)" >&2
-            exit 1
-        fi
-    fi
-
-    # Check jq availability
-    if ! command -v jq &>/dev/null; then
-        echo "❌ jq required but not found"
-        exit 1
-    fi
-
-    # PRE-FLIGHT: Check if port is listening before attempting verification
-    echo "Pre-flight: checking port $port..."
-    if ! check_port_listening "$service" "$port"; then
-        show_no_server_error "$service" "$port"
-
-        # Get session for evidence file
-        local session_id
-        session_id=$(get_session 2>/dev/null || echo "unknown")
-
-        # Create evidence file showing pre-flight failure
-        local preflight_file="/tmp/${service}_verify.json"
-        jq -n \
-            --arg sid "$session_id" \
-            --arg svc "$service" \
-            --argjson prt "$port" \
-            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{
-                session_id: $sid,
-                service: $svc,
-                port: $prt,
-                timestamp: $ts,
-                preflight_failed: true,
-                preflight_reason: "No process listening on port",
-                results: [],
-                passed: 0,
-                failed: 0
-            }' > "$preflight_file"
-
-        echo "Evidence: $preflight_file (preflight_failed: true)"
-        exit 1
-    fi
-    echo "  ✓ Port $port is listening"
-
-    # Get session
-    local session_id
-    session_id=$(get_session)
-    debug_log "Session: $session_id"
-
-    # Prepare results
-    local timestamp
-    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-    local passed=0
-    local failed=0
-    local results=()
-
-    echo ""
-    echo "=== Verifying $service:$port ==="
-
-    # Track first failure for context capture
-    local first_failure_endpoint=""
-    local first_failure_status=""
-    local first_failure_body=""
-
-    # Test each endpoint
-    for endpoint in "$@"; do
-        local result
-        result=$(test_endpoint "$service" "$port" "$endpoint")
-
-        # Parse result: status_code:pass:body_snippet
-        local status_code pass body_snippet
-        status_code=$(echo "$result" | cut -d: -f1)
-        pass=$(echo "$result" | cut -d: -f2)
-        body_snippet=$(echo "$result" | cut -d: -f3-)
-
-        if [ "$pass" = "true" ]; then
-            echo "  ✅ $endpoint → $status_code"
-            passed=$((passed + 1))
-        else
-            echo "  ❌ $endpoint → $status_code"
-            failed=$((failed + 1))
-
-            # Capture first failure for context
-            if [ -z "$first_failure_endpoint" ]; then
-                first_failure_endpoint="$endpoint"
-                first_failure_status="$status_code"
-                first_failure_body="$body_snippet"
+            if [ -z "$service" ]; then
+                echo "Usage: .zcp/verify.sh {service} \"what you verified\""
+                echo "       .zcp/verify.sh --help"
+                exit 1
             fi
-        fi
 
-        # Build JSON result
-        results+=("$(jq -n \
-            --arg ep "$endpoint" \
-            --arg st "$status_code" \
-            --argjson p "$([ "$pass" = "true" ] && echo true || echo false)" \
-            '{endpoint: $ep, status: ($st | tonumber), pass: $p}')")
-    done
-
-    # Auto-capture context on failure (for workflow continuity)
-    if [ -n "$first_failure_endpoint" ]; then
-        # Source utils.sh for auto_capture_context if not already sourced
-        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
-            source "$SCRIPT_DIR/lib/utils.sh"
-            auto_capture_context "verify_failure" "$first_failure_endpoint" "$first_failure_status" "$first_failure_body"
-        fi
-    fi
-
-    echo ""
-    echo "Passed: $passed | Failed: $failed"
-
-    # Create JSON evidence
-    local results_json
-    results_json=$(printf '%s\n' "${results[@]}" | jq -s '.')
-
-    local evidence_file="/tmp/${service}_verify.json"
-
-    jq -n \
-        --arg sid "$session_id" \
-        --arg svc "$service" \
-        --argjson prt "$port" \
-        --arg ts "$timestamp" \
-        --argjson res "$results_json" \
-        --argjson passed "$passed" \
-        --argjson failed "$failed" \
-        '{
-            session_id: $sid,
-            service: $svc,
-            port: $prt,
-            timestamp: $ts,
-            results: $res,
-            passed: $passed,
-            failed: $failed
-        }' > "$evidence_file"
-
-    echo "Evidence: $evidence_file"
-
-    # Load discovery names for accurate matching
-    get_discovery_names
-
-    # FIX-06: Multi-service aware symlink logic
-    local discovery_file="/tmp/discovery.json"
-    local service_count=1
-    if [ -f "$discovery_file" ]; then
-        service_count=$(jq -r '.service_count // 1' "$discovery_file" 2>/dev/null)
-    fi
-
-    # Symlink evidence to role-specific file based on discovery.json
-    if [ -n "$DEV_SERVICE_NAME" ] && [ "$service" = "$DEV_SERVICE_NAME" ]; then
-        ln -sf "$evidence_file" /tmp/dev_verify.json
-        echo "→ Linked to /tmp/dev_verify.json (matches discovery dev: $DEV_SERVICE_NAME)"
-    elif [ -n "$STAGE_SERVICE_NAME" ] && [ "$service" = "$STAGE_SERVICE_NAME" ]; then
-        ln -sf "$evidence_file" /tmp/stage_verify.json
-        echo "→ Linked to /tmp/stage_verify.json (matches discovery stage: $STAGE_SERVICE_NAME)"
-    else
-        # Check if this is a multi-service scenario
-        if [ "$service_count" -gt 1 ] && [ -f "$discovery_file" ]; then
-            # Check if service is any dev service in services[]
-            if jq -e ".services[] | select(.dev.name == \"$service\")" "$discovery_file" &>/dev/null; then
-                echo "→ Multi-service: Evidence saved to $evidence_file"
-                echo "   (Gate will check this file directly for dev verification)"
-            # Check if service is any stage service in services[]
-            elif jq -e ".services[] | select(.stage.name == \"$service\")" "$discovery_file" &>/dev/null; then
-                echo "→ Multi-service: Evidence saved to $evidence_file"
-                echo "   (Gate will check this file directly for stage verification)"
+            if [ -z "$attestation" ]; then
+                # No attestation given - show tools
+                show_tools "$service"
             else
-                echo "⚠️  Service '$service' not found in discovery.json services[]"
-                echo "   Evidence saved to: $evidence_file"
+                record_attestation "$service" "$attestation"
             fi
-        elif [ -n "$DEV_SERVICE_NAME" ] || [ -n "$STAGE_SERVICE_NAME" ]; then
-            # Single service but doesn't match - warn
-            echo "⚠️  Service '$service' not in discovery.json"
-            echo "   Expected: dev='$DEV_SERVICE_NAME' or stage='$STAGE_SERVICE_NAME'"
-            echo "   Evidence saved to: $evidence_file (not auto-linked to workflow)"
-            echo ""
-            echo "💡 If this is your dev/stage service, update discovery:"
-            echo "   .zcp/workflow.sh create_discovery {dev_id} $service {stage_id} {stage_name}"
-        else
-            # No discovery - fall back to pattern matching with warning
-            echo "⚠️  No discovery.json found, using pattern matching fallback"
-            if echo "$service" | grep -qi "dev" && ! echo "$service" | grep -qi "stage"; then
-                ln -sf "$evidence_file" /tmp/dev_verify.json
-                echo "→ Linked to /tmp/dev_verify.json (pattern match: contains 'dev')"
-            elif echo "$service" | grep -qi "stage"; then
-                ln -sf "$evidence_file" /tmp/stage_verify.json
-                echo "→ Linked to /tmp/stage_verify.json (pattern match: contains 'stage')"
-            fi
-        fi
-    fi
-
-    # Check for frontend and show reminder
-    if check_frontend "$service"; then
-        show_frontend_reminder "$service"
-    fi
-
-    # Exit code based on failures
-    if [ "$failed" -eq 0 ]; then
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "⚠️  HTTP status passed, but you must also verify:"
-        echo ""
-        if check_frontend "$service" 2>/dev/null; then
-            echo "   Frontend: agent-browser errors (must be empty)"
-            echo "             agent-browser console (check for errors)"
-        else
-            echo "   Backend:  curl response body (check data is correct)"
-            echo "             grep -iE 'error|exception' /tmp/app.log"
-        fi
-        echo ""
-        echo "   HTTP 200 ≠ feature works correctly"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        exit 0
-    else
-        exit 1
-    fi
+            ;;
+    esac
 }
 
 main "$@"

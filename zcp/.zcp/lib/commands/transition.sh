@@ -668,9 +668,32 @@ EOF
 
     echo "✅ Phase: DEPLOY"
     echo ""
-    echo "⚠️  PRE-DEPLOYMENT CHECKLIST:"
-    echo "   1. Verify ALL artifacts exist in /var/www/{service}/"
-    echo "   2. Check deployFiles in zerops.yml includes everything"
+    echo "╔══════════════════════════════════════════════════════════════════╗"
+    echo "║  ⛔ STOP - REVIEW zerops.yml BEFORE DEPLOYING                     ║"
+    echo "╚══════════════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "You modified zerops.yml. Read it NOW and confirm:"
+    echo ""
+
+    # Show the zerops.yml files that need review
+    local i=0
+    while [ "$i" -lt "$service_count" ]; do
+        local dev_name
+        if [ "$service_count" -eq 1 ]; then
+            dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
+        else
+            dev_name=$(jq -r ".services[$i].dev.name" "$DISCOVERY_FILE" 2>/dev/null)
+        fi
+        echo "   cat /var/www/$dev_name/zerops.yml"
+        i=$((i + 1))
+    done
+
+    echo ""
+    echo "Check these sections are CORRECT:"
+    echo "   □ build.deployFiles   — all artifacts listed (binary, static/, etc.)"
+    echo "   □ run.envVariables    — all env vars needed at runtime"
+    echo "   □ run.start           — correct startup command"
+    echo "   □ run.ports           — matches what your app listens on"
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "📦 DEPLOYMENT COMMANDS"
