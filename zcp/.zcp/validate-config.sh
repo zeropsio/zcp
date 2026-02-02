@@ -7,6 +7,8 @@ set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/utils.sh"
+# Source state.sh for get_session function (FIX: sourcing bug)
+source "$SCRIPT_DIR/lib/state.sh"
 
 RECIPE_FILE="$RECIPE_REVIEW_FILE"
 VALIDATION_OUTPUT="$CONFIG_VALIDATED_FILE"

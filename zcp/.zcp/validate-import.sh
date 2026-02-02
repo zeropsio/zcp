@@ -13,6 +13,8 @@ set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/utils.sh"
+# Source state.sh for get_session function (FIX: sourcing bug)
+source "$SCRIPT_DIR/lib/state.sh"
 
 # Colors are now defined in utils.sh
 

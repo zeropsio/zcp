@@ -20,6 +20,11 @@ if [ -f "$SCRIPT_DIR/lib/utils.sh" ]; then
     source "$SCRIPT_DIR/lib/utils.sh"
 fi
 
+# Source state.sh for get_session function (FIX: sourcing bug)
+if [ -f "$SCRIPT_DIR/lib/state.sh" ]; then
+    source "$SCRIPT_DIR/lib/state.sh"
+fi
+
 # ============================================================================
 # HELP
 # ============================================================================

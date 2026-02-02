@@ -520,6 +520,283 @@ EOF
     fi
 }
 
+# ============================================================================
+# DYNAMIC GUIDANCE HELPERS (FIX-03: Resolve placeholders from discovery.json)
+# ============================================================================
+
+# Get runtime-specific defaults (duplicated from status.sh for independence)
+_get_runtime_defaults() {
+    local runtime="$1"
+    case "$runtime" in
+        go|go@*) echo "proc=app binary=app build='go build -o app' port=8080" ;;
+        nodejs|nodejs@*|node|node@*) echo "proc=node binary='node index.js' build='npm install && npm run build' port=8080" ;;
+        bun|bun@*) echo "proc=bun binary='bun run index.ts' build='bun install' port=8080" ;;
+        python|python@*) echo "proc=python binary='python app.py' build='pip install -r requirements.txt' port=8080" ;;
+        rust|rust@*) echo "proc=app binary='./target/release/app' build='cargo build --release' port=8080" ;;
+        php|php@*) echo "proc=php binary='php -S 0.0.0.0:8080' build='composer install' port=8080" ;;
+        dotnet|dotnet@*) echo "proc=dotnet binary='dotnet run' build='dotnet build' port=8080" ;;
+        java|java@*) echo "proc=java binary='java -jar app.jar' build='mvn package' port=8080" ;;
+        *) echo "proc=app binary='./app' build='<see zerops.yml>' port=8080" ;;
+    esac
+}
+
+# Output DEVELOP phase with resolved values
+_output_develop_guidance_resolved() {
+    local shared_db="$1"
+
+    if [ ! -f "$DISCOVERY_FILE" ]; then
+        cat <<'EOF'
+✅ Phase: DEVELOP
+
+⚠️  No discovery.json found. Run discovery first:
+   .zcp/workflow.sh transition_to DISCOVER
+
+Once discovered, this will show exact commands for your services.
+EOF
+        return
+    fi
+
+    local service_count
+    service_count=$(jq -r '.service_count // 1' "$DISCOVERY_FILE" 2>/dev/null)
+
+    echo "✅ Phase: DEVELOP"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📁 Files: /var/www/{service}/     (edit directly via SSHFS)"
+    echo "💻 Run:   ssh {service} \"cmd\"    (execute inside container)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "⚠️  CRITICAL: Dev is where you iterate and fix errors."
+    echo "    Stage is for final validation AFTER dev confirms success."
+    echo ""
+
+    # Output commands for EACH service with RESOLVED values
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📦 SERVICES ($service_count)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    local i=0
+    while [ "$i" -lt "$service_count" ]; do
+        local dev_name runtime
+        if [ "$service_count" -eq 1 ]; then
+            dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
+            runtime=$(jq -r '.runtime // "unknown"' "$DISCOVERY_FILE" 2>/dev/null)
+        else
+            dev_name=$(jq -r ".services[$i].dev.name // \"service$i\"" "$DISCOVERY_FILE" 2>/dev/null)
+            runtime=$(jq -r ".services[$i].runtime // \"unknown\"" "$DISCOVERY_FILE" 2>/dev/null)
+        fi
+
+        local proc binary build port
+        eval "$(_get_runtime_defaults "$runtime")"
+
+        echo "[$((i+1))] $dev_name ($runtime)"
+        echo "────────────────────────────────────────────────────────────────"
+        echo ""
+        echo "Kill existing process:"
+        echo "  ssh $dev_name 'pkill -9 $proc; killall -9 $proc 2>/dev/null; fuser -k $port/tcp 2>/dev/null; true'"
+        echo ""
+        echo "Build & run:"
+        echo "  ssh $dev_name \"cd /var/www && $build\""
+        echo "  ssh $dev_name \"cd /var/www && $binary >> /tmp/app.log 2>&1\"  # run_in_background=true"
+        echo ""
+        echo "Verify:"
+        echo "  .zcp/verify.sh $dev_name $port / /health"
+        echo ""
+
+        i=$((i + 1))
+    done
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔍 FUNCTIONAL TESTING (required before deploy):"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "HTTP 200 is NOT enough. You must verify the feature WORKS."
+    echo ""
+
+    # Use resolved service name for log check guidance
+    local first_dev_name
+    if [ "$service_count" -eq 1 ]; then
+        first_dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
+    else
+        first_dev_name=$(jq -r '.services[0].dev.name // "service0"' "$DISCOVERY_FILE" 2>/dev/null)
+    fi
+
+    echo "Check logs for errors:"
+    echo "  ssh $first_dev_name \"tail -50 /tmp/app.log\""
+    echo "  ssh $first_dev_name \"grep -i error /tmp/app.log\""
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📋 When ready (feature works, no errors):"
+    echo "   Run verify.sh for each service, then:"
+    echo "   .zcp/workflow.sh transition_to DEPLOY"
+
+    # Gap 46: Show migration guidance if shared database detected
+    if [ "$shared_db" = "true" ]; then
+        cat <<'MIGRATION_GUIDANCE'
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🗄️  DATABASE MIGRATIONS (shared database detected)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Choose ONE service to run migrations. In its zerops.yml:
+
+  run:
+    initCommands:
+      - zsc execOnce "${appVersionId}-migrate" "./migrate.sh"
+
+Pattern: zsc execOnce "unique-id" "command"
+  • Use $appVersionId for automatic refresh on each deploy
+MIGRATION_GUIDANCE
+    fi
+}
+
+# Output DEPLOY phase with resolved values
+_output_deploy_guidance_resolved() {
+    if [ ! -f "$DISCOVERY_FILE" ]; then
+        cat <<'EOF'
+✅ Phase: DEPLOY
+
+⚠️  No discovery.json found. Cannot determine service IDs.
+   Run: .zcp/workflow.sh show
+EOF
+        return
+    fi
+
+    local service_count
+    service_count=$(jq -r '.service_count // 1' "$DISCOVERY_FILE" 2>/dev/null)
+
+    echo "✅ Phase: DEPLOY"
+    echo ""
+    echo "⚠️  PRE-DEPLOYMENT CHECKLIST:"
+    echo "   1. Verify ALL artifacts exist in /var/www/{service}/"
+    echo "   2. Check deployFiles in zerops.yml includes everything"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📦 DEPLOYMENT COMMANDS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    local i=0
+    while [ "$i" -lt "$service_count" ]; do
+        local dev_name stage_id stage_name runtime
+        if [ "$service_count" -eq 1 ]; then
+            dev_name=$(jq -r '.dev.name // "appdev"' "$DISCOVERY_FILE" 2>/dev/null)
+            stage_id=$(jq -r '.stage.id // "STAGE_ID"' "$DISCOVERY_FILE" 2>/dev/null)
+            stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
+            runtime=$(jq -r '.runtime // "unknown"' "$DISCOVERY_FILE" 2>/dev/null)
+        else
+            dev_name=$(jq -r ".services[$i].dev.name" "$DISCOVERY_FILE" 2>/dev/null)
+            stage_id=$(jq -r ".services[$i].stage.id" "$DISCOVERY_FILE" 2>/dev/null)
+            stage_name=$(jq -r ".services[$i].stage.name" "$DISCOVERY_FILE" 2>/dev/null)
+            runtime=$(jq -r ".services[$i].runtime // \"unknown\"" "$DISCOVERY_FILE" 2>/dev/null)
+        fi
+
+        local proc port
+        eval "$(_get_runtime_defaults "$runtime")"
+
+        echo "[$((i+1))] $dev_name → $stage_name"
+        echo "────────────────────────────────────────────────────────────────"
+        echo ""
+        echo "Stop dev process:"
+        echo "  ssh $dev_name 'pkill -9 $proc; killall -9 $proc 2>/dev/null; fuser -k $port/tcp 2>/dev/null; true'"
+        echo ""
+        echo "Authenticate (if needed):"
+        echo "  ssh $dev_name \"zcli login --region=gomibako \\"
+        echo "      --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \\"
+        echo "      \\\"\\\$ZEROPS_ZCP_API_KEY\\\"\""
+        echo ""
+        echo "Deploy:"
+        echo "  ssh $dev_name \"cd /var/www && zcli push $stage_id --setup=prod --versionName=v1.0.0\""
+        echo ""
+        echo "Wait for completion:"
+        echo "  .zcp/status.sh --wait $stage_name"
+        echo ""
+
+        i=$((i + 1))
+    done
+
+    cat <<'EOF'
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 Gate: .zcp/status.sh shows SUCCESS notification
+📋 Next: .zcp/workflow.sh transition_to VERIFY
+EOF
+}
+
+# Output VERIFY phase with resolved values
+_output_verify_guidance_resolved() {
+    if [ ! -f "$DISCOVERY_FILE" ]; then
+        cat <<'EOF'
+✅ Phase: VERIFY
+
+⚠️  No discovery.json found.
+   Run: .zcp/workflow.sh show
+EOF
+        return
+    fi
+
+    local service_count
+    service_count=$(jq -r '.service_count // 1' "$DISCOVERY_FILE" 2>/dev/null)
+
+    echo "✅ Phase: VERIFY"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📦 VERIFICATION COMMANDS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    local i=0
+    while [ "$i" -lt "$service_count" ]; do
+        local stage_name stage_id runtime
+        if [ "$service_count" -eq 1 ]; then
+            stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
+            stage_id=$(jq -r '.stage.id // "STAGE_ID"' "$DISCOVERY_FILE" 2>/dev/null)
+            runtime=$(jq -r '.runtime // "unknown"' "$DISCOVERY_FILE" 2>/dev/null)
+        else
+            stage_name=$(jq -r ".services[$i].stage.name" "$DISCOVERY_FILE" 2>/dev/null)
+            stage_id=$(jq -r ".services[$i].stage.id" "$DISCOVERY_FILE" 2>/dev/null)
+            runtime=$(jq -r ".services[$i].runtime // \"unknown\"" "$DISCOVERY_FILE" 2>/dev/null)
+        fi
+
+        local port
+        eval "$(_get_runtime_defaults "$runtime")"
+
+        echo "[$((i+1))] $stage_name"
+        echo "────────────────────────────────────────────────────────────────"
+        echo ""
+        echo "Check deployed artifacts:"
+        echo "  ssh $stage_name \"ls -la /var/www/\""
+        echo ""
+        echo "Verify endpoints:"
+        echo "  .zcp/verify.sh $stage_name $port / /health"
+        echo ""
+        echo "Service logs:"
+        echo "  zcli service log -S $stage_id -P \$projectId --follow"
+        echo ""
+
+        i=$((i + 1))
+    done
+
+    # Get first stage name for browser testing example
+    local first_stage_name
+    if [ "$service_count" -eq 1 ]; then
+        first_stage_name=$(jq -r '.stage.name // "appstage"' "$DISCOVERY_FILE" 2>/dev/null)
+    else
+        first_stage_name=$(jq -r '.services[0].stage.name // "stage0"' "$DISCOVERY_FILE" 2>/dev/null)
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "⚠️  BROWSER TESTING (required if frontend exists):"
+    echo "   URL=\$(ssh $first_stage_name \"echo \\\$zeropsSubdomain\")"
+    echo "   agent-browser open \"\$URL\"          # Don't prepend https://!"
+    echo "   agent-browser errors               # Must show no errors"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📋 Gate: verify.sh must pass (creates /tmp/stage_verify.json)"
+    echo "📋 Next: .zcp/workflow.sh transition_to DONE"
+}
+
 output_phase_guidance() {
     local phase="$1"
 
@@ -534,205 +811,13 @@ output_phase_guidance() {
                 shared_db=$(jq -r '.shared_database // false' "$DISCOVERY_FILE" 2>/dev/null)
             fi
 
-            cat <<'EOF'
-✅ Phase: DEVELOP
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📁 Files: /var/www/{dev}/     (edit directly via SSHFS)
-💻 Run:   ssh {dev} "cmd"     (execute inside container)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-⚠️  CRITICAL: Dev is where you iterate and fix errors.
-    Stage is for final validation AFTER dev confirms success.
-
-    You MUST verify the feature works correctly on dev before deploying.
-    If you find errors on stage, you did not test properly on dev.
-
-┌─────────────────────────────────────────────────────────────────┐
-│  DEVELOP LOOP (repeat until feature works):                     │
-│                                                                 │
-│  1. Build & Run                                                 │
-│  2. Test functionality (not just HTTP status!)                  │
-│  3. Check for errors (logs, responses, browser console)         │
-│  4. If errors → Fix → Go to step 1                              │
-│  5. Only when working → run verify.sh → transition to DEPLOY    │
-└─────────────────────────────────────────────────────────────────┘
-
-Kill existing process:
-  ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'
-
-Build & run:
-  ssh {dev} "{build_command}"              # Runs synchronously (see logs)
-  ssh {dev} './{binary} >> /tmp/app.log 2>&1'
-  ↑ run_in_background=true (server blocks forever)
-    NOT for builds/push — run those synchronously!
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔍 FUNCTIONAL TESTING (required before deploy):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-HTTP 200 is NOT enough. You must verify the feature WORKS.
-
-Backend APIs:
-  # GET the actual response and check content
-  ssh {dev} "curl -s http://localhost:{port}/api/endpoint" | jq .
-
-  # POST and verify the operation succeeded
-  ssh {dev} "curl -s -X POST http://localhost:{port}/api/items -d '{...}'"
-
-  # Check the data persisted
-  ssh {dev} "curl -s http://localhost:{port}/api/items"
-
-Frontend/Full-stack:
-  URL=$(ssh {dev} "echo \$zeropsSubdomain")
-  agent-browser open "$URL"
-  agent-browser errors          # ← MUST be empty
-  agent-browser console         # ← Check for runtime errors
-  agent-browser screenshot      # ← Visual verification
-
-Logs (check for errors/exceptions):
-  ssh {dev} "tail -50 /tmp/app.log"
-  ssh {dev} "grep -i error /tmp/app.log"
-  ssh {dev} "grep -i exception /tmp/app.log"
-
-Database verification (if applicable):
-  psql "$db_connectionString" -c "SELECT * FROM {table} ORDER BY id DESC LIMIT 5;"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-❌ DO NOT deploy to stage if:
-   • Response contains error messages
-   • Logs show exceptions or stack traces
-   • Browser console has JavaScript errors
-   • Data isn't persisting correctly
-   • UI is broken or not rendering
-
-✅ Deploy to stage ONLY when:
-   • Feature works as expected on dev
-   • No errors in logs or console
-   • You've tested the actual functionality, not just "server responds"
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 When ready (feature works, no errors):
-   .zcp/verify.sh {dev} {port} / /status /api/...
-   .zcp/workflow.sh transition_to DEPLOY
-EOF
-            # Gap 46: Show migration guidance if shared database detected
-            if [ "$shared_db" = "true" ]; then
-                cat <<'MIGRATION_GUIDANCE'
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🗄️  DATABASE MIGRATIONS (shared database detected)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Choose ONE service to run migrations. In its zerops.yml:
-
-  run:
-    initCommands:
-      - zsc execOnce "${appVersionId}-migrate" "./migrate.sh"
-
-Other services should NOT run migrations.
-
-Pattern: zsc execOnce "unique-id" "command"
-  • Runs once per service (idempotent across containers)
-  • Use $appVersionId for automatic refresh on each deploy
-  • Format: "${appVersionId}-{task}" ensures fresh execution per deploy
-  • Docs: https://docs.zerops.io/references/zsc#execonce
-
-⚠️  Do NOT use manual versioning like "migrate-v1", "migrate-v2"
-   This requires manual bumping and is error-prone.
-MIGRATION_GUIDANCE
-            fi
+            _output_develop_guidance_resolved "$shared_db"
             ;;
         DEPLOY)
-            cat <<'EOF'
-✅ Phase: DEPLOY
-
-⚠️  PRE-DEPLOYMENT CHECKLIST (do this BEFORE deploying):
-   1. cat /var/www/{dev}/zerops.yaml | grep -A10 deployFiles
-   2. Verify ALL artifacts exist:
-      ls -la /var/www/{dev}/app
-      ls -la /var/www/{dev}/templates/  # if using templates
-      ls -la /var/www/{dev}/static/     # if using static files
-   3. If you created templates/ or static/, add them to deployFiles!
-
-⚠️  Common failure: Agent builds files but doesn't update deployFiles
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Stop dev process:
-  ssh {dev} 'pkill -9 {proc}; killall -9 {proc} 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true'
-
-Authenticate from dev container:
-  ssh {dev} "zcli login --region=gomibako \\
-      --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \\
-      \"\$ZEROPS_ZCP_API_KEY\""
-
-Deploy to stage:
-  ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
-
-  --setup={setup} → references zerops.yaml build config name
-  --versionName   → optional but recommended
-
-**zerops.yaml structure reference:**
-zerops:
-  - setup: api                    # ← --setup value
-    build:
-      base: go@1.22
-      buildCommands:
-        - go build -o app main.go
-      deployFiles:
-        - ./app
-        - ./templates             # Don't forget if you created these!
-        - ./static
-    run:
-      base: go@1.22
-      ports:
-        - port: 8080
-      start: ./app
-
-Wait for completion:
-  .zcp/status.sh --wait {stage}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 Gate: .zcp/status.sh shows SUCCESS notification
-📋 Next: .zcp/workflow.sh transition_to VERIFY
-EOF
+            _output_deploy_guidance_resolved
             ;;
         VERIFY)
-            cat <<'EOF'
-✅ Phase: VERIFY
-
-Check deployed artifacts:
-  ssh {stage} "ls -la /var/www/"
-
-Verify endpoints:
-  .zcp/verify.sh {stage} {port} / /status /api/...
-
-Service logs:
-  zcli service log -S {stage_service_id} -P $projectId --follow
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-⚠️  BROWSER TESTING (required if frontend exists):
-   If your app has HTML/CSS/JS/templates:
-
-   URL=$(ssh {stage} "echo \$zeropsSubdomain")
-   agent-browser open "$URL"          # Don't prepend https://!
-   agent-browser errors               # Must show no errors
-   agent-browser console              # Check runtime errors
-   agent-browser network requests     # Verify assets load
-   agent-browser screenshot           # Visual evidence
-
-⚠️  HTTP 200 ≠ working UI. CSS/JS errors return 200 but break the app.
-
-💡 Tool awareness: You CAN see screenshots and reason about them.
-   You CAN use curl to test functionality, not just status codes.
-   You CAN query the database to verify data persistence.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 Gate: verify.sh must pass (creates /tmp/stage_verify.json)
-📋 Next: .zcp/workflow.sh transition_to DONE
-EOF
+            _output_verify_guidance_resolved
             ;;
         DONE)
             cat <<'EOF'

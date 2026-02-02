@@ -866,10 +866,7 @@ cmd_recover() {
             echo "DEPLOYMENT COMMANDS"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
-            echo "# Use the deploy helper:"
-            echo ".zcp/deploy.sh stage"
-            echo ""
-            echo "# Or manual command:"
+            echo "# Direct deployment commands (copy-paste ready):"
             i=0
             while [ "$i" -lt "$service_count" ]; do
                 local dev_name stage_id
