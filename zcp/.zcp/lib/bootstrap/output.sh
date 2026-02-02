@@ -162,12 +162,26 @@ emit_complete() {
     fi
 
     # -------------------------------------------------------------------------
-    # NEXT STEPS
+    # REQUIRED ACTION - BIG WARNING
     # -------------------------------------------------------------------------
     echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "NEXT: .zcp/workflow.sh iterate \"description of what to build\""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+    echo "┃  ⛔⛔⛔  REQUIRED ACTION - READ THIS  ⛔⛔⛔                           ┃"
+    echo "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫"
+    echo "┃                                                                        ┃"
+    echo "┃  When the user gives you a task, your FIRST action MUST be:            ┃"
+    echo "┃                                                                        ┃"
+    echo "┃    .zcp/workflow.sh iterate \"<the task they described>\"               ┃"
+    echo "┃                                                                        ┃"
+    echo "┃  Do NOT start editing files or writing code until you run iterate.     ┃"
+    echo "┃  This is BLOCKING - the workflow will NOT track your work otherwise.   ┃"
+    echo "┃                                                                        ┃"
+    echo "┃  Example:                                                              ┃"
+    echo "┃    User: \"Build the Starfield visualization\"                          ┃"
+    echo "┃    You:  .zcp/workflow.sh iterate \"Build the Starfield visualization\" ┃"
+    echo "┃    Then: Start implementing...                                         ┃"
+    echo "┃                                                                        ┃"
+    echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
     echo ""
 }
 
