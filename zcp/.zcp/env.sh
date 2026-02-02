@@ -95,6 +95,32 @@ get_service_var() {
         return 1
     fi
 
+    # Detect managed services that don't support SSH (case-insensitive)
+    local service_lower="${service,,}"  # Convert to lowercase for comparison
+    local managed_patterns="^(db|database|postgresql|mysql|mariadb|mongodb|cache|redis|valkey|keydb|queue|rabbitmq|nats|search|elasticsearch|storage|minio)$"
+    if [[ "$service_lower" =~ $managed_patterns ]]; then
+        # Try to get dev hostname from discovery for helpful error message
+        local dev_hostname="your-dev-service"
+        if [ -f "$DISCOVERY_FILE" ] && command -v jq &>/dev/null; then
+            local discovered_dev
+            discovered_dev=$(jq -r '.dev.name // .services[0].dev.name // ""' "$DISCOVERY_FILE" 2>/dev/null)
+            [ -n "$discovered_dev" ] && dev_hostname="$discovered_dev"
+        fi
+
+        echo >&2
+        echo "❌ Cannot SSH into '$service' - it's a managed service (no SSH access)" >&2
+        echo >&2
+        echo "Managed services don't support SSH. Get env vars from a runtime container:" >&2
+        echo >&2
+        echo "  ssh $dev_hostname 'echo \$${service}_connectionString'" >&2
+        echo >&2
+        echo "Or use client tools directly from ZCP:" >&2
+        echo "  CONN=\$(ssh $dev_hostname 'echo \$${service}_connectionString')" >&2
+        echo "  psql \"\$CONN\" -c \"SELECT 1\"" >&2
+        echo >&2
+        return 1
+    fi
+
     # SSH to service and echo the variable
     local value
     value=$(ssh "$service" "echo \$$var" 2>/dev/null)

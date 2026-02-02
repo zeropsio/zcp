@@ -362,12 +362,26 @@ EOF
             echo "  Dev:   $dev_name ($dev_id)"
             echo "  Stage: $stage_name ($stage_id)"
         fi
+        # Get actual dev hostname for concrete examples
+        local example_dev="appdev"
+        if [ -f "$DISCOVERY_FILE" ] && command -v jq &>/dev/null; then
+            local discovered_dev
+            discovered_dev=$(jq -r '.dev.name // .services[0].dev.name // ""' "$DISCOVERY_FILE" 2>/dev/null)
+            [ -n "$discovered_dev" ] && example_dev="$discovered_dev"
+        fi
+
         echo ""
         echo "  Runtime (SSH ✓):  Use ssh {hostname} for shell access"
-        echo "  Managed (NO SSH): db, cache, etc. → use psql, redis-cli from ZCP"
+        echo "  Managed (NO SSH): db, cache, etc. - NO direct SSH"
         echo ""
-        echo "  DB access:  psql \"\$db_connectionString\""
-        echo "  Variables:  \$db_hostname, \$db_user, \$db_database, \$db_connectionString"
+        echo "  ⚠️  Env vars DON'T exist in ZCP shell - get them via SSH:"
+        echo ""
+        echo "  # Get connection string from runtime container"
+        echo "  CONN=\$(ssh $example_dev 'echo \$db_connectionString')"
+        echo "  psql \"\$CONN\" -c \"SELECT 1\""
+        echo ""
+        echo "  # Or run psql inside container"
+        echo "  ssh $example_dev \"psql \\\"\\\$db_connectionString\\\" -c 'SELECT 1'\""
     fi
 
     echo ""

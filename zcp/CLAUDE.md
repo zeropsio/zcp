@@ -61,6 +61,17 @@ Shell variables like `$cache_hostname` **do not exist** in ZCP shell.
 
 ---
 
+## Logs
+
+| Environment | Access |
+|-------------|--------|
+| Dev | `ssh {dev} "tail -50 /tmp/app.log"` |
+| Stage | `zcli service log -S {stage_id} -P $projectId` |
+
+**Why the difference:** In dev, agent starts the server manually with `>> /tmp/app.log 2>&1`. In stage, Zerops runs the unit — no file-based logs, use zcli.
+
+---
+
 ## Rules
 
 - zcli uses service IDs, not hostnames — the flow provides correct values

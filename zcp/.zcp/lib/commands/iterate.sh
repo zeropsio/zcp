@@ -2,6 +2,49 @@
 # Iterate command for Zerops Workflow Continuity
 # Enables post-DONE continuation with iteration history
 
+# Output discovered env var guidance
+output_env_var_guidance() {
+    local discovery_file="${DISCOVERY_FILE:-/tmp/discovery.json}"
+
+    if [ ! -f "$discovery_file" ]; then
+        return 0
+    fi
+
+    local env_vars
+    env_vars=$(jq -r '.discovered_env_vars // empty' "$discovery_file" 2>/dev/null)
+
+    if [ -z "$env_vars" ] || [ "$env_vars" = "null" ] || [ "$env_vars" = "{}" ]; then
+        return 0
+    fi
+
+    local dev_hostname
+    dev_hostname=$(jq -r '.dev.name // .services[0].dev.name // "appdev"' "$discovery_file" 2>/dev/null)
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔑 ENVIRONMENT VARIABLES (discovered from $dev_hostname)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "⚠️  These vars exist INSIDE containers, NOT in ZCP shell!"
+    echo ""
+
+    # Output each discovered service's vars (suppress jq errors if malformed)
+    echo "$env_vars" | jq -r 'to_entries[] | "  \(.key): \(.value.variables | join(", "))"' 2>/dev/null || true
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📌 CORRECT ACCESS PATTERNS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  # Get connection string for use in ZCP"
+    echo "  CONN=\$(ssh $dev_hostname 'echo \$db_connectionString')"
+    echo "  psql \"\$CONN\" -c \"SELECT 1\""
+    echo ""
+    echo "  # Or run command inside container"
+    echo "  ssh $dev_hostname \"psql \\\"\\\$db_connectionString\\\" -c 'SELECT 1'\""
+    echo ""
+}
+
 cmd_iterate() {
     local summary=""
     local target_phase="DEVELOP"
@@ -182,6 +225,9 @@ cmd_iterate() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     output_phase_guidance "$target_phase"
+
+    # Show env var guidance if available
+    output_env_var_guidance
 }
 
 # Note: get_iteration() and set_iteration() are defined in utils.sh

@@ -365,6 +365,17 @@ step_aggregate_results() {
             service_count: $service_count
         }')
 
+    # Include discovered env vars if service_discovery.json exists
+    local service_discovery="${ZCP_TMP_DIR:-/tmp}/service_discovery.json"
+    if [ -f "$service_discovery" ]; then
+        local env_data
+        env_data=$(jq '.services // {}' "$service_discovery" 2>/dev/null || echo '{}')
+
+        if [ "$env_data" != "{}" ] && [ "$env_data" != "null" ]; then
+            discovery=$(echo "$discovery" | jq --argjson env "$env_data" '. + {discovered_env_vars: $env}')
+        fi
+    fi
+
     echo "$discovery" > "${ZCP_TMP_DIR:-/tmp}/discovery.json"
 
     # Also persist to state directory (STATE_DIR is set by utils.sh sourced from bootstrap.sh)

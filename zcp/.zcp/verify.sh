@@ -92,6 +92,232 @@ EOF
 }
 
 # ============================================================================
+# PROCESS VERIFICATION (for workers/cron jobs)
+# ============================================================================
+
+verify_process() {
+    local service="$1"
+    local process_name="$2"
+    local log_path="${3:-/tmp/app.log}"  # Optional log path, defaults to /tmp/app.log
+
+    # SECURITY: Validate process_name to prevent command injection
+    # Only allow alphanumeric, underscore, hyphen, dot, and forward slash
+    if [[ ! "$process_name" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+        echo "❌ Invalid process name: '$process_name'" >&2
+        echo "   Must contain only alphanumeric characters, dots, hyphens, underscores, slashes" >&2
+        return 1
+    fi
+
+    # SECURITY: Validate log_path
+    if [[ ! "$log_path" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+        echo "❌ Invalid log path: '$log_path'" >&2
+        return 1
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔧 PROCESS VERIFICATION: $service"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Check if process is running (process_name is now validated safe)
+    local ps_output
+    ps_output=$(ssh "$service" "ps aux | grep -E '$process_name' | grep -v grep" 2>/dev/null)
+
+    local process_running=false
+    if [ -n "$ps_output" ]; then
+        process_running=true
+        echo "  ✅ Process '$process_name' is running"
+        echo "$ps_output" | head -3 | while read -r line; do
+            echo "     $line"
+        done
+    else
+        echo "  ❌ Process '$process_name' not found"
+    fi
+
+    # Check for crash loops (process restart count in last hour)
+    local log_errors
+    log_errors=$(ssh "$service" "grep -ciE 'panic|fatal|crash' '$log_path' 2>/dev/null || echo 0")
+
+    if [ "$log_errors" -gt 0 ]; then
+        echo "  ⚠️  Found $log_errors error(s) in $log_path"
+    else
+        echo "  ✅ No panics/crashes in logs ($log_path)"
+    fi
+
+    # Get session for evidence
+    local session_id
+    session_id=$(get_session 2>/dev/null || echo "unknown")
+
+    # Create evidence file
+    local evidence_file="/tmp/${service}_verify.json"
+    local passed=0
+    local failed=0
+
+    [ "$process_running" = true ] && passed=$((passed + 1)) || failed=$((failed + 1))
+    [ "$log_errors" -eq 0 ] && passed=$((passed + 1)) || failed=$((failed + 1))
+
+    jq -n \
+        --arg sid "$session_id" \
+        --arg svc "$service" \
+        --arg proc "$process_name" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --argjson running "$process_running" \
+        --argjson errors "$log_errors" \
+        --argjson passed "$passed" \
+        --argjson failed "$failed" \
+        '{
+            session_id: $sid,
+            service: $svc,
+            verification_type: "process",
+            process_name: $proc,
+            timestamp: $ts,
+            results: [
+                {check: "process_running", passed: $running},
+                {check: "no_crashes", passed: ($errors == 0)}
+            ],
+            passed: $passed,
+            failed: $failed
+        }' > "$evidence_file"
+
+    echo ""
+    echo "Evidence: $evidence_file"
+    echo "Passed: $passed | Failed: $failed"
+
+    [ "$failed" -eq 0 ] && return 0 || return 1
+}
+
+# ============================================================================
+# LOG VERIFICATION (pattern matching in logs)
+# ============================================================================
+
+verify_logs() {
+    local service="$1"
+    local log_file="$2"
+    local pattern="$3"
+
+    # SECURITY: Validate log_file path to prevent command injection
+    if [[ ! "$log_file" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+        echo "❌ Invalid log file path: '$log_file'" >&2
+        echo "   Must contain only alphanumeric characters, dots, hyphens, underscores, slashes" >&2
+        return 1
+    fi
+
+    # SECURITY: Validate pattern - allow common regex chars but block shell metacharacters
+    # Allowed: alphanumeric, |, ., *, +, ?, ^, $, [], (), {}, \, -, _, space
+    if [[ "$pattern" =~ [\;\`\$\&\<\>] ]]; then
+        echo "❌ Invalid pattern: contains disallowed shell metacharacters" >&2
+        echo "   Pattern: '$pattern'" >&2
+        return 1
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📋 LOG VERIFICATION: $service"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Check log file exists (log_file is now validated safe)
+    local log_exists
+    log_exists=$(ssh "$service" "[ -f '$log_file' ] && echo yes || echo no" 2>/dev/null)
+
+    if [ "$log_exists" != "yes" ]; then
+        echo "  ❌ Log file not found: $log_file"
+
+        # Get session for evidence
+        local session_id
+        session_id=$(get_session 2>/dev/null || echo "unknown")
+
+        # Create evidence file showing failure
+        local evidence_file="/tmp/${service}_verify.json"
+        jq -n \
+            --arg sid "$session_id" \
+            --arg svc "$service" \
+            --arg log "$log_file" \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+                session_id: $sid,
+                service: $svc,
+                verification_type: "logs",
+                log_file: $log,
+                timestamp: $ts,
+                results: [{check: "log_file_exists", passed: false}],
+                passed: 0,
+                failed: 1
+            }' > "$evidence_file"
+
+        echo "Evidence: $evidence_file"
+        return 1
+    fi
+
+    echo "  ✅ Log file exists: $log_file"
+
+    # Check for pattern
+    local pattern_found
+    pattern_found=$(ssh "$service" "grep -cE '$pattern' '$log_file' 2>/dev/null || echo 0")
+
+    if [ "$pattern_found" -gt 0 ]; then
+        echo "  ✅ Pattern '$pattern' found ($pattern_found matches)"
+    else
+        echo "  ❌ Pattern '$pattern' not found"
+    fi
+
+    # Check for errors
+    local error_count
+    error_count=$(ssh "$service" "grep -ciE 'error|exception|panic|fatal' '$log_file' 2>/dev/null || echo 0")
+
+    if [ "$error_count" -eq 0 ]; then
+        echo "  ✅ No errors in log"
+    else
+        echo "  ⚠️  Found $error_count error(s) in log"
+        ssh "$service" "grep -iE 'error|exception|panic|fatal' '$log_file' | tail -3" 2>/dev/null | while read -r line; do
+            echo "     $line"
+        done
+    fi
+
+    # Get session for evidence
+    local session_id
+    session_id=$(get_session 2>/dev/null || echo "unknown")
+
+    # Create evidence file
+    local evidence_file="/tmp/${service}_verify.json"
+    local passed=0
+    local failed=0
+
+    [ "$pattern_found" -gt 0 ] && passed=$((passed + 1)) || failed=$((failed + 1))
+    [ "$error_count" -eq 0 ] && passed=$((passed + 1)) || failed=$((failed + 1))
+
+    jq -n \
+        --arg sid "$session_id" \
+        --arg svc "$service" \
+        --arg log "$log_file" \
+        --arg pat "$pattern" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --argjson matches "$pattern_found" \
+        --argjson errors "$error_count" \
+        --argjson passed "$passed" \
+        --argjson failed "$failed" \
+        '{
+            session_id: $sid,
+            service: $svc,
+            verification_type: "logs",
+            log_file: $log,
+            pattern: $pat,
+            timestamp: $ts,
+            results: [
+                {check: "pattern_found", matches: $matches, passed: ($matches > 0)},
+                {check: "no_errors", errors: $errors, passed: ($errors == 0)}
+            ],
+            passed: $passed,
+            failed: $failed
+        }' > "$evidence_file"
+
+    echo ""
+    echo "Evidence: $evidence_file"
+    echo "Passed: $passed | Failed: $failed"
+
+    [ "$failed" -eq 0 ] && return 0 || return 1
+}
+
+# ============================================================================
 # UTILITY
 # ============================================================================
 
@@ -369,6 +595,55 @@ main() {
     if [ "$1" = "--debug" ]; then
         DEBUG=true
         shift
+    fi
+
+    # Check for --process mode (for workers/cron jobs)
+    if [ "$1" = "--process" ]; then
+        shift
+        local service="$1"
+        local process_name="$2"
+        local log_path="${3:-/tmp/app.log}"  # Optional 3rd arg for log path
+
+        if [ -z "$service" ] || [ -z "$process_name" ]; then
+            echo "❌ Usage: .zcp/verify.sh --process {service} {process_name} [log_path]"
+            echo "Example: .zcp/verify.sh --process godev app"
+            echo "Example: .zcp/verify.sh --process godev app /var/log/app.log"
+            exit 2
+        fi
+
+        verify_process "$service" "$process_name" "$log_path"
+        exit $?
+    fi
+
+    # Check for --logs mode (pattern matching in logs)
+    if [ "$1" = "--logs" ]; then
+        shift
+        local service="$1"
+        local log_file="$2"
+        shift 2
+
+        # Parse --pattern flag
+        local pattern="Started|Ready|Listening"
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --pattern)
+                    pattern="$2"
+                    shift 2
+                    ;;
+                *)
+                    shift
+                    ;;
+            esac
+        done
+
+        if [ -z "$service" ] || [ -z "$log_file" ]; then
+            echo "❌ Usage: .zcp/verify.sh --logs {service} {log_file} [--pattern 'regex']"
+            echo "Example: .zcp/verify.sh --logs godev /tmp/app.log --pattern 'Started|Ready'"
+            exit 2
+        fi
+
+        verify_logs "$service" "$log_file" "$pattern"
+        exit $?
     fi
 
     local service="$1"

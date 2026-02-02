@@ -84,6 +84,7 @@ gate_check_session() {
 }
 
 # Check verification has zero failures (including pre-flight failures)
+# Now supports both HTTP and process/log verification types
 # Usage: gate_check_no_failures "$FILE" "context"
 gate_check_no_failures() {
     local file="$1"
@@ -99,24 +100,30 @@ gate_check_no_failures() {
         return 1
     fi
 
-    # Check for preflight failure FIRST (FIX-04: new check)
-    local preflight_failed
-    preflight_failed=$(jq -r '.preflight_failed // false' "$file" 2>/dev/null)
-    if [ "$preflight_failed" = "true" ]; then
-        local reason
-        reason=$(jq -r '.preflight_reason // "Unknown pre-flight failure"' "$file" 2>/dev/null)
-        gate_fail "Pre-flight check failed: $reason" "Ensure process is running on port"
-        return 1
+    # Check verification type
+    local verify_type
+    verify_type=$(jq -r '.verification_type // "http"' "$file" 2>/dev/null)
+
+    # Check for preflight failure (HTTP mode only)
+    if [ "$verify_type" = "http" ]; then
+        local preflight_failed
+        preflight_failed=$(jq -r '.preflight_failed // false' "$file" 2>/dev/null)
+        if [ "$preflight_failed" = "true" ]; then
+            local reason
+            reason=$(jq -r '.preflight_reason // "Unknown pre-flight failure"' "$file" 2>/dev/null)
+            gate_fail "Pre-flight check failed: $reason" "Ensure process is running on port"
+            return 1
+        fi
     fi
 
-    # Check for test failures
+    # Check for test failures (all modes)
     local failures
     failures=$(jq -r '.failed // 0' "$file" 2>/dev/null)
     if ! [[ "$failures" =~ ^[0-9]+$ ]]; then
         gate_fail "Cannot read failure count from evidence file"
         return 1
     elif [ "$failures" -gt 0 ]; then
-        gate_fail "$context has $failures failure(s)" "Fix failing endpoints before proceeding"
+        gate_fail "$context has $failures failure(s)" "Fix failing checks before proceeding"
         return 1
     fi
 
@@ -124,10 +131,21 @@ gate_check_no_failures() {
     local passed
     passed=$(jq -r '.passed // 0' "$file" 2>/dev/null)
     if [ "$passed" -eq 0 ] && [ "$failures" -eq 0 ]; then
-        gate_warn "No endpoints tested" "Ensure verification ran correctly"
+        gate_warn "No checks performed" "Ensure verification ran correctly"
     fi
 
-    gate_pass "$context passed ($passed endpoints, 0 failures)"
+    # Report based on verification type
+    case "$verify_type" in
+        process)
+            gate_pass "$context passed (process verification: $passed checks)"
+            ;;
+        logs)
+            gate_pass "$context passed (log verification: $passed checks)"
+            ;;
+        *)
+            gate_pass "$context passed ($passed endpoints, 0 failures)"
+            ;;
+    esac
     return 0
 }
 
@@ -603,7 +621,11 @@ check_gate_develop_to_deploy() {
                     gate_warn "Cannot validate zerops.yml (yq unavailable)"
                 fi
             else
-                gate_warn "zerops.yml not found at $config_file"
+                # BREAKING CHANGE: Previously gate_warn, now gate_fail
+                # Rationale: Missing zerops.yml means deploy will fail anyway.
+                # Failing early with clear guidance is better than proceeding to a broken deploy.
+                gate_fail "zerops.yml not found at $config_file" \
+                    "Subagent should have created /var/www/$dev_service/zerops.yml"
             fi
         fi
     fi
