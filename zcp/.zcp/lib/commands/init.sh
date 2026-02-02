@@ -242,10 +242,10 @@ cmd_quick() {
 ✅ Quick mode - no enforcement
 
 💡 Available tools:
-   status.sh                    # Check deployment state
-   .zcp/status.sh --wait {svc}       # Wait for deploy
-   .zcp/verify.sh {svc} {port} /...  # Test endpoints
-   .zcp/workflow.sh --help           # Full reference
+   status.sh                              # Check deployment state
+   .zcp/status.sh --wait {svc}            # Wait for deploy
+   .zcp/verify.sh {svc} "what verified"   # Record verification
+   .zcp/workflow.sh --help                # Full reference
 
 ⚠️  Remember:
    Files: /var/www/{service}/   (SSHFS direct edit)

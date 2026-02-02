@@ -465,11 +465,11 @@ zerops:
 | 9 | Subdomain dev | \`zcli service enable-subdomain -P \$projectId ${dev_id}\` |
 | 10 | Start dev server | SSH in, run appropriate start command for runtime (see below) |
 | 11 | Wait for server | \`.zcp/wait-for-server.sh ${dev_hostname} 8080 300\` — waits up to 5 min |
-| 12 | Verify dev | \`.zcp/verify.sh ${dev_hostname} 8080 / /health /status\` — includes port preflight |
+| 12 | Verify dev | Test endpoints with curl, check logs, then \`.zcp/verify.sh ${dev_hostname} "curl /, /health, /status ok"\` |
 | 13 | Deploy stage | \`ssh ${dev_hostname} 'cd /var/www && zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY" && zcli push ${stage_id} --setup=prod'\` |
 | 14 | Wait stage | \`.zcp/status.sh --wait ${stage_hostname}\` |
 | 15 | Subdomain stage | \`zcli service enable-subdomain -P \$projectId ${stage_id}\` |
-| 16 | Verify stage | \`.zcp/verify.sh ${stage_hostname} 8080 / /health /status\` |
+| 16 | Verify stage | Test endpoints, then \`.zcp/verify.sh ${stage_hostname} "curl /, /health, /status ok"\` |
 | 17 | **Done** | \`.zcp/mark-complete.sh ${dev_hostname}\` — completion evidence auto-generated |
 
 ## App Specification
@@ -654,11 +654,11 @@ PROMPT
                     "Enable dev subdomain",
                     "Start dev server manually with nohup in background",
                     "Wait for server: .zcp/wait-for-server.sh \($hostname) 8080 300",
-                    "Verify dev: .zcp/verify.sh \($hostname) 8080 / /health /status",
+                    "Verify dev: Test endpoints, then .zcp/verify.sh \($hostname) \"curl /, /health, /status ok\"",
                     "Deploy to stage with fresh auth: ssh \($hostname) \"cd /var/www && zcli login ... && zcli push \($stage_id) --setup=prod\"",
                     "Wait for stage: .zcp/status.sh --wait \($stage_hostname)",
                     "Enable stage subdomain",
-                    "Verify stage: .zcp/verify.sh \($stage_hostname) 8080 / /health /status",
+                    "Verify stage: Test endpoints, then .zcp/verify.sh \($stage_hostname) \"curl /, /health, /status ok\"",
                     "Mark complete: .zcp/mark-complete.sh \($hostname) - completion evidence auto-generated"
                 ]
             }')

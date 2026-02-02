@@ -242,7 +242,7 @@ determine_next_action() {
             ;;
         "DEVELOP")
             if [ "$(get_evidence_status dev_verify)" != "complete" ]; then
-                echo '{"command":".zcp/verify.sh {dev} 8080 / /status","description":"Verify dev endpoints work","prerequisites":["Build and start app: ssh {dev} \"go build -o app && ./app &\""],"on_success":{"next":".zcp/workflow.sh transition_to DEPLOY"},"on_failure":{"analyze":"ssh {dev} \"cat /var/log/app.log | tail -50\"","common_issues":["App not running","Database connection failed","Port conflict"]}}'
+                echo '{"command":".zcp/verify.sh {dev} \"curl ok, logs clean\"","description":"Record verification attestation","prerequisites":["Build and start app: ssh {dev} \"go build -o app && ./app &\"","Test: ssh {dev} \"curl -s localhost:8080/\""],"on_success":{"next":".zcp/workflow.sh transition_to DEPLOY"},"on_failure":{"analyze":"ssh {dev} \"cat /tmp/app.log | tail -50\"","common_issues":["App not running","Database connection failed","Port conflict"]}}'
             else
                 echo '{"command":".zcp/workflow.sh transition_to DEPLOY","description":"Transition to DEPLOY phase"}'
             fi
@@ -256,7 +256,7 @@ determine_next_action() {
             ;;
         "VERIFY")
             if [ "$(get_evidence_status stage_verify)" != "complete" ]; then
-                echo '{"command":".zcp/verify.sh {stage} 8080 / /status","description":"Verify stage endpoints work","on_success":{"next":".zcp/workflow.sh transition_to DONE"},"on_failure":{"analyze":"Check stage logs and compare to dev","common_issues":["Different environment variables","Missing database migration","Network policy blocking"]}}'
+                echo '{"command":".zcp/verify.sh {stage} \"curl ok, logs clean\"","description":"Record verification attestation","prerequisites":["Test: ssh {stage} \"curl -s localhost:8080/\""],"on_success":{"next":".zcp/workflow.sh transition_to DONE"},"on_failure":{"analyze":"Check stage logs and compare to dev","common_issues":["Different environment variables","Missing database migration","Network policy blocking"]}}'
             else
                 echo '{"command":".zcp/workflow.sh transition_to DONE","description":"Transition to DONE phase"}'
             fi

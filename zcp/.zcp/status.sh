@@ -565,8 +565,9 @@ wait_for_deployment() {
                     echo "  Before verifying, start your application:"
                     echo "    ssh $service \"cd /var/www && nohup <your-start-cmd> > /tmp/app.log 2>&1 &\""
                     echo ""
-                    echo "  Then verify:"
-                    echo "    .zcp/verify.sh $service 8080 / /health /status"
+                    echo "  Then test & record verification:"
+                    echo "    ssh $service \"curl -s localhost:8080/\""
+                    echo "    .zcp/verify.sh $service \"curl ok, logs clean\""
                     echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                     echo ""
                 fi

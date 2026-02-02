@@ -910,7 +910,8 @@ cmd_recover() {
         echo "VERIFICATION"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
-        echo ".zcp/verify.sh {service} 8080 / /health"
+        echo "ssh {service} \"curl -s localhost:8080/\""
+        echo ".zcp/verify.sh {service} \"curl ok, logs clean\""
         echo ""
         return 0
     fi

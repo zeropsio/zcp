@@ -284,7 +284,7 @@ mark_complete() {
                 ;;
             2)
                 echo -e "${YELLOW}⚠️  No verification evidence found${NC}" >&2
-                echo "  Run: .zcp/verify.sh $hostname 8080 / /health /status" >&2
+                echo "  Run: .zcp/verify.sh $hostname \"what you verified\"" >&2
                 echo "  Or force: .zcp/mark-complete.sh --force $hostname" >&2
                 return 1
                 ;;

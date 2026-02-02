@@ -233,7 +233,7 @@ gate_check_all_services_verified() {
 
     if [ "$verified" -lt "$service_count" ]; then
         gate_fail "$verified/$service_count ${role} services verified" \
-            "Missing:$missing_services - HTTP: .zcp/verify.sh {hostname} 8080 / | Worker: --process {hostname} {proc}"
+            "Missing:$missing_services - Run: .zcp/verify.sh {hostname} \"what you verified\""
         return 1
     else
         gate_pass "All $service_count ${role} services verified"
@@ -605,7 +605,7 @@ check_gate_develop_to_deploy() {
 
     # Check 1: dev_verify.json exists
     gate_check_file "$DEV_VERIFY_FILE" "dev_verify.json" \
-        "HTTP service: .zcp/verify.sh {dev} {port} / ... | Worker: .zcp/verify.sh --process {dev} {proc}"
+        "Run: .zcp/verify.sh {dev} \"what you verified (curl, logs, etc.)\""
 
     # Check 2: session_id matches
     gate_check_session "$DEV_VERIFY_FILE"
@@ -693,7 +693,7 @@ check_gate_verify_to_done() {
 
     # Check 1: stage_verify.json exists
     gate_check_file "$STAGE_VERIFY_FILE" "stage_verify.json" \
-        "Run: .zcp/verify.sh {stage} {port} / /status /api/..."
+        "Run: .zcp/verify.sh {stage} \"what you verified (curl, logs, etc.)\""
 
     # Check 2: session_id matches
     gate_check_session "$STAGE_VERIFY_FILE"

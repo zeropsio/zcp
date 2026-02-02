@@ -267,7 +267,7 @@ cmd_upgrade_to_full() {
     # Check dev verification exists
     if [ ! -f "$DEV_VERIFY_FILE" ]; then
         echo "❌ Dev verification required before upgrading"
-        echo "   Run: .zcp/verify.sh {dev} {port} /"
+        echo "   Run: .zcp/verify.sh {dev} \"what you verified\""
         return 1
     fi
 

@@ -378,8 +378,9 @@ Basic verification:
 1. Check deployed artifacts:
    ssh {stage} "ls -la /var/www/"
 
-2. Verify endpoints:
-   .zcp/verify.sh {stage} {port} / /status /api/...
+2. Verify & record:
+   ssh {stage} "curl -s localhost:{port}/"
+   .zcp/verify.sh {stage} "curl /, /health ok, logs clean"
 
 3. Check service logs:
    zcli service log -S {stage_service_id} -P $projectId
@@ -985,7 +986,8 @@ ssh {dev} "zcli login ... && zcli push {stage_id} --setup={setup}"
 
 VERIFY
 ─────────────────────────────────────────────────────────────────
-.zcp/verify.sh {service} {port} / /status /api/...
+ssh {service} "curl -s localhost:{port}/"          # Test manually
+.zcp/verify.sh {service} "curl ok, logs clean"     # Record attestation
 
 BROWSER TESTING
 ─────────────────────────────────────────────────────────────────
@@ -1287,7 +1289,8 @@ YAML
 # 7. Build, run, verify
 ssh appdev "go build -o app main.go"
 ssh appdev "./app >> /tmp/app.log 2>&1"  # run_in_background=true (server!)
-.zcp/verify.sh appdev 8080 / /status
+ssh appdev "curl -s localhost:8080/"
+.zcp/verify.sh appdev "curl /, /status ok"
 
 # Continue with normal DEPLOY → VERIFY → DONE flow
 

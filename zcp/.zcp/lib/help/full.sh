@@ -117,8 +117,10 @@ Build & run:
    ✅ ssh appdev './app'
    ❌ ssh appdev "DB_HOST=... DB_PASS=... ./app"
 
-Test endpoints:
-  .zcp/verify.sh {dev} {port} / /status /api/...
+Test & record verification:
+  ssh {dev} "curl -s localhost:{port}/"           # Test manually
+  ssh {dev} "curl -s localhost:{port}/health"
+  .zcp/verify.sh {dev} "curl /, /health ok"       # Record attestation
 
 Check logs:
   ssh {dev} "tail -f /tmp/app.log"
@@ -190,8 +192,9 @@ Redeploy/Retry (if needed):
 Check deployed artifacts:
   ssh {stage} "ls -la /var/www/"
 
-Verify endpoints:
-  .zcp/verify.sh {stage} {port} / /status /api/...
+Verify & record:
+  ssh {stage} "curl -s localhost:{port}/"
+  .zcp/verify.sh {stage} "curl /, /health ok, logs clean"
 
 Service logs:
   zcli service log -S {stage_service_id} -P $projectId --follow
@@ -312,7 +315,8 @@ zcli service list -P $projectId
 .zcp/workflow.sh transition_to DEVELOP
 ssh appdev "go build -o app main.go"
 ssh appdev './app >> /tmp/app.log 2>&1'  # run_in_background=true (server!)
-.zcp/verify.sh appdev 8080 / /status /api/items
+ssh appdev "curl -s localhost:8080/health"
+.zcp/verify.sh appdev "curl /, /health, /status ok"
 
 # 4. DEPLOY
 .zcp/workflow.sh transition_to DEPLOY
@@ -328,7 +332,8 @@ ssh appdev "zcli push svc456 --setup=api --versionName=v1.0.0"
 # 5. VERIFY
 .zcp/workflow.sh transition_to VERIFY
 ssh appstage "ls -la /var/www/"
-.zcp/verify.sh appstage 8080 / /status /api/items
+ssh appstage "curl -s localhost:8080/health"
+.zcp/verify.sh appstage "curl /, /health, /status ok"
 # If frontend:
 URL=$(ssh appstage "echo \$zeropsSubdomain")
 agent-browser open "$URL"

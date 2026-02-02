@@ -112,10 +112,12 @@ cmd_retarget() {
         echo ""
         echo "Then wait and verify:"
         echo "  .zcp/status.sh --wait $service_name"
-        echo "  .zcp/verify.sh $service_name {port} / /api/..."
+        echo "  ssh $service_name \"curl -s localhost:{port}/\""
+        echo "  .zcp/verify.sh $service_name \"curl ok, logs clean\""
     else
         echo "Re-verify on new dev target:"
         echo "  ssh $service_name \"{build_command}\""
-        echo "  .zcp/verify.sh $service_name {port} / /api/..."
+        echo "  ssh $service_name \"curl -s localhost:{port}/\""
+        echo "  .zcp/verify.sh $service_name \"curl ok, logs clean\""
     fi
 }
