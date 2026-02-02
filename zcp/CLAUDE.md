@@ -83,10 +83,31 @@ Shell variables like `$cache_hostname` **do not exist** in ZCP shell.
 
 | Symptom | Cause |
 |---------|-------|
+| `zcli project services list` | Wrong command → `zcli service list -P $projectId` |
 | `psql: command not found` via SSH | Run from ZCP, not via ssh |
 | Variable is empty | Use `.zcp/env.sh` or SSH to fetch |
 | HTTP 000 on dev | Server not running |
 | `https://https://...` | `zeropsSubdomain` already includes protocol |
+| SSH: Connection refused | Container OOM/restarting — check below |
+
+---
+
+## Container Crashes / OOM
+
+**If SSH fails repeatedly or process keeps dying**, the container is likely OOMing:
+
+```bash
+# Check CONTAINER logs (not app logs!) — shows OOM kills
+zcli service log -S {service_id} -P $projectId --limit 50
+
+# Scale up RAM temporarily (30 min)
+ssh {dev} "zsc scale ram 4GiB 30m"
+
+# Or scale CPU
+ssh {dev} "zsc scale cpu 2 30m"
+```
+
+**Don't retry SSH blindly** — if connection is refused, diagnose with `zcli service log` first.
 
 ---
 

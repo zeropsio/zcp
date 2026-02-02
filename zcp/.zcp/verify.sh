@@ -132,6 +132,10 @@ verify_process() {
         done
     else
         echo "  ❌ Process '$process_name' not found"
+        echo ""
+        echo "     If SSH failed or keeps timing out, container may be OOM/crashing:"
+        echo "     → zcli service log -S \$(jq -r '.dev.id' /tmp/discovery.json) -P \$projectId --limit 50"
+        echo "     → ssh $service \"zsc scale ram 4GiB 30m\"  # Scale up if OOMing"
     fi
 
     # Check for crash loops (process restart count in last hour)
@@ -577,6 +581,21 @@ show_no_server_error() {
     echo ""
     echo "THEN RE-RUN:"
     echo "  .zcp/verify.sh $service $port ..."
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔴 IF SSH FAILS OR PROCESS KEEPS DYING: Container may be OOM/crashing"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  1. Check CONTAINER logs (not app logs!) — shows OOM kills:"
+    echo "     zcli service log -S \$(jq -r '.dev.id' /tmp/discovery.json) -P \$projectId --limit 50"
+    echo ""
+    echo "  2. Scale up RAM if OOMing:"
+    echo "     ssh $service \"zsc scale ram 4GiB 30m\""
+    echo ""
+    echo "  3. Check app logs after fixing:"
+    echo "     ssh $service \"tail -50 /tmp/app.log\""
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }

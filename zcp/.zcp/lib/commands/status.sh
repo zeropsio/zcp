@@ -472,6 +472,10 @@ GUIDANCE
                 echo "   • Server start: run_in_background=true (NOT for builds/push!)"
                 echo "   • HTTP 200 ≠ working — check content, logs, console"
                 echo ""
+                echo "🔴 IF SSH FAILS OR PROCESS KEEPS DYING:"
+                echo "   • Container may be OOM — check: zcli service log -S {service_id} -P \$projectId"
+                echo "   • Scale up: ssh {dev} \"zsc scale ram 4GiB 30m\""
+                echo ""
 
                 if [ "$service_count" -gt 1 ]; then
                     # Multi-service mode: show guidance for EACH service

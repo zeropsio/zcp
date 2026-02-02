@@ -227,6 +227,24 @@ Database - Verify persistence (run from ZCP, NOT via ssh!):
   # Follow logs in real-time
   ssh {dev} "tail -f /tmp/app.log"
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔴 IF SSH FAILS OR PROCESS KEEPS DYING (Container OOM/Crash)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Don't retry SSH blindly! Check CONTAINER logs first:
+
+  # 1. Check container-level logs (shows OOM kills, not app errors)
+  zcli service log -S {service_id} -P $projectId --limit 50
+
+  # 2. Scale up RAM if OOMing
+  ssh {dev} "zsc scale ram 4GiB 30m"    # Temporary boost for 30 min
+
+  # 3. Then check app logs
+  ssh {dev} "tail -50 /tmp/app.log"
+
+  If container keeps restarting (OOM loop), scaling RAM fixes it.
+  Container logs are different from app logs — check both!
+
 Gate requirement:
   • verify.sh must pass (creates /tmp/dev_verify.json)
   • Feature must work correctly (not just HTTP 200)
@@ -998,6 +1016,13 @@ CRITICAL RULES
 • Server start: run_in_background=true (NOT for builds/push!)
 • DB tools (psql, redis-cli): Run from ZCP, NOT via ssh to runtime
 • Runtime containers are minimal — no dev tools installed
+• SSH fails repeatedly? Container may be OOM — check zcli service log!
+
+OOM / CONTAINER CRASH TROUBLESHOOTING
+─────────────────────────────────────────────────────────────────
+zcli service log -S {id} -P $projectId --limit 50  # Container logs
+ssh {dev} "zsc scale ram 4GiB 30m"                  # Scale up RAM
+ssh {dev} "zsc scale cpu 2 30m"                    # Scale up CPU
 
 ZCLI PUSH - REQUIRED FLAGS
 ─────────────────────────────────────────────────────────────────

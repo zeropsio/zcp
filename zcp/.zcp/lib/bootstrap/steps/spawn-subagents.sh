@@ -464,7 +464,7 @@ zerops:
 | 8 | Wait dev | \`.zcp/status.sh --wait ${dev_hostname}\` |
 | 9 | Subdomain dev | \`zcli service enable-subdomain -P \$projectId ${dev_id}\` |
 | 10 | Start dev server | SSH in, run appropriate start command for runtime (see below) |
-| 11 | Wait for server | \`.zcp/wait-for-server.sh ${dev_hostname} 8080 120\` — waits up to 120s |
+| 11 | Wait for server | \`.zcp/wait-for-server.sh ${dev_hostname} 8080 300\` — waits up to 5 min |
 | 12 | Verify dev | \`.zcp/verify.sh ${dev_hostname} 8080 / /health /status\` — includes port preflight |
 | 13 | Deploy stage | \`ssh ${dev_hostname} 'cd /var/www && zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY" && zcli push ${stage_id} --setup=prod'\` |
 | 14 | Wait stage | \`.zcp/status.sh --wait ${stage_hostname}\` |
@@ -592,6 +592,29 @@ NOT for zcli push, builds, or installs — run those synchronously to see logs.
 | Server won't start | Check logs: \`ssh ${dev_hostname} "cat /tmp/app.log"\` |
 | Need to restart server | Kill first: \`ssh ${dev_hostname} 'pkill -9 -f "bun\\|node\\|go"; fuser -k 8080/tcp 2>/dev/null; true'\` then start |
 | Endpoints fail (not 000) | \`zcli service log -P \$projectId ${dev_id}\` |
+| **SSH: Connection refused** | **Container OOM/crashing — see OOM section below** |
+| Process keeps dying | Check container logs: \`zcli service log -S ${dev_id} -P \$projectId --limit 50\` |
+
+## OOM / Container Crash Troubleshooting
+
+**If SSH fails repeatedly or process keeps dying, the container is likely OOMing:**
+
+1. **Check CONTAINER logs (not app logs!)** — shows OOM kills:
+   \`\`\`bash
+   zcli service log -S ${dev_id} -P \$projectId --limit 50
+   \`\`\`
+
+2. **Scale up RAM temporarily:**
+   \`\`\`bash
+   ssh ${dev_hostname} "zsc scale ram 4GiB 30m"
+   \`\`\`
+
+3. **Then check app logs:**
+   \`\`\`bash
+   ssh ${dev_hostname} "tail -50 /tmp/app.log"
+   \`\`\`
+
+**Don't retry SSH blindly** — diagnose with \`zcli service log\` first!
 
 ## Done
 
@@ -630,7 +653,7 @@ PROMPT
                     "Wait for dev: .zcp/status.sh --wait \($hostname)",
                     "Enable dev subdomain",
                     "Start dev server manually with nohup in background",
-                    "Wait for server: .zcp/wait-for-server.sh \($hostname) 8080 120",
+                    "Wait for server: .zcp/wait-for-server.sh \($hostname) 8080 300",
                     "Verify dev: .zcp/verify.sh \($hostname) 8080 / /health /status",
                     "Deploy to stage with fresh auth: ssh \($hostname) \"cd /var/www && zcli login ... && zcli push \($stage_id) --setup=prod\"",
                     "Wait for stage: .zcp/status.sh --wait \($stage_hostname)",

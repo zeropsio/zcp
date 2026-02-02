@@ -10,7 +10,7 @@ set -euo pipefail
 
 HOSTNAME="${1:-}"
 PORT="${2:-8080}"
-TIMEOUT="${3:-120}"  # Default 2 minutes for first-time startup with deps
+TIMEOUT="${3:-300}"  # Default 5 minutes for first-time startup with deps
 
 if [ -z "$HOSTNAME" ]; then
     echo "Usage: $0 <hostname> <port> [timeout_seconds]" >&2
@@ -39,9 +39,25 @@ while true; do
 
     if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
         echo ""
-        echo "Timeout after ${TIMEOUT}s - port $PORT not listening"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "❌ Timeout after ${TIMEOUT}s - port $PORT not listening"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
-        echo "Check logs: ssh $HOSTNAME 'tail -50 /tmp/app.log'"
+        echo "Check app logs:"
+        echo "  ssh $HOSTNAME 'tail -50 /tmp/app.log'"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🔴 IF SSH FAILS OR KEEPS TIMING OUT: Container may be OOM/crashing"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "  1. Check CONTAINER logs (shows OOM kills, not app errors):"
+        echo "     zcli service log -S \$(jq -r '.dev.id' /tmp/discovery.json) -P \$projectId --limit 50"
+        echo ""
+        echo "  2. Scale up RAM if OOMing:"
+        echo "     ssh $HOSTNAME \"zsc scale ram 4GiB 30m\""
+        echo ""
+        echo "  Don't retry SSH blindly — diagnose with zcli service log first!"
+        echo ""
         exit 1
     fi
 
@@ -70,10 +86,16 @@ while true; do
         # Check for fatal errors
         elif echo "$CURRENT_STATUS" | grep -qiE "error|panic|fatal|failed"; then
             echo ""
-            echo "Error detected in log:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "❌ Error detected in app log:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "  $(echo "$CURRENT_STATUS" | tail -2)"
             echo ""
             echo "Full log: ssh $HOSTNAME 'cat /tmp/app.log'"
+            echo ""
+            echo "If error mentions 'killed' or process keeps restarting:"
+            echo "  → Container may be OOMing — check: zcli service log -S {id} -P \$projectId"
+            echo "  → Scale up: ssh $HOSTNAME \"zsc scale ram 4GiB 30m\""
             exit 1
         fi
         LAST_STATUS="$CURRENT_STATUS"
