@@ -18,35 +18,10 @@
 # Returns 0 if evidence of completion exists, 1 otherwise
 verify_completion_by_files() {
     local dev_hostname="$1"
-    local mount_path="/var/www/$dev_hostname"
-
-    # Must have zerops.yml
-    if [ ! -f "$mount_path/zerops.yml" ]; then
-        return 1
-    fi
-
-    # Must have some source code
-    local has_code=false
-    for pattern in main.go index.js app.py main.py server.go index.ts app.ts; do
-        if [ -f "$mount_path/$pattern" ]; then
-            has_code=true
-            break
-        fi
-    done
-
-    # Also check for any source files if specific patterns don't match
-    if [ "$has_code" = false ]; then
-        if find "$mount_path" -maxdepth 2 -type f \( -name "*.go" -o -name "*.js" -o -name "*.py" -o -name "*.ts" -o -name "*.rs" \) 2>/dev/null | grep -q .; then
-            has_code=true
-        fi
-    fi
-
-    if [ "$has_code" = false ]; then
-        return 1
-    fi
-
-    # All checks passed - evidence of completion exists
-    return 0
+    # DISABLED: File-presence detection caused false-positive completions.
+    # See INCIDENT-REPORT.md Issue 2. Require explicit completion markers.
+    echo "  [verify_completion_by_files] Skipped — explicit markers required" >&2
+    return 1
 }
 
 # Auto-mark a service complete using mark-complete.sh
@@ -135,6 +110,9 @@ step_aggregate_results() {
                     phase="complete"
                     auto_detected=true
                     service_state=$(get_service_state "$dev_hostname" 2>/dev/null || echo '{"phase":"complete","auto_detected":true}')
+                else
+                    echo "  WARNING: auto_mark_complete failed for $dev_hostname — verification missing" >&2
+                    phase="incomplete"
                 fi
             fi
         fi
@@ -234,6 +212,41 @@ step_aggregate_results() {
         json_progress "aggregate-results" \
             "$complete/$count complete, waiting for ${#pending[@]} service(s)" \
             "$data" \
+            "aggregate-results"
+        return 0
+    fi
+
+    # GATE: Re-verify all services are actually complete before creating evidence
+    local gate_incomplete=()
+    local gate_i=0
+    while [ "$gate_i" -lt "$count" ]; do
+        local gate_hostname
+        gate_hostname=$(echo "$handoffs" | jq -r ".[$gate_i].dev_hostname")
+        local gate_state
+        gate_state=$(get_service_state "$gate_hostname" 2>/dev/null || echo '{}')
+        local gate_phase
+        gate_phase=$(echo "$gate_state" | jq -r '.phase // "unknown"')
+        if [ "$gate_phase" != "complete" ] && [ "$gate_phase" != "completed" ]; then
+            gate_incomplete+=("$gate_hostname:$gate_phase")
+        fi
+        gate_i=$((gate_i + 1))
+    done
+
+    if [ ${#gate_incomplete[@]} -gt 0 ]; then
+        echo "" >&2
+        echo "  GATE BLOCKED: ${#gate_incomplete[@]} service(s) lack completion markers: ${gate_incomplete[*]}" >&2
+        echo "  Subagents must run mark-complete.sh with passing verification before aggregation." >&2
+        echo "" >&2
+        local gate_pending_json
+        gate_pending_json=$(printf '%s\n' "${gate_incomplete[@]}" | jq -R . | jq -s .)
+        local gate_data
+        gate_data=$(jq -n \
+            --argjson pending "$gate_pending_json" \
+            --argjson total "$count" \
+            '{status: "in_progress", message: "Waiting for completion markers", pending: $pending, total: $total}')
+        json_progress "aggregate-results" \
+            "GATE: ${#gate_incomplete[@]} service(s) missing completion markers" \
+            "$gate_data" \
             "aggregate-results"
         return 0
     fi

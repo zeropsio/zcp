@@ -157,6 +157,12 @@ auto_generate_completion() {
     dev_url=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$hostname" 'echo $zeropsSubdomain' 2>/dev/null || echo "")
     stage_url=$(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$stage_hostname" 'echo $zeropsSubdomain' 2>/dev/null || echo "")
 
+    # Fail explicitly if we can't get the dev URL — completion evidence without URLs is misleading
+    if [ -z "$dev_url" ]; then
+        echo "  WARNING: Could not determine subdomain URL for $hostname via SSH" >&2
+        echo "  Completion evidence will have empty dev_url — verify manually" >&2
+    fi
+
     # Get verification results from evidence files
     local dev_verify="/tmp/${hostname}_verify.json"
     local stage_verify="/tmp/${stage_hostname}_verify.json"

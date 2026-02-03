@@ -132,6 +132,21 @@ wait_for_completion() {
             in_progress)
                 printf "\r  [%3d/%3ds] %s/%s complete, %s pending...   " \
                     "$elapsed" "$timeout" "$complete" "$total" "$pending"
+                # Show heartbeat info for services with heartbeat files
+                local handoff_file="${ZCP_TMP_DIR:-/tmp}/bootstrap_handoff.json"
+                if [ -f "$handoff_file" ]; then
+                    local hb_hostnames
+                    hb_hostnames=$(jq -r '.service_handoffs[].dev_hostname // empty' "$handoff_file" 2>/dev/null)
+                    for hb_hn in $hb_hostnames; do
+                        local hb_file="/tmp/subagent_heartbeat_${hb_hn}.json"
+                        if [ -f "$hb_file" ]; then
+                            local hb_task hb_name
+                            hb_task=$(jq -r '.task // "?"' "$hb_file" 2>/dev/null)
+                            hb_name=$(jq -r '.task_name // "?"' "$hb_file" 2>/dev/null)
+                            echo "    $hb_hn: Task $hb_task ($hb_name)"
+                        fi
+                    done
+                fi
                 ;;
             failed)
                 echo ""

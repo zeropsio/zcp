@@ -6,6 +6,10 @@
 # Outputs: Import result, service IDs
 
 step_import_services() {
+    # Trap timeout signals — mark step as failed so it can be retried
+    trap '_import_interrupted=true' TERM INT
+    local _import_interrupted=false
+
     # Get import file from previous step
     local import_step_data
     import_step_data=$(get_step_data "generate-import")
@@ -86,6 +90,13 @@ step_import_services() {
     # Run zcli import
     local import_output import_exit
     import_output=$(zcli project service-import "$import_file" -P "$projectId" 2>&1) || import_exit=$?
+
+    # Check if we were interrupted by timeout
+    if [ "$_import_interrupted" = "true" ]; then
+        echo "  INTERRUPTED: import-services was killed (timeout or signal)" >&2
+        json_error "import-services" "Import interrupted by timeout. Services may be partially created. Re-run to retry — it will skip existing services." "{\"exit_code\":${import_exit:-124}}" '["Re-run: .zcp/bootstrap.sh step import-services"]'
+        return 1
+    fi
 
     # EOF errors are normal with service-import, check if import actually worked
     if [ "${import_exit:-0}" -ne 0 ]; then

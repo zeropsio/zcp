@@ -450,6 +450,16 @@ zerops:
       start: ${prod_start}
 \`\`\`
 
+## Progress Tracking (MANDATORY)
+
+After completing each numbered task, write a heartbeat file so the parent agent can track your progress:
+
+\`\`\`bash
+echo '{"task":TASK_NUMBER,"task_name":"TASK_NAME","timestamp":"'\$(date -u +%Y-%m-%dT%H:%M:%SZ)'","hostname":"${dev_hostname}"}' > /tmp/subagent_heartbeat_${dev_hostname}.json
+\`\`\`
+
+Replace TASK_NUMBER and TASK_NAME with actual values. This lets the parent agent track your progress if your session crashes.
+
 ## Tasks
 
 | # | Task | Command/Action |
@@ -462,13 +472,13 @@ zerops:
 | 6 | Git init | \`ssh ${dev_hostname} "cd /var/www && git config --global user.email 'zcp@zerops.io' && git config --global user.name 'ZCP' && git init && git add -A && git commit -m 'Bootstrap'"\` |
 | 7 | Deploy dev | \`ssh ${dev_hostname} 'cd /var/www && zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY" && zcli push ${dev_id} --setup=dev --deploy-git-folder'\` |
 | 8 | Wait dev | \`.zcp/status.sh --wait ${dev_hostname}\` |
-| 9 | Subdomain dev | \`zcli service enable-subdomain -P \$projectId ${dev_id}\` |
+| 9 | Subdomain dev | \`zcli service enable-subdomain -P \$projectId ${dev_id}\` — if this fails or hangs >60s, skip it and note in evidence. Subdomain can be enabled later. |
 | 10 | Start dev server | SSH in, run appropriate start command for runtime (see below) |
 | 11 | Wait for server | \`.zcp/wait-for-server.sh ${dev_hostname} 8080 300\` — waits up to 5 min |
 | 12 | Verify dev | Test endpoints with curl, check logs, then \`.zcp/verify.sh ${dev_hostname} "curl /, /health, /status ok"\` |
 | 13 | Deploy stage | \`ssh ${dev_hostname} 'cd /var/www && zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "\$ZEROPS_ZCP_API_KEY" && zcli push ${stage_id} --setup=prod'\` |
 | 14 | Wait stage | \`.zcp/status.sh --wait ${stage_hostname}\` |
-| 15 | Subdomain stage | \`zcli service enable-subdomain -P \$projectId ${stage_id}\` |
+| 15 | Subdomain stage | \`zcli service enable-subdomain -P \$projectId ${stage_id}\` — if this fails or hangs >60s, skip it and note in evidence. Subdomain can be enabled later. |
 | 16 | Verify stage | Test endpoints, then \`.zcp/verify.sh ${stage_hostname} "curl /, /health, /status ok"\` |
 | 17 | **Done** | \`.zcp/mark-complete.sh ${dev_hostname}\` — completion evidence auto-generated |
 
@@ -594,6 +604,7 @@ NOT for zcli push, builds, or installs — run those synchronously to see logs.
 | Endpoints fail (not 000) | \`zcli service log -P \$projectId ${dev_id}\` |
 | **SSH: Connection refused** | **Container OOM/crashing — see OOM section below** |
 | Process keeps dying | Check container logs: \`zcli service log -S ${dev_id} -P \$projectId --limit 50\` |
+| enable-subdomain hangs | Skip after 60s. Run manually later: \`zcli service enable-subdomain -P \$projectId \$serviceId\`. Non-blocking — app works without subdomain initially. |
 
 ## OOM / Container Crash Troubleshooting
 

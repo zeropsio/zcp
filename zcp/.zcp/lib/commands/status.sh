@@ -153,11 +153,36 @@ cmd_show() {
             # Handoff exists but checkpoint not finalize/spawn-subagents - likely aggregate-results pending
             echo "✅ Subagents should be running or complete."
             echo ""
+
+            # Check if completion markers exist for all services
+            local all_markers_found=true
+            local hostnames
+            hostnames=$(jq -r '.service_handoffs[].dev_hostname // empty' "$bootstrap_handoff_file" 2>/dev/null)
+            for hn in $hostnames; do
+                if [ ! -f "${ZCP_TMP_DIR:-/tmp}/${hn}_complete.json" ]; then
+                    all_markers_found=false
+                    echo "  WARNING: No completion marker for $hn"
+                fi
+            done
+
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "📋 NEXT: Check subagent completion"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo ""
-            echo "  .zcp/bootstrap.sh step aggregate-results"
+            if [ "$all_markers_found" = "true" ]; then
+                echo "📋 All completion markers found. Safe to aggregate."
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+                echo "  .zcp/bootstrap.sh step aggregate-results"
+            else
+                echo "📋 NEXT: Wait for subagent completion (polls every 5s, 10min timeout)"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+                echo "  .zcp/wait-for-subagents.sh"
+                echo ""
+                echo "  OR check status without waiting:"
+                echo "    .zcp/wait-for-subagents.sh --check"
+                echo ""
+                echo "  THEN aggregate results:"
+                echo "    .zcp/bootstrap.sh step aggregate-results"
+            fi
             echo ""
             echo "This checks if all subagents completed successfully."
             echo "If pending, it will tell you which services are still in progress."

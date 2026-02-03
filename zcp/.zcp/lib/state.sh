@@ -45,6 +45,14 @@ atomic_write() {
     return 0
 }
 
+# Write state to both RAM and persistent in immediate succession
+# Minimizes the window where they can diverge
+dual_write_state() {
+    local content="$1"
+    atomic_write "$content" "$ZCP_STATE_FILE" || return 1
+    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$content" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+}
+
 # =============================================================================
 # UNIFIED STATE OPERATIONS
 # =============================================================================
@@ -79,8 +87,7 @@ zcp_init() {
             evidence: {},
             context: { intent: "", notes: [], last_error: null }
         }')
-    atomic_write "$state" "$ZCP_STATE_FILE"
-    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+    dual_write_state "$state"
 
     # Backward compatibility: also write to legacy files
     # This ensures code that still reads from old files works correctly
@@ -92,13 +99,25 @@ zcp_init() {
 }
 
 zcp_state() {
+    local content
     if [[ -f "$ZCP_STATE_FILE" ]]; then
-        cat "$ZCP_STATE_FILE"
-    elif [[ -f "$ZCP_STATE_PERSISTENT" ]]; then
-        cat "$ZCP_STATE_PERSISTENT"
-    else
-        echo '{}'
+        content=$(cat "$ZCP_STATE_FILE")
+        if echo "$content" | jq empty 2>/dev/null; then
+            echo "$content"
+            return 0
+        fi
+        # RAM state corrupted — fall through to persistent
+        echo "WARNING: RAM state corrupted, falling back to persistent" >&2
     fi
+    if [[ -f "$ZCP_STATE_PERSISTENT" ]]; then
+        content=$(cat "$ZCP_STATE_PERSISTENT")
+        if echo "$content" | jq empty 2>/dev/null; then
+            echo "$content"
+            return 0
+        fi
+        echo "WARNING: Persistent state also corrupted" >&2
+    fi
+    echo '{}'
 }
 
 zcp_get() {
@@ -114,8 +133,7 @@ zcp_set() {
     local state
     state=$(zcp_state)
     state=$(echo "$state" | jq --arg ts "$timestamp" "$path = $value | .updated_at = \$ts")
-    atomic_write "$state" "$ZCP_STATE_FILE"
-    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+    dual_write_state "$state"
 }
 
 zcp_exists() { [[ -f "$ZCP_STATE_FILE" ]] || [[ -f "$ZCP_STATE_PERSISTENT" ]]; }
@@ -210,8 +228,7 @@ init_bootstrap() {
         --argjson plan "$plan_data" \
         --argjson steps "$steps_json" \
         '.mode = "bootstrap" | .bootstrap.active = true | .bootstrap.workflow_id = $wid | .bootstrap.started_at = $ts | .bootstrap.current_step = 1 | .bootstrap.plan = $plan | .bootstrap.steps = $steps | .bootstrap.services = {} | .updated_at = $ts')
-    atomic_write "$state" "$ZCP_STATE_FILE"
-    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+    dual_write_state "$state"
 }
 
 get_state() { zcp_get '.bootstrap'; }
@@ -255,8 +272,7 @@ set_step_status() {
     local new_index
     new_index=$(echo "$state" | jq --arg n "$name" '.bootstrap.steps | to_entries | map(select(.value.name == $n)) | .[0].key + 1')
     state=$(echo "$state" | jq --argjson idx "$new_index" '.bootstrap.current_step = $idx')
-    atomic_write "$state" "$ZCP_STATE_FILE"
-    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+    dual_write_state "$state"
 }
 
 set_step_data() {
@@ -278,8 +294,7 @@ complete_step() {
     local state
     state=$(zcp_state)
     state=$(echo "$state" | jq --arg n "$name" --arg ts "$timestamp" --argjson d "$data" '.bootstrap.steps |= map(if .name == $n then .status = "complete" | .completed_at = $ts | .data = $d else . end) | .updated_at = $ts')
-    atomic_write "$state" "$ZCP_STATE_FILE"
-    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+    dual_write_state "$state"
 }
 
 update_plan() {
@@ -355,8 +370,7 @@ complete_bootstrap() {
     local state
     state=$(zcp_state)
     state=$(echo "$state" | jq --arg ts "$timestamp" --argjson svc "$services" '.bootstrap.active = false | .bootstrap.completed_at = $ts | .workflow.bootstrap_complete = true | .workflow.services = $svc | .mode = "full" | .updated_at = $ts')
-    atomic_write "$state" "$ZCP_STATE_FILE"
-    [[ -d "$(dirname "$ZCP_STATE_PERSISTENT")" ]] && atomic_write "$state" "$ZCP_STATE_PERSISTENT" 2>/dev/null || true
+    dual_write_state "$state"
     echo '{"status":"complete","completed_at":"'"$timestamp"'"}' > "${ZCP_TMP_DIR:-/tmp}/bootstrap_complete.json"
 }
 
@@ -365,7 +379,7 @@ complete_bootstrap() {
 # =============================================================================
 
 export ZCP_STATE_FILE ZCP_STATE_PERSISTENT
-export -f generate_uuid atomic_write zcp_init zcp_state zcp_get zcp_set zcp_exists zcp_clear
+export -f generate_uuid atomic_write dual_write_state zcp_init zcp_state zcp_get zcp_set zcp_exists zcp_clear
 export -f get_session get_mode set_mode get_phase set_phase get_iteration set_iteration check_bootstrap_mode
 export -f init_bootstrap get_state bootstrap_active get_plan get_step get_step_data is_step_complete get_next_step get_current_step_index
 export -f get_step_index get_step_by_index set_step_status set_step_data complete_step update_plan
