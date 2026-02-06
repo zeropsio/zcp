@@ -295,7 +295,7 @@ cmd_init() {
         if echo "$zcli_test_result" | grep -qiE "unauthorized|auth|login|token|403"; then
             cat >&2 <<'ZCLI_AUTH'
 zcli is not authenticated. Run:
-   zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZEROPS_ZCP_API_KEY"
+   zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZCP_API_KEY"
 ZCLI_AUTH
             exit 1
         elif [[ -z "$projectId" ]]; then

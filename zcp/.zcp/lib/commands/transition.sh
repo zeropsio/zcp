@@ -320,7 +320,7 @@ EOF
 
 zcli is not authenticated. Run:
 
-   zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZEROPS_ZCP_API_KEY"
+   zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZCP_API_KEY"
 
 Then re-run:
 
@@ -727,7 +727,7 @@ EOF
         echo "Authenticate (if needed):"
         echo "  ssh $dev_name \"zcli login --region=gomibako \\"
         echo "      --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \\"
-        echo "      \\\"\\\$ZEROPS_ZCP_API_KEY\\\"\""
+        echo "      \\\"\\\$ZCP_API_KEY\\\"\""
         echo ""
         echo "Deploy:"
         echo "  ssh $dev_name \"cd /var/www && zcli push $stage_id --setup=prod --versionName=v1.0.0\""

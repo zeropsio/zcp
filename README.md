@@ -46,7 +46,7 @@ Agents must test and fix errors on dev before deploying to stage. HTTP 200 doesn
 │   │                                                                           │   │
 │   │   SSHFS Mounts:  /var/www/appdev/   /var/www/appstage/                   │   │
 │   │   Tools:         zcli, jq, yq, psql, redis-cli, agent-browser            │   │
-│   │   Env Vars:      $projectId, $ZEROPS_ZCP_API_KEY, ${svc}_VAR             │   │
+│   │   Env Vars:      $projectId, $ZCP_API_KEY, ${svc}_VAR             │   │
 │   │                                                                           │   │
 │   │   ┌───────────────────────────────────────────────────────────────────┐   │   │
 │   │   │  .zcp/workflow.sh  ←  Agent Entry Point                           │   │   │

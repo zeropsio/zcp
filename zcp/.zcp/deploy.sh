@@ -200,7 +200,7 @@ find_service_index() {
 
 # Generate the zcli auth command
 get_auth_command() {
-    echo 'zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "$ZEROPS_ZCP_API_KEY"'
+    echo 'zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "$ZCP_API_KEY"'
 }
 
 # Generate deploy command for a service
@@ -347,7 +347,7 @@ execute_deploy() {
 
         echo "Authenticating zcli..."
         if ! ssh "$dev_name" "cd /var/www && $auth_cmd" 2>&1; then
-            echo "  Auth failed - check ZEROPS_ZCP_API_KEY"
+            echo "  Auth failed - check ZCP_API_KEY"
             failed=$((failed + 1))
             i=$((i + 1))
             continue

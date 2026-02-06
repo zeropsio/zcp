@@ -89,7 +89,7 @@ Authenticate and discover services:
 
   zcli login --region=gomibako \
       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-      "$ZEROPS_ZCP_API_KEY"
+      "$ZCP_API_KEY"
 
   zcli service list -P $projectId
 
@@ -171,7 +171,7 @@ Stop dev process (triple-kill pattern):
 Authenticate from dev container:
   ssh {dev} "zcli login --region=gomibako \
       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-      \"\$ZEROPS_ZCP_API_KEY\""
+      \"\$ZCP_API_KEY\""
 
 Deploy to stage:
   ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
@@ -306,7 +306,7 @@ Deploy to wrong target       │ Using dev as       │ Always deploy to
 # 2. DISCOVER
 zcli login --region=gomibako \
     --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-    "$ZEROPS_ZCP_API_KEY"
+    "$ZCP_API_KEY"
 zcli service list -P $projectId
 .zcp/workflow.sh create_discovery "svc123" "appdev" "svc456" "appstage"
 .zcp/workflow.sh transition_to DISCOVER
@@ -325,7 +325,7 @@ ls -la /var/www/appdev/app /var/www/appdev/templates/
 ssh appdev 'pkill -9 app; killall -9 app 2>/dev/null; fuser -k 8080/tcp 2>/dev/null; true'
 ssh appdev "zcli login --region=gomibako \
     --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-    \"\$ZEROPS_ZCP_API_KEY\""
+    \"\$ZCP_API_KEY\""
 ssh appdev "zcli push svc456 --setup=api --versionName=v1.0.0"
 .zcp/status.sh --wait appstage
 
