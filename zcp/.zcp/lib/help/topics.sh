@@ -65,7 +65,9 @@ show_topic_help() {
 }
 
 show_help_discover() {
-    cat <<'EOF'
+    local _zcli_cmd
+    _zcli_cmd=$(get_zcli_login_cmd)
+    sed "s|__ZCLI_LOGIN_CMD__|${_zcli_cmd}|g" <<'EOF'
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔍 DISCOVER PHASE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -73,9 +75,7 @@ show_help_discover() {
 Purpose: Authenticate to Zerops and discover service IDs
 
 Commands:
-  zcli login --region=gomibako \
-      --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-      "$ZCP_API_KEY"
+  __ZCLI_LOGIN_CMD__
 
   zcli service list -P $projectId
 
@@ -252,7 +252,9 @@ EOF
 }
 
 show_help_deploy() {
-    cat <<'EOF'
+    local _zcli_cmd
+    _zcli_cmd=$(get_zcli_login_cmd)
+    sed "s|__ZCLI_LOGIN_CMD__|${_zcli_cmd}|g" <<'EOF'
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚀 DEPLOY PHASE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -337,9 +339,7 @@ Deployment steps:
               fuser -k {port}/tcp 2>/dev/null; true'
 
 2. Authenticate from dev container:
-   ssh {dev} "zcli login --region=gomibako \
-       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-       \"\$ZCP_API_KEY\""
+   ssh {dev} "__ZCLI_LOGIN_CMD__"
 
 3. Deploy to stage:
    ssh {dev} "zcli push {stage_service_id} --setup={setup} --noGit --versionName=v1.0.0"
@@ -939,7 +939,9 @@ EOF
 }
 
 show_help_cheatsheet() {
-    cat <<'EOF'
+    local _zcli_cmd
+    _zcli_cmd=$(get_zcli_login_cmd)
+    sed "s|__ZCLI_LOGIN_CMD__|${_zcli_cmd}|g" <<'EOF'
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📋 CHEATSHEET — Quick Reference
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -959,9 +961,7 @@ WORKFLOW COMMANDS
 
 ZCLI LOGIN
 ─────────────────────────────────────────────────────────────────
-zcli login --region=gomibako \
-    --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-    "$ZCP_API_KEY"
+__ZCLI_LOGIN_CMD__
 
 zcli service list -P $projectId    # List services (need -P!)
 

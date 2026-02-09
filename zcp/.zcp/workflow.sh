@@ -83,16 +83,14 @@ main() {
             local zcli_exit=$?
 
             if [ $zcli_exit -ne 0 ] && echo "$zcli_test" | grep -qiE "unauthorized|unauthenticated|auth|login|token|403|not logged"; then
-                cat <<'ZCLI_AUTH_ERROR'
+                cat <<ZCLI_AUTH_ERROR
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔐 ZCLI NOT AUTHENTICATED
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Run this first:
 
-   zcli login --region=gomibako \
-       --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-       "$ZCP_API_KEY"
+   $(get_zcli_login_cmd)
 
 Then re-run: .zcp/workflow.sh show
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

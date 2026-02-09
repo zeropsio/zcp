@@ -715,7 +715,9 @@ To mark session fully complete (no more work):
 GUIDANCE
             ;;
         QUICK)
-            cat <<'GUIDANCE'
+            local _zcli_cmd
+            _zcli_cmd=$(get_zcli_login_cmd)
+            cat <<GUIDANCE
 Quick mode - no workflow enforcement
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -724,11 +726,11 @@ Quick mode - no workflow enforcement
 • Runtime services: ssh {service} "command"
 • Managed services (db, cache, etc.): NO SSH!
   Use client tools directly from ZCP:
-  psql "$db_connectionString"
-  redis-cli -u "$cache_connectionString"
-• Variables: ${hostname}_VAR from ZCP, $VAR inside ssh
-• zcli from ZCP: login first, then -P $projectId
-  zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "$ZCP_API_KEY"
+  psql "\$db_connectionString"
+  redis-cli -u "\$cache_connectionString"
+• Variables: \${hostname}_VAR from ZCP, \$VAR inside ssh
+• zcli from ZCP: login first, then -P \$projectId
+  $_zcli_cmd
 • Files: /var/www/{service}/ via SSHFS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 GUIDANCE
@@ -920,7 +922,7 @@ cmd_recover() {
                     dev_name=$(jq -r ".services[$i].dev.name" "$DISCOVERY_FILE")
                     stage_id=$(jq -r ".services[$i].stage.id" "$DISCOVERY_FILE")
                 fi
-                echo "ssh $dev_name 'cd /var/www && zcli login --region=gomibako --regionUrl=\"https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli\" \"\$ZCP_API_KEY\" && zcli push $stage_id --setup=prod --deploy-git-folder'"
+                echo "ssh $dev_name 'cd /var/www && $(get_zcli_login_cmd) && zcli push $stage_id --setup=prod --deploy-git-folder'"
                 echo ""
                 i=$((i + 1))
             done

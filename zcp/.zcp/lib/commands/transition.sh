@@ -313,14 +313,14 @@ EOF
 
     # Check for auth errors specifically
     if [ $zcli_exit -ne 0 ] && echo "$zcli_test_result" | grep -qiE "unauthorized|auth|login|token|403"; then
-        cat <<'EOF'
+        cat <<EOF
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔐 LOGIN REQUIRED FIRST
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 zcli is not authenticated. Run:
 
-   zcli login --region=gomibako --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' "\$ZCP_API_KEY"
+   $(get_zcli_login_cmd)
 
 Then re-run:
 
@@ -725,9 +725,7 @@ EOF
         echo "  ssh $dev_name 'pkill -9 $proc; killall -9 $proc 2>/dev/null; fuser -k $port/tcp 2>/dev/null; true'"
         echo ""
         echo "Authenticate (if needed):"
-        echo "  ssh $dev_name \"zcli login --region=gomibako \\"
-        echo "      --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \\"
-        echo "      \\\"\\\$ZCP_API_KEY\\\"\""
+        echo "  ssh $dev_name '$(get_zcli_login_cmd)'"
         echo ""
         echo "Deploy:"
         echo "  ssh $dev_name \"cd /var/www && zcli push $stage_id --setup=prod --versionName=v1.0.0\""

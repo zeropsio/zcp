@@ -198,11 +198,6 @@ find_service_index() {
 # DEPLOYMENT
 # ============================================================================
 
-# Generate the zcli auth command
-get_auth_command() {
-    echo 'zcli login --region=gomibako --regionUrl="https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli" "$ZCP_API_KEY"'
-}
-
 # Generate deploy command for a service
 generate_deploy_command() {
     local dev_name="$1"
@@ -210,7 +205,7 @@ generate_deploy_command() {
     local setup="${3:-prod}"
 
     local auth_cmd
-    auth_cmd=$(get_auth_command)
+    auth_cmd=$(get_zcli_login_cmd)
 
     # Prefer --deploy-git-folder over --noGit (git-based is standard)
     echo "ssh $dev_name 'cd /var/www && $auth_cmd && zcli push $target_id --setup=$setup --deploy-git-folder'"
@@ -343,7 +338,7 @@ execute_deploy() {
 
         # Generate and execute command
         local auth_cmd
-        auth_cmd=$(get_auth_command)
+        auth_cmd=$(get_zcli_login_cmd)
 
         echo "Authenticating zcli..."
         if ! ssh "$dev_name" "cd /var/www && $auth_cmd" 2>&1; then

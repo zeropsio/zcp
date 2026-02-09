@@ -2,7 +2,9 @@
 # Full help reference for Zerops Workflow
 
 show_full_help() {
-    cat <<'EOF'
+    local _zcli_cmd
+    _zcli_cmd=$(get_zcli_login_cmd)
+    sed "s|__ZCLI_LOGIN_CMD__|${_zcli_cmd}|g" <<'EOF'
 ╔══════════════════════════════════════════════════════════════════╗
 ║  ZEROPS PLATFORM REFERENCE                                       ║
 ╚══════════════════════════════════════════════════════════════════╝
@@ -87,9 +89,7 @@ Topics: discover, develop, deploy, verify, done, vars, services,
 
 Authenticate and discover services:
 
-  zcli login --region=gomibako \
-      --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-      "$ZCP_API_KEY"
+  __ZCLI_LOGIN_CMD__
 
   zcli service list -P $projectId
 
@@ -169,9 +169,7 @@ Stop dev process (triple-kill pattern):
              fuser -k {port}/tcp 2>/dev/null; true'
 
 Authenticate from dev container:
-  ssh {dev} "zcli login --region=gomibako \
-      --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-      \"\$ZCP_API_KEY\""
+  ssh {dev} "__ZCLI_LOGIN_CMD__"
 
 Deploy to stage:
   ssh {dev} "zcli push {stage_service_id} --setup={setup} --versionName=v1.0.0"
@@ -304,9 +302,7 @@ Deploy to wrong target       │ Using dev as       │ Always deploy to
 .zcp/workflow.sh init
 
 # 2. DISCOVER
-zcli login --region=gomibako \
-    --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-    "$ZCP_API_KEY"
+__ZCLI_LOGIN_CMD__
 zcli service list -P $projectId
 .zcp/workflow.sh create_discovery "svc123" "appdev" "svc456" "appstage"
 .zcp/workflow.sh transition_to DISCOVER
@@ -323,9 +319,7 @@ ssh appdev "curl -s localhost:8080/health"
 cat /var/www/appdev/zerops.yaml | grep -A10 deployFiles
 ls -la /var/www/appdev/app /var/www/appdev/templates/
 ssh appdev 'pkill -9 app; killall -9 app 2>/dev/null; fuser -k 8080/tcp 2>/dev/null; true'
-ssh appdev "zcli login --region=gomibako \
-    --regionUrl='https://api.app-gomibako.zerops.dev/api/rest/public/region/zcli' \
-    \"\$ZCP_API_KEY\""
+ssh appdev "__ZCLI_LOGIN_CMD__"
 ssh appdev "zcli push svc456 --setup=api --versionName=v1.0.0"
 .zcp/status.sh --wait appstage
 

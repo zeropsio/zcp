@@ -8,6 +8,17 @@
 # ZCLI HELPERS
 # ============================================================================
 
+# Build zcli login command string (for display or eval)
+# Region is optional — set ZCP_REGION / ZCP_REGION_URL env vars to override.
+# When unset, zcli login uses its built-in defaults (no --region/--regionUrl flags).
+get_zcli_login_cmd() {
+    local cmd="zcli login"
+    [[ -n "${ZCP_REGION:-}" ]] && cmd+=" --region=${ZCP_REGION}"
+    [[ -n "${ZCP_REGION_URL:-}" ]] && cmd+=" --regionUrl='${ZCP_REGION_URL}'"
+    cmd+=" \"\$ZCP_API_KEY\""
+    echo "$cmd"
+}
+
 # Strip ANSI color codes from output (zcli outputs colors that break JSON parsing)
 strip_ansi() {
     sed 's/\x1b\[[0-9;]*m//g'
