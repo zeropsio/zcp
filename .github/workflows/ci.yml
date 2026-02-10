@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ['*']
+
+jobs:
+  test:
+    name: test & lint
+    runs-on: ubuntu-22.04
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Install tools
+        run: |
+          export GOPATH=$HOME/go
+          ./tools/install.sh
+          echo "$PWD/bin" >> $GITHUB_PATH
+
+      - name: Verify tooling
+        run: |
+          go version
+          golangci-lint version
+
+      - name: Build (all platforms)
+        run: |
+          GOOS=linux GOARCH=amd64 go build -v ./...
+          GOOS=darwin GOARCH=arm64 go build -v ./...
+          GOOS=windows GOARCH=amd64 go build -v ./...
+
+      - name: Test
+        run: go test -race ./... -count=1
+
+      - name: Lint (linux/amd64)
+        run: GOOS=linux GOARCH=amd64 golangci-lint run ./...
+
+      - name: Lint (darwin/arm64)
+        run: GOOS=darwin GOARCH=arm64 golangci-lint run ./...

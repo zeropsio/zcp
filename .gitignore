@@ -1,1 +1,29 @@
+# Build artifacts
+bin/
+builds/
+
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Claude Code personal settings + generated files
 CLAUDE.local.md
+.claude/settings.local.json
+.claude/compact-state.md
+.claude/last-test-result
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+tmp/
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
