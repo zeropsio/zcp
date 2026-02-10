@@ -14,9 +14,6 @@ Single Go binary merging ZAIA CLI + ZAIA-MCP. AI-driven Zerops PaaS management v
 5. CLAUDE.md                           ← OPERATIONAL (workflow, conventions)
 ```
 
-Design docs: `design/<feature>.md` — read before writing tests for any feature.
-Plans: `plans/<feature>-plan.md` — read to find current implementation unit.
-
 ---
 
 ## Architecture
@@ -31,10 +28,10 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 |---------|---------------|----------|
 | `cmd/zcp` | Entrypoint, STDIO server | `main.go` |
 | `internal/server` | MCP server setup, registration | `server.go` |
-| `internal/tools` | MCP tool handlers (11 tools) | `discover.go`, `manage.go`, ... |
+| `internal/tools` | MCP tool handlers (12 tools) | `discover.go`, `manage.go`, ... |
 | `internal/ops` | Business logic, validation | `discover.go`, `manage.go`, ... |
 | `internal/platform` | Zerops API client, types, errors | `client.go`, `errors.go` |
-| `internal/auth` | Login, token, project discovery | `manager.go`, `storage.go` |
+| `internal/auth` | Token resolution (env var / zcli), project discovery | `auth.go` |
 | `internal/knowledge` | BM25 search engine, embedded docs | `engine.go` |
 
 Error codes: see `internal/platform/errors.go` for all codes (AUTH_REQUIRED, SERVICE_NOT_FOUND, etc.)
@@ -49,30 +46,15 @@ Error codes: see `internal/platform/errors.go` for all codes (AUTH_REQUIRED, SER
 
 ### Seed test pattern
 
-When starting a new package, write ONE complete seed test first. This establishes naming, assertion style, table-driven structure, and helper patterns. Then follow the seed for all subsequent tests.
+Write ONE seed test per new package — establishes naming, structure, helpers. Follow for all subsequent tests.
 
-**Parallel-safe packages** (no global state):
 ```go
 func TestDiscover_WithService_Success(t *testing.T) {
-    t.Parallel()
+    t.Parallel() // OMIT for packages with global state (e.g., output.SetWriter)
     tests := []struct { ... }{ ... }
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            t.Parallel()
-            // ...
-        })
-    }
-}
-```
-
-**Packages with global state** (e.g., `output.SetWriter` — inherits from zaia):
-```go
-// NOTE: output.SetWriter is global — DO NOT use t.Parallel()
-func TestFormat_JSONOutput_Success(t *testing.T) {
-    tests := []struct { ... }{ ... }
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            // NO t.Parallel() — SetWriter is not thread-safe
+            t.Parallel() // OMIT for packages with global state
             // ...
         })
     }
@@ -94,6 +76,18 @@ func TestFormat_JSONOutput_Success(t *testing.T) {
 - **`testing.Short()`** — long tests must check and skip
 - **`t.Parallel()` only where safe** — document global state preventing it (see seed patterns above)
 - **Test naming**: `Test{Op}_{Scenario}_{Result}` (e.g. `TestDiscover_WithService_Success`)
+- **Test headers**: `// Tests for: design/<feature>.md § <section>`
+
+### Design-doc workflow
+
+For features with `design/<feature>.md`:
+1. Read design doc (MUST/WHEN-THEN contracts) → read plan (scope, test cases)
+2. Write failing tests with header → implement minimal code to pass
+3. Update plan status (RED → GREEN → DONE), capture divergent decisions
+
+Design docs: **stable**, MUST/WHEN-THEN only, no code. Without design doc: standard TDD. >50 lines: create design doc first.
+
+Automated: Tier 1 (edit) → Tier 2 (turn) → Tier 3 (commit) → Tier 4 (CI). See `.claude/settings.json`.
 
 ---
 
@@ -102,14 +96,11 @@ func TestFormat_JSONOutput_Success(t *testing.T) {
 ```bash
 go test ./internal/<pkg> -run TestName -v   # Single test
 go test ./... -count=1 -short               # All tests (fast)
-go test ./... -count=1                      # All tests (full)
-go test -race ./... -count=1                # With race detection
+go test ./... -count=1                      # All tests (full, add -race for race detection)
 go build -o bin/zcp ./cmd/zcp              # Build
-go vet ./...                                # Vet
 make setup                                  # Bootstrap dev environment
 make lint-fast                              # Fast lint (~3s)
 make lint-local                             # Full lint (~15s)
-make lint                                   # CI lint (2 platforms)
 ```
 
 ---
@@ -129,9 +120,8 @@ make lint                                   # CI lint (2 platforms)
 
 - Use global mutable state (except `sync.Once` for init)
 - Use `replace` directives in go.mod (temporary dev only, never committed)
-- Use `interface{}` / `any` when a concrete type is known
-- Use `panic()` in library code — return errors
-- Skip error checks — `errcheck` linter enforces this
+- Use `interface{}`/`any` when concrete type is known, or `panic()` — use concrete types, return errors
+- Skip error checks — `errcheck` enforces this
 - Write tests and implementation in the same commit without RED phase first
 - Add `t.Parallel()` to packages with global state without making state thread-safe first
 - Use `fmt.Sprintf` for SQL/shell commands — use parameterized queries only
