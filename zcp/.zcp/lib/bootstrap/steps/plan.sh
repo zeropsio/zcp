@@ -155,9 +155,16 @@ step_plan() {
 
     # Build message
     local msg
+    local num_managed
+    num_managed=$(echo "$service_objects" | jq 'length')
+
     if [ $num_runtimes -eq 1 ]; then
         msg="Plan created: ${runtime_array[0]} app"
-        [ ${#managed_services[@]} -gt 0 ] && msg="$msg with ${managed_services[*]}"
+        if [ "$num_managed" -gt 0 ]; then
+            local managed_types
+            managed_types=$(echo "$service_objects" | jq -r '.[].type' | tr '\n' ' ' | sed 's/ $//')
+            msg="$msg with $managed_types"
+        fi
     else
         msg="Plan created: ${num_runtimes} services (${runtime_array[*]})"
     fi
