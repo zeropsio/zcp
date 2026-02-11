@@ -22,8 +22,8 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	s := newSession(t, h.srv)
 
 	suffix := randomSuffix()
-	rtHostname := "zcp-rt-" + suffix
-	dbHostname := "zcp-db-" + suffix
+	rtHostname := "zcprt" + suffix
+	dbHostname := "zcpdb" + suffix
 
 	// Register cleanup to delete test services even if test fails.
 	t.Cleanup(func() {
@@ -199,12 +199,12 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		// This is acceptable behavior — we verify the get call works.
 	}
 
-	// --- Step 12: zerops_manage restart ---
+	// --- Step 12: zerops_manage restart (database — active immediately after import) ---
 	step++
-	logStep(t, step, "zerops_manage restart %s", rtHostname)
+	logStep(t, step, "zerops_manage restart %s", dbHostname)
 	restartText := s.mustCallSuccess("zerops_manage", map[string]any{
 		"action":          "restart",
-		"serviceHostname": rtHostname,
+		"serviceHostname": dbHostname,
 	})
 	restartProcID := extractProcessID(t, restartText)
 	t.Logf("  Restart process: %s", restartProcID)
