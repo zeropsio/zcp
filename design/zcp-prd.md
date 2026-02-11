@@ -181,6 +181,12 @@ internal/
     errors.go                  → Error codes (29 for ZCP), PlatformError, mapSDKError
     logfetcher.go              → ZeropsLogFetcher (HTTP-based log backend)
     mock.go                    → Mock + MockLogFetcher (builder pattern, thread-safe)
+    apitest/
+      harness.go               → API test harness: real client setup, skip when no key,
+                                  ctx with timeout, cleanup helpers. Shared across all
+                                  -tags api and -tags e2e tests.
+      cleanup.go               → Resource cleanup: delete services, wait for processes.
+                                  Uses fresh context (test ctx may be cancelled).
   auth/
     auth.go                    → Token resolution (env var primary, zcli fallback for local dev),
                                   validate, discover project
@@ -844,19 +850,210 @@ NOT needed: `spf13/cobra` (no CLI), subprocess executor infrastructure.
 
 ## 11. Testing Strategy
 
-### 11.1 Test Layers
+### 11.1 Core Problem & Philosophy
 
-| Layer | Packages | Mock | t.Parallel |
-|-------|----------|------|------------|
-| Platform | `platform/` | None (types, error mapping) | Yes |
-| Auth | `auth/` | `platform.Mock` | Yes |
-| Knowledge | `knowledge/` | None (in-memory) | Yes |
-| Ops | `ops/` | `platform.Mock` + `MockLogFetcher` | Yes |
-| Tools | `tools/` | In-memory MCP + ops with Mock | Yes |
-| Integration | `integration/` | In-memory MCP + Mock | Yes |
-| E2E | `e2e/` | Real Zerops API (`-tags e2e`) | No |
+Mock-based tests create a false sense of correctness. The most common failure mode: everything passes with mocks, then real API testing reveals SDK type mapping errors, wrong field names, nil-vs-empty mismatches, unexpected status values, and broken error handling. By the time this is discovered, multiple layers of code are built on wrong assumptions.
 
-### 11.2 Tool Test Pattern (in-memory MCP, no subprocess)
+**Solution: Progressive API Verification.** Real API tests are written *alongside* mock tests in every phase — not as an afterthought. Each implementation unit is not DONE until both mock tests AND API tests pass. Mock tests verify logic; API tests verify reality.
+
+### 11.2 Test Layers
+
+| Layer | Packages | Mock | Build Tag | t.Parallel |
+|-------|----------|------|-----------|------------|
+| Platform unit | `platform/` | None (types, error mapping) | — | Yes |
+| **Platform contract** | `platform/` | **None — real Zerops API** | `api` | Yes (read), No (mutate) |
+| Auth unit | `auth/` | `platform.Mock` | — | Yes |
+| **Auth contract** | `auth/` | **Real API** | `api` | Yes |
+| Knowledge | `knowledge/` | None (in-memory) | — | Yes |
+| Ops unit | `ops/` | `platform.Mock` + `MockLogFetcher` | — | Yes |
+| **Ops API** | `ops/` | **Real `ZeropsClient`** | `api` | Yes (read), No (mutate) |
+| Tools unit | `tools/` | In-memory MCP + ops with Mock | — | Yes |
+| **Tools API** | `tools/` | **In-memory MCP + real `ZeropsClient`** | `api` | Yes (read), No (mutate) |
+| Integration | `integration/` | In-memory MCP + Mock | — | Yes |
+| **E2E lifecycle** | `e2e/` | **Real API, full lifecycle** | `e2e` | No |
+
+**Build tags:**
+- **`-tags api`** — Individual operations against real Zerops API. Can run per-method, per-phase. Read-only tests run in parallel. Mutating tests are sequential within their group.
+- **`-tags e2e`** — Full sequential lifecycle test (import→discover→manage→env→deploy→delete). Creates and destroys real resources. Runs at end of Phase 4.
+
+**Run commands:**
+```bash
+go test ./... -count=1 -short                    # Mock tests only (fast, no API)
+go test ./... -count=1 -tags api                 # Mock + API contract tests
+go test ./... -count=1 -tags e2e                 # Everything including full lifecycle
+go test ./internal/platform/ -tags api -v        # Platform contract tests only
+go test ./internal/ops/ -tags api -run TestAPI   # Ops API tests only
+```
+
+### 11.3 TDD Flow with API Verification
+
+The standard TDD cycle is extended with an API verification step:
+
+```
+RED:    Write mock test (failing) + API test (failing, -tags api)
+GREEN:  Implement to pass mock test
+VERIFY: Run API test (-tags api) → confirms real API matches assumptions
+        IF API test fails → fix implementation (not the mock!)
+        Common API mismatches: nil vs empty slice, *string vs string,
+        status values, field names in SDK, error response shapes
+DONE:   Both mock test AND API test pass
+```
+
+**Critical rule**: When an API test fails but the mock test passes, the implementation is wrong — the mock was built on incorrect assumptions. Fix the implementation AND update the mock to match reality. Never "fix" an API test by weakening its assertions.
+
+### 11.4 API Test Harness
+
+Shared test infrastructure for all `-tags api` and `-tags e2e` tests:
+
+```
+internal/platform/apitest/          → API test harness (shared across packages)
+  harness.go                        → APIHarness: real client setup, skip logic
+  cleanup.go                        → Resource cleanup helpers (delete services, etc.)
+```
+
+**Harness pattern:**
+```go
+//go:build api
+
+package platform_test
+
+func TestAPI_GetUserInfo(t *testing.T) {
+    h := apitest.New(t)  // Skips if ZEROPS_ZCP_API_KEY not set
+    client := h.Client() // Real ZeropsClient
+
+    info, err := client.GetUserInfo(h.Ctx())
+    require.NoError(t, err)
+    assert.NotEmpty(t, info.ID)
+    // Verify actual response shape matches domain types
+}
+```
+
+**Harness behavior:**
+- Reads `ZEROPS_ZCP_API_KEY` from env (same as production auth path)
+- `ZEROPS_API_HOST` override for non-default regions
+- **Skips** (not fails) when `ZEROPS_ZCP_API_KEY` is not set — developers without API access can still run mock tests
+- Provides `h.Client()` (real `ZeropsClient`), `h.Ctx()` (with timeout), `h.ProjectID()`
+- Provides `h.Cleanup(func())` for deferred resource deletion
+- Logs all API calls for debugging failed tests
+
+**Test file convention:**
+- `zerops_test.go` — unit tests (no build tag, runs always)
+- `zerops_api_test.go` — API contract tests (`//go:build api`, runs with `-tags api`)
+- `discover_test.go` / `discover_api_test.go` — same pattern for ops, tools
+
+### 11.5 Platform Contract Tests (Phase 1 gate)
+
+Every `ZeropsClient` method gets a contract test against real API. These are the most valuable tests in the entire suite — they catch SDK mapping errors at the source before any downstream code is affected.
+
+**What to verify per method:**
+- Response is non-nil when expected
+- All domain type fields are populated correctly (not zero-value when API returns data)
+- Pointer fields (`*string`, `*int`) are nil/non-nil as expected
+- Slice fields are non-nil (empty slice, not nil) when API returns empty collections
+- Status/enum values match expected normalized values
+- Error responses produce correct `PlatformError` codes
+
+**Example — verify `ListServices` response shape:**
+```go
+//go:build api
+
+func TestAPI_ListServices_ResponseShape(t *testing.T) {
+    h := apitest.New(t)
+    services, err := h.Client().ListServices(h.Ctx(), h.ProjectID())
+    require.NoError(t, err)
+    require.NotEmpty(t, services, "test project must have at least one service")
+
+    svc := services[0]
+    assert.NotEmpty(t, svc.ID, "service ID must be populated")
+    assert.NotEmpty(t, svc.Name, "service hostname must be populated")
+    assert.NotEmpty(t, svc.Status, "service status must be populated")
+    assert.NotNil(t, svc.Ports, "ports must be non-nil (may be empty slice)")
+    // Verify type info is populated for typed services
+    if svc.ServiceType != nil {
+        assert.NotEmpty(t, svc.ServiceType.Name)
+        assert.NotEmpty(t, svc.ServiceType.Version)
+    }
+}
+```
+
+**Phase 1 gate**: All 24 `Client` interface methods must have passing contract tests before proceeding to Phase 2. This ensures every downstream layer (ops, tools) builds on verified type mappings.
+
+### 11.6 Ops & Tools API Tests (Phase 2-3 gates)
+
+**Ops API tests** — Use real `ZeropsClient` instead of mock. Verify business logic works with actual API response shapes:
+```go
+//go:build api
+
+func TestAPI_Discover_WithRealServices(t *testing.T) {
+    h := apitest.New(t)
+    client := h.Client()
+    result, err := ops.Discover(h.Ctx(), client, h.ProjectID(), "")
+    require.NoError(t, err)
+    assert.NotEmpty(t, result.Services)
+    // Verify ops-level transformations produce correct output
+}
+```
+
+**Tools API tests** — Full MCP→tool→ops→platform→API chain using in-memory MCP transport but real API backend:
+```go
+//go:build api
+
+func TestAPI_DiscoverTool_RealBackend(t *testing.T) {
+    h := apitest.New(t)
+    // In-memory MCP with real ZeropsClient (not mock)
+    srv := server.NewWithClient(h.Client())
+    session := h.MCPSession(srv)
+
+    result, err := session.CallTool(h.Ctx(), &mcp.CallToolParams{
+        Name: "zerops_discover",
+    })
+    require.NoError(t, err)
+    assert.False(t, result.IsError)
+    // Verify complete chain produces valid MCP response
+}
+```
+
+**Read-only vs mutating tests:**
+- Read-only API tests (`discover`, `logs`, `events`, `env get`, `knowledge`) run in parallel — safe, idempotent.
+- Mutating API tests (`manage`, `env set`, `import`, `delete`, `subdomain`) run sequentially, use unique resource names, and have cleanup functions. Group mutating tests in dedicated test functions with `t.Cleanup()`.
+
+### 11.7 Full Lifecycle E2E (Phase 4 gate)
+
+Sequential multi-step test exercising the complete operational lifecycle. Modeled on zaia-mcp's 17-step pattern but adapted for ZCP's direct API access:
+
+```
+Step  Operation                  Validates
+──────────────────────────────────────────────────────────────
+01    zerops_context             Static content loads, token-sized
+02    zerops_discover            Auth works, project+services visible
+03    zerops_knowledge           BM25 search returns results
+04    zerops_validate            YAML validation (offline)
+05    zerops_import (dry-run)    Validates YAML, no side effects
+06    zerops_import (real)       Creates 2 services (runtime+managed)
+07    poll processes             Wait for import completion (120s max)
+08    zerops_discover            Verify both services exist
+09    zerops_env (set)           Set env var on runtime service
+10    zerops_env (get)           Read back, verify value
+11    zerops_manage (stop)       Stop managed service
+12    zerops_manage (start)      Start managed service
+13    zerops_subdomain (enable)  Enable subdomain (may fail if undeployed — expected)
+14    zerops_subdomain (disable) Disable subdomain
+15    zerops_logs                Fetch logs (may be empty — OK)
+16    zerops_events              Activity timeline shows operations
+17    zerops_workflow            Catalog returns, specific workflow returns
+18    zerops_delete (both)       Delete test services + wait
+19    zerops_discover            Verify services gone
+```
+
+**E2E conventions:**
+- Build tag: `//go:build e2e`
+- Service names: `zcp-test-{random}` suffix to avoid conflicts
+- `t.Cleanup()` always deletes created resources (even on failure)
+- Cleanup bypasses MCP — uses direct `ZeropsClient` with fresh context (test context may be cancelled)
+- Expected failures are non-fatal (e.g., restart/subdomain on undeployed service)
+- Process polling: 40 attempts × 3s = 120s max per operation
+
+### 11.8 Tool Test Pattern (in-memory MCP, no subprocess)
 
 Uses go-sdk `InMemoryTransports` for zero-subprocess testing:
 
@@ -880,18 +1077,19 @@ result, err := session.CallTool(ctx, &mcp.CallToolParams{
 // Assert on result.Content, result.IsError
 ```
 
-### 11.3 Deploy Tool Testing
+### 11.9 Deploy Tool Testing
 
 SSH mode requires special test considerations:
 - **Unit tests**: Mock the SSH execution layer. Test parameter validation, mode detection, auth injection.
 - **Integration tests**: Use mock SSH server or stub the exec layer. Verify the complete flow without actual SSH.
-- **E2E tests**: Real SSH to a dev container in a test Zerops project. Requires `-tags e2e`.
+- **API tests** (`-tags api`): Real SSH to a dev container in a test Zerops project. Verify zcli push command construction and auth injection.
+- **E2E tests** (`-tags e2e`): Full deploy cycle — SSH into source, push to target, verify via events.
 
-### 11.4 TDD per framework-plan.md
+### 11.10 TDD per framework-plan.md
 
-Every implementation unit: RED (failing test) → GREEN (minimal impl) → REFACTOR.
+Every implementation unit: RED (failing test) → GREEN (minimal impl) → VERIFY (API test) → REFACTOR.
 Test files reference design docs: `// Tests for: design/discover.md § Behavioral Contract`
-Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming.
+Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming. API tests: `TestAPI_{Op}_{Scenario}` naming.
 
 ---
 
@@ -909,49 +1107,78 @@ Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming.
 
 ## 13. Implementation Sequencing
 
+**Per-unit TDD cycle**: RED (mock test + API test) → GREEN (pass mock test) → VERIFY (pass API test) → REFACTOR.
+**Phase gates**: Each phase has an explicit API verification gate. Do NOT proceed to the next phase until the gate passes. This catches SDK mapping errors, response shape mismatches, and wrong assumptions early — before downstream code builds on them.
+
 ### Phase 1: Foundation
+
 1. `platform/types.go` — Domain types
 2. `platform/errors.go` — Error codes, PlatformError, mapping
 3. `platform/client.go` — Client interface (24 methods) + LogFetcher
 4. `platform/mock.go` — Mock + MockLogFetcher
-5. `platform/zerops.go` — ZeropsClient (zerops-go)
-6. `platform/logfetcher.go` — ZeropsLogFetcher
-7. `auth/auth.go` — Token resolution, validation, project discovery
-8. `knowledge/` — Store, documents, query, embed directory
+5. `platform/apitest/harness.go` — **API test harness** (shared: real client setup, skip logic, cleanup)
+6. `platform/zerops.go` — ZeropsClient (zerops-go)
+   - For EACH method: write `zerops_test.go` (unit) + `zerops_api_test.go` (contract, `-tags api`)
+   - Contract test verifies: response shape, field population, nil/empty handling, status values
+7. `platform/logfetcher.go` — ZeropsLogFetcher + API contract test
+8. `auth/auth.go` — Token resolution, validation, project discovery + API contract test
+9. `knowledge/` — Store, documents, query, embed directory
+
+**Phase 1 gate**: `go test ./internal/platform/... ./internal/auth/... -tags api -v` — ALL 24 Client methods + LogFetcher + auth flow verified against real API. Every domain type field mapping confirmed. This is the single most important test gate — it validates the foundation everything else builds on.
 
 ### Phase 2: Business Logic
-9. `ops/helpers.go` — Service resolution, time parsing
-10. `ops/discover.go` — Discover operation
-11. `ops/manage.go` — Start/stop/restart/scale
-12. `ops/env.go` — Env get/set/delete
-13. `ops/logs.go` — 2-step log fetch
-14. `ops/import.go` — Import with dry-run
-15. `ops/validate.go` — YAML validation (offline)
-16. `ops/delete.go` — Service deletion
-17. `ops/subdomain.go` — Subdomain (idempotent)
-18. `ops/events.go` — Activity timeline merge
-19. `ops/process.go` — Process status/cancel
-20. `ops/context.go` — Static platform knowledge content
-21. `ops/workflow.go` — Workflow catalog + per-workflow content (embedded markdown)
+
+10. `ops/helpers.go` — Service resolution, time parsing
+11. `ops/discover.go` — Discover + `discover_api_test.go` (real client, verify ops-level output)
+12. `ops/manage.go` — Start/stop/restart/scale + API tests (read-only: verify param mapping; mutating: sequential)
+13. `ops/env.go` — Env get/set/delete + API tests
+14. `ops/logs.go` — 2-step log fetch + API test (verify real log response shape)
+15. `ops/import.go` — Import with dry-run + API test (dry-run only — safe, no resources created)
+16. `ops/validate.go` — YAML validation (offline, no API test needed)
+17. `ops/delete.go` — Service deletion (API test grouped with import — create then delete)
+18. `ops/subdomain.go` — Subdomain (idempotent) + API test
+19. `ops/events.go` — Activity timeline merge + API test (verify real event shapes)
+20. `ops/process.go` — Process status/cancel + API test
+21. `ops/context.go` — Static platform knowledge content
+22. `ops/workflow.go` — Workflow catalog + per-workflow content (embedded markdown)
+
+**Phase 2 gate**: `go test ./internal/ops/... -tags api -v` — ALL ops functions verified with real API responses. Business logic (filtering, merging, formatting) produces correct results from real data, not just mock data.
 
 ### Phase 3: MCP Layer
-22. `tools/` — 14 tool handlers + convert.go
-23. `server/server.go` — MCP server + registration (14 tools)
-24. `server/instructions.go` — Ultra-minimal init message (~40-50 tokens, relevance signal only)
-25. `cmd/zcp/main.go` — Entrypoint (MCP server mode + init dispatch)
 
-### Phase 4: Streaming + Deploy
-26. `ops/progress.go` — Reusable PollProcess helper with callback (MCP-agnostic)
-27. `ops/deploy.go` — Deploy logic (SSH mode + local fallback)
-28. `tools/deploy.go` — Deploy tool handler
-29. Integration tests
+23. `tools/` — 14 tool handlers + convert.go
+    - For each tool: unit test (mock) + `_api_test.go` (in-memory MCP + real `ZeropsClient`)
+    - API tests verify: MCP request → tool → ops → platform → API → MCP response (full chain)
+24. `server/server.go` — MCP server + registration (14 tools)
+25. `server/instructions.go` — Ultra-minimal init message (~40-50 tokens, relevance signal only)
+26. `cmd/zcp/main.go` — Entrypoint (MCP server mode + init dispatch)
+
+**Phase 3 gate**: `go test ./internal/tools/... -tags api -v` — All 14 tools tested end-to-end with real API. MCP response format verified with real data. Error paths verified with real API errors (e.g., invalid service hostname → correct MCP error response).
+
+### Phase 4: Streaming + Deploy + E2E
+
+27. `ops/progress.go` — Reusable PollProcess helper with callback (MCP-agnostic)
+    - API test: trigger real async op, poll to completion, verify status transitions
+28. `ops/deploy.go` — Deploy logic (SSH mode + local fallback)
+29. `tools/deploy.go` — Deploy tool handler
+30. Integration tests (in-memory MCP + mock, multi-tool flows)
+31. **Full lifecycle E2E** (`-tags e2e`) — 19-step sequential test (see section 11.7)
+
+**Phase 4 gate**: `go test ./e2e/ -tags e2e -v` — Full lifecycle passes: import→discover→manage→env→subdomain→logs→events→delete. Real resources created and cleaned up. This is the final confidence gate.
 
 ### Phase 5: Init Subcommand
-30. `internal/init/init.go` — Init orchestrator (CLAUDE.md, MCP config, hooks, SSH)
-31. `internal/init/templates.go` — Embedded templates (shared content source with ops/workflow.go)
-32. Update `cmd/zcp/main.go` — Add init mode dispatch
 
-Each phase follows TDD. Each unit = one RED-GREEN-REFACTOR cycle.
+32. `internal/init/init.go` — Init orchestrator (CLAUDE.md, MCP config, hooks, SSH)
+33. `internal/init/templates.go` — Embedded templates (shared content source with ops/workflow.go)
+34. Update `cmd/zcp/main.go` — Add init mode dispatch
+
+### Test Prerequisites
+
+For API and E2E tests to run, the test environment needs:
+- `ZEROPS_ZCP_API_KEY` env var with a valid project-scoped PAT
+- The target project must have at least one existing service (for read-only tests)
+- Network access to Zerops API (`api.app-prg1.zerops.io` or `ZEROPS_API_HOST` override)
+- Tests **skip** (not fail) when `ZEROPS_ZCP_API_KEY` is not set — developers without API access can still run mock tests via `go test ./... -short`
 
 ---
 
@@ -993,21 +1220,35 @@ These capabilities are currently handled by the agent's native bash layer. They 
 
 ## 16. Verification
 
-After implementation, verify:
+### 16.1 Build & Lint
 
 1. `go build -o bin/zcp ./cmd/zcp` — Binary builds
-2. `go test ./... -count=1 -short` — All tests pass
+2. `go test ./... -count=1 -short` — All mock tests pass
 3. `golangci-lint run ./...` — No lint errors
-4. Manual: `ZEROPS_ZCP_API_KEY=<token> ./bin/zcp` — Server starts, responds to MCP initialize
-5. MCP init message: ~40-50 tokens, pure relevance signal, mentions `zerops_context` only
-6. MCP tool call: `zerops_context` returns platform knowledge + service catalog (~800-1200 tokens)
-7. MCP tool call: `zerops_workflow` returns workflow catalog; `zerops_workflow {workflow: "bootstrap"}` returns specific guidance
-8. MCP tool call: `zerops_discover` returns project + services
-9. MCP tool call: `zerops_knowledge {query: "postgresql"}` returns docs
-10. MCP tool call: `zerops_manage {action: "restart", serviceHostname: "api"}` returns process
-11. Progress notification test: async op with ProgressToken sends updates
-12. Error handling: invalid token → proper MCP error response
-13. Graceful shutdown: SIGINT during operation → clean exit
-14. Deploy SSH mode: `zerops_deploy {sourceService: "appdev", targetServiceId: "..."}` triggers push
-15. `zcp init` — generates CLAUDE.md, MCP config, hooks, SSH config. Idempotent on re-run.
-16. Tool count: 14 tools registered in MCP server (verify via `tools/list`)
+
+### 16.2 API Contract Tests (requires ZEROPS_ZCP_API_KEY)
+
+4. `go test ./internal/platform/... -tags api -v` — All 24 Client method contracts verified against real API
+5. `go test ./internal/auth/... -tags api -v` — Auth flow verified (token validation, project discovery)
+6. `go test ./internal/ops/... -tags api -v` — All ops functions produce correct results from real API data
+7. `go test ./internal/tools/... -tags api -v` — Full MCP→tool→ops→platform→API chain verified for all 14 tools
+
+### 16.3 E2E Lifecycle (requires ZEROPS_ZCP_API_KEY + creates real resources)
+
+8. `go test ./e2e/ -tags e2e -v` — Full 19-step lifecycle passes (import→discover→manage→env→subdomain→logs→events→delete)
+
+### 16.4 Manual Verification
+
+9. `ZEROPS_ZCP_API_KEY=<token> ./bin/zcp` — Server starts, responds to MCP initialize
+10. MCP init message: ~40-50 tokens, pure relevance signal, mentions `zerops_context` only
+11. MCP tool call: `zerops_context` returns platform knowledge + service catalog (~800-1200 tokens)
+12. MCP tool call: `zerops_workflow` returns workflow catalog; `zerops_workflow {workflow: "bootstrap"}` returns specific guidance
+13. MCP tool call: `zerops_discover` returns project + services
+14. MCP tool call: `zerops_knowledge {query: "postgresql"}` returns docs
+15. MCP tool call: `zerops_manage {action: "restart", serviceHostname: "api"}` returns process
+16. Progress notification test: async op with ProgressToken sends updates
+17. Error handling: invalid token → proper MCP error response
+18. Graceful shutdown: SIGINT during operation → clean exit
+19. Deploy SSH mode: `zerops_deploy {sourceService: "appdev", targetServiceId: "..."}` triggers push
+20. `zcp init` — generates CLAUDE.md, MCP config, hooks, SSH config. Idempotent on re-run.
+21. Tool count: 14 tools registered in MCP server (verify via `tools/list`)
