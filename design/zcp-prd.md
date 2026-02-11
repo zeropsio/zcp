@@ -1,5 +1,7 @@
 # ZCP-MCP: Product Requirements Document
 
+> **Editing convention**: Do NOT use hardcoded counts (e.g. "14 tools", "24 methods", "29 error codes") in prose, headers, or references. The authoritative count is always the actual list/table in the relevant section. Hardcoded numbers go stale on every addition/removal and create false inconsistencies.
+
 ## Context
 
 Currently the Zerops MCP integration uses two separate binaries:
@@ -44,7 +46,7 @@ The ZCP MCP binary is downloaded during `initCommands` and pre-configured as Cla
 │   │   │   ┌─────────────────────┐    ┌────────────────────────────┐ │       │     │
 │   │   │   │  Claude Code        │───►│  ZCP binary (MCP, STDIO)  │ │       │     │
 │   │   │   │  (terminal)         │◄───│                            │ │       │     │
-│   │   │   │                     │    │  • 14 MCP tools            │ │       │     │
+│   │   │   │                     │    │  • MCP tools               │ │       │     │
 │   │   │   │  Native bash:       │    │  • BM25 knowledge search   │ │       │     │
 │   │   │   │  • SSH to services  │    │  • Progress notifications  │ │       │     │
 │   │   │   │  • Mount FS         │    │  • Deploy via SSH + zcli   │ │       │     │
@@ -70,7 +72,7 @@ The ZCP MCP binary is downloaded during `initCommands` and pre-configured as Cla
 │    On-demand guidance, dev/stage patterns, bootstrap, verification            │
 │    CLAUDE.md = user-replaceable. zerops_workflow = tool-based routing.        │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│  MCP Tool Layer  (14 tools — this PRD)                                       │
+│  MCP Tool Layer  (this PRD)                                                  │
 │    API operations: discover, manage, env, logs, deploy, import,              │
 │    validate, knowledge, process, delete, subdomain, events                   │
 │    Context loading: context (platform knowledge), workflow (guidance)         │
@@ -95,7 +97,7 @@ The output of this PRD is a document for autonomous LLM agents to implement in T
 ### In Scope (v1)
 - Single binary MCP server over STDIO transport
 - Direct Zerops API calls via `zerops-go` SDK (no subprocess)
-- 14 MCP tools (12 from current zaia-mcp + `zerops_context` + `zerops_workflow`)
+- MCP tools (current zaia-mcp tools + `zerops_context` + `zerops_workflow`)
 - `zerops_context` — static platform knowledge loader (concepts, rules, service catalog)
 - `zerops_workflow` — workflow routing (catalog without param, specific guidance with param)
 - BM25 knowledge search with embedded docs
@@ -138,7 +140,7 @@ internal/
                                   "Is the user asking about something that needs Zerops tools?" The LLM pays
                                   near-zero cost when Zerops isn't relevant, and loads full context on-demand.
                                   Why no tool list in init: Every tool goes through MCP's tools/list — the LLM
-                                  already sees all 14 tools with descriptions and schemas. The init message
+                                  already sees all tools with descriptions and schemas. The init message
                                   doesn't need to duplicate that.
   tools/                       → MCP tool handlers (thin wrappers over ops)
     discover.go                → zerops_discover
@@ -175,7 +177,7 @@ internal/
     templates.go               → Embedded templates (CLAUDE.md, MCP config, SSH config, hooks).
                                   CLAUDE.md template and zerops_workflow share content source.
   platform/                    → Zerops API client abstraction
-    client.go                  → Client interface (24 methods) + LogFetcher interface
+    client.go                  → Client interface + LogFetcher interface
     zerops.go                  → ZeropsClient implementation (zerops-go SDK)
     types.go                   → All domain types (NEW file split — source has types in client.go)
     errors.go                  → Error codes (29 for ZCP), PlatformError, mapSDKError
@@ -209,7 +211,7 @@ cmd/zcp/main.go
       v
     internal/server (MCP server setup)
       │
-      ├──> internal/tools (MCP tool handlers, 14 tools)
+      ├──> internal/tools (MCP tool handlers)
       │      │
       │      v
       │    internal/ops (business logic)
@@ -342,7 +344,7 @@ type Info struct {
 
 ## 4. Platform Client Interface
 
-### 4.1 Interface (24 methods)
+### 4.1 Interface
 
 Port from: `../zaia/internal/platform/client.go`
 
@@ -398,13 +400,13 @@ Key details:
 - `SetAutoscaling` can return nil Process (sync, no async tracking)
 - Status normalization: "DONE" → "FINISHED", "CANCELLED" → "CANCELED"
 
-### 4.4 Error Codes (29 for ZCP)
+### 4.4 Error Codes
 
-Port from: `../zaia/internal/platform/errors.go` (31 static codes in source)
+Port from: `../zaia/internal/platform/errors.go`
 
-Skip 4 CLI-specific setup codes (ErrSetupDownloadFailed, ErrSetupInstallFailed, ErrSetupConfigFailed, ErrSetupUnsupportedOS) — irrelevant for MCP server. Also do NOT port `ExitCodeForError()` or `MapHTTPError()` suggestion text referencing "zaia login" — these are CLI-specific.
+Skip CLI-specific setup codes (ErrSetupDownloadFailed, ErrSetupInstallFailed, ErrSetupConfigFailed, ErrSetupUnsupportedOS) — irrelevant for MCP server. Also do NOT port `ExitCodeForError()` or `MapHTTPError()` suggestion text referencing "zaia login" — these are CLI-specific.
 
-27 static codes (after skipping 4 CLI-specific):
+Static codes (after skipping CLI-specific):
 ```
 AUTH_REQUIRED, AUTH_INVALID_TOKEN, AUTH_TOKEN_EXPIRED, AUTH_API_ERROR,
 TOKEN_NO_PROJECT, TOKEN_MULTI_PROJECT,
@@ -419,7 +421,7 @@ API_ERROR, API_TIMEOUT, API_RATE_LIMITED, NETWORK_ERROR,
 INVALID_USAGE
 ```
 
-2 dynamic codes (generated in `mapAPIError()` for subdomain idempotency):
+Dynamic codes (generated in `mapAPIError()` for subdomain idempotency):
 ```
 SUBDOMAIN_ALREADY_ENABLED, SUBDOMAIN_ALREADY_DISABLED
 ```
@@ -435,7 +437,7 @@ Thread-safe with `sync.RWMutex`. Compile-time interface check.
 
 ## 5. MCP Tools Specification
 
-### 5.1 All 14 Tools
+### 5.1 Tools
 
 | Tool | Type | Key Behavior |
 |------|------|-------------|
@@ -976,7 +978,7 @@ func TestAPI_ListServices_ResponseShape(t *testing.T) {
 }
 ```
 
-**Phase 1 gate**: All 24 `Client` interface methods must have passing contract tests before proceeding to Phase 2. This ensures every downstream layer (ops, tools) builds on verified type mappings.
+**Phase 1 gate**: ALL `Client` interface methods must have passing contract tests before proceeding to Phase 2. This ensures every downstream layer (ops, tools) builds on verified type mappings.
 
 ### 11.6 Ops & Tools API Tests (Phase 2-3 gates)
 
@@ -1114,7 +1116,7 @@ Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming. API tests: `TestAPI_{
 
 1. `platform/types.go` — Domain types
 2. `platform/errors.go` — Error codes, PlatformError, mapping
-3. `platform/client.go` — Client interface (24 methods) + LogFetcher
+3. `platform/client.go` — Client interface + LogFetcher
 4. `platform/mock.go` — Mock + MockLogFetcher
 5. `platform/apitest/harness.go` — **API test harness** (shared: real client setup, skip logic, cleanup)
 6. `platform/zerops.go` — ZeropsClient (zerops-go)
@@ -1124,7 +1126,7 @@ Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming. API tests: `TestAPI_{
 8. `auth/auth.go` — Token resolution, validation, project discovery + API contract test
 9. `knowledge/` — Store, documents, query, embed directory
 
-**Phase 1 gate**: `go test ./internal/platform/... ./internal/auth/... -tags api -v` — ALL 24 Client methods + LogFetcher + auth flow verified against real API. Every domain type field mapping confirmed. This is the single most important test gate — it validates the foundation everything else builds on.
+**Phase 1 gate**: `go test ./internal/platform/... ./internal/auth/... -tags api -v` — ALL Client methods + LogFetcher + auth flow verified against real API. Every domain type field mapping confirmed. This is the single most important test gate — it validates the foundation everything else builds on.
 
 ### Phase 2: Business Logic
 
@@ -1146,14 +1148,14 @@ Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming. API tests: `TestAPI_{
 
 ### Phase 3: MCP Layer
 
-23. `tools/` — 14 tool handlers + convert.go
+23. `tools/` — Tool handlers + convert.go
     - For each tool: unit test (mock) + `_api_test.go` (in-memory MCP + real `ZeropsClient`)
     - API tests verify: MCP request → tool → ops → platform → API → MCP response (full chain)
-24. `server/server.go` — MCP server + registration (14 tools)
+24. `server/server.go` — MCP server + tool registration
 25. `server/instructions.go` — Ultra-minimal init message (~40-50 tokens, relevance signal only)
 26. `cmd/zcp/main.go` — Entrypoint (MCP server mode + init dispatch)
 
-**Phase 3 gate**: `go test ./internal/tools/... -tags api -v` — All 14 tools tested end-to-end with real API. MCP response format verified with real data. Error paths verified with real API errors (e.g., invalid service hostname → correct MCP error response).
+**Phase 3 gate**: `go test ./internal/tools/... -tags api -v` — All tools tested end-to-end with real API. MCP response format verified with real data. Error paths verified with real API errors (e.g., invalid service hostname → correct MCP error response).
 
 ### Phase 4: Streaming + Deploy + E2E
 
@@ -1162,7 +1164,7 @@ Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming. API tests: `TestAPI_{
 28. `ops/deploy.go` — Deploy logic (SSH mode + local fallback)
 29. `tools/deploy.go` — Deploy tool handler
 30. Integration tests (in-memory MCP + mock, multi-tool flows)
-31. **Full lifecycle E2E** (`-tags e2e`) — 19-step sequential test (see section 11.7)
+31. **Full lifecycle E2E** (`-tags e2e`) — sequential test (see section 11.7)
 
 **Phase 4 gate**: `go test ./e2e/ -tags e2e -v` — Full lifecycle passes: import→discover→manage→env→subdomain→logs→events→delete. Real resources created and cleaned up. This is the final confidence gate.
 
@@ -1228,14 +1230,14 @@ These capabilities are currently handled by the agent's native bash layer. They 
 
 ### 16.2 API Contract Tests (requires ZEROPS_ZCP_API_KEY)
 
-4. `go test ./internal/platform/... -tags api -v` — All 24 Client method contracts verified against real API
+4. `go test ./internal/platform/... -tags api -v` — All Client method contracts verified against real API
 5. `go test ./internal/auth/... -tags api -v` — Auth flow verified (token validation, project discovery)
 6. `go test ./internal/ops/... -tags api -v` — All ops functions produce correct results from real API data
-7. `go test ./internal/tools/... -tags api -v` — Full MCP→tool→ops→platform→API chain verified for all 14 tools
+7. `go test ./internal/tools/... -tags api -v` — Full MCP→tool→ops→platform→API chain verified for all tools
 
 ### 16.3 E2E Lifecycle (requires ZEROPS_ZCP_API_KEY + creates real resources)
 
-8. `go test ./e2e/ -tags e2e -v` — Full 19-step lifecycle passes (import→discover→manage→env→subdomain→logs→events→delete)
+8. `go test ./e2e/ -tags e2e -v` — Full lifecycle passes (import→discover→manage→env→subdomain→logs→events→delete)
 
 ### 16.4 Manual Verification
 
@@ -1251,4 +1253,4 @@ These capabilities are currently handled by the agent's native bash layer. They 
 18. Graceful shutdown: SIGINT during operation → clean exit
 19. Deploy SSH mode: `zerops_deploy {sourceService: "appdev", targetServiceId: "..."}` triggers push
 20. `zcp init` — generates CLAUDE.md, MCP config, hooks, SSH config. Idempotent on re-run.
-21. Tool count: 14 tools registered in MCP server (verify via `tools/list`)
+21. Tool count: all tools from §5.1 registered in MCP server (verify via `tools/list`)
