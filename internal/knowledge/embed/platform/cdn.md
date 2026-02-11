@@ -1,0 +1,60 @@
+# CDN on Zerops
+
+## Keywords
+cdn, cache, edge, content delivery, static assets, object storage cdn, geo-steering, purge, cache invalidation
+
+## TL;DR
+Zerops CDN has 6 global regions with a **fixed 30-day cache TTL** (HTTP Cache-Control headers are ignored by CDN but still affect browsers).
+
+## Regions
+1. **EU (Prague, CZ)** — Primary + all-region failover
+2. **EU (Falkenstein, DE)** — Secondary European
+3. **UK (London)**
+4. **AU (Sydney)**
+5. **SG (Singapore)**
+6. **CA (Beauharnois, Canada)**
+
+DNS TTL: 30 seconds. Geo-steering routes to nearest node. EU Prague is fallback if all others down.
+
+## CDN Modes
+
+### Object Storage CDN
+- URL: `https://storage.cdn.zerops.app/bucket/path`
+- Env var: `${storageCdnUrl}`
+- Direct from Object Storage through CDN
+
+### Static CDN
+- URL: `https://static.cdn.zerops.app/domain.com/path`
+- Env var: `${staticCdnUrl}`
+- For custom domains on static/nginx services
+- **Wildcard domains NOT supported**
+
+### API CDN
+- Coming soon
+- Env var: `${apiCdnUrl}`
+
+## Cache Behavior
+- TTL: **Fixed 30 days** (not configurable)
+- HTTP `Cache-Control` headers: Affect browser caching, **NOT CDN caching**
+- Eviction: LRU when storage capacity reached
+- First request: Fetched from origin and cached
+
+## Purge Patterns
+```
+/*            # All content
+/dir/*        # Directory contents
+/file$        # Specific file (exact match)
+/prefix*      # Pattern prefix match
+```
+Wildcard must be at end. Use `$` suffix for exact file match.
+
+## Gotchas
+1. **30-day fixed TTL**: Cannot be changed — `Cache-Control: max-age=3600` has no effect on CDN
+2. **No wildcard domains on static CDN**: `*.domain.com` is not supported
+3. **Purge wildcards at end only**: `/images/*.jpg` is invalid — use `/images/*`
+
+## See Also
+- zerops://services/object-storage
+- zerops://services/static
+- zerops://services/nginx
+- zerops://networking/public-access

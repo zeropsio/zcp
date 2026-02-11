@@ -1,0 +1,139 @@
+# Production Checklist for Zerops
+
+## Keywords
+production, checklist, ha, high availability, minContainers, mailpit, smtp, adminer, volatile, sessions, object storage, deploy production, go-live, launch
+
+## TL;DR
+Before going to production: (1) databases to HA mode, (2) minContainers: 2 on app services, (3) replace Mailpit with real SMTP, (4) remove Adminer, (5) use Object Storage for uploads, (6) use Redis/Valkey for sessions.
+
+## Database
+
+| Item | Dev | Production |
+|------|-----|------------|
+| Mode | `NON_HA` | `HA` (must recreate) |
+| Backups | Optional | Enabled |
+| Connection | Single primary | Primary + read replicas |
+
+**HA is immutable** — cannot switch after creation. Delete and recreate with `mode: HA`.
+
+## Application Services
+
+| Item | Dev | Production |
+|------|-----|------------|
+| minContainers | 1 | 2+ |
+| Health checks | Optional | Enabled |
+| Logging | Console/debug | Structured (syslog) |
+| Debug mode | Enabled | Disabled |
+
+```yaml
+# Production app service
+- hostname: app
+  type: nodejs@22
+  minContainers: 2
+  maxContainers: 4
+```
+
+## Dev Services to Remove
+
+### Mailpit → Production SMTP
+```yaml
+# REMOVE for production:
+- hostname: mailpit
+  type: go@1
+  buildFromGit: https://github.com/zeropsio/recipe-mailpit
+
+# REPLACE with production SMTP env vars:
+envVariables:
+  SMTP_HOST: smtp.sendgrid.net
+  SMTP_PORT: "587"
+envSecrets:
+  SMTP_PASSWORD: your-production-key
+```
+
+### Adminer → Remove or Restrict
+Remove entirely or disable `enableSubdomainAccess`. Use VPN + pgAdmin/DBeaver locally.
+
+## File Storage
+
+**Containers are volatile** — files stored on disk are lost on restart/redeploy.
+
+| Use case | Solution |
+|----------|----------|
+| User uploads | Object Storage (S3) |
+| Media files | Object Storage (S3) |
+| Temp files | Container disk (OK) |
+| Build artifacts | Deploy via zerops.yaml |
+
+```yaml
+# Add Object Storage for persistent files
+- hostname: storage
+  type: object-storage
+  objectStorageSize: 2
+  objectStoragePolicy: public-read
+```
+
+## Sessions & Cache
+
+**File-based sessions are lost on container restart.**
+
+| Use case | Solution |
+|----------|----------|
+| PHP sessions | Redis/Valkey |
+| Laravel sessions | Redis driver |
+| Django sessions | Redis backend |
+| Express sessions | Redis store |
+
+```yaml
+# Add Valkey for sessions/cache
+- hostname: cache
+  type: valkey@7.2
+  mode: NON_HA  # HA for production
+```
+
+## Framework-Specific Production Settings
+
+### PHP/Laravel
+- `APP_ENV: production`, `APP_DEBUG: "false"`
+- Trusted proxies: `TRUSTED_PROXIES: 127.0.0.1,10.0.0.0/8`
+- Sessions in Redis, not files
+- Optimize: `php artisan config:cache && route:cache && view:cache`
+
+### PHP/Symfony
+- `APP_ENV: prod`
+- `TRUSTED_PROXIES: 127.0.0.1,10.0.0.0/8`
+- Logging via Monolog SyslogHandler
+
+### Python/Django
+- `DEBUG: "false"`
+- `CSRF_TRUSTED_ORIGINS: https://your-domain.com`
+- `ALLOWED_HOSTS: .zerops.app,your-domain.com`
+- Static files via `collectstatic`
+
+### Node.js
+- `NODE_ENV: production`
+- `HOST: 0.0.0.0`
+- Health check endpoint at `/status` or `/health`
+
+### Java/Spring
+- `server.address: 0.0.0.0` (required — default binds localhost)
+- Actuator health endpoints enabled
+- JVM memory flags: `-Xmx512m` (match container limits)
+
+### Elixir/Phoenix
+- `PHX_SERVER: "true"` (required to start server in releases)
+- `SECRET_KEY_BASE` generated via preprocessor
+- `PHX_HOST` set to domain
+
+## Gotchas
+1. **HA is immutable**: Must delete and recreate service to switch modes
+2. **Containers are volatile**: Any file written to disk is lost on restart
+3. **File sessions break with scaling**: Multiple containers don't share filesystem
+4. **Mailpit is not production SMTP**: Only for dev — no delivery guarantees
+5. **Debug mode leaks secrets**: Disable APP_DEBUG in production
+6. **Missing health checks**: Load balancer can't route around unhealthy containers
+
+## See Also
+- zerops://config/import-yml-patterns
+- zerops://platform/scaling
+- zerops://platform/backup
+- zerops://gotchas/common

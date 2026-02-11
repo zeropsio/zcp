@@ -1,0 +1,19 @@
+# Zerops SSH Configuration
+# Add this to your ~/.ssh/config to enable SSH access to Zerops containers.
+#
+# Usage:
+#   ssh <service-hostname>
+#
+# Prerequisites:
+#   - VPN connection to Zerops project (zcli vpn up)
+#   - SSH key registered in Zerops dashboard
+#
+# Example:
+#   ssh api
+#   ssh db
+
+Host *.zerops
+    User zerops
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR

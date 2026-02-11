@@ -1,0 +1,54 @@
+# Public Access on Zerops
+
+## Keywords
+public access, domain, subdomain, zerops.app, ipv4, ipv6, https, ssl, custom domain, dedicated ip, shared ip, direct port
+
+## TL;DR
+Zerops offers three public access methods: zerops.app subdomains (dev only, 50MB upload limit), custom domains (production, needs IPv4/IPv6), and direct port access (TCP/UDP on 10-65435).
+
+## Access Methods
+
+### 1. Zerops Subdomains (`.zerops.app`)
+- Shared HTTPS balancer (scalability bottleneck)
+- Max upload: **50 MB**
+- **Not for production** — use for development/testing only
+- Auto-provisioned SSL
+- Enable via import YAML: `enableSubdomainAccess: true` (works for all runtime/web types)
+- Enable via API: `zerops_subdomain enable` (only works on deployed/ACTIVE services)
+- Works for: nodejs, static, nginx, go, python, php, java, rust, dotnet, and all other runtime types
+
+### 2. Custom Domains (Production)
+- Per-project HTTPS balancer (2 containers, HA)
+- Round-robin load balancing + health checks
+- Full upload limit: 512 MB
+- Requires IP address assignment:
+
+| IP Type | Cost | Protocol | Notes |
+|---------|------|----------|-------|
+| Shared IPv4 | Free | HTTP/HTTPS only | Limited connections, shorter timeouts |
+| Dedicated IPv4 | $3/30 days | All protocols | Non-refundable, auto-renews |
+| IPv6 | Free | All protocols | Dedicated per project |
+
+### 3. Direct Port Access
+- Available for: Runtime services, PostgreSQL
+- Port range: 10-65435 (80, 443 reserved)
+- Protocols: TCP, UDP
+- Configurable firewall: blacklist or whitelist per port
+
+## DNS Setup (Custom Domain)
+Point your domain to the project's IP:
+- `A` record → Dedicated IPv4
+- `AAAA` record → IPv6
+- Shared IPv4: Requires **both A and AAAA** records (AAAA needed for SNI routing)
+
+## Gotchas
+1. **Shared IPv4 needs AAAA record**: Without AAAA, SNI routing fails — always add both A and AAAA
+2. **zerops.app 50MB limit**: File uploads over 50MB fail on subdomains — use custom domain
+3. **Dedicated IPv4 is non-refundable**: $3/30 days, auto-renews — cannot get refund if removed early
+4. **Ports 80/443 reserved**: Your app cannot bind to these — Zerops uses them for SSL termination
+
+## See Also
+- zerops://networking/cloudflare
+- zerops://networking/firewall
+- zerops://networking/overview
+- zerops://platform/infrastructure
