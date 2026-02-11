@@ -168,14 +168,17 @@ internal/
                                   Local-mode fallback for development outside Zerops.
     context.go                 → Static content: general Zerops knowledge + service type catalog.
                                   Compiled string, not part of BM25 index. Updated with code changes.
-    workflow.go                → Workflow catalog + per-workflow content. Static strings or embedded
-                                  markdown. Not part of BM25 index. Shares content source with
-                                  internal/init/templates.go (single source of truth).
+    workflow.go                → Workflow catalog + per-workflow content. Reads from
+                                  internal/content/ (shared with init/). Not part of BM25 index.
+  content/                     → Shared embedded content (single source of truth)
+    content.go                 → go:embed for workflow markdown, CLAUDE.md template, etc.
+    workflows/                 → Embedded workflow guidance markdown files
+    templates/                 → CLAUDE.md template, MCP config template, etc.
   init/
     init.go                    → Init orchestrator: runs all bootstrap steps (CLAUDE.md, MCP config,
                                   hooks, SSH config). Idempotent — running again resets to defaults.
-    templates.go               → Embedded templates (CLAUDE.md, MCP config, SSH config, hooks).
-                                  CLAUDE.md template and zerops_workflow share content source.
+    templates.go               → Uses internal/content/ for embedded templates. Generates files
+                                  (CLAUDE.md, MCP config, SSH config, hooks) from shared content.
   platform/                    → Zerops API client abstraction
     client.go                  → Client interface + LogFetcher interface
     zerops.go                  → ZeropsClient implementation (zerops-go SDK)
@@ -205,6 +208,7 @@ internal/
 cmd/zcp/main.go
   │
   ├── "init" arg → internal/init (bootstrap: CLAUDE.md, MCP config, hooks, SSH)
+  │                    └──> internal/content (shared embedded templates)
   │
   └── no args → MCP server mode:
       │
@@ -218,18 +222,20 @@ cmd/zcp/main.go
       │      │
       │      ├──> internal/platform (Zerops API client)
       │      ├──> internal/auth (token + project discovery)
-      │      └──> internal/knowledge (BM25 search)
+      │      ├──> internal/knowledge (BM25 search)
+      │      └──> internal/content (workflow content)
       │
       └──> internal/knowledge (MCP resource registration)
 ```
 
 **Rules**:
 - `tools/` depends on `ops/` for business logic. May import `platform/` for types only (e.g. `PlatformError`), but NEVER calls `platform.Client` methods directly.
-- `ops/` depends on `platform/`, `auth/`, `knowledge/`
+- `ops/` depends on `platform/`, `auth/`, `knowledge/`, `content/`
 - `platform/` depends only on `zerops-go` SDK and stdlib
 - `auth/` depends on `platform/` (for GetUserInfo, ListProjects)
 - `knowledge/` depends only on `bleve` and stdlib
-- `init/` depends only on stdlib (embedded templates, file I/O)
+- `content/` depends only on stdlib (go:embed, no external deps)
+- `init/` depends on `content/` and stdlib (file I/O)
 - No upward dependencies, no cycles
 
 ### 2.3 Key Difference from Current Architecture
@@ -289,7 +295,7 @@ cmd/zcp/main.go
 **Notes**:
 - `ScopeProjectId` is JSON `null` when unset (not empty string). Go's `json.Unmarshal` into `*string` will produce `nil` for `null` — use pointer type.
 - `ScopeProjectId` is set by `zcli scope project` command. When set, ZCP uses it directly instead of project discovery via ListProjects.
-- ZCP only reads `Token`, `RegionData.address`, and `ScopeProjectId`.
+- ZCP only reads `Token`, `RegionData.address`, `RegionData.name`, and `ScopeProjectId`.
 
 ### 3.2 Startup Sequence
 
@@ -450,7 +456,7 @@ Thread-safe with `sync.RWMutex`. Compile-time interface check.
 | `zerops_manage` | Async | action={start,stop,restart,scale} + serviceHostname. Scale accepts CPU/RAM/disk params (see parameter mapping below). |
 | `zerops_env` | Mixed | action={get,set,delete}. Service-level or project-level. Variables in KEY=value format. |
 | `zerops_logs` | Sync | 2-step: GetProjectLog → LogFetcher. Severity, since, limit, search, buildId filters. |
-| `zerops_deploy` | Mixed | SSH mode (primary): SSH into sourceService, run zcli push to target. Local mode (fallback): zcli subprocess. See section 8. |
+| `zerops_deploy` | Mixed | SSH mode (primary): SSH into sourceService, zcli push to targetService (hostname). Local mode (fallback): zcli subprocess. See section 8. |
 | `zerops_import` | Mixed | Inline content or filePath. dryRun for validation (sync), real import (async). |
 | `zerops_validate` | Sync | Offline YAML validation. zerops.yml or import.yml. No API needed. |
 | `zerops_knowledge` | Sync | BM25 search. Query expansion. Full top-result content. Suggestions. |
@@ -559,14 +565,12 @@ Available workflows:
 - Step-by-step workflow with tool calls
 - Prerequisites and validation steps
 - Common patterns and pitfalls
-- Hook/trigger points (TBD — placeholder for future operations)
-
 **Implementation**:
 - Workflow catalog: static string in `ops/workflow.go`
 - Per-workflow content: embedded markdown files or static strings
 - Not part of BM25 index
-- Shares content source with `internal/init/templates.go` (CLAUDE.md template)
-- Future: workflow hooks/triggers (v2+, interface defined now, implementation TBD)
+- Shares content source with `internal/content/` package (shared with `internal/init/templates.go`)
+- Workflow hooks/triggers: v2+ (no interface in v1 — define when use cases are clear)
 
 ### 5.4 Tool → MCP Error Conversion
 
@@ -655,7 +659,7 @@ For local development (ZCP running on developer's machine), a local `zcli push` 
 ```
 zerops_deploy (SSH mode):
   sourceService: string     # hostname of source container (SSH target, e.g. "appdev")
-  targetServiceId: string   # service ID to push to (e.g. stage service ID)
+  targetService: string     # hostname of target service to push to (e.g. "appstage")
   setup: string             # zerops.yml setup name ("dev" or "prod"), optional
   workingDir: string        # path inside container (default: /var/www)
 ```
@@ -663,18 +667,21 @@ zerops_deploy (SSH mode):
 **Execution flow:**
 ```
 1. Validate sourceService exists (resolve via discover)
-2. SSH into sourceService
-3. Authenticate zcli: run `zcli login $ZCP_API_KEY [--zeropsRegion $region]` if needed
+2. Resolve targetService hostname → service ID (via discover, same as other tools)
+3. SSH into sourceService
+4. Authenticate zcli: always run `zcli login $ZCP_API_KEY [--zeropsRegion $region]`
    ($region = auth.Info.Region from §3.2. If empty, omit --zeropsRegion flag.)
-4. Run: zcli push $targetServiceId [--setup=$setup] [--workingDir=$workingDir]
-5. zcli push uploads code + triggers build pipeline, then returns
-6. Return: {status, sourceService, targetServiceId, message}
-7. Agent can poll build completion via zerops_events (service filter)
+   Always re-login — idempotent, avoids stale auth detection complexity.
+5. Run: zcli push $resolvedServiceId [--setup=$setup] [--workingDir=$workingDir]
+   ($resolvedServiceId = targetService hostname resolved to ID in step 2)
+6. zcli push uploads code + triggers build pipeline, then returns
+7. Return: {status, sourceService, targetService, message}
+8. Agent can poll build completion via zerops_events (service filter)
 ```
 
-**SSH execution**: Uses `exec.CommandContext` to run `ssh $sourceService "cd $workingDir && zcli push ..."`. The ZCP service has SSH key access to all sibling services via Zerops VXLAN networking — no password or key configuration needed.
+**SSH execution**: Uses `exec.CommandContext` to run `ssh $sourceService "cd $workingDir && zcli login ... && zcli push ..."`. The ZCP service has SSH key access to all sibling services via Zerops VXLAN networking — no password or key configuration needed.
 
-**Auth sharing**: ZCP passes its own `ZCP_API_KEY` to zcli inside the SSH session. Unlike the local mode where zcli has its own stored token, in SSH mode ZCP explicitly authenticates zcli with the token it already has.
+**Auth sharing**: ZCP passes its own `ZCP_API_KEY` to zcli inside the SSH session. Always authenticates fresh — no detection of pre-existing auth state.
 
 **Build monitoring**: After `zcli push` returns, the build/deploy pipeline runs asynchronously on Zerops. The agent uses `zerops_events` (with service filter) or `zerops_process` to track completion. The existing progress notification system (section 6) can be adapted — although `zcli push` does not return a process ID, the events API shows build status per service.
 
@@ -684,7 +691,7 @@ zerops_deploy (SSH mode):
 ```
 zerops_deploy (local mode):
   workingDir: string        # local directory with zerops.yml
-  serviceId: string         # target service ID
+  targetService: string     # hostname of target service (resolved to ID internally)
 ```
 
 Shell out to local `zcli push` binary. This is the development-time fallback when ZCP runs on the developer's machine (not inside Zerops).
@@ -702,10 +709,12 @@ Shell out to local `zcli push` binary. This is the development-time fallback whe
 The deploy tool auto-detects which mode to use:
 
 ```
-IF sourceService parameter is provided → SSH mode
-ELSE IF workingDir + serviceId provided → Local mode
-ELSE → error: "Provide sourceService (SSH deploy) or workingDir + serviceId (local deploy)"
+IF sourceService parameter is provided → SSH mode (targetService required)
+ELSE IF workingDir + targetService provided → Local mode
+ELSE → error: "Provide sourceService (SSH deploy) or workingDir + targetService (local deploy)"
 ```
+
+**Note**: `targetService` is shared between both modes (always hostname, resolved to ID internally). Mode is determined solely by presence of `sourceService`.
 
 ---
 
@@ -830,15 +839,19 @@ This is NOT a CLI framework — no Cobra, just a simple `os.Args[1]` check in ma
 **Key properties:**
 - **Idempotent**: Running again overwrites with defaults. User customizations to CLAUDE.md get reset — this is intentional (binary is source of truth for defaults).
 - **Templates compiled into binary**: CLAUDE.md template, MCP config, SSH config all embedded in the binary via `go:embed`. No external downloads needed for init.
-- **Shared content source**: The CLAUDE.md template and `zerops_workflow` tool content both come from the same embedded source — single source of truth. CLAUDE.md is the thin directive ("call zerops_workflow"), workflow content lives in the tool.
+- **Shared content source**: The CLAUDE.md template and `zerops_workflow` tool content both live in `internal/content/` — single source of truth. Both `init/` and `ops/workflow.go` import from `content/`. CLAUDE.md is the thin directive ("call zerops_workflow"), workflow content lives in the tool.
 - **Future-extensible**: More init tasks can be added without changing the interface.
 
 **Package structure:**
 ```
 internal/
+  content/                   → Shared embedded content (go:embed)
+    content.go               → Embedded workflow + template files
+    workflows/               → Workflow guidance markdown
+    templates/               → CLAUDE.md, MCP config, SSH config templates
   init/
     init.go                  → Init orchestrator: runs all setup steps
-    templates.go             → Embedded templates (CLAUDE.md, MCP config, SSH config, hooks)
+    templates.go             → Uses content/ package for templates. Generates output files.
 ```
 
 **cmd/zcp/main.go dispatch:**
@@ -1161,37 +1174,38 @@ Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming. API tests: `TestAPI_{
 19. `ops/events.go` — Activity timeline merge + API test (verify real event shapes)
 20. `ops/process.go` — Process status/cancel + API test
 21. `ops/context.go` — Static platform knowledge content
-22. `ops/workflow.go` — Workflow catalog + per-workflow content (embedded markdown)
+22. `content/` — Shared embedded content (workflow markdown, CLAUDE.md template)
+23. `ops/workflow.go` — Workflow catalog + per-workflow content (reads from `content/`)
 
 **Phase 2 gate**: `go test ./internal/ops/... -tags api -v` — ALL ops functions verified with real API responses. Business logic (filtering, merging, formatting) produces correct results from real data, not just mock data.
 
 ### Phase 3: MCP Layer
 
-23. `tools/` — Tool handlers + convert.go
+24. `tools/` — Tool handlers + convert.go
     - For each tool: unit test (mock) + `_api_test.go` (in-memory MCP + real `ZeropsClient`)
     - API tests verify: MCP request → tool → ops → platform → API → MCP response (full chain)
-24. `server/server.go` — MCP server + tool registration
-25. `server/instructions.go` — Ultra-minimal init message (~40-50 tokens, relevance signal only)
-26. `cmd/zcp/main.go` — Entrypoint (MCP server mode + init dispatch)
+25. `server/server.go` — MCP server + tool registration
+26. `server/instructions.go` — Ultra-minimal init message (~40-50 tokens, relevance signal only)
+27. `cmd/zcp/main.go` — Entrypoint (MCP server mode + init dispatch)
 
 **Phase 3 gate**: `go test ./internal/tools/... -tags api -v` — All tools tested end-to-end with real API. MCP response format verified with real data. Error paths verified with real API errors (e.g., invalid service hostname → correct MCP error response).
 
 ### Phase 4: Streaming + Deploy + E2E
 
-27. `ops/progress.go` — Reusable PollProcess helper with callback (MCP-agnostic)
+28. `ops/progress.go` — Reusable PollProcess helper with callback (MCP-agnostic)
     - API test: trigger real async op, poll to completion, verify status transitions
-28. `ops/deploy.go` — Deploy logic (SSH mode + local fallback)
-29. `tools/deploy.go` — Deploy tool handler
-30. Integration tests (in-memory MCP + mock, multi-tool flows)
-31. **Full lifecycle E2E** (`-tags e2e`) — sequential test (see section 11.7)
+29. `ops/deploy.go` — Deploy logic (SSH mode + local fallback)
+30. `tools/deploy.go` — Deploy tool handler
+31. Integration tests (in-memory MCP + mock, multi-tool flows)
+32. **Full lifecycle E2E** (`-tags e2e`) — sequential test (see section 11.7)
 
 **Phase 4 gate**: `go test ./e2e/ -tags e2e -v` — Full lifecycle passes: import→discover→manage→env→subdomain→logs→events→delete. Real resources created and cleaned up. This is the final confidence gate.
 
 ### Phase 5: Init Subcommand
 
-32. `internal/init/init.go` — Init orchestrator (CLAUDE.md, MCP config, hooks, SSH)
-33. `internal/init/templates.go` — Embedded templates (shared content source with ops/workflow.go)
-34. Update `cmd/zcp/main.go` — Add init mode dispatch
+33. `internal/init/init.go` — Init orchestrator (CLAUDE.md, MCP config, hooks, SSH)
+34. `internal/init/templates.go` — Uses `internal/content/` for shared templates. Generates output files.
+35. Update `cmd/zcp/main.go` — Add init mode dispatch
 
 ### Test Prerequisites
 
@@ -1270,6 +1284,6 @@ These capabilities are currently handled by the agent's native bash layer. They 
 16. Progress notification test: async op with ProgressToken sends updates
 17. Error handling: invalid token → proper MCP error response
 18. Graceful shutdown: SIGINT during operation → clean exit
-19. Deploy SSH mode: `zerops_deploy {sourceService: "appdev", targetServiceId: "..."}` triggers push
+19. Deploy SSH mode: `zerops_deploy {sourceService: "appdev", targetService: "appstage"}` triggers push
 20. `zcp init` — generates CLAUDE.md, MCP config, hooks, SSH config. Idempotent on re-run.
 21. Tool count: all tools from §5.1 registered in MCP server (verify via `tools/list`)
