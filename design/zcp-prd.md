@@ -103,7 +103,7 @@ The output of this PRD is a document for autonomous LLM agents to implement in T
 - BM25 knowledge search with embedded docs
 - Progress notifications for async operations (MCP ProgressToken protocol)
 - Deploy tool with SSH mode (primary) and local fallback
-- Token from `ZEROPS_ZCP_API_KEY` service env var (primary), with optional zcli fallback for local dev
+- Token from `ZCP_API_KEY` service env var (primary), with optional zcli fallback for local dev
 - Ultra-minimal MCP init message (~40-50 tokens) — pure relevance signal pointing to `zerops_context`
 - `zcp init` subcommand — bootstraps CLAUDE.md, MCP config, hooks, SSH config
 - In-container CLAUDE.md (user-replaceable) recommends `zerops_workflow` call before infrastructure work
@@ -263,11 +263,11 @@ cmd/zcp/main.go
 
 ### 3.1 Token Resolution (priority order)
 
-1. **`ZEROPS_ZCP_API_KEY` env var** — Primary. Injected as service environment variable in Zerops. Always available in production deployment.
-2. **zcli fallback** — Development convenience only. If ZEROPS_ZCP_API_KEY not set (local development), read `~/.config/zerops/cli.data` (Linux) or `~/Library/Application Support/zerops/cli.data` (macOS). Extract `.Token`, `.RegionData.address`, and `.ScopeProjectId` from JSON.
-3. WHEN neither available → fatal error: "ZEROPS_ZCP_API_KEY not set and zcli not logged in"
+1. **`ZCP_API_KEY` env var** — Primary. Injected as service environment variable in Zerops. Always available in production deployment.
+2. **zcli fallback** — Development convenience only. If ZCP_API_KEY not set (local development), read `~/.config/zerops/cli.data` (Linux) or `~/Library/Application Support/zerops/cli.data` (macOS). Extract `.Token`, `.RegionData.address`, and `.ScopeProjectId` from JSON.
+3. WHEN neither available → fatal error: "ZCP_API_KEY not set and zcli not logged in"
 
-**Production (inside Zerops)**: Path 1 always. `ZEROPS_ZCP_API_KEY` is set as a service env var on the ZCP service. No filesystem fallback needed.
+**Production (inside Zerops)**: Path 1 always. `ZCP_API_KEY` is set as a service env var on the ZCP service. No filesystem fallback needed.
 
 **Local development**: Path 2 as convenience. Developer runs ZCP binary on their machine for testing, zcli provides the token.
 
@@ -293,37 +293,39 @@ cmd/zcp/main.go
 
 ### 3.2 Startup Sequence
 
-**ZEROPS_ZCP_API_KEY path (production — primary):**
+**ZCP_API_KEY path (production — primary):**
 ```
-1. Read ZEROPS_ZCP_API_KEY env var
-2. Resolve API host: ZEROPS_API_HOST env var (default: "api.app-prg1.zerops.io")
-3. Create ZeropsClient(token, apiHost)
-4. GetUserInfo(ctx) → clientID
+1. Read ZCP_API_KEY env var
+2. Resolve API host: ZCP_API_HOST env var (default: "api.app-prg1.zerops.io")
+3. Resolve region: ZCP_REGION env var (default: "prg1")
+4. Create ZeropsClient(token, apiHost)
+5. GetUserInfo(ctx) → clientID
    FAIL → fatal: "Authentication failed: invalid or expired token"
-5. ListProjects(ctx, clientID) → []Project
+6. ListProjects(ctx, clientID) → []Project
    0 projects → fatal: "Token has no project access"
    2+ projects → fatal: "Token accesses N projects; use project-scoped token"
    1 project → use it
-6. Cache: auth.Info{Token, APIHost, ClientID, ProjectID, ProjectName}
-7. Create MCP server with auth context injected into ops layer
-8. Run STDIO transport
+7. Cache: auth.Info{Token, APIHost, Region, ClientID, ProjectID, ProjectName}
+8. Create MCP server with auth context injected into ops layer
+9. Run STDIO transport
 ```
 
 **zcli fallback path (local development only):**
 ```
-1. Read cli.data → Token, RegionData.address, ScopeProjectId
-2. Resolve API host: RegionData.address from cli.data
-3. Create ZeropsClient(token, apiHost)
-4. GetUserInfo(ctx) → clientID
+1. Read cli.data → Token, RegionData.address, RegionData.name, ScopeProjectId
+2. Resolve API host: ZCP_API_HOST env var → cli.data RegionData.address → default
+3. Resolve region: ZCP_REGION env var → cli.data RegionData.name → default
+4. Create ZeropsClient(token, apiHost)
+5. GetUserInfo(ctx) → clientID
    FAIL → fatal: "Authentication failed: invalid or expired token"
-5a. IF ScopeProjectId is set:
+6a. IF ScopeProjectId is set:
     GetProject(ctx, ScopeProjectId) → validate it exists and is accessible
     FAIL → fatal: "Scoped project not found or inaccessible; run 'zcli scope project'"
-5b. IF ScopeProjectId is null:
-    ListProjects(ctx, clientID) → same logic as ZEROPS_ZCP_API_KEY path (must be exactly 1)
-6. Cache: auth.Info{Token, APIHost, ClientID, ProjectID, ProjectName}
-7. Create MCP server with auth context injected into ops layer
-8. Run STDIO transport
+6b. IF ScopeProjectId is null:
+    ListProjects(ctx, clientID) → same logic as ZCP_API_KEY path (must be exactly 1)
+7. Cache: auth.Info{Token, APIHost, Region, ClientID, ProjectID, ProjectName}
+8. Create MCP server with auth context injected into ops layer
+9. Run STDIO transport
 ```
 
 ### 3.3 Auth Info (in-memory, no file persistence)
@@ -332,6 +334,7 @@ cmd/zcp/main.go
 type Info struct {
     Token       string
     APIHost     string
+    Region      string  // e.g. "prg1" — needed for zcli login --zeropsRegion in SSH deploy
     ClientID    string
     ProjectID   string
     ProjectName string
@@ -339,6 +342,8 @@ type Info struct {
 ```
 
 **Naming**: Use `auth.Info` (not `auth.Context`) to avoid collision with `context.Context`. Source zaia uses `auth.Credentials` — `auth.Info` is a cleaner fit for ZCP since it includes project metadata beyond just credentials.
+
+**No auto-mapping between API host and region.** They are independent values — API hosts can be any URL (e.g. `gb-devel.zerops.dev`, `api.app-prg1.zerops.io`), no pattern to parse. Both have separate resolution chains (see §9.1). If `Region` is empty at deploy time, the deploy tool skips zcli's `--zeropsRegion` flag.
 
 ---
 
@@ -659,7 +664,8 @@ zerops_deploy (SSH mode):
 ```
 1. Validate sourceService exists (resolve via discover)
 2. SSH into sourceService
-3. Authenticate zcli: run `zcli login $ZEROPS_ZCP_API_KEY --zeropsRegion $region` if needed
+3. Authenticate zcli: run `zcli login $ZCP_API_KEY [--zeropsRegion $region]` if needed
+   ($region = auth.Info.Region from §3.2. If empty, omit --zeropsRegion flag.)
 4. Run: zcli push $targetServiceId [--setup=$setup] [--workingDir=$workingDir]
 5. zcli push uploads code + triggers build pipeline, then returns
 6. Return: {status, sourceService, targetServiceId, message}
@@ -668,7 +674,7 @@ zerops_deploy (SSH mode):
 
 **SSH execution**: Uses `exec.CommandContext` to run `ssh $sourceService "cd $workingDir && zcli push ..."`. The ZCP service has SSH key access to all sibling services via Zerops VXLAN networking — no password or key configuration needed.
 
-**Auth sharing**: ZCP passes its own `ZEROPS_ZCP_API_KEY` to zcli inside the SSH session. Unlike the local mode where zcli has its own stored token, in SSH mode ZCP explicitly authenticates zcli with the token it already has.
+**Auth sharing**: ZCP passes its own `ZCP_API_KEY` to zcli inside the SSH session. Unlike the local mode where zcli has its own stored token, in SSH mode ZCP explicitly authenticates zcli with the token it already has.
 
 **Build monitoring**: After `zcli push` returns, the build/deploy pipeline runs asynchronously on Zerops. The agent uses `zerops_events` (with service filter) or `zerops_process` to track completion. The existing progress notification system (section 6) can be adapted — although `zcli push` does not return a process ID, the events API shows build status per service.
 
@@ -709,9 +715,22 @@ ELSE → error: "Provide sourceService (SSH deploy) or workingDir + serviceId (l
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ZEROPS_ZCP_API_KEY` | Yes* | — | Zerops PAT. Set as service env var in Zerops. *Not required if zcli fallback is available (local dev). |
-| `ZEROPS_API_HOST` | No | `api.app-prg1.zerops.io` | API endpoint. Override for non-default regions. |
+| `ZCP_API_KEY` | Yes* | — | Zerops PAT. Set as service env var in Zerops. *Not required if zcli fallback is available (local dev). |
+| `ZCP_API_HOST` | No | `api.app-prg1.zerops.io` | API endpoint URL. Any valid host — e.g. `api.app-prg1.zerops.io`, `gb-devel.zerops.dev`. No pattern assumed. |
+| `ZCP_REGION` | No | `prg1` | Region label passed to `zcli login --zeropsRegion` in SSH deploy. Independent of `ZCP_API_HOST` — no auto-mapping between them. |
 | `ZCP_LOG_LEVEL` | No | `warn` | Stderr log level (debug, info, warn, error) |
+
+**Resolution priority (API host and region are independent):**
+
+API host:
+1. `ZCP_API_HOST` env var
+2. zcli fallback → `RegionData.address` from `cli.data`
+3. Default → `api.app-prg1.zerops.io`
+
+Region (only used for SSH deploy → `zcli login --zeropsRegion`):
+1. `ZCP_REGION` env var
+2. zcli fallback → `RegionData.name` from `cli.data`
+3. Default → `prg1`
 
 ### 9.2 Deployment Inside Zerops
 
@@ -726,7 +745,7 @@ services:
     verticalAutoscaling:
       minRam: 2
     envSecrets:
-      ZEROPS_ZCP_API_KEY: <project-scoped-PAT>
+      ZCP_API_KEY: <project-scoped-PAT>
 ```
 
 **ZCP binary delivery**: The `zerops.yml` build step compiles zcli from source and downloads the ZCP binary. The `initCommands` run `zcp init` which bootstraps the entire environment in a single idempotent step.
@@ -751,7 +770,7 @@ initCommands:
 }
 ```
 
-No token in the MCP config — ZCP reads `ZEROPS_ZCP_API_KEY` from the service environment. zcli is also pre-authenticated with the same token via `zcli login` in initCommands.
+No token in the MCP config — ZCP reads `ZCP_API_KEY` from the service environment. zcli is also pre-authenticated with the same token via `zcli login` in initCommands.
 
 **User flow**: Import the ZCP service → open subdomain URL → VS Code loads in browser → Claude Code terminal is ready with MCP server connected → user starts working.
 
@@ -782,14 +801,14 @@ For developing and testing ZCP outside Zerops:
     "zerops": {
       "command": "/path/to/zcp",
       "env": {
-        "ZEROPS_ZCP_API_KEY": "<your-PAT>"
+        "ZCP_API_KEY": "<your-PAT>"
       }
     }
   }
 }
 ```
 
-Or without `ZEROPS_ZCP_API_KEY`, relying on zcli fallback (requires prior `zcli login`).
+Or without `ZCP_API_KEY`, relying on zcli fallback (requires prior `zcli login`).
 
 ### 9.4 `zcp init` Subcommand
 
@@ -920,7 +939,7 @@ internal/platform/apitest/          → API test harness (shared across packages
 package platform_test
 
 func TestAPI_GetUserInfo(t *testing.T) {
-    h := apitest.New(t)  // Skips if ZEROPS_ZCP_API_KEY not set
+    h := apitest.New(t)  // Skips if ZCP_API_KEY not set
     client := h.Client() // Real ZeropsClient
 
     info, err := client.GetUserInfo(h.Ctx())
@@ -931,9 +950,9 @@ func TestAPI_GetUserInfo(t *testing.T) {
 ```
 
 **Harness behavior:**
-- Reads `ZEROPS_ZCP_API_KEY` from env (same as production auth path)
-- `ZEROPS_API_HOST` override for non-default regions
-- **Skips** (not fails) when `ZEROPS_ZCP_API_KEY` is not set — developers without API access can still run mock tests
+- Reads `ZCP_API_KEY` from env (same as production auth path)
+- `ZCP_API_HOST` override for non-default regions
+- **Skips** (not fails) when `ZCP_API_KEY` is not set — developers without API access can still run mock tests
 - Provides `h.Client()` (real `ZeropsClient`), `h.Ctx()` (with timeout), `h.ProjectID()`
 - Provides `h.Cleanup(func())` for deferred resource deletion
 - Logs all API calls for debugging failed tests
@@ -1177,10 +1196,10 @@ Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming. API tests: `TestAPI_{
 ### Test Prerequisites
 
 For API and E2E tests to run, the test environment needs:
-- `ZEROPS_ZCP_API_KEY` env var with a valid project-scoped PAT
+- `ZCP_API_KEY` env var with a valid project-scoped PAT
 - The target project must have at least one existing service (for read-only tests)
-- Network access to Zerops API (`api.app-prg1.zerops.io` or `ZEROPS_API_HOST` override)
-- Tests **skip** (not fail) when `ZEROPS_ZCP_API_KEY` is not set — developers without API access can still run mock tests via `go test ./... -short`
+- Network access to Zerops API (`api.app-prg1.zerops.io` or `ZCP_API_HOST` override)
+- Tests **skip** (not fail) when `ZCP_API_KEY` is not set — developers without API access can still run mock tests via `go test ./... -short`
 
 ---
 
@@ -1228,20 +1247,20 @@ These capabilities are currently handled by the agent's native bash layer. They 
 2. `go test ./... -count=1 -short` — All mock tests pass
 3. `golangci-lint run ./...` — No lint errors
 
-### 16.2 API Contract Tests (requires ZEROPS_ZCP_API_KEY)
+### 16.2 API Contract Tests (requires ZCP_API_KEY)
 
 4. `go test ./internal/platform/... -tags api -v` — All Client method contracts verified against real API
 5. `go test ./internal/auth/... -tags api -v` — Auth flow verified (token validation, project discovery)
 6. `go test ./internal/ops/... -tags api -v` — All ops functions produce correct results from real API data
 7. `go test ./internal/tools/... -tags api -v` — Full MCP→tool→ops→platform→API chain verified for all tools
 
-### 16.3 E2E Lifecycle (requires ZEROPS_ZCP_API_KEY + creates real resources)
+### 16.3 E2E Lifecycle (requires ZCP_API_KEY + creates real resources)
 
 8. `go test ./e2e/ -tags e2e -v` — Full lifecycle passes (import→discover→manage→env→subdomain→logs→events→delete)
 
 ### 16.4 Manual Verification
 
-9. `ZEROPS_ZCP_API_KEY=<token> ./bin/zcp` — Server starts, responds to MCP initialize
+9. `ZCP_API_KEY=<token> ./bin/zcp` — Server starts, responds to MCP initialize
 10. MCP init message: ~40-50 tokens, pure relevance signal, mentions `zerops_context` only
 11. MCP tool call: `zerops_context` returns platform knowledge + service catalog (~800-1200 tokens)
 12. MCP tool call: `zerops_workflow` returns workflow catalog; `zerops_workflow {workflow: "bootstrap"}` returns specific guidance
