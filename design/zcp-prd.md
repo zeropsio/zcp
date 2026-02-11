@@ -8,7 +8,84 @@ Currently the Zerops MCP integration uses two separate binaries:
 
 This architecture has friction: two binaries to install/deploy, subprocess overhead, JSON serialization/deserialization between processes, and complexity in error propagation.
 
-**ZCP-MCP** merges both into a single Go binary MCP server that calls the Zerops API directly. It is local-only, connects via STDIO, and is project-scoped. The output of this PRD is a document for autonomous LLM agents to implement in TDD fashion.
+**ZCP-MCP** merges both into a single Go binary MCP server that calls the Zerops API directly.
+
+It runs inside a **dedicated `zcp` service** (`type: zcp@1`) within the Zerops project it manages. This service comes pre-installed with:
+- **code-server** (VS Code in browser) as the user-facing interface
+- **Claude Code** (or another LLM code tool) pre-configured in the terminal
+- **zcli** built from source and pre-authenticated
+- **SSH access** to all sibling services on the VXLAN private network
+
+The ZCP MCP binary is downloaded during `initCommands` and pre-configured as Claude Code's MCP server. The user opens the service's subdomain URL, gets VS Code with Claude Code already running and connected to the MCP server.
+
+### Execution Model
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              ZEROPS PROJECT                                      │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐      │
+│   │   appdev    │    │  appstage   │    │ postgresql  │    │   valkey    │      │
+│   │  (runtime)  │    │  (runtime)  │    │  (managed)  │    │  (managed)  │      │
+│   │             │    │             │    │             │    │             │      │
+│   │  SSH ✓      │    │  SSH ✓      │    │  NO SSH     │    │  NO SSH     │      │
+│   │  Mount ✓    │    │  Mount ✓    │    │  psql only  │    │  redis-cli  │      │
+│   └──────┬──────┘    └──────┬──────┘    └──────┬──────┘    └──────┬──────┘      │
+│          └──────────────────┴──────────────────┴──────────────────┘              │
+│                              VXLAN Private Network                               │
+│                                     │                                            │
+│   ┌─────────────────────────────────┴──────────────────────────────────────┐     │
+│   │                    ZCP SERVICE  (type: zcp@1)                           │     │
+│   │                                                                         │     │
+│   │   ┌─────────────────────────────────────────────────────────────┐       │     │
+│   │   │  code-server (VS Code in browser)  :8080                    │       │     │
+│   │   │                                                              │       │     │
+│   │   │   ┌─────────────────────┐    ┌────────────────────────────┐ │       │     │
+│   │   │   │  Claude Code        │───►│  ZCP binary (MCP, STDIO)  │ │       │     │
+│   │   │   │  (terminal)         │◄───│                            │ │       │     │
+│   │   │   │                     │    │  • 12 MCP tools            │ │       │     │
+│   │   │   │  Native bash:       │    │  • BM25 knowledge search   │ │       │     │
+│   │   │   │  • SSH to services  │    │  • Progress notifications  │ │       │     │
+│   │   │   │  • Mount FS         │    │  • Deploy via SSH + zcli   │ │       │     │
+│   │   │   │  • psql, redis-cli  │    └────────────────────────────┘ │       │     │
+│   │   │   │  • curl, test       │                                    │       │     │
+│   │   │   └─────────────────────┘                                    │       │     │
+│   │   └─────────────────────────────────────────────────────────────┘       │     │
+│   │                                                                         │     │
+│   │   Pre-installed: zcli, jq, yq, psql, redis-cli, SSH keys               │     │
+│   │   CLAUDE.md: workflow guidance (downloaded at init)                      │     │
+│   └─────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                   │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key insight**: The agent operates in the same environment where production runs. What it sees is what production uses — same network, same DNS resolution, same env vars, same infrastructure. The user interacts through a browser — no local setup required.
+
+### Three-Layer Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Workflow Layer  (MCP instructions + CLAUDE.md)                              │
+│    Phases, guidance, dev/stage patterns, bootstrap, verification             │
+│    The LLM reasons about workflow; not hardcoded in Go                       │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  MCP Tool Layer  (12 tools — this PRD)                                       │
+│    API operations: discover, manage, env, logs, deploy, import,              │
+│    validate, knowledge, process, delete, subdomain, events                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  Agent Bash Layer  (native SSH/mount/tools)                                  │
+│    Container exec, mount filesystems, runtime env vars,                      │
+│    connectivity testing, live log tailing, build commands                     │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  Platform  (Zerops API + VXLAN network)                                      │
+│    API for service management, private network for direct access             │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+This PRD defines **Layer 2** (MCP tools). The Workflow Layer lives in `instructions.go` and CLAUDE.md. The Agent Bash Layer is the LLM agent's native capability (SSH, mount, psql, etc.).
+
+The output of this PRD is a document for autonomous LLM agents to implement in TDD fashion.
 
 ---
 
@@ -20,11 +97,16 @@ This architecture has friction: two binaries to install/deploy, subprocess overh
 - 12 MCP tools (same as current zaia-mcp)
 - BM25 knowledge search with embedded docs
 - Progress notifications for async operations (MCP ProgressToken protocol)
-- Deploy tool as zcli subprocess wrapper
-- Token from env var with optional zcli fallback
+- Deploy tool with SSH mode (primary) and local fallback
+- Token from `ZEROPS_ZCP_API_KEY` service env var (primary), with optional zcli fallback for local dev
+- MCP instructions encoding workflow guidance, dev/stage patterns, and platform context
 
 ### Out of Scope (v2+)
 - StreamableHTTP transport (architecture is transport-agnostic, ready for later)
+- `zerops_exec` tool for structured SSH command execution via MCP
+- `zerops_mount` tool for filesystem mount management via MCP
+- `zerops_verify` tool for structured endpoint verification
+- `zerops_recipes` tool for live recipe/template search from Zerops API
 
 ---
 
@@ -37,17 +119,23 @@ cmd/zcp/main.go                → Entrypoint: env parsing, server creation, sig
 internal/
   server/
     server.go                  → MCP server setup, tool + resource registration
-    instructions.go            → Embedded LLM instructions (~250 tokens). MUST list all 12 ZCP tool names:
-                                  zerops_discover, zerops_manage, zerops_env, zerops_logs, zerops_deploy,
-                                  zerops_import, zerops_validate, zerops_knowledge, zerops_process,
-                                  zerops_delete, zerops_subdomain, zerops_events.
+    instructions.go            → Embedded LLM instructions. MUST include:
+                                  1. All 12 tool names and their purpose
+                                  2. Platform context (Zerops PaaS, service types, networking rules)
+                                  3. Execution context (ZCP runs inside the project, VXLAN network)
+                                  4. Dev/stage service pair pattern
+                                  5. Deploy-from-dev pattern (SSH + zcli push)
+                                  6. Service access patterns (SSH for runtime, client tools for managed)
+                                  7. Defaults (postgresql@16, valkey@7.2, NON_HA, SHARED CPU, etc.)
+                                  8. Critical rules (http:// internal, ports 10-65435, mode required for DB)
                                   Do NOT copy zaia-mcp's "configure" reference — ZCP has separate tools.
+                                  Target: ~500-800 tokens. Concise but sufficient for correct orchestration.
   tools/                       → MCP tool handlers (thin wrappers over ops)
     discover.go                → zerops_discover
     manage.go                  → zerops_manage
     env.go                     → zerops_env
     logs.go                    → zerops_logs
-    deploy.go                  → zerops_deploy (zcli subprocess)
+    deploy.go                  → zerops_deploy (SSH mode primary, local fallback)
     import.go                  → zerops_import
     validate.go                → zerops_validate
     knowledge.go               → zerops_knowledge
@@ -62,6 +150,8 @@ internal/
     helpers.go                 → resolveServiceID, hostname helpers, time parsing
     progress.go                → Reusable PollProcess(ctx, processID, onProgress callback) helper.
                                   Ops stays MCP-agnostic — tool handler passes notification callback.
+    deploy.go                  → Deploy logic: SSH exec into source service, run zcli push.
+                                  Local-mode fallback for development outside Zerops.
   platform/                    → Zerops API client abstraction
     client.go                  → Client interface (24 methods) + LogFetcher interface
     zerops.go                  → ZeropsClient implementation (zerops-go SDK)
@@ -70,7 +160,8 @@ internal/
     logfetcher.go              → ZeropsLogFetcher (HTTP-based log backend)
     mock.go                    → Mock + MockLogFetcher (builder pattern, thread-safe)
   auth/
-    auth.go                    → Token resolution (env var → zcli fallback), validate, discover project
+    auth.go                    → Token resolution (env var primary, zcli fallback for local dev),
+                                  validate, discover project
   knowledge/                   → BM25 search engine
     engine.go                  → Store, Search(), List(), Get()
     documents.go               → Document type, go:embed, frontmatter parsing
@@ -111,10 +202,25 @@ internal/server (MCP server setup)
 | Aspect | zaia + zaia-mcp (current) | zcp (new) |
 |--------|--------------------------|-----------|
 | Binaries | 2 (zaia CLI + zaia-mcp server) | 1 (zcp MCP server) |
+| Execution context | Local developer machine | Service inside Zerops project |
 | API access | zaia-mcp → subprocess → zaia → zerops-go SDK | zcp → zerops-go SDK directly |
-| Auth storage | File-based (zaia.data), login command | In-memory, env var token, no login cmd |
+| Network position | Remote (over internet) | Local (VXLAN private network) |
+| Auth storage | File-based (zaia.data), login command | In-memory, service env var, no login cmd |
 | CLI framework | Cobra (18 commands) | None (pure MCP server) |
+| Deploy path | Local `zcli push` from developer's filesystem | SSH into dev container → `zcli push` to stage |
 | Error flow | SDK error → zaia JSON → parse → MCP result | SDK error → PlatformError → MCP result |
+| Service access | API only | API + SSH + mount + client tools (via agent bash) |
+
+### 2.4 What the Agent Can Do (by layer)
+
+| Layer | Capability | Example |
+|-------|-----------|---------|
+| **MCP tools** | Zerops API operations | `zerops_discover`, `zerops_import`, `zerops_deploy` |
+| **Agent bash** | SSH exec on runtime services | `ssh appdev "go build && go test"` |
+| **Agent bash** | Filesystem mount (future: MCP tool) | Mount service FS for code editing |
+| **Agent bash** | Managed service clients | `psql "$db_connectionString"`, `redis-cli -h valkey` |
+| **Agent bash** | Network connectivity | `curl http://appdev:8080/health` |
+| **Agent bash** | Live log tailing | `ssh appdev "tail -f /tmp/app.log"` |
 
 ---
 
@@ -122,11 +228,15 @@ internal/server (MCP server setup)
 
 ### 3.1 Token Resolution (priority order)
 
-1. **`ZEROPS_TOKEN` env var** — Primary. Set in MCP server config.
-2. **zcli fallback** — If ZEROPS_TOKEN not set, read `~/Library/Application Support/zerops/cli.data` (macOS) or `~/.config/zerops/cli.data` (Linux). Extract `.Token`, `.RegionData.address`, and `.ScopeProjectId` from JSON.
-3. WHEN neither available → fatal error: "ZEROPS_TOKEN not set and zcli not logged in"
+1. **`ZEROPS_ZCP_API_KEY` env var** — Primary. Injected as service environment variable in Zerops. Always available in production deployment.
+2. **zcli fallback** — Development convenience only. If ZEROPS_ZCP_API_KEY not set (local development), read `~/.config/zerops/cli.data` (Linux) or `~/Library/Application Support/zerops/cli.data` (macOS). Extract `.Token`, `.RegionData.address`, and `.ScopeProjectId` from JSON.
+3. WHEN neither available → fatal error: "ZEROPS_ZCP_API_KEY not set and zcli not logged in"
 
-**zcli cli.data format** (discovered at `/Users/macbook/Library/Application Support/zerops/cli.data`):
+**Production (inside Zerops)**: Path 1 always. `ZEROPS_ZCP_API_KEY` is set as a service env var on the ZCP service. No filesystem fallback needed.
+
+**Local development**: Path 2 as convenience. Developer runs ZCP binary on their machine for testing, zcli provides the token.
+
+**zcli cli.data format** (reference for fallback path):
 ```json
 {
   "Token": "<PAT>",
@@ -144,14 +254,13 @@ internal/server (MCP server setup)
 **Notes**:
 - `ScopeProjectId` is JSON `null` when unset (not empty string). Go's `json.Unmarshal` into `*string` will produce `nil` for `null` — use pointer type.
 - `ScopeProjectId` is set by `zcli scope project` command. When set, ZCP uses it directly instead of project discovery via ListProjects.
-- `ProjectVpnKeyRegistry`, `isDefault`, `guiAddress` are additional fields in cli.data. Go's `json.Unmarshal` silently ignores unknown fields (OK).
 - ZCP only reads `Token`, `RegionData.address`, and `ScopeProjectId`.
 
 ### 3.2 Startup Sequence
 
-**ZEROPS_TOKEN path:**
+**ZEROPS_ZCP_API_KEY path (production — primary):**
 ```
-1. Read ZEROPS_TOKEN env var
+1. Read ZEROPS_ZCP_API_KEY env var
 2. Resolve API host: ZEROPS_API_HOST env var (default: "api.app-prg1.zerops.io")
 3. Create ZeropsClient(token, apiHost)
 4. GetUserInfo(ctx) → clientID
@@ -165,7 +274,7 @@ internal/server (MCP server setup)
 8. Run STDIO transport
 ```
 
-**zcli fallback path:**
+**zcli fallback path (local development only):**
 ```
 1. Read cli.data → Token, RegionData.address, ScopeProjectId
 2. Resolve API host: RegionData.address from cli.data
@@ -176,7 +285,7 @@ internal/server (MCP server setup)
     GetProject(ctx, ScopeProjectId) → validate it exists and is accessible
     FAIL → fatal: "Scoped project not found or inaccessible; run 'zcli scope project'"
 5b. IF ScopeProjectId is null:
-    ListProjects(ctx, clientID) → same logic as ZEROPS_TOKEN path (must be exactly 1)
+    ListProjects(ctx, clientID) → same logic as ZEROPS_ZCP_API_KEY path (must be exactly 1)
 6. Cache: auth.Info{Token, APIHost, ClientID, ProjectID, ProjectName}
 7. Create MCP server with auth context injected into ops layer
 8. Run STDIO transport
@@ -195,17 +304,6 @@ type Info struct {
 ```
 
 **Naming**: Use `auth.Info` (not `auth.Context`) to avoid collision with `context.Context`. Source zaia uses `auth.Credentials` — `auth.Info` is a cleaner fit for ZCP since it includes project metadata beyond just credentials.
-
-### 3.4 Project-Scoped Filtering (API Bug Workaround)
-
-The Zerops API has a known bug where scoped tokens return data from all projects in search endpoints (GET on individual entities correctly returns 403). This affects `service-stack/search`, `project/search`, and process search endpoints.
-
-**Workaround:** Filter by `auth.Info.ProjectID` client-side in the **ops/ layer** (not platform/) using a shared helper in `ops/helpers.go`:
-- `ops/discover.go` — filter ListServices results where `svc.ProjectID == projectID`
-- `ops/events.go` — filter SearchProcesses where `p.ProjectId == projectID`
-- `ops/events.go` — filter SearchAppVersions where `av.ProjectId == projectID`
-
-This filter is designed to be easy to remove per-endpoint once the API is fixed. The bug will be fixed server-side — this is a temporary workaround. All filter call sites MUST include the comment `// API-BUG-WORKAROUND: remove when search endpoints are project-scoped` to enable grep-based removal.
 
 ---
 
@@ -253,6 +351,8 @@ Port from: `../zaia/internal/platform/client.go` (types section, lines 70-253).
 Core: `UserInfo`, `Project`, `ServiceStack`, `ServiceTypeInfo`, `Port`, `CustomAutoscaling`, `AutoscalingParams`, `Process`, `ServiceStackRef`, `EnvVar`, `ImportResult`, `ImportedServiceStack`, `APIError`, `LogAccess`, `LogFetchParams`, `LogEntry`, `ProcessEvent`, `AppVersionEvent`, `BuildInfo`, `UserRef`
 
 **Note**: `Process.Status` carries **normalized** values after mapping in zerops.go: `DONE→FINISHED`, `CANCELLED→CANCELED`. Source `client.go` comments document raw API statuses, but ZCP consumers always see normalized values. `Process.FailReason` (`*string`) contains the failure reason when status is FAILED — must be exposed in tool responses.
+
+**Service status**: `ServiceStack.Status` from the zerops-go SDK includes intermediate states that matter for workflow orchestration. Key statuses: `CREATING`, `READY_TO_DEPLOY` (imported but never deployed — critical for bootstrap), `BUILDING`, `RUNNING`, `STOPPED`. During implementation, verify the full enum returned by the SDK. If `READY_TO_DEPLOY` is not available, document the gap.
 
 ### 4.3 ZeropsClient Implementation
 
@@ -310,7 +410,7 @@ Thread-safe with `sync.RWMutex`. Compile-time interface check.
 | `zerops_manage` | Async | action={start,stop,restart,scale} + serviceHostname. Scale accepts CPU/RAM/disk params (see parameter mapping below). |
 | `zerops_env` | Mixed | action={get,set,delete}. Service-level or project-level. Variables in KEY=value format. |
 | `zerops_logs` | Sync | 2-step: GetProjectLog → LogFetcher. Severity, since, limit, search, buildId filters. |
-| `zerops_deploy` | Sync (blocking) | zcli subprocess wrapper. workingDir + serviceId params. Blocks until zcli exits — no process ID to poll. |
+| `zerops_deploy` | Mixed | SSH mode (primary): SSH into sourceService, run zcli push to target. Local mode (fallback): zcli subprocess. See section 8. |
 | `zerops_import` | Mixed | Inline content or filePath. dryRun for validation (sync), real import (async). |
 | `zerops_validate` | Sync | Offline YAML validation. zerops.yml or import.yml. No API needed. |
 | `zerops_knowledge` | Sync | BM25 search. Query expansion. Full top-result content. Suggestions. |
@@ -403,43 +503,121 @@ Port from: `../zaia/internal/knowledge/`
 
 ---
 
-## 8. Deploy Tool (zcli Wrapper)
+## 8. Deploy Tool
 
-### 8.1 Approach
+### 8.1 Architecture
 
-Shell out to `zcli push` binary (same as current zaia-mcp). The zcli binary is a Node.js CLI (`@zerops/zcli@v1.0.58`).
+In the target deployment, code lives ON runtime service containers (via mounted filesystems). The ZCP service has SSH access to all sibling runtime services on the VXLAN private network. Deploy means: SSH into the source service, run `zcli push` from there to the target service.
 
-### 8.2 Auth Sharing
+For local development (ZCP running on developer's machine), a local `zcli push` fallback is available.
 
-zcli stores its token at `~/Library/Application Support/zerops/cli.data`. When zcp starts:
-- If using zcli fallback auth, the same token is already in zcli
-- If using ZEROPS_TOKEN env var, zcli may have a different token
+### 8.2 SSH Mode (Primary — Production)
 
-For deploy, zcli uses its OWN token from cli.data. zcli does NOT support a `--zeropsToken` flag. This means:
-- WHEN user logged into zcli → deploy works without extra config
-- WHEN user only has ZEROPS_TOKEN → return clear error: "Deploy requires zcli login. Run 'zcli login' first."
+**Parameters:**
+```
+zerops_deploy (SSH mode):
+  sourceService: string     # hostname of source container (SSH target, e.g. "appdev")
+  targetServiceId: string   # service ID to push to (e.g. stage service ID)
+  setup: string             # zerops.yml setup name ("dev" or "prod"), optional
+  workingDir: string        # path inside container (default: /var/www)
+```
 
-**Auth detection approach**: Before invoking `zcli push`, check if `cli.data` file exists and contains a non-empty `Token` field. If file is missing or token is empty → return the clear error above. This is faster than letting `zcli push` fail and parsing the error, and avoids subprocess overhead for a predictable failure.
+**Execution flow:**
+```
+1. Validate sourceService exists (resolve via discover)
+2. SSH into sourceService
+3. Authenticate zcli: run `zcli login $ZEROPS_ZCP_API_KEY --zeropsRegion $region` if needed
+4. Run: zcli push $targetServiceId [--setup=$setup] [--workingDir=$workingDir]
+5. zcli push uploads code + triggers build pipeline, then returns
+6. Return: {status, sourceService, targetServiceId, message}
+7. Agent can poll build completion via zerops_events (service filter)
+```
 
-### 8.3 zcli Subprocess Pattern
+**SSH execution**: Uses `exec.CommandContext` to run `ssh $sourceService "cd $workingDir && zcli push ..."`. The ZCP service has SSH key access to all sibling services via Zerops VXLAN networking — no password or key configuration needed.
 
-Port from: `../zaia-mcp/internal/executor/executor.go`
+**Auth sharing**: ZCP passes its own `ZEROPS_ZCP_API_KEY` to zcli inside the SSH session. Unlike the local mode where zcli has its own stored token, in SSH mode ZCP explicitly authenticates zcli with the token it already has.
+
+**Build monitoring**: After `zcli push` returns, the build/deploy pipeline runs asynchronously on Zerops. The agent uses `zerops_events` (with service filter) or `zerops_process` to track completion. The existing progress notification system (section 6) can be adapted — although `zcli push` does not return a process ID, the events API shows build status per service.
+
+### 8.3 Local Mode (Fallback — Development)
+
+**Parameters:**
+```
+zerops_deploy (local mode):
+  workingDir: string        # local directory with zerops.yml
+  serviceId: string         # target service ID
+```
+
+Shell out to local `zcli push` binary. This is the development-time fallback when ZCP runs on the developer's machine (not inside Zerops).
+
+**Auth detection**: Before invoking local `zcli push`, check if `cli.data` file exists and contains a non-empty `Token` field. If file is missing or token is empty → return error: "Deploy requires zcli login. Run 'zcli login' first."
+
+**zcli subprocess pattern** (port from `../zaia-mcp/internal/executor/executor.go`):
 - `exec.CommandContext` with resolved PATH (handles nvm/homebrew paths)
 - Non-zero exit is NOT a Go error (zcli outputs JSON on stdout)
 - Context cancellation checked first
 - WHEN zcli not found → clear error with install instructions
 
+### 8.4 Mode Detection
+
+The deploy tool auto-detects which mode to use:
+
+```
+IF sourceService parameter is provided → SSH mode
+ELSE IF workingDir + serviceId provided → Local mode
+ELSE → error: "Provide sourceService (SSH deploy) or workingDir + serviceId (local deploy)"
+```
+
 ---
 
 ## 9. Configuration
 
+### 9.1 Environment Variables
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ZEROPS_TOKEN` | No* | — | Zerops PAT. *Falls back to zcli token if not set. |
-| `ZEROPS_API_HOST` | No | `api.app-prg1.zerops.io` | API endpoint. Auto-detected from zcli if using fallback. |
+| `ZEROPS_ZCP_API_KEY` | Yes* | — | Zerops PAT. Set as service env var in Zerops. *Not required if zcli fallback is available (local dev). |
+| `ZEROPS_API_HOST` | No | `api.app-prg1.zerops.io` | API endpoint. Override for non-default regions. |
 | `ZCP_LOG_LEVEL` | No | `warn` | Stderr log level (debug, info, warn, error) |
 
-### MCP Client Config (e.g., claude_desktop_config.json)
+### 9.2 Deployment Inside Zerops
+
+The ZCP service uses a dedicated Zerops service type `zcp@1` which comes pre-installed with code-server (VS Code), Claude Code, and tools (jq, yq, psql, redis-cli, SSH). The user imports this service into their project; Zerops handles the rest.
+
+**Service import:**
+```yaml
+services:
+  - hostname: zcp
+    type: zcp@1
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 2
+    envSecrets:
+      ZEROPS_ZCP_API_KEY: <project-scoped-PAT>
+```
+
+**ZCP binary delivery**: The `zerops.yml` build step compiles zcli from source. The `initCommands` download the ZCP MCP binary and CLAUDE.md (workflow guidance), configure SSH for passwordless access to sibling services, and set up the code-server + Claude Code environment.
+
+**MCP server config** (pre-configured in Claude Code settings inside the container):
+```json
+{
+  "mcpServers": {
+    "zerops": {
+      "command": "/usr/local/bin/zcp"
+    }
+  }
+}
+```
+
+No token in the MCP config — ZCP reads `ZEROPS_ZCP_API_KEY` from the service environment. zcli is also pre-authenticated with the same token via `zcli login` in initCommands.
+
+**User flow**: Import the ZCP service → open subdomain URL → VS Code loads in browser → Claude Code terminal is ready with MCP server connected → user starts working.
+
+**SSH pre-configuration**: initCommands set up `~/.ssh/config` with `StrictHostKeyChecking no` for all hosts on the VXLAN network. This enables passwordless SSH to all sibling runtime services (Zerops provides key-based access within the project).
+
+### 9.3 Local Development (optional)
+
+For developing and testing ZCP outside Zerops:
 
 ```json
 {
@@ -447,12 +625,14 @@ Port from: `../zaia-mcp/internal/executor/executor.go`
     "zerops": {
       "command": "/path/to/zcp",
       "env": {
-        "ZEROPS_TOKEN": "ya0_2DI.PMpvyEq9Jtp_qzL7l4TRyR-cX6qqxuYFTc_SQgnOaHl-tyRoAFOmPjCD-i"
+        "ZEROPS_ZCP_API_KEY": "<your-PAT>"
       }
     }
   }
 }
 ```
+
+Or without `ZEROPS_ZCP_API_KEY`, relying on zcli fallback (requires prior `zcli login`).
 
 ---
 
@@ -507,7 +687,14 @@ result, err := session.CallTool(ctx, &mcp.CallToolParams{
 // Assert on result.Content, result.IsError
 ```
 
-### 11.3 TDD per framework-plan.md
+### 11.3 Deploy Tool Testing
+
+SSH mode requires special test considerations:
+- **Unit tests**: Mock the SSH execution layer. Test parameter validation, mode detection, auth injection.
+- **Integration tests**: Use mock SSH server or stub the exec layer. Verify the complete flow without actual SSH.
+- **E2E tests**: Real SSH to a dev container in a test Zerops project. Requires `-tags e2e`.
+
+### 11.4 TDD per framework-plan.md
 
 Every implementation unit: RED (failing test) → GREEN (minimal impl) → REFACTOR.
 Test files reference design docs: `// Tests for: design/discover.md § Behavioral Contract`
@@ -517,12 +704,12 @@ Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming.
 
 ## 12. Non-Functional Requirements
 
-- **Timeouts**: API 30s, log fetch 30s, progress polling 10min, deploy (zcli) 5min
-- **Graceful shutdown**: SIGINT/SIGTERM → cancel context (aborts in-flight ops including PollProcess) → close STDIO transport → exit. Shutdown timeout: 5s hard deadline after signal. No drain phase needed — STDIO is not a listener, in-flight HTTP requests abort via context cancellation.
+- **Timeouts**: API 30s, log fetch 30s, progress polling 10min, deploy SSH 5min, deploy local 5min
+- **Graceful shutdown**: SIGINT/SIGTERM → cancel context (aborts in-flight ops including PollProcess and SSH sessions) → close STDIO transport → exit. Shutdown timeout: 5s hard deadline after signal. No drain phase needed — STDIO is not a listener, in-flight HTTP requests abort via context cancellation.
 - **Context propagation**: All layers pass ctx. Timeout is via `http.Client.Timeout` (30s), not per-call `context.WithTimeout`. Context cancellation from MCP transport works (client closes → ctx cancelled → in-flight HTTP aborts).
 - **Thread safety**: `ZeropsClient.clientID` via sync.Once. Knowledge Store via sync.Once. Tool handlers concurrent-safe.
 - **No retry policy in v1**: Neither zerops-go SDK nor zaia implement retries. Transient API failures (5xx, network blips) are not retried. Known limitation — consider adding retry with backoff in v2.
-- **Binary**: <30MB. `-ldflags "-s -w"`. UPX for Linux CI builds.
+- **Binary**: <30MB. `-ldflags "-s -w"`. Target platform: Linux amd64 (Zerops containers). Cross-compile for darwin during development.
 - **Module**: `github.com/zeropsio/zcp`, Go 1.24.0
 
 ---
@@ -555,12 +742,14 @@ Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming.
 ### Phase 3: MCP Layer
 20. `tools/` — 12 tool handlers + convert.go
 21. `server/server.go` — MCP server + registration
-22. `cmd/zcp/main.go` — Entrypoint
+22. `server/instructions.go` — Workflow guidance, platform context, tool catalog
+23. `cmd/zcp/main.go` — Entrypoint
 
 ### Phase 4: Streaming + Deploy
-23. `ops/progress.go` — Reusable PollProcess helper with callback (MCP-agnostic)
-24. `tools/deploy.go` — zcli subprocess
-25. Integration tests
+24. `ops/progress.go` — Reusable PollProcess helper with callback (MCP-agnostic)
+25. `ops/deploy.go` — Deploy logic (SSH mode + local fallback)
+26. `tools/deploy.go` — Deploy tool handler
+27. Integration tests
 
 Each phase follows TDD. Each unit = one RED-GREEN-REFACTOR cycle.
 
@@ -585,17 +774,36 @@ Each phase follows TDD. Each unit = one RED-GREEN-REFACTOR cycle.
 
 ---
 
-## 15. Verification
+## 15. Future Tools (v2+)
+
+These capabilities are currently handled by the agent's native bash layer. They are candidates for promotion to structured MCP tools when usage patterns are clear:
+
+| Tool | Purpose | Current Alternative |
+|------|---------|-------------------|
+| `zerops_exec` | Execute commands on service containers via SSH | Agent runs `ssh hostname "command"` |
+| `zerops_mount` | Mount/unmount service filesystems | Agent runs mount/SSHFS commands |
+| `zerops_verify` | Structured endpoint verification with evidence | Agent runs `curl` + manual checks |
+| `zerops_recipes` | Live recipe/template search from Zerops API | Knowledge base BM25 (static docs) |
+
+**Why not in v1**: The agent's bash layer handles these well enough. Promoting to MCP tools adds value when we need structured input/output, error handling, or cross-tool orchestration that bash doesn't provide cleanly. Evaluate after v1 based on actual usage patterns.
+
+**Architecture readiness**: The package structure (`ops/` + `tools/`) accommodates new tools without restructuring. Each new tool = one ops file + one tool handler + registration in server.go.
+
+---
+
+## 16. Verification
 
 After implementation, verify:
 
 1. `go build -o bin/zcp ./cmd/zcp` — Binary builds
 2. `go test ./... -count=1 -short` — All tests pass
 3. `golangci-lint run ./...` — No lint errors
-4. Manual: `ZEROPS_TOKEN=<token> ./bin/zcp` — Server starts, responds to MCP initialize
+4. Manual: `ZEROPS_ZCP_API_KEY=<token> ./bin/zcp` — Server starts, responds to MCP initialize
 5. MCP tool call: `zerops_discover` returns project + services
 6. MCP tool call: `zerops_knowledge {query: "postgresql"}` returns docs
 7. MCP tool call: `zerops_manage {action: "restart", serviceHostname: "api"}` returns process
 8. Progress notification test: async op with ProgressToken sends updates
 9. Error handling: invalid token → proper MCP error response
 10. Graceful shutdown: SIGINT during operation → clean exit
+11. Deploy SSH mode: `zerops_deploy {sourceService: "appdev", targetServiceId: "..."}` triggers push
+12. Instructions: MCP initialize response includes workflow guidance and platform context
