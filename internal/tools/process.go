@@ -27,11 +27,11 @@ func RegisterProcess(srv *mcp.Server, client platform.Client) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ProcessInput) (*mcp.CallToolResult, any, error) {
 		action := input.Action
 		if action == "" {
-			action = "status"
+			action = actionStatus
 		}
 
 		switch action {
-		case "status":
+		case actionStatus:
 			result, err := ops.GetProcessStatus(ctx, client, input.ProcessID)
 			if err != nil {
 				return convertError(err), nil, nil

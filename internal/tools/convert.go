@@ -9,6 +9,8 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+const actionStatus = "status"
+
 // convertError converts an error to a CallToolResult with IsError=true.
 // PlatformErrors are serialized as structured JSON with code/error/suggestion.
 // Generic errors are returned as plain text.

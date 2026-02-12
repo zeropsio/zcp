@@ -176,17 +176,16 @@ func compactVersions(versions []string) string {
 	var prefix string
 	var suffixes []string
 	for i, v := range versions {
-		at := strings.Index(v, "@")
-		if at < 0 {
+		p, suffix, ok := strings.Cut(v, "@")
+		if !ok {
 			return strings.Join(versions, ", ")
 		}
-		p := v[:at]
 		if i == 0 {
 			prefix = p
 		} else if p != prefix {
 			return strings.Join(versions, ", ")
 		}
-		suffixes = append(suffixes, v[at+1:])
+		suffixes = append(suffixes, suffix)
 	}
 
 	return prefix + "@{" + strings.Join(suffixes, ",") + "}"

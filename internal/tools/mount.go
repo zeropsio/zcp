@@ -44,7 +44,7 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 				return convertError(err), nil, nil
 			}
 			return jsonResult(result), nil, nil
-		case "status":
+		case actionStatus:
 			result, err := ops.MountStatus(ctx, client, projectID, mounter, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,7 +29,8 @@ func (m *SystemMounter) IsMounted(ctx context.Context, path string) (bool, error
 		return true, nil
 	}
 	// Exit code 1 means not a mount point (expected).
-	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return false, nil
 	}
 	// mountpoint command not found — try fallback.
@@ -62,8 +64,7 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 		hostname, localPath,
 	)
 
-	//nolint:gosec // hostname validated by safeHostname regex above
-	err := exec.CommandContext(ctx, "sudo", "-E", "zsc", "unit", "create", unitName, sshfsCmd).Run()
+	err := exec.CommandContext(ctx, "sudo", "-E", "zsc", "unit", "create", unitName, sshfsCmd).Run() //nolint:gosec // args validated by safeHostname
 	if err != nil {
 		return fmt.Errorf("zsc unit create: %w", err)
 	}
@@ -93,36 +94,15 @@ func (m *SystemMounter) Unmount(ctx context.Context, hostname, path string) erro
 // IsWritable checks if the mount point is writable by creating and removing a test file.
 func (m *SystemMounter) IsWritable(ctx context.Context, path string) (bool, error) {
 	testFile := filepath.Join(path, ".mount_test")
-	//nolint:gosec // path is constructed from validated hostname + constant base
 	err := exec.CommandContext(ctx, "touch", testFile).Run()
 	if err != nil {
-		return false, nil
+		return false, fmt.Errorf("writable check: %w", err)
 	}
 	_ = exec.CommandContext(ctx, "rm", "-f", testFile).Run()
 	return true, nil
 }
 
 func isExecNotFound(err error) bool {
-	var notFound *exec.Error
-	if ok := isError(err, &notFound); ok {
-		return true
-	}
-	return false
-}
-
-func isError(err error, target any) bool {
-	if t, ok := target.(**exec.Error); ok {
-		for err != nil {
-			if e, ok := err.(*exec.Error); ok {
-				*t = e
-				return true
-			}
-			if uw, ok := err.(interface{ Unwrap() error }); ok {
-				err = uw.Unwrap()
-			} else {
-				return false
-			}
-		}
-	}
-	return false
+	var execErr *exec.Error
+	return errors.As(err, &execErr)
 }
