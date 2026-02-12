@@ -64,7 +64,7 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 		hostname, localPath,
 	)
 
-	err := exec.CommandContext(ctx, "sudo", "-E", "zsc", "unit", "create", unitName, sshfsCmd).Run() //nolint:gosec // args validated by safeHostname
+	err := exec.CommandContext(ctx, "sudo", "-E", "zsc", "unit", "create", unitName, sshfsCmd).Run()
 	if err != nil {
 		return fmt.Errorf("zsc unit create: %w", err)
 	}
