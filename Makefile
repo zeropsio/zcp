@@ -4,6 +4,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 BUILT   ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 MODULE  := github.com/zeropsio/zcp
+LINT    := $(shell [ -x ./bin/golangci-lint ] && echo "./bin/golangci-lint" || { command -v golangci-lint 2>/dev/null || echo "./bin/golangci-lint"; })
 LDFLAGS  = -s -w \
   -X $(MODULE)/internal/server.Version=$(VERSION) \
   -X $(MODULE)/internal/server.Commit=$(COMMIT) \
@@ -18,11 +19,13 @@ setup: ## Bootstrap development environment (install all tools)
 	@command -v jq >/dev/null 2>&1 || { echo "ERROR: jq not installed (brew install jq)"; exit 1; }
 	@echo "==> Installing golangci-lint..."
 	@./tools/install.sh
-	@echo "==> Making hooks executable..."
+	@echo "==> Configuring git hooks..."
+	@git config core.hooksPath .githooks
+	@chmod +x .githooks/* 2>/dev/null || true
 	@chmod +x .claude/hooks/*.sh 2>/dev/null || true
 	@echo "==> Verifying..."
 	@go version
-	@./bin/golangci-lint version 2>/dev/null || golangci-lint version
+	@$(LINT) version
 	@jq --version
 	@echo "==> Setup complete."
 
@@ -36,14 +39,14 @@ test-race: ## Run tests with race detection
 	go test -race ./... -count=1
 
 lint: ## Run linter for all target platforms
-	GOOS=darwin GOARCH=arm64 golangci-lint run ./...
-	GOOS=linux GOARCH=amd64 golangci-lint run ./...
+	GOOS=darwin GOARCH=arm64 $(LINT) run ./...
+	GOOS=linux GOARCH=amd64 $(LINT) run ./...
 
 lint-fast: ## Fast lint (native platform, fast linters only, ~3s)
-	golangci-lint run ./... --fast-only
+	$(LINT) run ./... --fast-only
 
 lint-local: ## Full lint (native platform only)
-	golangci-lint run ./...
+	$(LINT) run ./...
 
 vet: ## Run go vet
 	go vet ./...

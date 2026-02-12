@@ -46,8 +46,8 @@ if [ -d "$PKG_DIR" ]; then
         TEST_OUTPUT=$(go test "./${PKG_DIR}" -count=1 -short -timeout=30s 2>&1)
     fi
 
-    # Cache test results for session-start.sh
-    echo "$TEST_OUTPUT" > "$CACHE_FILE" 2>/dev/null
+    # Cache test results with scope marker (stop.sh only trusts SCOPE=./...)
+    { echo "SCOPE=./${PKG_DIR}"; echo "$TEST_OUTPUT"; } > "$CACHE_FILE" 2>/dev/null
 
     if echo "$TEST_OUTPUT" | grep -qE 'FAIL'; then
         FAIL_LINES=$(echo "$TEST_OUTPUT" | grep -E 'FAIL|---' | tail -10)

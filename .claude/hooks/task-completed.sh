@@ -12,8 +12,8 @@ CACHE_FILE="$CLAUDE_PROJECT_DIR/.claude/last-test-result"
 # Run tests
 TEST_OUTPUT=$(go test ./... -count=1 -short -timeout=60s 2>&1)
 
-# Cache results
-echo "$TEST_OUTPUT" > "$CACHE_FILE" 2>/dev/null
+# Cache results with full-scope marker
+{ echo "SCOPE=./..."; echo "$TEST_OUTPUT"; } > "$CACHE_FILE" 2>/dev/null
 
 if echo "$TEST_OUTPUT" | grep -qE 'FAIL'; then
     echo "Cannot complete task: tests are failing" >&2

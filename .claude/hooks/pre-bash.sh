@@ -2,6 +2,9 @@
 # PreToolUse hook: Security gate + pre-commit lint gate + pre-push test gate
 # Exit 0 = allow, Exit 2 = block (stderr fed to Claude)
 
+# Require jq — without it, security checks silently fail
+command -v jq &>/dev/null || { echo "BLOCKED: jq is required for security checks" >&2; exit 2; }
+
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
@@ -10,16 +13,19 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 # SECURITY GATE — block destructive operations
 # ============================================================
 
-# Block rm -rf / rm -r with broad or relative dangerous targets
-# Catches: rm -rf /, rm -rf ., rm -rf .., rm -rf ~, rm -rf *, rm -r /foo && ..., etc.
-if echo "$COMMAND" | grep -qE 'rm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+)+(\.\.|\/|\.(\s|$)|~|\$HOME|\$\{HOME\}|\*)'; then
+# Block recursive rm targeting dangerous paths
+# Two-pass: (1) rm with recursive flag in any position, (2) dangerous target
+if echo "$COMMAND" | grep -qE 'rm\s' && \
+   echo "$COMMAND" | grep -qE '\s-[a-zA-Z]*[rR]|--recursive' && \
+   echo "$COMMAND" | grep -qE '\s(\.\.|\./?|/|~|\$HOME|\$\{HOME\}|\*)(\s|$)'; then
     echo "BLOCKED: Destructive rm command. Specify exact paths instead." >&2
     exit 2
 fi
 
 # Block dangerous git operations
-# force push, hard reset, clean -f, checkout ., restore ., stash drop
-if echo "$COMMAND" | grep -qE 'git\s+(push\s+.*--force|push\s+-f\b|reset\s+--hard|clean\s+-[a-zA-Z]*f|checkout\s+(--\s+)?\.(\s|$)|restore\s+\.(\s|$)|stash\s+drop)'; then
+# force push (but allow --force-with-lease), hard reset, clean -f, checkout .,
+# restore ., stash drop/clear, branch -D, push --delete
+if echo "$COMMAND" | grep -qE 'git\s+(push\s+.*--force(\s|$)|push\s+-f\b|reset\s+--hard|clean\s+-[a-zA-Z]*f|checkout\s+(--\s+)?\.(\s|$)|checkout\s+-f\b|restore\s+\.(\s|$)|stash\s+(drop|clear)|branch\s+-[a-zA-Z]*D|push\s+\S+\s+--delete)'; then
     echo "BLOCKED: Dangerous git operation. Use safer alternatives." >&2
     exit 2
 fi
@@ -30,9 +36,9 @@ if echo "$COMMAND" | grep -qE 'chmod\s+777'; then
     exit 2
 fi
 
-# Block pipe-to-shell patterns (curl|bash, wget|sh, etc.)
-if echo "$COMMAND" | grep -qE '\|\s*(ba)?sh\b|\|\s*sudo'; then
-    echo "BLOCKED: Piping to shell is dangerous. Download first, inspect, then execute." >&2
+# Block pipe-to-shell/interpreter patterns (curl|bash, wget|zsh, python, etc.)
+if echo "$COMMAND" | grep -qE '\|\s*((ba|z|da|c|tc|fi)?sh|/\S*sh|env\s+\S*sh|python[23]?|ruby|perl|node)\b|\|\s*sudo'; then
+    echo "BLOCKED: Piping to shell/interpreter is dangerous. Download first, inspect, then execute." >&2
     exit 2
 fi
 
@@ -85,11 +91,15 @@ if [ -n "$KEY_STAGED" ] && [ -z "$CLAUDE_MD_STAGED" ]; then
 fi
 
 # Lint gate — exit 2 to actually block the commit
-GO_STAGED=$(echo "$STAGED" | grep -E '\.go$' | head -1)
+GO_STAGED=$(echo "$STAGED" | grep -E '\.go$')
 if [ -n "$GO_STAGED" ]; then
-    if command -v golangci-lint &>/dev/null; then
-        echo "-- pre-commit: golangci-lint run ./... --"
-        LINT_OUTPUT=$(golangci-lint run ./... --timeout=60s 2>&1)
+    LINT_BIN="golangci-lint"
+    [ -x "${MODULE_ROOT}/bin/golangci-lint" ] && LINT_BIN="${MODULE_ROOT}/bin/golangci-lint"
+    if command -v "$LINT_BIN" &>/dev/null || [ -x "$LINT_BIN" ]; then
+        # Lint only packages with staged Go files (not entire codebase)
+        LINT_PKGS=$(echo "$GO_STAGED" | while read -r f; do dirname "./$f"; done | sort -u | tr '\n' ' ')
+        echo "-- pre-commit: $LINT_BIN on changed packages --"
+        LINT_OUTPUT=$($LINT_BIN run $LINT_PKGS --timeout=60s 2>&1)
         LINT_EXIT=$?
         if [ $LINT_EXIT -ne 0 ]; then
             echo "$LINT_OUTPUT" | tail -30 >&2
