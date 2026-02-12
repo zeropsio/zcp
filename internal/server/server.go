@@ -44,6 +44,7 @@ func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, 
 	}
 
 	s.registerTools()
+	s.registerResources()
 	return s
 }
 

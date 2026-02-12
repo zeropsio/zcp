@@ -107,6 +107,15 @@ func TestServer_Instructions(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "mentions resource URI",
+			check: func(t *testing.T) {
+				t.Helper()
+				if !strings.Contains(Instructions, "zerops://docs/") {
+					t.Error("Instructions should reference zerops://docs/ resources")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

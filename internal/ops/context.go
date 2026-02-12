@@ -295,5 +295,6 @@ When not specified, Zerops uses these defaults:
 ## Pointers
 
 - Use zerops_knowledge tool to search Zerops documentation for specific topics.
+- Read zerops://docs/{path} resources for full document content after searching.
 - Use zerops_workflow tool for step-by-step guidance on common tasks (bootstrap, deploy, debug, scale, configure, monitor).
 - Use zerops_discover tool to inspect current project and service state.`
