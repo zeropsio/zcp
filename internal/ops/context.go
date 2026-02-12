@@ -70,15 +70,22 @@ func formatServiceStacks(types []platform.ServiceStackType) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("## Available Service Stacks (live)\n")
+	sb.WriteString("## Service Stacks (live)\n[B]=also usable as build.base in zerops.yml\n")
 
 	writeCategory := func(cat string, stacks []platform.ServiceStackType) {
-		sb.WriteString("\n### ")
-		sb.WriteString(categoryDisplayName(cat))
-		sb.WriteByte('\n')
+		var entries []string
 		for _, st := range stacks {
-			sb.WriteString(formatStackEntry(st, buildVersions, matchedBuild))
+			if entry := compactStackEntry(st, buildVersions, matchedBuild); entry != "" {
+				entries = append(entries, entry)
+			}
 		}
+		if len(entries) == 0 {
+			return
+		}
+		sb.WriteByte('\n')
+		sb.WriteString(categoryDisplayName(cat))
+		sb.WriteString(": ")
+		sb.WriteString(strings.Join(entries, " | "))
 	}
 
 	for _, cat := range categoryOrder {
@@ -106,6 +113,7 @@ func formatServiceStacks(types []platform.ServiceStackType) string {
 		sb.WriteString(buildSection)
 	}
 
+	sb.WriteByte('\n')
 	return sb.String()
 }
 
@@ -125,7 +133,9 @@ func collectBuildVersions(types []platform.ServiceStackType) map[string]bool {
 	return result
 }
 
-func formatStackEntry(st platform.ServiceStackType, buildVersions, matchedBuild map[string]bool) string {
+// compactStackEntry returns a compact representation of a service stack type.
+// e.g., "nodejs@{18,20,22} [B]" or "docker@26.1" or "static".
+func compactStackEntry(st platform.ServiceStackType, buildVersions, matchedBuild map[string]bool) string {
 	var versions []string
 	for _, v := range st.Versions {
 		if v.Status != statusActive {
@@ -139,7 +149,6 @@ func formatStackEntry(st platform.ServiceStackType, buildVersions, matchedBuild 
 	}
 
 	// Determine build capability from BUILD category cross-reference.
-	// If ANY version of this type also exists in BUILD → type supports build+run.
 	hasBuild := false
 	for _, vn := range versions {
 		if buildVersions[vn] {
@@ -148,23 +157,49 @@ func formatStackEntry(st platform.ServiceStackType, buildVersions, matchedBuild 
 		}
 	}
 
-	label := "run"
+	result := compactVersions(versions)
 	if hasBuild {
-		label = "build+run"
+		result += " [B]"
 	}
-
-	return "- **" + st.Name + "** — " + label + ": " + strings.Join(versions, ", ") + "\n"
+	return result
 }
 
-// formatUnmatchedBuildTypes returns a markdown section for BUILD versions
-// that didn't match any visible run type (e.g., php@8.4 as PHP build base).
+// compactVersions groups versions with a common prefix using brace notation.
+// ["nodejs@18", "nodejs@20", "nodejs@22"] → "nodejs@{18,20,22}"
+// Single versions and bare names (no @) are returned as-is.
+func compactVersions(versions []string) string {
+	if len(versions) == 1 {
+		return versions[0]
+	}
+
+	// Extract common prefix before @.
+	var prefix string
+	var suffixes []string
+	for i, v := range versions {
+		at := strings.Index(v, "@")
+		if at < 0 {
+			return strings.Join(versions, ", ")
+		}
+		p := v[:at]
+		if i == 0 {
+			prefix = p
+		} else if p != prefix {
+			return strings.Join(versions, ", ")
+		}
+		suffixes = append(suffixes, v[at+1:])
+	}
+
+	return prefix + "@{" + strings.Join(suffixes, ",") + "}"
+}
+
+// formatUnmatchedBuildTypes returns BUILD versions that didn't match any
+// visible run type (e.g., php@8.1 as PHP build base).
 func formatUnmatchedBuildTypes(types []platform.ServiceStackType, matchedBuild map[string]bool) string {
 	var entries []string
 	for _, st := range types {
 		if st.Category != "BUILD" {
 			continue
 		}
-		// Skip internal build runtime types.
 		if !strings.HasPrefix(st.Name, "zbuild ") {
 			continue
 		}
@@ -177,25 +212,24 @@ func formatUnmatchedBuildTypes(types []platform.ServiceStackType, matchedBuild m
 		if len(unmatched) == 0 {
 			continue
 		}
-		name := strings.TrimPrefix(st.Name, "zbuild ")
-		entries = append(entries, "- **"+name+"** — "+strings.Join(unmatched, ", "))
+		entries = append(entries, compactVersions(unmatched))
 	}
 	if len(entries) == 0 {
 		return ""
 	}
-	return "\n### Build-only Bases (zerops.yml build.base)\n" + strings.Join(entries, "\n") + "\n"
+	return "\nBuild-only: " + strings.Join(entries, " | ")
 }
 
 func categoryDisplayName(cat string) string {
 	switch cat {
 	case "USER":
-		return "Runtime & Container"
+		return "Runtime"
 	case "STANDARD":
-		return "Managed Services"
+		return "Managed"
 	case "SHARED_STORAGE":
-		return "Shared Storage"
+		return "Shared storage"
 	case "OBJECT_STORAGE":
-		return "Object Storage"
+		return "Object storage"
 	default:
 		return cat
 	}

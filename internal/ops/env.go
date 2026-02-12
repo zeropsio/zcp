@@ -8,13 +8,6 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// EnvGetResult contains the result of an env get operation.
-type EnvGetResult struct {
-	Scope    string           `json:"scope"`
-	Hostname string           `json:"serviceHostname,omitempty"`
-	Vars     []map[string]any `json:"vars"`
-}
-
 // EnvSetResult contains the result of an env set operation.
 type EnvSetResult struct {
 	Process *platform.Process `json:"process,omitempty"`
@@ -23,48 +16,6 @@ type EnvSetResult struct {
 // EnvDeleteResult contains the result of an env delete operation.
 type EnvDeleteResult struct {
 	Process *platform.Process `json:"process,omitempty"`
-}
-
-// EnvGet retrieves environment variables for a service or project.
-func EnvGet(
-	ctx context.Context,
-	client platform.Client,
-	projectID string,
-	hostname string,
-	isProject bool,
-) (*EnvGetResult, error) {
-	if hostname == "" && !isProject {
-		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
-			"Provide serviceHostname or set project=true",
-			"Specify which scope to read env vars from")
-	}
-
-	if isProject {
-		envs, err := client.GetProjectEnv(ctx, projectID)
-		if err != nil {
-			return nil, err
-		}
-		return &EnvGetResult{
-			Scope: "project",
-			Vars:  envVarsToMaps(envs),
-		}, nil
-	}
-
-	svc, err := resolveService(ctx, client, projectID, hostname)
-	if err != nil {
-		return nil, err
-	}
-
-	envs, err := client.GetServiceEnv(ctx, svc.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &EnvGetResult{
-		Scope:    "service",
-		Hostname: hostname,
-		Vars:     envVarsToMaps(envs),
-	}, nil
 }
 
 // EnvSet sets environment variables for a service or project.
@@ -172,17 +123,6 @@ func EnvDelete(
 	}
 
 	return &EnvDeleteResult{Process: lastProc}, nil
-}
-
-func envVarsToMaps(envs []platform.EnvVar) []map[string]any {
-	result := make([]map[string]any, len(envs))
-	for i, e := range envs {
-		result[i] = map[string]any{
-			"key":   e.Key,
-			"value": e.Content,
-		}
-	}
-	return result
 }
 
 func buildEnvFileContent(pairs []envPair) string {

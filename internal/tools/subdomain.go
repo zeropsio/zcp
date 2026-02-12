@@ -20,7 +20,9 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, projectID string
 		Name:        "zerops_subdomain",
 		Description: "Enable or disable zerops.app subdomain for a service. Idempotent.",
 		Annotations: &mcp.ToolAnnotations{
-			IdempotentHint: true,
+			Title:           "Enable or disable subdomain",
+			IdempotentHint:  true,
+			DestructiveHint: boolPtr(false),
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input SubdomainInput) (*mcp.CallToolResult, any, error) {
 		result, err := ops.Subdomain(ctx, client, projectID, input.ServiceHostname, input.Action)

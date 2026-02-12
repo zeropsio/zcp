@@ -20,6 +20,8 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 		Name:        "zerops_manage",
 		Description: "Manage service lifecycle: start, stop, or restart a service.",
 		Annotations: &mcp.ToolAnnotations{
+			Title:           "Manage service lifecycle",
+			IdempotentHint:  true,
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ManageInput) (*mcp.CallToolResult, any, error) {

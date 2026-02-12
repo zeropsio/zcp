@@ -53,7 +53,7 @@ func TestContextTool_WithDynamicStacks(t *testing.T) {
 		t.Error("unexpected IsError")
 	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "Available Service Stacks") {
+	if !strings.Contains(text, "Service Stacks (live)") {
 		t.Error("expected dynamic service stacks section")
 	}
 	if !strings.Contains(text, "nodejs@22") {

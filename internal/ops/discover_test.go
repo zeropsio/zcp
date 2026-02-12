@@ -158,6 +158,88 @@ func TestDiscover_EnvFetchError_Graceful(t *testing.T) {
 	}
 }
 
+func TestDiscover_ProjectEnvs_NoFilter(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithServices(services).
+		WithProjectEnv([]platform.EnvVar{
+			{ID: "pe1", Key: "GLOBAL_KEY", Content: "global_val"},
+			{ID: "pe2", Key: "APP_ENV", Content: "production"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Project.Envs == nil {
+		t.Fatal("expected project envs, got nil")
+	}
+	if len(result.Project.Envs) != 2 {
+		t.Fatalf("expected 2 project envs, got %d", len(result.Project.Envs))
+	}
+	if result.Project.Envs[0]["key"] != "GLOBAL_KEY" {
+		t.Errorf("expected first env key=GLOBAL_KEY, got %v", result.Project.Envs[0]["key"])
+	}
+}
+
+func TestDiscover_ProjectEnvs_WithServiceFilter(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithServices(services).
+		WithProjectEnv([]platform.EnvVar{
+			{ID: "pe1", Key: "GLOBAL_KEY", Content: "global_val"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "api", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Project envs should NOT be included when filtering by service hostname.
+	if result.Project.Envs != nil {
+		t.Errorf("expected nil project envs when hostname filter is set, got %d", len(result.Project.Envs))
+	}
+}
+
+func TestDiscover_ProjectEnvFetchError_Graceful(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithServices(services).
+		WithError("GetProjectEnv", fmt.Errorf("project env fetch error"))
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Project env fetch error should not fail the whole discover.
+	if result.Project.Envs != nil {
+		t.Error("expected nil project envs when fetch fails")
+	}
+	if len(result.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(result.Services))
+	}
+}
+
 func TestDiscover_ProjectNotFound(t *testing.T) {
 	t.Parallel()
 

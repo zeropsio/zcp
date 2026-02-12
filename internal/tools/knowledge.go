@@ -20,6 +20,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider) {
 		Name:        "zerops_knowledge",
 		Description: "Search Zerops knowledge base using BM25. Use specific terms like service names, config keys, or error messages.",
 		Annotations: &mcp.ToolAnnotations{
+			Title:          "Search Zerops knowledge base",
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
 		},

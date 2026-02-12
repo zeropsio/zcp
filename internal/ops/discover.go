@@ -14,9 +14,10 @@ type DiscoverResult struct {
 
 // ProjectInfo contains basic project information.
 type ProjectInfo struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID     string           `json:"id"`
+	Name   string           `json:"name"`
+	Status string           `json:"status"`
+	Envs   []map[string]any `json:"envs,omitempty"`
 }
 
 // ServiceInfo contains service details for the discover response.
@@ -79,6 +80,10 @@ func Discover(
 		}
 	}
 
+	if includeEnvs {
+		attachProjectEnvs(ctx, client, &result.Project, projectID)
+	}
+
 	return result, nil
 }
 
@@ -126,16 +131,18 @@ func buildDetailedServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 	return info
 }
 
+func attachProjectEnvs(ctx context.Context, client platform.Client, info *ProjectInfo, projectID string) {
+	envs, err := client.GetProjectEnv(ctx, projectID)
+	if err != nil {
+		return // silently ignore project env fetch errors
+	}
+	info.Envs = envVarsToMaps(envs)
+}
+
 func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, serviceID string) {
 	envs, err := client.GetServiceEnv(ctx, serviceID)
 	if err != nil {
 		return // silently ignore env fetch errors
 	}
-	info.Envs = make([]map[string]any, len(envs))
-	for i, e := range envs {
-		info.Envs[i] = map[string]any{
-			"key":   e.Key,
-			"value": e.Content,
-		}
-	}
+	info.Envs = envVarsToMaps(envs)
 }

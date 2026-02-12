@@ -228,7 +228,7 @@ func TestIntegration_ImportThenDiscover(t *testing.T) {
 	}
 }
 
-func TestIntegration_EnvSetThenGet(t *testing.T) {
+func TestIntegration_EnvSetThenDiscover(t *testing.T) {
 	t.Parallel()
 
 	mock := defaultMock()
@@ -242,32 +242,28 @@ func TestIntegration_EnvSetThenGet(t *testing.T) {
 		"variables":       []any{"NEW_VAR=hello"},
 	})
 	if setResult.IsError {
-		t.Fatalf("env set returned error: %s", callAndGetText(t, session, "zerops_env", map[string]any{
-			"action": "set", "serviceHostname": "app", "variables": []any{"NEW_VAR=hello"},
-		}))
+		t.Fatalf("env set returned error: %s", getTextContent(t, setResult))
 	}
 
-	// Step 2: Get env vars for the service.
-	getText := callAndGetText(t, session, "zerops_env", map[string]any{
-		"action":          "get",
-		"serviceHostname": "app",
+	// Step 2: Read env vars via zerops_discover with includeEnvs=true.
+	discoverText := callAndGetText(t, session, "zerops_discover", map[string]any{
+		"service":     "app",
+		"includeEnvs": true,
 	})
 
-	// The mock returns the pre-configured env vars (DB_HOST=db).
-	// Response is an EnvGetResult object with scope and vars fields.
-	var envResult ops.EnvGetResult
-	if err := json.Unmarshal([]byte(getText), &envResult); err != nil {
-		t.Fatalf("parse env get result: %v", err)
+	var dr ops.DiscoverResult
+	if err := json.Unmarshal([]byte(discoverText), &dr); err != nil {
+		t.Fatalf("parse discover result: %v", err)
 	}
-	if envResult.Scope != "service" {
-		t.Errorf("scope = %q, want %q", envResult.Scope, "service")
+	if len(dr.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(dr.Services))
 	}
-	if len(envResult.Vars) == 0 {
-		t.Fatal("expected at least one env var")
+	if dr.Services[0].Envs == nil {
+		t.Fatal("expected envs in discover result")
 	}
 
 	foundDBHost := false
-	for _, env := range envResult.Vars {
+	for _, env := range dr.Services[0].Envs {
 		if env["key"] == "DB_HOST" {
 			foundDBHost = true
 			if env["value"] != "db" {
@@ -276,7 +272,37 @@ func TestIntegration_EnvSetThenGet(t *testing.T) {
 		}
 	}
 	if !foundDBHost {
-		t.Error("DB_HOST not found in env vars")
+		t.Error("DB_HOST not found in discover env vars")
+	}
+}
+
+func TestIntegration_DiscoverProjectEnvs(t *testing.T) {
+	t.Parallel()
+
+	mock := defaultMock().
+		WithProjectEnv([]platform.EnvVar{
+			{ID: "pe1", Key: "GLOBAL_KEY", Content: "global_val"},
+		})
+	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	defer cleanup()
+
+	// Discover without service filter — should include project envs.
+	discoverText := callAndGetText(t, session, "zerops_discover", map[string]any{
+		"includeEnvs": true,
+	})
+
+	var dr ops.DiscoverResult
+	if err := json.Unmarshal([]byte(discoverText), &dr); err != nil {
+		t.Fatalf("parse discover result: %v", err)
+	}
+	if dr.Project.Envs == nil {
+		t.Fatal("expected project envs in discover result")
+	}
+	if len(dr.Project.Envs) != 1 {
+		t.Fatalf("expected 1 project env, got %d", len(dr.Project.Envs))
+	}
+	if dr.Project.Envs[0]["key"] != "GLOBAL_KEY" {
+		t.Errorf("expected key=GLOBAL_KEY, got %v", dr.Project.Envs[0]["key"])
 	}
 }
 

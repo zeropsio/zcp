@@ -20,6 +20,7 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string) {
 		Name:        "zerops_delete",
 		Description: "Delete a service. Requires confirm=true. This is destructive and permanent.",
 		Annotations: &mcp.ToolAnnotations{
+			Title:           "Delete a service",
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input DeleteInput) (*mcp.CallToolResult, any, error) {

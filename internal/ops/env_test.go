@@ -1,4 +1,4 @@
-// Tests for: plans/analysis/ops.md § ops/env.go
+// Tests for: ops/env.go — env set and delete operations.
 package ops
 
 import (
@@ -7,64 +7,6 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
-
-func TestEnvGet_Service(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
-		}).
-		WithServiceEnv("svc-1", []platform.EnvVar{
-			{ID: "e1", Key: "PORT", Content: "3000"},
-			{ID: "e2", Key: "NODE_ENV", Content: "production"},
-		})
-
-	result, err := EnvGet(context.Background(), mock, "proj-1", "api", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Scope != "service" {
-		t.Errorf("expected scope=service, got %s", result.Scope)
-	}
-	if result.Hostname != "api" {
-		t.Errorf("expected hostname=api, got %s", result.Hostname)
-	}
-	if len(result.Vars) != 2 {
-		t.Fatalf("expected 2 vars, got %d", len(result.Vars))
-	}
-}
-
-func TestEnvGet_Project(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().
-		WithProjectEnv([]platform.EnvVar{
-			{ID: "pe1", Key: "GLOBAL_KEY", Content: "val"},
-		})
-
-	result, err := EnvGet(context.Background(), mock, "proj-1", "", true)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Scope != "project" {
-		t.Errorf("expected scope=project, got %s", result.Scope)
-	}
-	if len(result.Vars) != 1 {
-		t.Fatalf("expected 1 var, got %d", len(result.Vars))
-	}
-}
-
-func TestEnvGet_NoScope(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock()
-
-	_, err := EnvGet(context.Background(), mock, "proj-1", "", false)
-	if err == nil {
-		t.Fatal("expected error for no scope")
-	}
-}
 
 func TestEnvSet_Service(t *testing.T) {
 	t.Parallel()

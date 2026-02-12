@@ -175,17 +175,17 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		"variables":       []any{"E2E_TEST_VAR=hello_zerops"},
 	})
 
-	// --- Step 10: zerops_env get ---
+	// --- Step 10: zerops_discover with includeEnvs (replaces env get) ---
 	step++
-	logStep(t, step, "zerops_env get on %s", rtHostname)
-	envText := s.mustCallSuccess("zerops_env", map[string]any{
-		"action":          "get",
-		"serviceHostname": rtHostname,
+	logStep(t, step, "zerops_discover includeEnvs on %s", rtHostname)
+	envText := s.mustCallSuccess("zerops_discover", map[string]any{
+		"service":     rtHostname,
+		"includeEnvs": true,
 	})
 	if !strings.Contains(envText, "E2E_TEST_VAR") || !strings.Contains(envText, "hello_zerops") {
-		t.Logf("  env get response: %s", envText)
+		t.Logf("  discover envs response: %s", envText)
 		// Note: env set is async; the var may not appear immediately.
-		// This is acceptable behavior — we verify the get call works.
+		// This is acceptable behavior — we verify the discover call works.
 	}
 
 	// --- Step 11: zerops_manage restart (database — active immediately after import) ---

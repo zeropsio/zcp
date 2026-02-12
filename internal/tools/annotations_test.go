@@ -53,34 +53,30 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		readOnly       bool
-		idempotent     bool
-		destructive    *bool
-		openWorld      *bool
-		hasAnnotations bool
+		name        string
+		title       string
+		readOnly    bool
+		idempotent  bool
+		destructive *bool
+		openWorld   *bool
 	}{
 		// Read-only tools
-		{name: "zerops_context", readOnly: true, idempotent: true, openWorld: boolPtr(false), hasAnnotations: true},
-		{name: "zerops_workflow", readOnly: true, idempotent: true, openWorld: boolPtr(false), hasAnnotations: true},
-		{name: "zerops_discover", readOnly: true, idempotent: true, hasAnnotations: true},
-		{name: "zerops_knowledge", readOnly: true, idempotent: true, hasAnnotations: true},
-		{name: "zerops_logs", readOnly: true, idempotent: true, hasAnnotations: true},
-		{name: "zerops_events", readOnly: true, idempotent: true, hasAnnotations: true},
-		{name: "zerops_process", readOnly: true, idempotent: true, hasAnnotations: true},
+		{name: "zerops_context", title: "Get Zerops platform context", readOnly: true, idempotent: true, openWorld: boolPtr(false)},
+		{name: "zerops_workflow", title: "Get workflow guidance", readOnly: true, idempotent: true, openWorld: boolPtr(false)},
+		{name: "zerops_discover", title: "Discover project and services", readOnly: true, idempotent: true},
+		{name: "zerops_knowledge", title: "Search Zerops knowledge base", readOnly: true, idempotent: true},
+		{name: "zerops_logs", title: "Fetch service logs", readOnly: true, idempotent: true},
+		{name: "zerops_events", title: "Fetch project activity timeline", readOnly: true, idempotent: true},
 
-		// Destructive tools
-		{name: "zerops_manage", destructive: boolPtr(true), hasAnnotations: true},
-		{name: "zerops_scale", destructive: boolPtr(true), hasAnnotations: true},
-		{name: "zerops_delete", destructive: boolPtr(true), hasAnnotations: true},
-
-		// Idempotent tools
-		{name: "zerops_subdomain", idempotent: true, hasAnnotations: true},
-
-		// Tools without annotations
-		{name: "zerops_deploy", hasAnnotations: false},
-		{name: "zerops_env", hasAnnotations: false},
-		{name: "zerops_import", hasAnnotations: false},
+		// Mutating tools
+		{name: "zerops_process", title: "Check or cancel async process", idempotent: true, destructive: boolPtr(false)},
+		{name: "zerops_manage", title: "Manage service lifecycle", idempotent: true, destructive: boolPtr(true)},
+		{name: "zerops_scale", title: "Scale a service", idempotent: true, destructive: boolPtr(true)},
+		{name: "zerops_delete", title: "Delete a service", destructive: boolPtr(true)},
+		{name: "zerops_subdomain", title: "Enable or disable subdomain", idempotent: true, destructive: boolPtr(false)},
+		{name: "zerops_deploy", title: "Deploy code to a service", destructive: boolPtr(true)},
+		{name: "zerops_env", title: "Manage environment variables", destructive: boolPtr(true)},
+		{name: "zerops_import", title: "Import services from YAML", destructive: boolPtr(true)},
 	}
 
 	for _, tt := range tests {
@@ -97,19 +93,15 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 				t.Errorf("tool %s has empty description", tt.name)
 			}
 
-			if !tt.hasAnnotations {
-				if tool.Annotations != nil {
-					t.Errorf("tool %s should have no annotations, got %+v", tt.name, tool.Annotations)
-				}
-				return
-			}
-
 			if tool.Annotations == nil {
 				t.Fatalf("tool %s has nil annotations", tt.name)
 			}
 
 			ann := tool.Annotations
 
+			if ann.Title != tt.title {
+				t.Errorf("tool %s: Title = %q, want %q", tt.name, ann.Title, tt.title)
+			}
 			if ann.ReadOnlyHint != tt.readOnly {
 				t.Errorf("tool %s: ReadOnlyHint = %v, want %v", tt.name, ann.ReadOnlyHint, tt.readOnly)
 			}

@@ -20,6 +20,7 @@ func RegisterEvents(srv *mcp.Server, client platform.Client, projectID string) {
 		Name:        "zerops_events",
 		Description: "Fetch project activity timeline. Aggregates processes and build/deploy events sorted by time.",
 		Annotations: &mcp.ToolAnnotations{
+			Title:          "Fetch project activity timeline",
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
 		},

@@ -120,6 +120,18 @@ func parseEnvPairs(vars []string) ([]envPair, error) {
 	return pairs, nil
 }
 
+// envVarsToMaps converts platform env vars to a slice of maps for JSON output.
+func envVarsToMaps(envs []platform.EnvVar) []map[string]any {
+	result := make([]map[string]any, len(envs))
+	for i, e := range envs {
+		result[i] = map[string]any{
+			"key":   e.Key,
+			"value": e.Content,
+		}
+	}
+	return result
+}
+
 // findEnvIDByKey finds an env var ID by key name.
 func findEnvIDByKey(envs []platform.EnvVar, key string) string {
 	for _, e := range envs {

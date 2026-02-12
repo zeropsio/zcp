@@ -18,6 +18,7 @@ func RegisterWorkflow(srv *mcp.Server) {
 		Name:        "zerops_workflow",
 		Description: "Get step-by-step workflow guidance. Without workflow param returns catalog of available workflows.",
 		Annotations: &mcp.ToolAnnotations{
+			Title:          "Get workflow guidance",
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
 			OpenWorldHint:  boolPtr(false),

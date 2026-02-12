@@ -20,6 +20,10 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
 		Description: "Import services from YAML into the current project. Use dryRun=true to preview.",
+		Annotations: &mcp.ToolAnnotations{
+			Title:           "Import services from YAML",
+			DestructiveHint: boolPtr(true),
+		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ImportInput) (*mcp.CallToolResult, any, error) {
 		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, input.DryRun)
 		if err != nil {

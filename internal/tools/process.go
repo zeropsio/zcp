@@ -20,8 +20,9 @@ func RegisterProcess(srv *mcp.Server, client platform.Client) {
 		Name:        "zerops_process",
 		Description: "Check status or cancel an async process. Default action is 'status'.",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint:   true,
-			IdempotentHint: true,
+			Title:           "Check or cancel async process",
+			IdempotentHint:  true,
+			DestructiveHint: boolPtr(false),
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ProcessInput) (*mcp.CallToolResult, any, error) {
 		action := input.Action

@@ -17,6 +17,7 @@ func RegisterContext(srv *mcp.Server, client platform.Client, cache *ops.StackTy
 		Name:        "zerops_context",
 		Description: "Get Zerops platform context — fundamentals, rules, service types, defaults. Call this first when working with Zerops.",
 		Annotations: &mcp.ToolAnnotations{
+			Title:          "Get Zerops platform context",
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
 			OpenWorldHint:  boolPtr(false),

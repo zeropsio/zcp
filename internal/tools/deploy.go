@@ -29,6 +29,10 @@ func RegisterDeploy(
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
 		Description: "Deploy code to a Zerops service via SSH (cross-service) or local zcli push.",
+		Annotations: &mcp.ToolAnnotations{
+			Title:           "Deploy code to a service",
+			DestructiveHint: boolPtr(true),
+		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input DeployInput) (*mcp.CallToolResult, any, error) {
 		result, err := ops.Deploy(ctx, client, projectID, sshDeployer, localDeployer, *authInfo,
 			input.SourceService, input.TargetService, input.Setup, input.WorkingDir)

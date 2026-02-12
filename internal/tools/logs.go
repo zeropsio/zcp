@@ -23,6 +23,7 @@ func RegisterLogs(srv *mcp.Server, client platform.Client, fetcher platform.LogF
 		Name:        "zerops_logs",
 		Description: "Fetch runtime logs from a service. Filter by severity, time range, and search text.",
 		Annotations: &mcp.ToolAnnotations{
+			Title:          "Fetch service logs",
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
 		},

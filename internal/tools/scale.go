@@ -30,6 +30,8 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
 		Name:        "zerops_scale",
 		Description: "Scale a service: adjust CPU, RAM, disk, and container autoscaling parameters.",
 		Annotations: &mcp.ToolAnnotations{
+			Title:           "Scale a service",
+			IdempotentHint:  true,
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ScaleInput) (*mcp.CallToolResult, any, error) {
