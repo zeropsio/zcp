@@ -758,14 +758,17 @@ services:
       ZCP_API_KEY: <project-scoped-PAT>
 ```
 
-**ZCP binary delivery**: The `zerops.yml` build step compiles zcli from source and downloads the ZCP binary. The `initCommands` run `zcp init` which bootstraps the entire environment in a single idempotent step.
+**ZCP binary delivery**: The install script downloads the ZCP binary on every container start. The script auto-detects the Zerops `initCommands` environment (`HOME=/`, non-root user) and installs to `/usr/local/bin` via sudo. Then `zcp init` bootstraps the entire environment in a single idempotent step.
 
 **initCommands integration:**
 ```yaml
 initCommands:
+  - curl -sSfL https://raw.githubusercontent.com/zeropsio/zcp/v2/install.sh | sudo sh
   - zcp init  # Bootstrap: CLAUDE.md, MCP config, hooks, SSH
   # code-server starts with everything pre-configured
 ```
+
+> **Why `| sudo sh`?** Zerops `initCommands` run as the `zerops` user (uid=2023) with `HOME=/`. Without sudo, the install script cannot write to `/usr/local/bin`. The script detects `HOME=/` and falls back to `/usr/local/bin` automatically — sudo provides the write permission.
 
 `zcp init` replaces the previous scattered initCommands (downloading CLAUDE.md, configuring SSH, setting up MCP config separately). Single command, idempotent, all templates compiled into the binary.
 

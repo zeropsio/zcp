@@ -7,6 +7,9 @@
 # Install specific version:
 #   curl -sSfL https://raw.githubusercontent.com/zeropsio/zcp/v2/install.sh | sh -s v0.1.0
 #
+# Zerops initCommands (HOME=/, needs sudo for /usr/local/bin):
+#   curl -sSfL https://raw.githubusercontent.com/zeropsio/zcp/v2/install.sh | sudo sh
+#
 # NOTE: Update URL branch (v2 → main) when this branch is merged.
 
 set -e
@@ -24,24 +27,34 @@ else
   zcp_uri="https://github.com/zeropsio/zcp/releases/download/${1}/zcp-${target}"
 fi
 
-bin_dir="$HOME/.local/bin"
-bin_path="$bin_dir/zcp"
+# Determine install directory.
+# - Root (sudo): /usr/local/bin — system-wide, visible to all users.
+# - Normal user with valid HOME: $HOME/.local/bin — per-user install.
+# - HOME unset or "/" (Zerops initCommands): /usr/local/bin fallback.
 bin_dir_existed=1
-
-if [ ! -d "$bin_dir" ]; then
-  mkdir -p "$bin_dir"
-  bin_dir_existed=0
-
-  # By default ~/.local/bin isn't included in PATH if it doesn't exist.
-  # First try .bash_profile — if it exists, .profile is ignored by bash.
-  if [ "$(uname -s)" = "Linux" ]; then
-    if [ -f "$HOME/.bash_profile" ]; then
-      . "$HOME/.bash_profile"
-    elif [ -f "$HOME/.profile" ]; then
-      . "$HOME/.profile"
+if [ "$(id -u)" = "0" ]; then
+  bin_dir="/usr/local/bin"
+elif [ -n "$HOME" ] && [ "$HOME" != "/" ]; then
+  bin_dir="$HOME/.local/bin"
+  if [ ! -d "$bin_dir" ]; then
+    if mkdir -p "$bin_dir" 2>/dev/null; then
+      bin_dir_existed=0
+      # Reload profile so newly-created ~/.local/bin lands in PATH.
+      if [ "$(uname -s)" = "Linux" ]; then
+        if [ -f "$HOME/.bash_profile" ]; then
+          . "$HOME/.bash_profile"
+        elif [ -f "$HOME/.profile" ]; then
+          . "$HOME/.profile"
+        fi
+      fi
+    else
+      bin_dir="/usr/local/bin"
     fi
   fi
+else
+  bin_dir="/usr/local/bin"
 fi
+bin_path="$bin_dir/zcp"
 
 curl --fail --location --progress-bar --output "$bin_path" "$zcp_uri"
 chmod +x "$bin_path"

@@ -25,11 +25,8 @@ func TestRun_GeneratesCLAUDEMD(t *testing.T) {
 	}
 
 	content := string(data)
-	if !strings.Contains(content, "Zerops") {
-		t.Error("CLAUDE.md should mention Zerops")
-	}
-	if !strings.Contains(content, "zerops.yml") {
-		t.Error("CLAUDE.md should mention zerops.yml")
+	if !strings.Contains(content, "zerops_workflow") {
+		t.Error("CLAUDE.md should mention zerops_workflow")
 	}
 }
 
@@ -54,15 +51,17 @@ func TestRun_GeneratesMCPConfig(t *testing.T) {
 }
 
 func TestRun_GeneratesSSHConfig(t *testing.T) {
-	t.Parallel()
+	// Not parallel — mutates HOME env var.
 	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
 
 	err := zcpinit.Run(dir)
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, ".ssh", "config"))
+	data, err := os.ReadFile(filepath.Join(homeDir, ".ssh", "config"))
 	if err != nil {
 		t.Fatalf("read ssh config: %v", err)
 	}
@@ -90,14 +89,16 @@ func TestRun_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read CLAUDE.md after second run: %v", err)
 	}
-	if !strings.Contains(string(data), "Zerops") {
-		t.Error("CLAUDE.md should still contain Zerops after second run")
+	if !strings.Contains(string(data), "zerops_workflow") {
+		t.Error("CLAUDE.md should still contain zerops_workflow after second run")
 	}
 }
 
 func TestRun_ReportsSteps(t *testing.T) {
-	t.Parallel()
+	// Not parallel — mutates HOME env var.
 	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
 
 	err := zcpinit.Run(dir)
 	if err != nil {
@@ -108,7 +109,7 @@ func TestRun_ReportsSteps(t *testing.T) {
 	files := []string{
 		filepath.Join(dir, "CLAUDE.md"),
 		filepath.Join(dir, ".claude", "mcp-config.json"),
-		filepath.Join(dir, ".ssh", "config"),
+		filepath.Join(homeDir, ".ssh", "config"),
 	}
 	for _, f := range files {
 		if _, err := os.Stat(f); os.IsNotExist(err) {

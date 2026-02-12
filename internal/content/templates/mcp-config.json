@@ -2,10 +2,7 @@
   "mcpServers": {
     "zerops": {
       "command": "zcp",
-      "args": ["serve"],
-      "env": {
-        "ZCP_TOKEN": "<your-zerops-api-token>"
-      }
+      "args": ["serve"]
     }
   }
 }
