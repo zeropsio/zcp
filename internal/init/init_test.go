@@ -39,14 +39,14 @@ func TestRun_GeneratesMCPConfig(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, ".claude", "mcp-config.json"))
+	data, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
 	if err != nil {
-		t.Fatalf("read mcp-config.json: %v", err)
+		t.Fatalf("read .mcp.json: %v", err)
 	}
 
 	content := string(data)
 	if !strings.Contains(content, "zcp") {
-		t.Error("mcp-config.json should reference zcp")
+		t.Error(".mcp.json should reference zcp")
 	}
 }
 
@@ -108,7 +108,7 @@ func TestRun_ReportsSteps(t *testing.T) {
 	// All three files should exist.
 	files := []string{
 		filepath.Join(dir, "CLAUDE.md"),
-		filepath.Join(dir, ".claude", "mcp-config.json"),
+		filepath.Join(dir, ".mcp.json"),
 		filepath.Join(homeDir, ".ssh", "config"),
 	}
 	for _, f := range files {

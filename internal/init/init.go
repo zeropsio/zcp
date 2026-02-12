@@ -14,7 +14,7 @@ import (
 // Run executes the init subcommand, generating configuration files in baseDir.
 // Steps:
 //  1. Generate CLAUDE.md in baseDir
-//  2. Configure MCP server in baseDir/.claude/mcp-config.json
+//  2. Configure MCP server in baseDir/.mcp.json (Claude Code project-scoped config)
 //  3. Configure SSH in $HOME/.ssh/config (user home, not baseDir)
 //
 // All steps are idempotent — re-running resets to defaults.
@@ -52,11 +52,7 @@ func generateMCPConfig(baseDir string) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(baseDir, ".claude")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, "mcp-config.json"), []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
+	return os.WriteFile(filepath.Join(baseDir, ".mcp.json"), []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
 }
 
 func generateSSHConfig(_ string) error {
