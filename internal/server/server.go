@@ -62,7 +62,9 @@ func (s *Server) registerTools() {
 	tools.RegisterProcess(s.server, s.client)
 
 	// Mutating tools
-	tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.localDeployer, s.authInfo)
+	if s.sshDeployer != nil || s.localDeployer != nil {
+		tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.localDeployer, s.authInfo)
+	}
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID)

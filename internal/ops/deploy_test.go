@@ -302,6 +302,55 @@ func TestDeploy_ModeDetection(t *testing.T) {
 	}
 }
 
+func TestDeploy_NilSSHDeployer(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		})
+	authInfo := testAuthInfo()
+
+	_, err := Deploy(context.Background(), mock, "proj-1", nil, nil, authInfo,
+		"builder", "app", "", "")
+	if err == nil {
+		t.Fatal("expected error for nil SSH deployer")
+	}
+
+	var pe *platform.PlatformError
+	if !errorAs(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrNotImplemented {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrNotImplemented)
+	}
+}
+
+func TestDeploy_NilLocalDeployer(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		})
+	authInfo := testAuthInfo()
+
+	_, err := Deploy(context.Background(), mock, "proj-1", nil, nil, authInfo,
+		"", "app", "", "")
+	if err == nil {
+		t.Fatal("expected error for nil local deployer")
+	}
+
+	var pe *platform.PlatformError
+	if !errorAs(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrNotImplemented {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrNotImplemented)
+	}
+}
+
 func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 	t.Parallel()
 

@@ -23,6 +23,16 @@ func (*nopMounter) Mount(_ context.Context, _, _ string) error           { retur
 func (*nopMounter) Unmount(_ context.Context, _, _ string) error         { return nil }
 func (*nopMounter) IsWritable(_ context.Context, _ string) (bool, error) { return false, nil }
 
+// nopSSH satisfies ops.SSHDeployer for annotation tests (never called).
+type nopSSH struct{}
+
+func (*nopSSH) ExecSSH(_ context.Context, _, _ string) ([]byte, error) { return nil, nil }
+
+// nopLocal satisfies ops.LocalDeployer for annotation tests (never called).
+type nopLocal struct{}
+
+func (*nopLocal) ExecZcli(_ context.Context, _ ...string) ([]byte, error) { return nil, nil }
+
 func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	t.Parallel()
 
@@ -36,7 +46,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := server.New(mock, authInfo, store, logFetcher, nil, nil, &nopMounter{})
+	srv := server.New(mock, authInfo, store, logFetcher, &nopSSH{}, &nopLocal{}, &nopMounter{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

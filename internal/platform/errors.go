@@ -37,6 +37,7 @@ const (
 	ErrInvalidUsage           = "INVALID_USAGE"
 	ErrMountFailed            = "MOUNT_FAILED"
 	ErrUnmountFailed          = "UNMOUNT_FAILED"
+	ErrNotImplemented         = "NOT_IMPLEMENTED"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

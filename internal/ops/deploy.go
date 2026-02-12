@@ -50,10 +50,24 @@ func Deploy(
 	workingDir string,
 ) (*DeployResult, error) {
 	if sourceService != "" {
+		if sshDeployer == nil {
+			return nil, platform.NewPlatformError(
+				platform.ErrNotImplemented,
+				"SSH deploy is not available (deployer not configured)",
+				"SSH deploy requires a running Zerops container with SSH access",
+			)
+		}
 		return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
 			sourceService, targetService, setup, workingDir)
 	}
 	if targetService != "" {
+		if localDeployer == nil {
+			return nil, platform.NewPlatformError(
+				platform.ErrNotImplemented,
+				"Local deploy is not available (deployer not configured)",
+				"Local deploy requires zcli to be installed",
+			)
+		}
 		return deployLocal(ctx, client, projectID, localDeployer,
 			targetService, workingDir)
 	}

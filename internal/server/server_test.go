@@ -47,10 +47,11 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
+	// With nil deployers, zerops_deploy should NOT be registered.
 	expectedTools := []string{
 		"zerops_context", "zerops_workflow", "zerops_discover", "zerops_knowledge",
 		"zerops_logs", "zerops_events", "zerops_process",
-		"zerops_deploy", "zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
+		"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
 	}
 
 	if len(result.Tools) != len(expectedTools) {
@@ -69,6 +70,9 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 		if !toolMap[name] {
 			t.Errorf("missing tool: %s", name)
 		}
+	}
+	if toolMap["zerops_deploy"] {
+		t.Error("zerops_deploy should NOT be registered when deployers are nil")
 	}
 }
 
