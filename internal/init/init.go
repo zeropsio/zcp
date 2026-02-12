@@ -64,9 +64,11 @@ func generateSSHConfig(_ string) error {
 	if err != nil {
 		return err
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("resolve home directory: %w", err)
+	home := os.Getenv("HOME")
+	if home == "" || home == "/" {
+		// Zerops initCommands run with HOME unset or "/".
+		// Fall back to the zerops user's home directory.
+		home = "/home/zerops"
 	}
 	dir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(dir, 0700); err != nil {
