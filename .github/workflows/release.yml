@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: verify
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Install tools
+        run: |
+          export GOPATH=$HOME/go
+          ./tools/install.sh
+          echo "$PWD/bin" >> $GITHUB_PATH
+
+      - name: Test
+        run: go test -race ./... -count=1
+
+      - name: Lint
+        run: golangci-lint run ./...
+
+  build:
+    name: build ${{ matrix.name }}
+    needs: test
+    runs-on: ubuntu-22.04
+    env:
+      CGO_ENABLED: '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux amd64
+            env: { GOOS: linux, GOARCH: amd64 }
+            file: zcp-linux-amd64
+            compress: true
+            strip: true
+          - name: linux 386
+            env: { GOOS: linux, GOARCH: 386 }
+            file: zcp-linux-386
+            compress: true
+            strip: true
+          - name: darwin amd64
+            env: { GOOS: darwin, GOARCH: amd64 }
+            file: zcp-darwin-amd64
+            compress: false
+            strip: false
+          - name: darwin arm64
+            env: { GOOS: darwin, GOARCH: arm64 }
+            file: zcp-darwin-arm64
+            compress: false
+            strip: false
+          - name: windows amd64
+            env: { GOOS: windows, GOARCH: amd64 }
+            file: zcp-win-x64.exe
+            compress: false
+            strip: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      # NOTE: Module path must match MODULE in Makefile (github.com/zeropsio/zcp)
+      - name: Build
+        env: ${{ matrix.env }}
+        run: >-
+          go build
+          -o builds/${{ matrix.file }}
+          -ldflags "-s -w
+          -X github.com/zeropsio/zcp/internal/server.Version=${{ github.ref_name }}
+          -X github.com/zeropsio/zcp/internal/server.Commit=${{ github.sha }}
+          -X github.com/zeropsio/zcp/internal/server.Built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./cmd/zcp
+
+      - name: Compress binary
+        if: ${{ matrix.compress }}
+        uses: svenstaro/upx-action@v2
+        with:
+          file: ./builds/${{ matrix.file }}
+          strip: ${{ matrix.strip }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.file }}
+          path: ./builds/${{ matrix.file }}
+
+  release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ./builds
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "${{ github.ref_name }}"
+          ./builds/*
+          --repo "${{ github.repository }}"
+          --title "${{ github.ref_name }}"
+          --generate-notes
