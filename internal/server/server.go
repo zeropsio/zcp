@@ -22,10 +22,11 @@ type Server struct {
 	logFetcher    platform.LogFetcher
 	sshDeployer   ops.SSHDeployer
 	localDeployer ops.LocalDeployer
+	mounter       ops.Mounter
 }
 
 // New creates a new ZCP MCP server with all tools registered.
-func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer) *Server {
+func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter) *Server {
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: version},
 		&mcp.ServerOptions{Instructions: Instructions},
@@ -39,6 +40,7 @@ func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, 
 		logFetcher:    logFetcher,
 		sshDeployer:   sshDeployer,
 		localDeployer: localDeployer,
+		mounter:       mounter,
 	}
 
 	s.registerTools()
@@ -66,6 +68,9 @@ func (s *Server) registerTools() {
 	tools.RegisterImport(s.server, s.client, projectID)
 	tools.RegisterDelete(s.server, s.client, projectID)
 	tools.RegisterSubdomain(s.server, s.client, projectID)
+	if s.mounter != nil {
+		tools.RegisterMount(s.server, s.client, projectID, s.mounter)
+	}
 }
 
 // Run starts the MCP server on stdio transport.

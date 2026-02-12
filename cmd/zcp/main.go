@@ -61,9 +61,12 @@ func run() error {
 		return fmt.Errorf("knowledge store: %w", err)
 	}
 
+	// Real mounter for SSHFS operations (only functional on Zerops containers).
+	mounter := platform.NewSystemMounter()
+
 	// Create and run MCP server on STDIO.
 	// SSH and local deployers will be implemented with real implementations later.
-	srv := server.New(client, authInfo, store, logFetcher, nil, nil)
+	srv := server.New(client, authInfo, store, logFetcher, nil, nil, mounter)
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("server: %w", err)
 	}

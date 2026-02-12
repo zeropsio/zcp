@@ -8,9 +8,20 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/server"
 )
+
+// nopMounter satisfies ops.Mounter for annotation tests (never called).
+type nopMounter struct{}
+
+var _ ops.Mounter = (*nopMounter)(nil)
+
+func (*nopMounter) IsMounted(_ context.Context, _ string) (bool, error)  { return false, nil }
+func (*nopMounter) Mount(_ context.Context, _, _ string) error           { return nil }
+func (*nopMounter) Unmount(_ context.Context, _, _ string) error         { return nil }
+func (*nopMounter) IsWritable(_ context.Context, _ string) (bool, error) { return false, nil }
 
 func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	t.Parallel()
@@ -25,7 +36,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := server.New(mock, authInfo, store, logFetcher, nil, nil)
+	srv := server.New(mock, authInfo, store, logFetcher, nil, nil, &nopMounter{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -77,6 +88,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_deploy", title: "Deploy code to a service", destructive: boolPtr(true)},
 		{name: "zerops_env", title: "Manage environment variables", destructive: boolPtr(true)},
 		{name: "zerops_import", title: "Import services from YAML", destructive: boolPtr(true)},
+		{name: "zerops_mount", title: "Mount/unmount service filesystems", idempotent: true, destructive: boolPtr(false)},
 	}
 
 	for _, tt := range tests {

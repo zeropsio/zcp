@@ -35,6 +35,8 @@ const (
 	ErrAPIRateLimited         = "API_RATE_LIMITED"
 	ErrNetworkError           = "NETWORK_ERROR"
 	ErrInvalidUsage           = "INVALID_USAGE"
+	ErrMountFailed            = "MOUNT_FAILED"
+	ErrUnmountFailed          = "UNMOUNT_FAILED"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.
