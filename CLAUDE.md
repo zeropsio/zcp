@@ -28,11 +28,13 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 |---------|---------------|----------|
 | `cmd/zcp` | Entrypoint, STDIO server | `main.go` |
 | `internal/server` | MCP server setup, registration | `server.go` |
-| `internal/tools` | MCP tool handlers (12 tools) | `discover.go`, `manage.go`, ... |
+| `internal/tools` | MCP tool handlers (14 tools) | `discover.go`, `manage.go`, ... |
 | `internal/ops` | Business logic, validation | `discover.go`, `manage.go`, ... |
 | `internal/platform` | Zerops API client, types, errors | `client.go`, `errors.go` |
 | `internal/auth` | Token resolution (env var / zcli), project discovery | `auth.go` |
 | `internal/knowledge` | BM25 search engine, embedded docs | `engine.go` |
+| `internal/content` | Embedded templates + workflow catalog | `content.go` |
+| `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 
 Error codes: see `internal/platform/errors.go` for all codes (AUTH_REQUIRED, SERVICE_NOT_FOUND, etc.)
 
@@ -67,8 +69,20 @@ func TestDiscover_WithService_Success(t *testing.T) {
 |-------|-------|---------|
 | Unit | platform, auth, ops | `go test ./internal/platform/... ./internal/auth/... ./internal/ops/...` |
 | Tool | MCP handlers | `go test ./internal/tools/...` |
-| Integration | Multi-tool flows | `go test ./integration/` |
+| Integration | Multi-tool flows (mock) | `go test ./integration/` |
 | E2E | Real Zerops API | `go test ./e2e/ -tags e2e` |
+
+### Change impact — tests FIRST at ALL affected layers
+
+Before any behavioral change, update/write failing tests at **every affected layer** first (RED). Then implement (GREEN). Pure refactors (no behavior change) skip RED — just verify all layers stay green.
+
+- **Interface/type change** (platform, ops) → unit tests + tool tests + integration + e2e
+- **Tool handler change** (tools/) → tool tests + integration + e2e
+- **Business logic change** (ops/) → unit tests + tool tests that exercise the logic
+- **API client change** (platform/) → unit tests + e2e
+- **New MCP tool** → tool test + annotations_test.go + integration flow + e2e step
+
+A change is not complete until all affected layers pass.
 
 ### Rules
 
