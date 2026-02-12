@@ -1,0 +1,21 @@
+#!/bin/bash
+# Pre-push hook: runs full lint before any push.
+# Install: git config core.hooksPath .githooks (done by make setup)
+
+set -e
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+
+[ -f "go.mod" ] || exit 0
+
+LINT="golangci-lint"
+[ -x "${ROOT}/bin/golangci-lint" ] && LINT="${ROOT}/bin/golangci-lint"
+
+if ! command -v "$LINT" &>/dev/null && [ ! -x "$LINT" ]; then
+    echo "WARNING: golangci-lint not found. Run 'make setup' to install." >&2
+    exit 1
+fi
+
+echo "==> pre-push: running lint..."
+$LINT run ./... --timeout=120s || { echo "LINT FAILED — push blocked" >&2; exit 1; }
+echo "==> pre-push: lint passed"
