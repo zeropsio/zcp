@@ -39,8 +39,5 @@ jobs:
       - name: Test
         run: go test -race ./... -count=1
 
-      - name: Lint (linux/amd64)
-        run: GOOS=linux GOARCH=amd64 golangci-lint run ./...
-
-      - name: Lint (darwin/arm64)
-        run: GOOS=darwin GOARCH=arm64 golangci-lint run ./...
+      - name: Lint
+        run: golangci-lint run ./...

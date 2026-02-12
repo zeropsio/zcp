@@ -37,6 +37,7 @@ jobs:
     env:
       CGO_ENABLED: '0'
     strategy:
+      fail-fast: false
       matrix:
         include:
           - name: linux amd64
