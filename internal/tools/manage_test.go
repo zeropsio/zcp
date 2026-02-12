@@ -66,47 +66,6 @@ func TestManageTool_Restart(t *testing.T) {
 	}
 }
 
-func TestManageTool_Scale(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterManage(srv, mock, "proj-1")
-
-	result := callTool(t, srv, "zerops_manage", map[string]any{
-		"action":          "scale",
-		"serviceHostname": "api",
-		"cpuMode":         "SHARED",
-		"minCpu":          1,
-		"maxCpu":          4,
-	})
-
-	if result.IsError {
-		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
-	}
-}
-
-func TestManageTool_ScaleWithDisk(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "db"}})
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterManage(srv, mock, "proj-1")
-
-	result := callTool(t, srv, "zerops_manage", map[string]any{
-		"action":          "scale",
-		"serviceHostname": "db",
-		"minDisk":         5.0,
-		"maxDisk":         20.0,
-	})
-
-	if result.IsError {
-		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
-	}
-}
-
 func TestManageTool_MissingAction(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()

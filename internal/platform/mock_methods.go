@@ -274,3 +274,12 @@ func (m *Mock) SearchAppVersions(_ context.Context, _ string, _ int) ([]AppVersi
 	defer m.mu.RUnlock()
 	return m.appVersionEvents, nil
 }
+
+func (m *Mock) ListServiceStackTypes(_ context.Context) ([]ServiceStackType, error) {
+	if err := m.getError("ListServiceStackTypes"); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.stackTypes, nil
+}

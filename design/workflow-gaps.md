@@ -31,21 +31,7 @@ Key detail: `READY_TO_DEPLOY` indicates a runtime service imported but never dep
 
 ---
 
-## GAP 4: Validate Tool Semantic Depth
-
-**Severity**: LOW — post-v1
-
-v1 `zerops_validate` does offline YAML syntax validation. The main branch's Gate 0.5 performs deeper checks:
-
-1. **Runtime services MUST have `buildFromGit` or `startWithoutCode: true`** — otherwise stuck in `READY_TO_DEPLOY`
-2. **Runtime services MUST have `zeropsSetup`** — omitting causes build failures
-3. **Database/cache services MUST have `mode: NON_HA` or `mode: HA`** — omitting passes dry-run but fails real import
-
-These checks require knowledge of service type categories. The knowledge base has this info — the validate tool could cross-reference.
-
----
-
-## GAP 5: Build Monitoring via Events
+## GAP 4: Build Monitoring via Events
 
 **Severity**: LOW — implementation note for v1
 
@@ -80,13 +66,13 @@ status.sh --wait:
 | Deploy (push code) | SSH + `zcli push` | `zerops_deploy` (SSH mode) | OK |
 | Deploy (monitor build) | `status.sh --wait` | `zerops_events` / `zerops_process` | Verify depth (GAP 5) |
 | Import services | `zcli service-import` | `zerops_import` | OK |
-| YAML validation | Gate scripts | `zerops_validate` | Needs depth (GAP 4) |
+| YAML validation | Gate scripts | `zerops_import dryRun=true` | OK |
 | Knowledge/docs | N/A | `zerops_knowledge` | OK |
 | Process tracking | Polling | `zerops_process` + progress | OK |
 | Activity timeline | N/A | `zerops_events` | OK |
 | Subdomain | N/A | `zerops_subdomain` | OK |
 | Delete | N/A | `zerops_delete` | OK |
-| Scale | `zsc scale` | `zerops_manage` (scale) | OK |
+| Scale | `zsc scale` | `zerops_scale` | OK |
 | SSHFS mounts | `sshfs svc:/var/www` | Agent bash | OK |
 | SSH exec | `ssh svc "cmd"` | Agent bash | OK |
 | Connectivity testing | SSH + DNS/TCP/HTTP | Agent bash | OK |

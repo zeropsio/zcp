@@ -108,20 +108,13 @@ The `zerops_import` tool accepts YAML in two ways:
 
 Always use `dryRun: true` first to validate before actual import.
 
-### Validate Before Import
-Use `zerops_validate` with `type: "import.yml"` (not `"import"`) to check syntax:
-```
-zerops_validate(content: "services:\n  ...", type: "import.yml")
-```
-
 ## Gotchas
 1. **`project:` section is optional**: When using ZAIA, import adds services to existing project — no `project:` section needed
 2. **Preprocessor runs at import time**: `${random(32)}` generates once — value is fixed after import
 3. **`mode` is immutable**: HA/NON_HA cannot be changed after creation
 4. **`corePackage` matters**: LIGHT vs SERIOUS affects build hours, backup storage, and egress limits
 5. **Object storage size range**: 1-100 GB — cannot exceed 100GB per service
-6. **Validate type is `import.yml`**: Using `type: "import"` returns "Unknown file type" — always use `type: "import.yml"`
-7. **Dry-run ≠ real import**: Some service types (e.g., `valkey@8`) pass dry-run validation but fail at actual import — use exact documented versions
+6. **Dry-run ≠ real import**: Some service types (e.g., `valkey@8`) pass dry-run validation but fail at actual import — use exact documented versions
 8. **`mode` is mandatory for HA-capable services**: PostgreSQL, MariaDB, Valkey, KeyDB, shared-storage, elasticsearch, and other HA-capable services require `mode: NON_HA` or `mode: HA` explicitly — dry-run passes without it but real import fails with "Mandatory parameter is missing"
 
 ## See Also

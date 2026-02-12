@@ -51,22 +51,21 @@ The top 3 Zerops gotchas: (1) never use HTTPS internally, (2) never listen on po
 26. **Docker vertical scaling**: Triggers VM restart — expect brief downtime
 27. **Disk only grows**: Auto-scaling only increases disk — to reduce, recreate the service
 28. **Subdomain on undeployed service**: `zerops_subdomain enable` fails with "Service stack is not http or https" on READY_TO_DEPLOY services — use `enableSubdomainAccess: true` in import YAML instead
-29. **Validate type is `import.yml`**: `zerops_validate(type: "import")` returns "Unknown file type" — use `type: "import.yml"` (with `.yml`)
-30. **Valkey version**: Only `valkey@7.2` works — `valkey@8` passes dry-run but fails at actual import
-31. **`mode` mandatory for databases/caches**: PostgreSQL, MariaDB, Valkey, KeyDB, shared-storage require explicit `mode: NON_HA` or `mode: HA` — omitting it passes dry-run but fails real import with "Mandatory parameter is missing"
+29. **Valkey version**: Only `valkey@7.2` works — `valkey@8` passes dry-run but fails at actual import
+30. **`mode` mandatory for databases/caches**: PostgreSQL, MariaDB, Valkey, KeyDB, shared-storage require explicit `mode: NON_HA` or `mode: HA` — omitting it passes dry-run but fails real import with "Mandatory parameter is missing"
 
 ## Deploy & Runtime
 
-32. **`dist/~` tilde syntax**: Deploys directory **contents**, not the folder itself. Without `~`, you get nested `dist/dist/`
-33. **Ghost CMS maxContainers**: Must be 1 — Ghost cannot scale horizontally (uses SQLite/local state)
-34. **Next.js static export**: Requires `output: 'export'` in `next.config.mjs` — without it, `next build` produces SSR output
-35. **SvelteKit static**: Requires `@sveltejs/adapter-static` + `export const prerender = true` in root layout
-36. **Phoenix releases**: `PHX_SERVER=true` env var required to start the HTTP server in release mode
-37. **Java Spring bind address**: `server.address=0.0.0.0` required — default binds to localhost only, unreachable from Zerops routing
-38. **Python pip in containers**: Use `--no-cache-dir` flag and `build.addToRunPrepare` to persist packages in runtime
-39. **Django/Laravel behind proxy**: Configure `CSRF_TRUSTED_ORIGINS` (Django) or `TrustedProxies` middleware (Laravel) — reverse proxy breaks CSRF validation
-40. **Symfony sass-bundle**: Put `symfonycasts/sass-bundle` in `require` not `require-dev` — needed at runtime on Alpine
-41. **`AWS_USE_PATH_STYLE_ENDPOINT: true`**: Required for Zerops Object Storage (MinIO) — virtual-hosted style does not work
+31. **`dist/~` tilde syntax**: Deploys directory **contents**, not the folder itself. Without `~`, you get nested `dist/dist/`
+32. **Ghost CMS maxContainers**: Must be 1 — Ghost cannot scale horizontally (uses SQLite/local state)
+33. **Next.js static export**: Requires `output: 'export'` in `next.config.mjs` — without it, `next build` produces SSR output
+34. **SvelteKit static**: Requires `@sveltejs/adapter-static` + `export const prerender = true` in root layout
+35. **Phoenix releases**: `PHX_SERVER=true` env var required to start the HTTP server in release mode
+36. **Java Spring bind address**: `server.address=0.0.0.0` required — default binds to localhost only, unreachable from Zerops routing
+37. **Python pip in containers**: Use `--no-cache-dir` flag and `build.addToRunPrepare` to persist packages in runtime
+38. **Django/Laravel behind proxy**: Configure `CSRF_TRUSTED_ORIGINS` (Django) or `TrustedProxies` middleware (Laravel) — reverse proxy breaks CSRF validation
+39. **Symfony sass-bundle**: Put `symfonycasts/sass-bundle` in `require` not `require-dev` — needed at runtime on Alpine
+40. **`AWS_USE_PATH_STYLE_ENDPOINT: true`**: Required for Zerops Object Storage (MinIO) — virtual-hosted style does not work
 
 ## See Also
 - zerops://networking/overview

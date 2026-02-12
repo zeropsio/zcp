@@ -28,7 +28,7 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 |---------|---------------|----------|
 | `cmd/zcp` | Entrypoint, STDIO server | `main.go` |
 | `internal/server` | MCP server setup, registration | `server.go` |
-| `internal/tools` | MCP tool handlers (14 tools) | `discover.go`, `manage.go`, ... |
+| `internal/tools` | MCP tool handlers (15 tools) | `discover.go`, `manage.go`, ... |
 | `internal/ops` | Business logic, validation | `discover.go`, `manage.go`, ... |
 | `internal/platform` | Zerops API client, types, errors | `client.go`, `errors.go` |
 | `internal/auth` | Token resolution (env var / zcli), project discovery | `auth.go` |

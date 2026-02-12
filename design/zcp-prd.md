@@ -73,7 +73,7 @@ The ZCP MCP binary is downloaded during `initCommands` and pre-configured as Cla
 │    CLAUDE.md = user-replaceable. zerops_workflow = tool-based routing.        │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │  MCP Tool Layer  (this PRD)                                                  │
-│    API operations: discover, manage, env, logs, deploy, import,              │
+│    API operations: discover, manage, scale, env, logs, deploy, import,       │
 │    validate, knowledge, process, delete, subdomain, events                   │
 │    Context loading: context (platform knowledge), workflow (guidance)         │
 ├──────────────────────────────────────────────────────────────────────────────┤
@@ -145,11 +145,11 @@ internal/
   tools/                       → MCP tool handlers (thin wrappers over ops)
     discover.go                → zerops_discover
     manage.go                  → zerops_manage
+    scale.go                   → zerops_scale
     env.go                     → zerops_env
     logs.go                    → zerops_logs
     deploy.go                  → zerops_deploy (SSH mode primary, local fallback)
     import.go                  → zerops_import
-    validate.go                → zerops_validate
     knowledge.go               → zerops_knowledge
     process.go                 → zerops_process
     delete.go                  → zerops_delete
@@ -159,7 +159,7 @@ internal/
     workflow.go                → zerops_workflow
     convert.go                 → PlatformError → MCP result conversion
   ops/                         → Business logic, validation, orchestration
-    discover.go, manage.go, env.go, logs.go, import.go, validate.go,
+    discover.go, manage.go, scale.go, env.go, logs.go, import.go,
     delete.go, subdomain.go, events.go, process.go
     helpers.go                 → resolveServiceID, hostname helpers, time parsing
     progress.go                → Reusable PollProcess(ctx, processID, onProgress callback) helper.
@@ -453,12 +453,13 @@ Thread-safe with `sync.RWMutex`. Compile-time interface check.
 | Tool | Type | Key Behavior |
 |------|------|-------------|
 | `zerops_discover` | Sync | Project info + service list. Optional filter by hostname. Optional includeEnvs. |
-| `zerops_manage` | Async | action={start,stop,restart,scale} + serviceHostname. Scale accepts CPU/RAM/disk params (see parameter mapping below). |
+| `zerops_manage` | Async | action={start,stop,restart} + serviceHostname. Lifecycle operations only. |
+| `zerops_scale` | Async | serviceHostname + CPU/RAM/disk/container params (see parameter mapping below). Dedicated scaling tool. |
 | `zerops_env` | Mixed | action={get,set,delete}. Service-level or project-level. Variables in KEY=value format. |
 | `zerops_logs` | Sync | 2-step: GetProjectLog → LogFetcher. Severity, since, limit, search, buildId filters. |
 | `zerops_deploy` | Mixed | SSH mode (primary): SSH into sourceService, zcli push to targetService (hostname). Local mode (fallback): zcli subprocess. See section 8. |
 | `zerops_import` | Mixed | Inline content or filePath. dryRun for validation (sync), real import (async). |
-| `zerops_validate` | Sync | Offline YAML validation. zerops.yml or import.yml. No API needed. |
+
 | `zerops_knowledge` | Sync | BM25 search. Query expansion. Full top-result content. Suggestions. |
 | `zerops_process` | Sync | Status check or cancel. Normalizes DONE→FINISHED, CANCELLED→CANCELED. |
 | `zerops_delete` | Async | Requires confirm=true safety gate. Resolves hostname → serviceID. |
@@ -467,7 +468,7 @@ Thread-safe with `sync.RWMutex`. Compile-time interface check.
 | `zerops_context` | Sync | Static platform knowledge + service type catalog. No params. Load once per session. |
 | `zerops_workflow` | Sync | Workflow routing. No param = workflow catalog. With `workflow` param = specific guidance. |
 
-**Manage/scale parameter mapping** (tool params → `AutoscalingParams` fields):
+**Scale parameter mapping** (`zerops_scale` tool params → `AutoscalingParams` fields):
 
 | Tool Parameter | API Field (`AutoscalingParams`) |
 |----------------|-------------------------------|
@@ -1061,15 +1062,15 @@ Step  Operation                  Validates
 01    zerops_context             Static content loads, token-sized
 02    zerops_discover            Auth works, project+services visible
 03    zerops_knowledge           BM25 search returns results
-04    zerops_validate            YAML validation (offline)
-05    zerops_import (dry-run)    Validates YAML, no side effects
-06    zerops_import (real)       Creates 2 services (runtime+managed)
+04    zerops_import (dry-run)    Validates YAML, no side effects
+05    zerops_import (real)       Creates 2 services (runtime+managed)
 07    poll processes             Wait for import completion (120s max)
 08    zerops_discover            Verify both services exist
 09    zerops_env (set)           Set env var on runtime service
 10    zerops_env (get)           Read back, verify value
 11    zerops_manage (stop)       Stop managed service
 12    zerops_manage (start)      Start managed service
+12a   zerops_scale               Scale service resources (CPU/RAM/containers)
 13    zerops_subdomain (enable)  Enable subdomain (may fail if undeployed — expected)
 14    zerops_subdomain (disable) Disable subdomain
 15    zerops_logs                Fetch logs (may be empty — OK)
@@ -1168,8 +1169,7 @@ Table-driven tests, `Test{Op}_{Scenario}_{Result}` naming. API tests: `TestAPI_{
 13. `ops/env.go` — Env get/set/delete + API tests
 14. `ops/logs.go` — 2-step log fetch + API test (verify real log response shape)
 15. `ops/import.go` — Import with dry-run + API test (dry-run only — safe, no resources created)
-16. `ops/validate.go` — YAML validation (offline, no API test needed)
-17. `ops/delete.go` — Service deletion (API test grouped with import — create then delete)
+16. `ops/delete.go` — Service deletion (API test grouped with import — create then delete)
 18. `ops/subdomain.go` — Subdomain (idempotent) + API test
 19. `ops/events.go` — Activity timeline merge + API test (verify real event shapes)
 20. `ops/process.go` — Process status/cancel + API test
@@ -1281,6 +1281,7 @@ These capabilities are currently handled by the agent's native bash layer. They 
 13. MCP tool call: `zerops_discover` returns project + services
 14. MCP tool call: `zerops_knowledge {query: "postgresql"}` returns docs
 15. MCP tool call: `zerops_manage {action: "restart", serviceHostname: "api"}` returns process
+15a. MCP tool call: `zerops_scale {serviceHostname: "api", minCpu: 1, maxCpu: 4}` returns process
 16. Progress notification test: async op with ProgressToken sends updates
 17. Error handling: invalid token → proper MCP error response
 18. Graceful shutdown: SIGINT during operation → clean exit

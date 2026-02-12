@@ -61,6 +61,7 @@ type CustomAutoscaling struct {
 
 // AutoscalingParams maps MCP tool params to API request.
 type AutoscalingParams struct {
+	ServiceMode         string // Current HA/NON_HA mode — must be set to avoid API "mode update forbidden"
 	HorizontalMinCount  *int32
 	HorizontalMaxCount  *int32
 	VerticalCPUMode     *string
@@ -188,4 +189,18 @@ type BuildInfo struct {
 type UserRef struct {
 	FullName string `json:"fullName"`
 	Email    string `json:"email"`
+}
+
+// ServiceStackType represents an available service stack type (e.g. "Node.js", "PostgreSQL").
+type ServiceStackType struct {
+	Name     string                    `json:"name"`
+	Category string                    `json:"category"`
+	Versions []ServiceStackTypeVersion `json:"versions"`
+}
+
+// ServiceStackTypeVersion represents a specific version of a service stack type.
+type ServiceStackTypeVersion struct {
+	Name    string `json:"name"`
+	IsBuild bool   `json:"isBuild"`
+	Status  string `json:"status"`
 }

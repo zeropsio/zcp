@@ -83,9 +83,9 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	baselineCount := len(baseline.Services)
 	t.Logf("  Baseline: %d services in project %s", baselineCount, baseline.Project.Name)
 
-	// --- Step 5: zerops_validate import YAML ---
+	// --- Step 5: zerops_import dry-run ---
 	step++
-	logStep(t, step, "zerops_validate import YAML")
+	logStep(t, step, "zerops_import dry-run")
 	importYAML := `services:
   - hostname: ` + rtHostname + `
     type: nodejs@22
@@ -94,17 +94,6 @@ func TestE2E_FullLifecycle(t *testing.T) {
     type: postgresql@16
     mode: NON_HA
 `
-	validateText := s.mustCallSuccess("zerops_validate", map[string]any{
-		"content": importYAML,
-		"type":    "import",
-	})
-	if !strings.Contains(strings.ToLower(validateText), "valid") {
-		t.Errorf("expected valid in validate result: %s", validateText)
-	}
-
-	// --- Step 6: zerops_import dry-run ---
-	step++
-	logStep(t, step, "zerops_import dry-run")
 	dryRunText := s.mustCallSuccess("zerops_import", map[string]any{
 		"dryRun":  true,
 		"content": importYAML,
@@ -124,7 +113,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Fatalf("dry-run: expected 2 services, got %d", len(dryResult.Services))
 	}
 
-	// --- Step 7: zerops_import real ---
+	// --- Step 6: zerops_import real ---
 	step++
 	logStep(t, step, "zerops_import real (creating services)")
 	importText := s.mustCallSuccess("zerops_import", map[string]any{
@@ -143,7 +132,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		waitForProcess(s, pid)
 	}
 
-	// --- Step 8: zerops_discover (verify new services) ---
+	// --- Step 7: zerops_discover (verify new services) ---
 	step++
 	logStep(t, step, "zerops_discover after import")
 	waitForServiceReady(s, rtHostname)
@@ -155,7 +144,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Errorf("database service %s not found after import", dbHostname)
 	}
 
-	// --- Step 9: zerops_discover with service filter ---
+	// --- Step 8: zerops_discover with service filter ---
 	step++
 	logStep(t, step, "zerops_discover with service filter")
 	filteredText := s.mustCallSuccess("zerops_discover", map[string]any{
@@ -177,7 +166,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Errorf("hostname = %q, want %q", filtered.Services[0].Hostname, rtHostname)
 	}
 
-	// --- Step 10: zerops_env set ---
+	// --- Step 9: zerops_env set ---
 	step++
 	logStep(t, step, "zerops_env set on %s", rtHostname)
 	s.mustCallSuccess("zerops_env", map[string]any{
@@ -186,7 +175,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		"variables":       []any{"E2E_TEST_VAR=hello_zerops"},
 	})
 
-	// --- Step 11: zerops_env get ---
+	// --- Step 10: zerops_env get ---
 	step++
 	logStep(t, step, "zerops_env get on %s", rtHostname)
 	envText := s.mustCallSuccess("zerops_env", map[string]any{
@@ -199,7 +188,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		// This is acceptable behavior — we verify the get call works.
 	}
 
-	// --- Step 12: zerops_manage restart (database — active immediately after import) ---
+	// --- Step 11: zerops_manage restart (database — active immediately after import) ---
 	step++
 	logStep(t, step, "zerops_manage restart %s", dbHostname)
 	restartText := s.mustCallSuccess("zerops_manage", map[string]any{
@@ -210,7 +199,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	t.Logf("  Restart process: %s", restartProcID)
 	waitForProcess(s, restartProcID)
 
-	// --- Step 13: zerops_process status ---
+	// --- Step 12: zerops_process status ---
 	step++
 	logStep(t, step, "zerops_process status")
 	statusText := s.mustCallSuccess("zerops_process", map[string]any{
@@ -224,6 +213,35 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	}
 	if procStatus.Status != "FINISHED" {
 		t.Errorf("process status = %q, want FINISHED", procStatus.Status)
+	}
+
+	// --- Step 13: zerops_scale (database) ---
+	step++
+	logStep(t, step, "zerops_scale %s", dbHostname)
+	scaleText := s.mustCallSuccess("zerops_scale", map[string]any{
+		"serviceHostname": dbHostname,
+		"cpuMode":         "DEDICATED",
+		"minCpu":          1,
+		"maxCpu":          5,
+		"minRam":          0.5,
+		"maxRam":          4.0,
+	})
+	var scaleResult struct {
+		ServiceHostname string `json:"serviceHostname"`
+		ServiceID       string `json:"serviceId"`
+		Process         *struct {
+			ID string `json:"id"`
+		} `json:"process,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(scaleText), &scaleResult); err != nil {
+		t.Fatalf("parse scale result: %v", err)
+	}
+	if scaleResult.ServiceHostname == "" && scaleResult.ServiceID == "" {
+		t.Error("expected serviceHostname or serviceId in scale result")
+	}
+	if scaleResult.Process != nil && scaleResult.Process.ID != "" {
+		t.Logf("  Scale process: %s", scaleResult.Process.ID)
+		waitForProcess(s, scaleResult.Process.ID)
 	}
 
 	// --- Step 14: zerops_events ---

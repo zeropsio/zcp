@@ -19,7 +19,7 @@ zerops_discover service="api"
 Adjust resource limits per container:
 
 ```
-zerops_manage action="scale" serviceHostname="api" minCpu=1 maxCpu=4 minRam=0.5 maxRam=4
+zerops_scale serviceHostname="api" minCpu=1 maxCpu=4 minRam=0.5 maxRam=4
 ```
 
 Parameters:
@@ -33,7 +33,7 @@ Parameters:
 Adjust container count range:
 
 ```
-zerops_manage action="scale" serviceHostname="api" minContainers=2 maxContainers=5
+zerops_scale serviceHostname="api" minContainers=2 maxContainers=5
 ```
 
 Parameters:
@@ -58,19 +58,19 @@ zerops_process processId="<id from scale>"
 **Development**: SHARED CPU, min resources, 1 container. Cost-effective for dev/staging.
 
 ```
-zerops_manage action="scale" serviceHostname="api" cpuMode="SHARED" minCpu=1 maxCpu=2 minRam=0.25 maxRam=1 minContainers=1 maxContainers=1
+zerops_scale serviceHostname="api" cpuMode="SHARED" minCpu=1 maxCpu=2 minRam=0.25 maxRam=1 minContainers=1 maxContainers=1
 ```
 
 **Production**: DEDICATED CPU, higher minimums, multiple containers for HA.
 
 ```
-zerops_manage action="scale" serviceHostname="api" cpuMode="DEDICATED" minCpu=2 maxCpu=8 minRam=2 maxRam=8 minContainers=2 maxContainers=6
+zerops_scale serviceHostname="api" cpuMode="DEDICATED" minCpu=2 maxCpu=8 minRam=2 maxRam=8 minContainers=2 maxContainers=6
 ```
 
 **Burst workloads**: Wide autoscaling range, SHARED CPU.
 
 ```
-zerops_manage action="scale" serviceHostname="worker" cpuMode="SHARED" minCpu=1 maxCpu=8 minRam=1 maxRam=16 minContainers=1 maxContainers=10
+zerops_scale serviceHostname="worker" cpuMode="SHARED" minCpu=1 maxCpu=8 minRam=1 maxRam=16 minContainers=1 maxContainers=10
 ```
 
 ## Tips

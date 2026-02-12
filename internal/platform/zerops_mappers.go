@@ -64,6 +64,26 @@ func mapProcess(p output.Process) Process {
 	}
 }
 
+func mapServiceStackTypes(items output.EsServiceStackTypeResponseItems) []ServiceStackType {
+	result := make([]ServiceStackType, 0, len(items))
+	for _, item := range items {
+		versions := make([]ServiceStackTypeVersion, 0, len(item.ServiceStackTypeVersionList))
+		for _, v := range item.ServiceStackTypeVersionList {
+			versions = append(versions, ServiceStackTypeVersion{
+				Name:    v.Name.String(),
+				IsBuild: v.IsBuild.Native(),
+				Status:  v.Status.String(),
+			})
+		}
+		result = append(result, ServiceStackType{
+			Name:     item.Name.String(),
+			Category: item.Category.String(),
+			Versions: versions,
+		})
+	}
+	return result
+}
+
 func mapEsServiceStack(s output.EsServiceStack) ServiceStack {
 	var autoscaling *CustomAutoscaling
 	if s.CustomAutoscaling != nil {
@@ -84,6 +104,7 @@ func mapEsServiceStack(s output.EsServiceStack) ServiceStack {
 		},
 		Status:            s.Status.String(),
 		Mode:              mode,
+		Ports:             mapServicePorts(s.Ports),
 		CustomAutoscaling: autoscaling,
 		Created:           s.Created.String(),
 		LastUpdate:        s.LastUpdate.String(),
@@ -105,10 +126,29 @@ func mapFullServiceStack(s output.ServiceStack) ServiceStack {
 		},
 		Status:            s.Status.String(),
 		Mode:              s.Mode.String(),
+		Ports:             mapServicePorts(s.Ports),
 		CustomAutoscaling: autoscaling,
 		Created:           s.Created.String(),
 		LastUpdate:        s.LastUpdate.String(),
 	}
+}
+
+func mapServicePorts(sdkPorts []output.ServicePort) []Port {
+	if len(sdkPorts) == 0 {
+		return nil
+	}
+	ports := make([]Port, 0, len(sdkPorts))
+	for _, p := range sdkPorts {
+		portRouting, prFilled := p.PortRouting.Get()
+		httpRouting, hrFilled := p.HttpRouting.Get()
+		public := (prFilled && portRouting.Native()) || (hrFilled && httpRouting.Native())
+		ports = append(ports, Port{
+			Port:     int(p.Port),
+			Protocol: p.Protocol.String(),
+			Public:   public,
+		})
+	}
+	return ports
 }
 
 func mapOutputCustomAutoscaling(ca *output.CustomAutoscaling) *CustomAutoscaling {
@@ -156,6 +196,12 @@ func mapOutputCustomAutoscaling(ca *output.CustomAutoscaling) *CustomAutoscaling
 
 func buildAutoscalingBody(params AutoscalingParams) body.Autoscaling {
 	result := body.Autoscaling{}
+
+	// Set service mode to preserve current HA/NON_HA — nil mode causes "mode update forbidden".
+	if params.ServiceMode != "" {
+		mode := enum.ServiceStackModeEnum(params.ServiceMode)
+		result.Mode = &mode
+	}
 
 	var vert *body.VerticalAutoscalingNullable
 	var horiz *body.HorizontalAutoscalingNullable

@@ -144,6 +144,45 @@ func TestIntegration_DiscoverThenManage(t *testing.T) {
 	}
 }
 
+func TestIntegration_DiscoverThenScale(t *testing.T) {
+	t.Parallel()
+
+	mock := defaultMock()
+	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	defer cleanup()
+
+	// Step 1: Discover services.
+	discoverText := callAndGetText(t, session, "zerops_discover", nil)
+
+	var dr ops.DiscoverResult
+	if err := json.Unmarshal([]byte(discoverText), &dr); err != nil {
+		t.Fatalf("parse discover result: %v", err)
+	}
+	if len(dr.Services) == 0 {
+		t.Fatal("expected at least 1 service")
+	}
+
+	// Step 2: Use discovered hostname to scale a service.
+	hostname := dr.Services[0].Hostname
+	scaleText := callAndGetText(t, session, "zerops_scale", map[string]any{
+		"serviceHostname": hostname,
+		"cpuMode":         "SHARED",
+		"minCpu":          1,
+		"maxCpu":          4,
+	})
+
+	var sr ops.ScaleResult
+	if err := json.Unmarshal([]byte(scaleText), &sr); err != nil {
+		t.Fatalf("parse scale result: %v", err)
+	}
+	if sr.Hostname != hostname {
+		t.Errorf("serviceHostname = %q, want %q", sr.Hostname, hostname)
+	}
+	if sr.ServiceID == "" {
+		t.Error("expected non-empty serviceId")
+	}
+}
+
 func TestIntegration_ImportThenDiscover(t *testing.T) {
 	t.Parallel()
 

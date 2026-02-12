@@ -12,6 +12,29 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// Service stack types (public)
+// ---------------------------------------------------------------------------
+
+func (z *ZeropsClient) ListServiceStackTypes(ctx context.Context) ([]ServiceStackType, error) {
+	filter := body.EsFilter{
+		Search: body.EsFilterSearch{},
+		Sort:   body.EsFilterSort{},
+		Limit:  types.NewIntNull(500),
+	}
+
+	resp, err := z.handler.PostServiceStackTypeSearch(ctx, filter)
+	if err != nil {
+		return nil, mapSDKError(err, "service-stack-type")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "service-stack-type")
+	}
+
+	return mapServiceStackTypes(out.Items), nil
+}
+
+// ---------------------------------------------------------------------------
 // Import / Delete
 // ---------------------------------------------------------------------------
 

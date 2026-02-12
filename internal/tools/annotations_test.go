@@ -65,13 +65,13 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_workflow", readOnly: true, idempotent: true, openWorld: boolPtr(false), hasAnnotations: true},
 		{name: "zerops_discover", readOnly: true, idempotent: true, hasAnnotations: true},
 		{name: "zerops_knowledge", readOnly: true, idempotent: true, hasAnnotations: true},
-		{name: "zerops_validate", readOnly: true, idempotent: true, hasAnnotations: true},
 		{name: "zerops_logs", readOnly: true, idempotent: true, hasAnnotations: true},
 		{name: "zerops_events", readOnly: true, idempotent: true, hasAnnotations: true},
 		{name: "zerops_process", readOnly: true, idempotent: true, hasAnnotations: true},
 
 		// Destructive tools
 		{name: "zerops_manage", destructive: boolPtr(true), hasAnnotations: true},
+		{name: "zerops_scale", destructive: boolPtr(true), hasAnnotations: true},
 		{name: "zerops_delete", destructive: boolPtr(true), hasAnnotations: true},
 
 		// Idempotent tools

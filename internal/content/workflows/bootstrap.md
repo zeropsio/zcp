@@ -35,15 +35,7 @@ services:
     mode: NON_HA
 ```
 
-### 3. Validate Before Import
-
-Always validate your YAML before importing:
-
-```
-zerops_validate content="<your yaml>" type="import.yml"
-```
-
-### 4. Dry Run
+### 3. Dry Run
 
 Preview what will be created without actually creating anything:
 
@@ -51,7 +43,7 @@ Preview what will be created without actually creating anything:
 zerops_import content="<your yaml>" dryRun=true
 ```
 
-### 5. Import Services
+### 4. Import Services
 
 Create the services:
 
@@ -59,7 +51,7 @@ Create the services:
 zerops_import content="<your yaml>"
 ```
 
-### 6. Track Progress
+### 5. Track Progress
 
 Monitor the import process:
 
@@ -67,7 +59,7 @@ Monitor the import process:
 zerops_process processId="<id from import>"
 ```
 
-### 7. Configure Environment Variables
+### 6. Configure Environment Variables
 
 Set required environment variables for your services:
 
@@ -75,7 +67,7 @@ Set required environment variables for your services:
 zerops_env action="set" serviceHostname="api" variables=["DATABASE_URL=postgresql://db:5432/app", "CACHE_URL=redis://cache:6379"]
 ```
 
-### 8. Enable Public Access
+### 7. Enable Public Access
 
 Enable subdomain for web-facing services:
 

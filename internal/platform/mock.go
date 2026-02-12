@@ -27,6 +27,7 @@ type Mock struct {
 	importResult     *ImportResult
 	processEvents    []ProcessEvent
 	appVersionEvents []AppVersionEvent
+	stackTypes       []ServiceStackType
 
 	// Error overrides: method name -> error
 	errors map[string]error
@@ -134,6 +135,14 @@ func (m *Mock) WithAppVersionEvents(events []AppVersionEvent) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.appVersionEvents = events
+	return m
+}
+
+// WithServiceStackTypes sets the service stack types returned by ListServiceStackTypes.
+func (m *Mock) WithServiceStackTypes(types []ServiceStackType) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stackTypes = types
 	return m
 }
 

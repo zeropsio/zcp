@@ -53,6 +53,9 @@ type Client interface {
 	// Activity
 	SearchProcesses(ctx context.Context, projectID string, limit int) ([]ProcessEvent, error)
 	SearchAppVersions(ctx context.Context, projectID string, limit int) ([]AppVersionEvent, error)
+
+	// Service stack types (public, no auth required for search)
+	ListServiceStackTypes(ctx context.Context) ([]ServiceStackType, error)
 }
 
 // LogFetcher fetches logs from the log backend (step 2).

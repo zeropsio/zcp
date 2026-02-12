@@ -1,10 +1,204 @@
 package ops
 
-// GetContext returns a static precompiled Zerops platform context string.
-// Used by the zerops_context MCP tool to provide platform knowledge to AI agents.
-// Content is ~800-1200 tokens covering platform fundamentals and critical rules.
-func GetContext() string {
-	return zeropsContext
+import (
+	"context"
+	"slices"
+	"strings"
+
+	"github.com/zeropsio/zcp/internal/platform"
+)
+
+// GetContext returns Zerops platform context for AI agents.
+// If client and cache are provided, appends dynamic service stack types.
+// Falls back to static-only when client/cache is nil or API fails.
+func GetContext(ctx context.Context, client platform.Client, cache *StackTypeCache) string {
+	static := zeropsContext
+
+	if client == nil || cache == nil {
+		return static
+	}
+
+	types := cache.Get(ctx, client)
+	dynamic := formatServiceStacks(types)
+	if dynamic == "" {
+		return static
+	}
+
+	return static + "\n\n" + dynamic
+}
+
+const statusActive = "ACTIVE"
+
+// hiddenCategories are internal categories not shown to users.
+var hiddenCategories = map[string]bool{
+	"CORE":             true, // contains only internal "Core" type
+	"INTERNAL":         true,
+	"BUILD":            true,
+	"PREPARE_RUNTIME":  true,
+	"HTTP_L7_BALANCER": true,
+}
+
+// categoryOrder defines display order for user-facing categories.
+var categoryOrder = []string{
+	"USER",
+	"STANDARD",
+	"SHARED_STORAGE",
+	"OBJECT_STORAGE",
+}
+
+func formatServiceStacks(types []platform.ServiceStackType) string {
+	if len(types) == 0 {
+		return ""
+	}
+
+	// Collect build version names from BUILD category for cross-reference.
+	buildVersions := collectBuildVersions(types)
+	// Track which build versions get matched to a visible type.
+	matchedBuild := make(map[string]bool)
+
+	// Group visible types by category.
+	grouped := make(map[string][]platform.ServiceStackType)
+	for _, st := range types {
+		if hiddenCategories[st.Category] {
+			continue
+		}
+		grouped[st.Category] = append(grouped[st.Category], st)
+	}
+
+	if len(grouped) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## Available Service Stacks (live)\n")
+
+	writeCategory := func(cat string, stacks []platform.ServiceStackType) {
+		sb.WriteString("\n### ")
+		sb.WriteString(categoryDisplayName(cat))
+		sb.WriteByte('\n')
+		for _, st := range stacks {
+			sb.WriteString(formatStackEntry(st, buildVersions, matchedBuild))
+		}
+	}
+
+	for _, cat := range categoryOrder {
+		if stacks, ok := grouped[cat]; ok {
+			writeCategory(cat, stacks)
+		}
+	}
+
+	// Any remaining categories not in categoryOrder, sorted for determinism.
+	var remaining []string
+	for cat := range grouped {
+		if slices.Contains(categoryOrder, cat) {
+			continue
+		}
+		remaining = append(remaining, cat)
+	}
+	slices.Sort(remaining)
+	for _, cat := range remaining {
+		writeCategory(cat, grouped[cat])
+	}
+
+	// Show unmatched BUILD versions (e.g., php@8.4 for PHP build base).
+	buildSection := formatUnmatchedBuildTypes(types, matchedBuild)
+	if buildSection != "" {
+		sb.WriteString(buildSection)
+	}
+
+	return sb.String()
+}
+
+// collectBuildVersions returns a set of version names from BUILD category types.
+func collectBuildVersions(types []platform.ServiceStackType) map[string]bool {
+	result := make(map[string]bool)
+	for _, st := range types {
+		if st.Category != "BUILD" {
+			continue
+		}
+		for _, v := range st.Versions {
+			if v.Status == statusActive {
+				result[v.Name] = true
+			}
+		}
+	}
+	return result
+}
+
+func formatStackEntry(st platform.ServiceStackType, buildVersions, matchedBuild map[string]bool) string {
+	var versions []string
+	for _, v := range st.Versions {
+		if v.Status != statusActive {
+			continue
+		}
+		versions = append(versions, v.Name)
+	}
+
+	if len(versions) == 0 {
+		return ""
+	}
+
+	// Determine build capability from BUILD category cross-reference.
+	// If ANY version of this type also exists in BUILD → type supports build+run.
+	hasBuild := false
+	for _, vn := range versions {
+		if buildVersions[vn] {
+			hasBuild = true
+			matchedBuild[vn] = true
+		}
+	}
+
+	label := "run"
+	if hasBuild {
+		label = "build+run"
+	}
+
+	return "- **" + st.Name + "** — " + label + ": " + strings.Join(versions, ", ") + "\n"
+}
+
+// formatUnmatchedBuildTypes returns a markdown section for BUILD versions
+// that didn't match any visible run type (e.g., php@8.4 as PHP build base).
+func formatUnmatchedBuildTypes(types []platform.ServiceStackType, matchedBuild map[string]bool) string {
+	var entries []string
+	for _, st := range types {
+		if st.Category != "BUILD" {
+			continue
+		}
+		// Skip internal build runtime types.
+		if !strings.HasPrefix(st.Name, "zbuild ") {
+			continue
+		}
+		var unmatched []string
+		for _, v := range st.Versions {
+			if v.Status == statusActive && !matchedBuild[v.Name] {
+				unmatched = append(unmatched, v.Name)
+			}
+		}
+		if len(unmatched) == 0 {
+			continue
+		}
+		name := strings.TrimPrefix(st.Name, "zbuild ")
+		entries = append(entries, "- **"+name+"** — "+strings.Join(unmatched, ", "))
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	return "\n### Build-only Bases (zerops.yml build.base)\n" + strings.Join(entries, "\n") + "\n"
+}
+
+func categoryDisplayName(cat string) string {
+	switch cat {
+	case "USER":
+		return "Runtime & Container"
+	case "STANDARD":
+		return "Managed Services"
+	case "SHARED_STORAGE":
+		return "Shared Storage"
+	case "OBJECT_STORAGE":
+		return "Object Storage"
+	default:
+		return cat
+	}
 }
 
 const zeropsContext = `# Platform Context
@@ -55,19 +249,6 @@ External traffic enters through an L7 load balancer that terminates SSL.
 - **import.yml** — infrastructure-as-code for service creation. Contains a services: array
   defining service type, version, mode, hostname, and initial scaling. Must NOT contain a
   project: section (projects are created separately).
-
-## Service Types
-
-| Category | Services |
-|----------|----------|
-| Runtime | nodejs, php, python, go, rust, java, dotnet, elixir, gleam, bun, deno |
-| Container | alpine, ubuntu, docker (VM-based) |
-| Database | postgresql (default), mariadb, clickhouse |
-| Cache | valkey (default, Redis-compatible), keydb (deprecated) |
-| Search | meilisearch (default), elasticsearch, typesense, qdrant (internal-only) |
-| Queue | nats (default), kafka |
-| Storage | object-storage (S3/MinIO), shared-storage (POSIX) |
-| Web | nginx, static (SPA-ready) |
 
 ## Defaults
 

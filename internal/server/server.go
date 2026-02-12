@@ -47,13 +47,13 @@ func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, 
 
 func (s *Server) registerTools() {
 	projectID := s.authInfo.ProjectID
+	stackCache := ops.NewStackTypeCache(ops.DefaultStackTypeCacheTTL)
 
 	// Read-only tools
-	tools.RegisterContext(s.server)
+	tools.RegisterContext(s.server, s.client, stackCache)
 	tools.RegisterWorkflow(s.server)
 	tools.RegisterDiscover(s.server, s.client, projectID)
 	tools.RegisterKnowledge(s.server, s.store)
-	tools.RegisterValidate(s.server)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, projectID)
 	tools.RegisterProcess(s.server, s.client)
@@ -61,6 +61,7 @@ func (s *Server) registerTools() {
 	// Mutating tools
 	tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.localDeployer, s.authInfo)
 	tools.RegisterManage(s.server, s.client, projectID)
+	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID)
 	tools.RegisterImport(s.server, s.client, projectID)
 	tools.RegisterDelete(s.server, s.client, projectID)

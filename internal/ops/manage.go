@@ -68,6 +68,7 @@ func Scale(ctx context.Context, client platform.Client, projectID, hostname stri
 	}
 
 	apiParams := buildAutoscalingParams(params)
+	apiParams.ServiceMode = svc.Mode
 	proc, err := client.SetAutoscaling(ctx, svc.ID, apiParams)
 	if err != nil {
 		return nil, err

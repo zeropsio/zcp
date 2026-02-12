@@ -38,13 +38,7 @@ zerops:
       start: node dist/index.js
 ```
 
-### 3. Validate Configuration
-
-```
-zerops_validate content="<your zerops.yml>" type="zerops.yml"
-```
-
-### 4. Deploy
+### 3. Deploy
 
 Deploy using the deploy tool:
 
@@ -52,7 +46,7 @@ Deploy using the deploy tool:
 zerops_deploy workingDir="/path/to/project" serviceId="<service-id>"
 ```
 
-### 5. Monitor Deployment
+### 4. Monitor Deployment
 
 Check deployment status via events:
 

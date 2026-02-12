@@ -84,18 +84,14 @@ zerops_subdomain serviceHostname="api" action="disable"
 
 ### zerops.yml (Build + Deploy + Run)
 
-Defines the full pipeline per service. Validated with:
-
-```
-zerops_validate content="<yaml>" type="zerops.yml"
-```
+Defines the full pipeline per service. Validated server-side during deploy.
 
 ### import.yml (Infrastructure)
 
-Defines services to create. Validated with:
+Defines services to create. Validate with dry run before importing:
 
 ```
-zerops_validate content="<yaml>" type="import.yml"
+zerops_import content="<yaml>" dryRun=true
 ```
 
 ## Tips
