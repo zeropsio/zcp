@@ -75,6 +75,8 @@ If the briefing doesn't cover the user's framework specifics, ask for build/depl
 
 Using the loaded knowledge from Step 3, generate import.yml following the core principles for structure, priority, mode, env var wiring, and ports. The briefing includes all rules needed.
 
+**Hostname pattern** (from Step 2): Standard mode (default) creates `{app}dev` + `{app}stage` pairs with shared managed services. Simple mode creates a single `{app}`. If the user didn't specify, ask before generating.
+
 ### Step 5 — Generate zerops.yml
 
 For each runtime service, generate zerops.yml using the loaded runtime example from Step 3 as starting point. The briefing covers build pipeline, deployFiles, ports, and framework-specific decisions.
