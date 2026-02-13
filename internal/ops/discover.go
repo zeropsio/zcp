@@ -72,12 +72,16 @@ func Discover(
 		return result, nil
 	}
 
-	result.Services = make([]ServiceInfo, len(services))
+	result.Services = make([]ServiceInfo, 0, len(services))
 	for i := range services {
-		result.Services[i] = buildSummaryServiceInfo(&services[i])
-		if includeEnvs {
-			attachEnvs(ctx, client, &result.Services[i], services[i].ID)
+		if isHiddenServiceType(services[i].ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+			continue
 		}
+		info := buildSummaryServiceInfo(&services[i])
+		if includeEnvs {
+			attachEnvs(ctx, client, &info, services[i].ID)
+		}
+		result.Services = append(result.Services, info)
 	}
 
 	if includeEnvs {
@@ -85,6 +89,15 @@ func Discover(
 	}
 
 	return result, nil
+}
+
+// hiddenServiceTypes are internal types excluded from discover listings.
+var hiddenServiceTypes = map[string]bool{
+	"core": true,
+}
+
+func isHiddenServiceType(typeName string) bool {
+	return hiddenServiceTypes[typeName]
 }
 
 func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {

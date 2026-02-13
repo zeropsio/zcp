@@ -240,6 +240,36 @@ func TestDiscover_ProjectEnvFetchError_Graceful(t *testing.T) {
 	}
 }
 
+func TestDiscover_FiltersCoreService(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-0", Name: "core", ProjectID: "proj-1", Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "core"}},
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-2", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithServices(services)
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Services) != 2 {
+		t.Fatalf("expected 2 services (core filtered), got %d", len(result.Services))
+	}
+	for _, svc := range result.Services {
+		if svc.Type == "core" {
+			t.Error("core service should be filtered from discover results")
+		}
+	}
+}
+
 func TestDiscover_ProjectNotFound(t *testing.T) {
 	t.Parallel()
 
