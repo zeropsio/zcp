@@ -102,7 +102,7 @@ func TestStore_CoreRecipesEmbedded(t *testing.T) {
 
 func TestStore_GetBriefing_RealDocs(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("php-nginx@8.4", []string{"postgresql@16"})
+	briefing, err := store.GetBriefing("php-nginx@8.4", []string{"postgresql@16"}, nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -529,6 +529,49 @@ func TestHitRate(t *testing.T) {
 	hit3Rate := float64(hit3) / float64(total) * 100
 	t.Logf("Hit@1: %.0f%% (%d/%d)", hit1Rate, hit1, total)
 	t.Logf("Hit@3: %.0f%% (%d/%d)", hit3Rate, hit3, total)
+}
+
+// --- GetBriefing Version Integration Tests ---
+
+func TestGetBriefing_IncludesVersionCheck(t *testing.T) {
+	store := newTestStore(t)
+	types := testStackTypes()
+
+	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16"}, types)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if !strings.Contains(briefing, "Version Check") {
+		t.Error("briefing missing Version Check section")
+	}
+	if !strings.Contains(briefing, "\u2713") {
+		t.Error("briefing missing checkmarks for valid types")
+	}
+}
+
+func TestGetBriefing_VersionWarning(t *testing.T) {
+	store := newTestStore(t)
+	types := testStackTypes()
+
+	briefing, err := store.GetBriefing("bun@1", []string{"postgresql@16"}, types)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if !strings.Contains(briefing, "\u26a0") {
+		t.Error("briefing missing warning for invalid bun@1")
+	}
+}
+
+func TestGetBriefing_NilTypes_NoVersionSection(t *testing.T) {
+	store := newTestStore(t)
+
+	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16"}, nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if strings.Contains(briefing, "Version Check") {
+		t.Error("briefing should NOT contain Version Check when types is nil")
+	}
 }
 
 // --- Helpers ---

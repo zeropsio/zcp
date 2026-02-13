@@ -62,9 +62,9 @@ func (s *Server) registerTools() {
 
 	// Read-only tools
 	tools.RegisterContext(s.server, s.client, stackCache, s.updateInfo)
-	tools.RegisterWorkflow(s.server)
+	tools.RegisterWorkflow(s.server, s.client, stackCache)
 	tools.RegisterDiscover(s.server, s.client, projectID)
-	tools.RegisterKnowledge(s.server, s.store)
+	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, projectID)
 	tools.RegisterProcess(s.server, s.client)
@@ -76,7 +76,7 @@ func (s *Server) registerTools() {
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID)
-	tools.RegisterImport(s.server, s.client, projectID)
+	tools.RegisterImport(s.server, s.client, projectID, stackCache)
 	tools.RegisterDelete(s.server, s.client, projectID)
 	tools.RegisterSubdomain(s.server, s.client, projectID)
 	if s.mounter != nil {

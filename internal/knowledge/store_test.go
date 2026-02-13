@@ -105,7 +105,7 @@ func TestStore_GetBriefing_RuntimeOnly(t *testing.T) {
 			t.Parallel()
 			store := testStoreWithCore(t)
 
-			briefing, err := store.GetBriefing(tt.runtime, nil)
+			briefing, err := store.GetBriefing(tt.runtime, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +143,7 @@ func TestStore_GetBriefing_ServicesOnly(t *testing.T) {
 			t.Parallel()
 			store := testStoreWithCore(t)
 
-			briefing, err := store.GetBriefing("", tt.services)
+			briefing, err := store.GetBriefing("", tt.services, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,7 +161,7 @@ func TestStore_GetBriefing_RuntimeAndServices(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16", "valkey@7.2"})
+	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16", "valkey@7.2"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestStore_GetBriefing_EmptyInputs(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("", nil)
+	briefing, err := store.GetBriefing("", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestStore_GetBriefing_UnknownRuntime(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("unknown@1.0", nil)
+	briefing, err := store.GetBriefing("unknown@1.0", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestStore_GetBriefing_UnknownService(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("", []string{"unknown-service@1"})
+	briefing, err := store.GetBriefing("", []string{"unknown-service@1"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestStore_GetBriefing_CoreMissing(t *testing.T) {
 	// Store without core-principles
 	store, _ := NewStore(map[string]*Document{})
 
-	_, err := store.GetBriefing("php@8", nil)
+	_, err := store.GetBriefing("php@8", nil, nil)
 	if err == nil {
 		t.Error("expected error when core-principles missing")
 	}

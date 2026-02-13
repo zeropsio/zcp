@@ -1,6 +1,6 @@
 package server
 
 // Instructions is the MCP instructions message injected into the system prompt.
-// Kept concise but directive. zerops_context provides full platform knowledge on-demand.
-// zerops_workflow ensures knowledge-first pattern triggers for multi-step operations.
-const Instructions = `ZCP provides tools for managing Zerops PaaS infrastructure: services, deployment, configuration, and debugging. Call zerops_context to load platform knowledge when working with Zerops. For multi-step operations (bootstrap, deploy, debug), call zerops_workflow first. Call zerops_knowledge before generating any YAML (import.yml or zerops.yml). Read zerops://docs/{path} resources for detailed documentation on specific topics.`
+// Self-sufficient: each tool response includes live versions and validation,
+// so the LLM can enter at any point and still produce correct output.
+const Instructions = `ZCP manages Zerops PaaS infrastructure. For multi-step operations (creating services, deploying, debugging), start with zerops_workflow — it includes live service versions and step-by-step guidance. Call zerops_knowledge before generating YAML for runtime-specific rules and version validation. Use zerops_discover to check current state.`

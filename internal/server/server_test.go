@@ -84,11 +84,11 @@ func TestServer_Instructions(t *testing.T) {
 		check func(t *testing.T)
 	}{
 		{
-			name: "contains zerops_context",
+			name: "contains zerops_workflow",
 			check: func(t *testing.T) {
 				t.Helper()
-				if !strings.Contains(Instructions, "zerops_context") {
-					t.Error("Instructions should reference zerops_context")
+				if !strings.Contains(Instructions, "zerops_workflow") {
+					t.Error("Instructions should reference zerops_workflow")
 				}
 			},
 		},
@@ -112,11 +112,11 @@ func TestServer_Instructions(t *testing.T) {
 			},
 		},
 		{
-			name: "contains zerops_workflow",
+			name: "contains zerops_discover",
 			check: func(t *testing.T) {
 				t.Helper()
-				if !strings.Contains(Instructions, "zerops_workflow") {
-					t.Error("Instructions should reference zerops_workflow")
+				if !strings.Contains(Instructions, "zerops_discover") {
+					t.Error("Instructions should reference zerops_discover")
 				}
 			},
 		},
@@ -126,15 +126,6 @@ func TestServer_Instructions(t *testing.T) {
 				t.Helper()
 				if !strings.Contains(Instructions, "Zerops") {
 					t.Error("Instructions should mention Zerops")
-				}
-			},
-		},
-		{
-			name: "mentions resource URI",
-			check: func(t *testing.T) {
-				t.Helper()
-				if !strings.Contains(Instructions, "zerops://docs/") {
-					t.Error("Instructions should reference zerops://docs/ resources")
 				}
 			},
 		},

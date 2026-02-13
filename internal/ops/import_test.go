@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -44,7 +45,7 @@ func TestImport_DryRun_Valid(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mock := platform.NewMock()
-			result, err := Import(context.Background(), mock, "proj-1", tt.content, "", true)
+			result, err := Import(context.Background(), mock, "proj-1", tt.content, "", true, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -68,7 +69,7 @@ func TestImport_DryRun_Valid(t *testing.T) {
 func TestImport_DryRun_InvalidYAML(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	_, err := Import(context.Background(), mock, "proj-1", "{{invalid yaml", "", true)
+	_, err := Import(context.Background(), mock, "proj-1", "{{invalid yaml", "", true, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
 	}
@@ -84,7 +85,7 @@ func TestImport_DryRun_InvalidYAML(t *testing.T) {
 func TestImport_DryRun_MissingServices(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	_, err := Import(context.Background(), mock, "proj-1", "foo: bar\n", "", true)
+	_, err := Import(context.Background(), mock, "proj-1", "foo: bar\n", "", true, nil)
 	if err == nil {
 		t.Fatal("expected error for missing services key")
 	}
@@ -106,7 +107,7 @@ services:
     type: nodejs@22
 `
 	mock := platform.NewMock()
-	_, err := Import(context.Background(), mock, "proj-1", content, "", true)
+	_, err := Import(context.Background(), mock, "proj-1", content, "", true, nil)
 	if err == nil {
 		t.Fatal("expected error for project section")
 	}
@@ -145,7 +146,7 @@ func TestImport_Real_Success(t *testing.T) {
 			},
 		})
 
-	result, err := Import(context.Background(), mock, "proj-1", content, "", false)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestImport_Real_Success(t *testing.T) {
 func TestImport_NoInput(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	_, err := Import(context.Background(), mock, "proj-1", "", "", true)
+	_, err := Import(context.Background(), mock, "proj-1", "", "", true, nil)
 	if err == nil {
 		t.Fatal("expected error when neither content nor filePath provided")
 	}
@@ -193,7 +194,7 @@ func TestImport_NoInput(t *testing.T) {
 func TestImport_BothInputs(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	_, err := Import(context.Background(), mock, "proj-1", "content", "/some/path", true)
+	_, err := Import(context.Background(), mock, "proj-1", "content", "/some/path", true, nil)
 	if err == nil {
 		t.Fatal("expected error when both content and filePath provided")
 	}
@@ -209,7 +210,7 @@ func TestImport_BothInputs(t *testing.T) {
 func TestImport_FileNotFound(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	_, err := Import(context.Background(), mock, "proj-1", "", "/nonexistent/file.yml", true)
+	_, err := Import(context.Background(), mock, "proj-1", "", "/nonexistent/file.yml", true, nil)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -249,7 +250,7 @@ func TestImport_FileRead(t *testing.T) {
 			},
 		})
 
-	result, err := Import(context.Background(), mock, "proj-1", "", fp, false)
+	result, err := Import(context.Background(), mock, "proj-1", "", fp, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -259,6 +260,106 @@ func TestImport_FileRead(t *testing.T) {
 	}
 	if len(rr.Processes) != 1 {
 		t.Fatalf("expected 1 process, got %d", len(rr.Processes))
+	}
+}
+
+// --- Version Validation Tests ---
+
+func TestImport_DryRun_VersionWarnings(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: api
+    type: ruby@3.2
+`
+	types := []platform.ServiceStackType{
+		{
+			Name:     "Node.js",
+			Category: "USER",
+			Versions: []platform.ServiceStackTypeVersion{
+				{Name: "nodejs@22", Status: "ACTIVE"},
+			},
+		},
+	}
+	mock := platform.NewMock()
+	result, err := Import(context.Background(), mock, "proj-1", content, "", true, types)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dr, ok := result.(*ImportDryRunResult)
+	if !ok {
+		t.Fatalf("expected *ImportDryRunResult, got %T", result)
+	}
+	if len(dr.Warnings) == 0 {
+		t.Fatal("expected version warnings for ruby@3.2")
+	}
+	found := false
+	for _, w := range dr.Warnings {
+		if strings.Contains(w, "ruby@3.2") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning mentioning ruby@3.2, got: %v", dr.Warnings)
+	}
+}
+
+func TestImport_DryRun_ModeWarnings(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: db
+    type: postgresql@16
+`
+	types := []platform.ServiceStackType{
+		{
+			Name:     "PostgreSQL",
+			Category: "STANDARD",
+			Versions: []platform.ServiceStackTypeVersion{
+				{Name: "postgresql@16", Status: "ACTIVE"},
+			},
+		},
+	}
+	mock := platform.NewMock()
+	result, err := Import(context.Background(), mock, "proj-1", content, "", true, types)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dr, ok := result.(*ImportDryRunResult)
+	if !ok {
+		t.Fatalf("expected *ImportDryRunResult, got %T", result)
+	}
+	if len(dr.Warnings) == 0 {
+		t.Fatal("expected mode warning for postgresql without mode")
+	}
+	found := false
+	for _, w := range dr.Warnings {
+		if strings.Contains(w, "mode") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about missing mode, got: %v", dr.Warnings)
+	}
+}
+
+func TestImport_DryRun_NilTypes_NoWarnings(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: api
+    type: ruby@3.2
+`
+	mock := platform.NewMock()
+	result, err := Import(context.Background(), mock, "proj-1", content, "", true, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dr, ok := result.(*ImportDryRunResult)
+	if !ok {
+		t.Fatalf("expected *ImportDryRunResult, got %T", result)
+	}
+	if len(dr.Warnings) != 0 {
+		t.Errorf("expected no warnings with nil types, got: %v", dr.Warnings)
 	}
 }
 
@@ -275,7 +376,7 @@ func TestImport_Real_APIError(t *testing.T) {
 			Message: "import failed",
 		})
 
-	_, err := Import(context.Background(), mock, "proj-1", content, "", false)
+	_, err := Import(context.Background(), mock, "proj-1", content, "", false, nil)
 	if err == nil {
 		t.Fatal("expected error from API")
 	}

@@ -23,7 +23,7 @@ func TestImportTool_Content(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1")
+	RegisterImport(srv, mock, "proj-1", nil)
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
@@ -38,7 +38,7 @@ func TestImportTool_DryRun(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1")
+	RegisterImport(srv, mock, "proj-1", nil)
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml, "dryRun": true})
@@ -53,7 +53,7 @@ func TestImportTool_MissingContentAndFile(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1")
+	RegisterImport(srv, mock, "proj-1", nil)
 
 	result := callTool(t, srv, "zerops_import", nil)
 

@@ -63,7 +63,7 @@ func TestKnowledgeTool_Basic(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store)
+	RegisterKnowledge(srv, store, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{"query": "postgresql"})
 
@@ -85,7 +85,7 @@ func TestKnowledgeTool_WithLimit(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store)
+	RegisterKnowledge(srv, store, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{"query": "zerops", "limit": 1})
 
@@ -107,7 +107,7 @@ func TestKnowledgeTool_EmptyQuery(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store)
+	RegisterKnowledge(srv, store, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{"query": ""})
 
@@ -122,7 +122,7 @@ func TestKnowledgeTool_BriefingMode(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store)
+	RegisterKnowledge(srv, store, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{
 		"runtime":  "php-nginx@8.4",
@@ -150,7 +150,7 @@ func TestKnowledgeTool_RecipeMode(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store)
+	RegisterKnowledge(srv, store, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{"recipe": "ghost"})
 
@@ -168,7 +168,7 @@ func TestKnowledgeTool_ModeMixError(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store)
+	RegisterKnowledge(srv, store, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{
 		"query":   "test",
@@ -184,7 +184,7 @@ func TestKnowledgeTool_NoModeError(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store)
+	RegisterKnowledge(srv, store, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{})
 

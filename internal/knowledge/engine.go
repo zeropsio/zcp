@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 const analyzerStandard = "standard"
@@ -207,8 +208,9 @@ func (s *Store) GetCorePrinciples() (string, error) {
 // Combines: core-principles + runtime exceptions + service cards + wiring patterns.
 // runtime: e.g. "php-nginx@8.4" (normalized internally to "PHP" section)
 // services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
+// liveTypes: optional live service stack types for version validation (nil = skip)
 // Returns assembled markdown content ready for LLM consumption.
-func (s *Store) GetBriefing(runtime string, services []string) (string, error) {
+func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error) {
 	var sb strings.Builder
 
 	// 1. Always include core principles
@@ -255,6 +257,14 @@ func (s *Store) GetBriefing(runtime string, services []string) (string, error) {
 			sb.WriteString("\n\n")
 		}
 	}
+
+	// 5. Append version check if live types available
+	if versionCheck := FormatVersionCheck(runtime, services, liveTypes); versionCheck != "" {
+		sb.WriteString("\n---\n\n")
+		sb.WriteString(versionCheck)
+	}
+
+	sb.WriteString("\nNext: Generate import.yml and zerops.yml using the rules above. Use only validated versions. Then validate with zerops_import dryRun=true.")
 
 	return sb.String(), nil
 }

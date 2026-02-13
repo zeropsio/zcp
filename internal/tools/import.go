@@ -16,7 +16,7 @@ type ImportInput struct {
 }
 
 // RegisterImport registers the zerops_import tool.
-func RegisterImport(srv *mcp.Server, client platform.Client, projectID string) {
+func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
 		Description: "Import services from YAML into the current project. Use dryRun=true to preview.",
@@ -25,7 +25,11 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string) {
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ImportInput) (*mcp.CallToolResult, any, error) {
-		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, input.DryRun)
+		var liveTypes []platform.ServiceStackType
+		if cache != nil {
+			liveTypes = cache.Get(ctx, client)
+		}
+		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, input.DryRun, liveTypes)
 		if err != nil {
 			return convertError(err), nil, nil
 		}

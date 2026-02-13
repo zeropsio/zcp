@@ -6,6 +6,11 @@ Two phases: generate correct configuration (the hard part), then deploy (the eas
 
 ---
 
+<!-- STACKS:BEGIN -->
+<!-- STACKS:END -->
+
+---
+
 ## Phase 1: Configuration
 
 ### Step 1 — Discover current state
@@ -22,7 +27,13 @@ From the user's request, identify:
 - **Runtime services**: type + framework (e.g., nodejs@22 with Next.js, go@1 with Fiber, python@3.12 with FastAPI)
 - **Managed services**: type + version (e.g., postgresql@16, valkey@7.2, elasticsearch@8.16)
 
+**Verify all types against the Available Service Stacks section above.**
+
 If the user hasn't specified, ask. Don't guess frameworks — the build config depends on it.
+
+**Environment type** (ask if not specified):
+- **Development** (default): Include Mailpit (dev SMTP catch-all) + Adminer (DB GUI). NON_HA mode.
+- **Production**: Skip dev services. Consider HA mode for databases. See: zerops_knowledge query="production checklist"
 
 ### Step 3 — Load contextual knowledge BEFORE generating YAML
 

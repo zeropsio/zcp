@@ -6,6 +6,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -20,7 +21,7 @@ type KnowledgeInput struct {
 }
 
 // RegisterKnowledge registers the zerops_knowledge tool.
-func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider) {
+func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
 		Description: "Access Zerops knowledge: BM25 search (query), contextual briefing (runtime/services), or recipe retrieval.",
@@ -29,7 +30,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider) {
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
 		},
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input KnowledgeInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input KnowledgeInput) (*mcp.CallToolResult, any, error) {
 		// Validate: at least one mode specified
 		hasQuery := input.Query != ""
 		hasBriefing := input.Runtime != "" || len(input.Services) > 0
@@ -77,7 +78,11 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider) {
 					"Check server initialization")), nil, nil
 			}
 
-			briefing, err := concreteStore.GetBriefing(input.Runtime, input.Services)
+			var liveTypes []platform.ServiceStackType
+			if client != nil && cache != nil {
+				liveTypes = cache.Get(ctx, client)
+			}
+			briefing, err := concreteStore.GetBriefing(input.Runtime, input.Services, liveTypes)
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrFileNotFound,

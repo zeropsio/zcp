@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -37,8 +38,9 @@ type ImportProcessOutput struct {
 
 // Import imports services from YAML into a project.
 // Input: content XOR filePath (not both, not neither).
-// When dryRun=true, parses YAML offline and returns a preview.
+// When dryRun=true, parses YAML offline and returns a preview with version validation.
 // When dryRun=false, calls client.ImportServices.
+// liveTypes: optional live service stack types for version/mode validation (nil = skip).
 func Import(
 	ctx context.Context,
 	client platform.Client,
@@ -46,6 +48,7 @@ func Import(
 	content string,
 	filePath string,
 	dryRun bool,
+	liveTypes []platform.ServiceStackType,
 ) (any, error) {
 	yamlContent, err := resolveInput(content, filePath)
 	if err != nil {
@@ -72,7 +75,7 @@ func Import(
 	}
 
 	if dryRun {
-		return importDryRun(doc)
+		return importDryRun(doc, liveTypes)
 	}
 	return importReal(ctx, client, projectID, yamlContent)
 }
@@ -114,7 +117,7 @@ func resolveInput(content, filePath string) (string, error) {
 	return content, nil
 }
 
-func importDryRun(doc map[string]any) (*ImportDryRunResult, error) {
+func importDryRun(doc map[string]any, liveTypes []platform.ServiceStackType) (*ImportDryRunResult, error) {
 	raw, ok := doc["services"]
 	if !ok {
 		return nil, platform.NewPlatformError(
@@ -142,11 +145,16 @@ func importDryRun(doc map[string]any) (*ImportDryRunResult, error) {
 		services = append(services, svcMap)
 	}
 
+	warnings := knowledge.ValidateServiceTypes(services, liveTypes)
+	if warnings == nil {
+		warnings = []string{}
+	}
+
 	return &ImportDryRunResult{
 		DryRun:   true,
 		Valid:    true,
 		Services: services,
-		Warnings: []string{},
+		Warnings: warnings,
 	}, nil
 }
 
