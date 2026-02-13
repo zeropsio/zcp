@@ -58,48 +58,21 @@ This shows whether the issue is new or recurring. A recurring issue means the pr
 
 ### Step 6 — Match against common Zerops issues
 
-Check the gathered data against these known patterns FIRST — they cover ~80% of Zerops issues.
+Check gathered data against known patterns (covers ~80% of issues):
 
-**Note**: These patterns are covered in detail by `zerops_knowledge` with core-principles. If you need more context on any of these rules, call:
-```
-zerops_knowledge runtime="" services=[]
-```
-This returns core-principles which includes comprehensive coverage of networking, ports, env vars, build pipeline, and common gotchas.
+**Note**: These patterns are covered in detail by `zerops_knowledge` with core-principles. If you need more context on any of these rules, call `zerops_knowledge` with the relevant runtime/services.
 
-**Connection refused between services**
-- Symptom: `ECONNREFUSED`, `connection refused`, timeout to another service
-- Cause: Using `https://` for internal connections, or wrong hostname/port
-- Fix: Internal services use `http://hostname:port`. SSL terminates at L7 balancer.
+| Symptom | Likely cause | Verify / Fix |
+|---------|-------------|--------------|
+| ECONNREFUSED between services | Using `https://` internally | Use `http://` for all internal connections |
+| 502 Bad Gateway | App binds to localhost | Bind `0.0.0.0` (check runtime exceptions) |
+| Env vars show literal `${...}` | Dashes in cross-references | Use underscores: `${service_hostname}` |
+| Build FAILED | Wrong buildCommands or missing deps | Check build logs: `zcli service log {hostname} --showBuildLogs` |
+| Service not starting | Port outside range or bad start cmd | Ports 10-65435, verify `start` in zerops.yml |
+| DB connection timeout | Wrong connection string or DB not running | Use `http://hostname:port`, verify DB status |
+| Deploy OK but app broken | Missing env vars or wrong format | `zerops_discover includeEnvs=true` |
 
-**Service not starting**
-- Symptom: stuck in non-RUNNING state, container restarts in events
-- Cause: bad `start` command, missing dependencies, port outside range
-- Fix: check `start` in zerops.yml, ports must be 10-65435, app must bind `0.0.0.0` not `127.0.0.1`
-
-**Environment variables not resolving**
-- Symptom: env vars show literal `${...}` instead of values
-- Cause: dashes in cross-references instead of underscores
-- Fix: `${service_hostname}` (underscores), not `${service-hostname}`
-
-**Build failures**
-- Symptom: deploy events show FAILED
-- Cause: missing build deps, wrong buildCommands, incompatible runtime version
-- Fix: check build logs, verify prepareCommands install all system deps
-
-**Database connection issues**
-- Symptom: `could not connect`, timeout to DB service
-- Cause: wrong connection string format, DB not RUNNING, using localhost
-- Fix: use hostname `db:5432` (not localhost), verify DB status, check connection string format for the framework
-
-**Port binding errors**
-- Symptom: `EADDRINUSE`, `address already in use`
-- Cause: reserved port (0-9, 65436+), or zerops.yml port doesn't match app config
-- Fix: ensure zerops.yml `ports` matches what app listens on
-
-**Deploy succeeds but app broken**
-- Symptom: RUNNING status but errors in logs, HTTP 500s
-- Cause: missing env vars, wrong env var format, missing runtime dependencies
-- Fix: check `zerops_discover includeEnvs=true` for missing/wrong vars
+If the issue doesn't match, continue to Step 7 for knowledge search.
 
 ### Step 7 — Load knowledge for uncommon issues
 

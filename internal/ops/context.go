@@ -259,10 +259,8 @@ External traffic enters through an L7 load balancer that terminates SSL.
 
 ## Critical Rules
 
-For detailed platform rules (YAML structure, port ranges, env var system, build pipeline,
-networking, scaling), use zerops_knowledge with runtime/services parameters to get a contextual
-briefing. Key rules: internal http only (no HTTPS), ports 10-65435, HA mode immutable,
-mode mandatory for databases/caches, env var cross-refs use underscores not dashes.
+For platform rules (ports, env vars, binding, YAML structure, build pipeline), use
+` + "`zerops_knowledge`" + ` with runtime/services parameters.
 
 ## Configuration
 
@@ -279,12 +277,4 @@ When not specified, Zerops uses these defaults:
 - postgresql@16, valkey@7.2, meilisearch@1.10, nats@2.10
 - alpine base image for custom containers
 - NON_HA mode (single container, no high availability)
-- SHARED CPU mode (burstable, cost-effective)
-
-## Pointers
-
-- Use zerops_knowledge with runtime/services params for contextual briefing (core principles + exceptions + service cards + wiring).
-- Use zerops_knowledge with query param for ad-hoc BM25 search on specific topics.
-- Use zerops_knowledge with recipe param for complex framework recipes (Laravel, Ghost, Phoenix, etc.).
-- Use zerops_workflow for step-by-step guidance (bootstrap, deploy, debug, scale, configure, monitor).
-- Use zerops_discover to inspect current project and service state.`
+- SHARED CPU mode (burstable, cost-effective)`

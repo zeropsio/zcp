@@ -19,7 +19,7 @@ type ImportInput struct {
 func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
-		Description: "Import services from YAML into the current project. Use dryRun=true to preview.",
+		Description: "Import services from YAML into the current project. Always use dryRun=true first to validate.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Import services from YAML",
 			DestructiveHint: boolPtr(true),

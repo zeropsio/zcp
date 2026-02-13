@@ -24,7 +24,7 @@ type KnowledgeInput struct {
 func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
-		Description: "Access Zerops knowledge: BM25 search (query), contextual briefing (runtime/services), or recipe retrieval.",
+		Description: "Load Zerops platform rules and configuration knowledge. Three modes: (1) runtime/services — contextual briefing with version validation for YAML generation, (2) query — BM25 search for specific topics, (3) recipe — pre-built configs for frameworks. Call before generating any YAML.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Zerops knowledge access",
 			ReadOnlyHint:   true,

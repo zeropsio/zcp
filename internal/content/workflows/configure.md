@@ -50,21 +50,7 @@ Important: Always use underscores in references (`${db_hostname}`), not dashes.
 
 ## Ports and Routing
 
-Ports are configured in `zerops.yml`:
-
-```yaml
-zerops:
-  - setup: api
-    run:
-      ports:
-        - port: 3000
-          httpSupport: true
-```
-
-Rules:
-- Ports must be in range 10-65435 (0-9 and 65436+ reserved).
-- `httpSupport: true` enables L7 load balancing and SSL termination.
-- Internal services (not public-facing) don't need `httpSupport`.
+Ports are configured in `zerops.yml` under `run.ports`. See `zerops_knowledge` for port rules and httpSupport configuration.
 
 ## Subdomain Access
 

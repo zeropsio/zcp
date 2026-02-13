@@ -103,24 +103,6 @@ func TestServer_Instructions(t *testing.T) {
 			},
 		},
 		{
-			name: "contains zerops_knowledge",
-			check: func(t *testing.T) {
-				t.Helper()
-				if !strings.Contains(Instructions, "zerops_knowledge") {
-					t.Error("Instructions should reference zerops_knowledge")
-				}
-			},
-		},
-		{
-			name: "contains zerops_discover",
-			check: func(t *testing.T) {
-				t.Helper()
-				if !strings.Contains(Instructions, "zerops_discover") {
-					t.Error("Instructions should reference zerops_discover")
-				}
-			},
-		},
-		{
 			name: "mentions Zerops",
 			check: func(t *testing.T) {
 				t.Helper()

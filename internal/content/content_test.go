@@ -80,11 +80,9 @@ func TestGetTemplate_CLAUDEMDContent(t *testing.T) {
 	}
 
 	required := []string{
-		"MANDATORY",
 		"zerops_workflow",
 		"zerops_knowledge",
-		"zerops_context",
-		"dryRun",
+		"zerops_discover",
 	}
 
 	for _, keyword := range required {

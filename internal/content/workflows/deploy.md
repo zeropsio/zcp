@@ -57,33 +57,7 @@ If the briefing doesn't cover the user's framework specifics, ask for build/depl
 
 ### Step 4 — Generate or fix zerops.yml
 
-**Use the loaded runtime example as your starting point** — do not write from scratch.
-
-Key decisions per framework (from loaded knowledge):
-
-| Section | What to get right |
-|---------|------------------|
-| `build.base` | Match the service type from zerops_discover |
-| `build.buildCommands` | Framework-specific: `pnpm build`, `go build -o app`, `pip install`, etc. |
-| `build.deployFiles` | Framework-specific output path. **This is the #1 source of errors.** |
-| `build.cache` | Package manager cache: `node_modules`, `target`, `.m2`, etc. |
-| `build.addToRunPrepare` | Python needs this (`.`), most others don't |
-| `run.base` | Usually same as build. Static SPAs → `static`. PHP → `php-nginx@X` |
-| `run.start` | The actual entry point command |
-| `run.ports` | Must match what the app listens on. `httpSupport: true` for HTTP |
-
-Common deploy patterns:
-- **Single-base** (build=run): Node.js SSR, PHP, Python, Java
-- **Multi-base** (build→static): React SPA, Vue SPA, Astro, Next.js export
-- **Multi-runtime** (compile→alpine): Elixir releases, Rust binaries, Go binaries
-
-Common mistakes:
-- Missing `deployFiles` — build output is NOT auto-deployed
-- Wrong `deployFiles` path — use tilde syntax (`dist/~`) for static sites
-- `initCommands` for package installation — use `prepareCommands` instead
-- Missing `node_modules` in deployFiles for Node.js apps needing runtime deps
-- `protocol: HTTP` — only `TCP` and `UDP` are valid values
-- Wrong `run.base` for SSG/SPA (should be `static`, not the build runtime)
+Use the loaded runtime knowledge as your starting point — it covers build pipeline, deployFiles, ports, and framework-specific patterns.
 
 Present zerops.yml to user for review before deploying.
 
@@ -171,23 +145,3 @@ bash: zcli service log {hostname} --showBuildLogs --limit 50.
 If deploy fails, retry once. Report deployment result — URL if subdomain is enabled.
 ```
 
----
-
-## Build Pipeline Reference
-
-Zerops build pipeline runs in order:
-
-1. **prepareCommands** — cached in base layer, runs once. Install system deps, global tools.
-2. **buildCommands** — runs every deploy. Compile, bundle, test.
-3. **deployFiles** — files/dirs copied to runtime container. Mandatory.
-
-Runtime startup:
-
-1. **initCommands** — runs on every container start. Migrations, cache warm-up. Keep fast and idempotent.
-2. **start** — the main process command.
-
-Key rules:
-- `prepareCommands` change invalidates both cache layers → full rebuild.
-- `initCommands` run on EVERY restart — never install packages here.
-- `deployFiles` is mandatory — build output is NOT auto-deployed.
-- Use `build.cache` for package manager directories (node_modules, target, .m2).

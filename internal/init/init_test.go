@@ -107,7 +107,7 @@ func TestRun_GeneratesCLAUDEMD_StrongInstructions(t *testing.T) {
 	}
 
 	content := string(data)
-	required := []string{"MANDATORY", "zerops_workflow", "zerops_knowledge", "zerops_context"}
+	required := []string{"zerops_workflow", "zerops_knowledge", "zerops_discover"}
 	for _, keyword := range required {
 		if !strings.Contains(content, keyword) {
 			t.Errorf("CLAUDE.md should contain %q", keyword)

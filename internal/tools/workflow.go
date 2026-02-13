@@ -19,7 +19,7 @@ type WorkflowInput struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, cache *ops.StackTypeCache) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Get step-by-step workflow guidance. Without workflow param returns catalog of available workflows.",
+		Description: "Get step-by-step workflow for multi-step operations. Includes live service versions and orchestration steps. Use for: bootstrap, deploy, debug, scale, configure, monitor. Without workflow param returns catalog.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Get workflow guidance",
 			ReadOnlyHint:   true,

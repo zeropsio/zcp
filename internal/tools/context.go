@@ -17,7 +17,7 @@ type ContextInput struct{}
 func RegisterContext(srv *mcp.Server, client platform.Client, cache *ops.StackTypeCache, updateInfo *update.Info) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_context",
-		Description: "Get Zerops platform context — fundamentals, rules, service types, defaults. Call this first when working with Zerops.",
+		Description: "Get Zerops platform overview — what Zerops is, project/service hierarchy, defaults, live service stacks. Optional orientation, not a prerequisite.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Get Zerops platform context",
 			ReadOnlyHint:   true,
