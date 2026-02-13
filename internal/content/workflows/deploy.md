@@ -18,6 +18,13 @@ Note the service type (nodejs@22, go@1, etc.) and status.
 - **RUNNING** → subsequent deploy. zerops.yml likely exists already.
 - **READY_TO_DEPLOY** → first deploy. zerops.yml may need creation.
 
+**Route based on result:**
+- **RUNNING + zerops.yml exists + no changes** → Skip to Phase 2 (re-deploy)
+- **RUNNING + no zerops.yml or needs changes** → Continue to Step 3
+- **READY_TO_DEPLOY** → First deploy, continue to Step 2
+- **Service not found** → Wrong hostname or not created. Use bootstrap workflow.
+- **Dev+stage pair detected** → Follow dev-first flow in Phase 2
+
 ### Step 2 — Check zerops.yml
 
 Does a `zerops.yml` exist in the user's project with a `setup: {hostname}` entry?
@@ -77,6 +84,9 @@ If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow
 1. **Deploy to dev first**: `zerops_deploy targetService="appdev"`
 2. **Verify dev** — run the full verification protocol on the dev service
 3. **Fix any errors on dev** — iterate until dev passes all checks
+
+**Verification means more than HTTP 200.** Read the response body from health/status endpoints. If dev returns 200 but the body shows errors, the app is broken — fix before deploying to stage.
+
 4. **Deploy to stage**: `zerops_deploy targetService="appstage"`
 5. **Verify stage** — run the verification protocol on stage
 
@@ -144,4 +154,3 @@ bash: zcli service log {hostname} --showBuildLogs --limit 50.
 
 If deploy fails, retry once. Report deployment result — URL if subdomain is enabled.
 ```
-

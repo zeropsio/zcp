@@ -15,15 +15,21 @@ Two phases: generate correct configuration (the hard part), then deploy and veri
 
 ## Phase 1: Configuration
 
-### Step 1 — Discover current state
+### Step 0 — Detect project state and route
 
-```
-zerops_discover
-```
+Call `zerops_discover` to see what exists. Then classify:
 
-Note what already exists. If ALL requested services already exist, skip to Phase 2. If some exist, only create the missing ones in Step 4.
+| Discover result | State | Action |
+|----------------|-------|--------|
+| No runtime services | FRESH | Full bootstrap (Steps 1–5 → Phase 2) |
+| Some requested services exist, others don't | PARTIAL | Generate import.yml for MISSING services only, then Phase 2 |
+| All requested services exist as dev+stage pairs | CONFORMANT | Skip to Phase 2 (deploy only) or suggest deploy workflow |
+| Services exist but not as dev+stage pairs | EXISTING | Ask user: add dev+stage pairs, or work with existing? |
 
-### Step 2 — Identify stack components + environment mode
+**Dev+stage detection:** Look for `{name}dev` + `{name}stage` hostname pairs.
+**PARTIAL example:** User wants bun + postgresql. Discover shows postgresql exists but no runtime services → create only the runtime services.
+
+### Step 1 — Identify stack components + environment mode
 
 From the user's request, identify:
 - **Runtime services**: type + framework (e.g., nodejs@22 with Next.js, go@1 with Fiber, bun@1.2 with Hono)
@@ -39,7 +45,12 @@ If the user hasn't specified, ask. Don't guess frameworks — the build config d
 
 Default = standard (dev+stage). If the user says "just one service" or "simple setup", use simple mode.
 
-### Step 3 — Load contextual knowledge BEFORE generating YAML
+**Workflow scope** (infer from context, do not ask unless ambiguous):
+- **Full** (default): Configure → validate → deploy dev → verify → deploy stage → verify.
+- **Dev-only**: Configure → deploy to dev only, skip stage. When user says "just get it running" or "prototype."
+- **Quick**: Skip config, deploy with existing zerops.yml. Only when user says "just deploy" and config already exists → redirect to deploy workflow.
+
+### Step 2 — Load contextual knowledge BEFORE generating YAML
 
 **This step is mandatory.** Do not generate any YAML until you've loaded the relevant knowledge.
 
@@ -71,20 +82,40 @@ Examples: `bun`, `bun-hono`, `laravel-jetstream`, `ghost`, `django`, `phoenix`
 
 If the briefing doesn't cover the user's framework specifics, ask for build/deploy details before generating YAML.
 
-### Step 4 — Generate import.yml
+**After receiving the briefing, verify these before generating YAML:**
 
-Using the loaded knowledge from Step 3, generate import.yml following the core principles for structure, priority, mode, env var wiring, and ports. The briefing includes all rules needed.
+1. **Binding**: Briefing specifies 0.0.0.0 — plan HOST/BIND env vars accordingly
+2. **Deploy files**: Note the exact deployFiles pattern — wrong path is the #1 error
+3. **Build vs run base**: Different bases needed? (PHP: php-nginx, Python: addToRunPrepare, Static: run.base=static)
+4. **Cache paths**: Note package manager cache dirs — missing cache = slow rebuilds
+5. **Connection strings**: Use the exact pattern from service cards, not generic URLs
 
-**Hostname pattern** (from Step 2): Standard mode (default) creates `{app}dev` + `{app}stage` pairs with shared managed services. Simple mode creates a single `{app}`. If the user didn't specify, ask before generating.
+If the briefing doesn't cover your stack, call `zerops_knowledge recipe="{name}"` before generating YAML.
 
-### Step 5 — Generate zerops.yml
+### Step 3 — Generate import.yml
 
-For each runtime service, generate zerops.yml using the loaded runtime example from Step 3 as starting point. The briefing covers build pipeline, deployFiles, ports, and framework-specific decisions.
+Using the loaded knowledge from Step 2, generate import.yml following the core principles for structure, priority, mode, env var wiring, and ports. The briefing includes all rules needed.
+
+**Hostname pattern** (from Step 1): Standard mode (default) creates `{app}dev` + `{app}stage` pairs with shared managed services. Simple mode creates a single `{app}`. If the user didn't specify, ask before generating.
+
+### Step 4 — Generate zerops.yml
+
+For each runtime service, generate zerops.yml using the loaded runtime example from Step 2 as starting point. The briefing covers build pipeline, deployFiles, ports, and framework-specific decisions.
 
 **Health endpoint recommendation:**
 When scaffolding new application code, recommend adding `/health` (returns 200 when app is running) and `/status` (returns 200 with managed service connectivity info) endpoints. These enable deeper verification in Phase 2 — but verification adapts based on what's available.
 
-### Step 6 — Validate
+### Step 5 — Validate
+
+**Before dry-run, self-check against common failures that dryRun does NOT catch:**
+
+| Check | What to verify |
+|-------|---------------|
+| Ports match | `run.ports.port` = what app actually listens on |
+| Deploy files exist | `deployFiles` includes actual build output path |
+| Start command | `run.start` runs the app, not the build tool |
+| Env var refs | Cross-references use underscores: `${db_hostname}` not `${my-db_hostname}` |
+| Mode present | Every managed service has `mode: NON_HA` or `mode: HA` |
 
 Run dry-run validation:
 ```
@@ -126,12 +157,17 @@ Every deployment must pass this protocol before being considered complete.
 
 **Notes:**
 - Check 1 is CRITICAL — zerops_deploy returns before build completes. Wait 5s after deploy, then poll zerops_events every 10s until build finishes (max 300s / 30 polls).
-- Checks 2-3: mandatory, pure MCP tools.
-- Check 4: framework-dependent patterns — search for `listening on`, `started server`, `ready to accept`.
-- Check 5: re-check errors after startup — catches runtime config issues that appear after boot.
+- Check 4: framework-dependent — search for `listening on`, `started server`, `ready to accept`.
 - Check 6: get `zeropsSubdomain` from `zerops_discover includeEnvs=true`. It is already a full URL — do NOT prepend `https://`.
 - Check 7: skip if no managed services. Fallback to log search for `connected|pool|migration`.
 - **Graceful degradation:** if the app has no `/health` endpoint, check 4 is the final gate.
+
+**Critical: HTTP 200 does not mean the app works.**
+- Check 6: Read the response body. Empty body, "Cannot GET /", or framework error page = NOT healthy.
+- Check 7: Read `/status` body. If it shows DB as "disconnected" or "error" = NOT confirmed.
+- Always capture response body: `curl -sfm 10 "{url}/health" 2>&1`
+
+**Do NOT deploy to stage until dev passes ALL checks.** Stage is for final validation, not debugging.
 
 ### Standard mode (dev+stage) — deploy flow
 
@@ -242,4 +278,12 @@ If zerops_events shows build FAILED:
 2. If insufficient: `bash: zcli service log {hostname} --showBuildLogs --limit 50` — build-specific output (only way to see compilation errors)
 3. Common causes: wrong buildCommands, missing dependencies, wrong deployFiles path, app binds to localhost instead of 0.0.0.0
 4. Fix zerops.yml, redeploy. Max 2 retries before asking user.
+
+### After completion — next iteration
+
+If the user asks for changes after initial bootstrap:
+1. Reuse discovery data — do not re-discover unless services were added/removed.
+2. Make the code/config change.
+3. Deploy to dev first, verify, then stage. Same dev-first pattern.
+4. For config-only changes (env vars, scaling), use configure/scale workflows directly.
 
