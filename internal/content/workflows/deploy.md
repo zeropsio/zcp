@@ -96,6 +96,18 @@ Present zerops.yml to user for review before deploying.
 `zerops_deploy` triggers the build pipeline and returns `status=BUILD_TRIGGERED` BEFORE the build completes.
 You MUST poll for completion. Do NOT assume deployment is done when the tool returns.
 
+### Dev+stage pattern
+
+If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow this order:
+
+1. **Deploy to dev first**: `zerops_deploy targetService="appdev"`
+2. **Verify dev** — run the full verification protocol on the dev service
+3. **Fix any errors on dev** — iterate until dev passes all checks
+4. **Deploy to stage**: `zerops_deploy targetService="appstage"`
+5. **Verify stage** — run the verification protocol on stage
+
+This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation.
+
 ### Single service — direct
 
 ```

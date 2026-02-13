@@ -89,6 +89,7 @@ services:                           # REQUIRED: list of services
 
 ### Port Rules
 - **Valid range: 10-65435**: Ports 80 and 443 reserved by Zerops for SSL termination
+- **Bind to 0.0.0.0, NEVER localhost/127.0.0.1**: Zerops L7 balancer routes to container IP — localhost = 502 Bad Gateway
 - **`httpSupport: true` for HTTP**: NOT `protocol: HTTP` (invalid)
 - **`protocol: TCP` or `protocol: UDP` for non-HTTP**: Only these two values accepted
 
@@ -217,12 +218,19 @@ build:
 
 ---
 
-## Platform Variables for Frameworks
+## Platform Variables & Binding
 
+- **Bind 0.0.0.0** (universal — see Port Rules). Framework-specific:
+  - Bun: `Bun.serve({ hostname: "0.0.0.0" })`
+  - Node.js/Express: `app.listen(port, "0.0.0.0")`
+  - Python: `--host 0.0.0.0` on uvicorn/gunicorn
+  - Java Spring: `server.address=0.0.0.0`
+  - .NET: `ASPNETCORE_URLS=http://0.0.0.0:5000`
+  - Go: default `:port` binds all interfaces (correct)
+  - PHP: Nginx handles binding (no config needed)
 - **`TRUSTED_PROXIES`**: Configure for Django/Laravel behind Zerops L7 balancer (CSRF validation)
 - **`AWS_USE_PATH_STYLE_ENDPOINT: true`**: REQUIRED for Zerops Object Storage (MinIO)
 - **`PHX_SERVER: true`**: REQUIRED for Elixir Phoenix releases
-- **`server.address: 0.0.0.0`**: REQUIRED for Java Spring (default localhost unreachable)
 
 ---
 

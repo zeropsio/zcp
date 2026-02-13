@@ -574,6 +574,69 @@ func TestGetBriefing_NilTypes_NoVersionSection(t *testing.T) {
 	}
 }
 
+// --- Knowledge Content & Briefing Order Tests ---
+
+func TestGetBriefing_BunRuntime_ContainsBindingRule(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if !strings.Contains(briefing, "0.0.0.0") {
+		t.Error("Bun briefing missing 0.0.0.0 binding rule")
+	}
+	if !strings.Contains(briefing, "Bun.serve") {
+		t.Error("Bun briefing missing Bun.serve reference")
+	}
+}
+
+func TestStore_GetRecipe_Bun(t *testing.T) {
+	store := newTestStore(t)
+	content, err := store.GetRecipe("bun")
+	if err != nil {
+		t.Fatalf("GetRecipe(bun): %v", err)
+	}
+	if !strings.Contains(content, "0.0.0.0") {
+		t.Error("bun recipe missing 0.0.0.0 binding rule")
+	}
+	if !strings.Contains(content, "zerops.yml") {
+		t.Error("bun recipe missing zerops.yml example")
+	}
+}
+
+func TestStore_GetBriefing_SurfacesMatchingRecipes(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("bun@1.2", nil, nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if !strings.Contains(briefing, "Matching Recipes") {
+		t.Error("Bun briefing missing Matching Recipes section")
+	}
+	if !strings.Contains(briefing, "bun-hono") {
+		t.Error("Bun briefing missing bun-hono recipe hint")
+	}
+}
+
+func TestStore_GetBriefing_RuntimeFirstOrder(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	runtimeIdx := strings.Index(briefing, "Runtime-Specific: Bun")
+	coreIdx := strings.Index(briefing, "Zerops Core Principles")
+	if runtimeIdx < 0 {
+		t.Fatal("briefing missing Runtime-Specific: Bun section")
+	}
+	if coreIdx < 0 {
+		t.Fatal("briefing missing Zerops Core Principles section")
+	}
+	if runtimeIdx >= coreIdx {
+		t.Errorf("runtime section (pos %d) should come before core principles (pos %d)", runtimeIdx, coreIdx)
+	}
+}
+
 // --- Helpers ---
 
 func containsURI(results []SearchResult, uri string) bool {

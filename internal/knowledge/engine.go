@@ -204,8 +204,38 @@ func (s *Store) GetCorePrinciples() (string, error) {
 	return doc.Content, nil
 }
 
+// runtimeRecipeHints maps runtime base names to recipe name prefixes/matches.
+var runtimeRecipeHints = map[string][]string{
+	"bun":    {"bun"},
+	"nodejs": {"nestjs", "nextjs", "svelte-nodejs", "react-nodejs", "qwik-nodejs", "payload", "ghost", "medusa"},
+	"go":     {"echo-go"},
+	"python": {"django"},
+	"elixir": {"phoenix"},
+	"php":    {"laravel", "symfony", "nette", "filament", "twill", "php-"},
+	"java":   {"java-spring", "spring-boot"},
+}
+
+// matchingRecipes returns recipe names that match the given runtime base name.
+func (s *Store) matchingRecipes(runtimeBase string) []string {
+	prefixes, ok := runtimeRecipeHints[runtimeBase]
+	if !ok {
+		return nil
+	}
+	allRecipes := s.ListRecipes()
+	var matched []string
+	for _, recipe := range allRecipes {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(recipe, prefix) {
+				matched = append(matched, recipe)
+				break
+			}
+		}
+	}
+	return matched
+}
+
 // GetBriefing assembles contextual knowledge for a specific stack.
-// Combines: core-principles + runtime exceptions + service cards + wiring patterns.
+// Order: runtime exceptions (most actionable) → matching recipes → service cards → core principles → version check.
 // runtime: e.g. "php-nginx@8.4" (normalized internally to "PHP" section)
 // services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
 // liveTypes: optional live service stack types for version validation (nil = skip)
@@ -213,16 +243,10 @@ func (s *Store) GetCorePrinciples() (string, error) {
 func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error) {
 	var sb strings.Builder
 
-	// 1. Always include core principles
-	core, err := s.GetCorePrinciples()
-	if err != nil {
-		return "", err
-	}
-	sb.WriteString(core)
-	sb.WriteString("\n\n---\n\n")
-
-	// 2. If runtime specified, include matching runtime exceptions
+	// 1. Runtime-specific exceptions first (most actionable, LLM attention highest)
+	runtimeBase := ""
 	if runtime != "" {
+		runtimeBase, _, _ = strings.Cut(runtime, "@")
 		normalized := normalizeRuntimeName(runtime)
 		if normalized != "" {
 			if section := s.getRuntimeException(normalized); section != "" {
@@ -235,7 +259,21 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		}
 	}
 
-	// 3. Include service cards for each service
+	// 2. Matching recipes hint
+	if runtimeBase != "" {
+		if recipes := s.matchingRecipes(runtimeBase); len(recipes) > 0 {
+			sb.WriteString("## Matching Recipes\n\n")
+			sb.WriteString("Available recipes for this runtime (use `zerops_knowledge recipe=\"name\"` to load):\n")
+			for _, r := range recipes {
+				sb.WriteString("- `")
+				sb.WriteString(r)
+				sb.WriteString("`\n")
+			}
+			sb.WriteString("\n---\n\n")
+		}
+	}
+
+	// 3. Service cards + wiring patterns
 	if len(services) > 0 {
 		sb.WriteString("## Service Cards\n\n")
 		for _, svc := range services {
@@ -250,7 +288,6 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		}
 		sb.WriteString("---\n\n")
 
-		// 4. Include wiring patterns (only if services present)
 		wiring, _ := s.Get("zerops://docs/core/wiring-patterns")
 		if wiring != nil {
 			sb.WriteString(wiring.Content)
@@ -258,9 +295,17 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		}
 	}
 
+	// 4. Core principles (reference)
+	core, err := s.GetCorePrinciples()
+	if err != nil {
+		return "", err
+	}
+	sb.WriteString(core)
+	sb.WriteString("\n\n")
+
 	// 5. Append version check if live types available
 	if versionCheck := FormatVersionCheck(runtime, services, liveTypes); versionCheck != "" {
-		sb.WriteString("\n---\n\n")
+		sb.WriteString("---\n\n")
 		sb.WriteString(versionCheck)
 	}
 

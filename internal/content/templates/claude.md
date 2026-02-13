@@ -15,6 +15,8 @@ For ANY task involving creating services, deploying, or debugging:
 - **Never** skip the workflow for multi-step operations — it prevents errors and ensures correct ordering
 - **Always** validate import.yml with `zerops_import dryRun=true` before the real import
 - **Always** use `zerops_knowledge` with runtime/services params to get contextual briefings for YAML generation
+- **Always** bind to `0.0.0.0` — localhost/127.0.0.1 = 502 Bad Gateway (check runtime exceptions for framework-specific syntax)
+- For bootstrap, default is **dev+stage service pairs** (`appdev` + `appstage`). Single service only if user explicitly requests it.
 - For simple read-only queries (discover, events, logs), workflows are optional
 
 ## Quick reference

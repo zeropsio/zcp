@@ -29,10 +29,14 @@
 
 ## Node.js
 
+- **Bind to `0.0.0.0`**: Express/Fastify: `app.listen(port, "0.0.0.0")`. Next.js: `node_modules/.bin/next start -H 0.0.0.0`
 - `deployFiles` MUST include `node_modules` (runtime doesn't run `npm install`)
 - Next.js: deploy `.next`, `node_modules`, `package.json`, `next.config.js`, `public`
 - Nuxt SSR: deploy `.output`, `node_modules`, `package.json`
 - Cache: `node_modules`, `.next/cache`, `.pnpm-store`
+- Fastify: use `host: "0.0.0.0"` in listen options
+- NestJS: `await app.listen(port, "0.0.0.0")`
+- Hono (Node.js adapter): `serve({ fetch: app.fetch, hostname: "0.0.0.0", port })`
 
 ## Python
 
@@ -44,7 +48,26 @@
 
 ## Go
 
-Follows default pattern (compiled binary, no special requirements). CGO requires Ubuntu (`os: ubuntu`).
+- Default `:port` binding is correct (binds all interfaces)
+- Compiled binary — deploy only the binary, not source
+- CGO requires Ubuntu (`os: ubuntu`), pure Go uses Alpine (default)
+- Minimal zerops.yml pattern:
+  ```yaml
+  build:
+    base: go@latest
+    buildCommands:
+      - go build -v -o app .
+    deployFiles:
+      - app
+  run:
+    start: /var/www/app
+    ports:
+      - port: 8080
+        httpSupport: true
+  ```
+- Logger MUST output to `os.Stdout` for Zerops log collection
+- No `node_modules` equivalent — single binary deploy
+- Cache: Go module cache is in `~/go` (auto-cached, no config needed)
 
 ## Java
 
@@ -82,16 +105,61 @@ Follows default pattern (compiled binary, no special requirements). CGO requires
 
 ## Bun
 
-- Don't deploy `node_modules` (unlike Node.js, deploy only `package.json` + `dist`)
+- **Bind to `0.0.0.0`**: `Bun.serve({ hostname: "0.0.0.0", port })` — mandatory, default `localhost` = 502 Bad Gateway
+- Two deploy patterns:
+  - **Bundled** (recommended): `bun build src/index.ts --outdir dist --target bun`, deploy `dist/` + `package.json`
+  - **Source**: deploy `src/` + `package.json` + `bun.lockb` + `node_modules`
+- `deployFiles` must include `bun.lockb` + `package.json` for source deploys
+- **Don't deploy `node_modules` for bundled output** — unlike Node.js, Bun bundles dependencies
+- For source deploys: include `node_modules` (runtime doesn't run `bun install`)
+- Cache: `node_modules` (speeds up subsequent builds)
 - `bun.lockb` is binary format (not editable)
 - Use `bunx` instead of `npx`
+- Hono framework: `Bun.serve({ fetch: app.fetch, hostname: "0.0.0.0", port })`
+- Elysia framework: set `hostname: "0.0.0.0"` in Elysia constructor or `.listen()` options
+- Minimal zerops.yml (source deploy):
+  ```yaml
+  build:
+    base: bun@1.2
+    buildCommands:
+      - bun install
+    deployFiles:
+      - src
+      - package.json
+      - bun.lockb
+      - node_modules
+    cache:
+      - node_modules
+  run:
+    start: bun run src/index.ts
+    ports:
+      - port: 3000
+        httpSupport: true
+  ```
 
 ## Deno
 
-- Use `deno@1` (recipes use 1.x)
-- Permissions mandatory: `--allow-net` or app can't open ports
-- Deploy: `dist` + `deno.jsonc` (not entire dir)
+- **Bind to `0.0.0.0`**: `Deno.serve({ hostname: "0.0.0.0", port }, handler)` — mandatory
+- Permissions mandatory: `--allow-net --allow-env` minimum (or `--allow-all` for dev)
+- Deploy: compiled output or source + `deno.jsonc`
 - Use `deno.jsonc`, not `deno.json`
+- Fresh/Hono: `hostname: "0.0.0.0"` in serve options
+- Minimal zerops.yml:
+  ```yaml
+  build:
+    base: deno@2
+    buildCommands:
+      - deno compile --allow-net --allow-env --output app src/main.ts
+    deployFiles:
+      - app
+  run:
+    start: /var/www/app
+    ports:
+      - port: 8000
+        httpSupport: true
+  ```
+- Alternative (source deploy): deploy `src/` + `deno.jsonc`, start with `deno run --allow-net --allow-env src/main.ts`
+- Cache: Deno caches deps globally in `~/.cache/deno` (auto-cached)
 
 ## Static
 

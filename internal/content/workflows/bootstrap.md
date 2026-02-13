@@ -2,7 +2,9 @@
 
 ## Overview
 
-Two phases: generate correct configuration (the hard part), then deploy (the easy part).
+Two phases: generate correct configuration (the hard part), then deploy and verify (the easy part).
+
+**Default pattern: dev+stage service pairs.** Every runtime service gets `{app}dev` + `{app}stage` hostnames. Managed services are shared. User can opt into single-service mode if requested explicitly.
 
 ---
 
@@ -21,19 +23,21 @@ zerops_discover
 
 Note what already exists. If ALL requested services already exist, skip to Phase 2. If some exist, only create the missing ones in Step 4.
 
-### Step 2 — Identify stack components
+### Step 2 — Identify stack components + environment mode
 
 From the user's request, identify:
-- **Runtime services**: type + framework (e.g., nodejs@22 with Next.js, go@1 with Fiber, python@3.12 with FastAPI)
+- **Runtime services**: type + framework (e.g., nodejs@22 with Next.js, go@1 with Fiber, bun@1.2 with Hono)
 - **Managed services**: type + version (e.g., postgresql@16, valkey@7.2, elasticsearch@8.16)
 
 **Verify all types against the Available Service Stacks section above.**
 
 If the user hasn't specified, ask. Don't guess frameworks — the build config depends on it.
 
-**Environment type** (ask if not specified):
-- **Development** (default): Include Mailpit (dev SMTP catch-all) + Adminer (DB GUI). NON_HA mode.
-- **Production**: Skip dev services. Consider HA mode for databases. See: zerops_knowledge query="production checklist"
+**Environment mode** (ask if not specified):
+- **Standard** (default): Creates `{app}dev` + `{app}stage` + shared managed services. NON_HA mode.
+- **Simple**: Creates single `{app}` + managed services. Only if user explicitly requests it.
+
+Default = standard (dev+stage). If the user says "just one service" or "simple setup", use simple mode.
 
 ### Step 3 — Load contextual knowledge BEFORE generating YAML
 
@@ -45,15 +49,16 @@ zerops_knowledge runtime="{runtime-type}" services=["{service1}", "{service2}", 
 ```
 
 Examples:
+- `zerops_knowledge runtime="bun@1.2" services=["postgresql@16"]`
 - `zerops_knowledge runtime="nodejs@22" services=["postgresql@16", "valkey@7.2"]`
 - `zerops_knowledge runtime="php-nginx@8.4" services=["mariadb@11"]`
-- `zerops_knowledge runtime="python@3.12" services=["postgresql@16"]`
 - `zerops_knowledge runtime="go@1" services=[]` (runtime only, no managed services)
 
 **What you get back:**
-- **Core principles**: zerops.yml/import.yml structure, port rules, env var system, build pipeline, networking
-- **Runtime exceptions**: PHP (build≠run base), Python (addToRunPrepare), Node.js (node_modules in deployFiles), etc.
-- **Service cards**: ports, auto-injected env vars, connection string templates, HA behavior, mode requirements
+- **Runtime exceptions**: binding rules (0.0.0.0!), deploy patterns, framework-specific gotchas
+- **Matching recipes**: pre-built configurations for common stacks (load with `zerops_knowledge recipe="name"`)
+- **Service cards**: ports, auto-injected env vars, connection string templates, HA behavior
+- **Core principles**: zerops.yml/import.yml structure, port rules, env var system, build pipeline
 - **Wiring patterns**: ${hostname_var} system, envSecrets vs envVariables, connection examples
 
 This is a **single call** that assembles exactly what you need for the identified stack. Use it as the authoritative base for YAML generation.
@@ -62,7 +67,7 @@ This is a **single call** that assembles exactly what you need for the identifie
 ```
 zerops_knowledge recipe="{recipe-name}"
 ```
-Examples: `laravel-jetstream`, `ghost`, `django`, `phoenix`
+Examples: `bun`, `bun-hono`, `laravel-jetstream`, `ghost`, `django`, `phoenix`
 
 If the briefing doesn't cover the user's framework specifics, ask for build/deploy details before generating YAML.
 
@@ -70,12 +75,53 @@ If the briefing doesn't cover the user's framework specifics, ask for build/depl
 
 Using the loaded knowledge, generate `import.yml`. Follow these rules:
 
-**Structure:**
+**Standard mode (dev+stage) — default:**
+```yaml
+#yamlPreprocessor=on
+services:
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10
+
+  - hostname: appdev
+    type: bun@1.2
+    priority: 5
+    enableSubdomainAccess: true
+    envVariables:
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${db_dbName}
+      DATABASE_USER: ${db_user}
+    envSecrets:
+      DATABASE_PASSWORD: ${db_password}
+
+  - hostname: appstage
+    type: bun@1.2
+    priority: 5
+    enableSubdomainAccess: true
+    envVariables:
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${db_dbName}
+      DATABASE_USER: ${db_user}
+    envSecrets:
+      DATABASE_PASSWORD: ${db_password}
+```
+
+**Simple mode (single service):**
 ```yaml
 services:
-  - hostname: <name>
-    type: <runtime>@<version>
-    ...
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10
+
+  - hostname: app
+    type: bun@1.2
+    priority: 5
+    enableSubdomainAccess: true
+    envVariables: ...
 ```
 
 **Mandatory rules:**
@@ -101,21 +147,68 @@ services:
 
 For each runtime service, generate a `zerops.yml` entry. **Use the loaded runtime example as your starting point** — do not write from scratch.
 
+**Standard mode (dev+stage) — two setups in zerops.yml:**
+```yaml
+zerops:
+  - setup: appdev
+    build:
+      base: bun@1.2
+      buildCommands:
+        - bun install
+      deployFiles:
+        - src
+        - package.json
+        - bun.lockb
+        - node_modules
+      cache:
+        - node_modules
+    run:
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: bun run src/index.ts
+      envVariables:
+        PORT: "3000"
+
+  - setup: appstage
+    build:
+      base: bun@1.2
+      buildCommands:
+        - bun install
+      deployFiles:
+        - src
+        - package.json
+        - bun.lockb
+        - node_modules
+      cache:
+        - node_modules
+    run:
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: bun run src/index.ts
+      envVariables:
+        PORT: "3000"
+```
+
+Both setups share the same zerops.yml config. The only difference is the hostname.
+
 **Key decisions per framework (from loaded knowledge):**
 
 | Section | What to get right |
 |---------|------------------|
 | `build.base` | Match the runtime version from import.yml |
-| `build.buildCommands` | Framework-specific: `pnpm build`, `go build -o app`, `pip install`, etc. |
-| `build.deployFiles` | Framework-specific: `dist`, `./app`, `./`, `.next + node_modules`, etc. |
+| `build.buildCommands` | Framework-specific: `bun install`, `pnpm build`, `go build -o app`, etc. |
+| `build.deployFiles` | Framework-specific: `dist`, `./app`, `src + node_modules`, etc. |
 | `build.cache` | Package manager cache: `node_modules`, `target`, `.m2`, etc. |
 | `build.addToRunPrepare` | Python needs this (`.`), most others don't |
 | `run.base` | Usually same as build. Static SPAs use `run.base: static`. PHP uses `php-nginx@X` |
-| `run.start` | Entry point: `node dist/index.js`, `./app`, `python -m uvicorn ...` |
+| `run.start` | Entry point: `bun run src/index.ts`, `node dist/index.js`, `./app` |
 | `run.ports` | Must match what the app actually listens on. Use `httpSupport: true` for HTTP |
 | `run.documentRoot` | PHP/Nginx/Static only — subdirectory to serve |
 
 **Common mistakes to avoid:**
+- **App binds to localhost/127.0.0.1** — MUST bind to `0.0.0.0` or 502 Bad Gateway. Check runtime exceptions for framework-specific binding.
 - Missing `deployFiles` — build output is NOT auto-deployed
 - Wrong `deployFiles` path — check the framework's output directory
 - Using `initCommands` for package installation — use `prepareCommands` instead
@@ -145,6 +238,8 @@ zerops_import content="<generated import.yml>" dryRun=true
 
 ## Phase 2: Deployment and Verification
 
+**Core principle: Dev is for iterating and fixing. Stage is for final validation. Fix errors on dev before deploying to stage.**
+
 ### Important: zcli push is asynchronous
 
 `zerops_deploy` triggers the build pipeline and returns `status=BUILD_TRIGGERED` BEFORE the build completes.
@@ -173,36 +268,35 @@ Every deployment must pass this protocol before being considered complete.
 - Check 7: skip if no managed services. Fallback to log search for `connected|pool|migration`.
 - **Graceful degradation:** if the app has no `/health` endpoint, check 4 is the final gate.
 
-### Build failure handling
+### Standard mode (dev+stage) — deploy flow
 
-If zerops_events shows build FAILED:
-1. `zerops_logs serviceHostname="{hostname}" severity="error" since="10m"` — runtime errors
-2. If insufficient: `bash: zcli service log {hostname} --showBuildLogs --limit 50` — build-specific output (only way to see compilation errors)
-3. Common causes: wrong buildCommands, missing dependencies, wrong deployFiles path
-4. Fix zerops.yml, redeploy. Max 2 retries before asking user.
+1. `zerops_import content="<import.yml>"` — create all services
+2. `zerops_process processId="<id>"` — wait for all services RUNNING
+3. **Env var sync**: `zerops_discover includeEnvs=true` for each runtime service. Verify cross-referenced vars have real values — not empty, not literal `${...}`. If unresolved: `zerops_manage action="restart" serviceHostname="{runtime}"` → re-verify.
+4. **Deploy to appdev first**: `zerops_deploy targetService="appdev"`
+5. **Verify appdev** — run the full 7-point verification protocol on appdev
+6. **Fix any errors on appdev** — iterate until appdev passes all checks
+7. **Deploy to appstage**: `zerops_deploy targetService="appstage"`
+8. **Verify appstage** — run the 7-point verification protocol on appstage
+9. **Present both URLs** to user:
+   ```
+   Dev:   {appdev zeropsSubdomain}
+   Stage: {appstage zeropsSubdomain}
+   ```
 
-### Env var sync for managed services
-
-After import, managed service credentials may not be immediately visible to runtime services. Verify before deploying:
-
-1. `zerops_discover includeEnvs=true` for each runtime service
-2. Check that cross-referenced vars have real values — not empty, not literal `${...}`
-3. If unresolved: `zerops_manage action="restart" serviceHostname="{runtime}"` → re-verify with `zerops_discover includeEnvs=true`
-
-### For 1-2 services — direct
+### Simple mode — deploy flow
 
 ```
 zerops_import content="<import.yml>"          # create services
 zerops_process processId="<id>"               # wait for RUNNING
-zerops_env action="set" serviceHostname="<runtime>" variables=[...]  # if not in import.yml
 # Env var sync: verify managed svc vars resolved (see above)
 zerops_deploy targetService="<runtime>"       # returns BUILD_TRIGGERED
 # CRITICAL: wait 5s, then poll zerops_events every 10s (max 300s) until build FINISHED
 ```
 
-Then run the full 7-point verification protocol above.
+Then run the full 7-point verification protocol.
 
-### For 3+ services — agent orchestration
+### For 3+ runtime services — agent orchestration
 
 Prevents context rot by delegating per-service work to specialist agents with fresh context.
 
@@ -276,10 +370,19 @@ You verify managed Zerops service "{hostname}" is operational.
 Report status and any errors found. If the service is not RUNNING, report the issue — do not attempt to fix it.
 ```
 
+### Build failure handling
+
+If zerops_events shows build FAILED:
+1. `zerops_logs serviceHostname="{hostname}" severity="error" since="10m"` — runtime errors
+2. If insufficient: `bash: zcli service log {hostname} --showBuildLogs --limit 50` — build-specific output (only way to see compilation errors)
+3. Common causes: wrong buildCommands, missing dependencies, wrong deployFiles path, app binds to localhost instead of 0.0.0.0
+4. Fix zerops.yml, redeploy. Max 2 retries before asking user.
+
 ---
 
 ## Critical Rules
 
+- **Bind to `0.0.0.0`, not localhost** — this is the #1 cause of 502 errors. Check runtime exceptions for framework-specific binding.
 - `http://` for ALL internal service connections — never `https://`. SSL terminates at the L7 balancer.
 - `mode: NON_HA` or `mode: HA` is **mandatory** for managed services — dry-run doesn't catch this but real import fails.
 - Environment variable cross-references use underscores: `${api_hostname}`, not `${api-hostname}`.
@@ -287,3 +390,4 @@ Report status and any errors found. If the service is not RUNNING, report the is
 - `enableSubdomainAccess: true` in import.yml for new services. Do NOT also call `zerops_subdomain` — it only works on ACTIVE services.
 - `deployFiles` is mandatory in zerops.yml — build output is not auto-deployed.
 - `zeropsSubdomain` is already a full URL — do NOT prepend `https://`.
+- **Dev+stage is the default** — only use single service if user explicitly requests it.
