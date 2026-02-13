@@ -66,6 +66,57 @@ func TestStore_GetNotFound(t *testing.T) {
 	}
 }
 
+// --- Core Document Embed Tests ---
+
+func TestStore_CoreDocsEmbedded(t *testing.T) {
+	store := newTestStore(t)
+	coreURIs := []string{
+		"zerops://docs/core/core-principles",
+		"zerops://docs/core/runtime-exceptions",
+		"zerops://docs/core/service-cards",
+		"zerops://docs/core/wiring-patterns",
+	}
+	for _, uri := range coreURIs {
+		doc, err := store.Get(uri)
+		if err != nil {
+			t.Errorf("core doc %s not found: %v", uri, err)
+			continue
+		}
+		if len(doc.Content) < 50 {
+			t.Errorf("core doc %s content too short (%d bytes)", uri, len(doc.Content))
+		}
+	}
+}
+
+func TestStore_CoreRecipesEmbedded(t *testing.T) {
+	store := newTestStore(t)
+	recipes := store.ListRecipes()
+	if len(recipes) < 20 {
+		t.Errorf("ListRecipes() = %d, want >= 20", len(recipes))
+	}
+	// Spot-check a known recipe
+	if !slices.Contains(recipes, "laravel-jetstream") {
+		t.Errorf("expected laravel-jetstream in recipes, got: %v", recipes)
+	}
+}
+
+func TestStore_GetBriefing_RealDocs(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("php-nginx@8.4", []string{"postgresql@16"})
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if !strings.Contains(briefing, "Core Principles") && !strings.Contains(briefing, "core-principles") {
+		t.Error("briefing missing core principles content")
+	}
+	if !strings.Contains(briefing, "PHP") {
+		t.Error("briefing missing PHP runtime exceptions")
+	}
+	if !strings.Contains(briefing, "PostgreSQL") {
+		t.Error("briefing missing PostgreSQL service card")
+	}
+}
+
 // --- BM25 Search Tests ---
 
 func TestSearch_PostgreSQLConnectionString(t *testing.T) {

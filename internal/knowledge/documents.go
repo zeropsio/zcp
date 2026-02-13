@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-//go:embed embed/**/*.md core/**/*.md
+//go:embed embed/**/*.md core/*.md core/**/*.md
 var contentFS embed.FS
 
 // Document represents a parsed knowledge document.
