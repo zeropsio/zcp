@@ -9,9 +9,15 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/tools"
+	"github.com/zeropsio/zcp/internal/update"
 )
 
-const version = "0.1.0"
+// Version, Commit, Built are set by ldflags at build time.
+var (
+	Version = "dev"
+	Commit  = "unknown"
+	Built   = "unknown"
+)
 
 // Server wraps the MCP server with Zerops-specific configuration.
 type Server struct {
@@ -23,12 +29,13 @@ type Server struct {
 	sshDeployer   ops.SSHDeployer
 	localDeployer ops.LocalDeployer
 	mounter       ops.Mounter
+	updateInfo    *update.Info
 }
 
 // New creates a new ZCP MCP server with all tools registered.
-func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter) *Server {
+func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter, updateInfo *update.Info) *Server {
 	srv := mcp.NewServer(
-		&mcp.Implementation{Name: "zcp", Version: version},
+		&mcp.Implementation{Name: "zcp", Version: Version},
 		&mcp.ServerOptions{Instructions: Instructions},
 	)
 
@@ -41,6 +48,7 @@ func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, 
 		sshDeployer:   sshDeployer,
 		localDeployer: localDeployer,
 		mounter:       mounter,
+		updateInfo:    updateInfo,
 	}
 
 	s.registerTools()
@@ -53,7 +61,7 @@ func (s *Server) registerTools() {
 	stackCache := ops.NewStackTypeCache(ops.DefaultStackTypeCacheTTL)
 
 	// Read-only tools
-	tools.RegisterContext(s.server, s.client, stackCache)
+	tools.RegisterContext(s.server, s.client, stackCache, s.updateInfo)
 	tools.RegisterWorkflow(s.server)
 	tools.RegisterDiscover(s.server, s.client, projectID)
 	tools.RegisterKnowledge(s.server, s.store)

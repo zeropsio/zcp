@@ -14,24 +14,95 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/server"
+	"github.com/zeropsio/zcp/internal/update"
 )
 
 func main() {
-	// Init dispatch: generate project config files.
-	if len(os.Args) > 1 && os.Args[1] == "init" {
-		if err := zcpinit.Run("."); err != nil {
-			log.Fatalf("init: %v", err)
+	// Subcommand dispatch.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "init":
+			if err := zcpinit.Run("."); err != nil {
+				log.Fatalf("init: %v", err)
+			}
+			return
+		case "version":
+			printVersion()
+			return
+		case "update":
+			runUpdate()
+			return
 		}
-		return
 	}
 
+	// Auto-update check (before MCP server starts — stdout is still free).
+	updateInfo := checkAndApplyUpdate()
+
 	// MCP server mode.
-	if err := run(); err != nil {
+	if err := run(updateInfo); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run() error {
+func printVersion() {
+	fmt.Fprintf(os.Stdout, "zcp %s (%s, %s)\n", server.Version, server.Commit, server.Built)
+}
+
+func runUpdate() {
+	fmt.Fprintln(os.Stderr, "Checking for updates...")
+	checker := update.NewChecker(server.Version)
+	checker.CacheTTL = 0 // force fresh check
+	info := checker.Check()
+
+	if !info.Available {
+		fmt.Fprintf(os.Stderr, "Already up to date (%s).\n", server.Version)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "Update available: %s → %s\n", info.CurrentVersion, info.LatestVersion)
+	fmt.Fprintln(os.Stderr, "Downloading...")
+
+	binary, err := os.Executable()
+	if err != nil {
+		log.Fatalf("resolve executable: %v", err)
+	}
+
+	if err := update.Apply(info, binary, nil); err != nil {
+		log.Fatalf("update: %v", err)
+	}
+
+	fmt.Fprintln(os.Stderr, "Updated successfully. Restart ZCP to use the new version.")
+}
+
+func checkAndApplyUpdate() *update.Info {
+	checker := update.NewChecker(server.Version)
+	info := checker.Check()
+
+	if !info.Available || os.Getenv("ZCP_AUTO_UPDATE") == "0" {
+		return info
+	}
+
+	// Auto-update: download, replace, re-exec.
+	binary, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zcp: auto-update: resolve executable: %v\n", err)
+		return info
+	}
+
+	if err := update.Apply(info, binary, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "zcp: auto-update: %v\n", err)
+		return info
+	}
+
+	// Re-exec with new binary. On success this never returns.
+	if err := update.Exec(); err != nil {
+		fmt.Fprintf(os.Stderr, "zcp: auto-update: %v\n", err)
+	}
+
+	return info
+}
+
+func run(updateInfo *update.Info) error {
 	// Bootstrap: resolve credentials (env var or zcli) to create platform client.
 	creds, err := auth.ResolveCredentials()
 	if err != nil {
@@ -69,7 +140,7 @@ func run() error {
 
 	// Create and run MCP server on STDIO.
 	// SSH deployer remains nil — requires running Zerops container with SSH access.
-	srv := server.New(client, authInfo, store, logFetcher, nil, localDeployer, mounter)
+	srv := server.New(client, authInfo, store, logFetcher, nil, localDeployer, mounter, updateInfo)
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("server: %w", err)
 	}

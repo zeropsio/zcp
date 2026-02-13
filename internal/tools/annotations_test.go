@@ -46,7 +46,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := server.New(mock, authInfo, store, logFetcher, &nopSSH{}, &nopLocal{}, &nopMounter{})
+	srv := server.New(mock, authInfo, store, logFetcher, &nopSSH{}, &nopLocal{}, &nopMounter{}, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

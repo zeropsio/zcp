@@ -25,7 +25,7 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil)
+	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -161,7 +161,7 @@ func TestServer_Connect(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil)
+	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

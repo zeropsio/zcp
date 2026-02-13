@@ -47,7 +47,7 @@ func testResourceServer(t *testing.T) *mcp.ClientSession {
 	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil)
+	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
