@@ -62,6 +62,12 @@ func TestDeployTool_SSHMode(t *testing.T) {
 	if parsed.Mode != "ssh" {
 		t.Errorf("mode = %s, want ssh", parsed.Mode)
 	}
+	if parsed.Status != "BUILD_TRIGGERED" {
+		t.Errorf("status = %s, want BUILD_TRIGGERED", parsed.Status)
+	}
+	if parsed.MonitorHint == "" {
+		t.Error("monitorHint should not be empty")
+	}
 }
 
 func TestDeployTool_LocalMode(t *testing.T) {
@@ -92,6 +98,12 @@ func TestDeployTool_LocalMode(t *testing.T) {
 	}
 	if parsed.Mode != "local" {
 		t.Errorf("mode = %s, want local", parsed.Mode)
+	}
+	if parsed.Status != "BUILD_TRIGGERED" {
+		t.Errorf("status = %s, want BUILD_TRIGGERED", parsed.Status)
+	}
+	if parsed.MonitorHint == "" {
+		t.Error("monitorHint should not be empty")
 	}
 }
 

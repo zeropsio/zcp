@@ -19,6 +19,7 @@ type DeployResult struct {
 	TargetService   string `json:"targetService"`
 	TargetServiceID string `json:"targetServiceId"`
 	Message         string `json:"message"`
+	MonitorHint     string `json:"monitorHint"`
 }
 
 // SSHDeployer executes commands on remote Zerops services.
@@ -116,12 +117,13 @@ func deploySSH(
 	}
 
 	return &DeployResult{
-		Status:          "DEPLOYED",
+		Status:          "BUILD_TRIGGERED",
 		Mode:            "ssh",
 		SourceService:   sourceService,
 		TargetService:   targetService,
 		TargetServiceID: target.ID,
-		Message:         fmt.Sprintf("Deployed from %s to %s via SSH", sourceService, targetService),
+		Message:         fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService),
+		MonitorHint:     "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 	}, nil
 }
 
@@ -151,11 +153,12 @@ func deployLocal(
 	}
 
 	return &DeployResult{
-		Status:          "DEPLOYED",
+		Status:          "BUILD_TRIGGERED",
 		Mode:            "local",
 		TargetService:   targetService,
 		TargetServiceID: target.ID,
-		Message:         fmt.Sprintf("Deployed to %s via local zcli", targetService),
+		Message:         fmt.Sprintf("Build triggered for %s via local zcli", targetService),
+		MonitorHint:     "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 	}, nil
 }
 

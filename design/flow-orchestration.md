@@ -1,430 +1,352 @@
-# Flow Orchestration: Context-Rot-Resistant Multi-Step Workflows for ZCP
+# Flow Orchestration: Knowledge-First Workflows via MCP
+
+## Status: FINAL — all three workflows + MCP instruction updated
 
 ## 1. Problem
 
-ZCP provides 15 MCP tools for managing Zerops infrastructure. Multi-step operations (bootstrap 5 services, deploy and verify, debug and fix) require many sequential tool calls. During long sessions, Claude loses track: forgets to deploy service 4 of 5, skips verification, self-reports success without checking.
+There are two problems. One is hard, one is easy.
 
-The core requirement: **guarantee that every planned step executes and is verified.**
+### The hard problem: correct configuration
 
-### Why Context Rot Happens
+Zerops requires two YAML configs — `import.yml` (infrastructure) and `zerops.yml` (build/deploy/run). These can be written a thousand ways. Many are functional but suboptimal: wrong cache paths, missing `addToRunPrepare` for Python, incorrect deploy files for Next.js, wrong connection string format, missing `mode` for managed services.
 
-Context rot is structural. Every tool call response consumes context window. After 20-30 calls, earlier results are compacted or lost. Any solution relying on the LLM "remembering" what to do next is broken for long sessions.
+Getting these right requires deep, specific Zerops knowledge: runtime build patterns, framework quirks, env var wiring conventions, port ranges, deploy file syntax. The LLM's general training data is insufficient — it needs the Zerops-specific docs loaded into context BEFORE generating YAML.
 
-### What zcp-orig Proved
+**Current failure mode**: LLM sees "generate import.yml" → generates from training data → gets it ~70% right → errors at deploy time → debugs blind. The knowledge base has the correct patterns, but the LLM doesn't load them first.
 
-The predecessor system's key insight wasn't gates or state machines — it was **decomposition into fresh-context units of work**. A 733-line `spawn-subagents.sh` generated self-contained prompts for each service. Each subagent got:
+### The easy problem: deployment and verification
 
-- A clean context window (no rot)
-- A complete, self-contained prompt (no references to prior conversation)
-- A numbered task list with verification built into the steps
-- Heartbeat files for progress tracking
+Once YAML is correct, deployment is deterministic: import → wait → configure → deploy → verify. For multiple services this can cause context rot (20+ tool calls), but the solution is straightforward — spawn specialist agents with fresh context, one per service.
 
----
+### Design priority
 
-## 2. Design Principle
+Configuration is where 90% of failures happen. Deployment and verification are mechanical. The design reflects this — each workflow puts the hard part first.
 
-**Don't fight context rot. Avoid it.**
+## 2. Core Insight
 
-Decompose multi-step workflows into **pre-defined specialist agents** that each execute in a clean context with a narrow, bounded task.
+**Load knowledge at the right moment. Not before. Not after. Not as a fallback.**
+
+The "right moment" differs per workflow:
+
+| Workflow | Knowledge loads... | Why |
+|----------|-------------------|-----|
+| Bootstrap | BEFORE generating YAML | You need examples to write correct config |
+| Deploy | BEFORE generating/fixing zerops.yml (conditional) | Skip if zerops.yml already exists |
+| Debug | AFTER gathering data | You don't know what to search until you see the error |
 
 ```
-User: "Bootstrap Go API + PostgreSQL + Valkey"
-          │
-          ▼
+Bootstrap/Deploy:  identify stack → load knowledge → generate config (informed)
+Debug:             gather data → identify symptoms → load knowledge → diagnose (informed)
+```
+
+This is Anthropic's "explore before acting" pattern, applied contextually per workflow type.
+
+## 3. Architecture
+
+### MCP server as self-contained plugin
+
+```
 ┌─────────────────────────────────────────┐
-│  Orchestrator (main agent)              │
-│  1. zerops_discover (what exists)       │
-│  2. zerops_import (create services)     │
-│  3. zerops_process (wait for RUNNING)   │
-│  4. Spawn: zerops-configure-service     │──→ [api] fresh context, bounded task
-│  5. Spawn: zerops-verify-managed        │──→ [db]  fresh context, bounded task
-│  6. Spawn: zerops-verify-managed        │──→ [cache] fresh context, bounded task
-│  7. zerops_discover (final check)       │
+│  ZCP MCP Server (single Go binary)      │
+│                                         │
+│  Tools:     15 atomic operations        │
+│  Context:   platform knowledge (lazy)   │
+│  Workflows: knowledge-first playbooks   │
+│             + embedded agent prompts    │
+│  Knowledge: 65 MD files (BM25 search)   │
+│                                         │
+│  = Complete Zerops capability           │
+│  = Zero external file dependencies      │
+│  = Works with any MCP client            │
 └─────────────────────────────────────────┘
 ```
 
-The orchestrator makes 7 tool calls — too few to rot. Each specialist agent handles one service in a clean context with embedded verification.
-
----
-
-## 3. Architecture: Pre-defined Claude Code Agents
-
-### Why Pre-defined Agents, Not Dynamic Prompts
-
-Claude Code natively supports custom agents via `.claude/agents/*.md` files with YAML frontmatter. These are:
-
-- **Versioned in git** — ship with ZCP, evolve with the project
-- **Reusable across sessions** — same agent definition for every bootstrap, deploy, debug
-- **Self-contained** — system prompt, tool restrictions, model selection, MCP server access, hooks
-- **Automatically delegated** — Claude reads the `description` field and delegates matching tasks without explicit invocation
-- **Parameterized at spawn time** — the Task tool's `prompt` passes service-specific context
-
-This is fundamentally better than a `zerops_plan` tool generating prompts dynamically because:
-
-1. The agent definitions are **reviewable and testable** — they're files in the repo, not runtime output
-2. They can **restrict tools** — a verify agent only gets read-only tools
-3. They can have **their own hooks** — PreToolUse validation per agent type
-4. They **don't need a new MCP tool** — zero server-side changes for the agent definitions themselves
-
-### Agent Catalog
+### Context loading — three tiers
 
 ```
-.claude/agents/
-├── zerops-configure-service.md   # Configure + deploy a runtime service
-├── zerops-verify-managed.md      # Verify a managed service (DB, cache)
-├── zerops-deploy-service.md      # Deploy code to an existing service
-├── zerops-debug-service.md       # Debug a failing service
-└── zerops-orchestrator.md        # Coordinate multi-service operations
+Tier 1: Always in context (~60 tokens, in instructions.go)
+┌─────────────────────────────────────────┐
+│ MCP instruction:                         │
+│ "For multi-step operations (bootstrap,   │
+│  deploy, debug), call zerops_workflow    │
+│  first"                                  │
+└──────────────────┬──────────────────────┘
+                   │
+Tier 2: On-demand via zerops_workflow (when needed)
+┌──────────────────▼──────────────────────┐
+│ Workflow response (~1300-1800 tokens):   │
+│ - knowledge loading instructions         │
+│ - generation rules / diagnostic checklist│
+│ - validation loop                        │
+│ - deployment steps + agent prompts       │
+└──────────────────┬──────────────────────┘
+                   │
+Tier 3: On-demand via zerops_knowledge (per-component)
+┌──────────────────▼──────────────────────┐
+│ Specific runtime/service docs:           │
+│ - zerops.yml examples for the framework  │
+│ - connection string patterns             │
+│ - build/deploy patterns                  │
+│ - troubleshooting guidance               │
+└─────────────────────────────────────────┘
 ```
 
-### Agent Definitions
+### Why not bake Tier 3 into workflow responses?
 
-#### `zerops-configure-service.md`
+Workflows are generic — bootstrap works for Node.js + PG, Go + Valkey, Python + MariaDB, or any combination. Debug works for any error type. The workflow tells the LLM HOW to gather knowledge; the LLM determines WHAT to gather based on the user's request and the gathered data.
 
-For runtime services during bootstrap — configure env, enable subdomain, deploy, verify.
+## 4. Workflows
 
-```markdown
----
-name: zerops-configure-service
-description: Configure and deploy a single Zerops runtime service. Use when bootstrapping or reconfiguring a service that needs env vars, subdomain, deploy, and verification.
-model: sonnet
-maxTurns: 20
-mcpServers:
-  - zcp
----
+Three workflows rewritten with the knowledge-first pattern. Each has a hard phase (knowledge-dependent) and an easy phase (deterministic).
 
-# Zerops Service Configuration Agent
-
-You configure and deploy a single Zerops runtime service. You receive the service hostname and context as your task prompt.
-
-## Mandatory Workflow
-
-Execute these steps IN ORDER. Do not skip any step. Each step has a verification tool call that proves success.
-
-| # | Step | Tool | Verification |
-|---|------|------|-------------|
-| 1 | Discover service state | zerops_discover service="{hostname}" includeEnvs=true | Service exists, note current status |
-| 2 | Set environment variables | zerops_env action="set" | zerops_discover includeEnvs=true — vars present |
-| 3 | Enable subdomain (if web-facing) | zerops_subdomain action="enable" | zerops_discover — subdomain URL present |
-| 4 | Deploy code | zerops_deploy | zerops_events — deploy event shows FINISHED |
-| 5 | Check for errors | zerops_logs severity="error" since="5m" | No error-level logs |
-| 6 | Final verification | zerops_discover service="{hostname}" | Status is RUNNING |
-
-## Rules
-
-- **Every step requires its verification tool call.** Do not self-report success.
-- If a step fails, retry once. If it fails again, report the failure clearly — do not skip to the next step.
-- Use `zerops_knowledge` if you need runtime-specific guidance (build commands, zerops.yml structure).
-- Environment variable cross-references use underscores: `${service_hostname}`, not `${service-hostname}`.
-- Internal service connections use `http://`, never `https://`.
-```
-
-#### `zerops-verify-managed.md`
-
-For managed services (PostgreSQL, Valkey, etc.) — just verify they're running.
-
-```markdown
----
-name: zerops-verify-managed
-description: Verify a managed Zerops service (database, cache, message queue) is running correctly. Use for managed services that don't need code deployment.
-model: haiku
-maxTurns: 5
-mcpServers:
-  - zcp
----
-
-# Zerops Managed Service Verification Agent
-
-You verify a single managed Zerops service is operational.
-
-## Mandatory Workflow
-
-| # | Step | Tool | Verification |
-|---|------|------|-------------|
-| 1 | Check service status | zerops_discover service="{hostname}" | Status is RUNNING |
-| 2 | Check for errors | zerops_logs serviceHostname="{hostname}" severity="error" since="1h" | No errors |
-
-## Rules
-
-- Managed services (PostgreSQL, MariaDB, Valkey, Elasticsearch, etc.) don't need deployment.
-- Report the service status and any errors found. That's it.
-- If the service is not RUNNING, report the issue — do not attempt to fix it.
-```
-
-#### `zerops-deploy-service.md`
-
-For deploying code updates to an existing service.
-
-```markdown
----
-name: zerops-deploy-service
-description: Deploy code to an existing Zerops service and verify the deployment succeeded. Use when pushing code updates, not for initial setup.
-model: sonnet
-maxTurns: 15
-mcpServers:
-  - zcp
----
-
-# Zerops Deploy Agent
-
-You deploy code to a single Zerops service and verify it works.
-
-## Mandatory Workflow
-
-| # | Step | Tool | Verification |
-|---|------|------|-------------|
-| 1 | Verify service exists | zerops_discover service="{hostname}" | Status RUNNING or READY_TO_DEPLOY |
-| 2 | Deploy | zerops_deploy | Process ID returned |
-| 3 | Monitor deployment | zerops_events serviceHostname="{hostname}" limit=5 | Deploy event FINISHED |
-| 4 | Check for errors | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No error logs |
-| 5 | Verify running | zerops_discover service="{hostname}" | Status is RUNNING |
-
-## Rules
-
-- Ensure `zerops.yml` exists in the working directory before deploying.
-- If deploy fails, check `zerops_logs` for the reason before retrying.
-- Report the deployment result clearly — URL if subdomain is enabled.
-```
-
-#### `zerops-debug-service.md`
-
-For investigating issues with a service.
-
-```markdown
----
-name: zerops-debug-service
-description: Debug and diagnose issues with a Zerops service. Use when a service is failing, unhealthy, or behaving unexpectedly.
-model: sonnet
-maxTurns: 15
-mcpServers:
-  - zcp
----
-
-# Zerops Debug Agent
-
-You diagnose issues with a single Zerops service.
-
-## Mandatory Workflow
-
-| # | Step | Tool | What to look for |
-|---|------|------|-----------------|
-| 1 | Check status | zerops_discover service="{hostname}" | Status, container count, resources |
-| 2 | Recent events | zerops_events serviceHostname="{hostname}" limit=10 | Failed deploys, restarts, scaling |
-| 3 | Error logs | zerops_logs serviceHostname="{hostname}" severity="error" since="1h" | Error messages, stack traces |
-| 4 | Warning logs | zerops_logs serviceHostname="{hostname}" severity="warning" since="1h" | Connection issues, retries |
-| 5 | Check env vars | zerops_discover service="{hostname}" includeEnvs=true | Missing or misconfigured vars |
-| 6 | Search for patterns | zerops_logs search="{error pattern}" since="24h" | Recurring issues |
-
-## Rules
-
-- Gather ALL information before diagnosing. Do not jump to conclusions after step 1.
-- Use `zerops_knowledge` if you need Zerops-specific troubleshooting guidance.
-- Report findings as: Problem, Evidence, Recommended Fix.
-- Common issues: `https://` for internal connections (should be `http://`), dashes in env var refs (should be underscores), ports outside 10-65435 range.
-```
-
-#### `zerops-orchestrator.md`
-
-For coordinating multi-service operations. This is the agent that spawns the others.
-
-```markdown
----
-name: zerops-orchestrator
-description: Coordinate multi-service Zerops operations like bootstrap, multi-deploy, or project-wide debugging. Use when an operation involves more than 2 services.
-model: opus
-maxTurns: 30
-mcpServers:
-  - zcp
----
-
-# Zerops Orchestrator Agent
-
-You coordinate multi-service Zerops operations by delegating to specialist agents.
-
-## Bootstrap Workflow
-
-1. `zerops_discover` — check what already exists
-2. `zerops_import` with dry run — validate infrastructure definition
-3. `zerops_import` — create services
-4. `zerops_process` — wait for all services to reach RUNNING
-5. For each **runtime service**: spawn `zerops-configure-service` agent with the service hostname and discovered env vars
-6. For each **managed service**: spawn `zerops-verify-managed` agent with the service hostname
-7. After all agents complete: `zerops_discover` — verify everything is RUNNING
-8. Report results to user
-
-## Deploy-All Workflow
-
-1. `zerops_discover` — list all runtime services
-2. For each runtime service: spawn `zerops-deploy-service` agent
-3. After all complete: `zerops_discover` — verify all RUNNING
-4. Report results
-
-## Debug-All Workflow
-
-1. `zerops_discover` — list services with issues
-2. For each problematic service: spawn `zerops-debug-service` agent
-3. Collect findings, report summary
-
-## Rules
-
-- **Always discover first.** Don't assume what services exist.
-- **Spawn agents in parallel** when services are independent.
-- **Always run a final zerops_discover** after all agents complete — this is your verification, not their self-report.
-- Classify services: runtime (nodejs, go, python, etc.) needs configure/deploy agents. Managed (postgresql, valkey, etc.) needs verify agents.
-- If any agent reports failure, investigate before declaring the operation complete.
-```
-
----
-
-## 4. How Agents Get Service Context
-
-The agents are generic — they don't know which service to work on until spawned. The orchestrator (or main agent) passes context via the Task tool's `prompt` parameter:
+### Decision tree
 
 ```
-Task(
-  subagent_type: "zerops-configure-service",
-  prompt: "Configure service 'api' (nodejs@22).
-           Env vars needed: DATABASE_URL=${db_connectionString}, CACHE_URL=redis://${cache_hostname}:${cache_port}
-           Enable subdomain.
-           Deploy from /Users/me/project with setup='api'."
-)
+User request
+  │
+  ├─ Single tool call? (check status, read logs, scale)
+  │  → Use tool directly. No workflow.
+  │
+  ├─ Single service, multi-step? (deploy one, debug one)
+  │  → zerops_workflow → follow steps (agents optional)
+  │
+  ├─ Creating infrastructure?
+  │  → zerops_workflow workflow="bootstrap"
+  │
+  └─ Multiple services?
+     → zerops_workflow → orchestrate with specialist agents
 ```
 
-The agent receives this as its task, combined with its pre-defined system prompt (the workflow table, rules, etc.). The system prompt defines **how** to work. The task prompt defines **what** to work on.
+### Bootstrap (`bootstrap.md`)
 
-This is the same pattern as zcp-orig's subagents, but cleaner:
-- zcp-orig: 360-line generated bash prompt per service
-- ZCP: 40-line static agent definition + 5-line task prompt per service
+The most complex workflow. Two full phases.
 
----
+**Phase 1 — Configuration (6 steps):**
 
-## 5. What Stays Unchanged
+```
+Step 1: zerops_discover                    → what exists already
+Step 2: Identify stack components          → runtime + framework, managed services
+Step 3: zerops_knowledge (parallel)        → load docs for EACH component
+        "nodejs nextjs zerops.yml"         ← MANDATORY before any YAML generation
+        "postgresql import connection"
+        "valkey import"
+Step 4: Generate import.yml               → using loaded knowledge + workflow rules
+        (mode, priority, env wiring, enableSubdomainAccess, preprocessor)
+Step 5: Generate zerops.yml               → using loaded runtime examples as base
+        (buildCommands, deployFiles, cache, addToRunPrepare, ports, start)
+Step 6: zerops_import dryRun=true         → validate, max 2 retries
+        Present both YAMLs to user for review
+```
 
-- **All 15 MCP tools** — no changes
-- **Server architecture** — stateless, no new tools needed
-- **All hooks** — no changes
-- **Workflow guides** — still useful for single-service operations
-- **Knowledge base** — agents use `zerops_knowledge` when needed
-- **Ralph Loop** — still available as an orthogonal mechanism
+**Phase 2 — Deployment + 6-point verification:**
 
----
+```
+For 1-2 services: direct tool calls (import → wait → env sync check → deploy → build polling → 7-point verify)
+For 3+ services: agent orchestration
+  Step 7: zerops_import                   → create all services
+  Step 8: zerops_process                  → wait for RUNNING
+  Step 9: Spawn agents in parallel:
+          Task(sonnet) per runtime service → 11-step configure + deploy + poll + verify
+            (discover → env vars → verify env sync → trigger deploy → poll build completion
+             → check errors → confirm startup → post-startup errors → get subdomain
+             → HTTP health check → managed svc connectivity)
+          Task(haiku) per managed service  → verify status + check errors
+  Step 10: zerops_discover                → orchestrator's own final verification
 
-## 6. Implementation Spec
+Build polling: 10s interval, 300s timeout. zerops_deploy returns BUILD_TRIGGERED before build completes.
 
-### New Files
+7-point verification protocol (per runtime service):
+  1. Build/deploy FINISHED (zerops_events — poll 10s, max 300s)
+  2. Service RUNNING (zerops_discover)
+  3. No error logs (zerops_logs severity="error")
+  4. Startup confirmed (zerops_logs search="listening|started|ready")
+  5. No post-startup errors (zerops_logs severity="error" since="2m")
+  6. HTTP health check (curl /health — skip if no endpoint, step 4 = final gate)
+  7. Managed svc connectivity (curl /status or log search — skip if no managed svcs)
+```
 
-| File | Purpose |
-|------|---------|
-| `.claude/agents/zerops-configure-service.md` | Configure + deploy runtime service |
-| `.claude/agents/zerops-verify-managed.md` | Verify managed service |
-| `.claude/agents/zerops-deploy-service.md` | Deploy code to service |
-| `.claude/agents/zerops-debug-service.md` | Debug failing service |
-| `.claude/agents/zerops-orchestrator.md` | Coordinate multi-service ops |
+### Deploy (`deploy.md`)
 
-### Modified Files
+Conditional knowledge loading — skip if zerops.yml already exists.
+
+**Phase 1 — Configuration check (4 steps):**
+
+```
+Step 1: zerops_discover service="{hostname}" includeEnvs=true
+        → note type, status (RUNNING = re-deploy, READY_TO_DEPLOY = first deploy)
+Step 2: Check if zerops.yml exists with setup: {hostname}
+        → YES + re-deploy: skip to Phase 2
+        → NO or first deploy: continue
+Step 3: zerops_knowledge query="{runtime} {framework} zerops.yml"
+        Also: "deploy patterns" for tilde syntax, multi-base patterns
+        ← MANDATORY before generating zerops.yml
+Step 4: Generate/fix zerops.yml using loaded example as base
+        Key: deployFiles (#1 error source), build.cache, run.start, run.ports
+        Three patterns: single-base, multi-base (→static), multi-runtime (→alpine)
+        Present to user for review
+```
+
+**Phase 2 — Deploy and verify:**
+
+```
+Single service:
+  zerops_deploy → zerops_events (FINISHED) → zerops_logs (no errors) → zerops_discover (RUNNING)
+  If fails: check logs, fix zerops.yml, max 2 retries
+
+Multiple services (3+):
+  zerops_discover → list services
+  Spawn Task(sonnet) per service in parallel
+  zerops_discover → final verification
+```
+
+### Debug (`debug.md`)
+
+Knowledge loads AFTER data gathering — you need to see the error before you know what to search.
+
+**Phase 1 — Data gathering (5 steps):**
+
+```
+Step 1: zerops_discover service="{hostname}" includeEnvs=true
+        → status, containers, resources, env vars
+Step 2: zerops_events serviceHostname="{hostname}" limit=10
+        → timeline: deploys, restarts, scaling, env changes
+Step 3: zerops_logs severity="error" since="1h"
+        → stack traces, connection errors, port failures
+Step 4: zerops_logs severity="warning" since="1h"
+        → retries, memory pressure, slow queries
+Step 5: zerops_logs search="{error pattern}" since="24h"
+        → recurring vs new issue
+```
+
+**Phase 2 — Diagnosis (3 steps):**
+
+```
+Step 6: Match against common Zerops issues (embedded in workflow)
+        7 known patterns cover ~80% of cases:
+        - Connection refused (https:// internal → use http://)
+        - Service not starting (bad start, port range, bind address)
+        - Env vars not resolving (dashes → underscores)
+        - Build failures (missing deps, wrong commands)
+        - Database connection (wrong format, localhost, DB not running)
+        - Port binding (reserved ports, config mismatch)
+        - Deploy succeeds but app broken (missing env vars, runtime deps)
+
+Step 7: zerops_knowledge query="{error category}"
+        ← ONLY if Step 6 didn't match. Loads targeted knowledge.
+        "common gotchas" for full list of 40+ known pitfalls.
+
+Step 8: Report as structured diagnosis:
+        Problem → Evidence → Root Cause → Recommended Fix
+```
+
+**Multi-service debug (3+ services):**
+
+```
+zerops_discover → identify problematic services
+Spawn Task(sonnet) per service in parallel
+Collect findings, produce summary
+```
+
+## 5. Agent Prompt Templates
+
+Embedded in workflow MD files. Each workflow includes only the templates it needs. Agents handle deterministic per-service work in fresh context windows.
+
+| Agent | In workflow | Model | Steps | Purpose |
+|-------|-----------|-------|-------|---------|
+| Configure-Service | bootstrap.md | sonnet | 11 | discover → env vars → verify env sync → trigger deploy → poll build completion → check errors → confirm startup → post-startup errors → get subdomain → HTTP health check → managed svc connectivity |
+| Verify-Managed | bootstrap.md | haiku | 2 | discover RUNNING → check error logs |
+| Deploy-Service | deploy.md | sonnet | 7 | discover → trigger deploy → poll build completion → check errors → confirm startup → verify RUNNING → HTTP health |
+| Debug-Service | debug.md | sonnet | 5 | discover → events → error logs → warning logs → pattern search |
+
+All agents follow the same pattern:
+- Table-driven mandatory workflow (step + tool + verification)
+- No self-reporting — every step has an explicit verification tool call
+- Retry once on failure, then report clearly
+- Zerops-specific rules embedded (http://, underscores, port range)
+
+Spawned via: `Task(subagent_type="general-purpose", model=<model>, prompt=<template with filled placeholders>)`
+
+## 6. Implementation
+
+### Modified files (DONE)
 
 | File | Change |
 |------|--------|
-| `internal/content/templates/CLAUDE.md` | Add agent usage guidance |
-| `internal/content/workflows/bootstrap.md` | Mention orchestrator agent for multi-service |
+| `internal/server/instructions.go` | Added zerops_workflow nudge to MCP Instructions (Tier 1) |
+| `internal/content/workflows/bootstrap.md` | Complete rewrite: knowledge-first Phase 1 (6 steps) + orchestrated Phase 2 with configure/verify agent prompts |
+| `internal/content/workflows/deploy.md` | Complete rewrite: conditional Phase 1 (config check, 4 steps) + Phase 2 (deploy/verify) with deploy agent prompt |
+| `internal/content/workflows/debug.md` | Complete rewrite: Phase 1 (data gathering, 5 steps) + Phase 2 (diagnosis with 7 common issues + knowledge fallback) with debug agent prompt |
 
-### New Go Code
+### Unchanged workflows
 
-**Zero.** The agents are markdown files. The MCP tools they call already exist.
+| File | Why unchanged |
+|------|--------------|
+| `internal/content/workflows/configure.md` | Single-service env/port/subdomain ops — short, no knowledge loading needed |
+| `internal/content/workflows/monitor.md` | Read-only monitoring — deterministic tool calls, no YAML generation |
+| `internal/content/workflows/scale.md` | Single tool call with parameters — no knowledge loading needed |
 
-### CLAUDE.md Template Update
+### New Go code
 
-```markdown
-# Zerops
+**Zero.** Workflow content is embedded markdown. `zerops_workflow` tool already serves it.
 
-For guided step-by-step procedures, use `zerops_workflow` to see available workflows.
+### New files
 
-## Multi-Service Operations
+**Zero.** No `.claude/agents/` files. No new Go packages.
 
-For operations involving 2+ services (bootstrap, multi-deploy, project-wide debug), use the `zerops-orchestrator` agent. It spawns specialist agents per service, ensuring every service is configured and verified.
+## 7. Design Decisions
 
-Single-service operations (deploy one service, debug one service) can use workflow guides directly or the matching specialist agent.
-```
+Key decisions and why:
 
----
+1. **Embedded prompts, not `.claude/agents/` files** — Agent files can't spawn other agents (Claude Code nesting limit), require file deployment per project, and have permanent context cost. Embedded prompts in workflow markdown avoid all three.
+2. **Knowledge-first, not generate-then-fix** — Loading Zerops docs before YAML generation prevents ~70% of errors. 2-4 extra tool calls is cheap vs. 5-10 debug/fix cycles.
+3. **Main conversation as orchestrator** — No orchestrator agent. The main conversation spawns specialist agents directly via Task tool. Simpler, no nesting issues.
+4. **MCP = complete plugin** — Single binary, zero file dependencies. Works with any MCP client, not just Claude Code.
+5. **Guidance over enforcement** — Workflows are advisory playbooks, not gates. Evolution path (Section 9) adds hooks if enforcement becomes necessary.
+6. **Contextual knowledge loading** — Bootstrap/Deploy load knowledge before generation. Debug loads after data gathering. Each workflow loads at the moment that matters.
+7. **7-point verification protocol** — Evidence-depth matching the original shell-based ZCP using MCP tools + agent bash curl. Checks build completion (with polling), service status, error logs, startup confirmation, post-startup errors, HTTP health, and managed service connectivity. Degrades gracefully if app has no `/health` endpoint (startup log confirmation becomes the final gate).
+8. **Asynchronous build monitoring** — zerops_deploy returns before build completes (status=BUILD_TRIGGERED). Workflows embed polling protocol (10s interval, 300s timeout) with build failure detection via zcli --showBuildLogs fallback.
 
-## 7. How It Solves Each Problem
+## 8. Alignment with Research
 
-| Problem | Solution |
-|---------|----------|
-| Forgetting services | Orchestrator discovers all services, spawns one agent per service. Can't forget — each is a separate agent. |
-| Skipping verification | Each agent has a mandatory workflow table with verification tool calls. |
-| Losing the plan | Orchestrator has 7 steps. Each specialist has 5-6 steps. Too short to lose. |
-| Repeated work | Agents don't overlap. Each handles exactly one service. |
-| Self-reporting success | Orchestrator runs its own `zerops_discover` after all agents complete. |
-| Context rot | Each agent runs in a fresh context. Nothing to rot. |
+| Principle (source) | How this design aligns |
+|-------------------|---------------|
+| "Explore before acting" (Anthropic agentic coding) | Knowledge loading before YAML generation; data gathering before diagnosis |
+| "Smallest set of high-signal tokens" (Anthropic context eng.) | Three-tier lazy loading — nothing loads until needed |
+| "Start with simplest solution" (Anthropic agents guide) | Main conversation = orchestrator, no framework |
+| "Orchestrator-workers for multi-service" (Anthropic) | Task tool + general-purpose agents for per-service work |
+| "Fresh context avoids rot" (Anthropic) | Each agent = clean context window |
+| "Narrow specialization wins" (UC Berkeley, 600+ deployments) | Each agent handles exactly one service |
+| "Worse is better" (industry consensus) | Guidance over enforcement, no framework |
+| "Bounded retry loops" (industry anti-patterns) | Max 2 retries for YAML validation, then ask user |
+| "Systematic before creative" (Anthropic debug patterns) | Debug gathers ALL data before diagnosing |
 
----
+## 9. Evolution Path
 
-## 8. Trade-offs
+If guidance proves insufficient:
+
+1. **PreToolUse hook** on `zerops_import` — check that zerops_knowledge was called first
+2. **PreToolUse hook** on `zerops_deploy` — check that service was discovered first
+3. **Stop hook** — check all discovered services were verified
+4. These are incremental hook additions — not a new architecture
+
+## 10. Trade-offs
 
 ### Gains
-
-- **Zero server changes** — agents are markdown files, not Go code
-- **Reviewable** — agent behavior is visible in `.claude/agents/`, versioned in git
-- **Testable** — spawn an agent against a real project, check if it completes correctly
-- **Composable** — agents use existing MCP tools, workflows, knowledge base
-- **Evolvable** — edit a markdown file to change behavior, no recompile
-- **Model-appropriate** — Haiku for simple verification, Sonnet for configuration, Opus for orchestration
+- Solves the actual hard problem (YAML generation quality)
+- Debug workflow includes diagnostic checklist (7 common issues = ~80% coverage)
+- No nesting problem, no file dependencies, no permanent context cost
+- MCP server is self-contained plugin
+- Single source of truth (embedded markdown in Go binary)
+- Knowledge loads contextually per workflow type
 
 ### Losses
+- No tool restrictions on agents (guidance only)
+- No auto-delegation by agent description (one extra zerops_workflow call)
+- Knowledge loading adds 2-4 tool calls before YAML generation
+- Debug common issues list needs manual maintenance as new gotchas emerge
 
-- **No enforcement at server level** — agents are guidance, not gates. Claude can ignore them, though the descriptions and CLAUDE.md strongly push toward using them.
-- **Static prompts** — agent definitions don't include discovered env vars or service metadata. The spawner must pass this context via the task prompt. (This is actually fine — it's the same pattern as passing arguments to a function.)
-- **Requires Claude Code agent support** — only works with Claude Code, not other MCP clients.
-
-### When to Use Agents vs Direct Workflow
-
-| Scenario | Approach |
-|----------|----------|
-| Bootstrap (2+ services) | `zerops-orchestrator` spawns specialists |
-| Deploy single service | Workflow guide or `zerops-deploy-service` directly |
-| Deploy multiple services | `zerops-orchestrator` |
-| Debug single service | `zerops-debug-service` or workflow guide |
-| Scale/configure single service | Workflow guide (3-4 tool calls) |
-
----
-
-## 9. Verification Strategy
-
-### Manual Testing
-
-1. Create a Zerops project with 3 services (Go API + PostgreSQL + Valkey)
-2. Invoke the orchestrator: "Bootstrap this project"
-3. Verify: orchestrator discovers services, spawns 3 agents
-4. Verify: configure-service agent completes all 6 steps for the API service
-5. Verify: verify-managed agents check DB and cache
-6. Verify: orchestrator's final discover shows all services RUNNING
-
-### Agent Definition Review
-
-For each agent definition, verify:
-- Workflow table has verification column for every step
-- Rules section covers failure handling
-- MCP server access is correct (`zcp`)
-- Model selection is appropriate (haiku for simple, sonnet for complex)
-- maxTurns is sufficient but bounded
-
-### Regression Testing
-
-After any agent definition change:
-- Run the full bootstrap scenario against a test project
-- Verify no steps are skipped
-- Verify verification tool calls actually happen (check logs)
-
----
-
-## Appendix: Evolution Path
-
-If enforcement becomes necessary (agents being ignored), the next step is straightforward:
-
-1. Add a **PreToolUse hook** on `zerops_deploy` that checks whether the service was discovered first (a file written by zerops_discover)
-2. Add a **Stop hook** that checks whether all discovered services have been verified
-3. These are incremental additions to the hook system — not a new architecture
-
-The agents-first approach is the simplest solution. Enforcement hooks are the escape hatch if it's not enough.
+### Acceptable because
+- Tool restrictions: agents are guidance, not gates — enforcement via hooks if needed (Section 9)
+- Extra workflow call: negligible latency vs. the value of correct YAML
+- Knowledge loading: 2-4 calls is cheap; prevents 5-10 debug/fix cycles later
+- Common issues list: 40+ gotchas in knowledge base as fallback; workflow list covers the top 7

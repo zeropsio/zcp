@@ -97,7 +97,8 @@ if [ -n "$GO_STAGED" ]; then
     [ -x "${MODULE_ROOT}/bin/golangci-lint" ] && LINT_BIN="${MODULE_ROOT}/bin/golangci-lint"
     if command -v "$LINT_BIN" &>/dev/null || [ -x "$LINT_BIN" ]; then
         # Lint only packages with staged Go files (not entire codebase)
-        LINT_PKGS=$(echo "$GO_STAGED" | while read -r f; do dirname "./$f"; done | sort -u | tr '\n' ' ')
+        # Exclude e2e/ — requires --build-tags e2e (separate CI step)
+        LINT_PKGS=$(echo "$GO_STAGED" | while read -r f; do dirname "./$f"; done | sort -u | grep -v '^\./e2e$' | tr '\n' ' ')
         echo "-- pre-commit: $LINT_BIN on changed packages --"
         LINT_OUTPUT=$($LINT_BIN run $LINT_PKGS --timeout=60s 2>&1)
         LINT_EXIT=$?

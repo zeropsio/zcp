@@ -68,7 +68,8 @@ func newHarness(t *testing.T) *e2eHarness {
 	}
 
 	logFetcher := platform.NewLogFetcher()
-	srv := server.New(client, authInfo, store, logFetcher, nil, nil, nil)
+	localDeployer := platform.NewSystemLocalDeployer()
+	srv := server.New(client, authInfo, store, logFetcher, nil, localDeployer, nil)
 
 	return &e2eHarness{
 		t:         t,

@@ -106,6 +106,12 @@ func TestDeploy_SSHMode_Success(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			if result.Status != "BUILD_TRIGGERED" {
+				t.Errorf("status = %s, want BUILD_TRIGGERED", result.Status)
+			}
+			if result.MonitorHint == "" {
+				t.Error("monitorHint should not be empty")
+			}
 			if result.Mode != tt.wantMode {
 				t.Errorf("mode = %s, want %s", result.Mode, tt.wantMode)
 			}
@@ -204,6 +210,12 @@ func TestDeploy_LocalMode_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if result.Status != "BUILD_TRIGGERED" {
+		t.Errorf("status = %s, want BUILD_TRIGGERED", result.Status)
+	}
+	if result.MonitorHint == "" {
+		t.Error("monitorHint should not be empty")
+	}
 	if result.Mode != "local" {
 		t.Errorf("mode = %s, want local", result.Mode)
 	}
@@ -294,6 +306,12 @@ func TestDeploy_ModeDetection(t *testing.T) {
 				tt.sourceService, tt.targetService, "", "")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Status != "BUILD_TRIGGERED" {
+				t.Errorf("status = %s, want BUILD_TRIGGERED", result.Status)
+			}
+			if result.MonitorHint == "" {
+				t.Error("monitorHint should not be empty")
 			}
 			if result.Mode != tt.wantMode {
 				t.Errorf("mode = %s, want %s", result.Mode, tt.wantMode)
