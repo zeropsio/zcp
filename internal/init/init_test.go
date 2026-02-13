@@ -137,6 +137,79 @@ func TestRun_Idempotent(t *testing.T) {
 	}
 }
 
+func TestRun_GeneratesAliases(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	err := zcpinit.Run(dir)
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(homeDir, ".config", "zerops", "aliases"))
+	if err != nil {
+		t.Fatalf("read aliases: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "alias zcl=") {
+		t.Error("aliases file should contain zcl alias")
+	}
+	if !strings.Contains(content, "--dangerously-skip-permissions") {
+		t.Error("aliases file should contain --dangerously-skip-permissions flag")
+	}
+}
+
+func TestRun_AliasesBashrcSourceLine(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	err := zcpinit.Run(dir)
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(homeDir, ".bashrc"))
+	if err != nil {
+		t.Fatalf("read .bashrc: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, ".config/zerops/aliases") {
+		t.Error(".bashrc should source the aliases file")
+	}
+}
+
+func TestRun_AliasesBashrcIdempotent(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	// Run twice.
+	if err := zcpinit.Run(dir); err != nil {
+		t.Fatalf("first Run() error: %v", err)
+	}
+	if err := zcpinit.Run(dir); err != nil {
+		t.Fatalf("second Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(homeDir, ".bashrc"))
+	if err != nil {
+		t.Fatalf("read .bashrc: %v", err)
+	}
+
+	content := string(data)
+	count := strings.Count(content, "# Zerops shell aliases")
+	if count != 1 {
+		t.Errorf("source block should appear exactly once, got %d", count)
+	}
+}
+
 func TestRun_ReportsSteps(t *testing.T) {
 	// Not parallel — mutates HOME env var.
 	dir := t.TempDir()
@@ -148,12 +221,13 @@ func TestRun_ReportsSteps(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	// All four files should exist.
+	// All five files should exist.
 	files := []string{
 		filepath.Join(dir, "CLAUDE.md"),
 		filepath.Join(dir, ".mcp.json"),
 		filepath.Join(dir, ".claude", "settings.local.json"),
 		filepath.Join(homeDir, ".ssh", "config"),
+		filepath.Join(homeDir, ".config", "zerops", "aliases"),
 	}
 	for _, f := range files {
 		if _, err := os.Stat(f); os.IsNotExist(err) {
