@@ -6,13 +6,13 @@ import (
 	"strings"
 )
 
-//go:embed embed/**/*.md
+//go:embed embed/**/*.md core/**/*.md
 var contentFS embed.FS
 
 // Document represents a parsed knowledge document.
 type Document struct {
-	Path        string   // embed/services/postgresql.md
-	URI         string   // zerops://docs/services/postgresql
+	Path        string   // embed/services/postgresql.md OR core/core-principles.md
+	URI         string   // zerops://docs/services/postgresql OR zerops://docs/core/core-principles
 	Title       string   // PostgreSQL on Zerops
 	Keywords    []string // [postgresql, postgres, sql, ...]
 	TLDR        string   // One-sentence summary
@@ -23,6 +23,8 @@ type Document struct {
 // loadFromEmbedded walks the embedded filesystem and parses all markdown documents.
 func loadFromEmbedded() map[string]*Document {
 	docs := make(map[string]*Document)
+
+	// Walk embed/ directory (existing knowledge base)
 	_ = fs.WalkDir(contentFS, "embed", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
 			return nil //nolint:nilerr // intentional: continue walking on individual file errors
@@ -35,6 +37,21 @@ func loadFromEmbedded() map[string]*Document {
 		docs[doc.URI] = doc
 		return nil
 	})
+
+	// Walk core/ directory (new contextual knowledge)
+	_ = fs.WalkDir(contentFS, "core", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil //nolint:nilerr // intentional: continue walking on individual file errors
+		}
+		data, err := contentFS.ReadFile(path)
+		if err != nil {
+			return nil //nolint:nilerr // intentional: continue walking on individual file errors
+		}
+		doc := parseDocument(path, string(data))
+		docs[doc.URI] = doc
+		return nil
+	})
+
 	return docs
 }
 
@@ -61,13 +78,25 @@ func parseDocument(path, content string) *Document {
 }
 
 func pathToURI(fsPath string) string {
+	// Strip embed/ or core/ prefix
 	rel := strings.TrimPrefix(fsPath, "embed/")
+	rel = strings.TrimPrefix(rel, "core/")
+	// Strip .md suffix
 	rel = strings.TrimSuffix(rel, ".md")
+
+	// Reconstruct URI
+	if strings.HasPrefix(fsPath, "core/") {
+		return "zerops://docs/core/" + rel
+	}
 	return "zerops://docs/" + rel
 }
 
 func uriToPath(uri string) string {
 	rel := strings.TrimPrefix(uri, "zerops://docs/")
+	// Check if it's a core document
+	if strings.HasPrefix(rel, "core/") {
+		return rel + ".md" // Already has core/ prefix
+	}
 	return "embed/" + rel + ".md"
 }
 

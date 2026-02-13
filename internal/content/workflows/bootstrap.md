@@ -24,34 +24,36 @@ From the user's request, identify:
 
 If the user hasn't specified, ask. Don't guess frameworks — the build config depends on it.
 
-### Step 3 — Load knowledge BEFORE generating YAML
+### Step 3 — Load contextual knowledge BEFORE generating YAML
 
-**This step is mandatory.** Do not generate any YAML until you've loaded the relevant docs.
+**This step is mandatory.** Do not generate any YAML until you've loaded the relevant knowledge.
 
-For each **runtime service**, call in parallel:
+Call `zerops_knowledge` with the identified runtime and services:
 ```
-zerops_knowledge query="{runtime} zerops.yml {framework}"
+zerops_knowledge runtime="{runtime-type}" services=["{service1}", "{service2}", ...]
 ```
+
 Examples:
-- `zerops_knowledge query="nodejs nextjs zerops.yml"`
-- `zerops_knowledge query="go zerops.yml build"`
-- `zerops_knowledge query="python fastapi zerops.yml"`
+- `zerops_knowledge runtime="nodejs@22" services=["postgresql@16", "valkey@7.2"]`
+- `zerops_knowledge runtime="php-nginx@8.4" services=["mariadb@11"]`
+- `zerops_knowledge runtime="python@3.12" services=["postgresql@16"]`
+- `zerops_knowledge runtime="go@1" services=[]` (runtime only, no managed services)
 
-For each **managed service**, call in parallel:
+**What you get back:**
+- **Core principles**: zerops.yml/import.yml structure, port rules, env var system, build pipeline, networking
+- **Runtime exceptions**: PHP (build≠run base), Python (addToRunPrepare), Node.js (node_modules in deployFiles), etc.
+- **Service cards**: ports, auto-injected env vars, connection string templates, HA behavior, mode requirements
+- **Wiring patterns**: ${hostname_var} system, envSecrets vs envVariables, connection examples
+
+This is a **single call** that assembles exactly what you need for the identified stack. Use it as the authoritative base for YAML generation.
+
+**For complex recipes** (multi-base builds, unusual patterns), also check:
 ```
-zerops_knowledge query="{service} import connection"
+zerops_knowledge recipe="{recipe-name}"
 ```
-Examples:
-- `zerops_knowledge query="postgresql import connection"`
-- `zerops_knowledge query="valkey import"`
+Examples: `laravel-jetstream`, `ghost`, `django`, `phoenix`
 
-Also load if relevant:
-- `zerops_knowledge query="import.yml patterns"` — for env var wiring, priority, preprocessor
-- `zerops_knowledge query="deploy patterns"` — if the user has a specific deploy method
-
-You now have concrete examples for the user's exact stack. Use them as the base for YAML generation.
-
-If knowledge returns no relevant results for a component, ask the user for their framework's build/deploy specifics before generating YAML.
+If the briefing doesn't cover the user's framework specifics, ask for build/deploy details before generating YAML.
 
 ### Step 4 — Generate import.yml
 

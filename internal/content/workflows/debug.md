@@ -58,7 +58,13 @@ This shows whether the issue is new or recurring. A recurring issue means the pr
 
 ### Step 6 — Match against common Zerops issues
 
-Check the gathered data against these known patterns FIRST — they cover ~80% of Zerops issues:
+Check the gathered data against these known patterns FIRST — they cover ~80% of Zerops issues.
+
+**Note**: These patterns are covered in detail by `zerops_knowledge` with core-principles. If you need more context on any of these rules, call:
+```
+zerops_knowledge runtime="" services=[]
+```
+This returns core-principles which includes comprehensive coverage of networking, ports, env vars, build pipeline, and common gotchas.
 
 **Connection refused between services**
 - Symptom: `ECONNREFUSED`, `connection refused`, timeout to another service
@@ -97,7 +103,7 @@ Check the gathered data against these known patterns FIRST — they cover ~80% o
 
 ### Step 7 — Load knowledge for uncommon issues
 
-If the issue doesn't match common patterns above, search for Zerops-specific guidance:
+If the issue doesn't match common patterns above, use BM25 search for Zerops-specific guidance:
 
 ```
 zerops_knowledge query="{error category or message}"
@@ -109,6 +115,12 @@ Examples:
 - `zerops_knowledge query="environment variables cross-reference"`
 - `zerops_knowledge query="service not starting port"`
 - `zerops_knowledge query="common gotchas"` — full list of 40+ known pitfalls
+
+**Alternatively**, if you know the runtime/services involved, get comprehensive context:
+```
+zerops_knowledge runtime="{runtime-type}" services=["{service1}", ...]
+```
+This returns core-principles + runtime exceptions + service cards, which covers most troubleshooting scenarios.
 
 If knowledge returns no relevant results, report the raw evidence (logs, events) and ask the user for application-specific context.
 

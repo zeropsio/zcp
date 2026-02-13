@@ -85,7 +85,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_context", title: "Get Zerops platform context", readOnly: true, idempotent: true, openWorld: boolPtr(false)},
 		{name: "zerops_workflow", title: "Get workflow guidance", readOnly: true, idempotent: true, openWorld: boolPtr(false)},
 		{name: "zerops_discover", title: "Discover project and services", readOnly: true, idempotent: true},
-		{name: "zerops_knowledge", title: "Search Zerops knowledge base", readOnly: true, idempotent: true},
+		{name: "zerops_knowledge", title: "Zerops knowledge access", readOnly: true, idempotent: true},
 		{name: "zerops_logs", title: "Fetch service logs", readOnly: true, idempotent: true},
 		{name: "zerops_events", title: "Fetch project activity timeline", readOnly: true, idempotent: true},
 

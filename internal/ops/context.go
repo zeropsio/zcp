@@ -259,20 +259,10 @@ External traffic enters through an L7 load balancer that terminates SSL.
 
 ## Critical Rules
 
-- **Internal networking uses http://, NEVER https://** — SSL terminates at the L7 balancer.
-  Services must connect to each other via http://hostname:port.
-- **Ports must be in range 10-65435** — ports 0-9 and 65436+ are reserved by the platform.
-- **HA mode is immutable** — once a service is created as HA or NON_HA, it cannot be changed.
-  Recreate the service to switch modes.
-- **Database/cache services REQUIRE mode** — import.yml must specify mode: NON_HA or HA for
-  databases (postgresql, mariadb, clickhouse) and caches (valkey, keydb). Omitting mode passes
-  dry-run validation but fails real import.
-- **Environment variable cross-references use underscores** — ${service_hostname}, not
-  ${service-hostname}. Dashes in hostnames are replaced with underscores in env var references.
-- **No localhost** — services cannot use localhost/127.0.0.1 to reach other services. Always
-  use the service hostname.
-- **prepareCommands are cached** — they run once and are cached. Use initCommands for logic
-  that must run on every container start.
+For detailed platform rules (YAML structure, port ranges, env var system, build pipeline,
+networking, scaling), use zerops_knowledge with runtime/services parameters to get a contextual
+briefing. Key rules: internal http only (no HTTPS), ports 10-65435, HA mode immutable,
+mode mandatory for databases/caches, env var cross-refs use underscores not dashes.
 
 ## Configuration
 
@@ -293,7 +283,8 @@ When not specified, Zerops uses these defaults:
 
 ## Pointers
 
-- Use zerops_knowledge tool to search Zerops documentation for specific topics.
-- Read zerops://docs/{path} resources for full document content after searching.
-- Use zerops_workflow tool for step-by-step guidance on common tasks (bootstrap, deploy, debug, scale, configure, monitor).
-- Use zerops_discover tool to inspect current project and service state.`
+- Use zerops_knowledge with runtime/services params for contextual briefing (core principles + exceptions + service cards + wiring).
+- Use zerops_knowledge with query param for ad-hoc BM25 search on specific topics.
+- Use zerops_knowledge with recipe param for complex framework recipes (Laravel, Ghost, Phoenix, etc.).
+- Use zerops_workflow for step-by-step guidance (bootstrap, deploy, debug, scale, configure, monitor).
+- Use zerops_discover to inspect current project and service state.`

@@ -78,4 +78,8 @@ zerops_scale serviceHostname="worker" cpuMode="SHARED" minCpu=1 maxCpu=8 minRam=
 - Zerops autoscales within your min/max range automatically -- no manual intervention needed.
 - SHARED CPU is fine for most workloads. Use DEDICATED only for latency-sensitive services.
 - Horizontal scaling (more containers) is generally better than vertical for stateless services.
-- Database services have different scaling constraints -- check Zerops docs via `zerops_knowledge`.
+- Database services have different scaling constraints. For managed service specifics, use:
+  ```
+  zerops_knowledge services=["postgresql@16"]
+  ```
+  This returns the service card with HA behavior, mode requirements, and scaling constraints.

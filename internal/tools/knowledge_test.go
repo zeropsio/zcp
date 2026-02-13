@@ -4,6 +4,7 @@ package tools
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,6 +25,31 @@ func testKnowledgeStore(t *testing.T) *knowledge.Store {
 			Title:    "Node.js on Zerops",
 			Keywords: []string{"nodejs", "javascript", "runtime"},
 			Content:  "Node.js runtime service on Zerops for building APIs.",
+		},
+		"zerops://docs/core/core-principles": {
+			URI:     "zerops://docs/core/core-principles",
+			Title:   "Core Principles",
+			Content: "# Core Principles\n\nUniversal rules here.",
+		},
+		"zerops://docs/core/runtime-exceptions": {
+			URI:     "zerops://docs/core/runtime-exceptions",
+			Title:   "Runtime Exceptions",
+			Content: "## PHP\n\nPHP-specific rules.\n\n## Node.js\n\nNode.js-specific rules.",
+		},
+		"zerops://docs/core/service-cards": {
+			URI:     "zerops://docs/core/service-cards",
+			Title:   "Service Cards",
+			Content: "## PostgreSQL\n\nPort 5432.\n\n## Valkey\n\nPort 6379.",
+		},
+		"zerops://docs/core/wiring-patterns": {
+			URI:     "zerops://docs/core/wiring-patterns",
+			Title:   "Wiring Patterns",
+			Content: "Use ${hostname_var}.",
+		},
+		"zerops://docs/core/recipes/ghost": {
+			URI:     "zerops://docs/core/recipes/ghost",
+			Title:   "Ghost Recipe",
+			Content: "maxContainers: 1",
 		},
 	}
 	store, err := knowledge.NewStore(docs)
@@ -87,5 +113,82 @@ func TestKnowledgeTool_EmptyQuery(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected IsError for empty query")
+	}
+}
+
+// --- New Mode Tests ---
+
+func TestKnowledgeTool_BriefingMode(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"runtime":  "php-nginx@8.4",
+		"services": []string{"postgresql@16"},
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	// Verify briefing contains expected sections
+	if !strings.Contains(text, "Core Principles") {
+		t.Error("briefing missing core principles")
+	}
+	if !strings.Contains(text, "PHP") {
+		t.Error("briefing missing PHP exceptions")
+	}
+	if !strings.Contains(text, "PostgreSQL") {
+		t.Error("briefing missing PostgreSQL card")
+	}
+}
+
+func TestKnowledgeTool_RecipeMode(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{"recipe": "ghost"})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "maxContainers") {
+		t.Error("recipe missing expected content")
+	}
+}
+
+func TestKnowledgeTool_ModeMixError(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"query":   "test",
+		"runtime": "php@8",
+	})
+
+	if !result.IsError {
+		t.Error("expected error for mixed modes")
+	}
+}
+
+func TestKnowledgeTool_NoModeError(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{})
+
+	if !result.IsError {
+		t.Error("expected error for no mode")
 	}
 }

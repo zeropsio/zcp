@@ -192,3 +192,117 @@ func (s *Store) DocumentCount() int {
 func ExpandQuery(query string) string {
 	return expandQuery(query)
 }
+
+// GetCorePrinciples returns the full core-principles.md content.
+// This is the base layer for all infrastructure tasks.
+func (s *Store) GetCorePrinciples() (string, error) {
+	doc, err := s.Get("zerops://docs/core/core-principles")
+	if err != nil {
+		return "", fmt.Errorf("core-principles not found: %w", err)
+	}
+	return doc.Content, nil
+}
+
+// GetBriefing assembles contextual knowledge for a specific stack.
+// Combines: core-principles + runtime exceptions + service cards + wiring patterns.
+// runtime: e.g. "php-nginx@8.4" (normalized internally to "PHP" section)
+// services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
+// Returns assembled markdown content ready for LLM consumption.
+func (s *Store) GetBriefing(runtime string, services []string) (string, error) {
+	var sb strings.Builder
+
+	// 1. Always include core principles
+	core, err := s.GetCorePrinciples()
+	if err != nil {
+		return "", err
+	}
+	sb.WriteString(core)
+	sb.WriteString("\n\n---\n\n")
+
+	// 2. If runtime specified, include matching runtime exceptions
+	if runtime != "" {
+		normalized := normalizeRuntimeName(runtime)
+		if normalized != "" {
+			if section := s.getRuntimeException(normalized); section != "" {
+				sb.WriteString("## Runtime-Specific: ")
+				sb.WriteString(normalized)
+				sb.WriteString("\n\n")
+				sb.WriteString(section)
+				sb.WriteString("\n\n---\n\n")
+			}
+		}
+	}
+
+	// 3. Include service cards for each service
+	if len(services) > 0 {
+		sb.WriteString("## Service Cards\n\n")
+		for _, svc := range services {
+			normalized := normalizeServiceName(svc)
+			if card := s.getServiceCard(normalized); card != "" {
+				sb.WriteString("### ")
+				sb.WriteString(normalized)
+				sb.WriteString("\n\n")
+				sb.WriteString(card)
+				sb.WriteString("\n\n")
+			}
+		}
+		sb.WriteString("---\n\n")
+
+		// 4. Include wiring patterns (only if services present)
+		wiring, _ := s.Get("zerops://docs/core/wiring-patterns")
+		if wiring != nil {
+			sb.WriteString(wiring.Content)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	return sb.String(), nil
+}
+
+// getRuntimeException returns the section content for a normalized runtime name.
+// Returns empty string if no exceptions for this runtime (not an error).
+func (s *Store) getRuntimeException(normalizedName string) string {
+	doc, err := s.Get("zerops://docs/core/runtime-exceptions")
+	if err != nil {
+		return ""
+	}
+	sections := parseH2Sections(doc.Content)
+	return sections[normalizedName]
+}
+
+// getServiceCard returns the section content for a normalized service name.
+// Returns empty string if service not found (graceful degradation).
+func (s *Store) getServiceCard(normalizedName string) string {
+	doc, err := s.Get("zerops://docs/core/service-cards")
+	if err != nil {
+		return ""
+	}
+	sections := parseH2Sections(doc.Content)
+	return sections[normalizedName]
+}
+
+// GetRecipe returns the full content of a named recipe.
+// name: recipe filename without extension (e.g., "laravel-jetstream")
+// Returns error if recipe not found.
+func (s *Store) GetRecipe(name string) (string, error) {
+	uri := "zerops://docs/core/recipes/" + name
+	doc, err := s.Get(uri)
+	if err != nil {
+		available := s.ListRecipes()
+		return "", fmt.Errorf("recipe %q not found (available: %s)", name, strings.Join(available, ", "))
+	}
+	return doc.Content, nil
+}
+
+// ListRecipes returns names of all available recipes (without extension).
+func (s *Store) ListRecipes() []string {
+	var recipes []string
+	prefix := "zerops://docs/core/recipes/"
+	for uri := range s.docs {
+		if name, ok := strings.CutPrefix(uri, prefix); ok {
+			recipes = append(recipes, name)
+		}
+	}
+	sort.Strings(recipes)
+	return recipes
+}

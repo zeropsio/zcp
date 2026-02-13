@@ -25,24 +25,35 @@ Does a `zerops.yml` exist in the user's project with a `setup: {hostname}` entry
 - **YES and user is re-deploying** → skip to Phase 2.
 - **NO or user wants to create/fix it** → continue to Step 3.
 
-### Step 3 — Load knowledge for the runtime
+### Step 3 — Load contextual knowledge for the runtime
 
 **Mandatory before generating or modifying zerops.yml.**
 
+Call `zerops_knowledge` with the discovered runtime type (from Step 1):
 ```
-zerops_knowledge query="{runtime} {framework} zerops.yml"
+zerops_knowledge runtime="{runtime-type}"
 ```
+
 Examples:
-- `zerops_knowledge query="nodejs nextjs zerops.yml"`
-- `zerops_knowledge query="go zerops.yml build"`
-- `zerops_knowledge query="python django zerops.yml"`
-- `zerops_knowledge query="php laravel zerops.yml"`
+- `zerops_knowledge runtime="nodejs@22"` — for Next.js, Express, Nest.js, etc.
+- `zerops_knowledge runtime="go@1"` — for any Go framework
+- `zerops_knowledge runtime="python@3.12"` — for Django, FastAPI, Flask, etc.
+- `zerops_knowledge runtime="php-nginx@8.4"` — for Laravel, Symfony, etc.
 
-Also useful:
-- `zerops_knowledge query="deploy patterns"` — for tilde syntax, multi-base patterns
-- `zerops_knowledge query="build cache"` — for optimizing rebuild times
+**What you get back:**
+- **Core principles**: zerops.yml structure, build pipeline (prepare → build → deploy), deployFiles rules
+- **Runtime exceptions**: PHP (build≠run base), Python (addToRunPrepare), Node.js (node_modules in deployFiles), deploy patterns (tilde syntax, multi-base)
+- **Common gotchas**: Missing deployFiles, wrong paths, initCommands vs prepareCommands, protocol values
 
-If knowledge returns no relevant results for the runtime/framework, ask the user for their build/deploy specifics before generating zerops.yml.
+This is a **single call** that provides exactly what you need for the runtime. Use it as the authoritative base for zerops.yml generation.
+
+**For complex recipes** (multi-base builds, unusual patterns), also check:
+```
+zerops_knowledge recipe="{recipe-name}"
+```
+Examples: `laravel-jetstream`, `phoenix`, `django`
+
+If the briefing doesn't cover the user's framework specifics, ask for build/deploy details before generating zerops.yml.
 
 ### Step 4 — Generate or fix zerops.yml
 
