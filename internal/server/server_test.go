@@ -97,8 +97,26 @@ func TestServer_Instructions(t *testing.T) {
 			check: func(t *testing.T) {
 				t.Helper()
 				words := strings.Fields(Instructions)
-				if len(words) < 10 || len(words) > 60 {
-					t.Errorf("Instructions has %d words, expected 10-60", len(words))
+				if len(words) < 10 || len(words) > 80 {
+					t.Errorf("Instructions has %d words, expected 10-80", len(words))
+				}
+			},
+		},
+		{
+			name: "contains zerops_knowledge",
+			check: func(t *testing.T) {
+				t.Helper()
+				if !strings.Contains(Instructions, "zerops_knowledge") {
+					t.Error("Instructions should reference zerops_knowledge")
+				}
+			},
+		},
+		{
+			name: "contains zerops_workflow",
+			check: func(t *testing.T) {
+				t.Helper()
+				if !strings.Contains(Instructions, "zerops_workflow") {
+					t.Error("Instructions should reference zerops_workflow")
 				}
 			},
 		},

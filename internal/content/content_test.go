@@ -1,6 +1,7 @@
 package content
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -53,6 +54,7 @@ func TestGetTemplate_AllTemplates(t *testing.T) {
 		{"claude.md"},
 		{"mcp-config.json"},
 		{"ssh-config"},
+		{"settings-local.json"},
 	}
 
 	for _, tt := range tests {
@@ -66,6 +68,49 @@ func TestGetTemplate_AllTemplates(t *testing.T) {
 				t.Fatalf("GetTemplate(%q) returned empty content", tt.name)
 			}
 		})
+	}
+}
+
+func TestGetTemplate_CLAUDEMDContent(t *testing.T) {
+	t.Parallel()
+
+	content, err := GetTemplate("claude.md")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+
+	required := []string{
+		"MANDATORY",
+		"zerops_workflow",
+		"zerops_knowledge",
+		"zerops_context",
+		"dryRun",
+	}
+
+	for _, keyword := range required {
+		if !strings.Contains(content, keyword) {
+			t.Errorf("claude.md template should contain %q", keyword)
+		}
+	}
+}
+
+func TestGetTemplate_SettingsLocalJSON(t *testing.T) {
+	t.Parallel()
+
+	content, err := GetTemplate("settings-local.json")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+
+	required := []string{
+		"permissions",
+		"mcp__zerops__*",
+	}
+
+	for _, keyword := range required {
+		if !strings.Contains(content, keyword) {
+			t.Errorf("settings-local.json template should contain %q", keyword)
+		}
 	}
 }
 

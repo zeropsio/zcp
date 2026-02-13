@@ -72,6 +72,49 @@ func TestRun_GeneratesSSHConfig(t *testing.T) {
 	}
 }
 
+func TestRun_GeneratesSettingsLocal(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	err := zcpinit.Run(dir)
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.local.json"))
+	if err != nil {
+		t.Fatalf("read settings.local.json: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "mcp__zerops__*") {
+		t.Error("settings.local.json should contain mcp__zerops__* permission")
+	}
+}
+
+func TestRun_GeneratesCLAUDEMD_StrongInstructions(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	err := zcpinit.Run(dir)
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+
+	content := string(data)
+	required := []string{"MANDATORY", "zerops_workflow", "zerops_knowledge", "zerops_context"}
+	for _, keyword := range required {
+		if !strings.Contains(content, keyword) {
+			t.Errorf("CLAUDE.md should contain %q", keyword)
+		}
+	}
+}
+
 func TestRun_Idempotent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -105,10 +148,11 @@ func TestRun_ReportsSteps(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	// All three files should exist.
+	// All four files should exist.
 	files := []string{
 		filepath.Join(dir, "CLAUDE.md"),
 		filepath.Join(dir, ".mcp.json"),
+		filepath.Join(dir, ".claude", "settings.local.json"),
 		filepath.Join(homeDir, ".ssh", "config"),
 	}
 	for _, f := range files {
