@@ -14,8 +14,8 @@ var knowledgeDirs = []string{"foundation", "recipes", "guides", "decisions"}
 
 // Document represents a parsed knowledge document.
 type Document struct {
-	Path        string   // foundation/core.md, recipes/laravel-jetstream.md
-	URI         string   // zerops://foundation/core, zerops://recipes/laravel-jetstream
+	Path        string   // foundation/grammar.md, recipes/laravel-jetstream.md
+	URI         string   // zerops://foundation/grammar, zerops://recipes/laravel-jetstream
 	Title       string   // Zerops Fundamentals
 	Keywords    []string // [zerops, core, principles, ...]
 	TLDR        string   // One-sentence summary

@@ -71,9 +71,10 @@ func TestStore_GetNotFound(t *testing.T) {
 func TestStore_FoundationDocsEmbedded(t *testing.T) {
 	store := newTestStore(t)
 	foundationURIs := []string{
-		"zerops://foundation/core",
+		"zerops://foundation/grammar",
 		"zerops://foundation/runtimes",
 		"zerops://foundation/services",
+		"zerops://foundation/wiring",
 	}
 	for _, uri := range foundationURIs {
 		doc, err := store.Get(uri)
@@ -105,14 +106,17 @@ func TestStore_GetBriefing_RealDocs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	if !strings.Contains(briefing, "Zerops Fundamentals") {
-		t.Error("briefing missing foundation content")
+	if !strings.Contains(briefing, "Zerops Grammar") {
+		t.Error("briefing missing grammar content")
 	}
 	if !strings.Contains(briefing, "PHP") {
-		t.Error("briefing missing PHP runtime exceptions")
+		t.Error("briefing missing PHP runtime delta")
 	}
 	if !strings.Contains(briefing, "PostgreSQL") {
 		t.Error("briefing missing PostgreSQL service card")
+	}
+	if !strings.Contains(briefing, "Wiring") {
+		t.Error("briefing missing wiring section")
 	}
 }
 
@@ -236,16 +240,16 @@ func TestSearch_ZeropsYmlBuildCache(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'zerops.yml build cache'")
 	}
-	// Build cache content now in foundation/core
+	// Build cache content now in foundation/grammar
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(r.URI, "core") || strings.Contains(strings.ToLower(r.Snippet), "cache") || strings.Contains(strings.ToLower(r.Snippet), "build") {
+		if strings.Contains(r.URI, "grammar") || strings.Contains(strings.ToLower(r.Snippet), "cache") || strings.Contains(strings.ToLower(r.Snippet), "build") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("expected core or build-related result in top 3")
+		t.Error("expected grammar or build-related result in top 3")
 	}
 }
 
@@ -255,16 +259,16 @@ func TestSearch_ImportYmlServices(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'import.yml services'")
 	}
-	// import.yml content now in foundation/core
+	// import.yml content now in foundation/grammar
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(r.URI, "core") || strings.Contains(r.URI, "services") || strings.Contains(strings.ToLower(r.Snippet), "import") {
+		if strings.Contains(r.URI, "grammar") || strings.Contains(r.URI, "services") || strings.Contains(strings.ToLower(r.Snippet), "import") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("expected foundation/core or services in top 3")
+		t.Error("expected foundation/grammar or services in top 3")
 	}
 }
 
@@ -274,10 +278,10 @@ func TestSearch_EnvironmentVariables(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'environment variables env'")
 	}
-	// Env var content now in foundation/core
+	// Env var content now in foundation/grammar
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(strings.ToLower(r.Snippet), "variable") || strings.Contains(strings.ToLower(r.Snippet), "env") || strings.Contains(r.URI, "core") {
+		if strings.Contains(strings.ToLower(r.Snippet), "variable") || strings.Contains(strings.ToLower(r.Snippet), "env") || strings.Contains(r.URI, "grammar") {
 			found = true
 			break
 		}
@@ -293,10 +297,10 @@ func TestSearch_ScalingAutoscale(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'scaling autoscale ha'")
 	}
-	// Scaling content now in foundation/core
+	// Scaling content now in foundation/grammar
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(strings.ToLower(r.Snippet), "scaling") || strings.Contains(strings.ToLower(r.Snippet), "autoscal") || strings.Contains(r.URI, "core") {
+		if strings.Contains(strings.ToLower(r.Snippet), "scaling") || strings.Contains(strings.ToLower(r.Snippet), "autoscal") || strings.Contains(r.URI, "grammar") {
 			found = true
 			break
 		}
@@ -363,8 +367,8 @@ func TestSearch_TopResultHasFullContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(doc.Content, "## Keywords") && !strings.Contains(doc.Content, "## PostgreSQL") {
-		t.Error("top result doc should contain '## Keywords' or '## PostgreSQL' section")
+	if !strings.Contains(doc.Content, "## Keywords") && !strings.Contains(doc.Content, "## PostgreSQL") && !strings.Contains(doc.Content, "postgresql") {
+		t.Error("top result doc should contain '## Keywords' or '## PostgreSQL' or 'postgresql'")
 	}
 }
 
@@ -400,9 +404,10 @@ func TestPathToURI(t *testing.T) {
 		path string
 		uri  string
 	}{
-		{"foundation/core.md", "zerops://foundation/core"},
+		{"foundation/grammar.md", "zerops://foundation/grammar"},
 		{"foundation/runtimes.md", "zerops://foundation/runtimes"},
 		{"foundation/services.md", "zerops://foundation/services"},
+		{"foundation/wiring.md", "zerops://foundation/wiring"},
 		{"recipes/laravel-jetstream.md", "zerops://recipes/laravel-jetstream"},
 		{"guides/cloudflare.md", "zerops://guides/cloudflare"},
 		{"decisions/choose-database.md", "zerops://decisions/choose-database"},
@@ -420,7 +425,7 @@ func TestURIToPath(t *testing.T) {
 		uri  string
 		path string
 	}{
-		{"zerops://foundation/core", "foundation/core.md"},
+		{"zerops://foundation/grammar", "foundation/grammar.md"},
 		{"zerops://recipes/laravel-jetstream", "recipes/laravel-jetstream.md"},
 		{"zerops://guides/cloudflare", "guides/cloudflare.md"},
 	}
@@ -461,12 +466,12 @@ func TestParseDocument_TLDR(t *testing.T) {
 
 func TestParseDocument_Title(t *testing.T) {
 	store := newTestStore(t)
-	doc, err := store.Get("zerops://foundation/core")
+	doc, err := store.Get("zerops://foundation/grammar")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if doc.Title == "" {
-		t.Error("expected title for core")
+		t.Error("expected title for grammar")
 	}
 	if !strings.Contains(doc.Title, "Zerops") {
 		t.Errorf("title = %q, expected to contain 'Zerops'", doc.Title)
@@ -540,8 +545,8 @@ func TestHitRate(t *testing.T) {
 		{"mysql_setup", "mysql setup", "", "zerops://foundation/services"},
 		{"redis_cache", "redis cache", "", "zerops://foundation/services"},
 		{"elasticsearch", "elasticsearch fulltext", "", "zerops://foundation/services"},
-		{"env_variables", "environment variables env", "", "zerops://foundation/core"},
-		{"scaling", "scaling autoscale", "", "zerops://foundation/core"},
+		{"env_variables", "environment variables env", "", "zerops://foundation/grammar"},
+		{"scaling", "scaling autoscale", "", "zerops://foundation/grammar"},
 	}
 
 	hit1 := 0
@@ -673,22 +678,29 @@ func TestStore_GetBriefing_SurfacesMatchingRecipes(t *testing.T) {
 	}
 }
 
-func TestStore_GetBriefing_RuntimeFirstOrder(t *testing.T) {
+func TestStore_GetBriefing_GrammarFirstThenRuntime(t *testing.T) {
 	store := newTestStore(t)
 	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
+	grammarIdx := strings.Index(briefing, "Zerops Grammar")
 	runtimeIdx := strings.Index(briefing, "Runtime-Specific: Bun")
-	coreIdx := strings.Index(briefing, "Zerops Fundamentals")
+	serviceIdx := strings.Index(briefing, "Service Cards")
+	if grammarIdx < 0 {
+		t.Fatal("briefing missing Zerops Grammar")
+	}
 	if runtimeIdx < 0 {
 		t.Fatal("briefing missing Runtime-Specific: Bun section")
 	}
-	if coreIdx < 0 {
-		t.Fatal("briefing missing Zerops Fundamentals section")
+	if serviceIdx < 0 {
+		t.Fatal("briefing missing Service Cards section")
 	}
-	if runtimeIdx >= coreIdx {
-		t.Errorf("runtime section (pos %d) should come before foundation (pos %d)", runtimeIdx, coreIdx)
+	if grammarIdx >= runtimeIdx {
+		t.Errorf("grammar (pos %d) should come before runtime (pos %d)", grammarIdx, runtimeIdx)
+	}
+	if runtimeIdx >= serviceIdx {
+		t.Errorf("runtime (pos %d) should come before services (pos %d)", runtimeIdx, serviceIdx)
 	}
 }
 

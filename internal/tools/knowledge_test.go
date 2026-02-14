@@ -14,20 +14,25 @@ import (
 func testKnowledgeStore(t *testing.T) *knowledge.Store {
 	t.Helper()
 	docs := map[string]*knowledge.Document{
-		"zerops://foundation/core": {
-			URI:     "zerops://foundation/core",
-			Title:   "Zerops Fundamentals",
-			Content: "# Zerops Fundamentals\n\nUniversal rules here.",
+		"zerops://foundation/grammar": {
+			URI:     "zerops://foundation/grammar",
+			Title:   "Zerops Grammar",
+			Content: "# Zerops Grammar\n\nUniversal rules here.",
 		},
 		"zerops://foundation/runtimes": {
 			URI:     "zerops://foundation/runtimes",
-			Title:   "Runtime Exceptions",
+			Title:   "Runtime Deltas",
 			Content: "## PHP\n\nPHP-specific rules.\n\n## Node.js\n\nNode.js-specific rules.",
 		},
 		"zerops://foundation/services": {
 			URI:     "zerops://foundation/services",
 			Title:   "Managed Service Reference",
-			Content: "## PostgreSQL\n\nPort 5432.\n\n## Valkey\n\nPort 6379.\n\n## Wiring Patterns\n\nUse ${hostname_var}.",
+			Content: "## PostgreSQL\n\nPort 5432.\n\n## Valkey\n\nPort 6379.",
+		},
+		"zerops://foundation/wiring": {
+			URI:     "zerops://foundation/wiring",
+			Title:   "Wiring Patterns",
+			Content: "## Syntax Rules\n\nUse ${hostname_var}.\n\n## PostgreSQL\n\nDATABASE_URL.\n\n## Valkey\n\nREDIS_URL.",
 		},
 		"zerops://recipes/ghost": {
 			URI:     "zerops://recipes/ghost",
@@ -118,11 +123,11 @@ func TestKnowledgeTool_BriefingMode(t *testing.T) {
 
 	text := getTextContent(t, result)
 	// Verify briefing contains expected sections
-	if !strings.Contains(text, "Zerops Fundamentals") {
-		t.Error("briefing missing foundation content")
+	if !strings.Contains(text, "Zerops Grammar") {
+		t.Error("briefing missing grammar content")
 	}
 	if !strings.Contains(text, "PHP") {
-		t.Error("briefing missing PHP exceptions")
+		t.Error("briefing missing PHP runtime delta")
 	}
 	if !strings.Contains(text, "PostgreSQL") {
 		t.Error("briefing missing PostgreSQL card")

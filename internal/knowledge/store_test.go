@@ -11,20 +11,37 @@ import (
 func testStoreWithCore(t *testing.T) *Store {
 	t.Helper()
 	docs := map[string]*Document{
-		"zerops://foundation/core": {
-			URI:     "zerops://foundation/core",
-			Title:   "Zerops Fundamentals",
-			Content: "# Zerops Fundamentals\n\nUniversal rules here.\n\n## 3. Build Pipeline\n\nStructure rules.\n\n## 5. Networking\n\nPorts 10-65435.",
+		"zerops://foundation/grammar": {
+			URI:     "zerops://foundation/grammar",
+			Title:   "Zerops Grammar",
+			Content: "# Zerops Grammar\n\nUniversal rules here.\n\n## zerops.yml Schema\n\nStructure rules.\n\n## Platform Rules\n\nPorts 10-65435.",
 		},
 		"zerops://foundation/runtimes": {
 			URI:     "zerops://foundation/runtimes",
-			Title:   "Runtime Exceptions",
+			Title:   "Runtime Deltas",
 			Content: "## PHP\n\nBuild php@X, run php-nginx@X. Port 80.\n\n## Node.js\n\nnode_modules in deployFiles. SSR patterns.",
 		},
 		"zerops://foundation/services": {
 			URI:     "zerops://foundation/services",
 			Title:   "Managed Service Reference",
-			Content: "## PostgreSQL\n\nPort 5432. Env: hostname, password, connectionString.\n\n## Valkey\n\nPort 6379. Connection: redis://cache:6379.\n\n## Wiring Patterns\n\nUse ${hostname_var} for cross-refs.\n\nenvSecrets for sensitive data.",
+			Content: "## PostgreSQL\n\nPort 5432. Env: hostname, password, connectionString.\n\n## Valkey\n\nPort 6379. Connection: redis://cache:6379.",
+		},
+		"zerops://foundation/wiring": {
+			URI:     "zerops://foundation/wiring",
+			Title:   "Wiring Patterns",
+			Content: "## Syntax Rules\n\nUse ${hostname_var} for cross-refs.\n\nenvSecrets for sensitive data.\n\n## PostgreSQL\n\nDATABASE_URL:postgresql://${h_user}:${h_password}@{h}:5432\n\n## Valkey\n\nREDIS_URL:redis://${h_user}:${h_password}@{h}:6379",
+		},
+		"zerops://decisions/choose-database": {
+			URI:     "zerops://decisions/choose-database",
+			Title:   "Choose Database",
+			TLDR:    "Use PostgreSQL for everything unless you have a specific reason not to.",
+			Content: "# Choose Database\n\n## TL;DR\nUse PostgreSQL for everything unless you have a specific reason not to.",
+		},
+		"zerops://decisions/choose-cache": {
+			URI:     "zerops://decisions/choose-cache",
+			Title:   "Choose Cache",
+			TLDR:    "Use Valkey (default) — KeyDB is deprecated.",
+			Content: "# Choose Cache\n\n## TL;DR\nUse Valkey (default) — KeyDB is deprecated.",
 		},
 		"zerops://recipes/ghost": {
 			URI:     "zerops://recipes/ghost",
@@ -58,7 +75,7 @@ func TestStore_GetFoundation_Success(t *testing.T) {
 	if !strings.Contains(content, "Universal rules") {
 		t.Error("expected foundation content")
 	}
-	if !strings.Contains(content, "## 5. Networking") {
+	if !strings.Contains(content, "## Platform Rules") {
 		t.Error("expected section headers")
 	}
 }
@@ -70,7 +87,7 @@ func TestStore_GetFoundation_NotFound(t *testing.T) {
 
 	_, err := store.GetFoundation()
 	if err == nil {
-		t.Error("expected error when foundation core not found")
+		t.Error("expected error when foundation grammar not found")
 	}
 }
 
@@ -102,12 +119,12 @@ func TestStore_GetBriefing_RuntimeOnly(t *testing.T) {
 		{
 			name:    "PHP runtime",
 			runtime: "php-nginx@8.4",
-			want:    []string{"Zerops Fundamentals", "PHP", "Build php@X", "Port 80"},
+			want:    []string{"Zerops Grammar", "PHP", "Build php@X", "Port 80"},
 		},
 		{
 			name:    "Node.js runtime",
 			runtime: "nodejs@22",
-			want:    []string{"Zerops Fundamentals", "Node.js", "node_modules"},
+			want:    []string{"Zerops Grammar", "Node.js", "node_modules"},
 		},
 	}
 
@@ -140,12 +157,12 @@ func TestStore_GetBriefing_ServicesOnly(t *testing.T) {
 		{
 			name:     "PostgreSQL only",
 			services: []string{"postgresql@16"},
-			want:     []string{"Zerops Fundamentals", "PostgreSQL", "Port 5432", "${hostname_var}"},
+			want:     []string{"Zerops Grammar", "PostgreSQL", "Port 5432", "${hostname_var}", "DATABASE_URL"},
 		},
 		{
 			name:     "Multiple services",
 			services: []string{"postgresql@16", "valkey@7.2"},
-			want:     []string{"Zerops Fundamentals", "PostgreSQL", "Valkey", "Port 6379"},
+			want:     []string{"Zerops Grammar", "PostgreSQL", "Valkey", "Port 6379", "REDIS_URL"},
 		},
 	}
 
@@ -177,9 +194,9 @@ func TestStore_GetBriefing_RuntimeAndServices(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should contain all components
+	// Should contain all layers
 	required := []string{
-		"Zerops Fundamentals",
+		"Zerops Grammar",
 		"Node.js",
 		"node_modules",
 		"PostgreSQL",
@@ -187,6 +204,10 @@ func TestStore_GetBriefing_RuntimeAndServices(t *testing.T) {
 		"Valkey",
 		"Port 6379",
 		"${hostname_var}",
+		"DATABASE_URL",
+		"REDIS_URL",
+		"Choose Database",
+		"Choose Cache",
 	}
 
 	for _, substr := range required {
@@ -205,9 +226,9 @@ func TestStore_GetBriefing_EmptyInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should at least contain foundation
-	if !strings.Contains(briefing, "Zerops Fundamentals") {
-		t.Error("empty briefing should still contain foundation")
+	// Should at least contain grammar
+	if !strings.Contains(briefing, "Zerops Grammar") {
+		t.Error("empty briefing should still contain grammar")
 	}
 }
 
@@ -220,9 +241,9 @@ func TestStore_GetBriefing_UnknownRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should contain foundation, no exception section (graceful)
-	if !strings.Contains(briefing, "Zerops Fundamentals") {
-		t.Error("briefing should contain foundation")
+	// Should contain grammar, no exception section (graceful)
+	if !strings.Contains(briefing, "Zerops Grammar") {
+		t.Error("briefing should contain grammar")
 	}
 	// Should NOT contain PHP/Node.js specific content
 	if strings.Contains(briefing, "Build php@X") {
@@ -239,12 +260,12 @@ func TestStore_GetBriefing_UnknownService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should contain foundation + wiring, no service card (graceful)
-	if !strings.Contains(briefing, "Zerops Fundamentals") {
-		t.Error("briefing should contain foundation")
+	// Should contain grammar + wiring syntax (services were requested)
+	if !strings.Contains(briefing, "Zerops Grammar") {
+		t.Error("briefing should contain grammar")
 	}
 	if !strings.Contains(briefing, "${hostname_var}") {
-		t.Error("briefing should contain wiring patterns when services provided")
+		t.Error("briefing should contain wiring syntax when services provided")
 	}
 }
 
@@ -256,6 +277,83 @@ func TestStore_GetBriefing_CoreMissing(t *testing.T) {
 	_, err := store.GetBriefing("php@8", nil, nil)
 	if err == nil {
 		t.Error("expected error when foundation missing")
+	}
+}
+
+// --- GetBriefing Layered Composition Tests ---
+
+func TestStore_GetBriefing_GrammarFirst(t *testing.T) {
+	t.Parallel()
+	store := testStoreWithCore(t)
+
+	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	grammarIdx := strings.Index(briefing, "Zerops Grammar")
+	runtimeIdx := strings.Index(briefing, "Runtime-Specific:")
+	serviceIdx := strings.Index(briefing, "Service Cards")
+
+	if grammarIdx < 0 {
+		t.Fatal("briefing missing grammar")
+	}
+	if runtimeIdx >= 0 && grammarIdx >= runtimeIdx {
+		t.Error("grammar should come before runtime delta")
+	}
+	if serviceIdx >= 0 && grammarIdx >= serviceIdx {
+		t.Error("grammar should come before service cards")
+	}
+}
+
+func TestStore_GetBriefing_WiringIncluded(t *testing.T) {
+	t.Parallel()
+	store := testStoreWithCore(t)
+
+	briefing, err := store.GetBriefing("", []string{"postgresql@16"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(briefing, "Wiring Patterns") {
+		t.Error("briefing with services should include wiring patterns")
+	}
+	if !strings.Contains(briefing, "Wiring: PostgreSQL") {
+		t.Error("briefing should include per-service wiring template")
+	}
+}
+
+func TestStore_GetBriefing_NoWiringWithoutServices(t *testing.T) {
+	t.Parallel()
+	store := testStoreWithCore(t)
+
+	briefing, err := store.GetBriefing("nodejs@22", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(briefing, "Wiring Patterns") {
+		t.Error("briefing without services should NOT include wiring patterns")
+	}
+}
+
+func TestStore_GetBriefing_DecisionsIncluded(t *testing.T) {
+	t.Parallel()
+	store := testStoreWithCore(t)
+
+	briefing, err := store.GetBriefing("", []string{"postgresql@16", "valkey@7.2"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(briefing, "Decision Hints") {
+		t.Error("briefing with managed services should include decision hints")
+	}
+	if !strings.Contains(briefing, "Choose Database") {
+		t.Error("briefing with postgresql should include database decision")
+	}
+	if !strings.Contains(briefing, "Choose Cache") {
+		t.Error("briefing with valkey should include cache decision")
 	}
 }
 

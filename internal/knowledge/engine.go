@@ -194,12 +194,12 @@ func ExpandQuery(query string) string {
 	return expandQuery(query)
 }
 
-// GetFoundation returns the full foundation/core.md content.
-// This is the base layer for all infrastructure tasks.
+// GetFoundation returns the full foundation/grammar.md content.
+// This is the base layer (L0) for all infrastructure tasks.
 func (s *Store) GetFoundation() (string, error) {
-	doc, err := s.Get("zerops://foundation/core")
+	doc, err := s.Get("zerops://foundation/grammar")
 	if err != nil {
-		return "", fmt.Errorf("foundation core not found: %w", err)
+		return "", fmt.Errorf("foundation grammar not found: %w", err)
 	}
 	return doc.Content, nil
 }
@@ -239,8 +239,8 @@ func (s *Store) matchingRecipes(runtimeBase string) []string {
 	return matched
 }
 
-// GetBriefing assembles contextual knowledge for a specific stack.
-// Order: runtime exceptions (most actionable) → matching recipes → service cards → core principles → version check.
+// GetBriefing assembles contextual knowledge for a specific stack using layered composition.
+// Layers: L0 grammar (always) → L1 runtime delta → L2 service cards → L3 wiring → L4 decisions → L5 version check.
 // runtime: e.g. "php-nginx@8.4" (normalized internally to "PHP" section)
 // services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
 // liveTypes: optional live service stack types for version validation (nil = skip)
@@ -248,7 +248,15 @@ func (s *Store) matchingRecipes(runtimeBase string) []string {
 func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error) {
 	var sb strings.Builder
 
-	// 1. Runtime-specific exceptions first (most actionable, LLM attention highest)
+	// L0: Universal grammar (always included)
+	grammar, err := s.GetFoundation()
+	if err != nil {
+		return "", err
+	}
+	sb.WriteString(grammar)
+	sb.WriteString("\n\n")
+
+	// L1: Runtime delta (specific runtime only)
 	runtimeBase := ""
 	if runtime != "" {
 		runtimeBase, _, _ = strings.Cut(runtime, "@")
@@ -264,7 +272,7 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		}
 	}
 
-	// 2. Matching recipes hint
+	// L1b: Matching recipes hint
 	if runtimeBase != "" {
 		if recipes := s.matchingRecipes(runtimeBase); len(recipes) > 0 {
 			sb.WriteString("## Matching Recipes\n\n")
@@ -278,7 +286,7 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		}
 	}
 
-	// 3. Service cards + wiring patterns
+	// L2: Service cards (per service, only relevant ones)
 	if len(services) > 0 {
 		sb.WriteString("## Service Cards\n\n")
 		for _, svc := range services {
@@ -292,24 +300,35 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 			}
 		}
 		sb.WriteString("---\n\n")
+	}
 
-		// Wiring patterns from services.md
-		if wiring := s.getWiringPatterns(); wiring != "" {
+	// L3: Wiring (syntax rules + per-service templates)
+	if len(services) > 0 {
+		if syntax := s.getWiringSyntax(); syntax != "" {
 			sb.WriteString("## Wiring Patterns\n\n")
-			sb.WriteString(wiring)
+			sb.WriteString(syntax)
 			sb.WriteString("\n\n")
+		}
+		for _, svc := range services {
+			normalized := normalizeServiceName(svc)
+			if wiring := s.getWiringSection(normalized); wiring != "" {
+				sb.WriteString("### Wiring: ")
+				sb.WriteString(normalized)
+				sb.WriteString("\n\n")
+				sb.WriteString(wiring)
+				sb.WriteString("\n\n")
+			}
 		}
 	}
 
-	// 4. Foundation core (reference)
-	core, err := s.GetFoundation()
-	if err != nil {
-		return "", err
+	// L4: Relevant decisions (compact hints based on stack)
+	if decisions := s.getRelevantDecisions(runtime, services); decisions != "" {
+		sb.WriteString("## Decision Hints\n\n")
+		sb.WriteString(decisions)
+		sb.WriteString("\n\n")
 	}
-	sb.WriteString(core)
-	sb.WriteString("\n\n")
 
-	// 5. Append version check if live types available
+	// L5: Version check (if live types available)
 	if versionCheck := FormatVersionCheck(runtime, services, liveTypes); versionCheck != "" {
 		sb.WriteString("---\n\n")
 		sb.WriteString(versionCheck)
@@ -318,38 +337,6 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 	sb.WriteString("\nNext: Generate import.yml and zerops.yml using the rules above. Use only validated versions. Then validate with zerops_import dryRun=true.")
 
 	return sb.String(), nil
-}
-
-// getRuntimeException returns the section content for a normalized runtime name.
-// Returns empty string if no exceptions for this runtime (not an error).
-func (s *Store) getRuntimeException(normalizedName string) string {
-	doc, err := s.Get("zerops://foundation/runtimes")
-	if err != nil {
-		return ""
-	}
-	sections := parseH2Sections(doc.Content)
-	return sections[normalizedName]
-}
-
-// getServiceCard returns the section content for a normalized service name.
-// Returns empty string if service not found (graceful degradation).
-func (s *Store) getServiceCard(normalizedName string) string {
-	doc, err := s.Get("zerops://foundation/services")
-	if err != nil {
-		return ""
-	}
-	sections := parseH2Sections(doc.Content)
-	return sections[normalizedName]
-}
-
-// getWiringPatterns returns the "Wiring Patterns" section from services.md.
-func (s *Store) getWiringPatterns() string {
-	doc, err := s.Get("zerops://foundation/services")
-	if err != nil {
-		return ""
-	}
-	sections := parseH2Sections(doc.Content)
-	return sections["Wiring Patterns"]
 }
 
 // GetRecipe returns the full content of a named recipe.
