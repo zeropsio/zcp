@@ -63,9 +63,15 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 ## Python
 
 - **BIND**: uvicorn `--host 0.0.0.0`, gunicorn `--bind 0.0.0.0:8000`
-- **INSTALL**: `build.addToRunPrepare` copies pip packages to run container
-- System deps: `run.prepareCommands` with `apk add`
-- Use `--no-cache-dir` for pip
+- **INSTALL PATTERN** (canonical):
+  1. `build.addToRunPrepare: [requirements.txt]` — copies to `/home/zerops/` in prepare container
+  2. `run.prepareCommands: [python3 -m pip install --ignore-installed -r /home/zerops/requirements.txt]`
+  3. `build.buildCommands`: NO pip install needed (build container is separate)
+  4. `build.deployFiles: [app.py, ...]` or `[.]` for source files only
+  5. `run.start: gunicorn app:app --bind 0.0.0.0:8000` (gunicorn installed by prepareCommands)
+- **CRITICAL**: `run.prepareCommands` runs BEFORE deploy files arrive at `/var/www` but AFTER `addToRunPrepare` files are at `/home/zerops/`. Always reference `/home/zerops/requirements.txt`, NOT `/var/www/requirements.txt`
+- System deps: `run.prepareCommands` with `apk add` (before pip install)
+- Use `--no-cache-dir --ignore-installed` for pip
 
 ## Go
 

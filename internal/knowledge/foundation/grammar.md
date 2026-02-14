@@ -96,7 +96,7 @@ zerops[]:
     buildCommands: string[]            # runs every build
     deployFiles: string | string[]     # MANDATORY — nothing auto-deploys
     cache: bool | string | string[]    # paths to cache
-    addToRunPrepare: string | string[] # copy files from build to run container
+    addToRunPrepare: string | string[] # copy files from build to /home/zerops/ in prepare container
     envVariables: map<string, string|number|bool>
   deploy:
     temporaryShutdown: bool            # false = zero-downtime (default)
@@ -134,6 +134,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - Without tilde: `dist` → `/var/www/dist/` (nested)
 - All files land in `/var/www`
 - **Git required**: `zerops_deploy` uses `zcli push` which requires a git repository. Before deploying, run `git init && git add -A && git commit -m "deploy"` in the working directory. Configure git identity if needed: `git config user.email "deploy@zerops.io" && git config user.name "Deploy"`
+- **Prepare phase order**: `build.addToRunPrepare` files → `/home/zerops/` → `run.prepareCommands` execute → deploy files arrive at `/var/www/`. Do NOT reference `/var/www/` in `run.prepareCommands` — deploy files are not yet there. Use `/home/zerops/` paths for files from `addToRunPrepare`
 
 ### 4. Cache Architecture (Two-Layer)
 - **Base layer**: OS + prepareCommands (invalidated only when prepareCommands change)
