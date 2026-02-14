@@ -13,9 +13,21 @@ Schema-derived universal grammar for Zerops. All runtimes share 95% identical st
 **Hierarchy**: Project → Service → Container
 
 - Isolated **VXLAN private network** per project — services communicate by hostname, no cross-project traffic
-- **L7 load balancer** handles SSL termination — apps never handle SSL
 - **Full Linux containers** via Incus — each has SSH access, working dir `/var/www`
 - Two YAML files: `import.yml` (topology) + `zerops.yml` (lifecycle)
+
+### Traffic Flow
+
+```
+Internet → L7 Load Balancer (SSL termination) → container VXLAN IP:port → app
+```
+
+The **L7 load balancer** sits in front of all runtime services. It terminates SSL/TLS and forwards plain HTTP to the container's private VXLAN network IP. The balancer does NOT connect via localhost — it routes to the container's network interface. Therefore:
+
+- Apps **must bind to `0.0.0.0`** (all interfaces) so the balancer can reach them
+- Binding to `localhost`/`127.0.0.1` makes the app unreachable → **502 Bad Gateway**
+- Internal service-to-service traffic is always plain `http://` over VXLAN — never `https://`
+- Service discovery: `http://<hostname>:<port>` (e.g., `http://db:5432`)
 
 ### Core Plans
 
@@ -110,58 +122,55 @@ zerops[]:
 
 ## Platform Rules
 
-### 1. Binding Rule (CRITICAL)
-**Bind to `0.0.0.0`, NEVER `localhost`/`127.0.0.1`** — L7 balancer routes to container IP. Localhost binding = **502 Bad Gateway**.
+### 1. Binding & Networking
+See **Traffic Flow** above — bind `0.0.0.0`, internal traffic always `http://`.
 
-### 2. Internal Networking
-**ALWAYS `http://`, NEVER `https://`** — SSL terminates at L7 balancer. Internal traffic is plain HTTP over VXLAN. Service discovery: `http://hostname:port`.
-
-### 3. Port Rules
+### 2. Port Rules
 Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination. Exception: PHP uses port 80. `httpSupport: true` for HTTP, `protocol: tcp|udp` for non-HTTP. NEVER `protocol: HTTP`.
 
-### 4. Deploy Semantics
+### 3. Deploy Semantics
 - Build and run are **SEPARATE containers** — build output doesn't appear in run
 - **Tilde syntax**: `dist/~` extracts contents to `/var/www/` (not `/var/www/dist/`)
 - Without tilde: `dist` → `/var/www/dist/` (nested)
 - All files land in `/var/www`
 
-### 5. Cache Architecture (Two-Layer)
+### 4. Cache Architecture (Two-Layer)
 - **Base layer**: OS + prepareCommands (invalidated only when prepareCommands change)
 - **Build layer**: buildCommands output (invalidated every build)
 - `cache: false` only affects `/build/source` — modules elsewhere remain cached
 
-### 6. Environment Variables
+### 5. Environment Variables
 - **envSecrets**: passwords, tokens (masked) | **envVariables**: config (visible)
 - Cross-service ref: `${hostname_varname}` — dashes→underscores
 - Project vars auto-inherited — do NOT re-reference (creates shadow)
 - Cross-phase: build→run `${BUILD_MYVAR}`, run→build `${RUNTIME_MYVAR}`
 - Keys: alphanumeric + `_`, case-sensitive. Values: ASCII only
 
-### 7. Mode Immutability
+### 6. Mode Immutability
 **HA/NON_HA set at creation, CANNOT change** — determines node topology (1 vs 3). Must delete and recreate. Omitting mode passes dry-run but fails real import.
 
-### 8. Service Lifecycle
+### 7. Service Lifecycle
 - Hostname **IMMUTABLE** after creation
 - Runtime services start `READY_TO_DEPLOY` (unless `startWithoutCode: true`)
 - Managed services start `ACTIVE` immediately
 - 10 most recent versions kept, older auto-deleted
 - CI skip: `ci skip` or `skip ci` in commit message
 
-### 9. Public Access
+### 8. Public Access
 - **Shared IPv4**: free, HTTP/HTTPS only, requires BOTH A and AAAA DNS records
 - **Dedicated IPv4**: $3/30 days, all protocols
 - **IPv6**: free, dedicated per project
 - **zerops.app subdomain**: 50MB limit, not production
 
-### 10. Scaling
+### 9. Scaling
 - **Vertical**: CPU (shared 1/10-10/10 or dedicated), RAM (dual-threshold: minFreeRamGB OR minFreeRamPercent), Disk (grows only, never shrinks)
 - **Horizontal**: 1-10 containers for runtimes, databases fixed at creation (HA=3)
 - Docker: fixed resources, no min-max, restart on change
 
-### 11. Build Limits
+### 10. Build Limits
 CPU: 1-5 cores, RAM: 8 GB fixed, Disk: 1-100 GB, Time: 60 minutes
 
-### 12. zsc Commands
+### 11. zsc Commands
 - `zsc execOnce <key> -- <cmd>`: run once across all containers (HA-safe migrations)
 - `zsc add <runtime>@<version>`: install additional runtime in prepareCommands
 

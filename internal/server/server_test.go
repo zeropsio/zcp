@@ -76,9 +76,8 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	}
 }
 
+// TestServer_Instructions — NOT parallel because subtests use t.Setenv.
 func TestServer_Instructions(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name  string
 		check func(t *testing.T)
@@ -87,7 +86,8 @@ func TestServer_Instructions(t *testing.T) {
 			name: "contains zerops_workflow",
 			check: func(t *testing.T) {
 				t.Helper()
-				if !strings.Contains(Instructions, "zerops_workflow") {
+				inst := BuildInstructions()
+				if !strings.Contains(inst, "zerops_workflow") {
 					t.Error("Instructions should reference zerops_workflow")
 				}
 			},
@@ -96,9 +96,9 @@ func TestServer_Instructions(t *testing.T) {
 			name: "reasonable length",
 			check: func(t *testing.T) {
 				t.Helper()
-				words := strings.Fields(Instructions)
+				words := strings.Fields(baseInstructions)
 				if len(words) < 10 || len(words) > 80 {
-					t.Errorf("Instructions has %d words, expected 10-80", len(words))
+					t.Errorf("baseInstructions has %d words, expected 10-80", len(words))
 				}
 			},
 		},
@@ -106,8 +106,31 @@ func TestServer_Instructions(t *testing.T) {
 			name: "mentions Zerops",
 			check: func(t *testing.T) {
 				t.Helper()
-				if !strings.Contains(Instructions, "Zerops") {
+				inst := BuildInstructions()
+				if !strings.Contains(inst, "Zerops") {
 					t.Error("Instructions should mention Zerops")
+				}
+			},
+		},
+		{
+			name: "includes service name when env set",
+			check: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("ZEROPS_StackName", "myservice")
+				inst := BuildInstructions()
+				if !strings.Contains(inst, "myservice") {
+					t.Error("Instructions should include service name from ZEROPS_StackName")
+				}
+			},
+		},
+		{
+			name: "no service name when env empty",
+			check: func(t *testing.T) {
+				t.Helper()
+				t.Setenv("ZEROPS_StackName", "")
+				inst := BuildInstructions()
+				if strings.Contains(inst, "running inside") {
+					t.Error("Instructions should not mention service when ZEROPS_StackName is empty")
 				}
 			},
 		},
@@ -115,7 +138,6 @@ func TestServer_Instructions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			tt.check(t)
 		})
 	}

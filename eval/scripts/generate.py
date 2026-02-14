@@ -147,13 +147,13 @@ def render_prompt(scenario, tax):
     mod_parts = []
     for mod in scenario["modifiers"]:
         if mod == "ha-mode":
-            mod_parts.append("Enable HA mode (multiple containers) for the runtime service.")
+            mod_parts.append("Make the runtime service highly available.")
         elif mod == "subdomain":
-            mod_parts.append("Enable the zerops.app subdomain for the runtime service.")
+            mod_parts.append("Enable a public subdomain for the runtime service.")
         elif mod == "priority-ordering":
-            mod_parts.append("Set service start priorities so databases start before runtimes.")
+            mod_parts.append("Set appropriate service start priorities.")
         elif mod == "unsupported-request":
-            mod_parts.append("Also try to add a Redis service (note: Zerops uses Valkey, not Redis).")
+            mod_parts.append("Also add a Redis cache service.")
 
     # Add focus
     focus_parts = []

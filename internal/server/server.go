@@ -36,7 +36,7 @@ type Server struct {
 func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter, updateInfo *update.Info) *Server {
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
-		&mcp.ServerOptions{Instructions: Instructions},
+		&mcp.ServerOptions{Instructions: BuildInstructions()},
 	)
 
 	s := &Server{
