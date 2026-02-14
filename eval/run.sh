@@ -21,4 +21,4 @@ claude --dangerously-skip-permissions \
   -p "$(cat eval/AGENT_PROMPT.md)" \
   --model opus \
   --max-turns 200 \
-  2>&1 | stdbuf -oL tee "$LOG"
+  2>&1 | tee "$LOG"

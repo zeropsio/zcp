@@ -186,7 +186,20 @@ func TestIntegration_DiscoverThenScale(t *testing.T) {
 func TestIntegration_ImportThenDiscover(t *testing.T) {
 	t.Parallel()
 
-	mock := defaultMock()
+	mock := defaultMock().
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "proj-1",
+			ProjectName: "test-project",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{
+					ID:   "svc-web",
+					Name: "web",
+					Processes: []platform.Process{
+						{ID: "proc-web", ActionName: "serviceStackImport", Status: "PENDING"},
+					},
+				},
+			},
+		})
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 
@@ -196,27 +209,23 @@ func TestIntegration_ImportThenDiscover(t *testing.T) {
     minContainers: 1
 `
 
-	// Step 1: Import dry-run — validates YAML offline.
+	// Step 1: Import — validates inline and calls API.
 	importText := callAndGetText(t, session, "zerops_import", map[string]any{
-		"dryRun":  true,
 		"content": validYAML,
 	})
 
-	var dryResult ops.ImportDryRunResult
-	if err := json.Unmarshal([]byte(importText), &dryResult); err != nil {
-		t.Fatalf("parse import dry-run result: %v", err)
+	var importResult ops.ImportResult
+	if err := json.Unmarshal([]byte(importText), &importResult); err != nil {
+		t.Fatalf("parse import result: %v", err)
 	}
-	if !dryResult.DryRun {
-		t.Error("expected dryRun=true")
+	if importResult.ProjectID != "proj-1" {
+		t.Errorf("expected projectId=proj-1, got %s", importResult.ProjectID)
 	}
-	if !dryResult.Valid {
-		t.Error("expected valid=true")
-	}
-	if len(dryResult.Services) != 1 {
-		t.Fatalf("expected 1 service in dry-run, got %d", len(dryResult.Services))
+	if len(importResult.Processes) != 1 {
+		t.Fatalf("expected 1 process, got %d", len(importResult.Processes))
 	}
 
-	// Step 2: Discover still shows original services (dry-run does not mutate).
+	// Step 2: Discover shows services.
 	discoverText := callAndGetText(t, session, "zerops_discover", nil)
 
 	var dr ops.DiscoverResult
@@ -224,7 +233,7 @@ func TestIntegration_ImportThenDiscover(t *testing.T) {
 		t.Fatalf("parse discover result: %v", err)
 	}
 	if len(dr.Services) != 2 {
-		t.Fatalf("expected 2 services (unchanged by dry-run), got %d", len(dr.Services))
+		t.Fatalf("expected 2 services, got %d", len(dr.Services))
 	}
 }
 

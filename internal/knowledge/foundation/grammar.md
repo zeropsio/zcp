@@ -147,7 +147,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - Keys: alphanumeric + `_`, case-sensitive. Values: ASCII only
 
 ### 6. Mode Immutability
-**HA/NON_HA set at creation, CANNOT change** — determines node topology (1 vs 3). Must delete and recreate. Omitting mode passes dry-run but fails real import.
+**HA/NON_HA set at creation, CANNOT change** — determines node topology (1 vs 3). Must delete and recreate. Omitting mode causes import failure.
 
 ### 7. Service Lifecycle
 - Hostname **IMMUTABLE** after creation
@@ -163,7 +163,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - **zerops.app subdomain**: 50MB limit, not production. Use `enableSubdomainAccess: true` in import.yml — do NOT call zerops_subdomain separately after import (fails on READY_TO_DEPLOY services)
 
 ### 9. Scaling
-- **Vertical**: CPU (shared 1/10-10/10 or dedicated), RAM (dual-threshold: minFreeRamGB OR minFreeRamPercent), Disk (grows only, never shrinks). Applies to runtimes and DB/cache services. Do NOT set verticalAutoscaling for shared-storage or object-storage in import.yml (passes dry-run but fails real import)
+- **Vertical**: CPU (shared 1/10-10/10 or dedicated), RAM (dual-threshold: minFreeRamGB OR minFreeRamPercent), Disk (grows only, never shrinks). Applies to runtimes and DB/cache services. Do NOT set verticalAutoscaling for shared-storage or object-storage in import.yml (causes import failure)
 - **Horizontal**: 1-10 containers for runtimes only. Managed services (DB, cache, storage) have fixed containers (NON_HA=1, HA=3) — do NOT set minContainers/maxContainers for them in import.yml
 - Docker: fixed resources, no min-max, restart on change
 

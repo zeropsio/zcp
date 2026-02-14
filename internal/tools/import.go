@@ -12,14 +12,13 @@ import (
 type ImportInput struct {
 	Content  string `json:"content,omitempty"`
 	FilePath string `json:"filePath,omitempty"`
-	DryRun   bool   `json:"dryRun,omitempty"`
 }
 
 // RegisterImport registers the zerops_import tool.
 func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
-		Description: "Import services from YAML into the current project. Always use dryRun=true first to validate.",
+		Description: "Import services from YAML into the current project. Validates service types before calling the API.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Import services from YAML",
 			DestructiveHint: boolPtr(true),
@@ -29,7 +28,7 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, c
 		if cache != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
-		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, input.DryRun, liveTypes)
+		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, liveTypes)
 		if err != nil {
 			return convertError(err), nil, nil
 		}

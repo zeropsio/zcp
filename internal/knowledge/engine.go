@@ -334,7 +334,7 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		sb.WriteString(versionCheck)
 	}
 
-	sb.WriteString("\nNext: Generate import.yml and zerops.yml using the rules above. Use only validated versions. Then validate with zerops_import dryRun=true.")
+	sb.WriteString("\nNext: Generate import.yml and zerops.yml using the rules above. Use only validated versions. Then import with zerops_import.")
 
 	return sb.String(), nil
 }

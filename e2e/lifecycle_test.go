@@ -83,9 +83,9 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	baselineCount := len(baseline.Services)
 	t.Logf("  Baseline: %d services in project %s", baselineCount, baseline.Project.Name)
 
-	// --- Step 5: zerops_import dry-run ---
+	// --- Step 5: zerops_import ---
 	step++
-	logStep(t, step, "zerops_import dry-run")
+	logStep(t, step, "zerops_import (creating services)")
 	importYAML := `services:
   - hostname: ` + rtHostname + `
     type: nodejs@22
@@ -94,28 +94,6 @@ func TestE2E_FullLifecycle(t *testing.T) {
     type: postgresql@16
     mode: NON_HA
 `
-	dryRunText := s.mustCallSuccess("zerops_import", map[string]any{
-		"dryRun":  true,
-		"content": importYAML,
-	})
-	var dryResult struct {
-		DryRun   bool `json:"dryRun"`
-		Valid    bool `json:"valid"`
-		Services []interface{}
-	}
-	if err := json.Unmarshal([]byte(dryRunText), &dryResult); err != nil {
-		t.Fatalf("parse dry-run: %v", err)
-	}
-	if !dryResult.Valid {
-		t.Fatalf("dry-run should be valid: %s", dryRunText)
-	}
-	if len(dryResult.Services) != 2 {
-		t.Fatalf("dry-run: expected 2 services, got %d", len(dryResult.Services))
-	}
-
-	// --- Step 6: zerops_import real ---
-	step++
-	logStep(t, step, "zerops_import real (creating services)")
 	importText := s.mustCallSuccess("zerops_import", map[string]any{
 		"content": importYAML,
 	})
@@ -132,7 +110,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		waitForProcess(s, pid)
 	}
 
-	// --- Step 7: zerops_discover (verify new services) ---
+	// --- Step 6: zerops_discover (verify new services) ---
 	step++
 	logStep(t, step, "zerops_discover after import")
 	waitForServiceReady(s, rtHostname)
@@ -144,7 +122,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Errorf("database service %s not found after import", dbHostname)
 	}
 
-	// --- Step 8: zerops_discover with service filter ---
+	// --- Step 7: zerops_discover with service filter ---
 	step++
 	logStep(t, step, "zerops_discover with service filter")
 	filteredText := s.mustCallSuccess("zerops_discover", map[string]any{
@@ -166,7 +144,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Errorf("hostname = %q, want %q", filtered.Services[0].Hostname, rtHostname)
 	}
 
-	// --- Step 9: zerops_env set ---
+	// --- Step 8: zerops_env set ---
 	step++
 	logStep(t, step, "zerops_env set on %s", rtHostname)
 	s.mustCallSuccess("zerops_env", map[string]any{
@@ -175,7 +153,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		"variables":       []any{"E2E_TEST_VAR=hello_zerops"},
 	})
 
-	// --- Step 10: zerops_discover with includeEnvs (replaces env get) ---
+	// --- Step 9: zerops_discover with includeEnvs (replaces env get) ---
 	step++
 	logStep(t, step, "zerops_discover includeEnvs on %s", rtHostname)
 	envText := s.mustCallSuccess("zerops_discover", map[string]any{
@@ -188,7 +166,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		// This is acceptable behavior — we verify the discover call works.
 	}
 
-	// --- Step 11: zerops_manage restart (database — active immediately after import) ---
+	// --- Step 10: zerops_manage restart (database — active immediately after import) ---
 	step++
 	logStep(t, step, "zerops_manage restart %s", dbHostname)
 	restartText := s.mustCallSuccess("zerops_manage", map[string]any{
@@ -199,7 +177,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	t.Logf("  Restart process: %s", restartProcID)
 	waitForProcess(s, restartProcID)
 
-	// --- Step 12: zerops_process status ---
+	// --- Step 11: zerops_process status ---
 	step++
 	logStep(t, step, "zerops_process status")
 	statusText := s.mustCallSuccess("zerops_process", map[string]any{
@@ -215,7 +193,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Errorf("process status = %q, want FINISHED", procStatus.Status)
 	}
 
-	// --- Step 13: zerops_scale (database) ---
+	// --- Step 12: zerops_scale (database) ---
 	step++
 	logStep(t, step, "zerops_scale %s", dbHostname)
 	scaleText := s.mustCallSuccess("zerops_scale", map[string]any{
@@ -244,7 +222,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		waitForProcess(s, scaleResult.Process.ID)
 	}
 
-	// --- Step 14: zerops_events ---
+	// --- Step 13: zerops_events ---
 	step++
 	logStep(t, step, "zerops_events")
 	eventsText := s.mustCallSuccess("zerops_events", map[string]any{
@@ -254,7 +232,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Error("expected non-empty events response")
 	}
 
-	// --- Step 15: zerops_knowledge search ---
+	// --- Step 14: zerops_knowledge search ---
 	step++
 	logStep(t, step, "zerops_knowledge search")
 	knowledgeText := s.mustCallSuccess("zerops_knowledge", map[string]any{
@@ -264,7 +242,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Error("expected non-empty knowledge response")
 	}
 
-	// --- Step 16: zerops_delete without confirm (safety gate) ---
+	// --- Step 15: zerops_delete without confirm (safety gate) ---
 	step++
 	logStep(t, step, "zerops_delete without confirm")
 	noConfirmResult := s.callTool("zerops_delete", map[string]any{
@@ -279,7 +257,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Errorf("expected CONFIRM_REQUIRED in error: %s", errText)
 	}
 
-	// --- Step 17: zerops_delete runtime service ---
+	// --- Step 16: zerops_delete runtime service ---
 	step++
 	logStep(t, step, "zerops_delete %s (confirmed)", rtHostname)
 	deleteRtText := s.mustCallSuccess("zerops_delete", map[string]any{
@@ -290,7 +268,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	t.Logf("  Delete process: %s", deleteRtProcID)
 	waitForProcess(s, deleteRtProcID)
 
-	// --- Step 18: zerops_delete database service ---
+	// --- Step 17: zerops_delete database service ---
 	step++
 	logStep(t, step, "zerops_delete %s (confirmed)", dbHostname)
 	deleteDbText := s.mustCallSuccess("zerops_delete", map[string]any{
@@ -301,7 +279,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	t.Logf("  Delete process: %s", deleteDbProcID)
 	waitForProcess(s, deleteDbProcID)
 
-	// --- Step 19: zerops_discover (verify services deleted) ---
+	// --- Step 18: zerops_discover (verify services deleted) ---
 	step++
 	logStep(t, step, "zerops_discover after deletion")
 	// Allow time for deletion to propagate.

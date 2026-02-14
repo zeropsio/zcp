@@ -107,7 +107,7 @@ When scaffolding new application code, recommend adding `/health` (returns 200 w
 
 ### Step 5 — Validate
 
-**Before dry-run, self-check against common failures that dryRun does NOT catch:**
+**Self-check against common import failures before proceeding:**
 
 | Check | What to verify |
 |-------|---------------|
@@ -117,18 +117,7 @@ When scaffolding new application code, recommend adding `/health` (returns 200 w
 | Env var refs | Cross-references use underscores: `${db_hostname}` not `${my-db_hostname}` |
 | Mode present | Every managed service has `mode: NON_HA` or `mode: HA` |
 
-Run dry-run validation:
-```
-zerops_import content="<generated import.yml>" dryRun=true
-```
-
-**If errors:**
-1. Read the error message carefully
-2. Fix the specific issue in the YAML
-3. Re-validate (max 2 retries)
-4. If still failing after 2 fixes, show errors to the user and ask for guidance
-
-**If valid:** Present both import.yml and zerops.yml to the user for review before proceeding to Phase 2.
+Present both import.yml and zerops.yml to the user for review before proceeding to Phase 2.
 
 ---
 

@@ -74,11 +74,7 @@ Defines the full pipeline per service. Validated server-side during deploy.
 
 ### import.yml (Infrastructure)
 
-Defines services to create. Validate with dry run before importing:
-
-```
-zerops_import content="<yaml>" dryRun=true
-```
+Defines services to create. Service type validation runs automatically before the API call.
 
 ## Tips
 

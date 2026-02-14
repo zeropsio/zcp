@@ -33,21 +33,6 @@ func TestImportTool_Content(t *testing.T) {
 	}
 }
 
-func TestImportTool_DryRun(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock()
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil)
-
-	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n"
-	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml, "dryRun": true})
-
-	if result.IsError {
-		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
-	}
-}
-
 func TestImportTool_MissingContentAndFile(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
