@@ -64,7 +64,7 @@ services[]:                            # REQUIRED
   buildFromGit: url                    # one-time build from repo
   objectStorageSize: 1-100             # GB, object-storage only
   objectStoragePolicy: private | public-read | public-objects-read | public-write | public-read-write
-  verticalAutoscaling:
+  verticalAutoscaling:                 # RUNTIME + DB/CACHE ONLY (not shared-storage, not object-storage)
     cpuMode: SHARED | DEDICATED        # default SHARED
     minCpu/maxCpu: int                 # CPU threads
     startCpuCoreCount: int             # CPU at container start
@@ -163,7 +163,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - **zerops.app subdomain**: 50MB limit, not production. Use `enableSubdomainAccess: true` in import.yml — do NOT call zerops_subdomain separately after import (fails on READY_TO_DEPLOY services)
 
 ### 9. Scaling
-- **Vertical**: CPU (shared 1/10-10/10 or dedicated), RAM (dual-threshold: minFreeRamGB OR minFreeRamPercent), Disk (grows only, never shrinks)
+- **Vertical**: CPU (shared 1/10-10/10 or dedicated), RAM (dual-threshold: minFreeRamGB OR minFreeRamPercent), Disk (grows only, never shrinks). Applies to runtimes and DB/cache services. Do NOT set verticalAutoscaling for shared-storage or object-storage in import.yml (passes dry-run but fails real import)
 - **Horizontal**: 1-10 containers for runtimes only. Managed services (DB, cache, storage) have fixed containers (NON_HA=1, HA=3) — do NOT set minContainers/maxContainers for them in import.yml
 - Docker: fixed resources, no min-max, restart on change
 
