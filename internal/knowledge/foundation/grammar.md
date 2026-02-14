@@ -38,7 +38,7 @@ project:                               # OPTIONAL (omit in ZCP context)
   tags: string[]
 
 services[]:                            # REQUIRED
-  hostname: string                     # REQUIRED, max 25, a-z/0-9/hyphens, IMMUTABLE
+  hostname: string                     # REQUIRED, max 25, a-z and 0-9 ONLY (no hyphens/underscores), IMMUTABLE
   type: <runtime>@<version>            # REQUIRED (100+ valid values)
   mode: HA | NON_HA                    # MANDATORY for managed services, IMMUTABLE
   priority: int                        # higher = starts first (DB=10, app=5)

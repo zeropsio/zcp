@@ -51,9 +51,10 @@ def pick_service(tax, service_filter=None):
 
 
 def generate_hostname(prefix, name):
-    """Generate eval-prefixed hostname."""
+    """Generate eval-prefixed hostname (a-z, 0-9 only, no hyphens)."""
     suffix = random.randint(100, 999)
-    return f"eval-{prefix}-{name}-{suffix}"
+    clean_name = name.replace("-", "").replace("_", "")
+    return f"eval{prefix}{clean_name}{suffix}"
 
 
 def build_scenario(tax, task_type_name=None):
