@@ -34,7 +34,8 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 - **documentRoot**: required — Laravel: `public`, WordPress: `""`
 - **TRUSTED_PROXIES**: `"127.0.0.1,10.0.0.0/8"` or CSRF breaks
 - **Multi-base**: `base: [php@8.4, nodejs@18]` for Vite/Inertia assets
-- Alpine extensions: `apk add php-<ext>`, Composer: `--ignore-platform-reqs`
+- Alpine extensions: `apk add php84-<ext>` (version prefix matches PHP major+minor, e.g. `php84-redis`, `php84-pdo_pgsql`, `php83-curl`)
+- Composer: use `--ignore-platform-reqs` on Alpine
 
 ## Node.js
 
