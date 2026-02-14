@@ -1,0 +1,89 @@
+# Scenario taxonomy for knowledge eval
+# Used by generate.py to produce diverse, random Zerops scenarios
+
+task_types:
+  - name: single-service
+    description: Create one runtime or managed service
+    min_runtimes: 1
+    max_runtimes: 1
+    min_services: 0
+    max_services: 0
+
+  - name: runtime-db
+    description: Runtime + database pair with env wiring
+    min_runtimes: 1
+    max_runtimes: 1
+    min_services: 1
+    max_services: 1
+    service_filter: [postgresql, mariadb, clickhouse]
+
+  - name: full-stack
+    description: Runtime + DB + cache/search/storage
+    min_runtimes: 1
+    max_runtimes: 1
+    min_services: 2
+    max_services: 3
+
+  - name: env-wiring
+    description: Focus on cross-service environment variable references
+    min_runtimes: 1
+    max_runtimes: 2
+    min_services: 1
+    max_services: 2
+    focus: env-vars
+
+  - name: production-config
+    description: HA mode, scaling, subdomain, priority ordering
+    min_runtimes: 1
+    max_runtimes: 1
+    min_services: 1
+    max_services: 2
+    modifiers: [ha-mode, subdomain, priority-ordering]
+
+  - name: edge-case
+    description: Unusual combos, version edge cases, uncommon runtimes
+    min_runtimes: 1
+    max_runtimes: 2
+    min_services: 0
+    max_services: 2
+    prefer_uncommon: true
+
+runtimes:
+  - { name: "nodejs", versions: ["22", "20"] }
+  - { name: "python", versions: ["3.12", "3.11"] }
+  - { name: "go", versions: ["1"] }
+  - { name: "php-nginx", versions: ["8.4", "8.3"] }
+  - { name: "bun", versions: ["1.2"] }
+  - { name: "java", versions: ["21"] }
+  - { name: "static", versions: ["latest"] }
+  - { name: "dotnet", versions: ["9", "8"] }
+  - { name: "rust", versions: ["1"] }
+  - { name: "elixir", versions: ["1.16"] }
+
+services:
+  - { name: "postgresql", versions: ["16", "15"] }
+  - { name: "mariadb", versions: ["10.6", "11.4"] }
+  - { name: "valkey", versions: ["7.2"] }
+  - { name: "object-storage", versions: [""] }
+  - { name: "elasticsearch", versions: ["8.16"] }
+  - { name: "meilisearch", versions: ["1.10"] }
+  - { name: "shared-storage", versions: [""] }
+  - { name: "kafka", versions: ["3.8"] }
+  - { name: "clickhouse", versions: ["25.3"] }
+  - { name: "qdrant", versions: ["1.12"] }
+  - { name: "nats", versions: ["2.10"] }
+
+modifiers:
+  - ha-mode          # Request HA / multi-container
+  - subdomain        # Enable zerops.app subdomain
+  - priority-ordering # Specify service start order
+  - unsupported-request # Request something Zerops doesn't support (tests graceful handling)
+
+prompt_templates:
+  - "Create a {task_description}"
+  - "Set up {task_description} on Zerops"
+  - "I need {task_description} for my project"
+  - "Deploy {task_description}"
+  - "Configure {task_description} with proper environment variables"
+  - "Help me set up {task_description}"
+  - "Build {task_description} infrastructure"

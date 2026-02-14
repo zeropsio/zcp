@@ -23,6 +23,10 @@ Thumbs.db
 tmp/
 vendor/
 
+# Eval results (logs, jsonl, extracted json)
+eval/results/*
+!eval/results/.gitkeep
+
 # IDE
 .idea/
 .vscode/
