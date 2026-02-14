@@ -56,8 +56,8 @@ services[]:                            # REQUIRED
   priority: int                        # higher = starts first (DB=10, app=5)
   enableSubdomainAccess: bool          # zerops.app subdomain
   startWithoutCode: bool               # start without deploy (runtimes only)
-  minContainers: 1-10                  # default 1
-  maxContainers: 1-10
+  minContainers: 1-10                  # RUNTIME ONLY, default 1 (managed services have fixed containers)
+  maxContainers: 1-10                  # RUNTIME ONLY (managed: NON_HA=1, HA=3, fixed)
   envSecrets: map<string,string>       # masked in GUI, cannot view after creation
   envVariables: map<string,string>     # visible in GUI
   dotEnvSecrets: string                # .env format, auto-creates secrets
@@ -164,7 +164,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 
 ### 9. Scaling
 - **Vertical**: CPU (shared 1/10-10/10 or dedicated), RAM (dual-threshold: minFreeRamGB OR minFreeRamPercent), Disk (grows only, never shrinks)
-- **Horizontal**: 1-10 containers for runtimes, databases fixed at creation (HA=3)
+- **Horizontal**: 1-10 containers for runtimes only. Managed services (DB, cache, storage) have fixed containers (NON_HA=1, HA=3) — do NOT set minContainers/maxContainers for them in import.yml
 - Docker: fixed resources, no min-max, restart on change
 
 ### 10. Build Limits
