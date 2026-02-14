@@ -160,7 +160,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - **Shared IPv4**: free, HTTP/HTTPS only, requires BOTH A and AAAA DNS records
 - **Dedicated IPv4**: $3/30 days, all protocols
 - **IPv6**: free, dedicated per project
-- **zerops.app subdomain**: 50MB limit, not production
+- **zerops.app subdomain**: 50MB limit, not production. Use `enableSubdomainAccess: true` in import.yml — do NOT call zerops_subdomain separately after import (fails on READY_TO_DEPLOY services)
 
 ### 9. Scaling
 - **Vertical**: CPU (shared 1/10-10/10 or dedicated), RAM (dual-threshold: minFreeRamGB OR minFreeRamPercent), Disk (grows only, never shrinks)
