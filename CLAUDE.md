@@ -38,6 +38,8 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 
 Error codes: see `internal/platform/errors.go` for all codes (AUTH_REQUIRED, SERVICE_NOT_FOUND, etc.)
 
+Knowledge system context flow: see [`docs/knowledge-flow.md`](docs/knowledge-flow.md) for how context reaches the LLM via MCP tools.
+
 ---
 
 ## TDD — Mandatory
