@@ -30,7 +30,7 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 ## KeyDB
 **Type**: `keydb@6` | **Mode**: MANDATORY (NON_HA only)
 **Ports**: 6379 | **Env**: same as Valkey
-**Gotchas**: **DEPRECATED** — use Valkey. Migration: only hostname changes.
+**DEPRECATED**: Do NOT use for new projects — use `valkey@7.2` instead. When user requests "Redis" or "cache", always use Valkey. Migration from KeyDB: only hostname changes.
 
 ## Elasticsearch
 **Type**: `elasticsearch@{8.16,9.2}` | **Mode**: MANDATORY, immutable
