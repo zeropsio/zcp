@@ -83,10 +83,13 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 
 ## Rust
 
+- **BIND**: most frameworks (actix-web, axum, warp) default to `0.0.0.0` — verify if using custom binding
 - Always `--release` (debug 10-100x slower)
 - Cache: `target/`, `~/.cargo/registry`
-- Deploy: `./target/release/~/myapp` (tilde extracts)
-- Use `rust@stable` alias
+- Deploy: `target/release/~myapp` (tilde extracts binary to `/var/www/`)
+- Start: `./myapp` (binary lands in `/var/www/`)
+- Use `rust@stable` (or `rust@nightly`)
+- Native deps (openssl, etc.): `apk add --no-cache openssl-dev pkgconfig` in prepareCommands
 
 ## .NET
 
