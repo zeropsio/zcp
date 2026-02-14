@@ -84,9 +84,12 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 ## Java
 
 - **BIND**: `server.address=0.0.0.0` (Spring Boot defaults to localhost!)
+- **BUILD TOOLS NOT PRE-INSTALLED**: `java@21` provides only JDK — NO Maven, NO Gradle. Use `./mvnw` (Maven Wrapper) in `buildCommands`. For plain projects without mvnw, install via `prepareCommands: [sudo apt-get update && sudo apt-get install -y maven]`
+- **BUILD**: `./mvnw clean install -DskipTests`, deployFiles: `target/app.jar` (relative path)
+- **START**: `java -jar target/app.jar` (relative to `/var/www`, NOT absolute path)
 - **RAM**: `-Xmx` = ~75% of container max RAM
 - Cache: `.m2` or `.gradle`
-- Deploy only JAR, not entire `target/`
+- Deploy only JAR (fat JAR via shade/spring-boot plugin), not entire `target/`
 
 ## Rust
 

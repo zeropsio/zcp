@@ -170,8 +170,10 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - **Horizontal**: 1-10 containers for runtimes only. Managed services (DB, cache, storage) have fixed containers (NON_HA=1, HA=3) — do NOT set minContainers/maxContainers for them in import.yml
 - Docker: fixed resources, no min-max, restart on change
 
-### 10. Build Limits
-CPU: 1-5 cores, RAM: 8 GB fixed, Disk: 1-100 GB, Time: 60 minutes
+### 10. Build Environment
+- CPU: 1-5 cores, RAM: 8 GB fixed, Disk: 1-100 GB, Time: 60 minutes
+- Build containers run as user `zerops` with **sudo** access — use `sudo apt-get` for system packages (bare `apt-get` will fail with permission denied)
+- Base includes: selected runtime, git, wget, zcli. Build tools (Maven, Gradle, etc.) are NOT pre-installed — use wrappers (e.g., `./mvnw`) or install via `prepareCommands`
 
 ### 11. zsc Commands
 - `zsc execOnce <key> -- <cmd>`: run once across all containers (HA-safe migrations)
