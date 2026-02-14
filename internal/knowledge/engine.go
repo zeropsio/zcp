@@ -194,14 +194,19 @@ func ExpandQuery(query string) string {
 	return expandQuery(query)
 }
 
-// GetCorePrinciples returns the full core-principles.md content.
+// GetFoundation returns the full foundation/core.md content.
 // This is the base layer for all infrastructure tasks.
-func (s *Store) GetCorePrinciples() (string, error) {
-	doc, err := s.Get("zerops://docs/core/core-principles")
+func (s *Store) GetFoundation() (string, error) {
+	doc, err := s.Get("zerops://foundation/core")
 	if err != nil {
-		return "", fmt.Errorf("core-principles not found: %w", err)
+		return "", fmt.Errorf("foundation core not found: %w", err)
 	}
 	return doc.Content, nil
+}
+
+// GetCorePrinciples is an alias for GetFoundation (backward compatibility).
+func (s *Store) GetCorePrinciples() (string, error) {
+	return s.GetFoundation()
 }
 
 // runtimeRecipeHints maps runtime base names to recipe name prefixes/matches.
@@ -288,15 +293,16 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		}
 		sb.WriteString("---\n\n")
 
-		wiring, _ := s.Get("zerops://docs/core/wiring-patterns")
-		if wiring != nil {
-			sb.WriteString(wiring.Content)
+		// Wiring patterns from services.md
+		if wiring := s.getWiringPatterns(); wiring != "" {
+			sb.WriteString("## Wiring Patterns\n\n")
+			sb.WriteString(wiring)
 			sb.WriteString("\n\n")
 		}
 	}
 
-	// 4. Core principles (reference)
-	core, err := s.GetCorePrinciples()
+	// 4. Foundation core (reference)
+	core, err := s.GetFoundation()
 	if err != nil {
 		return "", err
 	}
@@ -317,7 +323,7 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 // getRuntimeException returns the section content for a normalized runtime name.
 // Returns empty string if no exceptions for this runtime (not an error).
 func (s *Store) getRuntimeException(normalizedName string) string {
-	doc, err := s.Get("zerops://docs/core/runtime-exceptions")
+	doc, err := s.Get("zerops://foundation/runtimes")
 	if err != nil {
 		return ""
 	}
@@ -328,7 +334,7 @@ func (s *Store) getRuntimeException(normalizedName string) string {
 // getServiceCard returns the section content for a normalized service name.
 // Returns empty string if service not found (graceful degradation).
 func (s *Store) getServiceCard(normalizedName string) string {
-	doc, err := s.Get("zerops://docs/core/service-cards")
+	doc, err := s.Get("zerops://foundation/services")
 	if err != nil {
 		return ""
 	}
@@ -336,11 +342,21 @@ func (s *Store) getServiceCard(normalizedName string) string {
 	return sections[normalizedName]
 }
 
+// getWiringPatterns returns the "Wiring Patterns" section from services.md.
+func (s *Store) getWiringPatterns() string {
+	doc, err := s.Get("zerops://foundation/services")
+	if err != nil {
+		return ""
+	}
+	sections := parseH2Sections(doc.Content)
+	return sections["Wiring Patterns"]
+}
+
 // GetRecipe returns the full content of a named recipe.
 // name: recipe filename without extension (e.g., "laravel-jetstream")
 // Returns error if recipe not found.
 func (s *Store) GetRecipe(name string) (string, error) {
-	uri := "zerops://docs/core/recipes/" + name
+	uri := "zerops://recipes/" + name
 	doc, err := s.Get(uri)
 	if err != nil {
 		available := s.ListRecipes()
@@ -352,7 +368,7 @@ func (s *Store) GetRecipe(name string) (string, error) {
 // ListRecipes returns names of all available recipes (without extension).
 func (s *Store) ListRecipes() []string {
 	var recipes []string
-	prefix := "zerops://docs/core/recipes/"
+	prefix := "zerops://recipes/"
 	for uri := range s.docs {
 		if name, ok := strings.CutPrefix(uri, prefix); ok {
 			recipes = append(recipes, name)

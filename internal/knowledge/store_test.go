@@ -7,37 +7,32 @@ import (
 	"testing"
 )
 
-// testStoreWithCore creates a Store with mock core documents for testing.
+// testStoreWithCore creates a Store with mock foundation documents for testing.
 func testStoreWithCore(t *testing.T) *Store {
 	t.Helper()
 	docs := map[string]*Document{
-		"zerops://docs/core/core-principles": {
-			URI:     "zerops://docs/core/core-principles",
-			Title:   "Zerops Core Principles",
-			Content: "# Core Principles\n\nUniversal rules here.\n\n## zerops.yml Format\n\nStructure rules.\n\n## Port Rules\n\nPorts 10-65435.",
+		"zerops://foundation/core": {
+			URI:     "zerops://foundation/core",
+			Title:   "Zerops Fundamentals",
+			Content: "# Zerops Fundamentals\n\nUniversal rules here.\n\n## 3. Build Pipeline\n\nStructure rules.\n\n## 5. Networking\n\nPorts 10-65435.",
 		},
-		"zerops://docs/core/runtime-exceptions": {
-			URI:     "zerops://docs/core/runtime-exceptions",
+		"zerops://foundation/runtimes": {
+			URI:     "zerops://foundation/runtimes",
 			Title:   "Runtime Exceptions",
 			Content: "## PHP\n\nBuild php@X, run php-nginx@X. Port 80.\n\n## Node.js\n\nnode_modules in deployFiles. SSR patterns.",
 		},
-		"zerops://docs/core/service-cards": {
-			URI:     "zerops://docs/core/service-cards",
-			Title:   "Service Cards",
-			Content: "## PostgreSQL\n\nPort 5432. Env: hostname, password, connectionString.\n\n## Valkey\n\nPort 6379. Connection: redis://cache:6379.",
+		"zerops://foundation/services": {
+			URI:     "zerops://foundation/services",
+			Title:   "Managed Service Reference",
+			Content: "## PostgreSQL\n\nPort 5432. Env: hostname, password, connectionString.\n\n## Valkey\n\nPort 6379. Connection: redis://cache:6379.\n\n## Wiring Patterns\n\nUse ${hostname_var} for cross-refs.\n\nenvSecrets for sensitive data.",
 		},
-		"zerops://docs/core/wiring-patterns": {
-			URI:     "zerops://docs/core/wiring-patterns",
-			Title:   "Wiring Patterns",
-			Content: "Use ${hostname_var} for cross-refs.\n\nenvSecrets for sensitive data.",
-		},
-		"zerops://docs/core/recipes/ghost": {
-			URI:     "zerops://docs/core/recipes/ghost",
+		"zerops://recipes/ghost": {
+			URI:     "zerops://recipes/ghost",
 			Title:   "Ghost CMS Recipe",
 			Content: "maxContainers: 1\n\nUse MariaDB with wsrep.",
 		},
-		"zerops://docs/core/recipes/laravel-jetstream": {
-			URI:     "zerops://docs/core/recipes/laravel-jetstream",
+		"zerops://recipes/laravel-jetstream": {
+			URI:     "zerops://recipes/laravel-jetstream",
 			Title:   "Laravel Jetstream Recipe",
 			Content: "Multi-base build. S3 + Redis + Mailpit.",
 		},
@@ -49,9 +44,39 @@ func testStoreWithCore(t *testing.T) *Store {
 	return store
 }
 
-// --- GetCorePrinciples Tests ---
+// --- GetFoundation Tests ---
 
-func TestStore_GetCorePrinciples_Success(t *testing.T) {
+func TestStore_GetFoundation_Success(t *testing.T) {
+	t.Parallel()
+	store := testStoreWithCore(t)
+
+	content, err := store.GetFoundation()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(content, "Universal rules") {
+		t.Error("expected foundation content")
+	}
+	if !strings.Contains(content, "## 5. Networking") {
+		t.Error("expected section headers")
+	}
+}
+
+func TestStore_GetFoundation_NotFound(t *testing.T) {
+	t.Parallel()
+	// Store without foundation docs
+	store, _ := NewStore(map[string]*Document{})
+
+	_, err := store.GetFoundation()
+	if err == nil {
+		t.Error("expected error when foundation core not found")
+	}
+}
+
+// --- GetCorePrinciples backward compat ---
+
+func TestStore_GetCorePrinciples_BackwardCompat(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
@@ -61,21 +86,7 @@ func TestStore_GetCorePrinciples_Success(t *testing.T) {
 	}
 
 	if !strings.Contains(content, "Universal rules") {
-		t.Error("expected core principles content")
-	}
-	if !strings.Contains(content, "## Port Rules") {
-		t.Error("expected section headers")
-	}
-}
-
-func TestStore_GetCorePrinciples_NotFound(t *testing.T) {
-	t.Parallel()
-	// Store without core docs
-	store, _ := NewStore(map[string]*Document{})
-
-	_, err := store.GetCorePrinciples()
-	if err == nil {
-		t.Error("expected error when core-principles not found")
+		t.Error("expected foundation content via backward compat")
 	}
 }
 
@@ -91,12 +102,12 @@ func TestStore_GetBriefing_RuntimeOnly(t *testing.T) {
 		{
 			name:    "PHP runtime",
 			runtime: "php-nginx@8.4",
-			want:    []string{"Core Principles", "PHP", "Build php@X", "Port 80"},
+			want:    []string{"Zerops Fundamentals", "PHP", "Build php@X", "Port 80"},
 		},
 		{
 			name:    "Node.js runtime",
 			runtime: "nodejs@22",
-			want:    []string{"Core Principles", "Node.js", "node_modules"},
+			want:    []string{"Zerops Fundamentals", "Node.js", "node_modules"},
 		},
 	}
 
@@ -129,12 +140,12 @@ func TestStore_GetBriefing_ServicesOnly(t *testing.T) {
 		{
 			name:     "PostgreSQL only",
 			services: []string{"postgresql@16"},
-			want:     []string{"Core Principles", "PostgreSQL", "Port 5432", "${hostname_var}"},
+			want:     []string{"Zerops Fundamentals", "PostgreSQL", "Port 5432", "${hostname_var}"},
 		},
 		{
 			name:     "Multiple services",
 			services: []string{"postgresql@16", "valkey@7.2"},
-			want:     []string{"Core Principles", "PostgreSQL", "Valkey", "Port 6379"},
+			want:     []string{"Zerops Fundamentals", "PostgreSQL", "Valkey", "Port 6379"},
 		},
 	}
 
@@ -168,7 +179,7 @@ func TestStore_GetBriefing_RuntimeAndServices(t *testing.T) {
 
 	// Should contain all components
 	required := []string{
-		"Core Principles",
+		"Zerops Fundamentals",
 		"Node.js",
 		"node_modules",
 		"PostgreSQL",
@@ -194,9 +205,9 @@ func TestStore_GetBriefing_EmptyInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should at least contain core principles
-	if !strings.Contains(briefing, "Core Principles") {
-		t.Error("empty briefing should still contain core principles")
+	// Should at least contain foundation
+	if !strings.Contains(briefing, "Zerops Fundamentals") {
+		t.Error("empty briefing should still contain foundation")
 	}
 }
 
@@ -209,9 +220,9 @@ func TestStore_GetBriefing_UnknownRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should contain core, no exception section (graceful)
-	if !strings.Contains(briefing, "Core Principles") {
-		t.Error("briefing should contain core principles")
+	// Should contain foundation, no exception section (graceful)
+	if !strings.Contains(briefing, "Zerops Fundamentals") {
+		t.Error("briefing should contain foundation")
 	}
 	// Should NOT contain PHP/Node.js specific content
 	if strings.Contains(briefing, "Build php@X") {
@@ -228,9 +239,9 @@ func TestStore_GetBriefing_UnknownService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should contain core + wiring, no service card (graceful)
-	if !strings.Contains(briefing, "Core Principles") {
-		t.Error("briefing should contain core principles")
+	// Should contain foundation + wiring, no service card (graceful)
+	if !strings.Contains(briefing, "Zerops Fundamentals") {
+		t.Error("briefing should contain foundation")
 	}
 	if !strings.Contains(briefing, "${hostname_var}") {
 		t.Error("briefing should contain wiring patterns when services provided")
@@ -239,12 +250,12 @@ func TestStore_GetBriefing_UnknownService(t *testing.T) {
 
 func TestStore_GetBriefing_CoreMissing(t *testing.T) {
 	t.Parallel()
-	// Store without core-principles
+	// Store without foundation
 	store, _ := NewStore(map[string]*Document{})
 
 	_, err := store.GetBriefing("php@8", nil, nil)
 	if err == nil {
-		t.Error("expected error when core-principles missing")
+		t.Error("expected error when foundation missing")
 	}
 }
 

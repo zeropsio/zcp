@@ -14,40 +14,23 @@ import (
 func testKnowledgeStore(t *testing.T) *knowledge.Store {
 	t.Helper()
 	docs := map[string]*knowledge.Document{
-		"zerops://docs/services/postgresql": {
-			URI:      "zerops://docs/services/postgresql",
-			Title:    "PostgreSQL on Zerops",
-			Keywords: []string{"postgresql", "postgres", "database"},
-			Content:  "PostgreSQL is a managed relational database service on Zerops.",
+		"zerops://foundation/core": {
+			URI:     "zerops://foundation/core",
+			Title:   "Zerops Fundamentals",
+			Content: "# Zerops Fundamentals\n\nUniversal rules here.",
 		},
-		"zerops://docs/services/nodejs": {
-			URI:      "zerops://docs/services/nodejs",
-			Title:    "Node.js on Zerops",
-			Keywords: []string{"nodejs", "javascript", "runtime"},
-			Content:  "Node.js runtime service on Zerops for building APIs.",
-		},
-		"zerops://docs/core/core-principles": {
-			URI:     "zerops://docs/core/core-principles",
-			Title:   "Core Principles",
-			Content: "# Core Principles\n\nUniversal rules here.",
-		},
-		"zerops://docs/core/runtime-exceptions": {
-			URI:     "zerops://docs/core/runtime-exceptions",
+		"zerops://foundation/runtimes": {
+			URI:     "zerops://foundation/runtimes",
 			Title:   "Runtime Exceptions",
 			Content: "## PHP\n\nPHP-specific rules.\n\n## Node.js\n\nNode.js-specific rules.",
 		},
-		"zerops://docs/core/service-cards": {
-			URI:     "zerops://docs/core/service-cards",
-			Title:   "Service Cards",
-			Content: "## PostgreSQL\n\nPort 5432.\n\n## Valkey\n\nPort 6379.",
+		"zerops://foundation/services": {
+			URI:     "zerops://foundation/services",
+			Title:   "Managed Service Reference",
+			Content: "## PostgreSQL\n\nPort 5432.\n\n## Valkey\n\nPort 6379.\n\n## Wiring Patterns\n\nUse ${hostname_var}.",
 		},
-		"zerops://docs/core/wiring-patterns": {
-			URI:     "zerops://docs/core/wiring-patterns",
-			Title:   "Wiring Patterns",
-			Content: "Use ${hostname_var}.",
-		},
-		"zerops://docs/core/recipes/ghost": {
-			URI:     "zerops://docs/core/recipes/ghost",
+		"zerops://recipes/ghost": {
+			URI:     "zerops://recipes/ghost",
 			Title:   "Ghost Recipe",
 			Content: "maxContainers: 1",
 		},
@@ -135,8 +118,8 @@ func TestKnowledgeTool_BriefingMode(t *testing.T) {
 
 	text := getTextContent(t, result)
 	// Verify briefing contains expected sections
-	if !strings.Contains(text, "Core Principles") {
-		t.Error("briefing missing core principles")
+	if !strings.Contains(text, "Zerops Fundamentals") {
+		t.Error("briefing missing foundation content")
 	}
 	if !strings.Contains(text, "PHP") {
 		t.Error("briefing missing PHP exceptions")
