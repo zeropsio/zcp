@@ -133,6 +133,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - **Tilde syntax**: `dist/~` extracts contents to `/var/www/` (not `/var/www/dist/`)
 - Without tilde: `dist` → `/var/www/dist/` (nested)
 - All files land in `/var/www`
+- **Git required**: `zerops_deploy` uses `zcli push` which requires a git repository. Before deploying, run `git init && git add -A && git commit -m "deploy"` in the working directory. Configure git identity if needed: `git config user.email "deploy@zerops.io" && git config user.name "Deploy"`
 
 ### 4. Cache Architecture (Two-Layer)
 - **Base layer**: OS + prepareCommands (invalidated only when prepareCommands change)
@@ -155,6 +156,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - Managed services start `ACTIVE` immediately
 - 10 most recent versions kept, older auto-deleted
 - CI skip: `ci skip` or `skip ci` in commit message
+- **Build completion detection**: In `zerops_events`, a build is done when the `process` event with action `stack.build` shows status `FINISHED`. The `build` event (appVersion) shows status `ACTIVE` which means deployed and running — NOT still building. Do NOT keep polling if `stack.build` process is `FINISHED`. If build FAILED, the process status will be `FAILED`
 
 ### 8. Public Access
 - **Shared IPv4**: free, HTTP/HTTPS only, requires BOTH A and AAAA DNS records
