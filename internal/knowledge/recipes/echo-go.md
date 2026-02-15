@@ -9,6 +9,7 @@ zerops:
     build:
       base: go@latest
       buildCommands:
+        - go mod tidy
         - go build -v -o app main.go
       deployFiles:
         - static/

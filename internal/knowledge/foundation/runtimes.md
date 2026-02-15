@@ -144,10 +144,14 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 
 **Build procedure**:
 1. Set `build.base: go@latest`
-2. If `go.sum` not in source: `buildCommands: [go mod tidy, go build -o app main.go]`
-3. If `go.sum` present: `buildCommands: [go build -o app main.go]`
-4. `deployFiles: app` (single binary)
-5. `run.start: ./app`
+2. `buildCommands`: ALWAYS use `go mod tidy` before build (safe even when go.sum exists):
+   ```
+   buildCommands:
+     - go mod tidy
+     - go build -o app .
+   ```
+3. `deployFiles: app` (single binary)
+4. `run.start: ./app`
 
 **Binding**: default `:port` binds all interfaces (correct, no change needed)
 
