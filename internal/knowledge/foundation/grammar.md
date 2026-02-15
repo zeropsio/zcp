@@ -28,6 +28,7 @@ The **L7 load balancer** sits in front of all runtime services. It terminates SS
 - Binding to `localhost`/`127.0.0.1` makes the app unreachable → **502 Bad Gateway**
 - Internal service-to-service traffic is always plain `http://` over VXLAN — never `https://`
 - Service discovery: `http://<hostname>:<port>` (e.g., `http://db:5432`)
+- For full networking reference: see zerops://guides/networking
 
 ### Core Plans
 
@@ -62,8 +63,9 @@ services[]:                            # REQUIRED
   envVariables: map<string,string>     # visible in GUI
   dotEnvSecrets: string                # .env format, auto-creates secrets
   buildFromGit: url                    # one-time build from repo
-  objectStorageSize: 1-100             # GB, object-storage only
+  objectStorageSize: 1-100             # GB, object-storage only (changeable in GUI later)
   objectStoragePolicy: private | public-read | public-objects-read | public-write | public-read-write
+  objectStorageRawPolicy: string       # custom IAM Policy JSON (alternative to objectStoragePolicy)
   verticalAutoscaling:                 # RUNTIME + DB/CACHE ONLY (not shared-storage, not object-storage)
     cpuMode: SHARED | DEDICATED        # default SHARED
     minCpu/maxCpu: int                 # CPU threads
@@ -75,12 +77,22 @@ services[]:                            # REQUIRED
 ```
 
 ### Preprocessor Functions
-Enable with `#yamlPreprocessor=on` as first line:
-- `${random(N)}`, `${randomInt(min, max)}` — random values
-- `${sha256(value)}`, `${bcrypt(value, rounds)}`, `${argon2id(value)}` — hashing
-- `${jwt(algorithm, secret, payload)}` — JWT generation
-- `${generateRSAKeyPair(bits)}`, `${generateEd25519KeyPair()}` — key pairs
-- Values generated once at import — fixed after, not regenerated
+Enable with `#yamlPreprocessor=on` as first line. Syntax: `<function(args)>`, chain modifiers with `|`: `<generateRandomString(32)|sha256>`.
+
+**Functions:**
+- `generateRandomString(<len>)` — random alphanumeric string
+- `generateRandomBytes(<len>)` — random bytes (binary)
+- `generateRandomInt(<min>,<max>)` — random integer in range
+- `pickRandom(<opt1>,<opt2>,...)` — pick random from options
+- `setVar(<name>,<content>)` / `getVar(<name>)` — store and retrieve variables
+- `generateRandomStringVar(<name>,<len>)` — generate + store string variable
+- `generateJWT(<secret>,<payload>)` — JWT token generation
+- `getDateTime(<format>,[<tz>])` — formatted datetime
+- `generateED25519Key(<name>)`, `generateRSA2048Key(<name>)`, `generateRSA4096Key(<name>)` — key pairs (stores pubKey/privKey)
+
+**Modifiers** (applied with `|`): `sha256`, `sha512`, `bcrypt`, `argon2id` (hashing) | `toHex`, `toString` (encoding) | `upper`, `lower`, `title` (case) | `noop` (testing)
+
+**Rules:** Functions return strings. Two-phase processing: preprocessing then YAML parsing. Values generated once at import — fixed after, not regenerated. Escape special characters: `\<`, `\>`, `\|` (double-escape `\\` for backslash)
 
 ---
 
@@ -158,6 +170,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - 10 most recent versions kept, older auto-deleted
 - CI skip: `ci skip` or `skip ci` in commit message
 - **Build completion detection**: In `zerops_events`, a build is done when the `process` event with action `stack.build` shows status `FINISHED`. The `build` event (appVersion) shows status `ACTIVE` which means deployed and running — NOT still building. Do NOT keep polling if `stack.build` process is `FINISHED`. If build FAILED, the process status will be `FAILED`
+- For full build/deploy pipeline: see zerops://guides/deployment-lifecycle
 
 ### 8. Public Access
 - **Shared IPv4**: free, HTTP/HTTPS only, requires BOTH A and AAAA DNS records
@@ -185,3 +198,9 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - zerops://foundation/runtimes — runtime-specific deltas
 - zerops://foundation/services — managed service reference
 - zerops://foundation/wiring — cross-service wiring templates
+- zerops://guides/deployment-lifecycle — build/deploy pipeline, readiness checks, event timeline
+- zerops://guides/build-cache — cache architecture, invalidation, per-runtime recommendations
+- zerops://guides/networking — L7 balancer, VXLAN internals, 502 diagnostics, proxy headers
+- zerops://guides/zerops-yaml-advanced — health checks, readiness checks, cron, startCommands, envReplace
+- zerops://guides/environment-variables — scopes, precedence, isolation, envReplace, secrets
+- zerops://guides/scaling — autoscaling mechanics, thresholds, common mistakes

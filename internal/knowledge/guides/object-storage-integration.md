@@ -8,14 +8,18 @@ Zerops Object Storage is S3-compatible (MinIO). Always set `AWS_USE_PATH_STYLE_E
 
 ## Environment Variables
 
-When you create an Object Storage service, Zerops auto-generates these env vars:
+When you create an Object Storage service, Zerops auto-generates these env vars (prefix with hostname for cross-service access, e.g. `${storage_apiUrl}`):
 
 | Variable | Description |
 |----------|-------------|
-| `${storage_apiUrl}` | S3 endpoint URL |
-| `${storage_accessKeyId}` | Access key |
-| `${storage_secretAccessKey}` | Secret key |
-| `${storage_bucketName}` | Default bucket name |
+| `apiUrl` | S3 endpoint URL (accessible from Zerops and remotely) |
+| `accessKeyId` | S3 access key |
+| `secretAccessKey` | S3 secret key |
+| `bucketName` | Auto-generated bucket name (hostname + random prefix, immutable) |
+| `quotaGBytes` | Bucket quota in GB |
+| `projectId` | Project ID (Zerops-generated) |
+| `serviceId` | Service ID (Zerops-generated) |
+| `hostname` | Service hostname |
 
 Reference them in your app's env:
 ```yaml
@@ -108,15 +112,22 @@ S3Client s3 = S3Client.builder()
 ```yaml
 services:
   - hostname: storage
-    type: object-storage
-    objectStorageSize: 2              # GB
-    objectStoragePolicy: public-read  # or private
+    type: object-storage             # or "objectstorage" (both valid)
+    objectStorageSize: 2              # GB (1-100, changeable in GUI later)
+    objectStoragePolicy: public-read  # predefined policy
     priority: 10
 ```
 
-**Policies:**
-- `public-read` — files accessible via URL (media, avatars, static assets)
-- `private` — files only accessible via S3 API (documents, backups)
+**Predefined policies** (`objectStoragePolicy`):
+- `private` — no anonymous access (documents, backups)
+- `public-read` — anonymous list + get (media, avatars, static assets)
+- `public-objects-read` — anonymous get only, no listing (direct links only)
+- `public-write` — anonymous put only
+- `public-read-write` — full anonymous access
+
+**Custom policy**: use `objectStorageRawPolicy` with IAM Policy JSON instead (template var `{{ .BucketName }}` available).
+
+Each service = one bucket (auto-named, immutable). Need multiple buckets? Create multiple services.
 
 ## When to Use Object Storage
 
@@ -130,14 +141,16 @@ services:
 | Database dumps | Yes — for backup storage |
 
 ## Gotchas
-1. **`AWS_USE_PATH_STYLE_ENDPOINT: true` is required**: Zerops uses MinIO which doesn't support virtual-hosted style
+1. **`forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` is REQUIRED**: Zerops uses MinIO which doesn't support virtual-hosted style
 2. **Containers are volatile**: Files on disk are lost on restart — always use Object Storage for persistent data
 3. **Region is required but ignored**: Set `us-east-1` — MinIO ignores it but SDKs require it
-4. **Public URL format**: `${storage_apiUrl}/${storage_bucketName}/path/to/file`
-5. **No CDN integration**: Object Storage is direct access — use Zerops CDN separately if needed
+4. **Public URL format**: `{apiUrl}/{bucketName}/path/to/file`
+5. **Independent infrastructure**: Object Storage runs on separate infra from other services — accessible from Zerops and remotely over internet
+6. **One bucket per service**: Bucket name auto-generated (hostname + random prefix), cannot be changed. Need multiple buckets? Add more object-storage services
+7. **No Zerops backup**: Object Storage is not covered by the Zerops backup system
+8. **No autoscaling**: Quota (1-100 GB) must be set manually, changeable in GUI after creation
 
 ## See Also
-- zerops://services/object-storage
-- zerops://examples/connection-strings
-- zerops://operations/production-checklist
-- zerops://config/import-yml-patterns
+- zerops://foundation/services — managed service reference (Object Storage section)
+- zerops://foundation/grammar — import.yml schema
+- zerops://guides/environment-variables — cross-service env var references

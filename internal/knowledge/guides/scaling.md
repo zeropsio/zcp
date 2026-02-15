@@ -1,0 +1,158 @@
+# Scaling and Autoscaling
+
+## Keywords
+scaling, autoscaling, vertical scaling, horizontal scaling, CPU, RAM, disk, containers, SHARED, DEDICATED, cpuMode, minCpu, maxCpu, minRam, maxRam, minDisk, maxDisk, minContainers, maxContainers, minFreeRamGB, minFreeRamPercent, startCpuCoreCount, verticalAutoscaling, HA, NON_HA, OOM, out of memory, scale up, scale down, threshold, Docker VM
+
+## TL;DR
+Zerops autoscales vertically (CPU/RAM/disk) and horizontally (container count). Runtimes support both. Managed services (DB, cache, shared-storage) support vertical only with fixed container count (NON_HA=1, HA=3). Object-storage and Docker have no autoscaling. Extends grammar.md section 9 with mechanics, thresholds, YAML syntax, and common mistakes.
+
+## Applicability Matrix
+
+| Service type | Vertical autoscaling | Horizontal scaling | Notes |
+|---|---|---|---|
+| **Runtime** (Node.js, Go, PHP, Python, Java, etc.) | Yes | Yes (1-10 containers) | Full autoscaling |
+| **Linux containers** (Alpine, Ubuntu) | Yes | Yes (1-10 containers) | Same as runtimes |
+| **Managed DB** (PostgreSQL, MariaDB) | Yes | No (fixed: NON_HA=1, HA=3) | Mode immutable after creation |
+| **Managed cache** (KeyDB/Valkey) | Yes | No (fixed: NON_HA=1, HA=3) | Mode immutable after creation |
+| **Shared storage** | No (automatic, not configurable) | No (fixed: NON_HA=1, HA=3) | DO NOT set verticalAutoscaling in import.yml |
+| **Object storage** | No | No | Fixed size at creation, no verticalAutoscaling |
+| **Docker** | No (manual, triggers VM restart) | Yes (VM count changeable, triggers restart) | No autoscaling at all |
+
+## Vertical Autoscaling
+
+### CPU Modes
+
+| Mode | Behavior | Best for |
+|---|---|---|
+| **SHARED** | Physical core shared with up to 10 tenants. Performance ranges 1/10 to 10/10 depending on neighbors | Dev, staging, low-traffic production |
+| **DEDICATED** | Exclusive full physical core(s). Consistent performance | Production, CPU-intensive workloads |
+
+- CPU mode can be changed **once per hour**
+- **startCpuCoreCount**: cores allocated at container start (default: 2). Increase for apps with heavy initialization
+
+### CPU Scaling Thresholds (DEDICATED mode only)
+
+- **Min free CPU cores (%)**: scale-up triggers when free capacity on a single core drops below this fraction (default: 10%)
+- **Dynamic min free total core %**: scale-up triggers when total free capacity across all cores drops below this percentage (default: 0%, disabled)
+
+### RAM Dual-Threshold System
+
+RAM is monitored every **10 seconds**. Two independent thresholds control scale-up -- whichever provides **more free memory** wins:
+
+| Threshold | Field | Default | Behavior |
+|---|---|---|---|
+| **Absolute** | `minFreeRamGB` | 0.0625 GB (64 MB) | Scale up when free RAM drops below this fixed amount |
+| **Percentage** | `minFreeRamPercent` | 0% (disabled) | Scale up when free RAM drops below this % of granted RAM |
+
+Both thresholds prevent OOM errors and preserve space for kernel disk caching. Swap is enabled as a safety net but does not replace proper threshold configuration.
+
+### Disk
+- **Grows only -- never shrinks** (no scale-down). Set `minDisk = maxDisk` to disable.
+
+### Resource Limits (Defaults)
+
+| Resource | Min | Max |
+|---|---|---|
+| CPU cores | 1 | 8 |
+| RAM | 0.125 GB | 48 GB |
+| Disk | 1 GB | 250 GB |
+
+PostgreSQL and MariaDB override RAM minimum to **0.25 GB**.
+
+### Scaling Behavior Parameters
+
+| Parameter | CPU | RAM | Disk |
+|---|---|---|---|
+| Collection interval | 10s | 10s | 10s |
+| Scale-up window | 20s | 10s | 10s |
+| Scale-down window | 60s | 120s | 300s |
+| Scale-up percentile | 60th | 50th | 50th |
+| Scale-down percentile | 40th | 50th | 50th |
+| Minimum step | 1 (0.1 cores) | 0.125 GB | 0.5 GB |
+| Maximum step | 40 | 32 GB | 128 GB |
+
+Scaling uses exponential growth: small increments initially, larger jumps under sustained high load.
+
+**Disabling autoscaling**: set **minimum = maximum** for any resource to pin it at a fixed value (e.g., `minRam: 2, maxRam: 2`).
+
+## Horizontal Scaling
+
+Applies to **runtimes and Linux containers only**. New containers are added when vertical scaling reaches configured maximums.
+
+- **minContainers**: baseline always running (system range: 1-10)
+- **maxContainers**: upper limit during peak (system range: 1-10)
+- Set `minContainers = maxContainers` to disable horizontal autoscaling
+
+**HA requirement**: applications must be stateless and handle distributed operation (no local file sessions, no local uploads).
+
+### Managed Services (DB, Cache, Shared Storage)
+
+Container count is **fixed by deployment mode**, set at creation, **immutable**:
+
+| Mode | Containers | Use case |
+|---|---|---|
+| `NON_HA` | 1 | Development, non-critical |
+| `HA` | 3 (on separate physical machines) | Production, automatic failover |
+
+HA recovery: failed container is disconnected, new one created on different hardware, data synchronized from healthy copies, failed container removed.
+
+PostgreSQL HA exposes read replica port **5433** for distributing SELECT queries.
+
+## Docker Services
+- Run in **VMs**, not containers. **No autoscaling** -- resources fixed at creation
+- Changing resources or VM count triggers **VM restart** (downtime). Disk can only increase
+- Consider runtime services or Linux containers if dynamic scaling is needed
+
+## import.yml Syntax
+
+```yaml
+services:
+  # Runtime with full scaling
+  - hostname: api
+    type: nodejs@22
+    minContainers: 2
+    maxContainers: 6
+    verticalAutoscaling:
+      cpuMode: SHARED
+      minCpu: 1
+      maxCpu: 4
+      startCpuCoreCount: 2
+      minRam: 0.5
+      maxRam: 8
+      minFreeRamGB: 0.125
+      minFreeRamPercent: 10
+      minDisk: 1
+      maxDisk: 20
+
+  # Managed DB (vertical only, no container settings)
+  - hostname: db
+    type: postgresql@16
+    mode: HA
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minCpu: 1
+      maxCpu: 4
+      minRam: 1
+      maxRam: 16
+      minDisk: 5
+      maxDisk: 100
+```
+
+## Common Mistakes
+
+**DO NOT** add `verticalAutoscaling` to **object-storage** or **shared-storage** services in import.yml -- causes import failure. Object storage has a fixed `objectStorageSize` only. Shared storage is managed automatically.
+
+**DO NOT** set `minContainers` or `maxContainers` for managed services (DB, cache, shared-storage) -- container count is fixed by `mode` (NON_HA=1, HA=3). Setting these causes import failure.
+
+**DO NOT** use `DEDICATED` CPU for low-traffic or dev services -- wastes resources. Use `SHARED` and switch to `DEDICATED` only when consistent performance matters.
+
+**DO NOT** set `minFreeRamGB: 0` and `minFreeRamPercent: 0` simultaneously -- removes OOM protection. Always keep at least the default absolute threshold (0.0625 GB).
+
+**DO NOT** forget that disk **never shrinks** -- setting a high `minDisk` is permanent for that container's lifetime.
+
+**DO NOT** assume horizontal scaling works automatically -- your application must be stateless. File-based sessions, local uploads, and in-memory state break with multiple containers.
+
+## See Also
+- zerops://foundation/grammar -- import.yml schema and platform rules (section 9: Scaling basics)
+- zerops://guides/production-checklist -- HA mode, minContainers recommendations
+- zerops://foundation/services -- managed service reference and mode constraints

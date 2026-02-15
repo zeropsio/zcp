@@ -1,0 +1,155 @@
+# Deployment Lifecycle
+
+## Keywords
+deploy, build, pipeline, lifecycle, build container, deploy process, rolling deployment, zero downtime, readiness check, health check, temporaryShutdown, build timeout, artifact, deploy files, prepareCommands, buildCommands, init commands, start command, container replacement, application version, build cancel, runtime prepare
+
+## TL;DR
+Zerops build & deploy pipeline: temporary build container runs prepareCommands + buildCommands, uploads artifact via deployFiles, then deploys to runtime containers with optional readiness checks. Default is zero-downtime rolling deployment. Build has a 60-minute timeout. The pipeline emits events trackable via `zerops_events`.
+
+---
+
+## Build Phase
+
+### Build Container Lifecycle
+
+The build container is **temporary** -- created on demand, destroyed after completion or failure.
+
+**Step-by-step execution order:**
+
+1. **Container creation** -- base environment from `build.base` + `build.os` (default Alpine)
+2. **Source code download** -- from GitHub, GitLab, or zcli push to `/var/www`
+3. **Cache restoration** -- cached files moved to `/build/source` (no-clobber, source wins)
+4. **prepareCommands** -- install additional tools/packages (skipped if cache valid)
+5. **buildCommands** -- compile, bundle, package your application
+6. **Artifact upload** -- files matching `deployFiles` stored in internal Zerops storage
+7. **Cache preservation** -- files matching `cache:` moved to `/build/cache`
+8. **Container deletion** -- build container destroyed regardless of outcome
+
+### Build Limits
+
+- **Resources**: CPU 1-5 cores, RAM 8 GB fixed, Disk 1-100 GB (auto-scales, not charged separately)
+- **Timeout**: **60 minutes** hard limit -- no retry, must trigger new pipeline
+- **Cancellation**: only available before build finishes -- once artifact uploaded, deploy cannot be cancelled
+
+### Command Exit Codes
+
+- **Exit 0** -- success, next command runs
+- **Non-zero** -- build cancelled, check build log for errors
+- YAML list items = **separate shells**; use `|` block scalar for **single shell** (shared env/cwd)
+
+---
+
+## Runtime Prepare Phase (Optional)
+
+Runs **after build, before deploy** when `run.prepareCommands` is defined. Creates a **custom runtime image** with additional system packages.
+
+**Execution order:**
+1. Create prepare container from `run.os` + `run.base`
+2. Copy files from `build.addToRunPrepare` to `/home/zerops/`
+3. Execute `run.prepareCommands` in order
+4. Snapshot as custom runtime image
+5. Image cached for future deploys
+
+**Cache invalidation triggers:**
+- Change to `run.os`, `run.base`, or `run.prepareCommands`
+- Change to `build.addToRunPrepare` file contents
+- Manual invalidation via GUI
+
+**DO NOT** include application code in the runtime prepare image. Deploy files arrive separately.
+
+---
+
+## Deploy Phase
+
+### First Deploy
+
+For each new container (count based on auto scaling settings):
+
+1. **Install runtime** -- base image or custom runtime image
+2. **Download artifact** -- from internal storage to `/var/www`
+3. **initCommands** -- optional per-container initialization (runs every start/restart)
+4. **start command** -- launch application
+5. **Readiness check** -- if configured, gates traffic routing
+6. **Container active** -- receives incoming requests
+
+Multiple containers deploy **in parallel**.
+
+### Subsequent Deploys (Rolling Deployment)
+
+Default behavior (`temporaryShutdown: false`):
+
+1. New containers started (same count as existing)
+2. New containers go through steps 1-6 above
+3. **Both old and new versions run simultaneously** during transition
+4. Old containers removed from load balancer (stop receiving new requests)
+5. Old container processes terminated
+6. Old containers deleted
+
+### temporaryShutdown Behavior
+
+| Setting | Behavior | Downtime |
+|---------|----------|----------|
+| `false` (default) | New containers start BEFORE old ones stop | **Zero downtime** |
+| `true` | Old containers stop BEFORE new ones start | **Temporary downtime** |
+
+Use `temporaryShutdown: true` only when you cannot run two versions simultaneously (e.g., database migrations, singleton locks).
+
+---
+
+## Readiness Check vs Health Check
+
+| Aspect | Readiness Check | Health Check |
+|--------|----------------|--------------|
+| When | **During deploy only** | **Continuously after deploy** |
+| Purpose | Gates traffic to new containers | Detects runtime failures |
+| Location | `deploy.readinessCheck` | `run.healthCheck` |
+| Failure action | Container marked failed after timeout, replaced | Container restarted |
+
+### Readiness Check Mechanics
+
+1. Application starts via `start` command
+2. Readiness check runs (httpGet or exec)
+3. If **fails** -- wait `retryPeriod` seconds (default 5s), retry
+4. If **succeeds** -- container marked active, receives traffic
+5. If still failing after `failureTimeout` (default 300s / 5 min) -- container deleted, new one created
+
+**httpGet**: succeeds on HTTP `2xx`, follows `3xx` redirects, 5-second per-request timeout
+**exec.command**: succeeds on exit code 0, 5-second per-command timeout
+
+---
+
+## Event Timeline (zerops_events)
+
+Typical pipeline events in chronological order:
+
+1. **`stack.build` process RUNNING** -- build container created, pipeline started
+2. **`stack.build` process FINISHED** -- build complete, artifact uploaded
+3. **`appVersion` build event ACTIVE** -- deploy started, containers launching
+4. **Service status returns to RUNNING** -- all containers active, deploy complete
+
+**Terminal states:**
+- Build done: `stack.build` process status = `FINISHED`
+- Build failed: `stack.build` process status = `FAILED`
+- Deploy done: service containers all active, new appVersion is `ACTIVE`
+
+**DO NOT** keep polling after `stack.build` shows `FINISHED` -- that means the build itself is complete. The `ACTIVE` status on appVersion means deployed and running.
+
+---
+
+## Application Versions
+
+Zerops keeps **10 most recent versions**. Older auto-deleted. Any archived version can be **restored** -- activates that version, archives current, restores env vars to their state when that version was last active.
+
+## Gotchas
+
+1. **Build and run are SEPARATE containers** -- build output does not automatically appear in runtime. You must specify `deployFiles`
+2. **initCommands run on EVERY container start** -- including restarts and horizontal scaling, not just deploys
+3. **initCommands failures do NOT cancel deploy** -- app starts regardless of init exit code
+4. **prepareCommands in build vs run** -- `build.prepareCommands` customizes build env, `run.prepareCommands` creates custom runtime image. Different containers, different purposes
+5. **deployFiles land in `/var/www`** -- use tilde syntax (`dist/~`) to extract contents directly
+
+## See Also
+- zerops://foundation/grammar -- zerops.yml schema and platform rules
+- zerops://guides/build-cache -- two-layer cache architecture and invalidation
+- zerops://guides/ci-cd -- triggering pipelines from GitHub/GitLab
+- zerops://guides/logging -- build and runtime log access

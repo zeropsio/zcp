@@ -1,7 +1,7 @@
 # Managed Service Reference
 
 ## Keywords
-postgresql, mariadb, valkey, keydb, elasticsearch, kafka, nats, meilisearch, clickhouse, qdrant, typesense, object storage, shared storage, database, cache, search, queue, s3, connection string, mode, HA, NON_HA
+postgresql, mariadb, valkey, keydb, elasticsearch, kafka, nats, meilisearch, clickhouse, qdrant, typesense, object storage, shared storage, database, cache, search, queue, s3, connection string, mode, HA, NON_HA, backup, export, import, debug, mount, pg_dump, mysqldump
 
 ## TL;DR
 Reference cards for all 13 Zerops managed services. Each card provides type, ports, env vars, connection pattern, HA specifics, and gotchas.
@@ -41,10 +41,13 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 **Gotchas**: HTTP only internally. Min RAM 0.25 GB. Default user `elastic`. Tune `HEAP_PERCENT=75` for search-heavy.
 
 ## Object Storage
-**Type**: `object-storage` (no version) | **Mode**: NOT REQUIRED
-**Env**: `apiUrl`, `accessKeyId`, `secretAccessKey`, `bucketName`, `storageCdnUrl`
-**Config**: `objectStorageSize: 1-100` GB, `objectStoragePolicy`, `priority: 10`
-**Gotchas**: MinIO backend. One bucket per service. **No Zerops backup**. `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` REQUIRED. Region `us-east-1` (required but ignored). No autoscaling.
+**Type**: `object-storage` or `objectstorage` (both valid, no version) | **Mode**: NOT REQUIRED
+**Env**: `apiUrl`, `accessKeyId`, `secretAccessKey`, `bucketName`, `quotaGBytes`, `projectId`, `serviceId`, `hostname`
+**Config**: `objectStorageSize: 1-100` GB, `objectStoragePolicy` or `objectStorageRawPolicy`, `priority: 10`
+**Infrastructure**: runs on **independent infra** separate from other project services — accessible from any Zerops service or remotely over internet
+**Bucket**: one auto-created per service (name = hostname + random prefix, **immutable**). Need multiple buckets? Create multiple object-storage services
+**Policies**: `private` | `public-read` (list+get) | `public-objects-read` (get only, no listing) | `public-write` (put only) | `public-read-write` (full). Or use `objectStorageRawPolicy` with IAM Policy JSON (`{{ .BucketName }}` template variable available)
+**Gotchas**: MinIO backend. **No Zerops backup**. `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` REQUIRED. Region `us-east-1` (required but ignored). No autoscaling, no verticalAutoscaling. Quota changeable in GUI after creation
 
 ## Shared Storage
 **Type**: `shared-storage` (no version) | **Mode**: MANDATORY, immutable
@@ -103,6 +106,45 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 - **VPN**: append `.zerops` to hostname
 - **Backup**: PostgreSQL, MariaDB, Elasticsearch, Meilisearch, Qdrant, NATS (NOT Valkey/KeyDB, NOT ClickHouse — use SQL BACKUP)
 - **Priority**: `priority: 10` for databases/storage to start before apps
+
+## Service Operations
+
+### Database Export/Import
+- **PostgreSQL**: `pg_dump` for export, `psql` for import
+- **MariaDB**: `mysqldump` for export, `mysql` for import
+- Requires Zerops VPN or Adminer (built-in web DB tool)
+- No SSL/TLS on internal connections — security provided by VPN tunnel
+- Desktop tools (DBeaver, pgAdmin, HeidiSQL) connect via VPN using standard env vars
+
+### Object Storage
+- MinIO backend on **independent infrastructure**, one auto-named bucket per service (hostname + random prefix, immutable)
+- S3-compatible access: `forcePathStyle: true` REQUIRED, region `us-east-1` (required but ignored by MinIO)
+- Accessible from any Zerops service and remotely over internet
+- Policies via `objectStoragePolicy`: `private`, `public-read`, `public-objects-read`, `public-write`, `public-read-write`. Custom IAM JSON via `objectStorageRawPolicy` (use `{{ .BucketName }}` template)
+- Cross-service env prefix: `${hostname_apiUrl}`, `${hostname_accessKeyId}`, `${hostname_secretAccessKey}`, `${hostname_bucketName}`
+- Quota (1-100 GB) changeable in GUI after creation. No autoscaling
+
+### Shared Storage
+- Mount in zerops.yml: `mount: [hostname]` — appears at `/mnt/{hostname}`
+- SeaweedFS backend, POSIX-only (not S3-compatible)
+- Max 60 GB per service
+
+### Backup System
+- **Supported**: PostgreSQL, MariaDB, Elasticsearch, Meilisearch, Qdrant, NATS, Shared Storage
+- **NOT supported**: Valkey, KeyDB, ClickHouse (use native dump commands), Object Storage
+- Default schedule: daily 00:00-01:00 UTC (configurable per service)
+- Retention minimums: 7 daily, 4 weekly, 3 monthly; max 50 backups per service
+- End-to-end encryption (X25519 per project)
+- Deleted services: backups retained for 7-day grace period
+- CLI: `zcli backup create <service>`
+- Storage limits: 5 GB (Lightweight plan), 25 GB (Serious plan), 1 TiB max per project
+
+### Debug Mode
+- Available for build and runtime prepare phases (independent settings)
+- Pause points: Disable, Before First Command, On Command Failure, After Last Command
+- Commands: `zsc debug continue`, `zsc debug success`, `zsc debug fail`
+- Max duration: 60 minutes (auto-cancelled after timeout)
+- Use for diagnosing build failures or runtime prepare issues
 
 ## See Also
 - zerops://foundation/grammar — universal rules
