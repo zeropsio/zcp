@@ -84,12 +84,14 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 ## Java
 
 - **BIND**: `server.address=0.0.0.0` (Spring Boot defaults to localhost!)
-- **BUILD TOOLS NOT PRE-INSTALLED**: `java@21` provides only JDK — NO Maven, NO Gradle. Use `./mvnw` (Maven Wrapper) in `buildCommands`. For plain projects without mvnw, install via `prepareCommands: [sudo apt-get update && sudo apt-get install -y maven]`
-- **BUILD**: `./mvnw clean install -DskipTests`, deployFiles: `target/app.jar` (relative path)
-- **START**: `java -jar target/app.jar` (relative to `/var/www`, NOT absolute path)
+- **BUILD TOOLS NOT PRE-INSTALLED**: `java@21` provides only JDK — NO Maven, NO Gradle
+  - **With Maven Wrapper** (recommended): `./mvnw clean install -DskipTests` in `buildCommands`. Include `mvnw`, `.mvn/` in your source
+  - **Without wrapper** (plain projects): set `os: ubuntu` and add `prepareCommands: ["sudo apt-get update && sudo apt-get install -y maven"]`, then use `mvn` in `buildCommands`. Alpine default does NOT have apt-get — `apk add maven` also unavailable
+- **FAT JAR REQUIRED**: deploy a single fat/uber JAR with all dependencies embedded. Use `maven-shade-plugin`, `spring-boot-maven-plugin`, or `maven-assembly-plugin`. Do NOT deploy individual jar + lib/ separately
+- **DEPLOY**: `deployFiles: target/app.jar` (relative path, single fat JAR)
+- **START**: `java -jar target/app.jar` (relative to `/var/www`)
 - **RAM**: `-Xmx` = ~75% of container max RAM
 - Cache: `.m2` or `.gradle`
-- Deploy only JAR (fat JAR via shade/spring-boot plugin), not entire `target/`
 
 ## Rust
 

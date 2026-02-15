@@ -172,7 +172,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 
 ### 10. Build Environment
 - CPU: 1-5 cores, RAM: 8 GB fixed, Disk: 1-100 GB, Time: 60 minutes
-- Build containers run as user `zerops` with **sudo** access — use `sudo apt-get` for system packages (bare `apt-get` will fail with permission denied)
+- Build containers run as user `zerops` with **sudo** access. Default OS is **Alpine** (`apk add --no-cache <pkg>`). With `os: ubuntu`, use `sudo apt-get update && sudo apt-get install -y <pkg>`. Using `apt-get` on Alpine fails with "command not found"
 - Base includes: selected runtime, git, wget, zcli. Build tools (Maven, Gradle, etc.) are NOT pre-installed — use wrappers (e.g., `./mvnw`) or install via `prepareCommands`
 
 ### 11. zsc Commands
