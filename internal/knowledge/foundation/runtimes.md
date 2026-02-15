@@ -29,126 +29,240 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 
 ## PHP
 
-- **BUILD≠RUN**: build `php@X`, run `php-nginx@X` or `php-apache@X`
-- **PORT**: 80 fixed (exception to 80/443 rule)
-- **documentRoot**: required — Laravel: `public`, WordPress: `""`
-- **TRUSTED_PROXIES**: `"127.0.0.1,10.0.0.0/8"` or CSRF breaks
-- **Multi-base**: `base: [php@8.4, nodejs@18]` for Vite/Inertia assets
-- Alpine extensions: `apk add php84-<ext>` (version prefix matches PHP major+minor, e.g. `php84-redis`, `php84-pdo_pgsql`, `php83-curl`)
-- Build tools pre-installed: `composer`, `git`, `wget`
-- Composer: use `--ignore-platform-reqs` on Alpine
+**Base image includes**: `composer`, `git`, `wget`, PHP runtime
+**Build≠Run**: build `php@X`, run `php-nginx@X` or `php-apache@X`
+**Port**: 80 fixed (exception to 80/443 rule)
+
+**Build procedure**:
+1. Set `build.base: php@8.4` (or desired version)
+2. If assets needed: `base: [php@8.4, nodejs@18]` (multi-base)
+3. `buildCommands`: `composer install --ignore-platform-reqs` (Alpine musl compat)
+4. `deployFiles`: include `vendor/`, app files
+5. Set `run.base: php-nginx@8.4` (or `php-apache@8.4`)
+6. Set `documentRoot` — Laravel: `public`, WordPress: `""`
+
+**Key settings**:
+- `TRUSTED_PROXIES: "127.0.0.1,10.0.0.0/8"` — REQUIRED or CSRF breaks
+- Alpine extensions: `apk add php84-<ext>` (version prefix = PHP major+minor)
 - Cache: `vendor`
+
+**Common mistakes**:
+- Missing `documentRoot` → Nginx doesn't know where to serve from
+- Missing `TRUSTED_PROXIES` → CSRF validation fails behind L7 LB
+- Using `php-nginx` as build base → build needs `php@X`, not the webserver variant
 
 ## Node.js
 
-- **BIND**: Express `app.listen(port, "0.0.0.0")`, Next.js `next start -H 0.0.0.0`, Fastify `host: "0.0.0.0"`, NestJS `app.listen(port, "0.0.0.0")`, Hono `serve({hostname: "0.0.0.0"})`
-- **DEPLOY**: MUST include `node_modules` — runtime doesn't run `npm install`
+**Base image includes**: Node.js, `npm`, `yarn`, `git`, `npx`
+
+**Build procedure**:
+1. Set `build.base: nodejs@22` (or desired version)
+2. `buildCommands`: `npm ci` or `yarn install`, then framework build command
+3. `deployFiles`: MUST include `node_modules` (runtime doesn't run npm install)
+4. `run.start`: `node server.js` or framework start command
+
+**Binding per framework**:
+- Express: `app.listen(port, "0.0.0.0")`
+- Next.js: `next start -H 0.0.0.0`
+- Fastify: `host: "0.0.0.0"`
+- NestJS: `app.listen(port, "0.0.0.0")`
+- Hono: `serve({hostname: "0.0.0.0"})`
+
+**Deploy patterns**:
 - Next.js SSR: deploy `.next`, `node_modules`, `package.json`, `next.config.js`, `public`
 - Nuxt SSR: deploy `.output`, `node_modules`, `package.json`
 - Cache: `node_modules`, `.next/cache`, `.pnpm-store`
 
+**Common mistakes**:
+- Missing `node_modules` in `deployFiles` → "Cannot find module" at runtime
+- Not binding `0.0.0.0` → 502 Bad Gateway
+- Next.js missing `output: 'export'` for static → produces SSR output instead
+
 ## Bun
 
-- **BIND**: `Bun.serve({hostname: "0.0.0.0"})` — default localhost = 502
-- Build tools pre-installed: Bun, `npm`, `yarn`, `git`, `npx`
-- Build commands: `bun i`, `bun run build`
-- **DEPLOY BUNDLED** (recommended): `bun build --outdir dist --target bun`, deploy `dist/` + `package.json` (NO node_modules)
-- **DEPLOY SOURCE**: deploy `src/` + `package.json` + `bun.lockb` + `node_modules`
-- Start: `bun start`
-- Elysia: `hostname: "0.0.0.0"` in constructor, Hono: `Bun.serve({fetch: app.fetch, hostname: "0.0.0.0"})`
-- Use `bunx` instead of `npx`
-- Cache: `node_modules`
+**Base image includes**: Bun, `npm`, `yarn`, `git`, `npx`
+**Versions**: `bun@latest` (= 1.2), `bun@1.1` (Ubuntu only), `bun@nightly`, `bun@canary`
+
+**Build procedure**:
+1. Set `build.base: bun@latest`
+2. `buildCommands`: `bun i`, then `bun run build` or `bun build --outdir dist --target bun`
+3. **Bundled deploy** (recommended): deploy `dist/` + `package.json` (NO node_modules)
+4. **Source deploy**: deploy `src/` + `package.json` + `bun.lockb` + `node_modules`
+5. `run.start`: `bun start`
+
+**Binding**: `Bun.serve({hostname: "0.0.0.0"})` — default localhost = 502
+- Elysia: `hostname: "0.0.0.0"` in constructor
+- Hono: `Bun.serve({fetch: app.fetch, hostname: "0.0.0.0"})`
+
+**Key settings**: Use `bunx` instead of `npx`. Cache: `node_modules`
 
 ## Deno
 
-- **BIND**: `Deno.serve({hostname: "0.0.0.0"}, handler)`
-- **PERMISSIONS**: `--allow-net --allow-env` minimum
-- Use `deno.jsonc`, not `deno.json`
-- Cache: deps in `~/.cache/deno` (auto-cached)
+**Base image includes**: Deno runtime
+**OS**: `os: ubuntu` REQUIRED (not available on Alpine)
+
+**Build procedure**:
+1. Set `build.base: deno@latest`, `build.os: ubuntu`
+2. Permissions: `--allow-net --allow-env` minimum
+3. Use `deno.jsonc`, not `deno.json`
+
+**Binding**: `Deno.serve({hostname: "0.0.0.0"}, handler)`
+**Cache**: deps in `~/.cache/deno` (auto-cached)
 
 ## Python
 
-- **BIND**: uvicorn `--host 0.0.0.0`, gunicorn `--bind 0.0.0.0:8000`
-- **INSTALL PATTERN** (canonical):
-  1. `build.addToRunPrepare: [requirements.txt]` — copies to `/home/zerops/` in prepare container
-  2. `run.prepareCommands: [python3 -m pip install --ignore-installed -r /home/zerops/requirements.txt]`
-  3. `build.buildCommands`: NO pip install needed (build container is separate)
-  4. `build.deployFiles: [app.py, ...]` or `[.]` for source files only
-  5. `run.start: gunicorn app:app --bind 0.0.0.0:8000` (gunicorn installed by prepareCommands)
-- **CRITICAL**: `run.prepareCommands` runs BEFORE deploy files arrive at `/var/www` but AFTER `addToRunPrepare` files are at `/home/zerops/`. Always reference `/home/zerops/requirements.txt`, NOT `/var/www/requirements.txt`
-- Build tools pre-installed: `pip`, `git`
-- System deps: `run.prepareCommands` with `apk add` (before pip install)
-- Use `--ignore-installed` for pip in `run.prepareCommands`
+**Base image includes**: Python, `pip`, `git`
+
+**Build procedure** (canonical pattern):
+1. Set `build.base: python@3.12` (or desired version)
+2. `build.addToRunPrepare: [requirements.txt]` — copies to `/home/zerops/`
+3. `run.prepareCommands: [python3 -m pip install --ignore-installed -r /home/zerops/requirements.txt]`
+4. `build.buildCommands`: NO pip install needed (build container is separate)
+5. `build.deployFiles: [app.py, ...]` or `[.]` for all source files
+6. `run.start: gunicorn app:app --bind 0.0.0.0:8000`
+
+**CRITICAL**: `run.prepareCommands` runs BEFORE deploy files arrive at `/var/www` but AFTER `addToRunPrepare` files are at `/home/zerops/`. Always use `/home/zerops/requirements.txt`, NOT `/var/www/requirements.txt`.
+
+**Binding**: uvicorn `--host 0.0.0.0`, gunicorn `--bind 0.0.0.0:8000`
+**System deps**: `run.prepareCommands` with `apk add` (before pip install)
+**Cache**: use `--ignore-installed` and `--no-cache-dir` for pip
+
+**Common mistakes**:
+- Referencing `/var/www/requirements.txt` in `run.prepareCommands` → file not found
+- Missing `--bind 0.0.0.0` → 502 Bad Gateway
+- Missing `CSRF_TRUSTED_ORIGINS` for Django → CSRF validation fails behind proxy
 
 ## Go
 
-- **BIND**: default `:port` binds all interfaces (correct, no change needed)
-- **BUILD≠RUN**: compiled binary — deploy only binary, no `run.base` needed (omit it)
-- **NEVER set `run.base: alpine@*`** — use no `run.base` or `run.base: go@latest`. Alpine run base causes glibc/musl mismatch for CGO-linked binaries (502 Bad Gateway)
-- Build tools pre-installed: Go compiler, `git`, `wget`
-- **Build commands** (in order): `go build -o app main.go` — do NOT create `go.sum` manually, the build container runs `go mod download` automatically if `go.sum` is present and valid
-- **NEVER write go.sum by hand** — checksums will be wrong. Either include a valid `go.sum` from local dev or omit it and add `go mod tidy` as first buildCommand
-- Deploy: `app` (single binary)
-- Start: `./app`
-- **CGO**: requires `os: ubuntu` + `CGO_ENABLED=1`, pure Go uses Alpine. When unsure, use `CGO_ENABLED=0 go build` for static binary
-- Logger MUST output to `os.Stdout`
-- Cache: `~/go` (auto-cached)
+**Base image includes**: Go compiler, `git`, `wget`
+**Version**: `go@1.22` (or `go@1`, `go@latest`)
+**Build≠Run**: compiled binary — deploy only binary, no `run.base` needed (omit it)
+
+**Build procedure**:
+1. Set `build.base: go@latest`
+2. If `go.sum` not in source: `buildCommands: [go mod tidy, go build -o app main.go]`
+3. If `go.sum` present: `buildCommands: [go build -o app main.go]`
+4. `deployFiles: app` (single binary)
+5. `run.start: ./app`
+
+**Binding**: default `:port` binds all interfaces (correct, no change needed)
+
+**NEVER set `run.base: alpine@*`** — causes glibc/musl mismatch for CGO-linked binaries → 502. Omit `run.base` or use `run.base: go@latest`.
+**NEVER write go.sum by hand** — checksums will be wrong
+**CGO**: requires `os: ubuntu` + `CGO_ENABLED=1`. When unsure: `CGO_ENABLED=0 go build` for static binary
+**Logger**: MUST output to `os.Stdout`
+**Cache**: `~/go` (auto-cached)
 
 ## Java
 
-- **BIND**: `server.address=0.0.0.0` (Spring Boot defaults to localhost!)
-- **BUILD TOOLS NOT PRE-INSTALLED**: `java@21` provides only JDK, `git`, `wget` — NO Maven, NO Gradle
-  - **With Maven Wrapper** (recommended): `./mvnw clean install` in `buildCommands`. Include `mvnw`, `.mvn/` in your source
-  - **Without wrapper** (plain projects): set `os: ubuntu` and add `prepareCommands: ["sudo apt-get update && sudo apt-get install -y maven"]`, then use `mvn` in `buildCommands`. Alpine default does NOT have apt-get — `apk add maven` also unavailable
-- **FAT JAR REQUIRED**: deploy a single fat/uber JAR with all dependencies embedded. Use `maven-shade-plugin`, `spring-boot-maven-plugin`, or `maven-assembly-plugin`. Do NOT deploy individual jar + lib/ separately
-- **DEPLOY**: `deployFiles: target/app.jar` (relative path, single fat JAR)
-- **START**: `java -jar target/app.jar` (relative to `/var/www`)
-- **RAM**: `-Xmx` = ~75% of container max RAM
-- Cache: `.m2` or `.gradle`
+**Base image includes**: JDK, `git`, `wget` — **NO Maven, NO Gradle**
+**Versions**: `java@21` (recommended), `java@17`. NOTE: `java@latest` = `java@17`, use `java@21` explicitly
+
+**Build procedure**:
+1. Set `build.base: java@21`
+2. **With Maven Wrapper** (recommended):
+   - Include `mvnw`, `.mvn/` in source
+   - `buildCommands: [./mvnw clean package -DskipTests]`
+3. **Without wrapper**:
+   - Set `build.os: ubuntu`
+   - `prepareCommands: [sudo apt-get update && sudo apt-get install -y maven]`
+   - `buildCommands: [mvn clean package -DskipTests]`
+4. `deployFiles: target/app.jar` (single fat JAR)
+5. `run.start: java -jar target/app.jar`
+
+**FAT JAR REQUIRED**: deploy a single fat/uber JAR with all dependencies. Use `maven-shade-plugin`, `spring-boot-maven-plugin`, or `maven-assembly-plugin`.
+**Binding**: `server.address=0.0.0.0` — Spring Boot defaults to localhost!
+**RAM**: `-Xmx` = ~75% of container max RAM
+**Cache**: `.m2` or `.gradle`
+
+**Common mistakes**:
+- Bare `mvn` or `maven` in buildCommands → "command not found" (not pre-installed)
+- Deploying thin JAR → ClassNotFoundException at runtime
+- Missing `server.address=0.0.0.0` for Spring Boot → 502 Bad Gateway
+- Using `apt-get` with default Alpine OS → "command not found"
 
 ## Rust
 
-- **BIND**: most frameworks (actix-web, axum, warp) default to `0.0.0.0` — verify if using custom binding
-- Build tools pre-installed: `cargo` (via Rust base), `npm`, `yarn`, `git`, `npx`
-- Build command: `cargo b --release` (always `--release` — debug 10-100x slower)
-- Cache: `target/`, `~/.cargo/registry`
-- Deploy: `target/release/~app` (tilde extracts binary to `/var/www/`)
-- Start: `./app` (binary lands in `/var/www/`)
-- Use `rust@latest` (or `rust@stable`, `rust@nightly`)
-- Native deps (openssl, etc.): `apk add --no-cache openssl-dev pkgconfig` in prepareCommands
+**Base image includes**: `cargo` (via Rust base), `git`
+
+**Build procedure**:
+1. Set `build.base: rust@latest` (or `rust@1`, `rust@nightly`)
+2. `buildCommands: [cargo b --release]` — ALWAYS `--release` (debug 10-100x slower)
+3. `deployFiles: target/release/~app` (tilde extracts binary to `/var/www/`)
+4. `run.start: ./app`
+
+**Binding**: most frameworks (actix-web, axum, warp) default to `0.0.0.0` — verify custom bindings
+**Native deps**: `apk add --no-cache openssl-dev pkgconfig` in prepareCommands
+**Cache**: `target/`, `~/.cargo/registry`
 
 ## .NET
 
-- **BIND**: `ASPNETCORE_URLS=http://0.0.0.0:5000`
-- Build tools pre-installed: .NET SDK, ASP.NET, `git`
-- Build command: `dotnet build -o app` (or `dotnet publish -c Release -o app`)
-- Deploy: `app` (the output folder)
-- Start: `cd app && dotnet dnet.dll` (adjust DLL name to match your project)
-- Alpine: use `linux-musl-x64` runtime identifier
-- Cache: NuGet packages
+**Base image includes**: .NET SDK, ASP.NET, `git`
+**Versions**: `dotnet@6`, `dotnet@7`, `dotnet@8`, `dotnet@9`
+
+**Build procedure**:
+1. Set `build.base: dotnet@9` (or desired version)
+2. `buildCommands: [dotnet publish -c Release -o app]` — `publish` preferred over `build` (includes all deps)
+3. Two deploy patterns:
+   - `deployFiles: [app]` → files at `/var/www/app/` → `run.start: cd app && dotnet MyApp.dll`
+   - `deployFiles: [app/~]` → files at `/var/www/` → `run.start: dotnet MyApp.dll`
+4. DLL name = project name (from `<RootNamespace>` or `.csproj` filename)
+
+**Binding**: `ASPNETCORE_URLS=http://0.0.0.0:5000` — Kestrel defaults to localhost, MUST override
+**Port**: typically 5000 (set in both ASPNETCORE_URLS and zerops.yml ports)
+**Alpine**: use `linux-musl-x64` runtime identifier for self-contained publish
+**Cache**: `~/.nuget`
+
+**Common mistakes**:
+- Missing `ASPNETCORE_URLS=http://0.0.0.0:5000` → 502 Bad Gateway (Kestrel binds localhost)
+- DLL name mismatch in start command → app won't start
+- Using `dotnet build` instead of `dotnet publish` → missing runtime deps in output
 
 ## Elixir
 
-- **BUILD=RUN**: build `elixir@latest`, run `elixir@latest` (both use Elixir base)
-- Build tools pre-installed: `mix`, `hex`, `rebar`, `npm`, `yarn`, `git`, `npx`
-- Build commands: `mix deps.get --only prod`, `mix compile`, `mix release`
-- Deploy: `_build/prod/rel/app/~` (tilde extracts release contents to `/var/www/`)
-- Start: `bin/app start` (release binary in `/var/www/`)
-- `PHX_SERVER=true` + `MIX_ENV=prod` required
-- Cache: `deps`, `_build`
+**Base image includes**: `mix`, `hex`, `rebar`, `npm`, `yarn`, `git`, `npx`
+**Build=Run**: both use `elixir@latest`
+
+**Build procedure**:
+1. Set `build.base: elixir@latest`
+2. `buildCommands: [mix deps.get --only prod, mix compile, mix release]`
+3. `deployFiles: _build/prod/rel/app/~` (tilde extracts release to `/var/www/`)
+4. `run.start: bin/app start`
+
+**Required env**: `PHX_SERVER=true` + `MIX_ENV=prod`
+**Cache**: `deps`, `_build`
 
 ## Gleam
 
+**OS**: `os: ubuntu` REQUIRED (not available on Alpine)
 - Erlang target: `gleam export erlang-shipment`, deploy `build/erlang-shipment/~`
 - JavaScript target: needs Node.js runtime
 
 ## Static
 
-- **BUILD≠RUN**: build `nodejs@22`, run `static`
-- No port config (serves on 80 internally)
-- Deploy: `dist/~` (tilde mandatory for correct root)
-- SPA fallback automatic ($uri → $uri.html → $uri/index.html → /index.html → 404)
-- Outputs: React/Vue `dist/~`, Angular `dist/app/browser/~`, Next.js export `out/~`, Nuxt generate `.output/public/~`, SvelteKit `build/~`, Astro `dist/~`, Remix `build/client/~`
+**Build≠Run**: build `nodejs@22`, run `static`
+
+**Build procedure**:
+1. Set `build.base: nodejs@22`
+2. `buildCommands`: framework build command (npm run build, etc.)
+3. `deployFiles: dist/~` (tilde MANDATORY for correct root)
+4. No `run.start` needed, no port config (serves on 80 internally)
+
+**SPA fallback**: automatic ($uri → $uri.html → $uri/index.html → /index.html → 404)
+
+**Framework outputs**:
+- React/Vue: `dist/~`
+- Angular: `dist/app/browser/~`
+- Next.js export: `out/~`
+- Nuxt generate: `.output/public/~`
+- SvelteKit: `build/~`
+- Astro: `dist/~`
+- Remix: `build/client/~`
+
+**Common mistakes**:
+- Missing tilde in `deployFiles` → nested directory structure
+- SvelteKit missing `@sveltejs/adapter-static` → not a static build
+- Next.js missing `output: 'export'` → SSR output instead of static
 
 ## Nginx
 
@@ -175,7 +289,9 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 - Use for: CGO Go, Python C extensions, legacy glibc-dependent software
 
 ## See Also
-- zerops://foundation/grammar — universal rules
+- zerops://foundation/platform-model — conceptual model (WHY things work the way they do)
+- zerops://foundation/rules — actionable DO/DON'T rules
+- zerops://foundation/grammar — universal YAML schema
 - zerops://foundation/services — managed services
 - zerops://guides/deployment-lifecycle — build/deploy pipeline details
 - zerops://guides/build-cache — cache architecture and per-runtime recommendations
