@@ -215,13 +215,20 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
    - `deployFiles: [app/~]` → files at `/var/www/` → `run.start: dotnet MyApp.dll`
 4. DLL name = project name (from `<RootNamespace>` or `.csproj` filename)
 
-**Binding**: `ASPNETCORE_URLS=http://0.0.0.0:5000` — Kestrel defaults to localhost, MUST override
-**Port**: typically 5000 (set in both ASPNETCORE_URLS and zerops.yml ports)
+**Binding (CRITICAL)**: Kestrel defaults to localhost → 502 Bad Gateway. MUST bind to 0.0.0.0 **in code**:
+```csharp
+// Option A: WebApplication (recommended)
+app.Urls.Add("http://0.0.0.0:5000");
+// Option B: WebApplicationBuilder
+builder.WebHost.UseUrls("http://0.0.0.0:5000");
+```
+Do NOT rely solely on `ASPNETCORE_URLS` env var — set binding explicitly in code.
+**Port**: typically 5000 (must match zerops.yml ports)
 **Alpine**: use `linux-musl-x64` runtime identifier for self-contained publish
 **Cache**: `~/.nuget`
 
 **Common mistakes**:
-- Missing `ASPNETCORE_URLS=http://0.0.0.0:5000` → 502 Bad Gateway (Kestrel binds localhost)
+- Relying on `ASPNETCORE_URLS` env var without code binding → 502 Bad Gateway
 - DLL name mismatch in start command → app won't start
 - Using `dotnet build` instead of `dotnet publish` → missing runtime deps in output
 
