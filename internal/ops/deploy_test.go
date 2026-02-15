@@ -591,7 +591,7 @@ func TestPrepareGitRepo(t *testing.T) {
 // runGit executes a git command in the given directory.
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.CommandContext(context.Background(), "git", args...) //nolint:gosec // test helper with static args
+	cmd := exec.CommandContext(context.Background(), "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
