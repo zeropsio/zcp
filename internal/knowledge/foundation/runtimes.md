@@ -83,12 +83,14 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 ## Go
 
 - **BIND**: default `:port` binds all interfaces (correct, no change needed)
-- **BUILD≠RUN**: compiled binary — deploy only binary, no run base needed
+- **BUILD≠RUN**: compiled binary — deploy only binary, no `run.base` needed (omit it)
+- **NEVER set `run.base: alpine@*`** — use no `run.base` or `run.base: go@latest`. Alpine run base causes glibc/musl mismatch for CGO-linked binaries (502 Bad Gateway)
 - Build tools pre-installed: Go compiler, `git`, `wget`
-- Build command: `go build -o app main.go`
+- **Build commands** (in order): `go build -o app main.go` — do NOT create `go.sum` manually, the build container runs `go mod download` automatically if `go.sum` is present and valid
+- **NEVER write go.sum by hand** — checksums will be wrong. Either include a valid `go.sum` from local dev or omit it and add `go mod tidy` as first buildCommand
 - Deploy: `app` (single binary)
 - Start: `./app`
-- **CGO**: requires `os: ubuntu` + `CGO_ENABLED=1`, pure Go uses Alpine
+- **CGO**: requires `os: ubuntu` + `CGO_ENABLED=1`, pure Go uses Alpine. When unsure, use `CGO_ENABLED=0 go build` for static binary
 - Logger MUST output to `os.Stdout`
 - Cache: `~/go` (auto-cached)
 
