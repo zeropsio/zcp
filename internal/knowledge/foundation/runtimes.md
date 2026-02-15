@@ -174,7 +174,8 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 4. `deployFiles: target/app.jar` (single fat JAR)
 5. `run.start: java -jar target/app.jar`
 
-**FAT JAR REQUIRED**: deploy a single fat/uber JAR with all dependencies. Use `maven-shade-plugin`, `spring-boot-maven-plugin`, or `maven-assembly-plugin`.
+**FAT JAR REQUIRED**: deploy a single fat/uber JAR with all dependencies. Use `maven-shade-plugin`, `spring-boot-maven-plugin`, or `maven-assembly-plugin`. Set `<finalName>app</finalName>` in pom.xml `<build>` section so artifact is always `target/app.jar` (avoids artifactId-version naming confusion).
+**Path behavior**: `deployFiles: target/app.jar` → file at `/var/www/target/app.jar`. `start: java -jar target/app.jar` is correct (relative to working dir `/var/www`).
 **Binding**: `server.address=0.0.0.0` — Spring Boot defaults to localhost!
 **Vanilla Java HTTP**: use `com.sun.net.httpserver.HttpServer` bound to `InetSocketAddress("0.0.0.0", port)`
 **RAM**: `-Xmx` = ~75% of container max RAM
