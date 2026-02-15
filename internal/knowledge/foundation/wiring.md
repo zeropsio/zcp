@@ -17,6 +17,30 @@ Cross-service wiring templates for all 13 Zerops managed services. Variable refe
 - **Project vars**: auto-inherited by all services — do NOT re-reference (creates shadow)
 - **Password sync**: changing DB password in GUI does NOT update env vars (manual sync)
 
+## CRITICAL: Wire credentials in import.yml
+
+Managed services auto-generate credentials but they are NOT automatically available to runtime services. You MUST wire them via `envVariables`/`envSecrets` on the **runtime service** in import.yml:
+
+```yaml
+services:
+  - hostname: mydb
+    type: mariadb@10.6
+    mode: NON_HA
+    priority: 10
+
+  - hostname: myapp
+    type: nodejs@22
+    envVariables:
+      DB_HOST: mydb
+      DB_PORT: "3306"
+      DB_NAME: ${mydb_dbName}
+    envSecrets:
+      DB_PASSWORD: ${mydb_password}
+      DB_USER: ${mydb_user}
+```
+
+Without this wiring, the runtime service has no way to connect to managed services.
+
 ## PostgreSQL
 **VARS**: `DB_HOST:{h}` `DB_PORT:5432` `DB_NAME:${h_dbName}`
 **SECRETS**: `DATABASE_URL:postgresql://${h_user}:${h_password}@{h}:5432/${h_dbName}`
