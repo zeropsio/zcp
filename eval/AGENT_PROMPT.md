@@ -31,6 +31,14 @@ python3 eval/scripts/generate.py
 ```
 Save the output to `eval/results/<tag>/prompt_<N>.txt` where `<tag>` is your run tag (e.g., `run_20260214`) and `<N>` is the iteration number.
 
+**Task types**: The generator picks from both import-only scenarios (single-service, runtime-db, full-stack, etc.) and **functional scenarios** (functional-dev, functional-fullstack). Functional scenarios include deploy + verify instructions — Claude will write app code, deploy it, and run the 7-point verification protocol. You can force a task type with `--task functional-dev` or let it pick randomly.
+
+To focus on functional scenarios, use:
+```bash
+python3 eval/scripts/generate.py --task functional-dev
+python3 eval/scripts/generate.py --task functional-fullstack
+```
+
 ### 2. Build and Deploy
 ```bash
 ./eval/scripts/build-deploy.sh
@@ -48,11 +56,11 @@ ssh zcpx "cat > /tmp/eval_prompt.txt << 'PROMPT_EOF'
 PROMPT_EOF"
 
 # Run Claude headless on remote (writes output to file)
-ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=10 zcpx \
+ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 zcpx \
   'claude --dangerously-skip-permissions \
   -p "$(cat /tmp/eval_prompt.txt)" \
-  --model sonnet \
-  --max-turns 20 \
+  --model opus \
+  --max-turns 60 \
   --output-format stream-json \
   --verbose \
   --no-session-persistence > /tmp/eval_run.jsonl 2>&1'
@@ -65,7 +73,7 @@ scp zcpx:/tmp/eval_run.jsonl eval/results/<tag>/run_<N>.jsonl
 - `--verbose` is REQUIRED with `--output-format stream-json`
 - Use heredoc to pass the prompt (avoids quoting issues)
 - `ServerAliveInterval` prevents SSH timeout during long runs
-- Remote Claude may take 2-5 minutes for complex scenarios
+- Import-only scenarios: 2-5 minutes. Functional scenarios: 3-10 minutes (build + deploy + verify)
 
 ### 4. Parse Execution Log
 ```bash
@@ -74,16 +82,16 @@ python3 eval/scripts/extract-tool-calls.py eval/results/<tag>/run_<N>.jsonl > ev
 
 Then read BOTH the raw `.jsonl` and parsed `.json` to understand the full picture.
 
-### 5. Cleanup eval-* Services
+### 5. Cleanup eval Services
 ```bash
 ssh -o ServerAliveInterval=30 zcpx \
   'claude --dangerously-skip-permissions \
-  -p "List all services. Then delete every service whose hostname starts with eval-. Confirm deletion for each." \
+  -p "List all services. Then delete every service whose hostname starts with eval. Confirm deletion for each." \
   --model haiku \
   --max-turns 15 \
   --no-session-persistence > /tmp/eval_cleanup.log 2>&1'
 ```
-The cleanup log stays on the remote (not needed locally). If cleanup fails, run `./eval/scripts/cleanup.sh`.
+This cleans up both random-hostname services (`evalappbun242`) and fixed-hostname services (`evalappnodejs`, `evalsvcpostgresql`). The cleanup log stays on the remote. If cleanup fails, run `./eval/scripts/cleanup.sh`.
 
 ### 6. Analyze the Full Execution
 
@@ -95,6 +103,14 @@ Read the complete execution trace and answer:
 - **Unnecessary steps**: Did Claude take detours (delete+recreate, multiple retries)?
 - **Error messages**: What Zerops API errors occurred? What was misconfigured?
 - **Tool call count**: How efficient was the execution?
+
+**For functional scenarios** (prompt contains "write and deploy a real working application"), also check:
+- **Build success**: Did zerops.yml produce a successful build on first attempt? Were buildCommands, deployFiles, and start command correct?
+- **Binding**: Did the app bind to `0.0.0.0`? (502 = binding issue)
+- **Env var wiring**: Did the app connect to managed services using correct env var names?
+- **Health endpoint**: Did `/health` return 200 with correct body?
+- **Service connectivity**: Did `/status` confirm managed service connections?
+- **EVAL RESULT block**: Look for the `=== EVAL RESULT ===` block in the output — it has a structured PASS/FAIL verdict per phase.
 
 ### 7. Fix Knowledge Gaps
 
@@ -122,11 +138,19 @@ d. **Commit** with a descriptive message explaining what was wrong and what was 
 ### 8. Check Early Stop
 
 Track quality per iteration. A **clean run** means:
+
+**Import-only scenarios:**
 - Zero API errors (from tool results)
 - No retries or workarounds
-- Knowledge queries returned relevant results
 - Services created correctly on first attempt
 - 10 or fewer tool calls total
+
+**Functional scenarios:**
+- Import succeeded on first attempt
+- Build succeeded on first attempt
+- All verification checks passed
+- EVAL RESULT verdict is PASS
+- 30 or fewer tool calls total
 
 If the **last 2 consecutive iterations were clean runs** → STOP early. The knowledge base is in good shape.
 
@@ -180,7 +204,7 @@ Write `eval/results/<tag>/SUMMARY.md` with:
 
 ## Troubleshooting
 
-- **SSH timeout**: Use `-o ServerAliveInterval=30 -o ServerAliveCountMax=10` on ssh commands
+- **SSH timeout**: Use `-o ServerAliveInterval=30 -o ServerAliveCountMax=20` on ssh commands
 - **Empty stream-json**: `--verbose` flag is REQUIRED with `--output-format stream-json`
 - **SSH buffering**: Never pipe remote Claude stdout directly over SSH. Always write to file on remote, then scp back.
 - **Claude CLI errors on zcpx**: Claude Code v2.1.42, binary at `/home/zerops/.local/bin/claude`
@@ -188,3 +212,6 @@ Write `eval/results/<tag>/SUMMARY.md` with:
 - **Build fails**: Run `go test ./... -short` first to catch compilation errors
 - **Binary hash mismatch**: Retry scp, check disk space on remote
 - **Running binary can't be overwritten**: The deploy script handles this (temp file + mv)
+- **Functional: 502 Bad Gateway**: App not binding to 0.0.0.0. Check knowledge for the runtime's binding rule.
+- **Functional: build FAILED**: Check zerops_logs + `zcli service log <hostname> --showBuildLogs --limit 50`
+- **Functional: no EVAL RESULT block**: Claude ran out of turns. Increase --max-turns or check raw .jsonl for partial results.

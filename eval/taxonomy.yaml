@@ -48,6 +48,32 @@ task_types:
     max_services: 2
     prefer_uncommon: true
 
+  # --- Functional scenarios: deploy real code + verify ---
+
+  - name: functional-dev
+    description: Deploy working app with health/status endpoints, verify end-to-end
+    min_runtimes: 1
+    max_runtimes: 1
+    min_services: 1
+    max_services: 1
+    service_filter: [postgresql, mariadb, valkey]
+    runtime_filter: [nodejs, python, go, php-nginx, bun, java, dotnet]
+    modifiers: [subdomain]
+    functional: true
+    fixed_hostnames: true
+
+  - name: functional-fullstack
+    description: Deploy app with DB + cache/search, verify connectivity to all services
+    min_runtimes: 1
+    max_runtimes: 1
+    min_services: 2
+    max_services: 2
+    service_filter: [postgresql, mariadb, valkey, meilisearch, qdrant]
+    runtime_filter: [nodejs, python, go, bun, java, dotnet]
+    modifiers: [subdomain]
+    functional: true
+    fixed_hostnames: true
+
 runtimes:
   - { name: "nodejs", versions: ["22", "20"] }
   - { name: "python", versions: ["3.12", "3.11"] }

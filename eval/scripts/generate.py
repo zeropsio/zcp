@@ -24,9 +24,11 @@ def load_taxonomy():
         return yaml.safe_load(f)
 
 
-def pick_runtime(tax, prefer_uncommon=False):
+def pick_runtime(tax, prefer_uncommon=False, runtime_filter=None):
     """Pick a random runtime with version."""
     runtimes = tax["runtimes"]
+    if runtime_filter:
+        runtimes = [r for r in runtimes if r["name"] in runtime_filter]
     if prefer_uncommon:
         # Prefer less common runtimes
         uncommon = [r for r in runtimes if r["name"] in (
@@ -50,10 +52,16 @@ def pick_service(tax, service_filter=None):
     return svc["name"], ver
 
 
-def generate_hostname(prefix, name):
-    """Generate eval-prefixed hostname (a-z, 0-9 only, no hyphens)."""
-    suffix = random.randint(100, 999)
+def generate_hostname(prefix, name, fixed=False):
+    """Generate eval-prefixed hostname (a-z, 0-9 only, no hyphens).
+
+    If fixed=True, use deterministic hostname without random suffix
+    (for functional scenarios that need known hostnames for cleanup/verify).
+    """
     clean_name = name.replace("-", "").replace("_", "")
+    if fixed:
+        return f"eval{prefix}{clean_name}"
+    suffix = random.randint(100, 999)
     return f"eval{prefix}{clean_name}{suffix}"
 
 
@@ -71,6 +79,7 @@ def build_scenario(tax, task_type_name=None):
 
     prefer_uncommon = task.get("prefer_uncommon", False)
     service_filter = task.get("service_filter")
+    runtime_filter = task.get("runtime_filter")
     forced_modifiers = task.get("modifiers", [])
     focus = task.get("focus")
 
@@ -80,7 +89,7 @@ def build_scenario(tax, task_type_name=None):
     seen_names = set()
     for _ in range(n_runtimes):
         for _attempt in range(10):
-            name, ver = pick_runtime(tax, prefer_uncommon)
+            name, ver = pick_runtime(tax, prefer_uncommon, runtime_filter)
             if name not in seen_names:
                 seen_names.add(name)
                 runtimes.append((name, ver))
@@ -112,16 +121,20 @@ def build_scenario(tax, task_type_name=None):
         "services": services,
         "modifiers": modifiers,
         "focus": focus,
+        "functional": task.get("functional", False),
+        "fixed_hostnames": task.get("fixed_hostnames", False),
     }
 
 
 def render_prompt(scenario, tax):
     """Render a natural-language prompt from a scenario."""
+    is_functional = scenario.get("functional", False)
+    fixed = scenario.get("fixed_hostnames", False)
     parts = []
 
     # Describe runtimes
     for name, ver in scenario["runtimes"]:
-        hostname = generate_hostname("app", name)
+        hostname = generate_hostname("app", name, fixed=fixed)
         if ver and ver != "latest":
             parts.append(f"{name} {ver} (hostname: {hostname})")
         else:
@@ -129,7 +142,7 @@ def render_prompt(scenario, tax):
 
     # Describe services
     for name, ver in scenario["services"]:
-        hostname = generate_hostname("svc", name)
+        hostname = generate_hostname("svc", name, fixed=fixed)
         if ver:
             parts.append(f"{name} {ver} (hostname: {hostname})")
         else:
@@ -173,7 +186,79 @@ def render_prompt(scenario, tax):
     if focus_parts:
         prompt += "\n\n" + "\n".join(focus_parts)
 
+    # For non-functional: simple mode, no deploy
+    if not is_functional:
+        prompt += (
+            "\n\nUse simple mode (single services, not dev+stage). "
+            "Just create the infrastructure with import.yml, do not deploy any code."
+        )
+    else:
+        # Functional: deploy real code + verify
+        prompt += render_functional_instructions(scenario)
+
     return prompt
+
+
+def render_functional_instructions(scenario):
+    """Append deploy + verify instructions for functional scenarios."""
+    runtime_name = scenario["runtimes"][0][0]
+    service_names = [s[0] for s in scenario["services"]]
+
+    # Build service-specific status check hints
+    status_checks = []
+    for svc_name in service_names:
+        if svc_name in ("postgresql", "mariadb", "clickhouse"):
+            status_checks.append(f"query {svc_name} with SELECT 1")
+        elif svc_name in ("valkey",):
+            status_checks.append("ping the cache (PING → PONG)")
+        elif svc_name in ("elasticsearch", "meilisearch", "qdrant", "typesense"):
+            status_checks.append(f"check {svc_name} health endpoint")
+        else:
+            status_checks.append(f"verify {svc_name} connectivity")
+
+    status_desc = " and ".join(status_checks) if status_checks else "return ok"
+
+    return f"""
+
+Use simple mode (single services, not dev+stage).
+
+After creating the services, write and deploy a real working application:
+
+1. Create app source in `/tmp/evalapp/`.
+2. The app MUST serve these HTTP endpoints:
+   - `GET /health` → `{{"status":"ok"}}` (HTTP 200)
+   - `GET /status` → {status_desc}, return JSON with connectivity result
+   - `GET /` → `{{"message":"evalapp running","runtime":"{runtime_name}"}}` (HTTP 200)
+3. Write `zerops.yml` in `/tmp/evalapp/` for the runtime service.
+4. Deploy with `zerops_deploy workingDir="/tmp/evalapp"`.
+5. Poll `zerops_events` for build completion (wait 5s, then every 10s, max 300s).
+6. Run the full 7-point verification protocol:
+   - Build completed (zerops_events terminal, not FAILED)
+   - Service RUNNING (zerops_discover)
+   - No error logs (zerops_logs severity="error" since="5m")
+   - Startup confirmed (zerops_logs search="listening|started|ready" since="5m")
+   - No post-startup errors (zerops_logs severity="error" since="2m")
+   - HTTP health check: curl /health → 200 + body contains "ok"
+   - Service connectivity: curl /status → 200 + body confirms connection
+
+After verification, output this result block:
+
+```
+=== EVAL RESULT ===
+scenario: {runtime_name}-{'-'.join(service_names)}-dev
+import: {{PASS|FAIL}}
+build: {{PASS|FAIL}}
+deploy: {{PASS|FAIL}}
+health_check: {{PASS|FAIL}}
+service_connectivity: {{PASS|FAIL}}
+subdomain_url: {{url or N/A}}
+health_response: {{response body}}
+status_response: {{response body}}
+verdict: {{PASS|FAIL}}
+=== END RESULT ===
+```
+
+Verdict is PASS only if ALL checks pass."""
 
 
 def main():
