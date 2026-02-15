@@ -155,31 +155,35 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 
 ## Java
 
-**Base image includes**: JDK, `git`, `wget` — **NO Maven, NO Gradle**
+**Base image includes**: JDK, `git`, `wget` — **NO Maven, NO Gradle pre-installed**
 **Versions**: `java@21` (recommended), `java@17`. NOTE: `java@latest` = `java@17`, use `java@21` explicitly
 
-**Build procedure**:
+**Build procedure** (ALWAYS use Maven Wrapper when creating new projects):
 1. Set `build.base: java@21`
-2. **With Maven Wrapper** (recommended):
-   - Include `mvnw`, `.mvn/` in source
+2. **With Maven Wrapper** (REQUIRED for new projects):
+   - Include `mvnw`, `.mvn/wrapper/maven-wrapper.jar`, `.mvn/wrapper/maven-wrapper.properties` in source
+   - `chmod +x mvnw` before deploying
    - `buildCommands: [./mvnw clean package -DskipTests]`
-3. **Without wrapper**:
-   - Set `build.os: ubuntu`
-   - `prepareCommands: [sudo apt-get update && sudo apt-get install -y maven]`
+3. **Without wrapper** (existing projects only):
+   - Set `build.os: ubuntu` — MANDATORY (Alpine has no `apt-get`)
+   - `prepareCommands: [sudo apt-get update && sudo apt-get install -y maven]` — `sudo` REQUIRED
    - `buildCommands: [mvn clean package -DskipTests]`
 4. `deployFiles: target/app.jar` (single fat JAR)
 5. `run.start: java -jar target/app.jar`
 
 **FAT JAR REQUIRED**: deploy a single fat/uber JAR with all dependencies. Use `maven-shade-plugin`, `spring-boot-maven-plugin`, or `maven-assembly-plugin`.
 **Binding**: `server.address=0.0.0.0` — Spring Boot defaults to localhost!
+**Vanilla Java HTTP**: use `com.sun.net.httpserver.HttpServer` bound to `InetSocketAddress("0.0.0.0", port)`
 **RAM**: `-Xmx` = ~75% of container max RAM
 **Cache**: `.m2` or `.gradle`
 
 **Common mistakes**:
+- Using Gradle for new projects without wrapper → "GradleWrapperMain not found"
 - Bare `mvn` or `maven` in buildCommands → "command not found" (not pre-installed)
+- `apt-get` without `sudo` → permission denied
+- `apt-get` on default Alpine OS → "command not found" (need `build.os: ubuntu`)
 - Deploying thin JAR → ClassNotFoundException at runtime
 - Missing `server.address=0.0.0.0` for Spring Boot → 502 Bad Gateway
-- Using `apt-get` with default Alpine OS → "command not found"
 
 ## Rust
 
