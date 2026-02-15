@@ -43,13 +43,17 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 
 **Key settings**:
 - `TRUSTED_PROXIES: "127.0.0.1,10.0.0.0/8"` — REQUIRED or CSRF breaks
-- Alpine extensions: `apk add php84-<ext>` (version prefix = PHP major+minor)
+- Alpine extensions: `sudo apk add --no-cache php84-<ext>` (version prefix = PHP major+minor, `sudo` required)
 - Cache: `vendor`
+- Custom nginx: `siteConfigPath: site.conf.tmpl` — use `{{.PhpSocket}}` for fastcgi_pass (NOT `127.0.0.1:9000`)
+- Default nginx config already routes `/` to `index.php` via `try_files`
 
 **Common mistakes**:
 - Missing `documentRoot` → Nginx doesn't know where to serve from
 - Missing `TRUSTED_PROXIES` → CSRF validation fails behind L7 LB
 - Using `php-nginx` as build base → build needs `php@X`, not the webserver variant
+- `apk add` without `sudo` → "Permission denied" in prepareCommands
+- Custom nginx with hardcoded `fastcgi_pass 127.0.0.1:9000` → use `{{.PhpSocket}}` template variable
 
 ## Node.js
 
