@@ -176,13 +176,37 @@ Every deployment must pass this protocol before being considered complete.
 
 ### Simple mode — deploy flow
 
-```
-zerops_import content="<import.yml>"          # create services
-zerops_process processId="<id>"               # wait for RUNNING
-# Env var sync: verify managed svc vars resolved (see above)
-zerops_deploy targetService="<runtime>"       # returns BUILD_TRIGGERED
-# CRITICAL: wait 5s, then poll zerops_events every 10s (max 300s) until build FINISHED
-```
+1. **Import services:**
+   ```
+   zerops_import content="<import.yml>"
+   zerops_process processId="<id>"               # wait for RUNNING
+   ```
+
+   > **CRITICAL — Subdomain:** If your import.yml includes `enableSubdomainAccess: true`, the subdomain is already enabled. Do NOT call `zerops_subdomain action="enable"` after import — it is redundant and wastes a tool call.
+
+2. **Verify environment variables are resolved:**
+   ```
+   zerops_discover service="<runtime>" includeEnvs=true
+   ```
+   Check that cross-referenced variables (e.g., `${evaldb_hostname}`) have real values — not empty, not literal `${...}`. If you see unresolved `${...}` literals:
+   ```
+   zerops_manage action="restart" serviceHostname="<runtime>"
+   # Wait 10s, then re-check with zerops_discover includeEnvs=true
+   ```
+
+3. **Prepare working directory for deploy:**
+   `zerops_deploy` uses `zcli push` which requires a git repository. If your working directory has no `.git`:
+   ```bash
+   cd /path/to/app && git init && git add -A && git commit -m "deploy"
+   ```
+   Note: `zerops_deploy` auto-initializes git if the directory exists but has no `.git`, so this step is a safety net.
+
+4. **Deploy and verify:**
+   ```
+   zerops_deploy targetService="<runtime>" workingDir="/path/to/app"
+   # CRITICAL: returns BUILD_TRIGGERED — build is NOT complete yet
+   # Wait 5s, then poll zerops_events every 10s (max 300s) until build FINISHED
+   ```
 
 Then run the full 7-point verification protocol.
 

@@ -71,6 +71,8 @@ func TestStore_GetNotFound(t *testing.T) {
 func TestStore_FoundationDocsEmbedded(t *testing.T) {
 	store := newTestStore(t)
 	foundationURIs := []string{
+		"zerops://foundation/platform-model",
+		"zerops://foundation/rules",
 		"zerops://foundation/grammar",
 		"zerops://foundation/runtimes",
 		"zerops://foundation/services",
@@ -105,6 +107,12 @@ func TestStore_GetBriefing_RealDocs(t *testing.T) {
 	briefing, err := store.GetBriefing("php-nginx@8.4", []string{"postgresql@16"}, nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
+	}
+	if !strings.Contains(briefing, "Zerops Platform Model") {
+		t.Error("briefing missing platform model content")
+	}
+	if !strings.Contains(briefing, "Zerops Rules") {
+		t.Error("briefing missing rules content")
 	}
 	if !strings.Contains(briefing, "Zerops Grammar") {
 		t.Error("briefing missing grammar content")
@@ -678,15 +686,23 @@ func TestStore_GetBriefing_SurfacesMatchingRecipes(t *testing.T) {
 	}
 }
 
-func TestStore_GetBriefing_GrammarFirstThenRuntime(t *testing.T) {
+func TestStore_GetBriefing_LayerOrderRealDocs(t *testing.T) {
 	store := newTestStore(t)
 	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
+	platformIdx := strings.Index(briefing, "Zerops Platform Model")
+	rulesIdx := strings.Index(briefing, "Zerops Rules")
 	grammarIdx := strings.Index(briefing, "Zerops Grammar")
 	runtimeIdx := strings.Index(briefing, "Runtime-Specific: Bun")
 	serviceIdx := strings.Index(briefing, "Service Cards")
+	if platformIdx < 0 {
+		t.Fatal("briefing missing Zerops Platform Model")
+	}
+	if rulesIdx < 0 {
+		t.Fatal("briefing missing Zerops Rules")
+	}
 	if grammarIdx < 0 {
 		t.Fatal("briefing missing Zerops Grammar")
 	}
@@ -695,6 +711,13 @@ func TestStore_GetBriefing_GrammarFirstThenRuntime(t *testing.T) {
 	}
 	if serviceIdx < 0 {
 		t.Fatal("briefing missing Service Cards section")
+	}
+	// L0 platform model → L1 rules → L2 grammar → L3 runtime → L4 services
+	if platformIdx >= rulesIdx {
+		t.Errorf("platform model (pos %d) should come before rules (pos %d)", platformIdx, rulesIdx)
+	}
+	if rulesIdx >= grammarIdx {
+		t.Errorf("rules (pos %d) should come before grammar (pos %d)", rulesIdx, grammarIdx)
 	}
 	if grammarIdx >= runtimeIdx {
 		t.Errorf("grammar (pos %d) should come before runtime (pos %d)", grammarIdx, runtimeIdx)

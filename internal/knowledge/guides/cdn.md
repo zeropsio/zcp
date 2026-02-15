@@ -4,7 +4,7 @@
 cdn, cache, edge, content delivery, static assets, object storage cdn, geo-steering, purge, cache invalidation
 
 ## TL;DR
-Zerops CDN has 6 global regions with a **fixed 30-day cache TTL** (HTTP Cache-Control headers are ignored by CDN but still affect browsers).
+Zerops CDN has 6 global regions with a **fixed 30-day cache TTL** (HTTP Cache-Control headers are ignored by CDN but still affect browsers). Built on Nginx + Cloudflare geo-steering.
 
 ## Regions
 1. **EU (Prague, CZ)** — Primary + all-region failover
@@ -47,6 +47,13 @@ DNS TTL: 30 seconds. Geo-steering routes to nearest node. EU Prague is fallback 
 /prefix*      # Pattern prefix match
 ```
 Wildcard must be at end. Use `$` suffix for exact file match.
+
+### Purge via zsc
+```bash
+zsc cdn purge /*              # Purge all cached content
+zsc cdn purge /images/*       # Purge directory
+zsc cdn purge /style.css$     # Purge exact file
+```
 
 ## Gotchas
 1. **30-day fixed TTL**: Cannot be changed — `Cache-Control: max-age=3600` has no effect on CDN

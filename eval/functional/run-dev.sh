@@ -45,7 +45,7 @@ ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 "$REMOTE_HOST" \
   "claude --dangerously-skip-permissions \
     -p \"\$(cat $REMOTE_PROMPT)\" \
     --model opus \
-    --max-turns 60 \
+    --max-turns 90 \
     --output-format stream-json \
     --verbose \
     --no-session-persistence 2>&1 | tee $REMOTE_LOG"  \
@@ -58,6 +58,15 @@ if command -v python3 &>/dev/null; then
     python3 "$PROJECT_DIR/eval/scripts/extract-tool-calls.py" \
         "$RESULTS_DIR/run.jsonl" \
         "$RESULTS_DIR/tools.json" 2>/dev/null || echo "==> Warning: tool extraction failed"
+fi
+
+# --- Score the run ---
+if [ -f "$RESULTS_DIR/tools.json" ]; then
+    python3 "$PROJECT_DIR/eval/scripts/score.py" \
+        "$RESULTS_DIR/tools.json" \
+        -o "$RESULTS_DIR/score.json" \
+        --type functional 2>&1 | while IFS= read -r line; do echo "==> $line"; done \
+        || echo "==> Warning: scoring failed"
 fi
 
 # --- Extract EVAL RESULT block from stream-json ---
@@ -126,3 +135,4 @@ echo "  $RESULTS_DIR/prompt.md    — prompt sent"
 echo "  $RESULTS_DIR/run.jsonl    — raw output"
 echo "  $RESULTS_DIR/tools.json   — parsed tool calls"
 echo "  $RESULTS_DIR/result.txt   — extracted result"
+echo "  $RESULTS_DIR/score.json   — automated score"

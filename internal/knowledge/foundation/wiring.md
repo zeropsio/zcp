@@ -8,8 +8,9 @@ Cross-service wiring templates for all 13 Zerops managed services. Variable refe
 
 ## Syntax Rules
 
+- **`{h}` placeholder**: represents the service hostname you are wiring to. In actual YAML, replace `{h}` with the real hostname (e.g., `DB_HOST: mydb`). For variable references, use `${hostname_varname}` syntax
 - **Reference**: `${hostname_variablename}` — dashes in hostnames become underscores
-- **envSecrets**: passwords, tokens, keys (masked in GUI, cannot view after creation)
+- **envSecrets**: passwords, tokens, keys (blurred in GUI by default, editable/deletable)
 - **envVariables**: config, URLs, flags (visible in GUI)
 - **Hostname = DNS**: use hostname directly for connections (`db:5432`, NOT `${db_hostname}:5432`)
 - **Internal**: ALWAYS `http://` — NEVER `https://` (SSL at L7 balancer)
@@ -53,7 +54,7 @@ Cross-service wiring templates for all 13 Zerops managed services. Variable refe
 **CONN**: `security.protocol=SASL_PLAINTEXT`, `sasl.mechanism=PLAIN` (no anonymous)
 
 ## NATS
-**SECRETS**: `NATS_URL:nats://${h_user}:${h_password}@{h}:4222`
+**SECRETS**: `NATS_URL:nats://${h_user}:${h_password}@{h}:4222` or `NATS_URL:${h_connectionString}`
 **NOTE**: User is always `zerops`. JetStream enabled by default.
 
 ## Meilisearch
@@ -75,6 +76,10 @@ Cross-service wiring templates for all 13 Zerops managed services. Variable refe
 **VARS**: `TYPESENSE_HOST:{h}` `TYPESENSE_PORT:8108`
 **SECRETS**: `TYPESENSE_API_KEY:${h_apiKey}`
 **CONN**: `http://{h}:8108` with `x-typesense-api-key` header
+
+## RabbitMQ
+**VARS**: `RABBITMQ_HOST:{h}` `RABBITMQ_PORT:5672`
+**SECRETS**: `RABBITMQ_URL:amqp://${h_user}:${h_password}@{h}:5672` or `RABBITMQ_URL:${h_connectionString}`
 
 ## See Also
 - zerops://foundation/grammar — variable reference syntax, envSecrets vs envVariables

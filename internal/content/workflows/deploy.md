@@ -70,6 +70,22 @@ Present zerops.yml to user for review before deploying.
 
 ---
 
+## Prerequisites
+
+Before deploying, ensure these requirements are met:
+
+1. **Git repository required.** `zerops_deploy` uses `zcli push` internally, which requires a git repository in the working directory. If the directory has no `.git`:
+   ```bash
+   cd /path/to/app && git init && git add -A && git commit -m "deploy"
+   ```
+   Note: `zerops_deploy` auto-initializes git for local deploys if the directory exists but has no `.git`.
+
+2. **`zerops.yml` must exist** at the working directory root with a `setup:` entry matching the target service hostname. Without it, the build pipeline has no instructions.
+
+3. **Environment variables must be resolved.** Run `zerops_discover service="{hostname}" includeEnvs=true` and verify cross-referenced variables have real values (not `${...}` literals). If unresolved, restart the service and re-check.
+
+---
+
 ## Phase 2: Deploy and Monitor
 
 ### Important: zcli push is asynchronous

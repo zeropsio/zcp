@@ -136,6 +136,17 @@ Typical pipeline events in chronological order:
 
 ---
 
+## Build Event Polling Checklist
+
+When monitoring a build/deploy via `zerops_events`:
+
+1. **Filter by service**: always use `serviceHostname` parameter to avoid stale events from other services or previous iterations
+2. **Check `stack.build` process**: look for status `FINISHED` (success) or `FAILED` (error). Once `FINISHED`, the build is done — stop polling build status
+3. **Check `appVersion` build event**: status `ACTIVE` means deployed and running. This confirms deploy completion
+4. **Do NOT confuse build events**: `stack.build` process `RUNNING` = build in progress. `appVersion` `ACTIVE` = already deployed. These are different events
+5. **Timeout guidance**: builds have a 60-minute hard limit. If no `FINISHED` after ~5 minutes for typical apps, check build logs via `zerops_logs`
+6. **Stale events**: project-level events may include old builds from previous deploys. Always verify the event timestamp and service match
+
 ## Application Versions
 
 Zerops keeps **10 most recent versions**. Older auto-deleted. Any archived version can be **restored** -- activates that version, archives current, restores env vars to their state when that version was last active.

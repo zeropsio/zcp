@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ type TimelineEvent struct {
 	Duration    string `json:"duration,omitempty"`
 	User        string `json:"user,omitempty"`
 	ProcessID   string `json:"processId,omitempty"`
+	Hint        string `json:"hint,omitempty"`
 }
 
 // actionNameMap normalizes Zerops action names to human-readable forms.
@@ -49,6 +51,29 @@ var actionNameMap = map[string]string{
 	"serviceStackUserDataFile":           "env-update",
 	"serviceStackEnableSubdomainAccess":  "subdomain-enable",
 	"serviceStackDisableSubdomainAccess": "subdomain-disable",
+}
+
+// processHintMap maps process statuses to interpretation hints.
+var processHintMap = map[string]string{
+	"FINISHED": "COMPLETE: Process finished successfully.",
+	"RUNNING":  "IN_PROGRESS: Process still running.",
+	"FAILED":   "FAILED: Process failed.",
+	"PENDING":  "IN_PROGRESS: Process queued.",
+}
+
+// appVersionHintMap maps app version statuses to interpretation hints.
+var appVersionHintMap = map[string]string{
+	"ACTIVE":       "DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.",
+	"BUILDING":     "IN_PROGRESS: Build is running. Continue polling.",
+	"BUILD_FAILED": "FAILED: Build failed. Check build logs with zerops_logs severity=error.",
+	"DEPLOYING":    "IN_PROGRESS: Deploy is running. Continue polling.",
+}
+
+// statusHint returns an interpretation hint for the given status and hint map.
+// Lookup is case-insensitive.
+func statusHint(status string, hints map[string]string) string {
+	upper := strings.ToUpper(status)
+	return hints[upper]
 }
 
 const defaultEventsLimit = 50
@@ -138,6 +163,7 @@ func Events(
 			Duration:  calcDuration(p.Started, p.Finished),
 			User:      user,
 			ProcessID: p.ID,
+			Hint:      statusHint(p.Status, processHintMap),
 		})
 		processCount++
 	}
@@ -156,6 +182,7 @@ func Events(
 			Action:    eventType,
 			Status:    av.Status,
 			Service:   svcName,
+			Hint:      statusHint(av.Status, appVersionHintMap),
 		})
 		deployCount++
 	}

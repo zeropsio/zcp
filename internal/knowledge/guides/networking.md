@@ -77,9 +77,9 @@ Your app receives plain HTTP but can inspect these headers for the real client i
 
 | Feature | Description |
 |---------|-------------|
-| **Redirects** | 301/302/307/308 with optional path/query preservation |
-| **Access Policy** | IP whitelist/blacklist (CIDR), returns 403 on deny |
-| **Rate Limiting** | Per-IP or per-domain, burst queue, 503 when exceeded |
+| **Redirects** | 301/302/307/308 with `preservePath` and `preserveQuery` options |
+| **Access Policy** | CIDR-based IP allow/deny lists, returns 403 on denied request |
+| **Rate Limiting** | Per-IP or per-domain, configurable burst queue, returns 503 when exceeded |
 | **Basic Auth** | HTTP Basic Authentication per location |
 | **Custom Content** | Return static content with custom status code and MIME type |
 

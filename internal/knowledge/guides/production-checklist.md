@@ -124,6 +124,39 @@ Remove entirely or disable `enableSubdomainAccess`. Use VPN + pgAdmin/DBeaver lo
 - `SECRET_KEY_BASE` generated via preprocessor
 - `PHX_HOST` set to domain
 
+## HA Checklist
+
+| Item | Recommendation |
+|------|---------------|
+| Core package | **Serious Core** for production (better SLA, dedicated resources) |
+| CPU mode | `cpuMode: DEDICATED` for consistent performance under load |
+| Environment separation | Separate projects for dev/staging/prod |
+| Stateless design | Sessions in Valkey, uploads in Object Storage — no local state |
+| Database mode | `mode: HA` for all managed services (immutable — plan before creation) |
+| Min containers | `minContainers: 2` on all app services for zero-downtime deploys |
+
+## Health Check Pattern
+
+Combined readiness + runtime health check for production services:
+
+```yaml
+zerops:
+  - setup: app
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 3000
+          path: /health
+    run:
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /health
+      start: node server.js
+```
+
+Readiness check gates traffic during deploy. Health check runs continuously — unhealthy containers are restarted after 5-minute retry window.
+
 ## Gotchas
 1. **HA is immutable**: Must delete and recreate service to switch modes
 2. **Containers are volatile**: Any file written to disk is lost on restart

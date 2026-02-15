@@ -7,33 +7,33 @@ postgresql, mariadb, valkey, keydb, elasticsearch, kafka, nats, meilisearch, cli
 Reference cards for all 13 Zerops managed services. Each card provides type, ports, env vars, connection pattern, HA specifics, and gotchas.
 
 ## PostgreSQL
-**Type**: `postgresql@{17,16,14}` | **Mode**: MANDATORY, immutable
+**Type**: `postgresql@{17,16,14}` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 5432 (RW), 5433 (read replicas, HA only), 6432 (external TLS via pgBouncer)
 **Env**: `hostname`, `port`, `user`, `password`, `connectionString`, `dbName`
 **HA**: 1 primary + 2 read replicas, streaming replication (async), auto-failover
 **Gotchas**: No internal TLS (only 6432). Don't modify `zps` user. Read replicas have async lag. Some libs need `postgres://` scheme.
 
 ## MariaDB
-**Type**: `mariadb@10.6` | **Mode**: MANDATORY, immutable
+**Type**: `mariadb@10.6` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 3306 (fixed, no separate replica port)
 **Env**: `hostname`, `port`, `user`, `password`, `connectionString`, `dbName`
 **HA**: MaxScale routing, read/write splitting, async replication, auto-failover
 **Gotchas**: No separate replica port (MaxScale routes on single port). No internal TLS. Don't modify `zps` user.
 
 ## Valkey
-**Type**: `valkey@7.2` (MUST be 7.2 — 8 passes validation but fails import) | **Mode**: MANDATORY, immutable
+**Type**: `valkey@7.2` (MUST be 7.2 — 8 passes validation but fails import) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 6379 (RW), 6380 (RW TLS), 7000 (RO, HA only), 7001 (RO TLS, HA only)
 **Env**: `hostname`, `port`, `password`, `connectionString`, `user`
 **HA**: 1 master + 2 replicas. Zerops-specific: ports 6379/6380 on replicas forward to master (NOT native Valkey). Async replication.
 **Gotchas**: Version MUST be 7.2. Port forwarding is Zerops-specific. Use 7000/7001 for direct read scaling. TLS ports for external/VPN only.
 
 ## KeyDB
-**Type**: `keydb@6` | **Mode**: MANDATORY (NON_HA only)
+**Type**: `keydb@6` | **Mode**: optional (NON_HA only)
 **Ports**: 6379 | **Env**: same as Valkey
 **DEPRECATED**: Do NOT use for new projects — use `valkey@7.2` instead. When user requests "Redis" or "cache", always use Valkey. Migration from KeyDB: only hostname changes.
 
 ## Elasticsearch
-**Type**: `elasticsearch@{8.16,9.2}` | **Mode**: MANDATORY, immutable
+**Type**: `elasticsearch@8.16` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 9200 (HTTP only, no native transport)
 **Env**: `hostname`, `port`, `password` (user always `elastic`)
 **HA**: Multi-node cluster, automatic repair
@@ -50,55 +50,61 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 **Gotchas**: MinIO backend. **No Zerops backup**. `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` REQUIRED. Region `us-east-1` (required but ignored). No autoscaling, no verticalAutoscaling. Quota changeable in GUI after creation
 
 ## Shared Storage
-**Type**: `shared-storage` (no version) | **Mode**: MANDATORY, immutable
+**Type**: `shared-storage` (no version) | **Mode**: optional (default NON_HA), immutable
 **Mount**: `/mnt/{hostname}` — add `mount: [hostname]` to runtime zerops.yml
 **HA**: 1:1 replication, auto-failover
 **Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). NON_HA = data loss on hardware failure.
 
 ## Kafka
-**Type**: `kafka@3.8` | **Mode**: MANDATORY, immutable
+**Type**: `kafka@3.8` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 9092 (SASL PLAIN), 8081 (Schema Registry if enabled)
 **Env**: `hostname`, `user`, `password`
 **HA**: 3 brokers, 6 partitions, replication factor 3, auto-repair
 **Gotchas**: SASL PLAIN only (no anonymous). NON_HA = 1 broker, **no replication**. Indefinite topic retention (implement cleanup). 250 GB cap.
 
 ## NATS
-**Type**: `nats@{2.10,2.12}` | **Mode**: MANDATORY, immutable
+**Type**: `nats@2.10` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 4222 (client), 8222 (HTTP monitoring)
-**Env**: `hostname`, `user` (always `zerops`), `password`
+**Env**: `hostname`, `user` (always `zerops`), `password`, `connectionString`
 **Config**: `JET_STREAM_ENABLED` (default 1), `MAX_PAYLOAD` (default 8 MB, max 64 MB)
 **Gotchas**: Config changes require restart. JetStream HA sync lag 1 min. Set `JET_STREAM_ENABLED=0` for core pub-sub only.
 
 ## Meilisearch
-**Type**: `meilisearch@{1.10,1.20}` | **Mode**: MANDATORY (NON_HA only)
+**Type**: `meilisearch@1.10` | **Mode**: optional (NON_HA only)
 **Ports**: 7700
 **Env**: `hostname`, `masterKey`, `defaultSearchKey`, `defaultAdminKey`
 **Gotchas**: **No HA** (single-node only). Never expose `masterKey` to frontend — use `defaultSearchKey`.
 
 ## ClickHouse
-**Type**: `clickhouse@25.3` | **Mode**: MANDATORY, immutable
+**Type**: `clickhouse@25.3` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 9000 (native), 8123 (HTTP), 9004 (MySQL compat), 9005 (PostgreSQL compat)
 **Env**: `hostname`, `port`, `portHttp`, `portMysql`, `portPostgresql`, `portNative`, `password`, `superUserPassword`, `dbName`
 **HA**: 3 nodes, replication factor 3, cluster `zerops`
 **Gotchas**: HA requires `ReplicatedMergeTree` (standard `MergeTree` won't replicate). Super user for backups.
 
 ## Qdrant
-**Type**: `qdrant@{1.12,1.10}` | **Mode**: MANDATORY, immutable
+**Type**: `qdrant@{1.12,1.10}` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 6333 (HTTP), 6334 (gRPC)
 **Env**: `hostname`, `port`, `grpcPort`, `apiKey`, `readOnlyApiKey`, `connectionString`, `grpcConnectionString`
 **HA**: 3 nodes, `automaticClusterReplication=true` by default
 **Gotchas**: No public access (internal only). Use 6334 for gRPC (higher perf for large vectors).
 
 ## Typesense
-**Type**: `typesense@27.1` | **Mode**: MANDATORY, immutable
+**Type**: `typesense@27.1` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 8108
 **Env**: `hostname`, `port`, `apiKey` (immutable master key)
 **HA**: 3-node Raft consensus, auto leader election, recovery up to 1 min
 **Gotchas**: API key immutable. 1-min recovery — expect brief 503s. CORS always on.
 
+## RabbitMQ
+**Type**: `rabbitmq@3.9` | **Mode**: optional (default NON_HA), immutable
+**Ports**: 5672 (AMQP), 15672 (management UI)
+**Env**: `hostname`, `port`, `user`, `password`, `connectionString`
+**Gotchas**: Management UI on port 15672. Use AMQP 0-9-1 protocol for client connections.
+
 ## Common Patterns
 
-- **HA Mode**: immutable after creation (delete+recreate to change)
+- **Mode**: optional (default NON_HA), immutable after creation (delete+recreate to change)
 - **Hostname**: immutable, becomes internal DNS name
 - **Internal**: HTTP/plain TCP only (no TLS) — TLS for external/VPN ports
 - **Credentials**: auto-generated in env vars

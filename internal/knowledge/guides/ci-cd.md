@@ -1,7 +1,7 @@
 # CI/CD on Zerops
 
 ## Keywords
-ci cd, github, gitlab, github actions, gitlab ci, webhook, automatic deploy, trigger, pipeline, continuous deployment
+ci cd, github, gitlab, github actions, gitlab ci, webhook, automatic deploy, trigger, pipeline, continuous deployment, zcli push, jenkins, circleci, generic ci
 
 ## TL;DR
 Zerops supports GitHub/GitLab webhook triggers (new tag or push to branch) and GitHub Actions / GitLab CI via `zcli push` with an access token.
@@ -51,6 +51,40 @@ Service detail → Build, Deploy, Run → Stop automatic build trigger.
 1. **Full repo access required**: Webhook integration needs full access to create/manage webhooks
 2. **`ci skip` in commit message**: Prevents pipeline trigger — useful for docs-only changes
 3. **Service ID not obvious**: Find it in service URL or three-dot menu → Copy Service ID
+
+## GitLab CI
+
+```yaml
+# .gitlab-ci.yml
+deploy:
+  stage: deploy
+  image: ubuntu:latest
+  script:
+    - apt-get update && apt-get install -y curl
+    - curl -L https://zerops.io/zcli/install.sh | sh
+    - zcli login $ZEROPS_TOKEN
+    - zcli push --project-id $ZEROPS_PROJECT_ID --service-id $ZEROPS_SERVICE_ID
+  only:
+    - main
+```
+
+## Generic CI (Any System)
+
+Any CI system with shell access can deploy via `zcli push`:
+1. Install zcli: `curl -L https://zerops.io/zcli/install.sh | sh`
+2. Authenticate: `zcli login <access-token>`
+3. Deploy: `zcli push --project-id <id> --service-id <id>`
+
+### zcli push key flags
+| Flag | Description |
+|------|-------------|
+| `--project-id` | Target project ID |
+| `--service-id` | Target service ID |
+| `--setup` | zerops.yml setup name (if different from service hostname) |
+| `--version-name` | Custom version label (e.g. git tag) |
+| `--workspace-state` | `all` (default), `clean` (git clean), `staged` (staged only) |
+| `--no-git` | Deploy without git context |
+| `--deploy-git-folder` | Include `.git/` directory in deploy |
 
 ## See Also
 - zerops://config/zerops-yml

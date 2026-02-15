@@ -3,6 +3,9 @@ package ops
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/auth"
@@ -145,6 +148,15 @@ func deployLocal(
 		return nil, err
 	}
 
+	// zcli push requires a git repo — auto-init if missing.
+	if workingDir != "" {
+		if info, statErr := os.Stat(workingDir); statErr == nil && info.IsDir() {
+			if err := prepareGitRepo(ctx, workingDir); err != nil {
+				return nil, fmt.Errorf("prepare git repo in %s: %w", workingDir, err)
+			}
+		}
+	}
+
 	args := buildZcliArgs(target.ID, workingDir)
 
 	_, err = localDeployer.ExecZcli(ctx, args...)
@@ -174,11 +186,35 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 		parts = append(parts, setup)
 	}
 
-	// Push from workingDir.
-	pushCmd := fmt.Sprintf("cd %s && zcli push --serviceId %s", workingDir, targetServiceID)
+	// Push from workingDir with git-init guard for non-git directories.
+	pushCmd := fmt.Sprintf("cd %s && (test -d .git || (git init -q && git add -A && git commit -q -m 'deploy')) && zcli push --serviceId %s", workingDir, targetServiceID)
 	parts = append(parts, pushCmd)
 
 	return strings.Join(parts, " && ")
+}
+
+// prepareGitRepo ensures workingDir contains a git repository.
+// zcli push requires a .git directory. If missing, initializes one
+// with all files committed.
+func prepareGitRepo(ctx context.Context, workingDir string) error {
+	gitDir := filepath.Join(workingDir, ".git")
+	if _, err := os.Stat(gitDir); err == nil {
+		return nil // already a git repo
+	}
+
+	cmds := [][]string{
+		{"git", "init", "-q"},
+		{"git", "add", "-A"},
+		{"git", "commit", "-q", "-m", "deploy", "--allow-empty"},
+	}
+	for _, args := range cmds {
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // args are static
+		cmd.Dir = workingDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %w\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	return nil
 }
 
 func buildZcliArgs(targetServiceID, workingDir string) []string {

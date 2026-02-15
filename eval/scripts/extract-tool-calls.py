@@ -17,6 +17,14 @@ import json
 import re
 import sys
 
+# Only check these API-action tools for errors.
+# Skip knowledge/workflow/context tools that discuss errors in documentation.
+ERROR_CHECK_TOOLS = {
+    "zerops_import", "zerops_deploy", "zerops_events", "zerops_subdomain",
+    "zerops_manage", "zerops_env", "zerops_scale", "zerops_discover",
+    "zerops_process", "zerops_mount", "zerops_delete",
+}
+
 
 def process_tool_result(tool_id, content, pending_tools, tool_calls,
                         knowledge_docs_used, errors):
@@ -47,15 +55,21 @@ def process_tool_result(tool_id, content, pending_tools, tool_calls,
             if m not in knowledge_docs_used:
                 knowledge_docs_used.append(m)
 
-    # Track errors from results
-    result_str = str(content).lower()
-    error_patterns = ["error", "failed", "invalid", "not found",
-                      "not_found", "auth_required", "bad_request"]
-    if any(err in result_str for err in error_patterns):
-        errors.append({
-            "tool": tool_name,
-            "message": str(content)[:300],
-        })
+    # Track errors — only for API-action tools, skip knowledge/content docs
+    if tool_name in ERROR_CHECK_TOOLS:
+        result_str = str(content)
+        # Look for structured error indicators, not just the word "error" in prose
+        error_indicators = [
+            r'"error"\s*:', r'"code"\s*:\s*"[A-Z_]+"', r'"status"\s*:\s*"FAILED"',
+            r'PLATFORM_ERROR', r'AUTH_REQUIRED', r'SERVICE_NOT_FOUND',
+            r'INVALID_PARAMETER', r'NOT_IMPLEMENTED', r'API_ERROR',
+            r'"isError"\s*:\s*true',
+        ]
+        if any(re.search(pat, result_str) for pat in error_indicators):
+            errors.append({
+                "tool": tool_name,
+                "message": str(content)[:300],
+            })
 
     tool_calls.append(pending_tools.pop(tool_id))
 
@@ -195,9 +209,15 @@ def extract_tool_calls(stream_file):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <stream-file.jsonl>", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <stream-file.jsonl> [output.json]", file=sys.stderr)
         sys.exit(1)
 
     result = extract_tool_calls(sys.argv[1])
-    json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
-    print()
+
+    if len(sys.argv) >= 3:
+        with open(sys.argv[2], "w") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+    else:
+        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
+        print()

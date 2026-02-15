@@ -18,7 +18,7 @@ type SubdomainInput struct {
 func RegisterSubdomain(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_subdomain",
-		Description: "Enable or disable zerops.app subdomain for a service. Idempotent.",
+		Description: "Enable or disable zerops.app subdomain for a service. Idempotent. NOTE: If you set enableSubdomainAccess=true in import YAML, the subdomain is already configured — do NOT call this tool separately. The subdomain activates automatically after the first deploy.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Enable or disable subdomain",
 			IdempotentHint:  true,

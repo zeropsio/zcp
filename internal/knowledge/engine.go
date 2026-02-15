@@ -194,8 +194,28 @@ func ExpandQuery(query string) string {
 	return expandQuery(query)
 }
 
+// GetPlatformModel returns the full foundation/platform-model.md content.
+// This is the L0 layer — conceptual understanding of how Zerops works.
+func (s *Store) GetPlatformModel() (string, error) {
+	doc, err := s.Get("zerops://foundation/platform-model")
+	if err != nil {
+		return "", fmt.Errorf("platform model not found: %w", err)
+	}
+	return doc.Content, nil
+}
+
+// GetRules returns the full foundation/rules.md content.
+// This is the L1 layer — actionable DO/DON'T rules with causal reasons.
+func (s *Store) GetRules() (string, error) {
+	doc, err := s.Get("zerops://foundation/rules")
+	if err != nil {
+		return "", fmt.Errorf("rules not found: %w", err)
+	}
+	return doc.Content, nil
+}
+
 // GetFoundation returns the full foundation/grammar.md content.
-// This is the base layer (L0) for all infrastructure tasks.
+// This is the L2 layer — YAML schema reference.
 func (s *Store) GetFoundation() (string, error) {
 	doc, err := s.Get("zerops://foundation/grammar")
 	if err != nil {
@@ -240,7 +260,8 @@ func (s *Store) matchingRecipes(runtimeBase string) []string {
 }
 
 // GetBriefing assembles contextual knowledge for a specific stack using layered composition.
-// Layers: L0 grammar (always) → L1 runtime delta → L2 service cards → L3 wiring → L4 decisions → L5 version check.
+// Layers: L0 platform model → L1 rules → L2 grammar → L3 runtime delta → L3b recipes →
+// L4 service cards → L5 wiring → L6 decisions → L7 version check.
 // runtime: e.g. "php-nginx@8.4" (normalized internally to "PHP" section)
 // services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
 // liveTypes: optional live service stack types for version validation (nil = skip)
@@ -248,7 +269,19 @@ func (s *Store) matchingRecipes(runtimeBase string) []string {
 func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error) {
 	var sb strings.Builder
 
-	// L0: Universal grammar (always included)
+	// L0: Platform model — conceptual understanding (always included)
+	if platformModel, err := s.GetPlatformModel(); err == nil {
+		sb.WriteString(platformModel)
+		sb.WriteString("\n\n")
+	}
+
+	// L1: Rules & pitfalls — actionable DO/DON'T (always included)
+	if rules, err := s.GetRules(); err == nil {
+		sb.WriteString(rules)
+		sb.WriteString("\n\n")
+	}
+
+	// L2: YAML schema reference (always included)
 	grammar, err := s.GetFoundation()
 	if err != nil {
 		return "", err
@@ -256,7 +289,7 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 	sb.WriteString(grammar)
 	sb.WriteString("\n\n")
 
-	// L1: Runtime delta (specific runtime only)
+	// L3: Runtime delta (specific runtime only)
 	runtimeBase := ""
 	if runtime != "" {
 		runtimeBase, _, _ = strings.Cut(runtime, "@")
@@ -272,7 +305,7 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		}
 	}
 
-	// L1b: Matching recipes hint
+	// L3b: Matching recipes hint
 	if runtimeBase != "" {
 		if recipes := s.matchingRecipes(runtimeBase); len(recipes) > 0 {
 			sb.WriteString("## Matching Recipes\n\n")
@@ -286,7 +319,7 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		}
 	}
 
-	// L2: Service cards (per service, only relevant ones)
+	// L4: Service cards (per service, only relevant ones)
 	if len(services) > 0 {
 		sb.WriteString("## Service Cards\n\n")
 		for _, svc := range services {
@@ -302,7 +335,7 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		sb.WriteString("---\n\n")
 	}
 
-	// L3: Wiring (syntax rules + per-service templates)
+	// L5: Wiring (syntax rules + per-service templates)
 	if len(services) > 0 {
 		if syntax := s.getWiringSyntax(); syntax != "" {
 			sb.WriteString("## Wiring Patterns\n\n")
@@ -321,14 +354,14 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		}
 	}
 
-	// L4: Relevant decisions (compact hints based on stack)
+	// L6: Relevant decisions (compact hints based on stack)
 	if decisions := s.getRelevantDecisions(runtime, services); decisions != "" {
 		sb.WriteString("## Decision Hints\n\n")
 		sb.WriteString(decisions)
 		sb.WriteString("\n\n")
 	}
 
-	// L5: Version check (if live types available)
+	// L7: Version check (if live types available)
 	if versionCheck := FormatVersionCheck(runtime, services, liveTypes); versionCheck != "" {
 		sb.WriteString("---\n\n")
 		sb.WriteString(versionCheck)

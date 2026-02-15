@@ -157,7 +157,7 @@ zerops:
     run: { envVariables: { NODE_ENV: production } }
 ```
 
-Child sections **replace** parent sections entirely -- no deep merge. Must reference another `setup` name in the same file.
+Configuration is **merged at the section level** -- child values override parent values within each section (build, run, deploy), but unspecified sections inherit from parent. Must reference another `setup` name in the same file.
 
 ## Base Images
 

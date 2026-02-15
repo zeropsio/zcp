@@ -221,25 +221,16 @@ def render_functional_instructions(scenario):
     return f"""
 
 Use simple mode (single services, not dev+stage).
+Do NOT use TodoWrite or AskUserQuestion. Make all decisions autonomously.
 
-After creating the services, write and deploy a real working application:
+Start by calling `zerops_workflow workflow="bootstrap"` to get the deployment workflow, then follow it.
 
-1. Create app source in `/tmp/evalapp/`.
-2. The app MUST serve these HTTP endpoints:
-   - `GET /health` → `{{"status":"ok"}}` (HTTP 200)
-   - `GET /status` → {status_desc}, return JSON with connectivity result
-   - `GET /` → `{{"message":"evalapp running","runtime":"{runtime_name}"}}` (HTTP 200)
-3. Write `zerops.yml` in `/tmp/evalapp/` for the runtime service.
-4. Deploy with `zerops_deploy workingDir="/tmp/evalapp"`.
-5. Poll `zerops_events` for build completion (wait 5s, then every 10s, max 300s).
-6. Run the full 7-point verification protocol:
-   - Build completed (zerops_events terminal, not FAILED)
-   - Service RUNNING (zerops_discover)
-   - No error logs (zerops_logs severity="error" since="5m")
-   - Startup confirmed (zerops_logs search="listening|started|ready" since="5m")
-   - No post-startup errors (zerops_logs severity="error" since="2m")
-   - HTTP health check: curl /health → 200 + body contains "ok"
-   - Service connectivity: curl /status → 200 + body confirms connection
+The app MUST serve these HTTP endpoints:
+- `GET /health` → HTTP 200, confirms the app is running
+- `GET /status` → {status_desc}, return JSON with connectivity result
+- `GET /` → JSON welcome message with runtime name
+
+Create app source in `/tmp/evalapp/`. Use `zerops_knowledge` to load correct configuration for the runtime and services.
 
 After verification, output this result block:
 

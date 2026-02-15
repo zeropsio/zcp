@@ -11,7 +11,7 @@ zerops:
       addToRunPrepare: [requirements.txt]
     run:
       prepareCommands:
-        - pip install --no-cache-dir -r requirements.txt
+        - python3 -m pip install --ignore-installed -r /home/zerops/requirements.txt
       envVariables:
         USE_S3: "1"
         S3_ACCESS_KEY_ID: $storage_accessKeyId
