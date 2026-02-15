@@ -158,16 +158,15 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 **Base image includes**: JDK, `git`, `wget` — **NO Maven, NO Gradle pre-installed**
 **Versions**: `java@21` (recommended), `java@17`. NOTE: `java@latest` = `java@17`, use `java@21` explicitly
 
-**Build procedure** (ALWAYS use Maven Wrapper when creating new projects):
+**Build procedure**:
 1. Set `build.base: java@21`
-2. **With Maven Wrapper** (REQUIRED for new projects):
-   - Include `mvnw`, `.mvn/wrapper/maven-wrapper.jar`, `.mvn/wrapper/maven-wrapper.properties` in source
-   - `chmod +x mvnw` before deploying
-   - `buildCommands: [./mvnw clean package -DskipTests]`
-3. **Without wrapper** (existing projects only):
+2. **For new projects** (simplest approach):
    - Set `build.os: ubuntu` — MANDATORY (Alpine has no `apt-get`)
-   - `prepareCommands: [sudo apt-get update && sudo apt-get install -y maven]` — `sudo` REQUIRED
-   - `buildCommands: [mvn clean package -DskipTests]`
+   - `prepareCommands: [sudo apt-get update -qq && sudo apt-get install -y -qq maven]` — `sudo` REQUIRED
+   - `buildCommands: [mvn -q clean package -DskipTests]`
+3. **For existing projects with Maven Wrapper** (preferred):
+   - `buildCommands: [./mvnw clean package -DskipTests]`
+   - Wrapper files (`mvnw`, `.mvn/`) must already exist in source
 4. `deployFiles: target/app.jar` (single fat JAR)
 5. `run.start: java -jar target/app.jar`
 
