@@ -11,7 +11,7 @@ wiring, connection string, env vars, envSecrets, envVariables, cross-service, re
 - **`{h}` placeholder**: represents the service hostname you are wiring to. In actual YAML, replace `{h}` with the real hostname (e.g., `DB_HOST: mydb`). For variable references, use `${hostname_varname}` syntax
 - **Reference**: `${hostname_variablename}` -- dashes in hostnames become underscores
 - **envSecrets**: passwords, tokens, keys (blurred in GUI by default, editable/deletable)
-- **envVariables**: config, URLs, flags (visible in GUI)
+- **import.yml service level**: ONLY `envSecrets` and `dotEnvSecrets` exist. There is NO `envVariables` at service level (only at project level). Put ALL connection vars in `envSecrets`.
 - **Hostname = DNS**: use hostname directly for connections (`db:5432`, NOT `${db_hostname}:5432`)
 - **Internal**: ALWAYS `http://` -- NEVER `https://` (SSL at L7 balancer)
 - **Project vars**: auto-inherited by all services -- do NOT re-reference (creates shadow)
@@ -19,7 +19,7 @@ wiring, connection string, env vars, envSecrets, envVariables, cross-service, re
 
 ## CRITICAL: Wire credentials in import.yml
 
-Managed services auto-generate credentials but they are NOT automatically available to runtime services. You MUST wire them via `envVariables`/`envSecrets` on the **runtime service** in import.yml:
+Managed services auto-generate credentials but they are NOT automatically available to runtime services. You MUST wire them via `envSecrets` on the **runtime service** in import.yml (there is no `envVariables` at service level in import.yml):
 
 ```yaml
 services:
@@ -30,16 +30,19 @@ services:
 
   - hostname: myapp
     type: nodejs@22
-    envVariables:
+    envSecrets:
       DB_HOST: mydb
       DB_PORT: "3306"
       DB_NAME: ${mydb_dbName}
-    envSecrets:
       DB_PASSWORD: ${mydb_password}
       DB_USER: ${mydb_user}
 ```
 
 Without this wiring, the runtime service has no way to connect to managed services.
+
+## Service Wiring Templates
+
+Below, **VARS** = config values, **SECRETS** = credentials. In import.yml, put ALL of them in `envSecrets` (no `envVariables` at service level). In zerops.yml, use `run.envVariables` for VARS.
 
 ## PostgreSQL
 **VARS**: `DB_HOST:{h}` `DB_PORT:5432` `DB_NAME:${h_dbName}`
