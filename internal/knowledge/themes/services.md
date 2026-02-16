@@ -23,13 +23,13 @@ postgresql, mariadb, valkey, keydb, elasticsearch, kafka, nats, meilisearch, cli
 ## Valkey
 **Type**: `valkey@7.2` (MUST be 7.2 -- 8 passes validation but fails import) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 6379 (RW), 6380 (RW TLS), 7000 (RO, HA only), 7001 (RO TLS, HA only)
-**Env**: `hostname`, `port`, `password`, `connectionString`, `user`
+**Env**: `hostname`, `port`, `connectionString`, `portTls` — NO `user` or `password` (unauthenticated)
 **HA**: 1 master + 2 replicas. Zerops-specific: ports 6379/6380 on replicas forward to master (NOT native Valkey). Async replication.
-**Gotchas**: Version MUST be 7.2. Port forwarding is Zerops-specific. Use 7000/7001 for direct read scaling. TLS ports for external/VPN only.
+**Gotchas**: Version MUST be 7.2. **No authentication** — connection is `redis://hostname:6379` without credentials. Do NOT reference `${cache_user}` or `${cache_password}` — they don't exist. Port forwarding is Zerops-specific. Use 7000/7001 for direct read scaling. TLS ports for external/VPN only.
 
 ## KeyDB
 **Type**: `keydb@6` | **Mode**: optional (NON_HA only)
-**Ports**: 6379 | **Env**: same as Valkey
+**Ports**: 6379 | **Env**: same as Valkey (no user/password)
 **DEPRECATED**: Do NOT use for new projects -- use `valkey@7.2` instead. When user requests "Redis" or "cache", always use Valkey. Migration from KeyDB: only hostname changes.
 
 ## Elasticsearch
