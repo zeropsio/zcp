@@ -204,6 +204,8 @@ func prepareGitRepo(ctx context.Context, workingDir string) error {
 
 	cmds := [][]string{
 		{"git", "init", "-q"},
+		{"git", "config", "user.email", "zcp@zerops.io"},
+		{"git", "config", "user.name", "zcp"},
 		{"git", "add", "-A"},
 		{"git", "commit", "-q", "-m", "deploy", "--allow-empty"},
 	}
