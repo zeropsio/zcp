@@ -280,11 +280,11 @@ zerops[]:
 - **ALWAYS** create dev/stage service pairs for runtime services. Naming: `{prefix}dev` and `{prefix}stage` (e.g., `appdev`/`appstage`, `apidev`/`apistage`). REASON: workflow engine detects conformant projects by this pattern; single services have no isolation
 - **ALWAYS** set `startWithoutCode: true` on dev services when using SSHFS-based development. REASON: without it OR `buildFromGit`, service stays stuck in READY_TO_DEPLOY (empty container, no code)
 - **ALWAYS** set `buildFromGit: <url>` OR `startWithoutCode: true` on every runtime service. REASON: runtime services without either have no code source -- they cannot start. This is the #1 import failure
-- **ALWAYS** set `zeropsSetup: <name>` on runtime services that have a zerops.yml. REASON: zeropsSetup links the import to a specific zerops.yml setup block (e.g., `dev`, `prod`). Without it, the service doesn't know which build/run config to use
+- **ONLY** set `zeropsSetup` when using `buildFromGit` and the zerops.yml setup name differs from the hostname. REASON: zeropsSetup defaults to hostname. With `startWithoutCode`, omit it -- when code is later pushed via `zcli push`, the zerops.yml `setup:` must match the hostname (or use `zcli push --setup <name>`)
 - **ALWAYS** set `verticalAutoscaling.minRam: 1.0` (GB) for runtime services. REASON: 0.5 GB causes OOM during compilation (especially Go, Java). 1.0 is the safe minimum
 - **ALWAYS** use managed service hostname conventions: `db` (postgresql/mariadb), `cache` (valkey), `queue` (rabbitmq/nats), `search` (elasticsearch), `storage` (object-storage/minio). REASON: standardizes cross-service references and discovery
 - **ALWAYS** create managed services with `priority: 10` and runtime services with lower priority (default or `priority: 5`). REASON: databases must be ready before apps that depend on them
-- **NEVER** use hostnames as zeropsSetup names. Setup names are `dev` and `prod` (matching zerops.yml setup blocks), NOT `appdev` or `appstage`. REASON: this is the #1 mistake -- zeropsSetup references zerops.yml `setup:` field, not the service hostname
+- **ALWAYS** match zerops.yml `setup:` to the service hostname (e.g., `setup: evalappjava` for hostname `evalappjava`). REASON: `zcli push` defaults to hostname as setup name. If setup doesn't match hostname, deploy fails with "setup not found". For dev/stage pairs, use `setup: <hostname>` per service, not generic names like `dev`/`prod`
 - **ALWAYS** prefer `enableSubdomainAccess: true` in import.yml over calling `zerops_subdomain` after import. REASON: calling subdomain API on a READY_TO_DEPLOY service errors; the import flag activates after first deploy
 
 ### Runtime-Specific
@@ -363,16 +363,15 @@ services:
   - hostname: appdev
     type: nodejs@22
     startWithoutCode: true
-    zeropsSetup: dev
     enableSubdomainAccess: true
     verticalAutoscaling:
       minRam: 1.0
   - hostname: appstage
     type: nodejs@22
     startWithoutCode: true
-    zeropsSetup: prod
     enableSubdomainAccess: true
 ```
+zerops.yml must have `setup: appdev` and `setup: appstage` blocks matching hostnames.
 
 **Full-Stack Dev/Stage (App + DB + Cache + Storage):**
 ```yaml
@@ -394,14 +393,12 @@ services:
   - hostname: appdev
     type: bun@1.2
     startWithoutCode: true
-    zeropsSetup: dev
     enableSubdomainAccess: true
     verticalAutoscaling:
       minRam: 1.0
   - hostname: appstage
     type: bun@1.2
     startWithoutCode: true
-    zeropsSetup: prod
     enableSubdomainAccess: true
     envSecrets:
       APP_KEY: <@generateRandomString(<32>)>
@@ -417,6 +414,6 @@ services:
   - hostname: app
     type: go@1.24
     buildFromGit: https://github.com/user/repo
-    zeropsSetup: prod
     enableSubdomainAccess: true
 ```
+zeropsSetup omitted — defaults to hostname `app`, so zerops.yml needs `setup: app`.
