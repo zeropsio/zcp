@@ -8,17 +8,18 @@ import (
 )
 
 // ScaleParams holds scaling configuration for a service.
+// Pointer fields distinguish "not set" (nil) from zero values.
 type ScaleParams struct {
-	CPUMode         string
-	MinCPU          int
-	MaxCPU          int
-	MinRAM          float64
-	MaxRAM          float64
-	MinDisk         float64
-	MaxDisk         float64
-	StartContainers int
-	MinContainers   int
-	MaxContainers   int
+	CPUMode         *string
+	MinCPU          *int
+	MaxCPU          *int
+	MinRAM          *float64
+	MaxRAM          *float64
+	MinDisk         *float64
+	MaxDisk         *float64
+	StartContainers *int
+	MinContainers   *int
+	MaxContainers   *int
 }
 
 // ScaleResult contains the result of a scale operation.
@@ -102,25 +103,25 @@ func validateScaleParams(p ScaleParams) error {
 			"Provide cpuMode, minCpu/maxCpu, minRam/maxRam, minDisk/maxDisk, or minContainers/maxContainers")
 	}
 
-	if p.CPUMode != "" && p.CPUMode != "SHARED" && p.CPUMode != "DEDICATED" {
+	if p.CPUMode != nil && *p.CPUMode != "SHARED" && *p.CPUMode != "DEDICATED" {
 		return platform.NewPlatformError(platform.ErrInvalidScaling,
-			fmt.Sprintf("Invalid cpuMode '%s'", p.CPUMode),
+			fmt.Sprintf("Invalid cpuMode '%s'", *p.CPUMode),
 			"Use SHARED or DEDICATED")
 	}
 
-	if p.MinCPU > 0 && p.MaxCPU > 0 && p.MinCPU > p.MaxCPU {
+	if p.MinCPU != nil && p.MaxCPU != nil && *p.MinCPU > *p.MaxCPU {
 		return platform.NewPlatformError(platform.ErrInvalidScaling,
 			"minCpu must be <= maxCpu", "")
 	}
-	if p.MinRAM > 0 && p.MaxRAM > 0 && p.MinRAM > p.MaxRAM {
+	if p.MinRAM != nil && p.MaxRAM != nil && *p.MinRAM > *p.MaxRAM {
 		return platform.NewPlatformError(platform.ErrInvalidScaling,
 			"minRam must be <= maxRam", "")
 	}
-	if p.MinDisk > 0 && p.MaxDisk > 0 && p.MinDisk > p.MaxDisk {
+	if p.MinDisk != nil && p.MaxDisk != nil && *p.MinDisk > *p.MaxDisk {
 		return platform.NewPlatformError(platform.ErrInvalidScaling,
 			"minDisk must be <= maxDisk", "")
 	}
-	if p.MinContainers > 0 && p.MaxContainers > 0 && p.MinContainers > p.MaxContainers {
+	if p.MinContainers != nil && p.MaxContainers != nil && *p.MinContainers > *p.MaxContainers {
 		return platform.NewPlatformError(platform.ErrInvalidScaling,
 			"minContainers must be <= maxContainers", "")
 	}
@@ -129,47 +130,47 @@ func validateScaleParams(p ScaleParams) error {
 }
 
 func hasAnyScaleParam(p ScaleParams) bool {
-	return p.CPUMode != "" || p.MinCPU != 0 || p.MaxCPU != 0 ||
-		p.MinRAM != 0 || p.MaxRAM != 0 || p.MinDisk != 0 || p.MaxDisk != 0 ||
-		p.StartContainers != 0 || p.MinContainers != 0 || p.MaxContainers != 0
+	return p.CPUMode != nil || p.MinCPU != nil || p.MaxCPU != nil ||
+		p.MinRAM != nil || p.MaxRAM != nil || p.MinDisk != nil || p.MaxDisk != nil ||
+		p.StartContainers != nil || p.MinContainers != nil || p.MaxContainers != nil
 }
 
 func buildAutoscalingParams(p ScaleParams) platform.AutoscalingParams {
 	params := platform.AutoscalingParams{}
 
-	if p.CPUMode != "" {
-		params.VerticalCPUMode = &p.CPUMode
+	if p.CPUMode != nil {
+		params.VerticalCPUMode = p.CPUMode
 	}
-	if p.MinCPU != 0 {
-		v := int32(p.MinCPU)
+	if p.MinCPU != nil {
+		v := int32(*p.MinCPU)
 		params.VerticalMinCPU = &v
 	}
-	if p.MaxCPU != 0 {
-		v := int32(p.MaxCPU)
+	if p.MaxCPU != nil {
+		v := int32(*p.MaxCPU)
 		params.VerticalMaxCPU = &v
 	}
-	if p.MinRAM != 0 {
-		params.VerticalMinRAM = &p.MinRAM
+	if p.MinRAM != nil {
+		params.VerticalMinRAM = p.MinRAM
 	}
-	if p.MaxRAM != 0 {
-		params.VerticalMaxRAM = &p.MaxRAM
+	if p.MaxRAM != nil {
+		params.VerticalMaxRAM = p.MaxRAM
 	}
-	if p.MinDisk != 0 {
-		params.VerticalMinDisk = &p.MinDisk
+	if p.MinDisk != nil {
+		params.VerticalMinDisk = p.MinDisk
 	}
-	if p.MaxDisk != 0 {
-		params.VerticalMaxDisk = &p.MaxDisk
+	if p.MaxDisk != nil {
+		params.VerticalMaxDisk = p.MaxDisk
 	}
-	if p.StartContainers != 0 {
-		v := int32(p.StartContainers)
+	if p.StartContainers != nil {
+		v := int32(*p.StartContainers)
 		params.VerticalStartCPU = &v // mapped to start container count
 	}
-	if p.MinContainers != 0 {
-		v := int32(p.MinContainers)
+	if p.MinContainers != nil {
+		v := int32(*p.MinContainers)
 		params.HorizontalMinCount = &v
 	}
-	if p.MaxContainers != 0 {
-		v := int32(p.MaxContainers)
+	if p.MaxContainers != nil {
+		v := int32(*p.MaxContainers)
 		params.HorizontalMaxCount = &v
 	}
 

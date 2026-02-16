@@ -41,45 +41,21 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
 				"Provide serviceHostname parameter")), nil, nil
 		}
 
-		result, err := ops.Scale(ctx, client, projectID, input.ServiceHostname, buildScaleParams(input))
+		result, err := ops.Scale(ctx, client, projectID, input.ServiceHostname, ops.ScaleParams{
+			CPUMode:         input.CPUMode,
+			MinCPU:          input.MinCPU,
+			MaxCPU:          input.MaxCPU,
+			MinRAM:          input.MinRAM,
+			MaxRAM:          input.MaxRAM,
+			MinDisk:         input.MinDisk,
+			MaxDisk:         input.MaxDisk,
+			StartContainers: input.StartContainers,
+			MinContainers:   input.MinContainers,
+			MaxContainers:   input.MaxContainers,
+		})
 		if err != nil {
 			return convertError(err), nil, nil
 		}
 		return jsonResult(result), nil, nil
 	})
-}
-
-func buildScaleParams(input ScaleInput) ops.ScaleParams {
-	p := ops.ScaleParams{}
-	if input.CPUMode != nil {
-		p.CPUMode = *input.CPUMode
-	}
-	if input.MinCPU != nil {
-		p.MinCPU = *input.MinCPU
-	}
-	if input.MaxCPU != nil {
-		p.MaxCPU = *input.MaxCPU
-	}
-	if input.MinRAM != nil {
-		p.MinRAM = *input.MinRAM
-	}
-	if input.MaxRAM != nil {
-		p.MaxRAM = *input.MaxRAM
-	}
-	if input.MinDisk != nil {
-		p.MinDisk = *input.MinDisk
-	}
-	if input.MaxDisk != nil {
-		p.MaxDisk = *input.MaxDisk
-	}
-	if input.StartContainers != nil {
-		p.StartContainers = *input.StartContainers
-	}
-	if input.MinContainers != nil {
-		p.MinContainers = *input.MinContainers
-	}
-	if input.MaxContainers != nil {
-		p.MaxContainers = *input.MaxContainers
-	}
-	return p
 }

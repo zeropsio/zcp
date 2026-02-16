@@ -8,6 +8,10 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+func scaleIntPtr(v int) *int           { return &v }
+func scaleFloatPtr(v float64) *float64 { return &v }
+func scaleCPUMode(v string) *string    { return &v }
+
 func TestStart_Success(t *testing.T) {
 	t.Parallel()
 
@@ -92,15 +96,15 @@ func TestScale_AllParams(t *testing.T) {
 		})
 
 	result, err := Scale(context.Background(), mock, "proj-1", "api", ScaleParams{
-		CPUMode:       "SHARED",
-		MinCPU:        1,
-		MaxCPU:        4,
-		MinRAM:        0.25,
-		MaxRAM:        4,
-		MinDisk:       1,
-		MaxDisk:       10,
-		MinContainers: 1,
-		MaxContainers: 3,
+		CPUMode:       scaleCPUMode("SHARED"),
+		MinCPU:        scaleIntPtr(1),
+		MaxCPU:        scaleIntPtr(4),
+		MinRAM:        scaleFloatPtr(0.25),
+		MaxRAM:        scaleFloatPtr(4),
+		MinDisk:       scaleFloatPtr(1),
+		MaxDisk:       scaleFloatPtr(10),
+		MinContainers: scaleIntPtr(1),
+		MaxContainers: scaleIntPtr(3),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -126,8 +130,8 @@ func TestScale_NilProcess(t *testing.T) {
 
 	// Default mock SetAutoscaling returns nil process
 	result, err := Scale(context.Background(), mock, "proj-1", "api", ScaleParams{
-		MinCPU: 1,
-		MaxCPU: 4,
+		MinCPU: scaleIntPtr(1),
+		MaxCPU: scaleIntPtr(4),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -168,10 +172,10 @@ func TestScale_MinGtMax(t *testing.T) {
 		name   string
 		params ScaleParams
 	}{
-		{"CPU", ScaleParams{MinCPU: 4, MaxCPU: 2}},
-		{"RAM", ScaleParams{MinRAM: 8, MaxRAM: 4}},
-		{"Disk", ScaleParams{MinDisk: 20, MaxDisk: 10}},
-		{"Containers", ScaleParams{MinContainers: 5, MaxContainers: 2}},
+		{"CPU", ScaleParams{MinCPU: scaleIntPtr(4), MaxCPU: scaleIntPtr(2)}},
+		{"RAM", ScaleParams{MinRAM: scaleFloatPtr(8), MaxRAM: scaleFloatPtr(4)}},
+		{"Disk", ScaleParams{MinDisk: scaleFloatPtr(20), MaxDisk: scaleFloatPtr(10)}},
+		{"Containers", ScaleParams{MinContainers: scaleIntPtr(5), MaxContainers: scaleIntPtr(2)}},
 	}
 
 	for _, tt := range tests {
@@ -207,9 +211,9 @@ func TestScale_InvalidCPUMode(t *testing.T) {
 		})
 
 	_, err := Scale(context.Background(), mock, "proj-1", "api", ScaleParams{
-		CPUMode: "INVALID",
-		MinCPU:  1,
-		MaxCPU:  2,
+		CPUMode: scaleCPUMode("INVALID"),
+		MinCPU:  scaleIntPtr(1),
+		MaxCPU:  scaleIntPtr(2),
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid CPU mode")

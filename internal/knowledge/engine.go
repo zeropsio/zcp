@@ -228,11 +228,6 @@ func (s *Store) GetFoundation() (string, error) {
 	return doc.Content, nil
 }
 
-// GetCorePrinciples is an alias for GetFoundation (backward compatibility).
-func (s *Store) GetCorePrinciples() (string, error) {
-	return s.GetFoundation()
-}
-
 // runtimeRecipeHints maps runtime base names to recipe name prefixes/matches.
 var runtimeRecipeHints = map[string][]string{
 	"bun":    {"bun"},
