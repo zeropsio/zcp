@@ -348,6 +348,7 @@ zerops[]:
 | `valkey@8` in import | Import fails | Only `valkey@7.2` is valid |
 | No `mode` for managed service | Import fails | Managed services require explicit `mode: NON_HA` or `mode: HA` |
 | Set `minContainers` for PostgreSQL | Import fails | Managed services have fixed container counts |
+| `build.base: php-nginx@8.3` | "unknown base php-nginx@8.3" | Webserver variants (`php-nginx`, `php-apache`) are run bases only; use `build.base: php@8.3` + `run.base: php-nginx@8.3` |
 
 ---
 
