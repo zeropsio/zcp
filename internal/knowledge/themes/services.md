@@ -1,10 +1,10 @@
 # Managed Service Reference
 
-## Keywords
-postgresql, mariadb, valkey, keydb, elasticsearch, kafka, nats, meilisearch, clickhouse, qdrant, typesense, object storage, shared storage, database, cache, search, queue, s3, connection string, mode, HA, NON_HA, backup, export, import, debug, mount, pg_dump, mysqldump
-
 ## TL;DR
-Reference cards for all 13 Zerops managed services. Each card provides type, ports, env vars, connection pattern, HA specifics, and gotchas.
+Reference cards for all 14 Zerops managed services. Each card provides type, ports, env vars, connection pattern, HA specifics, and gotchas.
+
+## Keywords
+postgresql, mariadb, valkey, keydb, elasticsearch, kafka, nats, meilisearch, clickhouse, qdrant, typesense, rabbitmq, object storage, shared storage, database, cache, search, queue, s3, connection string, mode, HA, NON_HA, backup, export, import, debug, mount, pg_dump, mysqldump
 
 ## PostgreSQL
 **Type**: `postgresql@{18,17,16,14}` | **Mode**: optional (default NON_HA), immutable
@@ -21,7 +21,7 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 **Gotchas**: No separate replica port (MaxScale routes on single port). No internal TLS. Don't modify `zps` user.
 
 ## Valkey
-**Type**: `valkey@7.2` (MUST be 7.2 — 8 passes validation but fails import) | **Mode**: optional (default NON_HA), immutable
+**Type**: `valkey@7.2` (MUST be 7.2 -- 8 passes validation but fails import) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 6379 (RW), 6380 (RW TLS), 7000 (RO, HA only), 7001 (RO TLS, HA only)
 **Env**: `hostname`, `port`, `password`, `connectionString`, `user`
 **HA**: 1 master + 2 replicas. Zerops-specific: ports 6379/6380 on replicas forward to master (NOT native Valkey). Async replication.
@@ -30,7 +30,7 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 ## KeyDB
 **Type**: `keydb@6` | **Mode**: optional (NON_HA only)
 **Ports**: 6379 | **Env**: same as Valkey
-**DEPRECATED**: Do NOT use for new projects — use `valkey@7.2` instead. When user requests "Redis" or "cache", always use Valkey. Migration from KeyDB: only hostname changes.
+**DEPRECATED**: Do NOT use for new projects -- use `valkey@7.2` instead. When user requests "Redis" or "cache", always use Valkey. Migration from KeyDB: only hostname changes.
 
 ## Elasticsearch
 **Type**: `elasticsearch@{9.2,8.16}` | **Mode**: optional (default NON_HA), immutable
@@ -44,14 +44,14 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 **Type**: `object-storage` or `objectstorage` (both valid, no version) | **Mode**: NOT REQUIRED
 **Env**: `apiUrl`, `accessKeyId`, `secretAccessKey`, `bucketName`, `quotaGBytes`, `projectId`, `serviceId`, `hostname`
 **Config**: `objectStorageSize: 1-100` GB, `objectStoragePolicy` or `objectStorageRawPolicy`, `priority: 10`
-**Infrastructure**: runs on **independent infra** separate from other project services — accessible from any Zerops service or remotely over internet
+**Infrastructure**: runs on **independent infra** separate from other project services -- accessible from any Zerops service or remotely over internet
 **Bucket**: one auto-created per service (name = hostname + random prefix, **immutable**). Need multiple buckets? Create multiple object-storage services
 **Policies**: `private` | `public-read` (list+get) | `public-objects-read` (get only, no listing) | `public-write` (put only) | `public-read-write` (full). Or use `objectStorageRawPolicy` with IAM Policy JSON (`{{ .BucketName }}` template variable available)
 **Gotchas**: MinIO backend. **No Zerops backup**. `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` REQUIRED. Region `us-east-1` (required but ignored). No autoscaling, no verticalAutoscaling. Quota changeable in GUI after creation
 
 ## Shared Storage
 **Type**: `shared-storage` (no version) | **Mode**: optional (default NON_HA), immutable
-**Mount**: `/mnt/{hostname}` — add `mount: [hostname]` to runtime zerops.yml
+**Mount**: `/mnt/{hostname}` -- add `mount: [hostname]` to runtime zerops.yml
 **HA**: 1:1 replication, auto-failover
 **Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). NON_HA = data loss on hardware failure.
 
@@ -73,7 +73,7 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 **Type**: `meilisearch@{1.20,1.10}` | **Mode**: optional (NON_HA only)
 **Ports**: 7700
 **Env**: `hostname`, `masterKey`, `defaultSearchKey`, `defaultAdminKey`
-**Gotchas**: **No HA** (single-node only). Never expose `masterKey` to frontend — use `defaultSearchKey`.
+**Gotchas**: **No HA** (single-node only). Never expose `masterKey` to frontend -- use `defaultSearchKey`.
 
 ## ClickHouse
 **Type**: `clickhouse@25.3` | **Mode**: optional (default NON_HA), immutable
@@ -94,7 +94,7 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 **Ports**: 8108
 **Env**: `hostname`, `port`, `apiKey` (immutable master key)
 **HA**: 3-node Raft consensus, auto leader election, recovery up to 1 min
-**Gotchas**: API key immutable. 1-min recovery — expect brief 503s. CORS always on.
+**Gotchas**: API key immutable. 1-min recovery -- expect brief 503s. CORS always on.
 
 ## RabbitMQ
 **Type**: `rabbitmq@3.9` | **Mode**: optional (default NON_HA), immutable
@@ -106,11 +106,11 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 
 - **Mode**: optional (default NON_HA), immutable after creation (delete+recreate to change)
 - **Hostname**: immutable, becomes internal DNS name
-- **Internal**: HTTP/plain TCP only (no TLS) — TLS for external/VPN ports
+- **Internal**: HTTP/plain TCP only (no TLS) -- TLS for external/VPN ports
 - **Credentials**: auto-generated in env vars
 - **System Users**: don't modify `zps`/`zerops`/`super`
 - **VPN**: append `.zerops` to hostname
-- **Backup**: PostgreSQL, MariaDB, Elasticsearch, Meilisearch, Qdrant, NATS (NOT Valkey/KeyDB, NOT ClickHouse — use SQL BACKUP)
+- **Backup**: PostgreSQL, MariaDB, Elasticsearch, Meilisearch, Qdrant, NATS (NOT Valkey/KeyDB, NOT ClickHouse -- use SQL BACKUP)
 - **Priority**: `priority: 10` for databases/storage to start before apps
 
 ## Service Operations
@@ -119,40 +119,18 @@ Reference cards for all 13 Zerops managed services. Each card provides type, por
 - **PostgreSQL**: `pg_dump` for export, `psql` for import
 - **MariaDB**: `mysqldump` for export, `mysql` for import
 - Requires Zerops VPN or Adminer (built-in web DB tool)
-- No SSL/TLS on internal connections — security provided by VPN tunnel
-- Desktop tools (DBeaver, pgAdmin, HeidiSQL) connect via VPN using standard env vars
-
-### Object Storage
-- MinIO backend on **independent infrastructure**, one auto-named bucket per service (hostname + random prefix, immutable)
-- S3-compatible access: `forcePathStyle: true` REQUIRED, region `us-east-1` (required but ignored by MinIO)
-- Accessible from any Zerops service and remotely over internet
-- Policies via `objectStoragePolicy`: `private`, `public-read`, `public-objects-read`, `public-write`, `public-read-write`. Custom IAM JSON via `objectStorageRawPolicy` (use `{{ .BucketName }}` template)
-- Cross-service env prefix: `${hostname_apiUrl}`, `${hostname_accessKeyId}`, `${hostname_secretAccessKey}`, `${hostname_bucketName}`
-- Quota (1-100 GB) changeable in GUI after creation. No autoscaling
-
-### Shared Storage
-- Mount in zerops.yml: `mount: [hostname]` — appears at `/mnt/{hostname}`
-- SeaweedFS backend, POSIX-only (not S3-compatible)
-- Max 60 GB per service
+- Desktop tools (DBeaver, pgAdmin) connect via VPN using standard env vars
 
 ### Backup System
 - **Supported**: PostgreSQL, MariaDB, Elasticsearch, Meilisearch, Qdrant, NATS, Shared Storage
-- **NOT supported**: Valkey, KeyDB, ClickHouse (use native dump commands), Object Storage
-- Default schedule: daily 00:00-01:00 UTC (configurable per service)
-- Retention minimums: 7 daily, 4 weekly, 3 monthly; max 50 backups per service
+- **NOT supported**: Valkey, KeyDB, ClickHouse (use native dump), Object Storage
+- Default schedule: daily 00:00-01:00 UTC (configurable)
+- Retention: 7 daily, 4 weekly, 3 monthly; max 50 per service
 - End-to-end encryption (X25519 per project)
-- Deleted services: backups retained for 7-day grace period
-- CLI: `zcli backup create <service>`
-- Storage limits: 5 GB (Lightweight plan), 25 GB (Serious plan), 1 TiB max per project
+- Storage limits: 5 GB (Lightweight), 25 GB (Serious), 1 TiB max
 
 ### Debug Mode
-- Available for build and runtime prepare phases (independent settings)
+- Available for build and runtime prepare phases
 - Pause points: Disable, Before First Command, On Command Failure, After Last Command
 - Commands: `zsc debug continue`, `zsc debug success`, `zsc debug fail`
-- Max duration: 60 minutes (auto-cancelled after timeout)
-- Use for diagnosing build failures or runtime prepare issues
-
-## See Also
-- zerops://foundation/grammar — universal rules
-- zerops://foundation/runtimes — runtime deltas
-- zerops://foundation/wiring — cross-service wiring templates
+- Max duration: 60 minutes

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
@@ -11,6 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
 	"github.com/zeropsio/zcp/internal/update"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // Version, Commit, Built are set by ldflags at build time.
@@ -63,9 +66,16 @@ func (s *Server) registerTools() {
 	projectID := s.authInfo.ProjectID
 	stackCache := ops.NewStackTypeCache(ops.DefaultStackTypeCacheTTL)
 
+	// Workflow engine: state at .zcp/state/ relative to working directory.
+	var wfEngine *workflow.Engine
+	if cwd, err := os.Getwd(); err == nil {
+		stateDir := filepath.Join(cwd, ".zcp", "state")
+		wfEngine = workflow.NewEngine(stateDir)
+	}
+
 	// Read-only tools
 	tools.RegisterContext(s.server, s.client, stackCache, s.updateInfo)
-	tools.RegisterWorkflow(s.server, s.client, stackCache)
+	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine)
 	tools.RegisterDiscover(s.server, s.client, projectID)
 	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)

@@ -14,23 +14,23 @@ import (
 func testKnowledgeStore(t *testing.T) *knowledge.Store {
 	t.Helper()
 	docs := map[string]*knowledge.Document{
-		"zerops://foundation/grammar": {
-			URI:     "zerops://foundation/grammar",
+		"zerops://themes/grammar": {
+			URI:     "zerops://themes/grammar",
 			Title:   "Zerops Grammar",
 			Content: "# Zerops Grammar\n\nUniversal rules here.",
 		},
-		"zerops://foundation/runtimes": {
-			URI:     "zerops://foundation/runtimes",
+		"zerops://themes/runtimes": {
+			URI:     "zerops://themes/runtimes",
 			Title:   "Runtime Deltas",
 			Content: "## PHP\n\nPHP-specific rules.\n\n## Node.js\n\nNode.js-specific rules.",
 		},
-		"zerops://foundation/services": {
-			URI:     "zerops://foundation/services",
+		"zerops://themes/services": {
+			URI:     "zerops://themes/services",
 			Title:   "Managed Service Reference",
 			Content: "## PostgreSQL\n\nPort 5432.\n\n## Valkey\n\nPort 6379.",
 		},
-		"zerops://foundation/wiring": {
-			URI:     "zerops://foundation/wiring",
+		"zerops://themes/wiring": {
+			URI:     "zerops://themes/wiring",
 			Title:   "Wiring Patterns",
 			Content: "## Syntax Rules\n\nUse ${hostname_var}.\n\n## PostgreSQL\n\nDATABASE_URL.\n\n## Valkey\n\nREDIS_URL.",
 		},

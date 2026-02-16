@@ -7,51 +7,44 @@ import (
 	"testing"
 )
 
-// testStoreWithCore creates a Store with mock foundation documents for testing.
+// testStoreWithCore creates a Store with mock theme documents for testing.
 func testStoreWithCore(t *testing.T) *Store {
 	t.Helper()
 	docs := map[string]*Document{
-		"zerops://foundation/platform-model": {
-			URI:     "zerops://foundation/platform-model",
+		"zerops://themes/platform": {
+			URI:     "zerops://themes/platform",
 			Title:   "Zerops Platform Model",
 			Content: "# Zerops Platform Model\n\nConceptual model of how Zerops works.\n\n## 3. The Build/Deploy Lifecycle\n\nBuild and Run are SEPARATE containers.",
 		},
-		"zerops://foundation/rules": {
-			URI:     "zerops://foundation/rules",
+		"zerops://themes/rules": {
+			URI:     "zerops://themes/rules",
 			Title:   "Zerops Rules & Pitfalls",
 			Content: "# Zerops Rules & Pitfalls\n\nALWAYS bind 0.0.0.0. NEVER use apt-get on Alpine.",
 		},
-		"zerops://foundation/grammar": {
-			URI:     "zerops://foundation/grammar",
+		"zerops://themes/grammar": {
+			URI:     "zerops://themes/grammar",
 			Title:   "Zerops Grammar",
 			Content: "# Zerops Grammar\n\nYAML schema reference.\n\n## zerops.yml Schema\n\nStructure rules.\n\n## Schema Rules\n\nPorts 10-65435.",
 		},
-		"zerops://foundation/runtimes": {
-			URI:     "zerops://foundation/runtimes",
+		"zerops://themes/runtimes": {
+			URI:     "zerops://themes/runtimes",
 			Title:   "Runtime Deltas",
 			Content: "## PHP\n\nBuild php@X, run php-nginx@X. Port 80.\n\n## Node.js\n\nnode_modules in deployFiles. SSR patterns.",
 		},
-		"zerops://foundation/services": {
-			URI:     "zerops://foundation/services",
+		"zerops://themes/services": {
+			URI:     "zerops://themes/services",
 			Title:   "Managed Service Reference",
 			Content: "## PostgreSQL\n\nPort 5432. Env: hostname, password, connectionString.\n\n## Valkey\n\nPort 6379. Connection: redis://cache:6379.",
 		},
-		"zerops://foundation/wiring": {
-			URI:     "zerops://foundation/wiring",
+		"zerops://themes/wiring": {
+			URI:     "zerops://themes/wiring",
 			Title:   "Wiring Patterns",
 			Content: "## Syntax Rules\n\nUse ${hostname_var} for cross-refs.\n\nenvSecrets for sensitive data.\n\n## PostgreSQL\n\nDATABASE_URL:postgresql://${h_user}:${h_password}@{h}:5432\n\n## Valkey\n\nREDIS_URL:redis://${h_user}:${h_password}@{h}:6379",
 		},
-		"zerops://decisions/choose-database": {
-			URI:     "zerops://decisions/choose-database",
-			Title:   "Choose Database",
-			TLDR:    "Use PostgreSQL for everything unless you have a specific reason not to.",
-			Content: "# Choose Database\n\n## TL;DR\nUse PostgreSQL for everything unless you have a specific reason not to.",
-		},
-		"zerops://decisions/choose-cache": {
-			URI:     "zerops://decisions/choose-cache",
-			Title:   "Choose Cache",
-			TLDR:    "Use Valkey (default) — KeyDB is deprecated.",
-			Content: "# Choose Cache\n\n## TL;DR\nUse Valkey (default) — KeyDB is deprecated.",
+		"zerops://themes/operations": {
+			URI:     "zerops://themes/operations",
+			Title:   "Zerops Operations & Decisions",
+			Content: "# Zerops Operations & Decisions\n\n## Choose Database\n\nUse PostgreSQL for everything unless you have a specific reason not to.\n\n## Choose Cache\n\nUse Valkey (default) — KeyDB is deprecated.\n\n## Choose Runtime Base\n\nGo, Rust, .NET build natively — use alpine base for smaller images.",
 		},
 		"zerops://recipes/ghost": {
 			URI:     "zerops://recipes/ghost",
@@ -453,10 +446,10 @@ func TestStore_GetBriefing_DecisionsIncluded(t *testing.T) {
 
 func TestStore_GetBriefing_GracefulWithoutPlatformModel(t *testing.T) {
 	t.Parallel()
-	// Store with grammar but no platform-model or rules
+	// Store with grammar but no platform or rules
 	docs := map[string]*Document{
-		"zerops://foundation/grammar": {
-			URI:     "zerops://foundation/grammar",
+		"zerops://themes/grammar": {
+			URI:     "zerops://themes/grammar",
 			Title:   "Zerops Grammar",
 			Content: "# Zerops Grammar\n\nYAML schema reference.",
 		},

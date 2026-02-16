@@ -6,11 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/blevesearch/bleve/v2"
 	"github.com/zeropsio/zcp/internal/platform"
 )
-
-const analyzerStandard = "standard"
 
 // SearchResult represents a single search result.
 type SearchResult struct {
@@ -33,13 +30,13 @@ type Provider interface {
 	List() []Resource
 	Get(uri string) (*Document, error)
 	Search(query string, limit int) []SearchResult
-	GenerateSuggestions(query string, results []SearchResult) []string
+	GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error)
+	GetRecipe(name string) (string, error)
 }
 
-// Store holds the knowledge base with BM25 index.
+// Store holds the knowledge base with simple text-matching search.
 type Store struct {
-	docs  map[string]*Document
-	index bleve.Index
+	docs map[string]*Document
 }
 
 // Verify Store implements Provider.
@@ -59,103 +56,118 @@ func GetEmbeddedStore() (*Store, error) {
 	return embeddedStore, errEmbeddedStore
 }
 
-// NewStore creates a new Store from pre-loaded documents and builds a BM25 index.
+// NewStore creates a new Store from pre-loaded documents.
 func NewStore(docs map[string]*Document) (*Store, error) {
-	s := &Store{docs: docs}
-	if err := s.buildIndex(); err != nil {
-		return nil, fmt.Errorf("knowledge: build index: %w", err)
-	}
-	return s, nil
+	return &Store{docs: docs}, nil
 }
 
-func (s *Store) buildIndex() error {
-	titleMapping := bleve.NewTextFieldMapping()
-	titleMapping.Analyzer = analyzerStandard
-	titleMapping.Store = false
-	titleMapping.IncludeInAll = true
-
-	kwMapping := bleve.NewTextFieldMapping()
-	kwMapping.Analyzer = analyzerStandard
-	kwMapping.Store = false
-
-	contentMapping := bleve.NewTextFieldMapping()
-	contentMapping.Analyzer = analyzerStandard
-	contentMapping.Store = false
-
-	docMapping := bleve.NewDocumentMapping()
-	docMapping.AddFieldMappingsAt("title", titleMapping)
-	docMapping.AddFieldMappingsAt("keywords", kwMapping)
-	docMapping.AddFieldMappingsAt("content", contentMapping)
-
-	indexMapping := bleve.NewIndexMapping()
-	indexMapping.DefaultMapping = docMapping
-	indexMapping.DefaultAnalyzer = analyzerStandard
-
-	index, err := bleve.NewMemOnly(indexMapping)
-	if err != nil {
-		return fmt.Errorf("create index: %w", err)
-	}
-
-	batch := index.NewBatch()
-	for uri, doc := range s.docs {
-		_ = batch.Index(uri, map[string]any{
-			"title":    doc.Title,
-			"keywords": strings.Join(doc.Keywords, " "),
-			"content":  doc.Content,
-		})
-	}
-	if err := index.Batch(batch); err != nil {
-		return fmt.Errorf("index batch: %w", err)
-	}
-
-	s.index = index
-	return nil
+// queryAliases maps common alternative terms to their Zerops equivalents.
+var queryAliases = map[string]string{
+	"postgres":  "postgres postgresql",
+	"redis":     "redis valkey",
+	"mysql":     "mysql mariadb",
+	"node":      "node nodejs",
+	"db":        "db database",
+	"ssl":       "ssl tls",
+	"env":       "env environment variable",
+	"cert":      "cert certificate ssl tls",
+	"ha":        "ha high-availability mode",
+	"k8s":       "k8s kubernetes",
+	"mongo":     "mongo mongodb",
+	"docker":    "docker dockerfile",
+	"pg":        "pg postgresql postgres",
+	"js":        "js nodejs javascript",
+	"ts":        "ts nodejs typescript",
+	"s3":        "s3 object-storage",
+	"cron":      "cron crontab schedule",
+	"log":       "log logging logs",
+	"logs":      "logs logging log",
+	"dns":       "dns domain networking",
+	"ci":        "ci ci-cd continuous integration",
+	"cd":        "cd ci-cd continuous deployment",
+	"dotnet":    "dotnet .net csharp",
+	"csharp":    "csharp dotnet .net",
+	"memcached": "memcached valkey cache",
 }
 
-// Search performs a BM25 search with field boosts and query expansion.
+func expandQuery(query string) string {
+	words := strings.Fields(strings.ToLower(query))
+	var expanded []string
+	for _, w := range words {
+		if alias, ok := queryAliases[w]; ok {
+			expanded = append(expanded, alias)
+		} else {
+			expanded = append(expanded, w)
+		}
+	}
+	return strings.Join(expanded, " ")
+}
+
+// ExpandQuery is exported for testing.
+func ExpandQuery(query string) string {
+	return expandQuery(query)
+}
+
+// Search performs a simple text-matching search with field boosts and query expansion.
 func (s *Store) Search(query string, limit int) []SearchResult {
 	if limit <= 0 {
 		limit = 5
 	}
 
 	expanded := expandQuery(query)
+	words := strings.Fields(strings.ToLower(expanded))
 
-	titleQuery := bleve.NewMatchQuery(expanded)
-	titleQuery.SetField("title")
-	titleQuery.SetBoost(2.0)
+	type scored struct {
+		uri   string
+		score float64
+	}
+	var hits []scored
 
-	kwQuery := bleve.NewMatchQuery(expanded)
-	kwQuery.SetField("keywords")
-	kwQuery.SetBoost(1.5)
+	for uri, doc := range s.docs {
+		score := 0.0
+		titleLower := strings.ToLower(doc.Title)
+		kwLower := strings.ToLower(strings.Join(doc.Keywords, " "))
+		contentLower := strings.ToLower(doc.Content)
 
-	contentQuery := bleve.NewMatchQuery(expanded)
-	contentQuery.SetField("content")
-	contentQuery.SetBoost(1.0)
+		for _, word := range words {
+			if strings.Contains(titleLower, word) {
+				score += 2.0
+			}
+			if strings.Contains(kwLower, word) {
+				score += 1.5
+			}
+			if strings.Contains(contentLower, word) {
+				score += 1.0
+			}
+		}
 
-	disjunction := bleve.NewDisjunctionQuery(titleQuery, kwQuery, contentQuery)
-
-	searchRequest := bleve.NewSearchRequest(disjunction)
-	searchRequest.Size = limit
-
-	results, err := s.index.Search(searchRequest)
-	if err != nil || results.Total == 0 {
-		return nil
+		if score > 0 {
+			hits = append(hits, scored{uri, score})
+		}
 	}
 
-	out := make([]SearchResult, 0, len(results.Hits))
-	for _, hit := range results.Hits {
-		doc := s.docs[hit.ID]
-		if doc == nil {
-			continue
+	// Sort by score descending, then by URI for determinism.
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].score != hits[j].score {
+			return hits[i].score > hits[j].score
 		}
-		out = append(out, SearchResult{
+		return hits[i].uri < hits[j].uri
+	})
+
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	results := make([]SearchResult, len(hits))
+	for i, h := range hits {
+		doc := s.docs[h.uri]
+		results[i] = SearchResult{
 			URI:     doc.URI,
 			Title:   doc.Title,
-			Score:   hit.Score,
+			Score:   h.score,
 			Snippet: extractSnippet(doc.Content, query, 300),
-		})
+		}
 	}
-	return out
+	return results
 }
 
 // List returns all available resources for MCP list_resources().
@@ -189,35 +201,27 @@ func (s *Store) DocumentCount() int {
 	return len(s.docs)
 }
 
-// ExpandQuery is exported for testing.
-func ExpandQuery(query string) string {
-	return expandQuery(query)
-}
-
-// GetPlatformModel returns the full foundation/platform-model.md content.
-// This is the L0 layer — conceptual understanding of how Zerops works.
+// GetPlatformModel returns the full themes/platform.md content.
 func (s *Store) GetPlatformModel() (string, error) {
-	doc, err := s.Get("zerops://foundation/platform-model")
+	doc, err := s.Get("zerops://themes/platform")
 	if err != nil {
 		return "", fmt.Errorf("platform model not found: %w", err)
 	}
 	return doc.Content, nil
 }
 
-// GetRules returns the full foundation/rules.md content.
-// This is the L1 layer — actionable DO/DON'T rules with causal reasons.
+// GetRules returns the full themes/rules.md content.
 func (s *Store) GetRules() (string, error) {
-	doc, err := s.Get("zerops://foundation/rules")
+	doc, err := s.Get("zerops://themes/rules")
 	if err != nil {
 		return "", fmt.Errorf("rules not found: %w", err)
 	}
 	return doc.Content, nil
 }
 
-// GetFoundation returns the full foundation/grammar.md content.
-// This is the L2 layer — YAML schema reference.
+// GetFoundation returns the full themes/grammar.md content.
 func (s *Store) GetFoundation() (string, error) {
-	doc, err := s.Get("zerops://foundation/grammar")
+	doc, err := s.Get("zerops://themes/grammar")
 	if err != nil {
 		return "", fmt.Errorf("foundation grammar not found: %w", err)
 	}
@@ -238,6 +242,7 @@ var runtimeRecipeHints = map[string][]string{
 	"elixir": {"phoenix"},
 	"php":    {"laravel", "symfony", "nette", "filament", "twill", "php-"},
 	"java":   {"java-spring", "spring-boot"},
+	"ruby":   {"rails"},
 }
 
 // matchingRecipes returns recipe names that match the given runtime base name.
@@ -259,141 +264,51 @@ func (s *Store) matchingRecipes(runtimeBase string) []string {
 	return matched
 }
 
-// GetBriefing assembles contextual knowledge for a specific stack using layered composition.
-// Layers: L0 platform model → L1 rules → L2 grammar → L3 runtime delta → L3b recipes →
-// L4 service cards → L5 wiring → L6 decisions → L7 version check.
-// runtime: e.g. "php-nginx@8.4" (normalized internally to "PHP" section)
-// services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
-// liveTypes: optional live service stack types for version validation (nil = skip)
-// Returns assembled markdown content ready for LLM consumption.
-func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error) {
-	var sb strings.Builder
+// extractSnippet extracts a text snippet around the first query term match.
+func extractSnippet(content, query string, maxLen int) string {
+	lower := strings.ToLower(content)
+	queryLower := strings.ToLower(query)
 
-	// L0: Platform model — conceptual understanding (always included)
-	if platformModel, err := s.GetPlatformModel(); err == nil {
-		sb.WriteString(platformModel)
-		sb.WriteString("\n\n")
-	}
-
-	// L1: Rules & pitfalls — actionable DO/DON'T (always included)
-	if rules, err := s.GetRules(); err == nil {
-		sb.WriteString(rules)
-		sb.WriteString("\n\n")
-	}
-
-	// L2: YAML schema reference (always included)
-	grammar, err := s.GetFoundation()
-	if err != nil {
-		return "", err
-	}
-	sb.WriteString(grammar)
-	sb.WriteString("\n\n")
-
-	// L3: Runtime delta (specific runtime only)
-	runtimeBase := ""
-	if runtime != "" {
-		runtimeBase, _, _ = strings.Cut(runtime, "@")
-		normalized := normalizeRuntimeName(runtime)
-		if normalized != "" {
-			if section := s.getRuntimeException(normalized); section != "" {
-				sb.WriteString("## Runtime-Specific: ")
-				sb.WriteString(normalized)
-				sb.WriteString("\n\n")
-				sb.WriteString(section)
-				sb.WriteString("\n\n---\n\n")
-			}
+	bestPos := -1
+	for word := range strings.FieldsSeq(queryLower) {
+		pos := strings.Index(lower, word)
+		if pos >= 0 && (bestPos < 0 || pos < bestPos) {
+			bestPos = pos
 		}
 	}
 
-	// L3b: Matching recipes hint
-	if runtimeBase != "" {
-		if recipes := s.matchingRecipes(runtimeBase); len(recipes) > 0 {
-			sb.WriteString("## Matching Recipes\n\n")
-			sb.WriteString("Available recipes for this runtime (use `zerops_knowledge recipe=\"name\"` to load):\n")
-			for _, r := range recipes {
-				sb.WriteString("- `")
-				sb.WriteString(r)
-				sb.WriteString("`\n")
-			}
-			sb.WriteString("\n---\n\n")
+	if bestPos < 0 {
+		lines := strings.SplitN(content, "\n", 3)
+		if len(lines) >= 3 {
+			return truncate(lines[2], maxLen)
+		}
+		return truncate(content, maxLen)
+	}
+
+	start := bestPos - maxLen/3
+	start = max(start, 0)
+	end := start + maxLen
+	end = min(end, len(content))
+
+	snippet := content[start:end]
+
+	if start > 0 {
+		if idx := strings.IndexByte(snippet, ' '); idx >= 0 {
+			snippet = "..." + snippet[idx+1:]
+		}
+	}
+	if end < len(content) {
+		if idx := strings.LastIndexByte(snippet, ' '); idx >= 0 {
+			snippet = snippet[:idx] + "..."
 		}
 	}
 
-	// L4: Service cards (per service, only relevant ones)
-	if len(services) > 0 {
-		sb.WriteString("## Service Cards\n\n")
-		for _, svc := range services {
-			normalized := normalizeServiceName(svc)
-			if card := s.getServiceCard(normalized); card != "" {
-				sb.WriteString("### ")
-				sb.WriteString(normalized)
-				sb.WriteString("\n\n")
-				sb.WriteString(card)
-				sb.WriteString("\n\n")
-			}
-		}
-		sb.WriteString("---\n\n")
-	}
-
-	// L5: Wiring (syntax rules + per-service templates)
-	if len(services) > 0 {
-		if syntax := s.getWiringSyntax(); syntax != "" {
-			sb.WriteString("## Wiring Patterns\n\n")
-			sb.WriteString(syntax)
-			sb.WriteString("\n\n")
-		}
-		for _, svc := range services {
-			normalized := normalizeServiceName(svc)
-			if wiring := s.getWiringSection(normalized); wiring != "" {
-				sb.WriteString("### Wiring: ")
-				sb.WriteString(normalized)
-				sb.WriteString("\n\n")
-				sb.WriteString(wiring)
-				sb.WriteString("\n\n")
-			}
-		}
-	}
-
-	// L6: Relevant decisions (compact hints based on stack)
-	if decisions := s.getRelevantDecisions(runtime, services); decisions != "" {
-		sb.WriteString("## Decision Hints\n\n")
-		sb.WriteString(decisions)
-		sb.WriteString("\n\n")
-	}
-
-	// L7: Version check (if live types available)
-	if versionCheck := FormatVersionCheck(runtime, services, liveTypes); versionCheck != "" {
-		sb.WriteString("---\n\n")
-		sb.WriteString(versionCheck)
-	}
-
-	sb.WriteString("\nNext: Generate import.yml and zerops.yml using the rules above. Use only validated versions. Then import with zerops_import.")
-
-	return sb.String(), nil
+	return snippet
 }
 
-// GetRecipe returns the full content of a named recipe.
-// name: recipe filename without extension (e.g., "laravel-jetstream")
-// Returns error if recipe not found.
-func (s *Store) GetRecipe(name string) (string, error) {
-	uri := "zerops://recipes/" + name
-	doc, err := s.Get(uri)
-	if err != nil {
-		available := s.ListRecipes()
-		return "", fmt.Errorf("recipe %q not found (available: %s)", name, strings.Join(available, ", "))
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
 	}
-	return doc.Content, nil
-}
-
-// ListRecipes returns names of all available recipes (without extension).
-func (s *Store) ListRecipes() []string {
-	var recipes []string
-	prefix := "zerops://recipes/"
-	for uri := range s.docs {
-		if name, ok := strings.CutPrefix(uri, prefix); ok {
-			recipes = append(recipes, name)
-		}
-	}
-	sort.Strings(recipes)
-	return recipes
+	return s[:maxLen] + "..."
 }

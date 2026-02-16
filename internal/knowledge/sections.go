@@ -67,6 +67,7 @@ var runtimeNormalizer = map[string]string{
 	"rust":       "Rust",
 	"elixir":     "Elixir",
 	"gleam":      "Gleam",
+	"ruby":       "Ruby",
 	"static":     "Static",
 	"docker":     "Docker",
 	"alpine":     "Alpine",
@@ -102,6 +103,7 @@ var serviceNormalizer = map[string]string{
 	"clickhouse":     "ClickHouse",
 	"qdrant":         "Qdrant",
 	"typesense":      "Typesense",
+	"rabbitmq":       "RabbitMQ",
 }
 
 // normalizeServiceName extracts service base name from versioned string and maps to section name.
@@ -132,7 +134,7 @@ func normalizeServiceName(service string) string {
 
 // getRuntimeException returns the section content for a normalized runtime name from runtimes.md.
 func (s *Store) getRuntimeException(normalizedName string) string {
-	doc, err := s.Get("zerops://foundation/runtimes")
+	doc, err := s.Get("zerops://themes/runtimes")
 	if err != nil {
 		return ""
 	}
@@ -142,7 +144,7 @@ func (s *Store) getRuntimeException(normalizedName string) string {
 
 // getServiceCard returns the section content for a normalized service name from services.md.
 func (s *Store) getServiceCard(normalizedName string) string {
-	doc, err := s.Get("zerops://foundation/services")
+	doc, err := s.Get("zerops://themes/services")
 	if err != nil {
 		return ""
 	}
@@ -152,7 +154,7 @@ func (s *Store) getServiceCard(normalizedName string) string {
 
 // getWiringSyntax returns the "Syntax Rules" section from wiring.md.
 func (s *Store) getWiringSyntax() string {
-	doc, err := s.Get("zerops://foundation/wiring")
+	doc, err := s.Get("zerops://themes/wiring")
 	if err != nil {
 		return ""
 	}
@@ -162,7 +164,7 @@ func (s *Store) getWiringSyntax() string {
 
 // getWiringSection returns the wiring template for a normalized service name from wiring.md.
 func (s *Store) getWiringSection(normalizedName string) string {
-	doc, err := s.Get("zerops://foundation/wiring")
+	doc, err := s.Get("zerops://themes/wiring")
 	if err != nil {
 		return ""
 	}
@@ -170,43 +172,55 @@ func (s *Store) getWiringSection(normalizedName string) string {
 	return sections[normalizedName]
 }
 
-// serviceDecisionMap maps service base names to decision document names.
-var serviceDecisionMap = map[string]string{
-	"postgresql":    "choose-database",
-	"mariadb":       "choose-database",
-	"clickhouse":    "choose-database",
-	"valkey":        "choose-cache",
-	"keydb":         "choose-cache",
-	"kafka":         "choose-queue",
-	"nats":          "choose-queue",
-	"elasticsearch": "choose-search",
-	"meilisearch":   "choose-search",
-	"qdrant":        "choose-search",
-	"typesense":     "choose-search",
+// decisionSectionMap maps service base names to operations.md decision section names.
+var decisionSectionMap = map[string]string{
+	"postgresql":    "Choose Database",
+	"mariadb":       "Choose Database",
+	"clickhouse":    "Choose Database",
+	"valkey":        "Choose Cache",
+	"keydb":         "Choose Cache",
+	"kafka":         "Choose Queue",
+	"nats":          "Choose Queue",
+	"elasticsearch": "Choose Search",
+	"meilisearch":   "Choose Search",
+	"qdrant":        "Choose Search",
+	"typesense":     "Choose Search",
 }
 
 // getRelevantDecisions returns compact decision hints based on the runtime and services.
 func (s *Store) getRelevantDecisions(runtime string, services []string) string {
+	doc, err := s.Get("zerops://themes/operations")
+	if err != nil {
+		return ""
+	}
+	sections := parseH2Sections(doc.Content)
+
 	var hints []string
 
 	// Runtime-related decisions
 	if runtime != "" {
 		base, _, _ := strings.Cut(runtime, "@")
 		if base == "go" || base == "python" || base == "dotnet" || base == "rust" {
-			if tip := s.getDecisionTLDR("choose-runtime-base"); tip != "" {
-				hints = append(hints, tip)
+			if section, ok := sections["Choose Runtime Base"]; ok && section != "" {
+				firstLine := extractFirstNonEmptyLine(section)
+				if firstLine != "" {
+					hints = append(hints, "- **Choose Runtime Base**: "+firstLine)
+				}
 			}
 		}
 	}
 
-	// Service-related decisions (deduplicate by decision doc)
+	// Service-related decisions (deduplicate by section name)
 	seen := make(map[string]bool)
 	for _, svc := range services {
 		base, _, _ := strings.Cut(svc, "@")
-		if decisionDoc, ok := serviceDecisionMap[base]; ok && !seen[decisionDoc] {
-			seen[decisionDoc] = true
-			if tip := s.getDecisionTLDR(decisionDoc); tip != "" {
-				hints = append(hints, tip)
+		if sectionName, ok := decisionSectionMap[base]; ok && !seen[sectionName] {
+			seen[sectionName] = true
+			if section, ok2 := sections[sectionName]; ok2 && section != "" {
+				firstLine := extractFirstNonEmptyLine(section)
+				if firstLine != "" {
+					hints = append(hints, "- **"+sectionName+"**: "+firstLine)
+				}
 			}
 		}
 	}
@@ -217,15 +231,13 @@ func (s *Store) getRelevantDecisions(runtime string, services []string) string {
 	return strings.Join(hints, "\n")
 }
 
-// getDecisionTLDR returns the TL;DR from a decision document as a compact hint.
-func (s *Store) getDecisionTLDR(decisionName string) string {
-	uri := "zerops://decisions/" + decisionName
-	doc, err := s.Get(uri)
-	if err != nil {
-		return ""
-	}
-	if doc.TLDR != "" {
-		return "- **" + doc.Title + "**: " + doc.TLDR
+// extractFirstNonEmptyLine returns the first non-empty line from content.
+func extractFirstNonEmptyLine(content string) string {
+	for line := range strings.SplitSeq(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			return trimmed
+		}
 	}
 	return ""
 }

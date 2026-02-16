@@ -61,28 +61,19 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 				"Use only one mode per call")), nil, nil
 		}
 
-		// Mode 1: BM25 search (existing behavior)
+		// Mode 1: Search
 		if hasQuery {
 			results := store.Search(input.Query, input.Limit)
 			return jsonResult(results), nil, nil
 		}
 
-		// Mode 2: Contextual briefing (NEW)
+		// Mode 2: Contextual briefing
 		if hasBriefing {
-			// Need concrete *Store for GetBriefing (not Provider interface)
-			concreteStore, ok := store.(*knowledge.Store)
-			if !ok {
-				return convertError(platform.NewPlatformError(
-					platform.ErrInvalidUsage,
-					"Briefing mode requires concrete Store implementation",
-					"Check server initialization")), nil, nil
-			}
-
 			var liveTypes []platform.ServiceStackType
 			if client != nil && cache != nil {
 				liveTypes = cache.Get(ctx, client)
 			}
-			briefing, err := concreteStore.GetBriefing(input.Runtime, input.Services, liveTypes)
+			briefing, err := store.GetBriefing(input.Runtime, input.Services, liveTypes)
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrFileNotFound,
@@ -92,18 +83,9 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			return textResult(briefing), nil, nil
 		}
 
-		// Mode 3: Recipe retrieval (NEW)
+		// Mode 3: Recipe retrieval
 		if hasRecipe {
-			// Need concrete *Store for GetRecipe
-			concreteStore, ok := store.(*knowledge.Store)
-			if !ok {
-				return convertError(platform.NewPlatformError(
-					platform.ErrInvalidUsage,
-					"Recipe mode requires concrete Store implementation",
-					"Check server initialization")), nil, nil
-			}
-
-			recipe, err := concreteStore.GetRecipe(input.Recipe)
+			recipe, err := store.GetRecipe(input.Recipe)
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,

@@ -6,17 +6,17 @@ import (
 	"strings"
 )
 
-//go:embed foundation/*.md recipes/*.md guides/*.md decisions/*.md
+//go:embed themes/*.md recipes/*.md
 var contentFS embed.FS
 
 // knowledgeDirs lists the top-level directories in the embedded knowledge filesystem.
-var knowledgeDirs = []string{"foundation", "recipes", "guides", "decisions"}
+var knowledgeDirs = []string{"themes", "recipes"}
 
 // Document represents a parsed knowledge document.
 type Document struct {
-	Path        string   // foundation/grammar.md, recipes/laravel-jetstream.md
-	URI         string   // zerops://foundation/grammar, zerops://recipes/laravel-jetstream
-	Title       string   // Zerops Fundamentals
+	Path        string   // themes/grammar.md, recipes/laravel-jetstream.md
+	URI         string   // zerops://themes/grammar, zerops://recipes/laravel-jetstream
+	Title       string   // Zerops Grammar
 	Keywords    []string // [zerops, core, principles, ...]
 	TLDR        string   // One-sentence summary
 	Content     string   // Full markdown content

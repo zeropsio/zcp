@@ -202,6 +202,11 @@ func TestNormalizeRuntimeName(t *testing.T) {
 		// Gleam
 		{"gleam@1", "Gleam"},
 
+		// Ruby
+		{"ruby@3.4", "Ruby"},
+		{"ruby@3.3", "Ruby"},
+		{"ruby", "Ruby"},
+
 		// Static
 		{"static", "Static"},
 
@@ -256,6 +261,10 @@ func TestNormalizeServiceName(t *testing.T) {
 		{"clickhouse@24", "ClickHouse"},
 		{"qdrant@1", "Qdrant"},
 		{"typesense@27", "Typesense"},
+
+		// RabbitMQ
+		{"rabbitmq@3.9", "RabbitMQ"},
+		{"rabbitmq", "RabbitMQ"},
 
 		// Unknown service - graceful degradation
 		{"unknown-service@1", "Unknown-Service"},

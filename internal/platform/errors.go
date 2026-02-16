@@ -38,6 +38,11 @@ const (
 	ErrMountFailed            = "MOUNT_FAILED"
 	ErrUnmountFailed          = "UNMOUNT_FAILED"
 	ErrNotImplemented         = "NOT_IMPLEMENTED"
+	ErrWorkflowActive         = "WORKFLOW_ACTIVE"
+	ErrGateFailed             = "GATE_FAILED"
+	ErrSessionNotFound        = "SESSION_NOT_FOUND"
+	ErrEvidenceMissing        = "EVIDENCE_MISSING"
+	ErrBootstrapActive        = "BOOTSTRAP_ACTIVE"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

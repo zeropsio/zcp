@@ -1,4 +1,4 @@
-// Tests for: design/zcp-prd.md § Knowledge (BM25 search engine)
+// Tests for: knowledge engine — search, document access, briefing, recipes
 package knowledge
 
 import (
@@ -20,16 +20,16 @@ func newTestStore(t *testing.T) *Store {
 func TestStore_DocumentCount(t *testing.T) {
 	store := newTestStore(t)
 	count := store.DocumentCount()
-	if count < 40 {
-		t.Errorf("DocumentCount = %d, want >= 40", count)
+	if count < 30 {
+		t.Errorf("DocumentCount = %d, want >= 30", count)
 	}
 }
 
 func TestStore_List(t *testing.T) {
 	store := newTestStore(t)
 	resources := store.List()
-	if len(resources) < 40 {
-		t.Errorf("List() returned %d resources, want >= 40", len(resources))
+	if len(resources) < 30 {
+		t.Errorf("List() returned %d resources, want >= 30", len(resources))
 	}
 	for _, r := range resources {
 		if !strings.HasPrefix(r.URI, "zerops://") {
@@ -46,7 +46,7 @@ func TestStore_List(t *testing.T) {
 
 func TestStore_Get(t *testing.T) {
 	store := newTestStore(t)
-	doc, err := store.Get("zerops://foundation/services")
+	doc, err := store.Get("zerops://themes/services")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,26 +66,27 @@ func TestStore_GetNotFound(t *testing.T) {
 	}
 }
 
-// --- Foundation Document Embed Tests ---
+// --- Theme Document Embed Tests ---
 
-func TestStore_FoundationDocsEmbedded(t *testing.T) {
+func TestStore_ThemeDocsEmbedded(t *testing.T) {
 	store := newTestStore(t)
-	foundationURIs := []string{
-		"zerops://foundation/platform-model",
-		"zerops://foundation/rules",
-		"zerops://foundation/grammar",
-		"zerops://foundation/runtimes",
-		"zerops://foundation/services",
-		"zerops://foundation/wiring",
+	themeURIs := []string{
+		"zerops://themes/platform",
+		"zerops://themes/rules",
+		"zerops://themes/grammar",
+		"zerops://themes/runtimes",
+		"zerops://themes/services",
+		"zerops://themes/wiring",
+		"zerops://themes/operations",
 	}
-	for _, uri := range foundationURIs {
+	for _, uri := range themeURIs {
 		doc, err := store.Get(uri)
 		if err != nil {
-			t.Errorf("foundation doc %s not found: %v", uri, err)
+			t.Errorf("theme doc %s not found: %v", uri, err)
 			continue
 		}
 		if len(doc.Content) < 50 {
-			t.Errorf("foundation doc %s content too short (%d bytes)", uri, len(doc.Content))
+			t.Errorf("theme doc %s content too short (%d bytes)", uri, len(doc.Content))
 		}
 	}
 }
@@ -128,7 +129,7 @@ func TestStore_GetBriefing_RealDocs(t *testing.T) {
 	}
 }
 
-// --- BM25 Search Tests ---
+// --- SimpleSearch Tests ---
 
 func TestSearch_PostgreSQLConnectionString(t *testing.T) {
 	store := newTestStore(t)
@@ -136,10 +137,9 @@ func TestSearch_PostgreSQLConnectionString(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'postgresql connection string'")
 	}
-	// PostgreSQL content now in foundation/services — check for any result containing postgresql
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(r.URI, "services") || strings.Contains(r.Title, "PostgreSQL") || strings.Contains(strings.ToLower(r.Snippet), "postgresql") {
+		if strings.Contains(r.URI, "services") || strings.Contains(strings.ToLower(r.Snippet), "postgresql") {
 			found = true
 			break
 		}
@@ -155,10 +155,9 @@ func TestSearch_RedisCache(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'redis cache'")
 	}
-	// Valkey content in foundation/services or decisions/choose-cache
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(strings.ToLower(r.Snippet), "valkey") || strings.Contains(r.URI, "cache") || strings.Contains(r.URI, "services") {
+		if strings.Contains(strings.ToLower(r.Snippet), "valkey") || strings.Contains(r.URI, "services") {
 			found = true
 			break
 		}
@@ -174,10 +173,9 @@ func TestSearch_NodejsDeploy(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'nodejs deploy'")
 	}
-	// Node.js content now in foundation/runtimes
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(strings.ToLower(r.Snippet), "node") || strings.Contains(r.URI, "runtimes") || strings.Contains(r.URI, "core") {
+		if strings.Contains(strings.ToLower(r.Snippet), "node") || strings.Contains(r.URI, "runtimes") {
 			found = true
 			break
 		}
@@ -193,10 +191,9 @@ func TestSearch_MysqlSetup(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'mysql setup'")
 	}
-	// MariaDB content in foundation/services or decisions/choose-database
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(strings.ToLower(r.Snippet), "mariadb") || strings.Contains(r.URI, "services") || strings.Contains(r.URI, "database") {
+		if strings.Contains(strings.ToLower(r.Snippet), "mariadb") || strings.Contains(r.URI, "services") {
 			found = true
 			break
 		}
@@ -214,7 +211,7 @@ func TestSearch_ElasticsearchFulltext(t *testing.T) {
 	}
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(strings.ToLower(r.Snippet), "elasticsearch") || strings.Contains(r.URI, "services") || strings.Contains(r.URI, "search") {
+		if strings.Contains(strings.ToLower(r.Snippet), "elasticsearch") || strings.Contains(r.URI, "services") {
 			found = true
 			break
 		}
@@ -232,7 +229,7 @@ func TestSearch_S3ObjectStorage(t *testing.T) {
 	}
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(r.URI, "object-storage") || strings.Contains(r.URI, "services") || strings.Contains(strings.ToLower(r.Snippet), "object") {
+		if strings.Contains(r.URI, "services") || strings.Contains(r.URI, "wiring") || strings.Contains(strings.ToLower(r.Snippet), "object") {
 			found = true
 			break
 		}
@@ -248,7 +245,6 @@ func TestSearch_ZeropsYmlBuildCache(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'zerops.yml build cache'")
 	}
-	// Build cache content now in foundation/grammar
 	found := false
 	for _, r := range results[:min(3, len(results))] {
 		if strings.Contains(r.URI, "grammar") || strings.Contains(strings.ToLower(r.Snippet), "cache") || strings.Contains(strings.ToLower(r.Snippet), "build") {
@@ -267,7 +263,6 @@ func TestSearch_ImportYmlServices(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'import.yml services'")
 	}
-	// import.yml content now in foundation/grammar
 	found := false
 	for _, r := range results[:min(3, len(results))] {
 		if strings.Contains(r.URI, "grammar") || strings.Contains(r.URI, "services") || strings.Contains(strings.ToLower(r.Snippet), "import") {
@@ -276,7 +271,7 @@ func TestSearch_ImportYmlServices(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected foundation/grammar or services in top 3")
+		t.Error("expected grammar or services in top 3")
 	}
 }
 
@@ -286,7 +281,6 @@ func TestSearch_EnvironmentVariables(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'environment variables env'")
 	}
-	// Env var content now in foundation/grammar
 	found := false
 	for _, r := range results[:min(3, len(results))] {
 		if strings.Contains(strings.ToLower(r.Snippet), "variable") || strings.Contains(strings.ToLower(r.Snippet), "env") || strings.Contains(r.URI, "grammar") {
@@ -305,7 +299,6 @@ func TestSearch_ScalingAutoscale(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'scaling autoscale ha'")
 	}
-	// Scaling content now in foundation/grammar
 	found := false
 	for _, r := range results[:min(3, len(results))] {
 		if strings.Contains(strings.ToLower(r.Snippet), "scaling") || strings.Contains(strings.ToLower(r.Snippet), "autoscal") || strings.Contains(r.URI, "grammar") {
@@ -324,7 +317,6 @@ func TestSearch_ConnectionStringNodejsPostgresql(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatal("expected results for 'connection string nodejs postgresql'")
 	}
-	// Content distributed across foundation/services and foundation/runtimes
 	found := false
 	for _, r := range results[:min(3, len(results))] {
 		if strings.Contains(strings.ToLower(r.Snippet), "postgresql") || strings.Contains(strings.ToLower(r.Snippet), "connection") {
@@ -334,34 +326,6 @@ func TestSearch_ConnectionStringNodejsPostgresql(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected postgresql or connection result in top 3")
-	}
-}
-
-func TestSearch_NoResults_MongoDB(t *testing.T) {
-	store := newTestStore(t)
-	results := store.Search("mongodb", 5)
-	suggestions := store.GenerateSuggestions("mongodb", results)
-	if len(suggestions) == 0 {
-		t.Error("expected suggestions for unsupported 'mongodb'")
-	}
-	found := false
-	for _, s := range suggestions {
-		if strings.Contains(s, "MongoDB") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected suggestion mentioning MongoDB")
-	}
-}
-
-func TestSearch_NoResults_Kubernetes(t *testing.T) {
-	store := newTestStore(t)
-	results := store.Search("kubernetes deployment", 5)
-	suggestions := store.GenerateSuggestions("kubernetes deployment", results)
-	if len(suggestions) == 0 {
-		t.Error("expected suggestions for unsupported 'kubernetes'")
 	}
 }
 
@@ -412,13 +376,11 @@ func TestPathToURI(t *testing.T) {
 		path string
 		uri  string
 	}{
-		{"foundation/grammar.md", "zerops://foundation/grammar"},
-		{"foundation/runtimes.md", "zerops://foundation/runtimes"},
-		{"foundation/services.md", "zerops://foundation/services"},
-		{"foundation/wiring.md", "zerops://foundation/wiring"},
+		{"themes/grammar.md", "zerops://themes/grammar"},
+		{"themes/runtimes.md", "zerops://themes/runtimes"},
+		{"themes/services.md", "zerops://themes/services"},
+		{"themes/wiring.md", "zerops://themes/wiring"},
 		{"recipes/laravel-jetstream.md", "zerops://recipes/laravel-jetstream"},
-		{"guides/cloudflare.md", "zerops://guides/cloudflare"},
-		{"decisions/choose-database.md", "zerops://decisions/choose-database"},
 	}
 	for _, tt := range tests {
 		got := pathToURI(tt.path)
@@ -433,9 +395,8 @@ func TestURIToPath(t *testing.T) {
 		uri  string
 		path string
 	}{
-		{"zerops://foundation/grammar", "foundation/grammar.md"},
+		{"zerops://themes/grammar", "themes/grammar.md"},
 		{"zerops://recipes/laravel-jetstream", "recipes/laravel-jetstream.md"},
-		{"zerops://guides/cloudflare", "guides/cloudflare.md"},
 	}
 	for _, tt := range tests {
 		got := uriToPath(tt.uri)
@@ -449,7 +410,7 @@ func TestURIToPath(t *testing.T) {
 
 func TestParseDocument_Keywords(t *testing.T) {
 	store := newTestStore(t)
-	doc, err := store.Get("zerops://foundation/services")
+	doc, err := store.Get("zerops://themes/services")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +424,7 @@ func TestParseDocument_Keywords(t *testing.T) {
 
 func TestParseDocument_TLDR(t *testing.T) {
 	store := newTestStore(t)
-	doc, err := store.Get("zerops://foundation/services")
+	doc, err := store.Get("zerops://themes/services")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +435,7 @@ func TestParseDocument_TLDR(t *testing.T) {
 
 func TestParseDocument_Title(t *testing.T) {
 	store := newTestStore(t)
-	doc, err := store.Get("zerops://foundation/grammar")
+	doc, err := store.Get("zerops://themes/grammar")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -502,101 +463,6 @@ func TestExtractSnippet_NoMatch(t *testing.T) {
 	if snippet == "" {
 		t.Error("expected fallback snippet even without match")
 	}
-}
-
-// --- Suggestions Tests ---
-
-func TestGenerateSuggestions_UnsupportedService(t *testing.T) {
-	store := newTestStore(t)
-	results := store.Search("dynamodb", 5)
-	suggestions := store.GenerateSuggestions("dynamodb", results)
-	if len(suggestions) == 0 {
-		t.Error("expected suggestions for dynamodb")
-	}
-	if !strings.Contains(suggestions[0], "DynamoDB") {
-		t.Errorf("suggestion should mention DynamoDB, got: %s", suggestions[0])
-	}
-}
-
-func TestGenerateSuggestions_WithResults(t *testing.T) {
-	store := newTestStore(t)
-	results := store.Search("postgresql", 5)
-	suggestions := store.GenerateSuggestions("postgresql", results)
-	_ = suggestions // verify no panic
-}
-
-func TestGenerateSuggestions_NoResults(t *testing.T) {
-	store := newTestStore(t)
-	var results []SearchResult
-	suggestions := store.GenerateSuggestions("xyznonexistent", results)
-	if len(suggestions) == 0 {
-		t.Error("expected fallback suggestion for no results")
-	}
-}
-
-// --- Hit Rate Tests ---
-
-func TestHitRate(t *testing.T) {
-	store := newTestStore(t)
-
-	type testCase struct {
-		name     string
-		query    string
-		wantURI  string // expected in top 1
-		wantTop3 string // expected in top 3 (if different)
-	}
-
-	cases := []testCase{
-		{"postgresql_connection", "postgresql connection string", "zerops://foundation/services", ""},
-		{"postgres_port", "postgres port", "zerops://foundation/services", ""},
-		{"nodejs_deploy", "nodejs deploy", "", "zerops://foundation/runtimes"},
-		{"mysql_setup", "mysql setup", "", "zerops://foundation/services"},
-		{"redis_cache", "redis cache", "", "zerops://foundation/services"},
-		{"elasticsearch", "elasticsearch fulltext", "", "zerops://foundation/services"},
-		{"env_variables", "environment variables env", "", "zerops://foundation/grammar"},
-		{"scaling", "scaling autoscale", "", "zerops://foundation/grammar"},
-	}
-
-	hit1 := 0
-	hit3 := 0
-	total := len(cases)
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			results := store.Search(tc.query, 5)
-			if len(results) == 0 {
-				t.Logf("MISS: no results for %q", tc.query)
-				return
-			}
-
-			expectedURI := tc.wantURI
-			if expectedURI == "" {
-				expectedURI = tc.wantTop3
-			}
-
-			if results[0].URI == expectedURI || (tc.wantURI != "" && results[0].URI == tc.wantURI) {
-				hit1++
-				hit3++
-				return
-			}
-
-			checkURI := expectedURI
-			if tc.wantTop3 != "" {
-				checkURI = tc.wantTop3
-			}
-
-			if containsURIInTop(results, checkURI, 3) {
-				hit3++
-			} else {
-				t.Logf("MISS top3: query=%q, got=%v", tc.query, urisFromResults(results[:min(3, len(results))]))
-			}
-		})
-	}
-
-	hit1Rate := float64(hit1) / float64(total) * 100
-	hit3Rate := float64(hit3) / float64(total) * 100
-	t.Logf("Hit@1: %.0f%% (%d/%d)", hit1Rate, hit1, total)
-	t.Logf("Hit@3: %.0f%% (%d/%d)", hit3Rate, hit3, total)
 }
 
 // --- GetBriefing Version Integration Tests ---
@@ -712,7 +578,7 @@ func TestStore_GetBriefing_LayerOrderRealDocs(t *testing.T) {
 	if serviceIdx < 0 {
 		t.Fatal("briefing missing Service Cards section")
 	}
-	// L0 platform model → L1 rules → L2 grammar → L3 runtime → L4 services
+	// L0 platform model -> L1 rules -> L2 grammar -> L3 runtime -> L4 services
 	if platformIdx >= rulesIdx {
 		t.Errorf("platform model (pos %d) should come before rules (pos %d)", platformIdx, rulesIdx)
 	}
@@ -725,20 +591,6 @@ func TestStore_GetBriefing_LayerOrderRealDocs(t *testing.T) {
 	if runtimeIdx >= serviceIdx {
 		t.Errorf("runtime (pos %d) should come before services (pos %d)", runtimeIdx, serviceIdx)
 	}
-}
-
-// --- Helpers ---
-
-func containsURIInTop(results []SearchResult, uri string, _ int) bool {
-	for i, r := range results {
-		if i >= 3 {
-			break
-		}
-		if r.URI == uri {
-			return true
-		}
-	}
-	return false
 }
 
 func urisFromResults(results []SearchResult) []string {

@@ -19,17 +19,17 @@ func testResourceServer(t *testing.T) *mcp.ClientSession {
 	t.Helper()
 
 	docs := map[string]*knowledge.Document{
-		"zerops://docs/services/postgresql": {
+		"zerops://services/postgresql": {
 			Path:        "embed/services/postgresql.md",
-			URI:         "zerops://docs/services/postgresql",
+			URI:         "zerops://services/postgresql",
 			Title:       "PostgreSQL on Zerops",
 			Keywords:    []string{"postgresql", "postgres"},
 			Content:     "# PostgreSQL on Zerops\n\nManaged PostgreSQL service.",
 			Description: "Managed PostgreSQL service.",
 		},
-		"zerops://docs/services/nodejs": {
+		"zerops://services/nodejs": {
 			Path:        "embed/services/nodejs.md",
-			URI:         "zerops://docs/services/nodejs",
+			URI:         "zerops://services/nodejs",
 			Title:       "Node.js on Zerops",
 			Keywords:    []string{"nodejs", "node"},
 			Content:     "# Node.js on Zerops\n\nRuntime for Node.js applications.",

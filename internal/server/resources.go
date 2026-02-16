@@ -23,7 +23,10 @@ func (s *Server) registerResources() {
 				return nil, mcp.ResourceNotFoundError(uri)
 			}
 
-			doc, err := s.store.Get(uri)
+			// Map zerops://docs/{path} → zerops://{path} for store lookup.
+			storeURI := "zerops://" + strings.TrimPrefix(uri, resourceURIPrefix)
+
+			doc, err := s.store.Get(storeURI)
 			if err != nil {
 				return nil, mcp.ResourceNotFoundError(uri)
 			}
