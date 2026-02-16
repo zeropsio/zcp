@@ -42,7 +42,7 @@ Without this wiring, the runtime service has no way to connect to managed servic
 
 ## Service Wiring Templates
 
-Below, **VARS** = config values, **SECRETS** = credentials. In import.yml, put ALL of them in `envSecrets` (no `envVariables` at service level). In zerops.yml, use `run.envVariables` for VARS. Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
+Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In import.yml, put ALL of them (both VARS and SECRETS) in `envSecrets`.** There is no `envVariables` at service level in import.yml — using it will silently drop the values. In zerops.yml, use `run.envVariables` for VARS. Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
 
 ## PostgreSQL
 Sample hostname: `db`
