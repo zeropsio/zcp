@@ -16,6 +16,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
 )
 
@@ -69,7 +70,7 @@ func newHarness(t *testing.T) *e2eHarness {
 
 	logFetcher := platform.NewLogFetcher()
 	localDeployer := platform.NewSystemLocalDeployer()
-	srv := server.New(client, authInfo, store, logFetcher, nil, localDeployer, nil, nil)
+	srv := server.New(client, authInfo, store, logFetcher, nil, localDeployer, nil, nil, runtime.Info{})
 
 	return &e2eHarness{
 		t:         t,

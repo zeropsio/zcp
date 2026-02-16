@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // testResourceServer creates an MCP client session backed by a server with a
@@ -47,7 +48,7 @@ func testResourceServer(t *testing.T) *mcp.ClientSession {
 	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil)
+	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

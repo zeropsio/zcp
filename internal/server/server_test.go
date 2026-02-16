@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 func TestServer_AllToolsRegistered(t *testing.T) {
@@ -25,7 +26,8 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil)
+	// Mount tool is now always registered (nil mounter returns error at call time).
+	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -48,10 +50,12 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	}
 
 	// With nil deployers, zerops_deploy should NOT be registered.
+	// Mount tool IS registered even with nil mounter (returns error at call time).
 	expectedTools := []string{
 		"zerops_context", "zerops_workflow", "zerops_discover", "zerops_knowledge",
 		"zerops_logs", "zerops_events", "zerops_process",
 		"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
+		"zerops_mount",
 	}
 
 	if len(result.Tools) != len(expectedTools) {
@@ -76,70 +80,56 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	}
 }
 
-// TestServer_Instructions — NOT parallel because subtests use t.Setenv.
 func TestServer_Instructions(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
-		name  string
-		check func(t *testing.T)
+		name string
+		rt   runtime.Info
+		want string
+		miss string
 	}{
 		{
-			name: "contains zerops_workflow",
-			check: func(t *testing.T) {
-				t.Helper()
-				inst := BuildInstructions()
-				if !strings.Contains(inst, "zerops_workflow") {
-					t.Error("Instructions should reference zerops_workflow")
-				}
-			},
+			name: "in container with service name",
+			rt:   runtime.Info{InContainer: true, ServiceName: "zcpx", ServiceID: "abc", ProjectID: "def"},
+			want: "zcpx",
 		},
 		{
-			name: "reasonable length",
-			check: func(t *testing.T) {
-				t.Helper()
-				words := strings.Fields(baseInstructions)
-				if len(words) < 10 || len(words) > 80 {
-					t.Errorf("baseInstructions has %d words, expected 10-80", len(words))
-				}
-			},
+			name: "in container without service name",
+			rt:   runtime.Info{InContainer: true, ServiceID: "abc"},
+			miss: "running inside",
 		},
 		{
-			name: "mentions Zerops",
-			check: func(t *testing.T) {
-				t.Helper()
-				inst := BuildInstructions()
-				if !strings.Contains(inst, "Zerops") {
-					t.Error("Instructions should mention Zerops")
-				}
-			},
+			name: "local dev (no context)",
+			rt:   runtime.Info{},
+			miss: "running inside",
 		},
 		{
-			name: "includes service name when env set",
-			check: func(t *testing.T) {
-				t.Helper()
-				t.Setenv("ZEROPS_StackName", "myservice")
-				inst := BuildInstructions()
-				if !strings.Contains(inst, "myservice") {
-					t.Error("Instructions should include service name from ZEROPS_StackName")
-				}
-			},
-		},
-		{
-			name: "no service name when env empty",
-			check: func(t *testing.T) {
-				t.Helper()
-				t.Setenv("ZEROPS_StackName", "")
-				inst := BuildInstructions()
-				if strings.Contains(inst, "running inside") {
-					t.Error("Instructions should not mention service when ZEROPS_StackName is empty")
-				}
-			},
+			name: "base instructions always included",
+			rt:   runtime.Info{InContainer: true, ServiceName: "myservice"},
+			want: "zerops_workflow",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.check(t)
+			t.Parallel()
+			inst := BuildInstructions(tt.rt)
+			if tt.want != "" && !strings.Contains(inst, tt.want) {
+				t.Errorf("Instructions should contain %q, got: %s", tt.want, inst)
+			}
+			if tt.miss != "" && strings.Contains(inst, tt.miss) {
+				t.Errorf("Instructions should NOT contain %q, got: %s", tt.miss, inst)
+			}
 		})
+	}
+}
+
+func TestServer_Instructions_ReasonableLength(t *testing.T) {
+	t.Parallel()
+	words := strings.Fields(baseInstructions)
+	if len(words) < 10 || len(words) > 80 {
+		t.Errorf("baseInstructions has %d words, expected 10-80", len(words))
 	}
 }
 
@@ -156,7 +146,7 @@ func TestServer_Connect(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil)
+	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

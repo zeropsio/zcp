@@ -8,6 +8,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
 	"github.com/zeropsio/zcp/internal/update"
 )
@@ -30,13 +31,14 @@ type Server struct {
 	localDeployer ops.LocalDeployer
 	mounter       ops.Mounter
 	updateInfo    *update.Info
+	rtInfo        runtime.Info
 }
 
 // New creates a new ZCP MCP server with all tools registered.
-func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter, updateInfo *update.Info) *Server {
+func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter, updateInfo *update.Info, rtInfo runtime.Info) *Server {
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
-		&mcp.ServerOptions{Instructions: BuildInstructions()},
+		&mcp.ServerOptions{Instructions: BuildInstructions(rtInfo)},
 	)
 
 	s := &Server{
@@ -49,6 +51,7 @@ func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, 
 		localDeployer: localDeployer,
 		mounter:       mounter,
 		updateInfo:    updateInfo,
+		rtInfo:        rtInfo,
 	}
 
 	s.registerTools()
@@ -79,9 +82,7 @@ func (s *Server) registerTools() {
 	tools.RegisterImport(s.server, s.client, projectID, stackCache)
 	tools.RegisterDelete(s.server, s.client, projectID)
 	tools.RegisterSubdomain(s.server, s.client, projectID)
-	if s.mounter != nil {
-		tools.RegisterMount(s.server, s.client, projectID, s.mounter)
-	}
+	tools.RegisterMount(s.server, s.client, projectID, s.mounter)
 }
 
 // Run starts the MCP server on stdio transport.

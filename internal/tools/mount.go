@@ -25,6 +25,13 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 			DestructiveHint: boolPtr(false),
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input MountInput) (*mcp.CallToolResult, any, error) {
+		if mounter == nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrNotImplemented,
+				"Mount is only available inside a Zerops container",
+				"zerops_mount requires SSHFS and zsc (available in Zerops containers)",
+			)), nil, nil
+		}
 		if input.Action == "" {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Action is required",

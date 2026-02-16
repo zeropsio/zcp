@@ -13,6 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
 )
 
@@ -35,7 +36,7 @@ func setupTestServer(t *testing.T, mock *platform.Mock, logFetcher platform.LogF
 		t.Fatalf("knowledge store: %v", err)
 	}
 
-	srv := server.New(mock, authInfo, store, logFetcher, nil, nil, nil, nil)
+	srv := server.New(mock, authInfo, store, logFetcher, nil, nil, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

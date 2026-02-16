@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
 )
 
@@ -46,7 +47,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := server.New(mock, authInfo, store, logFetcher, &nopSSH{}, &nopLocal{}, &nopMounter{}, nil)
+	srv := server.New(mock, authInfo, store, logFetcher, &nopSSH{}, &nopLocal{}, &nopMounter{}, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

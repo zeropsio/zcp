@@ -351,6 +351,30 @@ type Info struct {
 
 **No auto-mapping between API host and region.** They are independent values — API hosts can be any URL (e.g. `gb-devel.zerops.dev`, `api.app-prg1.zerops.io`), no pattern to parse. Both have separate resolution chains (see §9.1). If `Region` is empty at deploy time, the deploy tool skips zcli's `--zeropsRegion` flag.
 
+### 3.4 Runtime Detection
+
+ZCP detects whether it is running inside a Zerops container at startup. The `serviceId` env var is injected by Zerops into every container — its presence is the definitive signal.
+
+**Container env vars** (injected by Zerops):
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `hostname` | `zcpx` | Service hostname |
+| `serviceId` | `hffVp74hRXiVpkxyFRRmiQ` | Service ID (detection signal) |
+| `projectId` | `Ul8Eyr4DTme8fAMKcYSFaw` | Project ID |
+
+**Detection logic** (`internal/runtime/runtime.go`):
+```
+serviceId present? → InContainer=true, read hostname/serviceId/projectId
+serviceId absent?  → InContainer=false, zero struct
+```
+
+**`runtime.Info`** is resolved once at startup via `runtime.Detect()` and passed as a value parameter to `server.New()`. Tests pass `runtime.Info{}` directly — no env var manipulation needed.
+
+**Feature gating**:
+- `InContainer=true`: mounter is created (SSHFS available), instructions include service name
+- `InContainer=false`: mounter is nil (mount tool returns NOT_IMPLEMENTED error), base instructions only
+
 ---
 
 ## 4. Platform Client Interface

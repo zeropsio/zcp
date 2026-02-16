@@ -12,7 +12,9 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
 	"github.com/zeropsio/zcp/internal/update"
 )
@@ -132,15 +134,21 @@ func run(updateInfo *update.Info) error {
 		return fmt.Errorf("knowledge store: %w", err)
 	}
 
-	// Real mounter for SSHFS operations (only functional on Zerops containers).
-	mounter := platform.NewSystemMounter()
+	// Detect runtime environment (Zerops container vs local dev).
+	rtInfo := runtime.Detect()
 
-	// Local deployer for zcli push (zerops_deploy tool).
+	// Mounter requires SSHFS — only available inside Zerops containers.
+	var mounter ops.Mounter
+	if rtInfo.InContainer {
+		mounter = platform.NewSystemMounter()
+	}
+
+	// Local deployer for zcli push (zerops_deploy tool) — works from anywhere.
 	localDeployer := platform.NewSystemLocalDeployer()
 
 	// Create and run MCP server on STDIO.
 	// SSH deployer remains nil — requires running Zerops container with SSH access.
-	srv := server.New(client, authInfo, store, logFetcher, nil, localDeployer, mounter, updateInfo)
+	srv := server.New(client, authInfo, store, logFetcher, nil, localDeployer, mounter, updateInfo, rtInfo)
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("server: %w", err)
 	}

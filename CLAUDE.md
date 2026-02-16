@@ -33,6 +33,7 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/platform` | Zerops API client, types, errors | `client.go`, `errors.go` |
 | `internal/auth` | Token resolution (env var / zcli), project discovery | `auth.go` |
 | `internal/knowledge` | BM25 search engine, embedded docs | `engine.go` |
+| `internal/runtime` | Container vs local detection | `runtime.go` |
 | `internal/content` | Embedded templates + workflow catalog | `content.go` |
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 
