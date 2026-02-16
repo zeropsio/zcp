@@ -151,6 +151,8 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 **Binding**: default `:port` binds all interfaces (correct, no change needed)
 
 **NEVER set `run.base: alpine@*`** -- causes glibc/musl mismatch for CGO-linked binaries -> 502. Omit `run.base` or use `run.base: go@latest`.
+**NEVER write go.sum by hand** -- checksums will be wrong, build fails with `checksum mismatch`. Let `go mod tidy` in buildCommands generate it.
+**Do NOT include go.sum in source** when creating new apps -- `go mod tidy` in buildCommands handles it.
 **CGO**: requires `os: ubuntu` + `CGO_ENABLED=1`. When unsure: `CGO_ENABLED=0 go build` for static binary
 **Logger**: MUST output to `os.Stdout`
 **Cache**: `~/go` (auto-cached)
