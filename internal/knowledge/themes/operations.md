@@ -165,6 +165,7 @@ Cloudflare with **Full (strict)** SSL. WAF exception for ACME challenge. Both A 
 |------|--------|--------|
 | General messaging | **NATS** | Simple auth, JetStream, fast |
 | Enterprise event streaming | **Kafka** | SASL auth, 3-broker HA, ordering |
+| ~~AMQP (RabbitMQ)~~ | **NATS** | RabbitMQ deprecated — use NATS with JetStream |
 
 ### Choose Search
 **Default: Meilisearch** for simple full-text.

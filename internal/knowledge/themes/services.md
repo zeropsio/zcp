@@ -45,9 +45,9 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 ## PostgreSQL
 **Type**: `postgresql@{18,17,16,14}` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 5432 (RW), 5433 (read replicas, HA only), 6432 (external TLS via pgBouncer)
-**Env**: `hostname`, `port`, `user`, `password`, `connectionString`, `dbName`
+**Env**: `hostname`, `port`, `portTls`, `user`, `password`, `connectionString`, `connectionTlsString`, `dbName`, `superUser`, `superUserPassword` | HA-only: `portReplicas`, `connectionStringReplicas`
 **HA**: 1 primary + 2 read replicas, streaming replication (async), auto-failover
-**Gotchas**: No internal TLS (only 6432). Don't modify `zps` user. Read replicas have async lag. Some libs need `postgres://` scheme.
+**Gotchas**: No internal TLS (only 6432). Don't modify `zps` user. Read replicas have async lag. Some libs need `postgres://` scheme. `superUser` (always `postgres`) for plugin installation.
 **Wiring** (sample hostname: `db`):
 **VARS**: `DB_HOST: db` `DB_PORT: ${db_port}` `DB_NAME: ${db_dbName}`
 **SECRETS**: `DATABASE_URL: postgresql://${db_user}:${db_password}@db:${db_port}/${db_dbName}`
@@ -55,7 +55,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 ## MariaDB
 **Type**: `mariadb@10.6` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 3306 (fixed, no separate replica port)
-**Env**: `hostname`, `port`, `user`, `password`, `connectionString`, `dbName`
+**Env**: `hostname`, `port`, `projectId`, `serviceId`, `user`, `password`, `connectionString`, `dbName`
 **HA**: MaxScale routing, read/write splitting, async replication, auto-failover
 **Gotchas**: No separate replica port (MaxScale routes on single port). No internal TLS. Don't modify `zps` user.
 **Wiring** (sample hostname: `db`):
@@ -72,7 +72,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **VARS**: `REDIS_URL: redis://cache:${cache_port}`
 
 ## KeyDB
-**Type**: `keydb@6` | **Mode**: optional (NON_HA only)
+**Type**: `keydb@6` | **Mode**: optional (default NON_HA), immutable
 **Ports**: 6379 | **Env**: same as Valkey (no user/password)
 **DEPRECATED**: Do NOT use for new projects -- use `valkey@7.2` instead. When user requests "Redis" or "cache", always use Valkey. Migration from KeyDB: only hostname changes.
 **Wiring** (sample hostname: `cache`):
@@ -112,8 +112,8 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 
 ## Kafka
 **Type**: `kafka@3.8` | **Mode**: optional (default NON_HA), immutable
-**Ports**: 9092 (SASL PLAIN), 8081 (Schema Registry if enabled)
-**Env**: `hostname`, `user`, `password`
+**Ports**: 9092 (SASL PLAIN)
+**Env**: `hostname`, `port`, `user`, `password`
 **HA**: 3 brokers, 6 partitions, replication factor 3, auto-repair
 **Gotchas**: SASL PLAIN only (no anonymous). NON_HA = 1 broker, **no replication**. Indefinite topic retention (implement cleanup). 250 GB cap.
 **Wiring** (sample hostname: `kafka`):
@@ -174,9 +174,9 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 
 ## RabbitMQ
 **Type**: `rabbitmq@3.9` | **Mode**: optional (default NON_HA), immutable
+**DEPRECATED**: Do NOT use for new projects -- use `nats@2.12` instead. When user requests "RabbitMQ", "AMQP", or "message queue", always use NATS. Migration: switch from AMQP protocol to NATS client, use JetStream for durable messaging.
 **Ports**: 5672 (AMQP), 15672 (management UI)
 **Env**: `hostname`, `port`, `user`, `password`, `connectionString`
-**Gotchas**: Management UI on port 15672. Use AMQP 0-9-1 protocol for client connections.
 **Wiring** (sample hostname: `rabbitmq`):
 **VARS**: `RABBITMQ_HOST: rabbitmq` `RABBITMQ_PORT: ${rabbitmq_port}`
 **SECRETS**: `RABBITMQ_URL: amqp://${rabbitmq_user}:${rabbitmq_password}@rabbitmq:${rabbitmq_port}` or `RABBITMQ_URL: ${rabbitmq_connectionString}`

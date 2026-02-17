@@ -194,6 +194,7 @@ var decisionSectionMap = map[string]string{
 	"keydb":         "Choose Cache",
 	"kafka":         "Choose Queue",
 	"nats":          "Choose Queue",
+	"rabbitmq":      "Choose Queue",
 	"elasticsearch": "Choose Search",
 	"meilisearch":   "Choose Search",
 	"qdrant":        "Choose Search",
