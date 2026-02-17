@@ -56,6 +56,7 @@ func Deploy(
 	targetService string,
 	setup string,
 	workingDir string,
+	includeGit bool,
 ) (*DeployResult, error) {
 	if sourceService != "" {
 		if sshDeployer == nil {
@@ -66,7 +67,7 @@ func Deploy(
 			)
 		}
 		return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
-			sourceService, targetService, setup, workingDir)
+			sourceService, targetService, setup, workingDir, includeGit)
 	}
 	if targetService != "" {
 		if localDeployer == nil {
@@ -77,7 +78,7 @@ func Deploy(
 			)
 		}
 		return deployLocal(ctx, client, projectID, localDeployer,
-			targetService, workingDir)
+			targetService, workingDir, includeGit)
 	}
 	return nil, platform.NewPlatformError(
 		platform.ErrInvalidParameter,
@@ -96,6 +97,7 @@ func deploySSH(
 	targetService string,
 	setup string,
 	workingDir string,
+	includeGit bool,
 ) (*DeployResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -116,7 +118,7 @@ func deploySSH(
 		workingDir = defaultWorkingDir
 	}
 
-	cmd := buildSSHCommand(authInfo, target.ID, setup, workingDir)
+	cmd := buildSSHCommand(authInfo, target.ID, setup, workingDir, includeGit)
 
 	_, err = sshDeployer.ExecSSH(ctx, source.Name, cmd)
 	if err != nil {
@@ -141,6 +143,7 @@ func deployLocal(
 	localDeployer LocalDeployer,
 	targetService string,
 	workingDir string,
+	includeGit bool,
 ) (*DeployResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -161,7 +164,7 @@ func deployLocal(
 		}
 	}
 
-	args := buildZcliArgs(target.ID, workingDir)
+	args := buildZcliArgs(target.ID, workingDir, includeGit)
 
 	_, err = localDeployer.ExecZcli(ctx, args...)
 	if err != nil {
@@ -178,7 +181,7 @@ func deployLocal(
 	}, nil
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir string) string {
+func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir string, includeGit bool) string {
 	var parts []string
 
 	// Login to zcli on the remote host.
@@ -191,7 +194,11 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 	}
 
 	// Push from workingDir with git-init guard for non-git directories.
-	pushCmd := fmt.Sprintf("cd %s && (test -d .git || (git init -q && git add -A && git commit -q -m 'deploy')) && zcli push --serviceId %s", workingDir, targetServiceID)
+	pushArgs := fmt.Sprintf("zcli push --serviceId %s", targetServiceID)
+	if includeGit {
+		pushArgs += " -G"
+	}
+	pushCmd := fmt.Sprintf("cd %s && (test -d .git || (git init -q && git add -A && git commit -q -m 'deploy')) && %s", workingDir, pushArgs)
 	parts = append(parts, pushCmd)
 
 	return strings.Join(parts, " && ")
@@ -223,10 +230,13 @@ func prepareGitRepo(ctx context.Context, workingDir string) error {
 	return nil
 }
 
-func buildZcliArgs(targetServiceID, workingDir string) []string {
+func buildZcliArgs(targetServiceID, workingDir string, includeGit bool) []string {
 	args := []string{"push", "--serviceId", targetServiceID}
 	if workingDir != "" {
 		args = append(args, "--workingDir", workingDir)
+	}
+	if includeGit {
+		args = append(args, "-G")
 	}
 	return args
 }

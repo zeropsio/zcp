@@ -109,9 +109,21 @@ Using the loaded knowledge from Steps 2+3, generate import.yml following the inf
 
 **Hostname pattern** (from Step 1): Standard mode (default) creates `{app}dev` + `{app}stage` pairs with shared managed services. Simple mode creates a single `{app}`. If the user didn't specify, ask before generating.
 
+**Dev vs stage properties** (standard mode):
+
+| Property | Dev (`{app}dev`) | Stage (`{app}stage`) |
+|----------|-----------------|----------------------|
+| `startWithoutCode` | `true` | omit |
+| `maxContainers` | `1` | omit (default) |
+| `enableSubdomainAccess` | `true` | `true` |
+
+Dev starts immediately with an empty container (RUNNING). Stage stays in READY_TO_DEPLOY until first deploy from dev — no wasted resources running an empty container.
+
 ### Step 5 — Generate zerops.yml
 
 For each runtime service, generate zerops.yml using the loaded runtime example from Step 2 as starting point. The infrastructure knowledge from Step 3 covers the YAML schema rules. Together they provide build pipeline, deployFiles, ports, and framework-specific decisions.
+
+**Note:** zerops.yml and application source files are created on the mounted dev service filesystem at `/var/www/{hostname}/` (e.g., `/var/www/appdev/`). This happens after mounting in Phase 2.
 
 **Health endpoint recommendation:**
 When scaffolding new application code, recommend adding `/health` (returns 200 when app is running) and `/status` (returns 200 with managed service connectivity info) endpoints. These enable deeper verification in Phase 2 — but verification adapts based on what's available.
@@ -172,19 +184,21 @@ Every deployment must pass this protocol before being considered complete.
 
 ### Standard mode (dev+stage) — deploy flow
 
-1. `zerops_import content="<import.yml>"` — create all services
-2. `zerops_process processId="<id>"` — wait for all services RUNNING
-3. **Env var sync**: `zerops_discover includeEnvs=true` for each runtime service. Verify cross-referenced vars have real values — not empty, not literal `${...}`. If unresolved: `zerops_manage action="restart" serviceHostname="{runtime}"` → re-verify.
-4. **Deploy to appdev first**: `zerops_deploy targetService="appdev"`
-5. **Verify appdev** — run the full 7-point verification protocol on appdev
-6. **Fix any errors on appdev** — iterate until appdev passes all checks
-7. **Deploy to appstage**: `zerops_deploy targetService="appstage"`
-8. **Verify appstage** — run the 7-point verification protocol on appstage
-9. **Present both URLs** to user:
-   ```
-   Dev:   {appdev zeropsSubdomain}
-   Stage: {appstage zeropsSubdomain}
-   ```
+1. `zerops_import content="<import.yml>"` — create all services (dev gets `startWithoutCode: true` + `maxContainers: 1`, stage omits both)
+2. `zerops_process processId="<id>"` — wait for dev services RUNNING. Stage will be in READY_TO_DEPLOY — this is expected (no empty container wasted)
+3. **Mount dev**: `zerops_mount action="mount" serviceHostname="appdev"` — only dev services are mounted
+4. **Create files on mount path**: Write zerops.yml + application source files + .gitignore to `/var/www/appdev/`. Use `deployFiles: ./` in zerops.yml for dev services (deploys entire working directory). The zerops.yml `setup:` entries must match ALL service hostnames (both dev and stage)
+5. **Env var sync**: `zerops_discover includeEnvs=true` for each runtime service. Verify cross-referenced vars have real values — not empty, not literal `${...}`. If unresolved: `zerops_manage action="restart" serviceHostname="{runtime}"` → re-verify.
+6. **Deploy to appdev**: `zerops_deploy targetService="appdev" workingDir="/var/www/appdev" includeGit=true` — local mode, reads from SSHFS mount. `-G` flag includes `.git` directory on the container. The deploy tool auto-initializes a git repo if missing
+7. **Verify appdev** — run the full 7-point verification protocol on appdev
+8. **Fix any errors on appdev** — edit files on mount path (`/var/www/appdev/`), redeploy
+9. **Deploy to appstage**: `zerops_deploy targetService="appstage" workingDir="/var/www/appdev"` — same source files, different target. This transitions stage from READY_TO_DEPLOY → BUILDING → RUNNING
+10. **Verify appstage** — run the 7-point verification protocol on appstage
+11. **Present both URLs** to user:
+    ```
+    Dev:   {appdev zeropsSubdomain}
+    Stage: {appstage zeropsSubdomain}
+    ```
 
 ### Simple mode — deploy flow
 
@@ -250,10 +264,10 @@ Execute IN ORDER. Every step has a verification call — do not skip any.
 
 | # | Action | Tool | Verify |
 |---|--------|------|--------|
-| 1 | Check state | zerops_discover service="{hostname}" includeEnvs=true | Service exists |
+| 1 | Check state | zerops_discover service="{hostname}" includeEnvs=true | Service exists (RUNNING for dev, READY_TO_DEPLOY for stage before first deploy) |
 | 2 | Set env vars | zerops_env action="set" serviceHostname="{hostname}" variables=[{env_vars}] | zerops_discover includeEnvs=true — vars present |
 | 3 | Verify managed svc env vars | zerops_discover service="{hostname}" includeEnvs=true | Cross-refs resolved (not empty, not literal ${{...}}) |
-| 4 | Trigger deploy | zerops_deploy targetService="{hostname}" | status=BUILD_TRIGGERED |
+| 4 | Trigger deploy | zerops_deploy targetService="{hostname}" workingDir="/var/www/{devHostname}" includeGit=true | status=BUILD_TRIGGERED (local mode — reads from SSHFS mount, -G includes .git on container) |
 | 5 | Poll build completion | zerops_events serviceHostname="{hostname}" limit=5, every 10s, max 300s | Build event FINISHED |
 | 6 | Check error logs | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
 | 7 | Confirm startup in logs | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |

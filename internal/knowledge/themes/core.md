@@ -281,8 +281,9 @@ zerops[]:
 
 ### Import Generation
 - **ALWAYS** create dev/stage service pairs for runtime services. Naming: `{prefix}dev` and `{prefix}stage` (e.g., `appdev`/`appstage`, `apidev`/`apistage`). REASON: workflow engine detects conformant projects by this pattern; single services have no isolation
-- **ALWAYS** set `startWithoutCode: true` on dev services when using SSHFS-based development. REASON: without it OR `buildFromGit`, service stays stuck in READY_TO_DEPLOY (empty container, no code)
-- **ALWAYS** set `buildFromGit: <url>` OR `startWithoutCode: true` on every runtime service. REASON: runtime services without either have no code source -- they cannot start. This is the #1 import failure
+- **ALWAYS** set `startWithoutCode: true` ONLY on dev services (not stage) in dev/stage pairs. REASON: dev starts immediately for SSHFS iteration; stage stays in READY_TO_DEPLOY until proven code is deployed from dev. Without `startWithoutCode` OR `buildFromGit`, a service stays stuck in READY_TO_DEPLOY
+- **ALWAYS** set `maxContainers: 1` for dev services in dev/stage pairs. REASON: dev uses SSHFS; multiple containers cause file conflicts and waste resources
+- **ALWAYS** set `buildFromGit: <url>` OR `startWithoutCode: true` on every runtime service that needs to start immediately. REASON: runtime services without either have no code source -- they stay in READY_TO_DEPLOY. For stage services in dev/stage pairs, omit both -- first deploy from dev transitions them to RUNNING
 - **ONLY** set `zeropsSetup` when using `buildFromGit` and the zerops.yml setup name differs from the hostname. REASON: zeropsSetup defaults to hostname. With `startWithoutCode`, omit it -- when code is later pushed via `zcli push`, the zerops.yml `setup:` must match the hostname (or use `zcli push --setup <name>`)
 - **ALWAYS** set `verticalAutoscaling.minRam: 1.0` (GB) for runtime services. REASON: 0.5 GB causes OOM during compilation (especially Go, Java). 1.0 is the safe minimum
 - **ALWAYS** use managed service hostname conventions: `db` (postgresql/mariadb), `cache` (valkey), `queue` (rabbitmq/nats), `search` (elasticsearch), `storage` (object-storage/minio). REASON: standardizes cross-service references and discovery
@@ -372,14 +373,15 @@ services:
   - hostname: appdev
     type: nodejs@22
     startWithoutCode: true
+    maxContainers: 1
     enableSubdomainAccess: true
     verticalAutoscaling:
       minRam: 1.0
   - hostname: appstage
     type: nodejs@22
-    startWithoutCode: true
     enableSubdomainAccess: true
 ```
+Dev starts immediately (RUNNING) with `startWithoutCode`. Stage stays in READY_TO_DEPLOY until first deploy from dev.
 zerops.yml must have `setup: appdev` and `setup: appstage` blocks matching hostnames.
 
 **Full-Stack Dev/Stage (App + DB + Cache + Storage):**
@@ -402,12 +404,12 @@ services:
   - hostname: appdev
     type: bun@1.2
     startWithoutCode: true
+    maxContainers: 1
     enableSubdomainAccess: true
     verticalAutoscaling:
       minRam: 1.0
   - hostname: appstage
     type: bun@1.2
-    startWithoutCode: true
     enableSubdomainAccess: true
     envSecrets:
       APP_KEY: <@generateRandomString(<32>)>

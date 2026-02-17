@@ -17,6 +17,7 @@ type DeployInput struct {
 	TargetService string `json:"targetService,omitempty"`
 	Setup         string `json:"setup,omitempty"`
 	WorkingDir    string `json:"workingDir,omitempty"`
+	IncludeGit    bool   `json:"includeGit,omitempty"`
 }
 
 // RegisterDeploy registers the zerops_deploy tool.
@@ -37,7 +38,7 @@ func RegisterDeploy(
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployInput) (*mcp.CallToolResult, any, error) {
 		result, err := ops.Deploy(ctx, client, projectID, sshDeployer, localDeployer, *authInfo,
-			input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
+			input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit)
 		if err != nil {
 			return convertError(err), nil, nil
 		}

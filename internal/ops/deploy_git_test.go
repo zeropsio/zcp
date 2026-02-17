@@ -28,12 +28,13 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		authInfo  auth.Info
-		serviceID string
-		setup     string
-		workDir   string
-		wantParts []string
+		name       string
+		authInfo   auth.Info
+		serviceID  string
+		setup      string
+		workDir    string
+		includeGit bool
+		wantParts  []string
 	}{
 		{
 			name:      "basic command contains git guard",
@@ -77,17 +78,76 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 				"zcli push --serviceId svc-789",
 			},
 		},
+		{
+			name:       "with includeGit flag",
+			authInfo:   testAuthInfo(),
+			serviceID:  "svc-123",
+			workDir:    "/var/www",
+			includeGit: true,
+			wantParts: []string{
+				"zcli push --serviceId svc-123 -G",
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.setup, tt.workDir)
+			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.setup, tt.workDir, tt.includeGit)
 
 			for _, part := range tt.wantParts {
 				if !contains(cmd, part) {
 					t.Errorf("command missing %q\ngot: %s", part, cmd)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildZcliArgs_IncludeGit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		serviceID  string
+		workingDir string
+		includeGit bool
+		wantArgs   []string
+	}{
+		{
+			name:       "without includeGit",
+			serviceID:  "svc-1",
+			workingDir: "/tmp/app",
+			wantArgs:   []string{"push", "--serviceId", "svc-1", "--workingDir", "/tmp/app"},
+		},
+		{
+			name:       "with includeGit",
+			serviceID:  "svc-1",
+			workingDir: "/tmp/app",
+			includeGit: true,
+			wantArgs:   []string{"push", "--serviceId", "svc-1", "--workingDir", "/tmp/app", "-G"},
+		},
+		{
+			name:       "includeGit without workingDir",
+			serviceID:  "svc-1",
+			includeGit: true,
+			wantArgs:   []string{"push", "--serviceId", "svc-1", "-G"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			args := buildZcliArgs(tt.serviceID, tt.workingDir, tt.includeGit)
+
+			if len(args) != len(tt.wantArgs) {
+				t.Fatalf("args count = %d, want %d\ngot: %v\nwant: %v", len(args), len(tt.wantArgs), args, tt.wantArgs)
+			}
+			for i, arg := range args {
+				if arg != tt.wantArgs[i] {
+					t.Errorf("args[%d] = %q, want %q", i, arg, tt.wantArgs[i])
 				}
 			}
 		})

@@ -1,4 +1,4 @@
-// Tests for: workflow bootstrap subflow — 10-step state tracking.
+// Tests for: workflow bootstrap subflow — 11-step state tracking.
 package workflow
 
 import (
@@ -15,14 +15,14 @@ func TestNewBootstrapState_InitialState(t *testing.T) {
 	if bs.CurrentStep != 0 {
 		t.Errorf("CurrentStep: want 0, got %d", bs.CurrentStep)
 	}
-	if len(bs.Steps) != 10 {
-		t.Fatalf("Steps count: want 10, got %d", len(bs.Steps))
+	if len(bs.Steps) != 11 {
+		t.Fatalf("Steps count: want 11, got %d", len(bs.Steps))
 	}
 
 	expectedNames := []string{
 		"plan", "recipe-search", "generate-import", "import-services",
-		"wait-services", "mount-dev", "discover-services", "finalize",
-		"spawn-subagents", "aggregate-results",
+		"wait-services", "mount-dev", "create-files", "discover-services",
+		"finalize", "spawn-subagents", "aggregate-results",
 	}
 	for i, name := range expectedNames {
 		if bs.Steps[i].Name != name {
@@ -43,7 +43,7 @@ func TestBootstrapState_CurrentStepName(t *testing.T) {
 	}{
 		{"first_step", 0, "plan"},
 		{"middle_step", 4, "wait-services"},
-		{"last_step", 9, "aggregate-results"},
+		{"last_step", 10, "aggregate-results"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -60,7 +60,7 @@ func TestBootstrapState_CurrentStepName(t *testing.T) {
 func TestBootstrapState_CurrentStepName_OutOfBounds(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
-	bs.CurrentStep = 10 // past last step
+	bs.CurrentStep = 11 // past last step
 	if got := bs.CurrentStepName(); got != "" {
 		t.Errorf("CurrentStepName out of bounds: want empty, got %s", got)
 	}
@@ -93,8 +93,8 @@ func TestBootstrapState_AdvanceStep_FullSequence(t *testing.T) {
 
 	expectedSteps := []string{
 		"plan", "recipe-search", "generate-import", "import-services",
-		"wait-services", "mount-dev", "discover-services", "finalize",
-		"spawn-subagents", "aggregate-results",
+		"wait-services", "mount-dev", "create-files", "discover-services",
+		"finalize", "spawn-subagents", "aggregate-results",
 	}
 
 	for i, expected := range expectedSteps {
@@ -128,15 +128,15 @@ func TestBootstrapState_AdvanceStep_StubbedSteps(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 
-	// Advance to spawn-subagents (step 8).
-	for range 8 {
+	// Advance to spawn-subagents (step 9).
+	for range 9 {
 		name, _, _ := bs.AdvanceStep()
 		if err := bs.MarkStepComplete(name); err != nil {
 			t.Fatalf("MarkStepComplete(%s): %v", name, err)
 		}
 	}
 
-	// Step 8: spawn-subagents should have Task tool guidance.
+	// Step 9: spawn-subagents should have Task tool guidance.
 	name, guidance, _ := bs.AdvanceStep()
 	if name != "spawn-subagents" {
 		t.Fatalf("expected spawn-subagents, got %s", name)
@@ -149,7 +149,7 @@ func TestBootstrapState_AdvanceStep_StubbedSteps(t *testing.T) {
 		t.Fatalf("MarkStepComplete(spawn-subagents): %v", err)
 	}
 
-	// Step 9: aggregate-results should also have guidance.
+	// Step 10: aggregate-results should also have guidance.
 	name, guidance, _ = bs.AdvanceStep()
 	if name != "aggregate-results" {
 		t.Fatalf("expected aggregate-results, got %s", name)
@@ -163,7 +163,7 @@ func TestBootstrapState_AdvanceStep_AlreadyDone(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Active = false
-	bs.CurrentStep = 10
+	bs.CurrentStep = 11
 
 	name, _, done := bs.AdvanceStep()
 	if !done {

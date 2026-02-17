@@ -61,6 +61,8 @@ Actionable DO/DON'T rules for Zerops, each with a causal reason. Sourced from pr
 - **NEVER** use Docker `:latest` tag. REASON: cached and won't re-pull; always use specific version tags
 - **ALWAYS** use `--network=host` for Docker services. REASON: without it, container cannot receive traffic from Zerops routing
 - **ALWAYS** use `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` for Object Storage. REASON: MinIO backend doesn't support virtual-hosted style
+- **ALWAYS** set `maxContainers: 1` for dev services in dev/stage pairs. REASON: dev uses SSHFS; multiple containers cause file conflicts and waste resources
+- **ALWAYS** set `startWithoutCode: true` ONLY on dev services (not stage) in dev/stage pairs. REASON: stage should stay in READY_TO_DEPLOY until proven code is deployed from dev
 
 ## Runtime-Specific
 
