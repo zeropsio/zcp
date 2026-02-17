@@ -123,6 +123,10 @@ zerops_discover service="{hostname}"                                  # → RUNN
 zerops_events serviceHostname="{hostname}" limit=5                    # → final event check
 zerops_logs serviceHostname="{hostname}" severity="error" since="2m"  # → no post-startup errors
 # If subdomain enabled:
+zerops_discover service="{hostname}" includeEnvs=true                 # → check zeropsSubdomain present
+# If zeropsSubdomain missing:
+# zerops_subdomain serviceHostname="{hostname}" action="enable"       # → idempotent, safe
+# zerops_discover service="{hostname}" includeEnvs=true               # → re-verify
 # bash: curl -sfm 10 "{zeropsSubdomain}/health"                      # → HTTP 200
 ```
 
@@ -162,11 +166,15 @@ Execute IN ORDER. Every step requires verification.
 | 4 | Check errors | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
 | 5 | Confirm startup | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
 | 6 | Verify running | zerops_discover service="{hostname}" | RUNNING |
-| 7 | HTTP health | bash: curl -sfm 10 "{zeropsSubdomain}/health" | 200 (skip if no endpoint) |
+| 7 | Subdomain active | zerops_discover service="{hostname}" includeEnvs=true | `zeropsSubdomain` present. If missing: `zerops_subdomain action="enable"`, re-discover |
+| 8 | HTTP health | bash: curl -sfm 10 "{zeropsSubdomain}/health" | 200 (skip if no endpoint) |
 
 CRITICAL: zerops_deploy returns BEFORE build completes (status=BUILD_TRIGGERED). You MUST poll
 zerops_events for completion. Wait 5s after deploy, then poll every 10s until build event shows
 terminal status. Max 300s (30 polls).
+
+Step 7: zerops_subdomain action="enable" is idempotent — safe to call even if already enabled.
+zeropsSubdomain is already a full URL — do NOT prepend https://.
 
 If build FAILED: check zerops_logs severity="error" since="10m", then fallback to
 bash: zcli service log {hostname} --showBuildLogs --limit 50.

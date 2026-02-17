@@ -154,7 +154,7 @@ Present both import.yml and zerops.yml to the user for review before proceeding 
 `zerops_deploy` triggers the build pipeline and returns `status=BUILD_TRIGGERED` BEFORE the build completes.
 You MUST poll for completion. Do NOT assume deployment is done when the tool returns.
 
-### Verification Protocol (7-point)
+### Verification Protocol (8-point)
 
 Every deployment must pass this protocol before being considered complete.
 
@@ -165,19 +165,21 @@ Every deployment must pass this protocol before being considered complete.
 | 3 | No error logs | zerops_logs severity="error" since="5m" | Empty |
 | 4 | Startup confirmed | zerops_logs search="listening\|started\|ready" since="5m" | At least one match |
 | 5 | No post-startup errors | zerops_logs severity="error" since="2m" | Empty |
-| 6 | HTTP health check | bash: curl -sfm 10 "{zeropsSubdomain}/health" | HTTP 200 |
-| 7 | Managed svc connectivity | bash: curl -sfm 10 "{zeropsSubdomain}/status" OR log search | 200 with svc status / log match |
+| 6 | Subdomain active | zerops_discover service="{hostname}" includeEnvs=true | `zeropsSubdomain` present. If missing: `zerops_subdomain action="enable"`, re-discover |
+| 7 | HTTP health check | bash: curl -sfm 10 "{zeropsSubdomain}/health" | HTTP 200 |
+| 8 | Managed svc connectivity | bash: curl -sfm 10 "{zeropsSubdomain}/status" OR log search | 200 with svc status / log match |
 
 **Notes:**
 - Check 1 is CRITICAL — zerops_deploy returns before build completes. Wait 5s after deploy, then poll zerops_events every 10s until build finishes (max 300s / 30 polls).
 - Check 4: framework-dependent — search for `listening on`, `started server`, `ready to accept`.
-- Check 6: get `zeropsSubdomain` from `zerops_discover includeEnvs=true`. It is already a full URL — do NOT prepend `https://`.
-- Check 7: skip if no managed services. Fallback to log search for `connected|pool|migration`.
+- Check 6: `zerops_discover service="{hostname}" includeEnvs=true` — look for `zeropsSubdomain` env var. If missing, call `zerops_subdomain action="enable"` (idempotent, always safe), then re-discover to confirm.
+- Check 7: get `zeropsSubdomain` from check 6 discover result. It is already a full URL — do NOT prepend `https://`.
+- Check 8: skip if no managed services. Fallback to log search for `connected|pool|migration`.
 - **Graceful degradation:** if the app has no `/health` endpoint, check 4 is the final gate.
 
 **Critical: HTTP 200 does not mean the app works.**
-- Check 6: Read the response body. Empty body, "Cannot GET /", or framework error page = NOT healthy.
-- Check 7: Read `/status` body. If it shows DB as "disconnected" or "error" = NOT confirmed.
+- Check 7: Read the response body. Empty body, "Cannot GET /", or framework error page = NOT healthy.
+- Check 8: Read `/status` body. If it shows DB as "disconnected" or "error" = NOT confirmed.
 - Always capture response body: `curl -sfm 10 "{url}/health" 2>&1`
 
 **Do NOT deploy to stage until dev passes ALL checks.** Stage is for final validation, not debugging.
@@ -190,10 +192,10 @@ Every deployment must pass this protocol before being considered complete.
 4. **Create files on mount path**: Write zerops.yml + application source files + .gitignore to `/var/www/appdev/`. Use `deployFiles: ./` in zerops.yml for dev services (deploys entire working directory). The zerops.yml `setup:` entries must match ALL service hostnames (both dev and stage)
 5. **Env var check**: `zerops_discover includeEnvs=true` for each runtime service. Check env vars are present. Values showing `${...}` are cross-service references — this is expected, they resolve at container runtime.
 6. **Deploy to appdev**: `zerops_deploy targetService="appdev" workingDir="/var/www/appdev" includeGit=true` — local mode, reads from SSHFS mount. `-g` flag includes `.git` directory on the container. The deploy tool auto-initializes a git repo if missing
-7. **Verify appdev** — run the full 7-point verification protocol on appdev
+7. **Verify appdev** — run the full 8-point verification protocol on appdev
 8. **Fix any errors on appdev** — edit files on mount path (`/var/www/appdev/`), redeploy
 9. **Deploy to appstage**: `zerops_deploy targetService="appstage" workingDir="/var/www/appdev"` — same source files, different target. This transitions stage from READY_TO_DEPLOY → BUILDING → RUNNING
-10. **Verify appstage** — run the 7-point verification protocol on appstage
+10. **Verify appstage** — run the 8-point verification protocol on appstage
 11. **Present both URLs** to user:
     ```
     Dev:   {appdev zeropsSubdomain}
@@ -208,7 +210,7 @@ Every deployment must pass this protocol before being considered complete.
    zerops_process processId="<id>"               # wait for RUNNING
    ```
 
-   > **CRITICAL — Subdomain:** If your import.yml includes `enableSubdomainAccess: true`, the subdomain is already enabled. Do NOT call `zerops_subdomain action="enable"` after import — it is redundant and wastes a tool call.
+   > **Subdomain timing:** `enableSubdomainAccess: true` in import.yml configures the subdomain, but it may not activate until after the first deploy. The verification protocol (check 6) handles activation — `zerops_subdomain action="enable"` is idempotent and safe to call.
 
 2. **Check environment variables are present:**
    ```
@@ -230,7 +232,7 @@ Every deployment must pass this protocol before being considered complete.
    # Wait 5s, then poll zerops_events every 10s (max 300s) until build FINISHED
    ```
 
-Then run the full 7-point verification protocol.
+Then run the full 8-point verification protocol.
 
 ### For 3+ runtime services — agent orchestration
 
@@ -268,7 +270,7 @@ Execute IN ORDER. Every step has a verification call — do not skip any.
 | 6 | Check error logs | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
 | 7 | Confirm startup in logs | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
 | 8 | Check post-startup errors | zerops_logs serviceHostname="{hostname}" severity="error" since="2m" | No errors |
-| 9 | Get subdomain URL | zerops_discover service="{hostname}" includeEnvs=true | Extract zeropsSubdomain |
+| 9 | Verify subdomain active | zerops_discover service="{hostname}" includeEnvs=true | `zeropsSubdomain` present. If missing: `zerops_subdomain action="enable"`, re-discover |
 | 10 | HTTP health check | bash: curl -sfm 10 "{url}/health" | HTTP 200 (or skip — step 7 = final gate) |
 | 11 | Managed svc connectivity | bash: curl -sfm 10 "{url}/status" OR zerops_logs search="connected|pool|migration" | Connectivity confirmed (skip if no managed svcs) |
 
