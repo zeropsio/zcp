@@ -12,10 +12,30 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// syncBuffer is a thread-safe bytes.Buffer for tests where a background
+// goroutine writes and the test goroutine reads concurrently.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 func TestTryApplyUpdate_Success(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -198,8 +218,8 @@ func TestBackground_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	var logBuf bytes.Buffer
-	Background(ctx, "0.1.0", shutdown, &logBuf, nil)
+	logBuf := &syncBuffer{}
+	Background(ctx, "0.1.0", shutdown, logBuf, nil)
 
 	// Give goroutine a moment to exit.
 	time.Sleep(50 * time.Millisecond)
@@ -222,12 +242,12 @@ func TestBackground_ForceChannel(t *testing.T) {
 	shutdown := func() { shutdownCalled.Store(true) }
 
 	forceCh := make(chan struct{}, 1)
-	var logBuf bytes.Buffer
+	logBuf := &syncBuffer{}
 
 	// Set ZCP_UPDATE_URL so the background check uses our mock server.
 	t.Setenv("ZCP_UPDATE_URL", srv.URL)
 
-	Background(t.Context(), "0.1.0", shutdown, &logBuf, forceCh)
+	Background(t.Context(), "0.1.0", shutdown, logBuf, forceCh)
 
 	// Trigger immediate check via force channel.
 	forceCh <- struct{}{}
