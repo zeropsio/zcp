@@ -196,7 +196,7 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 	// Push from workingDir with git-init guard for non-git directories.
 	pushArgs := fmt.Sprintf("zcli push --serviceId %s", targetServiceID)
 	if includeGit {
-		pushArgs += " -G"
+		pushArgs += " -g"
 	}
 	pushCmd := fmt.Sprintf("cd %s && (test -d .git || (git init -q && git add -A && git commit -q -m 'deploy')) && %s", workingDir, pushArgs)
 	parts = append(parts, pushCmd)
@@ -236,7 +236,7 @@ func buildZcliArgs(targetServiceID, workingDir string, includeGit bool) []string
 		args = append(args, "--workingDir", workingDir)
 	}
 	if includeGit {
-		args = append(args, "-G")
+		args = append(args, "-g")
 	}
 	return args
 }

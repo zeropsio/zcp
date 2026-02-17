@@ -85,7 +85,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			workDir:    "/var/www",
 			includeGit: true,
 			wantParts: []string{
-				"zcli push --serviceId svc-123 -G",
+				"zcli push --serviceId svc-123 -g",
 			},
 		},
 	}
@@ -126,13 +126,13 @@ func TestBuildZcliArgs_IncludeGit(t *testing.T) {
 			serviceID:  "svc-1",
 			workingDir: "/tmp/app",
 			includeGit: true,
-			wantArgs:   []string{"push", "--serviceId", "svc-1", "--workingDir", "/tmp/app", "-G"},
+			wantArgs:   []string{"push", "--serviceId", "svc-1", "--workingDir", "/tmp/app", "-g"},
 		},
 		{
 			name:       "includeGit without workingDir",
 			serviceID:  "svc-1",
 			includeGit: true,
-			wantArgs:   []string{"push", "--serviceId", "svc-1", "-G"},
+			wantArgs:   []string{"push", "--serviceId", "svc-1", "-g"},
 		},
 	}
 
