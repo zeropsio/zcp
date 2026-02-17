@@ -14,13 +14,22 @@ var knowledgeDirs = []string{"themes", "recipes"}
 
 // Document represents a parsed knowledge document.
 type Document struct {
-	Path        string   // themes/grammar.md, recipes/laravel-jetstream.md
-	URI         string   // zerops://themes/grammar, zerops://recipes/laravel-jetstream
-	Title       string   // Zerops Grammar
-	Keywords    []string // [zerops, core, principles, ...]
-	TLDR        string   // One-sentence summary
-	Content     string   // Full markdown content
-	Description string   // TL;DR or first paragraph
+	Path        string            // themes/core.md, recipes/laravel-jetstream.md
+	URI         string            // zerops://themes/core, zerops://recipes/laravel-jetstream
+	Title       string            // Zerops Core Reference
+	Keywords    []string          // [zerops, core, principles, ...]
+	TLDR        string            // One-sentence summary
+	Content     string            // Full markdown content
+	Description string            // TL;DR or first paragraph
+	sections    map[string]string // cached H2 sections (lazily populated)
+}
+
+// H2Sections returns the parsed H2 sections, caching the result.
+func (d *Document) H2Sections() map[string]string {
+	if d.sections == nil {
+		d.sections = parseH2Sections(d.Content)
+	}
+	return d.sections
 }
 
 // loadFromEmbedded walks the embedded filesystem and parses all markdown documents.

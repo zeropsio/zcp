@@ -47,7 +47,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := server.New(mock, authInfo, store, logFetcher, &nopSSH{}, &nopLocal{}, &nopMounter{}, nil, runtime.Info{})
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopLocal{}, &nopMounter{}, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -83,7 +83,6 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		openWorld   *bool
 	}{
 		// Read-only tools
-		{name: "zerops_context", title: "Get Zerops platform context", readOnly: true, idempotent: true, openWorld: boolPtr(false)},
 		{name: "zerops_workflow", title: "Get workflow guidance", readOnly: true, idempotent: true, openWorld: boolPtr(false)},
 		{name: "zerops_discover", title: "Discover project and services", readOnly: true, idempotent: true},
 		{name: "zerops_knowledge", title: "Zerops knowledge access", readOnly: true, idempotent: true},

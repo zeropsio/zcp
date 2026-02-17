@@ -39,5 +39,5 @@ services:
 ## Gotchas
 - **zsc execOnce $appVersionId** ensures migrations run once per deploy
 - Sessions stored in Redis (not file-based)
-- 4 services: app + pg + keydb + adminer
+- 4 services: app + pg + valkey + adminer
 - chown command fixes temp directory permissions

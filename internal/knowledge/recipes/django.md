@@ -14,9 +14,9 @@ zerops:
         - python3 -m pip install --ignore-installed -r /home/zerops/requirements.txt
       envVariables:
         USE_S3: "1"
-        S3_ACCESS_KEY_ID: $storage_accessKeyId
-        S3_SECRET_ACCESS_KEY: $storage_secretAccessKey
-        S3_ENDPOINT_URL: $storage_apiUrl
+        S3_ACCESS_KEY_ID: ${storage_accessKeyId}
+        S3_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
+        S3_ENDPOINT_URL: ${storage_apiUrl}
       initCommands:
         - zsc execOnce migrate-${ZEROPS_appVersionId} -- python manage.py migrate
         - zsc execOnce collectstatic-${ZEROPS_appVersionId} -- python manage.py collectstatic --no-input

@@ -90,40 +90,6 @@ func (e *Engine) GetState() (*WorkflowState, error) {
 	return LoadSession(e.stateDir)
 }
 
-// Show returns a textual summary of the project state and workflow recommendation.
-func (e *Engine) Show(ctx context.Context, client platform.Client, projectID string) (string, error) {
-	projState, err := DetectProjectState(ctx, client, projectID)
-	if err != nil {
-		return "", fmt.Errorf("show: %w", err)
-	}
-
-	// Check for existing session.
-	existingState, loadErr := LoadSession(e.stateDir)
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "Project State: %s\n", projState)
-
-	if loadErr == nil {
-		fmt.Fprintf(&b, "Active Session: %s (mode=%s, phase=%s, iteration=%d)\n",
-			existingState.SessionID, existingState.Mode, existingState.Phase, existingState.Iteration)
-		fmt.Fprintf(&b, "Intent: %s\n", existingState.Intent)
-	} else {
-		b.WriteString("No active session.\n")
-	}
-
-	b.WriteString("\nRecommended mode: ")
-	switch projState {
-	case StateFresh:
-		b.WriteString("full (new project setup)\n")
-	case StateConformant:
-		b.WriteString("dev_only or hotfix (existing conformant project)\n")
-	case StateNonConformant:
-		b.WriteString("full (project needs restructuring)\n")
-	}
-
-	return b.String(), nil
-}
-
 // runtimeServiceTypes lists service type prefixes that are considered runtime (not managed).
 var managedServicePrefixes = []string{
 	"postgresql", "mariadb", "mysql", "mongodb", "valkey", "redis",

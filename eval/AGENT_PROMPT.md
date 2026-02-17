@@ -6,7 +6,7 @@ Your working directory is `/Users/macbook/Documents/Zerops-MCP/zcp`.
 
 ## Overview
 
-ZCP is an MCP server that helps Claude configure Zerops PaaS infrastructure. Its knowledge base (45 markdown files in `internal/knowledge/`) drives the quality of service configuration. You will test this knowledge by running diverse scenarios on a remote server (`zcpx`), analyzing execution logs for gaps, fixing the knowledge using official Zerops docs as reference, and rebuilding.
+ZCP is an MCP server that helps Claude configure Zerops PaaS infrastructure. Its knowledge base (7 theme files + 31 recipes in `internal/knowledge/`) drives the quality of service configuration. You will test this knowledge by running diverse scenarios on a remote server (`zcpx`), analyzing execution logs for gaps, fixing the knowledge using official Zerops docs as reference, and rebuilding.
 
 ## Environment
 
@@ -17,7 +17,8 @@ ZCP is an MCP server that helps Claude configure Zerops PaaS infrastructure. Its
 | Remote MCP config | `~/.mcp.json` (server: `zerops`, cmd: `zcp serve`) |
 | Remote Claude | `/home/zerops/.local/bin/claude` |
 | Build command | `make linux-amd` (output: `builds/zcp-linux-amd64`) |
-| Knowledge files | `internal/knowledge/` (foundation/, decisions/, guides/, recipes/) |
+| Knowledge files | `internal/knowledge/` (themes/, recipes/) — embedded in binary |
+| Legacy files | `internal/knowledge/` (foundation/, decisions/, guides/) — NOT embedded, reference only |
 | Reference docs | `../zerops-docs/apps/docs/content/` (290 MDX files, authoritative) |
 | Taxonomy | `eval/taxonomy.yaml` |
 
@@ -31,7 +32,7 @@ python3 eval/scripts/generate.py
 ```
 Save the output to `eval/results/<tag>/prompt_<N>.txt` where `<tag>` is your run tag (e.g., `run_20260214`) and `<N>` is the iteration number.
 
-**Task types**: The generator picks from both import-only scenarios (single-service, runtime-db, full-stack, etc.) and **functional scenarios** (functional-dev, functional-fullstack). Functional scenarios include deploy + verify instructions — Claude will write app code, deploy it, and run the 7-point verification protocol. You can force a task type with `--task functional-dev` or let it pick randomly.
+**Task types**: The generator picks from both import-only scenarios (single-service, runtime-db, full-stack, etc.) and **functional scenarios** (functional-dev, functional-fullstack). Prompts are intentionally minimal — they describe WHAT to create, not HOW. This tests whether the knowledge base and system prompt guide Claude to the right flow on its own. You can force a task type with `--task functional-dev` or let it pick randomly.
 
 To focus on functional scenarios, use:
 ```bash
@@ -97,20 +98,18 @@ This cleans up both random-hostname services (`evalappbun242`) and fixed-hostnam
 
 Read the complete execution trace and answer:
 
-- **Knowledge queries**: What did Claude search for? What was returned?
-- **Knowledge gaps**: Did Claude retry, guess, or improvise because knowledge was missing?
-- **Wrong knowledge**: Did Claude follow knowledge but get API errors (wrong version, wrong config)?
-- **Unnecessary steps**: Did Claude take detours (delete+recreate, multiple retries)?
-- **Error messages**: What Zerops API errors occurred? What was misconfigured?
-- **Tool call count**: How efficient was the execution?
+- **Tool discovery**: Which tools did Claude call first? Did it find the right approach on its own?
+- **Knowledge loading**: How did Claude load platform knowledge? What mode/params did it use?
+- **Flow**: What sequence of steps did Claude follow? Was it efficient or did it wander?
+- **Knowledge gaps**: Did Claude retry, guess, or improvise because knowledge was missing or wrong?
+- **Error recovery**: How did Claude handle API errors? Did it recover gracefully?
+- **Tool call count**: How many total calls? How many were wasted (retries, detours)?
 
-**For functional scenarios** (prompt contains "write and deploy a real working application"), also check:
-- **Build success**: Did zerops.yml produce a successful build on first attempt? Were buildCommands, deployFiles, and start command correct?
-- **Binding**: Did the app bind to `0.0.0.0`? (502 = binding issue)
-- **Env var wiring**: Did the app connect to managed services using correct env var names?
-- **Health endpoint**: Did `/health` return 200 with correct body?
-- **Service connectivity**: Did `/status` confirm managed service connections?
-- **EVAL RESULT block**: Look for the `=== EVAL RESULT ===` block in the output — it has a structured PASS/FAIL verdict per phase.
+**For functional scenarios**, also check:
+- **Build success**: Did the build succeed on first attempt?
+- **Deploy success**: Did the app come up and respond correctly?
+- **Service connectivity**: Did the app connect to all managed services?
+- **EVAL RESULT block**: Look for the `=== EVAL RESULT ===` block in the output.
 
 ### 7. Fix Knowledge Gaps
 
@@ -122,14 +121,15 @@ a. **Look up the correct information** in `../zerops-docs/apps/docs/content/`. U
    - Reference: `references/` (zerops.yaml spec, import YAML format)
    - Features: `features/` (env vars, networking, scaling)
 
-b. **Update the relevant knowledge file** in `internal/knowledge/`. Knowledge is organized as:
-   - `foundation/grammar.md` — Import YAML schema, syntax rules
-   - `foundation/runtimes.md` — Runtime service defaults and versions
-   - `foundation/services.md` — Managed service defaults and versions
-   - `foundation/wiring.md` — Cross-service env var references
-   - `decisions/` — Technology selection guides (choose-database, choose-cache, etc.)
-   - `guides/` — Operational guides (production-checklist, ci-cd, etc.)
-   - `recipes/` — Framework-specific setup guides
+b. **Update the relevant knowledge file** in `internal/knowledge/`. Only `themes/` and `recipes/` are embedded in the binary:
+   - `themes/platform.md` — Zerops platform conceptual model
+   - `themes/rules.md` — Actionable DO/DON'T rules and pitfalls
+   - `themes/grammar.md` — Import YAML and zerops.yml schema reference
+   - `themes/runtimes.md` — Runtime-specific exceptions (PHP, Node.js, Go, Bun, Java, .NET, etc.)
+   - `themes/services.md` — Managed service cards (PostgreSQL, Valkey, Elasticsearch, etc.)
+   - `themes/wiring.md` — Cross-service env var wiring patterns and syntax
+   - `themes/operations.md` — Operational decisions (choose-database, choose-cache, choose-runtime)
+   - `recipes/` — Framework-specific setup guides (31 recipes)
 
 c. **Keep changes minimal and factual** — add facts, not prose. One issue per change.
 
@@ -183,7 +183,7 @@ Write `eval/results/<tag>/SUMMARY.md` with:
 ...
 
 ## Knowledge Changes
-- `foundation/runtimes.md`: <what changed and why>
+- `themes/runtimes.md`: <what changed and why>
 - `recipes/django.md`: <what changed and why>
 - ...
 
@@ -215,3 +215,4 @@ Write `eval/results/<tag>/SUMMARY.md` with:
 - **Functional: 502 Bad Gateway**: App not binding to 0.0.0.0. Check knowledge for the runtime's binding rule.
 - **Functional: build FAILED**: Check zerops_logs + `zcli service log <hostname> --showBuildLogs --limit 50`
 - **Functional: no EVAL RESULT block**: Claude ran out of turns. Increase --max-turns or check raw .jsonl for partial results.
+- **Workflow engine**: ZCP now has action-based workflows (`action=show/start/transition/evidence/reset/iterate`). The legacy `workflow="bootstrap"` still works but the new engine tracks state across calls.

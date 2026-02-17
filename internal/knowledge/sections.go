@@ -88,6 +88,23 @@ func normalizeRuntimeName(runtime string) string {
 	return ""
 }
 
+// autoPromoteRuntime scans services for a known runtime name when runtime is empty.
+// Returns the promoted runtime string and the remaining services slice.
+// Only the first matching runtime is promoted; if none match, returns ("", original services).
+func autoPromoteRuntime(services []string) (string, []string) {
+	for i, svc := range services {
+		base, _, _ := strings.Cut(svc, "@")
+		if _, ok := runtimeNormalizer[base]; ok {
+			// Promote this entry to runtime, remove from services
+			remaining := make([]string, 0, len(services)-1)
+			remaining = append(remaining, services[:i]...)
+			remaining = append(remaining, services[i+1:]...)
+			return svc, remaining
+		}
+	}
+	return "", services
+}
+
 // serviceNormalizer maps MCP service types to services.md section names.
 var serviceNormalizer = map[string]string{
 	"postgresql":     "PostgreSQL",
@@ -138,8 +155,7 @@ func (s *Store) getRuntimeException(normalizedName string) string {
 	if err != nil {
 		return ""
 	}
-	sections := parseH2Sections(doc.Content)
-	return sections[normalizedName]
+	return doc.H2Sections()[normalizedName]
 }
 
 // getServiceCard returns the section content for a normalized service name from services.md.
@@ -148,8 +164,7 @@ func (s *Store) getServiceCard(normalizedName string) string {
 	if err != nil {
 		return ""
 	}
-	sections := parseH2Sections(doc.Content)
-	return sections[normalizedName]
+	return doc.H2Sections()[normalizedName]
 }
 
 // getWiringSyntax returns the "Syntax Rules" section from wiring.md.
@@ -158,8 +173,7 @@ func (s *Store) getWiringSyntax() string {
 	if err != nil {
 		return ""
 	}
-	sections := parseH2Sections(doc.Content)
-	return sections["Syntax Rules"]
+	return doc.H2Sections()["Syntax Rules"]
 }
 
 // getWiringSection returns the wiring template for a normalized service name from wiring.md.
@@ -168,8 +182,7 @@ func (s *Store) getWiringSection(normalizedName string) string {
 	if err != nil {
 		return ""
 	}
-	sections := parseH2Sections(doc.Content)
-	return sections[normalizedName]
+	return doc.H2Sections()[normalizedName]
 }
 
 // decisionSectionMap maps service base names to operations.md decision section names.
@@ -193,7 +206,7 @@ func (s *Store) getRelevantDecisions(runtime string, services []string) string {
 	if err != nil {
 		return ""
 	}
-	sections := parseH2Sections(doc.Content)
+	sections := doc.H2Sections()
 
 	var hints []string
 
@@ -202,9 +215,9 @@ func (s *Store) getRelevantDecisions(runtime string, services []string) string {
 		base, _, _ := strings.Cut(runtime, "@")
 		if base == "go" || base == "python" || base == "dotnet" || base == "rust" {
 			if section, ok := sections["Choose Runtime Base"]; ok && section != "" {
-				firstLine := extractFirstNonEmptyLine(section)
-				if firstLine != "" {
-					hints = append(hints, "- **Choose Runtime Base**: "+firstLine)
+				summary := extractDecisionSummary(section)
+				if summary != "" {
+					hints = append(hints, "- **Choose Runtime Base**: "+summary)
 				}
 			}
 		}
@@ -217,9 +230,9 @@ func (s *Store) getRelevantDecisions(runtime string, services []string) string {
 		if sectionName, ok := decisionSectionMap[base]; ok && !seen[sectionName] {
 			seen[sectionName] = true
 			if section, ok2 := sections[sectionName]; ok2 && section != "" {
-				firstLine := extractFirstNonEmptyLine(section)
-				if firstLine != "" {
-					hints = append(hints, "- **"+sectionName+"**: "+firstLine)
+				summary := extractDecisionSummary(section)
+				if summary != "" {
+					hints = append(hints, "- **"+sectionName+"**: "+summary)
 				}
 			}
 		}
@@ -231,13 +244,22 @@ func (s *Store) getRelevantDecisions(runtime string, services []string) string {
 	return strings.Join(hints, "\n")
 }
 
-// extractFirstNonEmptyLine returns the first non-empty line from content.
-func extractFirstNonEmptyLine(content string) string {
+// extractDecisionSummary extracts the first paragraph (all lines until first blank line)
+// from a decision section. This provides richer context than just the first line.
+func extractDecisionSummary(content string) string {
+	var lines []string
 	for line := range strings.SplitSeq(content, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			return trimmed
+		if trimmed == "" && len(lines) > 0 {
+			break
+		}
+		if trimmed != "" && !strings.HasPrefix(trimmed, "##") {
+			lines = append(lines, trimmed)
 		}
 	}
-	return ""
+	result := strings.Join(lines, " ")
+	if len(result) > 500 {
+		return result[:500] + "..."
+	}
+	return result
 }

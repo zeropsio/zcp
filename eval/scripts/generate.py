@@ -172,8 +172,7 @@ def render_prompt(scenario, tax):
     focus_parts = []
     if scenario["focus"] == "env-vars":
         focus_parts.append(
-            "Make sure all services are properly wired with environment variables. "
-            "The runtime should have connection strings for all managed services."
+            "The runtime must be able to connect to all managed services."
         )
 
     # Pick template
@@ -186,12 +185,9 @@ def render_prompt(scenario, tax):
     if focus_parts:
         prompt += "\n\n" + "\n".join(focus_parts)
 
-    # For non-functional: simple mode, no deploy
+    # For non-functional: just create infrastructure
     if not is_functional:
-        prompt += (
-            "\n\nUse simple mode (single services, not dev+stage). "
-            "Just create the infrastructure with import.yml, do not deploy any code."
-        )
+        prompt += "\n\nJust create the infrastructure, do not deploy any application code."
     else:
         # Functional: deploy real code + verify
         prompt += render_functional_instructions(scenario)
@@ -204,35 +200,17 @@ def render_functional_instructions(scenario):
     runtime_name = scenario["runtimes"][0][0]
     service_names = [s[0] for s in scenario["services"]]
 
-    # Build service-specific status check hints
-    status_checks = []
-    for svc_name in service_names:
-        if svc_name in ("postgresql", "mariadb", "clickhouse"):
-            status_checks.append(f"query {svc_name} with SELECT 1")
-        elif svc_name in ("valkey",):
-            status_checks.append("ping the cache (PING → PONG)")
-        elif svc_name in ("elasticsearch", "meilisearch", "qdrant", "typesense"):
-            status_checks.append(f"check {svc_name} health endpoint")
-        else:
-            status_checks.append(f"verify {svc_name} connectivity")
-
-    status_desc = " and ".join(status_checks) if status_checks else "return ok"
-
     return f"""
 
-Use simple mode (single services, not dev+stage).
 Do NOT use TodoWrite or AskUserQuestion. Make all decisions autonomously.
 
-Start by calling `zerops_workflow workflow="bootstrap"` to get the deployment workflow, then follow it.
+Write and deploy a real working application. Create source code in `/tmp/evalapp/`.
 
-The app MUST serve these HTTP endpoints:
-- `GET /health` → HTTP 200, confirms the app is running
-- `GET /status` → {status_desc}, return JSON with connectivity result
-- `GET /` → JSON welcome message with runtime name
+The app must:
+- Respond to HTTP requests on `/health` (200 OK) and `/status` (verify connectivity to all managed services)
+- Connect to all managed services listed above
 
-Create app source in `/tmp/evalapp/`. Use `zerops_knowledge` to load correct configuration for the runtime and services.
-
-After verification, output this result block:
+After deploy and verification, output this result block:
 
 ```
 === EVAL RESULT ===
@@ -243,8 +221,6 @@ deploy: {{PASS|FAIL}}
 health_check: {{PASS|FAIL}}
 service_connectivity: {{PASS|FAIL}}
 subdomain_url: {{url or N/A}}
-health_response: {{response body}}
-status_response: {{response body}}
 verdict: {{PASS|FAIL}}
 === END RESULT ===
 ```

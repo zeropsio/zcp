@@ -14,10 +14,10 @@ zerops:
     run:
       envVariables:
         DB_HOST: db
-        S3_ENDPOINT: $storage_apiUrl
-        S3_BUCKET: $storage_bucketName
-        S3_ACCESS_KEY: $storage_accessKeyId
-        S3_SECRET_KEY: $storage_secretAccessKey
+        S3_ENDPOINT: ${storage_apiUrl}
+        S3_BUCKET: ${storage_bucketName}
+        S3_ACCESS_KEY: ${storage_accessKeyId}
+        S3_SECRET_KEY: ${storage_secretAccessKey}
       start: java -jar target/api.jar
 ```
 

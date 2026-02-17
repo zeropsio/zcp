@@ -40,6 +40,18 @@ def count_deploy_attempts(tool_calls):
     return sum(1 for tc in tool_calls if tc["tool"] == "zerops_deploy")
 
 
+def count_knowledge_calls(data):
+    """Count knowledge calls by mode (query, briefing, recipe)."""
+    queries = len(data.get("knowledge_queries", []))
+    briefings = len(data.get("knowledge_briefings", []))
+    return queries, briefings
+
+
+def count_workflow_actions(data):
+    """Count workflow engine actions used."""
+    return len(data.get("workflow_actions", []))
+
+
 def count_waste(tool_calls):
     """Count and categorize wasted tool calls."""
     breakdown = {}
@@ -82,6 +94,8 @@ def score(data, scenario_type=None):
     deploy_attempts = count_deploy_attempts(tool_calls)
     waste_calls, waste_breakdown = count_waste(tool_calls)
     useful_calls = total_calls - waste_calls
+    knowledge_queries, knowledge_briefings = count_knowledge_calls(data)
+    workflow_action_count = count_workflow_actions(data)
 
     efficiency = useful_calls / total_calls if total_calls > 0 else 1.0
 
@@ -146,6 +160,9 @@ def score(data, scenario_type=None):
             "deploy_attempts": deploy_attempts,
             "retries": len(retries),
             "efficiency_ratio": round(efficiency, 2),
+            "knowledge_queries": knowledge_queries,
+            "knowledge_briefings": knowledge_briefings,
+            "workflow_actions": workflow_action_count,
         },
         "waste_breakdown": waste_breakdown,
         "flags": flags,
@@ -163,6 +180,7 @@ def print_summary(result):
     print(f"  Calls: {m['total_calls']} total, {m['useful_calls']} useful, {m['waste_calls']} waste", file=sys.stderr)
     print(f"  Efficiency: {m['efficiency_ratio']:.0%}", file=sys.stderr)
     print(f"  Errors: {m['real_errors']}, Retries: {m['retries']}, Event polls: {m['event_polls']}", file=sys.stderr)
+    print(f"  Knowledge: {m['knowledge_queries']} queries, {m['knowledge_briefings']} briefings, {m['workflow_actions']} workflow actions", file=sys.stderr)
 
     if result["flags"]:
         print(f"  Flags: {', '.join(result['flags'])}", file=sys.stderr)

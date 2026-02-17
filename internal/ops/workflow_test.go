@@ -2,39 +2,8 @@
 package ops
 
 import (
-	"strings"
 	"testing"
 )
-
-func TestGetWorkflowCatalog_NonEmpty(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		contains []string
-	}{
-		{
-			name:     "contains_all_workflows",
-			contains: []string{"bootstrap", "deploy", "debug", "scale", "configure", "monitor"},
-		},
-	}
-
-	catalog := GetWorkflowCatalog()
-	if catalog == "" {
-		t.Fatal("GetWorkflowCatalog() returned empty string")
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			for _, wf := range tt.contains {
-				if !strings.Contains(catalog, wf) {
-					t.Errorf("catalog does not contain workflow %q", wf)
-				}
-			}
-		})
-	}
-}
 
 func TestGetWorkflow_KnownWorkflows(t *testing.T) {
 	t.Parallel()

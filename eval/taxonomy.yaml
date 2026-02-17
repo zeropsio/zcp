@@ -68,7 +68,7 @@ task_types:
     max_runtimes: 1
     min_services: 2
     max_services: 2
-    service_filter: [postgresql, mariadb, valkey, meilisearch, qdrant]
+    service_filter: [postgresql, mariadb, valkey, meilisearch, qdrant, typesense]
     runtime_filter: [nodejs, python, go, bun, java, dotnet]
     modifiers: [subdomain]
     functional: true
@@ -87,17 +87,19 @@ runtimes:
   - { name: "elixir", versions: ["1.16"] }
 
 services:
-  - { name: "postgresql", versions: ["16", "17"] }
+  - { name: "postgresql", versions: ["18", "17", "16"] }
   - { name: "mariadb", versions: ["10.6"] }
   - { name: "valkey", versions: ["7.2"] }
   - { name: "object-storage", versions: [""] }
-  - { name: "elasticsearch", versions: ["8.16"] }
-  - { name: "meilisearch", versions: ["1.10"] }
+  - { name: "elasticsearch", versions: ["9.2", "8.16"] }
+  - { name: "meilisearch", versions: ["1.20", "1.10"] }
   - { name: "shared-storage", versions: [""] }
   - { name: "kafka", versions: ["3.8"] }
   - { name: "clickhouse", versions: ["25.3"] }
   - { name: "qdrant", versions: ["1.12"] }
-  - { name: "nats", versions: ["2.10"] }
+  - { name: "nats", versions: ["2.12", "2.10"] }
+  - { name: "typesense", versions: ["27.1"] }
+  - { name: "rabbitmq", versions: ["3.9"] }
 
 modifiers:
   - ha-mode          # Request HA / multi-container

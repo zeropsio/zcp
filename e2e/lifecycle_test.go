@@ -34,23 +34,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 
 	step := 0
 
-	// --- Step 1: zerops_context ---
-	step++
-	logStep(t, step, "zerops_context")
-	contextText := s.mustCallSuccess("zerops_context", nil)
-	if !strings.Contains(contextText, "Zerops") {
-		t.Error("context should mention Zerops")
-	}
-
-	// --- Step 2: zerops_workflow catalog ---
-	step++
-	logStep(t, step, "zerops_workflow catalog")
-	catalogText := s.mustCallSuccess("zerops_workflow", nil)
-	if !strings.Contains(catalogText, "bootstrap") {
-		t.Error("catalog should list bootstrap workflow")
-	}
-
-	// --- Step 3: zerops_workflow bootstrap ---
+	// --- Step 1: zerops_workflow bootstrap ---
 	step++
 	logStep(t, step, "zerops_workflow bootstrap")
 	bootstrapText := s.mustCallSuccess("zerops_workflow", map[string]any{

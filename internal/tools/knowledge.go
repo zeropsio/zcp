@@ -24,7 +24,7 @@ type KnowledgeInput struct {
 func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
-		Description: "Load Zerops platform rules and configuration knowledge. Three modes: (1) runtime/services — contextual briefing with version validation for YAML generation, (2) query — BM25 search for specific topics, (3) recipe — pre-built configs for frameworks. Call before generating any YAML.",
+		Description: "Load Zerops platform rules and configuration knowledge. Three modes: (1) briefing — contextual rules + version validation for YAML generation. Use `runtime` for the app you are building (e.g. \"nodejs@22\", \"python@3.12\", \"java@21\") and `services` for managed/stateful services (e.g. [\"postgresql@16\", \"valkey@7.2\"]). The runtime parameter loads build/deploy rules critical for correct zerops.yml generation. (2) query — BM25 search for specific topics. (3) recipe — pre-built configs for frameworks. Call before generating any YAML.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Zerops knowledge access",
 			ReadOnlyHint:   true,

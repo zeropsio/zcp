@@ -206,6 +206,40 @@ func TestFormatVersionCheck_Empty(t *testing.T) {
 	}
 }
 
+func TestFormatVersionCheck_BareNameNormalized(t *testing.T) {
+	t.Parallel()
+	types := testStackTypes()
+
+	// "valkey" without version — should normalize to latest available and pass.
+	result := FormatVersionCheck("nodejs@22", []string{"valkey"}, types)
+
+	if result == "" {
+		t.Fatal("expected non-empty result")
+	}
+	// Should have checkmark for normalized valkey (not a warning).
+	if strings.Contains(result, "\u26a0") && strings.Contains(result, "valkey") {
+		t.Errorf("bare 'valkey' should normalize to valkey@7.2 and pass, got: %s", result)
+	}
+	if !strings.Contains(result, "\u2713") {
+		t.Error("expected checkmarks for valid types")
+	}
+}
+
+func TestFormatVersionCheck_BareRuntimeNormalized(t *testing.T) {
+	t.Parallel()
+	types := testStackTypes()
+
+	// "go" without version — should normalize to go@1.
+	result := FormatVersionCheck("go", nil, types)
+
+	if result == "" {
+		t.Fatal("expected non-empty result")
+	}
+	if strings.Contains(result, "\u26a0") {
+		t.Errorf("bare 'go' should normalize to go@1 and pass, got: %s", result)
+	}
+}
+
 // --- ValidateServiceTypes Tests ---
 
 func TestValidateServiceTypes_Valid(t *testing.T) {
@@ -291,6 +325,199 @@ func TestValidateServiceTypes_NoTypes(t *testing.T) {
 			warnings := ValidateServiceTypes(services, tt.types)
 			if warnings != nil {
 				t.Errorf("expected nil warnings, got: %v", warnings)
+			}
+		})
+	}
+}
+
+// --- FormatServiceStacks Tests ---
+
+func TestFormatServiceStacks_Empty(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		types []platform.ServiceStackType
+	}{
+		{"nil", nil},
+		{"empty", []platform.ServiceStackType{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if result := FormatServiceStacks(tt.types); result != "" {
+				t.Errorf("expected empty string, got: %q", result)
+			}
+		})
+	}
+}
+
+func TestFormatServiceStacks_BuildRunCrossReference(t *testing.T) {
+	t.Parallel()
+
+	types := []platform.ServiceStackType{
+		{Name: "Golang", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "go@1", Status: "ACTIVE"},
+		}},
+		{Name: "zbuild Golang", Category: "BUILD", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "go@1", Status: "ACTIVE"},
+		}},
+		{Name: "Nginx static", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "nginx@1.22", Status: "ACTIVE"},
+		}},
+		{Name: "PostgreSQL", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "postgresql@16", Status: "ACTIVE"},
+		}},
+	}
+
+	result := FormatServiceStacks(types)
+
+	if !strings.Contains(result, "go@1 [B]") {
+		t.Error("Golang should show [B] (has BUILD counterpart)")
+	}
+	if strings.Contains(result, "nginx@1.22 [B]") {
+		t.Error("Nginx should not show [B] (no BUILD counterpart)")
+	}
+	if strings.Contains(result, "postgresql@16 [B]") {
+		t.Error("PostgreSQL should not show [B] (managed service)")
+	}
+}
+
+func TestFormatServiceStacks_UnmatchedBuildVersions(t *testing.T) {
+	t.Parallel()
+
+	types := []platform.ServiceStackType{
+		{Name: "PHP+Nginx", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "php-nginx@8.4", Status: "ACTIVE"},
+		}},
+		{Name: "zbuild PHP", Category: "BUILD", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "php@8.1", Status: "ACTIVE"},
+			{Name: "php@8.3", Status: "ACTIVE"},
+		}},
+		{Name: "Golang", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "go@1", Status: "ACTIVE"},
+		}},
+		{Name: "zbuild Golang", Category: "BUILD", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "go@1", Status: "ACTIVE"},
+		}},
+	}
+
+	result := FormatServiceStacks(types)
+
+	if !strings.Contains(result, "Build-only:") {
+		t.Error("should have Build-only section for unmatched PHP build versions")
+	}
+	if !strings.Contains(result, "php@{8.1,8.3}") {
+		t.Error("should show php build versions in compact brace notation")
+	}
+	if !strings.Contains(result, "go@1 [B]") {
+		t.Error("Golang should show [B]")
+	}
+}
+
+func TestFormatServiceStacks_CategoryOrdering(t *testing.T) {
+	t.Parallel()
+
+	types := []platform.ServiceStackType{
+		{Name: "S3", Category: "OBJECT_STORAGE", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "s3@1", Status: "ACTIVE"},
+		}},
+		{Name: "PostgreSQL", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "postgresql@16", Status: "ACTIVE"},
+		}},
+		{Name: "Shared NFS", Category: "SHARED_STORAGE", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "nfs@1", Status: "ACTIVE"},
+		}},
+		{Name: "Node.js", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "nodejs@22", Status: "ACTIVE"},
+		}},
+	}
+
+	result := FormatServiceStacks(types)
+
+	runtimeIdx := strings.Index(result, "Runtime:")
+	managedIdx := strings.Index(result, "Managed:")
+	sharedIdx := strings.Index(result, "Shared storage:")
+	objectIdx := strings.Index(result, "Object storage:")
+
+	if runtimeIdx < 0 || managedIdx < 0 || sharedIdx < 0 || objectIdx < 0 {
+		t.Fatalf("missing category sections: runtime=%d, managed=%d, shared=%d, object=%d",
+			runtimeIdx, managedIdx, sharedIdx, objectIdx)
+	}
+	if runtimeIdx >= managedIdx {
+		t.Errorf("Runtime (%d) should appear before Managed (%d)", runtimeIdx, managedIdx)
+	}
+	if managedIdx >= sharedIdx {
+		t.Errorf("Managed (%d) should appear before Shared storage (%d)", managedIdx, sharedIdx)
+	}
+	if sharedIdx >= objectIdx {
+		t.Errorf("Shared storage (%d) should appear before Object storage (%d)", sharedIdx, objectIdx)
+	}
+}
+
+func TestFormatServiceStacks_FiltersHiddenCategories(t *testing.T) {
+	t.Parallel()
+
+	types := []platform.ServiceStackType{
+		{Name: "Node.js", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "nodejs@22", Status: "ACTIVE"},
+		}},
+		{Name: "Internal Tool", Category: "INTERNAL", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "internal@1", Status: "ACTIVE"},
+		}},
+		{Name: "Core", Category: "CORE", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "core@1", Status: "ACTIVE"},
+		}},
+	}
+
+	result := FormatServiceStacks(types)
+
+	if !strings.Contains(result, "nodejs@22") {
+		t.Error("should contain USER category types")
+	}
+	if strings.Contains(result, "internal@1") {
+		t.Error("should filter out INTERNAL category")
+	}
+	if strings.Contains(result, "core@1") {
+		t.Error("should filter out CORE category")
+	}
+}
+
+func TestFormatServiceStacks_OnlyHiddenCategories(t *testing.T) {
+	t.Parallel()
+
+	types := []platform.ServiceStackType{
+		{Name: "Core", Category: "CORE", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "core", Status: "ACTIVE"},
+		}},
+	}
+
+	if result := FormatServiceStacks(types); result != "" {
+		t.Errorf("expected empty string for only hidden categories, got: %q", result)
+	}
+}
+
+func TestCompactVersionGroup(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		versions []string
+		want     string
+	}{
+		{"single", []string{"nodejs@22"}, "nodejs@22"},
+		{"single_bare", []string{"static"}, "static"},
+		{"multi_same_prefix", []string{"nodejs@18", "nodejs@20", "nodejs@22"}, "nodejs@{18,20,22}"},
+		{"multi_bare", []string{"static", "runtime"}, "static, runtime"},
+		{"multi_mixed_prefix", []string{"nodejs@22", "python@3.14"}, "nodejs@22, python@3.14"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := compactVersionGroup(tt.versions)
+			if got != tt.want {
+				t.Errorf("compactVersionGroup(%v) = %q, want %q", tt.versions, got, tt.want)
 			}
 		})
 	}

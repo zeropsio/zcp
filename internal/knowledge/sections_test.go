@@ -153,6 +153,53 @@ Final content`
 	}
 }
 
+// --- Decision Summary Tests ---
+
+func TestExtractDecisionSummary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "single line",
+			content: "Use PostgreSQL for everything.",
+			want:    "Use PostgreSQL for everything.",
+		},
+		{
+			name:    "multi-line paragraph",
+			content: "Use PostgreSQL for most use cases.\nMariaDB only when wsrep replication is needed.\nClickHouse for analytics.",
+			want:    "Use PostgreSQL for most use cases. MariaDB only when wsrep replication is needed. ClickHouse for analytics.",
+		},
+		{
+			name:    "stops at blank line",
+			content: "Use PostgreSQL for most use cases.\n\nDetailed comparison table below:",
+			want:    "Use PostgreSQL for most use cases.",
+		},
+		{
+			name:    "skips H2 headers",
+			content: "## Subsection\nUse Valkey.\nKeyDB is deprecated.",
+			want:    "Use Valkey. KeyDB is deprecated.",
+		},
+		{
+			name:    "empty content",
+			content: "",
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := extractDecisionSummary(tt.content)
+			if got != tt.want {
+				t.Errorf("extractDecisionSummary() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // --- Runtime Normalizer Tests ---
 
 func TestNormalizeRuntimeName(t *testing.T) {
@@ -229,6 +276,73 @@ func TestNormalizeRuntimeName(t *testing.T) {
 			got := normalizeRuntimeName(tt.input)
 			if got != tt.want {
 				t.Errorf("normalizeRuntimeName(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- Auto-Promote Runtime Tests ---
+
+func TestAutoPromoteRuntime(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		services     []string
+		wantRuntime  string
+		wantServices []string
+	}{
+		{
+			name:         "promotes first runtime found",
+			services:     []string{"python@3.12", "valkey@7.2"},
+			wantRuntime:  "python@3.12",
+			wantServices: []string{"valkey@7.2"},
+		},
+		{
+			name:         "no runtimes in services",
+			services:     []string{"postgresql@16", "valkey@7.2"},
+			wantRuntime:  "",
+			wantServices: []string{"postgresql@16", "valkey@7.2"},
+		},
+		{
+			name:         "runtime at end of list",
+			services:     []string{"mariadb@10.6", "java@21"},
+			wantRuntime:  "java@21",
+			wantServices: []string{"mariadb@10.6"},
+		},
+		{
+			name:         "runtime only — no remaining services",
+			services:     []string{"nodejs@22"},
+			wantRuntime:  "nodejs@22",
+			wantServices: []string{},
+		},
+		{
+			name:         "empty services",
+			services:     []string{},
+			wantRuntime:  "",
+			wantServices: []string{},
+		},
+		{
+			name:         "multiple runtimes — only first promoted",
+			services:     []string{"python@3.12", "nodejs@22", "valkey@7.2"},
+			wantRuntime:  "python@3.12",
+			wantServices: []string{"nodejs@22", "valkey@7.2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gotRuntime, gotServices := autoPromoteRuntime(tt.services)
+			if gotRuntime != tt.wantRuntime {
+				t.Errorf("runtime = %q, want %q", gotRuntime, tt.wantRuntime)
+			}
+			if len(gotServices) != len(tt.wantServices) {
+				t.Fatalf("services len = %d, want %d (%v vs %v)", len(gotServices), len(tt.wantServices), gotServices, tt.wantServices)
+			}
+			for i, s := range gotServices {
+				if s != tt.wantServices[i] {
+					t.Errorf("services[%d] = %q, want %q", i, s, tt.wantServices[i])
+				}
 			}
 		})
 	}

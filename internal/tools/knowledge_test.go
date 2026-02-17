@@ -14,10 +14,10 @@ import (
 func testKnowledgeStore(t *testing.T) *knowledge.Store {
 	t.Helper()
 	docs := map[string]*knowledge.Document{
-		"zerops://themes/grammar": {
-			URI:     "zerops://themes/grammar",
-			Title:   "Zerops Grammar",
-			Content: "# Zerops Grammar\n\nUniversal rules here.",
+		"zerops://themes/core": {
+			URI:     "zerops://themes/core",
+			Title:   "Zerops Core Reference",
+			Content: "# Zerops Core Reference\n\nUniversal rules here.",
 		},
 		"zerops://themes/runtimes": {
 			URI:     "zerops://themes/runtimes",
@@ -123,8 +123,8 @@ func TestKnowledgeTool_BriefingMode(t *testing.T) {
 
 	text := getTextContent(t, result)
 	// Verify briefing contains expected sections
-	if !strings.Contains(text, "Zerops Grammar") {
-		t.Error("briefing missing grammar content")
+	if !strings.Contains(text, "Zerops Core Reference") {
+		t.Error("briefing missing core reference content")
 	}
 	if !strings.Contains(text, "PHP") {
 		t.Error("briefing missing PHP runtime delta")

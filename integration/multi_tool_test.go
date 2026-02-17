@@ -36,7 +36,7 @@ func setupTestServer(t *testing.T, mock *platform.Mock, logFetcher platform.LogF
 		t.Fatalf("knowledge store: %v", err)
 	}
 
-	srv := server.New(mock, authInfo, store, logFetcher, nil, nil, nil, nil, runtime.Info{})
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -423,32 +423,14 @@ func TestIntegration_ErrorPropagation(t *testing.T) {
 	}
 }
 
-func TestIntegration_ContextThenWorkflow(t *testing.T) {
+func TestIntegration_WorkflowBootstrap(t *testing.T) {
 	t.Parallel()
 
 	mock := defaultMock()
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 
-	// Step 1: Call zerops_context — should return non-empty platform context.
-	contextText := callAndGetText(t, session, "zerops_context", nil)
-	if contextText == "" {
-		t.Fatal("expected non-empty context text")
-	}
-	if !strings.Contains(contextText, "Zerops") {
-		t.Error("context should mention Zerops")
-	}
-
-	// Step 2: Call zerops_workflow without params — should return catalog.
-	catalogText := callAndGetText(t, session, "zerops_workflow", nil)
-	if catalogText == "" {
-		t.Fatal("expected non-empty workflow catalog")
-	}
-	if !strings.Contains(catalogText, "bootstrap") {
-		t.Error("catalog should list bootstrap workflow")
-	}
-
-	// Step 3: Call zerops_workflow with specific workflow.
+	// Call zerops_workflow with specific workflow.
 	bootstrapText := callAndGetText(t, session, "zerops_workflow", map[string]any{
 		"workflow": "bootstrap",
 	})
@@ -457,6 +439,24 @@ func TestIntegration_ContextThenWorkflow(t *testing.T) {
 	}
 	if len(bootstrapText) < 50 {
 		t.Errorf("bootstrap workflow content too short (%d chars)", len(bootstrapText))
+	}
+}
+
+func TestIntegration_WorkflowNoParams_Error(t *testing.T) {
+	t.Parallel()
+
+	mock := defaultMock()
+	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
+	defer cleanup()
+
+	// Call zerops_workflow without params — should return error.
+	result := callAndGetResult(t, session, "zerops_workflow", nil)
+	if !result.IsError {
+		t.Fatal("expected IsError for empty workflow call")
+	}
+	errText := getTextContent(t, result)
+	if !strings.Contains(errText, "No workflow specified") {
+		t.Errorf("expected 'No workflow specified' error, got: %s", errText)
 	}
 }
 

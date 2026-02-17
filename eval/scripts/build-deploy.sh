@@ -31,11 +31,20 @@ echo "==> Verifying..."
 LOCAL_HASH=$(shasum -a 256 "$LOCAL_BIN" | cut -d' ' -f1)
 REMOTE_HASH=$(ssh "$REMOTE_HOST" "sha256sum $REMOTE_BIN" | cut -d' ' -f1)
 
-if [ "$LOCAL_HASH" = "$REMOTE_HASH" ]; then
-    echo "==> Deploy OK (hash match: ${LOCAL_HASH:0:12}...)"
-else
+if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
     echo "==> WARNING: Hash mismatch!"
     echo "    Local:  $LOCAL_HASH"
     echo "    Remote: $REMOTE_HASH"
     exit 1
+fi
+
+echo "==> Deploy OK (hash match: ${LOCAL_HASH:0:12}...)"
+
+# Kill stale zcp processes so Claude Code starts a fresh MCP server with the new binary.
+# Without this, a running "zcp serve" keeps the old binary's embedded knowledge in memory.
+KILLED=$(ssh "$REMOTE_HOST" "pkill -f 'zcp serve' 2>/dev/null && echo killed || echo none")
+if [ "$KILLED" = "killed" ]; then
+    echo "==> Killed stale zcp serve process(es) — next Claude invocation will start fresh"
+else
+    echo "==> No stale zcp serve processes found"
 fi

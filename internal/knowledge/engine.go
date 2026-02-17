@@ -164,7 +164,7 @@ func (s *Store) Search(query string, limit int) []SearchResult {
 			URI:     doc.URI,
 			Title:   doc.Title,
 			Score:   h.score,
-			Snippet: extractSnippet(doc.Content, query, 300),
+			Snippet: extractSnippet(doc.Content, expanded, 300),
 		}
 	}
 	return results
@@ -201,29 +201,11 @@ func (s *Store) DocumentCount() int {
 	return len(s.docs)
 }
 
-// GetPlatformModel returns the full themes/platform.md content.
-func (s *Store) GetPlatformModel() (string, error) {
-	doc, err := s.Get("zerops://themes/platform")
+// GetCore returns the full themes/core.md content (merged platform + rules + grammar).
+func (s *Store) GetCore() (string, error) {
+	doc, err := s.Get("zerops://themes/core")
 	if err != nil {
-		return "", fmt.Errorf("platform model not found: %w", err)
-	}
-	return doc.Content, nil
-}
-
-// GetRules returns the full themes/rules.md content.
-func (s *Store) GetRules() (string, error) {
-	doc, err := s.Get("zerops://themes/rules")
-	if err != nil {
-		return "", fmt.Errorf("rules not found: %w", err)
-	}
-	return doc.Content, nil
-}
-
-// GetFoundation returns the full themes/grammar.md content.
-func (s *Store) GetFoundation() (string, error) {
-	doc, err := s.Get("zerops://themes/grammar")
-	if err != nil {
-		return "", fmt.Errorf("foundation grammar not found: %w", err)
+		return "", fmt.Errorf("core reference not found: %w", err)
 	}
 	return doc.Content, nil
 }
@@ -231,13 +213,18 @@ func (s *Store) GetFoundation() (string, error) {
 // runtimeRecipeHints maps runtime base names to recipe name prefixes/matches.
 var runtimeRecipeHints = map[string][]string{
 	"bun":    {"bun"},
-	"nodejs": {"nestjs", "nextjs", "svelte-nodejs", "react-nodejs", "qwik-nodejs", "payload", "ghost", "medusa"},
+	"nodejs": {"nestjs", "nextjs", "svelte-nodejs", "react-nodejs", "qwik-nodejs", "payload", "ghost", "medusa", "nuxt"},
 	"go":     {"echo-go"},
 	"python": {"django"},
 	"elixir": {"phoenix"},
 	"php":    {"laravel", "symfony", "nette", "filament", "twill", "php-"},
 	"java":   {"java-spring", "spring-boot"},
 	"ruby":   {"rails"},
+	"rust":   {"rust"},
+	"dotnet": {"dotnet"},
+	"deno":   {"deno"},
+	"gleam":  {"gleam"},
+	"static": {"svelte-static", "nextjs-static", "qwik-static"},
 }
 
 // matchingRecipes returns recipe names that match the given runtime base name.

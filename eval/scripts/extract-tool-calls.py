@@ -3,14 +3,14 @@
 
 Parses stream-json .jsonl and produces structured JSON with:
 - tool_calls: chronological list of {tool, input, result}
-- knowledge_queries: what was searched in knowledge base
+- knowledge_queries: what was searched in knowledge base (query mode)
+- knowledge_briefings: briefing calls with runtime/services params
 - knowledge_docs_used: which docs were returned
 - import_yaml_generated: any import YAML that was sent
 - env_vars_set: env vars that were set per service
+- workflow_actions: workflow engine actions used
 - errors: any errors from tool calls
 - retries: tool calls that were repeated (same tool+similar input)
-
-Adapted from ../../../eval/scripts/extract-tool-calls.py for ZCP.
 """
 
 import json
@@ -48,12 +48,25 @@ def process_tool_result(tool_id, content, pending_tools, tool_calls,
 
     # Track knowledge docs from results
     if tool_name == "zerops_knowledge":
+        # Old format: topResult: URI
         doc_match = re.search(r"topResult:\s*(\S+)", str(content))
         if doc_match:
             knowledge_docs_used.append(doc_match.group(1))
+        # Search result URIs
+        for m in re.findall(r"zerops://(\S+?)(?:[\"'\s,\]])", str(content)):
+            uri = f"zerops://{m}"
+            if uri not in knowledge_docs_used:
+                knowledge_docs_used.append(uri)
+        # Legacy path format
         for m in re.findall(r"knowledge/(\S+\.md)", str(content)):
             if m not in knowledge_docs_used:
                 knowledge_docs_used.append(m)
+        # Briefing mode: track themes surfaced
+        for theme in ["platform", "rules", "grammar", "runtimes", "services", "wiring", "operations"]:
+            if f"Zerops {theme.title()}" in str(content) or f"themes/{theme}" in str(content):
+                uri = f"zerops://themes/{theme}"
+                if uri not in knowledge_docs_used:
+                    knowledge_docs_used.append(uri)
 
     # Track errors — only for API-action tools, skip knowledge/content docs
     if tool_name in ERROR_CHECK_TOOLS:
@@ -102,9 +115,11 @@ def detect_retries(tool_calls):
 def extract_tool_calls(stream_file):
     tool_calls = []
     knowledge_queries = []
+    knowledge_briefings = []
     knowledge_docs_used = []
     import_yaml_generated = []
     env_vars_set = {}
+    workflow_actions = []
     errors = []
 
     pending_tools = {}  # tool_use_id -> tool info
@@ -145,11 +160,37 @@ def extract_tool_calls(stream_file):
                     "result": None,
                 }
 
-                # Track knowledge queries
+                # Track knowledge queries and briefings
                 if short_name == "zerops_knowledge":
                     query = tool_input.get("query", "")
                     if query:
                         knowledge_queries.append(query)
+                    runtime = tool_input.get("runtime", "")
+                    services = tool_input.get("services", [])
+                    recipe = tool_input.get("recipe", "")
+                    if runtime or services:
+                        knowledge_briefings.append({
+                            "runtime": runtime,
+                            "services": services,
+                        })
+                    if recipe:
+                        knowledge_queries.append(f"recipe:{recipe}")
+
+                # Track workflow actions
+                if short_name == "zerops_workflow":
+                    action = tool_input.get("action", "")
+                    workflow = tool_input.get("workflow", "")
+                    if action:
+                        workflow_actions.append({
+                            "action": action,
+                            "mode": tool_input.get("mode", ""),
+                            "phase": tool_input.get("phase", ""),
+                        })
+                    elif workflow:
+                        workflow_actions.append({
+                            "action": "legacy",
+                            "workflow": workflow,
+                        })
 
                 # Track import YAML
                 if short_name == "zerops_import":
@@ -192,17 +233,21 @@ def extract_tool_calls(stream_file):
     return {
         "tool_calls": tool_calls,
         "knowledge_queries": knowledge_queries,
+        "knowledge_briefings": knowledge_briefings,
         "knowledge_docs_used": knowledge_docs_used,
         "import_yaml_generated": import_yaml_generated,
         "env_vars_set": env_vars_set,
+        "workflow_actions": workflow_actions,
         "errors": errors,
         "retries": retries,
         "summary": {
             "total_tool_calls": len(tool_calls),
             "total_knowledge_queries": len(knowledge_queries),
+            "total_knowledge_briefings": len(knowledge_briefings),
             "total_errors": len(errors),
             "total_retries": len(retries),
             "unique_knowledge_docs": len(set(knowledge_docs_used)),
+            "workflow_actions_used": len(workflow_actions),
         },
     }
 

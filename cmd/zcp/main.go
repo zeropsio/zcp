@@ -148,7 +148,7 @@ func run(updateInfo *update.Info) error {
 
 	// Create and run MCP server on STDIO.
 	// SSH deployer remains nil — requires running Zerops container with SSH access.
-	srv := server.New(client, authInfo, store, logFetcher, nil, localDeployer, mounter, updateInfo, rtInfo)
+	srv := server.New(ctx, client, authInfo, store, logFetcher, nil, localDeployer, mounter, updateInfo, rtInfo)
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("server: %w", err)
 	}

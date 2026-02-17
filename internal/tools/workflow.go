@@ -19,7 +19,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty"`
 
 	// New multi-action fields.
-	Action      string `json:"action,omitempty"`      // show, start, transition, reset, evidence, iterate
+	Action      string `json:"action,omitempty"`      // start, transition, reset, evidence, iterate
 	Mode        string `json:"mode,omitempty"`        // full, dev_only, hotfix, quick
 	Phase       string `json:"phase,omitempty"`       // target phase for transition
 	Intent      string `json:"intent,omitempty"`      // user intent for start
@@ -32,7 +32,7 @@ type WorkflowInput struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Get step-by-step workflow for multi-step operations. Includes live service versions and orchestration steps. Use for: bootstrap, deploy, debug, scale, configure, monitor. Without workflow param returns catalog.",
+		Description: "Get step-by-step workflow for multi-step operations. Includes live service versions and orchestration steps. Requires workflow parameter: bootstrap, deploy, debug, scale, configure, or monitor.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Get workflow guidance",
 			ReadOnlyHint:   true,
@@ -42,12 +42,15 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, client, projectID, engine, input)
+			return handleWorkflowAction(projectID, engine, input)
 		}
 
 		// Legacy: static workflow guidance.
 		if input.Workflow == "" {
-			return textResult(ops.GetWorkflowCatalog()), nil, nil
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				"No workflow specified",
+				"Use workflow=\"bootstrap\", workflow=\"deploy\", or workflow=\"debug\"")), nil, nil
 		}
 		content, err := ops.GetWorkflow(input.Workflow)
 		if err != nil {
@@ -66,7 +69,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, client platform.Client, projectID string, engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(projectID string, engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -75,8 +78,6 @@ func handleWorkflowAction(ctx context.Context, client platform.Client, projectID
 	}
 
 	switch input.Action {
-	case "show":
-		return handleShow(ctx, client, projectID, engine)
 	case "start":
 		return handleStart(projectID, engine, input)
 	case "transition":
@@ -91,19 +92,8 @@ func handleWorkflowAction(ctx context.Context, client platform.Client, projectID
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: show, start, transition, evidence, reset, iterate")), nil, nil
+			"Valid actions: start, transition, evidence, reset, iterate")), nil, nil
 	}
-}
-
-func handleShow(ctx context.Context, client platform.Client, projectID string, engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
-	text, err := engine.Show(ctx, client, projectID)
-	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrAPIError,
-			fmt.Sprintf("Show failed: %v", err),
-			"Check API connectivity")), nil, nil
-	}
-	return textResult(text), nil, nil
 }
 
 func handleStart(projectID string, engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {

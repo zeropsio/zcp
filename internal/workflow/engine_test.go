@@ -197,22 +197,3 @@ func TestEngine_GetState(t *testing.T) {
 		t.Errorf("ProjectID: want proj-1, got %s", state.ProjectID)
 	}
 }
-
-func TestEngine_Show(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	client := platform.NewMock().WithServices([]platform.ServiceStack{
-		{Name: "app-dev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-		{Name: "app-stage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-	})
-
-	result, err := eng.Show(context.Background(), client, "proj-1")
-	if err != nil {
-		t.Fatalf("Show: %v", err)
-	}
-	if result == "" {
-		t.Error("expected non-empty Show result")
-	}
-}

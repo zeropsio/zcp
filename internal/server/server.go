@@ -38,10 +38,10 @@ type Server struct {
 }
 
 // New creates a new ZCP MCP server with all tools registered.
-func New(client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter, updateInfo *update.Info, rtInfo runtime.Info) *Server {
+func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter, updateInfo *update.Info, rtInfo runtime.Info) *Server {
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
-		&mcp.ServerOptions{Instructions: BuildInstructions(rtInfo)},
+		&mcp.ServerOptions{Instructions: BuildInstructions(ctx, client, authInfo.ProjectID, rtInfo)},
 	)
 
 	s := &Server{
@@ -74,7 +74,6 @@ func (s *Server) registerTools() {
 	}
 
 	// Read-only tools
-	tools.RegisterContext(s.server, s.client, stackCache, s.updateInfo)
 	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine)
 	tools.RegisterDiscover(s.server, s.client, projectID)
 	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache)

@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -147,16 +148,28 @@ func FormatVersionCheck(runtime string, services []string, types []platform.Serv
 	var sb strings.Builder
 	sb.WriteString("## Version Check\n\n")
 
-	// Check runtime
+	// Check runtime (normalize bare names like "valkey" → "valkey@7.2")
 	if runtime != "" {
-		writeVersionLine(&sb, runtime, activeVersions, baseToVersions)
+		writeVersionLine(&sb, normalizeVersionInput(runtime, baseToVersions), activeVersions, baseToVersions)
 	}
 	// Check services
 	for _, svc := range services {
-		writeVersionLine(&sb, svc, activeVersions, baseToVersions)
+		writeVersionLine(&sb, normalizeVersionInput(svc, baseToVersions), activeVersions, baseToVersions)
 	}
 
 	return sb.String()
+}
+
+// normalizeVersionInput resolves bare names (without @version) to the latest available version.
+// E.g., "valkey" → "valkey@7.2" if that's available.
+func normalizeVersionInput(input string, baseToVersions map[string][]string) string {
+	if input == "" || strings.Contains(input, "@") {
+		return input
+	}
+	if versions, ok := baseToVersions[input]; ok && len(versions) > 0 {
+		return versions[len(versions)-1]
+	}
+	return input
 }
 
 // writeVersionLine writes a single version check line with checkmark or warning.
@@ -251,4 +264,135 @@ func ValidateServiceTypes(services []map[string]any, types []platform.ServiceSta
 	}
 
 	return warnings
+}
+
+// FormatServiceStacks formats live service stack types as rich markdown for briefing injection.
+// Includes [B] markers for build-capable runtimes and a build-only section for unmatched build types.
+// Returns "" if types is nil/empty.
+func FormatServiceStacks(types []platform.ServiceStackType) string {
+	if len(types) == 0 {
+		return ""
+	}
+
+	// Collect build version names from BUILD category for cross-reference.
+	buildVersions := make(map[string]bool)
+	for _, st := range types {
+		if st.Category != "BUILD" {
+			continue
+		}
+		for _, v := range st.Versions {
+			if v.Status == versionStatusActive {
+				buildVersions[v.Name] = true
+			}
+		}
+	}
+	matchedBuild := make(map[string]bool)
+
+	// Group visible types by category.
+	grouped := make(map[string][]platform.ServiceStackType)
+	for _, st := range types {
+		if hiddenVersionCategories[st.Category] {
+			continue
+		}
+		grouped[st.Category] = append(grouped[st.Category], st)
+	}
+	if len(grouped) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## Service Stacks (live)\n[B]=also usable as build.base in zerops.yml\n")
+
+	writeCategory := func(cat string, stacks []platform.ServiceStackType) {
+		var entries []string
+		for _, st := range stacks {
+			if entry := formatStackEntry(st, buildVersions, matchedBuild); entry != "" {
+				entries = append(entries, entry)
+			}
+		}
+		if len(entries) == 0 {
+			return
+		}
+		sb.WriteByte('\n')
+		sb.WriteString(versionCategoryDisplayName(cat))
+		sb.WriteString(": ")
+		sb.WriteString(strings.Join(entries, " | "))
+	}
+
+	for _, cat := range versionCategoryOrder {
+		if stacks, ok := grouped[cat]; ok {
+			writeCategory(cat, stacks)
+		}
+	}
+
+	// Remaining categories not in standard order, sorted for determinism.
+	var remaining []string
+	for cat := range grouped {
+		if slices.Contains(versionCategoryOrder, cat) {
+			continue
+		}
+		remaining = append(remaining, cat)
+	}
+	slices.Sort(remaining)
+	for _, cat := range remaining {
+		writeCategory(cat, grouped[cat])
+	}
+
+	// Show unmatched BUILD versions (e.g., php@8.4 for PHP build base).
+	if buildSection := formatUnmatchedBuild(types, matchedBuild); buildSection != "" {
+		sb.WriteString(buildSection)
+	}
+
+	sb.WriteByte('\n')
+	return sb.String()
+}
+
+// formatStackEntry returns a compact representation of a service stack type with build markers.
+func formatStackEntry(st platform.ServiceStackType, buildVersions, matchedBuild map[string]bool) string {
+	var versions []string
+	for _, v := range st.Versions {
+		if v.Status == versionStatusActive {
+			versions = append(versions, v.Name)
+		}
+	}
+	if len(versions) == 0 {
+		return ""
+	}
+
+	hasBuild := false
+	for _, vn := range versions {
+		if buildVersions[vn] {
+			hasBuild = true
+			matchedBuild[vn] = true
+		}
+	}
+
+	result := compactVersionGroup(versions)
+	if hasBuild {
+		result += " [B]"
+	}
+	return result
+}
+
+// formatUnmatchedBuild returns BUILD versions that didn't match any visible run type.
+func formatUnmatchedBuild(types []platform.ServiceStackType, matchedBuild map[string]bool) string {
+	var entries []string
+	for _, st := range types {
+		if st.Category != "BUILD" || !strings.HasPrefix(st.Name, "zbuild ") {
+			continue
+		}
+		var unmatched []string
+		for _, v := range st.Versions {
+			if v.Status == versionStatusActive && !matchedBuild[v.Name] {
+				unmatched = append(unmatched, v.Name)
+			}
+		}
+		if len(unmatched) > 0 {
+			entries = append(entries, compactVersionGroup(unmatched))
+		}
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	return "\nBuild-only: " + strings.Join(entries, " | ")
 }

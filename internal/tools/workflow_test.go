@@ -16,19 +16,19 @@ import (
 
 // --- Legacy Workflow Tests ---
 
-func TestWorkflowTool_Catalog(t *testing.T) {
+func TestWorkflowTool_NoParams_ReturnsError(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "", nil, nil)
 
 	result := callTool(t, srv, "zerops_workflow", nil)
 
-	if result.IsError {
-		t.Error("unexpected IsError")
+	if !result.IsError {
+		t.Error("expected IsError for empty call")
 	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "Available") {
-		t.Errorf("expected catalog listing, got: %s", text[:min(100, len(text))])
+	if !strings.Contains(text, "No workflow specified") {
+		t.Errorf("expected 'No workflow specified' error, got: %s", text)
 	}
 }
 
@@ -146,7 +146,7 @@ func TestWorkflowTool_Action_NoEngine(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "", nil, nil)
 
-	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "show"})
+	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "start"})
 
 	if !result.IsError {
 		t.Error("expected IsError when engine is nil")
@@ -328,20 +328,15 @@ func TestWorkflowTool_Action_Transition_MissingPhase(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Action_Show(t *testing.T) {
+func TestWorkflowTool_Action_ShowRemoved(t *testing.T) {
 	t.Parallel()
-	mock := platform.NewMock().WithServices(nil)
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, "proj1", nil, engine)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "show"})
 
-	if result.IsError {
-		t.Errorf("unexpected error: %s", getTextContent(t, result))
-	}
-	text := getTextContent(t, result)
-	if !strings.Contains(text, "Project State") {
-		t.Errorf("expected Project State in output, got: %s", text)
+	if !result.IsError {
+		t.Error("expected IsError for removed show action")
 	}
 }

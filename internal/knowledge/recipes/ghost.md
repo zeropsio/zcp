@@ -34,4 +34,4 @@ services:
 ## Gotchas
 - **maxContainers: 1** is MANDATORY (Ghost does not support multiple containers)
 - For MariaDB HA: run `SET GLOBAL wsrep_sync_wait=1;` in initCommands (Galera sync)
-- Caching (KeyDB/CDN) often better than DB HA due to static content nature
+- Caching (Valkey/CDN) often better than DB HA due to static content nature

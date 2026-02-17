@@ -132,7 +132,7 @@ func TestSearch_ZeropsYmlBuildCache(t *testing.T) {
 	}
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(r.URI, "grammar") || strings.Contains(strings.ToLower(r.Snippet), "cache") || strings.Contains(strings.ToLower(r.Snippet), "build") {
+		if strings.Contains(r.URI, "core") || strings.Contains(strings.ToLower(r.Snippet), "cache") || strings.Contains(strings.ToLower(r.Snippet), "build") {
 			found = true
 			break
 		}
@@ -150,7 +150,7 @@ func TestSearch_ImportYmlServices(t *testing.T) {
 	}
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(r.URI, "grammar") || strings.Contains(r.URI, "services") || strings.Contains(strings.ToLower(r.Snippet), "import") {
+		if strings.Contains(r.URI, "core") || strings.Contains(r.URI, "services") || strings.Contains(strings.ToLower(r.Snippet), "import") {
 			found = true
 			break
 		}
@@ -168,7 +168,7 @@ func TestSearch_EnvironmentVariables(t *testing.T) {
 	}
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(strings.ToLower(r.Snippet), "variable") || strings.Contains(strings.ToLower(r.Snippet), "env") || strings.Contains(r.URI, "grammar") {
+		if strings.Contains(strings.ToLower(r.Snippet), "variable") || strings.Contains(strings.ToLower(r.Snippet), "env") || strings.Contains(r.URI, "core") {
 			found = true
 			break
 		}
@@ -186,7 +186,7 @@ func TestSearch_ScalingAutoscale(t *testing.T) {
 	}
 	found := false
 	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(strings.ToLower(r.Snippet), "scaling") || strings.Contains(strings.ToLower(r.Snippet), "autoscal") || strings.Contains(r.URI, "grammar") {
+		if strings.Contains(strings.ToLower(r.Snippet), "scaling") || strings.Contains(strings.ToLower(r.Snippet), "autoscal") || strings.Contains(r.URI, "core") {
 			found = true
 			break
 		}

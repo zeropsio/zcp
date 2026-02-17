@@ -10,20 +10,14 @@ import (
 func testStoreWithCore(t *testing.T) *Store {
 	t.Helper()
 	docs := map[string]*Document{
-		"zerops://themes/platform": {
-			URI:     "zerops://themes/platform",
-			Title:   "Zerops Platform Model",
-			Content: "# Zerops Platform Model\n\nConceptual model of how Zerops works.\n\n## 3. The Build/Deploy Lifecycle\n\nBuild and Run are SEPARATE containers.",
-		},
-		"zerops://themes/rules": {
-			URI:     "zerops://themes/rules",
-			Title:   "Zerops Rules & Pitfalls",
-			Content: "# Zerops Rules & Pitfalls\n\nALWAYS bind 0.0.0.0. NEVER use apt-get on Alpine.",
-		},
-		"zerops://themes/grammar": {
-			URI:     "zerops://themes/grammar",
-			Title:   "Zerops Grammar",
-			Content: "# Zerops Grammar\n\nYAML schema reference.\n\n## zerops.yml Schema\n\nStructure rules.\n\n## Schema Rules\n\nPorts 10-65435.",
+		"zerops://themes/core": {
+			URI:   "zerops://themes/core",
+			Title: "Zerops Core Reference",
+			Content: "# Zerops Core Reference\n\nConceptual model of how Zerops works.\n\n" +
+				"ALWAYS bind 0.0.0.0. NEVER use apt-get on Alpine.\n\n" +
+				"YAML schema reference.\n\n## zerops.yml Schema\n\nStructure rules.\n\n" +
+				"## Schema Rules\n\nPorts 10-65435.\n\n" +
+				"## Build/Deploy Lifecycle\n\nBuild and Run are SEPARATE containers.",
 		},
 		"zerops://themes/runtimes": {
 			URI:     "zerops://themes/runtimes",
@@ -63,13 +57,13 @@ func testStoreWithCore(t *testing.T) *Store {
 	return store
 }
 
-// --- GetPlatformModel Tests ---
+// --- GetCore Tests ---
 
-func TestStore_GetPlatformModel_Success(t *testing.T) {
+func TestStore_GetCore_Success(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	content, err := store.GetPlatformModel()
+	content, err := store.GetCore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,77 +71,30 @@ func TestStore_GetPlatformModel_Success(t *testing.T) {
 	if !strings.Contains(content, "Conceptual model") {
 		t.Error("expected platform model content")
 	}
-	if !strings.Contains(content, "Build/Deploy Lifecycle") {
-		t.Error("expected lifecycle section")
-	}
-}
-
-func TestStore_GetPlatformModel_NotFound(t *testing.T) {
-	t.Parallel()
-	store, _ := NewStore(map[string]*Document{})
-
-	_, err := store.GetPlatformModel()
-	if err == nil {
-		t.Error("expected error when platform model not found")
-	}
-}
-
-// --- GetRules Tests ---
-
-func TestStore_GetRules_Success(t *testing.T) {
-	t.Parallel()
-	store := testStoreWithCore(t)
-
-	content, err := store.GetRules()
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	if !strings.Contains(content, "ALWAYS") {
 		t.Error("expected ALWAYS rules")
 	}
 	if !strings.Contains(content, "NEVER") {
 		t.Error("expected NEVER rules")
 	}
-}
-
-func TestStore_GetRules_NotFound(t *testing.T) {
-	t.Parallel()
-	store, _ := NewStore(map[string]*Document{})
-
-	_, err := store.GetRules()
-	if err == nil {
-		t.Error("expected error when rules not found")
-	}
-}
-
-// --- GetFoundation Tests ---
-
-func TestStore_GetFoundation_Success(t *testing.T) {
-	t.Parallel()
-	store := testStoreWithCore(t)
-
-	content, err := store.GetFoundation()
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	if !strings.Contains(content, "YAML schema reference") {
-		t.Error("expected foundation content")
+		t.Error("expected grammar content")
 	}
 	if !strings.Contains(content, "## Schema Rules") {
 		t.Error("expected section headers")
 	}
+	if !strings.Contains(content, "Build/Deploy Lifecycle") {
+		t.Error("expected lifecycle section")
+	}
 }
 
-func TestStore_GetFoundation_NotFound(t *testing.T) {
+func TestStore_GetCore_NotFound(t *testing.T) {
 	t.Parallel()
-	// Store without foundation docs
 	store, _ := NewStore(map[string]*Document{})
 
-	_, err := store.GetFoundation()
+	_, err := store.GetCore()
 	if err == nil {
-		t.Error("expected error when foundation grammar not found")
+		t.Error("expected error when core not found")
 	}
 }
 
@@ -155,38 +102,12 @@ func TestStore_GetFoundation_NotFound(t *testing.T) {
 
 func TestStore_GetBriefing_CoreMissing(t *testing.T) {
 	t.Parallel()
-	// Store without foundation grammar — GetBriefing should fail
+	// Store without core — GetBriefing should fail
 	store, _ := NewStore(map[string]*Document{})
 
 	_, err := store.GetBriefing("php@8", nil, nil)
 	if err == nil {
-		t.Error("expected error when foundation missing")
-	}
-}
-
-func TestStore_GetBriefing_GracefulWithoutPlatformModel(t *testing.T) {
-	t.Parallel()
-	// Store with grammar but no platform or rules
-	docs := map[string]*Document{
-		"zerops://themes/grammar": {
-			URI:     "zerops://themes/grammar",
-			Title:   "Zerops Grammar",
-			Content: "# Zerops Grammar\n\nYAML schema reference.",
-		},
-	}
-	store, err := NewStore(docs)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	briefing, err := store.GetBriefing("nodejs@22", nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Should still work with just grammar
-	if !strings.Contains(briefing, "Zerops Grammar") {
-		t.Error("briefing should contain grammar even without platform model")
+		t.Error("expected error when core missing")
 	}
 }
 

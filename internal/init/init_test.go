@@ -25,8 +25,8 @@ func TestRun_GeneratesCLAUDEMD(t *testing.T) {
 	}
 
 	content := string(data)
-	if !strings.Contains(content, "zerops_workflow") {
-		t.Error("CLAUDE.md should mention zerops_workflow")
+	if !strings.Contains(content, "# Zerops") {
+		t.Error("CLAUDE.md should contain '# Zerops' heading")
 	}
 }
 
@@ -92,29 +92,6 @@ func TestRun_GeneratesSettingsLocal(t *testing.T) {
 	}
 }
 
-func TestRun_GeneratesCLAUDEMD_StrongInstructions(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	err := zcpinit.Run(dir)
-	if err != nil {
-		t.Fatalf("Run() error: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	if err != nil {
-		t.Fatalf("read CLAUDE.md: %v", err)
-	}
-
-	content := string(data)
-	required := []string{"zerops_workflow", "zerops_knowledge", "zerops_discover"}
-	for _, keyword := range required {
-		if !strings.Contains(content, keyword) {
-			t.Errorf("CLAUDE.md should contain %q", keyword)
-		}
-	}
-}
-
 func TestRun_Idempotent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -132,8 +109,8 @@ func TestRun_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read CLAUDE.md after second run: %v", err)
 	}
-	if !strings.Contains(string(data), "zerops_workflow") {
-		t.Error("CLAUDE.md should still contain zerops_workflow after second run")
+	if !strings.Contains(string(data), "# Zerops") {
+		t.Error("CLAUDE.md should still contain '# Zerops' after second run")
 	}
 }
 

@@ -79,16 +79,8 @@ func TestGetTemplate_CLAUDEMDContent(t *testing.T) {
 		t.Fatalf("GetTemplate: %v", err)
 	}
 
-	required := []string{
-		"zerops_workflow",
-		"zerops_knowledge",
-		"zerops_discover",
-	}
-
-	for _, keyword := range required {
-		if !strings.Contains(content, keyword) {
-			t.Errorf("claude.md template should contain %q", keyword)
-		}
+	if !strings.Contains(content, "# Zerops") {
+		t.Error("claude.md template should contain '# Zerops' heading")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 func TestServer_AllToolsRegistered(t *testing.T) {
@@ -27,7 +28,7 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	logFetcher := platform.NewMockLogFetcher()
 
 	// Mount tool is now always registered (nil mounter returns error at call time).
-	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil, runtime.Info{})
+	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -52,7 +53,7 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	// With nil deployers, zerops_deploy should NOT be registered.
 	// Mount tool IS registered even with nil mounter (returns error at call time).
 	expectedTools := []string{
-		"zerops_context", "zerops_workflow", "zerops_discover", "zerops_knowledge",
+		"zerops_workflow", "zerops_discover", "zerops_knowledge",
 		"zerops_logs", "zerops_events", "zerops_process",
 		"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
 		"zerops_mount",
@@ -107,14 +108,14 @@ func TestServer_Instructions(t *testing.T) {
 		{
 			name: "base instructions always included",
 			rt:   runtime.Info{InContainer: true, ServiceName: "myservice"},
-			want: "zerops_workflow",
+			want: "ZCP manages",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			inst := BuildInstructions(tt.rt)
+			inst := BuildInstructions(context.Background(), nil, "", tt.rt)
 			if tt.want != "" && !strings.Contains(inst, tt.want) {
 				t.Errorf("Instructions should contain %q, got: %s", tt.want, inst)
 			}
@@ -127,9 +128,69 @@ func TestServer_Instructions(t *testing.T) {
 
 func TestServer_Instructions_ReasonableLength(t *testing.T) {
 	t.Parallel()
-	words := strings.Fields(baseInstructions)
-	if len(words) < 10 || len(words) > 80 {
-		t.Errorf("baseInstructions has %d words, expected 10-80", len(words))
+	// baseInstructions is short; routing is in routingInstructions.
+	// Check combined constant length is reasonable.
+	combined := baseInstructions + routingInstructions
+	words := strings.Fields(combined)
+	if len(words) < 20 || len(words) > 150 {
+		t.Errorf("base+routing instructions has %d words, expected 20-150", len(words))
+	}
+}
+
+func TestBuildInstructions_WithServices(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{Name: "appdev", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "appstage", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "db", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+	})
+
+	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{})
+
+	for _, want := range []string{"appdev", "appstage", "db", "nodejs@22", "postgresql@16", "RUNNING", string(workflow.StateConformant)} {
+		if !strings.Contains(inst, want) {
+			t.Errorf("instructions should contain %q", want)
+		}
+	}
+	if !strings.Contains(inst, "ZCP manages") {
+		t.Error("instructions should contain base instructions")
+	}
+}
+
+func TestBuildInstructions_FreshProject(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices(nil)
+
+	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{})
+
+	if !strings.Contains(inst, "empty") {
+		t.Error("instructions should mention empty project")
+	}
+	if !strings.Contains(inst, "bootstrap") {
+		t.Error("instructions should recommend bootstrap")
+	}
+}
+
+func TestBuildInstructions_APIFailure(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithError("ListServices", platform.NewPlatformError(
+		platform.ErrAPIError, "connection refused", "",
+	))
+
+	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{})
+
+	if !strings.Contains(inst, "ZCP manages") {
+		t.Error("instructions should still contain base instructions on API failure")
+	}
+}
+
+func TestBuildInstructions_NilClient(t *testing.T) {
+	t.Parallel()
+
+	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{})
+
+	if !strings.Contains(inst, "ZCP manages") {
+		t.Error("instructions should contain base instructions with nil client")
 	}
 }
 
@@ -146,7 +207,7 @@ func TestServer_Connect(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := New(mock, authInfo, store, logFetcher, nil, nil, nil, nil, runtime.Info{})
+	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

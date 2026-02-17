@@ -61,9 +61,7 @@ func TestStore_GetNotFound(t *testing.T) {
 func TestStore_ThemeDocsEmbedded(t *testing.T) {
 	store := newTestStore(t)
 	themeURIs := []string{
-		"zerops://themes/platform",
-		"zerops://themes/rules",
-		"zerops://themes/grammar",
+		"zerops://themes/core",
 		"zerops://themes/runtimes",
 		"zerops://themes/services",
 		"zerops://themes/wiring",
@@ -100,7 +98,7 @@ func TestPathToURI(t *testing.T) {
 		path string
 		uri  string
 	}{
-		{"themes/grammar.md", "zerops://themes/grammar"},
+		{"themes/core.md", "zerops://themes/core"},
 		{"themes/runtimes.md", "zerops://themes/runtimes"},
 		{"themes/services.md", "zerops://themes/services"},
 		{"themes/wiring.md", "zerops://themes/wiring"},
@@ -119,7 +117,7 @@ func TestURIToPath(t *testing.T) {
 		uri  string
 		path string
 	}{
-		{"zerops://themes/grammar", "themes/grammar.md"},
+		{"zerops://themes/core", "themes/core.md"},
 		{"zerops://recipes/laravel-jetstream", "recipes/laravel-jetstream.md"},
 	}
 	for _, tt := range tests {
@@ -159,12 +157,12 @@ func TestParseDocument_TLDR(t *testing.T) {
 
 func TestParseDocument_Title(t *testing.T) {
 	store := newTestStore(t)
-	doc, err := store.Get("zerops://themes/grammar")
+	doc, err := store.Get("zerops://themes/core")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if doc.Title == "" {
-		t.Error("expected title for grammar")
+		t.Error("expected title for core")
 	}
 	if !strings.Contains(doc.Title, "Zerops") {
 		t.Errorf("title = %q, expected to contain 'Zerops'", doc.Title)

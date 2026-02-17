@@ -37,4 +37,4 @@ zerops:
 - **league/flysystem-aws-s3-v3** required in composer.json for S3
 - Health checks enabled out of box in Laravel 11 (/up endpoint)
 - Sessions and cache in Redis, files in S3
-- 5 services: app + pg + keydb + s3 + mailpit
+- 5 services: app + pg + valkey + s3 + mailpit

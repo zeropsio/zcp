@@ -9,34 +9,33 @@ import (
 )
 
 // GetBriefing assembles contextual knowledge for a specific stack using layered composition.
-// Layers: L0 platform model -> L1 rules -> L2 grammar -> L3 runtime delta -> L3b recipes ->
-// L4 service cards -> L5 wiring -> L6 decisions -> L7 version check.
+// Layers: core reference -> runtime delta -> recipes -> service cards -> wiring -> decisions -> version check.
 // runtime: e.g. "php-nginx@8.4" (normalized internally to "PHP" section)
 // services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
-// liveTypes: optional live service stack types for version validation (nil = skip)
+// liveTypes: optional live service stack types for version validation and stack listing (nil = skip)
 // Returns assembled markdown content ready for LLM consumption.
 func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error) {
+	// Auto-promote: if runtime is empty but a known runtime name is in services, promote it.
+	// This handles the common agent mistake of passing runtimes in the services array.
+	if runtime == "" && len(services) > 0 {
+		runtime, services = autoPromoteRuntime(services)
+	}
+
 	var sb strings.Builder
 
-	// L0: Platform model -- conceptual understanding (always included)
-	if platformModel, err := s.GetPlatformModel(); err == nil {
-		sb.WriteString(platformModel)
-		sb.WriteString("\n\n")
-	}
-
-	// L1: Rules & pitfalls -- actionable DO/DON'T (always included)
-	if rules, err := s.GetRules(); err == nil {
-		sb.WriteString(rules)
-		sb.WriteString("\n\n")
-	}
-
-	// L2: YAML schema reference (always included)
-	grammar, err := s.GetFoundation()
+	// Core reference: platform model + rules + YAML schemas (always included)
+	core, err := s.GetCore()
 	if err != nil {
 		return "", err
 	}
-	sb.WriteString(grammar)
+	sb.WriteString(core)
 	sb.WriteString("\n\n")
+
+	// Live service stacks (if available)
+	if stacks := FormatServiceStacks(liveTypes); stacks != "" {
+		sb.WriteString(stacks)
+		sb.WriteString("\n\n")
+	}
 
 	// L3: Runtime delta (specific runtime only)
 	runtimeBase := ""
@@ -115,8 +114,6 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		sb.WriteString("---\n\n")
 		sb.WriteString(versionCheck)
 	}
-
-	sb.WriteString("\nNext: Generate import.yml and zerops.yml using the rules above. Use only validated versions. Then import with zerops_import.")
 
 	return sb.String(), nil
 }
