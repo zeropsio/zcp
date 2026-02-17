@@ -68,6 +68,6 @@ Internal service-to-service communication must always use `http://` — never `h
 5. **Subdomain on undeployed service**: `zerops_subdomain enable` returns "Service stack is not http or https" on READY_TO_DEPLOY services — deploy code first or use `enableSubdomainAccess` in import YAML
 
 ## See Also
-- zerops://networking/public-access
-- zerops://networking/firewall
-- zerops://networking/overview
+- zerops://guides/public-access
+- zerops://guides/firewall
+- zerops://guides/networking

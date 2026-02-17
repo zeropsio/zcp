@@ -53,5 +53,4 @@ search, elasticsearch, meilisearch, typesense, qdrant, vector, full-text, choose
 4. **Elasticsearch plugins require restart**: Changing `PLUGINS` env var needs service restart
 
 ## See Also
-- zerops://foundation/services — Meilisearch, Elasticsearch, Typesense, Qdrant service cards
-- zerops://foundation/wiring — search service connection patterns
+- zerops://themes/services — Meilisearch, Elasticsearch, Typesense, Qdrant service cards and wiring

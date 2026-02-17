@@ -181,6 +181,6 @@ Configuration is **merged at the section level** -- child values override parent
 ---
 
 ## See Also
-- zerops://foundation/grammar -- zerops.yml schema reference and platform rules
-- zerops://foundation/runtimes -- runtime-specific configuration deltas
+- zerops://themes/core -- zerops.yml schema reference and platform rules
+- zerops://themes/runtimes -- runtime-specific configuration deltas
 - zerops://guides/production-checklist -- production readiness including health check setup

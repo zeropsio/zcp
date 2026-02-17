@@ -160,7 +160,7 @@ Zerops keeps **10 most recent versions**. Older auto-deleted. Any archived versi
 5. **deployFiles land in `/var/www`** -- tilde syntax (`dist/~`) extracts contents directly to `/var/www/` (strips directory). Without tilde, `dist` → `/var/www/dist/` (preserved). **CRITICAL**: `run.start` path must match — `dist/~` + `start: bun dist/index.js` BREAKS because the file is at `/var/www/index.js`, not `/var/www/dist/index.js`
 
 ## See Also
-- zerops://foundation/grammar -- zerops.yml schema and platform rules
+- zerops://themes/core -- zerops.yml schema and platform rules
 - zerops://guides/build-cache -- two-layer cache architecture and invalidation
 - zerops://guides/ci-cd -- triggering pipelines from GitHub/GitLab
 - zerops://guides/logging -- build and runtime log access

@@ -95,5 +95,5 @@ CPU 1-5 cores, RAM 8 GB fixed, Disk 1-100 GB, Timeout 60 min. User `zerops` with
 4. **Lock file caching**: Cache lock files (`package-lock.json`, `composer.lock`) alongside dependency directories for consistent installs
 
 ## See Also
-- zerops://foundation/grammar -- zerops.yml schema and cache attribute syntax
+- zerops://themes/core -- zerops.yml schema and cache attribute syntax
 - zerops://guides/deployment-lifecycle -- full build and deploy pipeline sequence

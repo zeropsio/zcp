@@ -166,7 +166,6 @@ Readiness check gates traffic during deploy. Health check runs continuously — 
 6. **Missing health checks**: Load balancer can't route around unhealthy containers
 
 ## See Also
-- zerops://config/import-yml-patterns
-- zerops://platform/scaling
-- zerops://platform/backup
-- zerops://gotchas/common
+- zerops://themes/core — import.yml patterns
+- zerops://guides/scaling
+- zerops://guides/backup

@@ -27,12 +27,7 @@ func testStoreWithCore(t *testing.T) *Store {
 		"zerops://themes/services": {
 			URI:     "zerops://themes/services",
 			Title:   "Managed Service Reference",
-			Content: "## PostgreSQL\n\nPort 5432. Env: hostname, password, connectionString.\n\n## Valkey\n\nPort 6379. Connection: redis://cache:6379.",
-		},
-		"zerops://themes/wiring": {
-			URI:     "zerops://themes/wiring",
-			Title:   "Wiring Patterns",
-			Content: "## Syntax Rules\n\nUse ${hostname_var} for cross-refs.\n\nenvSecrets for sensitive data.\n\n## PostgreSQL\n\nDATABASE_URL:postgresql://${h_user}:${h_password}@{h}:5432\n\n## Valkey\n\nREDIS_URL:redis://${h_user}:${h_password}@{h}:6379",
+			Content: "## Wiring Syntax\n\nUse ${hostname_var} for cross-refs.\n\nenvSecrets for sensitive data.\n\n## Service Wiring Templates\n\nVARS = config, SECRETS = credentials.\n\n## PostgreSQL\n\nPort 5432. Env: hostname, password, connectionString.\n**Wiring**: DATABASE_URL:postgresql://${h_user}:${h_password}@{h}:5432\n\n## Valkey\n\nPort 6379. Connection: redis://cache:6379.\n**Wiring**: REDIS_URL:redis://cache:6379",
 		},
 		"zerops://themes/operations": {
 			URI:     "zerops://themes/operations",

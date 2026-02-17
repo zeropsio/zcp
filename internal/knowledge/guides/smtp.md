@@ -40,5 +40,5 @@ envSecrets:
 3. **Gmail needs App Password**: Regular Gmail passwords won't work — generate an App Password in Google Account settings
 
 ## See Also
-- zerops://networking/firewall
-- zerops://platform/env-variables
+- zerops://guides/firewall
+- zerops://guides/environment-variables

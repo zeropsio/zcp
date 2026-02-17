@@ -167,18 +167,18 @@ func (s *Store) getServiceCard(normalizedName string) string {
 	return doc.H2Sections()[normalizedName]
 }
 
-// getWiringSyntax returns the "Syntax Rules" section from wiring.md.
+// getWiringSyntax returns the "Wiring Syntax" section from services.md.
 func (s *Store) getWiringSyntax() string {
-	doc, err := s.Get("zerops://themes/wiring")
+	doc, err := s.Get("zerops://themes/services")
 	if err != nil {
 		return ""
 	}
-	return doc.H2Sections()["Syntax Rules"]
+	return doc.H2Sections()["Wiring Syntax"]
 }
 
-// getWiringSection returns the wiring template for a normalized service name from wiring.md.
+// getWiringSection returns the wiring template for a normalized service name from services.md.
 func (s *Store) getWiringSection(normalizedName string) string {
-	doc, err := s.Get("zerops://themes/wiring")
+	doc, err := s.Get("zerops://themes/services")
 	if err != nil {
 		return ""
 	}

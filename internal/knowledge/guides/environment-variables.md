@@ -170,6 +170,6 @@ Zerops auto-generates variables per service (e.g., `hostname`, `PATH`, DB connec
 - **DO NOT** create both secret and basic vars with same key -- basic silently wins
 
 ## See Also
-- zerops://foundation/grammar -- schema, build/deploy semantics, variable basics
-- zerops://foundation/wiring -- cross-service connection patterns using env vars
+- zerops://themes/core -- schema, build/deploy semantics, variable basics
+- zerops://themes/services -- cross-service wiring patterns using env vars
 - zerops://guides/production-checklist -- pre-launch variable audit

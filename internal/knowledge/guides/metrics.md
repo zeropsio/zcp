@@ -53,7 +53,5 @@ envVariables:
 3. **Cross-project needs forwarder**: Use `prometheuslight` service in source project to forward to global Prometheus
 
 ## See Also
-- zerops://operations/logging
-- zerops://operations/log-forwarding
-- zerops://services/elasticsearch
-- zerops://services/postgresql
+- zerops://guides/logging
+- zerops://themes/services — Elasticsearch, PostgreSQL service cards

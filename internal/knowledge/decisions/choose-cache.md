@@ -33,6 +33,5 @@ cache, redis, valkey, keydb, in-memory, session, key-value, choose cache, which 
 3. **Read replicas use different ports**: 7000/7001 for direct replica reads
 
 ## See Also
-- zerops://foundation/services — Valkey, KeyDB service cards
-- zerops://foundation/wiring — Valkey, KeyDB connection patterns
+- zerops://themes/services — Valkey, KeyDB service cards and wiring
 - zerops://decisions/choose-database

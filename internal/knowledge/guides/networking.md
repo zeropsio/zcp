@@ -149,7 +149,7 @@ server.address=0.0.0.0
 6. **Shared IPv4 needs AAAA**: Missing AAAA record = silent routing failure on shared IPv4
 
 ## See Also
-- zerops://foundation/grammar — Traffic Flow, Binding & Networking, Port Rules
+- zerops://themes/core — Traffic Flow, Binding & Networking, Port Rules
 - zerops://guides/public-access — IP types, DNS setup, domain configuration
 - zerops://guides/cloudflare — Cloudflare-specific DNS and SSL setup
 - zerops://guides/firewall — port restrictions and outbound rules

@@ -41,6 +41,6 @@ Contact `support@zerops.io` with Project ID + Organization ID to request changes
 3. **Cannot self-service unblock**: Must contact Zerops support for port exceptions
 
 ## See Also
-- zerops://networking/public-access
-- zerops://operations/smtp
-- zerops://networking/overview
+- zerops://guides/public-access
+- zerops://guides/smtp
+- zerops://guides/networking

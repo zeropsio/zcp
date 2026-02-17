@@ -57,6 +57,6 @@ End-to-end with X25519 per-project keys. Decrypted only on download.
 3. **Backup storage is shared**: All services in a project share the backup quota
 
 ## See Also
-- zerops://platform/infrastructure
-- zerops://services/_common-database
-- zerops://platform/scaling
+- zerops://themes/core — platform infrastructure
+- zerops://themes/services — database service cards
+- zerops://guides/scaling

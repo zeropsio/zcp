@@ -64,7 +64,6 @@ func TestStore_ThemeDocsEmbedded(t *testing.T) {
 		"zerops://themes/core",
 		"zerops://themes/runtimes",
 		"zerops://themes/services",
-		"zerops://themes/wiring",
 		"zerops://themes/operations",
 	}
 	for _, uri := range themeURIs {
@@ -101,7 +100,6 @@ func TestPathToURI(t *testing.T) {
 		{"themes/core.md", "zerops://themes/core"},
 		{"themes/runtimes.md", "zerops://themes/runtimes"},
 		{"themes/services.md", "zerops://themes/services"},
-		{"themes/wiring.md", "zerops://themes/wiring"},
 		{"recipes/laravel-jetstream.md", "zerops://recipes/laravel-jetstream"},
 	}
 	for _, tt := range tests {
@@ -166,6 +164,108 @@ func TestParseDocument_Title(t *testing.T) {
 	}
 	if !strings.Contains(doc.Title, "Zerops") {
 		t.Errorf("title = %q, expected to contain 'Zerops'", doc.Title)
+	}
+}
+
+// --- Guides & Decisions Embed Tests ---
+
+func TestStore_GuidesEmbedded(t *testing.T) {
+	store := newTestStore(t)
+	guideURIs := []string{
+		"zerops://guides/firewall",
+		"zerops://guides/environment-variables",
+		"zerops://guides/cloudflare",
+		"zerops://guides/vpn",
+		"zerops://guides/backup",
+		"zerops://guides/logging",
+		"zerops://guides/build-cache",
+		"zerops://guides/object-storage-integration",
+		"zerops://guides/zerops-yaml-advanced",
+		"zerops://guides/ci-cd",
+		"zerops://guides/cdn",
+		"zerops://guides/scaling",
+		"zerops://guides/networking",
+		"zerops://guides/production-checklist",
+		"zerops://guides/deployment-lifecycle",
+		"zerops://guides/public-access",
+		"zerops://guides/smtp",
+		"zerops://guides/metrics",
+	}
+	for _, uri := range guideURIs {
+		doc, err := store.Get(uri)
+		if err != nil {
+			t.Errorf("guide %s not found: %v", uri, err)
+			continue
+		}
+		if len(doc.Content) < 50 {
+			t.Errorf("guide %s content too short (%d bytes)", uri, len(doc.Content))
+		}
+		if doc.Title == "" {
+			t.Errorf("guide %s has no title", uri)
+		}
+	}
+}
+
+func TestStore_DecisionsEmbedded(t *testing.T) {
+	store := newTestStore(t)
+	decisionURIs := []string{
+		"zerops://decisions/choose-database",
+		"zerops://decisions/choose-cache",
+		"zerops://decisions/choose-queue",
+		"zerops://decisions/choose-search",
+		"zerops://decisions/choose-runtime-base",
+	}
+	for _, uri := range decisionURIs {
+		doc, err := store.Get(uri)
+		if err != nil {
+			t.Errorf("decision %s not found: %v", uri, err)
+			continue
+		}
+		if len(doc.Content) < 50 {
+			t.Errorf("decision %s content too short (%d bytes)", uri, len(doc.Content))
+		}
+		if doc.Title == "" {
+			t.Errorf("decision %s has no title", uri)
+		}
+	}
+}
+
+func TestSearch_GuideSpecificQueries(t *testing.T) {
+	store := newTestStore(t)
+	tests := []struct {
+		name    string
+		query   string
+		wantTop string // expected top result URI
+	}{
+		{
+			name:    "firewall query finds firewall guide",
+			query:   "firewall",
+			wantTop: "zerops://guides/firewall",
+		},
+		{
+			name:    "environment variables query finds env guide",
+			query:   "environment variables",
+			wantTop: "zerops://guides/environment-variables",
+		},
+		{
+			name:    "choose database query finds database decision",
+			query:   "choose database",
+			wantTop: "zerops://decisions/choose-database",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := store.Search(tt.query, 5)
+			if len(results) == 0 {
+				t.Fatal("search returned no results")
+			}
+			if results[0].URI != tt.wantTop {
+				t.Errorf("top result = %s (score %.1f), want %s", results[0].URI, results[0].Score, tt.wantTop)
+				for i, r := range results {
+					t.Logf("  #%d: %s (%.1f)", i+1, r.URI, r.Score)
+				}
+			}
+		})
 	}
 }
 

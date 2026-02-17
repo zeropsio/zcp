@@ -41,6 +41,5 @@ database, postgresql, mariadb, clickhouse, sql, relational, columnar, analytics,
 3. **PostgreSQL URI scheme**: Some libraries need `postgres://` not `postgresql://` — create a custom env var
 
 ## See Also
-- zerops://foundation/services — PostgreSQL, MariaDB, ClickHouse service cards
-- zerops://foundation/wiring — database connection patterns
+- zerops://themes/services — PostgreSQL, MariaDB, ClickHouse service cards and wiring
 - zerops://decisions/choose-cache

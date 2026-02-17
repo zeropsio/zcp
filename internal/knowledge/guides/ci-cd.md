@@ -87,6 +87,6 @@ Any CI system with shell access can deploy via `zcli push`:
 | `--deploy-git-folder` | Include `.git/` directory in deploy |
 
 ## See Also
-- zerops://config/zerops-yml
-- zerops://config/zcli
-- zerops://platform/infrastructure
+- zerops://themes/core -- zerops.yml schema reference
+- zerops://guides/deployment-lifecycle -- build and deploy pipeline
+- zerops://themes/core -- platform infrastructure

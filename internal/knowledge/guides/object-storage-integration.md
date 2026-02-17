@@ -151,6 +151,6 @@ Each service = one bucket (auto-named, immutable). Need multiple buckets? Create
 8. **No autoscaling**: Quota (1-100 GB) must be set manually, changeable in GUI after creation
 
 ## See Also
-- zerops://foundation/services — managed service reference (Object Storage section)
-- zerops://foundation/grammar — import.yml schema
+- zerops://themes/services — managed service reference (Object Storage section)
+- zerops://themes/core — import.yml schema
 - zerops://guides/environment-variables — cross-service env var references

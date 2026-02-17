@@ -215,6 +215,26 @@ func TestStore_GetBriefing_AutoPromotesRuntimeFromServices(t *testing.T) {
 	}
 }
 
+func TestBriefing_ValkeyNoCredentials(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("nodejs@22", []string{"valkey@7.2"}, nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	// Should contain the correct no-auth wiring pattern
+	if !strings.Contains(briefing, "redis://cache:${cache_port}") {
+		t.Error("Valkey wiring should contain redis://cache:${cache_port}")
+	}
+	// Valkey wiring URL should NOT contain user:password@ pattern
+	if strings.Contains(briefing, "${cache_user}:${cache_password}@cache") {
+		t.Error("Valkey wiring URL should NOT contain credentials (${cache_user}:${cache_password}@)")
+	}
+	// Verify the "No authentication" guidance is present
+	if !strings.Contains(briefing, "No authentication") {
+		t.Error("Valkey card should mention 'No authentication'")
+	}
+}
+
 func TestStore_GetBriefing_NoPromotionWhenRuntimeSet(t *testing.T) {
 	store := newTestStore(t)
 

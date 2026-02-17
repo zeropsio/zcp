@@ -43,6 +43,5 @@ queue, message queue, kafka, nats, event, stream, pub-sub, broker, choose queue,
 4. **Kafka SASL only**: No anonymous connections — always use the generated credentials
 
 ## See Also
-- zerops://foundation/services — NATS, Kafka service cards
-- zerops://foundation/wiring — NATS, Kafka connection patterns
+- zerops://themes/services — NATS, Kafka service cards and wiring
 - zerops://decisions/choose-database

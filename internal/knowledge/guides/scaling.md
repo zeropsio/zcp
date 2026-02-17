@@ -158,6 +158,6 @@ services:
 **DO NOT** assume horizontal scaling works automatically -- your application must be stateless. File-based sessions, local uploads, and in-memory state break with multiple containers.
 
 ## See Also
-- zerops://foundation/grammar -- import.yml schema and platform rules (section 9: Scaling basics)
+- zerops://themes/core -- import.yml schema and platform rules (section 9: Scaling basics)
 - zerops://guides/production-checklist -- HA mode, minContainers recommendations
-- zerops://foundation/services -- managed service reference and mode constraints
+- zerops://themes/services -- managed service reference and mode constraints

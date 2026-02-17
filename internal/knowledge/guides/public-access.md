@@ -48,7 +48,7 @@ Point your domain to the project's IP:
 4. **Ports 80/443 reserved**: Your app cannot bind to these — Zerops uses them for SSL termination
 
 ## See Also
-- zerops://networking/cloudflare
-- zerops://networking/firewall
-- zerops://networking/overview
-- zerops://platform/infrastructure
+- zerops://guides/cloudflare
+- zerops://guides/firewall
+- zerops://guides/networking
+- zerops://themes/core — platform infrastructure

@@ -40,6 +40,5 @@ zcli vpn down                               # Disconnect
 3. **Hostname needs `.zerops` suffix**: Plain hostname may not resolve — always use `hostname.zerops`
 
 ## See Also
-- zerops://networking/overview
-- zerops://networking/firewall
-- zerops://config/zcli
+- zerops://guides/networking
+- zerops://guides/firewall

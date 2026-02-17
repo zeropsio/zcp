@@ -61,7 +61,5 @@ zsc cdn purge /style.css$     # Purge exact file
 3. **Purge wildcards at end only**: `/images/*.jpg` is invalid — use `/images/*`
 
 ## See Also
-- zerops://services/object-storage
-- zerops://services/static
-- zerops://services/nginx
-- zerops://networking/public-access
+- zerops://themes/services — Object Storage service card
+- zerops://guides/public-access
