@@ -13,8 +13,8 @@ Zerops offers three public access methods: zerops.app subdomains (dev only, 50MB
 - Max upload: **50 MB**
 - **Not for production** — use for development/testing only
 - Auto-provisioned SSL
-- Enable via import YAML: `enableSubdomainAccess: true` (works for all runtime/web types)
-- Enable via API: `zerops_subdomain enable` (only works on deployed/ACTIVE services)
+- Pre-configure via import YAML: `enableSubdomainAccess: true` (sets `zeropsSubdomain` env var, works for all runtime/web types)
+- **Activate routing via API:** `zerops_subdomain enable` (only works on deployed/ACTIVE services) — **MUST be called after first deploy** even if `enableSubdomainAccess: true` was set in import. Import pre-configures the URL but does NOT activate L7 balancer routing; without the explicit enable call, the subdomain returns 502
 - Works for: nodejs, static, nginx, go, python, php, java, rust, dotnet, and all other runtime types
 
 ### 2. Custom Domains (Production)

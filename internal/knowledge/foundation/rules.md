@@ -57,7 +57,8 @@ Actionable DO/DON'T rules for Zerops, each with a causal reason. Sourced from pr
 - **NEVER** set `minContainers`/`maxContainers` for managed services. REASON: managed services have fixed container counts (NON_HA=1, HA=3); setting these causes import failure
 - **NEVER** set `verticalAutoscaling` for shared-storage or object-storage. REASON: these service types don't support vertical scaling; setting it causes import failure
 - **ALWAYS** set `priority: 10` for databases/storage services. REASON: ensures they start before application services that depend on them
-- **ALWAYS** use `enableSubdomainAccess: true` in import.yml instead of calling `zerops_subdomain` after. REASON: calling subdomain API on READY_TO_DEPLOY service returns an error
+- **ALWAYS** use `enableSubdomainAccess: true` in import.yml to pre-configure the subdomain URL. REASON: calling subdomain API on READY_TO_DEPLOY service returns an error; the import flag ensures the `zeropsSubdomain` env var is set
+- **ALWAYS** call `zerops_subdomain action="enable"` after first successful deploy — even if `enableSubdomainAccess: true` was set in import.yml. REASON: the import flag pre-configures the URL but does NOT activate L7 balancer routing; without the explicit enable call, the subdomain returns 502 even though the app is running internally. The call is idempotent (returns `already_enabled` if already active)
 - **NEVER** use Docker `:latest` tag. REASON: cached and won't re-pull; always use specific version tags
 - **ALWAYS** use `--network=host` for Docker services. REASON: without it, container cannot receive traffic from Zerops routing
 - **ALWAYS** use `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` for Object Storage. REASON: MinIO backend doesn't support virtual-hosted style

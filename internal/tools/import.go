@@ -19,7 +19,7 @@ type ImportInput struct {
 func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
-		Description: "Import services from YAML into the current project. Validates service types before calling the API.",
+		Description: "Import services from YAML into the current project. Validates service types before calling the API. NOTE: enableSubdomainAccess=true in import YAML pre-configures the subdomain URL but does NOT activate routing. You MUST call zerops_subdomain action=\"enable\" after the first successful deploy to activate the subdomain.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Import services from YAML",
 			DestructiveHint: boolPtr(true),

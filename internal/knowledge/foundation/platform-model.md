@@ -136,7 +136,8 @@ Understanding cause→effect prevents debugging by trial-and-error:
 | Deploy thin JAR | ClassNotFoundException | Build≠Run containers; dependencies not in artifact |
 | `apt-get` on Alpine | "command not found" | Alpine uses `apk`, not `apt-get` |
 | Reference `/var/www` in `run.prepareCommands` | File not found | Deploy files arrive AFTER prepareCommands |
-| `enableSubdomainAccess` in import + call `zerops_subdomain` | Error | Service in READY_TO_DEPLOY state rejects subdomain API call |
+| `enableSubdomainAccess` in import + call `zerops_subdomain` on READY_TO_DEPLOY | Error | Service in READY_TO_DEPLOY state rejects subdomain API call |
+| `enableSubdomainAccess` in import + deploy + skip `zerops_subdomain enable` | 502 on subdomain URL | Import flag pre-configures URL but does NOT activate L7 balancer routing; explicit `zerops_subdomain enable` call required after deploy |
 | `npm install` only in build | Missing modules at runtime | Build container discarded; `node_modules` must be in `deployFiles` |
 | Bare `mvn` in buildCommands | "command not found" | Build image has JDK only; Maven not pre-installed |
 | `valkey@8` in import | Import fails | Only `valkey@7.2` is valid (8 passes dry-run but fails real import) |

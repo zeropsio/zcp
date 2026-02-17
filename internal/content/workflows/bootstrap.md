@@ -165,14 +165,14 @@ Every deployment must pass this protocol before being considered complete.
 | 3 | No error logs | zerops_logs severity="error" since="5m" | Empty |
 | 4 | Startup confirmed | zerops_logs search="listening\|started\|ready" since="5m" | At least one match |
 | 5 | No post-startup errors | zerops_logs severity="error" since="2m" | Empty |
-| 6 | Subdomain active | zerops_discover service="{hostname}" includeEnvs=true | `zeropsSubdomain` present. If missing: `zerops_subdomain action="enable"`, re-discover |
+| 6 | Activate subdomain | zerops_subdomain serviceHostname="{hostname}" action="enable" | Success or already_enabled. Then: zerops_discover service="{hostname}" includeEnvs=true to get `zeropsSubdomain` URL |
 | 7 | HTTP health check | bash: curl -sfm 10 "{zeropsSubdomain}/health" | HTTP 200 |
 | 8 | Managed svc connectivity | bash: curl -sfm 10 "{zeropsSubdomain}/status" OR log search | 200 with svc status / log match |
 
 **Notes:**
 - Check 1 is CRITICAL — zerops_deploy returns before build completes. Wait 5s after deploy, then poll zerops_events every 10s until build finishes (max 300s / 30 polls).
 - Check 4: framework-dependent — search for `listening on`, `started server`, `ready to accept`.
-- Check 6: `zerops_discover service="{hostname}" includeEnvs=true` — look for `zeropsSubdomain` env var. If missing, call `zerops_subdomain action="enable"` (idempotent, always safe), then re-discover to confirm.
+- Check 6: **ALWAYS** call `zerops_subdomain action="enable"` after deploy — even if `zeropsSubdomain` env var is already present from import. The env var is pre-configured by `enableSubdomainAccess: true` in import.yml, but **routing is not active** until you explicitly call the enable API. The call is idempotent (returns `already_enabled` if already active). Then `zerops_discover service="{hostname}" includeEnvs=true` to get the `zeropsSubdomain` URL.
 - Check 7: get `zeropsSubdomain` from check 6 discover result. It is already a full URL — do NOT prepend `https://`.
 - Check 8: skip if no managed services. Fallback to log search for `connected|pool|migration`.
 - **Graceful degradation:** if the app has no `/health` endpoint, check 4 is the final gate.
@@ -210,7 +210,7 @@ Every deployment must pass this protocol before being considered complete.
    zerops_process processId="<id>"               # wait for RUNNING
    ```
 
-   > **Subdomain timing:** `enableSubdomainAccess: true` in import.yml configures the subdomain, but it may not activate until after the first deploy. The verification protocol (check 6) handles activation — `zerops_subdomain action="enable"` is idempotent and safe to call.
+   > **Subdomain activation:** `enableSubdomainAccess: true` in import.yml pre-configures the subdomain URL (sets `zeropsSubdomain` env var), but **does NOT activate routing**. You MUST call `zerops_subdomain action="enable"` after deploy to activate the L7 balancer route. Without the explicit enable call, the subdomain URL returns 502 even though the app is running internally. The call is idempotent — safe to call even if already active.
 
 2. **Check environment variables are present:**
    ```
@@ -270,7 +270,7 @@ Execute IN ORDER. Every step has a verification call — do not skip any.
 | 6 | Check error logs | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
 | 7 | Confirm startup in logs | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
 | 8 | Check post-startup errors | zerops_logs serviceHostname="{hostname}" severity="error" since="2m" | No errors |
-| 9 | Verify subdomain active | zerops_discover service="{hostname}" includeEnvs=true | `zeropsSubdomain` present. If missing: `zerops_subdomain action="enable"`, re-discover |
+| 9 | Activate subdomain | zerops_subdomain serviceHostname="{hostname}" action="enable" | Success or already_enabled. Then: zerops_discover service="{hostname}" includeEnvs=true to get `zeropsSubdomain` URL |
 | 10 | HTTP health check | bash: curl -sfm 10 "{url}/health" | HTTP 200 (or skip — step 7 = final gate) |
 | 11 | Managed svc connectivity | bash: curl -sfm 10 "{url}/status" OR zerops_logs search="connected|pool|migration" | Connectivity confirmed (skip if no managed svcs) |
 
@@ -287,6 +287,7 @@ Rules:
 - Cross-references showing ${...} are expected — they resolve at runtime, not in API.
 - If a step fails, retry once. If it fails again, report the failure — do not skip ahead.
 - zeropsSubdomain is already a full URL — do NOT prepend https://.
+- Step 9: ALWAYS call zerops_subdomain enable after deploy — even if zeropsSubdomain env var exists. The env var is pre-configured but routing is NOT active until you explicitly enable it.
 - curl flags: -sfm 10 (silent, fail on error, 10s timeout).
 - Internal service connections use http://, never https://.
 - Env var cross-references use underscores: ${service_hostname}, not ${service-hostname}.
