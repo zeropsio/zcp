@@ -92,6 +92,12 @@ func TestResolve_EnvVar_SingleProject(t *testing.T) {
 			if info.ClientID != "client-123" {
 				t.Errorf("ClientID = %q, want %q", info.ClientID, "client-123")
 			}
+			if info.Email != "test@example.com" {
+				t.Errorf("Email = %q, want %q", info.Email, "test@example.com")
+			}
+			if info.FullName != "Test User" {
+				t.Errorf("FullName = %q, want %q", info.FullName, "Test User")
+			}
 			if info.Region != tt.wantRegion {
 				t.Errorf("Region = %q, want %q", info.Region, tt.wantRegion)
 			}

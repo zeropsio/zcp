@@ -20,7 +20,7 @@ func TestDeploy_LocalMode_Success(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	result, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"", "app", "", "/tmp/build", false)
+		"", "app", "", "/tmp/build", false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestDeploy_LocalMode_TargetNotFound(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"", "nonexistent", "", "", false)
+		"", "nonexistent", "", "", false, false)
 	if err == nil {
 		t.Fatal("expected error for nonexistent target service")
 	}
@@ -66,7 +66,7 @@ func TestDeploy_NoParams(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"", "", "", "", false)
+		"", "", "", "", false, false)
 	if err == nil {
 		t.Fatal("expected error for no params")
 	}
@@ -117,7 +117,7 @@ func TestDeploy_ModeDetection(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			result, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-				tt.sourceService, tt.targetService, "", "", false)
+				tt.sourceService, tt.targetService, "", "", false, false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -144,7 +144,7 @@ func TestDeploy_NilLocalDeployer(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", nil, nil, authInfo,
-		"", "app", "", "", false)
+		"", "app", "", "", false, false)
 	if err == nil {
 		t.Fatal("expected error for nil local deployer")
 	}

@@ -43,9 +43,11 @@ func (m *mockLocalDeployer) ExecZcli(_ context.Context, args ...string) ([]byte,
 
 func testAuthInfo() auth.Info {
 	return auth.Info{
-		Token:   "test-token",
-		APIHost: "api.app-prg1.zerops.io",
-		Region:  "prg1",
+		Token:    "test-token",
+		APIHost:  "api.app-prg1.zerops.io",
+		Region:   "prg1",
+		Email:    "test@example.com",
+		FullName: "Test User",
 	}
 }
 
@@ -102,7 +104,7 @@ func TestDeploy_SSHMode_Success(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			result, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-				tt.sourceService, tt.targetService, tt.setup, tt.workingDir, false)
+				tt.sourceService, tt.targetService, tt.setup, tt.workingDir, false, false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -143,7 +145,7 @@ func TestDeploy_SSHMode_SourceNotFound(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"nonexistent", "app", "", "", false)
+		"nonexistent", "app", "", "", false, false)
 	if err == nil {
 		t.Fatal("expected error for nonexistent source service")
 	}
@@ -169,7 +171,7 @@ func TestDeploy_SSHMode_TargetNotFound(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"builder", "nonexistent", "", "", false)
+		"builder", "nonexistent", "", "", false, false)
 	if err == nil {
 		t.Fatal("expected error for nonexistent target service")
 	}
@@ -188,7 +190,7 @@ func TestDeploy_SSHMode_SSHError(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"builder", "app", "", "", false)
+		"builder", "app", "", "", false, false)
 	if err == nil {
 		t.Fatal("expected error for SSH failure")
 	}
@@ -211,7 +213,7 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 	}
 
 	result, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"builder", "app", "", "", false)
+		"builder", "app", "", "", false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,7 +241,7 @@ func TestDeploy_NilSSHDeployer(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", nil, nil, authInfo,
-		"builder", "app", "", "", false)
+		"builder", "app", "", "", false, false)
 	if err == nil {
 		t.Fatal("expected error for nil SSH deployer")
 	}

@@ -218,14 +218,7 @@ Every deployment must pass this protocol before being considered complete.
    ```
    Check env vars are present. Values showing `${...}` are cross-service references — this is expected, they resolve at container runtime.
 
-3. **Prepare working directory for deploy:**
-   `zerops_deploy` uses `zcli push` which requires a git repository. If your working directory has no `.git`:
-   ```bash
-   cd /path/to/app && git init && git add -A && git commit -m "deploy"
-   ```
-   Note: `zerops_deploy` auto-initializes git if the directory exists but has no `.git`, so this step is a safety net.
-
-4. **Deploy and verify:**
+3. **Deploy and verify:**
    ```
    zerops_deploy targetService="<runtime>" workingDir="/path/to/app"
    # CRITICAL: returns BUILD_TRIGGERED — build is NOT complete yet

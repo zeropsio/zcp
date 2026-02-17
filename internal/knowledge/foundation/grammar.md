@@ -122,7 +122,7 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
   - `deployFiles: [dist]` + `start: bun dist/index.js` — CORRECT (file at `/var/www/dist/index.js`)
   - `deployFiles: dist/~` + `start: bun index.js` — CORRECT (file at `/var/www/index.js`)
   - `deployFiles: dist/~` + `start: bun dist/index.js` — BROKEN (no `/var/www/dist/` exists)
-- **Git required**: `zerops_deploy` uses `zcli push` which requires a git repository. Before deploying, run `git init && git add -A && git commit -m "deploy"` in the working directory
+- **Git handled automatically**: `zerops_deploy` auto-initializes a git repository. Use `freshGit=true` if the directory has a `.git` from `git clone`
 
 ### Cache Architecture (Two-Layer)
 - **Base layer**: OS + prepareCommands (invalidated only when prepareCommands change)

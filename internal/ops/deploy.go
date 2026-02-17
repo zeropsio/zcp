@@ -14,6 +14,17 @@ import (
 
 const defaultWorkingDir = "/var/www"
 
+// GitIdentity holds user name and email for git commits.
+type GitIdentity struct {
+	Name  string
+	Email string
+}
+
+// sanitizeQuote strips single quotes from a string to prevent shell injection.
+func sanitizeQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "")
+}
+
 // DeployResult contains the outcome of a deploy operation.
 type DeployResult struct {
 	Status          string `json:"status"`
@@ -57,7 +68,10 @@ func Deploy(
 	setup string,
 	workingDir string,
 	includeGit bool,
+	freshGit bool,
 ) (*DeployResult, error) {
+	id := GitIdentity{Name: authInfo.FullName, Email: authInfo.Email}
+
 	if sourceService != "" {
 		if sshDeployer == nil {
 			return nil, platform.NewPlatformError(
@@ -67,7 +81,7 @@ func Deploy(
 			)
 		}
 		return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
-			sourceService, targetService, setup, workingDir, includeGit)
+			sourceService, targetService, setup, workingDir, includeGit, id, freshGit)
 	}
 	if targetService != "" {
 		if localDeployer == nil {
@@ -78,7 +92,7 @@ func Deploy(
 			)
 		}
 		return deployLocal(ctx, client, projectID, localDeployer,
-			targetService, workingDir, includeGit)
+			targetService, workingDir, includeGit, id, freshGit)
 	}
 	return nil, platform.NewPlatformError(
 		platform.ErrInvalidParameter,
@@ -98,6 +112,8 @@ func deploySSH(
 	setup string,
 	workingDir string,
 	includeGit bool,
+	id GitIdentity,
+	freshGit bool,
 ) (*DeployResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -118,7 +134,7 @@ func deploySSH(
 		workingDir = defaultWorkingDir
 	}
 
-	cmd := buildSSHCommand(authInfo, target.ID, setup, workingDir, includeGit)
+	cmd := buildSSHCommand(authInfo, target.ID, setup, workingDir, includeGit, id, freshGit)
 
 	_, err = sshDeployer.ExecSSH(ctx, source.Name, cmd)
 	if err != nil {
@@ -144,6 +160,8 @@ func deployLocal(
 	targetService string,
 	workingDir string,
 	includeGit bool,
+	id GitIdentity,
+	freshGit bool,
 ) (*DeployResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -155,10 +173,10 @@ func deployLocal(
 		return nil, err
 	}
 
-	// zcli push requires a git repo — auto-init if missing.
+	// zcli push requires a git repo — auto-init if missing (or reinit if freshGit).
 	if workingDir != "" {
 		if info, statErr := os.Stat(workingDir); statErr == nil && info.IsDir() {
-			if err := prepareGitRepo(ctx, workingDir); err != nil {
+			if err := prepareGitRepo(ctx, workingDir, id, freshGit); err != nil {
 				return nil, fmt.Errorf("prepare git repo in %s: %w", workingDir, err)
 			}
 		}
@@ -181,7 +199,7 @@ func deployLocal(
 	}, nil
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir string, includeGit bool) string {
+func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir string, includeGit bool, id GitIdentity, freshGit bool) string {
 	var parts []string
 
 	// Login to zcli on the remote host.
@@ -193,12 +211,24 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 		parts = append(parts, setup)
 	}
 
-	// Push from workingDir with git-init guard for non-git directories.
+	email := sanitizeQuote(id.Email)
+	name := sanitizeQuote(id.Name)
+	gitInit := fmt.Sprintf("git init -q && git config user.email '%s' && git config user.name '%s' && git add -A && git commit -q -m 'deploy'", email, name)
+
+	// Push from workingDir with git handling.
 	pushArgs := fmt.Sprintf("zcli push --serviceId %s", targetServiceID)
 	if includeGit {
 		pushArgs += " -g"
 	}
-	pushCmd := fmt.Sprintf("cd %s && (test -d .git || (git init -q && git add -A && git commit -q -m 'deploy')) && %s", workingDir, pushArgs)
+
+	var pushCmd string
+	if freshGit {
+		// freshGit: remove existing .git and reinitialize.
+		pushCmd = fmt.Sprintf("cd %s && rm -rf .git && %s && %s", workingDir, gitInit, pushArgs)
+	} else {
+		// Default: git-init guard for non-git directories.
+		pushCmd = fmt.Sprintf("cd %s && (test -d .git || (%s)) && %s", workingDir, gitInit, pushArgs)
+	}
 	parts = append(parts, pushCmd)
 
 	return strings.Join(parts, " && ")
@@ -206,22 +236,29 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 
 // prepareGitRepo ensures workingDir contains a git repository.
 // zcli push requires a .git directory. If missing, initializes one
-// with all files committed.
-func prepareGitRepo(ctx context.Context, workingDir string) error {
+// with all files committed. If freshGit is true, removes any existing
+// .git directory and reinitializes.
+func prepareGitRepo(ctx context.Context, workingDir string, id GitIdentity, freshGit bool) error {
 	gitDir := filepath.Join(workingDir, ".git")
-	if _, err := os.Stat(gitDir); err == nil {
-		return nil // already a git repo
+
+	if freshGit {
+		// Remove existing .git to start fresh.
+		if err := os.RemoveAll(gitDir); err != nil {
+			return fmt.Errorf("remove .git: %w", err)
+		}
+	} else if _, err := os.Stat(gitDir); err == nil {
+		return nil // already a git repo, no-op
 	}
 
 	cmds := [][]string{
 		{"git", "init", "-q"},
-		{"git", "config", "user.email", "zcp@zerops.io"},
-		{"git", "config", "user.name", "zcp"},
+		{"git", "config", "user.email", id.Email},
+		{"git", "config", "user.name", id.Name},
 		{"git", "add", "-A"},
 		{"git", "commit", "-q", "-m", "deploy", "--allow-empty"},
 	}
 	for _, args := range cmds {
-		cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // args are static
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // args are from trusted API
 		cmd.Dir = workingDir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%s: %w\n%s", strings.Join(args, " "), err, out)

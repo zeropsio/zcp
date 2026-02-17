@@ -32,7 +32,7 @@ Actionable DO/DON'T rules for Zerops, each with a causal reason. Sourced from pr
 - **NEVER** use `initCommands` for package installation. REASON: initCommands run on every container restart; use `prepareCommands` for one-time setup
 - **ALWAYS** use `--no-cache-dir` for pip in containers. REASON: prevents wasted disk space on ephemeral containers
 - **ALWAYS** use `--ignore-platform-reqs` for Composer on Alpine. REASON: musl libc may not satisfy platform requirements checks
-- **ALWAYS** require a git repository before `zerops_deploy`. REASON: `zcli push` requires git. Run `git init && git add -A && git commit -m "deploy"` first
+- **NEVER** run manual git init before `zerops_deploy`. REASON: `zerops_deploy` auto-initializes a git repository. Use `freshGit=true` if the directory has a `.git` from `git clone`
 
 ## Base Image & OS
 

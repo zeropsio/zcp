@@ -24,6 +24,8 @@ type Info struct {
 	APIHost     string
 	Region      string
 	ClientID    string
+	Email       string
+	FullName    string
 	ProjectID   string
 	ProjectName string
 }
@@ -71,6 +73,8 @@ func Resolve(ctx context.Context, client platform.Client) (*Info, error) {
 		APIHost:     apiHost,
 		Region:      region,
 		ClientID:    userInfo.ID,
+		Email:       userInfo.Email,
+		FullName:    userInfo.FullName,
 		ProjectID:   projectID,
 		ProjectName: projectName,
 	}, nil

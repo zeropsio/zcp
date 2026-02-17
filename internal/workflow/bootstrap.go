@@ -38,7 +38,7 @@ var stepGuidance = map[string]string{
 	"import-services":   "Call zerops_import to create services from the generated YAML.",
 	"wait-services":     "Wait for dev services to reach RUNNING. Stage services will be in READY_TO_DEPLOY — this is expected (they start on first deploy). Use zerops_process to check status.",
 	"mount-dev":         "Mount only dev service filesystems using zerops_mount for code deployment. Stage services are not mounted.",
-	"create-files":      "Create zerops.yml and application source files on the mounted dev service filesystem. Write files to the mount path (e.g., /var/www/appdev/). Use deployFiles: ./ in zerops.yml for dev services. Required files: zerops.yml (setup: entries must match ALL service hostnames), application source code, .gitignore. The deploy tool auto-initializes a git repo if missing — no manual git init needed.",
+	"create-files":      "Create zerops.yml and application source files on the mounted dev service filesystem. Write files to the mount path (e.g., /var/www/appdev/). Use deployFiles: ./ in zerops.yml for dev services. Required files: zerops.yml (setup: entries must match ALL service hostnames), application source code, .gitignore. The deploy tool auto-initializes a git repo if missing — no manual git init needed. Use freshGit=true if you cloned a skeleton repo.",
 	"discover-services": "Run zerops_discover to verify all services are running and collect their details.",
 	"finalize":          "Validate the deployment matches the plan. Record discovery evidence.",
 	"spawn-subagents":   "STUBBED: Use the Task tool to create subagent tasks for parallel service configuration. Each service should get its own task with specific setup instructions.",
