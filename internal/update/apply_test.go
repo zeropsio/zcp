@@ -35,7 +35,7 @@ func TestApply_Success(t *testing.T) {
 		DownloadURL: srv.URL + "/zcp-darwin-arm64",
 	}
 
-	err := Apply(info, binaryPath, srv.Client())
+	err := Apply(t.Context(), info, binaryPath, srv.Client())
 	if err != nil {
 		t.Fatalf("Apply() error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestApply_DownloadError(t *testing.T) {
 		DownloadURL: srv.URL + "/missing",
 	}
 
-	err := Apply(info, binaryPath, srv.Client())
+	err := Apply(t.Context(), info, binaryPath, srv.Client())
 	if err == nil {
 		t.Fatal("expected error on 404")
 	}
@@ -94,7 +94,7 @@ func TestApply_NotAvailable(t *testing.T) {
 	t.Parallel()
 
 	info := &Info{Available: false}
-	err := Apply(info, "/nonexistent", nil)
+	err := Apply(t.Context(), info, "/nonexistent", nil)
 	if err != nil {
 		t.Errorf("Apply with Available=false should be no-op, got: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestApply_NetworkError(t *testing.T) {
 	}
 
 	client := &http.Client{Timeout: 1}
-	err := Apply(info, binaryPath, client)
+	err := Apply(t.Context(), info, binaryPath, client)
 	if err == nil {
 		t.Fatal("expected error on network failure")
 	}
@@ -124,5 +124,42 @@ func TestApply_NetworkError(t *testing.T) {
 	got, _ := os.ReadFile(binaryPath)
 	if string(got) != "old" {
 		t.Error("original binary should not be modified on failure")
+	}
+}
+
+func TestCanWrite_WritableDir(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if !CanWrite(dir) {
+		t.Error("CanWrite should return true for writable temp dir")
+	}
+}
+
+func TestCanWrite_ReadOnlyDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod not effective on Windows")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root can write to any directory")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	if CanWrite(dir) {
+		t.Error("CanWrite should return false for read-only dir")
+	}
+}
+
+func TestCanWrite_NonexistentDir(t *testing.T) {
+	t.Parallel()
+
+	if CanWrite("/nonexistent-dir-that-does-not-exist") {
+		t.Error("CanWrite should return false for nonexistent dir")
 	}
 }

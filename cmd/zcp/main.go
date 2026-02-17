@@ -51,10 +51,12 @@ func printVersion() {
 }
 
 func runUpdate() {
+	ctx := context.Background()
+
 	fmt.Fprintln(os.Stderr, "Checking for updates...")
 	checker := update.NewChecker(server.Version)
 	checker.CacheTTL = 0 // force fresh check
-	info := checker.Check()
+	info := checker.Check(ctx)
 
 	if !info.Available {
 		fmt.Fprintf(os.Stderr, "Already up to date (%s).\n", server.Version)
@@ -69,7 +71,7 @@ func runUpdate() {
 		log.Fatalf("resolve executable: %v", err)
 	}
 
-	if err := update.Apply(info, binary, nil); err != nil {
+	if err := update.Apply(ctx, info, binary, nil); err != nil {
 		log.Fatalf("update: %v", err)
 	}
 
@@ -77,8 +79,10 @@ func runUpdate() {
 }
 
 func checkAndApplyUpdate() *update.Info {
+	ctx := context.Background()
+
 	checker := update.NewChecker(server.Version)
-	info := checker.Check()
+	info := checker.Check(ctx)
 
 	if !info.Available || os.Getenv("ZCP_AUTO_UPDATE") == "0" {
 		return info
@@ -91,7 +95,7 @@ func checkAndApplyUpdate() *update.Info {
 		return info
 	}
 
-	if err := update.Apply(info, binary, nil); err != nil {
+	if err := update.Apply(ctx, info, binary, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: auto-update: %v\n", err)
 		return info
 	}
@@ -149,6 +153,12 @@ func run(updateInfo *update.Info) error {
 	// Create and run MCP server on STDIO.
 	// SSH deployer remains nil — requires running Zerops container with SSH access.
 	srv := server.New(ctx, client, authInfo, store, logFetcher, nil, localDeployer, mounter, updateInfo, rtInfo)
+
+	// Background auto-update: check periodically and apply mid-session.
+	if os.Getenv("ZCP_AUTO_UPDATE") != "0" {
+		update.Background(ctx, server.Version, stop, os.Stderr, update.ForceCheckSignal())
+	}
+
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("server: %w", err)
 	}

@@ -21,6 +21,7 @@ const (
 	defaultCacheTTL  = 24 * time.Hour
 	checkTimeout     = 5 * time.Second
 	cacheFileName    = "update.json"
+	osWindows        = "windows"
 )
 
 // Info holds the result of an update check.
@@ -33,27 +34,34 @@ type Info struct {
 
 // Checker performs version checks against GitHub releases.
 type Checker struct {
-	CurrentVersion string
-	GitHubAPIURL   string
-	CacheDir       string
-	CacheTTL       time.Duration
-	HTTPClient     *http.Client
+	CurrentVersion  string
+	GitHubAPIURL    string
+	DownloadBaseURL string // override download URL base (testing/private deployments)
+	CacheDir        string
+	CacheTTL        time.Duration
+	HTTPClient      *http.Client
 }
 
 // NewChecker creates a Checker with default settings.
+// If ZCP_UPDATE_URL is set, it overrides both the API and download base URLs.
 func NewChecker(currentVersion string) *Checker {
-	return &Checker{
+	c := &Checker{
 		CurrentVersion: currentVersion,
 		GitHubAPIURL:   defaultGitHubAPI,
 		CacheDir:       defaultCacheDir(),
 		CacheTTL:       defaultCacheTTL,
 		HTTPClient:     &http.Client{Timeout: checkTimeout},
 	}
+	if base := os.Getenv("ZCP_UPDATE_URL"); base != "" {
+		c.GitHubAPIURL = base + "/repos/zeropsio/zcp/releases/latest"
+		c.DownloadBaseURL = base + "/download"
+	}
+	return c
 }
 
 // Check looks for a newer ZCP version. Returns Info with Available=false
 // on any error — the MCP server should always start regardless.
-func (c *Checker) Check() *Info {
+func (c *Checker) Check(ctx context.Context) *Info {
 	info := &Info{CurrentVersion: c.CurrentVersion}
 
 	// Try cache first.
@@ -65,13 +73,17 @@ func (c *Checker) Check() *Info {
 	}
 
 	// Fetch from GitHub API.
-	release, err := c.fetchLatestRelease()
+	release, err := c.fetchLatestRelease(ctx)
 	if err != nil {
 		return info
 	}
 
 	info.LatestVersion = release.TagName
-	info.DownloadURL = buildDownloadURL(release.TagName, runtime.GOOS, runtime.GOARCH)
+	if c.DownloadBaseURL != "" {
+		info.DownloadURL = fmt.Sprintf("%s/%s/%s", c.DownloadBaseURL, release.TagName, assetName(runtime.GOOS, runtime.GOARCH))
+	} else {
+		info.DownloadURL = buildDownloadURL(release.TagName, runtime.GOOS, runtime.GOARCH)
+	}
 	info.Available = isNewer(c.CurrentVersion, release.TagName)
 
 	// Write cache (best-effort).
@@ -94,8 +106,8 @@ type cacheEntry struct {
 	DownloadURL   string    `json:"downloadUrl"`
 }
 
-func (c *Checker) fetchLatestRelease() (*githubRelease, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
+func (c *Checker) fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
+	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.GitHubAPIURL, nil)
@@ -215,14 +227,15 @@ func cmpInt(a, b int) int {
 	return 0
 }
 
+// assetName returns the binary asset filename for a given OS/arch combination.
+func assetName(goos, goarch string) string {
+	if goos == osWindows && goarch == "amd64" {
+		return "zcp-win-x64.exe"
+	}
+	return fmt.Sprintf("zcp-%s-%s", goos, goarch)
+}
+
 // buildDownloadURL constructs the GitHub release asset URL for a given tag and platform.
 func buildDownloadURL(tag, goos, goarch string) string {
-	var asset string
-	switch {
-	case goos == "windows" && goarch == "amd64":
-		asset = "zcp-win-x64.exe"
-	default:
-		asset = fmt.Sprintf("zcp-%s-%s", goos, goarch)
-	}
-	return fmt.Sprintf("https://github.com/zeropsio/zcp/releases/download/%s/%s", tag, asset)
+	return fmt.Sprintf("https://github.com/zeropsio/zcp/releases/download/%s/%s", tag, assetName(goos, goarch))
 }

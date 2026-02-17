@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -87,7 +88,7 @@ func TestCheck_NewerVersionAvailable(t *testing.T) {
 				HTTPClient:     srv.Client(),
 			}
 
-			info := c.Check()
+			info := c.Check(t.Context())
 			if info.Available != tt.wantAvailable {
 				t.Errorf("Available = %v, want %v", info.Available, tt.wantAvailable)
 			}
@@ -122,7 +123,7 @@ func TestCheck_CacheRespected(t *testing.T) {
 	}
 
 	// First check hits API.
-	info1 := c.Check()
+	info1 := c.Check(t.Context())
 	if !info1.Available {
 		t.Fatal("first check should find update")
 	}
@@ -131,7 +132,7 @@ func TestCheck_CacheRespected(t *testing.T) {
 	}
 
 	// Second check uses cache.
-	info2 := c.Check()
+	info2 := c.Check(t.Context())
 	if !info2.Available {
 		t.Fatal("cached check should still find update")
 	}
@@ -178,7 +179,7 @@ func TestCheck_CacheExpired(t *testing.T) {
 		HTTPClient:     srv.Client(),
 	}
 
-	info := c.Check()
+	info := c.Check(t.Context())
 	if !info.Available {
 		t.Fatal("should find update after cache expiry")
 	}
@@ -201,7 +202,7 @@ func TestCheck_NetworkError_GracefulFallback(t *testing.T) {
 		HTTPClient:     &http.Client{Timeout: time.Second},
 	}
 
-	info := c.Check()
+	info := c.Check(t.Context())
 	if info.Available {
 		t.Error("should not report available on network error")
 	}
@@ -223,7 +224,7 @@ func TestCheck_InvalidJSON_GracefulFallback(t *testing.T) {
 		HTTPClient:     srv.Client(),
 	}
 
-	info := c.Check()
+	info := c.Check(t.Context())
 	if info.Available {
 		t.Error("should not report available on invalid JSON")
 	}
@@ -313,5 +314,74 @@ func TestDownloadURL(t *testing.T) {
 				t.Errorf("got %s, want %s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAssetName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		goos string
+		arch string
+		want string
+	}{
+		{"linux amd64", "linux", "amd64", "zcp-linux-amd64"},
+		{"darwin arm64", "darwin", "arm64", "zcp-darwin-arm64"},
+		{"windows amd64", "windows", "amd64", "zcp-win-x64.exe"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := assetName(tt.goos, tt.arch)
+			if got != tt.want {
+				t.Errorf("assetName(%s, %s) = %q, want %q", tt.goos, tt.arch, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheck_DownloadBaseURL(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := githubRelease{TagName: "v0.3.0"}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Checker{
+		CurrentVersion:  "0.1.0",
+		GitHubAPIURL:    srv.URL,
+		CacheDir:        t.TempDir(),
+		CacheTTL:        0,
+		HTTPClient:      srv.Client(),
+		DownloadBaseURL: srv.URL + "/download",
+	}
+
+	info := c.Check(t.Context())
+	if !info.Available {
+		t.Fatal("should find update")
+	}
+
+	wantPrefix := srv.URL + "/download/v0.3.0/zcp-"
+	if !strings.HasPrefix(info.DownloadURL, wantPrefix) {
+		t.Errorf("DownloadURL = %q, want prefix %q", info.DownloadURL, wantPrefix)
+	}
+}
+
+func TestNewChecker_ZCPUpdateURL(t *testing.T) {
+	t.Setenv("ZCP_UPDATE_URL", "http://mock.local")
+
+	c := NewChecker("0.1.0")
+	if c.GitHubAPIURL != "http://mock.local/repos/zeropsio/zcp/releases/latest" {
+		t.Errorf("GitHubAPIURL = %q, want mock URL", c.GitHubAPIURL)
+	}
+	if c.DownloadBaseURL != "http://mock.local/download" {
+		t.Errorf("DownloadBaseURL = %q, want mock download URL", c.DownloadBaseURL)
 	}
 }

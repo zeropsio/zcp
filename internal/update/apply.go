@@ -12,9 +12,21 @@ import (
 
 const downloadTimeout = 30 * time.Second
 
+// CanWrite checks if the process can create files in dir.
+func CanWrite(dir string) bool {
+	f, err := os.CreateTemp(dir, ".zcp-write-test-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	f.Close()
+	os.Remove(name)
+	return true
+}
+
 // Apply downloads the new binary and atomically replaces the current one.
 // If info.Available is false, this is a no-op.
-func Apply(info *Info, binaryPath string, client *http.Client) error {
+func Apply(ctx context.Context, info *Info, binaryPath string, client *http.Client) error {
 	if !info.Available {
 		return nil
 	}
@@ -23,7 +35,7 @@ func Apply(info *Info, binaryPath string, client *http.Client) error {
 		client = &http.Client{Timeout: downloadTimeout}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
+	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, info.DownloadURL, nil)
