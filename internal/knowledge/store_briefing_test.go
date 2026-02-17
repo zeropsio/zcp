@@ -16,12 +16,12 @@ func TestStore_GetBriefing_RuntimeOnly(t *testing.T) {
 		{
 			name:    "PHP runtime",
 			runtime: "php-nginx@8.4",
-			want:    []string{"Zerops Core Reference", "PHP", "Build php@X", "Port 80"},
+			want:    []string{"PHP", "Build php@X", "Port 80"},
 		},
 		{
 			name:    "Node.js runtime",
 			runtime: "nodejs@22",
-			want:    []string{"Zerops Core Reference", "Node.js", "node_modules"},
+			want:    []string{"Node.js", "node_modules"},
 		},
 	}
 
@@ -54,12 +54,12 @@ func TestStore_GetBriefing_ServicesOnly(t *testing.T) {
 		{
 			name:     "PostgreSQL only",
 			services: []string{"postgresql@16"},
-			want:     []string{"Zerops Core Reference", "PostgreSQL", "Port 5432", "${hostname_var}", "DATABASE_URL"},
+			want:     []string{"PostgreSQL", "Port 5432", "${hostname_var}", "DATABASE_URL"},
 		},
 		{
 			name:     "Multiple services",
 			services: []string{"postgresql@16", "valkey@7.2"},
-			want:     []string{"Zerops Core Reference", "PostgreSQL", "Valkey", "Port 6379", "REDIS_URL"},
+			want:     []string{"PostgreSQL", "Valkey", "Port 6379", "REDIS_URL"},
 		},
 	}
 
@@ -91,9 +91,8 @@ func TestStore_GetBriefing_RuntimeAndServices(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should contain all layers
+	// Should contain all stack-specific layers (no core reference)
 	required := []string{
-		"Zerops Core Reference",
 		"Node.js",
 		"node_modules",
 		"PostgreSQL",
@@ -114,21 +113,6 @@ func TestStore_GetBriefing_RuntimeAndServices(t *testing.T) {
 	}
 }
 
-func TestStore_GetBriefing_EmptyInputs(t *testing.T) {
-	t.Parallel()
-	store := testStoreWithCore(t)
-
-	briefing, err := store.GetBriefing("", nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Should contain core reference
-	if !strings.Contains(briefing, "Zerops Core Reference") {
-		t.Error("empty briefing should contain core reference")
-	}
-}
-
 func TestStore_GetBriefing_UnknownRuntime(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
@@ -138,9 +122,9 @@ func TestStore_GetBriefing_UnknownRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should contain core, no exception section (graceful)
-	if !strings.Contains(briefing, "Zerops Core Reference") {
-		t.Error("briefing should contain core reference")
+	// Should NOT contain core (core is separate now)
+	if strings.Contains(briefing, "Zerops Core Reference") {
+		t.Error("briefing should not contain core reference")
 	}
 	// Should NOT contain PHP/Node.js specific content
 	if strings.Contains(briefing, "Build php@X") {
@@ -157,9 +141,9 @@ func TestStore_GetBriefing_UnknownService(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should contain core + wiring syntax (services were requested)
-	if !strings.Contains(briefing, "Zerops Core Reference") {
-		t.Error("briefing should contain core reference")
+	// Should contain wiring syntax (services were requested) but no core
+	if strings.Contains(briefing, "Zerops Core Reference") {
+		t.Error("briefing should not contain core reference")
 	}
 	if !strings.Contains(briefing, "${hostname_var}") {
 		t.Error("briefing should contain wiring syntax when services provided")
@@ -177,19 +161,18 @@ func TestStore_GetBriefing_LayerOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	coreIdx := strings.Index(briefing, "Zerops Core Reference")
 	runtimeIdx := strings.Index(briefing, "Runtime-Specific:")
 	serviceIdx := strings.Index(briefing, "Service Cards")
 
-	if coreIdx < 0 {
-		t.Fatal("briefing missing core reference")
+	if runtimeIdx < 0 {
+		t.Fatal("briefing missing runtime section")
+	}
+	if serviceIdx < 0 {
+		t.Fatal("briefing missing service cards")
 	}
 
-	// Core -> runtime -> services
-	if runtimeIdx >= 0 && coreIdx >= runtimeIdx {
-		t.Errorf("core (pos %d) should come before runtime (pos %d)", coreIdx, runtimeIdx)
-	}
-	if serviceIdx >= 0 && runtimeIdx >= 0 && runtimeIdx >= serviceIdx {
+	// Runtime -> services (no core — core is separate)
+	if runtimeIdx >= serviceIdx {
 		t.Errorf("runtime (pos %d) should come before services (pos %d)", runtimeIdx, serviceIdx)
 	}
 }
@@ -222,6 +205,48 @@ func TestStore_GetBriefing_NoWiringWithoutServices(t *testing.T) {
 
 	if strings.Contains(briefing, "Wiring Patterns") {
 		t.Error("briefing without services should NOT include wiring patterns")
+	}
+}
+
+func TestStore_GetBriefing_NoCoreIncluded(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		runtime  string
+		services []string
+	}{
+		{name: "runtime only", runtime: "php-nginx@8.4"},
+		{name: "services only", services: []string{"postgresql@16"}},
+		{name: "both", runtime: "nodejs@22", services: []string{"valkey@7.2"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := testStoreWithCore(t)
+			briefing, err := store.GetBriefing(tt.runtime, tt.services, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(briefing, "Zerops Core Reference") {
+				t.Error("briefing should NOT contain core reference — core is now returned via scope=\"infrastructure\"")
+			}
+		})
+	}
+}
+
+func TestStore_GetBriefing_EmptyInputs_EmptyResult(t *testing.T) {
+	t.Parallel()
+	store := testStoreWithCore(t)
+
+	briefing, err := store.GetBriefing("", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if briefing != "" {
+		t.Errorf("empty inputs should return empty string, got %d chars", len(briefing))
 	}
 }
 

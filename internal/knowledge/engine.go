@@ -30,6 +30,7 @@ type Provider interface {
 	List() []Resource
 	Get(uri string) (*Document, error)
 	Search(query string, limit int) []SearchResult
+	GetCore() (string, error)
 	GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error)
 	GetRecipe(name string) (string, error)
 }

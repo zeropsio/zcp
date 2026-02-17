@@ -22,7 +22,11 @@ type DeployResult struct {
 	TargetService   string `json:"targetService"`
 	TargetServiceID string `json:"targetServiceId"`
 	Message         string `json:"message"`
-	MonitorHint     string `json:"monitorHint"`
+	MonitorHint     string `json:"monitorHint,omitempty"`
+	BuildStatus     string `json:"buildStatus,omitempty"`
+	BuildDuration   string `json:"buildDuration,omitempty"`
+	Suggestion      string `json:"suggestion,omitempty"`
+	TimedOut        bool   `json:"timedOut,omitempty"`
 }
 
 // SSHDeployer executes commands on remote Zerops services.

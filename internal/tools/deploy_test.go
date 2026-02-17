@@ -38,6 +38,15 @@ func TestDeployTool_SSHMode(t *testing.T) {
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "builder"},
 			{ID: "svc-2", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-1",
+				ProjectID:      "proj-1",
+				ServiceStackID: "svc-2",
+				Status:         statusActive,
+				Sequence:       1,
+			},
 		})
 	ssh := &stubSSH{output: []byte("ok")}
 	local := &stubLocal{}
@@ -62,11 +71,14 @@ func TestDeployTool_SSHMode(t *testing.T) {
 	if parsed.Mode != "ssh" {
 		t.Errorf("mode = %s, want ssh", parsed.Mode)
 	}
-	if parsed.Status != "BUILD_TRIGGERED" {
-		t.Errorf("status = %s, want BUILD_TRIGGERED", parsed.Status)
+	if parsed.Status != statusDeployed {
+		t.Errorf("status = %s, want DEPLOYED", parsed.Status)
 	}
-	if parsed.MonitorHint == "" {
-		t.Error("monitorHint should not be empty")
+	if parsed.BuildStatus != statusActive {
+		t.Errorf("buildStatus = %s, want ACTIVE", parsed.BuildStatus)
+	}
+	if parsed.MonitorHint != "" {
+		t.Errorf("monitorHint should be empty after successful deploy, got %q", parsed.MonitorHint)
 	}
 }
 
@@ -76,6 +88,15 @@ func TestDeployTool_LocalMode(t *testing.T) {
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-1",
+				ProjectID:      "proj-1",
+				ServiceStackID: "svc-1",
+				Status:         statusActive,
+				Sequence:       1,
+			},
 		})
 	ssh := &stubSSH{}
 	local := &stubLocal{output: []byte("ok")}
@@ -99,11 +120,60 @@ func TestDeployTool_LocalMode(t *testing.T) {
 	if parsed.Mode != "local" {
 		t.Errorf("mode = %s, want local", parsed.Mode)
 	}
-	if parsed.Status != "BUILD_TRIGGERED" {
-		t.Errorf("status = %s, want BUILD_TRIGGERED", parsed.Status)
+	if parsed.Status != statusDeployed {
+		t.Errorf("status = %s, want DEPLOYED", parsed.Status)
 	}
-	if parsed.MonitorHint == "" {
-		t.Error("monitorHint should not be empty")
+	if parsed.BuildStatus != statusActive {
+		t.Errorf("buildStatus = %s, want ACTIVE", parsed.BuildStatus)
+	}
+	if parsed.MonitorHint != "" {
+		t.Errorf("monitorHint should be empty after successful deploy, got %q", parsed.MonitorHint)
+	}
+}
+
+func TestDeployTool_BuildFailed(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-1",
+				ProjectID:      "proj-1",
+				ServiceStackID: "svc-1",
+				Status:         statusBuildFailed,
+				Sequence:       1,
+			},
+		})
+	ssh := &stubSSH{}
+	local := &stubLocal{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, local, authInfo)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "app",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed.Status != statusBuildFailed {
+		t.Errorf("status = %s, want BUILD_FAILED", parsed.Status)
+	}
+	if parsed.BuildStatus != statusBuildFailed {
+		t.Errorf("buildStatus = %s, want BUILD_FAILED", parsed.BuildStatus)
+	}
+	if parsed.Suggestion == "" {
+		t.Error("expected non-empty suggestion for build failure")
 	}
 }
 

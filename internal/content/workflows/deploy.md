@@ -48,11 +48,14 @@ Examples:
 - `zerops_knowledge runtime="php-nginx@8.4"` — for Laravel, Symfony, etc.
 
 **What you get back:**
-- **Core principles**: zerops.yml structure, build pipeline (prepare → build → deploy), deployFiles rules
 - **Runtime exceptions**: PHP (build≠run base), Python (addToRunPrepare), Node.js (node_modules in deployFiles), deploy patterns (tilde syntax, multi-base)
 - **Common gotchas**: Missing deployFiles, wrong paths, initCommands vs prepareCommands, protocol values
 
-This is a **single call** that provides exactly what you need for the runtime. Use it as the authoritative base for zerops.yml generation.
+**If generating or modifying zerops.yml**, also load infrastructure knowledge for YAML schema and rules:
+```
+zerops_knowledge scope="infrastructure"
+```
+Skip this if just re-deploying existing code with unchanged zerops.yml.
 
 **For complex recipes** (multi-base builds, unusual patterns), also check:
 ```

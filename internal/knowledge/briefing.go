@@ -8,8 +8,9 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// GetBriefing assembles contextual knowledge for a specific stack using layered composition.
-// Layers: core reference -> runtime delta -> recipes -> service cards -> wiring -> decisions -> version check.
+// GetBriefing assembles stack-specific knowledge using layered composition.
+// Layers: live stacks -> runtime delta -> recipes -> service cards -> wiring -> decisions -> version check.
+// Core reference (platform model, YAML schemas) is NOT included — use GetCore() via scope="infrastructure".
 // runtime: e.g. "php-nginx@8.4" (normalized internally to "PHP" section)
 // services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
 // liveTypes: optional live service stack types for version validation and stack listing (nil = skip)
@@ -22,14 +23,6 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 	}
 
 	var sb strings.Builder
-
-	// Core reference: platform model + rules + YAML schemas (always included)
-	core, err := s.GetCore()
-	if err != nil {
-		return "", err
-	}
-	sb.WriteString(core)
-	sb.WriteString("\n\n")
 
 	// Live service stacks (if available)
 	if stacks := FormatServiceStacks(liveTypes); stacks != "" {

@@ -3,8 +3,8 @@
 // Tests for: e2e — deploy lifecycle via zerops_deploy with real Zerops API.
 //
 // This test creates a nodejs@22 service, deploys a minimal app via zcli push
-// (local mode), polls zerops_events for build completion, and verifies the
-// service is running. Mirrors the mount_test.go pattern.
+// (local mode), waits for build completion (synchronous polling), and verifies
+// the service is running.
 //
 // Prerequisites:
 //   - ZCP_API_KEY set
@@ -138,16 +138,22 @@ func TestE2E_Deploy(t *testing.T) {
 	importText := s.mustCallSuccess("zerops_import", map[string]any{
 		"content": importYAML,
 	})
-	processes := parseProcesses(t, importText)
-	t.Logf("  Import returned %d processes", len(processes))
-
-	for _, proc := range processes {
-		pid, ok := proc["processId"].(string)
-		if !ok || pid == "" {
-			continue
+	// Import now blocks until all processes complete.
+	var importResult struct {
+		Processes []struct {
+			ProcessID string `json:"processId"`
+			Status    string `json:"status"`
+		} `json:"processes"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(importText), &importResult); err != nil {
+		t.Fatalf("parse import result: %v", err)
+	}
+	t.Logf("  Import: %s", importResult.Summary)
+	for _, proc := range importResult.Processes {
+		if proc.Status != "FINISHED" {
+			t.Errorf("import process %s status = %s, want FINISHED", proc.ProcessID, proc.Status)
 		}
-		t.Logf("  Waiting for process %s (%s)", pid, proc["actionName"])
-		waitForProcess(s, pid)
 	}
 
 	// --- Step 2: Wait for service to be ready ---
@@ -167,61 +173,24 @@ func TestE2E_Deploy(t *testing.T) {
 	var deployResult struct {
 		Status      string `json:"status"`
 		Mode        string `json:"mode"`
-		MonitorHint string `json:"monitorHint"`
+		BuildStatus string `json:"buildStatus"`
 	}
 	if err := json.Unmarshal([]byte(deployText), &deployResult); err != nil {
 		t.Fatalf("parse deploy result: %v", err)
 	}
-	if deployResult.Status != "BUILD_TRIGGERED" {
-		t.Errorf("status = %s, want BUILD_TRIGGERED", deployResult.Status)
+	// Deploy now blocks until build completes — status should be DEPLOYED.
+	if deployResult.Status != "DEPLOYED" {
+		t.Errorf("status = %s, want DEPLOYED", deployResult.Status)
 	}
 	if deployResult.Mode != "local" {
 		t.Errorf("mode = %s, want local", deployResult.Mode)
 	}
-	if deployResult.MonitorHint == "" {
-		t.Error("monitorHint should not be empty")
+	if deployResult.BuildStatus != "ACTIVE" {
+		t.Errorf("buildStatus = %s, want ACTIVE", deployResult.BuildStatus)
 	}
-	t.Logf("  Deploy result: status=%s mode=%s", deployResult.Status, deployResult.Mode)
+	t.Logf("  Deploy result: status=%s mode=%s buildStatus=%s", deployResult.Status, deployResult.Mode, deployResult.BuildStatus)
 
-	// --- Step 4: Poll zerops_events for build completion (10s interval, 300s max) ---
-	step++
-	logStep(t, step, "polling zerops_events for build completion")
-	buildFinished := false
-	for i := range 30 {
-		if i > 0 {
-			time.Sleep(10 * time.Second)
-		} else {
-			// Initial 5s wait for pipeline to register.
-			time.Sleep(5 * time.Second)
-		}
-
-		eventsText := s.mustCallSuccess("zerops_events", map[string]any{
-			"serviceHostname": appHostname,
-			"limit":           10,
-		})
-
-		// Check for build/deploy events with terminal status.
-		if strings.Contains(eventsText, "FINISHED") {
-			t.Logf("  Build FINISHED (poll %d)", i+1)
-			buildFinished = true
-			break
-		}
-		if strings.Contains(eventsText, "FAILED") {
-			// Grab logs for diagnosis.
-			logsText := s.mustCallSuccess("zerops_logs", map[string]any{
-				"serviceHostname": appHostname,
-				"severity":        "error",
-				"since":           "10m",
-			})
-			t.Fatalf("Build FAILED. Error logs: %s\nEvents: %s", logsText, eventsText)
-		}
-		t.Logf("  Build in progress (poll %d)", i+1)
-	}
-	if !buildFinished {
-		t.Fatal("Build did not finish within 300s timeout")
-	}
-
-	// --- Step 5: Check for error logs ---
+	// --- Step 4: Check for error logs ---
 	step++
 	logStep(t, step, "zerops_logs severity=error")
 	errorLogsText := s.mustCallSuccess("zerops_logs", map[string]any{
@@ -234,7 +203,7 @@ func TestE2E_Deploy(t *testing.T) {
 		t.Errorf("unexpected fatal/panic in error logs: %s", errorLogsText)
 	}
 
-	// --- Step 6: Confirm startup in logs ---
+	// --- Step 5: Confirm startup in logs ---
 	step++
 	logStep(t, step, "zerops_logs search for startup confirmation")
 	startupText := s.mustCallSuccess("zerops_logs", map[string]any{
@@ -248,31 +217,41 @@ func TestE2E_Deploy(t *testing.T) {
 		t.Log("  No 'listening' log yet — may appear later (acceptable)")
 	}
 
-	// --- Step 7: Verify service is RUNNING ---
+	// --- Step 6: Verify service is RUNNING ---
+	// After build completion, the service transitions through CREATING before RUNNING.
+	// Poll until it reaches a running state.
 	step++
 	logStep(t, step, "zerops_discover verify RUNNING")
-	discoverText := s.mustCallSuccess("zerops_discover", map[string]any{
-		"service": appHostname,
-	})
-	var discoverResult struct {
-		Services []struct {
-			Hostname string `json:"hostname"`
-			Status   string `json:"status"`
-		} `json:"services"`
+	var svcStatus string
+	for i := 0; i < 20; i++ {
+		discoverText := s.mustCallSuccess("zerops_discover", map[string]any{
+			"service": appHostname,
+		})
+		var discoverResult struct {
+			Services []struct {
+				Hostname string `json:"hostname"`
+				Status   string `json:"status"`
+			} `json:"services"`
+		}
+		if err := json.Unmarshal([]byte(discoverText), &discoverResult); err != nil {
+			t.Fatalf("parse discover: %v", err)
+		}
+		if len(discoverResult.Services) == 0 {
+			t.Fatal("service not found in discover")
+		}
+		svcStatus = discoverResult.Services[0].Status
+		if svcStatus == "RUNNING" || svcStatus == "ACTIVE" {
+			break
+		}
+		t.Logf("  Service status: %s (waiting...)", svcStatus)
+		time.Sleep(5 * time.Second)
 	}
-	if err := json.Unmarshal([]byte(discoverText), &discoverResult); err != nil {
-		t.Fatalf("parse discover: %v", err)
-	}
-	if len(discoverResult.Services) == 0 {
-		t.Fatal("service not found in discover")
-	}
-	svcStatus := discoverResult.Services[0].Status
 	t.Logf("  Service status: %s", svcStatus)
 	if svcStatus != "RUNNING" && svcStatus != "ACTIVE" {
 		t.Errorf("service status = %s, want RUNNING or ACTIVE", svcStatus)
 	}
 
-	// --- Step 8: Delete service ---
+	// --- Step 7: Delete service ---
 	step++
 	logStep(t, step, "zerops_delete %s", appHostname)
 	deleteText := s.mustCallSuccess("zerops_delete", map[string]any{

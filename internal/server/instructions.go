@@ -14,7 +14,7 @@ const baseInstructions = `ZCP manages Zerops PaaS infrastructure.`
 
 const routingInstructions = `
 Tool routing:
-- Create/bootstrap services: zerops_workflow workflow="bootstrap"
+- Create/bootstrap services: zerops_workflow workflow="bootstrap" (REQUIRED before zerops_import)
 - Deploy code: zerops_workflow workflow="deploy"
 - Debug issues: zerops_workflow workflow="debug"
 - Scale: zerops_workflow workflow="scale"
@@ -22,7 +22,7 @@ Tool routing:
 - Monitor: zerops_discover
 - Search docs: zerops_knowledge query="..."
 
-Call zerops_knowledge with runtime and services params BEFORE generating configuration (import.yml, zerops.yml), deploying, or debugging. Skip for direct commands (restart, delete, logs, discover).
+NEVER call zerops_import directly. ALWAYS use zerops_workflow first — it provides the required process, including when to call zerops_knowledge.
 
 For tracked multi-phase operations, use action="start" mode="full|dev_only|hotfix|quick" to begin a session with gates and evidence tracking.`
 
@@ -62,7 +62,7 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID 
 	}
 
 	if len(services) == 0 {
-		return "Project is empty — no services configured yet.\nRecommended: zerops_workflow workflow=\"bootstrap\""
+		return "Project is empty — no services configured yet.\nREQUIRED: zerops_workflow workflow=\"bootstrap\""
 	}
 
 	var b strings.Builder
@@ -79,11 +79,11 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID 
 		fmt.Fprintf(&b, "\nProject state: %s", projState)
 		switch projState {
 		case workflow.StateFresh:
-			b.WriteString("\nRecommended: zerops_workflow workflow=\"bootstrap\"")
+			b.WriteString("\nREQUIRED: zerops_workflow workflow=\"bootstrap\"")
 		case workflow.StateConformant:
 			b.WriteString("\nRecommended: zerops_workflow workflow=\"deploy\" or workflow=\"debug\"")
 		case workflow.StateNonConformant:
-			b.WriteString("\nRecommended: zerops_workflow workflow=\"bootstrap\"")
+			b.WriteString("\nREQUIRED: zerops_workflow workflow=\"bootstrap\"")
 		}
 	}
 

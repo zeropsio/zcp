@@ -81,17 +81,25 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	importText := s.mustCallSuccess("zerops_import", map[string]any{
 		"content": importYAML,
 	})
-	processes := parseProcesses(t, importText)
-	t.Logf("  Import returned %d processes", len(processes))
-
-	// Wait for all import processes.
-	for _, proc := range processes {
-		pid, ok := proc["processId"].(string)
-		if !ok || pid == "" {
-			continue
+	// Import now blocks until all processes complete — no manual polling needed.
+	var importResult struct {
+		Processes []struct {
+			ProcessID string `json:"processId"`
+			Status    string `json:"status"`
+		} `json:"processes"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(importText), &importResult); err != nil {
+		t.Fatalf("parse import result: %v", err)
+	}
+	t.Logf("  Import returned %d processes, summary: %s", len(importResult.Processes), importResult.Summary)
+	if importResult.Summary == "" {
+		t.Error("expected non-empty summary from import")
+	}
+	for _, proc := range importResult.Processes {
+		if proc.Status != "FINISHED" {
+			t.Errorf("import process %s status = %s, want FINISHED", proc.ProcessID, proc.Status)
 		}
-		t.Logf("  Waiting for process %s (%s)", pid, proc["actionName"])
-		waitForProcess(s, pid)
 	}
 
 	// --- Step 6: zerops_discover (verify new services) ---
@@ -157,15 +165,24 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		"action":          "restart",
 		"serviceHostname": dbHostname,
 	})
-	restartProcID := extractProcessID(t, restartText)
-	t.Logf("  Restart process: %s", restartProcID)
-	waitForProcess(s, restartProcID)
+	// Manage now blocks until process completes — no manual polling needed.
+	var restartResult struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(restartText), &restartResult); err != nil {
+		t.Fatalf("parse restart result: %v", err)
+	}
+	if restartResult.Status != "FINISHED" {
+		t.Errorf("restart process status = %q, want FINISHED", restartResult.Status)
+	}
+	t.Logf("  Restart process %s completed: %s", restartResult.ID, restartResult.Status)
 
-	// --- Step 11: zerops_process status ---
+	// --- Step 11: zerops_process status (verify already-FINISHED process) ---
 	step++
 	logStep(t, step, "zerops_process status")
 	statusText := s.mustCallSuccess("zerops_process", map[string]any{
-		"processId": restartProcID,
+		"processId": restartResult.ID,
 	})
 	var procStatus struct {
 		Status string `json:"status"`

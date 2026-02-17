@@ -86,6 +86,7 @@ func callAndGetResult(t *testing.T, session *mcp.ClientSession, name string, arg
 }
 
 // defaultMock creates a standard mock with project, services, env vars, and events.
+// Includes pre-registered FINISHED processes for manage/import polling.
 func defaultMock() *platform.Mock {
 	return platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "test-project", Status: "ACTIVE"}).
@@ -99,7 +100,19 @@ func defaultMock() *platform.Mock {
 		WithProcessEvents([]platform.ProcessEvent{
 			{ID: "pe-1", ActionName: "start", Status: "FINISHED"},
 		}).
-		WithAppVersionEvents([]platform.AppVersionEvent{})
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: "ACTIVE", Sequence: 1},
+		}).
+		// Pre-register processes for manage tool polling.
+		WithProcess(&platform.Process{ID: "proc-start-svc-1", ActionName: "start", Status: "FINISHED"}).
+		WithProcess(&platform.Process{ID: "proc-stop-svc-1", ActionName: "stop", Status: "FINISHED"}).
+		WithProcess(&platform.Process{ID: "proc-restart-svc-1", ActionName: "restart", Status: "FINISHED"}).
+		WithProcess(&platform.Process{ID: "proc-start-svc-2", ActionName: "start", Status: "FINISHED"}).
+		WithProcess(&platform.Process{ID: "proc-stop-svc-2", ActionName: "stop", Status: "FINISHED"}).
+		WithProcess(&platform.Process{ID: "proc-restart-svc-2", ActionName: "restart", Status: "FINISHED"}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-2", ActionName: "delete", Status: "FINISHED"}).
+		WithProcess(&platform.Process{ID: "proc-envset-svc-1", ActionName: "envSet", Status: "FINISHED"})
 }
 
 func defaultLogFetcher() *platform.MockLogFetcher {
@@ -127,6 +140,7 @@ func TestIntegration_DiscoverThenManage(t *testing.T) {
 	}
 
 	// Step 2: Use discovered hostname to restart a service.
+	// Manage now blocks until process completes. Mock returns proc-restart-svc-1.
 	hostname := dr.Services[0].Hostname
 	manageText := callAndGetText(t, session, "zerops_manage", map[string]any{
 		"action":          "restart",
@@ -140,8 +154,8 @@ func TestIntegration_DiscoverThenManage(t *testing.T) {
 	if proc.ActionName != "restart" {
 		t.Errorf("action = %q, want %q", proc.ActionName, "restart")
 	}
-	if proc.Status != "PENDING" {
-		t.Errorf("status = %q, want %q", proc.Status, "PENDING")
+	if proc.Status != "FINISHED" {
+		t.Errorf("status = %q, want %q", proc.Status, "FINISHED")
 	}
 }
 
@@ -200,7 +214,8 @@ func TestIntegration_ImportThenDiscover(t *testing.T) {
 					},
 				},
 			},
-		})
+		}).
+		WithProcess(&platform.Process{ID: "proc-web", ActionName: "serviceStackImport", Status: "FINISHED"})
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 

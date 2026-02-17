@@ -228,6 +228,270 @@ func TestPollProcess_GetProcessError(t *testing.T) {
 	}
 }
 
+// --- PollBuild tests ---
+
+// appVersionSequencer wraps platform.Mock and overrides SearchAppVersions
+// to return a sequence of app version event slices for PollBuild tests.
+type appVersionSequencer struct {
+	*platform.Mock
+	mu       sync.Mutex
+	sequence [][]platform.AppVersionEvent
+	idx      int
+}
+
+func (s *appVersionSequencer) SearchAppVersions(_ context.Context, _ string, _ int) ([]platform.AppVersionEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.idx >= len(s.sequence) {
+		return s.sequence[len(s.sequence)-1], nil
+	}
+	events := s.sequence[s.idx]
+	s.idx++
+	return events, nil
+}
+
+func newBuildSequencer(statuses ...string) *appVersionSequencer {
+	seq := make([][]platform.AppVersionEvent, len(statuses))
+	for i, s := range statuses {
+		seq[i] = []platform.AppVersionEvent{
+			{
+				ID:             fmt.Sprintf("av-%d", i),
+				ProjectID:      "proj-1",
+				ServiceStackID: "svc-1",
+				Status:         s,
+				Sequence:       i + 1,
+				Created:        "2025-01-01T00:00:00Z",
+				LastUpdate:     "2025-01-01T00:00:00Z",
+			},
+		}
+	}
+	return &appVersionSequencer{
+		Mock:     platform.NewMock(),
+		sequence: seq,
+	}
+}
+
+func TestPollBuild_ImmediateActive(t *testing.T) {
+	t.Parallel()
+
+	seq := newBuildSequencer("ACTIVE")
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != "ACTIVE" {
+		t.Errorf("status = %s, want ACTIVE", event.Status)
+	}
+}
+
+func TestPollBuild_ImmediateFailed(t *testing.T) {
+	t.Parallel()
+
+	seq := newBuildSequencer("BUILD_FAILED")
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != "BUILD_FAILED" {
+		t.Errorf("status = %s, want BUILD_FAILED", event.Status)
+	}
+}
+
+func TestPollBuild_BuildingThenActive(t *testing.T) {
+	t.Parallel()
+
+	seq := newBuildSequencer("BUILDING", "BUILDING", "ACTIVE")
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != "ACTIVE" {
+		t.Errorf("status = %s, want ACTIVE", event.Status)
+	}
+}
+
+func TestPollBuild_NoEventThenAppears(t *testing.T) {
+	t.Parallel()
+
+	// First call returns no events, second returns ACTIVE.
+	seq := &appVersionSequencer{
+		Mock: platform.NewMock(),
+		sequence: [][]platform.AppVersionEvent{
+			{}, // no events yet
+			{
+				{
+					ID:             "av-1",
+					ProjectID:      "proj-1",
+					ServiceStackID: "svc-1",
+					Status:         "ACTIVE",
+					Sequence:       1,
+					Created:        "2025-01-01T00:00:00Z",
+					LastUpdate:     "2025-01-01T00:00:00Z",
+				},
+			},
+		},
+	}
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != "ACTIVE" {
+		t.Errorf("status = %s, want ACTIVE", event.Status)
+	}
+}
+
+func TestPollBuild_Timeout(t *testing.T) {
+	t.Parallel()
+
+	seq := newBuildSequencer("BUILDING") // Never terminates.
+	ctx := context.Background()
+
+	cfg := testConfig()
+	cfg.timeout = 10 * time.Millisecond
+
+	_, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, cfg)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+
+	var pe *platform.PlatformError
+	if !errorAs(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrAPITimeout {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrAPITimeout)
+	}
+}
+
+func TestPollBuild_ContextCanceled(t *testing.T) {
+	t.Parallel()
+
+	seq := newBuildSequencer("BUILDING")
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if err != context.Canceled {
+		t.Errorf("error = %v, want context.Canceled", err)
+	}
+}
+
+func TestPollBuild_SearchError(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithError("SearchAppVersions", fmt.Errorf("connection refused"))
+	ctx := context.Background()
+
+	_, err := pollBuild(ctx, mock, "proj-1", "svc-1", nil, testConfig())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestPollBuild_FiltersByServiceID(t *testing.T) {
+	t.Parallel()
+
+	// Events for two services — only svc-2 should match.
+	seq := &appVersionSequencer{
+		Mock: platform.NewMock(),
+		sequence: [][]platform.AppVersionEvent{
+			{
+				{
+					ID:             "av-other",
+					ProjectID:      "proj-1",
+					ServiceStackID: "svc-1",
+					Status:         "BUILDING",
+					Sequence:       1,
+				},
+				{
+					ID:             "av-target",
+					ProjectID:      "proj-1",
+					ServiceStackID: "svc-2",
+					Status:         "ACTIVE",
+					Sequence:       2,
+				},
+			},
+		},
+	}
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-2", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.ID != "av-target" {
+		t.Errorf("event ID = %s, want av-target", event.ID)
+	}
+	if event.Status != "ACTIVE" {
+		t.Errorf("status = %s, want ACTIVE", event.Status)
+	}
+}
+
+func TestPollBuild_CallbackCalled(t *testing.T) {
+	t.Parallel()
+
+	seq := newBuildSequencer("BUILDING", "ACTIVE")
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var calls []string
+	cb := func(message string, progress, total float64) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, message)
+		if total != 100 {
+			t.Errorf("total = %v, want 100", total)
+		}
+	}
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", cb, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != "ACTIVE" {
+		t.Errorf("status = %s, want ACTIVE", event.Status)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// One callback per SearchAppVersions call: BUILDING, ACTIVE = 2.
+	if len(calls) != 2 {
+		t.Errorf("callback called %d times, want 2", len(calls))
+	}
+}
+
+func TestPollBuild_PublicFunction(t *testing.T) {
+	t.Parallel()
+
+	// Immediate ACTIVE — no actual waiting needed.
+	seq := newBuildSequencer("ACTIVE")
+	ctx := context.Background()
+
+	event, err := PollBuild(ctx, seq, "proj-1", "svc-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != "ACTIVE" {
+		t.Errorf("status = %s, want ACTIVE", event.Status)
+	}
+}
+
 // errorAs is a test helper that wraps errors.As to avoid importing errors.
 func errorAs(err error, target any) bool {
 	if t, ok := target.(**platform.PlatformError); ok {

@@ -103,29 +103,21 @@ func TestIntegration_DeployLocalFlow(t *testing.T) {
 	if err := json.Unmarshal([]byte(deployText), &deployResult); err != nil {
 		t.Fatalf("parse deploy result: %v", err)
 	}
-	if deployResult.Status != "BUILD_TRIGGERED" {
-		t.Errorf("status = %q, want %q", deployResult.Status, "BUILD_TRIGGERED")
+	// Deploy now blocks until build completes — status should be DEPLOYED.
+	if deployResult.Status != "DEPLOYED" {
+		t.Errorf("status = %q, want %q", deployResult.Status, "DEPLOYED")
 	}
 	if deployResult.Mode != "local" {
 		t.Errorf("mode = %q, want %q", deployResult.Mode, "local")
 	}
-	if deployResult.MonitorHint == "" {
-		t.Error("monitorHint should not be empty")
+	if deployResult.BuildStatus != "ACTIVE" {
+		t.Errorf("buildStatus = %q, want %q", deployResult.BuildStatus, "ACTIVE")
 	}
 	if deployResult.TargetService != "app" {
 		t.Errorf("targetService = %q, want %q", deployResult.TargetService, "app")
 	}
 
-	// Step 3: Check events (mock returns empty events, but the call must succeed).
-	eventsText := callAndGetText(t, session, "zerops_events", map[string]any{
-		"serviceHostname": "app",
-		"limit":           5,
-	})
-	if eventsText == "" {
-		t.Error("expected non-empty events response")
-	}
-
-	// Step 4: Verify service still RUNNING after deploy.
+	// Step 3: Verify service still RUNNING after deploy.
 	postDeployText := callAndGetText(t, session, "zerops_discover", map[string]any{
 		"service": "app",
 	})
@@ -156,8 +148,9 @@ func TestIntegration_DeployLocalWithWorkingDir(t *testing.T) {
 	if err := json.Unmarshal([]byte(deployText), &deployResult); err != nil {
 		t.Fatalf("parse deploy result: %v", err)
 	}
-	if deployResult.Status != "BUILD_TRIGGERED" {
-		t.Errorf("status = %q, want %q", deployResult.Status, "BUILD_TRIGGERED")
+	// Deploy now blocks until build completes — status should be DEPLOYED.
+	if deployResult.Status != "DEPLOYED" {
+		t.Errorf("status = %q, want %q", deployResult.Status, "DEPLOYED")
 	}
 	if deployResult.Mode != "local" {
 		t.Errorf("mode = %q, want %q", deployResult.Mode, "local")

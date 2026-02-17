@@ -98,19 +98,6 @@ func TestStore_GetCore_NotFound(t *testing.T) {
 	}
 }
 
-// --- GetBriefing Tests ---
-
-func TestStore_GetBriefing_CoreMissing(t *testing.T) {
-	t.Parallel()
-	// Store without core — GetBriefing should fail
-	store, _ := NewStore(map[string]*Document{})
-
-	_, err := store.GetBriefing("php@8", nil, nil)
-	if err == nil {
-		t.Error("expected error when core missing")
-	}
-}
-
 // --- GetRecipe Tests ---
 
 func TestStore_GetRecipe_Success(t *testing.T) {

@@ -122,9 +122,9 @@ func TestKnowledgeTool_BriefingMode(t *testing.T) {
 	}
 
 	text := getTextContent(t, result)
-	// Verify briefing contains expected sections
-	if !strings.Contains(text, "Zerops Core Reference") {
-		t.Error("briefing missing core reference content")
+	// Verify briefing contains stack-specific sections (no core — that's scope="infrastructure")
+	if strings.Contains(text, "Zerops Core Reference") {
+		t.Error("briefing should NOT contain core reference")
 	}
 	if !strings.Contains(text, "PHP") {
 		t.Error("briefing missing PHP runtime delta")
@@ -178,5 +178,65 @@ func TestKnowledgeTool_NoModeError(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected error for no mode")
+	}
+}
+
+// --- Scope Mode Tests ---
+
+func TestKnowledgeTool_ScopeInfrastructure_ReturnsCore(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"scope": "infrastructure",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "Zerops Core Reference") {
+		t.Error("scope=infrastructure should return core reference content")
+	}
+	if !strings.Contains(text, "Universal rules here") {
+		t.Error("scope=infrastructure should return full core content")
+	}
+}
+
+func TestKnowledgeTool_ScopeInvalid_Error(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"scope": "unknown",
+	})
+
+	if !result.IsError {
+		t.Error("expected error for unknown scope")
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "Unknown scope") {
+		t.Errorf("error should mention unknown scope, got: %s", text)
+	}
+}
+
+func TestKnowledgeTool_ScopePlusBriefing_Error(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"scope":   "infrastructure",
+		"runtime": "nodejs@22",
+	})
+
+	if !result.IsError {
+		t.Error("expected error for mixed scope + briefing modes")
 	}
 }

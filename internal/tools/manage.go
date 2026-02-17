@@ -24,7 +24,7 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 			IdempotentHint:  true,
 			DestructiveHint: boolPtr(true),
 		},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ManageInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input ManageInput) (*mcp.CallToolResult, any, error) {
 		if input.Action == "" {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Action is required",
@@ -36,29 +36,49 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 				"Provide serviceHostname parameter")), nil, nil
 		}
 
+		onProgress := buildProgressCallback(ctx, req)
+
 		switch input.Action {
 		case "start":
 			proc, err := ops.Start(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(proc), nil, nil
+			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
 		case "stop":
 			proc, err := ops.Stop(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(proc), nil, nil
+			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
 		case "restart":
 			proc, err := ops.Restart(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(proc), nil, nil
+			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",
 				"Use start, stop, or restart")), nil, nil
 		}
 	})
+}
+
+// pollManageProcess polls a process until completion, returning the final state.
+// On timeout/error, returns the original process unchanged.
+func pollManageProcess(
+	ctx context.Context,
+	client platform.Client,
+	proc *platform.Process,
+	onProgress ops.ProgressCallback,
+) *platform.Process {
+	if proc == nil || proc.ID == "" {
+		return proc
+	}
+	finalProc, err := ops.PollProcess(ctx, client, proc.ID, onProgress)
+	if err != nil {
+		return proc // return original on timeout/error
+	}
+	return finalProc
 }

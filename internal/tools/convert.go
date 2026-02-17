@@ -1,15 +1,25 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-const actionStatus = "status"
+// Shared status constants for process/build results.
+const (
+	actionStatus      = "status"
+	statusActive      = "ACTIVE"
+	statusDeployed    = "DEPLOYED"
+	statusBuildFailed = "BUILD_FAILED"
+	statusFinished    = "FINISHED"
+	statusFailed      = "FAILED"
+)
 
 // convertError converts an error to a CallToolResult with IsError=true.
 // PlatformErrors are serialized as structured JSON with code/error/suggestion.
@@ -58,3 +68,23 @@ func textResult(text string) *mcp.CallToolResult {
 
 // boolPtr returns a pointer to b. Used for optional bool fields in ToolAnnotations.
 func boolPtr(b bool) *bool { return &b }
+
+// buildProgressCallback returns an ops.ProgressCallback wired to MCP progress
+// notifications if the client provided a progressToken. Returns nil otherwise.
+func buildProgressCallback(ctx context.Context, req *mcp.CallToolRequest) ops.ProgressCallback {
+	if req == nil || req.Params == nil {
+		return nil
+	}
+	token := req.Params.GetProgressToken()
+	if token == nil {
+		return nil
+	}
+	return func(message string, progress, total float64) {
+		_ = req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
+			ProgressToken: token,
+			Message:       message,
+			Progress:      progress,
+			Total:         total,
+		})
+	}
+}

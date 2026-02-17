@@ -50,11 +50,9 @@ Default = standard (dev+stage). If the user says "just one service" or "simple s
 - **Dev-only**: Configure → deploy to dev only, skip stage. When user says "just get it running" or "prototype."
 - **Quick**: Skip config, deploy with existing zerops.yml. Only when user says "just deploy" and config already exists → redirect to deploy workflow.
 
-### Step 2 — Load contextual knowledge BEFORE generating YAML
+### Step 2 — Load stack-specific knowledge
 
-**This step is mandatory.** Do not generate any YAML until you've loaded the relevant knowledge.
-
-Call `zerops_knowledge` with the identified runtime and services:
+**Mandatory.** Call `zerops_knowledge` with the identified runtime and services:
 ```
 zerops_knowledge runtime="{runtime-type}" services=["{service1}", "{service2}", ...]
 ```
@@ -69,10 +67,8 @@ Examples:
 - **Runtime exceptions**: binding rules (0.0.0.0!), deploy patterns, framework-specific gotchas
 - **Matching recipes**: pre-built configurations for common stacks (load with `zerops_knowledge recipe="name"`)
 - **Service cards**: ports, auto-injected env vars, connection string templates, HA behavior
-- **Core principles**: zerops.yml/import.yml structure, port rules, env var system, build pipeline
 - **Wiring patterns**: ${hostname_var} system, envSecrets vs envVariables, connection examples
-
-This is a **single call** that assembles exactly what you need for the identified stack. Use it as the authoritative base for YAML generation.
+- **Version validation**: checks requested versions against available stacks
 
 **For complex recipes** (multi-base builds, unusual patterns), also check:
 ```
@@ -80,9 +76,24 @@ zerops_knowledge recipe="{recipe-name}"
 ```
 Examples: `bun`, `bun-hono`, `laravel-jetstream`, `ghost`, `django`, `phoenix`
 
-If the briefing doesn't cover the user's framework specifics, ask for build/deploy details before generating YAML.
+### Step 3 — Load infrastructure knowledge
 
-**After receiving the briefing, verify these before generating YAML:**
+**Mandatory before generating YAML.** Call:
+```
+zerops_knowledge scope="infrastructure"
+```
+
+**What you get back:**
+- **Zerops platform model**: projects, services, containers, routing
+- **import.yml schema**: structure, fields, rules, priorities, modes
+- **zerops.yml schema**: build/run pipeline, deployFiles, ports, prepareCommands
+- **Env var system**: cross-service references (`${hostname_var}`), envSecrets vs envVariables
+- **Build/deploy lifecycle**: build and run are SEPARATE containers, cache rules
+- **Rules & pitfalls**: common mistakes, validation rules, port ranges
+
+Steps 2 and 3 together provide everything needed for YAML generation — stack-specific knowledge (Step 2) plus platform rules (Step 3).
+
+**After receiving both, verify these before generating YAML:**
 
 1. **Binding**: Briefing specifies 0.0.0.0 — plan HOST/BIND env vars accordingly
 2. **Deploy files**: Note the exact deployFiles pattern — wrong path is the #1 error
@@ -92,20 +103,20 @@ If the briefing doesn't cover the user's framework specifics, ask for build/depl
 
 If the briefing doesn't cover your stack, call `zerops_knowledge recipe="{name}"` before generating YAML.
 
-### Step 3 — Generate import.yml
+### Step 4 — Generate import.yml
 
-Using the loaded knowledge from Step 2, generate import.yml following the core principles for structure, priority, mode, env var wiring, and ports. The briefing includes all rules needed.
+Using the loaded knowledge from Steps 2+3, generate import.yml following the infrastructure rules for structure, priority, mode, env var wiring, and ports.
 
 **Hostname pattern** (from Step 1): Standard mode (default) creates `{app}dev` + `{app}stage` pairs with shared managed services. Simple mode creates a single `{app}`. If the user didn't specify, ask before generating.
 
-### Step 4 — Generate zerops.yml
+### Step 5 — Generate zerops.yml
 
-For each runtime service, generate zerops.yml using the loaded runtime example from Step 2 as starting point. The briefing covers build pipeline, deployFiles, ports, and framework-specific decisions.
+For each runtime service, generate zerops.yml using the loaded runtime example from Step 2 as starting point. The infrastructure knowledge from Step 3 covers the YAML schema rules. Together they provide build pipeline, deployFiles, ports, and framework-specific decisions.
 
 **Health endpoint recommendation:**
 When scaffolding new application code, recommend adding `/health` (returns 200 when app is running) and `/status` (returns 200 with managed service connectivity info) endpoints. These enable deeper verification in Phase 2 — but verification adapts based on what's available.
 
-### Step 5 — Validate
+### Step 6 — Validate
 
 **Self-check against common import failures before proceeding:**
 

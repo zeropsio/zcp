@@ -18,15 +18,17 @@ type ImportResult struct {
 	ProjectName string                `json:"projectName"`
 	Processes   []ImportProcessOutput `json:"processes"`
 	Warnings    []string              `json:"warnings,omitempty"`
+	Summary     string                `json:"summary,omitempty"`
 }
 
 // ImportProcessOutput represents one process from the import result.
 type ImportProcessOutput struct {
-	ProcessID  string `json:"processId"`
-	ActionName string `json:"actionName"`
-	Status     string `json:"status"`
-	Service    string `json:"service"`
-	ServiceID  string `json:"serviceId"`
+	ProcessID  string  `json:"processId"`
+	ActionName string  `json:"actionName"`
+	Status     string  `json:"status"`
+	Service    string  `json:"service"`
+	ServiceID  string  `json:"serviceId"`
+	FailReason *string `json:"failReason,omitempty"`
 }
 
 // Import imports services from YAML into a project.

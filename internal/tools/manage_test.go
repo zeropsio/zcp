@@ -13,7 +13,11 @@ import (
 func TestManageTool_Start(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{
+			ID:     "proc-start-svc-1",
+			Status: statusFinished,
+		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterManage(srv, mock, "proj-1")
@@ -30,12 +34,19 @@ func TestManageTool_Start(t *testing.T) {
 	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
 		t.Fatalf("failed to parse result: %v", err)
 	}
+	if parsed["status"] != statusFinished {
+		t.Errorf("status = %v, want FINISHED", parsed["status"])
+	}
 }
 
 func TestManageTool_Stop(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{
+			ID:     "proc-stop-svc-1",
+			Status: statusFinished,
+		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterManage(srv, mock, "proj-1")
@@ -47,12 +58,24 @@ func TestManageTool_Stop(t *testing.T) {
 	if result.IsError {
 		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
 	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed["status"] != statusFinished {
+		t.Errorf("status = %v, want FINISHED", parsed["status"])
+	}
 }
 
 func TestManageTool_Restart(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{
+			ID:     "proc-restart-svc-1",
+			Status: statusFinished,
+		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterManage(srv, mock, "proj-1")
@@ -63,6 +86,14 @@ func TestManageTool_Restart(t *testing.T) {
 
 	if result.IsError {
 		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed["status"] != statusFinished {
+		t.Errorf("status = %v, want FINISHED", parsed["status"])
 	}
 }
 

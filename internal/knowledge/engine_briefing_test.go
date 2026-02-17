@@ -12,8 +12,9 @@ func TestStore_GetBriefing_RealDocs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	if !strings.Contains(briefing, "Zerops Core Reference") {
-		t.Error("briefing missing core reference content")
+	// Core reference is no longer included in briefing (use scope="infrastructure")
+	if strings.Contains(briefing, "Zerops Core Reference") {
+		t.Error("briefing should NOT contain core reference")
 	}
 	if !strings.Contains(briefing, "PHP") {
 		t.Error("briefing missing PHP runtime delta")
@@ -238,22 +239,15 @@ func TestStore_GetBriefing_LayerOrderRealDocs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	coreIdx := strings.Index(briefing, "Zerops Core Reference")
 	runtimeIdx := strings.Index(briefing, "Runtime-Specific: Bun")
 	serviceIdx := strings.Index(briefing, "Service Cards")
-	if coreIdx < 0 {
-		t.Fatal("briefing missing Zerops Core Reference")
-	}
 	if runtimeIdx < 0 {
 		t.Fatal("briefing missing Runtime-Specific: Bun section")
 	}
 	if serviceIdx < 0 {
 		t.Fatal("briefing missing Service Cards section")
 	}
-	// Core -> runtime -> services
-	if coreIdx >= runtimeIdx {
-		t.Errorf("core (pos %d) should come before runtime (pos %d)", coreIdx, runtimeIdx)
-	}
+	// Runtime -> services (no core — core is separate via scope="infrastructure")
 	if runtimeIdx >= serviceIdx {
 		t.Errorf("runtime (pos %d) should come before services (pos %d)", runtimeIdx, serviceIdx)
 	}
