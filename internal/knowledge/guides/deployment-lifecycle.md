@@ -157,7 +157,7 @@ Zerops keeps **10 most recent versions**. Older auto-deleted. Any archived versi
 2. **initCommands run on EVERY container start** -- including restarts and horizontal scaling, not just deploys
 3. **initCommands failures do NOT cancel deploy** -- app starts regardless of init exit code
 4. **prepareCommands in build vs run** -- `build.prepareCommands` customizes build env, `run.prepareCommands` creates custom runtime image. Different containers, different purposes
-5. **deployFiles land in `/var/www`** -- use tilde syntax (`dist/~`) to extract contents directly
+5. **deployFiles land in `/var/www`** -- tilde syntax (`dist/~`) extracts contents directly to `/var/www/` (strips directory). Without tilde, `dist` → `/var/www/dist/` (preserved). **CRITICAL**: `run.start` path must match — `dist/~` + `start: bun dist/index.js` BREAKS because the file is at `/var/www/index.js`, not `/var/www/dist/index.js`
 
 ## See Also
 - zerops://foundation/grammar -- zerops.yml schema and platform rules

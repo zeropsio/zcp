@@ -25,7 +25,10 @@ Actionable DO/DON'T rules for Zerops, each with a causal reason. Sourced from pr
 - **ALWAYS** use Maven/Gradle wrapper (`./mvnw`, `./gradlew`) or install build tools via `prepareCommands`. REASON: build container has JDK only — Maven, Gradle are NOT pre-installed
 - **NEVER** reference `/var/www/` in `run.prepareCommands`. REASON: deploy files arrive AFTER prepareCommands execute; `/var/www` is empty during prepare
 - **ALWAYS** use `addToRunPrepare` + `/home/zerops/` path for files needed in `run.prepareCommands`. REASON: this is the only way to get files from build into the prepare phase
-- **ALWAYS** use tilde syntax (`dist/~`) to extract directory contents to `/var/www/`. REASON: without tilde, `dist` → `/var/www/dist/` (nested)
+- **ALWAYS** match `deployFiles` layout to `run.start` path. Two valid patterns for build output directories:
+  - **Directory preserved** (NO tilde): `deployFiles: [dist, package.json]` → files at `/var/www/dist/` → `start: bun dist/index.js`
+  - **Contents extracted** (WITH tilde): `deployFiles: dist/~` → files at `/var/www/` → `start: bun index.js`
+  REASON: tilde strips the directory prefix. If start command references the subdirectory (e.g., `dist/index.js`), tilde BREAKS it because the file is at `/var/www/index.js`, not `/var/www/dist/index.js`. Use tilde for static sites (no start command) or when start command matches the flattened layout
 - **NEVER** use `initCommands` for package installation. REASON: initCommands run on every container restart; use `prepareCommands` for one-time setup
 - **ALWAYS** use `--no-cache-dir` for pip in containers. REASON: prevents wasted disk space on ephemeral containers
 - **ALWAYS** use `--ignore-platform-reqs` for Composer on Alpine. REASON: musl libc may not satisfy platform requirements checks

@@ -124,6 +124,7 @@ When scaffolding new application code, recommend adding `/health` (returns 200 w
 |-------|---------------|
 | Ports match | `run.ports.port` = what app actually listens on |
 | Deploy files exist | `deployFiles` includes actual build output path |
+| **deployFiles/start consistency** | If `deployFiles` uses tilde (`dist/~`), start must NOT reference the stripped dir (use `index.js` not `dist/index.js`). Without tilde, dir is preserved (`dist/index.js` is correct). **#1 bootstrap error.** |
 | Start command | `run.start` runs the app, not the build tool |
 | Env var refs | Cross-references use underscores: `${db_hostname}` not `${my-db_hostname}` |
 | Mode present | Every managed service has `mode: NON_HA` or `mode: HA` |

@@ -114,9 +114,13 @@ zerops[]:
 Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination. Exception: PHP uses port 80. `httpSupport: true` for HTTP, `protocol: tcp|udp` for non-HTTP. NEVER `protocol: HTTP`.
 
 ### Deploy Semantics
-- **Tilde syntax**: `dist/~` extracts contents to `/var/www/` (not `/var/www/dist/`)
-- Without tilde: `dist` → `/var/www/dist/` (nested)
-- All files land in `/var/www`
+- Without tilde: `dist` → `/var/www/dist/` (directory preserved)
+- **Tilde syntax**: `dist/~` → contents extracted to `/var/www/` (directory stripped)
+- All files land under `/var/www`
+- **INVARIANT**: `run.start` path MUST match where `deployFiles` places files:
+  - `deployFiles: [dist]` + `start: bun dist/index.js` — CORRECT (file at `/var/www/dist/index.js`)
+  - `deployFiles: dist/~` + `start: bun index.js` — CORRECT (file at `/var/www/index.js`)
+  - `deployFiles: dist/~` + `start: bun dist/index.js` — BROKEN (no `/var/www/dist/` exists)
 - **Git required**: `zerops_deploy` uses `zcli push` which requires a git repository. Before deploying, run `git init && git add -A && git commit -m "deploy"` in the working directory
 
 ### Cache Architecture (Two-Layer)

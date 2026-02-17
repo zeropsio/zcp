@@ -239,7 +239,10 @@ zerops[]:
 - **ALWAYS** use Maven/Gradle wrapper (`./mvnw`, `./gradlew`) or install build tools via `prepareCommands`. REASON: build container has JDK only -- Maven, Gradle are NOT pre-installed
 - **NEVER** reference `/var/www/` in `run.prepareCommands`. REASON: deploy files arrive AFTER prepareCommands execute; `/var/www` is empty during prepare
 - **ALWAYS** use `addToRunPrepare` + `/home/zerops/` path for files needed in `run.prepareCommands`. REASON: this is the only way to get files from build into the prepare phase
-- **ALWAYS** use tilde syntax (`dist/~`) to extract directory contents to `/var/www/`. REASON: without tilde, `dist` -> `/var/www/dist/` (nested)
+- **ALWAYS** match `deployFiles` layout to `run.start` path. Two valid patterns for build output directories:
+  - **Directory preserved** (NO tilde): `deployFiles: [dist, package.json]` -> files at `/var/www/dist/` -> `start: bun dist/index.js`
+  - **Contents extracted** (WITH tilde): `deployFiles: dist/~` -> files at `/var/www/` -> `start: bun index.js`
+  REASON: tilde strips the directory prefix. If start command references the subdirectory (e.g., `dist/index.js`), tilde BREAKS it because the file is at `/var/www/index.js`, not `/var/www/dist/index.js`. Use tilde for static sites (no start command) or when start command matches the flattened layout
 - **NEVER** use `initCommands` for package installation. REASON: initCommands run on every container restart; use `prepareCommands` for one-time setup
 - **ALWAYS** use `--no-cache-dir` for pip in containers. REASON: prevents wasted disk space on ephemeral containers
 - **ALWAYS** use `--ignore-platform-reqs` for Composer on Alpine. REASON: musl libc may not satisfy platform requirements checks
@@ -313,9 +316,13 @@ zerops[]:
 ## Schema Rules
 
 ### Deploy Semantics
-- **Tilde syntax**: `dist/~` extracts contents to `/var/www/` (not `/var/www/dist/`)
-- Without tilde: `dist` -> `/var/www/dist/` (nested)
-- All files land in `/var/www`
+- Without tilde: `dist` -> `/var/www/dist/` (directory preserved)
+- **Tilde syntax**: `dist/~` -> contents extracted to `/var/www/` (directory stripped)
+- All files land under `/var/www`
+- **INVARIANT**: `run.start` path MUST match where `deployFiles` places files:
+  - `deployFiles: [dist]` + `start: bun dist/index.js` -- CORRECT (file at `/var/www/dist/index.js`)
+  - `deployFiles: dist/~` + `start: bun index.js` -- CORRECT (file at `/var/www/index.js`)
+  - `deployFiles: dist/~` + `start: bun dist/index.js` -- BROKEN (no `/var/www/dist/` exists)
 - **Git required**: `zerops_deploy` uses `zcli push` which requires a git repository
 
 ### Cache Architecture (Two-Layer)
@@ -349,6 +356,7 @@ zerops[]:
 | No `mode` for managed service | Import fails | Managed services require explicit `mode: NON_HA` or `mode: HA` |
 | Set `minContainers` for PostgreSQL | Import fails | Managed services have fixed container counts |
 | `build.base: php-nginx@8.3` | "unknown base php-nginx@8.3" | Webserver variants (`php-nginx`, `php-apache`) are run bases only; use `build.base: php@8.3` + `run.base: php-nginx@8.3` |
+| `deployFiles: dist/~` + `start: bun dist/index.js` | App crashes / file not found | Tilde extracts `dist/` contents to `/var/www/`, so `index.js` is at `/var/www/index.js`, not `/var/www/dist/index.js`. Either remove tilde OR change start to `bun index.js` |
 
 ---
 

@@ -92,9 +92,9 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 **Build procedure**:
 1. Set `build.base: bun@latest`
 2. `buildCommands`: `bun i`, then `bun run build` or `bun build --outdir dist --target bun`
-3. **Bundled deploy** (recommended): deploy `dist/` + `package.json` (NO node_modules)
-4. **Source deploy**: deploy `src/` + `package.json` + `bun.lockb` + `node_modules`
-5. `run.start`: `bun start`
+3. **Bundled deploy** (recommended): `deployFiles: [dist, package.json]` (NO node_modules) + `start: bun dist/index.js`
+4. **Source deploy**: `deployFiles: [src, package.json, bun.lockb, node_modules]` + `start: bun run src/index.ts`
+5. **CRITICAL**: do NOT use `deployFiles: dist/~` with `start: bun dist/index.js` — tilde strips the `dist/` prefix, so the file lands at `/var/www/index.js`, not `/var/www/dist/index.js`
 
 **Binding**: `Bun.serve({hostname: "0.0.0.0"})` — default localhost = 502
 - Elysia: `hostname: "0.0.0.0"` in constructor
