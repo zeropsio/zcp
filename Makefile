@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build all clean
+.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build all clean release
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -56,6 +56,32 @@ build: ## Build binary
 
 clean: ## Remove build artifacts
 	rm -rf bin/ builds/
+
+###########
+# RELEASE #
+###########
+release: ## Patch bump, tag, push (requires clean worktree)
+	@if [ -n "$$(git status --porcelain 2>/dev/null)" ]; then \
+		echo "ERROR: working tree is dirty. Run /commit first."; exit 1; \
+	fi; \
+	LATEST=$$(git describe --tags --abbrev=0 2>/dev/null); \
+	if [ -z "$$LATEST" ]; then echo "ERROR: no existing tags found"; exit 1; fi; \
+	MAJOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f1); \
+	MINOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f2); \
+	PATCH=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f3); \
+	NEXT="v$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
+	COMMITS=$$(git rev-list "$$LATEST"..HEAD --count 2>/dev/null || echo 0); \
+	if [ "$$COMMITS" = "0" ]; then \
+		printf "\033[33mWarning:\033[0m no new commits since $$LATEST\n"; \
+		printf "Release \033[1m$$NEXT\033[0m anyway? [y/N] "; \
+		read ans; \
+		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 1;; esac; \
+	fi; \
+	echo "Tagging $$NEXT ($$COMMITS commits since $$LATEST)..."; \
+	git tag -a "$$NEXT" -m "$$NEXT"; \
+	echo "Pushing..."; \
+	git push origin HEAD "$$NEXT"; \
+	echo "Done. GitHub Actions will build and publish the release."
 
 #########
 # BUILD #
