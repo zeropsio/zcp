@@ -20,7 +20,6 @@ zerops:
       deployFiles:
         - dist
         - package.json
-        - bun.lockb
       cache:
         - node_modules
     run:

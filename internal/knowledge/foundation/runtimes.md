@@ -93,7 +93,7 @@ Runtime-specific deltas from universal grammar. Each section lists ONLY what dif
 1. Set `build.base: bun@latest`
 2. `buildCommands`: `bun i`, then `bun run build` or `bun build --outdir dist --target bun`
 3. **Bundled deploy** (recommended): `deployFiles: [dist, package.json]` (NO node_modules) + `start: bun dist/index.js`
-4. **Source deploy**: `deployFiles: [src, package.json, bun.lockb, node_modules]` + `start: bun run src/index.ts`
+4. **Source deploy**: `deployFiles: [src, package.json, node_modules]` + `start: bun run src/index.ts`
 5. **CRITICAL**: do NOT use `deployFiles: dist/~` with `start: bun dist/index.js` — tilde strips the `dist/` prefix, so the file lands at `/var/www/index.js`, not `/var/www/dist/index.js`
 
 **Binding**: `Bun.serve({hostname: "0.0.0.0"})` — default localhost = 502

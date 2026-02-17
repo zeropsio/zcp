@@ -19,7 +19,6 @@ zerops:
       deployFiles:
         - src
         - package.json
-        - bun.lockb
         - node_modules
       cache:
         - node_modules
@@ -69,9 +68,7 @@ Bun.serve({
 
 ## Gotchas
 - **`hostname: "0.0.0.0"` is mandatory** in Bun.serve() — without it, Zerops L7 balancer cannot reach the app
-- `bun.lockb` is binary — always include in deployFiles
 - Don't deploy `node_modules` if using bundled output (`bun build --outdir dist`)
 - For source deploy (this recipe): include `node_modules` in deployFiles
 - PostgreSQL connection: use `${db_user}:${db_password}@db:5432/${db_dbName}` pattern
 - In import.yml: use `envSecrets` for ALL env vars (no `envVariables` at service level). In zerops.yml: use `run.envVariables` for non-sensitive config
-- `bun.lockb` may not exist on fresh bootstrap (no local `bun install` yet) — if missing, omit from deployFiles or run `bun install` locally first
