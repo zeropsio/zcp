@@ -19,9 +19,12 @@ type nopMounter struct{}
 
 var _ ops.Mounter = (*nopMounter)(nil)
 
-func (*nopMounter) IsMounted(_ context.Context, _ string) (bool, error)  { return false, nil }
+func (*nopMounter) CheckMount(_ context.Context, _ string) (platform.MountState, error) {
+	return platform.MountStateNotMounted, nil
+}
 func (*nopMounter) Mount(_ context.Context, _, _ string) error           { return nil }
 func (*nopMounter) Unmount(_ context.Context, _, _ string) error         { return nil }
+func (*nopMounter) ForceUnmount(_ context.Context, _ string) error       { return nil }
 func (*nopMounter) IsWritable(_ context.Context, _ string) (bool, error) { return false, nil }
 
 // nopSSH satisfies ops.SSHDeployer for annotation tests (never called).

@@ -2,7 +2,9 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 
@@ -15,9 +17,10 @@ var hostnameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,62}$`)
 
 // Mounter abstracts filesystem mount operations for testing.
 type Mounter interface {
-	IsMounted(ctx context.Context, path string) (bool, error)
+	CheckMount(ctx context.Context, path string) (platform.MountState, error)
 	Mount(ctx context.Context, hostname, localPath string) error
 	Unmount(ctx context.Context, hostname, path string) error
+	ForceUnmount(ctx context.Context, path string) error
 	IsWritable(ctx context.Context, path string) (bool, error)
 }
 
@@ -40,6 +43,7 @@ type MountInfo struct {
 	Hostname  string `json:"hostname"`
 	MountPath string `json:"mountPath"`
 	Mounted   bool   `json:"mounted"`
+	Stale     bool   `json:"stale,omitempty"`
 	Writable  bool   `json:"writable,omitempty"`
 }
 
@@ -65,7 +69,7 @@ func MountService(
 
 	mountPath := filepath.Join(mountBase, hostname)
 
-	mounted, err := mounter.IsMounted(ctx, mountPath)
+	state, err := mounter.CheckMount(ctx, mountPath)
 	if err != nil {
 		return nil, platform.NewPlatformError(
 			platform.ErrMountFailed,
@@ -73,7 +77,9 @@ func MountService(
 			"Check if the service is accessible",
 		)
 	}
-	if mounted {
+
+	switch state {
+	case platform.MountStateActive:
 		writable, _ := mounter.IsWritable(ctx, mountPath)
 		return &MountResult{
 			Status:    "ALREADY_MOUNTED",
@@ -82,6 +88,19 @@ func MountService(
 			Writable:  writable,
 			Message:   fmt.Sprintf("Service %s is already mounted at %s", hostname, mountPath),
 		}, nil
+
+	case platform.MountStateStale:
+		if err := mounter.ForceUnmount(ctx, mountPath); err != nil {
+			return nil, platform.NewPlatformError(
+				platform.ErrMountFailed,
+				fmt.Sprintf("Failed to clear stale mount for %s: %v", hostname, err),
+				"Try fusermount -uz manually",
+			)
+		}
+		_ = os.Remove(mountPath)
+
+	case platform.MountStateNotMounted:
+		// Proceed to mount below.
 	}
 
 	if err := mounter.Mount(ctx, hostname, mountPath); err != nil {
@@ -114,17 +133,10 @@ func UnmountService(
 		return nil, err
 	}
 
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("list services: %w", err)
-	}
-	if _, err := resolveServiceID(services, hostname); err != nil {
-		return nil, err
-	}
-
 	mountPath := filepath.Join(mountBase, hostname)
 
-	mounted, err := mounter.IsMounted(ctx, mountPath)
+	// Check mount state FIRST, before API call.
+	state, err := mounter.CheckMount(ctx, mountPath)
 	if err != nil {
 		return nil, platform.NewPlatformError(
 			platform.ErrUnmountFailed,
@@ -132,13 +144,60 @@ func UnmountService(
 			"Check mount state manually",
 		)
 	}
-	if !mounted {
+
+	if state == platform.MountStateNotMounted {
 		return &MountResult{
 			Status:    "NOT_MOUNTED",
 			Hostname:  hostname,
 			MountPath: mountPath,
 			Message:   fmt.Sprintf("Service %s is not mounted", hostname),
 		}, nil
+	}
+
+	// Stale mount — force unmount directly (service may be deleted).
+	if state == platform.MountStateStale {
+		if err := mounter.ForceUnmount(ctx, mountPath); err != nil {
+			return nil, platform.NewPlatformError(
+				platform.ErrUnmountFailed,
+				fmt.Sprintf("Failed to force unmount stale %s: %v", hostname, err),
+				"Try fusermount -uz manually",
+			)
+		}
+		_ = os.Remove(mountPath)
+		return &MountResult{
+			Status:    "UNMOUNTED",
+			Hostname:  hostname,
+			MountPath: mountPath,
+			Message:   fmt.Sprintf("Force unmounted stale %s from %s", hostname, mountPath),
+		}, nil
+	}
+
+	// Active mount — try API lookup, fall back to force unmount if service deleted.
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list services: %w", err)
+	}
+	_, resolveErr := resolveServiceID(services, hostname)
+	if resolveErr != nil {
+		// Service deleted but mount still active — force unmount.
+		var pe *platform.PlatformError
+		if errors.As(resolveErr, &pe) && pe.Code == platform.ErrServiceNotFound {
+			if err := mounter.ForceUnmount(ctx, mountPath); err != nil {
+				return nil, platform.NewPlatformError(
+					platform.ErrUnmountFailed,
+					fmt.Sprintf("Failed to force unmount %s: %v", hostname, err),
+					"Try fusermount -uz manually",
+				)
+			}
+			_ = os.Remove(mountPath)
+			return &MountResult{
+				Status:    "UNMOUNTED",
+				Hostname:  hostname,
+				MountPath: mountPath,
+				Message:   fmt.Sprintf("Force unmounted %s (service deleted) from %s", hostname, mountPath),
+			}, nil
+		}
+		return nil, resolveErr
 	}
 
 	if err := mounter.Unmount(ctx, hostname, mountPath); err != nil {
@@ -149,6 +208,7 @@ func UnmountService(
 		)
 	}
 
+	_ = os.Remove(mountPath)
 	return &MountResult{
 		Status:    "UNMOUNTED",
 		Hostname:  hostname,
@@ -195,13 +255,18 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string) Mount
 		Hostname:  hostname,
 		MountPath: mountPath,
 	}
-	mounted, err := mounter.IsMounted(ctx, mountPath)
+	state, err := mounter.CheckMount(ctx, mountPath)
 	if err != nil {
 		return info
 	}
-	info.Mounted = mounted
-	if mounted {
+	switch state {
+	case platform.MountStateActive:
+		info.Mounted = true
 		info.Writable, _ = mounter.IsWritable(ctx, mountPath)
+	case platform.MountStateStale:
+		info.Stale = true
+	case platform.MountStateNotMounted:
+		// Nothing to report.
 	}
 	return info
 }

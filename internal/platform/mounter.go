@@ -22,30 +22,37 @@ func NewSystemMounter() *SystemMounter {
 	return &SystemMounter{}
 }
 
-// IsMounted checks if a path is an active mount point.
-func (m *SystemMounter) IsMounted(ctx context.Context, path string) (bool, error) {
+// CheckMount checks the mount state of a path: active, stale, or not mounted.
+func (m *SystemMounter) CheckMount(ctx context.Context, path string) (MountState, error) {
 	err := exec.CommandContext(ctx, "mountpoint", "-q", path).Run()
 	if err == nil {
-		return true, nil
+		return MountStateActive, nil
 	}
-	// Exit code 1 means not a mount point (expected).
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return false, nil
+	if errors.As(err, &exitErr) {
+		switch exitErr.ExitCode() {
+		case 1:
+			return MountStateNotMounted, nil
+		case 32:
+			return MountStateStale, nil
+		}
 	}
 	// mountpoint command not found — try fallback.
 	if isExecNotFound(err) {
-		return m.isMountedFallback(ctx, path)
+		return m.checkMountFallback(ctx, path)
 	}
-	return false, fmt.Errorf("mountpoint check: %w", err)
+	return MountStateNotMounted, fmt.Errorf("mountpoint check: %w", err)
 }
 
-func (m *SystemMounter) isMountedFallback(ctx context.Context, path string) (bool, error) {
+func (m *SystemMounter) checkMountFallback(ctx context.Context, path string) (MountState, error) {
 	out, err := exec.CommandContext(ctx, "mount").Output()
 	if err != nil {
-		return false, fmt.Errorf("mount list: %w", err)
+		return MountStateNotMounted, fmt.Errorf("mount list: %w", err)
 	}
-	return strings.Contains(string(out), path), nil
+	if strings.Contains(string(out), path) {
+		return MountStateActive, nil
+	}
+	return MountStateNotMounted, nil
 }
 
 // Mount creates an SSHFS mount via zsc systemd unit.
@@ -87,6 +94,15 @@ func (m *SystemMounter) Unmount(ctx context.Context, hostname, path string) erro
 	// Then unmount the FUSE filesystem.
 	if err := exec.CommandContext(ctx, "fusermount", "-u", path).Run(); err != nil {
 		return fmt.Errorf("fusermount: %w", err)
+	}
+	return nil
+}
+
+// ForceUnmount performs a lazy unmount without requiring a zsc unit.
+// Used for stale mounts where the transport endpoint is disconnected.
+func (m *SystemMounter) ForceUnmount(ctx context.Context, path string) error {
+	if err := exec.CommandContext(ctx, "fusermount", "-uz", path).Run(); err != nil {
+		return fmt.Errorf("fusermount lazy unmount: %w", err)
 	}
 	return nil
 }

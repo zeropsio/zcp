@@ -11,32 +11,37 @@ import (
 
 // mockMounter tracks calls and returns configurable results.
 type mockMounter struct {
-	mounted   map[string]bool
-	writable  map[string]bool
-	mountErr  error
-	umountErr error
-	checkErr  error
+	states         map[string]platform.MountState
+	writable       map[string]bool
+	mountErr       error
+	umountErr      error
+	forceUmountErr error
+	checkErr       error
 }
 
 func newMockMounter() *mockMounter {
 	return &mockMounter{
-		mounted:  make(map[string]bool),
+		states:   make(map[string]platform.MountState),
 		writable: make(map[string]bool),
 	}
 }
 
-func (m *mockMounter) IsMounted(_ context.Context, path string) (bool, error) {
+func (m *mockMounter) CheckMount(_ context.Context, path string) (platform.MountState, error) {
 	if m.checkErr != nil {
-		return false, m.checkErr
+		return platform.MountStateNotMounted, m.checkErr
 	}
-	return m.mounted[path], nil
+	state, ok := m.states[path]
+	if !ok {
+		return platform.MountStateNotMounted, nil
+	}
+	return state, nil
 }
 
 func (m *mockMounter) Mount(_ context.Context, _, localPath string) error {
 	if m.mountErr != nil {
 		return m.mountErr
 	}
-	m.mounted[localPath] = true
+	m.states[localPath] = platform.MountStateActive
 	return nil
 }
 
@@ -44,7 +49,15 @@ func (m *mockMounter) Unmount(_ context.Context, _, path string) error {
 	if m.umountErr != nil {
 		return m.umountErr
 	}
-	delete(m.mounted, path)
+	delete(m.states, path)
+	return nil
+}
+
+func (m *mockMounter) ForceUnmount(_ context.Context, path string) error {
+	if m.forceUmountErr != nil {
+		return m.forceUmountErr
+	}
+	delete(m.states, path)
 	return nil
 }
 
@@ -109,7 +122,7 @@ func TestMountService_AlreadyMounted(t *testing.T) {
 
 	mock := platform.NewMock().WithServices(testServices())
 	mounter := newMockMounter()
-	mounter.mounted["/var/www/app"] = true
+	mounter.states["/var/www/app"] = platform.MountStateActive
 	mounter.writable["/var/www/app"] = true
 
 	result, err := MountService(context.Background(), mock, "proj-1", mounter, "app")
@@ -223,12 +236,31 @@ func TestMountService_CheckError(t *testing.T) {
 	}
 }
 
+func TestMountService_StaleRemounted(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.states["/var/www/app"] = platform.MountStateStale
+
+	result, err := MountService(context.Background(), mock, "proj-1", mounter, "app")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "MOUNTED" {
+		t.Errorf("status = %s, want MOUNTED", result.Status)
+	}
+	if result.MountPath != "/var/www/app" {
+		t.Errorf("mountPath = %s, want /var/www/app", result.MountPath)
+	}
+}
+
 func TestUnmountService_Success(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices(testServices())
 	mounter := newMockMounter()
-	mounter.mounted["/var/www/app"] = true
+	mounter.states["/var/www/app"] = platform.MountStateActive
 
 	result, err := UnmountService(context.Background(), mock, "proj-1", mounter, "app")
 	if err != nil {
@@ -262,7 +294,7 @@ func TestUnmountService_UnmountError(t *testing.T) {
 
 	mock := platform.NewMock().WithServices(testServices())
 	mounter := newMockMounter()
-	mounter.mounted["/var/www/app"] = true
+	mounter.states["/var/www/app"] = platform.MountStateActive
 	mounter.umountErr = errors.New("device busy")
 
 	_, err := UnmountService(context.Background(), mock, "proj-1", mounter, "app")
@@ -279,12 +311,72 @@ func TestUnmountService_UnmountError(t *testing.T) {
 	}
 }
 
+func TestUnmountService_StaleMountSuccess(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.states["/var/www/app"] = platform.MountStateStale
+
+	result, err := UnmountService(context.Background(), mock, "proj-1", mounter, "app")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "UNMOUNTED" {
+		t.Errorf("status = %s, want UNMOUNTED", result.Status)
+	}
+	if result.MountPath != "/var/www/app" {
+		t.Errorf("mountPath = %s, want /var/www/app", result.MountPath)
+	}
+}
+
+func TestUnmountService_StaleMountForceUnmountFails(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.states["/var/www/app"] = platform.MountStateStale
+	mounter.forceUmountErr = errors.New("permission denied")
+
+	_, err := UnmountService(context.Background(), mock, "proj-1", mounter, "app")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrUnmountFailed {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrUnmountFailed)
+	}
+}
+
+func TestUnmountService_ActiveServiceDeleted(t *testing.T) {
+	t.Parallel()
+
+	// Service exists in mount but not in API (deleted).
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-2", Name: "worker"},
+	})
+	mounter := newMockMounter()
+	mounter.states["/var/www/app"] = platform.MountStateActive
+
+	result, err := UnmountService(context.Background(), mock, "proj-1", mounter, "app")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "UNMOUNTED" {
+		t.Errorf("status = %s, want UNMOUNTED", result.Status)
+	}
+}
+
 func TestMountStatus_SingleService(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices(testServices())
 	mounter := newMockMounter()
-	mounter.mounted["/var/www/app"] = true
+	mounter.states["/var/www/app"] = platform.MountStateActive
 	mounter.writable["/var/www/app"] = true
 
 	result, err := MountStatus(context.Background(), mock, "proj-1", mounter, "app")
@@ -311,7 +403,7 @@ func TestMountStatus_AllServices(t *testing.T) {
 
 	mock := platform.NewMock().WithServices(testServices())
 	mounter := newMockMounter()
-	mounter.mounted["/var/www/app"] = true
+	mounter.states["/var/www/app"] = platform.MountStateActive
 
 	result, err := MountStatus(context.Background(), mock, "proj-1", mounter, "")
 	if err != nil {
@@ -352,5 +444,28 @@ func TestMountStatus_ServiceNotFound(t *testing.T) {
 	}
 	if pe.Code != platform.ErrServiceNotFound {
 		t.Errorf("code = %s, want %s", pe.Code, platform.ErrServiceNotFound)
+	}
+}
+
+func TestMountStatus_StaleMount(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.states["/var/www/app"] = platform.MountStateStale
+
+	result, err := MountStatus(context.Background(), mock, "proj-1", mounter, "app")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Mounts) != 1 {
+		t.Fatalf("mounts count = %d, want 1", len(result.Mounts))
+	}
+	m := result.Mounts[0]
+	if m.Mounted {
+		t.Error("stale mount should report mounted=false")
+	}
+	if !m.Stale {
+		t.Error("stale mount should report stale=true")
 	}
 }

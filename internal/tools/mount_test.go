@@ -13,32 +13,41 @@ import (
 
 // stubMounter is a minimal Mounter for tool-layer tests.
 type stubMounter struct {
-	mounted  map[string]bool
+	states   map[string]platform.MountState
 	writable map[string]bool
 	mountErr error
 }
 
 func newStubMounter() *stubMounter {
 	return &stubMounter{
-		mounted:  make(map[string]bool),
+		states:   make(map[string]platform.MountState),
 		writable: make(map[string]bool),
 	}
 }
 
-func (s *stubMounter) IsMounted(_ context.Context, path string) (bool, error) {
-	return s.mounted[path], nil
+func (s *stubMounter) CheckMount(_ context.Context, path string) (platform.MountState, error) {
+	state, ok := s.states[path]
+	if !ok {
+		return platform.MountStateNotMounted, nil
+	}
+	return state, nil
 }
 
 func (s *stubMounter) Mount(_ context.Context, _, localPath string) error {
 	if s.mountErr != nil {
 		return s.mountErr
 	}
-	s.mounted[localPath] = true
+	s.states[localPath] = platform.MountStateActive
 	return nil
 }
 
 func (s *stubMounter) Unmount(_ context.Context, _, path string) error {
-	delete(s.mounted, path)
+	delete(s.states, path)
+	return nil
+}
+
+func (s *stubMounter) ForceUnmount(_ context.Context, path string) error {
+	delete(s.states, path)
 	return nil
 }
 
@@ -86,7 +95,35 @@ func TestMountTool_Unmount(t *testing.T) {
 		{ID: "svc-1", Name: "app"},
 	})
 	mounter := newStubMounter()
-	mounter.mounted["/var/www/app"] = true
+	mounter.states["/var/www/app"] = platform.MountStateActive
+	srv := mountServer(mock, mounter)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action":          "unmount",
+		"serviceHostname": "app",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.MountResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if parsed.Status != "UNMOUNTED" {
+		t.Errorf("status = %s, want UNMOUNTED", parsed.Status)
+	}
+}
+
+func TestMountTool_UnmountStale(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "app"},
+	})
+	mounter := newStubMounter()
+	mounter.states["/var/www/app"] = platform.MountStateStale
 	srv := mountServer(mock, mounter)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
@@ -115,7 +152,7 @@ func TestMountTool_Status(t *testing.T) {
 		{ID: "svc-2", Name: "worker"},
 	})
 	mounter := newStubMounter()
-	mounter.mounted["/var/www/app"] = true
+	mounter.states["/var/www/app"] = platform.MountStateActive
 	srv := mountServer(mock, mounter)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
@@ -132,6 +169,40 @@ func TestMountTool_Status(t *testing.T) {
 	}
 	if len(parsed.Mounts) != 2 {
 		t.Fatalf("mounts count = %d, want 2", len(parsed.Mounts))
+	}
+}
+
+func TestMountTool_StatusStale(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "app"},
+	})
+	mounter := newStubMounter()
+	mounter.states["/var/www/app"] = platform.MountStateStale
+	srv := mountServer(mock, mounter)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action": "status",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.MountStatusResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if len(parsed.Mounts) != 1 {
+		t.Fatalf("mounts count = %d, want 1", len(parsed.Mounts))
+	}
+	m := parsed.Mounts[0]
+	if m.Mounted {
+		t.Error("stale mount should report mounted=false")
+	}
+	if !m.Stale {
+		t.Error("stale mount should report stale=true")
 	}
 }
 
