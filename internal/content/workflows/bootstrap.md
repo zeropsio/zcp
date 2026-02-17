@@ -188,7 +188,7 @@ Every deployment must pass this protocol before being considered complete.
 2. `zerops_process processId="<id>"` — wait for dev services RUNNING. Stage will be in READY_TO_DEPLOY — this is expected (no empty container wasted)
 3. **Mount dev**: `zerops_mount action="mount" serviceHostname="appdev"` — only dev services are mounted
 4. **Create files on mount path**: Write zerops.yml + application source files + .gitignore to `/var/www/appdev/`. Use `deployFiles: ./` in zerops.yml for dev services (deploys entire working directory). The zerops.yml `setup:` entries must match ALL service hostnames (both dev and stage)
-5. **Env var sync**: `zerops_discover includeEnvs=true` for each runtime service. Verify cross-referenced vars have real values — not empty, not literal `${...}`. If unresolved: `zerops_manage action="restart" serviceHostname="{runtime}"` → re-verify.
+5. **Env var check**: `zerops_discover includeEnvs=true` for each runtime service. Check env vars are present. Values showing `${...}` are cross-service references — this is expected, they resolve at container runtime.
 6. **Deploy to appdev**: `zerops_deploy targetService="appdev" workingDir="/var/www/appdev" includeGit=true` — local mode, reads from SSHFS mount. `-g` flag includes `.git` directory on the container. The deploy tool auto-initializes a git repo if missing
 7. **Verify appdev** — run the full 7-point verification protocol on appdev
 8. **Fix any errors on appdev** — edit files on mount path (`/var/www/appdev/`), redeploy
@@ -210,15 +210,11 @@ Every deployment must pass this protocol before being considered complete.
 
    > **CRITICAL — Subdomain:** If your import.yml includes `enableSubdomainAccess: true`, the subdomain is already enabled. Do NOT call `zerops_subdomain action="enable"` after import — it is redundant and wastes a tool call.
 
-2. **Verify environment variables are resolved:**
+2. **Check environment variables are present:**
    ```
    zerops_discover service="<runtime>" includeEnvs=true
    ```
-   Check that cross-referenced variables (e.g., `${evaldb_hostname}`) have real values — not empty, not literal `${...}`. If you see unresolved `${...}` literals:
-   ```
-   zerops_manage action="restart" serviceHostname="<runtime>"
-   # Wait 10s, then re-check with zerops_discover includeEnvs=true
-   ```
+   Check env vars are present. Values showing `${...}` are cross-service references — this is expected, they resolve at container runtime.
 
 3. **Prepare working directory for deploy:**
    `zerops_deploy` uses `zcli push` which requires a git repository. If your working directory has no `.git`:
@@ -266,7 +262,7 @@ Execute IN ORDER. Every step has a verification call — do not skip any.
 |---|--------|------|--------|
 | 1 | Check state | zerops_discover service="{hostname}" includeEnvs=true | Service exists (RUNNING for dev, READY_TO_DEPLOY for stage before first deploy) |
 | 2 | Set env vars | zerops_env action="set" serviceHostname="{hostname}" variables=[{env_vars}] | zerops_discover includeEnvs=true — vars present |
-| 3 | Verify managed svc env vars | zerops_discover service="{hostname}" includeEnvs=true | Cross-refs resolved (not empty, not literal ${{...}}) |
+| 3 | Verify managed svc env vars | zerops_discover service="{hostname}" includeEnvs=true | Cross-refs showing ${{...}} are expected — resolved at runtime, not in API |
 | 4 | Trigger deploy | zerops_deploy targetService="{hostname}" workingDir="/var/www/{devHostname}" includeGit=true | status=BUILD_TRIGGERED (local mode — reads from SSHFS mount, -g includes .git on container) |
 | 5 | Poll build completion | zerops_events serviceHostname="{hostname}" limit=5, every 10s, max 300s | Build event FINISHED |
 | 6 | Check error logs | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
@@ -286,7 +282,7 @@ then fallback to bash: zcli service log {hostname} --showBuildLogs --limit 50.
 
 Rules:
 - Every step requires its verification tool call. Do not self-report success.
-- If step 3 finds unresolved vars, call zerops_manage action="restart" serviceHostname="{hostname}" then re-verify.
+- Cross-references showing ${...} are expected — they resolve at runtime, not in API.
 - If a step fails, retry once. If it fails again, report the failure — do not skip ahead.
 - zeropsSubdomain is already a full URL — do NOT prepend https://.
 - curl flags: -sfm 10 (silent, fail on error, 10s timeout).

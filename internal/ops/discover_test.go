@@ -4,6 +4,7 @@ package ops
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -337,6 +338,142 @@ func TestDiscover_FiltersSystemServices(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDiscover_EnvRefAnnotation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		envs      []platform.EnvVar
+		wantIsRef map[string]bool // key -> expected isReference presence
+	}{
+		{
+			name: "plain values have no isReference",
+			envs: []platform.EnvVar{
+				{ID: "e1", Key: "PORT", Content: "3000"},
+				{ID: "e2", Key: "HOST", Content: "0.0.0.0"},
+			},
+			wantIsRef: map[string]bool{"PORT": false, "HOST": false},
+		},
+		{
+			name: "cross-service refs get isReference true",
+			envs: []platform.EnvVar{
+				{ID: "e1", Key: "DB_HOST", Content: "${db_hostname}"},
+				{ID: "e2", Key: "DB_PASS", Content: "${db_password}"},
+			},
+			wantIsRef: map[string]bool{"DB_HOST": true, "DB_PASS": true},
+		},
+		{
+			name: "mixed plain and ref values",
+			envs: []platform.EnvVar{
+				{ID: "e1", Key: "PORT", Content: "3000"},
+				{ID: "e2", Key: "DB_URL", Content: "postgresql://${db_hostname}:${db_port}/mydb"},
+				{ID: "e3", Key: "NODE_ENV", Content: "production"},
+			},
+			wantIsRef: map[string]bool{"PORT": false, "DB_URL": true, "NODE_ENV": false},
+		},
+		{
+			name: "dollar without braces is not a reference",
+			envs: []platform.EnvVar{
+				{ID: "e1", Key: "PRICE", Content: "$100"},
+			},
+			wantIsRef: map[string]bool{"PRICE": false},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			services := []platform.ServiceStack{
+				{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+			}
+
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+				WithServices(services).
+				WithServiceEnv("svc-1", tt.envs)
+
+			result, err := Discover(context.Background(), mock, "proj-1", "api", true)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Services) != 1 {
+				t.Fatalf("expected 1 service, got %d", len(result.Services))
+			}
+
+			for _, env := range result.Services[0].Envs {
+				key := env["key"].(string)
+				wantRef, ok := tt.wantIsRef[key]
+				if !ok {
+					continue
+				}
+				_, hasRef := env["isReference"]
+				if wantRef && !hasRef {
+					t.Errorf("env %s: expected isReference=true, not present", key)
+				}
+				if !wantRef && hasRef {
+					t.Errorf("env %s: expected no isReference, but found %v", key, env["isReference"])
+				}
+			}
+		})
+	}
+}
+
+func TestDiscover_NotesOnReferences(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithServiceEnv("svc-1", []platform.EnvVar{
+			{ID: "e1", Key: "PORT", Content: "3000"},
+			{ID: "e2", Key: "DB_HOST", Content: "${db_hostname}"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "api", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Notes) == 0 {
+		t.Fatal("expected Notes to be populated when env refs exist")
+	}
+	wantNote := "Values showing ${...} are cross-service references — resolved inside the running container, not in the API. Do not restart to resolve them."
+	if !slices.Contains(result.Notes, wantNote) {
+		t.Errorf("expected cross-reference note, got: %v", result.Notes)
+	}
+}
+
+func TestDiscover_NoNotesWithoutReferences(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithServiceEnv("svc-1", []platform.EnvVar{
+			{ID: "e1", Key: "PORT", Content: "3000"},
+			{ID: "e2", Key: "HOST", Content: "0.0.0.0"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "api", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Notes) != 0 {
+		t.Errorf("expected no Notes when no refs exist, got: %v", result.Notes)
 	}
 }
 

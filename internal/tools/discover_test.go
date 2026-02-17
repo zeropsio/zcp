@@ -113,6 +113,57 @@ func TestDiscoverTool_ServiceNotFound(t *testing.T) {
 	}
 }
 
+func TestDiscoverTool_EnvRefAnnotation(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
+		}).
+		WithServiceEnv("svc-1", []platform.EnvVar{
+			{Key: "PORT", Content: "3000"},
+			{Key: "DB_HOST", Content: "${db_hostname}"},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDiscover(srv, mock, "proj-1")
+
+	result := callTool(t, srv, "zerops_discover", map[string]any{"service": "api", "includeEnvs": true})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var dr ops.DiscoverResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &dr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+
+	// Check isReference annotation on env vars
+	if len(dr.Services[0].Envs) != 2 {
+		t.Fatalf("expected 2 envs, got %d", len(dr.Services[0].Envs))
+	}
+	for _, env := range dr.Services[0].Envs {
+		key := env["key"].(string)
+		_, hasRef := env["isReference"]
+		switch key {
+		case "PORT":
+			if hasRef {
+				t.Error("PORT should not have isReference")
+			}
+		case "DB_HOST":
+			if !hasRef {
+				t.Error("DB_HOST should have isReference=true")
+			}
+		}
+	}
+
+	// Check notes field
+	if len(dr.Notes) == 0 {
+		t.Fatal("expected notes when env refs present")
+	}
+}
+
 func TestDiscoverTool_Error(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().

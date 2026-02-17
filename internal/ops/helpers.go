@@ -120,14 +120,22 @@ func parseEnvPairs(vars []string) ([]envPair, error) {
 	return pairs, nil
 }
 
+// crossRefPattern matches Zerops cross-service env var references like ${db_hostname}.
+var crossRefPattern = regexp.MustCompile(`\$\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
+
 // envVarsToMaps converts platform env vars to a slice of maps for JSON output.
+// Values containing ${...} cross-service references are annotated with isReference: true.
 func envVarsToMaps(envs []platform.EnvVar) []map[string]any {
 	result := make([]map[string]any, len(envs))
 	for i, e := range envs {
-		result[i] = map[string]any{
+		m := map[string]any{
 			"key":   e.Key,
 			"value": e.Content,
 		}
+		if crossRefPattern.MatchString(e.Content) {
+			m["isReference"] = true
+		}
+		result[i] = m
 	}
 	return result
 }

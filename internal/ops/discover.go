@@ -10,6 +10,7 @@ import (
 type DiscoverResult struct {
 	Project  ProjectInfo   `json:"project"`
 	Services []ServiceInfo `json:"services"`
+	Notes    []string      `json:"notes,omitempty"`
 }
 
 // ProjectInfo contains basic project information.
@@ -69,6 +70,7 @@ func Discover(
 			attachEnvs(ctx, client, &info, svc.ID)
 		}
 		result.Services = []ServiceInfo{info}
+		addEnvRefNotes(result)
 		return result, nil
 	}
 
@@ -88,6 +90,7 @@ func Discover(
 		attachProjectEnvs(ctx, client, &result.Project, projectID)
 	}
 
+	addEnvRefNotes(result)
 	return result, nil
 }
 
@@ -149,4 +152,17 @@ func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, 
 		return // silently ignore env fetch errors
 	}
 	info.Envs = envVarsToMaps(envs)
+}
+
+// addEnvRefNotes appends an explanatory note if any service env contains cross-service references.
+func addEnvRefNotes(result *DiscoverResult) {
+	for _, svc := range result.Services {
+		for _, env := range svc.Envs {
+			if env["isReference"] == true {
+				result.Notes = append(result.Notes,
+					"Values showing ${...} are cross-service references — resolved inside the running container, not in the API. Do not restart to resolve them.")
+				return
+			}
+		}
+	}
 }
