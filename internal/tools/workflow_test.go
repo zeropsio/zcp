@@ -68,14 +68,14 @@ func TestWorkflowTool_Bootstrap_IncludesStacks(t *testing.T) {
 			Name:     "Node.js",
 			Category: "USER",
 			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "nodejs@22", Status: "ACTIVE"},
+				{Name: "nodejs@22", Status: statusActive},
 			},
 		},
 		{
 			Name:     "PostgreSQL",
 			Category: "STANDARD",
 			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "postgresql@16", Status: "ACTIVE"},
+				{Name: "postgresql@16", Status: statusActive},
 			},
 		},
 	})
@@ -119,7 +119,7 @@ func TestWorkflowTool_Scale_NoStacks(t *testing.T) {
 			Name:     "Node.js",
 			Category: "USER",
 			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "nodejs@22", Status: "ACTIVE"},
+				{Name: "nodejs@22", Status: statusActive},
 			},
 		},
 	})

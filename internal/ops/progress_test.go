@@ -63,9 +63,9 @@ func TestPollProcess_ImmediateFinish(t *testing.T) {
 		name   string
 		status string
 	}{
-		{name: "FINISHED", status: "FINISHED"},
-		{name: "FAILED", status: "FAILED"},
-		{name: "CANCELED", status: "CANCELED"},
+		{name: statusFinished, status: statusFinished},
+		{name: statusFailed, status: statusFailed},
+		{name: "CANCELED", status: statusCanceled},
 	}
 
 	for _, tt := range tests {
@@ -88,14 +88,14 @@ func TestPollProcess_ImmediateFinish(t *testing.T) {
 func TestPollProcess_PollThenFinish(t *testing.T) {
 	t.Parallel()
 
-	seq := newSequencer("PENDING", "RUNNING", "FINISHED")
+	seq := newSequencer("PENDING", "RUNNING", statusFinished)
 	ctx := context.Background()
 
 	proc, err := pollProcess(ctx, seq, "proc-1", nil, testConfig())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if proc.Status != "FINISHED" {
+	if proc.Status != statusFinished {
 		t.Errorf("status = %s, want FINISHED", proc.Status)
 	}
 }
@@ -104,7 +104,7 @@ func TestPollProcess_Failed(t *testing.T) {
 	t.Parallel()
 
 	reason := "build error"
-	s := newSequencer("PENDING", "FAILED")
+	s := newSequencer("PENDING", statusFailed)
 	s.sequence[1].FailReason = &reason
 	ctx := context.Background()
 
@@ -112,7 +112,7 @@ func TestPollProcess_Failed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if proc.Status != "FAILED" {
+	if proc.Status != statusFailed {
 		t.Errorf("status = %s, want FAILED", proc.Status)
 	}
 	if proc.FailReason == nil || *proc.FailReason != reason {
@@ -145,7 +145,7 @@ func TestPollProcess_ContextCanceled(t *testing.T) {
 func TestPollProcess_CallbackCalled(t *testing.T) {
 	t.Parallel()
 
-	seq := newSequencer("PENDING", "RUNNING", "FINISHED")
+	seq := newSequencer("PENDING", "RUNNING", statusFinished)
 	ctx := context.Background()
 
 	var mu sync.Mutex
@@ -163,7 +163,7 @@ func TestPollProcess_CallbackCalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if proc.Status != "FINISHED" {
+	if proc.Status != statusFinished {
 		t.Errorf("status = %s, want FINISHED", proc.Status)
 	}
 
@@ -178,7 +178,7 @@ func TestPollProcess_CallbackCalled(t *testing.T) {
 func TestPollProcess_NilCallback(t *testing.T) {
 	t.Parallel()
 
-	seq := newSequencer("FINISHED")
+	seq := newSequencer(statusFinished)
 	ctx := context.Background()
 
 	// Must not panic with nil callback.
@@ -186,7 +186,7 @@ func TestPollProcess_NilCallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if proc.Status != "FINISHED" {
+	if proc.Status != statusFinished {
 		t.Errorf("status = %s, want FINISHED", proc.Status)
 	}
 }
@@ -274,14 +274,14 @@ func newBuildSequencer(statuses ...string) *appVersionSequencer {
 func TestPollBuild_ImmediateActive(t *testing.T) {
 	t.Parallel()
 
-	seq := newBuildSequencer("ACTIVE")
+	seq := newBuildSequencer(statusActive)
 	ctx := context.Background()
 
 	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event.Status != "ACTIVE" {
+	if event.Status != statusActive {
 		t.Errorf("status = %s, want ACTIVE", event.Status)
 	}
 }
@@ -289,14 +289,14 @@ func TestPollBuild_ImmediateActive(t *testing.T) {
 func TestPollBuild_ImmediateFailed(t *testing.T) {
 	t.Parallel()
 
-	seq := newBuildSequencer("BUILD_FAILED")
+	seq := newBuildSequencer(statusBuildFailed)
 	ctx := context.Background()
 
 	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event.Status != "BUILD_FAILED" {
+	if event.Status != statusBuildFailed {
 		t.Errorf("status = %s, want BUILD_FAILED", event.Status)
 	}
 }
@@ -304,14 +304,14 @@ func TestPollBuild_ImmediateFailed(t *testing.T) {
 func TestPollBuild_BuildingThenActive(t *testing.T) {
 	t.Parallel()
 
-	seq := newBuildSequencer("BUILDING", "BUILDING", "ACTIVE")
+	seq := newBuildSequencer(statusBuilding, statusBuilding, statusActive)
 	ctx := context.Background()
 
 	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event.Status != "ACTIVE" {
+	if event.Status != statusActive {
 		t.Errorf("status = %s, want ACTIVE", event.Status)
 	}
 }
@@ -329,7 +329,7 @@ func TestPollBuild_NoEventThenAppears(t *testing.T) {
 					ID:             "av-1",
 					ProjectID:      "proj-1",
 					ServiceStackID: "svc-1",
-					Status:         "ACTIVE",
+					Status:         statusActive,
 					Sequence:       1,
 					Created:        "2025-01-01T00:00:00Z",
 					LastUpdate:     "2025-01-01T00:00:00Z",
@@ -343,7 +343,7 @@ func TestPollBuild_NoEventThenAppears(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event.Status != "ACTIVE" {
+	if event.Status != statusActive {
 		t.Errorf("status = %s, want ACTIVE", event.Status)
 	}
 }
@@ -351,7 +351,7 @@ func TestPollBuild_NoEventThenAppears(t *testing.T) {
 func TestPollBuild_Timeout(t *testing.T) {
 	t.Parallel()
 
-	seq := newBuildSequencer("BUILDING") // Never terminates.
+	seq := newBuildSequencer(statusBuilding) // Never terminates.
 	ctx := context.Background()
 
 	cfg := testConfig()
@@ -374,7 +374,7 @@ func TestPollBuild_Timeout(t *testing.T) {
 func TestPollBuild_ContextCanceled(t *testing.T) {
 	t.Parallel()
 
-	seq := newBuildSequencer("BUILDING")
+	seq := newBuildSequencer(statusBuilding)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
@@ -416,14 +416,14 @@ func TestPollBuild_FiltersByServiceID(t *testing.T) {
 					ID:             "av-other",
 					ProjectID:      "proj-1",
 					ServiceStackID: "svc-1",
-					Status:         "BUILDING",
+					Status:         statusBuilding,
 					Sequence:       1,
 				},
 				{
 					ID:             "av-target",
 					ProjectID:      "proj-1",
 					ServiceStackID: "svc-2",
-					Status:         "ACTIVE",
+					Status:         statusActive,
 					Sequence:       2,
 				},
 			},
@@ -438,7 +438,7 @@ func TestPollBuild_FiltersByServiceID(t *testing.T) {
 	if event.ID != "av-target" {
 		t.Errorf("event ID = %s, want av-target", event.ID)
 	}
-	if event.Status != "ACTIVE" {
+	if event.Status != statusActive {
 		t.Errorf("status = %s, want ACTIVE", event.Status)
 	}
 }
@@ -446,7 +446,7 @@ func TestPollBuild_FiltersByServiceID(t *testing.T) {
 func TestPollBuild_CallbackCalled(t *testing.T) {
 	t.Parallel()
 
-	seq := newBuildSequencer("BUILDING", "ACTIVE")
+	seq := newBuildSequencer(statusBuilding, statusActive)
 	ctx := context.Background()
 
 	var mu sync.Mutex
@@ -464,7 +464,7 @@ func TestPollBuild_CallbackCalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event.Status != "ACTIVE" {
+	if event.Status != statusActive {
 		t.Errorf("status = %s, want ACTIVE", event.Status)
 	}
 
@@ -480,14 +480,14 @@ func TestPollBuild_PublicFunction(t *testing.T) {
 	t.Parallel()
 
 	// Immediate ACTIVE — no actual waiting needed.
-	seq := newBuildSequencer("ACTIVE")
+	seq := newBuildSequencer(statusActive)
 	ctx := context.Background()
 
 	event, err := PollBuild(ctx, seq, "proj-1", "svc-1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if event.Status != "ACTIVE" {
+	if event.Status != statusActive {
 		t.Errorf("status = %s, want ACTIVE", event.Status)
 	}
 }
@@ -516,14 +516,14 @@ func TestPollProcess_PublicFunction(t *testing.T) {
 	t.Parallel()
 
 	// Immediate finish — no actual waiting needed.
-	seq := newSequencer("FINISHED")
+	seq := newSequencer(statusFinished)
 	ctx := context.Background()
 
 	proc, err := PollProcess(ctx, seq, "proc-1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if proc.Status != "FINISHED" {
+	if proc.Status != statusFinished {
 		t.Errorf("status = %s, want FINISHED", proc.Status)
 	}
 }

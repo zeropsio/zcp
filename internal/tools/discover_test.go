@@ -14,9 +14,9 @@ import (
 func TestDiscoverTool_Basic(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "api", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
+			{ID: "svc-1", Name: "api", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -43,10 +43,10 @@ func TestDiscoverTool_Basic(t *testing.T) {
 func TestDiscoverTool_WithService(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "api", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
-			{ID: "svc-2", Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+			{ID: "svc-1", Name: "api", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
+			{ID: "svc-2", Name: "db", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -73,9 +73,9 @@ func TestDiscoverTool_WithService(t *testing.T) {
 func TestDiscoverTool_WithEnvs(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "api", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
+			{ID: "svc-1", Name: "api", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
 		}).
 		WithServiceEnv("svc-1", []platform.EnvVar{{Key: "PORT", Content: "3000"}})
 
@@ -100,7 +100,7 @@ func TestDiscoverTool_WithEnvs(t *testing.T) {
 func TestDiscoverTool_ServiceNotFound(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices([]platform.ServiceStack{})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)

@@ -21,14 +21,14 @@ func TestEvents_MergedTimeline(t *testing.T) {
 		{
 			ID:            "p1",
 			ActionName:    "serviceStackStart",
-			Status:        "FINISHED",
+			Status:        statusFinished,
 			Created:       "2024-01-01T00:03:00Z",
 			ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "api"}},
 		},
 		{
 			ID:            "p2",
 			ActionName:    "serviceStackRestart",
-			Status:        "FINISHED",
+			Status:        statusFinished,
 			Created:       "2024-01-01T00:01:00Z",
 			ServiceStacks: []platform.ServiceStackRef{{ID: "svc-2", Name: "db"}},
 		},
@@ -114,14 +114,14 @@ func TestEvents_FilterByService(t *testing.T) {
 		{
 			ID:            "p1",
 			ActionName:    "serviceStackStart",
-			Status:        "FINISHED",
+			Status:        statusFinished,
 			Created:       "2024-01-01T00:01:00Z",
 			ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "api"}},
 		},
 		{
 			ID:            "p2",
 			ActionName:    "serviceStackRestart",
-			Status:        "FINISHED",
+			Status:        statusFinished,
 			Created:       "2024-01-01T00:02:00Z",
 			ServiceStacks: []platform.ServiceStackRef{{ID: "svc-2", Name: "db"}},
 		},
@@ -155,7 +155,7 @@ func TestEvents_LimitApplied(t *testing.T) {
 		processes[i] = platform.ProcessEvent{
 			ID:            fmt.Sprintf("p%d", i),
 			ActionName:    "serviceStackStart",
-			Status:        "FINISHED",
+			Status:        statusFinished,
 			Created:       fmt.Sprintf("2024-01-01T00:00:%02dZ", i),
 			ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1"}},
 		}

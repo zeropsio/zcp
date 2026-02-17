@@ -22,7 +22,7 @@ func TestDiscover_AllServices(t *testing.T) {
 	}
 
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services)
 
 	result, err := Discover(context.Background(), mock, "proj-1", "", false)
@@ -55,7 +55,7 @@ func TestDiscover_SingleService_Found(t *testing.T) {
 	}
 
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services)
 
 	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
@@ -82,7 +82,7 @@ func TestDiscover_SingleService_NotFound(t *testing.T) {
 	}
 
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services)
 
 	_, err := Discover(context.Background(), mock, "proj-1", "missing", false)
@@ -109,7 +109,7 @@ func TestDiscover_WithEnvs(t *testing.T) {
 	}
 
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
 		WithServiceEnv("svc-1", []platform.EnvVar{
 			{ID: "e1", Key: "PORT", Content: "3000"},
@@ -141,7 +141,7 @@ func TestDiscover_EnvFetchError_Graceful(t *testing.T) {
 	}
 
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
 		WithError("GetServiceEnv", fmt.Errorf("env fetch error"))
 
@@ -167,7 +167,7 @@ func TestDiscover_ProjectEnvs_NoFilter(t *testing.T) {
 	}
 
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
 		WithProjectEnv([]platform.EnvVar{
 			{ID: "pe1", Key: "GLOBAL_KEY", Content: "global_val"},
@@ -198,7 +198,7 @@ func TestDiscover_ProjectEnvs_WithServiceFilter(t *testing.T) {
 	}
 
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
 		WithProjectEnv([]platform.EnvVar{
 			{ID: "pe1", Key: "GLOBAL_KEY", Content: "global_val"},
@@ -223,7 +223,7 @@ func TestDiscover_ProjectEnvFetchError_Graceful(t *testing.T) {
 	}
 
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
 		WithError("GetProjectEnv", fmt.Errorf("project env fetch error"))
 
@@ -244,7 +244,7 @@ func TestDiscover_FiltersCoreService(t *testing.T) {
 	t.Parallel()
 
 	services := []platform.ServiceStack{
-		{ID: "svc-0", Name: "core", ProjectID: "proj-1", Status: "ACTIVE",
+		{ID: "svc-0", Name: "core", ProjectID: "proj-1", Status: statusActive,
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "core"}},
 		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
@@ -253,7 +253,7 @@ func TestDiscover_FiltersCoreService(t *testing.T) {
 	}
 
 	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: "ACTIVE"}).
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services)
 
 	result, err := Discover(context.Background(), mock, "proj-1", "", false)

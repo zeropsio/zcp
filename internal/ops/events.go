@@ -55,18 +55,18 @@ var actionNameMap = map[string]string{
 
 // processHintMap maps process statuses to interpretation hints.
 var processHintMap = map[string]string{
-	"FINISHED": "COMPLETE: Process finished successfully.",
-	"RUNNING":  "IN_PROGRESS: Process still running.",
-	"FAILED":   "FAILED: Process failed.",
-	"PENDING":  "IN_PROGRESS: Process queued.",
+	statusFinished: "COMPLETE: Process finished successfully.",
+	"RUNNING":      "IN_PROGRESS: Process still running.",
+	statusFailed:   "FAILED: Process failed.",
+	"PENDING":      "IN_PROGRESS: Process queued.",
 }
 
 // appVersionHintMap maps app version statuses to interpretation hints.
 var appVersionHintMap = map[string]string{
-	"ACTIVE":       "DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.",
-	"BUILDING":     "IN_PROGRESS: Build is running. Continue polling.",
-	"BUILD_FAILED": "FAILED: Build failed. Check build logs with zerops_logs severity=error.",
-	"DEPLOYING":    "IN_PROGRESS: Deploy is running. Continue polling.",
+	statusActive:      "DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.",
+	statusBuilding:    "IN_PROGRESS: Build is running. Continue polling.",
+	statusBuildFailed: "FAILED: Build failed. Check build logs with zerops_logs severity=error.",
+	"DEPLOYING":       "IN_PROGRESS: Deploy is running. Continue polling.",
 }
 
 // statusHint returns an interpretation hint for the given status and hint map.

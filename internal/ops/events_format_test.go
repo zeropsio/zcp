@@ -81,7 +81,7 @@ func TestEvents_StatusHints(t *testing.T) {
 		{
 			name: "appVersion ACTIVE uppercase",
 			appVer: &platform.AppVersionEvent{
-				ID: "av1", ServiceStackID: "svc-1", Status: "ACTIVE",
+				ID: "av1", ServiceStackID: "svc-1", Status: statusActive,
 				Created: "2024-01-01T00:01:00Z",
 			},
 			wantHint: "DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.",
@@ -97,7 +97,7 @@ func TestEvents_StatusHints(t *testing.T) {
 		{
 			name: "appVersion BUILDING",
 			appVer: &platform.AppVersionEvent{
-				ID: "av3", ServiceStackID: "svc-1", Status: "BUILDING",
+				ID: "av3", ServiceStackID: "svc-1", Status: statusBuilding,
 				Created: "2024-01-01T00:03:00Z",
 			},
 			wantHint: "IN_PROGRESS: Build is running. Continue polling.",
@@ -105,7 +105,7 @@ func TestEvents_StatusHints(t *testing.T) {
 		{
 			name: "appVersion BUILD_FAILED",
 			appVer: &platform.AppVersionEvent{
-				ID: "av4", ServiceStackID: "svc-1", Status: "BUILD_FAILED",
+				ID: "av4", ServiceStackID: "svc-1", Status: statusBuildFailed,
 				Created: "2024-01-01T00:04:00Z",
 			},
 			wantHint: "FAILED: Build failed. Check build logs with zerops_logs severity=error.",
@@ -121,7 +121,7 @@ func TestEvents_StatusHints(t *testing.T) {
 		{
 			name: "process FINISHED",
 			process: &platform.ProcessEvent{
-				ID: "p1", ActionName: "serviceStackStart", Status: "FINISHED",
+				ID: "p1", ActionName: "serviceStackStart", Status: statusFinished,
 				Created:       "2024-01-01T00:06:00Z",
 				ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "api"}},
 			},
@@ -139,7 +139,7 @@ func TestEvents_StatusHints(t *testing.T) {
 		{
 			name: "process FAILED",
 			process: &platform.ProcessEvent{
-				ID: "p3", ActionName: "serviceStackStart", Status: "FAILED",
+				ID: "p3", ActionName: "serviceStackStart", Status: statusFailed,
 				Created:       "2024-01-01T00:08:00Z",
 				ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "api"}},
 			},

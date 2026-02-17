@@ -40,11 +40,11 @@ func TestGetProcessStatus(t *testing.T) {
 				WithProcess(&platform.Process{
 					ID:         "proc-2",
 					ActionName: "start",
-					Status:     "FAILED",
+					Status:     statusFailed,
 					Created:    "2024-01-01T00:00:00Z",
 					FailReason: &failReason,
 				}),
-			wantStatus: "FAILED",
+			wantStatus: statusFailed,
 			wantFail:   &failReason,
 		},
 		{
@@ -126,7 +126,7 @@ func TestCancelProcess(t *testing.T) {
 			mock: platform.NewMock().
 				WithProcess(&platform.Process{
 					ID:     "proc-2",
-					Status: "FINISHED",
+					Status: statusFinished,
 				}),
 			wantErr: platform.ErrProcessAlreadyTerminal,
 		},
@@ -136,7 +136,7 @@ func TestCancelProcess(t *testing.T) {
 			mock: platform.NewMock().
 				WithProcess(&platform.Process{
 					ID:     "proc-3",
-					Status: "FAILED",
+					Status: statusFailed,
 				}),
 			wantErr: platform.ErrProcessAlreadyTerminal,
 		},

@@ -24,7 +24,7 @@ func TestStackTypeCache_FreshFetch(t *testing.T) {
 			name: "returns_fetched_types",
 			types: []platform.ServiceStackType{
 				{Name: "Node.js", Category: "CORE", Versions: []platform.ServiceStackTypeVersion{
-					{Name: "nodejs@22", IsBuild: false, Status: "ACTIVE"},
+					{Name: "nodejs@22", IsBuild: false, Status: statusActive},
 				}},
 			},
 			wantCount: 1,

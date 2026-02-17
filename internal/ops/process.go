@@ -8,9 +8,12 @@ import (
 )
 
 const (
-	statusFinished = "FINISHED"
-	statusFailed   = "FAILED"
-	statusCanceled = "CANCELED"
+	statusActive      = "ACTIVE"
+	statusBuilding    = "BUILDING"
+	statusBuildFailed = "BUILD_FAILED"
+	statusFinished    = "FINISHED"
+	statusFailed      = "FAILED"
+	statusCanceled    = "CANCELED"
 )
 
 // ProcessStatusResult contains the status of a process.

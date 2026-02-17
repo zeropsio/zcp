@@ -18,7 +18,7 @@ func TestEventsTool_Basic(t *testing.T) {
 			{ID: "svc-1", Name: "api"},
 		}).
 		WithProcessEvents([]platform.ProcessEvent{
-			{ID: "p-1", ActionName: "serviceStackStart", Status: "FINISHED", Created: "2025-01-01T00:00:00Z",
+			{ID: "p-1", ActionName: "serviceStackStart", Status: statusFinished, Created: "2025-01-01T00:00:00Z",
 				ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "api"}}},
 		}).
 		WithAppVersionEvents([]platform.AppVersionEvent{})
@@ -49,9 +49,9 @@ func TestEventsTool_WithService(t *testing.T) {
 			{ID: "svc-2", Name: "db"},
 		}).
 		WithProcessEvents([]platform.ProcessEvent{
-			{ID: "p-1", ActionName: "serviceStackStart", Status: "FINISHED", Created: "2025-01-01T00:00:00Z",
+			{ID: "p-1", ActionName: "serviceStackStart", Status: statusFinished, Created: "2025-01-01T00:00:00Z",
 				ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "api"}}},
-			{ID: "p-2", ActionName: "serviceStackStart", Status: "FINISHED", Created: "2025-01-01T01:00:00Z",
+			{ID: "p-2", ActionName: "serviceStackStart", Status: statusFinished, Created: "2025-01-01T01:00:00Z",
 				ServiceStacks: []platform.ServiceStackRef{{ID: "svc-2", Name: "db"}}},
 		}).
 		WithAppVersionEvents([]platform.AppVersionEvent{})

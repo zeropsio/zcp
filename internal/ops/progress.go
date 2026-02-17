@@ -124,7 +124,7 @@ func pollBuild(
 }
 
 func isBuildTerminal(status string) bool {
-	return status == "ACTIVE" || status == "BUILD_FAILED"
+	return status == statusActive || status == statusBuildFailed
 }
 
 func pollProcess(

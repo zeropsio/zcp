@@ -167,7 +167,7 @@ func TestImport_VersionWarnings(t *testing.T) {
 			Name:     "Node.js",
 			Category: "USER",
 			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "nodejs@22", Status: "ACTIVE"},
+				{Name: "nodejs@22", Status: statusActive},
 			},
 		},
 	}
@@ -202,7 +202,7 @@ func TestImport_ModeWarnings(t *testing.T) {
 			Name:     "PostgreSQL",
 			Category: "STANDARD",
 			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "postgresql@16", Status: "ACTIVE"},
+				{Name: "postgresql@16", Status: statusActive},
 			},
 		},
 	}
