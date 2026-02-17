@@ -240,33 +240,103 @@ func TestDiscover_ProjectEnvFetchError_Graceful(t *testing.T) {
 	}
 }
 
-func TestDiscover_FiltersCoreService(t *testing.T) {
+func TestDiscover_FiltersSystemServices(t *testing.T) {
 	t.Parallel()
 
-	services := []platform.ServiceStack{
-		{ID: "svc-0", Name: "core", ProjectID: "proj-1", Status: statusActive,
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "core"}},
-		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-		{ID: "svc-2", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+	tests := []struct {
+		name            string
+		services        []platform.ServiceStack
+		wantCount       int
+		wantNoHostnames []string
+	}{
+		{
+			name: "filters CORE category",
+			services: []platform.ServiceStack{
+				{ID: "svc-0", Name: "core", ProjectID: "proj-1", Status: statusActive,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName:  "core",
+						ServiceStackTypeCategoryName: "CORE",
+					}},
+				{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName:  "nodejs@22",
+						ServiceStackTypeCategoryName: "USER",
+					}},
+			},
+			wantCount:       1,
+			wantNoHostnames: []string{"core"},
+		},
+		{
+			name: "filters BUILD category",
+			services: []platform.ServiceStack{
+				{ID: "svc-0", Name: "buildappdevv1771328058", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName:  "ubuntu-build@1",
+						ServiceStackTypeCategoryName: "BUILD",
+					}},
+				{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName:  "nodejs@22",
+						ServiceStackTypeCategoryName: "USER",
+					}},
+			},
+			wantCount:       1,
+			wantNoHostnames: []string{"buildappdevv1771328058"},
+		},
+		{
+			name: "filters all system categories at once",
+			services: []platform.ServiceStack{
+				{ID: "s1", Name: "core", ProjectID: "proj-1", Status: statusActive,
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "CORE"}},
+				{ID: "s2", Name: "builder", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "BUILD"}},
+				{ID: "s3", Name: "internal-svc", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "INTERNAL"}},
+				{ID: "s4", Name: "prep-runtime", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "PREPARE_RUNTIME"}},
+				{ID: "s5", Name: "balancer", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "HTTP_L7_BALANCER"}},
+				{ID: "s6", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName:  "nodejs@22",
+						ServiceStackTypeCategoryName: "USER",
+					}},
+				{ID: "s7", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName:  "postgresql@16",
+						ServiceStackTypeCategoryName: "STANDARD",
+					}},
+			},
+			wantCount:       2,
+			wantNoHostnames: []string{"core", "builder", "internal-svc", "prep-runtime", "balancer"},
+		},
 	}
 
-	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
-		WithServices(services)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	result, err := Discover(context.Background(), mock, "proj-1", "", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.Services) != 2 {
-		t.Fatalf("expected 2 services (core filtered), got %d", len(result.Services))
-	}
-	for _, svc := range result.Services {
-		if svc.Type == "core" {
-			t.Error("core service should be filtered from discover results")
-		}
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+				WithServices(tt.services)
+
+			result, err := Discover(context.Background(), mock, "proj-1", "", false)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Services) != tt.wantCount {
+				t.Fatalf("expected %d services, got %d", tt.wantCount, len(result.Services))
+			}
+			hostnames := make(map[string]bool)
+			for _, svc := range result.Services {
+				hostnames[svc.Hostname] = true
+			}
+			for _, forbidden := range tt.wantNoHostnames {
+				if hostnames[forbidden] {
+					t.Errorf("system service %q should be filtered", forbidden)
+				}
+			}
+		})
 	}
 }
 

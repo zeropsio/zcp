@@ -68,6 +68,9 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID 
 	var b strings.Builder
 	b.WriteString("Current services:\n")
 	for _, svc := range services {
+		if svc.IsSystem() {
+			continue
+		}
 		fmt.Fprintf(&b, "- %s (%s) — %s\n",
 			svc.Name,
 			svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,

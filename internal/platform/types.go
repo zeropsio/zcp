@@ -35,7 +35,22 @@ type ServiceStack struct {
 
 // ServiceTypeInfo contains service type details.
 type ServiceTypeInfo struct {
-	ServiceStackTypeVersionName string `json:"serviceStackTypeVersionName"` // e.g. "nodejs@22"
+	ServiceStackTypeVersionName  string `json:"serviceStackTypeVersionName"`  // e.g. "nodejs@22"
+	ServiceStackTypeCategoryName string `json:"serviceStackTypeCategoryName"` // e.g. "USER", "CORE", "BUILD"
+}
+
+// systemCategories are internal service categories hidden from user-facing outputs.
+var systemCategories = map[string]bool{
+	"CORE":             true,
+	"BUILD":            true,
+	"INTERNAL":         true,
+	"PREPARE_RUNTIME":  true,
+	"HTTP_L7_BALANCER": true,
+}
+
+// IsSystem returns true if the service belongs to a system/internal category.
+func (s *ServiceStack) IsSystem() bool {
+	return systemCategories[s.ServiceStackTypeInfo.ServiceStackTypeCategoryName]
 }
 
 // Port represents a service port.

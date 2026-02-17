@@ -157,6 +157,37 @@ func TestBuildInstructions_WithServices(t *testing.T) {
 	}
 }
 
+func TestBuildInstructions_FiltersSystemServices(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{Name: "core", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName: "core", ServiceStackTypeCategoryName: "CORE"}},
+		{Name: "buildappdevv123", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName: "ubuntu-build@1", ServiceStackTypeCategoryName: "BUILD"}},
+		{Name: "api", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+		{Name: "db", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}},
+	})
+
+	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{})
+
+	// User services should appear.
+	if !strings.Contains(inst, "api") {
+		t.Error("instructions should contain user service 'api'")
+	}
+	if !strings.Contains(inst, "db") {
+		t.Error("instructions should contain user service 'db'")
+	}
+	// System services should NOT appear.
+	if strings.Contains(inst, "core") {
+		t.Error("instructions should not contain system service 'core'")
+	}
+	if strings.Contains(inst, "buildappdevv123") {
+		t.Error("instructions should not contain system service 'buildappdevv123'")
+	}
+}
+
 func TestBuildInstructions_FreshProject(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices(nil)

@@ -74,7 +74,7 @@ func Discover(
 
 	result.Services = make([]ServiceInfo, 0, len(services))
 	for i := range services {
-		if isHiddenServiceType(services[i].ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		if services[i].IsSystem() {
 			continue
 		}
 		info := buildSummaryServiceInfo(&services[i])
@@ -89,15 +89,6 @@ func Discover(
 	}
 
 	return result, nil
-}
-
-// hiddenServiceTypes are internal types excluded from discover listings.
-var hiddenServiceTypes = map[string]bool{
-	"core": true,
-}
-
-func isHiddenServiceType(typeName string) bool {
-	return hiddenServiceTypes[typeName]
 }
 
 func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {

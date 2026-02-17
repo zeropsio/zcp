@@ -100,7 +100,8 @@ func mapEsServiceStack(s output.EsServiceStack) ServiceStack {
 		Name:      s.Name.String(),
 		ProjectID: s.ProjectId.TypedString().String(),
 		ServiceStackTypeInfo: ServiceTypeInfo{
-			ServiceStackTypeVersionName: s.ServiceStackTypeInfo.ServiceStackTypeVersionName.String(),
+			ServiceStackTypeVersionName:  s.ServiceStackTypeInfo.ServiceStackTypeVersionName.String(),
+			ServiceStackTypeCategoryName: s.ServiceStackTypeInfo.ServiceStackTypeCategory.String(),
 		},
 		Status:            s.Status.String(),
 		Mode:              mode,
@@ -122,7 +123,8 @@ func mapFullServiceStack(s output.ServiceStack) ServiceStack {
 		Name:      s.Name.String(),
 		ProjectID: s.ProjectId.TypedString().String(),
 		ServiceStackTypeInfo: ServiceTypeInfo{
-			ServiceStackTypeVersionName: s.ServiceStackTypeInfo.ServiceStackTypeVersionName.String(),
+			ServiceStackTypeVersionName:  s.ServiceStackTypeInfo.ServiceStackTypeVersionName.String(),
+			ServiceStackTypeCategoryName: s.ServiceStackTypeInfo.ServiceStackTypeCategory.String(),
 		},
 		Status:            s.Status.String(),
 		Mode:              s.Mode.String(),
