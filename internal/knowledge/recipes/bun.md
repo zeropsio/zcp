@@ -45,12 +45,11 @@ services:
     type: bun@1.2
     priority: 5
     enableSubdomainAccess: true
-    envVariables:
+    envSecrets:
       DATABASE_HOST: db
-      DATABASE_PORT: "5432"
+      DATABASE_PORT: ${db_port}
       DATABASE_NAME: ${db_dbName}
       DATABASE_USER: ${db_user}
-    envSecrets:
       DATABASE_PASSWORD: ${db_password}
 ```
 
@@ -74,4 +73,5 @@ Bun.serve({
 - Don't deploy `node_modules` if using bundled output (`bun build --outdir dist`)
 - For source deploy (this recipe): include `node_modules` in deployFiles
 - PostgreSQL connection: use `${db_user}:${db_password}@db:5432/${db_dbName}` pattern
-- Use `envSecrets` for passwords, `envVariables` for non-sensitive config
+- In import.yml: use `envSecrets` for ALL env vars (no `envVariables` at service level). In zerops.yml: use `run.envVariables` for non-sensitive config
+- `bun.lockb` may not exist on fresh bootstrap (no local `bun install` yet) — if missing, omit from deployFiles or run `bun install` locally first

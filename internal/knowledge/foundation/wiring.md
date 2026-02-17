@@ -4,22 +4,22 @@
 wiring, connection string, env vars, envSecrets, envVariables, cross-service, reference, postgresql, mariadb, valkey, elasticsearch, object storage, kafka, nats, meilisearch, clickhouse, qdrant, typesense, shared storage, keydb
 
 ## TL;DR
-Cross-service wiring templates for all 13 Zerops managed services. Variable reference syntax, envSecrets vs envVariables rules, and concrete connection patterns.
+Cross-service wiring templates for all 13 Zerops managed services. Variable reference syntax, envSecrets rules, and concrete connection patterns.
 
 ## Syntax Rules
 
 - **`{h}` placeholder**: represents the service hostname you are wiring to. In actual YAML, replace `{h}` with the real hostname (e.g., `DB_HOST: mydb`). For variable references, use `${hostname_varname}` syntax
 - **Reference**: `${hostname_variablename}` — dashes in hostnames become underscores
 - **envSecrets**: passwords, tokens, keys (blurred in GUI by default, editable/deletable)
-- **envVariables**: config, URLs, flags (visible in GUI)
-- **Hostname = DNS**: use hostname directly for connections (`db:5432`, NOT `${db_hostname}:5432`)
+- **import.yml service level**: ONLY `envSecrets` and `dotEnvSecrets` exist. There is NO `envVariables` at service level (only at project level). Put ALL connection vars in `envSecrets`.
+- **Hostname = DNS**: use hostname directly for host (`{h}`, NOT `${h_hostname}`), but use `${h_port}` for port
 - **Internal**: ALWAYS `http://` — NEVER `https://` (SSL at L7 balancer)
 - **Project vars**: auto-inherited by all services — do NOT re-reference (creates shadow)
 - **Password sync**: changing DB password in GUI does NOT update env vars (manual sync)
 
 ## CRITICAL: Wire credentials in import.yml
 
-Managed services auto-generate credentials but they are NOT automatically available to runtime services. You MUST wire them via `envVariables`/`envSecrets` on the **runtime service** in import.yml:
+Managed services auto-generate credentials but they are NOT automatically available to runtime services. You MUST wire them via `envSecrets` on the **runtime service** in import.yml:
 
 ```yaml
 services:
@@ -30,38 +30,37 @@ services:
 
   - hostname: myapp
     type: nodejs@22
-    envVariables:
-      DB_HOST: mydb
-      DB_PORT: "3306"
-      DB_NAME: ${mydb_dbName}
     envSecrets:
-      DB_PASSWORD: ${mydb_password}
+      DB_HOST: mydb
+      DB_PORT: ${mydb_port}
+      DB_NAME: ${mydb_dbName}
       DB_USER: ${mydb_user}
+      DB_PASSWORD: ${mydb_password}
 ```
 
 Without this wiring, the runtime service has no way to connect to managed services.
 
 ## PostgreSQL
-**VARS**: `DB_HOST:{h}` `DB_PORT:5432` `DB_NAME:${h_dbName}`
-**SECRETS**: `DATABASE_URL:postgresql://${h_user}:${h_password}@{h}:5432/${h_dbName}`
+**VARS**: `DB_HOST:{h}` `DB_PORT:${h_port}` `DB_NAME:${h_dbName}`
+**SECRETS**: `DATABASE_URL:postgresql://${h_user}:${h_password}@{h}:${h_port}/${h_dbName}`
 **NOTE**: Some libs need `postgres://` instead of `postgresql://`. HA read replicas on port 5433.
 
 ## MariaDB
-**VARS**: `DB_HOST:{h}` `DB_PORT:3306` `DB_NAME:${h_dbName}`
-**SECRETS**: `DATABASE_URL:mysql://${h_user}:${h_password}@{h}:3306/${h_dbName}`
+**VARS**: `DB_HOST:{h}` `DB_PORT:${h_port}` `DB_NAME:${h_dbName}`
+**SECRETS**: `DATABASE_URL:mysql://${h_user}:${h_password}@{h}:${h_port}/${h_dbName}`
 
 ## Valkey
-**SECRETS**: `REDIS_URL:redis://${h_user}:${h_password}@{h}:6379`
-**NOTE**: TLS: `rediss://...@{h}:6380`. Read replicas: port 7000 (non-TLS), 7001 (TLS).
+**SECRETS**: `REDIS_URL:redis://${h_user}:${h_password}@{h}:${h_port}`
+**NOTE**: TLS: `rediss://${h_user}:${h_password}@{h}:6380`. Read replicas: port 7000 (non-TLS), 7001 (TLS).
 
 ## KeyDB
-**SECRETS**: `REDIS_URL:redis://${h_user}:${h_password}@{h}:6379`
+**SECRETS**: `REDIS_URL:redis://${h_user}:${h_password}@{h}:${h_port}`
 **NOTE**: Same as Valkey. DEPRECATED — migrate to Valkey.
 
 ## Elasticsearch
-**VARS**: `ES_HOST:{h}` `ES_PORT:9200`
+**VARS**: `ES_HOST:{h}` `ES_PORT:${h_port}`
 **SECRETS**: `ES_PASSWORD:${h_password}`
-**CONN**: `http://{h}:9200` with `Authorization: Basic elastic:${h_password}`
+**CONN**: `http://{h}:${h_port}` with `Authorization: Basic elastic:${h_password}`
 
 ## Object Storage
 **VARS**: `S3_ENDPOINT:${h_apiUrl}` `S3_BUCKET:${h_bucketName}` `S3_REGION:us-east-1`
@@ -89,21 +88,21 @@ Without this wiring, the runtime service has no way to connect to managed servic
 ## ClickHouse
 **VARS**: `CH_HOST:{h}` `CH_DB:${h_dbName}`
 **SECRETS**: `CH_PASSWORD:${h_password}` `CH_SUPER_PASSWORD:${h_superUserPassword}`
-**CONN**: Native `clickhouse://{h}:9000`, HTTP `http://{h}:8123`, MySQL `{h}:9004`, PostgreSQL `{h}:9005`
+**CONN**: Native `clickhouse://{h}:${h_port}`, HTTP `http://{h}:${h_portHttp}`, MySQL `{h}:9004`, PostgreSQL `{h}:9005`
 
 ## Qdrant
-**VARS**: `QDRANT_HOST:{h}` `QDRANT_PORT:6333` `QDRANT_GRPC:6334`
+**VARS**: `QDRANT_HOST:{h}` `QDRANT_PORT:${h_port}` `QDRANT_GRPC:${h_grpcPort}`
 **SECRETS**: `QDRANT_API_KEY:${h_apiKey}`
-**CONN**: HTTP `http://{h}:6333` with `api-key` header, gRPC `{h}:6334`
+**CONN**: HTTP `http://{h}:${h_port}` with `api-key` header, gRPC `{h}:${h_grpcPort}`
 
 ## Typesense
-**VARS**: `TYPESENSE_HOST:{h}` `TYPESENSE_PORT:8108`
+**VARS**: `TYPESENSE_HOST:{h}` `TYPESENSE_PORT:${h_port}`
 **SECRETS**: `TYPESENSE_API_KEY:${h_apiKey}`
-**CONN**: `http://{h}:8108` with `x-typesense-api-key` header
+**CONN**: `http://{h}:${h_port}` with `x-typesense-api-key` header
 
 ## RabbitMQ
-**VARS**: `RABBITMQ_HOST:{h}` `RABBITMQ_PORT:5672`
-**SECRETS**: `RABBITMQ_URL:amqp://${h_user}:${h_password}@{h}:5672` or `RABBITMQ_URL:${h_connectionString}`
+**VARS**: `RABBITMQ_HOST:{h}` `RABBITMQ_PORT:${h_port}`
+**SECRETS**: `RABBITMQ_URL:amqp://${h_user}:${h_password}@{h}:${h_port}` or `RABBITMQ_URL:${h_connectionString}`
 
 ## See Also
 - zerops://foundation/grammar — variable reference syntax, envSecrets vs envVariables

@@ -51,18 +51,17 @@ services:
     type: bun@1.2
     priority: 5
     enableSubdomainAccess: true
-    envVariables:
+    envSecrets:
       DATABASE_HOST: db
-      DATABASE_PORT: "5432"
+      DATABASE_PORT: ${db_port}
       DATABASE_NAME: ${db_dbName}
       DATABASE_USER: ${db_user}
+      DATABASE_PASSWORD: ${db_password}
       S3_ENDPOINT: ${storage_apiUrl}
       S3_ACCESS_KEY_ID: ${storage_accessKeyId}
       S3_BUCKET: ${storage_bucketName}
-      AWS_USE_PATH_STYLE_ENDPOINT: "true"
-    envSecrets:
-      DATABASE_PASSWORD: ${db_password}
       S3_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
+      AWS_USE_PATH_STYLE_ENDPOINT: "true"
 ```
 
 ## App code requirement

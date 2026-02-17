@@ -62,6 +62,14 @@ run:
 
 The referenced variable does **not** need to exist at definition time -- Zerops resolves at container start.
 
+### Cross-Service References in API vs Runtime
+
+Cross-service references (`${hostname_varname}`) are **resolved at container start time**, not at definition time. This means:
+
+- **`zerops_discover` with `includeEnvs=true`** returns the **literal template** (e.g., `${db_password}`), NOT the resolved value. This is expected — the API stores templates, not resolved values.
+- **Inside the running container**, environment variables contain the actual resolved values.
+- **Restarting a service does NOT change** what `zerops_discover` returns — it always shows templates. To verify resolved values, check from inside the container (e.g., via SSH or application endpoint).
+
 ### Isolation Modes (envIsolation)
 
 | Mode | Behavior |

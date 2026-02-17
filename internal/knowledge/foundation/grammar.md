@@ -27,7 +27,8 @@ services[]:                            # REQUIRED
   minContainers: 1-10                  # RUNTIME ONLY, default 1 (managed services have fixed containers)
   maxContainers: 1-10                  # RUNTIME ONLY (managed: NON_HA=1, HA=3, fixed)
   envSecrets: map<string,string>       # blurred in GUI by default, editable/deletable
-  envVariables: map<string,string>     # visible in GUI
+  # NOTE: envVariables does NOT exist at service level — only at project level
+  # For non-secret env vars on a service, use zerops_env after import or zerops.yml run.envVariables
   dotEnvSecrets: string                # .env format, auto-creates secrets
   buildFromGit: url                    # one-time build from repo
   objectStorageSize: 1-100             # GB, object-storage only (changeable in GUI later)
@@ -129,7 +130,8 @@ Valid range **10-65435** — ports 80/443 reserved by Zerops for SSL termination
 - `cache: false` only affects `/build/source` — modules elsewhere remain cached
 
 ### Environment Variables
-- **envSecrets**: passwords, tokens (blurred in GUI, editable/deletable) | **envVariables**: config (visible)
+- **envSecrets**: passwords, tokens, config — ONLY option at import.yml service level (blurred in GUI, editable/deletable)
+- **envVariables**: config (visible in GUI) — project level only in import.yml; also in zerops.yml build/run sections
 - **Managed services auto-generate credentials** (hostname, port, user, password, dbName, connectionString) — do NOT set these in import.yml. Only set custom env vars on runtime services. Managed services accept only `mode`, `priority`, `hostname`, `type`, and scaling config in import
 - Cross-service ref: `${hostname_varname}` — dashes→underscores
 - Project vars auto-inherited — do NOT re-reference (creates shadow)
