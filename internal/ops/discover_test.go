@@ -41,23 +41,33 @@ func TestDiscover_AllServices(t *testing.T) {
 func TestDiscover_SingleService_Found(t *testing.T) {
 	t.Parallel()
 
+	// ListServices returns minimal info (only CustomAutoscaling — often nulls/zeros).
 	services := []platform.ServiceStack{
 		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
 			Ports:                []platform.Port{{Port: 3000, Protocol: "TCP", Public: true}},
-			CustomAutoscaling: &platform.CustomAutoscaling{
-				CPUMode: "SHARED", MinCPU: 1, MaxCPU: 4,
-				MinRAM: 0.25, MaxRAM: 4,
-				MinDisk: 1, MaxDisk: 10,
-				HorizontalMinCount: 1, HorizontalMaxCount: 3,
-			}},
+		},
 		{ID: "svc-2", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
 	}
 
+	// GetService returns full detail including CurrentAutoscaling (active config).
+	detailSvc := &platform.ServiceStack{
+		ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+		Ports:                []platform.Port{{Port: 3000, Protocol: "TCP", Public: true}},
+		CurrentAutoscaling: &platform.CustomAutoscaling{
+			CPUMode: "DEDICATED", MinCPU: 1, MaxCPU: 8,
+			MinRAM: 0.125, MaxRAM: 48,
+			MinDisk: 1, MaxDisk: 250,
+			HorizontalMinCount: 1, HorizontalMaxCount: 10,
+		},
+	}
+
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
-		WithServices(services)
+		WithServices(services).
+		WithService(detailSvc)
 
 	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
 	if err != nil {
@@ -72,6 +82,111 @@ func TestDiscover_SingleService_Found(t *testing.T) {
 	}
 	if svc.ServiceID != "svc-1" {
 		t.Errorf("expected serviceId=svc-1, got %s", svc.ServiceID)
+	}
+	// Resources should come from CurrentAutoscaling (active config).
+	if svc.Resources == nil {
+		t.Fatal("expected resources, got nil")
+	}
+	if svc.Resources["cpuMode"] != "DEDICATED" {
+		t.Errorf("expected cpuMode=DEDICATED, got %v", svc.Resources["cpuMode"])
+	}
+	if svc.Resources["maxCpu"] != int32(8) {
+		t.Errorf("expected maxCpu=8, got %v", svc.Resources["maxCpu"])
+	}
+	if svc.Resources["minRam"] != 0.125 {
+		t.Errorf("expected minRam=0.125, got %v", svc.Resources["minRam"])
+	}
+	if svc.Containers == nil {
+		t.Fatal("expected containers, got nil")
+	}
+	if svc.Containers["maxContainers"] != int32(10) {
+		t.Errorf("expected maxContainers=10, got %v", svc.Containers["maxContainers"])
+	}
+}
+
+func TestDiscover_SingleService_OmitsZeroResources(t *testing.T) {
+	t.Parallel()
+
+	// Service with nil CurrentAutoscaling and nil CustomAutoscaling.
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+
+	// GetService also returns nil autoscaling.
+	detailSvc := &platform.ServiceStack{
+		ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithService(detailSvc)
+
+	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(result.Services))
+	}
+	svc := result.Services[0]
+	if svc.Resources != nil {
+		t.Errorf("expected nil resources when no autoscaling, got %v", svc.Resources)
+	}
+	if svc.Containers != nil {
+		t.Errorf("expected nil containers when no autoscaling, got %v", svc.Containers)
+	}
+}
+
+func TestDiscover_SingleService_FallsBackToCustom(t *testing.T) {
+	t.Parallel()
+
+	// Service with nil CurrentAutoscaling but valid CustomAutoscaling.
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+
+	detailSvc := &platform.ServiceStack{
+		ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+		CustomAutoscaling: &platform.CustomAutoscaling{
+			CPUMode: "SHARED", MinCPU: 1, MaxCPU: 4,
+			MinRAM: 0.25, MaxRAM: 4,
+			MinDisk: 1, MaxDisk: 10,
+			HorizontalMinCount: 1, HorizontalMaxCount: 3,
+		},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithService(detailSvc)
+
+	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(result.Services))
+	}
+	svc := result.Services[0]
+	if svc.Resources == nil {
+		t.Fatal("expected resources from CustomAutoscaling fallback, got nil")
+	}
+	if svc.Resources["cpuMode"] != "SHARED" {
+		t.Errorf("expected cpuMode=SHARED, got %v", svc.Resources["cpuMode"])
+	}
+	if svc.Resources["maxCpu"] != int32(4) {
+		t.Errorf("expected maxCpu=4, got %v", svc.Resources["maxCpu"])
+	}
+	if svc.Containers == nil {
+		t.Fatal("expected containers from CustomAutoscaling fallback, got nil")
+	}
+	if svc.Containers["maxContainers"] != int32(3) {
+		t.Errorf("expected maxContainers=3, got %v", svc.Containers["maxContainers"])
 	}
 }
 

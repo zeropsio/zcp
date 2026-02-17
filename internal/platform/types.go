@@ -29,6 +29,7 @@ type ServiceStack struct {
 	Mode                 string             `json:"mode"` // HA, NON_HA
 	Ports                []Port             `json:"ports,omitempty"`
 	CustomAutoscaling    *CustomAutoscaling `json:"customAutoscaling,omitempty"`
+	CurrentAutoscaling   *CustomAutoscaling `json:"currentAutoscaling,omitempty"`
 	Created              string             `json:"created"`
 	LastUpdate           string             `json:"lastUpdate,omitempty"`
 }

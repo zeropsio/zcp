@@ -65,9 +65,14 @@ func Discover(
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
-		info := buildDetailedServiceInfo(svc)
+		// Fetch full detail (includes CurrentAutoscaling with active config).
+		detail, getErr := client.GetService(ctx, svc.ID)
+		if getErr != nil {
+			return nil, getErr
+		}
+		info := buildDetailedServiceInfo(detail)
 		if includeEnvs {
-			attachEnvs(ctx, client, &info, svc.ID)
+			attachEnvs(ctx, client, &info, detail.ID)
 		}
 		result.Services = []ServiceInfo{info}
 		addEnvRefNotes(result)
@@ -107,21 +112,14 @@ func buildDetailedServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 	info := buildSummaryServiceInfo(svc)
 	info.Created = svc.Created
 
-	if svc.CustomAutoscaling != nil {
-		a := svc.CustomAutoscaling
-		info.Resources = map[string]any{
-			"cpuMode": a.CPUMode,
-			"minCpu":  a.MinCPU,
-			"maxCpu":  a.MaxCPU,
-			"minRam":  a.MinRAM,
-			"maxRam":  a.MaxRAM,
-			"minDisk": a.MinDisk,
-			"maxDisk": a.MaxDisk,
-		}
-		info.Containers = map[string]any{
-			"minContainers": a.HorizontalMinCount,
-			"maxContainers": a.HorizontalMaxCount,
-		}
+	// Prefer CurrentAutoscaling (active config) over CustomAutoscaling (user overrides).
+	a := svc.CurrentAutoscaling
+	if a == nil {
+		a = svc.CustomAutoscaling
+	}
+	if a != nil {
+		info.Resources = buildResourcesMap(a)
+		info.Containers = buildContainersMap(a)
 	}
 
 	if len(svc.Ports) > 0 {
@@ -136,6 +134,51 @@ func buildDetailedServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 	}
 
 	return info
+}
+
+// buildResourcesMap creates a resources map from autoscaling, omitting zero/empty values.
+func buildResourcesMap(a *platform.CustomAutoscaling) map[string]any {
+	m := make(map[string]any)
+	if a.CPUMode != "" {
+		m["cpuMode"] = a.CPUMode
+	}
+	if a.MinCPU != 0 {
+		m["minCpu"] = a.MinCPU
+	}
+	if a.MaxCPU != 0 {
+		m["maxCpu"] = a.MaxCPU
+	}
+	if a.MinRAM != 0 {
+		m["minRam"] = a.MinRAM
+	}
+	if a.MaxRAM != 0 {
+		m["maxRam"] = a.MaxRAM
+	}
+	if a.MinDisk != 0 {
+		m["minDisk"] = a.MinDisk
+	}
+	if a.MaxDisk != 0 {
+		m["maxDisk"] = a.MaxDisk
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
+
+// buildContainersMap creates a containers map from autoscaling, omitting zero values.
+func buildContainersMap(a *platform.CustomAutoscaling) map[string]any {
+	m := make(map[string]any)
+	if a.HorizontalMinCount != 0 {
+		m["minContainers"] = a.HorizontalMinCount
+	}
+	if a.HorizontalMaxCount != 0 {
+		m["maxContainers"] = a.HorizontalMaxCount
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
 }
 
 func attachProjectEnvs(ctx context.Context, client platform.Client, info *ProjectInfo, projectID string) {

@@ -113,9 +113,14 @@ func mapEsServiceStack(s output.EsServiceStack) ServiceStack {
 }
 
 func mapFullServiceStack(s output.ServiceStack) ServiceStack {
-	var autoscaling *CustomAutoscaling
+	var customAutoscaling *CustomAutoscaling
 	if s.CustomAutoscaling != nil {
-		autoscaling = mapOutputCustomAutoscaling(s.CustomAutoscaling)
+		customAutoscaling = mapOutputCustomAutoscaling(s.CustomAutoscaling)
+	}
+
+	var currentAutoscaling *CustomAutoscaling
+	if s.CurrentAutoscaling != nil {
+		currentAutoscaling = mapOutputCustomAutoscaling(s.CurrentAutoscaling)
 	}
 
 	return ServiceStack{
@@ -126,12 +131,13 @@ func mapFullServiceStack(s output.ServiceStack) ServiceStack {
 			ServiceStackTypeVersionName:  s.ServiceStackTypeInfo.ServiceStackTypeVersionName.String(),
 			ServiceStackTypeCategoryName: s.ServiceStackTypeInfo.ServiceStackTypeCategory.String(),
 		},
-		Status:            s.Status.String(),
-		Mode:              s.Mode.String(),
-		Ports:             mapServicePorts(s.Ports),
-		CustomAutoscaling: autoscaling,
-		Created:           s.Created.String(),
-		LastUpdate:        s.LastUpdate.String(),
+		Status:             s.Status.String(),
+		Mode:               s.Mode.String(),
+		Ports:              mapServicePorts(s.Ports),
+		CustomAutoscaling:  customAutoscaling,
+		CurrentAutoscaling: currentAutoscaling,
+		Created:            s.Created.String(),
+		LastUpdate:         s.LastUpdate.String(),
 	}
 }
 
