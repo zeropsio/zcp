@@ -2,6 +2,12 @@
 
 Spring Boot API with PostgreSQL, S3, static frontend, Adminer, Mailpit. Service priorities control startup order.
 
+## Keywords
+spring boot, java, postgresql, s3, object-storage, maven, multi-service
+
+## TL;DR
+Spring Boot API with PostgreSQL and S3 — service priorities ensure DB starts before the API.
+
 ## zerops.yml
 ```yaml
 zerops:
@@ -10,7 +16,7 @@ zerops:
       base: java@21
       buildCommands:
         - ./mvnw clean install --define maven.test.skip
-      deployFiles: ./target/api.jar  # Single JAR
+      deployFiles: ./target/api.jar
     run:
       envVariables:
         DB_HOST: db
@@ -21,19 +27,24 @@ zerops:
       start: java -jar target/api.jar
 ```
 
-## import.yml (service priorities)
+## import.yml
 ```yaml
 services:
   - hostname: api
+    type: java@21
+    enableSubdomainAccess: true
     priority: 5
-    minRam: 1GB
     maxContainers: 1
+
   - hostname: db
-    priority: 10  # Higher = starts first
-  - hostname: storage
+    type: postgresql@16
+    mode: NON_HA
     priority: 10
-    objectStoragePolicy: public-read
-    objectStorageSize: 2GB
+
+  - hostname: storage
+    type: object-storage
+    objectStorageSize: 2
+    priority: 10
 ```
 
 ## Gotchas

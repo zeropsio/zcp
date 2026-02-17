@@ -1,7 +1,14 @@
 # Java on Zerops
 
-## Spring Boot (with Maven Wrapper)
+Java with Spring Boot or vanilla HttpServer. Maven Wrapper preferred, fat JAR required.
 
+## Keywords
+java, spring boot, maven, gradle, jar, jvm, kotlin
+
+## TL;DR
+Java with `./mvnw clean package` and fat JAR deploy — `server.address=0.0.0.0` is mandatory for Spring Boot.
+
+## zerops.yml
 ```yaml
 zerops:
   - setup: app
@@ -57,6 +64,14 @@ Set `<finalName>app</finalName>` in `<build>` so artifact is always `target/app.
 **Binding** for `com.sun.net.httpserver.HttpServer`:
 ```java
 HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: java@21
+    enableSubdomainAccess: true
 ```
 
 ## Path behavior

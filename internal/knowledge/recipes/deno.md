@@ -2,6 +2,12 @@
 
 Deno runtime. Ubuntu only — no Alpine support.
 
+## Keywords
+deno, typescript, javascript, ubuntu, web server
+
+## TL;DR
+Deno runtime on Ubuntu — requires `os: ubuntu` in both build and run, explicit permission flags.
+
 ## zerops.yml
 ```yaml
 zerops:
@@ -18,6 +24,14 @@ zerops:
         - port: 8000
           httpSupport: true
       start: deno run --allow-net --allow-env --allow-read main.ts
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: deno@2
+    enableSubdomainAccess: true
 ```
 
 ## Gotchas

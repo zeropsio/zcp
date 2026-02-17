@@ -2,6 +2,12 @@
 
 Go Echo web app with 6 services: PostgreSQL, S3, Valkey (Redis-compatible), Mailpit, Adminer.
 
+## Keywords
+echo, go, golang, postgresql, valkey, redis, s3, object-storage
+
+## TL;DR
+Go Echo API with PostgreSQL, Valkey, and S3 — logger must output to `os.Stdout` for Zerops log collection.
+
 ## zerops.yml
 ```yaml
 zerops:
@@ -25,6 +31,29 @@ zerops:
       initCommands:
         - zsc execOnce seed -- /var/www/app -seed
       start: /var/www/app
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: go@1
+    enableSubdomainAccess: true
+
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10
+
+  - hostname: cache
+    type: valkey@7.2
+    mode: NON_HA
+    priority: 10
+
+  - hostname: storage
+    type: object-storage
+    objectStorageSize: 2
+    priority: 10
 ```
 
 ## Go code requirement

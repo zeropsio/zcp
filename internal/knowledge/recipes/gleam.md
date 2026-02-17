@@ -1,6 +1,12 @@
 # Gleam on Zerops
 
-Gleam compiles to JavaScript and runs on Node.js.
+Gleam compiles to Erlang and runs as a self-contained release.
+
+## Keywords
+gleam, erlang, beam, ubuntu, wisp, mist, functional
+
+## TL;DR
+Gleam with Erlang shipment on Ubuntu — `gleam export erlang-shipment` creates a self-contained release.
 
 ## zerops.yml
 ```yaml
@@ -18,6 +24,14 @@ zerops:
         - port: 8000
           httpSupport: true
       start: ./entrypoint.sh run
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: gleam@1.5
+    enableSubdomainAccess: true
 ```
 
 ## Gotchas

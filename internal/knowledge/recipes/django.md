@@ -2,7 +2,13 @@
 
 Django with PostgreSQL, S3 storage, Gunicorn WSGI server. Requires CSRF_TRUSTED_ORIGINS config for reverse proxy.
 
-## zerops.yml (key sections)
+## Keywords
+django, python, postgresql, s3, gunicorn, wsgi, object-storage
+
+## TL;DR
+Django with Gunicorn, PostgreSQL, and S3 — requires `CSRF_TRUSTED_ORIGINS` for Zerops reverse proxy.
+
+## zerops.yml
 ```yaml
 zerops:
   - setup: app
@@ -21,6 +27,24 @@ zerops:
         - zsc execOnce migrate-${ZEROPS_appVersionId} -- python manage.py migrate
         - zsc execOnce collectstatic-${ZEROPS_appVersionId} -- python manage.py collectstatic --no-input
       start: gunicorn recipe.wsgi
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: python@3.12
+    enableSubdomainAccess: true
+
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10
+
+  - hostname: storage
+    type: object-storage
+    objectStorageSize: 2
+    priority: 10
 ```
 
 ## Gotchas

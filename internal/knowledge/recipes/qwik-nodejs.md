@@ -2,6 +2,12 @@
 
 Qwik with Node.js SSR. Requires Express adapter installation before deployment.
 
+## Keywords
+qwik, nodejs, ssr, express, resumable, javascript
+
+## TL;DR
+Qwik SSR with Express adapter — run `npm run qwik add express` before deploying.
+
 ## Pre-deployment (REQUIRED)
 ```bash
 npm run qwik add express
@@ -20,9 +26,17 @@ zerops:
       base: nodejs@20
       buildCommands:
         - pnpm i
-        - pnpm run build  # Uses build.server from adapter
+        - pnpm run build
     run:
-      start: pnpm serve  # Uses serve script from adapter
+      start: pnpm serve
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: nodejs@20
+    enableSubdomainAccess: true
 ```
 
 ## Gotchas

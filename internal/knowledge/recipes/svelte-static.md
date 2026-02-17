@@ -2,6 +2,12 @@
 
 SvelteKit SSG. Requires adapter-static AND explicit prerender export.
 
+## Keywords
+svelte, sveltekit, static, ssg, adapter-static, javascript
+
+## TL;DR
+SvelteKit static with `@sveltejs/adapter-static` — requires `export const prerender = true` in layout.
+
 ## svelte.config.js (REQUIRED)
 ```javascript
 import adapter from '@sveltejs/adapter-static';
@@ -29,9 +35,17 @@ zerops:
       buildCommands:
         - pnpm i
         - pnpm build
-      deployFiles: build/~  # Deploys contents
+      deployFiles: build/~
     run:
       base: static
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: static
+    enableSubdomainAccess: true
 ```
 
 ## Gotchas

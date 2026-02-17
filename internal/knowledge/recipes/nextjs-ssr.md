@@ -2,6 +2,12 @@
 
 Next.js with server-side rendering on Node.js. Not a static export.
 
+## Keywords
+nextjs, next.js, nodejs, ssr, react, server-side rendering
+
+## TL;DR
+Next.js SSR on Node.js — deploy `.next` + `node_modules` + `package.json`, do NOT set `output: 'export'`.
+
 ## zerops.yml
 ```yaml
 zerops:
@@ -22,6 +28,14 @@ zerops:
       envVariables:
         NODE_ENV: production
       start: pnpm start
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: nodejs@20
+    enableSubdomainAccess: true
 ```
 
 ## Gotchas

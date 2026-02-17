@@ -214,7 +214,7 @@ func (s *Store) GetCore() (string, error) {
 // runtimeRecipeHints maps runtime base names to recipe name prefixes/matches.
 var runtimeRecipeHints = map[string][]string{
 	"bun":    {"bun"},
-	"nodejs": {"nestjs", "nextjs", "svelte-nodejs", "react-nodejs", "qwik-nodejs", "payload", "ghost", "medusa", "nuxt"},
+	"nodejs": {"nestjs", "nextjs-ssr", "svelte-nodejs", "react-nodejs", "qwik-nodejs", "payload", "ghost", "nuxt"},
 	"go":     {"echo-go"},
 	"python": {"django"},
 	"elixir": {"phoenix"},

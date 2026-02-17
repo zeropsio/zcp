@@ -2,29 +2,47 @@
 
 Demonstrates both Apache and Nginx in same project. Build base differs from run base.
 
-## zerops.yml (build vs run base)
+## Keywords
+php, apache, nginx, php-apache, php-nginx, variants, composer
+
+## TL;DR
+PHP with Apache and Nginx variants in one project — build base is generic `php@`, run base includes web server.
+
+## zerops.yml
 ```yaml
 zerops:
   - setup: apacheapi
     build:
-      base: php@8.3  # Generic PHP (no server)
+      base: php@8.3
       buildCommands:
         - composer install --optimize-autoloader --no-dev
     run:
-      base: php-apache@8.3  # Apache variant
+      base: php-apache@8.3
       deployFiles:
         - index.php
-        - .htaccess  # Required for Apache
+        - .htaccess
         - vendor/
 
   - setup: nginxapi
     build:
-      base: php@8.3  # Same generic build
+      base: php@8.3
     run:
-      base: php-nginx@8.3  # Nginx variant
+      base: php-nginx@8.3
       deployFiles:
         - index.php
-        - vendor/  # No .htaccess for Nginx
+        - vendor/
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: apacheapi
+    type: php-apache@8.3
+    enableSubdomainAccess: true
+
+  - hostname: nginxapi
+    type: php-nginx@8.3
+    enableSubdomainAccess: true
 ```
 
 ## Gotchas

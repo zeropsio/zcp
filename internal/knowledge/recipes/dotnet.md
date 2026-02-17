@@ -2,6 +2,12 @@
 
 ASP.NET Core app. Build with `dotnet publish`, deploy the published output.
 
+## Keywords
+dotnet, csharp, aspnet, asp.net core, kestrel, web api
+
+## TL;DR
+ASP.NET Core with `dotnet publish` — must bind `0.0.0.0` in code via `UseUrls`, not just env var.
+
 ## zerops.yml
 ```yaml
 zerops:
@@ -16,6 +22,14 @@ zerops:
         - port: 5000
           httpSupport: true
       start: ./MyApp
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: dotnet@9
+    enableSubdomainAccess: true
 ```
 
 ## Code requirement (binding)

@@ -2,6 +2,12 @@
 
 Nette framework with Contributte packages for Redis sessions and syslog logging. Doctrine migrations with zsc execOnce.
 
+## Keywords
+nette, contributte, php, postgresql, valkey, redis, doctrine, apache
+
+## TL;DR
+Nette + Contributte with Redis sessions and Monolog SyslogHandler — Doctrine migrations via `zsc execOnce`.
+
 ## zerops.yml
 ```yaml
 zerops:
@@ -21,6 +27,24 @@ zerops:
         - zsc execOnce ${appVersionId}-migration -- php /var/www/bin/console migrations:migrate --no-interaction
         - zsc execOnce ${appVersionId}-fixtures -- php /var/www/bin/console doctrine:fixtures:load --no-interaction
         - chown -R zerops:zerops /var/www/var/tmp/
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: php-apache@8.3
+    enableSubdomainAccess: true
+
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10
+
+  - hostname: redis
+    type: valkey@7.2
+    mode: NON_HA
+    priority: 10
 ```
 
 ## Nette config (REQUIRED)

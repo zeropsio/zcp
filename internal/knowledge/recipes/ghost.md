@@ -2,7 +2,13 @@
 
 Ghost blogging platform with MariaDB. **CRITICAL**: Ghost does not support horizontal scaling.
 
-## zerops.yml (key sections)
+## Keywords
+ghost, nodejs, mariadb, cms, blog, content management, s3
+
+## TL;DR
+Ghost CMS on Node.js with MariaDB — `maxContainers: 1` is mandatory (Ghost cannot scale horizontally).
+
+## zerops.yml
 ```yaml
 zerops:
   - setup: ghost
@@ -22,13 +28,20 @@ zerops:
       start: ghost run
 ```
 
-## import.yml (critical constraint)
+## import.yml
 ```yaml
 services:
   - hostname: ghost
-    maxContainers: 1  # REQUIRED: Ghost cannot scale horizontally
+    type: nodejs@18
+    maxContainers: 1
+    enableSubdomainAccess: true
     verticalAutoscaling:
       minRam: 1
+
+  - hostname: db
+    type: mariadb@10.6
+    mode: NON_HA
+    priority: 10
 ```
 
 ## Gotchas

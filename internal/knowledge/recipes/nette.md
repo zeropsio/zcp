@@ -2,6 +2,12 @@
 
 Nette with PostgreSQL, Redis sessions, Doctrine migrations via zsc execOnce.
 
+## Keywords
+nette, php, postgresql, valkey, redis, doctrine, migrations, apache
+
+## TL;DR
+Nette with PHP-Apache, PostgreSQL, and Valkey sessions — Doctrine migrations via `zsc execOnce`.
+
 ## zerops.yml
 ```yaml
 zerops:
@@ -25,19 +31,27 @@ zerops:
 
 ## import.yml
 ```yaml
-#zeropsPreprocessor=on
+#yamlPreprocessor=on
 services:
   - hostname: app
+    type: php-apache@8.3
+    enableSubdomainAccess: true
     envSecrets:
       ADMIN_PASSWORD: <@generateRandomString(<24>)>
+
   - hostname: db
+    type: postgresql@16
+    mode: NON_HA
     priority: 10
+
   - hostname: redis
+    type: valkey@7.2
+    mode: NON_HA
     priority: 10
 ```
 
 ## Gotchas
 - **zsc execOnce $appVersionId** ensures migrations run once per deploy
-- Sessions stored in Redis (not file-based)
+- Sessions stored in Redis (Valkey) — not file-based
 - 4 services: app + pg + valkey + adminer
 - chown command fixes temp directory permissions

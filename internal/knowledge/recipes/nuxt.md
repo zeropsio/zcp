@@ -2,6 +2,12 @@
 
 Nuxt 3 with two deployment modes: SSR (server) and static (pre-rendered).
 
+## Keywords
+nuxt, vue, nodejs, ssr, static, ssg, javascript
+
+## TL;DR
+Nuxt 3 SSR with `SERVER_PRESET: node-server` or static with `pnpm generate` — two deployment modes.
+
 ## SSR Mode (zerops.yml)
 ```yaml
 zerops:
@@ -35,6 +41,14 @@ zerops:
       deployFiles: .output/public/~
     run:
       base: static
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: nodejs@20
+    enableSubdomainAccess: true
 ```
 
 ## Gotchas

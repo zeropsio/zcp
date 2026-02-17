@@ -2,6 +2,12 @@
 
 Qwik SSG. Requires static adapter installation before deployment.
 
+## Keywords
+qwik, static, ssg, resumable, javascript
+
+## TL;DR
+Qwik static with `pnpm qwik add static` — deploy `dist/~` to `static` base.
+
 ## Pre-deployment (REQUIRED)
 ```bash
 pnpm qwik add static
@@ -19,10 +25,18 @@ zerops:
       base: nodejs@20
       buildCommands:
         - pnpm i
-        - pnpm build  # Uses static adapter
-      deployFiles: dist/~  # Tilde deploys contents
+        - pnpm build
+      deployFiles: dist/~
     run:
       base: static
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: static
+    enableSubdomainAccess: true
 ```
 
 ## Gotchas

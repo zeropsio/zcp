@@ -2,37 +2,52 @@
 
 Payload CMS with Next.js. Requires Ubuntu OS and database wait pattern.
 
-## zerops.yml (database wait + migrations in build)
+## Keywords
+payload, cms, nextjs, nodejs, postgresql, ubuntu, headless cms
+
+## TL;DR
+Payload CMS on Node.js (Ubuntu) — migrations in BUILD phase with `zsc test tcp` DB wait pattern.
+
+## zerops.yml
 ```yaml
 zerops:
   - setup: api
     build:
       base: nodejs@20
-      os: ubuntu  # NOT Alpine
+      os: ubuntu
       envVariables:
         PAYLOAD_SECRET: ${RUNTIME_PAYLOAD_SECRET}
         DATABASE_URI: ${RUNTIME_DATABASE_URI}
       buildCommands:
         - pnpm i
-        - zsc test tcp -6 db:5432 --timeout 30s  # Wait for DB
+        - zsc test tcp -6 db:5432 --timeout 30s
         - zsc test tcp -6 mailpit:1025 --timeout 30s
-        - pnpm payload migrate  # Migrations in BUILD phase
+        - pnpm payload migrate
         - pnpm build
     run:
       os: ubuntu
       envVariables:
         DATABASE_URI: ${db_connectionString}/${db_dbName}
+      start: pnpm start
 ```
 
 ## import.yml
 ```yaml
 services:
   - hostname: api
+    type: nodejs@20
+    enableSubdomainAccess: true
     maxContainers: 1
+
   - hostname: db
-    priority: 1  # Start before api
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10
+
   - hostname: storage
-    priority: 1
+    type: object-storage
+    objectStorageSize: 2
+    priority: 10
 ```
 
 ## Gotchas

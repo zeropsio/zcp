@@ -2,6 +2,12 @@
 
 Next.js SSG requires explicit output configuration.
 
+## Keywords
+nextjs, next.js, static, ssg, react, export
+
+## TL;DR
+Next.js static export with `output: 'export'` in next.config.mjs — deploy `out/~` to `static` base.
+
 ## next.config.mjs (REQUIRED)
 ```javascript
 export default {
@@ -18,9 +24,17 @@ zerops:
       buildCommands:
         - pnpm i
         - pnpm build
-      deployFiles: out/~  # Next.js static output
+      deployFiles: out/~
     run:
       base: static
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: static
+    enableSubdomainAccess: true
 ```
 
 ## Gotchas

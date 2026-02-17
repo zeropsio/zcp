@@ -2,6 +2,12 @@
 
 Filament admin panel with PostgreSQL, Redis cache/sessions, S3 filesystem. Laravel 11 health checks.
 
+## Keywords
+filament, laravel, php, postgresql, valkey, redis, s3, admin panel
+
+## TL;DR
+Filament (Laravel) admin with PHP-Nginx, PostgreSQL, Valkey, and S3 — health check via `/up` endpoint.
+
 ## zerops.yml
 ```yaml
 zerops:
@@ -31,6 +37,29 @@ zerops:
         httpGet:
           port: 80
           path: /up
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: php-nginx@8.3
+    enableSubdomainAccess: true
+
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10
+
+  - hostname: redis
+    type: valkey@7.2
+    mode: NON_HA
+    priority: 10
+
+  - hostname: storage
+    type: object-storage
+    objectStorageSize: 2
+    priority: 10
 ```
 
 ## Gotchas

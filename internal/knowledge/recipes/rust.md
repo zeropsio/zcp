@@ -2,6 +2,12 @@
 
 Compiled Rust binary. Build with cargo, deploy the release binary.
 
+## Keywords
+rust, cargo, actix, axum, rocket, compiled, binary
+
+## TL;DR
+Rust with `cargo build --release` — deploy only the binary, bind `0.0.0.0`.
+
 ## zerops.yml
 ```yaml
 zerops:
@@ -16,6 +22,14 @@ zerops:
         - port: 8080
           httpSupport: true
       start: ./app
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: rust@stable
+    enableSubdomainAccess: true
 ```
 
 ## Gotchas

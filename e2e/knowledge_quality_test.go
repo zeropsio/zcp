@@ -13,6 +13,7 @@ package e2e_test
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -373,6 +374,32 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 			}
 		}
 	})
+
+	// --- Phase 3: Recipe Version Drift ---
+
+	t.Run("Phase3", func(t *testing.T) {
+		recipes := store.ListRecipes()
+		if len(recipes) == 0 {
+			t.Fatal("no recipes found in store")
+		}
+
+		for _, name := range recipes {
+			content, recipeErr := store.GetRecipe(name)
+			if recipeErr != nil {
+				t.Errorf("get recipe %s: %v", name, recipeErr)
+				continue
+			}
+
+			versions := recipeVersionRefs(content)
+			for _, v := range versions {
+				t.Run("RecipeVersion/"+name+"/"+v, func(t *testing.T) {
+					if !activeVersions[v] {
+						t.Errorf("recipe %q references version %s which is not ACTIVE in platform catalog", name, v)
+					}
+				})
+			}
+		}
+	})
 }
 
 // --- Helpers ---
@@ -422,4 +449,55 @@ func formatPorts(ports []platform.Port) string {
 		nums[i] = fmt.Sprintf("%d", p.Port)
 	}
 	return strings.Join(nums, ", ")
+}
+
+// recipeVersionRefs extracts type@version and base@version references from recipe content.
+// Skips "latest" versions (no catalog entry) and special types without versions.
+var recipeVersionRefRe = regexp.MustCompile(`(?:type|base):\s*(\S+@\S+)`)
+var recipeVersionArrayRe = regexp.MustCompile(`(?:type|base):\s*\[([^\]]+)\]`)
+
+// skipVersionPatterns lists version suffixes that aren't in the catalog.
+var skipVersionPatterns = []string{"@latest"}
+
+func recipeVersionRefs(content string) []string {
+	seen := make(map[string]bool)
+	var refs []string
+
+	addRef := func(v string) {
+		v = strings.TrimSpace(v)
+		v = strings.TrimRight(v, ",]\"'")
+		if v == "" || seen[v] || !strings.Contains(v, "@") {
+			return
+		}
+		for _, skip := range skipVersionPatterns {
+			if strings.HasSuffix(v, skip) {
+				return
+			}
+		}
+		// Skip special types without platform catalog entries.
+		base, _, _ := strings.Cut(v, "@")
+		if base == "static" || base == "object-storage" || base == "shared-storage" {
+			return
+		}
+		seen[v] = true
+		refs = append(refs, v)
+	}
+
+	// Array values: base: [php@8.3, nodejs@18]
+	for _, match := range recipeVersionArrayRe.FindAllStringSubmatch(content, -1) {
+		for _, part := range strings.Split(match[1], ",") {
+			addRef(part)
+		}
+	}
+
+	// Single values: type: nodejs@20, base: php@8.3
+	for _, match := range recipeVersionRefRe.FindAllStringSubmatch(content, -1) {
+		v := match[1]
+		if strings.HasPrefix(v, "[") {
+			continue // Array values handled above
+		}
+		addRef(v)
+	}
+
+	return refs
 }

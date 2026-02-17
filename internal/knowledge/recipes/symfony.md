@@ -2,6 +2,12 @@
 
 Symfony with PostgreSQL, Redis sessions, Doctrine migrations. Requires lock bundle for idempotent migrations.
 
+## Keywords
+symfony, php, postgresql, valkey, redis, doctrine, nginx, migrations
+
+## TL;DR
+Symfony with PHP-Nginx, PostgreSQL, and Valkey — requires `marein/symfony-lock-doctrine-migrations-bundle` for idempotent migrations.
+
 ## zerops.yml
 ```yaml
 zerops:
@@ -25,14 +31,22 @@ zerops:
 
 ## import.yml
 ```yaml
-#zeropsPreprocessor=on
+#yamlPreprocessor=on
 services:
   - hostname: app
+    type: php-nginx@8.3
+    enableSubdomainAccess: true
     envSecrets:
       APP_SECRET: <@generateRandomString(<32>)>
+
   - hostname: db
-    priority: 10  # Start before app
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10
+
   - hostname: redis
+    type: valkey@7.2
+    mode: NON_HA
     priority: 10
 ```
 

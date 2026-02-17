@@ -2,12 +2,20 @@
 
 Laravel Twill CMS. Multi-base build, OS mismatch (Alpine build → Ubuntu run), custom nginx, zsc execOnce.
 
-## zerops.yml (multi-base + OS mismatch)
+## Keywords
+twill, laravel, php, cms, postgresql, valkey, redis, s3, nginx
+
+## TL;DR
+Twill CMS with multi-base `[php, nodejs]` build — Alpine build, Ubuntu runtime, custom nginx config.
+
+## zerops.yml
 ```yaml
 zerops:
   - setup: app
     build:
-      base: [php@8.3, nodejs@18]  # Multi-base for assets
+      base:
+        - php@8.3
+        - nodejs@18
       os: alpine
       buildCommands:
         - composer install --optimize-autoloader --no-dev
@@ -15,13 +23,13 @@ zerops:
         - npm run build
     run:
       base: php-nginx@8.3
-      os: ubuntu  # Runtime OS differs from build
-      siteConfigPath: site.conf.tmpl  # Custom nginx config
+      os: ubuntu
+      siteConfigPath: site.conf.tmpl
       envVariables:
         SESSION_DRIVER: redis
         CACHE_STORE: redis
         FILESYSTEM_DISK: s3
-        AWS_USE_PATH_STYLE_ENDPOINT: true  # REQUIRED for Zerops S3
+        AWS_USE_PATH_STYLE_ENDPOINT: true
         GLIDE_USE_SOURCE_DISK: s3
       initCommands:
         - sudo -E -u zerops -- zsc execOnce initialize -- php artisan twill:install -n
@@ -31,7 +39,30 @@ zerops:
       readinessCheck:
         httpGet:
           port: 80
-          path: /up  # Laravel 11 health check
+          path: /up
+```
+
+## import.yml
+```yaml
+services:
+  - hostname: app
+    type: php-nginx@8.3
+    enableSubdomainAccess: true
+
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10
+
+  - hostname: redis
+    type: valkey@7.2
+    mode: NON_HA
+    priority: 10
+
+  - hostname: storage
+    type: object-storage
+    objectStorageSize: 2
+    priority: 10
 ```
 
 ## Gotchas
