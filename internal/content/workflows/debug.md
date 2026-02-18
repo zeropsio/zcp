@@ -60,7 +60,7 @@ This shows whether the issue is new or recurring. A recurring issue means the pr
 
 Check gathered data against known patterns (covers ~80% of issues):
 
-**Note**: These patterns are covered in detail by `zerops_knowledge` with core-principles. If you need more context on any of these rules, call `zerops_knowledge` with the relevant runtime/services.
+**Note**: For detailed platform rules on any of these patterns, call `zerops_knowledge scope="infrastructure"` for the full reference, or `zerops_knowledge runtime="{type}" services=[...]` for stack-specific context.
 
 | Symptom | Likely cause | Verify / Fix |
 |---------|-------------|--------------|

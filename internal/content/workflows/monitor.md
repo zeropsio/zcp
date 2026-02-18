@@ -4,6 +4,8 @@
 
 Monitor service health, performance, and activity using logs, events, and process tracking.
 
+**If monitoring reveals issues, switch to the debug workflow** (`zerops_workflow workflow="debug"`) for systematic diagnosis. Do not attempt ad-hoc fixes based on partial monitoring data.
+
 ## Steps
 
 ### 1. Service Overview
@@ -20,6 +22,11 @@ For detailed info on a specific service:
 zerops_discover service="api"
 ```
 
+Key fields to check:
+- **status** — RUNNING (healthy), READY_TO_DEPLOY (never deployed), ACTION_FAILED (needs attention)
+- **containerCount** — number of active containers (0 = service is down)
+- **scaling** — current CPU/RAM/disk ranges and CPU mode (SHARED vs DEDICATED)
+
 ### 2. Activity Timeline
 
 View recent activity across the project:
@@ -34,7 +41,7 @@ Filter by service:
 zerops_events serviceHostname="api" limit=10
 ```
 
-Events include: deploys, restarts, scaling, imports, env updates, subdomain changes.
+Events include: deploys, restarts, scaling, imports, env updates, subdomain changes. Look for FAILED events — they indicate operations that need attention.
 
 ### 3. Log Monitoring
 
@@ -89,28 +96,51 @@ Supported formats for `since`:
 
 ## Monitoring Patterns
 
-**Post-deploy check**: After deploying, monitor for errors in the first few minutes.
+### Post-deploy verification
+
+After deploying, run the full verification protocol (same as bootstrap Phase 2):
 
 ```
-zerops_logs serviceHostname="api" severity="error" since="5m"
+zerops_events serviceHostname="api" limit=5               # Build event FINISHED (poll every 10s, max 300s)
+zerops_logs serviceHostname="api" severity="error" since="5m"  # No errors
+zerops_logs serviceHostname="api" search="listening|started|ready" since="5m"  # Startup confirmed
+zerops_discover service="api"                              # RUNNING
+zerops_logs serviceHostname="api" severity="error" since="2m"  # No post-startup errors
 ```
 
-**Daily health check**: Review errors and events from the past 24 hours.
+If subdomain is enabled:
+```
+zerops_subdomain serviceHostname="api" action="enable"     # Activate routing (idempotent)
+zerops_discover service="api" includeEnvs=true             # Get zeropsSubdomain URL
+# bash: curl -sfm 10 "{zeropsSubdomain}/health"           # HTTP 200
+```
+
+### Daily health check
+
+Review errors and events from the past 24 hours:
 
 ```
 zerops_events limit=50
 zerops_logs serviceHostname="api" severity="error" since="24h"
 ```
 
-**Incident investigation**: Correlate events with logs around the incident time.
+### Incident investigation
+
+Correlate events with logs around the incident time:
 
 ```
 zerops_events serviceHostname="api" limit=20
 zerops_logs serviceHostname="api" since="2024-01-15T10:00:00Z" limit=500
 ```
 
+If the investigation reveals a clear issue, switch to the debug workflow for structured diagnosis:
+```
+zerops_workflow workflow="debug"
+```
+
 ## Tips
 
 - Use `zerops_events` first to get the big picture, then drill into `zerops_logs` for details.
-- Log search is text-based -- use specific error messages or codes for best results.
-- Process IDs from operations (deploy, scale, restart) can be tracked with `zerops_process`.
+- Log search is text-based — use specific error messages or codes for best results.
+- Process IDs from operations (deploy, scale, restart, env changes) can be tracked with `zerops_process`.
+- A service with status ACTION_FAILED usually needs a redeploy or config fix — use the debug workflow.

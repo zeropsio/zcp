@@ -6,6 +6,11 @@ Two concerns: ensure zerops.yml is correct for the runtime (hard), then deploy a
 
 ---
 
+<!-- STACKS:BEGIN -->
+<!-- STACKS:END -->
+
+---
+
 ## Phase 1: Configuration Check
 
 ### Step 1 — Discover target service
