@@ -91,7 +91,7 @@ func Deploy(
 				"Local deploy requires zcli to be installed",
 			)
 		}
-		return deployLocal(ctx, client, projectID, localDeployer,
+		return deployLocal(ctx, client, projectID, localDeployer, authInfo,
 			targetService, workingDir, includeGit, id, freshGit)
 	}
 	return nil, platform.NewPlatformError(
@@ -157,6 +157,7 @@ func deployLocal(
 	client platform.Client,
 	projectID string,
 	localDeployer LocalDeployer,
+	authInfo auth.Info,
 	targetService string,
 	workingDir string,
 	includeGit bool,
@@ -171,6 +172,12 @@ func deployLocal(
 	target, err := resolveServiceID(services, targetService)
 	if err != nil {
 		return nil, err
+	}
+
+	// Login zcli before push (mirrors SSH mode behavior).
+	loginArgs := []string{"login", authInfo.Token, "--zeropsRegion", authInfo.Region}
+	if _, err := localDeployer.ExecZcli(ctx, loginArgs...); err != nil {
+		return nil, fmt.Errorf("zcli login: %w", err)
 	}
 
 	// zcli push requires a git repo — auto-init if missing (or reinit if freshGit).

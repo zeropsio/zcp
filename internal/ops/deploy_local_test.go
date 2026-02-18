@@ -3,8 +3,10 @@ package ops
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -36,8 +38,9 @@ func TestDeploy_LocalMode_Success(t *testing.T) {
 	if result.TargetService != "app" {
 		t.Errorf("targetService = %s, want app", result.TargetService)
 	}
-	if len(local.calls) != 1 {
-		t.Fatalf("zcli calls = %d, want 1", len(local.calls))
+	// Expect 2 calls: login + push.
+	if len(local.calls) != 2 {
+		t.Fatalf("zcli calls = %d, want 2", len(local.calls))
 	}
 }
 
@@ -155,5 +158,64 @@ func TestDeploy_NilLocalDeployer(t *testing.T) {
 	}
 	if pe.Code != platform.ErrNotImplemented {
 		t.Errorf("code = %s, want %s", pe.Code, platform.ErrNotImplemented)
+	}
+}
+
+func TestDeploy_LocalMode_LoginFails(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{}
+	local := &mockLocalDeployer{errs: []error{fmt.Errorf("auth failed")}}
+	authInfo := testAuthInfo()
+
+	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
+		"", "app", "", "", false, false)
+	if err == nil {
+		t.Fatal("expected error when zcli login fails")
+	}
+	if !containsSubstring(err.Error(), "zcli login") {
+		t.Errorf("error should contain 'zcli login', got: %v", err)
+	}
+}
+
+func TestDeploy_LocalMode_LoginArgs(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{}
+	local := &mockLocalDeployer{output: []byte("ok")}
+	authInfo := auth.Info{
+		Token:    "my-token-123",
+		APIHost:  "api.app-fra1.zerops.io",
+		Region:   "fra1",
+		Email:    "dev@example.com",
+		FullName: "Dev User",
+	}
+
+	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
+		"", "app", "", "", false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(local.calls) < 2 {
+		t.Fatalf("zcli calls = %d, want >= 2 (login + push)", len(local.calls))
+	}
+
+	loginArgs := local.calls[0].args
+	wantLogin := []string{"login", "my-token-123", "--zeropsRegion", "fra1"}
+	if len(loginArgs) != len(wantLogin) {
+		t.Fatalf("login args = %v, want %v", loginArgs, wantLogin)
+	}
+	for i, arg := range wantLogin {
+		if loginArgs[i] != arg {
+			t.Errorf("login args[%d] = %s, want %s", i, loginArgs[i], arg)
+		}
 	}
 }

@@ -33,11 +33,16 @@ type zcliCall struct {
 type mockLocalDeployer struct {
 	output []byte
 	err    error
+	errs   []error // per-call errors; takes precedence over err when set
 	calls  []zcliCall
 }
 
 func (m *mockLocalDeployer) ExecZcli(_ context.Context, args ...string) ([]byte, error) {
+	idx := len(m.calls)
 	m.calls = append(m.calls, zcliCall{args: args})
+	if idx < len(m.errs) {
+		return m.output, m.errs[idx]
+	}
 	return m.output, m.err
 }
 
