@@ -175,7 +175,7 @@ func deployLocal(
 	}
 
 	// Login zcli before push (mirrors SSH mode behavior).
-	loginArgs := []string{"login", authInfo.Token, "--zeropsRegion", authInfo.Region}
+	loginArgs := []string{"login", authInfo.Token}
 	if _, err := localDeployer.ExecZcli(ctx, loginArgs...); err != nil {
 		return nil, fmt.Errorf("zcli login: %w", err)
 	}
@@ -210,7 +210,7 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 	var parts []string
 
 	// Login to zcli on the remote host.
-	loginCmd := fmt.Sprintf("zcli login %s --zeropsRegion %s", authInfo.Token, authInfo.Region)
+	loginCmd := fmt.Sprintf("zcli login %s", authInfo.Token)
 	parts = append(parts, loginCmd)
 
 	// Setup command if provided.

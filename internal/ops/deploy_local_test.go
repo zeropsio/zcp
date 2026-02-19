@@ -209,7 +209,7 @@ func TestDeploy_LocalMode_LoginArgs(t *testing.T) {
 	}
 
 	loginArgs := local.calls[0].args
-	wantLogin := []string{"login", "my-token-123", "--zeropsRegion", "fra1"}
+	wantLogin := []string{"login", "my-token-123"}
 	if len(loginArgs) != len(wantLogin) {
 		t.Fatalf("login args = %v, want %v", loginArgs, wantLogin)
 	}

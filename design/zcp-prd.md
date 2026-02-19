@@ -340,7 +340,7 @@ cmd/zcp/main.go
 type Info struct {
     Token       string
     APIHost     string
-    Region      string  // e.g. "prg1" — needed for zcli login --zeropsRegion in SSH deploy
+    Region      string  // e.g. "prg1" — region metadata (diagnostics, future use)
     ClientID    string
     ProjectID   string
     ProjectName string
@@ -349,7 +349,7 @@ type Info struct {
 
 **Naming**: Use `auth.Info` (not `auth.Context`) to avoid collision with `context.Context`. Source zaia uses `auth.Credentials` — `auth.Info` is a cleaner fit for ZCP since it includes project metadata beyond just credentials.
 
-**No auto-mapping between API host and region.** They are independent values — API hosts can be any URL (e.g. `gb-devel.zerops.dev`, `api.app-prg1.zerops.io`), no pattern to parse. Both have separate resolution chains (see §9.1). If `Region` is empty at deploy time, the deploy tool skips zcli's `--zeropsRegion` flag.
+**No auto-mapping between API host and region.** They are independent values — API hosts can be any URL (e.g. `gb-devel.zerops.dev`, `api.app-prg1.zerops.io`), no pattern to parse. Both have separate resolution chains (see §9.1). Region is metadata only — not passed to zcli (zcli login accepts only a token, no `--zeropsRegion` flag).
 
 ### 3.4 Runtime Detection
 
@@ -694,8 +694,7 @@ zerops_deploy (SSH mode):
 1. Validate sourceService exists (resolve via discover)
 2. Resolve targetService hostname → service ID (via discover, same as other tools)
 3. SSH into sourceService
-4. Authenticate zcli: always run `zcli login $ZCP_API_KEY [--zeropsRegion $region]`
-   ($region = auth.Info.Region from §3.2. If empty, omit --zeropsRegion flag.)
+4. Authenticate zcli: always run `zcli login $ZCP_API_KEY`
    Always re-login — idempotent, avoids stale auth detection complexity.
 5. Run: zcli push $resolvedServiceId [--setup=$setup] [--workingDir=$workingDir]
    ($resolvedServiceId = targetService hostname resolved to ID in step 2)
@@ -751,7 +750,7 @@ ELSE → error: "Provide sourceService (SSH deploy) or workingDir + targetServic
 |----------|----------|---------|-------------|
 | `ZCP_API_KEY` | Yes* | — | Zerops PAT. Set as service env var in Zerops. *Not required if zcli fallback is available (local dev). |
 | `ZCP_API_HOST` | No | `api.app-prg1.zerops.io` | API endpoint URL. Any valid host — e.g. `api.app-prg1.zerops.io`, `gb-devel.zerops.dev`. No pattern assumed. |
-| `ZCP_REGION` | No | `prg1` | Region label passed to `zcli login --zeropsRegion` in SSH deploy. Independent of `ZCP_API_HOST` — no auto-mapping between them. |
+| `ZCP_REGION` | No | `prg1` | Region metadata label. Independent of `ZCP_API_HOST` — no auto-mapping between them. Not passed to zcli. |
 | `ZCP_LOG_LEVEL` | No | `warn` | Stderr log level (debug, info, warn, error) |
 
 **Resolution priority (API host and region are independent):**
@@ -761,7 +760,7 @@ API host:
 2. zcli fallback → `RegionData.address` from `cli.data`
 3. Default → `api.app-prg1.zerops.io`
 
-Region (only used for SSH deploy → `zcli login --zeropsRegion`):
+Region (metadata — not passed to zcli):
 1. `ZCP_REGION` env var
 2. zcli fallback → `RegionData.name` from `cli.data`
 3. Default → `prg1`

@@ -692,7 +692,7 @@ New implementation (PRD §3.3). NOT a port of `auth.Credentials`:
 type Info struct {
     Token       string
     APIHost     string
-    Region      string   // e.g. "prg1" — needed for zcli login --zeropsRegion
+    Region      string   // e.g. "prg1" — region metadata (diagnostics, future use)
     ClientID    string
     ProjectID   string
     ProjectName string

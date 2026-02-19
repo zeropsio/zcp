@@ -990,11 +990,10 @@ ELSE → error: "Provide sourceService (SSH deploy) or targetService (local depl
 2. Resolve `targetService` hostname → service ID via `resolveServiceID`.
 3. Build SSH command:
    ```
-   ssh {sourceService} "cd {workingDir} && zcli login {ZCP_API_KEY} [--zeropsRegion {region}] && zcli push {targetServiceID} [--setup={setup}]"
+   ssh {sourceService} "cd {workingDir} && zcli login {ZCP_API_KEY} && zcli push {targetServiceID} [--setup={setup}]"
    ```
 4. `workingDir` defaults to `/var/www` if empty.
-5. `--zeropsRegion` only included if `authInfo.Region` is non-empty.
-6. Execute via `sshDeployer.ExecSSH(ctx, sourceService, command)`.
+5. Execute via `sshDeployer.ExecSSH(ctx, sourceService, command)`.
 7. Return `DeployResult{Status: "initiated", SourceService, TargetService, Message}`.
 
 ### Local Mode Execution (PRD section 8.3)
@@ -1008,7 +1007,7 @@ ELSE → error: "Provide sourceService (SSH deploy) or targetService (local depl
 
 ### Auth Injection
 
-- SSH mode: `zcli login $ZCP_API_KEY [--zeropsRegion $region]` — always fresh login (idempotent).
+- SSH mode: `zcli login $ZCP_API_KEY` — always fresh login (idempotent).
 - Local mode: assumes zcli already authenticated. Check `cli.data` exists with Token.
 
 ### Source Reference
@@ -1025,8 +1024,7 @@ ELSE → error: "Provide sourceService (SSH deploy) or targetService (local depl
 | `TestDeploy_SSHMode_Success` | sourceService="appdev", target="appstage" | SSH command built correctly |
 | `TestDeploy_SSHMode_WithSetup` | setup="prod" | `--setup=prod` in command |
 | `TestDeploy_SSHMode_DefaultWorkingDir` | workingDir="" | `/var/www` used |
-| `TestDeploy_SSHMode_WithRegion` | region="prg1" | `--zeropsRegion prg1` included |
-| `TestDeploy_SSHMode_NoRegion` | region="" | `--zeropsRegion` omitted |
+| `TestDeploy_SSHMode_WithRegion` | region="fra1" | login present, no `--zeropsRegion` flag |
 | `TestDeploy_SSHMode_SourceNotFound` | sourceService not in services | SERVICE_NOT_FOUND |
 | `TestDeploy_SSHMode_TargetNotFound` | targetService not in services | SERVICE_NOT_FOUND |
 | `TestDeploy_LocalMode_Success` | no sourceService, target="appstage" | zcli push called |

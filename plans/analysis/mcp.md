@@ -389,10 +389,10 @@ Local mode: → ops.DeployLocal(ctx, targetService, workingDir)
 1. Validate sourceService exists (via discover)
 2. Resolve targetService hostname → service ID
 3. SSH into sourceService
-4. `zcli login $ZCP_API_KEY [--zeropsRegion $region]`
+4. `zcli login $ZCP_API_KEY`
 5. `zcli push $resolvedServiceId [--setup=$setup] [--workingDir=$workingDir]`
 
-**Auth sharing**: Tool handler needs `auth.Info` to pass `ZCP_API_KEY` and `Region` into SSH session.
+**Auth sharing**: Tool handler needs `auth.Info` to pass `ZCP_API_KEY` into SSH session.
 
 ---
 

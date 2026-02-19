@@ -82,8 +82,8 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			serviceID: "svc-789",
 			workDir:   "/var/www",
 			wantParts: []string{
+				"zcli login my-token",
 				"test -d .git",
-				"fra1",
 				"zcli push --serviceId svc-789",
 			},
 		},

@@ -225,13 +225,16 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 	if result.Mode != "ssh" {
 		t.Errorf("mode = %s, want ssh", result.Mode)
 	}
-	// Verify region appears in the SSH command.
+	// Verify login command is present without --zeropsRegion.
 	if len(ssh.calls) != 1 {
 		t.Fatalf("ssh calls = %d, want 1", len(ssh.calls))
 	}
 	cmd := ssh.calls[0].command
-	if !containsSubstring(cmd, "fra1") {
-		t.Errorf("SSH command should contain region 'fra1', got: %s", cmd)
+	if !containsSubstring(cmd, "zcli login test-token") {
+		t.Errorf("SSH command should contain 'zcli login test-token', got: %s", cmd)
+	}
+	if containsSubstring(cmd, "--zeropsRegion") {
+		t.Errorf("SSH command should NOT contain '--zeropsRegion', got: %s", cmd)
 	}
 }
 
