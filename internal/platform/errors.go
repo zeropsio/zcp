@@ -43,6 +43,7 @@ const (
 	ErrSessionNotFound        = "SESSION_NOT_FOUND"
 	ErrEvidenceMissing        = "EVIDENCE_MISSING"
 	ErrBootstrapActive        = "BOOTSTRAP_ACTIVE"
+	ErrBootstrapNotActive     = "BOOTSTRAP_NOT_ACTIVE"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

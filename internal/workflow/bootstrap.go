@@ -1,11 +1,36 @@
 package workflow
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
+
+// StepCategory classifies bootstrap steps.
+type StepCategory string
+
+const (
+	CategoryFixed     StepCategory = "fixed"
+	CategoryCreative  StepCategory = "creative"
+	CategoryBranching StepCategory = "branching"
+)
+
+// StepDetail defines a bootstrap step's metadata and guidance.
+type StepDetail struct {
+	Name         string       `json:"name"`
+	Category     StepCategory `json:"category"`
+	Guidance     string       `json:"guidance"`
+	Tools        []string     `json:"tools"`
+	Verification string       `json:"verification"`
+	Skippable    bool         `json:"skippable"`
+}
 
 // BootstrapStep represents a single step in the bootstrap subflow.
 type BootstrapStep struct {
-	Name   string `json:"name"`
-	Status string `json:"status"` // pending, in_progress, complete, skipped
+	Name        string `json:"name"`
+	Status      string `json:"status"` // pending, in_progress, complete, skipped
+	Attestation string `json:"attestation,omitempty"`
+	SkipReason  string `json:"skipReason,omitempty"`
+	CompletedAt string `json:"completedAt,omitempty"`
 }
 
 // BootstrapState tracks progress through the bootstrap subflow.
@@ -15,41 +40,44 @@ type BootstrapState struct {
 	Steps       []BootstrapStep `json:"steps"`
 }
 
-// bootstrapStepNames defines the 11 bootstrap steps in order.
-var bootstrapStepNames = []string{
-	"plan",
-	"recipe-search",
-	"generate-import",
-	"import-services",
-	"wait-services",
-	"mount-dev",
-	"create-files",
-	"discover-services",
-	"finalize",
-	"spawn-subagents",
-	"aggregate-results",
+// BootstrapResponse is returned from conductor actions.
+type BootstrapResponse struct {
+	SessionID string             `json:"sessionId"`
+	Mode      Mode               `json:"mode"`
+	Intent    string             `json:"intent"`
+	Progress  BootstrapProgress  `json:"progress"`
+	Current   *BootstrapStepInfo `json:"current,omitempty"`
+	Message   string             `json:"message"`
 }
 
-// stepGuidance provides guidance text for each bootstrap step.
-var stepGuidance = map[string]string{
-	"plan":              "Identify required services from user's request: runtime types + frameworks, managed services + versions, environment mode (standard dev+stage or simple). Verify types against available stacks. If unclear, ask the user.",
-	"recipe-search":     "Load stack-specific knowledge: zerops_knowledge runtime=\"{type}\" services=[...]. Then load infrastructure rules: zerops_knowledge scope=\"infrastructure\". Both are MANDATORY before generating YAML.",
-	"generate-import":   "Generate import.yml following infrastructure rules. Standard mode: {app}dev (startWithoutCode: true, maxContainers: 1) + {app}stage + shared managed services. Validate hostnames, modes, ports.",
-	"import-services":   "Import services: zerops_import content=\"<yaml>\". Then poll: zerops_process processId=\"<id>\" until complete.",
-	"wait-services":     "Wait for dev services to reach RUNNING. Stage stays in READY_TO_DEPLOY (expected — starts on first deploy). Use zerops_discover to check status.",
-	"mount-dev":         "Mount ONLY dev service filesystems: zerops_mount action=\"mount\" serviceHostname=\"{devHostname}\" for each runtime dev service. Stage services are NOT mounted.",
-	"create-files":      "Write zerops.yml + application code + .gitignore to mount path (e.g., /var/www/appdev/). App MUST have /, /health, /status endpoints — /status MUST prove connectivity to each managed service (SELECT 1 for DB, PING for cache). Use dev vs prod deploy differentiation: dev deploys source (deployFiles: [.]), prod deploys build output. Use ONLY discovered env vars in envVariables. For 2+ service pairs: skip — subagents handle this in spawn-subagents step.",
-	"discover-services": "Discover ALL services with env vars: zerops_discover service=\"{hostname}\" includeEnvs=true for EACH managed service. Record exact env var names (connectionString, host, port, user, password, dbName). This data MUST be available before creating files or spawning subagents.",
-	"finalize":          "Prepare subagent context: combine discovered env vars, loaded runtime knowledge, app specification, and zerops.yml template into the Service Bootstrap Agent Prompt. For inline deployment (1 service pair): verify files are ready for deploy.",
-	"spawn-subagents":   "Spawn one general-purpose agent per runtime service pair with the Service Bootstrap Agent Prompt from the workflow guide. Each agent handles FULL lifecycle: write code, deploy dev, verify (with iteration loop), deploy stage, verify. All agents run in parallel.",
-	"aggregate-results": "Collect results from all subagents. Independently verify: zerops_discover for each runtime service (must be RUNNING). Check zeropsSubdomain URLs respond. Present final results: dev + stage URLs for each service pair.",
+// BootstrapProgress summarizes overall bootstrap progress.
+type BootstrapProgress struct {
+	Total     int                    `json:"total"`
+	Completed int                    `json:"completed"`
+	Steps     []BootstrapStepSummary `json:"steps"`
 }
 
-// NewBootstrapState creates a new bootstrap state with all 11 steps pending.
+// BootstrapStepSummary is a lightweight step summary for progress display.
+type BootstrapStepSummary struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// BootstrapStepInfo provides detailed info about the current step.
+type BootstrapStepInfo struct {
+	Name         string   `json:"name"`
+	Index        int      `json:"index"`
+	Category     string   `json:"category"`
+	Guidance     string   `json:"guidance"`
+	Tools        []string `json:"tools"`
+	Verification string   `json:"verification"`
+}
+
+// NewBootstrapState creates a new bootstrap state with all 10 steps pending.
 func NewBootstrapState() *BootstrapState {
-	steps := make([]BootstrapStep, len(bootstrapStepNames))
-	for i, name := range bootstrapStepNames {
-		steps[i] = BootstrapStep{Name: name, Status: "pending"}
+	steps := make([]BootstrapStep, len(stepDetails))
+	for i, d := range stepDetails {
+		steps[i] = BootstrapStep{Name: d.Name, Status: stepPending}
 	}
 	return &BootstrapState{
 		Active:      true,
@@ -66,33 +94,118 @@ func (b *BootstrapState) CurrentStepName() string {
 	return b.Steps[b.CurrentStep].Name
 }
 
-// AdvanceStep returns the current step name, guidance, and whether the bootstrap is done.
-// It marks the current step as in_progress.
-func (b *BootstrapState) AdvanceStep() (stepName string, guidance string, done bool) {
-	if !b.Active || b.CurrentStep >= len(b.Steps) {
-		return "", "", true
+// Step status constants.
+const (
+	stepPending    = "pending"
+	stepInProgress = "in_progress"
+	stepComplete   = "complete"
+	stepSkipped    = "skipped"
+)
+
+const minAttestationLen = 10
+
+// CompleteStep validates and completes the current step with an attestation.
+func (b *BootstrapState) CompleteStep(name, attestation string) error {
+	if !b.Active {
+		return fmt.Errorf("complete step: bootstrap not active")
+	}
+	if b.CurrentStep >= len(b.Steps) {
+		return fmt.Errorf("complete step: all steps already done")
+	}
+	current := b.Steps[b.CurrentStep].Name
+	if name != current {
+		return fmt.Errorf("complete step: expected %q (current), got %q", current, name)
+	}
+	if len(attestation) < minAttestationLen {
+		return fmt.Errorf("complete step: attestation too short (min %d chars)", minAttestationLen)
 	}
 
-	step := &b.Steps[b.CurrentStep]
-	step.Status = "in_progress"
-	return step.Name, stepGuidance[step.Name], false
+	b.Steps[b.CurrentStep].Status = stepComplete
+	b.Steps[b.CurrentStep].Attestation = attestation
+	b.Steps[b.CurrentStep].CompletedAt = time.Now().UTC().Format(time.RFC3339)
+	b.CurrentStep++
+
+	if b.CurrentStep >= len(b.Steps) {
+		b.Active = false
+	}
+	return nil
 }
 
-// MarkStepComplete marks a step as complete by name and advances CurrentStep.
-func (b *BootstrapState) MarkStepComplete(name string) error {
-	for i := range b.Steps {
-		if b.Steps[i].Name == name {
-			b.Steps[i].Status = "complete"
-			// Advance to next step if this was the current step.
-			if i == b.CurrentStep {
-				b.CurrentStep++
-			}
-			// Deactivate if all steps are done.
-			if b.CurrentStep >= len(b.Steps) {
-				b.Active = false
-			}
-			return nil
+// SkipStep validates and skips the current step with a reason.
+func (b *BootstrapState) SkipStep(name, reason string) error {
+	if !b.Active {
+		return fmt.Errorf("skip step: bootstrap not active")
+	}
+	if b.CurrentStep >= len(b.Steps) {
+		return fmt.Errorf("skip step: all steps already done")
+	}
+	current := b.Steps[b.CurrentStep].Name
+	if name != current {
+		return fmt.Errorf("skip step: expected %q (current), got %q", current, name)
+	}
+
+	detail := lookupDetail(name)
+	if !detail.Skippable {
+		return fmt.Errorf("skip step: %q is mandatory and cannot be skipped", name)
+	}
+
+	b.Steps[b.CurrentStep].Status = stepSkipped
+	b.Steps[b.CurrentStep].SkipReason = reason
+	b.Steps[b.CurrentStep].CompletedAt = time.Now().UTC().Format(time.RFC3339)
+	b.CurrentStep++
+
+	if b.CurrentStep >= len(b.Steps) {
+		b.Active = false
+	}
+	return nil
+}
+
+// BuildResponse constructs a BootstrapResponse from the current state.
+func (b *BootstrapState) BuildResponse(sessionID string, mode Mode, intent string) *BootstrapResponse {
+	completed := 0
+	summaries := make([]BootstrapStepSummary, len(b.Steps))
+	for i, s := range b.Steps {
+		summaries[i] = BootstrapStepSummary{Name: s.Name, Status: s.Status}
+		if s.Status == stepComplete || s.Status == stepSkipped {
+			completed++
 		}
 	}
-	return fmt.Errorf("mark step complete: step %q not found", name)
+
+	resp := &BootstrapResponse{
+		SessionID: sessionID,
+		Mode:      mode,
+		Intent:    intent,
+		Progress: BootstrapProgress{
+			Total:     len(b.Steps),
+			Completed: completed,
+			Steps:     summaries,
+		},
+	}
+
+	if b.CurrentStep < len(b.Steps) {
+		detail := lookupDetail(b.Steps[b.CurrentStep].Name)
+		resp.Current = &BootstrapStepInfo{
+			Name:         detail.Name,
+			Index:        b.CurrentStep,
+			Category:     string(detail.Category),
+			Guidance:     detail.Guidance,
+			Tools:        detail.Tools,
+			Verification: detail.Verification,
+		}
+		resp.Message = fmt.Sprintf("Step %d/%d: %s", b.CurrentStep+1, len(b.Steps), detail.Name)
+	} else {
+		resp.Message = "Bootstrap complete. All steps finished."
+	}
+
+	return resp
+}
+
+// lookupDetail finds the StepDetail for a step name.
+func lookupDetail(name string) StepDetail {
+	for _, d := range stepDetails {
+		if d.Name == name {
+			return d
+		}
+	}
+	return StepDetail{}
 }

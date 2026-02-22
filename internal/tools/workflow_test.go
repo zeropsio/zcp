@@ -340,3 +340,177 @@ func TestWorkflowTool_Action_ShowRemoved(t *testing.T) {
 		t.Error("expected IsError for removed show action")
 	}
 }
+
+// --- Bootstrap Conductor Tests ---
+
+func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"mode":     "full",
+		"intent":   "bun + postgres",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Progress.Total != 10 {
+		t.Errorf("Total: want 10, got %d", resp.Progress.Total)
+	}
+	if resp.Current == nil || resp.Current.Name != "detect" {
+		t.Error("expected current step to be 'detect'")
+	}
+}
+
+func TestWorkflowTool_Action_BootstrapComplete(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
+
+	// Start bootstrap.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "mode": "full",
+	})
+
+	// Complete detect step.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":      "complete",
+		"step":        "detect",
+		"attestation": "FRESH project, no existing services",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Current == nil || resp.Current.Name != "plan" {
+		t.Error("expected current step to be 'plan'")
+	}
+}
+
+func TestWorkflowTool_Action_BootstrapComplete_MissingFields(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
+
+	// Missing step.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete", "attestation": "test attestation here",
+	})
+	if !result.IsError {
+		t.Error("expected IsError for missing step")
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "INVALID_PARAMETER") {
+		t.Errorf("expected INVALID_PARAMETER error, got: %s", text)
+	}
+
+	// Missing attestation.
+	result = callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "detect",
+	})
+	if !result.IsError {
+		t.Error("expected IsError for missing attestation")
+	}
+}
+
+func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
+
+	// Start and advance to mount-dev.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "mode": "full",
+	})
+	preSteps := []string{"detect", "plan", "load-knowledge", "generate-import", "import-services"}
+	for _, step := range preSteps {
+		callTool(t, srv, "zerops_workflow", map[string]any{
+			"action": "complete", "step": step,
+			"attestation": "Attestation for " + step + " completed ok",
+		})
+	}
+
+	// Skip mount-dev.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "skip",
+		"step":   "mount-dev",
+		"reason": "no runtime services",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Current == nil || resp.Current.Name != "discover-envs" {
+		t.Error("expected current step to be 'discover-envs'")
+	}
+}
+
+func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
+
+	// Start bootstrap.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "mode": "full",
+	})
+
+	// Get status.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "status"})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Progress.Total != 10 {
+		t.Errorf("Total: want 10, got %d", resp.Progress.Total)
+	}
+}
+
+func TestWorkflowTool_Action_QuickMode(t *testing.T) {
+	t.Parallel()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "", nil, nil)
+
+	// Quick mode with legacy workflow=bootstrap should return full markdown.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow": "bootstrap",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	// Should contain markdown content (not JSON).
+	if strings.HasPrefix(text, "{") {
+		t.Error("quick/legacy mode should return markdown, not JSON")
+	}
+}

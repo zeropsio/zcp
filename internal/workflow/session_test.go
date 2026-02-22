@@ -44,6 +44,22 @@ func TestInitSession_CreatesState(t *testing.T) {
 	}
 }
 
+func TestInitSession_ExistingSessionBlocked(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// First init should succeed.
+	if _, err := InitSession(dir, "proj-1", ModeFull, "first"); err != nil {
+		t.Fatalf("first InitSession: %v", err)
+	}
+
+	// Second init should fail.
+	_, err := InitSession(dir, "proj-1", ModeFull, "second")
+	if err == nil {
+		t.Fatal("expected error for second InitSession with existing session")
+	}
+}
+
 func TestLoadSession_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

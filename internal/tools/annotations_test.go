@@ -86,7 +86,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		openWorld   *bool
 	}{
 		// Read-only tools
-		{name: "zerops_workflow", title: "Get workflow guidance", readOnly: true, idempotent: true, openWorld: boolPtr(false)},
+		{name: "zerops_workflow", title: "Workflow orchestration", openWorld: boolPtr(false)},
 		{name: "zerops_discover", title: "Discover project and services", readOnly: true, idempotent: true},
 		{name: "zerops_knowledge", title: "Zerops knowledge access", readOnly: true, idempotent: true},
 		{name: "zerops_logs", title: "Fetch service logs", readOnly: true, idempotent: true},

@@ -18,25 +18,27 @@ type WorkflowInput struct {
 	// Legacy: workflow name for static guidance (backward compat).
 	Workflow string `json:"workflow,omitempty"`
 
-	// New multi-action fields.
-	Action      string `json:"action,omitempty"`      // start, transition, reset, evidence, iterate
+	// Multi-action fields.
+	Action      string `json:"action,omitempty"`      // start, transition, reset, evidence, iterate, complete, skip, status
 	Mode        string `json:"mode,omitempty"`        // full, dev_only, hotfix, quick
 	Phase       string `json:"phase,omitempty"`       // target phase for transition
 	Intent      string `json:"intent,omitempty"`      // user intent for start
 	Type        string `json:"type,omitempty"`        // evidence type
 	Service     string `json:"service,omitempty"`     // service for evidence
-	Attestation string `json:"attestation,omitempty"` // attestation text for evidence
+	Attestation string `json:"attestation,omitempty"` // attestation text
+	Step        string `json:"step,omitempty"`        // step name for complete/skip
+	Reason      string `json:"reason,omitempty"`      // reason for skip
 }
 
 // RegisterWorkflow registers the zerops_workflow tool.
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Get step-by-step workflow for multi-step operations. Includes live service versions and orchestration steps. Requires workflow parameter: bootstrap, deploy, debug, scale, configure, or monitor.",
+		Description: "Orchestrate multi-step operations. Actions: start (bootstrap conductor or generic), complete/skip (bootstrap steps), status (progress), transition/evidence/reset/iterate (phase management).",
 		Annotations: &mcp.ToolAnnotations{
-			Title:          "Get workflow guidance",
-			ReadOnlyHint:   true,
-			IdempotentHint: true,
+			Title:          "Workflow orchestration",
+			ReadOnlyHint:   false,
+			IdempotentHint: false,
 			OpenWorldHint:  boolPtr(false),
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
@@ -88,11 +90,17 @@ func handleWorkflowAction(projectID string, engine *workflow.Engine, input Workf
 		return handleReset(engine)
 	case "iterate":
 		return handleIterate(engine)
+	case "complete":
+		return handleBootstrapComplete(engine, input)
+	case "skip":
+		return handleBootstrapSkip(engine, input)
+	case "status":
+		return handleBootstrapStatus(engine)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, transition, evidence, reset, iterate")), nil, nil
+			"Valid actions: start, complete, skip, status, transition, evidence, reset, iterate")), nil, nil
 	}
 }
 
@@ -105,6 +113,20 @@ func handleStart(projectID string, engine *workflow.Engine, input WorkflowInput)
 	}
 
 	mode := workflow.Mode(input.Mode)
+
+	// Bootstrap conductor: use BootstrapStart for non-quick bootstrap.
+	if input.Workflow == "bootstrap" && mode != workflow.ModeQuick {
+		resp, err := engine.BootstrapStart(projectID, mode, input.Intent)
+		if err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrWorkflowActive,
+				fmt.Sprintf("Bootstrap start failed: %v", err),
+				"Reset existing session first with action=reset")), nil, nil
+		}
+		return jsonResult(resp), nil, nil
+	}
+
+	// Generic start (non-bootstrap or quick mode).
 	state, err := engine.Start(projectID, mode, input.Intent)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -199,6 +221,64 @@ func handleIterate(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
 			"Start a session first")), nil, nil
 	}
 	return jsonResult(state), nil, nil
+}
+
+func handleBootstrapComplete(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	if input.Step == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"Step is required for complete action",
+			"Specify step name (e.g., step=\"detect\")")), nil, nil
+	}
+	if input.Attestation == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"Attestation is required for complete action",
+			"Describe what was accomplished in this step")), nil, nil
+	}
+
+	resp, err := engine.BootstrapComplete(input.Step, input.Attestation)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrBootstrapNotActive,
+			fmt.Sprintf("Complete step failed: %v", err),
+			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
+	}
+	return jsonResult(resp), nil, nil
+}
+
+func handleBootstrapSkip(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	if input.Step == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"Step is required for skip action",
+			"Specify step name (e.g., step=\"mount-dev\")")), nil, nil
+	}
+
+	reason := input.Reason
+	if reason == "" {
+		reason = "skipped by user"
+	}
+
+	resp, err := engine.BootstrapSkip(input.Step, reason)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrBootstrapNotActive,
+			fmt.Sprintf("Skip step failed: %v", err),
+			"Only skippable steps (mount-dev, discover-envs, deploy) can be skipped")), nil, nil
+	}
+	return jsonResult(resp), nil, nil
+}
+
+func handleBootstrapStatus(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
+	resp, err := engine.BootstrapStatus()
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrBootstrapNotActive,
+			fmt.Sprintf("Bootstrap status failed: %v", err),
+			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
+	}
+	return jsonResult(resp), nil, nil
 }
 
 // injectStacks inserts the stack list section into workflow content.
