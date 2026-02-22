@@ -1,7 +1,7 @@
 //go:build e2e && !windows
 
-// Tests for: e2e — background auto-update with binary replacement and graceful restart.
-// Requires: Unix (SIGUSR1), real build toolchain (go build).
+// Tests for: e2e — async auto-update with binary replacement and idle-wait graceful restart.
+// Requires: Unix, real build toolchain (go build).
 
 package e2e_test
 
@@ -18,17 +18,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
 
-func TestE2E_BackgroundUpdate(t *testing.T) {
+func TestE2E_AsyncUpdate(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode")
 	}
 
-	// Need a real Go toolchain to build test binaries.
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go not in PATH")
 	}
@@ -67,13 +65,13 @@ func TestE2E_BackgroundUpdate(t *testing.T) {
 	}
 
 	// Start the "old" binary as a subprocess.
-	// It will do startup update check → find v99.0.0 → download "new" from mock → replace → exit.
+	// MCP server starts immediately. The background goroutine:
+	//   check → find v99.0.0 → download "new" from mock → replace binary →
+	//   wait for idle → trigger graceful shutdown.
 	cmd := exec.Command(execPath)
 	cmd.Env = append(os.Environ(),
 		"ZCP_UPDATE_URL="+mockSrv.URL,
 		"ZCP_AUTO_UPDATE=1",
-		// Provide a fake API key so the binary doesn't exit early on auth.
-		// The startup check + replace happens before MCP server auth.
 	)
 
 	var stderr bytes.Buffer
@@ -88,11 +86,12 @@ func TestE2E_BackgroundUpdate(t *testing.T) {
 		t.Fatalf("start old binary: %v", err)
 	}
 
-	// Wait for the process to exit (it should re-exec after updating).
-	// The startup check in checkAndApplyUpdate() should find the update and re-exec.
-	// But since re-exec replaces the process, and the "new" binary is v99.0.0 which
-	// won't find an update, it will proceed to MCP server mode (and likely fail on auth).
-	// We give it time to complete the update cycle.
+	// Wait for the process to exit. The async update goroutine should:
+	// 1. Download the new binary and replace on disk
+	// 2. Wait for idle (no MCP requests in-flight — immediate since we sent none)
+	// 3. Call shutdown → context cancel → MCP server exits
+	// The process may also exit early due to auth failure, but the binary
+	// should still be replaced since the update goroutine runs concurrently.
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
@@ -100,11 +99,9 @@ func TestE2E_BackgroundUpdate(t *testing.T) {
 
 	select {
 	case err := <-done:
-		// Process exited — the re-exec may have failed on auth (expected).
 		t.Logf("Process exited: %v", err)
 		t.Logf("Stderr: %s", stderr.String())
 	case <-time.After(30 * time.Second):
-		// Process still running — close stdin to trigger shutdown.
 		stdinW.Close()
 		select {
 		case <-done:
@@ -125,9 +122,15 @@ func TestE2E_BackgroundUpdate(t *testing.T) {
 	} else {
 		t.Log("Binary on disk matches new version (checksum OK)")
 	}
+
+	// Verify stderr mentions the update.
+	stderrOutput := stderr.String()
+	if strings.Contains(stderrOutput, "updated") {
+		t.Log("Stderr confirms update was applied")
+	}
 }
 
-func TestE2E_BackgroundUpdate_SIGUSR1(t *testing.T) {
+func TestE2E_AsyncUpdate_NoUpdate(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode")
 	}
@@ -138,10 +141,10 @@ func TestE2E_BackgroundUpdate_SIGUSR1(t *testing.T) {
 
 	srcDir := findProjectRoot(t)
 
-	// Build a binary that is already "up to date" so SIGUSR1 check finds nothing.
+	// Build a binary that is already up to date.
 	binary := buildBinaryWithVersion(t, srcDir, "99.0.0")
 
-	// Mock HTTP server that returns the same version.
+	// Mock HTTP server returns the same version.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/zeropsio/zcp/releases/latest", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -156,6 +159,12 @@ func TestE2E_BackgroundUpdate_SIGUSR1(t *testing.T) {
 	if err := os.Chmod(execPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
+	originalBytes, err := os.ReadFile(execPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalChecksum := sha256.Sum256(originalBytes)
 
 	cmd := exec.Command(execPath)
 	cmd.Env = append(os.Environ(),
@@ -174,18 +183,8 @@ func TestE2E_BackgroundUpdate_SIGUSR1(t *testing.T) {
 		t.Fatalf("start binary: %v", err)
 	}
 
-	// Wait a moment for the process to start up (it may fail on auth, but
-	// the background goroutine should still be running briefly).
-	time.Sleep(2 * time.Second)
-
-	// Send SIGUSR1 to trigger immediate check.
-	t.Log("Sending SIGUSR1...")
-	if err := cmd.Process.Signal(syscall.SIGUSR1); err != nil {
-		// Process may have already exited due to auth failure.
-		t.Logf("SIGUSR1 send: %v (process may have exited)", err)
-	}
-
-	time.Sleep(2 * time.Second)
+	// Give it time to start and check for updates.
+	time.Sleep(3 * time.Second)
 
 	// Close stdin to trigger shutdown.
 	stdinW.Close()
@@ -202,16 +201,17 @@ func TestE2E_BackgroundUpdate_SIGUSR1(t *testing.T) {
 		<-done
 	}
 
-	stderrOutput := stderr.String()
-	t.Logf("Stderr output:\n%s", stderrOutput)
+	// Binary should NOT have been replaced.
+	currentBytes, err := os.ReadFile(execPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentChecksum := sha256.Sum256(currentBytes)
 
-	// The SIGUSR1 handling may or may not produce output depending on whether
-	// the process reached the background goroutine before auth failure.
-	// If it did, we should see the force check message.
-	if strings.Contains(stderrOutput, "force checking") {
-		t.Log("SIGUSR1 force check was triggered (OK)")
+	if currentChecksum != originalChecksum {
+		t.Error("binary was unexpectedly modified when no update was available")
 	} else {
-		t.Log("SIGUSR1 may not have been processed (process may have exited before background goroutine started)")
+		t.Log("Binary unchanged (no update available) — OK")
 	}
 }
 

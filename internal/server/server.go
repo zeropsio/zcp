@@ -33,16 +33,21 @@ type Server struct {
 	sshDeployer   ops.SSHDeployer
 	localDeployer ops.LocalDeployer
 	mounter       ops.Mounter
-	updateInfo    *update.Info
+	idleWaiter    *update.IdleWaiter
 	rtInfo        runtime.Info
 }
 
 // New creates a new ZCP MCP server with all tools registered.
-func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter, updateInfo *update.Info, rtInfo runtime.Info) *Server {
+func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter, idleWaiter *update.IdleWaiter, rtInfo runtime.Info) *Server {
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
 		&mcp.ServerOptions{Instructions: BuildInstructions(ctx, client, authInfo.ProjectID, rtInfo)},
 	)
+
+	// Register idle tracking middleware for graceful update restart.
+	if idleWaiter != nil {
+		srv.AddReceivingMiddleware(idleWaiter.Middleware())
+	}
 
 	s := &Server{
 		server:        srv,
@@ -53,7 +58,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		sshDeployer:   sshDeployer,
 		localDeployer: localDeployer,
 		mounter:       mounter,
-		updateInfo:    updateInfo,
+		idleWaiter:    idleWaiter,
 		rtInfo:        rtInfo,
 	}
 

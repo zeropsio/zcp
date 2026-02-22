@@ -37,11 +37,8 @@ func main() {
 		}
 	}
 
-	// Auto-update check (before MCP server starts — stdout is still free).
-	updateInfo := checkAndApplyUpdate()
-
-	// MCP server mode.
-	if err := run(updateInfo); err != nil {
+	// MCP server mode — starts immediately, no blocking update check.
+	if err := run(); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -78,37 +75,7 @@ func runUpdate() {
 	fmt.Fprintln(os.Stderr, "Updated successfully. Restart ZCP to use the new version.")
 }
 
-func checkAndApplyUpdate() *update.Info {
-	ctx := context.Background()
-
-	checker := update.NewChecker(server.Version)
-	info := checker.Check(ctx)
-
-	if !info.Available || os.Getenv("ZCP_AUTO_UPDATE") == "0" {
-		return info
-	}
-
-	// Auto-update: download, replace, re-exec.
-	binary, err := os.Executable()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "zcp: auto-update: resolve executable: %v\n", err)
-		return info
-	}
-
-	if err := update.Apply(ctx, info, binary, nil); err != nil {
-		fmt.Fprintf(os.Stderr, "zcp: auto-update: %v\n", err)
-		return info
-	}
-
-	// Re-exec with new binary. On success this never returns.
-	if err := update.Exec(); err != nil {
-		fmt.Fprintf(os.Stderr, "zcp: auto-update: %v\n", err)
-	}
-
-	return info
-}
-
-func run(updateInfo *update.Info) error {
+func run() error {
 	// Bootstrap: resolve credentials (env var or zcli) to create platform client.
 	creds, err := auth.ResolveCredentials()
 	if err != nil {
@@ -150,13 +117,18 @@ func run(updateInfo *update.Info) error {
 	// Local deployer for zcli push (zerops_deploy tool) — works from anywhere.
 	localDeployer := platform.NewSystemLocalDeployer()
 
+	// Idle tracker for graceful update restart.
+	idleWaiter := update.NewIdleWaiter()
+
 	// Create and run MCP server on STDIO.
 	// SSH deployer remains nil — requires running Zerops container with SSH access.
-	srv := server.New(ctx, client, authInfo, store, logFetcher, nil, localDeployer, mounter, updateInfo, rtInfo)
+	srv := server.New(ctx, client, authInfo, store, logFetcher, nil, localDeployer, mounter, idleWaiter, rtInfo)
 
-	// Background auto-update: check periodically and apply mid-session.
+	// Silent background update — completely invisible to LLM.
+	// Checks GitHub (24h cache), downloads if newer, waits for idle, then exits.
+	// Claude Code auto-restarts the MCP server with the new binary.
 	if os.Getenv("ZCP_AUTO_UPDATE") != "0" {
-		update.Background(ctx, server.Version, stop, os.Stderr, update.ForceCheckSignal())
+		go update.Once(ctx, server.Version, idleWaiter, stop, os.Stderr)
 	}
 
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
