@@ -182,15 +182,71 @@ func TestWorkflowTool_Action_Start(t *testing.T) {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))
 	}
 	text := getTextContent(t, result)
-	var state workflow.WorkflowState
-	if err := json.Unmarshal([]byte(text), &state); err != nil {
-		t.Fatalf("failed to parse state: %v", err)
+	var resp startResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse startResponse: %v", err)
 	}
-	if state.Mode != "full" {
-		t.Errorf("mode = %q, want full", state.Mode)
+	if resp.Mode != "full" {
+		t.Errorf("mode = %q, want full", resp.Mode)
 	}
-	if state.Phase != "INIT" {
-		t.Errorf("phase = %q, want INIT", state.Phase)
+	if resp.Phase != "INIT" {
+		t.Errorf("phase = %q, want INIT", resp.Phase)
+	}
+	if resp.SessionID == "" {
+		t.Error("expected non-empty sessionId")
+	}
+}
+
+func TestWorkflowTool_Action_Start_Deploy_ReturnsGuidance(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "deploy",
+		"mode":     "full",
+		"intent":   "Deploy to production",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp startResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse startResponse: %v", err)
+	}
+	if resp.Guidance == "" {
+		t.Error("expected non-empty guidance for deploy workflow")
+	}
+	if resp.Mode != "full" {
+		t.Errorf("mode = %q, want full", resp.Mode)
+	}
+}
+
+func TestWorkflowTool_Action_Start_NoWorkflow_NoGuidance(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start",
+		"mode":   "full",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp startResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse startResponse: %v", err)
+	}
+	if resp.Guidance != "" {
+		t.Errorf("expected empty guidance without workflow, got: %s", resp.Guidance[:50])
 	}
 }
 

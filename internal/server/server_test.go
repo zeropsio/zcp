@@ -137,6 +137,19 @@ func TestServer_Instructions_ReasonableLength(t *testing.T) {
 	}
 }
 
+func TestServer_RoutingInstructions_TrackedMode(t *testing.T) {
+	t.Parallel()
+	// All routing entries must use tracked mode syntax (action="start"), not legacy workflow="name".
+	if !strings.Contains(routingInstructions, `action="start"`) {
+		t.Error("routingInstructions should use tracked mode syntax")
+	}
+	// Legacy bare workflow= format should not appear in routing.
+	// We check that there's no "workflow=\"bootstrap\" (REQUIRED" which was the old format.
+	if strings.Contains(routingInstructions, `workflow="bootstrap" (REQUIRED`) {
+		t.Error("routingInstructions should not use legacy workflow= format")
+	}
+}
+
 func TestBuildInstructions_WithServices(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
@@ -154,6 +167,10 @@ func TestBuildInstructions_WithServices(t *testing.T) {
 	}
 	if !strings.Contains(inst, "ZCP manages") {
 		t.Error("instructions should contain base instructions")
+	}
+	// Conformant project should recommend deploy with tracked mode syntax.
+	if !strings.Contains(inst, `action="start"`) {
+		t.Error("conformant project should use tracked mode syntax")
 	}
 }
 
@@ -199,6 +216,12 @@ func TestBuildInstructions_FreshProject(t *testing.T) {
 	}
 	if !strings.Contains(inst, "bootstrap") {
 		t.Error("instructions should recommend bootstrap")
+	}
+	if !strings.Contains(inst, `action="start"`) {
+		t.Error("empty project directive should use tracked mode syntax")
+	}
+	if !strings.Contains(inst, `mode="full"`) {
+		t.Error("empty project directive should specify mode")
 	}
 }
 

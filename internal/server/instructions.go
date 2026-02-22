@@ -14,17 +14,15 @@ const baseInstructions = `ZCP manages Zerops PaaS infrastructure.`
 
 const routingInstructions = `
 Tool routing:
-- Create/bootstrap services: zerops_workflow workflow="bootstrap" (REQUIRED before zerops_import)
-- Deploy code: zerops_workflow workflow="deploy"
-- Debug issues: zerops_workflow workflow="debug"
-- Scale: zerops_workflow workflow="scale"
-- Configure: zerops_workflow workflow="configure"
+- Bootstrap/create services: zerops_workflow action="start" workflow="bootstrap" mode="full"
+- Deploy code: zerops_workflow action="start" workflow="deploy" mode="full"
+- Debug issues: zerops_workflow action="start" workflow="debug" mode="quick"
+- Scale: zerops_workflow action="start" workflow="scale" mode="quick"
+- Configure: zerops_workflow action="start" workflow="configure" mode="quick"
 - Monitor: zerops_discover
 - Search docs: zerops_knowledge query="..."
 
-NEVER call zerops_import directly. ALWAYS use zerops_workflow first — it provides the required process, including when to call zerops_knowledge.
-
-For tracked multi-phase operations, use action="start" mode="full|dev_only|hotfix|quick" to begin a session with gates and evidence tracking.`
+NEVER call zerops_import directly. ALWAYS start with zerops_workflow.`
 
 // BuildInstructions returns the MCP instructions message injected into the system prompt.
 // It includes runtime context, a dynamic project summary, and routing instructions.
@@ -62,7 +60,7 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID 
 	}
 
 	if len(services) == 0 {
-		return "Project is empty — no services configured yet.\nREQUIRED: zerops_workflow workflow=\"bootstrap\""
+		return "Project is empty — no services configured yet.\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\""
 	}
 
 	var b strings.Builder
@@ -82,11 +80,11 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID 
 		fmt.Fprintf(&b, "\nProject state: %s", projState)
 		switch projState {
 		case workflow.StateFresh:
-			b.WriteString("\nREQUIRED: zerops_workflow workflow=\"bootstrap\"")
+			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\"")
 		case workflow.StateConformant:
-			b.WriteString("\nRecommended: zerops_workflow workflow=\"deploy\" or workflow=\"debug\"")
+			b.WriteString("\nRecommended: zerops_workflow action=\"start\" workflow=\"deploy\" mode=\"full\"")
 		case workflow.StateNonConformant:
-			b.WriteString("\nREQUIRED: zerops_workflow workflow=\"bootstrap\"")
+			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\"")
 		}
 	}
 

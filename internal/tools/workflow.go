@@ -13,6 +13,11 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+const (
+	workflowBootstrap = "bootstrap"
+	workflowDeploy    = "deploy"
+)
+
 // WorkflowInput is the input type for zerops_workflow.
 type WorkflowInput struct {
 	// Legacy: workflow name for static guidance (backward compat).
@@ -30,11 +35,20 @@ type WorkflowInput struct {
 	Reason      string `json:"reason,omitempty"      jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
 }
 
+// startResponse wraps WorkflowState with workflow guidance for non-bootstrap start.
+type startResponse struct {
+	SessionID string `json:"sessionId"`
+	Mode      string `json:"mode"`
+	Intent    string `json:"intent"`
+	Phase     string `json:"phase"`
+	Guidance  string `json:"guidance,omitempty"`
+}
+
 // RegisterWorkflow registers the zerops_workflow tool.
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate multi-step operations. Actions: start (bootstrap conductor or generic), complete/skip (bootstrap steps), status (progress), transition/evidence/reset/iterate (phase management).",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" mode=\"full|dev_only|hotfix|quick\" to begin a tracked session with guidance. mode is REQUIRED. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"transition|evidence|reset|iterate\" (phase management).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -44,7 +58,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(projectID, engine, input)
+			return handleWorkflowAction(ctx, projectID, engine, client, cache, input)
 		}
 
 		// Legacy: static workflow guidance.
@@ -60,7 +74,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 		}
 
 		// Inject live stack types into bootstrap/deploy workflows.
-		if (input.Workflow == "bootstrap" || input.Workflow == "deploy") && client != nil && cache != nil {
+		if (input.Workflow == workflowBootstrap || input.Workflow == workflowDeploy) && client != nil && cache != nil {
 			if types := cache.Get(ctx, client); len(types) > 0 {
 				stackList := knowledge.FormatStackList(types)
 				content = injectStacks(content, stackList)
@@ -71,7 +85,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	})
 }
 
-func handleWorkflowAction(projectID string, engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -81,7 +95,7 @@ func handleWorkflowAction(projectID string, engine *workflow.Engine, input Workf
 
 	switch input.Action {
 	case "start":
-		return handleStart(projectID, engine, input)
+		return handleStart(ctx, projectID, engine, client, cache, input)
 	case "transition":
 		return handleTransition(engine, input)
 	case "evidence":
@@ -104,7 +118,7 @@ func handleWorkflowAction(projectID string, engine *workflow.Engine, input Workf
 	}
 }
 
-func handleStart(projectID string, engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Mode == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -115,7 +129,7 @@ func handleStart(projectID string, engine *workflow.Engine, input WorkflowInput)
 	mode := workflow.Mode(input.Mode)
 
 	// Bootstrap conductor: use BootstrapStart for non-quick bootstrap.
-	if input.Workflow == "bootstrap" && mode != workflow.ModeQuick {
+	if input.Workflow == workflowBootstrap && mode != workflow.ModeQuick {
 		resp, err := engine.BootstrapStart(projectID, mode, input.Intent)
 		if err != nil {
 			return convertError(platform.NewPlatformError(
@@ -135,7 +149,24 @@ func handleStart(projectID string, engine *workflow.Engine, input WorkflowInput)
 			"Reset existing session first with action=reset")), nil, nil
 	}
 
-	return jsonResult(state), nil, nil
+	resp := startResponse{
+		SessionID: state.SessionID,
+		Mode:      string(state.Mode),
+		Intent:    state.Intent,
+		Phase:     string(state.Phase),
+	}
+	if input.Workflow != "" {
+		if guidance, err := ops.GetWorkflow(input.Workflow); err == nil {
+			if (input.Workflow == workflowBootstrap || input.Workflow == workflowDeploy) && client != nil && cache != nil {
+				if types := cache.Get(ctx, client); len(types) > 0 {
+					guidance = injectStacks(guidance, knowledge.FormatStackList(types))
+				}
+			}
+			resp.Guidance = guidance
+		}
+	}
+
+	return jsonResult(resp), nil, nil
 }
 
 func handleTransition(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
