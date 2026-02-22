@@ -132,10 +132,16 @@ func (z *ZeropsClient) GetProject(ctx context.Context, projectID string) (*Proje
 		return nil, mapSDKError(err, "project")
 	}
 
+	subdomainHost := ""
+	if sh, ok := out.ZeropsSubdomainHost.Get(); ok {
+		subdomainHost = sh.String()
+	}
+
 	return &Project{
-		ID:     out.Id.TypedString().String(),
-		Name:   out.Name.String(),
-		Status: out.Status.String(),
+		ID:            out.Id.TypedString().String(),
+		Name:          out.Name.String(),
+		Status:        out.Status.String(),
+		SubdomainHost: subdomainHost,
 	}, nil
 }
 

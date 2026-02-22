@@ -263,5 +263,8 @@ Verification is attestation-based: the agent verifies using tools, then records 
 | `jq: command not found` via SSH | jq not available inside containers | Pipe outside: `ssh dev "curl ..." \| jq .` |
 | `psql: command not found` via SSH | DB tools only on ZCP | Run from ZCP: `psql "$db_connectionString"` |
 | `https://https://...` double protocol | `zeropsSubdomain` already includes `https://` | Use the variable directly, don't prepend |
+| HTTP 502 despite app running + subdomain enabled | Using base zeropsSubdomain URL without port suffix | First verify internally: `curl http://{hostname}:{port}/health`. If internal works, the issue is subdomain URL — append -{port} to base: `{hostname}-{prefix}-{port}.{region}.zerops.app` |
+| SSHFS stale after deploy | Container replaced during deploy (runtime-1→2→3) | `zerops_mount action="mount"` auto-detects stale, re-mounts. Always remount after deploy |
+| Logs flooded with SSH isolation warnings | sshIsolation: vpn rejects non-VPN connections | Normal behavior. Filter with `search="exec"` or `search="listening"` to find app logs |
 | Gate fails after verification | Empty or vague attestation | Include specific description of what was verified |
 | Empty env variable | Variable not discovered or wrong name | Check `zerops_discover includeEnvs=true` first |

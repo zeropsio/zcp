@@ -261,7 +261,7 @@ Every deployment must pass this protocol before being considered complete.
 - Check 1 is CRITICAL — zerops_deploy returns before build completes. Wait 5s after deploy, then poll zerops_events every 10s until build finishes (max 300s / 30 polls).
 - Check 4: framework-dependent — search for `listening on`, `started server`, `ready to accept`.
 - Check 6: **ALWAYS** call `zerops_subdomain action="enable"` after deploy — even if `zeropsSubdomain` env var is already present from import. The env var is pre-configured by `enableSubdomainAccess: true` in import.yml, but **routing is not active** until you explicitly call the enable API. The call is idempotent (returns `already_enabled` if already active). Then `zerops_discover service="{hostname}" includeEnvs=true` to get the `zeropsSubdomain` URL.
-- Check 7: get `zeropsSubdomain` from check 6 discover result. It is already a full URL — do NOT prepend `https://`. **Read the response body.** Empty body, "Cannot GET /", or framework error page = NOT healthy.
+- Check 7: get `zeropsSubdomain` from check 6 discover result. It is already a full URL — do NOT prepend `https://`. **Read the response body.** Empty body, "Cannot GET /", or framework error page = NOT healthy. **Alternative/fallback:** verify internally via `curl -sfm 10 http://{hostname}:{port}/health` from the ZCP container. If internal check passes but public subdomain returns 502, the issue is subdomain configuration — not the app.
 - Check 8: **Read the `/status` body.** If it shows any connection as "error" or "disconnected" = NOT confirmed. Fallback to log search for `connected|pool|migration` if no `/status` endpoint.
 
 **Do NOT deploy to stage until dev passes ALL checks.** Stage is for final validation, not debugging.
@@ -318,11 +318,12 @@ When any verification check fails, enter the iteration loop instead of giving up
 4. **Discover env vars**: For each managed service, `zerops_discover service="{hostname}" includeEnvs=true`. Record the exact env var names available. See "Env var discovery protocol" above.
 5. **Create files on mount path**: Write zerops.yml + application source files + .gitignore to `/var/www/appdev/`. Follow the Application Code Requirements (Step 6) and dev vs prod differentiation (Step 5). The zerops.yml `setup:` entries must match ALL service hostnames (both dev and stage). Use only DISCOVERED env vars in envVariables mappings.
 6. **Deploy to appdev**: `zerops_deploy targetService="appdev" workingDir="/var/www/appdev" includeGit=true` — local mode, reads from SSHFS mount. `-g` flag includes `.git` directory on the container. The deploy tool auto-initializes a git repo if missing
-7. **Verify appdev** — run the full 8-point verification protocol
-8. **Iterate if needed** — if verification fails, enter the iteration loop: diagnose → fix on mount path → redeploy → re-verify (max 3 iterations)
-9. **Deploy to appstage**: `zerops_deploy targetService="appstage" workingDir="/var/www/appdev"` — same source files, different target. This transitions stage from READY_TO_DEPLOY → BUILDING → RUNNING
-10. **Verify appstage** — run the 8-point verification protocol on appstage
-11. **Present both URLs** to user:
+7. **Remount after deploy**: `zerops_mount action="mount" serviceHostname="appdev"` — deploy replaces the container, making the previous SSHFS mount stale. The mount tool auto-detects stale mounts and re-mounts.
+8. **Verify appdev** — run the full 8-point verification protocol
+9. **Iterate if needed** — if verification fails, enter the iteration loop: diagnose → fix on mount path → redeploy → remount → re-verify (max 3 iterations)
+10. **Deploy to appstage**: `zerops_deploy targetService="appstage" workingDir="/var/www/appdev"` — same source files, different target. This transitions stage from READY_TO_DEPLOY → BUILDING → RUNNING
+11. **Verify appstage** — run the 8-point verification protocol on appstage
+12. **Present both URLs** to user:
     ```
     Dev:   {appdev zeropsSubdomain}
     Stage: {appstage zeropsSubdomain}
@@ -501,6 +502,7 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 3 | Write .gitignore | Appropriate for {runtimeType} | File exists |
 | 4 | Deploy dev | `zerops_deploy targetService="{devHostname}" workingDir="{mountPath}" includeGit=true` | status=BUILD_TRIGGERED |
 | 5 | Wait for build | `zerops_events serviceHostname="{devHostname}" limit=5` — poll every 10s, max 300s | Build FINISHED |
+| 5b | Remount | `zerops_mount action="mount" serviceHostname="{devHostname}"` — deploy replaces container, stale mount auto-cleans on remount | Mount path accessible |
 | 6 | Check errors | `zerops_logs serviceHostname="{devHostname}" severity="error" since="5m"` | No errors |
 | 7 | Confirm startup | `zerops_logs serviceHostname="{devHostname}" search="listening\|started\|ready" since="5m"` | At least one match |
 | 8 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` then `zerops_discover service="{devHostname}" includeEnvs=true` | Success + get zeropsSubdomain URL |
@@ -524,7 +526,9 @@ If any check 5–10 fails, iterate — do NOT skip ahead to stage:
 
 3. **Redeploy**: `zerops_deploy targetService="{devHostname}" workingDir="{mountPath}" includeGit=true`
 
-4. **Re-verify**: Start from check 5 again
+4. **Remount**: `zerops_mount action="mount" serviceHostname="{devHostname}"` — deploy replaces the container
+
+5. **Re-verify**: Start from check 5 again
 
 Max 3 iterations. After that, report failure with diagnosis.
 
@@ -533,6 +537,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 - NEVER write lock files (go.sum, bun.lock, package-lock.json). Write manifests only (go.mod, package.json). Let build commands generate locks.
 - NEVER write dependency dirs (node_modules/, vendor/).
 - zerops_deploy returns BUILD_TRIGGERED — you MUST poll zerops_events for completion.
+- `includeGit=true` requires `deployFiles: [.]` in zerops.yml — individual paths break git repository structure.
 - zerops_subdomain MUST be called after deploy (even if enableSubdomainAccess was in import).
 - zeropsSubdomain is already a full URL — do NOT prepend https://.
 - Internal connections use http://, never https://.

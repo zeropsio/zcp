@@ -86,6 +86,8 @@ Before deploying, ensure these requirements are met:
 
 2. **`zerops.yml` must exist** at the working directory root with a `setup:` entry matching the target service hostname. Without it, the build pipeline has no instructions.
 
+3. **`includeGit=true` requires `deployFiles: [.]`** — when deploying with `includeGit=true`, the `.git/` directory is sent alongside code. Listing individual paths in `deployFiles` (e.g., `[src, node_modules]`) breaks because git expects the full repo structure. Always use `deployFiles: [.]` with `includeGit=true`.
+
 3. **Environment variables must be resolved.** Run `zerops_discover service="{hostname}" includeEnvs=true` and verify cross-referenced variables have real values (not `${...}` literals). If unresolved, restart the service and re-check.
 
 ---
@@ -101,8 +103,9 @@ You MUST poll for completion. Do NOT assume deployment is done when the tool ret
 
 If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow this order:
 
-1. **Deploy to dev first**: `zerops_deploy targetService="appdev"`
-2. **Verify dev** — run the full verification protocol on the dev service
+1. **Deploy to dev first**: `zerops_deploy targetService="appdev" includeGit=true`
+2. **Remount after deploy**: `zerops_mount action="mount" serviceHostname="appdev"` — deploy replaces the container, making SSHFS mounts stale. The mount tool auto-detects and re-mounts.
+3. **Verify dev** — run the full verification protocol on the dev service
 3. **Fix any errors on dev** — iterate until dev passes all checks
 
 **Verification means more than HTTP 200.** Read the response body from health/status endpoints. If dev returns 200 but the body shows errors, the app is broken — fix before deploying to stage.
@@ -186,7 +189,7 @@ Execute IN ORDER. Every step requires verification.
 | # | Action | Tool | Verify |
 |---|--------|------|--------|
 | 1 | Verify exists | zerops_discover service="{hostname}" | RUNNING or READY_TO_DEPLOY |
-| 2 | Trigger deploy | zerops_deploy targetService="{hostname}" | status=BUILD_TRIGGERED |
+| 2 | Trigger deploy | zerops_deploy targetService="{hostname}" includeGit=true | status=BUILD_TRIGGERED |
 | 3 | Poll build | zerops_events serviceHostname="{hostname}" limit=5, every 10s, max 300s | Build FINISHED |
 | 4 | Check errors | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
 | 5 | Confirm startup | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
@@ -204,8 +207,14 @@ already exists from import. The env var is pre-configured by enableSubdomainAcce
 but routing is NOT active until you explicitly call enable. The call is idempotent.
 zeropsSubdomain is already a full URL — do NOT prepend https://.
 
+If subdomain URL returns 502, verify the app internally first: curl http://{hostname}:{port}/health.
+Internal network access uses hostname directly — no subdomain needed.
+
+After deploy, remount SSHFS: zerops_mount action="mount" serviceHostname="{hostname}" — deploy
+replaces the container, making previous mounts stale.
+
 If any check fails, iterate: diagnose (check logs, capture response bodies), fix the issue,
-redeploy, re-verify. Max 3 iterations. If build FAILED: check zerops_logs severity="error"
+remount (zerops_mount), redeploy, re-verify. Max 3 iterations. If build FAILED: check zerops_logs severity="error"
 since="10m", then fallback to bash: zcli service log {hostname} --showBuildLogs --limit 50.
 
 Report: status (pass/fail) + which checks passed/failed + subdomain URL.

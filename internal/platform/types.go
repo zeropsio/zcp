@@ -14,9 +14,10 @@ type UserInfo struct {
 
 // Project represents a Zerops project.
 type Project struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Status        string `json:"status"`
+	SubdomainHost string `json:"subdomainHost,omitempty"` // e.g. "1df2.prg1.zerops.app"
 }
 
 // ServiceStack represents a Zerops service.
@@ -27,6 +28,7 @@ type ServiceStack struct {
 	ServiceStackTypeInfo ServiceTypeInfo    `json:"serviceStackTypeInfo"`
 	Status               string             `json:"status"`
 	Mode                 string             `json:"mode"` // HA, NON_HA
+	SubdomainAccess      bool               `json:"subdomainAccess,omitempty"`
 	Ports                []Port             `json:"ports,omitempty"`
 	CustomAutoscaling    *CustomAutoscaling `json:"customAutoscaling,omitempty"`
 	CurrentAutoscaling   *CustomAutoscaling `json:"currentAutoscaling,omitempty"`

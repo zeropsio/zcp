@@ -2,6 +2,8 @@ package ops
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -23,15 +25,16 @@ type ProjectInfo struct {
 
 // ServiceInfo contains service details for the discover response.
 type ServiceInfo struct {
-	Hostname   string           `json:"hostname"`
-	ServiceID  string           `json:"serviceId"`
-	Type       string           `json:"type"`
-	Status     string           `json:"status"`
-	Created    string           `json:"created,omitempty"`
-	Containers map[string]any   `json:"containers,omitempty"`
-	Resources  map[string]any   `json:"resources,omitempty"`
-	Ports      []map[string]any `json:"ports,omitempty"`
-	Envs       []map[string]any `json:"envs,omitempty"`
+	Hostname      string           `json:"hostname"`
+	ServiceID     string           `json:"serviceId"`
+	Type          string           `json:"type"`
+	Status        string           `json:"status"`
+	Created       string           `json:"created,omitempty"`
+	SubdomainUrls []string         `json:"subdomainUrls,omitempty"`
+	Containers    map[string]any   `json:"containers,omitempty"`
+	Resources     map[string]any   `json:"resources,omitempty"`
+	Ports         []map[string]any `json:"ports,omitempty"`
+	Envs          []map[string]any `json:"envs,omitempty"`
 }
 
 // Discover fetches project and service information.
@@ -71,6 +74,7 @@ func Discover(
 			return nil, getErr
 		}
 		info := buildDetailedServiceInfo(detail)
+		attachSubdomainUrls(&info, detail, proj.SubdomainHost)
 		if includeEnvs {
 			attachEnvs(ctx, client, &info, detail.ID)
 		}
@@ -195,6 +199,28 @@ func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, 
 		return // silently ignore env fetch errors
 	}
 	info.Envs = envVarsToMaps(envs)
+}
+
+// attachSubdomainUrls populates SubdomainUrls on a ServiceInfo when subdomain access is enabled.
+func attachSubdomainUrls(info *ServiceInfo, svc *platform.ServiceStack, subdomainHost string) {
+	if !svc.SubdomainAccess || subdomainHost == "" || len(svc.Ports) == 0 {
+		return
+	}
+	urls := make([]string, 0, len(svc.Ports))
+	for _, p := range svc.Ports {
+		urls = append(urls, buildSubdomainURL(svc.Name, subdomainHost, p.Port))
+	}
+	info.SubdomainUrls = urls
+}
+
+// buildSubdomainURL constructs a full subdomain URL for a service port.
+// Pattern: https://{hostname}-{prefix}-{port}.{rest} (port 80 omits the port suffix).
+func buildSubdomainURL(hostname, subdomainHost string, port int) string {
+	prefix, rest, _ := strings.Cut(subdomainHost, ".")
+	if port == 80 {
+		return fmt.Sprintf("https://%s-%s.%s", hostname, prefix, rest)
+	}
+	return fmt.Sprintf("https://%s-%s-%d.%s", hostname, prefix, port, rest)
 }
 
 // addEnvRefNotes appends an explanatory note if any service env contains cross-service references.

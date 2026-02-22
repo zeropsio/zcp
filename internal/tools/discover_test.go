@@ -164,6 +164,49 @@ func TestDiscoverTool_EnvRefAnnotation(t *testing.T) {
 	}
 }
 
+func TestDiscoverTool_SubdomainUrls(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive, SubdomainHost: "abc1.prg1.zerops.app"}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app", Status: statusActive,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"},
+				SubdomainAccess:      true,
+				Ports:                []platform.Port{{Port: 3000, Protocol: "tcp", Public: false}},
+			},
+		}).
+		WithService(&platform.ServiceStack{
+			ID: "svc-1", Name: "app", Status: statusActive,
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"},
+			SubdomainAccess:      true,
+			Ports:                []platform.Port{{Port: 3000, Protocol: "tcp", Public: false}},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDiscover(srv, mock, "proj-1")
+
+	result := callTool(t, srv, "zerops_discover", map[string]any{"service": "app"})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var dr ops.DiscoverResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &dr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if len(dr.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(dr.Services))
+	}
+	if len(dr.Services[0].SubdomainUrls) != 1 {
+		t.Fatalf("expected 1 subdomain URL, got %d", len(dr.Services[0].SubdomainUrls))
+	}
+	want := "https://app-abc1-3000.prg1.zerops.app"
+	if dr.Services[0].SubdomainUrls[0] != want {
+		t.Errorf("subdomain URL = %q, want %q", dr.Services[0].SubdomainUrls[0], want)
+	}
+}
+
 func TestDiscoverTool_Error(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().

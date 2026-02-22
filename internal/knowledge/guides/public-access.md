@@ -15,6 +15,8 @@ Zerops offers three public access methods: zerops.app subdomains (dev only, 50MB
 - Auto-provisioned SSL
 - Pre-configure via import YAML: `enableSubdomainAccess: true` (sets `zeropsSubdomain` env var, works for all runtime/web types)
 - **Activate routing via API:** `zerops_subdomain enable` (only works on deployed/ACTIVE services) — **MUST be called after first deploy** even if `enableSubdomainAccess: true` was set in import. Import pre-configures the URL but does NOT activate L7 balancer routing; without the explicit enable call, the subdomain returns 502
+- **Port-specific subdomains**: If HTTP ports are defined in zerops.yml, each port gets its own subdomain: `{hostname}-{subdomainHost_prefix}-{port}.{subdomainHost_rest}`. Example: hostname `appdev`, subdomainHost `1df2.prg1.zerops.app`, port 3000 → actual URL `https://appdev-1df2-3000.prg1.zerops.app`. Port 80 omits the port suffix: `https://appdev-1df2.prg1.zerops.app`. The `zeropsSubdomain` env var contains the full routable URL including port suffix
+- **Internal network fallback**: Every service is accessible internally via `http://{hostname}:{port}` (e.g., `http://appdev:3000`). Use this to verify the app is running when subdomain access is uncertain — `curl http://appdev:3000/health` from the ZCP container or any other service in the project
 - Works for: nodejs, static, nginx, go, python, php, java, rust, dotnet, and all other runtime types
 
 ### 2. Custom Domains (Production)
