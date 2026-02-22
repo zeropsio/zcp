@@ -10,8 +10,8 @@ import (
 
 // SubdomainInput is the input type for zerops_subdomain.
 type SubdomainInput struct {
-	ServiceHostname string `json:"serviceHostname"`
-	Action          string `json:"action"`
+	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to enable/disable subdomain for."`
+	Action          string `json:"action"          jsonschema:"Action: enable or disable. Must call enable after first deploy to activate routing."`
 }
 
 // RegisterSubdomain registers the zerops_subdomain tool.

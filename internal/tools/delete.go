@@ -10,8 +10,8 @@ import (
 
 // DeleteInput is the input type for zerops_delete.
 type DeleteInput struct {
-	ServiceHostname string `json:"serviceHostname"`
-	Confirm         bool   `json:"confirm"`
+	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to delete."`
+	Confirm         bool   `json:"confirm"         jsonschema:"Must be true to confirm deletion. This is destructive and permanent."`
 }
 
 // RegisterDelete registers the zerops_delete tool.

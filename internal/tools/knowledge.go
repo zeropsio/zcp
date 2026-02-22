@@ -13,12 +13,12 @@ import (
 // KnowledgeInput is the input type for zerops_knowledge.
 // Supports four modes: query (BM25 search), briefing (contextual assembly), scope (platform reference), or recipe.
 type KnowledgeInput struct {
-	Query    string   `json:"query,omitempty"`    // BM25 search query
-	Limit    int      `json:"limit,omitempty"`    // Result limit for query mode
-	Runtime  string   `json:"runtime,omitempty"`  // Runtime type (e.g., "php-nginx@8.4")
-	Services []string `json:"services,omitempty"` // Service types (e.g., ["postgresql@16", "valkey@7.2"])
-	Recipe   string   `json:"recipe,omitempty"`   // Recipe name (e.g., "laravel-jetstream")
-	Scope    string   `json:"scope,omitempty"`    // "infrastructure" for platform reference
+	Query    string   `json:"query,omitempty"    jsonschema:"BM25 search query for finding specific topics in Zerops docs. Use alone (query mode)."`
+	Limit    int      `json:"limit,omitempty"    jsonschema:"Maximum number of search results to return (query mode only)."`
+	Runtime  string   `json:"runtime,omitempty"  jsonschema:"Runtime type for stack briefing (e.g. php-nginx@8.4 or bun@1.2). Use with or without services (briefing mode)."`
+	Services []string `json:"services,omitempty" jsonschema:"Service types for stack briefing (e.g. [postgresql@16, valkey@7.2]). Use with or without runtime (briefing mode)."`
+	Recipe   string   `json:"recipe,omitempty"   jsonschema:"Recipe name to retrieve pre-built framework config (e.g. laravel-jetstream, nextjs). Use alone (recipe mode)."`
+	Scope    string   `json:"scope,omitempty"    jsonschema:"Platform reference scope. Use scope=infrastructure for complete Zerops knowledge (YAML schemas, env vars, build/deploy lifecycle). Required before generating YAML. Use alone (scope mode)."`
 }
 
 // RegisterKnowledge registers the zerops_knowledge tool.

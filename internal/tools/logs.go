@@ -10,11 +10,11 @@ import (
 
 // LogsInput is the input type for zerops_logs.
 type LogsInput struct {
-	ServiceHostname string `json:"serviceHostname"`
-	Severity        string `json:"severity,omitempty"`
-	Since           string `json:"since,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
-	Search          string `json:"search,omitempty"`
+	ServiceHostname string `json:"serviceHostname"    jsonschema:"Hostname of the service to fetch logs from."`
+	Severity        string `json:"severity,omitempty" jsonschema:"Filter by log severity: WARNING or ERROR. Omit for all severities."`
+	Since           string `json:"since,omitempty"    jsonschema:"Fetch logs since this time. RFC3339 format (e.g. 2024-01-15T10:00:00Z) or relative duration (e.g. 1h, 30m)."`
+	Limit           int    `json:"limit,omitempty"    jsonschema:"Maximum number of log entries to return. Default: 100."`
+	Search          string `json:"search,omitempty"   jsonschema:"Full-text search filter applied to log messages."`
 }
 
 // RegisterLogs registers the zerops_logs tool.

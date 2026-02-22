@@ -10,8 +10,8 @@ import (
 
 // EventsInput is the input type for zerops_events.
 type EventsInput struct {
-	ServiceHostname string `json:"serviceHostname,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
+	ServiceHostname string `json:"serviceHostname,omitempty" jsonschema:"Filter events by service hostname. Omit to see all project events."`
+	Limit           int    `json:"limit,omitempty"           jsonschema:"Maximum number of events to return."`
 }
 
 // RegisterEvents registers the zerops_events tool.

@@ -10,8 +10,8 @@ import (
 
 // ManageInput is the input type for zerops_manage.
 type ManageInput struct {
-	Action          string `json:"action"`
-	ServiceHostname string `json:"serviceHostname"`
+	Action          string `json:"action"          jsonschema:"Lifecycle action to perform: start, stop, or restart."`
+	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to manage."`
 }
 
 // RegisterManage registers the zerops_manage tool.

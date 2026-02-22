@@ -11,8 +11,8 @@ import (
 
 // ImportInput is the input type for zerops_import.
 type ImportInput struct {
-	Content  string `json:"content,omitempty"`
-	FilePath string `json:"filePath,omitempty"`
+	Content  string `json:"content,omitempty"  jsonschema:"Inline import YAML content. Provide either content or filePath."`
+	FilePath string `json:"filePath,omitempty" jsonschema:"Path to a YAML file containing the import definition. Provide either filePath or content."`
 }
 
 // RegisterImport registers the zerops_import tool.

@@ -16,18 +16,18 @@ import (
 // WorkflowInput is the input type for zerops_workflow.
 type WorkflowInput struct {
 	// Legacy: workflow name for static guidance (backward compat).
-	Workflow string `json:"workflow,omitempty"`
+	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name for static guidance: bootstrap, deploy, debug, scale, or configure."`
 
 	// Multi-action fields.
-	Action      string `json:"action,omitempty"`      // start, transition, reset, evidence, iterate, complete, skip, status
-	Mode        string `json:"mode,omitempty"`        // full, dev_only, hotfix, quick
-	Phase       string `json:"phase,omitempty"`       // target phase for transition
-	Intent      string `json:"intent,omitempty"`      // user intent for start
-	Type        string `json:"type,omitempty"`        // evidence type
-	Service     string `json:"service,omitempty"`     // service for evidence
-	Attestation string `json:"attestation,omitempty"` // attestation text
-	Step        string `json:"step,omitempty"`        // step name for complete/skip
-	Reason      string `json:"reason,omitempty"`      // reason for skip
+	Action      string `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, transition, evidence, reset, or iterate."`
+	Mode        string `json:"mode,omitempty"        jsonschema:"Session mode for start action: full (all phases), dev_only (skip deploy/verify), hotfix (skip discover), or quick (no gates)."`
+	Phase       string `json:"phase,omitempty"       jsonschema:"Target phase for transition action: DISCOVER, DEVELOP, DEPLOY, VERIFY, or DONE."`
+	Intent      string `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
+	Type        string `json:"type,omitempty"        jsonschema:"Evidence type for evidence action: recipe_review, discovery, dev_verify, deploy_evidence, or stage_verify."`
+	Service     string `json:"service,omitempty"     jsonschema:"Service hostname to associate with evidence."`
+	Attestation string `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for evidence and complete actions)."`
+	Step        string `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (e.g. detect, mount-dev, discover-envs, deploy)."`
+	Reason      string `json:"reason,omitempty"      jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
 }
 
 // RegisterWorkflow registers the zerops_workflow tool.

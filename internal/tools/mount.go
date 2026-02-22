@@ -10,8 +10,8 @@ import (
 
 // MountInput is the input type for zerops_mount.
 type MountInput struct {
-	Action          string `json:"action"`
-	ServiceHostname string `json:"serviceHostname,omitempty"`
+	Action          string `json:"action"                    jsonschema:"Action to perform: mount, unmount, or status."`
+	ServiceHostname string `json:"serviceHostname,omitempty" jsonschema:"Hostname of the service to mount/unmount. Required for mount and unmount actions."`
 }
 
 // RegisterMount registers the zerops_mount tool.

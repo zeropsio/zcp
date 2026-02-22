@@ -10,10 +10,10 @@ import (
 
 // EnvInput is the input type for zerops_env.
 type EnvInput struct {
-	Action          string   `json:"action"`
-	ServiceHostname string   `json:"serviceHostname,omitempty"`
-	Project         bool     `json:"project,omitempty"`
-	Variables       []string `json:"variables,omitempty"`
+	Action          string   `json:"action"                    jsonschema:"Action to perform: set or delete. To read env vars use zerops_discover with includeEnvs=true."`
+	ServiceHostname string   `json:"serviceHostname,omitempty" jsonschema:"Hostname of the service to modify env vars on. Required unless project=true."`
+	Project         bool     `json:"project,omitempty"         jsonschema:"Set to true to manage project-level env vars instead of service-level."`
+	Variables       []string `json:"variables,omitempty"       jsonschema:"List of env vars. For set: KEY=VALUE strings. For delete: KEY names only."`
 }
 
 // RegisterEnv registers the zerops_env tool.

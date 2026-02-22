@@ -10,8 +10,8 @@ import (
 
 // ProcessInput is the input type for zerops_process.
 type ProcessInput struct {
-	ProcessID string `json:"processId"`
-	Action    string `json:"action,omitempty"`
+	ProcessID string `json:"processId"        jsonschema:"ID of the async process to check or cancel."`
+	Action    string `json:"action,omitempty" jsonschema:"Action to perform: status (default) or cancel."`
 }
 
 // RegisterProcess registers the zerops_process tool.

@@ -13,12 +13,12 @@ import (
 
 // DeployInput is the input type for zerops_deploy.
 type DeployInput struct {
-	SourceService string `json:"sourceService,omitempty"`
-	TargetService string `json:"targetService,omitempty"`
-	Setup         string `json:"setup,omitempty"`
-	WorkingDir    string `json:"workingDir,omitempty"`
-	IncludeGit    bool   `json:"includeGit,omitempty"`
-	FreshGit      bool   `json:"freshGit,omitempty"`
+	SourceService string `json:"sourceService,omitempty" jsonschema:"SSH mode only: hostname of the container to execute deploy from (e.g. a builder service). Omit for local deploy."`
+	TargetService string `json:"targetService,omitempty" jsonschema:"Hostname of the service to deploy code to. Required for both SSH and local modes."`
+	Setup         string `json:"setup,omitempty"         jsonschema:"SSH mode only: custom shell command to run before push (e.g. npm install or cp config)."`
+	WorkingDir    string `json:"workingDir,omitempty"    jsonschema:"Directory containing the code to deploy. SSH mode default: /var/www. In local mode: path on your machine."`
+	IncludeGit    bool   `json:"includeGit,omitempty"    jsonschema:"Include .git directory in the push (zcli -g flag). Rarely needed."`
+	FreshGit      bool   `json:"freshGit,omitempty"      jsonschema:"Remove existing .git and reinitialize before push. Use this for first deploys or when the directory has no valid git repo — avoids ownership and identity errors. Recommended for most SSH deploys."`
 }
 
 // RegisterDeploy registers the zerops_deploy tool.
@@ -32,7 +32,7 @@ func RegisterDeploy(
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
-		Description: "Deploy code to a Zerops service via SSH (cross-service) or local zcli push.",
+		Description: "Deploy code to a Zerops service via SSH (cross-service) or local zcli push. Automatically handles git initialization — use freshGit=true when deploying to a directory without a proper git repo (common for first deploys or shared storage). SSH mode: set sourceService (container to run from) + targetService. Local mode: set only targetService.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),
