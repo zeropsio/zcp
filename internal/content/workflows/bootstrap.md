@@ -321,7 +321,7 @@ When any verification check fails, enter the iteration loop instead of giving up
 7. **Remount after deploy**: `zerops_mount action="mount" serviceHostname="appdev"` — deploy replaces the container, making the previous SSHFS mount stale. The mount tool auto-detects stale mounts and re-mounts.
 8. **Verify appdev** — run the full 8-point verification protocol
 9. **Iterate if needed** — if verification fails, enter the iteration loop: diagnose → fix on mount path → redeploy → remount → re-verify (max 3 iterations)
-10. **Deploy to appstage**: `zerops_deploy targetService="appstage" workingDir="/var/www/appdev"` — same source files, different target. This transitions stage from READY_TO_DEPLOY → BUILDING → RUNNING
+10. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline (production buildCommands + deployFiles). Transitions stage from READY_TO_DEPLOY → BUILDING → RUNNING
 11. **Verify appstage** — run the 8-point verification protocol on appstage
 12. **Present both URLs** to user:
     ```
@@ -508,7 +508,7 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 8 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` then `zerops_discover service="{devHostname}" includeEnvs=true` | Success + get zeropsSubdomain URL |
 | 9 | HTTP health | `bash: curl -sfm 10 "{zeropsSubdomain}/health"` | 200 with valid body |
 | 10 | Connectivity | `bash: curl -sfm 10 "{zeropsSubdomain}/status"` | 200 with all connections "ok" |
-| 11 | Deploy stage | `zerops_deploy targetService="{stageHostname}" workingDir="{mountPath}"` | BUILD_TRIGGERED |
+| 11 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" freshGit=true` | BUILD_TRIGGERED |
 | 12 | Wait + verify stage | Same checks 5–10 for {stageHostname} | All pass |
 | 13 | Report | Status (pass/fail) + dev URL + stage URL | — |
 

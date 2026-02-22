@@ -110,7 +110,7 @@ If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow
 
 **Verification means more than HTTP 200.** Read the response body from health/status endpoints. If dev returns 200 but the body shows errors, the app is broken — fix before deploying to stage.
 
-4. **Deploy to stage**: `zerops_deploy targetService="appstage"`
+4. **Deploy to stage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true` — SSH mode: pushes source from dev container, zerops runs the `setup: appstage` build pipeline for production output
 5. **Verify stage** — run the verification protocol on stage
 
 This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation.
