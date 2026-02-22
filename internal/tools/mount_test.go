@@ -46,13 +46,17 @@ func (s *stubMounter) Unmount(_ context.Context, _, path string) error {
 	return nil
 }
 
-func (s *stubMounter) ForceUnmount(_ context.Context, path string) error {
+func (s *stubMounter) ForceUnmount(_ context.Context, _, path string) error {
 	delete(s.states, path)
 	return nil
 }
 
 func (s *stubMounter) IsWritable(_ context.Context, path string) (bool, error) {
 	return s.writable[path], nil
+}
+
+func (s *stubMounter) ListMountDirs(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
 }
 
 func mountServer(mock platform.Client, mounter ops.Mounter) *mcp.Server {

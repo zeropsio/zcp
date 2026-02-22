@@ -32,8 +32,11 @@ func (*nopMounter) CheckMount(_ context.Context, _ string) (platform.MountState,
 }
 func (*nopMounter) Mount(_ context.Context, _, _ string) error           { return nil }
 func (*nopMounter) Unmount(_ context.Context, _, _ string) error         { return nil }
-func (*nopMounter) ForceUnmount(_ context.Context, _ string) error       { return nil }
+func (*nopMounter) ForceUnmount(_ context.Context, _, _ string) error    { return nil }
 func (*nopMounter) IsWritable(_ context.Context, _ string) (bool, error) { return true, nil }
+func (*nopMounter) ListMountDirs(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
 
 // nopLocal satisfies ops.LocalDeployer for realistic integration tests.
 type nopLocal struct{}

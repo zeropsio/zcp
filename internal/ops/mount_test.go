@@ -4,6 +4,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"maps"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -17,6 +18,8 @@ type mockMounter struct {
 	umountErr      error
 	forceUmountErr error
 	checkErr       error
+	mountDirs      []string
+	mountDirsErr   error
 }
 
 func newMockMounter() *mockMounter {
@@ -53,7 +56,7 @@ func (m *mockMounter) Unmount(_ context.Context, _, path string) error {
 	return nil
 }
 
-func (m *mockMounter) ForceUnmount(_ context.Context, path string) error {
+func (m *mockMounter) ForceUnmount(_ context.Context, _, path string) error {
 	if m.forceUmountErr != nil {
 		return m.forceUmountErr
 	}
@@ -63,6 +66,10 @@ func (m *mockMounter) ForceUnmount(_ context.Context, path string) error {
 
 func (m *mockMounter) IsWritable(_ context.Context, path string) (bool, error) {
 	return m.writable[path], nil
+}
+
+func (m *mockMounter) ListMountDirs(_ context.Context, _ string) ([]string, error) {
+	return m.mountDirs, m.mountDirsErr
 }
 
 func testServices() []platform.ServiceStack {
@@ -467,5 +474,163 @@ func TestMountStatus_StaleMount(t *testing.T) {
 	}
 	if !m.Stale {
 		t.Error("stale mount should report stale=true")
+	}
+}
+
+func TestMountStatus_Messages(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		services    []platform.ServiceStack
+		mountDirs   []string
+		states      map[string]platform.MountState
+		hostname    string
+		wantMessage string
+	}{
+		{
+			name: "stale mount message",
+			services: []platform.ServiceStack{
+				{ID: "svc-1", Name: "app"},
+			},
+			states: map[string]platform.MountState{
+				"/var/www/app": platform.MountStateStale,
+			},
+			hostname:    "app",
+			wantMessage: "Mount is stale (transport disconnected). Unmount and remount after build/deploy completes.",
+		},
+		{
+			name: "orphan stale mount message",
+			services: []platform.ServiceStack{
+				{ID: "svc-1", Name: "app"},
+			},
+			mountDirs: []string{"app", "deleted"},
+			states: map[string]platform.MountState{
+				"/var/www/deleted": platform.MountStateStale,
+			},
+			hostname:    "deleted",
+			wantMessage: "Service was deleted but mount is stale. Use unmount to clean up.",
+		},
+		{
+			name: "orphan not-mounted message",
+			services: []platform.ServiceStack{
+				{ID: "svc-1", Name: "app"},
+			},
+			mountDirs:   []string{"app", "oldservice"},
+			states:      map[string]platform.MountState{},
+			hostname:    "oldservice",
+			wantMessage: "Leftover mount directory from deleted service.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mock := platform.NewMock().WithServices(tt.services)
+			mounter := newMockMounter()
+			mounter.mountDirs = tt.mountDirs
+			maps.Copy(mounter.states, tt.states)
+
+			// Use empty hostname to get all services + orphans.
+			result, err := MountStatus(context.Background(), mock, "proj-1", mounter, "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var found bool
+			for _, m := range result.Mounts {
+				if m.Hostname == tt.hostname {
+					found = true
+					if m.Message != tt.wantMessage {
+						t.Errorf("message = %q, want %q", m.Message, tt.wantMessage)
+					}
+				}
+			}
+			if !found {
+				t.Errorf("hostname %s not found in results", tt.hostname)
+			}
+		})
+	}
+}
+
+func TestMountStatus_OrphanDetection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		services   []platform.ServiceStack
+		mountDirs  []string
+		states     map[string]platform.MountState
+		wantCount  int
+		wantOrphan string
+	}{
+		{
+			name: "orphan stale mount from deleted service",
+			services: []platform.ServiceStack{
+				{ID: "svc-1", Name: "app"},
+			},
+			mountDirs: []string{"app", "deleted"},
+			states: map[string]platform.MountState{
+				"/var/www/deleted": platform.MountStateStale,
+			},
+			wantCount:  2,
+			wantOrphan: "deleted",
+		},
+		{
+			name: "orphan not-mounted directory from deleted service",
+			services: []platform.ServiceStack{
+				{ID: "svc-1", Name: "app"},
+			},
+			mountDirs:  []string{"app", "oldservice"},
+			states:     map[string]platform.MountState{},
+			wantCount:  2,
+			wantOrphan: "oldservice",
+		},
+		{
+			name: "no orphans when all dirs match services",
+			services: []platform.ServiceStack{
+				{ID: "svc-1", Name: "app"},
+				{ID: "svc-2", Name: "worker"},
+			},
+			mountDirs:  []string{"app", "worker"},
+			states:     map[string]platform.MountState{},
+			wantCount:  2,
+			wantOrphan: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mock := platform.NewMock().WithServices(tt.services)
+			mounter := newMockMounter()
+			mounter.mountDirs = tt.mountDirs
+			maps.Copy(mounter.states, tt.states)
+
+			result, err := MountStatus(context.Background(), mock, "proj-1", mounter, "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Mounts) != tt.wantCount {
+				t.Fatalf("mounts count = %d, want %d", len(result.Mounts), tt.wantCount)
+			}
+
+			if tt.wantOrphan != "" {
+				var found bool
+				for _, m := range result.Mounts {
+					if m.Hostname == tt.wantOrphan {
+						found = true
+						if !m.Orphan {
+							t.Errorf("expected orphan=true for %s", tt.wantOrphan)
+						}
+					}
+				}
+				if !found {
+					t.Errorf("orphan %s not found in results", tt.wantOrphan)
+				}
+			}
+		})
 	}
 }

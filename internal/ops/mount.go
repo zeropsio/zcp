@@ -20,8 +20,9 @@ type Mounter interface {
 	CheckMount(ctx context.Context, path string) (platform.MountState, error)
 	Mount(ctx context.Context, hostname, localPath string) error
 	Unmount(ctx context.Context, hostname, path string) error
-	ForceUnmount(ctx context.Context, path string) error
+	ForceUnmount(ctx context.Context, hostname, path string) error
 	IsWritable(ctx context.Context, path string) (bool, error)
+	ListMountDirs(ctx context.Context, basePath string) ([]string, error)
 }
 
 // MountResult is the result of a mount or unmount operation.
@@ -45,6 +46,8 @@ type MountInfo struct {
 	Mounted   bool   `json:"mounted"`
 	Stale     bool   `json:"stale,omitempty"`
 	Writable  bool   `json:"writable,omitempty"`
+	Orphan    bool   `json:"orphan,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
 // MountService mounts a service's /var/www via SSHFS. Idempotent.
@@ -90,7 +93,7 @@ func MountService(
 		}, nil
 
 	case platform.MountStateStale:
-		if err := mounter.ForceUnmount(ctx, mountPath); err != nil {
+		if err := mounter.ForceUnmount(ctx, hostname, mountPath); err != nil {
 			return nil, platform.NewPlatformError(
 				platform.ErrMountFailed,
 				fmt.Sprintf("Failed to clear stale mount for %s: %v", hostname, err),
@@ -156,7 +159,7 @@ func UnmountService(
 
 	// Stale mount — force unmount directly (service may be deleted).
 	if state == platform.MountStateStale {
-		if err := mounter.ForceUnmount(ctx, mountPath); err != nil {
+		if err := mounter.ForceUnmount(ctx, hostname, mountPath); err != nil {
 			return nil, platform.NewPlatformError(
 				platform.ErrUnmountFailed,
 				fmt.Sprintf("Failed to force unmount stale %s: %v", hostname, err),
@@ -182,7 +185,7 @@ func UnmountService(
 		// Service deleted but mount still active — force unmount.
 		var pe *platform.PlatformError
 		if errors.As(resolveErr, &pe) && pe.Code == platform.ErrServiceNotFound {
-			if err := mounter.ForceUnmount(ctx, mountPath); err != nil {
+			if err := mounter.ForceUnmount(ctx, hostname, mountPath); err != nil {
 				return nil, platform.NewPlatformError(
 					platform.ErrUnmountFailed,
 					fmt.Sprintf("Failed to force unmount %s: %v", hostname, err),
@@ -238,22 +241,34 @@ func MountStatus(
 		if err != nil {
 			return nil, err
 		}
-		info := checkMountInfo(ctx, mounter, svc.Name)
+		info := checkMountInfo(ctx, mounter, svc.Name, false)
 		return &MountStatusResult{Mounts: []MountInfo{info}}, nil
 	}
 
+	serviceNames := make(map[string]bool, len(services))
 	mounts := make([]MountInfo, 0, len(services))
 	for _, svc := range services {
-		mounts = append(mounts, checkMountInfo(ctx, mounter, svc.Name))
+		serviceNames[svc.Name] = true
+		mounts = append(mounts, checkMountInfo(ctx, mounter, svc.Name, false))
 	}
+
+	// Detect orphan mount directories from deleted services.
+	dirs, _ := mounter.ListMountDirs(ctx, mountBase)
+	for _, dir := range dirs {
+		if !serviceNames[dir] {
+			mounts = append(mounts, checkMountInfo(ctx, mounter, dir, true))
+		}
+	}
+
 	return &MountStatusResult{Mounts: mounts}, nil
 }
 
-func checkMountInfo(ctx context.Context, mounter Mounter, hostname string) MountInfo {
+func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orphan bool) MountInfo {
 	mountPath := filepath.Join(mountBase, hostname)
 	info := MountInfo{
 		Hostname:  hostname,
 		MountPath: mountPath,
+		Orphan:    orphan,
 	}
 	state, err := mounter.CheckMount(ctx, mountPath)
 	if err != nil {
@@ -265,8 +280,15 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string) Mount
 		info.Writable, _ = mounter.IsWritable(ctx, mountPath)
 	case platform.MountStateStale:
 		info.Stale = true
+		if orphan {
+			info.Message = "Service was deleted but mount is stale. Use unmount to clean up."
+		} else {
+			info.Message = "Mount is stale (transport disconnected). Unmount and remount after build/deploy completes."
+		}
 	case platform.MountStateNotMounted:
-		// Nothing to report.
+		if orphan {
+			info.Message = "Leftover mount directory from deleted service."
+		}
 	}
 	return info
 }
