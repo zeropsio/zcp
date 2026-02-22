@@ -12,6 +12,26 @@ import (
 
 const downloadTimeout = 30 * time.Second
 
+// copyFile overwrites dst with contents of src, preserving dst's path.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open source: %w", err)
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return fmt.Errorf("open target: %w", err)
+	}
+
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return fmt.Errorf("copy: %w", err)
+	}
+	return out.Close()
+}
+
 // CanWrite checks if the process can create files in dir.
 func CanWrite(dir string) bool {
 	f, err := os.CreateTemp(dir, ".zcp-write-test-*")
@@ -54,8 +74,14 @@ func Apply(ctx context.Context, info *Info, binaryPath string, client *http.Clie
 	}
 
 	// Write to temp file in same directory for atomic rename.
+	// If the directory is not writable (e.g. /usr/local/bin/ as non-root),
+	// fall back to os.TempDir() and copy-based replacement.
 	dir := filepath.Dir(binaryPath)
 	tmp, err := os.CreateTemp(dir, "zcp-update-*")
+	sameFS := err == nil
+	if !sameFS {
+		tmp, err = os.CreateTemp("", "zcp-update-*")
+	}
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
@@ -80,11 +106,18 @@ func Apply(ctx context.Context, info *Info, binaryPath string, client *http.Clie
 		return fmt.Errorf("chmod: %w", err)
 	}
 
-	// Atomic rename.
-	if err := os.Rename(tmpPath, binaryPath); err != nil {
-		return fmt.Errorf("replace binary: %w", err)
+	if sameFS {
+		// Atomic rename (same filesystem).
+		if err := os.Rename(tmpPath, binaryPath); err != nil {
+			return fmt.Errorf("replace binary: %w", err)
+		}
+		tmpPath = "" // prevent deferred removal
+		return nil
 	}
 
-	tmpPath = "" // prevent deferred removal
+	// Cross-filesystem fallback: overwrite binary in place.
+	if err := copyFile(tmpPath, binaryPath); err != nil {
+		return fmt.Errorf("replace binary: %w", err)
+	}
 	return nil
 }

@@ -127,6 +127,71 @@ func TestApply_NetworkError(t *testing.T) {
 	}
 }
 
+func TestApply_ReadOnlyDir_FallbackCopy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod not effective on Windows")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root can write to any directory")
+	}
+	t.Parallel()
+
+	binaryContent := []byte("#!/bin/sh\necho new-version\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(binaryContent)
+	}))
+	defer srv.Close()
+
+	// Create binary in a read-only directory (simulates /usr/local/bin/ without write).
+	dir := t.TempDir()
+	binaryPath := filepath.Join(dir, "zcp")
+	if err := os.WriteFile(binaryPath, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make directory read-only so CreateTemp in binary dir fails,
+	// but the binary itself remains writable (owned by us).
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	// The binary file itself needs to be writable for the fallback.
+	// On most Unix systems, file write permission is checked against the file's
+	// own mode, not the parent directory. But we can't chmod the file after
+	// making the dir read-only, so we set it writable before.
+
+	info := &Info{
+		Available:   true,
+		DownloadURL: srv.URL + "/zcp-darwin-arm64",
+	}
+
+	err := Apply(t.Context(), info, binaryPath, srv.Client())
+	if err != nil {
+		t.Fatalf("Apply() with read-only dir should fallback to copy, got error: %v", err)
+	}
+
+	// Verify the binary was replaced.
+	// Need to restore dir permissions to read the file.
+	_ = os.Chmod(dir, 0o755)
+	got, err := os.ReadFile(binaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(binaryContent) {
+		t.Errorf("binary content = %q, want %q", got, binaryContent)
+	}
+
+	// Verify executable permission.
+	fi, err := os.Stat(binaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&0o111 == 0 {
+		t.Error("binary should be executable")
+	}
+}
+
 func TestCanWrite_WritableDir(t *testing.T) {
 	t.Parallel()
 
