@@ -2,7 +2,7 @@
 
 ## Overview
 
-Two concerns: ensure zerops.yml is correct for the runtime (hard), then deploy and verify (easy).
+Two concerns: ensure zerops.yml is correct for the runtime (hard), then deploy and verify with iteration (the harder part).
 
 ---
 
@@ -129,13 +129,39 @@ zerops_discover service="{hostname}" includeEnvs=true                 # → get 
 # bash: curl -sfm 10 "{zeropsSubdomain}/health"                      # → HTTP 200
 ```
 
-### Build failure handling
+### Verification iteration loop
 
-If zerops_events shows build FAILED:
-1. `zerops_logs serviceHostname="{hostname}" severity="error" since="10m"` — runtime errors
-2. If insufficient: `bash: zcli service log {hostname} --showBuildLogs --limit 50` — build-specific output (only way to see compilation errors)
-3. Common causes: wrong buildCommands, missing dependencies, wrong deployFiles path
-4. Fix zerops.yml, redeploy. Max 2 retries before asking user.
+When verification fails, iterate — do not give up after one failure:
+
+**Iteration 1–3 (auto-fix):**
+
+1. **Diagnose** — what check failed?
+   - Build FAILED → `zerops_logs serviceHostname="{hostname}" severity="error" since="10m"`, fallback: `bash: zcli service log {hostname} --showBuildLogs --limit 50`
+   - No startup logs → App crashed on start. Check error logs.
+   - HTTP check failed → Capture response body: `bash: curl -sfm 10 "{url}" 2>&1`
+   - /status shows errors → env var mismatch or managed service down
+
+2. **Fix** — based on diagnosis:
+   - Build error → fix zerops.yml (buildCommands, deployFiles, start)
+   - Runtime error → fix app code
+   - Env var issue → fix zerops.yml envVariables
+   - Connection error → verify managed service RUNNING, check hostname/port
+
+3. **Redeploy** — `zerops_deploy targetService="{hostname}"`
+
+4. **Re-verify** — run verification protocol again
+
+**After 3 failed iterations**: Stop and report to user with what was tried and current error state.
+
+**Common fix patterns:**
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| "command not found" in build | Wrong buildCommands | Check runtime knowledge |
+| "module not found" in build | Missing dependency install | Add install step to buildCommands |
+| App crashes: "connection refused" | Wrong DB/cache host env var | Check envVariables vs discovered vars |
+| HTTP 502 | Subdomain not activated | Call zerops_subdomain action="enable" |
+| Empty response body | App not listening on 0.0.0.0 | Add HOST=0.0.0.0 to envVariables |
 
 ### Multiple services — agent orchestration
 
@@ -166,7 +192,8 @@ Execute IN ORDER. Every step requires verification.
 | 5 | Confirm startup | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
 | 6 | Verify running | zerops_discover service="{hostname}" | RUNNING |
 | 7 | Activate subdomain | zerops_subdomain serviceHostname="{hostname}" action="enable" | Success or already_enabled. Then: zerops_discover service="{hostname}" includeEnvs=true to get `zeropsSubdomain` URL |
-| 8 | HTTP health | bash: curl -sfm 10 "{zeropsSubdomain}/health" | 200 (skip if no endpoint) |
+| 8 | HTTP health | bash: curl -sfm 10 "{zeropsSubdomain}/health" | 200 with valid body |
+| 9 | Connectivity | bash: curl -sfm 10 "{zeropsSubdomain}/status" | 200 with connections "ok" (skip if no /status) |
 
 CRITICAL: zerops_deploy returns BEFORE build completes (status=BUILD_TRIGGERED). You MUST poll
 zerops_events for completion. Wait 5s after deploy, then poll every 10s until build event shows
@@ -177,8 +204,9 @@ already exists from import. The env var is pre-configured by enableSubdomainAcce
 but routing is NOT active until you explicitly call enable. The call is idempotent.
 zeropsSubdomain is already a full URL — do NOT prepend https://.
 
-If build FAILED: check zerops_logs severity="error" since="10m", then fallback to
-bash: zcli service log {hostname} --showBuildLogs --limit 50.
+If any check fails, iterate: diagnose (check logs, capture response bodies), fix the issue,
+redeploy, re-verify. Max 3 iterations. If build FAILED: check zerops_logs severity="error"
+since="10m", then fallback to bash: zcli service log {hostname} --showBuildLogs --limit 50.
 
-If deploy fails, retry once. Report deployment result — URL if subdomain is enabled.
+Report: status (pass/fail) + which checks passed/failed + subdomain URL.
 ```

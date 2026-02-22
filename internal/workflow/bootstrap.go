@@ -32,17 +32,17 @@ var bootstrapStepNames = []string{
 
 // stepGuidance provides guidance text for each bootstrap step.
 var stepGuidance = map[string]string{
-	"plan":              "Create a deployment plan based on the user's intent. Identify required services, runtimes, and configurations.",
-	"recipe-search":     "Search the knowledge base for matching recipes and runtime configurations using zerops_knowledge.",
-	"generate-import":   "Generate import.yml YAML based on the plan and recipe findings. Validate against runtime rules.",
-	"import-services":   "Call zerops_import to create services from the generated YAML.",
-	"wait-services":     "Wait for dev services to reach RUNNING. Stage services will be in READY_TO_DEPLOY — this is expected (they start on first deploy). Use zerops_process to check status.",
-	"mount-dev":         "Mount only dev service filesystems using zerops_mount for code deployment. Stage services are not mounted.",
-	"create-files":      "Create zerops.yml and application source files on the mounted dev service filesystem. Write files to the mount path (e.g., /var/www/appdev/). Use deployFiles: ./ in zerops.yml for dev services. Required files: zerops.yml (setup: entries must match ALL service hostnames), application source code, .gitignore. The deploy tool auto-initializes a git repo if missing — no manual git init needed. Use freshGit=true if you cloned a skeleton repo.",
-	"discover-services": "Run zerops_discover to verify all services are running and collect their details.",
-	"finalize":          "Validate the deployment matches the plan. Record discovery evidence.",
-	"spawn-subagents":   "STUBBED: Use the Task tool to create subagent tasks for parallel service configuration. Each service should get its own task with specific setup instructions.",
-	"aggregate-results": "STUBBED: Use the Task tool to collect results from all subagent tasks. Verify all services are configured correctly and record final evidence.",
+	"plan":              "Identify required services from user's request: runtime types + frameworks, managed services + versions, environment mode (standard dev+stage or simple). Verify types against available stacks. If unclear, ask the user.",
+	"recipe-search":     "Load stack-specific knowledge: zerops_knowledge runtime=\"{type}\" services=[...]. Then load infrastructure rules: zerops_knowledge scope=\"infrastructure\". Both are MANDATORY before generating YAML.",
+	"generate-import":   "Generate import.yml following infrastructure rules. Standard mode: {app}dev (startWithoutCode: true, maxContainers: 1) + {app}stage + shared managed services. Validate hostnames, modes, ports.",
+	"import-services":   "Import services: zerops_import content=\"<yaml>\". Then poll: zerops_process processId=\"<id>\" until complete.",
+	"wait-services":     "Wait for dev services to reach RUNNING. Stage stays in READY_TO_DEPLOY (expected — starts on first deploy). Use zerops_discover to check status.",
+	"mount-dev":         "Mount ONLY dev service filesystems: zerops_mount action=\"mount\" serviceHostname=\"{devHostname}\" for each runtime dev service. Stage services are NOT mounted.",
+	"create-files":      "Write zerops.yml + application code + .gitignore to mount path (e.g., /var/www/appdev/). App MUST have /, /health, /status endpoints — /status MUST prove connectivity to each managed service (SELECT 1 for DB, PING for cache). Use dev vs prod deploy differentiation: dev deploys source (deployFiles: [.]), prod deploys build output. Use ONLY discovered env vars in envVariables. For 2+ service pairs: skip — subagents handle this in spawn-subagents step.",
+	"discover-services": "Discover ALL services with env vars: zerops_discover service=\"{hostname}\" includeEnvs=true for EACH managed service. Record exact env var names (connectionString, host, port, user, password, dbName). This data MUST be available before creating files or spawning subagents.",
+	"finalize":          "Prepare subagent context: combine discovered env vars, loaded runtime knowledge, app specification, and zerops.yml template into the Service Bootstrap Agent Prompt. For inline deployment (1 service pair): verify files are ready for deploy.",
+	"spawn-subagents":   "Spawn one general-purpose agent per runtime service pair with the Service Bootstrap Agent Prompt from the workflow guide. Each agent handles FULL lifecycle: write code, deploy dev, verify (with iteration loop), deploy stage, verify. All agents run in parallel.",
+	"aggregate-results": "Collect results from all subagents. Independently verify: zerops_discover for each runtime service (must be RUNNING). Check zeropsSubdomain URLs respond. Present final results: dev + stage URLs for each service pair.",
 }
 
 // NewBootstrapState creates a new bootstrap state with all 11 steps pending.
