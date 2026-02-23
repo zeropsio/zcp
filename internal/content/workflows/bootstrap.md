@@ -156,6 +156,8 @@ Dev and prod setups serve different purposes and often need different configurat
 
 **Dev self-deploy lifecycle note:** After deploy, the run container only contains `deployFiles` content. All other files are gone. `deployFiles: [.]` ensures zerops.yml and source files survive the deploy cycle. Without zerops.yml in deployFiles, subsequent deploys from the container fail.
 
+> **CRITICAL — dev `deployFiles` MUST be `[.]`:** Dev containers are volatile. After deploy, ONLY `deployFiles` content survives. If dev setup uses `[dist]`, `[app]`, or any build output path, all source files + zerops.yml are DESTROYED. Further iteration becomes impossible. Dev setup MUST ALWAYS use `deployFiles: [.]` regardless of runtime. No exceptions.
+
 ### Step 6 — Application code requirements
 
 Every generated application **MUST** expose these endpoints:
@@ -204,7 +206,7 @@ The `/status` endpoint **MUST actually connect** to each managed service and rep
 | Start command | `run.start` runs the app, not the build tool |
 | Env var refs | Cross-references use underscores: `${db_hostname}` not `${my-db_hostname}` |
 | Mode present | Every managed service has `mode: NON_HA` or `mode: HA` |
-| Dev vs prod | Dev uses `deployFiles: [.]` + source-mode start. Prod uses appropriate build output. |
+| Dev vs prod | Dev uses `deployFiles: [.]` + source-mode start. Prod uses appropriate build output. **FAIL if dev deployFiles is anything other than `[.]`** — source files will be lost after deploy. |
 | /status endpoint | App code includes /status with actual connectivity checks for each managed service |
 
 Present both import.yml and zerops.yml to the user for review before proceeding to Phase 2.
@@ -442,7 +444,7 @@ zerops:
     build:
       base: {runtimeVersion}
       buildCommands: [<from runtime knowledge>]
-      deployFiles: [.]
+      deployFiles: [.]   # CRITICAL: MUST be [.] — anything else destroys source files after deploy
       cache: [<runtime-specific cache dirs>]
     run:
       base: {runtimeVersion}
@@ -451,7 +453,7 @@ zerops:
           httpSupport: true
       envVariables:
         # Map discovered variables to app-expected names
-      start: {devStartCommand}
+      start: {devStartCommand}   # Source-mode: go run ., bun run index.ts, etc.
 
   - setup: {stageHostname}
     build:
@@ -542,6 +544,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 
 ## Platform Rules
 
+- **Dev setup MUST use `deployFiles: [.]`** — containers are volatile, only deployFiles content persists. Using `[dist]` or `[app]` in dev destroys source code after deploy.
 - NEVER write lock files (go.sum, bun.lock, package-lock.json). Write manifests only (go.mod, package.json). Let build commands generate locks.
 - NEVER write dependency dirs (node_modules/, vendor/).
 - zerops_deploy blocks until build completes — returns DEPLOYED or BUILD_FAILED with build duration.
