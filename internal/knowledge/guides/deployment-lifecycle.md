@@ -159,6 +159,18 @@ Zerops keeps **10 most recent versions**. Older auto-deleted. Any archived versi
 4. **prepareCommands in build vs run** -- `build.prepareCommands` customizes build env, `run.prepareCommands` creates custom runtime image. Different containers, different purposes
 5. **deployFiles land in `/var/www`** -- tilde syntax (`dist/~`) extracts contents directly to `/var/www/` (strips directory). Without tilde, `dist` → `/var/www/dist/` (preserved). **CRITICAL**: `run.start` path must match — `dist/~` + `start: bun dist/index.js` BREAKS because the file is at `/var/www/index.js`, not `/var/www/dist/index.js`
 
+## SSHFS Mount and Deploy Interaction
+
+When using SSHFS (`zerops_mount`) for dev workflows, deploy replaces the container. This has important consequences:
+
+1. **After deploy, run container only has `deployFiles` content.** All other files (including zerops.yml if not in deployFiles) are gone. Use `deployFiles: [.]` for dev services to ensure zerops.yml and source files survive the deploy cycle.
+2. **SSHFS mount becomes stale after deploy.** The mount pointed to the old container. Remount (`zerops_mount action="mount"`) reconnects to the new container, which now only contains deployFiles content.
+3. **zerops.yml must be in deployFiles** for dev self-deploy lifecycle. Without it, subsequent deploys from the container fail because zerops.yml is missing.
+
+**Two kinds of "mount" (disambiguation):**
+- `zerops_mount` -- SSHFS tool, mounts service `/var/www` locally for development. This is a dev workflow tool.
+- Shared storage mount -- platform feature, attaches a shared-storage volume at `/mnt/{hostname}` via `mount:` in import.yml + zerops.yml `run.mount`. These are completely unrelated features.
+
 ## See Also
 - zerops://themes/core -- zerops.yml schema and platform rules
 - zerops://guides/build-cache -- two-layer cache architecture and invalidation

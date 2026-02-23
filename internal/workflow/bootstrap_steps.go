@@ -173,6 +173,9 @@ For EACH runtime service pair (dev + stage):
 6. Deploy stage: zerops_deploy targetService="{stageHostname}"
 7. Verify stage: same checks as dev
 8. Enable subdomain: zerops_subdomain action="enable" serviceHostname="{stageHostname}"
+9. If shared-storage is in the stack: after stage becomes ACTIVE, connect storage:
+   zerops_manage action="connect-storage" serviceHostname="{stageHostname}" storageHostname="{storageHostname}"
+   (Stage was READY_TO_DEPLOY during import, so import mount: did not apply to it)
 
 Dev vs prod deploy differentiation:
 | Aspect | Dev (source deploy) | Stage (build deploy) |

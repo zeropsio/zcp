@@ -44,6 +44,7 @@ const (
 	ErrEvidenceMissing        = "EVIDENCE_MISSING"
 	ErrBootstrapActive        = "BOOTSTRAP_ACTIVE"
 	ErrBootstrapNotActive     = "BOOTSTRAP_NOT_ACTIVE"
+	ErrSSHDeployFailed        = "SSH_DEPLOY_FAILED"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

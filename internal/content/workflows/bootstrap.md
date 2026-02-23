@@ -121,6 +121,10 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 **Shared storage mount** (if shared-storage is in the stack): Add `mount: [{storage-hostname}]` to both dev and stage service definitions in import.yml. This pre-configures the connection but does NOT make storage available at runtime. You MUST also add `mount: [{storage-hostname}]` in the zerops.yml `run:` section and deploy for the storage to actually mount at `/mnt/{storage-hostname}`.
 
+> **Two kinds of "mount" (disambiguation):** (1) `zerops_mount` — SSHFS tool, mounts service `/var/www` locally for development. (2) Shared storage mount — platform feature, attaches a shared-storage volume at `/mnt/{hostname}` via `mount:` in import.yml + zerops.yml. These are completely unrelated.
+
+> **IMPORTANT**: Import `mount:` only applies to ACTIVE services. Stage services are READY_TO_DEPLOY during import, so the mount pre-configuration silently doesn't apply. After first deploy transitions stage to ACTIVE, connect storage via `zerops_manage action="connect-storage" serviceHostname="{stage}" storageHostname="{storage}"`.
+
 ### Step 5 — Plan zerops.yml and application code
 
 For each runtime service, plan zerops.yml using the loaded runtime example from Step 2 as starting point. The infrastructure knowledge from Step 3 covers the YAML schema rules. Together they provide build pipeline, deployFiles, ports, and framework-specific decisions.
@@ -149,6 +153,8 @@ Dev and prod setups serve different purposes and often need different configurat
 | Rust | `[.]` | `cargo run` | `[app]` | `./app` |
 
 **Go specifically**: Dev setup uses `go run .` as start (compiles + runs source each deploy). Prod setup builds a binary in buildCommands and deploys only the binary. The zerops.yml MUST have TWO separate setup entries with different build/deploy pipelines.
+
+**Dev self-deploy lifecycle note:** After deploy, the run container only contains `deployFiles` content. All other files are gone. `deployFiles: [.]` ensures zerops.yml and source files survive the deploy cycle. Without zerops.yml in deployFiles, subsequent deploys from the container fail.
 
 ### Step 6 — Application code requirements
 
@@ -320,10 +326,11 @@ When any verification check fails, enter the iteration loop instead of giving up
 4. **Discover env vars**: For each managed service, `zerops_discover service="{hostname}" includeEnvs=true`. Record the exact env var names available. See "Env var discovery protocol" above.
 5. **Create files on mount path**: Write zerops.yml + application source files + .gitignore to `/var/www/appdev/`. Follow the Application Code Requirements (Step 6) and dev vs prod differentiation (Step 5). The zerops.yml `setup:` entries must match ALL service hostnames (both dev and stage). Use only DISCOVERED env vars in envVariables mappings.
 6. **Deploy to appdev**: `zerops_deploy targetService="appdev" workingDir="/var/www/appdev" includeGit=true` — local mode, reads from SSHFS mount. `-g` flag includes `.git` directory on the container. The deploy tool auto-initializes a git repo if missing
-7. **Remount after deploy**: `zerops_mount action="mount" serviceHostname="appdev"` — deploy replaces the container, making the previous SSHFS mount stale. The mount tool auto-detects stale mounts and re-mounts.
+7. **Remount after deploy**: `zerops_mount action="mount" serviceHostname="appdev"` — deploy replaces the container, making the previous SSHFS mount stale. The new container only has `deployFiles` content. Remount reconnects to the new container. The mount tool auto-detects stale mounts and re-mounts.
 8. **Verify appdev** — run the full 8-point verification protocol
 9. **Iterate if needed** — if verification fails, enter the iteration loop: diagnose → fix on mount path → redeploy → remount → re-verify (max 3 iterations)
 10. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline (production buildCommands + deployFiles). Transitions stage from READY_TO_DEPLOY → BUILDING → RUNNING
+10b. **Connect shared storage to stage** (if shared-storage is in the stack): `zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"` — stage was READY_TO_DEPLOY during import, so the import `mount:` did not apply. Now that stage is ACTIVE, connect storage explicitly.
 11. **Verify appstage** — run the 8-point verification protocol on appstage
 12. **Present both URLs** to user:
     ```

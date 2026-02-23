@@ -199,6 +199,101 @@ func TestDeploy_SSHMode_SSHError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for SSH failure")
 	}
+
+	var pe *platform.PlatformError
+	if !errorAs(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrSSHDeployFailed {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
+	}
+}
+
+func TestDeploy_SSHMode_SignalKilled(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{err: fmt.Errorf("process exited: signal: killed")}
+	local := &mockLocalDeployer{}
+	authInfo := testAuthInfo()
+
+	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
+		"builder", "app", "", "", false, false)
+	if err == nil {
+		t.Fatal("expected error for signal killed")
+	}
+
+	var pe *platform.PlatformError
+	if !errorAs(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrSSHDeployFailed {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
+	}
+	if !containsSubstring(pe.Suggestion, "RAM") {
+		t.Errorf("suggestion should mention RAM scaling, got: %s", pe.Suggestion)
+	}
+}
+
+func TestDeploy_SSHMode_CommandNotFound(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{err: fmt.Errorf("bash: zcli: command not found")}
+	local := &mockLocalDeployer{}
+	authInfo := testAuthInfo()
+
+	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
+		"builder", "app", "", "", false, false)
+	if err == nil {
+		t.Fatal("expected error for command not found")
+	}
+
+	var pe *platform.PlatformError
+	if !errorAs(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrSSHDeployFailed {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
+	}
+	if !containsSubstring(pe.Suggestion, "zcli") {
+		t.Errorf("suggestion should mention zcli, got: %s", pe.Suggestion)
+	}
+}
+
+func TestDeploy_SSHMode_GenericError(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		})
+	ssh := &mockSSHDeployer{err: fmt.Errorf("some unexpected error")}
+	local := &mockLocalDeployer{}
+	authInfo := testAuthInfo()
+
+	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
+		"builder", "app", "", "", false, false)
+	if err == nil {
+		t.Fatal("expected error for generic SSH failure")
+	}
+
+	var pe *platform.PlatformError
+	if !errorAs(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrSSHDeployFailed {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
+	}
 }
 
 func TestDeploy_SSHMode_WithRegion(t *testing.T) {

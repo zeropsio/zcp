@@ -10,15 +10,16 @@ import (
 
 // ManageInput is the input type for zerops_manage.
 type ManageInput struct {
-	Action          string `json:"action"          jsonschema:"Lifecycle action to perform: start, stop, restart, or reload."`
-	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to manage."`
+	Action          string `json:"action"                    jsonschema:"Lifecycle action: start, stop, restart, reload, connect-storage, disconnect-storage."`
+	ServiceHostname string `json:"serviceHostname"           jsonschema:"Hostname of the service to manage."`
+	StorageHostname string `json:"storageHostname,omitempty" jsonschema:"Hostname of shared-storage service. Required for connect-storage/disconnect-storage."`
 }
 
 // RegisterManage registers the zerops_manage tool.
 func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_manage",
-		Description: "Manage service lifecycle: start, stop, restart, or reload a service. Use reload after env var changes — it's faster (~4s) than restart (~14s) and sufficient for picking up new environment variables.",
+		Description: "Manage service lifecycle: start, stop, restart, reload, connect-storage, disconnect-storage. Use reload after env var changes (~4s, faster than restart ~14s). Use connect-storage/disconnect-storage to attach/detach a shared-storage volume to a runtime service (mounts at /mnt/{storageHostname}). Requires storageHostname parameter.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage service lifecycle",
 			IdempotentHint:  true,
@@ -28,7 +29,7 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 		if input.Action == "" {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Action is required",
-				"Use start, stop, restart, or reload")), nil, nil
+				"Use start, stop, restart, reload, connect-storage, or disconnect-storage")), nil, nil
 		}
 		if input.ServiceHostname == "" {
 			return convertError(platform.NewPlatformError(
@@ -63,10 +64,32 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 				return convertError(err), nil, nil
 			}
 			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
+		case "connect-storage":
+			if input.StorageHostname == "" {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter, "storageHostname is required for connect-storage",
+					"Provide storageHostname parameter with the shared-storage service hostname")), nil, nil
+			}
+			proc, err := ops.ConnectStorage(ctx, client, projectID, input.ServiceHostname, input.StorageHostname)
+			if err != nil {
+				return convertError(err), nil, nil
+			}
+			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
+		case "disconnect-storage":
+			if input.StorageHostname == "" {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter, "storageHostname is required for disconnect-storage",
+					"Provide storageHostname parameter with the shared-storage service hostname")), nil, nil
+			}
+			proc, err := ops.DisconnectStorage(ctx, client, projectID, input.ServiceHostname, input.StorageHostname)
+			if err != nil {
+				return convertError(err), nil, nil
+			}
+			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",
-				"Use start, stop, restart, or reload")), nil, nil
+				"Use start, stop, restart, reload, connect-storage, or disconnect-storage")), nil, nil
 		}
 	})
 }

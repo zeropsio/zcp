@@ -291,6 +291,7 @@ zerops[]:
 - **ALWAYS** create managed services with `priority: 10` and runtime services with lower priority (default or `priority: 5`). REASON: databases must be ready before apps that depend on them
 - **ALWAYS** match zerops.yml `setup:` to the service hostname (e.g., `setup: evalappjava` for hostname `evalappjava`). REASON: `zcli push` defaults to hostname as setup name. If setup doesn't match hostname, deploy fails with "setup not found". For dev/stage pairs, use `setup: <hostname>` per service, not generic names like `dev`/`prod`
 - **ALWAYS** prefer `enableSubdomainAccess: true` in import.yml over calling `zerops_subdomain` after import. REASON: calling subdomain API on a READY_TO_DEPLOY service errors; the import flag activates after first deploy
+- **WHEN** shared-storage is in the stack and stage service transitions from READY_TO_DEPLOY to ACTIVE after first deploy, **THEN** connect storage post-deploy via `zerops_manage action="connect-storage" serviceHostname="{stage}" storageHostname="{storage}"`. REASON: import `mount:` only pre-configures connections for ACTIVE services; stage is not ACTIVE during import
 
 ### Runtime-Specific
 - **ALWAYS** set `server.address=0.0.0.0` for Java Spring Boot. REASON: Spring Boot defaults to localhost binding -> unreachable from LB

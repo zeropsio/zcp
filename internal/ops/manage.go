@@ -66,6 +66,32 @@ func Reload(ctx context.Context, client platform.Client, projectID, hostname str
 	return client.ReloadService(ctx, svc.ID)
 }
 
+// ConnectStorage connects a shared-storage volume to a runtime service.
+func ConnectStorage(ctx context.Context, client platform.Client, projectID, hostname, storageHostname string) (*platform.Process, error) {
+	svc, err := resolveService(ctx, client, projectID, hostname)
+	if err != nil {
+		return nil, err
+	}
+	storage, err := resolveService(ctx, client, projectID, storageHostname)
+	if err != nil {
+		return nil, err
+	}
+	return client.ConnectSharedStorage(ctx, svc.ID, storage.ID)
+}
+
+// DisconnectStorage disconnects a shared-storage volume from a runtime service.
+func DisconnectStorage(ctx context.Context, client platform.Client, projectID, hostname, storageHostname string) (*platform.Process, error) {
+	svc, err := resolveService(ctx, client, projectID, hostname)
+	if err != nil {
+		return nil, err
+	}
+	storage, err := resolveService(ctx, client, projectID, storageHostname)
+	if err != nil {
+		return nil, err
+	}
+	return client.DisconnectSharedStorage(ctx, svc.ID, storage.ID)
+}
+
 // Scale updates the autoscaling parameters for a service.
 func Scale(ctx context.Context, client platform.Client, projectID, hostname string, params ScaleParams) (*ScaleResult, error) {
 	if err := validateScaleParams(params); err != nil {

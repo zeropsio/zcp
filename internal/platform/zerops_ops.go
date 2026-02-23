@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 
+	"github.com/zeropsio/zerops-go/dto/input/body"
 	"github.com/zeropsio/zerops-go/dto/input/path"
 	"github.com/zeropsio/zerops-go/types/uuid"
 )
@@ -56,6 +57,36 @@ func (z *ZeropsClient) RestartService(ctx context.Context, serviceID string) (*P
 func (z *ZeropsClient) ReloadService(ctx context.Context, serviceID string) (*Process, error) {
 	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
 	resp, err := z.handler.PutServiceStackReload(ctx, pathParam)
+	if err != nil {
+		return nil, mapSDKError(err, "service")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "service")
+	}
+	proc := mapProcess(out)
+	return &proc, nil
+}
+
+func (z *ZeropsClient) ConnectSharedStorage(ctx context.Context, serviceID, storageID string) (*Process, error) {
+	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
+	bodyParam := body.PutSharedStorageAction{SharedStorageId: uuid.ServiceStackId(storageID)}
+	resp, err := z.handler.PutServiceStackConnectSharedStorage(ctx, pathParam, bodyParam)
+	if err != nil {
+		return nil, mapSDKError(err, "service")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "service")
+	}
+	proc := mapProcess(out)
+	return &proc, nil
+}
+
+func (z *ZeropsClient) DisconnectSharedStorage(ctx context.Context, serviceID, storageID string) (*Process, error) {
+	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
+	bodyParam := body.PutSharedStorageAction{SharedStorageId: uuid.ServiceStackId(storageID)}
+	resp, err := z.handler.PutServiceStackDisconnectSharedStorage(ctx, pathParam, bodyParam)
 	if err != nil {
 		return nil, mapSDKError(err, "service")
 	}

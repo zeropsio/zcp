@@ -108,7 +108,9 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **Mount**: `/mnt/{hostname}` -- **two steps required**: (1) `mount: [hostname]` in import.yml service definition pre-configures the connection, (2) `mount: [hostname]` in zerops.yml `run:` section activates the mount at runtime. Both are needed -- import.yml alone is NOT sufficient.
 **HA**: 1:1 replication, auto-failover
 **Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). NON_HA = data loss on hardware failure. Import YAML `mount:` only pre-configures -- storage is NOT available until zerops.yml `run.mount` is set and service is deployed.
+**Post-deploy connect**: If a runtime service was in READY_TO_DEPLOY during import (e.g., stage), the `mount:` in import.yml does NOT apply. After first deploy transitions the service to ACTIVE, connect storage via `zerops_manage action="connect-storage" serviceHostname="{runtime}" storageHostname="{storage}"`.
 **Wiring**: No env vars. Mount path: `/mnt/{hostname}`. POSIX filesystem, max 60 GB.
+**Disambiguation**: `zerops_mount` (SSHFS dev tool) is a completely different feature -- it mounts the service `/var/www` locally for development, not shared storage. Shared storage mount (`/mnt/{hostname}`) is a platform feature configured via import.yml + zerops.yml or `zerops_manage action="connect-storage"`.
 
 ## Kafka
 **Type**: `kafka@3.8` | **Mode**: optional (default NON_HA), immutable

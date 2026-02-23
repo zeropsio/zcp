@@ -112,6 +112,30 @@ func (m *Mock) ReloadService(_ context.Context, serviceID string) (*Process, err
 	}, nil
 }
 
+func (m *Mock) ConnectSharedStorage(_ context.Context, serviceID, _ string) (*Process, error) {
+	if err := m.getError("ConnectSharedStorage"); err != nil {
+		return nil, err
+	}
+	return &Process{
+		ID:            "proc-connect-storage-" + serviceID,
+		ActionName:    "stack.sharedStorageConnect",
+		Status:        "PENDING",
+		ServiceStacks: []ServiceStackRef{{ID: serviceID}},
+	}, nil
+}
+
+func (m *Mock) DisconnectSharedStorage(_ context.Context, serviceID, _ string) (*Process, error) {
+	if err := m.getError("DisconnectSharedStorage"); err != nil {
+		return nil, err
+	}
+	return &Process{
+		ID:            "proc-disconnect-storage-" + serviceID,
+		ActionName:    "stack.sharedStorageDisconnect",
+		Status:        "PENDING",
+		ServiceStacks: []ServiceStackRef{{ID: serviceID}},
+	}, nil
+}
+
 func (m *Mock) SetAutoscaling(_ context.Context, _ string, _ AutoscalingParams) (*Process, error) {
 	if err := m.getError("SetAutoscaling"); err != nil {
 		return nil, err
