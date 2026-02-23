@@ -94,10 +94,9 @@ Before deploying, ensure these requirements are met:
 
 ## Phase 2: Deploy and Monitor
 
-### Important: zcli push is asynchronous
+### zerops_deploy blocks until completion
 
-`zerops_deploy` triggers the build pipeline and returns `status=BUILD_TRIGGERED` BEFORE the build completes.
-You MUST poll for completion. Do NOT assume deployment is done when the tool returns.
+`zerops_deploy` blocks until the build pipeline completes. It returns the final status (`DEPLOYED` or `BUILD_FAILED`) along with build duration. No manual polling needed.
 
 ### Dev+stage pattern
 
@@ -118,13 +117,10 @@ This is the default flow for projects bootstrapped with the standard dev+stage p
 ### Single service — direct
 
 ```
-zerops_deploy targetService="{hostname}"                              # → BUILD_TRIGGERED
-# Wait 5s, then poll zerops_events every 10s until build FINISHED (max 300s)
-zerops_events serviceHostname="{hostname}" limit=5                    # → build event terminal
+zerops_deploy targetService="{hostname}"                              # → blocks until DEPLOYED or BUILD_FAILED
 zerops_logs serviceHostname="{hostname}" severity="error" since="5m"  # → no errors
 zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m"  # → startup confirmed
 zerops_discover service="{hostname}"                                  # → RUNNING
-zerops_events serviceHostname="{hostname}" limit=5                    # → final event check
 zerops_logs serviceHostname="{hostname}" severity="error" since="2m"  # → no post-startup errors
 # If subdomain enabled:
 zerops_subdomain serviceHostname="{hostname}" action="enable"        # → ALWAYS call (idempotent, activates routing)
@@ -189,20 +185,18 @@ Execute IN ORDER. Every step requires verification.
 | # | Action | Tool | Verify |
 |---|--------|------|--------|
 | 1 | Verify exists | zerops_discover service="{hostname}" | RUNNING or READY_TO_DEPLOY |
-| 2 | Trigger deploy | zerops_deploy targetService="{hostname}" includeGit=true | status=BUILD_TRIGGERED |
-| 3 | Poll build | zerops_events serviceHostname="{hostname}" limit=5, every 10s, max 300s | Build FINISHED |
-| 4 | Check errors | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
-| 5 | Confirm startup | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
-| 6 | Verify running | zerops_discover service="{hostname}" | RUNNING |
-| 7 | Activate subdomain | zerops_subdomain serviceHostname="{hostname}" action="enable" | Success or already_enabled. Then: zerops_discover service="{hostname}" includeEnvs=true to get `zeropsSubdomain` URL |
-| 8 | HTTP health | bash: curl -sfm 10 "{zeropsSubdomain}/health" | 200 with valid body |
-| 9 | Connectivity | bash: curl -sfm 10 "{zeropsSubdomain}/status" | 200 with connections "ok" (skip if no /status) |
+| 2 | Deploy | zerops_deploy targetService="{hostname}" includeGit=true | status=DEPLOYED (blocks until complete) |
+| 3 | Check errors | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
+| 4 | Confirm startup | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
+| 5 | Verify running | zerops_discover service="{hostname}" | RUNNING |
+| 6 | Activate subdomain | zerops_subdomain serviceHostname="{hostname}" action="enable" | Success or already_enabled. Then: zerops_discover service="{hostname}" includeEnvs=true to get `zeropsSubdomain` URL |
+| 7 | HTTP health | bash: curl -sfm 10 "{zeropsSubdomain}/health" | 200 with valid body |
+| 8 | Connectivity | bash: curl -sfm 10 "{zeropsSubdomain}/status" | 200 with connections "ok" (skip if no /status) |
 
-CRITICAL: zerops_deploy returns BEFORE build completes (status=BUILD_TRIGGERED). You MUST poll
-zerops_events for completion. Wait 5s after deploy, then poll every 10s until build event shows
-terminal status. Max 300s (30 polls).
+zerops_deploy blocks until the build pipeline completes. It returns DEPLOYED or BUILD_FAILED with
+build duration. No manual polling needed.
 
-Step 7: ALWAYS call zerops_subdomain action="enable" after deploy — even if zeropsSubdomain env var
+Step 6: ALWAYS call zerops_subdomain action="enable" after deploy — even if zeropsSubdomain env var
 already exists from import. The env var is pre-configured by enableSubdomainAccess:true in import.yml
 but routing is NOT active until you explicitly call enable. The call is idempotent.
 zeropsSubdomain is already a full URL — do NOT prepend https://.

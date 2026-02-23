@@ -2,7 +2,7 @@
 
 ## Overview
 
-Scale services horizontally (more containers) and vertically (more CPU/RAM/disk). All scaling operations are asynchronous.
+Scale services horizontally (more containers) and vertically (more CPU/RAM/disk). `zerops_scale` blocks until the scaling process completes.
 
 **When to scale which way:**
 
@@ -57,22 +57,14 @@ Parameters:
 - `minContainers` — Minimum container count (always running).
 - `maxContainers` — Maximum container count (autoscale ceiling).
 
-### Step 3 — Track Scaling Operation
+### Step 3 — Verify New Values
 
-Scaling is asynchronous. Track the returned process ID:
-
-```
-zerops_process processId="<id from scale>"
-```
-
-Poll until status is FINISHED. If FAILED, check the error message — common causes:
+`zerops_scale` blocks until the process completes — returns final status (FINISHED/FAILED). If FAILED, check the error message — common causes:
 - `min` value exceeds `max` value
 - Requested resources exceed project limits
 - Invalid CPU mode value (must be SHARED or DEDICATED)
 
-### Step 4 — Verify New Values
-
-After the process completes, confirm the scaling was applied:
+Confirm the scaling was applied:
 
 ```
 zerops_discover service="api"

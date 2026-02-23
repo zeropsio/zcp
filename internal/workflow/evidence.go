@@ -8,16 +8,24 @@ import (
 	"strings"
 )
 
+// ServiceResult holds per-service verification status within evidence.
+type ServiceResult struct {
+	Hostname string `json:"hostname"`
+	Status   string `json:"status"` // "pass", "fail", "skip"
+	Detail   string `json:"detail,omitempty"`
+}
+
 // Evidence represents attestation evidence for gate checks.
 type Evidence struct {
-	SessionID        string `json:"sessionId"`
-	Timestamp        string `json:"timestamp"`
-	VerificationType string `json:"verificationType"` // always "attestation"
-	Service          string `json:"service,omitempty"`
-	Attestation      string `json:"attestation"`
-	Type             string `json:"type"` // recipe_review, discovery, dev_verify, deploy_evidence, stage_verify
-	Passed           int    `json:"passed"`
-	Failed           int    `json:"failed"`
+	SessionID        string          `json:"sessionId"`
+	Timestamp        string          `json:"timestamp"`
+	VerificationType string          `json:"verificationType"` // always "attestation"
+	Service          string          `json:"service,omitempty"`
+	Attestation      string          `json:"attestation"`
+	Type             string          `json:"type"` // recipe_review, discovery, dev_verify, deploy_evidence, stage_verify
+	Passed           int             `json:"passed"`
+	Failed           int             `json:"failed"`
+	ServiceResults   []ServiceResult `json:"serviceResults,omitempty"`
 }
 
 // SaveEvidence atomically writes evidence to dir/<sessionID>/<type>.json.

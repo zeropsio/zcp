@@ -24,15 +24,18 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name for static guidance: bootstrap, deploy, debug, scale, or configure."`
 
 	// Multi-action fields.
-	Action      string `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, transition, evidence, reset, or iterate."`
-	Mode        string `json:"mode,omitempty"        jsonschema:"Session mode for start action: full (all phases), dev_only (skip deploy/verify), hotfix (skip discover), or quick (no gates)."`
-	Phase       string `json:"phase,omitempty"       jsonschema:"Target phase for transition action: DISCOVER, DEVELOP, DEPLOY, VERIFY, or DONE."`
-	Intent      string `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
-	Type        string `json:"type,omitempty"        jsonschema:"Evidence type for evidence action: recipe_review, discovery, dev_verify, deploy_evidence, or stage_verify."`
-	Service     string `json:"service,omitempty"     jsonschema:"Service hostname to associate with evidence."`
-	Attestation string `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for evidence and complete actions)."`
-	Step        string `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (e.g. detect, mount-dev, discover-envs, deploy)."`
-	Reason      string `json:"reason,omitempty"      jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
+	Action         string                   `json:"action,omitempty"         jsonschema:"Orchestration action: start, complete, skip, status, transition, evidence, reset, or iterate."`
+	Mode           string                   `json:"mode,omitempty"           jsonschema:"Session mode for start action: full (all phases), dev_only (skip deploy/verify), hotfix (skip discover), or quick (no gates)."`
+	Phase          string                   `json:"phase,omitempty"          jsonschema:"Target phase for transition action: DISCOVER, DEVELOP, DEPLOY, VERIFY, or DONE."`
+	Intent         string                   `json:"intent,omitempty"         jsonschema:"User intent description for start action (what you want to accomplish)."`
+	Type           string                   `json:"type,omitempty"           jsonschema:"Evidence type for evidence action: recipe_review, discovery, dev_verify, deploy_evidence, or stage_verify."`
+	Service        string                   `json:"service,omitempty"        jsonschema:"Service hostname to associate with evidence."`
+	Attestation    string                   `json:"attestation,omitempty"    jsonschema:"Description of what was verified or accomplished (required for evidence and complete actions)."`
+	Step           string                   `json:"step,omitempty"           jsonschema:"Bootstrap step name for complete/skip actions (e.g. detect, mount-dev, discover-envs, deploy)."`
+	Reason         string                   `json:"reason,omitempty"         jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
+	Passed         *int                     `json:"passed,omitempty"         jsonschema:"Number of passed verifications (evidence action). Defaults to 1."`
+	Failed         *int                     `json:"failed,omitempty"         jsonschema:"Number of failed verifications (evidence action). Defaults to 0."`
+	ServiceResults []workflow.ServiceResult `json:"serviceResults,omitempty" jsonschema:"Per-service verification results (evidence action)."`
 }
 
 // startResponse wraps WorkflowState with workflow guidance for non-bootstrap start.
@@ -209,14 +212,24 @@ func handleEvidence(engine *workflow.Engine, input WorkflowInput) (*mcp.CallTool
 			"Describe what was verified")), nil, nil
 	}
 
+	passed := 1
+	if input.Passed != nil {
+		passed = *input.Passed
+	}
+	failed := 0
+	if input.Failed != nil {
+		failed = *input.Failed
+	}
+
 	ev := &workflow.Evidence{
 		Timestamp:        time.Now().UTC().Format(time.RFC3339),
 		VerificationType: "attestation",
 		Service:          input.Service,
 		Attestation:      input.Attestation,
 		Type:             input.Type,
-		Passed:           1,
-		Failed:           0,
+		Passed:           passed,
+		Failed:           failed,
+		ServiceResults:   input.ServiceResults,
 	}
 
 	if err := engine.RecordEvidence(ev); err != nil {

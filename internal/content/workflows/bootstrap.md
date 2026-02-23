@@ -209,10 +209,10 @@ Present both import.yml and zerops.yml to the user for review before proceeding 
 
 **Core principle: Dev is for iterating and fixing. Stage is for final validation. Fix errors on dev before deploying to stage.**
 
-### Important: zcli push is asynchronous
+### zerops_deploy and zerops_import block until completion
 
-`zerops_deploy` triggers the build pipeline and returns `status=BUILD_TRIGGERED` BEFORE the build completes.
-You MUST poll for completion. Do NOT assume deployment is done when the tool returns.
+`zerops_deploy` blocks until the build pipeline completes. It returns the final status (`DEPLOYED` or `BUILD_FAILED`) along with build duration. No manual polling needed.
+`zerops_import` blocks until all import processes complete. It returns final statuses (`FINISHED` or `FAILED`) for each process.
 
 ### Env var discovery protocol (mandatory before deploy)
 
@@ -250,7 +250,7 @@ Every deployment must pass this protocol before being considered complete.
 
 | # | Check | Tool / Method | Pass criteria |
 |---|-------|---------------|---------------|
-| 1 | Build/deploy completed | zerops_events limit=5 (poll 10s, max 300s) | Build event status terminal + not FAILED |
+| 1 | Build/deploy completed | zerops_deploy return value | status=DEPLOYED (not BUILD_FAILED or timedOut) |
 | 2 | Service status | zerops_discover | RUNNING |
 | 3 | No error logs | zerops_logs severity="error" since="5m" | Empty |
 | 4 | Startup confirmed | zerops_logs search="listening\|started\|ready" since="5m" | At least one match |
@@ -260,7 +260,7 @@ Every deployment must pass this protocol before being considered complete.
 | 8 | Managed svc connectivity | bash: curl -sfm 10 "{zeropsSubdomain}/status" | 200 with all connections "ok" |
 
 **Notes:**
-- Check 1 is CRITICAL — zerops_deploy returns before build completes. Wait 5s after deploy, then poll zerops_events every 10s until build finishes (max 300s / 30 polls).
+- Check 1: zerops_deploy blocks until build completes and returns the final status directly. No polling needed.
 - Check 4: framework-dependent — search for `listening on`, `started server`, `ready to accept`.
 - Check 6: **ALWAYS** call `zerops_subdomain action="enable"` after deploy — even if `zeropsSubdomain` env var is already present from import. The env var is pre-configured by `enableSubdomainAccess: true` in import.yml, but **routing is not active** until you explicitly call the enable API. The call is idempotent (returns `already_enabled` if already active). Then `zerops_discover service="{hostname}" includeEnvs=true` to get the `zeropsSubdomain` URL.
 - Check 7: get `zeropsSubdomain` from check 6 discover result. It is already a full URL — do NOT prepend `https://`. **Read the response body.** Empty body, "Cannot GET /", or framework error page = NOT healthy. **Alternative/fallback:** verify internally via `curl -sfm 10 http://{hostname}:{port}/health` from the ZCP container. If internal check passes but public subdomain returns 502, the issue is subdomain configuration — not the app.
@@ -314,8 +314,8 @@ When any verification check fails, enter the iteration loop instead of giving up
 
 ### Standard mode (dev+stage) — deploy flow
 
-1. `zerops_import content="<import.yml>"` — create all services (dev gets `startWithoutCode: true` + `maxContainers: 1`, stage omits both)
-2. `zerops_process processId="<id>"` — wait for dev services RUNNING. Stage will be in READY_TO_DEPLOY — this is expected (no empty container wasted)
+1. `zerops_import content="<import.yml>"` — create all services (blocks until all processes finish — returns final statuses). Dev gets `startWithoutCode: true` + `maxContainers: 1`, stage omits both.
+2. Verify dev services reached RUNNING: `zerops_discover` — stage may be READY_TO_DEPLOY (expected, no empty container wasted)
 3. **Mount dev**: `zerops_mount action="mount" serviceHostname="appdev"` — only dev services are mounted
 4. **Discover env vars**: For each managed service, `zerops_discover service="{hostname}" includeEnvs=true`. Record the exact env var names available. See "Env var discovery protocol" above.
 5. **Create files on mount path**: Write zerops.yml + application source files + .gitignore to `/var/www/appdev/`. Follow the Application Code Requirements (Step 6) and dev vs prod differentiation (Step 5). The zerops.yml `setup:` entries must match ALL service hostnames (both dev and stage). Use only DISCOVERED env vars in envVariables mappings.
@@ -335,8 +335,8 @@ When any verification check fails, enter the iteration loop instead of giving up
 
 1. **Import services:**
    ```
-   zerops_import content="<import.yml>"
-   zerops_process processId="<id>"               # wait for RUNNING
+   zerops_import content="<import.yml>"           # blocks until all processes finish
+   zerops_discover                                # verify services reached RUNNING
    ```
 
    > **Subdomain activation:** `enableSubdomainAccess: true` in import.yml pre-configures the subdomain URL (sets `zeropsSubdomain` env var), but **does NOT activate routing**. You MUST call `zerops_subdomain action="enable"` after deploy to activate the L7 balancer route. Without the explicit enable call, the subdomain URL returns 502 even though the app is running internally. The call is idempotent — safe to call even if already active.
@@ -351,8 +351,7 @@ When any verification check fails, enter the iteration loop instead of giving up
    Write zerops.yml + app code following Application Code Requirements. Then:
    ```
    zerops_deploy targetService="<runtime>" workingDir="/path/to/app"
-   # CRITICAL: returns BUILD_TRIGGERED — build is NOT complete yet
-   # Wait 5s, then poll zerops_events every 10s (max 300s) until build FINISHED
+   # Blocks until build completes — returns DEPLOYED or BUILD_FAILED
    ```
 
 4. Run the full 8-point verification protocol. If it fails, iterate (diagnose → fix → redeploy).
@@ -362,8 +361,8 @@ When any verification check fails, enter the iteration loop instead of giving up
 Prevents context rot by delegating per-service work to specialist agents with fresh context. **Use this for 2 or more runtime service pairs.** For a single service pair, follow the inline flow above.
 
 **Parent agent steps:**
-1. `zerops_import content="<import.yml>"` — create all services
-2. `zerops_process processId="<id>"` — wait until dev services reach RUNNING
+1. `zerops_import content="<import.yml>"` — create all services (blocks until all processes finish)
+2. `zerops_discover` — verify dev services reached RUNNING
 3. **Mount all dev services**: `zerops_mount action="mount" serviceHostname="{devHostname}"` for each
 4. **Discover ALL env vars**: `zerops_discover service="{hostname}" includeEnvs=true` for every managed service. Record exact var names.
 5. For each **runtime** service pair, spawn a Service Bootstrap Agent (in parallel):
@@ -502,16 +501,16 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 1 | Write zerops.yml | Write to `{mountPath}/zerops.yml` with both setup entries | File exists with correct setup names |
 | 2 | Write app code | HTTP server on :8080 with `/`, `/health`, `/status` | Code references discovered env vars |
 | 3 | Write .gitignore | Appropriate for {runtimeType} | File exists |
-| 4 | Deploy dev | `zerops_deploy targetService="{devHostname}" workingDir="{mountPath}" includeGit=true` | status=BUILD_TRIGGERED |
-| 5 | Wait for build | `zerops_events serviceHostname="{devHostname}" limit=5` — poll every 10s, max 300s | Build FINISHED |
+| 4 | Deploy dev | `zerops_deploy targetService="{devHostname}" workingDir="{mountPath}" includeGit=true` | status=DEPLOYED (blocks until complete) |
+| 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
 | 5b | Remount | `zerops_mount action="mount" serviceHostname="{devHostname}"` — deploy replaces container, stale mount auto-cleans on remount | Mount path accessible |
 | 6 | Check errors | `zerops_logs serviceHostname="{devHostname}" severity="error" since="5m"` | No errors |
 | 7 | Confirm startup | `zerops_logs serviceHostname="{devHostname}" search="listening\|started\|ready" since="5m"` | At least one match |
 | 8 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` then `zerops_discover service="{devHostname}" includeEnvs=true` | Success + get zeropsSubdomain URL |
 | 9 | HTTP health | `bash: curl -sfm 10 "{zeropsSubdomain}/health"` | 200 with valid body |
 | 10 | Connectivity | `bash: curl -sfm 10 "{zeropsSubdomain}/status"` | 200 with all connections "ok" |
-| 11 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" freshGit=true` | BUILD_TRIGGERED |
-| 12 | Wait + verify stage | Same checks 5–10 for {stageHostname} | All pass |
+| 11 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" freshGit=true` | status=DEPLOYED (blocks until complete) |
+| 12 | Verify stage | Same checks 5b–10 for {stageHostname} | All pass |
 | 13 | Report | Status (pass/fail) + dev URL + stage URL | — |
 
 ## Iteration Loop (when verification fails)
@@ -538,7 +537,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 
 - NEVER write lock files (go.sum, bun.lock, package-lock.json). Write manifests only (go.mod, package.json). Let build commands generate locks.
 - NEVER write dependency dirs (node_modules/, vendor/).
-- zerops_deploy returns BUILD_TRIGGERED — you MUST poll zerops_events for completion.
+- zerops_deploy blocks until build completes — returns DEPLOYED or BUILD_FAILED with build duration.
 - `includeGit=true` requires `deployFiles: [.]` in zerops.yml — individual paths break git repository structure.
 - zerops_subdomain MUST be called after deploy (even if enableSubdomainAccess was in import).
 - zeropsSubdomain is already a full URL — do NOT prepend https://.

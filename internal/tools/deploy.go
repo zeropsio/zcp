@@ -32,7 +32,7 @@ func RegisterDeploy(
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
-		Description: "Deploy code to a Zerops service via SSH (cross-service) or local zcli push. Automatically handles git initialization — use freshGit=true when deploying to a directory without a proper git repo (common for first deploys or shared storage). SSH mode: set sourceService (container to run from) + targetService. Local mode: set only targetService.",
+		Description: "Deploy code to a Zerops service via SSH (cross-service) or local zcli push. Blocks until build pipeline completes — returns final status (DEPLOYED or BUILD_FAILED) with build duration. Automatically handles git initialization — use freshGit=true when deploying to a directory without a proper git repo (common for first deploys or shared storage). SSH mode: set sourceService (container to run from) + targetService. Local mode: set only targetService.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),

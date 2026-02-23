@@ -2,6 +2,7 @@
 package workflow
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,12 +12,14 @@ func TestCheckGate_AllGatesPass(t *testing.T) {
 	dir := t.TempDir()
 	sessionID := "sess-gates"
 
-	// Save all required evidence.
+	// Save all required evidence with valid content (Passed > 0, non-empty attestation).
 	evidenceTypes := []string{"recipe_review", "discovery", "dev_verify", "deploy_evidence", "stage_verify"}
 	for _, typ := range evidenceTypes {
 		ev := &Evidence{
 			SessionID: sessionID, Type: typ, VerificationType: "attestation",
-			Timestamp: time.Now().Format(time.RFC3339),
+			Timestamp:   time.Now().Format(time.RFC3339),
+			Attestation: "verified successfully",
+			Passed:      1,
 		}
 		if err := SaveEvidence(dir, sessionID, ev); err != nil {
 			t.Fatalf("SaveEvidence(%s): %v", typ, err)
@@ -235,6 +238,241 @@ func TestCheckGate_InvalidTransition(t *testing.T) {
 	_, err := CheckGate(PhaseInit, PhaseDeploy, ModeFull, dir, "sess-x")
 	if err == nil {
 		t.Fatal("expected error for invalid transition")
+	}
+}
+
+// --- ValidateEvidence tests ---
+
+func TestValidateEvidence_ZeroPassed_Fails(t *testing.T) {
+	t.Parallel()
+	ev := &Evidence{Type: "dev_verify", Attestation: "looks good", Passed: 0, Failed: 0}
+	err := ValidateEvidence(ev)
+	if err == nil {
+		t.Fatal("expected error for zero passed and zero failed")
+	}
+	if !strings.Contains(err.Error(), "no verification results") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEvidence_NonZeroFailed_Fails(t *testing.T) {
+	t.Parallel()
+	ev := &Evidence{Type: "dev_verify", Attestation: "some failed", Passed: 2, Failed: 1}
+	err := ValidateEvidence(ev)
+	if err == nil {
+		t.Fatal("expected error for non-zero failed")
+	}
+	if !strings.Contains(err.Error(), "1 failure(s)") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEvidence_EmptyAttestation_Fails(t *testing.T) {
+	t.Parallel()
+	ev := &Evidence{Type: "dev_verify", Attestation: "", Passed: 1, Failed: 0}
+	err := ValidateEvidence(ev)
+	if err == nil {
+		t.Fatal("expected error for empty attestation")
+	}
+	if !strings.Contains(err.Error(), "empty attestation") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateEvidence_Valid_Passes(t *testing.T) {
+	t.Parallel()
+	ev := &Evidence{Type: "dev_verify", Attestation: "all checks passed", Passed: 3, Failed: 0}
+	if err := ValidateEvidence(ev); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestCheckGate_EvidenceWithFailures_Blocked(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-failures"
+
+	ev := &Evidence{
+		SessionID: sessionID, Type: "discovery", VerificationType: "attestation",
+		Timestamp: time.Now().Format(time.RFC3339), Attestation: "has failures",
+		Passed: 2, Failed: 1,
+	}
+	if err := SaveEvidence(dir, sessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, ModeFull, dir, sessionID)
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected gate to fail when evidence has failures")
+	}
+	if len(result.Failures) == 0 {
+		t.Error("expected non-empty Failures list")
+	}
+}
+
+func TestCheckGate_SessionMismatch_Blocked(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-current"
+
+	// Save evidence with a different session ID.
+	ev := &Evidence{
+		SessionID: "sess-other", Type: "discovery", VerificationType: "attestation",
+		Timestamp: time.Now().Format(time.RFC3339), Attestation: "verified",
+		Passed: 1,
+	}
+	if err := SaveEvidence(dir, sessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, ModeFull, dir, sessionID)
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected gate to fail on session mismatch")
+	}
+	if len(result.Failures) == 0 {
+		t.Error("expected non-empty Failures for session mismatch")
+	}
+}
+
+// --- Multi-service verification tests ---
+
+func TestCheckGate_MultiService_FailedService_Blocked(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-multi-fail"
+
+	ev := &Evidence{
+		SessionID: sessionID, Type: "dev_verify", VerificationType: "attestation",
+		Timestamp: time.Now().Format(time.RFC3339), Attestation: "multi-service check",
+		Passed: 2, Failed: 0,
+		ServiceResults: []ServiceResult{
+			{Hostname: "appdev", Status: "pass", Detail: "ok"},
+			{Hostname: "apidev", Status: "fail", Detail: "connection refused"},
+		},
+	}
+	if err := SaveEvidence(dir, sessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	result, err := CheckGate(PhaseDevelop, PhaseDeploy, ModeFull, dir, sessionID)
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected gate to fail when a service result has status=fail")
+	}
+	if len(result.Failures) == 0 {
+		t.Error("expected non-empty Failures for failed service result")
+	}
+}
+
+func TestCheckGate_MultiService_AllPassed_Passes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-multi-pass"
+
+	ev := &Evidence{
+		SessionID: sessionID, Type: "stage_verify", VerificationType: "attestation",
+		Timestamp: time.Now().Format(time.RFC3339), Attestation: "all services ok",
+		Passed: 2, Failed: 0,
+		ServiceResults: []ServiceResult{
+			{Hostname: "appstage", Status: "pass"},
+			{Hostname: "apistage", Status: "pass"},
+		},
+	}
+	if err := SaveEvidence(dir, sessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	result, err := CheckGate(PhaseVerify, PhaseDone, ModeFull, dir, sessionID)
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected gate to pass, missing=%v failures=%v", result.Missing, result.Failures)
+	}
+}
+
+func TestCheckGate_MultiService_EmptyResults_Passes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-multi-empty"
+
+	// Backward compat: no ServiceResults is fine.
+	ev := &Evidence{
+		SessionID: sessionID, Type: "dev_verify", VerificationType: "attestation",
+		Timestamp: time.Now().Format(time.RFC3339), Attestation: "verified",
+		Passed: 1, Failed: 0,
+	}
+	if err := SaveEvidence(dir, sessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	result, err := CheckGate(PhaseDevelop, PhaseDeploy, ModeFull, dir, sessionID)
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected gate to pass with empty ServiceResults, missing=%v failures=%v", result.Missing, result.Failures)
+	}
+}
+
+// --- Evidence freshness tests ---
+
+func TestCheckGate_StaleEvidence_Blocked(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-stale-ev"
+
+	// Save discovery evidence that is 25h old.
+	staleTime := time.Now().Add(-25 * time.Hour).Format(time.RFC3339)
+	ev := &Evidence{
+		SessionID: sessionID, Type: "discovery", VerificationType: "attestation",
+		Timestamp: staleTime, Attestation: "discovered", Passed: 1,
+	}
+	if err := SaveEvidence(dir, sessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	// G1 (DISCOVER→DEVELOP) should fail because discovery evidence is stale.
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, ModeFull, dir, sessionID)
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected gate to fail with stale evidence")
+	}
+	if len(result.Failures) == 0 {
+		t.Error("expected non-empty Failures for stale evidence")
+	}
+}
+
+func TestCheckGate_FreshEvidence_Passes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-fresh-ev"
+
+	// Save fresh discovery evidence.
+	ev := &Evidence{
+		SessionID: sessionID, Type: "discovery", VerificationType: "attestation",
+		Timestamp: time.Now().Format(time.RFC3339), Attestation: "discovered", Passed: 1,
+	}
+	if err := SaveEvidence(dir, sessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, ModeFull, dir, sessionID)
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected gate to pass with fresh evidence, missing=%v failures=%v", result.Missing, result.Failures)
 	}
 }
 

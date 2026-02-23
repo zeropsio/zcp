@@ -10,8 +10,8 @@ Manage environment variables, ports, routing, and service configuration.
 |---------------------|------|-------|
 | View env vars (service) | `zerops_discover service="{hostname}" includeEnvs=true` | Shows all env vars including cross-refs |
 | View env vars (project) | `zerops_discover includeEnvs=true` | Shows project-level vars on all services |
-| Set env vars | `zerops_env action="set"` | Async — returns process ID |
-| Delete env vars | `zerops_env action="delete"` | Async — returns process ID |
+| Set env vars | `zerops_env action="set"` | Blocks until complete |
+| Delete env vars | `zerops_env action="delete"` | Blocks until complete |
 | Enable subdomain | `zerops_subdomain action="enable"` | Idempotent, safe to call repeatedly |
 | Disable subdomain | `zerops_subdomain action="disable"` | |
 
@@ -49,15 +49,15 @@ For project-wide variables:
 zerops_env action="set" project=true variables=["SHARED_SECRET=mysecret"]
 ```
 
-### Step 3 — Track Completion
+### Step 3 — Reload Service
 
-Env var changes are **asynchronous**. The set/delete call returns a process ID. Track it:
+`zerops_env` blocks until the process completes (returns FINISHED/FAILED). However, **running containers do not automatically pick up new env vars**. You MUST reload the service:
 
 ```
-zerops_process processId="<id from set/delete>"
+zerops_manage action="reload" serviceHostname="api"
 ```
 
-Wait for FINISHED status before relying on the new values. The service containers restart automatically to pick up env var changes — no manual restart needed.
+Reload is fast (~4s) vs restart (~14s) and sufficient for picking up new environment variables.
 
 ### Step 4 — Verify
 
@@ -73,7 +73,7 @@ zerops_discover service="api" includeEnvs=true
 zerops_env action="delete" serviceHostname="api" variables=["OLD_VAR"]
 ```
 
-Same async tracking applies — check `zerops_process` for completion.
+`zerops_env` blocks until the delete process completes. Reload the service afterward to apply changes.
 
 ### Cross-Service References
 
@@ -117,8 +117,8 @@ Defines services to create. Service type validation runs automatically before th
 
 ## Tips
 
-- Environment variable changes are asynchronous — always track the process to confirm completion.
-- Service containers restart automatically after env var changes. No manual restart needed.
+- `zerops_env` blocks until the process completes — no manual polling needed.
+- After env var changes, reload the service (`zerops_manage action="reload"`) for the app to pick up new values.
 - Service-level env vars override project-level vars with the same key.
 - Cross-service references use underscores: `${service_hostname}`, never dashes.
 - Use `zerops_discover` with `includeEnvs=true` to see all env vars — this is the only way to read env vars.

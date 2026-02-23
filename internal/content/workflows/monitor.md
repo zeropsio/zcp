@@ -65,7 +65,7 @@ zerops_logs serviceHostname="api" search="timeout" since="24h"
 
 ### 4. Process Tracking
 
-Check status of async operations:
+All mutating tools (import, deploy, manage, env, scale) now poll automatically and return final statuses. Use `zerops_process` only to cancel a running process or check a historical process:
 
 ```
 zerops_process processId="<process-id>"
@@ -98,10 +98,9 @@ Supported formats for `since`:
 
 ### Post-deploy verification
 
-After deploying, run the full verification protocol (same as bootstrap Phase 2):
+After deploying, `zerops_deploy` blocks until complete — check the return value for DEPLOYED status. Then verify:
 
 ```
-zerops_events serviceHostname="api" limit=5               # Build event FINISHED (poll every 10s, max 300s)
 zerops_logs serviceHostname="api" severity="error" since="5m"  # No errors
 zerops_logs serviceHostname="api" search="listening|started|ready" since="5m"  # Startup confirmed
 zerops_discover service="api"                              # RUNNING
@@ -142,5 +141,5 @@ zerops_workflow workflow="debug"
 
 - Use `zerops_events` first to get the big picture, then drill into `zerops_logs` for details.
 - Log search is text-based — use specific error messages or codes for best results.
-- Process IDs from operations (deploy, scale, restart, env changes) can be tracked with `zerops_process`.
+- All mutating tools poll automatically. Use `zerops_process` only to cancel a stuck process or inspect historical processes.
 - A service with status ACTION_FAILED usually needs a redeploy or config fix — use the debug workflow.
