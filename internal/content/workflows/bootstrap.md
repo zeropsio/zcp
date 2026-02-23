@@ -119,6 +119,8 @@ Using the loaded knowledge from Steps 2+3, generate import.yml following the inf
 
 Dev starts immediately with an empty container (RUNNING). Stage stays in READY_TO_DEPLOY until first deploy from dev — no wasted resources running an empty container.
 
+**Shared storage mount** (if shared-storage is in the stack): Add `mount: [{storage-hostname}]` to both dev and stage service definitions in import.yml. This pre-configures the connection but does NOT make storage available at runtime. You MUST also add `mount: [{storage-hostname}]` in the zerops.yml `run:` section and deploy for the storage to actually mount at `/mnt/{storage-hostname}`.
+
 ### Step 5 — Plan zerops.yml and application code
 
 For each runtime service, plan zerops.yml using the loaded runtime example from Step 2 as starting point. The infrastructure knowledge from Step 3 covers the YAML schema rules. Together they provide build pipeline, deployFiles, ports, and framework-specific decisions.

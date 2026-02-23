@@ -105,10 +105,10 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 
 ## Shared Storage
 **Type**: `shared-storage` (no version) | **Mode**: optional (default NON_HA), immutable
-**Mount**: `/mnt/{hostname}` -- add `mount: [hostname]` to runtime zerops.yml
+**Mount**: `/mnt/{hostname}` -- **two steps required**: (1) `mount: [hostname]` in import.yml service definition pre-configures the connection, (2) `mount: [hostname]` in zerops.yml `run:` section activates the mount at runtime. Both are needed -- import.yml alone is NOT sufficient.
 **HA**: 1:1 replication, auto-failover
-**Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). NON_HA = data loss on hardware failure.
-**Wiring**: No env vars. Mount via `mount: [{hostname}]` in zerops.yml run section. POSIX filesystem, max 60 GB.
+**Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). NON_HA = data loss on hardware failure. Import YAML `mount:` only pre-configures -- storage is NOT available until zerops.yml `run.mount` is set and service is deployed.
+**Wiring**: No env vars. Mount path: `/mnt/{hostname}`. POSIX filesystem, max 60 GB.
 
 ## Kafka
 **Type**: `kafka@3.8` | **Mode**: optional (default NON_HA), immutable

@@ -146,7 +146,7 @@ services[]:                            # REQUIRED
   objectStoragePolicy: private | public-read | public-objects-read | public-write | public-read-write
   objectStorageRawPolicy: string       # custom IAM Policy JSON (alternative to objectStoragePolicy)
   override: bool                       # triggers redeploy of existing runtime service with same hostname
-  mount: string[]                      # mount shared storage services at import time
+  mount: string[]                      # pre-configure shared storage connection (ALSO requires mount in zerops.yml run section to activate)
   nginxConfig: string                  # custom nginx config for PHP/static/nginx services
   zeropsSetup: string                  # inline zerops.yml setup name
   zeropsYaml: object                   # inline zerops.yml configuration in import
@@ -217,6 +217,7 @@ zerops[]:
     envVariables: map<string, string|number|bool>
     crontab[]: { timing: cron, command: string, allContainers: bool }
     routing: { cors, redirects[], headers[] }
+    mount: string[]                    # shared storage hostnames to mount at /mnt/{hostname} (REQUIRED for storage access at runtime)
     startCommands[]: { command, name, workingDir, initCommands[] }
 ```
 
