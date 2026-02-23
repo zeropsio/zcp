@@ -1,14 +1,14 @@
 //go:build e2e
 
-// Tests for: e2e — subdomain URL construction in zerops_discover.
+// Tests for: e2e — subdomain URL construction via zerops_subdomain enable.
 //
-// Verifies that zerops_discover returns correct SubdomainUrls for services
+// Verifies that zerops_subdomain enable returns correct subdomainUrls for services
 // with different port configurations (80, 3000, 8080).
 //
 // Prerequisites:
 //   - ZCP_API_KEY set
 //
-// Run: go test ./e2e/ -tags e2e -run TestE2E_DiscoverSubdomainUrls -v -timeout 600s
+// Run: go test ./e2e/ -tags e2e -run TestE2E_SubdomainEnableUrls -v -timeout 600s
 
 package e2e_test
 
@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-func TestE2E_DiscoverSubdomainUrls(t *testing.T) {
+func TestE2E_SubdomainEnableUrls(t *testing.T) {
 	h := newHarness(t)
 	s := newSession(t, h.srv)
 
@@ -106,42 +106,28 @@ func TestE2E_DiscoverSubdomainUrls(t *testing.T) {
 		waitForServiceReady(s, tt.hostname)
 	}
 
-	// Step 3: Verify SubdomainUrls for each service.
+	// Step 3: Verify subdomainUrls from zerops_subdomain enable for each service.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			text := s.mustCallSuccess("zerops_discover", map[string]any{
-				"service": tt.hostname,
+			// Enable subdomain — the response should contain subdomainUrls.
+			enableText := s.mustCallSuccess("zerops_subdomain", map[string]any{
+				"serviceHostname": tt.hostname,
+				"action":          "enable",
 			})
-			var result struct {
-				Services []struct {
-					Hostname      string   `json:"hostname"`
-					SubdomainUrls []string `json:"subdomainUrls"`
-					Ports         []struct {
-						Port int `json:"port"`
-					} `json:"ports"`
-				} `json:"services"`
+			var enableResult struct {
+				SubdomainUrls []string `json:"subdomainUrls"`
 			}
-			if err := json.Unmarshal([]byte(text), &result); err != nil {
-				t.Fatalf("parse discover: %v", err)
-			}
-			if len(result.Services) != 1 {
-				t.Fatalf("expected 1 service, got %d", len(result.Services))
+			if err := json.Unmarshal([]byte(enableText), &enableResult); err != nil {
+				t.Fatalf("parse enable result: %v", err)
 			}
 
-			svc := result.Services[0]
-
-			// Verify ports are present.
-			if len(svc.Ports) == 0 {
-				t.Error("expected ports to be populated")
+			// Verify subdomainUrls are present.
+			if len(enableResult.SubdomainUrls) == 0 {
+				t.Fatal("expected subdomainUrls from enable response")
 			}
 
-			// Verify SubdomainUrls.
-			if len(svc.SubdomainUrls) == 0 {
-				t.Fatal("expected SubdomainUrls to be populated")
-			}
-
-			url := svc.SubdomainUrls[0]
-			t.Logf("  SubdomainUrl: %s", url)
+			url := enableResult.SubdomainUrls[0]
+			t.Logf("  subdomainUrl: %s", url)
 
 			// URL must start with https:// and contain hostname.
 			if !strings.HasPrefix(url, "https://") {
@@ -158,11 +144,17 @@ func TestE2E_DiscoverSubdomainUrls(t *testing.T) {
 				}
 			} else {
 				// Port 80 should NOT have port suffix.
-				// Extract the part after hostname: should be like "zcpsd80{suffix}-{prefix}.{rest}"
-				// and NOT contain "-80."
 				if strings.Contains(url, "-80.") {
 					t.Errorf("port 80 URL should NOT contain -80 suffix, got: %s", url)
 				}
+			}
+
+			// Verify zerops_discover does NOT include subdomainUrls.
+			discoverText := s.mustCallSuccess("zerops_discover", map[string]any{
+				"service": tt.hostname,
+			})
+			if strings.Contains(discoverText, "subdomainUrls") {
+				t.Error("zerops_discover should NOT include subdomainUrls field")
 			}
 		})
 	}

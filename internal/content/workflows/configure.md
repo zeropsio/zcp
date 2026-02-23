@@ -103,7 +103,7 @@ Disable when no longer needed:
 zerops_subdomain serviceHostname="api" action="disable"
 ```
 
-Note: `enableSubdomainAccess: true` in import.yml pre-configures the subdomain URL but does NOT activate routing. You MUST call `zerops_subdomain action="enable"` after the first deploy to activate it.
+Note: `enableSubdomainAccess: true` in import.yml pre-configures routing but does NOT activate it. You MUST call `zerops_subdomain action="enable"` after the first deploy to activate it and get the subdomain URLs.
 
 ## Configuration Files
 

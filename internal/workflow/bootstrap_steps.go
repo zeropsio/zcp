@@ -168,11 +168,10 @@ For EACH runtime service pair (dev + stage):
    - GET /health — health check (200 OK)
    - GET /status — connectivity proof (SELECT 1 for DB, PING for cache)
 3. Deploy dev: zerops_deploy targetService="{devHostname}"
-4. Verify dev: zerops_discover + HTTP check on zeropsSubdomain URL
-5. Enable subdomain: zerops_subdomain action="enable" serviceHostname="{devHostname}"
+4. Enable subdomain + verify: zerops_subdomain action="enable" → use subdomainUrls from response for HTTP check
 6. Deploy stage: zerops_deploy targetService="{stageHostname}"
-7. Verify stage: same checks as dev
-8. Enable subdomain: zerops_subdomain action="enable" serviceHostname="{stageHostname}"
+6. Verify stage: same checks as dev (enable subdomain → use subdomainUrls from response)
+7. Enable subdomain: zerops_subdomain action="enable" serviceHostname="{stageHostname}"
 9. If shared-storage is in the stack: after stage becomes ACTIVE, connect storage:
    zerops_manage action="connect-storage" serviceHostname="{stageHostname}" storageHostname="{storageHostname}"
    (Stage was READY_TO_DEPLOY during import, so import mount: did not apply to it)
@@ -200,7 +199,7 @@ Skip this step if no runtime services exist (managed-only project).`,
 
 For each runtime service:
 1. zerops_discover service="{hostname}" — confirm status is RUNNING
-2. HTTP check: curl/fetch the zeropsSubdomain URL
+2. zerops_subdomain action="enable" — get subdomainUrls from response, HTTP check
 3. Check /status endpoint returns 200 with connectivity proof
 
 For each managed service:
@@ -222,7 +221,7 @@ If any service fails verification:
 Format:
 - List each service with: hostname, type, status, URL (if applicable)
 - Group by: runtime dev, runtime stage, managed
-- Include zeropsSubdomain URLs for services with subdomain enabled
+- Include subdomainUrls from zerops_subdomain enable responses
 - Mention /status endpoint for connectivity monitoring
 
 Summary:

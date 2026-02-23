@@ -263,15 +263,15 @@ Every deployment must pass this protocol before being considered complete.
 | 3 | No error logs | zerops_logs severity="error" since="5m" | Empty |
 | 4 | Startup confirmed | zerops_logs search="listening\|started\|ready" since="5m" | At least one match |
 | 5 | No post-startup errors | zerops_logs severity="error" since="2m" | Empty |
-| 6 | Activate subdomain | zerops_subdomain serviceHostname="{hostname}" action="enable" | Success or already_enabled. Then: zerops_discover service="{hostname}" includeEnvs=true to get `zeropsSubdomain` URL |
-| 7 | HTTP health check | bash: curl -sfm 10 "{zeropsSubdomain}/health" | HTTP 200 with valid body |
-| 8 | Managed svc connectivity | bash: curl -sfm 10 "{zeropsSubdomain}/status" | 200 with all connections "ok" |
+| 6 | Activate subdomain | zerops_subdomain serviceHostname="{hostname}" action="enable" | Success or already_enabled. Response contains `subdomainUrls` |
+| 7 | HTTP health check | bash: curl -sfm 10 "{subdomainUrl}/health" | HTTP 200 with valid body |
+| 8 | Managed svc connectivity | bash: curl -sfm 10 "{subdomainUrl}/status" | 200 with all connections "ok" |
 
 **Notes:**
 - Check 1: zerops_deploy blocks until build completes and returns the final status directly. No polling needed.
 - Check 4: framework-dependent — search for `listening on`, `started server`, `ready to accept`.
-- Check 6: **ALWAYS** call `zerops_subdomain action="enable"` after deploy — even if `zeropsSubdomain` env var is already present from import. The env var is pre-configured by `enableSubdomainAccess: true` in import.yml, but **routing is not active** until you explicitly call the enable API. The call is idempotent (returns `already_enabled` if already active). Then `zerops_discover service="{hostname}" includeEnvs=true` to get the `zeropsSubdomain` URL.
-- Check 7: get `zeropsSubdomain` from check 6 discover result. It is already a full URL — do NOT prepend `https://`. **Read the response body.** Empty body, "Cannot GET /", or framework error page = NOT healthy. **Alternative/fallback:** verify internally via `curl -sfm 10 http://{hostname}:{port}/health` from the ZCP container. If internal check passes but public subdomain returns 502, the issue is subdomain configuration — not the app.
+- Check 6: **ALWAYS** call `zerops_subdomain action="enable"` after deploy — even if `enableSubdomainAccess` was set in import. The enable response contains `subdomainUrls` — this is the **only** source for subdomain URLs. The call is idempotent (returns `already_enabled` if already active).
+- Check 7: use `subdomainUrls[0]` from the check 6 enable response. It is already a full URL — do NOT prepend `https://`. **Read the response body.** Empty body, "Cannot GET /", or framework error page = NOT healthy. **Alternative/fallback:** verify internally via `curl -sfm 10 http://{hostname}:{port}/health` from the ZCP container. If internal check passes but public subdomain returns 502, the issue is subdomain configuration — not the app.
 - Check 8: **Read the `/status` body.** If it shows any connection as "error" or "disconnected" = NOT confirmed. Fallback to log search for `connected|pool|migration` if no `/status` endpoint.
 
 **Do NOT deploy to stage until dev passes ALL checks.** Stage is for final validation, not debugging.
@@ -336,8 +336,8 @@ When any verification check fails, enter the iteration loop instead of giving up
 11. **Verify appstage** — run the 8-point verification protocol on appstage
 12. **Present both URLs** to user:
     ```
-    Dev:   {appdev zeropsSubdomain}
-    Stage: {appstage zeropsSubdomain}
+    Dev:   {subdomainUrl from enable}
+    Stage: {subdomainUrl from enable}
     ```
 
 ### Simple mode — deploy flow
@@ -348,7 +348,7 @@ When any verification check fails, enter the iteration loop instead of giving up
    zerops_discover                                # verify services reached RUNNING
    ```
 
-   > **Subdomain activation:** `enableSubdomainAccess: true` in import.yml pre-configures the subdomain URL (sets `zeropsSubdomain` env var), but **does NOT activate routing**. You MUST call `zerops_subdomain action="enable"` after deploy to activate the L7 balancer route. Without the explicit enable call, the subdomain URL returns 502 even though the app is running internally. The call is idempotent — safe to call even if already active.
+   > **Subdomain activation:** `enableSubdomainAccess: true` in import.yml pre-configures routing, but **does NOT activate it**. You MUST call `zerops_subdomain action="enable"` after deploy to activate the L7 balancer route. The enable response contains `subdomainUrls` — this is the **only** source for subdomain URLs. Without the explicit enable call, the subdomain returns 502. The call is idempotent — safe to call even if already active.
 
 2. **Discover env vars:**
    ```
@@ -515,9 +515,9 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 5b | Remount | `zerops_mount action="mount" serviceHostname="{devHostname}"` — deploy replaces container, stale mount auto-cleans on remount | Mount path accessible |
 | 6 | Check errors | `zerops_logs serviceHostname="{devHostname}" severity="error" since="5m"` | No errors |
 | 7 | Confirm startup | `zerops_logs serviceHostname="{devHostname}" search="listening\|started\|ready" since="5m"` | At least one match |
-| 8 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` then `zerops_discover service="{devHostname}" includeEnvs=true` | Success + get zeropsSubdomain URL |
-| 9 | HTTP health | `bash: curl -sfm 10 "{zeropsSubdomain}/health"` | 200 with valid body |
-| 10 | Connectivity | `bash: curl -sfm 10 "{zeropsSubdomain}/status"` | 200 with all connections "ok" |
+| 8 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Success + response contains `subdomainUrls` |
+| 9 | HTTP health | `bash: curl -sfm 10 "{subdomainUrl}/health"` (from enable response) | 200 with valid body |
+| 10 | Connectivity | `bash: curl -sfm 10 "{subdomainUrl}/status"` (from enable response) | 200 with all connections "ok" |
 | 11 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" freshGit=true` | status=DEPLOYED (blocks until complete) |
 | 12 | Verify stage | Same checks 5b–10 for {stageHostname} | All pass |
 | 13 | Report | Status (pass/fail) + dev URL + stage URL | — |
@@ -549,8 +549,8 @@ Max 3 iterations. After that, report failure with diagnosis.
 - NEVER write dependency dirs (node_modules/, vendor/).
 - zerops_deploy blocks until build completes — returns DEPLOYED or BUILD_FAILED with build duration.
 - `includeGit=true` requires `deployFiles: [.]` in zerops.yml — individual paths break git repository structure.
-- zerops_subdomain MUST be called after deploy (even if enableSubdomainAccess was in import).
-- zeropsSubdomain is already a full URL — do NOT prepend https://.
+- zerops_subdomain MUST be called after deploy (even if enableSubdomainAccess was in import). The enable response contains `subdomainUrls` — the only source for subdomain URLs.
+- subdomainUrls from enable response are already full URLs — do NOT prepend https://.
 - Internal connections use http://, never https://.
 - Env var cross-references use underscores: ${service_hostname}.
 - 0.0.0.0 binding: app must listen on 0.0.0.0, not localhost or 127.0.0.1.

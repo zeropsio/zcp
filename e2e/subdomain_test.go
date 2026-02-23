@@ -26,38 +26,6 @@ import (
 	"time"
 )
 
-// discoverSubdomainEnv calls zerops_discover with includeEnvs and returns
-// the zeropsSubdomain value (empty string if not present).
-// Envs are returned as []map[string]any with "key" and "value" fields.
-func discoverSubdomainEnv(s *e2eSession, hostname string) string {
-	s.t.Helper()
-	text := s.mustCallSuccess("zerops_discover", map[string]any{
-		"service":     hostname,
-		"includeEnvs": true,
-	})
-	var result struct {
-		Services []struct {
-			Hostname string           `json:"hostname"`
-			Envs     []map[string]any `json:"envs"`
-		} `json:"services"`
-	}
-	if err := json.Unmarshal([]byte(text), &result); err != nil {
-		s.t.Fatalf("parse discover: %v", err)
-	}
-	for _, svc := range result.Services {
-		if svc.Hostname == hostname {
-			for _, env := range svc.Envs {
-				key, _ := env["key"].(string)
-				val, _ := env["value"].(string)
-				if key == "zeropsSubdomain" {
-					return val
-				}
-			}
-		}
-	}
-	return ""
-}
-
 // httpGetStatus sends an HTTP GET to the given URL and returns the status code.
 // Returns -1 on error (timeout, DNS, connection refused, etc).
 func httpGetStatus(url string, timeout time.Duration) int {
@@ -202,44 +170,30 @@ func TestE2E_Subdomain(t *testing.T) {
 	}
 	t.Logf("  Service status: %s", svcStatus)
 
-	// --- Step 5: Verify zeropsSubdomain env var is present from import ---
+	// --- Step 5: Enable subdomain and get URL from response ---
 	step++
-	logStep(t, step, "verify zeropsSubdomain env var present (from import)")
-	subdomainURL := discoverSubdomainEnv(s, appHostname)
-	if subdomainURL == "" {
-		t.Fatal("zeropsSubdomain env var not set — expected it to be pre-configured by enableSubdomainAccess")
-	}
-	t.Logf("  zeropsSubdomain = %s", subdomainURL)
-
-	// --- Step 6: Test subdomain BEFORE explicit enable ---
-	// The subdomain URL exists (from import) but routing may not be active.
-	// We attempt one HTTP call to document the 502 behavior.
-	step++
-	logStep(t, step, "HTTP check BEFORE explicit enable (expect 502 or timeout)")
-	healthURL := subdomainURL + "/health"
-	preEnableStatus := httpGetStatus(healthURL, 10*time.Second)
-	t.Logf("  Pre-enable HTTP status: %d (502 or -1 expected)", preEnableStatus)
-	// We don't assert here because timing can vary — the point is to document
-	// that the subdomain may not work without explicit enable.
-
-	// --- Step 7: Explicitly enable subdomain (the critical fix) ---
-	step++
-	logStep(t, step, "zerops_subdomain action=enable (explicit activation)")
+	logStep(t, step, "zerops_subdomain action=enable (explicit activation + get URL)")
 	enableText := s.mustCallSuccess("zerops_subdomain", map[string]any{
 		"serviceHostname": appHostname,
 		"action":          "enable",
 	})
 	var enableResult struct {
-		Status string `json:"status,omitempty"`
-		Action string `json:"action"`
+		Status        string   `json:"status,omitempty"`
+		Action        string   `json:"action"`
+		SubdomainUrls []string `json:"subdomainUrls"`
 	}
 	if err := json.Unmarshal([]byte(enableText), &enableResult); err != nil {
 		t.Fatalf("parse enable result: %v", err)
 	}
-	t.Logf("  Enable result: action=%s status=%s", enableResult.Action, enableResult.Status)
+	t.Logf("  Enable result: action=%s status=%s urls=%v", enableResult.Action, enableResult.Status, enableResult.SubdomainUrls)
 	if enableResult.Action != "enable" {
 		t.Errorf("action = %s, want enable", enableResult.Action)
 	}
+	if len(enableResult.SubdomainUrls) == 0 {
+		t.Fatal("expected subdomainUrls in enable response")
+	}
+	subdomainURL := enableResult.SubdomainUrls[0]
+	t.Logf("  subdomainUrl = %s", subdomainURL)
 
 	// Wait for enable process to complete if one was returned.
 	var enableProc struct {
@@ -252,16 +206,17 @@ func TestE2E_Subdomain(t *testing.T) {
 		waitForProcess(s, enableProc.Process.ID)
 	}
 
-	// --- Step 8: Poll subdomain until HTTP 200 ---
+	// --- Step 6: Poll subdomain until HTTP 200 ---
 	step++
 	logStep(t, step, "HTTP health check AFTER explicit enable (expect 200)")
+	healthURL := subdomainURL + "/health"
 	code, ok := pollHTTPHealth(healthURL, 5*time.Second, 60*time.Second)
 	if !ok {
 		t.Fatalf("subdomain health check failed: last status=%d, want 200", code)
 	}
 	t.Logf("  Post-enable HTTP status: %d", code)
 
-	// --- Step 9: Verify subdomain is idempotent (second enable = safe) ---
+	// --- Step 7: Verify subdomain is idempotent (second enable = safe) ---
 	// The Zerops API may return already_enabled, or start a new process that
 	// finishes/fails quickly. Either way, the subdomain should remain active.
 	step++
@@ -308,7 +263,7 @@ func TestE2E_Subdomain(t *testing.T) {
 		t.Errorf("subdomain health after second enable: %d, want 200", finalCode)
 	}
 
-	// --- Step 10: Delete service ---
+	// --- Step 8: Delete service ---
 	step++
 	logStep(t, step, "zerops_delete %s", appHostname)
 	deleteText := s.mustCallSuccess("zerops_delete", map[string]any{

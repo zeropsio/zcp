@@ -109,9 +109,8 @@ zerops_logs serviceHostname="api" severity="error" since="2m"  # No post-startup
 
 If subdomain is enabled:
 ```
-zerops_subdomain serviceHostname="api" action="enable"     # Activate routing (idempotent)
-zerops_discover service="api" includeEnvs=true             # Get zeropsSubdomain URL
-# bash: curl -sfm 10 "{zeropsSubdomain}/health"           # HTTP 200
+zerops_subdomain serviceHostname="api" action="enable"     # Activate routing (idempotent), returns subdomainUrls
+# bash: curl -sfm 10 "{subdomainUrls[0]}/health"          # HTTP 200
 ```
 
 ### Daily health check

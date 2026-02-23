@@ -18,7 +18,7 @@ type SubdomainInput struct {
 func RegisterSubdomain(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_subdomain",
-		Description: "Enable or disable zerops.app subdomain for a service. Idempotent — safe to call even if already enabled (returns already_enabled). NOTE: If you set enableSubdomainAccess=true in import YAML, the subdomain URL is pre-configured but routing is NOT active. You MUST call this tool with action=\"enable\" after the first successful deploy to activate L7 balancer routing. Without this call, the subdomain returns 502 even if the app is running internally.",
+		Description: "Enable or disable zerops.app subdomain for a service. Returns subdomainUrls in the response — this is the ONLY source for subdomain URLs (zerops_discover does not include them). Idempotent — safe to call even if already enabled (returns already_enabled). NOTE: If you set enableSubdomainAccess=true in import YAML, the subdomain URL is pre-configured but routing is NOT active. You MUST call this tool with action=\"enable\" after the first successful deploy to activate L7 balancer routing. Without this call, the subdomain returns 502 even if the app is running internally.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Enable or disable subdomain",
 			IdempotentHint:  true,

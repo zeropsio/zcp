@@ -9,11 +9,12 @@ import (
 
 // SubdomainResult represents the result of a subdomain enable/disable operation.
 type SubdomainResult struct {
-	Process   *platform.Process `json:"process,omitempty"`
-	Hostname  string            `json:"serviceHostname"`
-	ServiceID string            `json:"serviceId"`
-	Action    string            `json:"action"`
-	Status    string            `json:"status,omitempty"`
+	Process       *platform.Process `json:"process,omitempty"`
+	Hostname      string            `json:"serviceHostname"`
+	ServiceID     string            `json:"serviceId"`
+	Action        string            `json:"action"`
+	Status        string            `json:"status,omitempty"`
+	SubdomainUrls []string          `json:"subdomainUrls,omitempty"`
 }
 
 // Error codes for idempotent handling.
@@ -60,11 +61,13 @@ func Subdomain(
 		if err != nil {
 			if isAlreadyEnabled(err) {
 				result.Status = "already_enabled"
+				attachSubdomainUrlsToResult(ctx, client, result, projectID, svc.ID)
 				return result, nil
 			}
 			return nil, err
 		}
 		result.Process = proc
+		attachSubdomainUrlsToResult(ctx, client, result, projectID, svc.ID)
 	} else {
 		proc, err := client.DisableSubdomainAccess(ctx, svc.ID)
 		if err != nil {
@@ -78,6 +81,23 @@ func Subdomain(
 	}
 
 	return result, nil
+}
+
+// attachSubdomainUrlsToResult fetches project and service detail to compute subdomain URLs.
+func attachSubdomainUrlsToResult(ctx context.Context, client platform.Client, result *SubdomainResult, projectID, serviceID string) {
+	proj, err := client.GetProject(ctx, projectID)
+	if err != nil || proj.SubdomainHost == "" {
+		return
+	}
+	detail, err := client.GetService(ctx, serviceID)
+	if err != nil || len(detail.Ports) == 0 {
+		return
+	}
+	urls := make([]string, 0, len(detail.Ports))
+	for _, p := range detail.Ports {
+		urls = append(urls, BuildSubdomainURL(result.Hostname, proj.SubdomainHost, p.Port))
+	}
+	result.SubdomainUrls = urls
 }
 
 func isAlreadyEnabled(err error) bool {

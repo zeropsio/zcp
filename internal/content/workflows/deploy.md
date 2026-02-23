@@ -123,9 +123,8 @@ zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since=
 zerops_discover service="{hostname}"                                  # → RUNNING
 zerops_logs serviceHostname="{hostname}" severity="error" since="2m"  # → no post-startup errors
 # If subdomain enabled:
-zerops_subdomain serviceHostname="{hostname}" action="enable"        # → ALWAYS call (idempotent, activates routing)
-zerops_discover service="{hostname}" includeEnvs=true                 # → get zeropsSubdomain URL
-# bash: curl -sfm 10 "{zeropsSubdomain}/health"                      # → HTTP 200
+zerops_subdomain serviceHostname="{hostname}" action="enable"        # → ALWAYS call (idempotent, activates routing, returns subdomainUrls)
+# bash: curl -sfm 10 "{subdomainUrls[0]}/health"                     # → HTTP 200
 ```
 
 ### Verification iteration loop
@@ -189,17 +188,17 @@ Execute IN ORDER. Every step requires verification.
 | 3 | Check errors | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
 | 4 | Confirm startup | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
 | 5 | Verify running | zerops_discover service="{hostname}" | RUNNING |
-| 6 | Activate subdomain | zerops_subdomain serviceHostname="{hostname}" action="enable" | Success or already_enabled. Then: zerops_discover service="{hostname}" includeEnvs=true to get `zeropsSubdomain` URL |
-| 7 | HTTP health | bash: curl -sfm 10 "{zeropsSubdomain}/health" | 200 with valid body |
-| 8 | Connectivity | bash: curl -sfm 10 "{zeropsSubdomain}/status" | 200 with connections "ok" (skip if no /status) |
+| 6 | Activate subdomain | zerops_subdomain serviceHostname="{hostname}" action="enable" | Success or already_enabled. Response contains `subdomainUrls` |
+| 7 | HTTP health | bash: curl -sfm 10 "{subdomainUrl}/health" (from enable response) | 200 with valid body |
+| 8 | Connectivity | bash: curl -sfm 10 "{subdomainUrl}/status" (from enable response) | 200 with connections "ok" (skip if no /status) |
 
 zerops_deploy blocks until the build pipeline completes. It returns DEPLOYED or BUILD_FAILED with
 build duration. No manual polling needed.
 
-Step 6: ALWAYS call zerops_subdomain action="enable" after deploy — even if zeropsSubdomain env var
-already exists from import. The env var is pre-configured by enableSubdomainAccess:true in import.yml
-but routing is NOT active until you explicitly call enable. The call is idempotent.
-zeropsSubdomain is already a full URL — do NOT prepend https://.
+Step 6: ALWAYS call zerops_subdomain action="enable" after deploy — even if enableSubdomainAccess was
+set in import. The enable response contains subdomainUrls — this is the ONLY source for subdomain
+URLs. zerops_discover does not include subdomain URLs. The call is idempotent.
+subdomainUrls from the enable response are already full URLs — do NOT prepend https://.
 
 If subdomain URL returns 502, verify the app internally first: curl http://{hostname}:{port}/health.
 Internal network access uses hostname directly — no subdomain needed.
@@ -211,5 +210,5 @@ If any check fails, iterate: diagnose (check logs, capture response bodies), fix
 remount (zerops_mount), redeploy, re-verify. Max 3 iterations. If build FAILED: check zerops_logs severity="error"
 since="10m", then fallback to bash: zcli service log {hostname} --showBuildLogs --limit 50.
 
-Report: status (pass/fail) + which checks passed/failed + subdomain URL.
+Report: status (pass/fail) + which checks passed/failed + subdomain URL (from enable response).
 ```

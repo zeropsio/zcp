@@ -326,6 +326,62 @@ func TestListHostnames(t *testing.T) {
 	}
 }
 
+func TestEnvVarsToMaps_FiltersZeropsSubdomain(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		envs     []platform.EnvVar
+		wantKeys []string
+	}{
+		{
+			name: "filters zeropsSubdomain",
+			envs: []platform.EnvVar{
+				{ID: "e1", Key: "PORT", Content: "3000"},
+				{ID: "e2", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
+				{ID: "e3", Key: "HOST", Content: "0.0.0.0"},
+			},
+			wantKeys: []string{"PORT", "HOST"},
+		},
+		{
+			name: "no zeropsSubdomain present",
+			envs: []platform.EnvVar{
+				{ID: "e1", Key: "PORT", Content: "3000"},
+				{ID: "e2", Key: "HOST", Content: "0.0.0.0"},
+			},
+			wantKeys: []string{"PORT", "HOST"},
+		},
+		{
+			name:     "empty envs",
+			envs:     []platform.EnvVar{},
+			wantKeys: []string{},
+		},
+		{
+			name: "only zeropsSubdomain",
+			envs: []platform.EnvVar{
+				{ID: "e1", Key: "zeropsSubdomain", Content: "https://..."},
+			},
+			wantKeys: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := envVarsToMaps(tt.envs)
+			if len(result) != len(tt.wantKeys) {
+				t.Fatalf("expected %d envs, got %d", len(tt.wantKeys), len(result))
+			}
+			for i, wantKey := range tt.wantKeys {
+				if result[i]["key"] != wantKey {
+					t.Errorf("env[%d] key = %v, want %s", i, result[i]["key"], wantKey)
+				}
+			}
+		})
+	}
+}
+
 func TestFindEnvIDByKey(t *testing.T) {
 	t.Parallel()
 
