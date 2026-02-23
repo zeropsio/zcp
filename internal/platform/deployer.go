@@ -25,3 +25,22 @@ func (d *SystemLocalDeployer) ExecZcli(ctx context.Context, args ...string) ([]b
 	}
 	return output, nil
 }
+
+// SystemSSHDeployer implements ops.SSHDeployer using SSH to sibling Zerops containers.
+// Zerops provides key-based SSH access within a project (no password needed).
+type SystemSSHDeployer struct{}
+
+// NewSystemSSHDeployer creates a new SystemSSHDeployer.
+func NewSystemSSHDeployer() *SystemSSHDeployer {
+	return &SystemSSHDeployer{}
+}
+
+// ExecSSH runs a command on a remote Zerops container via SSH.
+func (d *SystemSSHDeployer) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "ssh", hostname, command)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return output, fmt.Errorf("ssh %s: %w (output: %s)", hostname, err, string(output))
+	}
+	return output, nil
+}
