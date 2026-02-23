@@ -20,6 +20,7 @@ type Client interface {
 	StartService(ctx context.Context, serviceID string) (*Process, error)
 	StopService(ctx context.Context, serviceID string) (*Process, error)
 	RestartService(ctx context.Context, serviceID string) (*Process, error)
+	ReloadService(ctx context.Context, serviceID string) (*Process, error)
 	// SetAutoscaling returns *Process which MAY be nil (API: ResponseProcessNil).
 	// When process == nil -> treat as sync (scaling applied immediately).
 	// When process != nil -> treat as async (track via process ID).

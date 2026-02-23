@@ -161,6 +161,35 @@ func TestManageTool_EmptyServiceHostname(t *testing.T) {
 	}
 }
 
+func TestManageTool_Reload(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{
+			ID:     "proc-reload-svc-1",
+			Status: statusFinished,
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterManage(srv, mock, "proj-1")
+
+	result := callTool(t, srv, "zerops_manage", map[string]any{
+		"action": "reload", "serviceHostname": "api",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed["status"] != statusFinished {
+		t.Errorf("status = %v, want FINISHED", parsed["status"])
+	}
+}
+
 func TestManageTool_InvalidAction(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()

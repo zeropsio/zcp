@@ -38,6 +38,47 @@ func TestScaleTool_Success(t *testing.T) {
 	}
 }
 
+func TestScaleTool_PollsToFinished(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", Mode: "NON_HA"}}).
+		WithAutoscalingProcess(&platform.Process{
+			ID:         "proc-scale-1",
+			ActionName: "scale",
+			Status:     "PENDING",
+		}).
+		WithProcess(&platform.Process{
+			ID:         "proc-scale-1",
+			Status:     statusFinished,
+			ActionName: "scale",
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterScale(srv, mock, "proj-1")
+
+	result := callTool(t, srv, "zerops_scale", map[string]any{
+		"serviceHostname": "api",
+		"minCpu":          1,
+		"maxCpu":          4,
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	proc, ok := parsed["process"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected process in result, got: %v", parsed)
+	}
+	if proc["status"] != statusFinished {
+		t.Errorf("process status = %v, want FINISHED", proc["status"])
+	}
+}
+
 func TestScaleTool_WithDisk(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().

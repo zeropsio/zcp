@@ -100,9 +100,26 @@ func (m *Mock) RestartService(_ context.Context, serviceID string) (*Process, er
 	}, nil
 }
 
+func (m *Mock) ReloadService(_ context.Context, serviceID string) (*Process, error) {
+	if err := m.getError("ReloadService"); err != nil {
+		return nil, err
+	}
+	return &Process{
+		ID:            "proc-reload-" + serviceID,
+		ActionName:    "reload",
+		Status:        "PENDING",
+		ServiceStacks: []ServiceStackRef{{ID: serviceID}},
+	}, nil
+}
+
 func (m *Mock) SetAutoscaling(_ context.Context, _ string, _ AutoscalingParams) (*Process, error) {
 	if err := m.getError("SetAutoscaling"); err != nil {
 		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.autoscalingProcess != nil {
+		return m.autoscalingProcess, nil
 	}
 	return nil, nil //nolint:nilnil // intentional: nil process means sync (no async process)
 }

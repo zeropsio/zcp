@@ -10,7 +10,7 @@ import (
 
 // ManageInput is the input type for zerops_manage.
 type ManageInput struct {
-	Action          string `json:"action"          jsonschema:"Lifecycle action to perform: start, stop, or restart."`
+	Action          string `json:"action"          jsonschema:"Lifecycle action to perform: start, stop, restart, or reload."`
 	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to manage."`
 }
 
@@ -18,7 +18,7 @@ type ManageInput struct {
 func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_manage",
-		Description: "Manage service lifecycle: start, stop, or restart a service.",
+		Description: "Manage service lifecycle: start, stop, restart, or reload a service. Use reload after env var changes — it's faster (~4s) than restart (~14s) and sufficient for picking up new environment variables.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage service lifecycle",
 			IdempotentHint:  true,
@@ -28,7 +28,7 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 		if input.Action == "" {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Action is required",
-				"Use start, stop, or restart")), nil, nil
+				"Use start, stop, restart, or reload")), nil, nil
 		}
 		if input.ServiceHostname == "" {
 			return convertError(platform.NewPlatformError(
@@ -57,10 +57,16 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 				return convertError(err), nil, nil
 			}
 			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
+		case "reload":
+			proc, err := ops.Reload(ctx, client, projectID, input.ServiceHostname)
+			if err != nil {
+				return convertError(err), nil, nil
+			}
+			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",
-				"Use start, stop, or restart")), nil, nil
+				"Use start, stop, restart, or reload")), nil, nil
 		}
 	})
 }

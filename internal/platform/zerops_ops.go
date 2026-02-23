@@ -53,6 +53,20 @@ func (z *ZeropsClient) RestartService(ctx context.Context, serviceID string) (*P
 	return &proc, nil
 }
 
+func (z *ZeropsClient) ReloadService(ctx context.Context, serviceID string) (*Process, error) {
+	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
+	resp, err := z.handler.PutServiceStackReload(ctx, pathParam)
+	if err != nil {
+		return nil, mapSDKError(err, "service")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return nil, mapSDKError(err, "service")
+	}
+	proc := mapProcess(out)
+	return &proc, nil
+}
+
 func (z *ZeropsClient) SetAutoscaling(ctx context.Context, serviceID string, params AutoscalingParams) (*Process, error) {
 	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
 

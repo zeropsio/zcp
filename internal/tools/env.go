@@ -20,12 +20,14 @@ type EnvInput struct {
 func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage environment variables. Actions: set, delete. Scope: service (serviceHostname) or project (project=true). To read env vars, use zerops_discover with includeEnvs=true.",
+		Description: "Manage environment variables. Actions: set, delete. Scope: service (serviceHostname) or project (project=true). Blocks until the process completes — returns final status (FINISHED/FAILED). After changing env vars, you MUST reload the service (zerops_manage action=reload) for the running application to pick up the new values. Reload is fast (~4s) vs restart (~14s). To read env vars, use zerops_discover with includeEnvs=true.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
 			DestructiveHint: boolPtr(true),
 		},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input EnvInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input EnvInput) (*mcp.CallToolResult, any, error) {
+		onProgress := buildProgressCallback(ctx, req)
+
 		switch input.Action {
 		case "get":
 			return convertError(platform.NewPlatformError(
@@ -37,11 +39,17 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 			if err != nil {
 				return convertError(err), nil, nil
 			}
+			if result.Process != nil {
+				result.Process = pollManageProcess(ctx, client, result.Process, onProgress)
+			}
 			return jsonResult(result), nil, nil
 		case "delete":
 			result, err := ops.EnvDelete(ctx, client, projectID, input.ServiceHostname, input.Project, input.Variables)
 			if err != nil {
 				return convertError(err), nil, nil
+			}
+			if result.Process != nil {
+				result.Process = pollManageProcess(ctx, client, result.Process, onProgress)
 			}
 			return jsonResult(result), nil, nil
 		case "":

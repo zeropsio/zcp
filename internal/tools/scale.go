@@ -28,13 +28,13 @@ type ScaleInput struct {
 func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_scale",
-		Description: "Scale a service: adjust CPU, RAM, disk, and container autoscaling parameters.",
+		Description: "Scale a service: adjust CPU, RAM, disk, and container autoscaling parameters. Blocks until the scaling process completes — returns final status (FINISHED/FAILED).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Scale a service",
 			IdempotentHint:  true,
 			DestructiveHint: boolPtr(true),
 		},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input ScaleInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input ScaleInput) (*mcp.CallToolResult, any, error) {
 		if input.ServiceHostname == "" {
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceRequired, "Service hostname is required",
@@ -55,6 +55,11 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
 		})
 		if err != nil {
 			return convertError(err), nil, nil
+		}
+
+		if result.Process != nil {
+			onProgress := buildProgressCallback(ctx, req)
+			result.Process = pollManageProcess(ctx, client, result.Process, onProgress)
 		}
 		return jsonResult(result), nil, nil
 	})

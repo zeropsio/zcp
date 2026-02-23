@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -35,10 +36,14 @@ func TestEnvTool_GetAction_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestEnvTool_Set(t *testing.T) {
+func TestEnvTool_Set_PollsToFinished(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{
+			ID:     "proc-envset-svc-1",
+			Status: statusFinished,
+		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterEnv(srv, mock, "proj-1")
@@ -52,13 +57,29 @@ func TestEnvTool_Set(t *testing.T) {
 	if result.IsError {
 		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
 	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	proc, ok := parsed["process"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected process in result, got: %v", parsed)
+	}
+	if proc["status"] != statusFinished {
+		t.Errorf("process status = %v, want FINISHED", proc["status"])
+	}
 }
 
-func TestEnvTool_Delete(t *testing.T) {
+func TestEnvTool_Delete_PollsToFinished(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
-		WithServiceEnv("svc-1", []platform.EnvVar{{ID: "env-1", Key: "OLD_VAR", Content: "old"}})
+		WithServiceEnv("svc-1", []platform.EnvVar{{ID: "env-1", Key: "OLD_VAR", Content: "old"}}).
+		WithProcess(&platform.Process{
+			ID:     "proc-envdel-env-1",
+			Status: statusFinished,
+		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterEnv(srv, mock, "proj-1")
@@ -71,6 +92,18 @@ func TestEnvTool_Delete(t *testing.T) {
 
 	if result.IsError {
 		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	proc, ok := parsed["process"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected process in result, got: %v", parsed)
+	}
+	if proc["status"] != statusFinished {
+		t.Errorf("process status = %v, want FINISHED", proc["status"])
 	}
 }
 

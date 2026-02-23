@@ -15,19 +15,20 @@ var _ LogFetcher = (*MockLogFetcher)(nil)
 type Mock struct {
 	mu sync.RWMutex
 
-	userInfo         *UserInfo
-	projects         []Project
-	project          *Project
-	services         []ServiceStack
-	service          *ServiceStack
-	processes        map[string]*Process
-	envVars          map[string][]EnvVar // serviceID -> env vars
-	projectEnv       []EnvVar
-	logAccess        *LogAccess
-	importResult     *ImportResult
-	processEvents    []ProcessEvent
-	appVersionEvents []AppVersionEvent
-	stackTypes       []ServiceStackType
+	userInfo           *UserInfo
+	projects           []Project
+	project            *Project
+	services           []ServiceStack
+	service            *ServiceStack
+	processes          map[string]*Process
+	envVars            map[string][]EnvVar // serviceID -> env vars
+	projectEnv         []EnvVar
+	logAccess          *LogAccess
+	importResult       *ImportResult
+	processEvents      []ProcessEvent
+	appVersionEvents   []AppVersionEvent
+	stackTypes         []ServiceStackType
+	autoscalingProcess *Process // non-nil → SetAutoscaling returns this process
 
 	// Error overrides: method name -> error
 	errors map[string]error
@@ -135,6 +136,14 @@ func (m *Mock) WithAppVersionEvents(events []AppVersionEvent) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.appVersionEvents = events
+	return m
+}
+
+// WithAutoscalingProcess sets the process returned by SetAutoscaling (nil = sync, no process).
+func (m *Mock) WithAutoscalingProcess(proc *Process) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.autoscalingProcess = proc
 	return m
 }
 

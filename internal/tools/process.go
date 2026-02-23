@@ -18,7 +18,7 @@ type ProcessInput struct {
 func RegisterProcess(srv *mcp.Server, client platform.Client) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_process",
-		Description: "Check status or cancel an async process. Default action is 'status'.",
+		Description: "Check status or cancel an async process. All mutating tools (import, deploy, manage, env, scale) now poll automatically. Use this only to cancel a running process or check a historical process. Default action is 'status'.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Check or cancel async process",
 			IdempotentHint:  true,

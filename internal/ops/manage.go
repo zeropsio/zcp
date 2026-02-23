@@ -57,6 +57,15 @@ func Restart(ctx context.Context, client platform.Client, projectID, hostname st
 	return client.RestartService(ctx, svc.ID)
 }
 
+// Reload reloads a running service. Faster than restart (~4s vs ~14s), sufficient for env var changes.
+func Reload(ctx context.Context, client platform.Client, projectID, hostname string) (*platform.Process, error) {
+	svc, err := resolveService(ctx, client, projectID, hostname)
+	if err != nil {
+		return nil, err
+	}
+	return client.ReloadService(ctx, svc.ID)
+}
+
 // Scale updates the autoscaling parameters for a service.
 func Scale(ctx context.Context, client platform.Client, projectID, hostname string, params ScaleParams) (*ScaleResult, error) {
 	if err := validateScaleParams(params); err != nil {
