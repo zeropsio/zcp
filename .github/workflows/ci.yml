@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: test & lint
+    name: test
     runs-on: ubuntu-22.04
     env:
       CGO_ENABLED: '0'
@@ -19,17 +19,6 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Install tools
-        run: |
-          export GOPATH=$HOME/go
-          ./tools/install.sh
-          echo "$PWD/bin" >> $GITHUB_PATH
-
-      - name: Verify tooling
-        run: |
-          go version
-          golangci-lint version
-
       - name: Build (all platforms)
         run: |
           GOOS=linux GOARCH=amd64 go build -v ./...
@@ -39,5 +28,16 @@ jobs:
       - name: Test
         run: go test -race ./... -count=1
 
-      - name: Lint
-        run: golangci-lint run ./...
+  lint:
+    name: lint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.8.0
