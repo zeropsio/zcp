@@ -12,7 +12,7 @@
 #   ssh api
 #   ssh db
 
-Host *.zerops
+Host *
     User zerops
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
