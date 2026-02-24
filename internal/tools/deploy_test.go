@@ -238,6 +238,55 @@ func TestDeployTool_FreshGit(t *testing.T) {
 	}
 }
 
+func TestDeployTool_SSHMode_Exit255PollsSuccessfully(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-1",
+				ProjectID:      "proj-1",
+				ServiceStackID: "svc-2",
+				Status:         statusActive,
+				Sequence:       1,
+			},
+		})
+	// SSH returns exit 255 but output indicates build was triggered.
+	ssh := &stubSSH{
+		output: []byte("BUILD ARTEFACTS READY TO DEPLOY\nConnection closed.\n"),
+		err:    fmt.Errorf("ssh builder: process exited with status 255"),
+	}
+	local := &stubLocal{}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, local, authInfo)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"sourceService": "builder",
+		"targetService": "app",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed.Status != statusDeployed {
+		t.Errorf("status = %s, want DEPLOYED", parsed.Status)
+	}
+	if parsed.BuildStatus != statusActive {
+		t.Errorf("buildStatus = %s, want ACTIVE", parsed.BuildStatus)
+	}
+}
+
 func TestDeployTool_Error(t *testing.T) {
 	t.Parallel()
 

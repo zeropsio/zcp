@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -81,6 +82,12 @@ func Import(
 		}
 	}
 
+	// Wait for any DELETING services with conflicting hostnames to finish.
+	hostnames := extractHostnames(doc)
+	if err := waitForDeletingServices(ctx, client, projectID, hostnames); err != nil {
+		return nil, err
+	}
+
 	result, err := client.ImportServices(ctx, projectID, yamlContent)
 	if err != nil {
 		return nil, err
@@ -105,6 +112,78 @@ func Import(
 		Processes:   processes,
 		Warnings:    warnings,
 	}, nil
+}
+
+// extractHostnames parses service hostnames from the parsed import YAML document.
+func extractHostnames(doc map[string]any) []string {
+	raw, ok := doc["services"]
+	if !ok {
+		return nil
+	}
+	servicesList, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	var hostnames []string
+	for _, svc := range servicesList {
+		svcMap, ok := svc.(map[string]any)
+		if !ok {
+			continue
+		}
+		if h, ok := svcMap["hostname"].(string); ok && h != "" {
+			hostnames = append(hostnames, h)
+		}
+	}
+	return hostnames
+}
+
+// waitForDeletingServices polls ListServices until no DELETING services
+// conflict with the requested hostnames. Returns ErrAPITimeout on context
+// cancellation or deadline exceeded.
+func waitForDeletingServices(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	hostnames []string,
+) error {
+	if len(hostnames) == 0 {
+		return nil
+	}
+
+	wantSet := make(map[string]bool, len(hostnames))
+	for _, h := range hostnames {
+		wantSet[h] = true
+	}
+
+	const pollInterval = 3 * time.Second
+
+	for {
+		services, err := client.ListServices(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("list services for DELETING check: %w", err)
+		}
+
+		var conflicts []string
+		for _, svc := range services {
+			if svc.Status == "DELETING" && wantSet[svc.Name] {
+				conflicts = append(conflicts, svc.Name)
+			}
+		}
+		if len(conflicts) == 0 {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return platform.NewPlatformError(
+				platform.ErrAPITimeout,
+				fmt.Sprintf("timed out waiting for DELETING services to finish: %v", conflicts),
+				"Services are still being deleted. Wait and retry, or use a different hostname.",
+			)
+		case <-time.After(pollInterval):
+			// Continue polling.
+		}
+	}
 }
 
 // resolveInput resolves content XOR filePath into YAML content string.

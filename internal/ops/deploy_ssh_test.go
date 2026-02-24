@@ -333,6 +333,186 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 	}
 }
 
+func TestDeploy_SSHMode_Exit255WithBuildSuccess(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name:   "build artefacts ready marker",
+			output: "Uploading files...\nBUILD ARTEFACTS READY TO DEPLOY\nConnection to host closed by remote host.\n",
+		},
+		{
+			name:   "deploying service marker",
+			output: "zcli push completed\nDeploying service stack svc-2...\nConnection closed.\n",
+		},
+		{
+			name:   "both markers present",
+			output: "BUILD ARTEFACTS READY TO DEPLOY\nDeploying service stack svc-2\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-1", Name: "builder"},
+					{ID: "svc-2", Name: "app"},
+				})
+			ssh := &mockSSHDeployer{
+				output: []byte(tt.output),
+				err:    fmt.Errorf("ssh builder: process exited with status 255"),
+			}
+			local := &mockLocalDeployer{}
+			authInfo := testAuthInfo()
+
+			result, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
+				"builder", "app", "", "", false, false)
+			if err != nil {
+				t.Fatalf("expected success (build triggered recovery), got error: %v", err)
+			}
+			if result.Status != "BUILD_TRIGGERED" {
+				t.Errorf("status = %s, want BUILD_TRIGGERED", result.Status)
+			}
+			if result.Mode != "ssh" {
+				t.Errorf("mode = %s, want ssh", result.Mode)
+			}
+			if result.TargetServiceID != "svc-2" {
+				t.Errorf("targetServiceID = %s, want svc-2", result.TargetServiceID)
+			}
+		})
+	}
+}
+
+func TestDeploy_SSHMode_Exit255RealFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name:   "no build markers",
+			output: "Error: File zerops.yml not found\n",
+		},
+		{
+			name:   "empty output",
+			output: "",
+		},
+		{
+			name:   "generic failure output",
+			output: "fatal: could not read Username\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-1", Name: "builder"},
+					{ID: "svc-2", Name: "app"},
+				})
+			ssh := &mockSSHDeployer{
+				output: []byte(tt.output),
+				err:    fmt.Errorf("ssh builder: process exited with status 255"),
+			}
+			local := &mockLocalDeployer{}
+			authInfo := testAuthInfo()
+
+			_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
+				"builder", "app", "", "", false, false)
+			if err == nil {
+				t.Fatal("expected error for exit 255 without build success markers")
+			}
+
+			var pe *platform.PlatformError
+			if !errorAs(err, &pe) {
+				t.Fatalf("expected PlatformError, got %T: %v", err, err)
+			}
+			if pe.Code != platform.ErrSSHDeployFailed {
+				t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
+			}
+		})
+	}
+}
+
+func TestClassifySSHError_ZeropsYmlNotFound(t *testing.T) {
+	t.Parallel()
+
+	err := fmt.Errorf("File zerops.yml not found in /var/www")
+	pe := classifySSHError(err, "builder", "app")
+	if pe.Code != platform.ErrSSHDeployFailed {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
+	}
+	if !containsSubstring(pe.Suggestion, "deployFiles") {
+		t.Errorf("suggestion should mention deployFiles, got: %s", pe.Suggestion)
+	}
+}
+
+func TestClassifySSHError_ConnectionRefused(t *testing.T) {
+	t.Parallel()
+
+	err := fmt.Errorf("connection refused")
+	pe := classifySSHError(err, "builder", "app")
+	if pe.Code != platform.ErrSSHDeployFailed {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
+	}
+	if !containsSubstring(pe.Suggestion, "RUNNING") {
+		t.Errorf("suggestion should mention RUNNING, got: %s", pe.Suggestion)
+	}
+}
+
+func TestIsSSHBuildTriggered(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{
+			name:   "build artefacts marker",
+			output: "Uploading...\nBUILD ARTEFACTS READY TO DEPLOY\ndone",
+			want:   true,
+		},
+		{
+			name:   "deploying service marker",
+			output: "Deploying service stack svc-1...\n",
+			want:   true,
+		},
+		{
+			name:   "no markers",
+			output: "Error: something went wrong",
+			want:   false,
+		},
+		{
+			name:   "empty output",
+			output: "",
+			want:   false,
+		},
+		{
+			name:   "case sensitivity - lowercase should not match",
+			output: "build artefacts ready to deploy",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isSSHBuildTriggered(tt.output); got != tt.want {
+				t.Errorf("isSSHBuildTriggered(%q) = %v, want %v", tt.output, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDeploy_NilSSHDeployer(t *testing.T) {
 	t.Parallel()
 
