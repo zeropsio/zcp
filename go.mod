@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.3.0
-	github.com/zeropsio/zerops-go v1.0.16
+	github.com/zeropsio/zerops-go v1.0.17
 	gopkg.in/yaml.v3 v3.0.1
 )
 

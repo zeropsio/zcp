@@ -2,8 +2,6 @@ package platform
 
 import (
 	"context"
-	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -21,14 +19,10 @@ var _ Client = (*ZeropsClient)(nil)
 
 // ZeropsClient implements the Client interface using the zerops-go SDK.
 type ZeropsClient struct {
-	handler    sdk.Handler
-	httpClient *http.Client
-	token      string
-	endpoint   string // normalized API endpoint (e.g. "https://api.app-prg1.zerops.io/")
-	apiHost    string
-	once       sync.Once // thread-safe clientID caching
-	cachedID   string
-	idErr      error
+	handler  sdk.Handler
+	once     sync.Once // thread-safe clientID caching
+	cachedID string
+	idErr    error
 }
 
 // NewZeropsClient creates a new ZeropsClient authenticated with the given token.
@@ -46,13 +40,7 @@ func NewZeropsClient(token, apiHost string) (*ZeropsClient, error) {
 	handler := sdk.New(config, httpClient)
 	handler = sdk.AuthorizeSdk(handler, token)
 
-	return &ZeropsClient{
-		handler:    handler,
-		httpClient: httpClient,
-		token:      token,
-		endpoint:   endpoint,
-		apiHost:    apiHost,
-	}, nil
+	return &ZeropsClient{handler: handler}, nil
 }
 
 // getClientID returns the cached clientId, using sync.Once for thread safety.
@@ -205,44 +193,5 @@ func (z *ZeropsClient) GetService(ctx context.Context, serviceID string) (*Servi
 		return nil, mapSDKError(err, "service")
 	}
 	svc := mapFullServiceStack(out)
-
-	// Workaround: zerops-go SDK v1.0.16 has a JSON tag mismatch for autoscaling
-	// (expects "verticalAutoscalingNullable" but API returns "verticalAutoscaling").
-	// If SDK mapping produced empty autoscaling, fetch raw JSON and parse ourselves.
-	if svc.CurrentAutoscaling == nil || *svc.CurrentAutoscaling == (CustomAutoscaling{}) {
-		rawAutoscaling, rawErr := z.fetchRawAutoscaling(ctx, serviceID)
-		if rawErr == nil && rawAutoscaling != nil {
-			svc.CurrentAutoscaling = rawAutoscaling
-		}
-	}
-
 	return &svc, nil
-}
-
-// fetchRawAutoscaling makes a raw HTTP call to GetServiceStack and parses
-// autoscaling data directly, bypassing the SDK's broken JSON tag mapping.
-func (z *ZeropsClient) fetchRawAutoscaling(ctx context.Context, serviceID string) (*CustomAutoscaling, error) {
-	url := z.endpoint + "api/rest/public/service-stack/" + serviceID
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create autoscaling request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+z.token)
-
-	resp, err := z.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch autoscaling: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch autoscaling: HTTP %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read autoscaling body: %w", err)
-	}
-
-	return parseRawAutoscaling(body)
 }

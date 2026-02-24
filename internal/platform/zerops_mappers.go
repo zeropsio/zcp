@@ -163,7 +163,7 @@ func mapServicePorts(sdkPorts []output.ServicePort) []Port {
 
 func mapOutputCustomAutoscaling(ca *output.CustomAutoscaling) *CustomAutoscaling {
 	result := &CustomAutoscaling{}
-	if v := ca.VerticalAutoscalingNullable; v != nil {
+	if v := ca.VerticalAutoscaling; v != nil {
 		if v.CpuMode != nil {
 			result.CPUMode = v.CpuMode.String()
 		}
@@ -193,7 +193,7 @@ func mapOutputCustomAutoscaling(ca *output.CustomAutoscaling) *CustomAutoscaling
 			result.StartCPUCoreCount = int32(val)
 		}
 	}
-	if h := ca.HorizontalAutoscalingNullable; h != nil {
+	if h := ca.HorizontalAutoscaling; h != nil {
 		if val, ok := h.MinContainerCount.Get(); ok {
 			result.HorizontalMinCount = int32(val)
 		}
