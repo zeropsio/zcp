@@ -55,15 +55,25 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 - Using `php-nginx` as build base -> build needs `php@X`, not the webserver variant
 - `apk add` without `sudo` -> "Permission denied" in prepareCommands
 
+**Dev deploy**: `deployFiles: [.]`, no build step needed (PHP is interpreted)
+**Prod deploy**: `buildCommands: [composer install --ignore-platform-reqs]`, `deployFiles: [., vendor/]`
+
 ## Node.js
 
-**Base image includes**: Node.js, `npm`, `yarn`, `git`, `npx`
+**Base image includes**: Node.js, `npm`, `yarn`, `pnpm`, `git`, `npx`
 
 **Build procedure**:
 1. Set `build.base: nodejs@22` (or desired version)
-2. `buildCommands`: `npm ci` or `yarn install`, then framework build command
-3. `deployFiles`: MUST include `node_modules` (runtime doesn't run npm install)
+2. `buildCommands` — use ONE package manager:
+   - `pnpm i` (preferred — fastest, smallest disk, pre-installed)
+   - `npm ci` (deterministic — REQUIRES package-lock.json, fails without it)
+   - `npm install` (flexible — works without lockfile, creates/updates package-lock.json)
+   - `yarn install` (requires yarn.lock)
+3. `deployFiles`: MUST include `node_modules` (runtime doesn't run package install)
 4. `run.start`: `node server.js` or framework start command
+
+**Dev deploy**: `deployFiles: [.]`, `start: node index.js` — no build step needed
+**Prod deploy**: `buildCommands: [pnpm i, pnpm build]`, `deployFiles` includes `node_modules` + build output
 
 **Binding per framework**:
 - Express: `app.listen(port, "0.0.0.0")`
@@ -81,6 +91,7 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 - Missing `node_modules` in `deployFiles` -> "Cannot find module" at runtime
 - Not binding `0.0.0.0` -> 502 Bad Gateway
 - Next.js missing `output: 'export'` for static -> produces SSR output instead
+- Using `npm ci` without `package-lock.json` -> EUSAGE error ("can only install with existing lockfile")
 
 ## Bun
 
@@ -100,6 +111,9 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 
 **Key settings**: Use `bunx` instead of `npx`. Cache: `node_modules`
 
+**Dev deploy**: `deployFiles: [.]`, `start: bun run index.ts` (source mode, fast iteration)
+**Prod deploy**: `buildCommands: [bun i, bun build --outdir dist --target bun src/index.ts]`, `deployFiles: [dist, package.json]`, `start: bun dist/index.js`
+
 ## Deno
 
 **Base image includes**: Deno runtime
@@ -112,6 +126,12 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 
 **Binding**: `Deno.serve({hostname: "0.0.0.0"}, handler)`
 **Cache**: deps in `~/.cache/deno` (auto-cached)
+
+**Build caching**: Run `deno cache main.ts` in buildCommands to pre-download dependencies. Ensures deployments are deterministic.
+
+**Dev and prod deploy**: Both use source deploy — Deno doesn't have a separate compile step for simple apps.
+`deployFiles: [.]`, `start: deno run --allow-net --allow-env main.ts`
+For compiled binaries: `deno compile --output app main.ts` → `deployFiles: app`, `start: ./app`
 
 ## Python
 
@@ -135,6 +155,9 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 - Missing `--bind 0.0.0.0` -> 502 Bad Gateway
 - Missing `CSRF_TRUSTED_ORIGINS` for Django -> CSRF validation fails behind proxy
 
+**Dev deploy**: `deployFiles: [.]`, `start: python3 main.py` (no build step, direct execution)
+**Prod deploy**: use `addToRunPrepare` + `prepareCommands` pattern for pip install, `start: gunicorn app:app --bind 0.0.0.0:8000`
+
 ## Go
 
 **Base image includes**: Go compiler, `git`, `wget`
@@ -156,6 +179,9 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 **CGO**: requires `os: ubuntu` + `CGO_ENABLED=1`. When unsure: `CGO_ENABLED=0 go build` for static binary
 **Logger**: MUST output to `os.Stdout`
 **Cache**: `~/go` (auto-cached)
+
+**Dev deploy**: `deployFiles: [.]`, `start: go run .` (compiles from source each run)
+**Prod deploy**: `buildCommands: [go mod tidy && go build -o app .]`, `deployFiles: app`, `start: ./app`
 
 ## Java
 
@@ -181,6 +207,11 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 - Deploying thin JAR -> ClassNotFoundException at runtime
 - Missing `server.address=0.0.0.0` for Spring Boot -> 502 Bad Gateway
 
+**JAR naming**: Without `<finalName>` in pom.xml, JAR name includes version: `target/{artifactId}-{version}.jar`. If version changes, deployFiles path breaks. Normalize: add `<build><finalName>app</finalName></build>` to pom.xml, then use `deployFiles: target/app.jar`.
+
+**Dev deploy**: `deployFiles: [.]`, install maven in prepareCommands, `start: mvn -q compile exec:java` (recompiles from source)
+**Prod deploy**: `buildCommands: [mvn -q clean package -DskipTests]`, `deployFiles: target/app.jar`, `start: java -jar target/app.jar`
+
 ## Rust
 
 **Base image includes**: `cargo` (via Rust base), `git`
@@ -192,6 +223,11 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 4. `run.start: ./app`
 
 **Binding**: most frameworks (actix-web, axum, warp) default to `0.0.0.0` -- verify custom bindings
+**Binary naming**: name in `Cargo.toml [package]` → binary at `target/release/{name}` (dashes preserved, e.g., `name = "my-app"` → `target/release/my-app`)
+
+**Dev deploy**: `deployFiles: [.]`, `start: cargo run --release` (compiles at start, slow but uses source)
+**Prod deploy**: `buildCommands: [cargo build --release]`, `deployFiles: target/release/~{binary}`, `start: ./{binary}`
+
 **Native deps**: `apk add --no-cache openssl-dev pkgconfig` in prepareCommands
 **Cache**: `target/`, `~/.cargo/registry`
 
@@ -203,7 +239,12 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 **Build procedure**:
 1. Set `build.base: dotnet@9` (or desired version)
 2. `buildCommands: [dotnet publish -c Release -o app]` -- `publish` preferred over `build`
-3. `deployFiles: [app/~]` -> files at `/var/www/` -> `run.start: dotnet MyApp.dll`
+3. `deployFiles: [app/~]` -> files at `/var/www/`
+4. `run.start: dotnet {ProjectName}.dll` -- DLL name = .csproj FILENAME (NOT RootNamespace)
+   Example: `myapp.csproj` → output is `myapp.dll` → `start: dotnet myapp.dll`
+
+**Dev deploy**: `deployFiles: [.]`, `start: dotnet run`
+**Prod deploy**: `buildCommands: [dotnet publish -c Release -o app]`, `deployFiles: [app/~]`, `start: dotnet {name}.dll`
 
 **Binding (CRITICAL)**: Kestrel defaults to localhost -> 502. MUST bind in code:
 ```csharp
@@ -211,6 +252,12 @@ app.Urls.Add("http://0.0.0.0:5000");
 ```
 Do NOT rely solely on `ASPNETCORE_URLS` env var.
 **Cache**: `~/.nuget`
+
+**Common mistakes**:
+- Using RootNamespace as DLL name -> "file not found" (DLL name = .csproj filename, not namespace)
+- Missing 0.0.0.0 binding in code -> 502 Bad Gateway
+- Using `dotnet build` instead of `dotnet publish` -> missing runtime assets
+- `ASPNETCORE_URLS` env var alone insufficient -> must set in code via UseUrls
 
 ## Elixir
 
@@ -220,17 +267,32 @@ Do NOT rely solely on `ASPNETCORE_URLS` env var.
 **Build procedure**:
 1. Set `build.base: elixir@latest`
 2. `buildCommands: [mix deps.get --only prod, mix compile, mix release]`
-3. `deployFiles: _build/prod/rel/app/~` (tilde extracts release)
-4. `run.start: bin/app start`
+3. `deployFiles: _build/prod/rel/{app_name}/~` -- release name = mix.exs `app:` property (e.g. `:my_app` → `_build/prod/rel/my_app/~`)
+4. `run.start: bin/{app_name} start` -- same name as mix.exs app
+
+**Dev deploy**: `deployFiles: [.]`, `run.prepareCommands: [mix deps.get]`, `start: mix run --no-halt`
+**Prod deploy**: build release, deploy extracted release, `start: bin/{app_name} start`
 
 **Required env**: `PHX_SERVER=true` + `MIX_ENV=prod`
+**Phoenix-specific**: Also set `PHX_HOST=${zeropsSubdomain}`
 **Cache**: `deps`, `_build`
 
 ## Gleam
 
-**OS**: `os: ubuntu` REQUIRED (not available on Alpine)
-- Erlang target: `gleam export erlang-shipment`, deploy `build/erlang-shipment/~`
-- JavaScript target: needs Node.js runtime
+**OS**: `os: ubuntu` REQUIRED in both build AND run (not available on Alpine)
+
+**Build procedure**:
+1. Set `build.base: gleam@latest`, `build.os: ubuntu`
+2. `buildCommands: [gleam export erlang-shipment]`
+3. `deployFiles: build/erlang-shipment/~` (tilde extracts release to /var/www/)
+4. `run.start: ./entrypoint.sh run` -- Erlang shipment includes entrypoint.sh
+5. Set `run.os: ubuntu`
+
+**Dev deploy**: `deployFiles: [.]`, `start: gleam run`
+**Prod deploy**: build erlang-shipment, deploy extracted, `start: ./entrypoint.sh run`
+
+**VERSION WARNING**: `gleam@1.5` on Zerops is old. Modern `gleam_stdlib` versions require Gleam >=1.14.0. If dependencies fail with version mismatch, pin older dependency versions in gleam.toml.
+- JavaScript target: needs Node.js runtime instead
 
 ## Ruby
 
@@ -239,9 +301,14 @@ Do NOT rely solely on `ASPNETCORE_URLS` env var.
 
 **Build procedure**:
 1. Set `build.base: ruby@3.4`
-2. `buildCommands`: `bundle install --deployment` + asset precompilation if needed
+2. `buildCommands`:
+   - With Gemfile.lock: `bundle install --deployment` (deterministic, production-ready)
+   - Without Gemfile.lock: `bundle install --path vendor/bundle` (--deployment FAILS without lockfile)
 3. `deployFiles: ./` (entire source + vendor/bundle)
 4. `run.start: bundle exec puma -b tcp://0.0.0.0:3000`
+
+**Dev deploy**: `deployFiles: [.]`, `run.prepareCommands: [bundle install --path vendor/bundle]`, `start: bundle exec ruby app.rb`
+**Prod deploy**: `buildCommands: [bundle install --deployment]`, `deployFiles: [.]`, `start: bundle exec puma -b tcp://0.0.0.0:3000`
 
 **Cache**: `vendor/bundle`
 

@@ -21,7 +21,7 @@ zerops:
       ports:
         - port: 5000
           httpSupport: true
-      start: ./MyApp
+      start: dotnet app.dll  # name matches .csproj filename
 ```
 
 ## import.yml
@@ -46,3 +46,4 @@ Setting `ASPNETCORE_URLS` env var alone is **insufficient** — the binding must
 - **Deploy with tilde** — `app/~` extracts contents to `/var/www/` (not `/var/www/app/`)
 - **Port 5000** is the default ASP.NET Core port — match it in `ports[]`
 - **Self-contained publish** — add `-r linux-x64 --self-contained` for deployments without .NET runtime
+- **DLL name = .csproj filename** — if project file is `myapp.csproj`, output is `myapp.dll`, regardless of RootNamespace

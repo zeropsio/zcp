@@ -146,11 +146,17 @@ Dev and prod setups serve different purposes and often need different configurat
 | Runtime | Dev deployFiles | Dev start | Prod deployFiles | Prod start |
 |---------|----------------|-----------|------------------|------------|
 | Go | `[.]` | `go run .` | `[app]` | `./app` |
-| Bun | `[.]` | `bun run index.ts` | `[.]` | `bun run index.ts` |
+| Bun | `[.]` | `bun run index.ts` | `[dist, package.json]` | `bun dist/index.js` |
 | Node.js | `[.]` | `node index.js` | `[., node_modules]` | `node index.js` |
-| Python | `[.]` | `python app.py` | `[.]` | `python app.py` |
-| PHP | `[.]` | (web server) | `[.]` | (web server) |
-| Rust | `[.]` | `cargo run` | `[app]` | `./app` |
+| Python | `[.]` | `python app.py` | `[.]` | `gunicorn app:app --bind 0.0.0.0:8000` |
+| PHP | `[.]` | (web server) | `[., vendor/]` | (web server) |
+| Rust | `[.]` | `cargo run --release` | `[{binary}]` | `./{binary}` |
+| .NET | `[.]` | `dotnet run` | `[app/~]` | `dotnet {name}.dll` |
+| Java | `[.]` | `mvn compile exec:java` | `[target/app.jar]` | `java -jar target/app.jar` |
+| Ruby | `[.]` | `bundle exec ruby app.rb` | `[.]` | `bundle exec puma -b tcp://0.0.0.0:3000` |
+| Elixir | `[.]` | `mix run --no-halt` | `[_build/prod/rel/{app}/~]` | `bin/{app} start` |
+| Deno | `[.]` | `deno run --allow-net --allow-env main.ts` | `[.]` | same |
+| Gleam | `[.]` | `gleam run` | `[build/erlang-shipment/~]` | `./entrypoint.sh run` |
 
 **Go specifically**: Dev setup uses `go run .` as start (compiles + runs source each deploy). Prod setup builds a binary in buildCommands and deploys only the binary. The zerops.yml MUST have TWO separate setup entries with different build/deploy pipelines.
 
