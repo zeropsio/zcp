@@ -201,8 +201,12 @@ func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, 
 
 // BuildSubdomainURL constructs a full subdomain URL for a service port.
 // Pattern: https://{hostname}-{prefix}-{port}.{rest} (port 80 omits the port suffix).
+// Returns "" if subdomainHost has no domain suffix (bare prefix like "1df2").
 func BuildSubdomainURL(hostname, subdomainHost string, port int) string {
-	prefix, rest, _ := strings.Cut(subdomainHost, ".")
+	prefix, rest, found := strings.Cut(subdomainHost, ".")
+	if !found || rest == "" {
+		return ""
+	}
 	if port == 80 {
 		return fmt.Sprintf("https://%s-%s.%s", hostname, prefix, rest)
 	}
