@@ -12,7 +12,7 @@ import (
 )
 
 func checkServiceRunning(svc *platform.ServiceStack) CheckResult {
-	if svc.Status == "RUNNING" {
+	if svc.Status == "RUNNING" || svc.Status == "ACTIVE" {
 		return CheckResult{Name: "service_running", Status: CheckPass}
 	}
 	return CheckResult{

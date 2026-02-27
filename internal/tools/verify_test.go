@@ -78,6 +78,43 @@ func TestVerifyTool_ManagedHealthy(t *testing.T) {
 	}
 }
 
+func TestVerifyTool_RuntimeActive(t *testing.T) {
+	t.Parallel()
+
+	// ACTIVE is the real status returned by Zerops API for running services.
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "ACTIVE"},
+		})
+	fetcher := platform.NewMockLogFetcher()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, fetcher, "proj-1")
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
+
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if vr.Type != "runtime" {
+		t.Errorf("Type = %q, want runtime", vr.Type)
+	}
+	if vr.Status != "healthy" {
+		t.Errorf("Status = %q, want healthy (ACTIVE should be accepted)", vr.Status)
+	}
+	// service_running must pass for ACTIVE status.
+	for _, c := range vr.Checks {
+		if c.Name == "service_running" && c.Status != "pass" {
+			t.Errorf("service_running = %q, want pass for ACTIVE status", c.Status)
+		}
+	}
+}
+
 func TestVerifyTool_NotFound(t *testing.T) {
 	t.Parallel()
 

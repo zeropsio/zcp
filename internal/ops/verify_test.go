@@ -60,7 +60,7 @@ func TestVerify_RuntimeAllPass(t *testing.T) {
 	// HTTP check functions are tested separately in TestCheckHTTPHealth/TestCheckHTTPStatus.
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", SubdomainAccess: false},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "ACTIVE", SubdomainAccess: false},
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
@@ -92,7 +92,7 @@ func TestVerify_RuntimeAllPass(t *testing.T) {
 		t.Fatalf("Checks count = %d, want 6", len(result.Checks))
 	}
 
-	// Log checks should pass.
+	// Log checks should pass — ACTIVE status flows through the full verify pipeline.
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "no_error_logs", "pass")
 	findCheck(t, result, "startup_detected", "pass")
@@ -527,6 +527,7 @@ func TestCheckServiceRunning(t *testing.T) {
 		wantStatus string
 	}{
 		{"running", "RUNNING", "pass"},
+		{"active", "ACTIVE", "pass"},
 		{"ready to deploy", "READY_TO_DEPLOY", "fail"},
 		{"restarting", "RESTARTING", "fail"},
 		{"stopped", "STOPPED", "fail"},
