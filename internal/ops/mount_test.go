@@ -497,7 +497,7 @@ func TestMountStatus_Messages(t *testing.T) {
 				"/var/www/app": platform.MountStateStale,
 			},
 			hostname:    "app",
-			wantMessage: "Mount is stale (transport disconnected). Unmount and remount after build/deploy completes.",
+			wantMessage: "Mount is stale (transport disconnected). Will auto-reconnect when service is running. If service is stopped, start it first.",
 		},
 		{
 			name: "orphan stale mount message",

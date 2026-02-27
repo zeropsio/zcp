@@ -18,8 +18,8 @@ type DeployInput struct {
 	TargetService string `json:"targetService,omitempty" jsonschema:"Hostname of the service to deploy code to. Required for both SSH and local modes."`
 	Setup         string `json:"setup,omitempty"         jsonschema:"SSH mode only: custom shell command to run before push (e.g. npm install or cp config)."`
 	WorkingDir    string `json:"workingDir,omitempty"    jsonschema:"Directory containing the code to deploy. SSH mode default: /var/www. In local mode: path on your machine."`
-	IncludeGit    bool   `json:"includeGit,omitempty"    jsonschema:"Include .git directory in the push (zcli -g flag). Rarely needed."`
-	FreshGit      bool   `json:"freshGit,omitempty"      jsonschema:"Remove existing .git and reinitialize before push. Use this for first deploys or when the directory has no valid git repo — avoids ownership and identity errors. Recommended for most SSH deploys."`
+	IncludeGit    bool   `json:"includeGit,omitempty"    jsonschema:"Include .git directory in the push (zcli -g flag). Required for SSH self-deploy workflows so .git persists on the target across deploys. Without this flag, each deploy replaces /var/www entirely and .git is lost."`
+	FreshGit      bool   `json:"freshGit,omitempty"      jsonschema:"Remove existing .git and reinitialize before push. Use this for first deploys or when the directory has no valid git repo — avoids ownership and identity errors. Only needed once per service; subsequent deploys with includeGit=true preserve .git on the target."`
 }
 
 // RegisterDeploy registers the zerops_deploy tool.
@@ -34,7 +34,7 @@ func RegisterDeploy(
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
-		Description: "REQUIRES active workflow session — call zerops_workflow action=\"start\" first. Deploy code to a Zerops service via SSH (cross-service) or local zcli push. Blocks until build pipeline completes — returns final status (DEPLOYED or BUILD_FAILED) with build duration. Automatically handles git initialization — use freshGit=true when deploying to a directory without a proper git repo (common for first deploys or shared storage). SSH mode: set sourceService (container to run from) + targetService. Local mode: set only targetService. SSH mode requires zerops.yml in workingDir. After deploy, /var/www only contains deployFiles artifacts — dev services must use deployFiles: [.] so zerops.yml survives for SSH cross-service deploys.",
+		Description: "REQUIRES active workflow session — call zerops_workflow action=\"start\" first. Deploy code to a Zerops service via SSH (cross-service) or local zcli push. Blocks until build pipeline completes — returns final status (DEPLOYED or BUILD_FAILED) with build duration. Automatically handles git initialization — use freshGit=true for first deploy only (when no .git exists). Use includeGit=true for SSH self-deploy workflows so .git persists on the target across deploys (without it, each deploy replaces /var/www entirely and .git is lost). SSH mode: set sourceService (container to run from) + targetService. Local mode: set only targetService. SSH mode requires zerops.yml in workingDir. After deploy, /var/www only contains deployFiles artifacts — dev services must use deployFiles: [.] so zerops.yml survives for SSH cross-service deploys.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),

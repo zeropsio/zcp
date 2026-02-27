@@ -264,7 +264,7 @@ Verification is attestation-based: the agent verifies using tools, then records 
 | `psql: command not found` via SSH | DB tools only on ZCP | Run from ZCP: `psql "$db_connectionString"` |
 | `https://https://...` double protocol | `subdomainUrls` from enable already include `https://` | Use the URL directly, don't prepend |
 | HTTP 502 despite app running + subdomain enabled | Routing not activated or wrong URL | First verify internally: `curl http://{hostname}:{port}/health`. If internal works, call `zerops_subdomain action="enable"` — use `subdomainUrls` from the response |
-| SSHFS stale after deploy | Container replaced during deploy (runtime-1→2→3) | `zerops_mount action="mount"` auto-detects stale, re-mounts. Always remount after deploy |
+| SSHFS stale after deploy | Container replaced during deploy (runtime-1→2→3) | SSHFS auto-reconnects after deploy — no explicit remount needed. Only truly stale during stop (container not running). |
 | Logs flooded with SSH isolation warnings | sshIsolation: vpn rejects non-VPN connections | Normal behavior. Filter with `search="exec"` or `search="listening"` to find app logs |
 | Gate fails after verification | Empty or vague attestation | Include specific description of what was verified |
 | Empty env variable | Variable not discovered or wrong name | Check `zerops_discover includeEnvs=true` first |

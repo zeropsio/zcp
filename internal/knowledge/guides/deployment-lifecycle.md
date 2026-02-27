@@ -164,7 +164,7 @@ Zerops keeps **10 most recent versions**. Older auto-deleted. Any archived versi
 When using SSHFS (`zerops_mount`) for dev workflows, deploy replaces the container. This has important consequences:
 
 1. **After deploy, run container only has `deployFiles` content.** All other files (including zerops.yml if not in deployFiles) are gone. Use `deployFiles: [.]` for dev services to ensure zerops.yml and source files survive the deploy cycle.
-2. **SSHFS mount becomes stale after deploy.** The mount pointed to the old container. Remount (`zerops_mount action="mount"`) reconnects to the new container, which now only contains deployFiles content.
+2. **SSHFS mount auto-reconnects after deploy.** No explicit remount is needed — the SSHFS reconnect mechanism handles the container replacement transparently. The mount only becomes truly stale during stop (container not running); after start it auto-reconnects again.
 3. **zerops.yml must be in deployFiles** for dev self-deploy lifecycle. Without it, subsequent deploys from the container fail because zerops.yml is missing.
 
 **Two kinds of "mount" (disambiguation):**

@@ -288,7 +288,7 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 		if orphan {
 			info.Message = "Service was deleted but mount is stale. Use unmount to clean up."
 		} else {
-			info.Message = "Mount is stale (transport disconnected). Unmount and remount after build/deploy completes."
+			info.Message = "Mount is stale (transport disconnected). Will auto-reconnect when service is running. If service is stopped, start it first."
 		}
 	case platform.MountStateNotMounted:
 		// Nothing to report — orphan plain dirs are filtered by MountStatus.

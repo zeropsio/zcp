@@ -82,7 +82,7 @@ Present zerops.yml to user for review before deploying.
 
 Before deploying, ensure these requirements are met:
 
-1. **Git handled automatically.** `zerops_deploy` auto-initializes a git repository if missing. If the directory has a `.git` from `git clone`, use `freshGit=true` to reinitialize.
+1. **Git handled automatically.** `zerops_deploy` auto-initializes a git repository if missing. Use `freshGit=true` only for first deploys or when the directory has no valid `.git` (e.g. from `git clone` with different identity). Use `includeGit=true` for SSH self-deploy workflows so `.git` persists on the target across deploys — without it, each deploy replaces `/var/www` entirely and `.git` is lost, requiring `freshGit=true` again.
 
 2. **`zerops.yml` must exist** at the working directory root with a `setup:` entry matching the target service hostname. Without it, the build pipeline has no instructions.
 
@@ -102,12 +102,11 @@ Before deploying, ensure these requirements are met:
 
 If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow this order:
 
-1. **Deploy to dev first**: `zerops_deploy targetService="appdev" includeGit=true`
-2. **Remount after deploy**: `zerops_mount action="mount" serviceHostname="appdev"` — deploy replaces the container, making SSHFS mounts stale. The mount tool auto-detects and re-mounts.
-3. **Verify dev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
+1. **Deploy to dev first**: `zerops_deploy targetService="appdev" includeGit=true` — SSHFS mount auto-reconnects after deploy, no remount needed.
+2. **Verify dev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 3. **Fix any errors on dev** — if `zerops_verify` returns degraded/unhealthy, read the `checks` array for diagnosis. Iterate until status=healthy.
 
-4. **Deploy to stage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true` — SSH mode: pushes source from dev container, zerops runs the `setup: appstage` build pipeline for production output
+4. **Deploy to stage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true includeGit=true` — SSH mode: pushes source from dev container, zerops runs the `setup: appstage` build pipeline for production output
 5. **Verify stage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
 
 This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation.
@@ -178,7 +177,7 @@ Execute IN ORDER. Every step requires verification.
 | # | Action | Tool | Verify |
 |---|--------|------|--------|
 | 1 | Verify exists | zerops_discover service="{hostname}" | RUNNING or READY_TO_DEPLOY |
-| 2 | Deploy | zerops_deploy targetService="{hostname}" includeGit=true | status=DEPLOYED (blocks until complete) |
+| 2 | Deploy | zerops_deploy targetService="{hostname}" includeGit=true freshGit=true | status=DEPLOYED (blocks until complete) |
 | 3 | Check errors | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
 | 4 | Confirm startup | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
 | 5 | Verify running | zerops_discover service="{hostname}" | RUNNING |
@@ -197,11 +196,10 @@ subdomainUrls from the enable response are already full URLs — do NOT prepend 
 If subdomain URL returns 502, verify the app internally first: curl http://{hostname}:{port}/health.
 Internal network access uses hostname directly — no subdomain needed.
 
-After deploy, remount SSHFS: zerops_mount action="mount" serviceHostname="{hostname}" — deploy
-replaces the container, making previous mounts stale.
+SSHFS mount auto-reconnects after deploy — no explicit remount needed.
 
 If any check fails, iterate: diagnose (check logs, capture response bodies), fix the issue,
-remount (zerops_mount), redeploy, re-verify. Max 3 iterations. If build FAILED: check zerops_logs severity="error"
+redeploy, re-verify. Max 3 iterations. If build FAILED: check zerops_logs severity="error"
 since="10m", then fallback to bash: zcli service log {hostname} --showBuildLogs --limit 50.
 
 Report: status (pass/fail) + which checks passed/failed + subdomain URL (from enable response).
