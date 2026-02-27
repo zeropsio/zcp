@@ -301,10 +301,10 @@ envVariables:
 
 **Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path (steps 4-7).
 
-1. **Deploy to appdev** (SSH self-deploy): `zerops_deploy sourceService="appdev" targetService="appdev" freshGit=true includeGit=true` — SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. Files got there via SSHFS mount writes. `includeGit=true` preserves `.git` on the target so subsequent deploys don't need `freshGit`. SSHFS mount auto-reconnects after deploy — no remount needed.
+1. **Deploy to appdev** (SSH self-deploy): `zerops_deploy sourceService="appdev" targetService="appdev" includeGit=true` — SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. Files got there via SSHFS mount writes. `includeGit=true` preserves `.git` on the target so subsequent deploys work. SSHFS mount auto-reconnects after deploy — no remount needed.
 2. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 3. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
-4. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true includeGit=true` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING.
+4. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" includeGit=true` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING.
 4b. **Connect shared storage to stage** (if shared-storage is in the stack): `zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"` — stage was READY_TO_DEPLOY during import, so the import `mount:` did not apply.
 5. **Verify appstage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
 6. **Present both URLs** to user:
@@ -491,11 +491,11 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 1 | Write zerops.yml | Write to `{mountPath}/zerops.yml` with both setup entries | File exists with correct setup names |
 | 2 | Write app code | HTTP server on :8080 with `/`, `/health`, `/status` | Code references discovered env vars |
 | 3 | Write .gitignore | Build artifacts and IDE files only. Do NOT include `.env` — no .env files exist on Zerops | File exists, no `.env` entry |
-| 4 | Deploy dev | `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" freshGit=true includeGit=true` | status=DEPLOYED (blocks until complete) |
+| 4 | Deploy dev | `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true` | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
 | 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
 | 7 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
-| 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" freshGit=true includeGit=true` | status=DEPLOYED (blocks until complete) |
+| 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" includeGit=true` | status=DEPLOYED (blocks until complete) |
 | 9 | Verify stage | `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{stageHostname}"` | status=healthy |
 | 10 | Report | Status (pass/fail) + dev URL + stage URL | — |
 
@@ -515,7 +515,7 @@ If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ah
 
 2. **Fix**: Edit files at `{mountPath}/` — fix zerops.yml, app code, or both
 
-3. **Redeploy**: `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true` — no `freshGit` needed after first deploy if `includeGit=true` was used (`.git` persists on target). SSHFS mount auto-reconnects after deploy.
+3. **Redeploy**: `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true` — `.git` persists on target when `includeGit=true` was used. SSHFS mount auto-reconnects after deploy.
 
 4. **Re-verify**: `zerops_verify serviceHostname="{devHostname}"` — check status=healthy
 
@@ -523,7 +523,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 
 ## Platform Rules
 
-- **Bootstrap deploys ALWAYS use SSH mode** — `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" freshGit=true includeGit=true`. NEVER use local mode (targetService only) — git operations fail on SSHFS mounts. `includeGit=true` preserves `.git` on target so subsequent deploys work without `freshGit`.
+- **Bootstrap deploys ALWAYS use SSH mode** — `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true`. Git is initialized automatically if missing. `includeGit=true` preserves `.git` on target so subsequent deploys work. NEVER use local mode (targetService only) — git operations fail on SSHFS mounts.
 - **Dev setup MUST use `deployFiles: [.]`** — containers are volatile, only deployFiles content persists. Using `[dist]` or `[app]` in dev destroys source code after deploy.
 - NEVER write lock files (go.sum, bun.lock, package-lock.json). Write manifests only (go.mod, package.json). Let build commands generate locks.
 - NEVER write dependency dirs (node_modules/, vendor/).

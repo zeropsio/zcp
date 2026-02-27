@@ -34,7 +34,6 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 		setup      string
 		workDir    string
 		includeGit bool
-		freshGit   bool
 		wantParts  []string
 		wantAbsent []string
 	}{
@@ -98,26 +97,6 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			},
 		},
 		{
-			name:      "freshGit removes existing .git and reinitializes",
-			authInfo:  testAuthInfo(),
-			serviceID: "svc-123",
-			workDir:   "/var/www",
-			freshGit:  true,
-			wantParts: []string{
-				"rm -rf .git",
-				"sync",
-				"git init -q",
-				"git config user.email 'test@example.com'",
-				"git config user.name 'Test User'",
-				"git add -A",
-				"git commit -q -m 'deploy'",
-				"zcli push --serviceId svc-123",
-			},
-			wantAbsent: []string{
-				"test -d .git",
-			},
-		},
-		{
 			name: "custom email and name in command",
 			authInfo: auth.Info{
 				Token:    "my-token",
@@ -140,7 +119,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			t.Parallel()
 
 			id := GitIdentity{Name: tt.authInfo.FullName, Email: tt.authInfo.Email}
-			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.setup, tt.workDir, tt.includeGit, id, tt.freshGit)
+			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.setup, tt.workDir, tt.includeGit, id)
 
 			for _, part := range tt.wantParts {
 				if !contains(cmd, part) {
@@ -211,16 +190,14 @@ func TestPrepareGitRepo(t *testing.T) {
 	defaultID := GitIdentity{Name: "Test User", Email: "test@example.com"}
 
 	tests := []struct {
-		name          string
-		id            GitIdentity
-		freshGit      bool
-		setupDir      func(t *testing.T, dir string)
-		wantGitDir    bool
-		wantCommit    bool
-		wantNoOp      bool // existing repo should not be modified
-		wantEmail     string
-		wantName      string
-		wantNewCommit bool // HEAD should differ from before
+		name       string
+		id         GitIdentity
+		setupDir   func(t *testing.T, dir string)
+		wantGitDir bool
+		wantCommit bool
+		wantNoOp   bool // existing repo should not be modified
+		wantEmail  string
+		wantName   string
 	}{
 		{
 			name: "dir without .git creates repo with commit",
@@ -238,7 +215,7 @@ func TestPrepareGitRepo(t *testing.T) {
 			wantName:   "Test User",
 		},
 		{
-			name: "dir with existing .git is no-op when freshGit false",
+			name: "dir with existing .git is no-op",
 			id:   defaultID,
 			setupDir: func(t *testing.T, dir string) {
 				t.Helper()
@@ -267,27 +244,6 @@ func TestPrepareGitRepo(t *testing.T) {
 			wantCommit: true,
 		},
 		{
-			name:     "freshGit reinitializes existing repo",
-			id:       defaultID,
-			freshGit: true,
-			setupDir: func(t *testing.T, dir string) {
-				t.Helper()
-				runGit(t, dir, "init", "-q")
-				runGit(t, dir, "config", "user.email", "old@test.com")
-				runGit(t, dir, "config", "user.name", "old")
-				if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				runGit(t, dir, "add", "-A")
-				runGit(t, dir, "commit", "-q", "-m", "original")
-			},
-			wantGitDir:    true,
-			wantCommit:    true,
-			wantNewCommit: true,
-			wantEmail:     "test@example.com",
-			wantName:      "Test User",
-		},
-		{
 			name: "custom identity appears in git config",
 			id:   GitIdentity{Name: "Deploy Bot", Email: "deploy@company.io"},
 			setupDir: func(t *testing.T, dir string) {
@@ -310,13 +266,13 @@ func TestPrepareGitRepo(t *testing.T) {
 			dir := t.TempDir()
 			tt.setupDir(t, dir)
 
-			// Capture HEAD before if we expect no-op or want to check new commit.
+			// Capture HEAD before if we expect no-op.
 			var headBefore string
-			if tt.wantNoOp || tt.wantNewCommit {
+			if tt.wantNoOp {
 				headBefore = gitHead(t, dir)
 			}
 
-			err := prepareGitRepo(context.Background(), dir, tt.id, tt.freshGit)
+			err := prepareGitRepo(context.Background(), dir, tt.id)
 			if err != nil {
 				t.Fatalf("prepareGitRepo() error: %v", err)
 			}
@@ -345,14 +301,6 @@ func TestPrepareGitRepo(t *testing.T) {
 				headAfter := gitHead(t, dir)
 				if headBefore != headAfter {
 					t.Errorf("HEAD changed: before=%s, after=%s", headBefore, headAfter)
-				}
-			}
-
-			// freshGit: HEAD should differ from before.
-			if tt.wantNewCommit {
-				headAfter := gitHead(t, dir)
-				if headBefore == headAfter {
-					t.Errorf("HEAD should have changed with freshGit, but stayed at %s", headBefore)
 				}
 			}
 

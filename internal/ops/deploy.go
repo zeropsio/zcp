@@ -70,7 +70,6 @@ func Deploy(
 	setup string,
 	workingDir string,
 	includeGit bool,
-	freshGit bool,
 ) (*DeployResult, error) {
 	id := GitIdentity{Name: authInfo.FullName, Email: authInfo.Email}
 
@@ -83,7 +82,7 @@ func Deploy(
 			)
 		}
 		return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
-			sourceService, targetService, setup, workingDir, includeGit, id, freshGit)
+			sourceService, targetService, setup, workingDir, includeGit, id)
 	}
 	if targetService != "" {
 		if localDeployer == nil {
@@ -94,7 +93,7 @@ func Deploy(
 			)
 		}
 		return deployLocal(ctx, client, projectID, localDeployer, authInfo,
-			targetService, workingDir, includeGit, id, freshGit)
+			targetService, workingDir, includeGit, id)
 	}
 	return nil, platform.NewPlatformError(
 		platform.ErrInvalidParameter,
@@ -115,7 +114,6 @@ func deploySSH(
 	workingDir string,
 	includeGit bool,
 	id GitIdentity,
-	freshGit bool,
 ) (*DeployResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -136,7 +134,7 @@ func deploySSH(
 		workingDir = defaultWorkingDir
 	}
 
-	cmd := buildSSHCommand(authInfo, target.ID, setup, workingDir, includeGit, id, freshGit)
+	cmd := buildSSHCommand(authInfo, target.ID, setup, workingDir, includeGit, id)
 
 	output, err := sshDeployer.ExecSSH(ctx, source.Name, cmd)
 	if err != nil {
@@ -177,7 +175,6 @@ func deployLocal(
 	workingDir string,
 	includeGit bool,
 	id GitIdentity,
-	freshGit bool,
 ) (*DeployResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -195,10 +192,10 @@ func deployLocal(
 		return nil, fmt.Errorf("zcli login: %w", err)
 	}
 
-	// zcli push requires a git repo — auto-init if missing (or reinit if freshGit).
+	// zcli push requires a git repo — auto-init if missing.
 	if workingDir != "" {
 		if info, statErr := os.Stat(workingDir); statErr == nil && info.IsDir() {
-			if err := prepareGitRepo(ctx, workingDir, id, freshGit); err != nil {
+			if err := prepareGitRepo(ctx, workingDir, id); err != nil {
 				return nil, fmt.Errorf("prepare git repo in %s: %w", workingDir, err)
 			}
 		}
@@ -228,7 +225,7 @@ func deployLocal(
 	}, nil
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir string, includeGit bool, id GitIdentity, freshGit bool) string {
+func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir string, includeGit bool, id GitIdentity) string {
 	var parts []string
 
 	// Login to zcli on the remote host.
@@ -250,15 +247,8 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 		pushArgs += " -g"
 	}
 
-	var pushCmd string
-	if freshGit {
-		// freshGit: remove existing .git and reinitialize.
-		// sync ensures filesystem flush completes before git init (required on SSHFS mounts).
-		pushCmd = fmt.Sprintf("cd %s && rm -rf .git && sync && %s && %s", workingDir, gitInit, pushArgs)
-	} else {
-		// Default: git-init guard for non-git directories.
-		pushCmd = fmt.Sprintf("cd %s && (test -d .git || (%s)) && %s", workingDir, gitInit, pushArgs)
-	}
+	// Git-init guard: init only if no .git exists.
+	pushCmd := fmt.Sprintf("cd %s && (test -d .git || (%s)) && %s", workingDir, gitInit, pushArgs)
 	parts = append(parts, pushCmd)
 
 	return strings.Join(parts, " && ")
@@ -266,17 +256,11 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 
 // prepareGitRepo ensures workingDir contains a git repository.
 // zcli push requires a .git directory. If missing, initializes one
-// with all files committed. If freshGit is true, removes any existing
-// .git directory and reinitializes.
-func prepareGitRepo(ctx context.Context, workingDir string, id GitIdentity, freshGit bool) error {
+// with all files committed. If .git already exists, no-op.
+func prepareGitRepo(ctx context.Context, workingDir string, id GitIdentity) error {
 	gitDir := filepath.Join(workingDir, ".git")
 
-	if freshGit {
-		// Remove existing .git to start fresh.
-		if err := os.RemoveAll(gitDir); err != nil {
-			return fmt.Errorf("remove .git: %w", err)
-		}
-	} else if _, err := os.Stat(gitDir); err == nil {
+	if _, err := os.Stat(gitDir); err == nil {
 		return nil // already a git repo, no-op
 	}
 

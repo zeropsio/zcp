@@ -197,49 +197,6 @@ func TestDeployTool_NoParams(t *testing.T) {
 	}
 }
 
-func TestDeployTool_FreshGit(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "builder"},
-			{ID: "svc-2", Name: "app"},
-		}).
-		WithAppVersionEvents([]platform.AppVersionEvent{
-			{
-				ID:             "av-1",
-				ProjectID:      "proj-1",
-				ServiceStackID: "svc-2",
-				Status:         statusActive,
-				Sequence:       1,
-			},
-		})
-	ssh := &stubSSH{output: []byte("ok")}
-	local := &stubLocal{}
-	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "user@test.io", FullName: "Test"}
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, local, authInfo, nil)
-
-	result := callTool(t, srv, "zerops_deploy", map[string]any{
-		"sourceService": "builder",
-		"targetService": "app",
-		"freshGit":      true,
-	})
-
-	if result.IsError {
-		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
-	}
-
-	var parsed ops.DeployResult
-	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
-		t.Fatalf("failed to parse result: %v", err)
-	}
-	if parsed.Mode != "ssh" {
-		t.Errorf("mode = %s, want ssh", parsed.Mode)
-	}
-}
-
 func TestDeployTool_SSHMode_Exit255PollsSuccessfully(t *testing.T) {
 	t.Parallel()
 

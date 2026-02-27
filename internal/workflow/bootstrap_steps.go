@@ -203,9 +203,9 @@ NEVER use local mode (targetService only) — git operations fail on SSHFS mount
 
 For EACH runtime service pair (dev + stage):
 
-1. Deploy dev: zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" freshGit=true includeGit=true
+1. Deploy dev: zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true
 2. Enable subdomain + verify dev: zerops_subdomain action="enable" → zerops_verify
-3. Deploy stage: zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" freshGit=true includeGit=true
+3. Deploy stage: zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"
 4. Enable subdomain + verify stage: zerops_subdomain action="enable" → zerops_verify
 5. If shared-storage is in the stack: after stage becomes ACTIVE, connect storage:
    zerops_manage action="connect-storage" serviceHostname="{stageHostname}" storageHostname="{storageHostname}"

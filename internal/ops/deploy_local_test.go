@@ -22,7 +22,7 @@ func TestDeploy_LocalMode_Success(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	result, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"", "app", "", "/tmp/build", false, false)
+		"", "app", "", "/tmp/build", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestDeploy_LocalMode_TargetNotFound(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"", "nonexistent", "", "", false, false)
+		"", "nonexistent", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for nonexistent target service")
 	}
@@ -69,7 +69,7 @@ func TestDeploy_NoParams(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"", "", "", "", false, false)
+		"", "", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for no params")
 	}
@@ -120,7 +120,7 @@ func TestDeploy_ModeDetection(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			result, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-				tt.sourceService, tt.targetService, "", "", false, false)
+				tt.sourceService, tt.targetService, "", "", false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -147,7 +147,7 @@ func TestDeploy_NilLocalDeployer(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", nil, nil, authInfo,
-		"", "app", "", "", false, false)
+		"", "app", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for nil local deployer")
 	}
@@ -173,7 +173,7 @@ func TestDeploy_LocalMode_LoginFails(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"", "app", "", "", false, false)
+		"", "app", "", "", false)
 	if err == nil {
 		t.Fatal("expected error when zcli login fails")
 	}
@@ -200,7 +200,7 @@ func TestDeploy_LocalMode_LoginArgs(t *testing.T) {
 	}
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, local, authInfo,
-		"", "app", "", "", false, false)
+		"", "app", "", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -45,12 +45,6 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 			fmt.Sprintf("SSH deploy from %s to %s failed: cannot reach source service", sourceService, targetService),
 			fmt.Sprintf("Cannot reach source service. Verify it's RUNNING: zerops_discover service=%s", sourceService),
 		)
-	case strings.Contains(msg, "not in a git directory") || strings.Contains(msg, "not a git repository"):
-		return platform.NewPlatformError(
-			platform.ErrSSHDeployFailed,
-			fmt.Sprintf("SSH deploy from %s to %s failed: working directory is not a git repository", sourceService, targetService),
-			"The working directory lost its .git state (common on SSHFS mounts). Retry with freshGit=true to reinitialize.",
-		)
 	case strings.Contains(msg, "command not found"):
 		return platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,

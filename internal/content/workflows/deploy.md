@@ -82,7 +82,7 @@ Present zerops.yml to user for review before deploying.
 
 Before deploying, ensure these requirements are met:
 
-1. **Git handled automatically.** `zerops_deploy` auto-initializes a git repository if missing. Use `freshGit=true` only for first deploys or when the directory has no valid `.git` (e.g. from `git clone` with different identity). Use `includeGit=true` for SSH self-deploy workflows so `.git` persists on the target across deploys — without it, each deploy replaces `/var/www` entirely and `.git` is lost, requiring `freshGit=true` again.
+1. **Git handled automatically.** `zerops_deploy` auto-initializes a git repository if no `.git` directory exists. Use `includeGit=true` for SSH self-deploy workflows so `.git` persists on the target across deploys — without it, each deploy replaces `/var/www` entirely and `.git` is lost.
 
 2. **`zerops.yml` must exist** at the working directory root with a `setup:` entry matching the target service hostname. Without it, the build pipeline has no instructions.
 
@@ -106,7 +106,7 @@ If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow
 2. **Verify dev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 3. **Fix any errors on dev** — if `zerops_verify` returns degraded/unhealthy, read the `checks` array for diagnosis. Iterate until status=healthy.
 
-4. **Deploy to stage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true includeGit=true` — SSH mode: pushes source from dev container, zerops runs the `setup: appstage` build pipeline for production output
+4. **Deploy to stage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes source from dev container, zerops runs the `setup: appstage` build pipeline for production output
 5. **Verify stage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
 
 This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation.
@@ -177,7 +177,7 @@ Execute IN ORDER. Every step requires verification.
 | # | Action | Tool | Verify |
 |---|--------|------|--------|
 | 1 | Verify exists | zerops_discover service="{hostname}" | RUNNING or READY_TO_DEPLOY |
-| 2 | Deploy | zerops_deploy targetService="{hostname}" includeGit=true freshGit=true | status=DEPLOYED (blocks until complete) |
+| 2 | Deploy | zerops_deploy targetService="{hostname}" includeGit=true | status=DEPLOYED (blocks until complete) |
 | 3 | Check errors | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
 | 4 | Confirm startup | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
 | 5 | Verify running | zerops_discover service="{hostname}" | RUNNING |
