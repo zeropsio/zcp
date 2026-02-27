@@ -104,13 +104,11 @@ If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow
 
 1. **Deploy to dev first**: `zerops_deploy targetService="appdev" includeGit=true`
 2. **Remount after deploy**: `zerops_mount action="mount" serviceHostname="appdev"` — deploy replaces the container, making SSHFS mounts stale. The mount tool auto-detects and re-mounts.
-3. **Verify dev** — run the full verification protocol on the dev service
-3. **Fix any errors on dev** — iterate until dev passes all checks
-
-**Verification means more than HTTP 200.** Read the response body from health/status endpoints. If dev returns 200 but the body shows errors, the app is broken — fix before deploying to stage.
+3. **Verify dev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
+3. **Fix any errors on dev** — if `zerops_verify` returns degraded/unhealthy, read the `checks` array for diagnosis. Iterate until status=healthy.
 
 4. **Deploy to stage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true` — SSH mode: pushes source from dev container, zerops runs the `setup: appstage` build pipeline for production output
-5. **Verify stage** — run the verification protocol on stage
+5. **Verify stage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
 
 This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation.
 
@@ -118,26 +116,22 @@ This is the default flow for projects bootstrapped with the standard dev+stage p
 
 ```
 zerops_deploy targetService="{hostname}"                              # → blocks until DEPLOYED or BUILD_FAILED
-zerops_logs serviceHostname="{hostname}" severity="error" since="5m"  # → no errors
-zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m"  # → startup confirmed
-zerops_discover service="{hostname}"                                  # → RUNNING
-zerops_logs serviceHostname="{hostname}" severity="error" since="2m"  # → no post-startup errors
-# If subdomain enabled:
-zerops_subdomain serviceHostname="{hostname}" action="enable"        # → ALWAYS call (idempotent, activates routing, returns subdomainUrls)
-# bash: curl -sfm 10 "{subdomainUrls[0]}/health"                     # → HTTP 200
+zerops_subdomain serviceHostname="{hostname}" action="enable"        # → activates routing, returns subdomainUrls
+zerops_verify serviceHostname="{hostname}"                           # → status=healthy
 ```
 
 ### Verification iteration loop
 
-When verification fails, iterate — do not give up after one failure:
+When `zerops_verify` returns "degraded" or "unhealthy", iterate — do not give up after one failure:
 
 **Iteration 1–3 (auto-fix):**
 
-1. **Diagnose** — what check failed?
-   - Build FAILED → `zerops_logs serviceHostname="{hostname}" severity="error" since="10m"`, fallback: `bash: zcli service log {hostname} --showBuildLogs --limit 50`
-   - No startup logs → App crashed on start. Check error logs.
-   - HTTP check failed → Capture response body: `bash: curl -sfm 10 "{url}" 2>&1`
-   - /status shows errors → env var mismatch or managed service down
+1. **Diagnose** — read the `checks` array from `zerops_verify` response:
+   - service_running: fail → service not running, check deploy status
+   - no_error_logs: fail → runtime errors, read the `detail` field
+   - startup_detected: fail → app crashed on start, check `zerops_logs severity="error" since="5m"`
+   - http_health: fail → endpoint broken, check `detail` for HTTP status
+   - http_status: fail → managed service connectivity issue, check `detail` for which connection failed
 
 2. **Fix** — based on diagnosis:
    - Build error → fix zerops.yml (buildCommands, deployFiles, start)
@@ -147,7 +141,7 @@ When verification fails, iterate — do not give up after one failure:
 
 3. **Redeploy** — `zerops_deploy targetService="{hostname}"`
 
-4. **Re-verify** — run verification protocol again
+4. **Re-verify** — `zerops_verify serviceHostname="{hostname}"` — check status=healthy
 
 **After 3 failed iterations**: Stop and report to user with what was tried and current error state.
 

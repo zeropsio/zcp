@@ -161,3 +161,4 @@ make lint-local                             # Full lint (~15s)
 | Design doc concept change | Update design doc, verify tests still match |
 | Plan completed | Move to plans/archive/ |
 | New feature area | Create design doc before implementation |
+| `/status` format change | Update both `bootstrap.md` /status spec AND `ops/verify.go` `statusResponse` struct |

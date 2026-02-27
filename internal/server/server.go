@@ -91,6 +91,7 @@ func (s *Server) registerTools() {
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, projectID)
 	tools.RegisterProcess(s.server, s.client)
+	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID)
 
 	// Mutating tools
 	if s.sshDeployer != nil || s.localDeployer != nil {

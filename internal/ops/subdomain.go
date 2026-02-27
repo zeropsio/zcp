@@ -106,8 +106,8 @@ func attachSubdomainUrlsToResult(ctx context.Context, client platform.Client, re
 	}
 
 	// If all URLs are empty, SubdomainHost was a bare prefix — fall back to env var.
-	if allEmpty(urls) {
-		domain := extractDomainFromEnv(ctx, client, serviceID)
+	if AllEmpty(urls) {
+		domain := ExtractDomainFromEnv(ctx, client, serviceID)
 		if domain == "" {
 			return
 		}
@@ -124,23 +124,23 @@ func attachSubdomainUrlsToResult(ctx context.Context, client platform.Client, re
 	result.SubdomainUrls = urls
 }
 
-// extractDomainFromEnv reads the zeropsSubdomain env var and extracts the domain suffix.
-func extractDomainFromEnv(ctx context.Context, client platform.Client, serviceID string) string {
+// ExtractDomainFromEnv reads the zeropsSubdomain env var and extracts the domain suffix.
+func ExtractDomainFromEnv(ctx context.Context, client platform.Client, serviceID string) string {
 	envs, err := client.GetServiceEnv(ctx, serviceID)
 	if err != nil {
 		return ""
 	}
 	for _, env := range envs {
 		if env.Key == "zeropsSubdomain" {
-			return parseSubdomainDomain(env.Content)
+			return ParseSubdomainDomain(env.Content)
 		}
 	}
 	return ""
 }
 
-// parseSubdomainDomain extracts the domain suffix from a zerops subdomain URL.
+// ParseSubdomainDomain extracts the domain suffix from a zerops subdomain URL.
 // E.g. "https://app-1df2-3000.prg1.zerops.app" → "prg1.zerops.app".
-func parseSubdomainDomain(url string) string {
+func ParseSubdomainDomain(url string) string {
 	if url == "" {
 		return ""
 	}
@@ -161,8 +161,8 @@ func parseSubdomainDomain(url string) string {
 	return domain
 }
 
-// allEmpty returns true if all strings in the slice are empty.
-func allEmpty(ss []string) bool {
+// AllEmpty returns true if all strings in the slice are empty.
+func AllEmpty(ss []string) bool {
 	for _, s := range ss {
 		if s != "" {
 			return false

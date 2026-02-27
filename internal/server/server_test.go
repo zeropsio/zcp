@@ -54,7 +54,7 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	// Mount tool IS registered even with nil mounter (returns error at call time).
 	expectedTools := []string{
 		"zerops_workflow", "zerops_discover", "zerops_knowledge",
-		"zerops_logs", "zerops_events", "zerops_process",
+		"zerops_logs", "zerops_events", "zerops_process", "zerops_verify",
 		"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
 		"zerops_mount",
 	}

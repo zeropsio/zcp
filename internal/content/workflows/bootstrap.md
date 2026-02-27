@@ -258,27 +258,22 @@ envVariables:
 
 **ONLY use variables that were actually discovered.** Guessing variable names causes runtime failures. If a variable doesn't appear in discovery, it doesn't exist.
 
-### Verification Protocol (8-point)
+### Verification Protocol
 
 Every deployment must pass this protocol before being considered complete.
 
 | # | Check | Tool / Method | Pass criteria |
 |---|-------|---------------|---------------|
-| 1 | Build/deploy completed | zerops_deploy return value | status=DEPLOYED (not BUILD_FAILED or timedOut) |
-| 2 | Service status | zerops_discover | RUNNING |
-| 3 | No error logs | zerops_logs severity="error" since="5m" | Empty |
-| 4 | Startup confirmed | zerops_logs search="listening\|started\|ready" since="5m" | At least one match |
-| 5 | No post-startup errors | zerops_logs severity="error" since="2m" | Empty |
-| 6 | Activate subdomain | zerops_subdomain serviceHostname="{hostname}" action="enable" | Success or already_enabled. Response contains `subdomainUrls` |
-| 7 | HTTP health check | bash: curl -sfm 10 "{subdomainUrl}/health" | HTTP 200 with valid body |
-| 8 | Managed svc connectivity | bash: curl -sfm 10 "{subdomainUrl}/status" | 200 with all connections "ok" |
+| 1 | Build/deploy completed | `zerops_deploy` return value | status=DEPLOYED (not BUILD_FAILED or timedOut) |
+| 2 | Activate subdomain | `zerops_subdomain serviceHostname="{hostname}" action="enable"` | Success or already_enabled, response contains `subdomainUrls` |
+| 3 | Full verification | `zerops_verify serviceHostname="{hostname}"` | status=healthy. If degraded: read `checks` array for diagnosis |
+
+For managed services (DB, cache, storage): skip step 2 (no subdomain), just steps 1 + 3.
 
 **Notes:**
 - Check 1: zerops_deploy blocks until build completes and returns the final status directly. No polling needed.
-- Check 4: framework-dependent — search for `listening on`, `started server`, `ready to accept`.
-- Check 6: **ALWAYS** call `zerops_subdomain action="enable"` after deploy — even if `enableSubdomainAccess` was set in import. The enable response contains `subdomainUrls` — this is the **only** source for subdomain URLs. The call is idempotent (returns `already_enabled` if already active).
-- Check 7: use `subdomainUrls[0]` from the check 6 enable response. It is already a full URL — do NOT prepend `https://`. **Read the response body.** Empty body, "Cannot GET /", or framework error page = NOT healthy. **Alternative/fallback:** verify internally via `curl -sfm 10 http://{hostname}:{port}/health` from the ZCP container. If internal check passes but public subdomain returns 502, the issue is subdomain configuration — not the app.
-- Check 8: **Read the `/status` body.** If it shows any connection as "error" or "disconnected" = NOT confirmed. Fallback to log search for `connected|pool|migration` if no `/status` endpoint.
+- Check 2: **ALWAYS** call `zerops_subdomain action="enable"` after deploy — even if `enableSubdomainAccess` was set in import. The enable response contains `subdomainUrls` — this is the **only** source for subdomain URLs. The call is idempotent (returns `already_enabled` if already active).
+- Check 3: `zerops_verify` performs 6 checks for runtime services (service_running, no_error_logs, startup_detected, no_recent_errors, http_health, http_status) and 1 check for managed services (service_running only). The response includes a `checks` array — each entry has `name`, `status` (pass/fail/skip), and optional `detail`. Status values: `healthy` (all pass/skip), `degraded` (running but some checks fail), `unhealthy` (service not running).
 
 **Do NOT deploy to stage until dev passes ALL checks.** Stage is for final validation, not debugging.
 
@@ -335,11 +330,11 @@ When any verification check fails, enter the iteration loop instead of giving up
 5. **Create files on mount path**: Write zerops.yml + application source files + .gitignore to `/var/www/appdev/`. Follow the Application Code Requirements (Step 6) and dev vs prod differentiation (Step 5). The zerops.yml `setup:` entries must match ALL service hostnames (both dev and stage). Use only DISCOVERED env vars in envVariables mappings.
 6. **Deploy to appdev**: `zerops_deploy targetService="appdev" workingDir="/var/www/appdev" includeGit=true` — local mode, reads from SSHFS mount. `-g` flag includes `.git` directory on the container. The deploy tool auto-initializes a git repo if missing
 7. **Remount after deploy**: `zerops_mount action="mount" serviceHostname="appdev"` — deploy replaces the container, making the previous SSHFS mount stale. The new container only has `deployFiles` content. Remount reconnects to the new container. The mount tool auto-detects stale mounts and re-mounts.
-8. **Verify appdev** — run the full 8-point verification protocol
-9. **Iterate if needed** — if verification fails, enter the iteration loop: diagnose → fix on mount path → redeploy → remount → re-verify (max 3 iterations)
+8. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
+9. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array → fix on mount path → redeploy → remount → re-verify (max 3 iterations)
 10. **Deploy to appstage from dev**: After deploy, `/var/www` only contains `deployFiles` content. Dev services **MUST** use `deployFiles: [.]` for SSH cross-service deploy to work — zerops.yml must be present in the working directory. Run: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline (production buildCommands + deployFiles). Transitions stage from READY_TO_DEPLOY → BUILDING → RUNNING
 10b. **Connect shared storage to stage** (if shared-storage is in the stack): `zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"` — stage was READY_TO_DEPLOY during import, so the import `mount:` did not apply. Now that stage is ACTIVE, connect storage explicitly.
-11. **Verify appstage** — run the 8-point verification protocol on appstage
+11. **Verify appstage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
 12. **Present both URLs** to user:
     ```
     Dev:   {subdomainUrl from enable}
@@ -519,24 +514,25 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 4 | Deploy dev | `zerops_deploy targetService="{devHostname}" workingDir="{mountPath}" includeGit=true` | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
 | 5b | Remount | `zerops_mount action="mount" serviceHostname="{devHostname}"` — deploy replaces container, stale mount auto-cleans on remount | Mount path accessible |
-| 6 | Check errors | `zerops_logs serviceHostname="{devHostname}" severity="error" since="5m"` | No errors |
-| 7 | Confirm startup | `zerops_logs serviceHostname="{devHostname}" search="listening\|started\|ready" since="5m"` | At least one match |
-| 8 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Success + response contains `subdomainUrls` |
-| 9 | HTTP health | `bash: curl -sfm 10 "{subdomainUrl}/health"` (from enable response) | 200 with valid body |
-| 10 | Connectivity | `bash: curl -sfm 10 "{subdomainUrl}/status"` (from enable response) | 200 with all connections "ok" |
-| 11 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" freshGit=true` | status=DEPLOYED (blocks until complete) |
-| 12 | Verify stage | Same checks 5b–10 for {stageHostname} | All pass |
-| 13 | Report | Status (pass/fail) + dev URL + stage URL | — |
+| 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
+| 7 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
+| 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" freshGit=true` | status=DEPLOYED (blocks until complete) |
+| 9 | Verify stage | `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{stageHostname}"` | status=healthy |
+| 10 | Report | Status (pass/fail) + dev URL + stage URL | — |
 
 ## Iteration Loop (when verification fails)
 
-If any check 5–10 fails, iterate — do NOT skip ahead to stage:
+If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ahead to stage:
 
-1. **Diagnose**: What failed?
-   - Build FAILED → `zerops_logs severity="error" since="10m"`, fallback: `bash: zcli service log {devHostname} --showBuildLogs --limit 50`
-   - Runtime error → `zerops_logs severity="error" since="5m"` — read the error
-   - HTTP fails → capture response body: `bash: curl -sfm 10 "{url}" 2>&1`
-   - /status shows errors → env var mismatch: compare zerops.yml envVariables with discovered vars
+1. **Diagnose**: Read the `checks` array from the `zerops_verify` response:
+   | Failed check | Diagnosis action |
+   |-------------|-----------------|
+   | service_running: fail | Service not running — check deploy status, read error logs: `zerops_logs severity="error" since="10m"` |
+   | no_error_logs: fail | Runtime errors — read the `detail` field for the error message |
+   | startup_detected: fail | App crashed on start — `zerops_logs severity="error" since="5m"` |
+   | no_recent_errors: fail | Errors after startup — read the `detail` field |
+   | http_health: fail | App started but /health endpoint broken — check `detail` for HTTP status |
+   | http_status: fail | Managed service connectivity issue — check `detail` for which connection failed. Verify env var mapping matches discovered vars. |
 
 2. **Fix**: Edit files at `{mountPath}/` — fix zerops.yml, app code, or both
 
@@ -544,7 +540,7 @@ If any check 5–10 fails, iterate — do NOT skip ahead to stage:
 
 4. **Remount**: `zerops_mount action="mount" serviceHostname="{devHostname}"` — deploy replaces the container
 
-5. **Re-verify**: Start from check 5 again
+5. **Re-verify**: `zerops_verify serviceHostname="{devHostname}"` — check status=healthy
 
 Max 3 iterations. After that, report failure with diagnosis.
 

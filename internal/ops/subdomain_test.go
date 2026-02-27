@@ -110,9 +110,9 @@ func TestParseSubdomainDomain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := parseSubdomainDomain(tt.url)
+			got := ParseSubdomainDomain(tt.url)
 			if got != tt.want {
-				t.Errorf("parseSubdomainDomain(%q) = %q, want %q", tt.url, got, tt.want)
+				t.Errorf("ParseSubdomainDomain(%q) = %q, want %q", tt.url, got, tt.want)
 			}
 		})
 	}

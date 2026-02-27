@@ -94,6 +94,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_knowledge", title: "Zerops knowledge access", readOnly: true, idempotent: true},
 		{name: "zerops_logs", title: "Fetch service logs", readOnly: true, idempotent: true},
 		{name: "zerops_events", title: "Fetch project activity timeline", readOnly: true, idempotent: true},
+		{name: "zerops_verify", title: "Verify service health", readOnly: true, idempotent: true},
 
 		// Mutating tools
 		{name: "zerops_process", title: "Check or cancel async process", idempotent: true, destructive: boolPtr(false)},
