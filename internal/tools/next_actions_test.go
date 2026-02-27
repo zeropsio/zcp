@@ -22,7 +22,12 @@ func TestNextActions_ContainToolNames(t *testing.T) {
 		{"import_partial_workflow", nextActionImportPartial, "zerops_workflow"},
 		{"env_set_reload", nextActionEnvSetSuccess, "zerops_manage"},
 		{"env_delete_reload", nextActionEnvDeleteSuccess, "zerops_manage"},
+		{"manage_start_discover", nextActionManageStart, "zerops_discover"},
+		{"manage_stop_manage", nextActionManageStop, "zerops_manage"},
+		{"manage_restart_logs", nextActionManageRestart, "zerops_logs"},
 		{"manage_reload_logs", nextActionManageReload, "zerops_logs"},
+		{"manage_connect_discover", nextActionManageConnect, "zerops_discover"},
+		{"manage_disconnect_discover", nextActionManageDisconnect, "zerops_discover"},
 		{"scale_discover", nextActionScaleSuccess, "zerops_discover"},
 		{"subdomain_enable_logs", nextActionSubdomainEnable, "zerops_logs"},
 	}

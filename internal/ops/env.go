@@ -21,6 +21,10 @@ type EnvDeleteResult struct {
 }
 
 // EnvSet sets environment variables for a service or project.
+// Service-level: all variables are set in a single API call (one process).
+// Project-level: each variable triggers a separate API call; only the last
+// process is returned. Earlier processes complete independently. On error,
+// returns immediately — earlier variables may already be set.
 func EnvSet(
 	ctx context.Context,
 	client platform.Client,
@@ -66,6 +70,9 @@ func EnvSet(
 }
 
 // EnvDelete deletes environment variables from a service or project.
+// Service-level: each variable is deleted individually; only the last process
+// is returned. Project-level: same behavior. On error, returns immediately —
+// earlier variables may already be deleted.
 func EnvDelete(
 	ctx context.Context,
 	client platform.Client,

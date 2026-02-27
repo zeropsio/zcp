@@ -29,6 +29,7 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string) {
 			return convertError(err), nil, nil
 		}
 		onProgress := buildProgressCallback(ctx, req)
-		return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
+		finalProc, _ := pollManageProcess(ctx, client, proc, onProgress)
+		return jsonResult(finalProc), nil, nil
 	})
 }

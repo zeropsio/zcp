@@ -140,7 +140,7 @@ func extractHostnames(doc map[string]any) []string {
 
 // waitForDeletingServices polls ListServices until no DELETING services
 // conflict with the requested hostnames. Returns ErrAPITimeout on context
-// cancellation or deadline exceeded.
+// cancellation, deadline exceeded, or after a 5-minute hardcoded timeout.
 func waitForDeletingServices(
 	ctx context.Context,
 	client platform.Client,
@@ -156,7 +156,11 @@ func waitForDeletingServices(
 		wantSet[h] = true
 	}
 
-	const pollInterval = 3 * time.Second
+	const (
+		pollInterval = 3 * time.Second
+		timeout      = 5 * time.Minute
+	)
+	start := time.Now()
 
 	for {
 		services, err := client.ListServices(ctx, projectID)
@@ -172,6 +176,14 @@ func waitForDeletingServices(
 		}
 		if len(conflicts) == 0 {
 			return nil
+		}
+
+		if time.Since(start) > timeout {
+			return platform.NewPlatformError(
+				platform.ErrAPITimeout,
+				fmt.Sprintf("timed out waiting for DELETING services after %s: %v", timeout, conflicts),
+				"Services are still being deleted. Wait and retry, or use a different hostname.",
+			)
 		}
 
 		select {

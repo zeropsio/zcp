@@ -8,7 +8,12 @@ const (
 	nextActionImportPartial    = "Check failed processes: zerops_events. Fix and re-import via zerops_workflow."
 	nextActionEnvSetSuccess    = "Reload service: zerops_manage action=reload (~4s, faster than restart)."
 	nextActionEnvDeleteSuccess = "Reload service: zerops_manage action=reload (~4s, faster than restart)."
+	nextActionManageStart      = "Verify service is running: zerops_discover."
+	nextActionManageStop       = "Service stopped. Start with: zerops_manage action=start."
+	nextActionManageRestart    = "Verify health: zerops_logs severity=ERROR since=1m."
 	nextActionManageReload     = "Verify health: zerops_logs severity=ERROR since=1m."
+	nextActionManageConnect    = "Verify storage mount: zerops_discover."
+	nextActionManageDisconnect = "Storage disconnected. Verify: zerops_discover."
 	nextActionScaleSuccess     = "Verify scaling: zerops_discover."
 	nextActionSubdomainEnable  = "Test subdomain URL. If 502: zerops_logs severity=ERROR."
 )

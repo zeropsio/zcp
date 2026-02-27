@@ -40,7 +40,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 				return convertError(err), nil, nil
 			}
 			if result.Process != nil {
-				result.Process = pollManageProcess(ctx, client, result.Process, onProgress)
+				result.Process, _ = pollManageProcess(ctx, client, result.Process, onProgress)
 			}
 			result.NextActions = nextActionEnvSetSuccess
 			return jsonResult(result), nil, nil
@@ -50,7 +50,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 				return convertError(err), nil, nil
 			}
 			if result.Process != nil {
-				result.Process = pollManageProcess(ctx, client, result.Process, onProgress)
+				result.Process, _ = pollManageProcess(ctx, client, result.Process, onProgress)
 			}
 			result.NextActions = nextActionEnvDeleteSuccess
 			return jsonResult(result), nil, nil

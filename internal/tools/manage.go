@@ -11,6 +11,7 @@ import (
 // manageResponse wraps a Process with NextActions for the MCP response.
 type manageResponse struct {
 	*platform.Process
+	TimedOut    bool   `json:"timedOut,omitempty"`
 	NextActions string `json:"nextActions,omitempty"`
 }
 
@@ -51,26 +52,29 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
+			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
+			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageStart}), nil, nil
 		case "stop":
 			proc, err := ops.Stop(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
+			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
+			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageStop}), nil, nil
 		case "restart":
 			proc, err := ops.Restart(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
+			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
+			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageRestart}), nil, nil
 		case "reload":
 			proc, err := ops.Reload(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			finalProc := pollManageProcess(ctx, client, proc, onProgress)
-			return jsonResult(manageResponse{Process: finalProc, NextActions: nextActionManageReload}), nil, nil
+			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
+			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageReload}), nil, nil
 		case "connect-storage":
 			if input.StorageHostname == "" {
 				return convertError(platform.NewPlatformError(
@@ -81,7 +85,8 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
+			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
+			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageConnect}), nil, nil
 		case "disconnect-storage":
 			if input.StorageHostname == "" {
 				return convertError(platform.NewPlatformError(
@@ -92,7 +97,8 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
+			finalProc, timedOut := pollManageProcess(ctx, client, proc, onProgress)
+			return jsonResult(manageResponse{Process: finalProc, TimedOut: timedOut, NextActions: nextActionManageDisconnect}), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",
@@ -101,20 +107,21 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 	})
 }
 
-// pollManageProcess polls a process until completion, returning the final state.
-// On timeout/error, returns the original process unchanged.
+// pollManageProcess polls a process until completion, returning the final state
+// and whether polling timed out. On timeout/error, returns the original process
+// with timedOut=true so callers can signal stale data to the LLM.
 func pollManageProcess(
 	ctx context.Context,
 	client platform.Client,
 	proc *platform.Process,
 	onProgress ops.ProgressCallback,
-) *platform.Process {
+) (*platform.Process, bool) {
 	if proc == nil || proc.ID == "" {
-		return proc
+		return proc, false
 	}
 	finalProc, err := ops.PollProcess(ctx, client, proc.ID, onProgress)
 	if err != nil {
-		return proc // return original on timeout/error
+		return proc, true // return original on timeout/error
 	}
-	return finalProc
+	return finalProc, false
 }

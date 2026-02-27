@@ -37,6 +37,9 @@ func TestManageTool_Start(t *testing.T) {
 	if parsed["status"] != statusFinished {
 		t.Errorf("status = %v, want FINISHED", parsed["status"])
 	}
+	if _, ok := parsed["nextActions"]; !ok {
+		t.Error("expected nextActions in response")
+	}
 }
 
 func TestManageTool_Stop(t *testing.T) {
@@ -66,6 +69,9 @@ func TestManageTool_Stop(t *testing.T) {
 	if parsed["status"] != statusFinished {
 		t.Errorf("status = %v, want FINISHED", parsed["status"])
 	}
+	if _, ok := parsed["nextActions"]; !ok {
+		t.Error("expected nextActions in response")
+	}
 }
 
 func TestManageTool_Restart(t *testing.T) {
@@ -94,6 +100,9 @@ func TestManageTool_Restart(t *testing.T) {
 	}
 	if parsed["status"] != statusFinished {
 		t.Errorf("status = %v, want FINISHED", parsed["status"])
+	}
+	if _, ok := parsed["nextActions"]; !ok {
+		t.Error("expected nextActions in response")
 	}
 }
 
@@ -188,6 +197,9 @@ func TestManageTool_Reload(t *testing.T) {
 	if parsed["status"] != statusFinished {
 		t.Errorf("status = %v, want FINISHED", parsed["status"])
 	}
+	if _, ok := parsed["nextActions"]; !ok {
+		t.Error("expected nextActions in response")
+	}
 }
 
 func TestManageTool_ConnectStorage_Success(t *testing.T) {
@@ -219,6 +231,9 @@ func TestManageTool_ConnectStorage_Success(t *testing.T) {
 	}
 	if parsed["status"] != statusFinished {
 		t.Errorf("status = %v, want FINISHED", parsed["status"])
+	}
+	if _, ok := parsed["nextActions"]; !ok {
+		t.Error("expected nextActions in response")
 	}
 }
 
@@ -268,6 +283,9 @@ func TestManageTool_DisconnectStorage_Success(t *testing.T) {
 	}
 	if parsed["status"] != statusFinished {
 		t.Errorf("status = %v, want FINISHED", parsed["status"])
+	}
+	if _, ok := parsed["nextActions"]; !ok {
+		t.Error("expected nextActions in response")
 	}
 }
 

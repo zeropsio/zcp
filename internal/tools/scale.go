@@ -59,7 +59,7 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
 
 		if result.Process != nil {
 			onProgress := buildProgressCallback(ctx, req)
-			result.Process = pollManageProcess(ctx, client, result.Process, onProgress)
+			result.Process, _ = pollManageProcess(ctx, client, result.Process, onProgress)
 		}
 		result.NextActions = nextActionScaleSuccess
 		return jsonResult(result), nil, nil
