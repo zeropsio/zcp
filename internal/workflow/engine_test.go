@@ -8,6 +8,38 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+func TestIsManagedService(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		serviceType string
+		want        bool
+	}{
+		{"postgresql", "postgresql@16", true},
+		{"valkey", "valkey@7.2", true},
+		{"object_storage_hyphen", "object-storage@1", true},
+		{"shared_storage_hyphen", "shared-storage@1", true},
+		{"object_storage_bare", "object-storage", true},
+		{"shared_storage_bare", "shared-storage", true},
+		{"nats", "nats@2.10", true},
+		{"clickhouse", "clickhouse@24.3", true},
+		{"qdrant", "qdrant@1.12", true},
+		{"typesense", "typesense@27.1", true},
+		{"runtime_bun", "bun@1.2", false},
+		{"runtime_nodejs", "nodejs@22", false},
+		{"runtime_go", "go@1", false},
+		{"runtime_php", "php-nginx@8.4", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isManagedService(tt.serviceType); got != tt.want {
+				t.Errorf("isManagedService(%q) = %v, want %v", tt.serviceType, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDetectProjectState_Fresh(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -25,6 +57,20 @@ func TestDetectProjectState_Fresh(t *testing.T) {
 			[]platform.ServiceStack{
 				{Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
 				{Name: "cache", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@8"}},
+			},
+			StateFresh,
+		},
+		{
+			"only_object_storage",
+			[]platform.ServiceStack{
+				{Name: "storage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "object-storage@1"}},
+			},
+			StateFresh,
+		},
+		{
+			"only_shared_storage",
+			[]platform.ServiceStack{
+				{Name: "files", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "shared-storage@1"}},
 			},
 			StateFresh,
 		},
@@ -598,6 +644,107 @@ func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
 	}
 	if len(state.History) != 5 {
 		t.Errorf("History length: want 5, got %d", len(state.History))
+	}
+}
+
+func TestEngine_BootstrapComplete_AutoEvidence_PassedCount(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	steps := []string{
+		"detect", "plan", "load-knowledge", "generate-import",
+		"import-services", "mount-dev", "discover-envs",
+		"deploy", "verify", "report",
+	}
+	for _, step := range steps {
+		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
+
+	state, _ := eng.GetState()
+
+	// recipe_review maps to steps: detect, plan, load-knowledge — all 3 completed.
+	ev, err := LoadEvidence(eng.evidenceDir, state.SessionID, "recipe_review")
+	if err != nil {
+		t.Fatalf("load recipe_review: %v", err)
+	}
+	if ev.Passed < 2 {
+		t.Errorf("recipe_review.Passed: want >=2, got %d", ev.Passed)
+	}
+
+	// dev_verify maps to steps: deploy, verify — both completed.
+	ev, err = LoadEvidence(eng.evidenceDir, state.SessionID, "dev_verify")
+	if err != nil {
+		t.Fatalf("load dev_verify: %v", err)
+	}
+	if ev.Passed < 2 {
+		t.Errorf("dev_verify.Passed: want >=2, got %d", ev.Passed)
+	}
+}
+
+func TestEngine_BootstrapComplete_AutoEvidence_ServiceResults(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	// Complete detect.
+	if _, err := eng.BootstrapComplete("detect", "FRESH project detected"); err != nil {
+		t.Fatalf("BootstrapComplete(detect): %v", err)
+	}
+
+	// Complete plan with structured plan.
+	plan := []PlannedService{
+		{Hostname: "appdev", Type: "bun@1.2"},
+		{Hostname: "appstage", Type: "bun@1.2"},
+		{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
+	}
+	if _, err := eng.BootstrapCompletePlan(plan, nil); err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	// Complete remaining steps.
+	remaining := []string{
+		"load-knowledge", "generate-import", "import-services",
+		"mount-dev", "discover-envs", "deploy", "verify", "report",
+	}
+	for _, step := range remaining {
+		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
+
+	state, _ := eng.GetState()
+
+	// deploy_evidence should have ServiceResults from plan.
+	ev, err := LoadEvidence(eng.evidenceDir, state.SessionID, "deploy_evidence")
+	if err != nil {
+		t.Fatalf("load deploy_evidence: %v", err)
+	}
+	if len(ev.ServiceResults) == 0 {
+		t.Error("deploy_evidence.ServiceResults should be populated from plan")
+	}
+	// Should contain all 3 planned services.
+	if len(ev.ServiceResults) != 3 {
+		t.Errorf("deploy_evidence.ServiceResults: want 3, got %d", len(ev.ServiceResults))
+	}
+
+	// stage_verify should also have ServiceResults from plan.
+	ev, err = LoadEvidence(eng.evidenceDir, state.SessionID, "stage_verify")
+	if err != nil {
+		t.Fatalf("load stage_verify: %v", err)
+	}
+	if len(ev.ServiceResults) == 0 {
+		t.Error("stage_verify.ServiceResults should be populated from plan")
 	}
 }
 

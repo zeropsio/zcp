@@ -64,14 +64,22 @@ type BootstrapStepSummary struct {
 	Status string `json:"status"`
 }
 
+// StepContext provides context from prior bootstrap steps for the current step.
+type StepContext struct {
+	Plan         *ServicePlan      `json:"plan,omitempty"`
+	Attestations map[string]string `json:"attestations,omitempty"`
+}
+
 // BootstrapStepInfo provides detailed info about the current step.
 type BootstrapStepInfo struct {
-	Name         string   `json:"name"`
-	Index        int      `json:"index"`
-	Category     string   `json:"category"`
-	Guidance     string   `json:"guidance"`
-	Tools        []string `json:"tools"`
-	Verification string   `json:"verification"`
+	Name          string       `json:"name"`
+	Index         int          `json:"index"`
+	Category      string       `json:"category"`
+	Guidance      string       `json:"guidance"`
+	Tools         []string     `json:"tools"`
+	Verification  string       `json:"verification"`
+	DetailedGuide string       `json:"detailedGuide,omitempty"`
+	PriorContext  *StepContext `json:"priorContext,omitempty"`
 }
 
 // NewBootstrapState creates a new bootstrap state with all 10 steps pending.
@@ -186,12 +194,14 @@ func (b *BootstrapState) BuildResponse(sessionID string, mode Mode, intent strin
 	if b.CurrentStep < len(b.Steps) {
 		detail := lookupDetail(b.Steps[b.CurrentStep].Name)
 		resp.Current = &BootstrapStepInfo{
-			Name:         detail.Name,
-			Index:        b.CurrentStep,
-			Category:     string(detail.Category),
-			Guidance:     detail.Guidance,
-			Tools:        detail.Tools,
-			Verification: detail.Verification,
+			Name:          detail.Name,
+			Index:         b.CurrentStep,
+			Category:      string(detail.Category),
+			Guidance:      detail.Guidance,
+			Tools:         detail.Tools,
+			Verification:  detail.Verification,
+			DetailedGuide: ResolveGuidance(detail.Name),
+			PriorContext:  b.buildPriorContext(),
 		}
 		resp.Message = fmt.Sprintf("Step %d/%d: %s", b.CurrentStep+1, len(b.Steps), detail.Name)
 	} else {
@@ -199,6 +209,26 @@ func (b *BootstrapState) BuildResponse(sessionID string, mode Mode, intent strin
 	}
 
 	return resp
+}
+
+// buildPriorContext collects attestations from completed prior steps and the plan.
+// Returns nil if there is no prior context (first step, no attestations).
+func (b *BootstrapState) buildPriorContext() *StepContext {
+	attestations := make(map[string]string)
+	for i := 0; i < b.CurrentStep && i < len(b.Steps); i++ {
+		if b.Steps[i].Attestation != "" {
+			attestations[b.Steps[i].Name] = b.Steps[i].Attestation
+		}
+	}
+
+	if len(attestations) == 0 && b.Plan == nil {
+		return nil
+	}
+
+	return &StepContext{
+		Plan:         b.Plan,
+		Attestations: attestations,
+	}
 }
 
 // lookupDetail finds the StepDetail for a step name.

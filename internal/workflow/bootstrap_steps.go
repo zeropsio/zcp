@@ -9,17 +9,15 @@ var stepDetails = []StepDetail{
 		Guidance: `Call zerops_discover to inspect the current project.
 Classify the project state:
 - FRESH: no runtime services exist (only managed or none)
-- PARTIAL: some services exist but import incomplete
-- CONFORMANT: dev+stage naming pattern detected
-- EXISTING: runtime services without dev/stage pattern
+- CONFORMANT: dev+stage naming pattern detected (e.g., appdev+appstage)
+- NON_CONFORMANT: runtime services exist without dev/stage pattern
 
 Route:
 - FRESH → proceed normally through all steps
-- PARTIAL → resume from failed step (check zerops_events for errors)
 - CONFORMANT → skip to deploy step (services already exist)
-- EXISTING → warn user about non-standard naming, suggest reset or manual approach`,
+- NON_CONFORMANT → warn user about non-standard naming, suggest reset or manual approach`,
 		Tools:        []string{"zerops_discover"},
-		Verification: "Project state classified as FRESH/PARTIAL/CONFORMANT/EXISTING with evidence",
+		Verification: "Project state classified as FRESH/CONFORMANT/NON_CONFORMANT with evidence",
 		Skippable:    false,
 	},
 	{
@@ -188,7 +186,7 @@ Iteration loop (max 3 attempts per service):
 - If /status fails → check connectivity → fix code → redeploy
 
 Skip this step if no runtime services exist (managed-only project).`,
-		Tools:        []string{"zerops_deploy", "zerops_discover", "zerops_subdomain", "zerops_logs", "zerops_mount"},
+		Tools:        []string{"zerops_deploy", "zerops_discover", "zerops_subdomain", "zerops_logs", "zerops_mount", "zerops_verify"},
 		Verification: "All runtime services deployed, /status endpoints returning 200 with connectivity proof",
 		Skippable:    true,
 	},
@@ -209,7 +207,7 @@ If any service fails verification:
 - Record the failure in attestation (e.g., "3/5 services healthy, apidev failing")
 - Do NOT block — the conductor accepts partial success
 - The attestation captures the actual state`,
-		Tools:        []string{"zerops_discover"},
+		Tools:        []string{"zerops_discover", "zerops_verify"},
 		Verification: "All services independently verified with status documented",
 		Skippable:    false,
 	},

@@ -2,6 +2,7 @@
 package workflow
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,44 @@ func TestStepDetails_AllStepsCovered(t *testing.T) {
 		}
 		if detail.Verification == "" {
 			t.Errorf("step %q has empty Verification", name)
+		}
+	}
+}
+
+func TestStepDetails_ToolLists(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		step     string
+		wantTool string
+	}{
+		{"deploy", "zerops_verify"},
+		{"verify", "zerops_verify"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.step+"_has_"+tt.wantTool, func(t *testing.T) {
+			t.Parallel()
+			detail := lookupDetail(tt.step)
+			if !slices.Contains(detail.Tools, tt.wantTool) {
+				t.Errorf("step %q Tools %v should contain %q", tt.step, detail.Tools, tt.wantTool)
+			}
+		})
+	}
+}
+
+func TestStepDetails_DetectGuidance_ThreeStates(t *testing.T) {
+	t.Parallel()
+	detail := lookupDetail("detect")
+
+	// Guidance must mention the 3 actual code states.
+	for _, state := range []string{"FRESH", "CONFORMANT", "NON_CONFORMANT"} {
+		if !strings.Contains(detail.Guidance, state) {
+			t.Errorf("detect guidance missing state %q", state)
+		}
+	}
+	// Guidance must NOT mention dropped states.
+	for _, dropped := range []string{"PARTIAL", "EXISTING"} {
+		if strings.Contains(detail.Guidance, dropped) {
+			t.Errorf("detect guidance still mentions dropped state %q", dropped)
 		}
 	}
 }
@@ -363,6 +402,92 @@ func TestBuildResponse_WithSkipped(t *testing.T) {
 	}
 	if !found {
 		t.Error("mount-dev should appear as 'skipped' in progress steps")
+	}
+}
+
+func TestBuildResponse_PriorContext_Attestations(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	// Complete first 3 steps with attestations.
+	attestations := map[string]string{
+		"detect":         "FRESH project detected, no runtime services",
+		"plan":           "Planned: appdev (bun@1.2), db (postgresql@16)",
+		"load-knowledge": "Loaded bun runtime briefing and infrastructure scope",
+	}
+	for i, name := range []string{"detect", "plan", "load-knowledge"} {
+		bs.Steps[i].Status = stepComplete
+		bs.Steps[i].Attestation = attestations[name]
+	}
+	bs.CurrentStep = 3
+	bs.Steps[3].Status = stepInProgress
+
+	resp := bs.BuildResponse("sess-ctx", ModeFull, "bun + postgres")
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil")
+	}
+	if resp.Current.PriorContext == nil {
+		t.Fatal("PriorContext should not be nil when prior steps have attestations")
+	}
+	if len(resp.Current.PriorContext.Attestations) != 3 {
+		t.Errorf("PriorContext.Attestations: want 3 entries, got %d", len(resp.Current.PriorContext.Attestations))
+	}
+	if resp.Current.PriorContext.Attestations["detect"] != attestations["detect"] {
+		t.Errorf("PriorContext.Attestations[detect] mismatch")
+	}
+}
+
+func TestBuildResponse_PriorContext_WithPlan(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	// Complete first 2 steps.
+	bs.Steps[0].Status = stepComplete
+	bs.Steps[0].Attestation = "FRESH project"
+	bs.Steps[1].Status = stepComplete
+	bs.Steps[1].Attestation = "Planned services"
+	bs.CurrentStep = 2
+	bs.Steps[2].Status = stepInProgress
+	bs.Plan = &ServicePlan{
+		Services: []PlannedService{
+			{Hostname: "appdev", Type: "bun@1.2"},
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
+		},
+		CreatedAt: "2026-02-27T00:00:00Z",
+	}
+
+	resp := bs.BuildResponse("sess-plan", ModeFull, "test")
+	if resp.Current.PriorContext == nil {
+		t.Fatal("PriorContext should not be nil")
+	}
+	if resp.Current.PriorContext.Plan == nil {
+		t.Fatal("PriorContext.Plan should not be nil when plan exists")
+	}
+	if len(resp.Current.PriorContext.Plan.Services) != 2 {
+		t.Errorf("PriorContext.Plan.Services: want 2, got %d", len(resp.Current.PriorContext.Plan.Services))
+	}
+}
+
+func TestBuildResponse_DetailedGuide_Populated(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Steps[0].Status = stepInProgress
+
+	resp := bs.BuildResponse("sess-guide", ModeFull, "test")
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil")
+	}
+	if resp.Current.DetailedGuide == "" {
+		t.Error("DetailedGuide should be populated from bootstrap.md for detect step")
+	}
+}
+
+func TestBuildResponse_PriorContext_FirstStep_Empty(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Steps[0].Status = stepInProgress
+
+	resp := bs.BuildResponse("sess-first", ModeFull, "test")
+	if resp.Current.PriorContext != nil {
+		t.Error("PriorContext should be nil for first step (no prior attestations)")
 	}
 }
 

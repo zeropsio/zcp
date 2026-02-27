@@ -3,7 +3,6 @@ package workflow
 import (
 	"fmt"
 	"regexp"
-	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -37,23 +36,10 @@ func ValidatePlanHostname(hostname string) error {
 	return nil
 }
 
-// managedPrefixes are service types that require Mode (HA/NON_HA).
-var managedPrefixes = []string{
-	"postgresql", "mariadb", "mysql", "mongodb", "valkey", "redis",
-	"keydb", "elasticsearch", "meilisearch", "rabbitmq", "kafka",
-	"nats", "clickhouse", "qdrant", "typesense",
-	"shared-storage", "object-storage",
-}
-
 // isManagedType checks if a service type requires a Mode field.
+// Uses managedServicePrefixes from managed_types.go (shared source of truth).
 func isManagedType(serviceType string) bool {
-	lower := strings.ToLower(serviceType)
-	for _, prefix := range managedPrefixes {
-		if strings.HasPrefix(lower, prefix) {
-			return true
-		}
-	}
-	return false
+	return isManagedService(serviceType)
 }
 
 // ValidateServicePlan validates a list of planned services against constraints.
