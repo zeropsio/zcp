@@ -25,8 +25,9 @@ Tool routing:
 NEVER call zerops_import directly. ALWAYS start with zerops_workflow.`
 
 // BuildInstructions returns the MCP instructions message injected into the system prompt.
-// It includes runtime context, a dynamic project summary, and routing instructions.
-func BuildInstructions(ctx context.Context, client platform.Client, projectID string, rt runtime.Info) string {
+// It includes runtime context, a dynamic project summary, workflow hint, and routing instructions.
+// stateDir is the workflow state directory; empty string means no hint.
+func BuildInstructions(ctx context.Context, client platform.Client, projectID string, rt runtime.Info, stateDir string) string {
 	var b strings.Builder
 
 	// Section A: Runtime context.
@@ -44,7 +45,34 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 	b.WriteString(baseInstructions)
 	b.WriteString(routingInstructions)
 
+	// Section D: Workflow hint (from local state file).
+	if hint := buildWorkflowHint(stateDir); hint != "" {
+		b.WriteString("\n\n")
+		b.WriteString(hint)
+	}
+
 	return b.String()
+}
+
+// buildWorkflowHint reads the local workflow state and returns a 1-line hint.
+// Returns empty string on any error (graceful fallback).
+func buildWorkflowHint(stateDir string) string {
+	if stateDir == "" {
+		return ""
+	}
+	state, err := workflow.LoadSession(stateDir)
+	if err != nil {
+		return ""
+	}
+
+	hint := fmt.Sprintf("Active workflow: %s mode=%s phase=%s", "bootstrap", state.Mode, state.Phase)
+	if state.Bootstrap != nil && state.Bootstrap.Active {
+		stepNum := state.Bootstrap.CurrentStep + 1
+		total := len(state.Bootstrap.Steps)
+		stepName := state.Bootstrap.CurrentStepName()
+		hint += fmt.Sprintf(" (step %d/%d: %s)", stepNum, total, stepName)
+	}
+	return hint
 }
 
 // buildProjectSummary calls the API to list services and detect project state.

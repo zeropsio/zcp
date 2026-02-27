@@ -77,7 +77,9 @@ func pollImportProcesses(
 	}
 	if failed > 0 {
 		result.Summary = fmt.Sprintf("%d/%d processes completed, %d failed", finished, total, failed)
+		result.NextActions = nextActionImportPartial
 	} else {
 		result.Summary = fmt.Sprintf("All %d processes completed successfully", total)
+		result.NextActions = nextActionImportSuccess
 	}
 }

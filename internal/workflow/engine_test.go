@@ -611,3 +611,83 @@ func TestEngine_BootstrapStatus_NoSession(t *testing.T) {
 		t.Fatal("expected error for status without session")
 	}
 }
+
+// --- BootstrapCompletePlan tests ---
+
+func TestEngine_BootstrapCompletePlan_Valid(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	// Complete detect first.
+	if _, err := eng.BootstrapComplete("detect", "FRESH project detected"); err != nil {
+		t.Fatalf("BootstrapComplete(detect): %v", err)
+	}
+
+	plan := []PlannedService{
+		{Hostname: "appdev", Type: "bun@1.2"},
+		{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
+	}
+	resp, err := eng.BootstrapCompletePlan(plan, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+	if resp.Current == nil || resp.Current.Name != "load-knowledge" {
+		t.Errorf("expected current step to be 'load-knowledge', got %v", resp.Current)
+	}
+
+	// Verify plan is persisted in state.
+	state, err := eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state.Bootstrap.Plan == nil {
+		t.Fatal("Plan should be stored in bootstrap state")
+	}
+	if len(state.Bootstrap.Plan.Services) != 2 {
+		t.Errorf("Plan.Services length: want 2, got %d", len(state.Bootstrap.Plan.Services))
+	}
+}
+
+func TestEngine_BootstrapCompletePlan_InvalidHostname(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	if _, err := eng.BootstrapComplete("detect", "FRESH project detected"); err != nil {
+		t.Fatalf("BootstrapComplete(detect): %v", err)
+	}
+
+	plan := []PlannedService{
+		{Hostname: "my-app", Type: "bun@1.2"},
+	}
+	_, err := eng.BootstrapCompletePlan(plan, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid hostname")
+	}
+}
+
+func TestEngine_BootstrapCompletePlan_WrongStep(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	// Don't complete detect — current step is detect, not plan.
+
+	plan := []PlannedService{
+		{Hostname: "app", Type: "bun@1.2"},
+	}
+	_, err := eng.BootstrapCompletePlan(plan, nil)
+	if err == nil {
+		t.Fatal("expected error when current step is not 'plan'")
+	}
+}

@@ -10,12 +10,14 @@ import (
 
 // EnvSetResult contains the result of an env set operation.
 type EnvSetResult struct {
-	Process *platform.Process `json:"process,omitempty"`
+	Process     *platform.Process `json:"process,omitempty"`
+	NextActions string            `json:"nextActions,omitempty"`
 }
 
 // EnvDeleteResult contains the result of an env delete operation.
 type EnvDeleteResult struct {
-	Process *platform.Process `json:"process,omitempty"`
+	Process     *platform.Process `json:"process,omitempty"`
+	NextActions string            `json:"nextActions,omitempty"`
 }
 
 // EnvSet sets environment variables for a service or project.

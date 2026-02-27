@@ -551,6 +551,104 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 	}
 }
 
+func TestWorkflowTool_Action_BootstrapComplete_PlanStep_Structured(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
+
+	// Start bootstrap and complete detect.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "mode": "full",
+	})
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "detect",
+		"attestation": "FRESH project, no existing services",
+	})
+
+	// Complete plan step with structured plan.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete",
+		"step":   "plan",
+		"plan": []any{
+			map[string]any{"hostname": "appdev", "type": "bun@1.2"},
+			map[string]any{"hostname": "db", "type": "postgresql@16", "mode": "NON_HA"},
+		},
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Current == nil || resp.Current.Name != "load-knowledge" {
+		t.Error("expected current step to be 'load-knowledge'")
+	}
+}
+
+func TestWorkflowTool_Action_BootstrapComplete_PlanStep_InvalidPlan(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
+
+	// Start bootstrap and complete detect.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "mode": "full",
+	})
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "detect",
+		"attestation": "FRESH project, no existing services",
+	})
+
+	// Complete plan step with invalid hostname.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete",
+		"step":   "plan",
+		"plan": []any{
+			map[string]any{"hostname": "my-app", "type": "bun@1.2"},
+		},
+	})
+
+	if !result.IsError {
+		t.Error("expected error for invalid hostname in plan")
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "invalid characters") {
+		t.Errorf("expected 'invalid characters' error, got: %s", text)
+	}
+}
+
+func TestWorkflowTool_Action_BootstrapComplete_PlanStep_FallbackAttestation(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
+
+	// Start bootstrap and complete detect.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "mode": "full",
+	})
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "detect",
+		"attestation": "FRESH project, no existing services",
+	})
+
+	// Complete plan step with attestation only (no structured plan) — should still work via JSON parse fallback or plain attestation.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":      "complete",
+		"step":        "plan",
+		"attestation": "Services: appdev (bun@1.2), db (postgresql@16 NON_HA) — validated manually",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+}
+
 func TestWorkflowTool_Action_QuickMode(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)

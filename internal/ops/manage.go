@@ -24,10 +24,11 @@ type ScaleParams struct {
 
 // ScaleResult contains the result of a scale operation.
 type ScaleResult struct {
-	Process   *platform.Process `json:"process,omitempty"`
-	Message   string            `json:"message,omitempty"`
-	Hostname  string            `json:"serviceHostname"`
-	ServiceID string            `json:"serviceId"`
+	Process     *platform.Process `json:"process,omitempty"`
+	Message     string            `json:"message,omitempty"`
+	Hostname    string            `json:"serviceHostname"`
+	ServiceID   string            `json:"serviceId"`
+	NextActions string            `json:"nextActions,omitempty"`
 }
 
 // Start starts a stopped service.

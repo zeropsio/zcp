@@ -39,9 +39,15 @@ type Server struct {
 
 // New creates a new ZCP MCP server with all tools registered.
 func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter, idleWaiter *update.IdleWaiter, rtInfo runtime.Info) *Server {
+	// Determine workflow state directory for system prompt hint.
+	var stateDir string
+	if cwd, err := os.Getwd(); err == nil {
+		stateDir = filepath.Join(cwd, ".zcp", "state")
+	}
+
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
-		&mcp.ServerOptions{Instructions: BuildInstructions(ctx, client, authInfo.ProjectID, rtInfo)},
+		&mcp.ServerOptions{Instructions: BuildInstructions(ctx, client, authInfo.ProjectID, rtInfo, stateDir)},
 	)
 
 	// Register idle tracking middleware for graceful update restart.

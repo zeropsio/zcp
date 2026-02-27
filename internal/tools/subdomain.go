@@ -29,6 +29,9 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, projectID string
 		if err != nil {
 			return convertError(err), nil, nil
 		}
+		if input.Action == "enable" {
+			result.NextActions = nextActionSubdomainEnable
+		}
 		return jsonResult(result), nil, nil
 	})
 }

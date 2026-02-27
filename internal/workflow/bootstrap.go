@@ -38,6 +38,7 @@ type BootstrapState struct {
 	Active      bool            `json:"active"`
 	CurrentStep int             `json:"currentStep"`
 	Steps       []BootstrapStep `json:"steps"`
+	Plan        *ServicePlan    `json:"plan,omitempty"`
 }
 
 // BootstrapResponse is returned from conductor actions.

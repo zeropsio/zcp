@@ -8,6 +8,12 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// manageResponse wraps a Process with NextActions for the MCP response.
+type manageResponse struct {
+	*platform.Process
+	NextActions string `json:"nextActions,omitempty"`
+}
+
 // ManageInput is the input type for zerops_manage.
 type ManageInput struct {
 	Action          string `json:"action"                    jsonschema:"Lifecycle action: start, stop, restart, reload, connect-storage, disconnect-storage."`
@@ -63,7 +69,8 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
+			finalProc := pollManageProcess(ctx, client, proc, onProgress)
+			return jsonResult(manageResponse{Process: finalProc, NextActions: nextActionManageReload}), nil, nil
 		case "connect-storage":
 			if input.StorageHostname == "" {
 				return convertError(platform.NewPlatformError(

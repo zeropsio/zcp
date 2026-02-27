@@ -20,6 +20,7 @@ type ImportResult struct {
 	Processes   []ImportProcessOutput `json:"processes"`
 	Warnings    []string              `json:"warnings,omitempty"`
 	Summary     string                `json:"summary,omitempty"`
+	NextActions string                `json:"nextActions,omitempty"`
 }
 
 // ImportProcessOutput represents one process from the import result.

@@ -140,6 +140,58 @@ func (e *Engine) BootstrapComplete(stepName, attestation string) (*BootstrapResp
 	return state.Bootstrap.BuildResponse(state.SessionID, state.Mode, state.Intent), nil
 }
 
+// BootstrapCompletePlan validates a structured plan, completes the "plan" step, and stores the plan.
+// liveTypes may be nil — type checking is skipped when unavailable.
+func (e *Engine) BootstrapCompletePlan(services []PlannedService, liveTypes []platform.ServiceStackType) (*BootstrapResponse, error) {
+	state, err := LoadSession(e.stateDir)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
+	}
+	if state.Bootstrap == nil || !state.Bootstrap.Active {
+		return nil, fmt.Errorf("bootstrap complete plan: bootstrap not active")
+	}
+	if state.Bootstrap.CurrentStepName() != "plan" {
+		return nil, fmt.Errorf("bootstrap complete plan: current step is %q, not \"plan\"", state.Bootstrap.CurrentStepName())
+	}
+
+	if err := ValidateServicePlan(services, liveTypes); err != nil {
+		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
+	}
+
+	// Build attestation from validated plan.
+	var parts []string
+	for _, svc := range services {
+		entry := svc.Hostname + " (" + svc.Type
+		if svc.Mode != "" {
+			entry += ", " + svc.Mode
+		}
+		entry += ")"
+		parts = append(parts, entry)
+	}
+	attestation := "Planned services: " + strings.Join(parts, ", ")
+
+	if err := state.Bootstrap.CompleteStep("plan", attestation); err != nil {
+		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
+	}
+
+	// Store plan in bootstrap state.
+	state.Bootstrap.Plan = &ServicePlan{
+		Services:  services,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Mark next step as in_progress.
+	if state.Bootstrap.CurrentStep < len(state.Bootstrap.Steps) {
+		state.Bootstrap.Steps[state.Bootstrap.CurrentStep].Status = stepInProgress
+	}
+
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveState(e.stateDir, state); err != nil {
+		return nil, fmt.Errorf("bootstrap complete plan save: %w", err)
+	}
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Mode, state.Intent), nil
+}
+
 // BootstrapSkip skips the current step and returns the next.
 func (e *Engine) BootstrapSkip(stepName, reason string) (*BootstrapResponse, error) {
 	state, err := LoadSession(e.stateDir)

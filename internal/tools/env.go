@@ -42,6 +42,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 			if result.Process != nil {
 				result.Process = pollManageProcess(ctx, client, result.Process, onProgress)
 			}
+			result.NextActions = nextActionEnvSetSuccess
 			return jsonResult(result), nil, nil
 		case "delete":
 			result, err := ops.EnvDelete(ctx, client, projectID, input.ServiceHostname, input.Project, input.Variables)
@@ -51,6 +52,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 			if result.Process != nil {
 				result.Process = pollManageProcess(ctx, client, result.Process, onProgress)
 			}
+			result.NextActions = nextActionEnvDeleteSuccess
 			return jsonResult(result), nil, nil
 		case "":
 			return convertError(platform.NewPlatformError(

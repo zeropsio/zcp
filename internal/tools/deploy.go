@@ -78,9 +78,11 @@ func pollDeployBuild(
 		result.Status = statusDeployed
 		result.MonitorHint = ""
 		result.Message = fmt.Sprintf("Successfully deployed to %s", result.TargetService)
+		result.NextActions = nextActionDeploySuccess
 	case statusBuildFailed:
 		result.Status = statusBuildFailed
 		result.Suggestion = "Check build logs with zerops_logs for details"
+		result.NextActions = nextActionDeployBuildFail
 	}
 }
 

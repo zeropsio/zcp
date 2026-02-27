@@ -115,7 +115,7 @@ func TestServer_Instructions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			inst := BuildInstructions(context.Background(), nil, "", tt.rt)
+			inst := BuildInstructions(context.Background(), nil, "", tt.rt, "")
 			if tt.want != "" && !strings.Contains(inst, tt.want) {
 				t.Errorf("Instructions should contain %q, got: %s", tt.want, inst)
 			}
@@ -158,7 +158,7 @@ func TestBuildInstructions_WithServices(t *testing.T) {
 		{Name: "db", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
 	})
 
-	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{})
+	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
 
 	for _, want := range []string{"appdev", "appstage", "db", "nodejs@22", "postgresql@16", "RUNNING", string(workflow.StateConformant)} {
 		if !strings.Contains(inst, want) {
@@ -187,7 +187,7 @@ func TestBuildInstructions_FiltersSystemServices(t *testing.T) {
 			ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}},
 	})
 
-	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{})
+	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
 
 	// User services should appear.
 	if !strings.Contains(inst, "api") {
@@ -209,7 +209,7 @@ func TestBuildInstructions_FreshProject(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices(nil)
 
-	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{})
+	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
 
 	if !strings.Contains(inst, "empty") {
 		t.Error("instructions should mention empty project")
@@ -231,7 +231,7 @@ func TestBuildInstructions_APIFailure(t *testing.T) {
 		platform.ErrAPIError, "connection refused", "",
 	))
 
-	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{})
+	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
 
 	if !strings.Contains(inst, "ZCP manages") {
 		t.Error("instructions should still contain base instructions on API failure")
@@ -241,10 +241,81 @@ func TestBuildInstructions_APIFailure(t *testing.T) {
 func TestBuildInstructions_NilClient(t *testing.T) {
 	t.Parallel()
 
-	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{})
+	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, "")
 
 	if !strings.Contains(inst, "ZCP manages") {
 		t.Error("instructions should contain base instructions with nil client")
+	}
+}
+
+func TestBuildInstructions_WorkflowHint_ActiveBootstrap(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := workflow.NewEngine(dir)
+
+	// Start bootstrap and complete 3 steps.
+	if _, err := eng.BootstrapStart("proj-1", workflow.ModeFull, "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	for _, step := range []string{"detect", "plan", "load-knowledge"} {
+		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" ok"); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
+
+	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, dir)
+	if !strings.Contains(inst, "Active workflow") {
+		t.Error("instructions should contain workflow hint")
+	}
+	if !strings.Contains(inst, "bootstrap") {
+		t.Error("hint should mention bootstrap workflow")
+	}
+	if !strings.Contains(inst, "step 4/10") {
+		t.Errorf("hint should mention step 4/10, got: %s", inst)
+	}
+}
+
+func TestBuildInstructions_WorkflowHint_NoState(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir() // empty dir, no state file
+
+	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, dir)
+	if strings.Contains(inst, "Active workflow") {
+		t.Error("instructions should not contain workflow hint without state")
+	}
+}
+
+func TestBuildInstructions_WorkflowHint_PhaseDone(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := workflow.NewEngine(dir)
+
+	// Complete full bootstrap.
+	if _, err := eng.BootstrapStart("proj-1", workflow.ModeFull, "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	steps := []string{
+		"detect", "plan", "load-knowledge", "generate-import",
+		"import-services", "mount-dev", "discover-envs",
+		"deploy", "verify", "report",
+	}
+	for _, step := range steps {
+		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" ok"); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
+
+	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, dir)
+	if !strings.Contains(inst, "DONE") {
+		t.Errorf("hint should mention DONE phase, got: %s", inst)
+	}
+}
+
+func TestBuildInstructions_WorkflowHint_EmptyDir(t *testing.T) {
+	t.Parallel()
+	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, "")
+	if strings.Contains(inst, "Active workflow") {
+		t.Error("empty stateDir should produce no hint")
 	}
 }
 

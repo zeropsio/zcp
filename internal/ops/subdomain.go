@@ -17,6 +17,7 @@ type SubdomainResult struct {
 	Action        string            `json:"action"`
 	Status        string            `json:"status,omitempty"`
 	SubdomainUrls []string          `json:"subdomainUrls,omitempty"`
+	NextActions   string            `json:"nextActions,omitempty"`
 }
 
 // Error codes for idempotent handling.
