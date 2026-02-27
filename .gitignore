@@ -15,6 +15,9 @@ CLAUDE.local.md
 .claude/compact-state.md
 .claude/last-test-result
 
+# Workflow state (created by tests and runtime)
+**/.zcp/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -45,6 +45,7 @@ const (
 	ErrBootstrapActive        = "BOOTSTRAP_ACTIVE"
 	ErrBootstrapNotActive     = "BOOTSTRAP_NOT_ACTIVE"
 	ErrSSHDeployFailed        = "SSH_DEPLOY_FAILED"
+	ErrWorkflowRequired       = "WORKFLOW_REQUIRED"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

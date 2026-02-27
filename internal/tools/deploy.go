@@ -9,6 +9,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // DeployInput is the input type for zerops_deploy.
@@ -29,15 +30,19 @@ func RegisterDeploy(
 	sshDeployer ops.SSHDeployer,
 	localDeployer ops.LocalDeployer,
 	authInfo *auth.Info,
+	engine *workflow.Engine,
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
-		Description: "Deploy code to a Zerops service via SSH (cross-service) or local zcli push. Blocks until build pipeline completes — returns final status (DEPLOYED or BUILD_FAILED) with build duration. Automatically handles git initialization — use freshGit=true when deploying to a directory without a proper git repo (common for first deploys or shared storage). SSH mode: set sourceService (container to run from) + targetService. Local mode: set only targetService. SSH mode requires zerops.yml in workingDir. After deploy, /var/www only contains deployFiles artifacts — dev services must use deployFiles: [.] so zerops.yml survives for SSH cross-service deploys.",
+		Description: "REQUIRES active workflow session — call zerops_workflow action=\"start\" first. Deploy code to a Zerops service via SSH (cross-service) or local zcli push. Blocks until build pipeline completes — returns final status (DEPLOYED or BUILD_FAILED) with build duration. Automatically handles git initialization — use freshGit=true when deploying to a directory without a proper git repo (common for first deploys or shared storage). SSH mode: set sourceService (container to run from) + targetService. Local mode: set only targetService. SSH mode requires zerops.yml in workingDir. After deploy, /var/www only contains deployFiles artifacts — dev services must use deployFiles: [.] so zerops.yml survives for SSH cross-service deploys.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployInput) (*mcp.CallToolResult, any, error) {
+		if blocked := requireWorkflow(engine); blocked != nil {
+			return blocked, nil, nil
+		}
 		result, err := ops.Deploy(ctx, client, projectID, sshDeployer, localDeployer, *authInfo,
 			input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit, input.FreshGit)
 		if err != nil {

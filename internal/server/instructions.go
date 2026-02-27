@@ -13,42 +13,44 @@ import (
 const baseInstructions = `ZCP manages Zerops PaaS infrastructure.`
 
 const routingInstructions = `
-Tool routing:
-- Bootstrap/create services: zerops_workflow action="start" workflow="bootstrap" mode="full"
+Zerops operations are managed through workflow sessions.
+For any operation (creating services, deploying code, debugging), start with zerops_workflow.
+zerops_import and zerops_deploy require an active workflow session and will reject calls without one.
+
+Workflow commands:
+- Create services: zerops_workflow action="start" workflow="bootstrap" mode="full"
 - Deploy code: zerops_workflow action="start" workflow="deploy" mode="full"
 - Debug issues: zerops_workflow action="start" workflow="debug" mode="quick"
 - Scale: zerops_workflow action="start" workflow="scale" mode="quick"
 - Configure: zerops_workflow action="start" workflow="configure" mode="quick"
 - Monitor: zerops_discover
-- Search docs: zerops_knowledge query="..."
-
-NEVER call zerops_import directly. ALWAYS start with zerops_workflow.`
+- Search docs: zerops_knowledge query="..."`
 
 // BuildInstructions returns the MCP instructions message injected into the system prompt.
-// It includes runtime context, a dynamic project summary, workflow hint, and routing instructions.
+// It includes base + routing (first), workflow hint, runtime context, and project summary.
 // stateDir is the workflow state directory; empty string means no hint.
 func BuildInstructions(ctx context.Context, client platform.Client, projectID string, rt runtime.Info, stateDir string) string {
 	var b strings.Builder
 
-	// Section A: Runtime context.
-	if rt.ServiceName != "" {
-		fmt.Fprintf(&b, "You are running inside the Zerops service '%s'. You manage services in the same project.\n\n", rt.ServiceName)
-	}
-
-	// Section B: Project summary (dynamic).
-	if summary := buildProjectSummary(ctx, client, projectID); summary != "" {
-		b.WriteString(summary)
-		b.WriteString("\n\n")
-	}
-
-	// Section C: Base + routing instructions.
+	// Section A: Base + routing instructions (FIRST — most important for tool selection).
 	b.WriteString(baseInstructions)
 	b.WriteString(routingInstructions)
 
-	// Section D: Workflow hint (from local state file).
+	// Section B: Workflow hint (from local state file).
 	if hint := buildWorkflowHint(stateDir); hint != "" {
 		b.WriteString("\n\n")
 		b.WriteString(hint)
+	}
+
+	// Section C: Runtime context.
+	if rt.ServiceName != "" {
+		fmt.Fprintf(&b, "\n\nYou are running inside the Zerops service '%s'. You manage services in the same project.", rt.ServiceName)
+	}
+
+	// Section D: Project summary (dynamic).
+	if summary := buildProjectSummary(ctx, client, projectID); summary != "" {
+		b.WriteString("\n\n")
+		b.WriteString(summary)
 	}
 
 	return b.String()

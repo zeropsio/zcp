@@ -225,6 +225,12 @@ func TestIntegration_ImportThenDiscover(t *testing.T) {
     minContainers: 1
 `
 
+	// Start workflow session (required by import guard).
+	callAndGetText(t, session, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"intent": "integration test",
+	})
+
 	// Step 1: Import — validates inline and calls API.
 	importText := callAndGetText(t, session, "zerops_import", map[string]any{
 		"content": validYAML,

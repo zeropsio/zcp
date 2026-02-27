@@ -95,12 +95,12 @@ func (s *Server) registerTools() {
 
 	// Mutating tools
 	if s.sshDeployer != nil || s.localDeployer != nil {
-		tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.localDeployer, s.authInfo)
+		tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.localDeployer, s.authInfo, wfEngine)
 	}
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID)
-	tools.RegisterImport(s.server, s.client, projectID, stackCache)
+	tools.RegisterImport(s.server, s.client, projectID, stackCache, wfEngine)
 	tools.RegisterDelete(s.server, s.client, projectID)
 	tools.RegisterSubdomain(s.server, s.client, projectID)
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter)

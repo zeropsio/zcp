@@ -78,6 +78,12 @@ func TestIntegration_DeployLocalFlow(t *testing.T) {
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()
 
+	// Start workflow session (required by deploy guard).
+	callAndGetText(t, session, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "deploy", "mode": "full",
+		"intent": "integration test",
+	})
+
 	// Step 1: Discover to find the service.
 	discoverText := callAndGetText(t, session, "zerops_discover", map[string]any{
 		"service": "app",
@@ -138,6 +144,12 @@ func TestIntegration_DeployLocalWithWorkingDir(t *testing.T) {
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()
 
+	// Start workflow session (required by deploy guard).
+	callAndGetText(t, session, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "deploy", "mode": "full",
+		"intent": "integration test",
+	})
+
 	// Deploy with explicit workingDir.
 	deployText := callAndGetText(t, session, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -186,6 +198,12 @@ func TestIntegration_DeployError(t *testing.T) {
 	}
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()
+
+	// Start workflow session (required by deploy guard).
+	callAndGetText(t, session, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "deploy", "mode": "full",
+		"intent": "integration test",
+	})
 
 	result := callAndGetResult(t, session, "zerops_deploy", map[string]any{
 		"targetService": "app",

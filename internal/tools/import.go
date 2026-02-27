@@ -7,6 +7,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // ImportInput is the input type for zerops_import.
@@ -16,15 +17,18 @@ type ImportInput struct {
 }
 
 // RegisterImport registers the zerops_import tool.
-func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache) {
+func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
-		Description: "Import services from YAML into the current project. Validates service types before calling the API. Blocks until all processes complete — returns final statuses (FINISHED/FAILED). NOTE: enableSubdomainAccess=true in import YAML pre-configures routing but does NOT activate it. You MUST call zerops_subdomain action=\"enable\" after the first successful deploy to activate routing and get subdomain URLs.",
+		Description: "REQUIRES active workflow session — call zerops_workflow action=\"start\" first. Import services from YAML into the current project. Validates service types before calling the API. Blocks until all processes complete — returns final statuses (FINISHED/FAILED). NOTE: enableSubdomainAccess=true in import YAML pre-configures routing but does NOT activate it. You MUST call zerops_subdomain action=\"enable\" after the first successful deploy to activate routing and get subdomain URLs.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Import services from YAML",
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ImportInput) (*mcp.CallToolResult, any, error) {
+		if blocked := requireWorkflow(engine); blocked != nil {
+			return blocked, nil, nil
+		}
 		var liveTypes []platform.ServiceStackType
 		if cache != nil {
 			liveTypes = cache.Get(ctx, client)

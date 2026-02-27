@@ -4,11 +4,13 @@ package tools
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 func TestImportTool_Content(t *testing.T) {
@@ -30,7 +32,7 @@ func TestImportTool_Content(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil)
+	RegisterImport(srv, mock, "proj-1", nil, nil)
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
@@ -59,7 +61,7 @@ func TestImportTool_MissingContentAndFile(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil)
+	RegisterImport(srv, mock, "proj-1", nil, nil)
 
 	result := callTool(t, srv, "zerops_import", nil)
 
@@ -93,7 +95,7 @@ func TestImportTool_PollMultipleSuccess(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil)
+	RegisterImport(srv, mock, "proj-1", nil, nil)
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n  - hostname: db\n    type: postgresql@16\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
@@ -143,7 +145,7 @@ func TestImportTool_PollPartialFailure(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil)
+	RegisterImport(srv, mock, "proj-1", nil, nil)
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n  - hostname: db\n    type: postgresql@16\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
@@ -164,5 +166,52 @@ func TestImportTool_PollPartialFailure(t *testing.T) {
 	}
 	if parsed.Processes[1].FailReason == nil || *parsed.Processes[1].FailReason != failReason {
 		t.Errorf("process[1] failReason = %v, want %q", parsed.Processes[1].FailReason, failReason)
+	}
+}
+
+func TestImportTool_NoWorkflowSession_Blocked(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock()
+	engine := workflow.NewEngine(t.TempDir())
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterImport(srv, mock, "proj-1", nil, engine)
+
+	result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
+	if !result.IsError {
+		t.Error("expected IsError when no workflow session")
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "WORKFLOW_REQUIRED") {
+		t.Errorf("expected WORKFLOW_REQUIRED, got: %s", text)
+	}
+}
+
+func TestImportTool_WithWorkflowSession_Succeeds(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "proj-1",
+			ProjectName: "myproject",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{ID: "svc-1", Name: "api", Processes: []platform.Process{
+					{ID: "p-1", ActionName: "serviceStackImport", Status: "RUNNING"},
+				}},
+			},
+		}).
+		WithProcess(&platform.Process{ID: "p-1", Status: statusFinished})
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir)
+	if _, err := engine.Start("proj-1", workflow.ModeFull, "test"); err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterImport(srv, mock, "proj-1", nil, engine)
+
+	result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
+	if result.IsError {
+		t.Errorf("unexpected IsError with active session: %s", getTextContent(t, result))
 	}
 }

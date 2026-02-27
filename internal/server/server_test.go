@@ -132,8 +132,21 @@ func TestServer_Instructions_ReasonableLength(t *testing.T) {
 	// Check combined constant length is reasonable.
 	combined := baseInstructions + routingInstructions
 	words := strings.Fields(combined)
-	if len(words) < 20 || len(words) > 150 {
-		t.Errorf("base+routing instructions has %d words, expected 20-150", len(words))
+	if len(words) < 20 || len(words) > 170 {
+		t.Errorf("base+routing instructions has %d words, expected 20-170", len(words))
+	}
+}
+
+func TestServer_RoutingInstructions_WorkflowFirst(t *testing.T) {
+	t.Parallel()
+	if !strings.Contains(routingInstructions, "workflow sessions") {
+		t.Error("routingInstructions should mention 'workflow sessions'")
+	}
+	if !strings.Contains(routingInstructions, "require") {
+		t.Error("routingInstructions should mention 'require'")
+	}
+	if strings.Contains(routingInstructions, "NEVER") {
+		t.Error("routingInstructions should not use 'NEVER' language")
 	}
 }
 

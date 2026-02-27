@@ -84,6 +84,12 @@ func (e *Engine) Iterate() (*WorkflowState, error) {
 	return IterateSession(e.stateDir, e.evidenceDir)
 }
 
+// HasActiveSession returns true if there is a loadable workflow session.
+func (e *Engine) HasActiveSession() bool {
+	_, err := LoadSession(e.stateDir)
+	return err == nil
+}
+
 // GetState returns the current workflow state.
 func (e *Engine) GetState() (*WorkflowState, error) {
 	return LoadSession(e.stateDir)
