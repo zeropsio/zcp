@@ -223,7 +223,13 @@ The `/status` endpoint **MUST actually connect** to each managed service and rep
 
 **Do NOT generate hello-world apps that skip service connectivity.** The whole point of bootstrap is proving the infrastructure works end-to-end.
 
-#### Env var mapping
+#### Env var injection — how variables reach your app
+
+Zerops injects all `envVariables` and `envSecrets` as **standard OS environment variables** at container start. Cross-service references like `${db_connectionString}` are resolved before injection — your app receives plain values, not template syntax.
+
+**Read env vars using the runtime's native env var API. No `.env` files. No dotenv libraries. No manual env loading.** Every language/framework has a standard way to read OS environment variables — use that.
+
+#### Env var mapping in zerops.yml
 
 In zerops.yml `envVariables`, ONLY use variables discovered in the discover-envs step:
 ```yaml
@@ -277,6 +283,8 @@ envVariables:
 ```
 
 **ONLY use variables that were actually discovered.** Guessing variable names causes runtime failures. If a variable doesn't appear in discovery, it doesn't exist.
+
+**How these reach your app**: All variables mapped in zerops.yml `envVariables` are injected as standard OS environment variables at container start. Your app reads them with the runtime's native env var API. No `.env` files or dotenv libraries needed.
 </section>
 
 <section name="deploy">
@@ -388,6 +396,12 @@ Managed services in this project: {managedServices}
 
 {envVarSection}
 
+### How variables reach your app
+
+Zerops injects all `envVariables` as standard OS environment variables at container start. Cross-service references (e.g., `${db_connectionString}`) are resolved before injection — your app receives plain values. Use the runtime's native env var API to read them.
+
+**NO .env files. NO dotenv libraries. NO manual env loading.**
+
 ### Mapping in zerops.yml
 
 ```yaml
@@ -439,6 +453,8 @@ zerops:
 
 ## Application Requirements
 
+**Environment variables**: Zerops injects all `envVariables` as OS env vars at container start. Read them using the runtime's native env var API. Do NOT create `.env` files, use dotenv libraries, or add any env file parsing code.
+
 Your app MUST expose these endpoints on port 8080:
 
 | Endpoint | Response | Purpose |
@@ -475,7 +491,7 @@ Execute IN ORDER. Every step has verification — do not skip any.
 |---|------|--------|--------|
 | 1 | Write zerops.yml | Write to `{mountPath}/zerops.yml` with both setup entries | File exists with correct setup names |
 | 2 | Write app code | HTTP server on :8080 with `/`, `/health`, `/status` | Code references discovered env vars |
-| 3 | Write .gitignore | Appropriate for {runtimeType} | File exists |
+| 3 | Write .gitignore | Build artifacts and IDE files only. Do NOT include `.env` — no .env files exist on Zerops | File exists, no `.env` entry |
 | 4 | Deploy dev | `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" freshGit=true` | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
 | 5b | Remount | `zerops_mount action="mount" serviceHostname="{devHostname}"` — deploy replaces container, stale mount auto-cleans on remount | Mount path accessible |
@@ -521,6 +537,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 - subdomainUrls from enable response are already full URLs — do NOT prepend https://.
 - Internal connections use http://, never https://.
 - Env var cross-references use underscores: ${service_hostname}.
+- **NO .env files** — Zerops injects all envVariables/envSecrets as OS env vars at container start. Do NOT create `.env` files, use dotenv libraries, or add env-file-loading code.
 - 0.0.0.0 binding: app must listen on 0.0.0.0, not localhost or 127.0.0.1.
 
 ## Recovery
