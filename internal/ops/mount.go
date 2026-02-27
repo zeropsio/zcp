@@ -253,10 +253,15 @@ func MountStatus(
 	}
 
 	// Detect orphan mount directories from deleted services.
+	// Only report dirs that are actual SSHFS mounts (active or stale).
+	// Plain directories (e.g. .claude, .zcp) are silently skipped.
 	dirs, _ := mounter.ListMountDirs(ctx, mountBase)
 	for _, dir := range dirs {
 		if !serviceNames[dir] {
-			mounts = append(mounts, checkMountInfo(ctx, mounter, dir, true))
+			info := checkMountInfo(ctx, mounter, dir, true)
+			if info.Mounted || info.Stale {
+				mounts = append(mounts, info)
+			}
 		}
 	}
 
@@ -286,9 +291,7 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 			info.Message = "Mount is stale (transport disconnected). Unmount and remount after build/deploy completes."
 		}
 	case platform.MountStateNotMounted:
-		if orphan {
-			info.Message = "Leftover mount directory from deleted service."
-		}
+		// Nothing to report — orphan plain dirs are filtered by MountStatus.
 	}
 	return info
 }

@@ -109,9 +109,9 @@ func TestE2E_Mount(t *testing.T) {
 	// --- Step 4: Verify NOT MOUNTED initially ---
 	step++
 	logStep(t, step, "verify not mounted initially")
-	_, err := sshExec(t, zcpHostname, fmt.Sprintf("mountpoint -q /var/www/%s", appHostname))
+	_, err := sshExec(t, zcpHostname, fmt.Sprintf("grep -q 'fuse.sshfs.*/var/www/%s ' /proc/mounts", appHostname))
 	if err == nil {
-		t.Fatal("expected mountpoint to fail (not mounted), but it succeeded")
+		t.Fatal("expected /proc/mounts check to fail (not mounted), but it succeeded")
 	}
 	t.Log("  Confirmed: not mounted")
 
@@ -142,9 +142,9 @@ func TestE2E_Mount(t *testing.T) {
 	// --- Step 6: Verify MOUNTED ---
 	step++
 	logStep(t, step, "verify mounted")
-	out, err = sshExec(t, zcpHostname, fmt.Sprintf("mountpoint -q /var/www/%s", appHostname))
+	out, err = sshExec(t, zcpHostname, fmt.Sprintf("grep -q 'fuse.sshfs.*/var/www/%s ' /proc/mounts", appHostname))
 	if err != nil {
-		t.Fatalf("expected mountpoint to succeed (mounted), but failed: %s (%v)", out, err)
+		t.Fatalf("expected /proc/mounts to show fuse.sshfs mount, but failed: %s (%v)", out, err)
 	}
 	t.Log("  Confirmed: mounted")
 
@@ -177,9 +177,9 @@ func TestE2E_Mount(t *testing.T) {
 	// --- Step 9: Verify NOT MOUNTED after unmount ---
 	step++
 	logStep(t, step, "verify not mounted after unmount")
-	_, err = sshExec(t, zcpHostname, fmt.Sprintf("mountpoint -q /var/www/%s", appHostname))
+	_, err = sshExec(t, zcpHostname, fmt.Sprintf("grep -q 'fuse.sshfs.*/var/www/%s ' /proc/mounts", appHostname))
 	if err == nil {
-		t.Fatal("expected mountpoint to fail after unmount, but it succeeded")
+		t.Fatal("expected /proc/mounts check to fail after unmount, but it succeeded")
 	}
 	t.Log("  Confirmed: not mounted after unmount")
 

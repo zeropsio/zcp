@@ -1,8 +1,8 @@
 package platform
 
 import (
+	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,7 +22,7 @@ const (
 )
 
 // SystemMounter implements ops.Mounter using real system commands.
-// Only works on Zerops containers where sshfs, zsc, and mountpoint are available.
+// Only works on Zerops containers where sshfs, zsc, and /proc/mounts are available.
 type SystemMounter struct{}
 
 // NewSystemMounter creates a new SystemMounter.
@@ -31,36 +31,44 @@ func NewSystemMounter() *SystemMounter {
 }
 
 // CheckMount checks the mount state of a path: active, stale, or not mounted.
-func (m *SystemMounter) CheckMount(ctx context.Context, path string) (MountState, error) {
-	err := execWithTimeout(ctx, mountCheckTimeout, "mountpoint", "-q", path)
+// Uses /proc/mounts (kernel-authoritative) instead of mountpoint(1), which
+// returns exit 32 for ALL directories in LXC/Incus containers.
+func (m *SystemMounter) CheckMount(_ context.Context, path string) (MountState, error) {
+	mounted, err := isSshfsMount(path)
+	if err != nil {
+		return MountStateNotMounted, fmt.Errorf("proc mounts check: %w", err)
+	}
+	if !mounted {
+		return MountStateNotMounted, nil
+	}
+	// SSHFS entry exists — probe to distinguish active vs stale.
+	_, err = os.Stat(path)
 	if err == nil {
 		return MountStateActive, nil
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		switch exitErr.ExitCode() {
-		case 1:
-			return MountStateNotMounted, nil
-		case 32:
-			return MountStateStale, nil
-		}
-	}
-	// mountpoint command not found — try fallback.
-	if isExecNotFound(err) {
-		return m.checkMountFallback(ctx, path)
-	}
-	return MountStateNotMounted, fmt.Errorf("mountpoint check: %w", err)
+	return MountStateStale, nil
 }
 
-func (m *SystemMounter) checkMountFallback(ctx context.Context, path string) (MountState, error) {
-	out, err := outputWithTimeout(ctx, mountCheckTimeout, "mount")
+// isSshfsMount reads /proc/mounts and returns true if path has a fuse.sshfs entry.
+func isSshfsMount(path string) (bool, error) {
+	f, err := os.Open("/proc/mounts")
 	if err != nil {
-		return MountStateNotMounted, fmt.Errorf("mount list: %w", err)
+		return false, fmt.Errorf("open /proc/mounts: %w", err)
 	}
-	if strings.Contains(string(out), path) {
-		return MountStateActive, nil
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 3 {
+			continue
+		}
+		// fields[1] = mount point, fields[2] = filesystem type
+		if fields[1] == path && fields[2] == "fuse.sshfs" {
+			return true, nil
+		}
 	}
-	return MountStateNotMounted, nil
+	return false, scanner.Err()
 }
 
 // Mount creates an SSHFS mount via zsc systemd unit.
@@ -156,16 +164,4 @@ func execWithTimeout(ctx context.Context, timeout time.Duration, name string, ar
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return exec.CommandContext(ctx, name, args...).Run()
-}
-
-// outputWithTimeout runs a command with a timeout and returns its stdout.
-func outputWithTimeout(ctx context.Context, timeout time.Duration, name string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return exec.CommandContext(ctx, name, args...).Output()
-}
-
-func isExecNotFound(err error) bool {
-	var execErr *exec.Error
-	return errors.As(err, &execErr)
 }

@@ -512,14 +512,14 @@ func TestMountStatus_Messages(t *testing.T) {
 			wantMessage: "Service was deleted but mount is stale. Use unmount to clean up.",
 		},
 		{
-			name: "orphan not-mounted message",
+			name: "orphan not-mounted directory is filtered out",
 			services: []platform.ServiceStack{
 				{ID: "svc-1", Name: "app"},
 			},
 			mountDirs:   []string{"app", "oldservice"},
 			states:      map[string]platform.MountState{},
 			hostname:    "oldservice",
-			wantMessage: "Leftover mount directory from deleted service.",
+			wantMessage: "", // plain dirs are no longer reported
 		},
 	}
 
@@ -547,7 +547,12 @@ func TestMountStatus_Messages(t *testing.T) {
 					}
 				}
 			}
-			if !found {
+			if tt.wantMessage == "" {
+				// Expect hostname to be filtered out (plain dir orphan).
+				if found {
+					t.Errorf("hostname %s should not appear in results (filtered out)", tt.hostname)
+				}
+			} else if !found {
 				t.Errorf("hostname %s not found in results", tt.hostname)
 			}
 		})
@@ -578,14 +583,24 @@ func TestMountStatus_OrphanDetection(t *testing.T) {
 			wantOrphan: "deleted",
 		},
 		{
-			name: "orphan not-mounted directory from deleted service",
+			name: "orphan not-mounted directory filtered out",
 			services: []platform.ServiceStack{
 				{ID: "svc-1", Name: "app"},
 			},
 			mountDirs:  []string{"app", "oldservice"},
 			states:     map[string]platform.MountState{},
-			wantCount:  2,
-			wantOrphan: "oldservice",
+			wantCount:  1,
+			wantOrphan: "",
+		},
+		{
+			name: "hidden directories ignored",
+			services: []platform.ServiceStack{
+				{ID: "svc-1", Name: "app"},
+			},
+			mountDirs:  []string{"app", ".claude", ".zcp"},
+			states:     map[string]platform.MountState{},
+			wantCount:  1,
+			wantOrphan: "",
 		},
 		{
 			name: "no orphans when all dirs match services",
