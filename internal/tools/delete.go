@@ -23,11 +23,12 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string) {
 			Title:           "Delete a service",
 			DestructiveHint: boolPtr(true),
 		},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input DeleteInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeleteInput) (*mcp.CallToolResult, any, error) {
 		proc, err := ops.Delete(ctx, client, projectID, input.ServiceHostname, input.Confirm)
 		if err != nil {
 			return convertError(err), nil, nil
 		}
-		return jsonResult(proc), nil, nil
+		onProgress := buildProgressCallback(ctx, req)
+		return jsonResult(pollManageProcess(ctx, client, proc, onProgress)), nil, nil
 	})
 }

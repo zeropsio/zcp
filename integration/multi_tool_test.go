@@ -374,6 +374,9 @@ func TestIntegration_DeleteWithConfirmGate(t *testing.T) {
 	if proc.ActionName != "delete" {
 		t.Errorf("action = %q, want %q", proc.ActionName, "delete")
 	}
+	if proc.Status != "FINISHED" {
+		t.Errorf("status = %q, want %q", proc.Status, "FINISHED")
+	}
 }
 
 func TestIntegration_ProcessPolling(t *testing.T) {

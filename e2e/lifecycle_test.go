@@ -259,15 +259,24 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	}
 
 	// --- Step 16: zerops_delete runtime service ---
+	// Delete now blocks until process completes — no manual polling needed.
 	step++
 	logStep(t, step, "zerops_delete %s (confirmed)", rtHostname)
 	deleteRtText := s.mustCallSuccess("zerops_delete", map[string]any{
 		"serviceHostname": rtHostname,
 		"confirm":         true,
 	})
-	deleteRtProcID := extractProcessID(t, deleteRtText)
-	t.Logf("  Delete process: %s", deleteRtProcID)
-	waitForProcess(s, deleteRtProcID)
+	var deleteRtProc struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(deleteRtText), &deleteRtProc); err != nil {
+		t.Fatalf("parse delete result: %v", err)
+	}
+	if deleteRtProc.Status != "FINISHED" {
+		t.Errorf("delete rt process status = %q, want FINISHED", deleteRtProc.Status)
+	}
+	t.Logf("  Delete process %s completed: %s", deleteRtProc.ID, deleteRtProc.Status)
 
 	// --- Step 17: zerops_delete database service ---
 	step++
@@ -276,9 +285,17 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		"serviceHostname": dbHostname,
 		"confirm":         true,
 	})
-	deleteDbProcID := extractProcessID(t, deleteDbText)
-	t.Logf("  Delete process: %s", deleteDbProcID)
-	waitForProcess(s, deleteDbProcID)
+	var deleteDbProc struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(deleteDbText), &deleteDbProc); err != nil {
+		t.Fatalf("parse delete result: %v", err)
+	}
+	if deleteDbProc.Status != "FINISHED" {
+		t.Errorf("delete db process status = %q, want FINISHED", deleteDbProc.Status)
+	}
+	t.Logf("  Delete process %s completed: %s", deleteDbProc.ID, deleteDbProc.Status)
 
 	// --- Step 18: zerops_discover (verify services deleted) ---
 	step++

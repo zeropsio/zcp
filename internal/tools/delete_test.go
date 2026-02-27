@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -12,7 +13,8 @@ import (
 func TestDeleteTool_Confirmed(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDelete(srv, mock, "proj-1")
@@ -23,6 +25,16 @@ func TestDeleteTool_Confirmed(t *testing.T) {
 
 	if result.IsError {
 		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	// Verify delete now polls to completion (status=FINISHED).
+	text := getTextContent(t, result)
+	var proc platform.Process
+	if err := json.Unmarshal([]byte(text), &proc); err != nil {
+		t.Fatalf("parse delete result: %v", err)
+	}
+	if proc.Status != "FINISHED" {
+		t.Errorf("status = %q, want %q", proc.Status, "FINISHED")
 	}
 }
 
