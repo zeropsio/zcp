@@ -49,7 +49,7 @@ type startResponse struct {
 }
 
 // RegisterWorkflow registers the zerops_workflow tool.
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine) {
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, tracker *ops.KnowledgeTracker) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
 		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" mode=\"full|dev_only|hotfix|quick\" to begin a tracked session with guidance. mode is REQUIRED. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"transition|evidence|reset|iterate\" (phase management).",
@@ -62,7 +62,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, cache, input)
+			return handleWorkflowAction(ctx, projectID, engine, client, cache, tracker, input)
 		}
 
 		// Legacy: static workflow guidance.
@@ -89,7 +89,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -113,11 +113,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if cache != nil && client != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
-		return handleBootstrapComplete(engine, input, liveTypes)
+		return handleBootstrapComplete(engine, input, liveTypes, tracker)
 	case "skip":
 		return handleBootstrapSkip(engine, input)
 	case "status":
-		return handleBootstrapStatus(engine)
+		return handleBootstrapStatus(engine, tracker)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -276,7 +276,7 @@ func handleIterate(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
 	return jsonResult(state), nil, nil
 }
 
-func handleBootstrapComplete(engine *workflow.Engine, input WorkflowInput, liveTypes []platform.ServiceStackType) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(engine *workflow.Engine, input WorkflowInput, liveTypes []platform.ServiceStackType, tracker *ops.KnowledgeTracker) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -291,8 +291,9 @@ func handleBootstrapComplete(engine *workflow.Engine, input WorkflowInput, liveT
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Plan validation failed: %v", err),
-				"Provide valid plan: [{hostname, type, mode?}]. Hostnames: lowercase a-z0-9, max 25 chars. Managed services require mode: HA or NON_HA.")), nil, nil
+				"Provide valid plan: [{hostname, type, mode?}]. Hostnames: lowercase a-z0-9, max 25 chars. Managed services default to mode: NON_HA. Specify HA explicitly for production.")), nil, nil
 		}
+		injectKnowledgeHint(resp, tracker)
 		return jsonResult(resp), nil, nil
 	}
 
@@ -311,6 +312,7 @@ func handleBootstrapComplete(engine *workflow.Engine, input WorkflowInput, liveT
 			fmt.Sprintf("Complete step failed: %v", err),
 			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
 	}
+	injectKnowledgeHint(resp, tracker)
 	return jsonResult(resp), nil, nil
 }
 
@@ -337,7 +339,7 @@ func handleBootstrapSkip(engine *workflow.Engine, input WorkflowInput) (*mcp.Cal
 	return jsonResult(resp), nil, nil
 }
 
-func handleBootstrapStatus(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
+func handleBootstrapStatus(engine *workflow.Engine, tracker *ops.KnowledgeTracker) (*mcp.CallToolResult, any, error) {
 	resp, err := engine.BootstrapStatus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -345,7 +347,23 @@ func handleBootstrapStatus(engine *workflow.Engine) (*mcp.CallToolResult, any, e
 			fmt.Sprintf("Bootstrap status failed: %v", err),
 			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
 	}
+	injectKnowledgeHint(resp, tracker)
 	return jsonResult(resp), nil, nil
+}
+
+// injectKnowledgeHint adds a hint to the load-knowledge step guidance when
+// knowledge has already been loaded via prior zerops_knowledge calls.
+func injectKnowledgeHint(resp *workflow.BootstrapResponse, tracker *ops.KnowledgeTracker) {
+	if resp.Current == nil || resp.Current.Name != "load-knowledge" {
+		return
+	}
+	if tracker == nil || !tracker.IsLoaded() {
+		return
+	}
+	resp.Current.Guidance = fmt.Sprintf(
+		"Knowledge already loaded (%s).\nComplete this step with: zerops_workflow action=\"complete\" step=\"load-knowledge\" attestation=\"Already loaded\"",
+		tracker.Summary(),
+	)
 }
 
 // injectStacks inserts the stack list section into workflow content.

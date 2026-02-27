@@ -64,133 +64,175 @@ func TestValidateServicePlan(t *testing.T) {
 		{Name: "Shared Storage", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
 			{Name: "shared-storage", Status: "ACTIVE"},
 		}},
+		{Name: "Object Storage", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "object-storage", Status: "ACTIVE"},
+		}},
 	}
 
 	tests := []struct {
-		name      string
-		services  []PlannedService
-		liveTypes []platform.ServiceStackType
-		wantErr   string
+		name        string
+		services    []PlannedService
+		liveTypes   []platform.ServiceStackType
+		wantErr     string
+		wantDefault []string          // hostnames that should have mode defaulted to NON_HA
+		wantMode    map[string]string // hostname -> expected mode after validation
 	}{
 		{
-			"valid_plan",
-			[]PlannedService{
+			name: "valid_plan",
+			services: []PlannedService{
 				{Hostname: "appdev", Type: "bun@1.2"},
 				{Hostname: "appstage", Type: "bun@1.2"},
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
 			},
-			liveTypes,
-			"",
+			liveTypes: liveTypes,
 		},
 		{
-			"empty_services",
-			[]PlannedService{},
-			liveTypes,
-			"at least one service",
+			name:      "empty_services",
+			services:  []PlannedService{},
+			liveTypes: liveTypes,
+			wantErr:   "at least one service",
 		},
 		{
-			"duplicate_hostname",
-			[]PlannedService{
+			name: "duplicate_hostname",
+			services: []PlannedService{
 				{Hostname: "app", Type: "bun@1.2"},
 				{Hostname: "app", Type: "nodejs@22"},
 			},
-			liveTypes,
-			"duplicate hostname",
+			liveTypes: liveTypes,
+			wantErr:   "duplicate hostname",
 		},
 		{
-			"invalid_hostname",
-			[]PlannedService{
+			name: "invalid_hostname",
+			services: []PlannedService{
 				{Hostname: "my-app", Type: "bun@1.2"},
 			},
-			liveTypes,
-			"invalid characters",
+			liveTypes: liveTypes,
+			wantErr:   "invalid characters",
 		},
 		{
-			"empty_type",
-			[]PlannedService{
+			name: "empty_type",
+			services: []PlannedService{
 				{Hostname: "app", Type: ""},
 			},
-			liveTypes,
-			"empty type",
+			liveTypes: liveTypes,
+			wantErr:   "empty type",
 		},
 		{
-			"unknown_type_with_live",
-			[]PlannedService{
+			name: "unknown_type_with_live",
+			services: []PlannedService{
 				{Hostname: "app", Type: "python@3.12"},
 			},
-			liveTypes,
-			"not found in available",
+			liveTypes: liveTypes,
+			wantErr:   "not found in available",
 		},
 		{
-			"managed_missing_mode",
-			[]PlannedService{
+			name: "managed_missing_mode",
+			services: []PlannedService{
 				{Hostname: "db", Type: "postgresql@16"},
 			},
-			liveTypes,
-			"requires mode",
+			liveTypes:   liveTypes,
+			wantDefault: []string{"db"},
+			wantMode:    map[string]string{"db": "NON_HA"},
 		},
 		{
-			"managed_with_mode",
-			[]PlannedService{
+			name: "managed_with_mode",
+			services: []PlannedService{
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
 			},
-			liveTypes,
-			"",
+			liveTypes: liveTypes,
 		},
 		{
-			"managed_ha_mode",
-			[]PlannedService{
+			name: "managed_ha_mode",
+			services: []PlannedService{
 				{Hostname: "db", Type: "postgresql@16", Mode: "HA"},
 			},
-			liveTypes,
-			"",
+			liveTypes: liveTypes,
 		},
 		{
-			"managed_invalid_mode",
-			[]PlannedService{
+			name: "managed_invalid_mode",
+			services: []PlannedService{
 				{Hostname: "db", Type: "postgresql@16", Mode: "INVALID"},
 			},
-			liveTypes,
-			"must be HA or NON_HA",
+			liveTypes: liveTypes,
+			wantErr:   "must be HA or NON_HA",
 		},
 		{
-			"nil_live_types_skips_type_check",
-			[]PlannedService{
+			name: "nil_live_types_skips_type_check",
+			services: []PlannedService{
 				{Hostname: "app", Type: "unknown@99"},
 			},
-			nil,
-			"",
+			liveTypes: nil,
 		},
 		{
-			"runtime_service_no_mode_required",
-			[]PlannedService{
+			name: "runtime_service_no_mode_required",
+			services: []PlannedService{
 				{Hostname: "app", Type: "bun@1.2"},
 			},
-			liveTypes,
-			"",
+			liveTypes: liveTypes,
 		},
 		{
-			"valkey_requires_mode",
-			[]PlannedService{
+			name: "valkey_missing_mode_defaults",
+			services: []PlannedService{
 				{Hostname: "cache", Type: "valkey@7.2"},
 			},
-			liveTypes,
-			"requires mode",
+			liveTypes:   liveTypes,
+			wantDefault: []string{"cache"},
+			wantMode:    map[string]string{"cache": "NON_HA"},
 		},
 		{
-			"shared_storage_requires_mode",
-			[]PlannedService{
+			name: "shared_storage_with_mode",
+			services: []PlannedService{
 				{Hostname: "storage", Type: "shared-storage", Mode: "NON_HA"},
 			},
-			liveTypes,
-			"",
+			liveTypes: liveTypes,
+		},
+		{
+			name: "object_storage_no_mode",
+			services: []PlannedService{
+				{Hostname: "storage", Type: "object-storage"},
+			},
+			liveTypes:   liveTypes,
+			wantDefault: []string{"storage"},
+			wantMode:    map[string]string{"storage": "NON_HA"},
+		},
+		{
+			name: "object_storage_with_mode",
+			services: []PlannedService{
+				{Hostname: "storage", Type: "object-storage", Mode: "NON_HA"},
+			},
+			liveTypes: liveTypes,
+		},
+		{
+			name: "all_defaulted",
+			services: []PlannedService{
+				{Hostname: "db", Type: "postgresql@16"},
+				{Hostname: "cache", Type: "valkey@7.2"},
+				{Hostname: "storage", Type: "object-storage"},
+			},
+			liveTypes:   liveTypes,
+			wantDefault: []string{"db", "cache", "storage"},
+			wantMode: map[string]string{
+				"db":      "NON_HA",
+				"cache":   "NON_HA",
+				"storage": "NON_HA",
+			},
+		},
+		{
+			name: "batch_multiple_errors",
+			services: []PlannedService{
+				{Hostname: "my-app", Type: "bun@1.2"},
+				{Hostname: "db", Type: ""},
+				{Hostname: "cache", Type: "postgresql@16", Mode: "INVALID"},
+			},
+			liveTypes: liveTypes,
+			wantErr:   "3 validation errors",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := ValidateServicePlan(tt.services, tt.liveTypes)
+			defaulted, err := ValidateServicePlan(tt.services, tt.liveTypes)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Errorf("expected no error, got: %v", err)
@@ -201,6 +243,29 @@ func TestValidateServicePlan(t *testing.T) {
 				}
 				if !strings.Contains(err.Error(), tt.wantErr) {
 					t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
+				}
+				return
+			}
+
+			// Check defaulted hostnames.
+			if len(tt.wantDefault) != len(defaulted) {
+				t.Errorf("defaulted: want %v, got %v", tt.wantDefault, defaulted)
+			} else {
+				for i, want := range tt.wantDefault {
+					if defaulted[i] != want {
+						t.Errorf("defaulted[%d]: want %q, got %q", i, want, defaulted[i])
+					}
+				}
+			}
+
+			// Check modes were actually set on services.
+			for hostname, wantMode := range tt.wantMode {
+				for _, svc := range tt.services {
+					if svc.Hostname == hostname {
+						if svc.Mode != wantMode {
+							t.Errorf("service %q mode: want %q, got %q", hostname, wantMode, svc.Mode)
+						}
+					}
 				}
 			}
 		})

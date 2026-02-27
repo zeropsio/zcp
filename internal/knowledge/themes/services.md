@@ -91,7 +91,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **CONN**: `http://search:${search_port}` with `Authorization: Basic elastic:${search_password}`
 
 ## Object Storage
-**Type**: `object-storage` or `objectstorage` (both valid, no version) | **Mode**: NOT REQUIRED
+**Type**: `object-storage` or `objectstorage` (both valid, no version) | **Mode**: optional (default NON_HA)
 **Env**: `apiUrl`, `accessKeyId`, `secretAccessKey`, `bucketName`, `quotaGBytes`, `projectId`, `serviceId`, `hostname`
 **Config**: `objectStorageSize: 1-100` GB, `objectStoragePolicy` or `objectStorageRawPolicy`, `priority: 10`
 **Infrastructure**: runs on **independent infra** separate from other project services -- accessible from any Zerops service or remotely over internet

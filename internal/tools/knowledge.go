@@ -22,7 +22,7 @@ type KnowledgeInput struct {
 }
 
 // RegisterKnowledge registers the zerops_knowledge tool.
-func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache) {
+func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
 		Description: "Load Zerops platform knowledge. Four modes: (1) briefing — stack-specific rules. Use `runtime` and/or `services` params. Returns: binding rules, ports, env vars, wiring patterns, version validation. (2) scope — platform reference. Use scope=\"infrastructure\" for complete Zerops knowledge: import.yml/zerops.yml schemas, env var system (cross-service references, envSecrets), build/deploy lifecycle, rules & pitfalls. Required before generating YAML. (3) query — BM25 search for specific topics. (4) recipe — pre-built configs for frameworks.",
@@ -81,6 +81,9 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 					fmt.Sprintf("Failed to load core reference: %v", err),
 					"Check that core knowledge files are embedded")), nil, nil
 			}
+			if tracker != nil {
+				tracker.RecordScope()
+			}
 			return textResult(core), nil, nil
 		}
 
@@ -102,6 +105,9 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 					platform.ErrFileNotFound,
 					fmt.Sprintf("Failed to assemble briefing: %v", err),
 					"Check that core knowledge files are embedded")), nil, nil
+			}
+			if tracker != nil {
+				tracker.RecordBriefing(input.Runtime, input.Services)
 			}
 			return textResult(briefing), nil, nil
 		}

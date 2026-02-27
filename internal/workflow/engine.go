@@ -159,16 +159,24 @@ func (e *Engine) BootstrapCompletePlan(services []PlannedService, liveTypes []pl
 		return nil, fmt.Errorf("bootstrap complete plan: current step is %q, not \"plan\"", state.Bootstrap.CurrentStepName())
 	}
 
-	if err := ValidateServicePlan(services, liveTypes); err != nil {
+	defaulted, err := ValidateServicePlan(services, liveTypes)
+	if err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
 	}
 
 	// Build attestation from validated plan.
+	defaultedSet := make(map[string]bool, len(defaulted))
+	for _, h := range defaulted {
+		defaultedSet[h] = true
+	}
 	var parts []string
 	for _, svc := range services {
 		entry := svc.Hostname + " (" + svc.Type
 		if svc.Mode != "" {
 			entry += ", " + svc.Mode
+			if defaultedSet[svc.Hostname] {
+				entry += " [defaulted]"
+			}
 		}
 		entry += ")"
 		parts = append(parts, entry)

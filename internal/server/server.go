@@ -84,10 +84,13 @@ func (s *Server) registerTools() {
 		wfEngine = workflow.NewEngine(stateDir)
 	}
 
+	// Knowledge tracker shared between knowledge and workflow tools.
+	knowledgeTracker := ops.NewKnowledgeTracker()
+
 	// Read-only tools
-	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine)
+	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine, knowledgeTracker)
 	tools.RegisterDiscover(s.server, s.client, projectID)
-	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache)
+	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache, knowledgeTracker)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, projectID)
 	tools.RegisterProcess(s.server, s.client)

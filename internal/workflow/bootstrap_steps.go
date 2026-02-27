@@ -34,7 +34,7 @@ Hostname rules (STRICT):
 - Dev pattern: {app}dev (e.g., "appdev")
 - Stage pattern: {app}stage (e.g., "appstage")
 
-ALL managed services require mode: NON_HA or HA — including object-storage and shared-storage. No exceptions.
+Managed services default to mode: NON_HA. Set HA explicitly for production.
 
 Output: list of services with hostnames, types, and versions.
 Validate all types against available stacks from zerops_knowledge.`,

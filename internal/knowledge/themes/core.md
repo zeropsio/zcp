@@ -131,7 +131,7 @@ project:                               # OPTIONAL (omit in ZCP context)
 services[]:                            # REQUIRED
   hostname: string                     # REQUIRED, max 25, a-z and 0-9 ONLY (no hyphens/underscores), IMMUTABLE
   type: <runtime>@<version>            # REQUIRED (100+ valid values)
-  mode: HA | NON_HA                    # MANDATORY for managed services (dry-run won't catch missing mode), IMMUTABLE
+  mode: HA | NON_HA                    # Defaults to NON_HA if omitted for managed services. IMMUTABLE
   priority: int                        # higher = starts first (DB=10, app=5)
   enableSubdomainAccess: bool          # zerops.app subdomain
   startWithoutCode: bool               # start without deploy (runtimes only)
@@ -270,7 +270,7 @@ zerops[]:
 
 ### Import & Service Creation
 - **ALWAYS** use `valkey@7.2` (not `valkey@8`). REASON: v8 passes dry-run validation but fails actual import
-- **ALWAYS** set explicit `mode: NON_HA` or `mode: HA` for managed services (DB, cache, shared-storage). REASON: omitting mode passes dry-run but fails real import with "Mandatory parameter is missing"
+- **ALWAYS** set explicit `mode: NON_HA` or `mode: HA` for managed services (DB, cache, shared-storage). Mode defaults to NON_HA if omitted. Set HA explicitly for production. IMMUTABLE
 - **NEVER** set `mode` for runtime services. REASON: `mode` is only for managed services. Runtime HA is achieved via `minContainers: 2+` (horizontal scaling). Setting `mode: HA` on a runtime is meaningless
 - **NEVER** set `minContainers`/`maxContainers` for managed services. REASON: managed services have fixed container counts (NON_HA=1, HA=3); setting these causes import failure
 - **NEVER** set `verticalAutoscaling` for shared-storage or object-storage. REASON: these service types don't support vertical scaling; setting it causes import failure
@@ -356,7 +356,7 @@ zerops[]:
 | `npm install` only in build | Missing modules at runtime | Build container discarded; `node_modules` must be in `deployFiles` |
 | Bare `mvn` in buildCommands | "command not found" | Build image has JDK only; Maven not pre-installed |
 | `valkey@8` in import | Import fails | Only `valkey@7.2` is valid |
-| No `mode` for managed service | Import fails | Managed services require explicit `mode: NON_HA` or `mode: HA` |
+| No `mode` for managed service | Defaults to NON_HA | Managed services default to NON_HA if mode omitted. Set HA explicitly for production |
 | Set `minContainers` for PostgreSQL | Import fails | Managed services have fixed container counts |
 | `build.base: php-nginx@8.3` | "unknown base php-nginx@8.3" | Webserver variants (`php-nginx`, `php-apache`) are run bases only; use `build.base: php@8.3` + `run.base: php-nginx@8.3` |
 | `deployFiles: dist/~` + `start: bun dist/index.js` | App crashes / file not found | Tilde extracts `dist/` contents to `/var/www/`, so `index.js` is at `/var/www/index.js`, not `/var/www/dist/index.js`. Either remove tilde OR change start to `bun index.js` |

@@ -111,6 +111,14 @@ const (
 	stepSkipped    = "skipped"
 )
 
+// Step name constants for conditional skip validation.
+const (
+	stepDiscoverEnvs = "discover-envs"
+	stepMountDev     = "mount-dev"
+	stepGenerateCode = "generate-code"
+	stepDeploy       = "deploy"
+)
+
 const minAttestationLen = 10
 
 // CompleteStep validates and completes the current step with an attestation.
@@ -249,11 +257,11 @@ func validateConditionalSkip(plan *ServicePlan, stepName string) error {
 		}
 	}
 	switch stepName {
-	case "discover-envs":
+	case stepDiscoverEnvs:
 		if hasManagedServices {
 			return fmt.Errorf("skip step: cannot skip %q — managed services require env var discovery", stepName)
 		}
-	case "mount-dev", "generate-code", "deploy":
+	case stepMountDev, stepGenerateCode, stepDeploy:
 		if hasRuntimeServices {
 			return fmt.Errorf("skip step: cannot skip %q — runtime services in plan require it", stepName)
 		}

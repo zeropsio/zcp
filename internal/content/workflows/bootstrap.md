@@ -37,8 +37,8 @@ Route:
 <section name="plan">
 ### Step 1 — Identify stack components + environment mode
 
-> **mode is REQUIRED for ALL managed services** — databases, caches, object-storage, shared-storage.
-> Use `NON_HA` for dev environments, `HA` for production.
+> **mode defaults to NON_HA for managed services** — databases, caches, object-storage, shared-storage.
+> Set `HA` explicitly for production.
 
 From the user's request, identify:
 - **Runtime services**: type + framework (e.g., nodejs@22 with Next.js, go@1 with Fiber, bun@1.2 with Hono)
@@ -120,8 +120,8 @@ If the briefing doesn't cover your stack, call `zerops_knowledge recipe="{name}"
 
 Using the loaded knowledge from Steps 2+3, generate import.yml ONLY. Do NOT write zerops.yml or application code — that happens in the generate-code step AFTER env var discovery.
 
-> **mode is REQUIRED for ALL managed services** — databases, caches, object-storage, shared-storage.
-> Use `NON_HA` for dev environments, `HA` for production.
+> **mode defaults to NON_HA for managed services** — databases, caches, object-storage, shared-storage.
+> Set `HA` explicitly for production.
 
 **Hostname pattern** (from Step 1): Standard mode (default) creates `{app}dev` + `{app}stage` pairs with shared managed services. Simple mode creates a single `{app}`. If the user didn't specify, ask before generating.
 
@@ -150,7 +150,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 | No duplicates | No duplicate hostnames |
 | object-storage | Requires `objectStorageSize` field |
 | Preprocessor | `#yamlPreprocessor=on` if using `<@...>` functions |
-| Mode present | Every managed service has `mode: NON_HA` or `mode: HA` |
+| Mode present | Managed services default to NON_HA if omitted |
 
 Present import.yml to the user for review before proceeding.
 </section>
