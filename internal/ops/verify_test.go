@@ -21,44 +21,31 @@ func (f *callbackLogFetcher) FetchLogs(_ context.Context, _ *platform.LogAccess,
 	return f.fn(params)
 }
 
-// --- isManagedType ---
+// --- isManagedCategory ---
 
-func TestIsManagedType(t *testing.T) {
+func TestIsManagedCategory(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		typeVersion string
-		want        bool
+		category string
+		want     bool
 	}{
-		{"postgresql@16", true},
-		{"mariadb@10.11", true},
-		{"valkey@7.2", true},
-		{"keydb@6", true},
-		{"elasticsearch@8", true},
-		{"object-storage", true},
-		{"shared-storage", true},
-		{"kafka@3", true},
-		{"nats@2", true},
-		{"meilisearch@1.11", true},
-		{"clickhouse@24", true},
-		{"qdrant@1", true},
-		{"typesense@27", true},
-		{"rabbitmq@4", true},
-		{"nodejs@22", false},
-		{"go@1", false},
-		{"php-nginx@8.4", false},
-		{"python@3.12", false},
-		{"rust@stable", false},
-		{"bun@1.2", false},
-		{"dotnet@9", false},
+		{"STANDARD", true},
+		{"SHARED_STORAGE", true},
+		{"OBJECT_STORAGE", true},
+		{"USER", false},
+		{"CORE", false},
+		{"BUILD", false},
+		{"INTERNAL", false},
+		{"", false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.typeVersion, func(t *testing.T) {
+		t.Run(tt.category, func(t *testing.T) {
 			t.Parallel()
-			got := isManagedType(tt.typeVersion)
+			got := isManagedCategory(tt.category)
 			if got != tt.want {
-				t.Errorf("isManagedType(%q) = %v, want %v", tt.typeVersion, got, tt.want)
+				t.Errorf("isManagedCategory(%q) = %v, want %v", tt.category, got, tt.want)
 			}
 		})
 	}
@@ -73,7 +60,7 @@ func TestVerify_RuntimeAllPass(t *testing.T) {
 	// HTTP check functions are tested separately in TestCheckHTTPHealth/TestCheckHTTPStatus.
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Status: "RUNNING", SubdomainAccess: false},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", SubdomainAccess: false},
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
@@ -120,7 +107,7 @@ func TestVerify_RuntimeStopped(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Status: "READY_TO_DEPLOY"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "READY_TO_DEPLOY"},
 		})
 
 	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "app")
@@ -152,7 +139,7 @@ func TestVerify_RuntimeErrorLogs(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
@@ -182,7 +169,7 @@ func TestVerify_RuntimeNoStartup(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
@@ -206,7 +193,7 @@ func TestVerify_RuntimeRecentErrors(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
@@ -243,7 +230,7 @@ func TestVerify_RuntimeNoSubdomain(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Status: "RUNNING", SubdomainAccess: false},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", SubdomainAccess: false},
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
@@ -275,7 +262,7 @@ func TestVerify_ManagedRunning(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
 		})
 
 	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "db")
@@ -308,7 +295,7 @@ func TestVerify_ManagedStopped(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}, Status: "RESTARTING"},
+			{ID: "svc-1", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RESTARTING"},
 		})
 
 	result, err := Verify(context.Background(), mock, platform.NewMockLogFetcher(), http.DefaultClient, "proj-1", "db")
@@ -332,7 +319,7 @@ func TestVerify_LogFetchError(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
 		}).
 		WithError("GetProjectLog", fmt.Errorf("log backend down"))
 

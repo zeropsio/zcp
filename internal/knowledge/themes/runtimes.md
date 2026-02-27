@@ -31,7 +31,6 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 ## PHP
 
 **Base image includes**: `composer`, `git`, `wget`, PHP runtime
-**Versions**: `php@8.5` (latest), `php@8.4`, `php@8.3`, `php@8.1`
 **Build!=Run**: build `php@X`, run `php-nginx@X` or `php-apache@X`
 **Port**: 80 fixed (exception to 80/443 rule)
 **Pre-installed PHP extensions** (both php-nginx and php-apache images):
@@ -99,7 +98,6 @@ Use `apk add` only for extensions NOT in this list.
 ## Bun
 
 **Base image includes**: Bun, `npm`, `yarn`, `git`, `npx`
-**Versions**: `bun@latest` (= 1.2), `bun@1.1.34` (Ubuntu only), `bun@nightly`, `bun@canary`
 
 **Build procedure**:
 1. Set `build.base: bun@latest`
@@ -139,7 +137,6 @@ For compiled binaries: `deno compile --output app main.ts` → `deployFiles: app
 ## Python
 
 **Base image includes**: Python, `pip`, `git`
-**Versions**: `python@3.14` (latest), `python@3.12`, `python@3.11`
 
 **Build procedure** (canonical pattern):
 1. Set `build.base: python@3.12` (or desired version)
@@ -164,7 +161,6 @@ For compiled binaries: `deno compile --output app main.ts` → `deployFiles: app
 ## Go
 
 **Base image includes**: Go compiler, `git`, `wget`
-**Version**: `go@1.22` (or `go@1`, `go@latest`)
 **Build!=Run**: compiled binary -- deploy only binary, no `run.base` needed (omit it)
 
 **Build procedure**:
@@ -189,7 +185,7 @@ For compiled binaries: `deno compile --output app main.ts` → `deployFiles: app
 ## Java
 
 **Base image includes**: JDK, `git`, `wget` -- **NO Maven, NO Gradle pre-installed**
-**Versions**: `java@21` (recommended), `java@17`. NOTE: `java@latest` = `java@17`, use `java@21` explicitly
+NOTE: `java@latest` resolves to an older version, not the newest — always specify the exact version explicitly
 
 **Build procedure**:
 1. Set `build.base: java@21`
@@ -237,7 +233,6 @@ For compiled binaries: `deno compile --output app main.ts` → `deployFiles: app
 ## .NET
 
 **Base image includes**: .NET SDK, ASP.NET, `git`
-**Versions**: `dotnet@6`, `dotnet@7`, `dotnet@8`, `dotnet@9`
 
 **Build procedure**:
 1. Set `build.base: dotnet@9` (or desired version)
@@ -300,7 +295,6 @@ Do NOT rely solely on `ASPNETCORE_URLS` env var.
 ## Ruby
 
 **Base image includes**: Ruby, `bundler`, `gem`, `git`
-**Versions**: `ruby@3.4` (latest), `ruby@3.3`, `ruby@3.2`
 
 **Build procedure**:
 1. Set `build.base: ruby@3.4`
@@ -357,7 +351,6 @@ Do NOT rely solely on `ASPNETCORE_URLS` env var.
 
 ## Alpine
 
-**Versions**: `alpine@3.23` (latest), `alpine@3.20`, `alpine@3.19`, `alpine@3.18`, `alpine@3.17`
 - Default base (~5MB), `apk add --no-cache`
 - musl libc -- some C libraries won't compile
 

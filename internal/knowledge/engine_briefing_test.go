@@ -2,6 +2,7 @@
 package knowledge
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -270,5 +271,56 @@ func TestStore_GetBriefing_LayerOrderRealDocs(t *testing.T) {
 	// Runtime -> services (no core — core is separate via scope="infrastructure")
 	if runtimeIdx >= serviceIdx {
 		t.Errorf("runtime (pos %d) should come before services (pos %d)", runtimeIdx, serviceIdx)
+	}
+}
+
+// --- Phase 1: No static version numbers in briefing output ---
+
+// TestGetBriefing_NoStaticVersionLines verifies that runtime delta sections returned by
+// GetBriefing do NOT contain **Versions**: or **Version**: lines. These are redundant
+// with FormatServiceStacks() live injection.
+func TestGetBriefing_NoStaticVersionLines(t *testing.T) {
+	store := newTestStore(t)
+
+	// versionsPattern matches lines like "**Versions**: ..." or "**Version**: ..."
+	versionsPattern := regexp.MustCompile(`(?m)^\*\*Versions?\*\*:`)
+
+	runtimes := []string{
+		"php-nginx@8.4", "nodejs@22", "bun@1.2", "python@3.12",
+		"go@1", "java@21", "dotnet@9", "ruby@3.4", "alpine@3.23",
+	}
+
+	for _, rt := range runtimes {
+		t.Run(rt, func(t *testing.T) {
+			briefing, err := store.GetBriefing(rt, nil, nil)
+			if err != nil {
+				t.Fatalf("GetBriefing(%s): %v", rt, err)
+			}
+			if versionsPattern.MatchString(briefing) {
+				t.Errorf("briefing for %s contains static **Versions**: line — should be removed (live stacks provide version info)", rt)
+			}
+		})
+	}
+}
+
+// TestGetBriefing_NoStaticServiceTypeVersions verifies that service cards returned by
+// GetBriefing do NOT contain hardcoded version numbers in **Type**: lines.
+func TestGetBriefing_NoStaticServiceTypeVersions(t *testing.T) {
+	store := newTestStore(t)
+
+	// Match **Type**: lines that contain @ (version pinning)
+	typeWithVersion := regexp.MustCompile(`(?m)^\*\*Type\*\*:.*@`)
+
+	services := []string{
+		"postgresql@16", "mariadb@10.6", "valkey@7.2",
+		"elasticsearch@8.16", "kafka@3.8", "nats@2.12",
+	}
+
+	briefing, err := store.GetBriefing("", services, nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if typeWithVersion.MatchString(briefing) {
+		t.Errorf("briefing contains **Type**: lines with hardcoded versions — should use base name only")
 	}
 }

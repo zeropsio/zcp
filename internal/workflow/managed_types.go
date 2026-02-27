@@ -8,11 +8,11 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// managedServicePrefixes lists service type prefixes for managed (non-runtime) services.
-// Used by both isManagedService (project state detection) and isManagedType (plan validation).
-// Source of truth: matches Zerops API type names (hyphenated: "object-storage", "shared-storage").
+// managedServicePrefixes is the static fallback for managed service classification.
+// Used when live API types are unavailable. Source of truth: Zerops API categories.
+// Does NOT include phantom types that don't exist on Zerops (mysql, mongodb, redis).
 var managedServicePrefixes = []string{
-	"postgresql", "mariadb", "mysql", "mongodb", "valkey", "redis",
+	"postgresql", "mariadb", "valkey",
 	"keydb", "elasticsearch", "meilisearch", "rabbitmq", "kafka",
 	"nats", "clickhouse", "qdrant", "typesense",
 	"object-storage", "shared-storage",

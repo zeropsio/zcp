@@ -119,6 +119,38 @@ func compactVersionGroup(versions []string) string {
 	return prefix + "@{" + strings.Join(suffixes, ",") + "}"
 }
 
+// managedCategories are API categories that represent managed (non-runtime) services.
+var managedCategories = map[string]bool{
+	"STANDARD":       true,
+	"SHARED_STORAGE": true,
+	"OBJECT_STORAGE": true,
+}
+
+// IsManagedCategory returns true if the given API category represents a managed service.
+func IsManagedCategory(category string) bool {
+	return managedCategories[category]
+}
+
+// ManagedBaseNames derives managed service base names from live API service stack types.
+// Filters for STANDARD, SHARED_STORAGE, and OBJECT_STORAGE categories.
+// Returns empty map (not nil) for nil/empty input.
+func ManagedBaseNames(types []platform.ServiceStackType) map[string]bool {
+	result := make(map[string]bool)
+	for _, st := range types {
+		if !managedCategories[st.Category] {
+			continue
+		}
+		for _, v := range st.Versions {
+			if v.Status != versionStatusActive {
+				continue
+			}
+			base, _, _ := strings.Cut(v.Name, "@")
+			result[base] = true
+		}
+	}
+	return result
+}
+
 // FormatVersionCheck validates requested runtime + services against live types.
 // Returns markdown section with checkmark/warning per type + suggestions.
 // Returns "" if types is nil/empty (graceful degradation).

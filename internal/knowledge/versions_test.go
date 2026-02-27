@@ -522,3 +522,113 @@ func TestCompactVersionGroup(t *testing.T) {
 		})
 	}
 }
+
+// --- ManagedBaseNames Tests ---
+
+func TestManagedBaseNames_MixedCategories(t *testing.T) {
+	t.Parallel()
+
+	types := []platform.ServiceStackType{
+		{Name: "Node.js", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "nodejs@22", Status: "ACTIVE"},
+		}},
+		{Name: "PostgreSQL", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "postgresql@16", Status: "ACTIVE"},
+		}},
+		{Name: "Valkey", Category: "STANDARD", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "valkey@7.2", Status: "ACTIVE"},
+		}},
+		{Name: "Object Storage", Category: "OBJECT_STORAGE", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "object-storage", Status: "ACTIVE"},
+		}},
+		{Name: "Shared NFS", Category: "SHARED_STORAGE", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "shared-storage", Status: "ACTIVE"},
+		}},
+		{Name: "Core", Category: "CORE", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "core@1", Status: "ACTIVE"},
+		}},
+		{Name: "zbuild Go", Category: "BUILD", Versions: []platform.ServiceStackTypeVersion{
+			{Name: "go@1", Status: "ACTIVE"},
+		}},
+	}
+
+	result := ManagedBaseNames(types)
+
+	// STANDARD types should be included
+	if !result["postgresql"] {
+		t.Error("expected postgresql in managed base names")
+	}
+	if !result["valkey"] {
+		t.Error("expected valkey in managed base names")
+	}
+	// OBJECT_STORAGE should be included
+	if !result["object-storage"] {
+		t.Error("expected object-storage in managed base names")
+	}
+	// SHARED_STORAGE should be included
+	if !result["shared-storage"] {
+		t.Error("expected shared-storage in managed base names")
+	}
+	// USER types should NOT be included
+	if result["nodejs"] {
+		t.Error("nodejs (USER) should not be in managed base names")
+	}
+	// CORE types should NOT be included
+	if result["core"] {
+		t.Error("core (CORE) should not be in managed base names")
+	}
+	// BUILD types should NOT be included
+	if result["go"] {
+		t.Error("go (BUILD) should not be in managed base names")
+	}
+}
+
+func TestManagedBaseNames_Empty(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		types []platform.ServiceStackType
+	}{
+		{"nil", nil},
+		{"empty", []platform.ServiceStackType{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := ManagedBaseNames(tt.types)
+			if len(result) != 0 {
+				t.Errorf("expected empty map, got %v", result)
+			}
+		})
+	}
+}
+
+func TestIsManagedCategory(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		category string
+		want     bool
+	}{
+		{"STANDARD", true},
+		{"SHARED_STORAGE", true},
+		{"OBJECT_STORAGE", true},
+		{"USER", false},
+		{"CORE", false},
+		{"BUILD", false},
+		{"INTERNAL", false},
+		{"PREPARE_RUNTIME", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.category, func(t *testing.T) {
+			t.Parallel()
+			got := IsManagedCategory(tt.category)
+			if got != tt.want {
+				t.Errorf("IsManagedCategory(%q) = %v, want %v", tt.category, got, tt.want)
+			}
+		})
+	}
+}

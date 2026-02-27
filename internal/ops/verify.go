@@ -3,7 +3,6 @@ package ops
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -51,27 +50,14 @@ type connectionStatus struct {
 	Status string `json:"status"`
 }
 
-// managedBaseTypes identifies service types fully managed by Zerops.
-var managedBaseTypes = map[string]bool{
-	"postgresql":     true,
-	"mariadb":        true,
-	"valkey":         true,
-	"keydb":          true,
-	"elasticsearch":  true,
-	"object-storage": true,
-	"shared-storage": true,
-	"kafka":          true,
-	"nats":           true,
-	"meilisearch":    true,
-	"clickhouse":     true,
-	"qdrant":         true,
-	"typesense":      true,
-	"rabbitmq":       true,
-}
-
-func isManagedType(serviceTypeVersion string) bool {
-	base, _, _ := strings.Cut(serviceTypeVersion, "@")
-	return managedBaseTypes[base]
+// isManagedCategory returns true if the API category represents a managed service.
+func isManagedCategory(categoryName string) bool {
+	switch categoryName {
+	case "STANDARD", "SHARED_STORAGE", "OBJECT_STORAGE":
+		return true
+	default:
+		return false
+	}
 }
 
 // Verify runs health verification checks for a single service.
@@ -92,8 +78,7 @@ func Verify(
 		return nil, err
 	}
 
-	typeName := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
-	managed := isManagedType(typeName)
+	managed := isManagedCategory(svc.ServiceStackTypeInfo.ServiceStackTypeCategoryName)
 
 	result := &VerifyResult{
 		Hostname: hostname,

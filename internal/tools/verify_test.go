@@ -19,7 +19,7 @@ func TestVerifyTool_RuntimeHealthy(t *testing.T) {
 	// All pass/skip → healthy.
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
 		})
 	fetcher := platform.NewMockLogFetcher()
 
@@ -50,7 +50,7 @@ func TestVerifyTool_ManagedHealthy(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
 		})
 	fetcher := platform.NewMockLogFetcher()
 
@@ -102,7 +102,7 @@ func TestVerifyTool_GracefulLogError(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
 		}).
 		WithError("GetProjectLog", fmt.Errorf("log backend down"))
 	fetcher := platform.NewMockLogFetcher()

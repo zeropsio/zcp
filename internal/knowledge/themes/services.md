@@ -22,7 +22,7 @@ postgresql, mariadb, valkey, keydb, elasticsearch, kafka, nats, meilisearch, cli
 ```yaml
 services:
   - hostname: mydb
-    type: mariadb@10.6
+    type: mariadb@{version}
     mode: NON_HA
     priority: 10
 
@@ -43,7 +43,7 @@ Without this wiring, the runtime service has no way to connect to managed servic
 Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In import.yml, put ALL of them (both VARS and SECRETS) in `envSecrets`.** There is no `envVariables` at service level in import.yml — using it will silently drop the values. In zerops.yml, use `run.envVariables` for VARS. Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
 
 ## PostgreSQL
-**Type**: `postgresql@{18,17,16,14}` | **Mode**: optional (default NON_HA), immutable
+**Type**: `postgresql` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 5432 (RW), 5433 (read replicas, HA only), 6432 (external TLS via pgBouncer)
 **Env**: `hostname`, `port`, `portTls`, `user`, `password`, `connectionString`, `connectionTlsString`, `dbName`, `superUser`, `superUserPassword` | HA-only: `portReplicas`, `connectionStringReplicas`
 **HA**: 1 primary + 2 read replicas, streaming replication (async), auto-failover
@@ -53,7 +53,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **SECRETS**: `DATABASE_URL: postgresql://${db_user}:${db_password}@db:${db_port}/${db_dbName}`
 
 ## MariaDB
-**Type**: `mariadb@10.6` | **Mode**: optional (default NON_HA), immutable
+**Type**: `mariadb` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 3306 (fixed, no separate replica port)
 **Env**: `hostname`, `port`, `projectId`, `serviceId`, `user`, `password`, `connectionString`, `dbName`
 **HA**: MaxScale routing, read/write splitting, async replication, auto-failover
@@ -63,23 +63,23 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **SECRETS**: `DATABASE_URL: mysql://${db_user}:${db_password}@db:${db_port}/${db_dbName}`
 
 ## Valkey
-**Type**: `valkey@7.2` (MUST be 7.2 -- 8 passes validation but fails import) | **Mode**: optional (default NON_HA), immutable
+**Type**: `valkey` (check live stacks for versions; MUST NOT use v8 — passes validation but fails import) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 6379 (RW), 6380 (RW TLS), 7000 (RO, HA only), 7001 (RO TLS, HA only)
 **Env**: `hostname`, `port`, `connectionString`, `portTls` — NO `user` or `password` (unauthenticated)
 **HA**: 1 master + 2 replicas. Zerops-specific: ports 6379/6380 on replicas forward to master (NOT native Valkey). Async replication.
-**Gotchas**: Version MUST be 7.2. **No authentication** — connection is `redis://hostname:6379` without credentials. Do NOT reference `${cache_user}` or `${cache_password}` — they don't exist. Port forwarding is Zerops-specific. Use 7000/7001 for direct read scaling. TLS ports for external/VPN only.
+**Gotchas**: MUST NOT use v8 (passes validation but fails import — check live stacks for valid versions). **No authentication** — connection is `redis://hostname:6379` without credentials. Do NOT reference `${cache_user}` or `${cache_password}` — they don't exist. Port forwarding is Zerops-specific. Use 7000/7001 for direct read scaling. TLS ports for external/VPN only.
 **Wiring** (sample hostname: `cache`):
 **VARS**: `REDIS_URL: redis://cache:${cache_port}`
 
 ## KeyDB
-**Type**: `keydb@6` | **Mode**: optional (default NON_HA), immutable
+**Type**: `keydb` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 6379 | **Env**: same as Valkey (no user/password)
 **DEPRECATED**: Do NOT use for new projects -- use `valkey@7.2` instead. When user requests "Redis" or "cache", always use Valkey. Migration from KeyDB: only hostname changes.
 **Wiring** (sample hostname: `cache`):
 **VARS**: `REDIS_URL: redis://cache:${cache_port}`
 
 ## Elasticsearch
-**Type**: `elasticsearch@{9.2,8.16}` | **Mode**: optional (default NON_HA), immutable
+**Type**: `elasticsearch` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 9200 (HTTP only, no native transport)
 **Env**: `hostname`, `port`, `password` (user always `elastic`)
 **HA**: Multi-node cluster, automatic repair
@@ -113,7 +113,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **Disambiguation**: `zerops_mount` (SSHFS dev tool) is a completely different feature -- it mounts the service `/var/www` locally for development, not shared storage. Shared storage mount (`/mnt/{hostname}`) is a platform feature configured via import.yml + zerops.yml or `zerops_manage action="connect-storage"`.
 
 ## Kafka
-**Type**: `kafka@3.8` | **Mode**: optional (default NON_HA), immutable
+**Type**: `kafka` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 9092 (SASL PLAIN)
 **Env**: `hostname`, `port`, `user`, `password`
 **HA**: 3 brokers, 6 partitions, replication factor 3, auto-repair
@@ -124,7 +124,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **CONN**: `security.protocol=SASL_PLAINTEXT`, `sasl.mechanism=PLAIN` (no anonymous)
 
 ## NATS
-**Type**: `nats@{2.12,2.10}` | **Mode**: optional (default NON_HA), immutable
+**Type**: `nats` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 4222 (client), 8222 (HTTP monitoring)
 **Env**: `hostname`, `user` (always `zerops`), `password`, `connectionString`
 **Config**: `JET_STREAM_ENABLED` (default 1), `MAX_PAYLOAD` (default 8 MB, max 64 MB)
@@ -133,7 +133,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **SECRETS**: `NATS_URL: nats://${nats_user}:${nats_password}@nats:4222` or `NATS_URL: ${nats_connectionString}`
 
 ## Meilisearch
-**Type**: `meilisearch@{1.20,1.10}` | **Mode**: optional (NON_HA only)
+**Type**: `meilisearch` (check live stacks for versions) | **Mode**: optional (NON_HA only)
 **Ports**: 7700
 **Env**: `hostname`, `masterKey`, `defaultSearchKey`, `defaultAdminKey`
 **Gotchas**: **No HA** (single-node only). Never expose `masterKey` to frontend -- use `defaultSearchKey`.
@@ -142,7 +142,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **SECRETS**: `MEILI_MASTER_KEY: ${search_masterKey}`
 
 ## ClickHouse
-**Type**: `clickhouse@25.3` | **Mode**: optional (default NON_HA), immutable
+**Type**: `clickhouse` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 9000 (native), 8123 (HTTP), 9004 (MySQL compat), 9005 (PostgreSQL compat)
 **Env**: `hostname`, `port`, `portHttp`, `portMysql`, `portPostgresql`, `portNative`, `password`, `superUserPassword`, `dbName`
 **HA**: 3 nodes, replication factor 3, cluster `zerops`
@@ -153,7 +153,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **CONN**: Native `clickhouse://ch:${ch_port}`, HTTP `http://ch:${ch_portHttp}`, MySQL `ch:9004`, PostgreSQL `ch:9005`
 
 ## Qdrant
-**Type**: `qdrant@{1.12,1.10}` | **Mode**: optional (default NON_HA), immutable
+**Type**: `qdrant` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 6333 (HTTP), 6334 (gRPC)
 **Env**: `hostname`, `port`, `grpcPort`, `apiKey`, `readOnlyApiKey`, `connectionString`, `grpcConnectionString`
 **HA**: 3 nodes, `automaticClusterReplication=true` by default
@@ -164,7 +164,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **CONN**: HTTP `http://qdrant:${qdrant_port}` with `api-key` header, gRPC `qdrant:${qdrant_grpcPort}`
 
 ## Typesense
-**Type**: `typesense@27.1` | **Mode**: optional (default NON_HA), immutable
+**Type**: `typesense` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
 **Ports**: 8108
 **Env**: `hostname`, `port`, `apiKey` (immutable master key)
 **HA**: 3-node Raft consensus, auto leader election, recovery up to 1 min
@@ -175,7 +175,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In impor
 **CONN**: `http://typesense:${typesense_port}` with `x-typesense-api-key` header
 
 ## RabbitMQ
-**Type**: `rabbitmq@3.9` | **Mode**: optional (default NON_HA), immutable
+**Type**: `rabbitmq` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
 **DEPRECATED**: Do NOT use for new projects -- use `nats@2.12` instead. When user requests "RabbitMQ", "AMQP", or "message queue", always use NATS. Migration: switch from AMQP protocol to NATS client, use JetStream for durable messaging.
 **Ports**: 5672 (AMQP), 15672 (management UI)
 **Env**: `hostname`, `port`, `user`, `password`, `connectionString`

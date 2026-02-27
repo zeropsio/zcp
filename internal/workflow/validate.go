@@ -3,7 +3,9 @@ package workflow
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
+	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -36,9 +38,13 @@ func ValidatePlanHostname(hostname string) error {
 	return nil
 }
 
-// isManagedType checks if a service type requires a Mode field.
-// Uses managedServicePrefixes from managed_types.go (shared source of truth).
-func isManagedType(serviceType string) bool {
+// isManagedTypeWithLive checks if a service type requires a Mode field.
+// Uses live API categories when available, falls back to static prefixes.
+func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool {
+	base, _, _ := strings.Cut(serviceType, "@")
+	if len(liveManaged) > 0 {
+		return liveManaged[base]
+	}
 	return isManagedService(serviceType)
 }
 
@@ -48,6 +54,9 @@ func ValidateServicePlan(services []PlannedService, liveTypes []platform.Service
 	if len(services) == 0 {
 		return fmt.Errorf("plan must contain at least one service")
 	}
+
+	// Derive managed base names from live types when available.
+	liveManaged := knowledge.ManagedBaseNames(liveTypes)
 
 	seen := make(map[string]bool, len(services))
 	for _, svc := range services {
@@ -71,7 +80,7 @@ func ValidateServicePlan(services []PlannedService, liveTypes []platform.Service
 		}
 
 		// Managed services require Mode.
-		if isManagedType(svc.Type) {
+		if isManagedTypeWithLive(svc.Type, liveManaged) {
 			if svc.Mode == "" {
 				return fmt.Errorf("service %q (type %q) requires mode (HA or NON_HA)", svc.Hostname, svc.Type)
 			}
