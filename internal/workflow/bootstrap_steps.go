@@ -9,13 +9,13 @@ var stepDetails = []StepDetail{
 		Guidance: `Call zerops_discover to inspect the current project.
 Classify the project state:
 - FRESH: no runtime services exist (only managed or none)
-- CONFORMANT: dev+stage naming pattern detected (e.g., appdev+appstage)
+- CONFORMANT: dev+stage naming pattern detected (e.g., appdev+appstage, apidev+apistage, webdev+webstage)
 - NON_CONFORMANT: runtime services exist without dev/stage pattern
 
 Route:
 - FRESH → proceed normally through all steps
-- CONFORMANT → skip to deploy step (services already exist)
-- NON_CONFORMANT → warn user about non-standard naming, suggest reset or manual approach`,
+- CONFORMANT → if stack matches request, skip to deploy. If user wants a different stack, ASK how to proceed. Do NOT delete existing services without explicit user approval.
+- NON_CONFORMANT → STOP. Present existing services to user with types and status. Ask how to proceed. NEVER delete without explicit user approval naming each service.`,
 		Tools:        []string{"zerops_discover"},
 		Verification: "Project state classified as FRESH/CONFORMANT/NON_CONFORMANT with evidence",
 		Skippable:    false,
@@ -31,8 +31,8 @@ Route:
 Hostname rules (STRICT):
 - Only [a-z0-9], NO hyphens, NO underscores
 - Max 25 characters, immutable after creation
-- Dev pattern: {app}dev (e.g., "appdev")
-- Stage pattern: {app}stage (e.g., "appstage")
+- Dev pattern: {name}dev (e.g., "appdev", "apidev", "webdev")
+- Stage pattern: {name}stage (e.g., "appstage", "apistage", "webstage")
 
 Managed services default to mode: NON_HA. Set HA explicitly for production.
 

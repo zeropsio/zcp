@@ -4,7 +4,7 @@
 
 Two phases: generate correct configuration (the hard part), then deploy and verify with iteration (the harder part).
 
-**Default pattern: dev+stage service pairs.** Every runtime service gets `{app}dev` + `{app}stage` hostnames. Managed services are shared. User can opt into single-service mode if requested explicitly.
+**Default pattern: dev+stage service pairs.** Every runtime service gets `{name}dev` + `{name}stage` hostnames (e.g., "appdev", "apidev", "webdev"). Managed services are shared. User can opt into single-service mode if requested explicitly.
 
 ---
 
@@ -23,15 +23,15 @@ Call `zerops_discover` to see what exists. Then classify:
 | Discover result | State | Action |
 |----------------|-------|--------|
 | No runtime services | FRESH | Full bootstrap (Steps 1-7 then Phase 2) |
-| All requested services exist as dev+stage pairs | CONFORMANT | Suggest deploy workflow instead — services already exist |
-| Services exist but not as dev+stage pairs | NON_CONFORMANT | Warn user about non-standard naming, suggest reset or manual approach |
+| All requested services exist as dev+stage pairs | CONFORMANT | If stack matches request, route to deploy. If different stack requested, ASK user how to proceed. NEVER auto-delete. |
+| Services exist but not as dev+stage pairs | NON_CONFORMANT | ASK user how to proceed. Options: (a) add new services with different hostnames alongside existing, (b) user explicitly approves deletion of specific named services, (c) work with existing. NEVER auto-delete. |
 
 **Dev+stage detection:** Look for `{name}dev` + `{name}stage` hostname pairs.
 
 Route:
 - FRESH: proceed normally through all steps
-- CONFORMANT: skip bootstrap — route to deploy workflow (`zerops_workflow action="start" workflow="deploy"`)
-- NON_CONFORMANT: warn user about non-standard naming, suggest reset or manual approach
+- CONFORMANT: if stack matches, skip bootstrap — route to deploy workflow (`zerops_workflow action="start" workflow="deploy"`). If user wants a different stack, ASK before making any changes. Do NOT delete existing services without explicit user approval.
+- NON_CONFORMANT: STOP. Present existing services to user with types and status. Ask how to proceed. NEVER delete without explicit user approval naming each service.
 </section>
 
 <section name="plan">
@@ -49,8 +49,8 @@ From the user's request, identify:
 If the user hasn't specified, ask. Don't guess frameworks — the build config depends on it.
 
 **Environment mode** (ask if not specified):
-- **Standard** (default): Creates `{app}dev` + `{app}stage` + shared managed services. NON_HA mode.
-- **Simple**: Creates single `{app}` + managed services. Only if user explicitly requests it.
+- **Standard** (default): Creates `{name}dev` + `{name}stage` + shared managed services. NON_HA mode.
+- **Simple**: Creates single `{name}` + managed services. Only if user explicitly requests it.
 
 Default = standard (dev+stage). If the user says "just one service" or "simple setup", use simple mode.
 
@@ -123,11 +123,11 @@ Using the loaded knowledge from Steps 2+3, generate import.yml ONLY. Do NOT writ
 > **mode defaults to NON_HA for managed services** — databases, caches, object-storage, shared-storage.
 > Set `HA` explicitly for production.
 
-**Hostname pattern** (from Step 1): Standard mode (default) creates `{app}dev` + `{app}stage` pairs with shared managed services. Simple mode creates a single `{app}`. If the user didn't specify, ask before generating.
+**Hostname pattern** (from Step 1): Standard mode (default) creates `{name}dev` + `{name}stage` pairs (e.g., "appdev"/"appstage", "apidev"/"apistage", "webdev"/"webstage") with shared managed services. Simple mode creates a single `{name}`. If the user didn't specify, ask before generating.
 
 **Dev vs stage properties** (standard mode):
 
-| Property | Dev (`{app}dev`) | Stage (`{app}stage`) |
+| Property | Dev (`{name}dev`) | Stage (`{name}stage`) |
 |----------|-----------------|----------------------|
 | `startWithoutCode` | `true` | omit |
 | `maxContainers` | `1` | omit (default) |

@@ -281,7 +281,7 @@ zerops[]:
 - **ALWAYS** use `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` for Object Storage. REASON: MinIO backend doesn't support virtual-hosted style
 
 ### Import Generation
-- **ALWAYS** create dev/stage service pairs for runtime services. Naming: `{prefix}dev` and `{prefix}stage` (e.g., `appdev`/`appstage`, `apidev`/`apistage`). REASON: workflow engine detects conformant projects by this pattern; single services have no isolation
+- **ALWAYS** create dev/stage service pairs for runtime services. Naming: `{prefix}dev` and `{prefix}stage` — the prefix is descriptive, not fixed. Use `app`, `api`, `web`, `admin`, etc. based on what the service does (e.g., `appdev`/`appstage`, `apidev`/`apistage`, `webdev`/`webstage`). REASON: workflow engine detects conformant projects by this pattern; single services have no isolation
 - **ALWAYS** set `startWithoutCode: true` ONLY on dev services (not stage) in dev/stage pairs. REASON: dev starts immediately for SSHFS iteration; stage stays in READY_TO_DEPLOY until proven code is deployed from dev. Without `startWithoutCode` OR `buildFromGit`, a service stays stuck in READY_TO_DEPLOY
 - **ALWAYS** set `maxContainers: 1` for dev services in dev/stage pairs. REASON: dev uses SSHFS; multiple containers cause file conflicts and waste resources
 - **ALWAYS** set `buildFromGit: <url>` OR `startWithoutCode: true` on every runtime service that needs to start immediately. REASON: runtime services without either have no code source -- they stay in READY_TO_DEPLOY. For stage services in dev/stage pairs, omit both -- first deploy from dev transitions them to RUNNING
@@ -385,6 +385,26 @@ services:
 ```
 Dev starts immediately (RUNNING) with `startWithoutCode`. Stage stays in READY_TO_DEPLOY until first deploy from dev.
 zerops.yml must have `setup: appdev` and `setup: appstage` blocks matching hostnames.
+
+**Dev/Stage Setup (API + DB) — alternative prefix:**
+```yaml
+services:
+  - hostname: db
+    type: mariadb@10.6
+    mode: NON_HA
+    priority: 10
+  - hostname: apidev
+    type: bun@1.2
+    startWithoutCode: true
+    maxContainers: 1
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 1.0
+  - hostname: apistage
+    type: bun@1.2
+    enableSubdomainAccess: true
+```
+Same pattern as above but using `api` prefix instead of `app`. zerops.yml needs `setup: apidev` and `setup: apistage`.
 
 **Full-Stack Dev/Stage (App + DB + Cache + Storage):**
 ```yaml
