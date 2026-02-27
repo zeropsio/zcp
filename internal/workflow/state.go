@@ -70,7 +70,7 @@ var phaseSequences = map[Mode][]Phase{
 	ModeFull:    {PhaseInit, PhaseDiscover, PhaseDevelop, PhaseDeploy, PhaseVerify, PhaseDone},
 	ModeDevOnly: {PhaseInit, PhaseDiscover, PhaseDevelop, PhaseDone},
 	ModeHotfix:  {PhaseInit, PhaseDevelop, PhaseDeploy, PhaseVerify, PhaseDone},
-	// ModeQuick has no phase sequence — operates without gates.
+	ModeQuick:   {PhaseInit, PhaseDevelop, PhaseDeploy, PhaseVerify, PhaseDone},
 }
 
 // PhaseSequence returns the ordered phase sequence for a mode.

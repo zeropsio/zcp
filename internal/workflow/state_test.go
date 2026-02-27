@@ -81,8 +81,11 @@ func TestValidNextPhase_QuickMode(t *testing.T) {
 		current  Phase
 		expected []Phase
 	}{
-		{"init_no_phases", PhaseInit, nil},
-		{"any_phase_no_next", PhaseDevelop, nil},
+		{"init_to_develop", PhaseInit, []Phase{PhaseDevelop}},
+		{"develop_to_deploy", PhaseDevelop, []Phase{PhaseDeploy}},
+		{"deploy_to_verify", PhaseDeploy, []Phase{PhaseVerify}},
+		{"verify_to_done", PhaseVerify, []Phase{PhaseDone}},
+		{"done_terminal", PhaseDone, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,7 +134,7 @@ func TestIsValidTransition_InvalidCases(t *testing.T) {
 		{"full_backward", PhaseDeploy, PhaseDiscover, ModeFull},
 		{"devonly_has_no_deploy", PhaseDevelop, PhaseDeploy, ModeDevOnly},
 		{"hotfix_has_no_discover", PhaseInit, PhaseDiscover, ModeHotfix},
-		{"quick_no_transitions", PhaseInit, PhaseDiscover, ModeQuick},
+		{"quick_skip_phase", PhaseInit, PhaseDeploy, ModeQuick},
 		{"same_phase", PhaseInit, PhaseInit, ModeFull},
 	}
 	for _, tt := range tests {
@@ -154,7 +157,7 @@ func TestPhaseSequence_ReturnsCorrectSequence(t *testing.T) {
 		{"full", ModeFull, []Phase{PhaseInit, PhaseDiscover, PhaseDevelop, PhaseDeploy, PhaseVerify, PhaseDone}},
 		{"dev_only", ModeDevOnly, []Phase{PhaseInit, PhaseDiscover, PhaseDevelop, PhaseDone}},
 		{"hotfix", ModeHotfix, []Phase{PhaseInit, PhaseDevelop, PhaseDeploy, PhaseVerify, PhaseDone}},
-		{"quick_empty", ModeQuick, nil},
+		{"quick", ModeQuick, []Phase{PhaseInit, PhaseDevelop, PhaseDeploy, PhaseVerify, PhaseDone}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

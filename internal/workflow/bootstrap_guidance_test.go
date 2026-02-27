@@ -63,6 +63,12 @@ func TestResolveGuidance(t *testing.T) {
 			true,
 		},
 		{
+			"generate_code_returns_content",
+			"generate-code",
+			"zerops.yml",
+			true,
+		},
+		{
 			"import_services_returns_empty",
 			"import-services",
 			"",

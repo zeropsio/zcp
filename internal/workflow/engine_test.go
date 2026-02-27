@@ -265,8 +265,8 @@ func TestEngine_BootstrapStart_Success(t *testing.T) {
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
 	}
-	if resp.Progress.Total != 10 {
-		t.Errorf("Total: want 10, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 11 {
+		t.Errorf("Total: want 11, got %d", resp.Progress.Total)
 	}
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
@@ -338,7 +338,7 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 
 	steps := []string{
 		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
 		"deploy", "verify", "report",
 	}
 	var resp *BootstrapResponse
@@ -354,8 +354,8 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 	if resp.Current != nil {
 		t.Error("Current should be nil after all steps")
 	}
-	if resp.Progress.Completed != 10 {
-		t.Errorf("Completed: want 10, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 11 {
+		t.Errorf("Completed: want 11, got %d", resp.Progress.Completed)
 	}
 
 	// Phase should be DONE.
@@ -382,7 +382,7 @@ func TestEngine_BootstrapComplete_AutoEvidence(t *testing.T) {
 
 	steps := []string{
 		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
 		"deploy", "verify", "report",
 	}
 	for _, step := range steps {
@@ -417,7 +417,7 @@ func TestEngine_BootstrapComplete_AutoTransition(t *testing.T) {
 
 	steps := []string{
 		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
 		"deploy", "verify", "report",
 	}
 	for _, step := range steps {
@@ -541,8 +541,8 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 	}
 
 	// Verify first step shows as complete in summary.
-	if len(resp.Progress.Steps) != 10 {
-		t.Fatalf("Steps count: want 10, got %d", len(resp.Progress.Steps))
+	if len(resp.Progress.Steps) != 11 {
+		t.Fatalf("Steps count: want 11, got %d", len(resp.Progress.Steps))
 	}
 	if resp.Progress.Steps[0].Status != "complete" {
 		t.Errorf("step[0].Status: want complete, got %s", resp.Progress.Steps[0].Status)
@@ -561,7 +561,7 @@ func TestBootstrapComplete_AutoComplete_GatesChecked(t *testing.T) {
 	// Complete all steps with valid attestations.
 	steps := []string{
 		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
 		"deploy", "verify", "report",
 	}
 	for _, step := range steps {
@@ -593,10 +593,10 @@ func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
 	// to trigger a gate failure. We'll manually save bad evidence after bootstrap completes
 	// its auto-evidence generation.
 
-	// Complete steps 0-8 normally.
+	// Complete steps 0-9 normally.
 	preSteps := []string{
 		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
 		"deploy", "verify",
 	}
 	for _, step := range preSteps {
@@ -658,7 +658,7 @@ func TestEngine_BootstrapComplete_AutoEvidence_PassedCount(t *testing.T) {
 
 	steps := []string{
 		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
 		"deploy", "verify", "report",
 	}
 	for _, step := range steps {
@@ -678,13 +678,13 @@ func TestEngine_BootstrapComplete_AutoEvidence_PassedCount(t *testing.T) {
 		t.Errorf("recipe_review.Passed: want >=2, got %d", ev.Passed)
 	}
 
-	// dev_verify maps to steps: deploy, verify — both completed.
+	// dev_verify maps to steps: generate-code, deploy, verify — all completed.
 	ev, err = LoadEvidence(eng.evidenceDir, state.SessionID, "dev_verify")
 	if err != nil {
 		t.Fatalf("load dev_verify: %v", err)
 	}
-	if ev.Passed < 2 {
-		t.Errorf("dev_verify.Passed: want >=2, got %d", ev.Passed)
+	if ev.Passed < 3 {
+		t.Errorf("dev_verify.Passed: want >=3, got %d", ev.Passed)
 	}
 }
 
@@ -715,7 +715,7 @@ func TestEngine_BootstrapComplete_AutoEvidence_ServiceResults(t *testing.T) {
 	// Complete remaining steps.
 	remaining := []string{
 		"load-knowledge", "generate-import", "import-services",
-		"mount-dev", "discover-envs", "deploy", "verify", "report",
+		"mount-dev", "discover-envs", "generate-code", "deploy", "verify", "report",
 	}
 	for _, step := range remaining {
 		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {

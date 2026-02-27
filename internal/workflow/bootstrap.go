@@ -82,7 +82,7 @@ type BootstrapStepInfo struct {
 	PriorContext  *StepContext `json:"priorContext,omitempty"`
 }
 
-// NewBootstrapState creates a new bootstrap state with all 10 steps pending.
+// NewBootstrapState creates a new bootstrap state with all 11 steps pending.
 func NewBootstrapState() *BootstrapState {
 	steps := make([]BootstrapStep, len(stepDetails))
 	for i, d := range stepDetails {
@@ -158,6 +158,10 @@ func (b *BootstrapState) SkipStep(name, reason string) error {
 		return fmt.Errorf("skip step: %q is mandatory and cannot be skipped", name)
 	}
 
+	if err := validateConditionalSkip(b.Plan, name); err != nil {
+		return err
+	}
+
 	b.Steps[b.CurrentStep].Status = stepSkipped
 	b.Steps[b.CurrentStep].SkipReason = reason
 	b.Steps[b.CurrentStep].CompletedAt = time.Now().UTC().Format(time.RFC3339)
@@ -229,6 +233,32 @@ func (b *BootstrapState) buildPriorContext() *StepContext {
 		Plan:         b.Plan,
 		Attestations: attestations,
 	}
+}
+
+// validateConditionalSkip prevents skipping steps that are required based on the plan.
+func validateConditionalSkip(plan *ServicePlan, stepName string) error {
+	if plan == nil {
+		return nil
+	}
+	hasManagedServices, hasRuntimeServices := false, false
+	for _, svc := range plan.Services {
+		if isManagedService(svc.Type) {
+			hasManagedServices = true
+		} else {
+			hasRuntimeServices = true
+		}
+	}
+	switch stepName {
+	case "discover-envs":
+		if hasManagedServices {
+			return fmt.Errorf("skip step: cannot skip %q — managed services require env var discovery", stepName)
+		}
+	case "mount-dev", "generate-code", "deploy":
+		if hasRuntimeServices {
+			return fmt.Errorf("skip step: cannot skip %q — runtime services in plan require it", stepName)
+		}
+	}
+	return nil
 }
 
 // lookupDetail finds the StepDetail for a step name.

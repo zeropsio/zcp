@@ -1,7 +1,7 @@
 // Tests for: integration — bootstrap conductor full E2E flow through MCP server.
 //
 // Exercises the complete bootstrap conductor lifecycle:
-// start → complete all 10 steps → auto-evidence → auto-transition → DONE
+// start → complete all 11 steps → auto-evidence → auto-transition → DONE
 // Also tests: skip flow, status recovery, error cases.
 
 package integration_test
@@ -81,8 +81,8 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 	if err := json.Unmarshal([]byte(startText), &startResp); err != nil {
 		t.Fatalf("parse start response: %v", err)
 	}
-	if startResp.Progress.Total != 10 {
-		t.Fatalf("total steps: want 10, got %d", startResp.Progress.Total)
+	if startResp.Progress.Total != 11 {
+		t.Fatalf("total steps: want 11, got %d", startResp.Progress.Total)
 	}
 	if startResp.Current == nil || startResp.Current.Name != "detect" {
 		t.Fatal("expected first step to be 'detect'")
@@ -102,7 +102,7 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 		t.Error("expected non-empty tools list for detect step")
 	}
 
-	// Step 2: Complete all 10 steps sequentially.
+	// Step 2: Complete all 11 steps sequentially.
 	steps := []struct {
 		name        string
 		attestation string
@@ -114,6 +114,7 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 		{"import-services", "All services imported. bundev=RUNNING, bunstage=NEW, db=RUNNING. Process ID proc-123 FINISHED."},
 		{"mount-dev", "Mounted bundev at /var/www/bundev/. Stage and managed services skipped as expected."},
 		{"discover-envs", "Discovered db envs: connectionString, host, port, user, password, dbName. Recorded all 6 vars."},
+		{"generate-code", "zerops.yml and app code written to /var/www/bundev/ with correct env var mappings and /status endpoint."},
 		{"deploy", "Deployed bundev: /status returns 200 with SELECT 1 proof. Deployed bunstage: /status 200. Both subdomains enabled."},
 		{"verify", "Independent verification: bundev RUNNING + HTTP 200, bunstage RUNNING + HTTP 200, db RUNNING. 3/3 healthy."},
 		{"report", "All services operational. Dev: https://bundev-proj1.zerops.app, Stage: https://bunstage-proj1.zerops.app"},
@@ -150,7 +151,7 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 		}
 	}
 
-	// After all 10 steps: bootstrap complete.
+	// After all 11 steps: bootstrap complete.
 	// Use a fresh variable — json.Unmarshal doesn't zero omitted pointer fields.
 	var finalResp workflow.BootstrapResponse
 	finalRaw := callAndGetText(t, session, "zerops_workflow", map[string]any{
@@ -162,8 +163,8 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 	if finalResp.Current != nil {
 		t.Errorf("current should be nil after all steps complete, got: name=%q", finalResp.Current.Name)
 	}
-	if finalResp.Progress.Completed != 10 {
-		t.Errorf("final completed: want 10, got %d", finalResp.Progress.Completed)
+	if finalResp.Progress.Completed != 11 {
+		t.Errorf("final completed: want 11, got %d", finalResp.Progress.Completed)
 	}
 	if !strings.Contains(strings.ToLower(finalResp.Message), "complete") {
 		t.Errorf("final message should contain 'complete', got: %q", finalResp.Message)
@@ -208,6 +209,11 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 		"action": "skip", "step": "discover-envs", "reason": "env vars already known from import",
 	})
 
+	// Skip generate-code (no runtime services).
+	callAndGetText(t, session, "zerops_workflow", map[string]any{
+		"action": "skip", "step": "generate-code", "reason": "managed-only project, no code to generate",
+	})
+
 	// Skip deploy (no runtime services).
 	skipText = callAndGetText(t, session, "zerops_workflow", map[string]any{
 		"action": "skip", "step": "deploy", "reason": "managed-only project, no deploy needed",
@@ -234,9 +240,9 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 		t.Fatalf("parse final response: %v", err)
 	}
 
-	// 7 completed + 3 skipped = 10 total.
-	if finalResp.Progress.Completed != 10 {
-		t.Errorf("completed: want 10, got %d", finalResp.Progress.Completed)
+	// 7 completed + 4 skipped = 11 total.
+	if finalResp.Progress.Completed != 11 {
+		t.Errorf("completed: want 11, got %d", finalResp.Progress.Completed)
 	}
 	if finalResp.Current != nil {
 		t.Error("current should be nil after completion")
@@ -253,8 +259,8 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 			completedCount++
 		}
 	}
-	if skippedCount != 3 {
-		t.Errorf("skipped count: want 3, got %d", skippedCount)
+	if skippedCount != 4 {
+		t.Errorf("skipped count: want 4, got %d", skippedCount)
 	}
 	if completedCount != 7 {
 		t.Errorf("completed count: want 7, got %d", completedCount)
@@ -471,6 +477,7 @@ func TestIntegration_BootstrapConductor_StepGuidanceQuality(t *testing.T) {
 		"import-services": "zerops_import",
 		"mount-dev":       "zerops_mount",
 		"discover-envs":   "zerops_discover",
+		"generate-code":   "zerops_knowledge",
 		"deploy":          "zerops_deploy",
 		"verify":          "zerops_discover",
 		"report":          "zerops_discover",
@@ -478,7 +485,7 @@ func TestIntegration_BootstrapConductor_StepGuidanceQuality(t *testing.T) {
 
 	steps := []string{
 		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
 		"deploy", "verify", "report",
 	}
 

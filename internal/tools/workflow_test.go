@@ -420,8 +420,8 @@ func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Progress.Total != 10 {
-		t.Errorf("Total: want 10, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 11 {
+		t.Errorf("Total: want 11, got %d", resp.Progress.Total)
 	}
 	if resp.Current == nil || resp.Current.Name != "detect" {
 		t.Error("expected current step to be 'detect'")
@@ -546,8 +546,8 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Progress.Total != 10 {
-		t.Errorf("Total: want 10, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 11 {
+		t.Errorf("Total: want 11, got %d", resp.Progress.Total)
 	}
 }
 
@@ -649,22 +649,32 @@ func TestWorkflowTool_Action_BootstrapComplete_PlanStep_FallbackAttestation(t *t
 	}
 }
 
-func TestWorkflowTool_Action_QuickMode(t *testing.T) {
+func TestWorkflowTool_Action_QuickMode_Bootstrap(t *testing.T) {
 	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "", nil, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine)
 
-	// Quick mode with legacy workflow=bootstrap should return full markdown.
+	// Quick mode bootstrap now uses the conductor (returns BootstrapResponse).
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
 		"workflow": "bootstrap",
+		"mode":     "quick",
+		"intent":   "quick test",
 	})
 
 	if result.IsError {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))
 	}
 	text := getTextContent(t, result)
-	// Should contain markdown content (not JSON).
-	if strings.HasPrefix(text, "{") {
-		t.Error("quick/legacy mode should return markdown, not JSON")
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse BootstrapResponse: %v", err)
+	}
+	if resp.Progress.Total != 11 {
+		t.Errorf("Total: want 11, got %d", resp.Progress.Total)
+	}
+	if resp.Mode != "quick" {
+		t.Errorf("Mode: want quick, got %s", resp.Mode)
 	}
 }

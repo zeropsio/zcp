@@ -94,12 +94,16 @@ func checkHTTPHealth(ctx context.Context, httpClient HTTPDoer, url string) Check
 		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 201))
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return CheckResult{Name: name, Status: CheckPass}
+		return CheckResult{Name: name, Status: CheckPass, HTTPStatus: resp.StatusCode}
 	}
-	return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+	detail := fmt.Sprintf("HTTP %d", resp.StatusCode)
+	if len(body) > 0 {
+		detail += ": " + truncateBody(body, 200)
+	}
+	return CheckResult{Name: name, Status: CheckFail, Detail: detail, HTTPStatus: resp.StatusCode}
 }
 
 func checkHTTPStatus(ctx context.Context, httpClient HTTPDoer, url string) CheckResult {
@@ -118,8 +122,12 @@ func checkHTTPStatus(ctx context.Context, httpClient HTTPDoer, url string) Check
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("HTTP %d", resp.StatusCode)}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 201))
+		detail := fmt.Sprintf("HTTP %d", resp.StatusCode)
+		if len(body) > 0 {
+			detail += ": " + truncateBody(body, 200)
+		}
+		return CheckResult{Name: name, Status: CheckFail, Detail: detail, HTTPStatus: resp.StatusCode}
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -129,7 +137,8 @@ func checkHTTPStatus(ctx context.Context, httpClient HTTPDoer, url string) Check
 
 	var sr statusResponse
 	if err := json.Unmarshal(body, &sr); err != nil {
-		return CheckResult{Name: name, Status: CheckFail, Detail: "not JSON"}
+		excerpt := truncateBody(body, 200)
+		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("response not JSON (HTTP %d): %s", resp.StatusCode, excerpt), HTTPStatus: resp.StatusCode}
 	}
 
 	// If connections present, check each one.
@@ -147,6 +156,14 @@ func checkHTTPStatus(ctx context.Context, httpClient HTTPDoer, url string) Check
 		return CheckResult{Name: name, Status: CheckPass}
 	}
 	return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("status: %s", sr.Status)}
+}
+
+// truncateBody returns a string-truncated body with "..." if over max bytes.
+func truncateBody(b []byte, limit int) string {
+	if len(b) <= limit {
+		return string(b)
+	}
+	return string(b[:limit]) + "..."
 }
 
 // resolveSubdomainURL constructs the subdomain URL for a service (read-only, no enable call).

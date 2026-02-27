@@ -10,7 +10,7 @@ import (
 var bootstrapEvidenceMap = map[string][]string{
 	"recipe_review":   {"detect", "plan", "load-knowledge"},
 	"discovery":       {"discover-envs"},
-	"dev_verify":      {"deploy", "verify"},
+	"dev_verify":      {"generate-code", "deploy", "verify"},
 	"deploy_evidence": {"deploy"},
 	"stage_verify":    {"verify", "report"},
 }

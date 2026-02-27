@@ -57,6 +57,30 @@ func classifySSHError(err error, sourceService, targetService string) *platform.
 			fmt.Sprintf("SSH deploy from %s to %s failed: command not found", sourceService, targetService),
 			"zcli not available on source container. Verify the source service type supports zcli.",
 		)
+	case strings.Contains(msg, "no space left on device") || strings.Contains(msg, "disk quota exceeded"):
+		return platform.NewPlatformError(
+			platform.ErrSSHDeployFailed,
+			fmt.Sprintf("SSH deploy from %s to %s failed: disk full", sourceService, targetService),
+			fmt.Sprintf("No disk space. Scale up: zerops_scale serviceHostname=%s minDisk=5", sourceService),
+		)
+	case strings.Contains(msg, "permission denied"):
+		return platform.NewPlatformError(
+			platform.ErrSSHDeployFailed,
+			fmt.Sprintf("SSH deploy from %s to %s failed: permission denied", sourceService, targetService),
+			"Check buildCommands for ownership issues. Files may need chown or chmod.",
+		)
+	case strings.Contains(msg, "module not found") || strings.Contains(msg, "cannot find module"):
+		return platform.NewPlatformError(
+			platform.ErrSSHDeployFailed,
+			fmt.Sprintf("SSH deploy from %s to %s failed: module not found", sourceService, targetService),
+			"Add dependency install command to buildCommands (e.g., npm install, go mod tidy, bun install).",
+		)
+	case strings.Contains(msg, "exec format error"):
+		return platform.NewPlatformError(
+			platform.ErrSSHDeployFailed,
+			fmt.Sprintf("SSH deploy from %s to %s failed: exec format error", sourceService, targetService),
+			"Binary architecture mismatch. Ensure build targets linux/amd64 (e.g., GOOS=linux GOARCH=amd64).",
+		)
 	default:
 		return platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,

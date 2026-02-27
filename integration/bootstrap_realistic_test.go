@@ -153,6 +153,7 @@ func TestIntegration_BootstrapRealistic_FullAgentFlow(t *testing.T) {
 	agentPlanAndKnowledge(t, session)
 	agentGenerateAndImport(t, session)
 	agentMountAndDiscoverEnvs(t, session)
+	agentGenerateCode(t, session)
 	agentDeployWithSubdomain(t, session)
 	agentVerifyAndReport(t, session)
 }
@@ -266,6 +267,12 @@ func agentMountAndDiscoverEnvs(t *testing.T, session *mcp.ClientSession) {
 		"Discovered db envs: connectionString, host, port, user, password, dbName. 6 vars.")
 }
 
+func agentGenerateCode(t *testing.T, session *mcp.ClientSession) {
+	t.Helper()
+	completeStep(t, session, "generate-code",
+		"Generated zerops.yml + app code for bundev and bunstage. /status endpoint with DB SELECT 1 proof. deployFiles: [.].")
+}
+
 func agentDeployWithSubdomain(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 	for _, svc := range []string{"bundev", "bunstage"} {
@@ -311,8 +318,8 @@ func agentVerifyAndReport(t *testing.T, session *mcp.ClientSession) {
 	if finalResp.Current != nil {
 		t.Errorf("expected nil current after completion, got: %s", finalResp.Current.Name)
 	}
-	if finalResp.Progress.Completed != 10 {
-		t.Errorf("completed: want 10, got %d", finalResp.Progress.Completed)
+	if finalResp.Progress.Completed != 11 {
+		t.Errorf("completed: want 11, got %d", finalResp.Progress.Completed)
 	}
 	if !strings.Contains(strings.ToLower(finalResp.Message), "complete") {
 		t.Errorf("final message should contain 'complete', got: %q", finalResp.Message)
@@ -405,6 +412,9 @@ func managedOnlyImportAndSkip(t *testing.T, session *mcp.ClientSession) {
 		"action": "skip", "step": "discover-envs", "reason": "no runtime services need envs",
 	})
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
+		"action": "skip", "step": "generate-code", "reason": "no runtime services to generate code for",
+	})
+	callAndGetText(t, session, "zerops_workflow", map[string]any{
 		"action": "skip", "step": "deploy", "reason": "no runtime services to deploy",
 	})
 }
@@ -422,8 +432,8 @@ func managedOnlyVerifyAndReport(t *testing.T, session *mcp.ClientSession) {
 	reportText := completeStep(t, session, "report", "Managed-only project complete. db RUNNING.")
 	var finalResp workflow.BootstrapResponse
 	mustUnmarshal(t, reportText, &finalResp)
-	if finalResp.Progress.Completed != 10 {
-		t.Errorf("completed: want 10, got %d", finalResp.Progress.Completed)
+	if finalResp.Progress.Completed != 11 {
+		t.Errorf("completed: want 11, got %d", finalResp.Progress.Completed)
 	}
 
 	skipped, completed := 0, 0
@@ -435,8 +445,8 @@ func managedOnlyVerifyAndReport(t *testing.T, session *mcp.ClientSession) {
 			completed++
 		}
 	}
-	if skipped != 3 {
-		t.Errorf("skipped: want 3, got %d", skipped)
+	if skipped != 4 {
+		t.Errorf("skipped: want 4, got %d", skipped)
 	}
 	if completed != 7 {
 		t.Errorf("completed: want 7, got %d", completed)

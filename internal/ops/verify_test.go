@@ -368,10 +368,11 @@ func TestCheckHTTPHealth(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		handler    http.HandlerFunc
-		wantStatus string
-		wantDetail string
+		name           string
+		handler        http.HandlerFunc
+		wantStatus     string
+		wantDetail     string
+		wantHTTPStatus int
 	}{
 		{
 			name: "200 OK",
@@ -379,23 +380,28 @@ func TestCheckHTTPHealth(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				fmt.Fprint(w, `{"status":"ok"}`)
 			},
-			wantStatus: "pass",
+			wantStatus:     "pass",
+			wantHTTPStatus: 200,
 		},
 		{
-			name: "502 Bad Gateway",
+			name: "502 Bad Gateway with body",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusBadGateway)
+				fmt.Fprint(w, `<html>502 Bad Gateway</html>`)
 			},
-			wantStatus: "fail",
-			wantDetail: "HTTP 502",
+			wantStatus:     "fail",
+			wantDetail:     "HTTP 502: <html>502 Bad Gateway</html>",
+			wantHTTPStatus: 502,
 		},
 		{
-			name: "500 Internal Server Error",
+			name: "500 Internal Server Error with body",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprint(w, `Internal Server Error`)
 			},
-			wantStatus: "fail",
-			wantDetail: "HTTP 500",
+			wantStatus:     "fail",
+			wantDetail:     "HTTP 500: Internal Server Error",
+			wantHTTPStatus: 500,
 		},
 	}
 
@@ -413,6 +419,9 @@ func TestCheckHTTPHealth(t *testing.T) {
 			if tt.wantDetail != "" && !strings.Contains(c.Detail, tt.wantDetail) {
 				t.Errorf("detail = %q, want to contain %q", c.Detail, tt.wantDetail)
 			}
+			if tt.wantHTTPStatus != 0 && c.HTTPStatus != tt.wantHTTPStatus {
+				t.Errorf("httpStatus = %d, want %d", c.HTTPStatus, tt.wantHTTPStatus)
+			}
 		})
 	}
 }
@@ -421,10 +430,11 @@ func TestCheckHTTPStatus(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		handler    http.HandlerFunc
-		wantStatus string
-		wantDetail string
+		name           string
+		handler        http.HandlerFunc
+		wantStatus     string
+		wantDetail     string
+		wantHTTPStatus int
 	}{
 		{
 			name: "all connections ok",
@@ -457,20 +467,33 @@ func TestCheckHTTPStatus(t *testing.T) {
 			wantDetail: "status: error",
 		},
 		{
-			name: "not JSON",
+			name: "not JSON — includes body excerpt",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
 				fmt.Fprint(w, `<html>not found</html>`)
 			},
-			wantStatus: "fail",
-			wantDetail: "not JSON",
+			wantStatus:     "fail",
+			wantDetail:     "response not JSON (HTTP 200): <html>not found</html>",
+			wantHTTPStatus: 200,
 		},
 		{
-			name: "HTTP 500",
+			name: "HTTP 500 with body",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprint(w, `Internal Server Error`)
 			},
-			wantStatus: "fail",
-			wantDetail: "HTTP 500",
+			wantStatus:     "fail",
+			wantDetail:     "HTTP 500: Internal Server Error",
+			wantHTTPStatus: 500,
+		},
+		{
+			name: "HTTP 502 with HTML body",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadGateway)
+				fmt.Fprint(w, `<html><body>502 Bad Gateway</body></html>`)
+			},
+			wantStatus:     "fail",
+			wantDetail:     "HTTP 502: <html><body>502 Bad Gateway</body></html>",
+			wantHTTPStatus: 502,
 		},
 	}
 
@@ -487,6 +510,9 @@ func TestCheckHTTPStatus(t *testing.T) {
 			}
 			if tt.wantDetail != "" && !strings.Contains(c.Detail, tt.wantDetail) {
 				t.Errorf("detail = %q, want to contain %q", c.Detail, tt.wantDetail)
+			}
+			if tt.wantHTTPStatus != 0 && c.HTTPStatus != tt.wantHTTPStatus {
+				t.Errorf("httpStatus = %d, want %d", c.HTTPStatus, tt.wantHTTPStatus)
 			}
 		})
 	}
@@ -564,6 +590,34 @@ func TestVerify_StatusAggregation(t *testing.T) {
 			got := aggregateStatus(tt.checks)
 			if got != tt.want {
 				t.Errorf("aggregateStatus() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// --- truncateBody ---
+
+func TestTruncateBody(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+		max  int
+		want string
+	}{
+		{"short", "hello", 10, "hello"},
+		{"exact", "hello", 5, "hello"},
+		{"truncated", "hello world", 5, "hello..."},
+		{"empty", "", 10, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := truncateBody([]byte(tt.body), tt.max)
+			if got != tt.want {
+				t.Errorf("truncateBody(%q, %d) = %q, want %q", tt.body, tt.max, got, tt.want)
 			}
 		})
 	}

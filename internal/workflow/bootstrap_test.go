@@ -1,4 +1,4 @@
-// Tests for: bootstrap conductor — 10-step state machine with attestations.
+// Tests for: bootstrap conductor — 11-step state machine with attestations.
 package workflow
 
 import (
@@ -11,7 +11,7 @@ func TestStepDetails_AllStepsCovered(t *testing.T) {
 	t.Parallel()
 	expectedNames := []string{
 		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
 		"deploy", "verify", "report",
 	}
 	for _, name := range expectedNames {
@@ -83,6 +83,7 @@ func TestStepDetails_Categories(t *testing.T) {
 		{"import-services", CategoryFixed},
 		{"mount-dev", CategoryFixed},
 		{"discover-envs", CategoryFixed},
+		{"generate-code", CategoryCreative},
 		{"deploy", CategoryBranching},
 		{"verify", CategoryFixed},
 		{"report", CategoryFixed},
@@ -98,7 +99,7 @@ func TestStepDetails_Categories(t *testing.T) {
 	}
 }
 
-func TestNewBootstrapState_10Steps(t *testing.T) {
+func TestNewBootstrapState_11Steps(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 
@@ -108,13 +109,13 @@ func TestNewBootstrapState_10Steps(t *testing.T) {
 	if bs.CurrentStep != 0 {
 		t.Errorf("CurrentStep: want 0, got %d", bs.CurrentStep)
 	}
-	if len(bs.Steps) != 10 {
-		t.Fatalf("Steps count: want 10, got %d", len(bs.Steps))
+	if len(bs.Steps) != 11 {
+		t.Fatalf("Steps count: want 11, got %d", len(bs.Steps))
 	}
 
 	expectedNames := []string{
 		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
 		"deploy", "verify", "report",
 	}
 	for i, name := range expectedNames {
@@ -200,7 +201,7 @@ func TestCompleteStep_AllDone(t *testing.T) {
 
 	stepNames := []string{
 		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
 		"deploy", "verify", "report",
 	}
 	for _, name := range stepNames {
@@ -214,8 +215,8 @@ func TestCompleteStep_AllDone(t *testing.T) {
 	if bs.Active {
 		t.Error("expected Active=false after all steps complete")
 	}
-	if bs.CurrentStep != 10 {
-		t.Errorf("CurrentStep: want 10, got %d", bs.CurrentStep)
+	if bs.CurrentStep != 11 {
+		t.Errorf("CurrentStep: want 11, got %d", bs.CurrentStep)
 	}
 }
 
@@ -257,8 +258,8 @@ func TestSkipStep_MandatoryStep(t *testing.T) {
 		{"load-knowledge", "load-knowledge", 2},
 		{"generate-import", "generate-import", 3},
 		{"import-services", "import-services", 4},
-		{"verify", "verify", 8},
-		{"report", "report", 9},
+		{"verify", "verify", 9},
+		{"report", "report", 10},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -307,8 +308,8 @@ func TestBuildResponse_FirstStep(t *testing.T) {
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
 	}
-	if resp.Progress.Total != 10 {
-		t.Errorf("Progress.Total: want 10, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 11 {
+		t.Errorf("Progress.Total: want 11, got %d", resp.Progress.Total)
 	}
 	if resp.Progress.Completed != 0 {
 		t.Errorf("Progress.Completed: want 0, got %d", resp.Progress.Completed)
@@ -359,15 +360,15 @@ func TestBuildResponse_AllDone(t *testing.T) {
 	for i := range bs.Steps {
 		bs.Steps[i].Status = "complete"
 	}
-	bs.CurrentStep = 10
+	bs.CurrentStep = 11
 	bs.Active = false
 
 	resp := bs.BuildResponse("sess-3", ModeFull, "test")
 	if resp.Current != nil {
 		t.Error("Current should be nil when all done")
 	}
-	if resp.Progress.Completed != 10 {
-		t.Errorf("Progress.Completed: want 10, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 11 {
+		t.Errorf("Progress.Completed: want 11, got %d", resp.Progress.Completed)
 	}
 	if !strings.Contains(strings.ToLower(resp.Message), "complete") {
 		t.Errorf("Message should contain 'complete', got: %s", resp.Message)
@@ -402,6 +403,91 @@ func TestBuildResponse_WithSkipped(t *testing.T) {
 	}
 	if !found {
 		t.Error("mount-dev should appear as 'skipped' in progress steps")
+	}
+}
+
+func TestValidateConditionalSkip(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		plan      *ServicePlan
+		stepName  string
+		wantError bool
+	}{
+		{
+			name:      "nil plan allows skip",
+			plan:      nil,
+			stepName:  "discover-envs",
+			wantError: false,
+		},
+		{
+			name: "discover-envs blocked with managed services",
+			plan: &ServicePlan{Services: []PlannedService{
+				{Hostname: "appdev", Type: "bun@1.2"},
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
+			}},
+			stepName:  "discover-envs",
+			wantError: true,
+		},
+		{
+			name: "discover-envs allowed without managed services",
+			plan: &ServicePlan{Services: []PlannedService{
+				{Hostname: "appdev", Type: "bun@1.2"},
+			}},
+			stepName:  "discover-envs",
+			wantError: false,
+		},
+		{
+			name: "mount-dev blocked with runtime services",
+			plan: &ServicePlan{Services: []PlannedService{
+				{Hostname: "appdev", Type: "bun@1.2"},
+			}},
+			stepName:  "mount-dev",
+			wantError: true,
+		},
+		{
+			name: "mount-dev allowed without runtime services",
+			plan: &ServicePlan{Services: []PlannedService{
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
+			}},
+			stepName:  "mount-dev",
+			wantError: false,
+		},
+		{
+			name: "generate-code blocked with runtime services",
+			plan: &ServicePlan{Services: []PlannedService{
+				{Hostname: "appdev", Type: "go@1"},
+			}},
+			stepName:  "generate-code",
+			wantError: true,
+		},
+		{
+			name: "deploy blocked with runtime services",
+			plan: &ServicePlan{Services: []PlannedService{
+				{Hostname: "appdev", Type: "go@1"},
+			}},
+			stepName:  "deploy",
+			wantError: true,
+		},
+		{
+			name: "deploy allowed without runtime services",
+			plan: &ServicePlan{Services: []PlannedService{
+				{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA"},
+			}},
+			stepName:  "deploy",
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateConditionalSkip(tt.plan, tt.stepName)
+			if (err != nil) != tt.wantError {
+				t.Errorf("validateConditionalSkip(): error=%v, wantError=%v", err, tt.wantError)
+			}
+		})
 	}
 }
 
@@ -491,7 +577,7 @@ func TestBuildResponse_PriorContext_FirstStep_Empty(t *testing.T) {
 	}
 }
 
-func TestBootstrapState_CurrentStepName_10Steps(t *testing.T) {
+func TestBootstrapState_CurrentStepName_11Steps(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
@@ -500,8 +586,9 @@ func TestBootstrapState_CurrentStepName_10Steps(t *testing.T) {
 	}{
 		{"first", 0, "detect"},
 		{"middle", 5, "mount-dev"},
-		{"last", 9, "report"},
-		{"out_of_bounds", 10, ""},
+		{"generate_code", 7, "generate-code"},
+		{"last", 10, "report"},
+		{"out_of_bounds", 11, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

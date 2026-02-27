@@ -82,7 +82,8 @@ func ValidateServicePlan(services []PlannedService, liveTypes []platform.Service
 		// Managed services require Mode.
 		if isManagedTypeWithLive(svc.Type, liveManaged) {
 			if svc.Mode == "" {
-				return fmt.Errorf("service %q (type %q) requires mode (HA or NON_HA)", svc.Hostname, svc.Type)
+				return fmt.Errorf("service %q (type %q) requires mode (HA or NON_HA) — all managed services "+
+					"(databases, caches, object-storage, shared-storage) must specify mode", svc.Hostname, svc.Type)
 			}
 			if svc.Mode != "HA" && svc.Mode != "NON_HA" {
 				return fmt.Errorf("service %q mode %q must be HA or NON_HA", svc.Hostname, svc.Mode)

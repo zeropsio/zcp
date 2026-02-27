@@ -136,8 +136,8 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	mode := workflow.Mode(input.Mode)
 
-	// Bootstrap conductor: use BootstrapStart for non-quick bootstrap.
-	if input.Workflow == workflowBootstrap && mode != workflow.ModeQuick {
+	// Bootstrap conductor: use BootstrapStart for bootstrap workflow.
+	if input.Workflow == workflowBootstrap {
 		resp, err := engine.BootstrapStart(projectID, mode, input.Intent)
 		if err != nil {
 			return convertError(platform.NewPlatformError(

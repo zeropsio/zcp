@@ -27,18 +27,19 @@ func sanitizeQuote(s string) string {
 
 // DeployResult contains the outcome of a deploy operation.
 type DeployResult struct {
-	Status          string `json:"status"`
-	Mode            string `json:"mode"` // "ssh" or "local"
-	SourceService   string `json:"sourceService,omitempty"`
-	TargetService   string `json:"targetService"`
-	TargetServiceID string `json:"targetServiceId"`
-	Message         string `json:"message"`
-	MonitorHint     string `json:"monitorHint,omitempty"`
-	BuildStatus     string `json:"buildStatus,omitempty"`
-	BuildDuration   string `json:"buildDuration,omitempty"`
-	Suggestion      string `json:"suggestion,omitempty"`
-	TimedOut        bool   `json:"timedOut,omitempty"`
-	NextActions     string `json:"nextActions,omitempty"`
+	Status          string   `json:"status"`
+	Mode            string   `json:"mode"` // "ssh" or "local"
+	SourceService   string   `json:"sourceService,omitempty"`
+	TargetService   string   `json:"targetService"`
+	TargetServiceID string   `json:"targetServiceId"`
+	Message         string   `json:"message"`
+	MonitorHint     string   `json:"monitorHint,omitempty"`
+	BuildStatus     string   `json:"buildStatus,omitempty"`
+	BuildDuration   string   `json:"buildDuration,omitempty"`
+	Suggestion      string   `json:"suggestion,omitempty"`
+	TimedOut        bool     `json:"timedOut,omitempty"`
+	NextActions     string   `json:"nextActions,omitempty"`
+	Warnings        []string `json:"warnings,omitempty"`
 }
 
 // SSHDeployer executes commands on remote Zerops services.
@@ -203,6 +204,12 @@ func deployLocal(
 		}
 	}
 
+	// Pre-deploy validation (warnings only, does not block deploy).
+	var warnings []string
+	if workingDir != "" {
+		warnings = ValidateZeropsYml(workingDir, targetService)
+	}
+
 	args := buildZcliArgs(target.ID, workingDir, includeGit)
 
 	_, err = localDeployer.ExecZcli(ctx, args...)
@@ -217,6 +224,7 @@ func deployLocal(
 		TargetServiceID: target.ID,
 		Message:         fmt.Sprintf("Build triggered for %s via local zcli", targetService),
 		MonitorHint:     "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
+		Warnings:        warnings,
 	}, nil
 }
 

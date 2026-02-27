@@ -33,9 +33,10 @@ type VerifyResult struct {
 
 // CheckResult is the result of a single verification check.
 type CheckResult struct {
-	Name   string `json:"name"`             // "service_running", "no_error_logs", etc.
-	Status string `json:"status"`           // "pass", "fail", "skip"
-	Detail string `json:"detail,omitempty"` // human-readable detail on fail/skip
+	Name       string `json:"name"`                 // "service_running", "no_error_logs", etc.
+	Status     string `json:"status"`               // "pass", "fail", "skip"
+	Detail     string `json:"detail,omitempty"`     // human-readable detail on fail/skip
+	HTTPStatus int    `json:"httpStatus,omitempty"` // HTTP status code (0 = N/A)
 }
 
 // statusResponse is the expected /status endpoint response (per bootstrap.md spec).

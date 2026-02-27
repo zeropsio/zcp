@@ -37,6 +37,9 @@ Route:
 <section name="plan">
 ### Step 1 — Identify stack components + environment mode
 
+> **mode is REQUIRED for ALL managed services** — databases, caches, object-storage, shared-storage.
+> Use `NON_HA` for dev environments, `HA` for production.
+
 From the user's request, identify:
 - **Runtime services**: type + framework (e.g., nodejs@22 with Next.js, go@1 with Fiber, bun@1.2 with Hono)
 - **Managed services**: type + version (e.g., postgresql@16, valkey@7.2, elasticsearch@8.16)
@@ -115,7 +118,10 @@ If the briefing doesn't cover your stack, call `zerops_knowledge recipe="{name}"
 <section name="generate-import">
 ### Step 4 — Generate import.yml
 
-Using the loaded knowledge from Steps 2+3, generate import.yml following the infrastructure rules for structure, priority, mode, env var wiring, and ports.
+Using the loaded knowledge from Steps 2+3, generate import.yml ONLY. Do NOT write zerops.yml or application code — that happens in the generate-code step AFTER env var discovery.
+
+> **mode is REQUIRED for ALL managed services** — databases, caches, object-storage, shared-storage.
+> Use `NON_HA` for dev environments, `HA` for production.
 
 **Hostname pattern** (from Step 1): Standard mode (default) creates `{app}dev` + `{app}stage` pairs with shared managed services. Simple mode creates a single `{app}`. If the user didn't specify, ask before generating.
 
@@ -135,15 +141,26 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 > **IMPORTANT**: Import `mount:` only applies to ACTIVE services. Stage services are READY_TO_DEPLOY during import, so the mount pre-configuration silently doesn't apply. After first deploy transitions stage to ACTIVE, connect storage via `zerops_manage action="connect-storage" serviceHostname="{stage}" storageHostname="{storage}"`.
 
-### Step 5 — Plan zerops.yml and application code
+**Validation checklist** (import.yml only):
 
-For each runtime service, plan zerops.yml using the loaded runtime example from Step 2 as starting point. The infrastructure knowledge from Step 3 covers the YAML schema rules. Together they provide build pipeline, deployFiles, ports, and framework-specific decisions.
+| Check | What to verify |
+|-------|---------------|
+| Hostnames | Follow [a-z0-9] pattern, max 25 chars |
+| Service types | Match available stacks |
+| No duplicates | No duplicate hostnames |
+| object-storage | Requires `objectStorageSize` field |
+| Preprocessor | `#yamlPreprocessor=on` if using `<@...>` functions |
+| Mode present | Every managed service has `mode: NON_HA` or `mode: HA` |
 
-**Note:** zerops.yml and application source files are created on the mounted dev service filesystem at `/var/www/{hostname}/` (e.g., `/var/www/appdev/`). This happens after mounting in Phase 2.
+Present import.yml to the user for review before proceeding.
+</section>
+
+<section name="generate-code">
+### Step 7 — Generate zerops.yml and application code
+
+**Prerequisites**: Dev services mounted (step 5), env vars discovered (step 6). Write files to the mounted dev service filesystem at `/var/www/{devHostname}/`.
 
 **CRITICAL: Dev vs Prod deploy differentiation**
-
-Dev and prod setups serve different purposes and often need different configurations:
 
 | Property | Dev setup | Prod setup |
 |----------|-----------|------------|
@@ -170,11 +187,9 @@ Dev and prod setups serve different purposes and often need different configurat
 
 **Go specifically**: Dev setup uses `go run .` as start (compiles + runs source each deploy). Prod setup builds a binary in buildCommands and deploys only the binary. The zerops.yml MUST have TWO separate setup entries with different build/deploy pipelines.
 
-**Dev self-deploy lifecycle note:** After deploy, the run container only contains `deployFiles` content. All other files are gone. `deployFiles: [.]` ensures zerops.yml and source files survive the deploy cycle. Without zerops.yml in deployFiles, subsequent deploys from the container fail.
-
 > **CRITICAL — dev `deployFiles` MUST be `[.]`:** Dev containers are volatile. After deploy, ONLY `deployFiles` content survives. If dev setup uses `[dist]`, `[app]`, or any build output path, all source files + zerops.yml are DESTROYED. Further iteration becomes impossible. Dev setup MUST ALWAYS use `deployFiles: [.]` regardless of runtime. No exceptions.
 
-### Step 6 — Application code requirements
+#### Application code requirements
 
 Every generated application **MUST** expose these endpoints:
 
@@ -184,7 +199,7 @@ Every generated application **MUST** expose these endpoints:
 | `GET /health` | `{"status":"ok"}` (HTTP 200) | Liveness probe |
 | `GET /status` | Connectivity JSON (HTTP 200) | **Proves managed service connections** |
 
-#### /status endpoint specification
+##### /status endpoint specification
 
 The `/status` endpoint **MUST actually connect** to each managed service and report results:
 
@@ -206,26 +221,26 @@ The `/status` endpoint **MUST actually connect** to each managed service and rep
 - **Shared Storage**: Check mount path exists and is writable
 - **No managed services**: Return `{"service": "{hostname}", "status": "ok"}`
 
-**The `/status` endpoint is the PRIMARY verification gate.** HTTP 200 with all connections reporting "ok" = app works. Anything else = iterate and fix.
-
 **Do NOT generate hello-world apps that skip service connectivity.** The whole point of bootstrap is proving the infrastructure works end-to-end.
 
-### Step 7 — Validate
+#### Env var mapping
 
-**Self-check against common import failures before proceeding:**
+In zerops.yml `envVariables`, ONLY use variables discovered in the discover-envs step:
+```yaml
+envVariables:
+  DATABASE_URL: ${db_connectionString}
+  REDIS_HOST: ${cache_host}
+  REDIS_PORT: ${cache_port}
+  # Do NOT add variables that don't exist
+```
 
-| Check | What to verify |
-|-------|---------------|
-| Ports match | `run.ports.port` = what app actually listens on |
-| Deploy files exist | `deployFiles` includes actual build output path |
-| **deployFiles/start consistency** | If `deployFiles` uses tilde (`dist/~`), start must NOT reference the stripped dir (use `index.js` not `dist/index.js`). Without tilde, dir is preserved (`dist/index.js` is correct). **#1 bootstrap error.** |
-| Start command | `run.start` runs the app, not the build tool |
-| Env var refs | Cross-references use underscores: `${db_hostname}` not `${my-db_hostname}` |
-| Mode present | Every managed service has `mode: NON_HA` or `mode: HA` |
-| Dev vs prod | Dev uses `deployFiles: [.]` + source-mode start. Prod uses appropriate build output. **FAIL if dev deployFiles is anything other than `[.]`** — source files will be lost after deploy. |
-| /status endpoint | App code includes /status with actual connectivity checks for each managed service |
-
-Present both import.yml and zerops.yml to the user for review before proceeding to Phase 2.
+**MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
+- [ ] zerops.yml has `setup:` entry for EVERY planned runtime hostname
+- [ ] Dev setup uses `deployFiles: [.]` — NO EXCEPTIONS
+- [ ] `run.start` is the RUN command (not a build tool like `go build`)
+- [ ] `run.ports` port matches what the app listens on
+- [ ] `envVariables` ONLY uses variables discovered in discover-envs step
+- [ ] App binds to `0.0.0.0:{port}`, NOT localhost
 </section>
 
 ---
@@ -269,24 +284,23 @@ envVariables:
 
 **Core principle: Dev is for iterating and fixing. Stage is for final validation. Fix errors on dev before deploying to stage.**
 
+> **Bootstrap deploys ALWAYS use SSH mode** (sourceService + targetService). NEVER use local mode (targetService only) — git operations fail on SSHFS mounts.
+
 `zerops_deploy` blocks until the build pipeline completes. It returns the final status (`DEPLOYED` or `BUILD_FAILED`) along with build duration. No manual polling needed.
 `zerops_import` blocks until all import processes complete. It returns final statuses (`FINISHED` or `FAILED`) for each process.
 
 ### Standard mode (dev+stage) — deploy flow
 
-1. `zerops_import content="<import.yml>"` — create all services (blocks until all processes finish — returns final statuses). Dev gets `startWithoutCode: true` + `maxContainers: 1`, stage omits both.
-2. Verify dev services reached RUNNING: `zerops_discover` — stage may be READY_TO_DEPLOY (expected, no empty container wasted)
-3. **Mount dev**: `zerops_mount action="mount" serviceHostname="appdev"` — only dev services are mounted
-4. **Discover env vars**: For each managed service, `zerops_discover service="{hostname}" includeEnvs=true`. Record the exact env var names available. See "Env var discovery protocol" above.
-5. **Create files on mount path**: Write zerops.yml + application source files + .gitignore to `/var/www/appdev/`. Follow the Application Code Requirements (Step 6) and dev vs prod differentiation (Step 5). The zerops.yml `setup:` entries must match ALL service hostnames (both dev and stage). Use only DISCOVERED env vars in envVariables mappings.
-6. **Deploy to appdev**: `zerops_deploy targetService="appdev" workingDir="/var/www/appdev" includeGit=true` — local mode, reads from SSHFS mount. `-g` flag includes `.git` directory on the container. The deploy tool auto-initializes a git repo if missing
-7. **Remount after deploy**: `zerops_mount action="mount" serviceHostname="appdev"` — deploy replaces the container, making the previous SSHFS mount stale. The new container only has `deployFiles` content. Remount reconnects to the new container. The mount tool auto-detects stale mounts and re-mounts.
-8. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
-9. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> remount -> re-verify (max 3 iterations)
-10. **Deploy to appstage from dev**: After deploy, `/var/www` only contains `deployFiles` content. Dev services **MUST** use `deployFiles: [.]` for SSH cross-service deploy to work — zerops.yml must be present in the working directory. Run: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline (production buildCommands + deployFiles). Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING
-10b. **Connect shared storage to stage** (if shared-storage is in the stack): `zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"` — stage was READY_TO_DEPLOY during import, so the import `mount:` did not apply. Now that stage is ACTIVE, connect storage explicitly.
-11. **Verify appstage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
-12. **Present both URLs** to user:
+**Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path (steps 4-7).
+
+1. **Deploy to appdev** (SSH self-deploy): `zerops_deploy sourceService="appdev" targetService="appdev" freshGit=true` — SSHes into dev container, runs `git init` + `zcli push` on native FS at `/var/www`. Files got there via SSHFS mount writes.
+2. **Remount after deploy**: `zerops_mount action="mount" serviceHostname="appdev"` — deploy replaces the container, making the previous SSHFS mount stale. Remount reconnects to the new container.
+3. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
+4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> remount -> re-verify (max 3 iterations)
+5. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" freshGit=true` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING.
+5b. **Connect shared storage to stage** (if shared-storage is in the stack): `zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"` — stage was READY_TO_DEPLOY during import, so the import `mount:` did not apply.
+6. **Verify appstage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
+7. **Present both URLs** to user:
     ```
     Dev:   {subdomainUrl from enable}
     Stage: {subdomainUrl from enable}
@@ -462,7 +476,7 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 1 | Write zerops.yml | Write to `{mountPath}/zerops.yml` with both setup entries | File exists with correct setup names |
 | 2 | Write app code | HTTP server on :8080 with `/`, `/health`, `/status` | Code references discovered env vars |
 | 3 | Write .gitignore | Appropriate for {runtimeType} | File exists |
-| 4 | Deploy dev | `zerops_deploy targetService="{devHostname}" workingDir="{mountPath}" includeGit=true` | status=DEPLOYED (blocks until complete) |
+| 4 | Deploy dev | `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" freshGit=true` | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
 | 5b | Remount | `zerops_mount action="mount" serviceHostname="{devHostname}"` — deploy replaces container, stale mount auto-cleans on remount | Mount path accessible |
 | 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
@@ -487,7 +501,7 @@ If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ah
 
 2. **Fix**: Edit files at `{mountPath}/` — fix zerops.yml, app code, or both
 
-3. **Redeploy**: `zerops_deploy targetService="{devHostname}" workingDir="{mountPath}" includeGit=true`
+3. **Redeploy**: `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" freshGit=true`
 
 4. **Remount**: `zerops_mount action="mount" serviceHostname="{devHostname}"` — deploy replaces the container
 
@@ -497,6 +511,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 
 ## Platform Rules
 
+- **Bootstrap deploys ALWAYS use SSH mode** — `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" freshGit=true`. NEVER use local mode (targetService only) — git operations fail on SSHFS mounts.
 - **Dev setup MUST use `deployFiles: [.]`** — containers are volatile, only deployFiles content persists. Using `[dist]` or `[app]` in dev destroys source code after deploy.
 - NEVER write lock files (go.sum, bun.lock, package-lock.json). Write manifests only (go.mod, package.json). Let build commands generate locks.
 - NEVER write dependency dirs (node_modules/, vendor/).
