@@ -17,8 +17,10 @@ type DeleteInput struct {
 // RegisterDelete registers the zerops_delete tool.
 func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "zerops_delete",
-		Description: "Delete a service. Requires confirm=true. This is destructive and permanent.",
+		Name: "zerops_delete",
+		Description: "Delete a service. Requires confirm=true. This is destructive and permanent. " +
+			"IMPORTANT: You MUST have explicit user approval in the current conversation to delete " +
+			"THIS SPECIFIC service by name. Never delete proactively — only when the user explicitly asks.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Delete a service",
 			DestructiveHint: boolPtr(true),

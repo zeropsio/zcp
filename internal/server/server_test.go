@@ -185,6 +185,39 @@ func TestBuildInstructions_WithServices(t *testing.T) {
 	if !strings.Contains(inst, `action="start"`) {
 		t.Error("conformant project should use tracked mode syntax")
 	}
+	// Conformant project should contain anti-deletion language.
+	if !strings.Contains(inst, "Do NOT delete") {
+		t.Error("conformant project should contain anti-deletion warning")
+	}
+	// Should NOT have bare REQUIRED directive for conformant state.
+	if strings.Contains(inst, "REQUIRED: zerops_workflow") {
+		t.Error("conformant project should not have bare REQUIRED directive")
+	}
+}
+
+func TestBuildInstructions_NonConformantProject(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{Name: "api", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+
+	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
+
+	if !strings.Contains(inst, string(workflow.StateNonConformant)) {
+		t.Errorf("instructions should contain NON_CONFORMANT state")
+	}
+	// Non-conformant project should contain anti-deletion language.
+	if !strings.Contains(inst, "Do NOT delete") {
+		t.Error("non-conformant project should contain anti-deletion warning")
+	}
+	// Non-conformant project should NOT force bootstrap with REQUIRED.
+	if strings.Contains(inst, "REQUIRED: zerops_workflow") {
+		t.Error("non-conformant project should not have bare REQUIRED directive")
+	}
+	// Should recommend bootstrap for adding new services.
+	if !strings.Contains(inst, "bootstrap") {
+		t.Error("non-conformant project should mention bootstrap option")
+	}
 }
 
 func TestBuildInstructions_FiltersSystemServices(t *testing.T) {

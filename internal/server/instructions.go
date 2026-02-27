@@ -112,9 +112,14 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID 
 		case workflow.StateFresh:
 			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\"")
 		case workflow.StateConformant:
-			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"deploy\" mode=\"full\"")
+			b.WriteString("\nDev+stage service pairs detected.")
+			b.WriteString("\nIf the request matches existing services, use: zerops_workflow action=\"start\" workflow=\"deploy\" mode=\"full\"")
+			b.WriteString("\nIf the user wants a DIFFERENT stack, ASK how to proceed before making any changes.")
+			b.WriteString("\nDo NOT delete existing services without explicit user approval.")
 		case workflow.StateNonConformant:
-			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\"")
+			b.WriteString("\nExisting services do not follow dev+stage naming.")
+			b.WriteString("\nRecommended: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\" to add NEW services alongside existing ones.")
+			b.WriteString("\nDo NOT delete existing services without explicit user approval.")
 		}
 	}
 

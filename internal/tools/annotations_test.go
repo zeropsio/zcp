@@ -3,6 +3,7 @@ package tools_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -167,4 +168,56 @@ func ptrStr(p *bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func TestAnnotations_DeleteToolRequiresExplicitApproval(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test"}).
+		WithServices(nil)
+	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("knowledge store: %v", err)
+	}
+	logFetcher := platform.NewMockLogFetcher()
+
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopLocal{}, &nopMounter{}, nil, runtime.Info{})
+
+	ctx := context.Background()
+	st, ct := mcp.NewInMemoryTransports()
+
+	_, err = srv.MCPServer().Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	session, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { session.Close() })
+
+	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+
+	var deleteTool *mcp.Tool
+	for _, tool := range result.Tools {
+		if tool.Name == "zerops_delete" {
+			deleteTool = tool
+			break
+		}
+	}
+	if deleteTool == nil {
+		t.Fatal("zerops_delete tool not found")
+	}
+
+	// Delete tool description must require explicit user approval.
+	if !strings.Contains(deleteTool.Description, "explicit user approval") {
+		t.Errorf("zerops_delete description should contain 'explicit user approval', got: %s", deleteTool.Description)
+	}
 }
