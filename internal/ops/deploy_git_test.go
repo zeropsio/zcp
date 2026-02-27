@@ -105,6 +105,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			freshGit:  true,
 			wantParts: []string{
 				"rm -rf .git",
+				"sync",
 				"git init -q",
 				"git config user.email 'test@example.com'",
 				"git config user.name 'Test User'",

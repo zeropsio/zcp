@@ -34,6 +34,9 @@ runtime, php, nodejs, node, bun, deno, python, go, java, rust, dotnet, elixir, g
 **Versions**: `php@8.5` (latest), `php@8.4`, `php@8.3`, `php@8.1`
 **Build!=Run**: build `php@X`, run `php-nginx@X` or `php-apache@X`
 **Port**: 80 fixed (exception to 80/443 rule)
+**Pre-installed PHP extensions** (both php-nginx and php-apache images):
+pdo, pdo_pgsql, pdo_mysql, pdo_sqlite, redis, imagick, mongodb, curl, dom, fileinfo, gd, gmp, iconv, intl, ldap, mbstring, opcache, openssl, session, simplexml, sockets, tidy, tokenizer, xml, xmlwriter, zip, soap, imap, igbinary, msgpack.
+Use `apk add` only for extensions NOT in this list.
 
 **Build procedure**:
 1. Set `build.base: php@8.4` (or desired version)

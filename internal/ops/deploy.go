@@ -245,7 +245,8 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 	var pushCmd string
 	if freshGit {
 		// freshGit: remove existing .git and reinitialize.
-		pushCmd = fmt.Sprintf("cd %s && rm -rf .git && %s && %s", workingDir, gitInit, pushArgs)
+		// sync ensures filesystem flush completes before git init (required on SSHFS mounts).
+		pushCmd = fmt.Sprintf("cd %s && rm -rf .git && sync && %s && %s", workingDir, gitInit, pushArgs)
 	} else {
 		// Default: git-init guard for non-git directories.
 		pushCmd = fmt.Sprintf("cd %s && (test -d .git || (%s)) && %s", workingDir, gitInit, pushArgs)
