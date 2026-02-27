@@ -67,7 +67,7 @@ func buildWorkflowHint(stateDir string) string {
 		return ""
 	}
 
-	hint := fmt.Sprintf("Active workflow: %s mode=%s phase=%s", "bootstrap", state.Mode, state.Phase)
+	hint := fmt.Sprintf("Active workflow: %s mode=%s phase=%s", state.Workflow, state.Mode, state.Phase)
 	if state.Bootstrap != nil && state.Bootstrap.Active {
 		stepNum := state.Bootstrap.CurrentStep + 1
 		total := len(state.Bootstrap.Steps)
@@ -112,7 +112,7 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID 
 		case workflow.StateFresh:
 			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\"")
 		case workflow.StateConformant:
-			b.WriteString("\nRecommended: zerops_workflow action=\"start\" workflow=\"deploy\" mode=\"full\"")
+			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"deploy\" mode=\"full\"")
 		case workflow.StateNonConformant:
 			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\"")
 		}

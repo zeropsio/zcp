@@ -25,8 +25,8 @@ func NewEngine(baseDir string) *Engine {
 }
 
 // Start creates a new workflow session.
-func (e *Engine) Start(projectID string, mode Mode, intent string) (*WorkflowState, error) {
-	return InitSession(e.stateDir, projectID, mode, intent)
+func (e *Engine) Start(projectID, workflowName string, mode Mode, intent string) (*WorkflowState, error) {
+	return InitSession(e.stateDir, projectID, workflowName, mode, intent)
 }
 
 // Transition moves the workflow to the next phase, checking gates.
@@ -97,7 +97,7 @@ func (e *Engine) GetState() (*WorkflowState, error) {
 
 // BootstrapStart creates a new session with bootstrap state and returns the first step.
 func (e *Engine) BootstrapStart(projectID string, mode Mode, intent string) (*BootstrapResponse, error) {
-	state, err := InitSession(e.stateDir, projectID, mode, intent)
+	state, err := InitSession(e.stateDir, projectID, "bootstrap", mode, intent)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap start: %w", err)
 	}

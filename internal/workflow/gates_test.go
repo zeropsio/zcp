@@ -243,15 +243,12 @@ func TestCheckGate_InvalidTransition(t *testing.T) {
 
 // --- ValidateEvidence tests ---
 
-func TestValidateEvidence_ZeroPassed_Fails(t *testing.T) {
+func TestValidateEvidence_ZeroPassed_ZeroFailed_Passes(t *testing.T) {
 	t.Parallel()
+	// Vacuous evidence (Passed==0, Failed==0) is acceptable — auto-complete of skipped steps.
 	ev := &Evidence{Type: "dev_verify", Attestation: "looks good", Passed: 0, Failed: 0}
-	err := ValidateEvidence(ev)
-	if err == nil {
-		t.Fatal("expected error for zero passed and zero failed")
-	}
-	if !strings.Contains(err.Error(), "no verification results") {
-		t.Errorf("unexpected error: %v", err)
+	if err := ValidateEvidence(ev); err != nil {
+		t.Errorf("expected no error for vacuous evidence, got: %v", err)
 	}
 }
 

@@ -120,11 +120,9 @@ func CheckGate(from, to Phase, mode Mode, evidenceDir, sessionID string) (*GateR
 }
 
 // ValidateEvidence checks that evidence content is structurally valid:
-// at least one pass, no failures, non-empty attestation.
+// no failures and non-empty attestation. Passed==0 && Failed==0 is acceptable
+// (vacuous evidence from auto-complete of skipped steps).
 func ValidateEvidence(ev *Evidence) error {
-	if ev.Passed == 0 && ev.Failed == 0 {
-		return fmt.Errorf("evidence %s: no verification results", ev.Type)
-	}
 	if ev.Failed > 0 {
 		return fmt.Errorf("evidence %s: has %d failure(s)", ev.Type, ev.Failed)
 	}

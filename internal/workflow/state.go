@@ -40,6 +40,7 @@ type WorkflowState struct {
 	Version   string                `json:"version"`
 	SessionID string                `json:"sessionId"`
 	ProjectID string                `json:"projectId"`
+	Workflow  string                `json:"workflow"`
 	Mode      Mode                  `json:"mode"`
 	Phase     Phase                 `json:"phase"`
 	Iteration int                   `json:"iteration"`

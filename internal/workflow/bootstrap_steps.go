@@ -166,13 +166,11 @@ For EACH runtime service pair (dev + stage):
    - GET /health — health check (200 OK)
    - GET /status — connectivity proof (SELECT 1 for DB, PING for cache)
 3. Deploy dev: zerops_deploy targetService="{devHostname}"
-4. Enable subdomain + verify: zerops_subdomain action="enable" → use subdomainUrls from response for HTTP check
-6. Deploy stage: zerops_deploy targetService="{stageHostname}"
-6. Verify stage: same checks as dev (enable subdomain → use subdomainUrls from response)
-7. Enable subdomain: zerops_subdomain action="enable" serviceHostname="{stageHostname}"
-9. If shared-storage is in the stack: after stage becomes ACTIVE, connect storage:
+4. Enable subdomain + verify dev: zerops_subdomain action="enable" → zerops_verify
+5. Deploy stage: zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" freshGit=true
+6. Enable subdomain + verify stage: zerops_subdomain action="enable" → zerops_verify
+7. If shared-storage is in the stack: after stage becomes ACTIVE, connect storage:
    zerops_manage action="connect-storage" serviceHostname="{stageHostname}" storageHostname="{storageHostname}"
-   (Stage was READY_TO_DEPLOY during import, so import mount: did not apply to it)
 
 Dev vs prod deploy differentiation:
 | Aspect | Dev (source deploy) | Stage (build deploy) |

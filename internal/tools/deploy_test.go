@@ -350,7 +350,7 @@ func TestDeployTool_WithWorkflowSession_Succeeds(t *testing.T) {
 
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir)
-	if _, err := engine.Start("proj-1", workflow.ModeFull, "test"); err != nil {
+	if _, err := engine.Start("proj-1", "deploy", workflow.ModeFull, "test"); err != nil {
 		t.Fatalf("start session: %v", err)
 	}
 

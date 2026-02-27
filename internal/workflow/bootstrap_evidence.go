@@ -40,9 +40,6 @@ func (e *Engine) autoCompleteBootstrap(state *WorkflowState) error {
 				passed++
 			}
 		}
-		if passed == 0 {
-			passed = 1 // Minimum 1 for gate passage.
-		}
 		attestation := "auto-recorded from bootstrap steps"
 		if len(parts) > 0 {
 			attestation = strings.Join(parts, "; ")
@@ -54,17 +51,6 @@ func (e *Engine) autoCompleteBootstrap(state *WorkflowState) error {
 			Attestation:      attestation,
 			Type:             evType,
 			Passed:           passed,
-		}
-
-		// Populate ServiceResults from plan for deploy/verify evidence types.
-		if state.Bootstrap.Plan != nil && (evType == "deploy_evidence" || evType == "stage_verify") {
-			for _, svc := range state.Bootstrap.Plan.Services {
-				ev.ServiceResults = append(ev.ServiceResults, ServiceResult{
-					Hostname: svc.Hostname,
-					Status:   "pass",
-					Detail:   "auto-recorded from bootstrap plan (" + svc.Type + ")",
-				})
-			}
 		}
 
 		if err := SaveEvidence(e.evidenceDir, state.SessionID, ev); err != nil {

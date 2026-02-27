@@ -17,7 +17,7 @@ const (
 
 // InitSession creates a new workflow session and persists it to disk.
 // Returns an error if a session already exists (call ResetSession first).
-func InitSession(stateDir, projectID string, mode Mode, intent string) (*WorkflowState, error) {
+func InitSession(stateDir, projectID, workflowName string, mode Mode, intent string) (*WorkflowState, error) {
 	if _, err := LoadSession(stateDir); err == nil {
 		return nil, fmt.Errorf("init session: active session exists, reset first")
 	}
@@ -32,6 +32,7 @@ func InitSession(stateDir, projectID string, mode Mode, intent string) (*Workflo
 		Version:   stateVersion,
 		SessionID: sessionID,
 		ProjectID: projectID,
+		Workflow:  workflowName,
 		Mode:      mode,
 		Phase:     PhaseInit,
 		Iteration: 0,

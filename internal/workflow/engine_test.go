@@ -128,7 +128,7 @@ func TestEngine_StartAndTransition(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	state, err := eng.Start("proj-1", ModeFull, "full workflow")
+	state, err := eng.Start("proj-1", "deploy", ModeFull, "full workflow")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestEngine_Transition_InvalidPhase(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.Start("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.Start("proj-1", "deploy", ModeFull, "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestEngine_Transition_GateFails(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.Start("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.Start("proj-1", "deploy", ModeFull, "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -195,7 +195,7 @@ func TestEngine_Reset(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.Start("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.Start("proj-1", "deploy", ModeFull, "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := eng.Reset(); err != nil {
@@ -211,7 +211,7 @@ func TestEngine_Iterate(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.Start("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.Start("proj-1", "deploy", ModeFull, "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -232,7 +232,7 @@ func TestEngine_GetState(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.Start("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.Start("proj-1", "deploy", ModeFull, "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -725,26 +725,22 @@ func TestEngine_BootstrapComplete_AutoEvidence_ServiceResults(t *testing.T) {
 
 	state, _ := eng.GetState()
 
-	// deploy_evidence should have ServiceResults from plan.
+	// deploy_evidence should NOT have fabricated ServiceResults (auto-complete doesn't populate them).
 	ev, err := LoadEvidence(eng.evidenceDir, state.SessionID, "deploy_evidence")
 	if err != nil {
 		t.Fatalf("load deploy_evidence: %v", err)
 	}
-	if len(ev.ServiceResults) == 0 {
-		t.Error("deploy_evidence.ServiceResults should be populated from plan")
-	}
-	// Should contain all 3 planned services.
-	if len(ev.ServiceResults) != 3 {
-		t.Errorf("deploy_evidence.ServiceResults: want 3, got %d", len(ev.ServiceResults))
+	if len(ev.ServiceResults) != 0 {
+		t.Errorf("deploy_evidence.ServiceResults should be empty (no fabrication), got %d", len(ev.ServiceResults))
 	}
 
-	// stage_verify should also have ServiceResults from plan.
+	// stage_verify should also have empty ServiceResults.
 	ev, err = LoadEvidence(eng.evidenceDir, state.SessionID, "stage_verify")
 	if err != nil {
 		t.Fatalf("load stage_verify: %v", err)
 	}
-	if len(ev.ServiceResults) == 0 {
-		t.Error("stage_verify.ServiceResults should be populated from plan")
+	if len(ev.ServiceResults) != 0 {
+		t.Errorf("stage_verify.ServiceResults should be empty (no fabrication), got %d", len(ev.ServiceResults))
 	}
 }
 

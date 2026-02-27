@@ -11,7 +11,7 @@ func TestInitSession_CreatesState(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	state, err := InitSession(dir, "proj-1", ModeFull, "deploy my app")
+	state, err := InitSession(dir, "proj-1", "bootstrap", ModeFull, "deploy my app")
 	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
@@ -49,12 +49,12 @@ func TestInitSession_ExistingSessionBlocked(t *testing.T) {
 	dir := t.TempDir()
 
 	// First init should succeed.
-	if _, err := InitSession(dir, "proj-1", ModeFull, "first"); err != nil {
+	if _, err := InitSession(dir, "proj-1", "bootstrap", ModeFull, "first"); err != nil {
 		t.Fatalf("first InitSession: %v", err)
 	}
 
 	// Second init should fail.
-	_, err := InitSession(dir, "proj-1", ModeFull, "second")
+	_, err := InitSession(dir, "proj-1", "bootstrap", ModeFull, "second")
 	if err == nil {
 		t.Fatal("expected error for second InitSession with existing session")
 	}
@@ -64,7 +64,7 @@ func TestLoadSession_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	original, err := InitSession(dir, "proj-2", ModeDevOnly, "develop feature")
+	original, err := InitSession(dir, "proj-2", "deploy", ModeDevOnly, "develop feature")
 	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestResetSession_DeletesState(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	if _, err := InitSession(dir, "proj-3", ModeFull, "test"); err != nil {
+	if _, err := InitSession(dir, "proj-3", "bootstrap", ModeFull, "test"); err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 
@@ -124,7 +124,7 @@ func TestIterateSession_IncrementsCounter(t *testing.T) {
 	dir := t.TempDir()
 	evidenceDir := filepath.Join(dir, "evidence")
 
-	if _, err := InitSession(dir, "proj-4", ModeFull, "iterate test"); err != nil {
+	if _, err := InitSession(dir, "proj-4", "bootstrap", ModeFull, "iterate test"); err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 
@@ -156,7 +156,7 @@ func TestIterateSession_ArchivesEvidence(t *testing.T) {
 	dir := t.TempDir()
 	evidenceDir := filepath.Join(dir, "evidence")
 
-	if _, err := InitSession(dir, "proj-5", ModeFull, "archive test"); err != nil {
+	if _, err := InitSession(dir, "proj-5", "bootstrap", ModeFull, "archive test"); err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 

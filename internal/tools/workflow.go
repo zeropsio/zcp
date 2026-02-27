@@ -149,7 +149,11 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 	}
 
 	// Generic start (non-bootstrap or quick mode).
-	state, err := engine.Start(projectID, mode, input.Intent)
+	wfName := input.Workflow
+	if wfName == "" {
+		wfName = "workflow"
+	}
+	state, err := engine.Start(projectID, wfName, mode, input.Intent)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrWorkflowActive,
