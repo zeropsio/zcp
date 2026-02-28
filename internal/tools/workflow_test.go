@@ -676,6 +676,163 @@ func TestWorkflowTool_Action_BootstrapComplete_PlanStep_InvalidPlan(t *testing.T
 	}
 }
 
+func TestWorkflow_BootstrapStart_IncludesStacks(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServiceStackTypes([]platform.ServiceStackType{
+		{
+			Name:     "Go",
+			Category: "USER",
+			Versions: []platform.ServiceStackTypeVersion{
+				{Name: "go@1", Status: statusActive},
+			},
+		},
+		{
+			Name:     "PostgreSQL",
+			Category: "STANDARD",
+			Versions: []platform.ServiceStackTypeVersion{
+				{Name: "postgresql@16", Status: statusActive},
+			},
+		},
+	})
+	cache := ops.NewStackTypeCache(1 * time.Hour)
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil)
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"intent":   "go + postgres",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.AvailableStacks == "" {
+		t.Error("expected availableStacks to be populated")
+	}
+	if !strings.Contains(resp.AvailableStacks, "go@1") {
+		t.Errorf("availableStacks missing go@1: %s", resp.AvailableStacks)
+	}
+	if !strings.Contains(resp.AvailableStacks, "postgresql@16") {
+		t.Errorf("availableStacks missing postgresql@16: %s", resp.AvailableStacks)
+	}
+}
+
+func TestWorkflow_BootstrapStart_NoCache_OmitsStacks(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"intent":   "bun app",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.AvailableStacks != "" {
+		t.Errorf("expected empty availableStacks without cache, got: %s", resp.AvailableStacks)
+	}
+}
+
+func TestWorkflow_BootstrapComplete_IncludesStacks(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServiceStackTypes([]platform.ServiceStackType{
+		{
+			Name:     "Bun",
+			Category: "USER",
+			Versions: []platform.ServiceStackTypeVersion{
+				{Name: "bun@1.2", Status: statusActive},
+			},
+		},
+	})
+	cache := ops.NewStackTypeCache(1 * time.Hour)
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil)
+
+	// Start bootstrap.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap",
+	})
+
+	// Complete detect step.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":      "complete",
+		"step":        "detect",
+		"attestation": "FRESH project, no existing services",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.AvailableStacks == "" {
+		t.Error("expected availableStacks in complete response")
+	}
+	if !strings.Contains(resp.AvailableStacks, "bun@1.2") {
+		t.Errorf("availableStacks missing bun@1.2: %s", resp.AvailableStacks)
+	}
+}
+
+func TestWorkflow_BootstrapStatus_IncludesStacks(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServiceStackTypes([]platform.ServiceStackType{
+		{
+			Name:     "Node.js",
+			Category: "USER",
+			Versions: []platform.ServiceStackTypeVersion{
+				{Name: "nodejs@22", Status: statusActive},
+			},
+		},
+	})
+	cache := ops.NewStackTypeCache(1 * time.Hour)
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil)
+
+	// Start bootstrap.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap",
+	})
+
+	// Get status.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "status"})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.AvailableStacks == "" {
+		t.Error("expected availableStacks in status response")
+	}
+	if !strings.Contains(resp.AvailableStacks, "nodejs@22") {
+		t.Errorf("availableStacks missing nodejs@22: %s", resp.AvailableStacks)
+	}
+}
+
 func TestWorkflowTool_Action_BootstrapComplete_PlanStep_FallbackAttestation(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())

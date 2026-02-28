@@ -43,11 +43,12 @@ type BootstrapState struct {
 
 // BootstrapResponse is returned from conductor actions.
 type BootstrapResponse struct {
-	SessionID string             `json:"sessionId"`
-	Intent    string             `json:"intent"`
-	Progress  BootstrapProgress  `json:"progress"`
-	Current   *BootstrapStepInfo `json:"current,omitempty"`
-	Message   string             `json:"message"`
+	SessionID       string             `json:"sessionId"`
+	Intent          string             `json:"intent"`
+	Progress        BootstrapProgress  `json:"progress"`
+	Current         *BootstrapStepInfo `json:"current,omitempty"`
+	Message         string             `json:"message"`
+	AvailableStacks string             `json:"availableStacks,omitempty"`
 }
 
 // BootstrapProgress summarizes overall bootstrap progress.

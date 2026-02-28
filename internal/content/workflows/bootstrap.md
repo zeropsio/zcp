@@ -44,7 +44,7 @@ From the user's request, identify:
 - **Runtime services**: type + framework (e.g., nodejs@22 with Next.js, go@1 with Fiber, bun@1.2 with Hono)
 - **Managed services**: type + version (e.g., postgresql@16, valkey@7.2, elasticsearch@8.16)
 
-**Verify all types against the Available Service Stacks section above.**
+**Verify all types against the `availableStacks` field in the workflow response.**
 
 If the user hasn't specified, ask. Don't guess frameworks — the build config depends on it.
 

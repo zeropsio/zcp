@@ -37,7 +37,7 @@ Hostname rules (STRICT):
 Managed services default to mode: NON_HA. Set HA explicitly for production.
 
 Output: list of services with hostnames, types, and versions.
-Validate all types against available stacks from zerops_knowledge.`,
+Validate all types against the availableStacks field in this response.`,
 		Tools:        []string{"zerops_knowledge"},
 		Verification: "Service list with hostnames, types, versions documented",
 		Skippable:    false,

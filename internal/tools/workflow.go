@@ -117,11 +117,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if cache != nil && client != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
-		return handleBootstrapComplete(engine, input, liveTypes, tracker)
+		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, tracker)
 	case "skip":
-		return handleBootstrapSkip(engine, input)
+		return handleBootstrapSkip(ctx, engine, client, cache, input)
 	case "status":
-		return handleBootstrapStatus(engine, tracker)
+		return handleBootstrapStatus(ctx, engine, client, cache, tracker)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -157,6 +157,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 				fmt.Sprintf("Bootstrap start failed: %v", err),
 				"Reset existing session first with action=reset")), nil, nil
 		}
+		populateStacks(ctx, resp, client, cache)
 		return jsonResult(resp), nil, nil
 	}
 
@@ -287,7 +288,7 @@ func handleIterate(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
 	return jsonResult(state), nil, nil
 }
 
-func handleBootstrapComplete(engine *workflow.Engine, input WorkflowInput, liveTypes []platform.ServiceStackType, tracker *ops.KnowledgeTracker) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, tracker *ops.KnowledgeTracker) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -305,6 +306,7 @@ func handleBootstrapComplete(engine *workflow.Engine, input WorkflowInput, liveT
 				"Provide valid plan: [{hostname, type, mode?}]. Hostnames: lowercase a-z0-9, max 25 chars. Managed services default to mode: NON_HA. Specify HA explicitly for production.")), nil, nil
 		}
 		injectKnowledgeHint(resp, tracker)
+		populateStacks(ctx, resp, client, cache)
 		return jsonResult(resp), nil, nil
 	}
 
@@ -324,10 +326,11 @@ func handleBootstrapComplete(engine *workflow.Engine, input WorkflowInput, liveT
 			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
 	}
 	injectKnowledgeHint(resp, tracker)
+	populateStacks(ctx, resp, client, cache)
 	return jsonResult(resp), nil, nil
 }
 
-func handleBootstrapSkip(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -347,10 +350,11 @@ func handleBootstrapSkip(engine *workflow.Engine, input WorkflowInput) (*mcp.Cal
 			fmt.Sprintf("Skip step failed: %v", err),
 			"Only skippable steps (mount-dev, discover-envs, deploy) can be skipped")), nil, nil
 	}
+	populateStacks(ctx, resp, client, cache)
 	return jsonResult(resp), nil, nil
 }
 
-func handleBootstrapStatus(engine *workflow.Engine, tracker *ops.KnowledgeTracker) (*mcp.CallToolResult, any, error) {
+func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker) (*mcp.CallToolResult, any, error) {
 	resp, err := engine.BootstrapStatus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -359,7 +363,18 @@ func handleBootstrapStatus(engine *workflow.Engine, tracker *ops.KnowledgeTracke
 			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
 	}
 	injectKnowledgeHint(resp, tracker)
+	populateStacks(ctx, resp, client, cache)
 	return jsonResult(resp), nil, nil
+}
+
+// populateStacks injects live stack catalog into a bootstrap response.
+func populateStacks(ctx context.Context, resp *workflow.BootstrapResponse, client platform.Client, cache *ops.StackTypeCache) {
+	if resp == nil || client == nil || cache == nil {
+		return
+	}
+	if types := cache.Get(ctx, client); len(types) > 0 {
+		resp.AvailableStacks = knowledge.FormatStackList(types)
+	}
 }
 
 // injectKnowledgeHint adds a hint to the load-knowledge step guidance when
