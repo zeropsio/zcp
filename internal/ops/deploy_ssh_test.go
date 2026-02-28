@@ -513,6 +513,80 @@ func TestIsSSHBuildTriggered(t *testing.T) {
 	}
 }
 
+func TestBuildSSHCommand_ShellQuoting(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		email     string
+		fullName  string
+		wantSafe  bool // the output should NOT contain unescaped dangerous chars
+		checkFunc func(t *testing.T, cmd string)
+	}{
+		{
+			name:     "command injection via dollar",
+			email:    "test@example.com",
+			fullName: "$(whoami)",
+			checkFunc: func(t *testing.T, cmd string) {
+				t.Helper()
+				if !containsSubstring(cmd, "'$(whoami)'") {
+					t.Errorf("expected $(whoami) to be inside single quotes, got: %s", cmd)
+				}
+			},
+		},
+		{
+			name:     "backtick injection",
+			email:    "`id`@evil.com",
+			fullName: "Test User",
+			checkFunc: func(t *testing.T, cmd string) {
+				t.Helper()
+				if !containsSubstring(cmd, "'`id`@evil.com'") {
+					t.Errorf("expected backtick email to be inside single quotes, got: %s", cmd)
+				}
+			},
+		},
+		{
+			name:     "single quote in name",
+			email:    "test@example.com",
+			fullName: "O'Brien",
+			checkFunc: func(t *testing.T, cmd string) {
+				t.Helper()
+				if !containsSubstring(cmd, "'O'\\''Brien'") {
+					t.Errorf("expected single quote escaped via POSIX quoting, got: %s", cmd)
+				}
+			},
+		},
+		{
+			name:     "newline in name",
+			email:    "test@example.com",
+			fullName: "Test\nUser",
+			checkFunc: func(t *testing.T, cmd string) {
+				t.Helper()
+				if !containsSubstring(cmd, "'Test\nUser'") {
+					t.Errorf("expected newline inside single quotes, got: %s", cmd)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			authInfo := auth.Info{
+				Token:    "test-token",
+				APIHost:  "api.app-prg1.zerops.io",
+				Region:   "prg1",
+				Email:    tt.email,
+				FullName: tt.fullName,
+			}
+			id := GitIdentity{Name: tt.fullName, Email: tt.email}
+			cmd := buildSSHCommand(authInfo, "svc-target", "", "/var/www", false, id)
+			tt.checkFunc(t, cmd)
+		})
+	}
+}
+
 func TestDeploy_NilSSHDeployer(t *testing.T) {
 	t.Parallel()
 

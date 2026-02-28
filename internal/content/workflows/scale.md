@@ -53,7 +53,6 @@ zerops_scale serviceHostname="api" minContainers=2 maxContainers=5
 ```
 
 Parameters:
-- `startContainers` — Initial container count when scaling up (optional, within min/max range).
 - `minContainers` — Minimum container count (always running).
 - `maxContainers` — Maximum container count (autoscale ceiling).
 

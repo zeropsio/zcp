@@ -286,6 +286,46 @@ func TestDisconnectStorage_Success(t *testing.T) {
 	}
 }
 
+func TestScale_StartCPU(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING"},
+		})
+
+	result, err := Scale(context.Background(), mock, "proj-1", "api", ScaleParams{
+		StartCPU: scaleIntPtr(2),
+		MinCPU:   scaleIntPtr(1),
+		MaxCPU:   scaleIntPtr(4),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Hostname != "api" {
+		t.Errorf("expected hostname=api, got %s", result.Hostname)
+	}
+}
+
+func TestBuildAutoscalingParams_StartCPU(t *testing.T) {
+	t.Parallel()
+
+	startCPU := 2
+	params := buildAutoscalingParams(ScaleParams{
+		StartCPU: &startCPU,
+	})
+
+	if params.VerticalStartCPU == nil {
+		t.Fatal("VerticalStartCPU should be set")
+	}
+	if *params.VerticalStartCPU != 2 {
+		t.Errorf("VerticalStartCPU = %d, want 2", *params.VerticalStartCPU)
+	}
+}
+
 func TestScale_InvalidCPUMode(t *testing.T) {
 	t.Parallel()
 

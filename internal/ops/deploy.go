@@ -20,9 +20,10 @@ type GitIdentity struct {
 	Email string
 }
 
-// sanitizeQuote strips single quotes from a string to prevent shell injection.
-func sanitizeQuote(s string) string {
-	return strings.ReplaceAll(s, "'", "")
+// shellQuote wraps a string in POSIX single quotes, escaping embedded single quotes.
+// This prevents shell injection from untrusted input (e.g., user names, emails).
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // DeployResult contains the outcome of a deploy operation.
@@ -237,9 +238,9 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 		parts = append(parts, setup)
 	}
 
-	email := sanitizeQuote(id.Email)
-	name := sanitizeQuote(id.Name)
-	gitInit := fmt.Sprintf("git init -q && git config user.email '%s' && git config user.name '%s' && git add -A && git commit -q -m 'deploy'", email, name)
+	email := shellQuote(id.Email)
+	name := shellQuote(id.Name)
+	gitInit := fmt.Sprintf("git init -q && git config user.email %s && git config user.name %s && git add -A && git commit -q -m 'deploy'", email, name)
 
 	// Push from workingDir with git handling.
 	pushArgs := fmt.Sprintf("zcli push --serviceId %s", targetServiceID)

@@ -10,16 +10,16 @@ import (
 // ScaleParams holds scaling configuration for a service.
 // Pointer fields distinguish "not set" (nil) from zero values.
 type ScaleParams struct {
-	CPUMode         *string
-	MinCPU          *int
-	MaxCPU          *int
-	MinRAM          *float64
-	MaxRAM          *float64
-	MinDisk         *float64
-	MaxDisk         *float64
-	StartContainers *int
-	MinContainers   *int
-	MaxContainers   *int
+	CPUMode       *string  // SHARED or DEDICATED
+	MinCPU        *int     // min CPU cores
+	MaxCPU        *int     // max CPU cores
+	StartCPU      *int     // initial CPU cores on container start
+	MinRAM        *float64 // min RAM in GB
+	MaxRAM        *float64 // max RAM in GB
+	MinDisk       *float64 // min disk in GB
+	MaxDisk       *float64 // max disk in GB
+	MinContainers *int     // min container count
+	MaxContainers *int     // max container count
 }
 
 // ScaleResult contains the result of a scale operation.
@@ -166,9 +166,9 @@ func validateScaleParams(p ScaleParams) error {
 }
 
 func hasAnyScaleParam(p ScaleParams) bool {
-	return p.CPUMode != nil || p.MinCPU != nil || p.MaxCPU != nil ||
+	return p.CPUMode != nil || p.MinCPU != nil || p.MaxCPU != nil || p.StartCPU != nil ||
 		p.MinRAM != nil || p.MaxRAM != nil || p.MinDisk != nil || p.MaxDisk != nil ||
-		p.StartContainers != nil || p.MinContainers != nil || p.MaxContainers != nil
+		p.MinContainers != nil || p.MaxContainers != nil
 }
 
 func buildAutoscalingParams(p ScaleParams) platform.AutoscalingParams {
@@ -185,6 +185,10 @@ func buildAutoscalingParams(p ScaleParams) platform.AutoscalingParams {
 		v := int32(*p.MaxCPU)
 		params.VerticalMaxCPU = &v
 	}
+	if p.StartCPU != nil {
+		v := int32(*p.StartCPU)
+		params.VerticalStartCPU = &v
+	}
 	if p.MinRAM != nil {
 		params.VerticalMinRAM = p.MinRAM
 	}
@@ -196,10 +200,6 @@ func buildAutoscalingParams(p ScaleParams) platform.AutoscalingParams {
 	}
 	if p.MaxDisk != nil {
 		params.VerticalMaxDisk = p.MaxDisk
-	}
-	if p.StartContainers != nil {
-		v := int32(*p.StartContainers)
-		params.VerticalStartCPU = &v // mapped to start container count
 	}
 	if p.MinContainers != nil {
 		v := int32(*p.MinContainers)

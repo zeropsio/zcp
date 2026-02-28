@@ -85,11 +85,12 @@ func IterateSession(stateDir, evidenceDir string) (*WorkflowState, error) {
 		return nil, fmt.Errorf("iterate session archive: %w", err)
 	}
 
+	prevPhase := state.Phase
 	state.Phase = PhaseDevelop
 	state.Iteration = nextIter
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	state.History = append(state.History, PhaseTransition{
-		From: state.Phase,
+		From: prevPhase,
 		To:   PhaseDevelop,
 		At:   state.UpdatedAt,
 	})

@@ -176,6 +176,51 @@ func TestIterateSession_ArchivesEvidence(t *testing.T) {
 	}
 }
 
+func TestIterateSession_HistoryRecordsCorrectSourcePhase(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	evidenceDir := filepath.Join(dir, "evidence")
+
+	if _, err := InitSession(dir, "proj-6", "bootstrap", "history test"); err != nil {
+		t.Fatalf("InitSession: %v", err)
+	}
+
+	// Manually set the phase to VERIFY (simulating a session that advanced).
+	state, err := LoadSession(dir)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	state.Phase = PhaseVerify
+	if err := saveState(dir, state); err != nil {
+		t.Fatalf("saveState: %v", err)
+	}
+
+	// Save evidence so iterate doesn't fail.
+	ev := &Evidence{
+		SessionID: state.SessionID, Type: "stage_verify", VerificationType: "attestation",
+	}
+	if err := SaveEvidence(evidenceDir, state.SessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	iterated, err := IterateSession(dir, evidenceDir)
+	if err != nil {
+		t.Fatalf("IterateSession: %v", err)
+	}
+
+	// The history entry should record From=VERIFY (the phase before iterate), not DEVELOP.
+	if len(iterated.History) == 0 {
+		t.Fatal("expected at least one history entry")
+	}
+	lastEntry := iterated.History[len(iterated.History)-1]
+	if lastEntry.From != PhaseVerify {
+		t.Errorf("History.From = %s, want VERIFY", lastEntry.From)
+	}
+	if lastEntry.To != PhaseDevelop {
+		t.Errorf("History.To = %s, want DEVELOP", lastEntry.To)
+	}
+}
+
 func TestIterateSession_NoExistingState(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -20,9 +20,8 @@ var _ Client = (*ZeropsClient)(nil)
 // ZeropsClient implements the Client interface using the zerops-go SDK.
 type ZeropsClient struct {
 	handler  sdk.Handler
-	once     sync.Once // thread-safe clientID caching
+	mu       sync.Mutex // guards cachedID lazy init with retry on error
 	cachedID string
-	idErr    error
 }
 
 // NewZeropsClient creates a new ZeropsClient authenticated with the given token.
@@ -43,17 +42,20 @@ func NewZeropsClient(token, apiHost string) (*ZeropsClient, error) {
 	return &ZeropsClient{handler: handler}, nil
 }
 
-// getClientID returns the cached clientId, using sync.Once for thread safety.
+// getClientID returns the cached clientId, retrying on transient errors.
+// On success the ID is cached permanently (it never changes for a session).
 func (z *ZeropsClient) getClientID(ctx context.Context) (string, error) {
-	z.once.Do(func() {
-		info, err := z.GetUserInfo(ctx)
-		if err != nil {
-			z.idErr = err
-			return
-		}
-		z.cachedID = info.ID
-	})
-	return z.cachedID, z.idErr
+	z.mu.Lock()
+	defer z.mu.Unlock()
+	if z.cachedID != "" {
+		return z.cachedID, nil
+	}
+	info, err := z.GetUserInfo(ctx)
+	if err != nil {
+		return "", err
+	}
+	z.cachedID = info.ID
+	return z.cachedID, nil
 }
 
 // ---------------------------------------------------------------------------

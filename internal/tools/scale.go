@@ -10,18 +10,17 @@ import (
 
 // ScaleInput is the input type for zerops_scale.
 type ScaleInput struct {
-	ServiceHostname string   `json:"serviceHostname"           jsonschema:"Hostname of the service to scale."`
-	CPUMode         *string  `json:"cpuMode,omitempty"         jsonschema:"CPU scaling mode: SHARED or DEDICATED."`
-	MinCPU          *int     `json:"minCpu,omitempty"          jsonschema:"Minimum CPU cores (autoscaling lower bound)."`
-	MaxCPU          *int     `json:"maxCpu,omitempty"          jsonschema:"Maximum CPU cores (autoscaling upper bound)."`
-	MinRAM          *float64 `json:"minRam,omitempty"          jsonschema:"Minimum RAM in GB (autoscaling lower bound)."`
-	MaxRAM          *float64 `json:"maxRam,omitempty"          jsonschema:"Maximum RAM in GB (autoscaling upper bound)."`
-	MinDisk         *float64 `json:"minDisk,omitempty"         jsonschema:"Minimum disk size in GB (autoscaling lower bound)."`
-	MaxDisk         *float64 `json:"maxDisk,omitempty"         jsonschema:"Maximum disk size in GB (autoscaling upper bound)."`
-	StartContainers *int     `json:"startContainers,omitempty" jsonschema:"Initial number of containers on service start."`
-	MinContainers   *int     `json:"minContainers,omitempty"   jsonschema:"Minimum number of containers (autoscaling lower bound)."`
-	MaxContainers   *int     `json:"maxContainers,omitempty"   jsonschema:"Maximum number of containers (autoscaling upper bound)."`
-	StartCPU        *int     `json:"startCpu,omitempty"        jsonschema:"Initial CPU cores on service start."`
+	ServiceHostname string   `json:"serviceHostname"         jsonschema:"Hostname of the service to scale."`
+	CPUMode         *string  `json:"cpuMode,omitempty"       jsonschema:"CPU scaling mode: SHARED or DEDICATED."`
+	MinCPU          *int     `json:"minCpu,omitempty"        jsonschema:"Minimum CPU cores (autoscaling lower bound)."`
+	MaxCPU          *int     `json:"maxCpu,omitempty"        jsonschema:"Maximum CPU cores (autoscaling upper bound)."`
+	StartCPU        *int     `json:"startCpu,omitempty"      jsonschema:"Initial CPU cores on service start."`
+	MinRAM          *float64 `json:"minRam,omitempty"        jsonschema:"Minimum RAM in GB (autoscaling lower bound)."`
+	MaxRAM          *float64 `json:"maxRam,omitempty"        jsonschema:"Maximum RAM in GB (autoscaling upper bound)."`
+	MinDisk         *float64 `json:"minDisk,omitempty"       jsonschema:"Minimum disk size in GB (autoscaling lower bound)."`
+	MaxDisk         *float64 `json:"maxDisk,omitempty"       jsonschema:"Maximum disk size in GB (autoscaling upper bound)."`
+	MinContainers   *int     `json:"minContainers,omitempty" jsonschema:"Minimum number of containers (autoscaling lower bound)."`
+	MaxContainers   *int     `json:"maxContainers,omitempty" jsonschema:"Maximum number of containers (autoscaling upper bound)."`
 }
 
 // RegisterScale registers the zerops_scale tool.
@@ -42,16 +41,16 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
 		}
 
 		result, err := ops.Scale(ctx, client, projectID, input.ServiceHostname, ops.ScaleParams{
-			CPUMode:         input.CPUMode,
-			MinCPU:          input.MinCPU,
-			MaxCPU:          input.MaxCPU,
-			MinRAM:          input.MinRAM,
-			MaxRAM:          input.MaxRAM,
-			MinDisk:         input.MinDisk,
-			MaxDisk:         input.MaxDisk,
-			StartContainers: input.StartContainers,
-			MinContainers:   input.MinContainers,
-			MaxContainers:   input.MaxContainers,
+			CPUMode:       input.CPUMode,
+			MinCPU:        input.MinCPU,
+			MaxCPU:        input.MaxCPU,
+			StartCPU:      input.StartCPU,
+			MinRAM:        input.MinRAM,
+			MaxRAM:        input.MaxRAM,
+			MinDisk:       input.MinDisk,
+			MaxDisk:       input.MaxDisk,
+			MinContainers: input.MinContainers,
+			MaxContainers: input.MaxContainers,
 		})
 		if err != nil {
 			return convertError(err), nil, nil
