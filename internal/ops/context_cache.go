@@ -26,19 +26,24 @@ func NewStackTypeCache(ttl time.Duration) *StackTypeCache {
 
 // Get returns cached service stack types, refreshing from the API when expired.
 // On API error: returns stale data if available, else nil.
+// The mutex is released before network I/O to avoid blocking concurrent callers.
 func (c *StackTypeCache) Get(ctx context.Context, client platform.Client) []platform.ServiceStackType {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if !c.fetchedAt.IsZero() && time.Since(c.fetchedAt) < c.ttl {
-		return c.types
+		result := c.types
+		c.mu.Unlock()
+		return result
 	}
+	c.mu.Unlock()
 
+	// Network I/O outside lock.
 	types, err := client.ListServiceStackTypes(ctx)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if err != nil {
 		return c.types // stale or nil
 	}
-
 	c.types = types
 	c.fetchedAt = time.Now()
 	return c.types
