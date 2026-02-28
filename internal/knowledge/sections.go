@@ -68,6 +68,7 @@ var runtimeNormalizer = map[string]string{
 	"elixir":     "Elixir",
 	"gleam":      "Gleam",
 	"ruby":       "Ruby",
+	"nginx":      "Nginx",
 	"static":     "Static",
 	"docker":     "Docker",
 	"alpine":     "Alpine",
@@ -174,15 +175,6 @@ func (s *Store) getWiringSyntax() string {
 		return ""
 	}
 	return doc.H2Sections()["Wiring Syntax"]
-}
-
-// getWiringSection returns the wiring template for a normalized service name from services.md.
-func (s *Store) getWiringSection(normalizedName string) string {
-	doc, err := s.Get("zerops://themes/services")
-	if err != nil {
-		return ""
-	}
-	return doc.H2Sections()[normalizedName]
 }
 
 // decisionSectionMap maps service base names to operations.md decision section names.

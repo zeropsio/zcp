@@ -189,8 +189,9 @@ func TestStore_GetBriefing_WiringIncluded(t *testing.T) {
 	if !strings.Contains(briefing, "Wiring Patterns") {
 		t.Error("briefing with services should include wiring patterns")
 	}
-	if !strings.Contains(briefing, "Wiring: PostgreSQL") {
-		t.Error("briefing should include per-service wiring template")
+	// Per-service wiring is in service cards, not a separate section.
+	if strings.Contains(briefing, "Wiring: PostgreSQL") {
+		t.Error("briefing should NOT have separate per-service wiring section (merged into service cards)")
 	}
 }
 

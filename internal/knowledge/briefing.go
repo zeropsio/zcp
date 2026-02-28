@@ -76,22 +76,12 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		sb.WriteString("---\n\n")
 	}
 
-	// L5: Wiring (syntax rules + per-service templates)
+	// L5: Wiring syntax rules (per-service wiring is already in service cards)
 	if len(services) > 0 {
 		if syntax := s.getWiringSyntax(); syntax != "" {
 			sb.WriteString("## Wiring Patterns\n\n")
 			sb.WriteString(syntax)
 			sb.WriteString("\n\n")
-		}
-		for _, svc := range services {
-			normalized := normalizeServiceName(svc)
-			if wiring := s.getWiringSection(normalized); wiring != "" {
-				sb.WriteString("### Wiring: ")
-				sb.WriteString(normalized)
-				sb.WriteString("\n\n")
-				sb.WriteString(wiring)
-				sb.WriteString("\n\n")
-			}
 		}
 	}
 

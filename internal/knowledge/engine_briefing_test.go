@@ -216,6 +216,35 @@ func TestStore_GetBriefing_AutoPromotesRuntimeFromServices(t *testing.T) {
 	}
 }
 
+func TestBriefing_PostgreSQLNoDuplicateWiring(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("", []string{"postgresql@16"}, nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	// PostgreSQL content should appear in the service card section only,
+	// not duplicated in a separate "### Wiring: PostgreSQL" section.
+	// Wiring was merged into service cards in services.md.
+	if strings.Contains(briefing, "### Wiring: PostgreSQL") {
+		t.Error("briefing should NOT contain separate '### Wiring: PostgreSQL' section (wiring merged into service cards)")
+	}
+	// The service card should still be present.
+	if !strings.Contains(briefing, "### PostgreSQL") {
+		t.Error("briefing missing PostgreSQL service card")
+	}
+}
+
+func TestBriefing_NginxRuntime(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("nginx@1.26", nil, nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if !strings.Contains(briefing, "Runtime-Specific: Nginx") {
+		t.Error("briefing missing Nginx runtime delta section")
+	}
+}
+
 func TestBriefing_ValkeyNoCredentials(t *testing.T) {
 	store := newTestStore(t)
 	briefing, err := store.GetBriefing("nodejs@22", []string{"valkey@7.2"}, nil)
