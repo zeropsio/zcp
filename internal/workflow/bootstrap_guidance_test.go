@@ -69,6 +69,18 @@ func TestResolveGuidance(t *testing.T) {
 			true,
 		},
 		{
+			"generate_code_has_commit_recommendation",
+			"generate-code",
+			"committing",
+			true,
+		},
+		{
+			"deploy_has_sshfs_note",
+			"deploy",
+			"already on the dev container",
+			true,
+		},
+		{
 			"import_services_returns_empty",
 			"import-services",
 			"",

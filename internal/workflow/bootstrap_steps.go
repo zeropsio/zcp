@@ -176,6 +176,10 @@ For EACH runtime service:
 
 Use zerops_knowledge for runtime-specific build/deploy patterns.
 
+Files are immediately on the dev container via SSHFS — no deploy needed for that.
+Deploy tests the build pipeline and ensures persistence.
+Consider committing generated code before proceeding to deploy.
+
 MANDATORY PRE-DEPLOY CHECK (do NOT proceed to deploy until all pass):
 - zerops.yml has setup entry for EVERY planned runtime hostname
 - Dev setup uses deployFiles: [.] — NO EXCEPTIONS
@@ -193,6 +197,9 @@ Skip this step if no runtime services exist (managed-only project).`,
 		Name:     "deploy",
 		Category: CategoryBranching,
 		Guidance: `Deploy application code to all runtime services.
+Files are already on dev via SSHFS mount. Deploy runs the build pipeline,
+restarts the process, and ensures persistence (volatile containers retain
+only deployFiles content).
 
 BRANCH by service count:
 - 1 service pair (or inline): deploy directly in this conversation

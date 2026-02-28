@@ -57,7 +57,7 @@ func ValidateZeropsYml(workingDir, targetHostname string) []string {
 
 	if strings.Contains(targetHostname, "dev") && len(entry.Build.DeployFiles) > 0 {
 		if !slices.Contains(entry.Build.DeployFiles, ".") {
-			warnings = append(warnings, "dev service should use deployFiles: [.] — source files will be lost after deploy")
+			warnings = append(warnings, "dev service should use deployFiles: [.] — ensures source files persist across deploys for continued iteration")
 		}
 	}
 
