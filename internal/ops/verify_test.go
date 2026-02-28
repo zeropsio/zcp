@@ -137,6 +137,9 @@ func TestVerify_RuntimeStopped(t *testing.T) {
 func TestVerify_RuntimeErrorLogs(t *testing.T) {
 	t.Parallel()
 
+	// Error logs are advisory (CheckInfo) — they should NOT cause degraded status.
+	// SSH deploy logs are classified as errors by the Zerops log backend,
+	// causing false "degraded" status. Making log checks info-only avoids this.
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
@@ -158,10 +161,11 @@ func TestVerify_RuntimeErrorLogs(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Status != "degraded" {
-		t.Errorf("Status = %q, want degraded", result.Status)
+	// Error log checks are advisory — status should be healthy, not degraded.
+	if result.Status != "healthy" {
+		t.Errorf("Status = %q, want healthy", result.Status)
 	}
-	findCheck(t, result, "no_error_logs", "fail")
+	findCheck(t, result, "no_error_logs", "info")
 }
 
 func TestVerify_RuntimeNoStartup(t *testing.T) {
@@ -191,6 +195,7 @@ func TestVerify_RuntimeNoStartup(t *testing.T) {
 func TestVerify_RuntimeRecentErrors(t *testing.T) {
 	t.Parallel()
 
+	// Recent error logs are advisory (CheckInfo) — they should NOT cause degraded status.
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
@@ -218,11 +223,12 @@ func TestVerify_RuntimeRecentErrors(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Status != "degraded" {
-		t.Errorf("Status = %q, want degraded", result.Status)
+	// Error log checks are advisory — status should be healthy, not degraded.
+	if result.Status != "healthy" {
+		t.Errorf("Status = %q, want healthy", result.Status)
 	}
 	findCheck(t, result, "no_error_logs", "pass")
-	findCheck(t, result, "no_recent_errors", "fail")
+	findCheck(t, result, "no_recent_errors", "info")
 }
 
 func TestVerify_RuntimeNoSubdomain(t *testing.T) {
@@ -292,12 +298,12 @@ func TestVerify_RuntimeCrashLoop(t *testing.T) {
 
 	// Service is running.
 	findCheck(t, result, "service_running", "pass")
-	// Error logs present.
-	findCheck(t, result, "no_error_logs", "fail")
-	// No startup message.
+	// Error logs present — but advisory (info), not fail.
+	findCheck(t, result, "no_error_logs", "info")
+	// No startup message — still a real failure.
 	findCheck(t, result, "startup_detected", "fail")
-	// Recent errors present.
-	findCheck(t, result, "no_recent_errors", "fail")
+	// Recent errors present — advisory (info), not fail.
+	findCheck(t, result, "no_recent_errors", "info")
 }
 
 func TestVerify_ManagedRunning(t *testing.T) {
@@ -593,6 +599,7 @@ func TestCheckServiceRunning(t *testing.T) {
 func TestVerify_StatusAggregation(t *testing.T) {
 	t.Parallel()
 
+	// CheckInfo is advisory — aggregateStatus treats it like pass/skip (not fail).
 	tests := []struct {
 		name   string
 		checks []CheckResult
@@ -625,6 +632,27 @@ func TestVerify_StatusAggregation(t *testing.T) {
 				{Name: "service_running", Status: "fail"}, {Status: "skip"},
 			},
 			want: "unhealthy",
+		},
+		{
+			name: "info with pass → healthy",
+			checks: []CheckResult{
+				{Status: "pass"}, {Status: "info"}, {Status: "pass"},
+			},
+			want: "healthy",
+		},
+		{
+			name: "info with skip → healthy",
+			checks: []CheckResult{
+				{Status: "pass"}, {Status: "info"}, {Status: "skip"},
+			},
+			want: "healthy",
+		},
+		{
+			name: "info with fail → degraded (fail wins)",
+			checks: []CheckResult{
+				{Status: "pass"}, {Status: "info"}, {Status: "fail"},
+			},
+			want: "degraded",
 		},
 	}
 

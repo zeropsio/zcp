@@ -16,6 +16,7 @@ const (
 	CheckPass       = "pass"
 	CheckFail       = "fail"
 	CheckSkip       = "skip"
+	CheckInfo       = "info" // advisory — LLM sees the data but aggregateStatus ignores it
 )
 
 // HTTPDoer executes HTTP requests (satisfied by *http.Client).

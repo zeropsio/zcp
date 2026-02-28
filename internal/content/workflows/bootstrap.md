@@ -54,6 +54,8 @@ If the user hasn't specified, ask. Don't guess frameworks — the build config d
 
 Default = standard (dev+stage). If the user says "just one service" or "simple setup", use simple mode.
 
+Multi-runtime naming: use role or runtime as prefix — `phpdev`/`phpstage` + `bundev`/`bunstage` (or `apidev`/`webdev` by role). Managed services are shared, no dev/stage suffixes: `db`, `cache`, `storage`.
+
 **Workflow scope** (infer from context, do not ask unless ambiguous):
 - **Full** (default): Configure -> validate -> deploy dev -> verify -> deploy stage -> verify.
 - **Dev-only**: Configure -> deploy to dev only, skip stage. When user says "just get it running" or "prototype."
@@ -312,7 +314,7 @@ envVariables:
 1. **Deploy to appdev** (SSH self-deploy): `zerops_deploy sourceService="appdev" targetService="appdev" includeGit=true` — SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. Files got there via SSHFS mount writes. `includeGit=true` preserves `.git` on the target so subsequent deploys work. SSHFS mount auto-reconnects after deploy — no remount needed. Deploy tests the build pipeline and ensures deployFiles artifacts persist.
 2. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 3. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
-4. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" includeGit=true` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING.
+4. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING. Stage is never a deploy source — no `.git` needed on target.
 4b. **Connect shared storage to stage** (if shared-storage is in the stack): `zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"` — stage was READY_TO_DEPLOY during import, so the import `mount:` did not apply.
 5. **Verify appstage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
 6. **Present both URLs** to user:
@@ -503,7 +505,7 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
 | 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
 | 7 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
-| 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" includeGit=true` | status=DEPLOYED (blocks until complete) |
+| 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` | status=DEPLOYED (blocks until complete) |
 | 9 | Verify stage | `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{stageHostname}"` | status=healthy |
 | 10 | Report | Status (pass/fail) + dev URL + stage URL | — |
 
@@ -512,12 +514,12 @@ Execute IN ORDER. Every step has verification — do not skip any.
 If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ahead to stage:
 
 1. **Diagnose**: Read the `checks` array from the `zerops_verify` response:
-   | Failed check | Diagnosis action |
+   | Check result | Diagnosis action |
    |-------------|-----------------|
    | service_running: fail | Service not running — check deploy status, read error logs: `zerops_logs severity="error" since="10m"` |
-   | no_error_logs: fail | Runtime errors — read the `detail` field for the error message |
+   | no_error_logs: info | Advisory — error-severity logs found. Read detail. If SSH/infra noise, ignore. If app errors, investigate with `zerops_logs` |
    | startup_detected: fail | App crashed on start — `zerops_logs severity="error" since="5m"` |
-   | no_recent_errors: fail | Errors after startup — read the `detail` field |
+   | no_recent_errors: info | Advisory — same as above. Recent error-severity logs found. Read detail to determine if actionable |
    | http_health: fail | App started but /health endpoint broken — check `detail` for HTTP status |
    | http_status: fail | Managed service connectivity issue — check `detail` for which connection failed. Verify env var mapping matches discovered vars. |
 
@@ -632,7 +634,7 @@ For managed services (DB, cache, storage): skip step 2 (no subdomain), just step
 **Notes:**
 - Check 1: zerops_deploy blocks until build completes and returns the final status directly. No polling needed.
 - Check 2: **ALWAYS** call `zerops_subdomain action="enable"` after deploy — even if `enableSubdomainAccess` was set in import. The enable response contains `subdomainUrls` — this is the **only** source for subdomain URLs. The call is idempotent (returns `already_enabled` if already active).
-- Check 3: `zerops_verify` performs 6 checks for runtime services (service_running, no_error_logs, startup_detected, no_recent_errors, http_health, http_status) and 1 check for managed services (service_running only). The response includes a `checks` array — each entry has `name`, `status` (pass/fail/skip), and optional `detail`. Status values: `healthy` (all pass/skip), `degraded` (running but some checks fail), `unhealthy` (service not running).
+- Check 3: `zerops_verify` performs 6 checks for runtime services (service_running, no_error_logs, startup_detected, no_recent_errors, http_health, http_status) and 1 check for managed services (service_running only). The response includes a `checks` array — each entry has `name`, `status` (pass/fail/skip/info), and optional `detail`. Status values: `healthy` (all pass/skip/info), `degraded` (running but some checks fail), `unhealthy` (service not running). Error log checks (no_error_logs, no_recent_errors) return `info` instead of `fail` — they are advisory because SSH deploy logs are often classified as errors.
 
 **Do NOT deploy to stage until dev passes ALL checks.** Stage is for final validation, not debugging.
 </section>

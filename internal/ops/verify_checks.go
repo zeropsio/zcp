@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -35,13 +36,22 @@ func checkErrorLogs(
 		ServiceID: serviceID,
 		Severity:  "error",
 		Since:     time.Now().Add(-since),
-		Limit:     1,
+		Limit:     5,
 	})
 	if err != nil {
 		return CheckResult{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("log backend unavailable: %v", err)}
 	}
 	if len(entries) > 0 {
-		return CheckResult{Name: name, Status: CheckFail, Detail: entries[0].Message}
+		// Advisory: error-severity logs found. SSH deploy logs are often classified
+		// as errors by the Zerops log backend, causing false positives.
+		msgs := make([]string, 0, 3)
+		for i := range entries {
+			if i >= 3 {
+				break
+			}
+			msgs = append(msgs, entries[i].Message)
+		}
+		return CheckResult{Name: name, Status: CheckInfo, Detail: strings.Join(msgs, " | ")}
 	}
 	return CheckResult{Name: name, Status: CheckPass}
 }

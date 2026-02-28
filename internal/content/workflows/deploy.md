@@ -127,8 +127,9 @@ When `zerops_verify` returns "degraded" or "unhealthy", iterate — do not give 
 
 1. **Diagnose** — read the `checks` array from `zerops_verify` response:
    - service_running: fail → service not running, check deploy status
-   - no_error_logs: fail → runtime errors, read the `detail` field
+   - no_error_logs: info → advisory — error-severity logs found. Read detail. If SSH/infra noise, ignore. If app errors, investigate with `zerops_logs`
    - startup_detected: fail → app crashed on start, check `zerops_logs severity="error" since="5m"`
+   - no_recent_errors: info → advisory — same as above. Recent error-severity logs found
    - http_health: fail → endpoint broken, check `detail` for HTTP status
    - http_status: fail → managed service connectivity issue, check `detail` for which connection failed
 
