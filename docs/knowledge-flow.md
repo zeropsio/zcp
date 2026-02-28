@@ -11,7 +11,7 @@ How the ZCP knowledge system assembles and delivers context to the LLM via MCP t
 │  (LLM)   │                  │     └─ Instructions: "ZCP manages..."   │
 └────┬─────┘                  └──────────────────────────────────────────┘
      │                                         │
-     │  System prompt gets:                    │ Registers 14 MCP tools
+     │  System prompt gets:                    │ Registers 15 MCP tools
      │  • Instructions (1 line)                │ at startup via
      │  • Tool schemas (auto)                  │ server.registerTools()
      │                                         │
@@ -30,9 +30,9 @@ How the ZCP knowledge system assembles and delivers context to the LLM via MCP t
 
 ## Tool Call Paths
 
-### PATH 1: zerops_knowledge (3 exclusive modes)
+### PATH 1: zerops_knowledge (4 exclusive modes)
 
-#### Mode A: BM25 Search
+#### Mode A: Text Search
 
 ```
 LLM calls: zerops_knowledge { query: "postgresql connection" }
@@ -41,7 +41,7 @@ knowledge.go ──► Store.Search(query, limit)
                      │
                      ▼
              ┌─────────────┐     ┌───────────────────────┐
-             │ expandQuery │────►│ Bleve BM25 Index      │
+             │ expandQuery │────►│ Text Search Index      │
              │ redis→valkey│     │ title:2x kw:1.5x      │
              │ postgres→pg │     │ content:1x             │
              └─────────────┘     └───────────┬───────────┘
@@ -62,46 +62,40 @@ knowledge.go ──► Store.GetBriefing(runtime, services, liveTypes)
                      ▼  LAYERED COMPOSITION
 ┌────────────────────────────────────────────────────────────┐
 │                                                            │
-│  L0  core.md              ← ALWAYS (merged platform +     │
-│  ──────────────                rules + grammar)            │
-│  Architecture, lifecycle, import.yml schema,               │
-│  zerops.yml schema, rules & pitfalls                       │
-│                                                            │
-│  L0b Service Stacks (live) ← IF liveTypes available       │
+│  Service Stacks (live)    ← IF liveTypes available         │
 │  ──────────────────────────                                │
 │  FormatServiceStacks(liveTypes)                            │
 │  → Runtime: nodejs@{18,20,22} [B] | go@1 [B]              │
 │  → Managed: postgresql@16 | valkey@7.2                     │
 │  → Build-only: php@{8.1,8.3}                              │
 │                                                            │
-│  L1  runtimes.md § Node.js  ← IF runtime specified        │
+│  L3  runtimes.md § Node.js  ← IF runtime specified        │
 │  ──────────────────────────                                │
 │  normalizeRuntimeName("nodejs@22") → "Node.js"             │
 │  parseH2Sections() → sections["Node.js"]                   │
 │  → BIND: 0.0.0.0, DEPLOY: node_modules, etc.              │
 │                                                            │
-│  L1b Matching Recipes     ← IF runtime has known recipes   │
+│  L3b Matching Recipes     ← IF runtime has known recipes   │
 │  ────────────────────                                      │
 │  runtimeRecipeHints["nodejs"] → prefixes                   │
 │  → "nestjs", "nextjs", "ghost", "medusa"...               │
 │                                                            │
-│  L2  services.md § PostgreSQL, § Valkey  ← PER SERVICE    │
+│  L4  services.md § PostgreSQL, § Valkey  ← PER SERVICE    │
 │  ────────────────────────────────────────                  │
 │  normalizeServiceName("postgresql@16") → "PostgreSQL"      │
-│  → ports, env vars, HA config, gotchas                     │
+│  → ports, env vars, HA config, wiring, gotchas             │
 │                                                            │
-│  L3  wiring.md § Syntax + § PostgreSQL + § Valkey          │
-│  ──────────────────────────────────────────── ← IF services│
-│  → ${hostname_var} syntax                                  │
-│  → DATABASE_URL, REDIS_URL templates                       │
+│  L5  Wiring Syntax        ← IF services specified          │
+│  ──────────────────────                                    │
+│  → ${hostname_var} cross-service reference syntax          │
 │                                                            │
-│  L4  decisions/ TL;DRs    ← AUTO-SELECTED                 │
+│  L6  decisions/ TL;DRs    ← AUTO-SELECTED                 │
 │  ────────────────────                                      │
 │  postgresql → choose-database.md TLDR                      │
 │  valkey → choose-cache.md TLDR                             │
 │  (deduplicated per decision doc)                           │
 │                                                            │
-│  L5  FormatVersionCheck   ← IF liveTypes available         │
+│  L7  FormatVersionCheck   ← IF liveTypes available         │
 │  ──────────────────────                                    │
 │  ✓ nodejs@22   ⚠ postgresql@17 → suggest @16              │
 │                                                            │
@@ -133,7 +127,7 @@ workflow.go ──► content.GetWorkflow("deploy")
                     ▼
             ┌──────────────────────────┐
             │ content/workflows/*.md   │  (embedded at compile time)
-            │ 8 workflow guides        │
+            │ 6 workflow guides        │
             └──────────────────────────┘
 
 Returns: step-by-step workflow markdown
@@ -147,14 +141,13 @@ All knowledge is compiled into the binary at build time via `//go:embed`:
 
 ```
 internal/knowledge/
-├── themes/              ← Theme documents (5 files)
+├── themes/              ← Theme documents (4 files)
 │   ├── core.md          Merged platform model + rules + grammar
 │   ├── runtimes.md      Runtime deltas (only what differs from universal)
-│   ├── services.md      13 managed service reference cards
-│   ├── wiring.md        Cross-service wiring templates
+│   ├── services.md      13 managed service reference cards (includes wiring)
 │   └── operations.md    Architecture decisions and recommendations
-├── recipes/             ← Framework-specific guides (39 files)
-└── (indexed via BM25 for search mode)
+├── recipes/             ← Framework-specific guides (30 files)
+└── (indexed via text search for query mode)
 ```
 
 Document loading pipeline:
@@ -162,9 +155,9 @@ Document loading pipeline:
 loadFromEmbedded() → parseDocument() per .md file:
   path → URI:     "themes/core.md" → "zerops://themes/core"
   # H1 → Title:   "Zerops Core Reference"
-  ## Keywords → []string for BM25 index
+  ## Keywords → []string for text search index
   ## TL;DR → Description
-  Full content → BM25 index + direct access via Store.Get()
+  Full content → text search index + direct access via Store.Get()
 ```
 
 ---
@@ -184,14 +177,13 @@ User: "Deploy a Node.js app with PostgreSQL and Valkey"
      services: ["postgresql@16", "valkey@7.2"]
    }
    ← Gets layered briefing:
-      L0: core.md (architecture, schema rules, pitfalls)
-      L0b: Live service stacks (if API available)
-      L1: Node.js delta (0.0.0.0, node_modules)
-      L1b: Matching recipes (nestjs, nextjs, ghost...)
-      L2: PostgreSQL card + Valkey card
-      L3: Wiring syntax + DB/cache connection templates
-      L4: "Use PostgreSQL for everything" + "Use Valkey, KeyDB deprecated"
-      L5: ✓ nodejs@22, ✓ postgresql@16, ✓ valkey@7.2
+      Live service stacks (if API available)
+      L3: Node.js delta (0.0.0.0, node_modules)
+      L3b: Matching recipes (nestjs, nextjs, ghost...)
+      L4: PostgreSQL card + Valkey card (includes wiring)
+      L5: Wiring syntax (cross-service references)
+      L6: "Use PostgreSQL for everything" + "Use Valkey, KeyDB deprecated"
+      L7: ✓ nodejs@22, ✓ postgresql@16, ✓ valkey@7.2
 
 4. LLM generates import.yml + zerops.yml from the rules
 
@@ -212,7 +204,7 @@ User: "Deploy a Node.js app with PostgreSQL and Valkey"
 | `internal/server/instructions.go` | System prompt instructions |
 | `internal/tools/knowledge.go` | zerops_knowledge handler, mode routing |
 | `internal/tools/workflow.go` | zerops_workflow handler |
-| `internal/knowledge/engine.go` | Store, BM25 Search, GetBriefing, GetRecipe |
+| `internal/knowledge/engine.go` | Store, text search, GetBriefing, GetRecipe |
 | `internal/knowledge/briefing.go` | Briefing assembly (layered composition) |
 | `internal/knowledge/documents.go` | Embed loading, document parsing, URI mapping |
 | `internal/knowledge/sections.go` | H2 parsing, normalizers, wiring/decision helpers |
