@@ -30,18 +30,17 @@ func TestCheckGate_AllGatesPass(t *testing.T) {
 		name string
 		from Phase
 		to   Phase
-		mode Mode
 	}{
-		{"G0_init_to_discover", PhaseInit, PhaseDiscover, ModeFull},
-		{"G1_discover_to_develop", PhaseDiscover, PhaseDevelop, ModeFull},
-		{"G2_develop_to_deploy", PhaseDevelop, PhaseDeploy, ModeFull},
-		{"G3_deploy_to_verify", PhaseDeploy, PhaseVerify, ModeFull},
-		{"G4_verify_to_done", PhaseVerify, PhaseDone, ModeFull},
+		{"G0_init_to_discover", PhaseInit, PhaseDiscover},
+		{"G1_discover_to_develop", PhaseDiscover, PhaseDevelop},
+		{"G2_develop_to_deploy", PhaseDevelop, PhaseDeploy},
+		{"G3_deploy_to_verify", PhaseDeploy, PhaseVerify},
+		{"G4_verify_to_done", PhaseVerify, PhaseDone},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result, err := CheckGate(tt.from, tt.to, tt.mode, dir, sessionID)
+			result, err := CheckGate(tt.from, tt.to, dir, sessionID)
 			if err != nil {
 				t.Fatalf("CheckGate: %v", err)
 			}
@@ -61,40 +60,39 @@ func TestCheckGate_MissingEvidence(t *testing.T) {
 		name        string
 		from        Phase
 		to          Phase
-		mode        Mode
 		wantGate    string
 		wantMissing []string
 	}{
 		{
 			"G0_missing_recipe_review",
-			PhaseInit, PhaseDiscover, ModeFull,
+			PhaseInit, PhaseDiscover,
 			"G0", []string{"recipe_review"},
 		},
 		{
 			"G1_missing_discovery",
-			PhaseDiscover, PhaseDevelop, ModeFull,
+			PhaseDiscover, PhaseDevelop,
 			"G1", []string{"discovery"},
 		},
 		{
 			"G2_missing_dev_verify",
-			PhaseDevelop, PhaseDeploy, ModeFull,
+			PhaseDevelop, PhaseDeploy,
 			"G2", []string{"dev_verify"},
 		},
 		{
 			"G3_missing_deploy_evidence",
-			PhaseDeploy, PhaseVerify, ModeFull,
+			PhaseDeploy, PhaseVerify,
 			"G3", []string{"deploy_evidence"},
 		},
 		{
 			"G4_missing_stage_verify",
-			PhaseVerify, PhaseDone, ModeFull,
+			PhaseVerify, PhaseDone,
 			"G4", []string{"stage_verify"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result, err := CheckGate(tt.from, tt.to, tt.mode, dir, sessionID)
+			result, err := CheckGate(tt.from, tt.to, dir, sessionID)
 			if err != nil {
 				t.Fatalf("CheckGate: %v", err)
 			}
@@ -131,7 +129,7 @@ func TestCheckGate_G0ConditionalSkip(t *testing.T) {
 	}
 
 	// G0 should pass without recipe_review when discovery is fresh.
-	result, err := CheckGate(PhaseInit, PhaseDiscover, ModeFull, dir, sessionID)
+	result, err := CheckGate(PhaseInit, PhaseDiscover, dir, sessionID)
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -156,7 +154,7 @@ func TestCheckGate_G0StaleDiscovery(t *testing.T) {
 	}
 
 	// G0 should fail — discovery is stale and no recipe_review.
-	result, err := CheckGate(PhaseInit, PhaseDiscover, ModeFull, dir, sessionID)
+	result, err := CheckGate(PhaseInit, PhaseDiscover, dir, sessionID)
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -165,77 +163,12 @@ func TestCheckGate_G0StaleDiscovery(t *testing.T) {
 	}
 }
 
-func TestCheckGate_ModeAware_DevOnly(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	sessionID := "sess-devonly"
-
-	// DevOnly has no DEPLOY or VERIFY phases, so G2/G3/G4 should not apply.
-	// The only gates in dev_only: G0 (INIT→DISCOVER), G1 (DISCOVER→DEVELOP).
-	// DEVELOP→DONE has no gate (it's a mode shortcut).
-	tests := []struct {
-		name     string
-		from     Phase
-		to       Phase
-		wantGate string
-	}{
-		{"G0_applies", PhaseInit, PhaseDiscover, "G0"},
-		{"G1_applies", PhaseDiscover, PhaseDevelop, "G1"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result, err := CheckGate(tt.from, tt.to, ModeDevOnly, dir, sessionID)
-			if err != nil {
-				t.Fatalf("CheckGate: %v", err)
-			}
-			if result.Gate != tt.wantGate {
-				t.Errorf("gate: want %s, got %s", tt.wantGate, result.Gate)
-			}
-		})
-	}
-}
-
-func TestCheckGate_ModeAware_Hotfix(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	sessionID := "sess-hotfix"
-
-	// Hotfix: INIT→DEVELOP (no gate/G0 — no DISCOVER phase), DEVELOP→DEPLOY (G2), DEPLOY→VERIFY (G3), VERIFY→DONE (G4).
-	// INIT→DEVELOP should have no gate.
-	result, err := CheckGate(PhaseInit, PhaseDevelop, ModeHotfix, dir, sessionID)
-	if err != nil {
-		t.Fatalf("CheckGate: %v", err)
-	}
-	if !result.Passed {
-		t.Errorf("expected no gate for hotfix INIT→DEVELOP, missing: %v", result.Missing)
-	}
-	if result.Gate != "" {
-		t.Errorf("expected empty gate for hotfix INIT→DEVELOP, got %s", result.Gate)
-	}
-}
-
-func TestCheckGate_QuickMode_NoGates(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	sessionID := "sess-quick"
-
-	// Quick mode has no phases and no gates.
-	result, err := CheckGate(PhaseInit, PhaseDiscover, ModeQuick, dir, sessionID)
-	if err != nil {
-		t.Fatalf("CheckGate: %v", err)
-	}
-	if !result.Passed {
-		t.Error("expected quick mode to always pass (no gates)")
-	}
-}
-
 func TestCheckGate_InvalidTransition(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
 	// Skip a phase — invalid transition.
-	_, err := CheckGate(PhaseInit, PhaseDeploy, ModeFull, dir, "sess-x")
+	_, err := CheckGate(PhaseInit, PhaseDeploy, dir, "sess-x")
 	if err == nil {
 		t.Fatal("expected error for invalid transition")
 	}
@@ -298,7 +231,7 @@ func TestCheckGate_EvidenceWithFailures_Blocked(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseDiscover, PhaseDevelop, ModeFull, dir, sessionID)
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID)
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -325,7 +258,7 @@ func TestCheckGate_SessionMismatch_Blocked(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseDiscover, PhaseDevelop, ModeFull, dir, sessionID)
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID)
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -357,7 +290,7 @@ func TestCheckGate_MultiService_FailedService_Blocked(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseDevelop, PhaseDeploy, ModeFull, dir, sessionID)
+	result, err := CheckGate(PhaseDevelop, PhaseDeploy, dir, sessionID)
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -387,7 +320,7 @@ func TestCheckGate_MultiService_AllPassed_Passes(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseVerify, PhaseDone, ModeFull, dir, sessionID)
+	result, err := CheckGate(PhaseVerify, PhaseDone, dir, sessionID)
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -411,7 +344,7 @@ func TestCheckGate_MultiService_EmptyResults_Passes(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseDevelop, PhaseDeploy, ModeFull, dir, sessionID)
+	result, err := CheckGate(PhaseDevelop, PhaseDeploy, dir, sessionID)
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -438,7 +371,7 @@ func TestCheckGate_StaleEvidence_Blocked(t *testing.T) {
 	}
 
 	// G1 (DISCOVER→DEVELOP) should fail because discovery evidence is stale.
-	result, err := CheckGate(PhaseDiscover, PhaseDevelop, ModeFull, dir, sessionID)
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID)
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -464,7 +397,7 @@ func TestCheckGate_FreshEvidence_Passes(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseDiscover, PhaseDevelop, ModeFull, dir, sessionID)
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID)
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}

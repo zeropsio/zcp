@@ -36,7 +36,7 @@ func TestRequireWorkflow_ActiveSession_Passes(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir)
-	if _, err := engine.Start("proj-1", "deploy", workflow.ModeFull, "test"); err != nil {
+	if _, err := engine.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("start session: %v", err)
 	}
 	result := requireWorkflow(engine)

@@ -25,7 +25,6 @@ type WorkflowInput struct {
 
 	// Multi-action fields.
 	Action         string                    `json:"action,omitempty"         jsonschema:"Orchestration action: start, complete, skip, status, transition, evidence, reset, or iterate."`
-	Mode           string                    `json:"mode,omitempty"           jsonschema:"Session mode for start action: full (all phases), dev_only (skip deploy/verify), hotfix (skip discover), or quick (no gates)."`
 	Phase          string                    `json:"phase,omitempty"          jsonschema:"Target phase for transition action: DISCOVER, DEVELOP, DEPLOY, VERIFY, or DONE."`
 	Intent         string                    `json:"intent,omitempty"         jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Type           string                    `json:"type,omitempty"           jsonschema:"Evidence type for evidence action: recipe_review, discovery, dev_verify, deploy_evidence, or stage_verify."`
@@ -39,20 +38,25 @@ type WorkflowInput struct {
 	ServiceResults []workflow.ServiceResult  `json:"serviceResults,omitempty" jsonschema:"Per-service verification results (evidence action)."`
 }
 
-// startResponse wraps WorkflowState with workflow guidance for non-bootstrap start.
+// startResponse wraps WorkflowState with workflow guidance for non-bootstrap orchestrated start.
 type startResponse struct {
 	SessionID string `json:"sessionId"`
-	Mode      string `json:"mode"`
 	Intent    string `json:"intent"`
 	Phase     string `json:"phase"`
 	Guidance  string `json:"guidance,omitempty"`
+}
+
+// immediateResponse is returned from immediate (stateless) workflows.
+type immediateResponse struct {
+	Workflow string `json:"workflow"`
+	Guidance string `json:"guidance"`
 }
 
 // RegisterWorkflow registers the zerops_workflow tool.
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, tracker *ops.KnowledgeTracker) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" mode=\"full|dev_only|hotfix|quick\" to begin a tracked session with guidance. mode is REQUIRED. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"transition|evidence|reset|iterate\" (phase management).",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"transition|evidence|reset|iterate\" (phase management).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -127,18 +131,26 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 }
 
 func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	if input.Mode == "" {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"Mode is required for start action",
-			"Specify mode: full, dev_only, hotfix, or quick")), nil, nil
+	// Immediate workflows: stateless, return guidance only.
+	if workflow.IsImmediateWorkflow(input.Workflow) {
+		content, err := ops.GetWorkflow(input.Workflow)
+		if err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Workflow %q not found: %v", input.Workflow, err),
+				"Valid workflows: bootstrap, deploy, debug, scale, configure")), nil, nil
+		}
+		return jsonResult(immediateResponse{
+			Workflow: input.Workflow,
+			Guidance: content,
+		}), nil, nil
 	}
 
-	mode := workflow.Mode(input.Mode)
+	// Orchestrated workflows: bootstrap and deploy.
 
 	// Bootstrap conductor: use BootstrapStart for bootstrap workflow.
 	if input.Workflow == workflowBootstrap {
-		resp, err := engine.BootstrapStart(projectID, mode, input.Intent)
+		resp, err := engine.BootstrapStart(projectID, input.Intent)
 		if err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrWorkflowActive,
@@ -148,12 +160,12 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return jsonResult(resp), nil, nil
 	}
 
-	// Generic start (non-bootstrap or quick mode).
+	// Generic orchestrated start (deploy or other).
 	wfName := input.Workflow
 	if wfName == "" {
 		wfName = "workflow"
 	}
-	state, err := engine.Start(projectID, wfName, mode, input.Intent)
+	state, err := engine.Start(projectID, wfName, input.Intent)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrWorkflowActive,
@@ -163,7 +175,6 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	resp := startResponse{
 		SessionID: state.SessionID,
-		Mode:      string(state.Mode),
 		Intent:    state.Intent,
 		Phase:     string(state.Phase),
 	}

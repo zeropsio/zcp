@@ -227,7 +227,7 @@ func TestIntegration_ImportThenDiscover(t *testing.T) {
 
 	// Start workflow session (required by import guard).
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"action": "start", "workflow": "bootstrap",
 		"intent": "integration test",
 	})
 

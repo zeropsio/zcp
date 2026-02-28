@@ -161,7 +161,7 @@ func TestIntegration_BootstrapRealistic_FullAgentFlow(t *testing.T) {
 func agentStartAndDetect(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 	startText := callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"action": "start", "workflow": "bootstrap",
 		"intent": "bun + hono app with postgresql",
 	})
 	var resp workflow.BootstrapResponse
@@ -372,7 +372,7 @@ func TestIntegration_BootstrapRealistic_ManagedOnlySkipPath(t *testing.T) {
 func managedOnlyDetectAndPlan(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"action": "start", "workflow": "bootstrap",
 		"intent": "postgresql database only",
 	})
 

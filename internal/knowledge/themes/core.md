@@ -1,3 +1,9 @@
+> **STOP — Do NOT generate import.yml, zerops.yml, or application code directly from this reference.**
+> This document is a reference, not an action plan. To create or bootstrap services, start a
+> workflow session first: `zerops_workflow action="start" workflow="bootstrap"`.
+> The workflow provides step-by-step guidance including env var discovery, correct file paths
+> (SSHFS mounts), and deploy sequencing that this reference alone cannot provide.
+
 # Zerops Core Reference
 
 ## TL;DR

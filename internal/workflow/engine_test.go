@@ -128,7 +128,7 @@ func TestEngine_StartAndTransition(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	state, err := eng.Start("proj-1", "deploy", ModeFull, "full workflow")
+	state, err := eng.Start("proj-1", "deploy", "full workflow")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestEngine_Transition_InvalidPhase(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.Start("proj-1", "deploy", ModeFull, "test"); err != nil {
+	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestEngine_Transition_GateFails(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.Start("proj-1", "deploy", ModeFull, "test"); err != nil {
+	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -195,7 +195,7 @@ func TestEngine_Reset(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.Start("proj-1", "deploy", ModeFull, "test"); err != nil {
+	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := eng.Reset(); err != nil {
@@ -211,7 +211,7 @@ func TestEngine_Iterate(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.Start("proj-1", "deploy", ModeFull, "test"); err != nil {
+	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -232,7 +232,7 @@ func TestEngine_GetState(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.Start("proj-1", "deploy", ModeFull, "test"); err != nil {
+	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -245,6 +245,56 @@ func TestEngine_GetState(t *testing.T) {
 	}
 }
 
+// --- Auto-reset DONE session tests ---
+
+func TestEngine_Start_AutoResetDoneSession(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	// Create and manually transition to DONE.
+	state, err := eng.Start("proj-1", "deploy", "first")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Manually set phase to DONE (simulating completed workflow).
+	state.Phase = PhaseDone
+	if err := saveState(dir, state); err != nil {
+		t.Fatalf("saveState: %v", err)
+	}
+
+	// Start again — should auto-reset the DONE session.
+	state2, err := eng.Start("proj-1", "deploy", "second")
+	if err != nil {
+		t.Fatalf("Start after DONE: %v", err)
+	}
+	if state2.Phase != PhaseInit {
+		t.Errorf("Phase: want INIT, got %s", state2.Phase)
+	}
+	if state2.Intent != "second" {
+		t.Errorf("Intent: want 'second', got %s", state2.Intent)
+	}
+	if state2.SessionID == state.SessionID {
+		t.Error("expected new session ID after auto-reset")
+	}
+}
+
+func TestEngine_Start_ActiveSessionBlocks(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.Start("proj-1", "deploy", "first"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Start with active (non-DONE) session should fail.
+	_, err := eng.Start("proj-1", "deploy", "second")
+	if err == nil {
+		t.Fatal("expected error for second Start with active session")
+	}
+}
+
 // --- Bootstrap conductor engine tests ---
 
 func TestEngine_BootstrapStart_Success(t *testing.T) {
@@ -252,15 +302,12 @@ func TestEngine_BootstrapStart_Success(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	resp, err := eng.BootstrapStart("proj-1", ModeFull, "bun + postgres")
+	resp, err := eng.BootstrapStart("proj-1", "bun + postgres")
 	if err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	if resp.SessionID == "" {
 		t.Error("expected non-empty SessionID")
-	}
-	if resp.Mode != ModeFull {
-		t.Errorf("Mode: want full, got %s", resp.Mode)
 	}
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
@@ -293,11 +340,11 @@ func TestEngine_BootstrapStart_ExistingSession(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "first"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "first"); err != nil {
 		t.Fatalf("first BootstrapStart: %v", err)
 	}
 
-	_, err := eng.BootstrapStart("proj-1", ModeFull, "second")
+	_, err := eng.BootstrapStart("proj-1", "second")
 	if err == nil {
 		t.Fatal("expected error for second BootstrapStart")
 	}
@@ -308,7 +355,7 @@ func TestEngine_BootstrapComplete_Success(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -332,7 +379,7 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -376,7 +423,7 @@ func TestEngine_BootstrapComplete_AutoEvidence(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -411,7 +458,7 @@ func TestEngine_BootstrapComplete_AutoTransition(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -433,7 +480,7 @@ func TestEngine_BootstrapComplete_AutoTransition(t *testing.T) {
 	if state.Phase != PhaseDone {
 		t.Errorf("Phase: want DONE, got %s", state.Phase)
 	}
-	// Full mode: INIT→DISCOVER→DEVELOP→DEPLOY→VERIFY→DONE = 5 transitions.
+	// Full: INIT→DISCOVER→DEVELOP→DEPLOY→VERIFY→DONE = 5 transitions.
 	if len(state.History) != 5 {
 		t.Errorf("History length: want 5, got %d", len(state.History))
 	}
@@ -444,7 +491,7 @@ func TestEngine_BootstrapSkip_Success(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -474,7 +521,7 @@ func TestEngine_BootstrapSkip_Mandatory(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -495,7 +542,7 @@ func TestEngine_BootstrapStatus_Active(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -527,7 +574,7 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -554,7 +601,7 @@ func TestBootstrapComplete_AutoComplete_GatesChecked(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -585,13 +632,9 @@ func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
-
-	// Complete all steps but the last step provides an empty attestation
-	// to trigger a gate failure. We'll manually save bad evidence after bootstrap completes
-	// its auto-evidence generation.
 
 	// Complete steps 0-9 normally.
 	preSteps := []string{
@@ -605,7 +648,7 @@ func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
 		}
 	}
 
-	// Overwrite stage_verify evidence with Failed: 1 before the last step triggers auto-complete.
+	// Overwrite stage_verify evidence with Failed: 1.
 	state, err := eng.GetState()
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
@@ -619,16 +662,7 @@ func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	// Complete the last step — auto-complete should fail because the pre-placed
-	// stage_verify evidence has Failed: 1. The auto-complete generates its own
-	// evidence but we pre-placed bad evidence first. The auto-complete will overwrite it.
-	// So this test verifies the gates are checked AFTER evidence is saved.
-	// We need a different approach: save bad evidence AFTER auto-complete generates evidence.
-	// Instead, let's test that when auto-complete generates evidence with aggregated attestations,
-	// and gates are actually checked. The simplest test: complete "report" with empty attestation.
-	// But bootstrap.CompleteStep requires non-empty attestation.
-	// The real test: auto-complete saves evidence with Passed: 1, which should pass gates.
-	// This test confirms the gate-checking path is exercised (no raw mutations).
+	// Complete the last step — auto-complete will overwrite the evidence.
 	_, err = eng.BootstrapComplete("report", "Final report complete")
 	if err != nil {
 		t.Fatalf("BootstrapComplete(report): %v", err)
@@ -652,7 +686,7 @@ func TestEngine_BootstrapComplete_AutoEvidence_PassedCount(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -693,7 +727,7 @@ func TestEngine_BootstrapComplete_AutoEvidence_ServiceResults(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
@@ -725,13 +759,13 @@ func TestEngine_BootstrapComplete_AutoEvidence_ServiceResults(t *testing.T) {
 
 	state, _ := eng.GetState()
 
-	// deploy_evidence should NOT have fabricated ServiceResults (auto-complete doesn't populate them).
+	// deploy_evidence should NOT have fabricated ServiceResults.
 	ev, err := LoadEvidence(eng.evidenceDir, state.SessionID, "deploy_evidence")
 	if err != nil {
 		t.Fatalf("load deploy_evidence: %v", err)
 	}
 	if len(ev.ServiceResults) != 0 {
-		t.Errorf("deploy_evidence.ServiceResults should be empty (no fabrication), got %d", len(ev.ServiceResults))
+		t.Errorf("deploy_evidence.ServiceResults should be empty, got %d", len(ev.ServiceResults))
 	}
 
 	// stage_verify should also have empty ServiceResults.
@@ -740,7 +774,7 @@ func TestEngine_BootstrapComplete_AutoEvidence_ServiceResults(t *testing.T) {
 		t.Fatalf("load stage_verify: %v", err)
 	}
 	if len(ev.ServiceResults) != 0 {
-		t.Errorf("stage_verify.ServiceResults should be empty (no fabrication), got %d", len(ev.ServiceResults))
+		t.Errorf("stage_verify.ServiceResults should be empty, got %d", len(ev.ServiceResults))
 	}
 }
 
@@ -762,7 +796,7 @@ func TestEngine_BootstrapCompletePlan_Valid(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	// Complete detect first.
@@ -800,7 +834,7 @@ func TestEngine_BootstrapCompletePlan_InvalidHostname(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	if _, err := eng.BootstrapComplete("detect", "FRESH project detected"); err != nil {
@@ -821,7 +855,7 @@ func TestEngine_BootstrapCompletePlan_WrongStep(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	if _, err := eng.BootstrapStart("proj-1", ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	// Don't complete detect — current step is detect, not plan.

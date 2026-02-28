@@ -59,9 +59,9 @@ func (e *Engine) autoCompleteBootstrap(state *WorkflowState) error {
 	}
 
 	// Transition through all phases, checking gates at each step.
-	seq := PhaseSequence(state.Mode)
+	seq := PhaseSequence()
 	for i := 1; i < len(seq); i++ {
-		result, err := CheckGate(seq[i-1], seq[i], state.Mode, e.evidenceDir, state.SessionID)
+		result, err := CheckGate(seq[i-1], seq[i], e.evidenceDir, state.SessionID)
 		if err != nil {
 			return fmt.Errorf("auto-complete gate %s→%s: %w", seq[i-1], seq[i], err)
 		}

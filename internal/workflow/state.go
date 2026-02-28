@@ -16,16 +16,6 @@ const (
 	PhaseDone     Phase = "DONE"
 )
 
-// Mode represents a workflow mode.
-type Mode string
-
-const (
-	ModeFull    Mode = "full"
-	ModeDevOnly Mode = "dev_only"
-	ModeHotfix  Mode = "hotfix"
-	ModeQuick   Mode = "quick"
-)
-
 // ProjectState represents detected project state.
 type ProjectState string
 
@@ -41,7 +31,6 @@ type WorkflowState struct {
 	SessionID string                `json:"sessionId"`
 	ProjectID string                `json:"projectId"`
 	Workflow  string                `json:"workflow"`
-	Mode      Mode                  `json:"mode"`
 	Phase     Phase                 `json:"phase"`
 	Iteration int                   `json:"iteration"`
 	Intent    string                `json:"intent"`
@@ -65,43 +54,37 @@ type PhaseTransition struct {
 	At   string `json:"at"`
 }
 
-// phaseSequences defines the ordered phases for each mode.
-var phaseSequences = map[Mode][]Phase{
-	ModeFull:    {PhaseInit, PhaseDiscover, PhaseDevelop, PhaseDeploy, PhaseVerify, PhaseDone},
-	ModeDevOnly: {PhaseInit, PhaseDiscover, PhaseDevelop, PhaseDone},
-	ModeHotfix:  {PhaseInit, PhaseDevelop, PhaseDeploy, PhaseVerify, PhaseDone},
-	ModeQuick:   {PhaseInit, PhaseDevelop, PhaseDeploy, PhaseVerify, PhaseDone},
-}
+// orchestratedPhases is the fixed phase sequence for orchestrated workflows (bootstrap, deploy).
+var orchestratedPhases = []Phase{PhaseInit, PhaseDiscover, PhaseDevelop, PhaseDeploy, PhaseVerify, PhaseDone}
 
-// PhaseSequence returns the ordered phase sequence for a mode.
-// Returns nil for ModeQuick (no phases).
-func PhaseSequence(mode Mode) []Phase {
-	seq, ok := phaseSequences[mode]
-	if !ok {
-		return nil
-	}
-	// Return a copy to prevent mutation.
-	result := make([]Phase, len(seq))
-	copy(result, seq)
+// PhaseSequence returns a copy of the orchestrated phase sequence.
+func PhaseSequence() []Phase {
+	result := make([]Phase, len(orchestratedPhases))
+	copy(result, orchestratedPhases)
 	return result
 }
 
-// ValidNextPhase returns the valid next phases from the current phase in the given mode.
-// Returns nil if the current phase is terminal or not in the mode's sequence.
-func ValidNextPhase(current Phase, mode Mode) []Phase {
-	seq := phaseSequences[mode]
-	if len(seq) == 0 {
-		return nil
-	}
-	for i, p := range seq {
-		if p == current && i+1 < len(seq) {
-			return []Phase{seq[i+1]}
+// ValidNextPhase returns the valid next phase from the current phase.
+func ValidNextPhase(current Phase) []Phase {
+	for i, p := range orchestratedPhases {
+		if p == current && i+1 < len(orchestratedPhases) {
+			return []Phase{orchestratedPhases[i+1]}
 		}
 	}
 	return nil
 }
 
-// IsValidTransition checks if a phase transition is valid for the given mode.
-func IsValidTransition(from, to Phase, mode Mode) bool {
-	return slices.Contains(ValidNextPhase(from, mode), to)
+// IsValidTransition checks if a phase transition is valid.
+func IsValidTransition(from, to Phase) bool {
+	return slices.Contains(ValidNextPhase(from), to)
+}
+
+// immediateWorkflows are stateless — no session, no phases, just guidance.
+var immediateWorkflows = map[string]bool{
+	"debug": true, "scale": true, "configure": true,
+}
+
+// IsImmediateWorkflow returns true if the workflow is stateless (no session, no phases).
+func IsImmediateWorkflow(name string) bool {
+	return immediateWorkflows[name]
 }

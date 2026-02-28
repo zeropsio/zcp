@@ -25,8 +25,18 @@ func NewEngine(baseDir string) *Engine {
 }
 
 // Start creates a new workflow session.
-func (e *Engine) Start(projectID, workflowName string, mode Mode, intent string) (*WorkflowState, error) {
-	return InitSession(e.stateDir, projectID, workflowName, mode, intent)
+// Auto-resets DONE sessions so orchestrated workflows can chain without manual reset.
+func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, error) {
+	if existing, err := LoadSession(e.stateDir); err == nil {
+		if existing.Phase == PhaseDone {
+			if err := e.Reset(); err != nil {
+				return nil, fmt.Errorf("start auto-reset: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("start: active session in phase %s, reset first", existing.Phase)
+		}
+	}
+	return InitSession(e.stateDir, projectID, workflowName, intent)
 }
 
 // Transition moves the workflow to the next phase, checking gates.
@@ -36,12 +46,12 @@ func (e *Engine) Transition(phase Phase) (*WorkflowState, error) {
 		return nil, fmt.Errorf("transition: %w", err)
 	}
 
-	if !IsValidTransition(state.Phase, phase, state.Mode) {
-		return nil, fmt.Errorf("transition: invalid %s → %s in mode %s", state.Phase, phase, state.Mode)
+	if !IsValidTransition(state.Phase, phase) {
+		return nil, fmt.Errorf("transition: invalid %s → %s", state.Phase, phase)
 	}
 
 	// Check gate.
-	result, err := CheckGate(state.Phase, phase, state.Mode, e.evidenceDir, state.SessionID)
+	result, err := CheckGate(state.Phase, phase, e.evidenceDir, state.SessionID)
 	if err != nil {
 		return nil, fmt.Errorf("transition gate check: %w", err)
 	}
@@ -96,8 +106,8 @@ func (e *Engine) GetState() (*WorkflowState, error) {
 }
 
 // BootstrapStart creates a new session with bootstrap state and returns the first step.
-func (e *Engine) BootstrapStart(projectID string, mode Mode, intent string) (*BootstrapResponse, error) {
-	state, err := InitSession(e.stateDir, projectID, "bootstrap", mode, intent)
+func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, error) {
+	state, err := e.Start(projectID, "bootstrap", intent)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap start: %w", err)
 	}
@@ -109,7 +119,7 @@ func (e *Engine) BootstrapStart(projectID string, mode Mode, intent string) (*Bo
 	if err := saveState(e.stateDir, state); err != nil {
 		return nil, fmt.Errorf("bootstrap start save: %w", err)
 	}
-	return bs.BuildResponse(state.SessionID, mode, intent), nil
+	return bs.BuildResponse(state.SessionID, intent), nil
 }
 
 // BootstrapComplete completes the current step and returns the next.
@@ -142,7 +152,7 @@ func (e *Engine) BootstrapComplete(stepName, attestation string) (*BootstrapResp
 	if err := saveState(e.stateDir, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete save: %w", err)
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Mode, state.Intent), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
 }
 
 // BootstrapCompletePlan validates a structured plan, completes the "plan" step, and stores the plan.
@@ -202,7 +212,7 @@ func (e *Engine) BootstrapCompletePlan(services []PlannedService, liveTypes []pl
 	if err := saveState(e.stateDir, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan save: %w", err)
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Mode, state.Intent), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
 }
 
 // BootstrapSkip skips the current step and returns the next.
@@ -228,7 +238,7 @@ func (e *Engine) BootstrapSkip(stepName, reason string) (*BootstrapResponse, err
 	if err := saveState(e.stateDir, state); err != nil {
 		return nil, fmt.Errorf("bootstrap skip save: %w", err)
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Mode, state.Intent), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
 }
 
 // BootstrapStatus returns the current bootstrap progress (read-only).
@@ -240,5 +250,5 @@ func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 	if state.Bootstrap == nil {
 		return nil, fmt.Errorf("bootstrap status: no bootstrap state")
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Mode, state.Intent), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
 }

@@ -142,8 +142,8 @@ func TestServer_RoutingInstructions_WorkflowFirst(t *testing.T) {
 	if !strings.Contains(routingInstructions, "workflow sessions") {
 		t.Error("routingInstructions should mention 'workflow sessions'")
 	}
-	if !strings.Contains(routingInstructions, "require") {
-		t.Error("routingInstructions should mention 'require'")
+	if !strings.Contains(routingInstructions, "MUST") {
+		t.Error("routingInstructions should mention 'MUST'")
 	}
 	if strings.Contains(routingInstructions, "NEVER") {
 		t.Error("routingInstructions should not use 'NEVER' language")
@@ -266,8 +266,8 @@ func TestBuildInstructions_FreshProject(t *testing.T) {
 	if !strings.Contains(inst, `action="start"`) {
 		t.Error("empty project directive should use tracked mode syntax")
 	}
-	if !strings.Contains(inst, `mode="full"`) {
-		t.Error("empty project directive should specify mode")
+	if !strings.Contains(inst, `workflow="bootstrap"`) {
+		t.Error("empty project directive should specify bootstrap workflow")
 	}
 }
 
@@ -300,7 +300,7 @@ func TestBuildInstructions_WorkflowHint_ActiveBootstrap(t *testing.T) {
 	eng := workflow.NewEngine(dir)
 
 	// Start bootstrap and complete 3 steps.
-	if _, err := eng.BootstrapStart("proj-1", workflow.ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	for _, step := range []string{"detect", "plan", "load-knowledge"} {
@@ -337,7 +337,7 @@ func TestBuildInstructions_WorkflowHint_PhaseDone(t *testing.T) {
 	eng := workflow.NewEngine(dir)
 
 	// Complete full bootstrap.
-	if _, err := eng.BootstrapStart("proj-1", workflow.ModeFull, "test"); err != nil {
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	steps := []string{

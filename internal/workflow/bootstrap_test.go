@@ -298,12 +298,9 @@ func TestBuildResponse_FirstStep(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-1", ModeFull, "bun + postgres")
+	resp := bs.BuildResponse("sess-1", "bun + postgres")
 	if resp.SessionID != "sess-1" {
 		t.Errorf("SessionID: want sess-1, got %s", resp.SessionID)
-	}
-	if resp.Mode != ModeFull {
-		t.Errorf("Mode: want full, got %s", resp.Mode)
 	}
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
@@ -339,7 +336,7 @@ func TestBuildResponse_MiddleStep(t *testing.T) {
 	bs.CurrentStep = 5
 	bs.Steps[5].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-2", ModeFull, "test")
+	resp := bs.BuildResponse("sess-2", "test")
 	if resp.Progress.Completed != 5 {
 		t.Errorf("Progress.Completed: want 5, got %d", resp.Progress.Completed)
 	}
@@ -363,7 +360,7 @@ func TestBuildResponse_AllDone(t *testing.T) {
 	bs.CurrentStep = 11
 	bs.Active = false
 
-	resp := bs.BuildResponse("sess-3", ModeFull, "test")
+	resp := bs.BuildResponse("sess-3", "test")
 	if resp.Current != nil {
 		t.Error("Current should be nil when all done")
 	}
@@ -387,7 +384,7 @@ func TestBuildResponse_WithSkipped(t *testing.T) {
 	bs.CurrentStep = 6
 	bs.Steps[6].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-4", ModeFull, "test")
+	resp := bs.BuildResponse("sess-4", "test")
 	// Skipped counts as completed for progress.
 	if resp.Progress.Completed != 6 {
 		t.Errorf("Progress.Completed: want 6 (5 complete + 1 skipped), got %d", resp.Progress.Completed)
@@ -507,7 +504,7 @@ func TestBuildResponse_PriorContext_Attestations(t *testing.T) {
 	bs.CurrentStep = 3
 	bs.Steps[3].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-ctx", ModeFull, "bun + postgres")
+	resp := bs.BuildResponse("sess-ctx", "bun + postgres")
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -540,7 +537,7 @@ func TestBuildResponse_PriorContext_WithPlan(t *testing.T) {
 		CreatedAt: "2026-02-27T00:00:00Z",
 	}
 
-	resp := bs.BuildResponse("sess-plan", ModeFull, "test")
+	resp := bs.BuildResponse("sess-plan", "test")
 	if resp.Current.PriorContext == nil {
 		t.Fatal("PriorContext should not be nil")
 	}
@@ -557,7 +554,7 @@ func TestBuildResponse_DetailedGuide_Populated(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-guide", ModeFull, "test")
+	resp := bs.BuildResponse("sess-guide", "test")
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -571,7 +568,7 @@ func TestBuildResponse_PriorContext_FirstStep_Empty(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-first", ModeFull, "test")
+	resp := bs.BuildResponse("sess-first", "test")
 	if resp.Current.PriorContext != nil {
 		t.Error("PriorContext should be nil for first step (no prior attestations)")
 	}

@@ -44,16 +44,10 @@ func GateName(from, to Phase) string {
 }
 
 // CheckGate checks whether a phase transition is allowed based on evidence.
-// Returns an error for invalid transitions in the given mode.
-func CheckGate(from, to Phase, mode Mode, evidenceDir, sessionID string) (*GateResult, error) {
-	// Quick mode has no gates.
-	if mode == ModeQuick {
-		return &GateResult{Passed: true}, nil
-	}
-
-	// Validate the transition is valid for this mode.
-	if !IsValidTransition(from, to, mode) {
-		return nil, fmt.Errorf("check gate: invalid transition %s → %s in mode %s", from, to, mode)
+func CheckGate(from, to Phase, evidenceDir, sessionID string) (*GateResult, error) {
+	// Validate the transition is valid.
+	if !IsValidTransition(from, to) {
+		return nil, fmt.Errorf("check gate: invalid transition %s → %s", from, to)
 	}
 
 	// Find the gate for this transition.

@@ -11,15 +11,12 @@ func TestInitSession_CreatesState(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	state, err := InitSession(dir, "proj-1", "bootstrap", ModeFull, "deploy my app")
+	state, err := InitSession(dir, "proj-1", "bootstrap", "deploy my app")
 	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 	if state.ProjectID != "proj-1" {
 		t.Errorf("ProjectID: want proj-1, got %s", state.ProjectID)
-	}
-	if state.Mode != ModeFull {
-		t.Errorf("Mode: want full, got %s", state.Mode)
 	}
 	if state.Phase != PhaseInit {
 		t.Errorf("Phase: want INIT, got %s", state.Phase)
@@ -49,12 +46,12 @@ func TestInitSession_ExistingSessionBlocked(t *testing.T) {
 	dir := t.TempDir()
 
 	// First init should succeed.
-	if _, err := InitSession(dir, "proj-1", "bootstrap", ModeFull, "first"); err != nil {
+	if _, err := InitSession(dir, "proj-1", "bootstrap", "first"); err != nil {
 		t.Fatalf("first InitSession: %v", err)
 	}
 
 	// Second init should fail.
-	_, err := InitSession(dir, "proj-1", "bootstrap", ModeFull, "second")
+	_, err := InitSession(dir, "proj-1", "bootstrap", "second")
 	if err == nil {
 		t.Fatal("expected error for second InitSession with existing session")
 	}
@@ -64,7 +61,7 @@ func TestLoadSession_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	original, err := InitSession(dir, "proj-2", "deploy", ModeDevOnly, "develop feature")
+	original, err := InitSession(dir, "proj-2", "deploy", "develop feature")
 	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
@@ -76,8 +73,8 @@ func TestLoadSession_Success(t *testing.T) {
 	if loaded.SessionID != original.SessionID {
 		t.Errorf("SessionID mismatch: want %s, got %s", original.SessionID, loaded.SessionID)
 	}
-	if loaded.Mode != ModeDevOnly {
-		t.Errorf("Mode: want dev_only, got %s", loaded.Mode)
+	if loaded.Workflow != "deploy" {
+		t.Errorf("Workflow: want deploy, got %s", loaded.Workflow)
 	}
 }
 
@@ -95,7 +92,7 @@ func TestResetSession_DeletesState(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	if _, err := InitSession(dir, "proj-3", "bootstrap", ModeFull, "test"); err != nil {
+	if _, err := InitSession(dir, "proj-3", "bootstrap", "test"); err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 
@@ -124,7 +121,7 @@ func TestIterateSession_IncrementsCounter(t *testing.T) {
 	dir := t.TempDir()
 	evidenceDir := filepath.Join(dir, "evidence")
 
-	if _, err := InitSession(dir, "proj-4", "bootstrap", ModeFull, "iterate test"); err != nil {
+	if _, err := InitSession(dir, "proj-4", "bootstrap", "iterate test"); err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 
@@ -156,7 +153,7 @@ func TestIterateSession_ArchivesEvidence(t *testing.T) {
 	dir := t.TempDir()
 	evidenceDir := filepath.Join(dir, "evidence")
 
-	if _, err := InitSession(dir, "proj-5", "bootstrap", ModeFull, "archive test"); err != nil {
+	if _, err := InitSession(dir, "proj-5", "bootstrap", "archive test"); err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 

@@ -80,7 +80,7 @@ func TestIntegration_DeployLocalFlow(t *testing.T) {
 
 	// Start workflow session (required by deploy guard).
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "deploy", "mode": "full",
+		"action": "start", "workflow": "deploy",
 		"intent": "integration test",
 	})
 
@@ -146,7 +146,7 @@ func TestIntegration_DeployLocalWithWorkingDir(t *testing.T) {
 
 	// Start workflow session (required by deploy guard).
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "deploy", "mode": "full",
+		"action": "start", "workflow": "deploy",
 		"intent": "integration test",
 	})
 
@@ -201,7 +201,7 @@ func TestIntegration_DeployError(t *testing.T) {
 
 	// Start workflow session (required by deploy guard).
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "deploy", "mode": "full",
+		"action": "start", "workflow": "deploy",
 		"intent": "integration test",
 	})
 

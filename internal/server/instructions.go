@@ -13,16 +13,14 @@ import (
 const baseInstructions = `ZCP manages Zerops PaaS infrastructure.`
 
 const routingInstructions = `
-Zerops operations are managed through workflow sessions.
-For any operation (creating services, deploying code, debugging), start with zerops_workflow.
-zerops_import and zerops_deploy require an active workflow session and will reject calls without one.
+IMPORTANT: All Zerops operations are managed through workflow sessions. Before writing ANY configuration (import.yml, zerops.yml) or application code, you MUST start a workflow session. The workflow provides env var discovery, correct file paths, and deploy sequencing. Writing code before starting the workflow leads to incorrect configurations that must be rewritten.
 
 Workflow commands:
-- Create services: zerops_workflow action="start" workflow="bootstrap" mode="full"
-- Deploy code: zerops_workflow action="start" workflow="deploy" mode="full"
-- Debug issues: zerops_workflow action="start" workflow="debug" mode="quick"
-- Scale: zerops_workflow action="start" workflow="scale" mode="quick"
-- Configure: zerops_workflow action="start" workflow="configure" mode="quick"
+- Create services: zerops_workflow action="start" workflow="bootstrap" (ALWAYS start here for new services)
+- Deploy code: zerops_workflow action="start" workflow="deploy"
+- Debug issues: zerops_workflow action="start" workflow="debug"
+- Scale: zerops_workflow action="start" workflow="scale"
+- Configure: zerops_workflow action="start" workflow="configure"
 - Monitor: zerops_discover
 - Search docs: zerops_knowledge query="..."`
 
@@ -67,7 +65,7 @@ func buildWorkflowHint(stateDir string) string {
 		return ""
 	}
 
-	hint := fmt.Sprintf("Active workflow: %s mode=%s phase=%s", state.Workflow, state.Mode, state.Phase)
+	hint := fmt.Sprintf("Active workflow: %s phase=%s", state.Workflow, state.Phase)
 	if state.Bootstrap != nil && state.Bootstrap.Active {
 		stepNum := state.Bootstrap.CurrentStep + 1
 		total := len(state.Bootstrap.Steps)
@@ -90,7 +88,7 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID 
 	}
 
 	if len(services) == 0 {
-		return "Project is empty — no services configured yet.\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\""
+		return "Project is empty — no services configured yet.\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\""
 	}
 
 	var b strings.Builder
@@ -110,15 +108,15 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID 
 		fmt.Fprintf(&b, "\nProject state: %s", projState)
 		switch projState {
 		case workflow.StateFresh:
-			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\"")
+			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\"")
 		case workflow.StateConformant:
 			b.WriteString("\nDev+stage service pairs detected.")
-			b.WriteString("\nIf the request matches existing services, use: zerops_workflow action=\"start\" workflow=\"deploy\" mode=\"full\"")
+			b.WriteString("\nIf the request matches existing services, use: zerops_workflow action=\"start\" workflow=\"deploy\"")
 			b.WriteString("\nIf the user wants a DIFFERENT stack, ASK how to proceed before making any changes.")
 			b.WriteString("\nDo NOT delete existing services without explicit user approval.")
 		case workflow.StateNonConformant:
 			b.WriteString("\nExisting services do not follow dev+stage naming.")
-			b.WriteString("\nRecommended: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\" to add NEW services alongside existing ones.")
+			b.WriteString("\nRecommended: zerops_workflow action=\"start\" workflow=\"bootstrap\" to add NEW services alongside existing ones.")
 			b.WriteString("\nDo NOT delete existing services without explicit user approval.")
 		}
 	}

@@ -44,7 +44,6 @@ type BootstrapState struct {
 // BootstrapResponse is returned from conductor actions.
 type BootstrapResponse struct {
 	SessionID string             `json:"sessionId"`
-	Mode      Mode               `json:"mode"`
 	Intent    string             `json:"intent"`
 	Progress  BootstrapProgress  `json:"progress"`
 	Current   *BootstrapStepInfo `json:"current,omitempty"`
@@ -182,7 +181,7 @@ func (b *BootstrapState) SkipStep(name, reason string) error {
 }
 
 // BuildResponse constructs a BootstrapResponse from the current state.
-func (b *BootstrapState) BuildResponse(sessionID string, mode Mode, intent string) *BootstrapResponse {
+func (b *BootstrapState) BuildResponse(sessionID, intent string) *BootstrapResponse {
 	completed := 0
 	summaries := make([]BootstrapStepSummary, len(b.Steps))
 	for i, s := range b.Steps {
@@ -194,7 +193,6 @@ func (b *BootstrapState) BuildResponse(sessionID string, mode Mode, intent strin
 
 	resp := &BootstrapResponse{
 		SessionID: sessionID,
-		Mode:      mode,
 		Intent:    intent,
 		Progress: BootstrapProgress{
 			Total:     len(b.Steps),

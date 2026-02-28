@@ -166,16 +166,16 @@ func TestWorkflowTool_Action_UnknownAction(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Action_Start(t *testing.T) {
+func TestWorkflowTool_Action_Start_Orchestrated(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start",
-		"mode":   "full",
-		"intent": "Deploy bun app",
+		"action":   "start",
+		"workflow": "deploy",
+		"intent":   "Deploy bun app",
 	})
 
 	if result.IsError {
@@ -185,9 +185,6 @@ func TestWorkflowTool_Action_Start(t *testing.T) {
 	var resp startResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse startResponse: %v", err)
-	}
-	if resp.Mode != "full" {
-		t.Errorf("mode = %q, want full", resp.Mode)
 	}
 	if resp.Phase != "INIT" {
 		t.Errorf("phase = %q, want INIT", resp.Phase)
@@ -206,7 +203,6 @@ func TestWorkflowTool_Action_Start_Deploy_ReturnsGuidance(t *testing.T) {
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "deploy",
-		"mode":     "full",
 		"intent":   "Deploy to production",
 	})
 
@@ -221,45 +217,101 @@ func TestWorkflowTool_Action_Start_Deploy_ReturnsGuidance(t *testing.T) {
 	if resp.Guidance == "" {
 		t.Error("expected non-empty guidance for deploy workflow")
 	}
-	if resp.Mode != "full" {
-		t.Errorf("mode = %q, want full", resp.Mode)
+}
+
+func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		workflow string
+	}{
+		{"debug", "debug"},
+		{"scale", "scale"},
+		{"configure", "configure"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			engine := workflow.NewEngine(t.TempDir())
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+
+			result := callTool(t, srv, "zerops_workflow", map[string]any{
+				"action":   "start",
+				"workflow": tt.workflow,
+			})
+
+			if result.IsError {
+				t.Errorf("unexpected error: %s", getTextContent(t, result))
+			}
+			text := getTextContent(t, result)
+			var resp immediateResponse
+			if err := json.Unmarshal([]byte(text), &resp); err != nil {
+				t.Fatalf("failed to parse immediateResponse: %v", err)
+			}
+			if resp.Workflow != tt.workflow {
+				t.Errorf("workflow = %q, want %q", resp.Workflow, tt.workflow)
+			}
+			if resp.Guidance == "" {
+				t.Error("expected non-empty guidance")
+			}
+		})
 	}
 }
 
-func TestWorkflowTool_Action_Start_NoWorkflow_NoGuidance(t *testing.T) {
+func TestWorkflowTool_Action_Start_ImmediateNoSession(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
 
+	// Start an immediate workflow — should NOT create a session.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start",
-		"mode":   "full",
+		"action":   "start",
+		"workflow": "debug",
 	})
-
 	if result.IsError {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))
 	}
-	text := getTextContent(t, result)
-	var resp startResponse
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("failed to parse startResponse: %v", err)
-	}
-	if resp.Guidance != "" {
-		t.Errorf("expected empty guidance without workflow, got: %s", resp.Guidance[:50])
+
+	// Verify no session was created.
+	if engine.HasActiveSession() {
+		t.Error("immediate workflow should not create a session")
 	}
 }
 
-func TestWorkflowTool_Action_Start_MissingMode(t *testing.T) {
+func TestWorkflowTool_Action_Start_AutoResetDone(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
 
-	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "start"})
+	// Start and complete a bootstrap to get to DONE.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap",
+		"intent": "first bootstrap",
+	})
+	steps := []string{
+		"detect", "plan", "load-knowledge", "generate-import",
+		"import-services", "mount-dev", "discover-envs", "generate-code",
+		"deploy", "verify", "report",
+	}
+	for _, step := range steps {
+		callTool(t, srv, "zerops_workflow", map[string]any{
+			"action":      "complete",
+			"step":        step,
+			"attestation": "Attestation for " + step + " completed ok",
+		})
+	}
 
-	if !result.IsError {
-		t.Error("expected IsError for missing mode")
+	// Now start a new deploy — should auto-reset the DONE session.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "deploy",
+		"intent":   "second deploy",
+	})
+	if result.IsError {
+		t.Errorf("expected auto-reset of DONE session, got error: %s", getTextContent(t, result))
 	}
 }
 
@@ -271,7 +323,8 @@ func TestWorkflowTool_Action_Evidence(t *testing.T) {
 
 	// Start session first.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "mode": "full",
+		"action":   "start",
+		"workflow": "deploy",
 	})
 
 	// Record evidence.
@@ -321,7 +374,8 @@ func TestWorkflowTool_Action_TransitionWithGate(t *testing.T) {
 
 	// Start session.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "mode": "full",
+		"action":   "start",
+		"workflow": "deploy",
 	})
 
 	// Try transition without evidence — should fail.
@@ -358,7 +412,8 @@ func TestWorkflowTool_Action_Reset(t *testing.T) {
 
 	// Start and reset.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "mode": "full",
+		"action":   "start",
+		"workflow": "deploy",
 	})
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "reset"})
 
@@ -408,7 +463,6 @@ func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
-		"mode":     "full",
 		"intent":   "bun + postgres",
 	})
 
@@ -436,7 +490,7 @@ func TestWorkflowTool_Action_BootstrapComplete(t *testing.T) {
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"action": "start", "workflow": "bootstrap",
 	})
 
 	// Complete detect step.
@@ -494,7 +548,7 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 
 	// Start and advance to mount-dev.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"action": "start", "workflow": "bootstrap",
 	})
 	preSteps := []string{"detect", "plan", "load-knowledge", "generate-import", "import-services"}
 	for _, step := range preSteps {
@@ -532,7 +586,7 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"action": "start", "workflow": "bootstrap",
 	})
 
 	// Get status.
@@ -559,7 +613,7 @@ func TestWorkflowTool_Action_BootstrapComplete_PlanStep_Structured(t *testing.T)
 
 	// Start bootstrap and complete detect.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"action": "start", "workflow": "bootstrap",
 	})
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "detect",
@@ -597,7 +651,7 @@ func TestWorkflowTool_Action_BootstrapComplete_PlanStep_InvalidPlan(t *testing.T
 
 	// Start bootstrap and complete detect.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"action": "start", "workflow": "bootstrap",
 	})
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "detect",
@@ -630,14 +684,14 @@ func TestWorkflowTool_Action_BootstrapComplete_PlanStep_FallbackAttestation(t *t
 
 	// Start bootstrap and complete detect.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"action": "start", "workflow": "bootstrap",
 	})
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "detect",
 		"attestation": "FRESH project, no existing services",
 	})
 
-	// Complete plan step with attestation only (no structured plan) — should still work via JSON parse fallback or plain attestation.
+	// Complete plan step with attestation only (no structured plan).
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "complete",
 		"step":        "plan",
@@ -646,35 +700,5 @@ func TestWorkflowTool_Action_BootstrapComplete_PlanStep_FallbackAttestation(t *t
 
 	if result.IsError {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))
-	}
-}
-
-func TestWorkflowTool_Action_QuickMode_Bootstrap(t *testing.T) {
-	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
-
-	// Quick mode bootstrap now uses the conductor (returns BootstrapResponse).
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "bootstrap",
-		"mode":     "quick",
-		"intent":   "quick test",
-	})
-
-	if result.IsError {
-		t.Errorf("unexpected error: %s", getTextContent(t, result))
-	}
-	text := getTextContent(t, result)
-	var resp workflow.BootstrapResponse
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("failed to parse BootstrapResponse: %v", err)
-	}
-	if resp.Progress.Total != 11 {
-		t.Errorf("Total: want 11, got %d", resp.Progress.Total)
-	}
-	if resp.Mode != "quick" {
-		t.Errorf("Mode: want quick, got %s", resp.Mode)
 	}
 }

@@ -73,7 +73,6 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 	startText := callAndGetText(t, session, "zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
-		"mode":     "full",
 		"intent":   "bun + postgres app",
 	})
 
@@ -180,7 +179,7 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 
 	// Start bootstrap.
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "dev_only", "intent": "managed-only project",
+		"action": "start", "workflow": "bootstrap", "intent": "managed-only project",
 	})
 
 	// Complete mandatory steps up to import-services.
@@ -276,7 +275,7 @@ func TestIntegration_BootstrapConductor_StatusRecovery(t *testing.T) {
 
 	// Start bootstrap and complete a few steps.
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full", "intent": "recovery test",
+		"action": "start", "workflow": "bootstrap", "intent": "recovery test",
 	})
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "detect",
@@ -364,12 +363,12 @@ func TestIntegration_BootstrapConductor_ErrorCases(t *testing.T) {
 
 	// Start bootstrap.
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full", "intent": "error test",
+		"action": "start", "workflow": "bootstrap", "intent": "error test",
 	})
 
 	// Error: double start.
 	result = callAndGetResult(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full",
+		"action": "start", "workflow": "bootstrap",
 	})
 	if !result.IsError {
 		t.Error("expected error for double start")
@@ -421,7 +420,7 @@ func TestIntegration_BootstrapConductor_ResetAndRestart(t *testing.T) {
 
 	// Start, complete a step, then reset.
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full", "intent": "will reset",
+		"action": "start", "workflow": "bootstrap", "intent": "will reset",
 	})
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "detect", "attestation": "FRESH project detected successfully",
@@ -437,14 +436,11 @@ func TestIntegration_BootstrapConductor_ResetAndRestart(t *testing.T) {
 
 	// Restart — should work after reset.
 	restartText := callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "dev_only", "intent": "restarted",
+		"action": "start", "workflow": "bootstrap", "intent": "restarted",
 	})
 	var restartResp workflow.BootstrapResponse
 	if err := json.Unmarshal([]byte(restartText), &restartResp); err != nil {
 		t.Fatalf("parse restart response: %v", err)
-	}
-	if restartResp.Mode != "dev_only" {
-		t.Errorf("mode: want dev_only, got %s", restartResp.Mode)
 	}
 	if restartResp.Intent != "restarted" {
 		t.Errorf("intent: want 'restarted', got %q", restartResp.Intent)
@@ -466,7 +462,7 @@ func TestIntegration_BootstrapConductor_StepGuidanceQuality(t *testing.T) {
 
 	// Start and check each step's guidance quality as we advance.
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "mode": "full", "intent": "guidance quality check",
+		"action": "start", "workflow": "bootstrap", "intent": "guidance quality check",
 	})
 
 	expectedTools := map[string]string{
