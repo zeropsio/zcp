@@ -98,7 +98,7 @@ func TestGetClientID_NoOnceField(t *testing.T) {
 	c := &ZeropsClient{}
 	// Lock/Unlock proves mu is a Mutex, not a Once.
 	c.mu.Lock()
-	c.cachedID = "test-id" //nolint:staticcheck // intentional: prove mu is a Mutex, not Once
+	c.cachedID = "test-id"
 	c.mu.Unlock()
 
 	if c.cachedID != "test-id" {

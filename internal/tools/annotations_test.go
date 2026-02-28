@@ -30,6 +30,8 @@ func (*nopMounter) IsWritable(_ context.Context, _ string) (bool, error) { retur
 func (*nopMounter) ListMountDirs(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+func (*nopMounter) HasUnit(_ context.Context, _ string) (bool, error) { return false, nil }
+func (*nopMounter) CleanupUnit(_ context.Context, _ string) error     { return nil }
 
 // nopSSH satisfies ops.SSHDeployer for annotation tests (never called).
 type nopSSH struct{}

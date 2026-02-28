@@ -159,6 +159,26 @@ func (m *SystemMounter) ListMountDirs(_ context.Context, basePath string) ([]str
 	return dirs, nil
 }
 
+// HasUnit checks if a systemd unit exists for the given hostname.
+// Uses "systemctl cat" which does not require sudo.
+func (m *SystemMounter) HasUnit(ctx context.Context, hostname string) (bool, error) {
+	if !safeHostname.MatchString(hostname) {
+		return false, fmt.Errorf("unsafe hostname: %s", hostname)
+	}
+	unitName := "zerops@sshfs-" + hostname + ".service"
+	err := execWithTimeout(ctx, mountCheckTimeout, "systemctl", "cat", unitName)
+	return err == nil, nil
+}
+
+// CleanupUnit removes the zsc systemd unit without touching the FUSE mount.
+// Used to clean up orphan units where no FUSE mount was established.
+func (m *SystemMounter) CleanupUnit(ctx context.Context, hostname string) error {
+	if !safeHostname.MatchString(hostname) {
+		return fmt.Errorf("unsafe hostname: %s", hostname)
+	}
+	return execWithTimeout(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", "sshfs-"+hostname)
+}
+
 // execWithTimeout runs a command with a timeout derived from the parent context.
 func execWithTimeout(ctx context.Context, timeout time.Duration, name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)

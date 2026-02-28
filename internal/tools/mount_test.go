@@ -16,12 +16,14 @@ type stubMounter struct {
 	states   map[string]platform.MountState
 	writable map[string]bool
 	mountErr error
+	units    map[string]bool
 }
 
 func newStubMounter() *stubMounter {
 	return &stubMounter{
 		states:   make(map[string]platform.MountState),
 		writable: make(map[string]bool),
+		units:    make(map[string]bool),
 	}
 }
 
@@ -57,6 +59,14 @@ func (s *stubMounter) IsWritable(_ context.Context, path string) (bool, error) {
 
 func (s *stubMounter) ListMountDirs(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
+}
+
+func (s *stubMounter) HasUnit(_ context.Context, hostname string) (bool, error) {
+	return s.units[hostname], nil
+}
+
+func (s *stubMounter) CleanupUnit(_ context.Context, _ string) error {
+	return nil
 }
 
 func mountServer(mock platform.Client, mounter ops.Mounter) *mcp.Server {
@@ -255,5 +265,34 @@ func TestMountTool_ServiceNotFound(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected IsError for nonexistent service")
+	}
+}
+
+func TestMountTool_UnmountOrphanUnit(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "app"},
+	})
+	mounter := newStubMounter()
+	mounter.units["app"] = true
+	// No FUSE mount — state is NotMounted by default.
+	srv := mountServer(mock, mounter)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action":          "unmount",
+		"serviceHostname": "app",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.MountResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if parsed.Status != "UNIT_CLEANED" {
+		t.Errorf("status = %s, want UNIT_CLEANED", parsed.Status)
 	}
 }

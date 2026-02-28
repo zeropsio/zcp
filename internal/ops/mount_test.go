@@ -20,12 +20,16 @@ type mockMounter struct {
 	checkErr       error
 	mountDirs      []string
 	mountDirsErr   error
+	units          map[string]bool
+	cleanupErr     error
+	cleanupCalls   []string
 }
 
 func newMockMounter() *mockMounter {
 	return &mockMounter{
 		states:   make(map[string]platform.MountState),
 		writable: make(map[string]bool),
+		units:    make(map[string]bool),
 	}
 }
 
@@ -70,6 +74,15 @@ func (m *mockMounter) IsWritable(_ context.Context, path string) (bool, error) {
 
 func (m *mockMounter) ListMountDirs(_ context.Context, _ string) ([]string, error) {
 	return m.mountDirs, m.mountDirsErr
+}
+
+func (m *mockMounter) HasUnit(_ context.Context, hostname string) (bool, error) {
+	return m.units[hostname], nil
+}
+
+func (m *mockMounter) CleanupUnit(_ context.Context, hostname string) error {
+	m.cleanupCalls = append(m.cleanupCalls, hostname)
+	return m.cleanupErr
 }
 
 func testServices() []platform.ServiceStack {
@@ -645,6 +658,172 @@ func TestMountStatus_OrphanDetection(t *testing.T) {
 				if !found {
 					t.Errorf("orphan %s not found in results", tt.wantOrphan)
 				}
+			}
+		})
+	}
+}
+
+func TestUnmountService_OrphanUnit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		hasUnit    bool
+		cleanupErr error
+		wantStatus string
+		wantErr    bool
+		wantCode   string
+	}{
+		{
+			name:       "orphan unit cleaned",
+			hasUnit:    true,
+			wantStatus: "UNIT_CLEANED",
+		},
+		{
+			name:       "no unit returns NOT_MOUNTED",
+			hasUnit:    false,
+			wantStatus: "NOT_MOUNTED",
+		},
+		{
+			name:       "cleanup fails returns error",
+			hasUnit:    true,
+			cleanupErr: errors.New("zsc remove failed"),
+			wantErr:    true,
+			wantCode:   platform.ErrUnmountFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mock := platform.NewMock().WithServices(testServices())
+			mounter := newMockMounter()
+			mounter.units["app"] = tt.hasUnit
+			mounter.cleanupErr = tt.cleanupErr
+
+			result, err := UnmountService(context.Background(), mock, "proj-1", mounter, "app")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				var pe *platform.PlatformError
+				if !errors.As(err, &pe) {
+					t.Fatalf("expected PlatformError, got %T: %v", err, err)
+				}
+				if pe.Code != tt.wantCode {
+					t.Errorf("code = %s, want %s", pe.Code, tt.wantCode)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Status != tt.wantStatus {
+				t.Errorf("status = %s, want %s", result.Status, tt.wantStatus)
+			}
+			if tt.hasUnit && tt.cleanupErr == nil {
+				if len(mounter.cleanupCalls) != 1 || mounter.cleanupCalls[0] != "app" {
+					t.Errorf("cleanupCalls = %v, want [app]", mounter.cleanupCalls)
+				}
+			}
+		})
+	}
+}
+
+func TestMountService_CleansOrphanUnit(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices(testServices())
+	mounter := newMockMounter()
+	mounter.units["app"] = true
+
+	result, err := MountService(context.Background(), mock, "proj-1", mounter, "app")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "MOUNTED" {
+		t.Errorf("status = %s, want MOUNTED", result.Status)
+	}
+	if len(mounter.cleanupCalls) != 1 || mounter.cleanupCalls[0] != "app" {
+		t.Errorf("cleanupCalls = %v, want [app]", mounter.cleanupCalls)
+	}
+}
+
+func TestMountStatus_PendingState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		services    []platform.ServiceStack
+		mountDirs   []string
+		units       map[string]bool
+		hostname    string
+		wantPending bool
+		wantOrphan  bool
+		wantInclude bool
+	}{
+		{
+			name: "known service with orphan unit shows pending",
+			services: []platform.ServiceStack{
+				{ID: "svc-1", Name: "app"},
+			},
+			units:       map[string]bool{"app": true},
+			hostname:    "app",
+			wantPending: true,
+			wantInclude: true,
+		},
+		{
+			name: "orphan dir with orphan unit shows pending+orphan",
+			services: []platform.ServiceStack{
+				{ID: "svc-1", Name: "app"},
+			},
+			mountDirs:   []string{"app", "deleted"},
+			units:       map[string]bool{"deleted": true},
+			hostname:    "deleted",
+			wantPending: true,
+			wantOrphan:  true,
+			wantInclude: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mock := platform.NewMock().WithServices(tt.services)
+			mounter := newMockMounter()
+			mounter.mountDirs = tt.mountDirs
+			maps.Copy(mounter.units, tt.units)
+
+			var result *MountStatusResult
+			var err error
+			if tt.hostname != "" && !tt.wantOrphan {
+				result, err = MountStatus(context.Background(), mock, "proj-1", mounter, tt.hostname)
+			} else {
+				result, err = MountStatus(context.Background(), mock, "proj-1", mounter, "")
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var found bool
+			for _, m := range result.Mounts {
+				if m.Hostname == tt.hostname {
+					found = true
+					if m.Pending != tt.wantPending {
+						t.Errorf("pending = %v, want %v", m.Pending, tt.wantPending)
+					}
+					if m.Orphan != tt.wantOrphan {
+						t.Errorf("orphan = %v, want %v", m.Orphan, tt.wantOrphan)
+					}
+					if m.Message == "" {
+						t.Error("expected non-empty message for pending state")
+					}
+				}
+			}
+			if tt.wantInclude && !found {
+				t.Errorf("hostname %s not found in results", tt.hostname)
 			}
 		})
 	}

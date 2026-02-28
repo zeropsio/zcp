@@ -23,6 +23,8 @@ type Mounter interface {
 	ForceUnmount(ctx context.Context, hostname, path string) error
 	IsWritable(ctx context.Context, path string) (bool, error)
 	ListMountDirs(ctx context.Context, basePath string) ([]string, error)
+	HasUnit(ctx context.Context, hostname string) (bool, error)
+	CleanupUnit(ctx context.Context, hostname string) error
 }
 
 // MountResult is the result of a mount or unmount operation.
@@ -45,6 +47,7 @@ type MountInfo struct {
 	MountPath string `json:"mountPath"`
 	Mounted   bool   `json:"mounted"`
 	Stale     bool   `json:"stale,omitempty"`
+	Pending   bool   `json:"pending,omitempty"`
 	Writable  bool   `json:"writable,omitempty"`
 	Orphan    bool   `json:"orphan,omitempty"`
 	Message   string `json:"message,omitempty"`
@@ -103,7 +106,11 @@ func MountService(
 		_ = os.Remove(mountPath)
 
 	case platform.MountStateNotMounted:
-		// Proceed to mount below.
+		// Clean up orphan unit if present, before creating a new mount.
+		if hasUnit, _ := mounter.HasUnit(ctx, hostname); hasUnit {
+			_ = mounter.CleanupUnit(ctx, hostname)
+			_ = os.Remove(mountPath)
+		}
 	}
 
 	if err := mounter.Mount(ctx, hostname, mountPath); err != nil {
@@ -149,6 +156,24 @@ func UnmountService(
 	}
 
 	if state == platform.MountStateNotMounted {
+		// Check for orphan systemd unit (unit exists but no FUSE mount).
+		hasUnit, _ := mounter.HasUnit(ctx, hostname)
+		if hasUnit {
+			if err := mounter.CleanupUnit(ctx, hostname); err != nil {
+				return nil, platform.NewPlatformError(
+					platform.ErrUnmountFailed,
+					fmt.Sprintf("Failed to clean up orphan unit for %s: %v", hostname, err),
+					"Try: sudo zsc unit remove sshfs-"+hostname,
+				)
+			}
+			_ = os.Remove(mountPath)
+			return &MountResult{
+				Status:    "UNIT_CLEANED",
+				Hostname:  hostname,
+				MountPath: mountPath,
+				Message:   fmt.Sprintf("Cleaned up orphan systemd unit for %s (no FUSE mount was active)", hostname),
+			}, nil
+		}
 		return &MountResult{
 			Status:    "NOT_MOUNTED",
 			Hostname:  hostname,
@@ -259,7 +284,7 @@ func MountStatus(
 	for _, dir := range dirs {
 		if !serviceNames[dir] {
 			info := checkMountInfo(ctx, mounter, dir, true)
-			if info.Mounted || info.Stale {
+			if info.Mounted || info.Stale || info.Pending {
 				mounts = append(mounts, info)
 			}
 		}
@@ -291,7 +316,15 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 			info.Message = "Mount is stale (transport disconnected). Will auto-reconnect when service is running. If service is stopped, start it first."
 		}
 	case platform.MountStateNotMounted:
-		// Nothing to report — orphan plain dirs are filtered by MountStatus.
+		// Check for orphan systemd unit (unit exists but FUSE never connected).
+		if hasUnit, _ := mounter.HasUnit(ctx, hostname); hasUnit {
+			info.Pending = true
+			if orphan {
+				info.Message = "Orphan systemd unit exists but FUSE mount never connected. Use unmount to clean up."
+			} else {
+				info.Message = "Systemd unit exists but FUSE mount is not active. Use unmount to clean up, or mount to recreate."
+			}
+		}
 	}
 	return info
 }
