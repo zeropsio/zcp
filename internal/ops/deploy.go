@@ -233,7 +233,10 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 	loginCmd := fmt.Sprintf("zcli login %s", authInfo.Token)
 	parts = append(parts, loginCmd)
 
-	// Setup command if provided.
+	// Security note: setup is intentionally passed as-is — it is a shell command
+	// provided by the LLM (e.g. "npm install", "cp config.json /etc/app/").
+	// The LLM already has full shell access via the MCP deploy tool.
+	// Do NOT apply shellQuote() here — it would break multi-command setup strings.
 	if setup != "" {
 		parts = append(parts, setup)
 	}
