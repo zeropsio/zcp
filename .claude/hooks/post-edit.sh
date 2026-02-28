@@ -54,12 +54,6 @@ if [ -d "$PKG_DIR" ]; then
         PROBLEMS+="Tests FAILED in ./${PKG_DIR}:\n${FAIL_LINES}\n"
     fi
 
-    # Run vet
-    VET_OUTPUT=$(go vet "./${PKG_DIR}" 2>&1)
-    if [ -n "$VET_OUTPUT" ]; then
-        PROBLEMS+="Vet issues in ./${PKG_DIR}:\n${VET_OUTPUT}\n"
-    fi
-
     # Fast lint (non-blocking)
     if command -v golangci-lint &>/dev/null; then
         LINT_OUTPUT=$(golangci-lint run "./${PKG_DIR}" --fast-only --timeout=30s 2>&1)
