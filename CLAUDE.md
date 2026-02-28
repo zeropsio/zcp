@@ -35,6 +35,7 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/knowledge` | BM25 search engine, embedded docs | `engine.go` |
 | `internal/runtime` | Container vs local detection | `runtime.go` |
 | `internal/content` | Embedded templates + workflow catalog | `content.go` |
+| `internal/workflow` | Workflow orchestration, bootstrap conductor, session state | `session.go` |
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 
 Error codes: see `internal/platform/errors.go` for all codes (AUTH_REQUIRED, SERVICE_NOT_FOUND, etc.)
@@ -129,8 +130,9 @@ make lint-local                             # Full lint (~15s)
 - **Prefer simplest solution** — plain functions over abstractions, fewer lines over more
 - **Stateless STDIO tools** — each MCP call = fresh operation, not HTTP
 - **MockClient + MockExecutor for tests** — `platform.MockClient` for API, in-memory MCP for tools
-- **Max 300 lines per .go file** — split when growing
+- **Max 350 lines per .go file** — split when growing
 - **English everywhere** — code, comments, docs, commits
+- **Shell string interpolation**: use `shellQuote()` (POSIX single-quote escaping), never strip-only
 - **`go.sum` committed, no `vendor/`** — reproducible builds via module cache
 
 ## Do NOT

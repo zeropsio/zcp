@@ -210,4 +210,5 @@ User: "Deploy a Node.js app with PostgreSQL and Valkey"
 | `internal/knowledge/sections.go` | H2 parsing, normalizers, wiring/decision helpers |
 | `internal/knowledge/versions.go` | Version validation, stack formatting |
 | `internal/content/content.go` | Workflow + template embedding |
+| `internal/tools/workflow_bootstrap.go` | Bootstrap step handlers (complete, skip, status) |
 | `internal/ops/context_cache.go` | Service stack type cache (TTL-based) |
