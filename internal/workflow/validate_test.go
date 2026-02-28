@@ -19,6 +19,8 @@ func TestValidatePlanHostname(t *testing.T) {
 		{"valid_with_digits", "app1dev2", ""},
 		{"single_char", "a", ""},
 		{"max_length_25", strings.Repeat("a", 25), ""},
+		{"leading_digit", "3test", "must start with a letter"},
+		{"all_digits", "123", "must start with a letter"},
 		{"has_hyphen", "my-app", "invalid characters"},
 		{"has_underscore", "my_app", "invalid characters"},
 		{"has_uppercase", "AppDev", "invalid characters"},

@@ -257,6 +257,49 @@ func TestVerify_RuntimeNoSubdomain(t *testing.T) {
 	}
 }
 
+func TestVerify_RuntimeCrashLoop(t *testing.T) {
+	t.Parallel()
+
+	// Crash loop pattern: service is RUNNING, error logs present, no startup marker.
+	// This is the most common LLM-deploy failure — app crashes repeatedly.
+	// Expected: status = "degraded" (not "unhealthy" — service IS running, just crashing).
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
+		}).
+		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
+
+	fetcher := &callbackLogFetcher{fn: func(params platform.LogFetchParams) ([]platform.LogEntry, error) {
+		if params.Severity == "error" {
+			// Error logs present in both 5m and 2m windows.
+			return []platform.LogEntry{{Message: "Error: Cannot find module 'express'"}}, nil
+		}
+		if params.Search != "" {
+			// No startup marker — app never reached "listening" state.
+			return nil, nil
+		}
+		return nil, nil
+	}}
+
+	result, err := Verify(context.Background(), mock, fetcher, http.DefaultClient, "proj-1", "app")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Status != "degraded" {
+		t.Errorf("Status = %q, want degraded (crash loop = running + errors + no startup)", result.Status)
+	}
+
+	// Service is running.
+	findCheck(t, result, "service_running", "pass")
+	// Error logs present.
+	findCheck(t, result, "no_error_logs", "fail")
+	// No startup message.
+	findCheck(t, result, "startup_detected", "fail")
+	// Recent errors present.
+	findCheck(t, result, "no_recent_errors", "fail")
+}
+
 func TestVerify_ManagedRunning(t *testing.T) {
 	t.Parallel()
 

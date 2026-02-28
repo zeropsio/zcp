@@ -587,6 +587,119 @@ func TestBuildSSHCommand_ShellQuoting(t *testing.T) {
 	}
 }
 
+func TestShellQuote(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "simple string",
+			input: "hello",
+			want:  "'hello'",
+		},
+		{
+			name:  "single quote POSIX escape",
+			input: "O'Brien",
+			want:  "'O'\\''Brien'",
+		},
+		{
+			name:  "dollar expansion neutralized",
+			input: "$(whoami)",
+			want:  "'$(whoami)'",
+		},
+		{
+			name:  "backtick neutralized",
+			input: "`id`",
+			want:  "'`id`'",
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "''",
+		},
+		{
+			name:  "multiple single quotes",
+			input: "it's a 'test'",
+			want:  "'it'\\''s a '\\''test'\\'''",
+		},
+		{
+			name:  "spaces preserved",
+			input: "hello world",
+			want:  "'hello world'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := shellQuote(tt.input)
+			if got != tt.want {
+				t.Errorf("shellQuote(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildSSHCommand_SetupPassthrough(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		setup     string
+		wantSetup bool   // true = setup must appear verbatim in command
+		wantExact string // exact substring that must appear (empty = not checked)
+	}{
+		{
+			name:      "multi_command_setup_passes_through",
+			setup:     "npm install && npm run build",
+			wantSetup: true,
+			wantExact: "npm install && npm run build",
+		},
+		{
+			name:      "setup_with_pipes_passes_through",
+			setup:     "cat config.json | jq '.db' > /tmp/db.json",
+			wantSetup: true,
+			wantExact: "cat config.json | jq '.db' > /tmp/db.json",
+		},
+		{
+			name:      "empty_setup_omitted",
+			setup:     "",
+			wantSetup: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			authInfo := auth.Info{
+				Token:    "test-token",
+				APIHost:  "api.app-prg1.zerops.io",
+				Region:   "prg1",
+				Email:    "test@example.com",
+				FullName: "Test User",
+			}
+			id := GitIdentity{Name: "Test User", Email: "test@example.com"}
+			cmd := buildSSHCommand(authInfo, "svc-target", tt.setup, "/var/www", false, id)
+
+			if tt.wantSetup {
+				if !containsSubstring(cmd, tt.wantExact) {
+					t.Errorf("setup should pass through verbatim\nwant substring: %s\ngot command: %s", tt.wantExact, cmd)
+				}
+			} else {
+				// With empty setup, the command should go straight from login to cd+git+push
+				// (no empty "&&  &&" segment).
+				if containsSubstring(cmd, "&& &&") || containsSubstring(cmd, "&&  &&") {
+					t.Errorf("empty setup should not leave double && in command: %s", cmd)
+				}
+			}
+		})
+	}
+}
+
 func TestDeploy_NilSSHDeployer(t *testing.T) {
 	t.Parallel()
 
