@@ -111,6 +111,8 @@ If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow
 
 This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation.
 
+For rapid iteration on dev without full redeployment, see the "Dev iteration: quick edit cycle" section in the bootstrap workflow. Edit code on the SSHFS mount, manually start/restart the server process via SSH, and test before running `zerops_deploy`.
+
 ### Single service — direct
 
 ```

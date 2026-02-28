@@ -170,24 +170,19 @@ Present import.yml to the user for review before proceeding.
 | deployFiles | `[.]` (entire source directory) | Runtime-specific build output |
 | start command | Source-mode start | Binary/compiled start |
 
-**Per-runtime deployFiles and start commands:**
+**Dev setup rules:**
+- `deployFiles: [.]` — ALWAYS, no exceptions. Anything else destroys source files after deploy.
+- `start:` — a source-mode command that runs the app directly from source. LLMs know the right command for each runtime (e.g., interpreted execution, `go run .`, `cargo run`).
+- `buildCommands:` — dependency installation only (no compilation step). Source runs directly.
 
-| Runtime | Dev deployFiles | Dev start | Prod deployFiles | Prod start |
-|---------|----------------|-----------|------------------|------------|
-| Go | `[.]` | `go run .` | `[app]` | `./app` |
-| Bun | `[.]` | `bun run index.ts` | `[dist, package.json]` | `bun dist/index.js` |
-| Node.js | `[.]` | `node index.js` | `[., node_modules]` | `node index.js` |
-| Python | `[.]` | `python app.py` | `[.]` | `gunicorn app:app --bind 0.0.0.0:8000` |
-| PHP | `[.]` | (web server) | `[., vendor/]` | (web server) |
-| Rust | `[.]` | `cargo run --release` | `[{binary}]` | `./{binary}` |
-| .NET | `[.]` | `dotnet run` | `[app/~]` | `dotnet {name}.dll` |
-| Java | `[.]` | `mvn compile exec:java` | `[target/app.jar]` | `java -jar target/app.jar` |
-| Ruby | `[.]` | `bundle exec ruby app.rb` | `[.]` | `bundle exec puma -b tcp://0.0.0.0:3000` |
-| Elixir | `[.]` | `mix run --no-halt` | `[_build/prod/rel/{app}/~]` | `bin/{app} start` |
-| Deno | `[.]` | `deno run --allow-net --allow-env main.ts` | `[.]` | same |
-| Gleam | `[.]` | `gleam run` | `[build/erlang-shipment/~]` | `./entrypoint.sh run` |
+**Prod/stage setup rules:**
+- `deployFiles:` — only the compiled output or production artifacts.
+- `start:` — runs the compiled artifact directly.
+- `buildCommands:` — full build pipeline: install deps, compile, produce artifacts.
 
-**Go specifically**: Dev setup uses `go run .` as start (compiles + runs source each deploy). Prod setup builds a binary in buildCommands and deploys only the binary. The zerops.yml MUST have TWO separate setup entries with different build/deploy pipelines.
+**PHP runtimes (php-nginx, php-apache) are different:** The web server is built into the runtime and serves files automatically. There is no `start:` command — both dev and prod just need correct `deployFiles`.
+
+The zerops.yml MUST have TWO separate `setup:` entries — one for the dev hostname, one for the stage hostname — with their own build/deploy/start pipelines.
 
 > **CRITICAL — dev `deployFiles` MUST be `[.]`:** Dev containers are volatile. After deploy, ONLY `deployFiles` content survives. If dev setup uses `[dist]`, `[app]`, or any build output path, all source files + zerops.yml are DESTROYED. Further iteration becomes impossible. Dev setup MUST ALWAYS use `deployFiles: [.]` regardless of runtime. No exceptions.
 
@@ -322,6 +317,28 @@ envVariables:
     Dev:   {subdomainUrl from enable}
     Stage: {subdomainUrl from enable}
     ```
+
+### Dev iteration: quick edit cycle
+
+After the initial deploy to dev, iterate on code without running a full `zerops_deploy` each time. This is faster because it skips the build pipeline entirely.
+
+**How it works:** Files written to the SSHFS mount are immediately visible inside the dev container. Start the server process manually via SSH, test the endpoints, fix code on the mount, kill and restart the process. No deploy needed for code changes.
+
+**The cycle:**
+1. **Edit code** on the mount path — changes appear instantly in the container.
+2. **Start the server** manually via SSH — run the dev start command as a background process with output to a log file.
+3. **Test** endpoints — curl localhost from inside the container via SSH.
+4. **If broken**: read the log, fix code on the mount, kill the process, restart.
+5. **When working**: run formal `zerops_deploy` to persist through the build pipeline and validate before deploying to stage.
+
+**Why formal deploy is still needed:** Dev containers are volatile — only `deployFiles` content persists. The manual-start cycle is for rapid iteration, but the final state must go through `zerops_deploy` to ensure persistence and validate the build pipeline.
+
+**PHP runtimes (php-nginx, php-apache) skip manual start.** The web server runs automatically and serves files from the deploy directory. Editing files on the mount is enough — just test the endpoints directly.
+
+**When to use quick cycle vs. full deploy:**
+- Code logic changes, adding endpoints, fixing bugs → quick edit cycle
+- Changing zerops.yml (build config, env vars, ports) → full `zerops_deploy`
+- Before deploying to stage → always full `zerops_deploy`
 
 ### Simple mode — deploy flow
 
@@ -501,6 +518,7 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 1 | Write zerops.yml | Write to `{mountPath}/zerops.yml` with both setup entries | File exists with correct setup names |
 | 2 | Write app code | HTTP server on :8080 with `/`, `/health`, `/status` | Code references discovered env vars |
 | 3 | Write .gitignore | Build artifacts and IDE files only. Do NOT include `.env` — no .env files exist on Zerops | File exists, no `.env` entry |
+| 3b | Quick-test | Start server manually via SSH, test /health and /status. Fix issues before formal deploy. | Endpoints return expected responses |
 | 4 | Deploy dev | `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true` | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
 | 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
@@ -508,6 +526,17 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` | status=DEPLOYED (blocks until complete) |
 | 9 | Verify stage | `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{stageHostname}"` | status=healthy |
 | 10 | Report | Status (pass/fail) + dev URL + stage URL | — |
+
+## Quick-test before deploy
+
+After writing code (task 3), verify it works before formal deploy (task 4):
+
+1. Start the server process in background via SSH with output to a log file.
+2. Test endpoints: curl localhost:{port}/ and /health from inside the container via SSH.
+3. If broken: read the log, fix the code on the mount, kill the process, restart.
+4. When endpoints respond correctly: proceed to formal deploy (task 4).
+
+**PHP runtimes (php-nginx, php-apache):** Skip manual start — the web server runs automatically. Just test endpoints directly.
 
 ## Iteration Loop (when verification fails)
 

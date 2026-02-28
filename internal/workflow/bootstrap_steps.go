@@ -165,8 +165,9 @@ PREREQUISITES (from prior steps):
 For EACH runtime service:
 
 1. Write zerops.yml to mount path with setup entries for BOTH dev and stage hostnames
-   - Dev: deployFiles: [.] (ALWAYS), source-mode start command
-   - Stage: appropriate build output, compiled start command
+   - Dev: deployFiles: [.] (ALWAYS), source-mode start command (LLMs know the right command per runtime)
+   - Stage: compiled output in deployFiles, compiled/binary start command
+   - PHP runtimes: no start command needed (web server built-in)
    - envVariables: ONLY use variables discovered in discover-envs step
 2. Write application code with required endpoints:
    - GET / — app root
