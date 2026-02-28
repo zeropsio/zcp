@@ -19,6 +19,6 @@ func requireWorkflow(engine *workflow.Engine) *mcp.CallToolResult {
 	return convertError(platform.NewPlatformError(
 		platform.ErrWorkflowRequired,
 		"No active workflow session. This tool requires a workflow session.",
-		"Start a workflow first: zerops_workflow action=\"start\" workflow=\"bootstrap\" mode=\"full\"",
+		"Start a workflow first: zerops_workflow action=\"start\" workflow=\"bootstrap\"",
 	))
 }

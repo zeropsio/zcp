@@ -1,7 +1,7 @@
 package workflow
 
-// stepDetails defines the 10 bootstrap steps in order.
-// Skippable: mount-dev, discover-envs, deploy (managed-only fast path).
+// stepDetails defines the 11 bootstrap steps in order.
+// Skippable: mount-dev, discover-envs, generate-code, deploy (managed-only fast path).
 var stepDetails = []StepDetail{
 	{
 		Name:     "detect",
