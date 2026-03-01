@@ -162,6 +162,8 @@ Present import.yml to the user for review before proceeding.
 
 **Prerequisites**: Dev services mounted (step 5), env vars discovered (step 6). Write files to the mounted dev service filesystem at `/var/www/{devHostname}/`.
 
+**SSHFS mount is for source code only** — small file reads/writes (editing .go, .ts, .yml files). Commands that generate many files (npm install, pip install, go mod download, composer install, bundle install, cargo build) MUST run via SSH on the container: `ssh {devHostname} "cd /var/www && {install_command}"`. Running them locally through the SSHFS network mount is orders of magnitude slower.
+
 **CRITICAL: Dev vs Prod deploy differentiation**
 
 | Property | Dev setup | Prod setup |
@@ -320,7 +322,7 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 **Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path (steps 4-7).
 
 1. **Deploy to appdev** (SSH self-deploy): `zerops_deploy sourceService="appdev" targetService="appdev" includeGit=true` — SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. Files got there via SSHFS mount writes. `includeGit=true` preserves `.git` on the target so subsequent deploys work. SSHFS mount auto-reconnects after deploy — no remount needed. Deploy tests the build pipeline and ensures deployFiles artifacts persist.
-2. **Start appdev** (deploy restarted container with `zsc noop`): start server via SSH (same kill-then-start pattern from Dev iteration below), verify startup log
+2. **Start appdev** (deploy restarted container with `zsc noop`): wait ~10s for SSH to become available after container restart, then start server via SSH (same kill-then-start pattern from Dev iteration below), verify startup log
 3. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
 5. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING. Stage is never a deploy source — no `.git` needed on target.
@@ -347,9 +349,9 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 2. **Kill any previous process**:
    `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`
    Process pattern for pkill: use the binary name — `go` for Go, `bun` for Bun, `node` for Node.js, `python` for Python. Also kill by port with `fuser` to prevent EADDRINUSE.
-3. **Start server** — use `run_in_background=true` on this Bash call:
+3. **Start server** — call the Bash tool with the `run_in_background=true` parameter (this makes the tool call non-blocking, NOT the server process):
    `ssh {devHostname} "cd /var/www && {start_command}"`
-   The SSH session stays open and streams server stdout/stderr into the task output. Do NOT use `nohup` or redirect to a file — let output flow to the task.
+   The server runs in the SSH foreground — its stdout/stderr streams into the background task output. Do NOT use `nohup`, `&`, or redirect to a file.
 4. **Check startup** — wait 3-5s, then read the background task output (non-blocking):
    `TaskOutput task_id=<from step 3> block=false` — look for startup message (`listening on`, `server started`, `ready`). If you see `error`, `panic`, `fatal`, or `EADDRINUSE` → fix code and go back to step 2.
 5. **Test** endpoints from inside the container:
@@ -546,10 +548,10 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 1 | Write zerops.yml | Write to `{mountPath}/zerops.yml` with both setup entries | File exists with correct setup names |
 | 2 | Write app code | HTTP server on the port defined in zerops.yml `run.ports` with `/`, `/health`, `/status` | Code references discovered env vars |
 | 3 | Write .gitignore | Build artifacts and IDE files only. Do NOT include `.env` — no .env files exist on Zerops | File exists, no `.env` entry |
-| 3b | Quick-test (mandatory) | Kill previous process, start server via SSH with `run_in_background=true`, check `TaskOutput` for startup, test /health and /status. Fix issues. | Endpoints return expected responses |
+| 3b | Quick-test (mandatory) | Kill previous process, start server via SSH (Bash tool `run_in_background=true` — server runs in SSH foreground), check `TaskOutput` for startup, test /health and /status. Fix issues. | Endpoints return expected responses |
 | 4 | Deploy dev | `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true` | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
-| 5b | Start server (post-deploy) | Deploy restarted container — `zsc noop --silent` is running, not your app. Start server via SSH with `run_in_background=true` (kill-then-start pattern from Quick-test). | `TaskOutput` shows startup message |
+| 5b | Start server (post-deploy) | Deploy restarted container — `zsc noop --silent` is running, not your app. Wait ~10s for SSH to reconnect, then start server via SSH (Bash tool `run_in_background=true`, kill-then-start pattern from Quick-test). | `TaskOutput` shows startup message |
 | 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
 | 7 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
 | 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` | status=DEPLOYED (blocks until complete) |
@@ -566,9 +568,9 @@ Dev uses `start: zsc noop --silent` — no server runs automatically. You MUST s
    `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`
 2. **Install dependencies** (if needed):
    `ssh {devHostname} "cd /var/www && {install_command}"`
-3. **Start server** — use `run_in_background=true` on this Bash call:
+3. **Start server** — call the Bash tool with `run_in_background=true` (makes the tool call non-blocking, NOT the server):
    `ssh {devHostname} "cd /var/www && {dev_start_command}"`
-   SSH stays open, server output streams to task. Do NOT use nohup or file redirects.
+   Server runs in SSH foreground, output streams to background task. Do NOT use nohup, `&`, or file redirects.
 4. **Check startup** — wait 3-5s, then `TaskOutput task_id=<from step 3> block=false`. Look for startup message. If errors visible → fix and retry.
 5. **Test endpoints**:
    `ssh {devHostname} "curl -sf localhost:{port}/health"` | jq .
@@ -598,7 +600,7 @@ If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ah
 
 3. **Redeploy**: `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true` — `.git` persists on target when `includeGit=true` was used. SSHFS mount auto-reconnects after deploy.
 
-4. **Start server**: kill previous: `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`, then start with `run_in_background=true`: `ssh {devHostname} "cd /var/www && {start_command}"` — check startup via `TaskOutput task_id=... block=false` after 3-5s.
+4. **Start server**: wait ~10s for SSH after deploy, then kill previous: `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`, then start via Bash tool with `run_in_background=true` (server in SSH foreground): `ssh {devHostname} "cd /var/www && {start_command}"` — check startup via `TaskOutput task_id=... block=false` after 3-5s.
 
 5. **Re-verify**: `zerops_verify serviceHostname="{devHostname}"` — check status=healthy
 

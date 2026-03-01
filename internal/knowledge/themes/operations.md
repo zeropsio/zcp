@@ -222,7 +222,7 @@ The agent has two execution contexts: the **MCP server** (ZCP) and **runtime con
 | Logs | `TaskOutput task_id=... block=false` (from background SSH task) | `zerops_logs` MCP tool |
 | Deployment | N/A (code runs directly) | `ssh appdev "cd /var/www && zcli push <stage_id>"` |
 
-**Log access differs because**: in dev, the agent starts the server via SSH with `run_in_background=true` — output streams to `TaskOutput`. In stage, Zerops manages the process — use `zerops_logs` MCP tool.
+**Log access differs because**: in dev, the agent starts the server in the SSH foreground via a background Bash tool call (`run_in_background=true`) — output streams to `TaskOutput`. In stage, Zerops manages the process — use `zerops_logs` MCP tool.
 
 **zcli usage**: `zcli` is available ONLY inside dev containers. The only `zcli` command the agent uses is `zcli push` to deploy from dev to stage. All other operations (logs, scaling, restarts, env vars, discovery) are done through MCP tools (`zerops_logs`, `zerops_scale`, `zerops_manage`, `zerops_env`, `zerops_discover`).
 
@@ -258,8 +258,10 @@ Verification is attestation-based: the agent verifies using tools, then records 
 |---------|-------|-----|
 | Service stuck in `READY_TO_DEPLOY` | Missing `buildFromGit` or `startWithoutCode` in import.yml | Delete service, fix import.yml, re-import |
 | HTTP 000 (connection refused) | Server not running on dev service | Start the server via SSH first |
-| SSH hangs after starting server | Expected on Zerops — SSH session stays open while server runs | Use `run_in_background=true` on the Bash call. Read output via `TaskOutput task_id=... block=false`. Stop with `TaskStop`. |
+| SSH hangs after starting server | Expected — SSH stays open while server runs in foreground | Use Bash tool `run_in_background=true` to make the tool call non-blocking. Server output streams to `TaskOutput task_id=... block=false`. Stop with `TaskStop`. |
 | SSH repeatedly fails | Container OOM/restarting | Check: `zerops_logs` MCP tool, scale: `zerops_scale` MCP tool |
+| SSH fails right after deploy | Container restarting — SSH needs ~10s to become available | Wait ~10s after `zerops_deploy` returns before first SSH attempt. Do not retry immediately. |
+| `npm install` (or pip/composer) extremely slow | Running install over SSHFS network mount instead of on container | Always install dependencies via SSH: `ssh dev "cd /var/www && npm install"`. SSHFS is for source code edits only. |
 | `jq: command not found` via SSH | jq not available inside containers | Pipe outside: `ssh dev "curl ..." \| jq .` |
 | `psql: command not found` via SSH | DB tools only on ZCP | Run from ZCP: `psql "$db_connectionString"` |
 | `https://https://...` double protocol | `subdomainUrls` from enable already include `https://` | Use the URL directly, don't prepend |
