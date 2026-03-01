@@ -102,7 +102,7 @@ Before deploying, ensure these requirements are met:
 
 If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow this order:
 
-1. **Deploy to dev first**: `zerops_deploy targetService="appdev" includeGit=true` — SSHFS mount auto-reconnects after deploy, no remount needed. Files are already on the dev container via SSHFS mount — deploy runs the build pipeline and ensures deployFiles persist.
+1. **Deploy to dev first**: `zerops_deploy sourceService="appdev" targetService="appdev" includeGit=true` — SSHFS mount auto-reconnects after deploy, no remount needed. Files are already on the dev container via SSHFS mount — SSH self-deploy runs the build pipeline and ensures deployFiles persist.
 2. **Start dev server** (dev uses `zsc noop --silent` — no server runs after deploy): wait ~10s for SSH to reconnect after container restart, then kill previous process and start via Bash tool with `run_in_background=true` (server in SSH foreground): `ssh {devHostname} "cd /var/www && {start_command}"`. Check startup via `TaskOutput` after 3-5s — look for startup message, not errors.
 3. **Verify dev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 4. **Fix any errors on dev** — if `zerops_verify` returns degraded/unhealthy, read the `checks` array for diagnosis. Iterate until status=healthy.
@@ -114,7 +114,7 @@ This is the default flow for projects bootstrapped with the standard dev+stage p
 
 For rapid iteration on dev, see the "Dev iteration: manual start cycle" section in the bootstrap workflow. Dev services use `start: zsc noop --silent` — after every deploy to dev, the agent must start the server manually via SSH before `zerops_verify` can succeed.
 
-### Single service — direct
+### Single service — direct (local mode, no SSHFS)
 
 ```
 zerops_deploy targetService="{hostname}"                              # → blocks until DEPLOYED or BUILD_FAILED
@@ -142,7 +142,9 @@ When `zerops_verify` returns "degraded" or "unhealthy", iterate — do not give 
    - Env var issue → fix zerops.yml envVariables
    - Connection error → verify managed service RUNNING, check hostname/port
 
-3. **Redeploy** — `zerops_deploy targetService="{hostname}"`
+3. **Redeploy** — use the mode matching your setup:
+   - SSH (SSHFS-mounted): `zerops_deploy sourceService="{hostname}" targetService="{hostname}" includeGit=true`
+   - Local (no SSHFS): `zerops_deploy targetService="{hostname}"`
 
 4. **Re-verify** — `zerops_verify serviceHostname="{hostname}"` — check status=healthy
 
@@ -181,7 +183,7 @@ Execute IN ORDER. Every step requires verification.
 | # | Action | Tool | Verify |
 |---|--------|------|--------|
 | 1 | Verify exists | zerops_discover service="{hostname}" | RUNNING or READY_TO_DEPLOY |
-| 2 | Deploy | zerops_deploy targetService="{hostname}" includeGit=true | status=DEPLOYED (blocks until complete) |
+| 2 | Deploy | zerops_deploy sourceService="{hostname}" targetService="{hostname}" includeGit=true | status=DEPLOYED (blocks until complete) |
 | 3 | Check errors | zerops_logs serviceHostname="{hostname}" severity="error" since="5m" | No errors |
 | 4 | Confirm startup | zerops_logs serviceHostname="{hostname}" search="listening|started|ready" since="5m" | At least one match |
 | 5 | Verify running | zerops_discover service="{hostname}" | RUNNING |
