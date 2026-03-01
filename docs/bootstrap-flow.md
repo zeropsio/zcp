@@ -210,7 +210,7 @@ Optional: `zerops_knowledge recipe="{framework}"` for framework-specific configs
 
 **Tools:** `zerops_discover`
 
-**What the LLM does:** For each managed service, calls `zerops_discover service="{hostname}" includeEnvs=true`. Records exact env var names (connectionString, host, port, user, password, dbName). These real values must be used in `zerops.yml` — never hardcoded guesses.
+**What the LLM does:** Calls `zerops_discover includeEnvs=true` (single call returns all services with env vars). Records exact env var names (connectionString, host, port, user, password, dbName). These real values must be used in `zerops.yml` — never hardcoded guesses.
 
 **Skip condition:** No managed services exist.
 

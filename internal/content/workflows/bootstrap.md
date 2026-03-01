@@ -263,9 +263,9 @@ Since you're writing to an SSHFS mount, every file you create or modify is immed
 
 After importing services and waiting for them to reach RUNNING, discover the ACTUAL env vars available to each service. This data is critical for writing correct zerops.yml envVariables and for subagent prompts.
 
-**For each managed service:**
+**Single call — returns env vars for ALL services:**
 ```
-zerops_discover service="{managed_hostname}" includeEnvs=true
+zerops_discover includeEnvs=true
 ```
 
 Record which env vars exist. Common patterns by service type:
@@ -376,9 +376,9 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 
 2. **Discover env vars:**
    ```
-   zerops_discover service="{managed_hostname}" includeEnvs=true
+   zerops_discover includeEnvs=true
    ```
-   Record available env vars. Use ONLY discovered variable names in zerops.yml.
+   Single call returns env vars for all services. Record available env vars. Use ONLY discovered variable names in zerops.yml.
 
 3. **Create files and deploy:**
    Write zerops.yml + app code following Application Code Requirements. Then:
@@ -397,7 +397,7 @@ Prevents context rot by delegating per-service work to specialist agents with fr
 1. `zerops_import content="<import.yml>"` — create all services (blocks until all processes finish)
 2. `zerops_discover` — verify dev services reached RUNNING
 3. **Mount all dev services**: `zerops_mount action="mount" serviceHostname="{devHostname}"` for each
-4. **Discover ALL env vars**: `zerops_discover service="{hostname}" includeEnvs=true` for every managed service. Record exact var names.
+4. **Discover ALL env vars**: `zerops_discover includeEnvs=true` — single call returns all services with env vars. Record exact var names.
 5. For each **runtime** service pair, spawn a Service Bootstrap Agent (in parallel):
    ```
    Task(subagent_type="general-purpose", model="sonnet", prompt=<Service Bootstrap Agent Prompt below>)

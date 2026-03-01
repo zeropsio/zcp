@@ -10,8 +10,8 @@ import (
 
 // DiscoverInput is the input type for zerops_discover.
 type DiscoverInput struct {
-	Service     string `json:"service,omitempty"     jsonschema:"Filter by service hostname. Omit to list all services in the project."`
-	IncludeEnvs bool   `json:"includeEnvs,omitempty" jsonschema:"Include environment variables (both service-level and project-level) in the response. This is the primary way to read env vars."`
+	Service     string `json:"service,omitempty"     jsonschema:"Filter by service hostname. Omit to list all services in the project. When discovering env vars for multiple services, omit this parameter — one call returns all."`
+	IncludeEnvs bool   `json:"includeEnvs,omitempty" jsonschema:"Include environment variables (both service-level and project-level) in the response. This is the primary way to read env vars. Without service filter, returns env vars for ALL services in one call."`
 }
 
 // RegisterDiscover registers the zerops_discover tool.
