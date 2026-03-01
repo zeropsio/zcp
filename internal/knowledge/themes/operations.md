@@ -219,10 +219,10 @@ The agent has two execution contexts: the **MCP server** (ZCP) and **runtime con
 | Server start | Manual via SSH | Auto-starts on deploy (`run.start` in zerops.yml) |
 | Code placement | Source in SSHFS `/var/www/{dev}/` | Built artifact deployed via `zcli push` (from dev container) |
 | Fix errors | HERE — do not deploy broken code | Never — go back to dev, fix, redeploy |
-| Logs | `ssh appdev "tail -50 /tmp/app.log"` | `zerops_logs` MCP tool |
+| Logs | `TaskOutput task_id=... block=false` (from background SSH task) | `zerops_logs` MCP tool |
 | Deployment | N/A (code runs directly) | `ssh appdev "cd /var/www && zcli push <stage_id>"` |
 
-**Log access differs because**: in dev, the agent starts the server manually with `> /tmp/app.log 2>&1`. In stage, Zerops manages the process — no file-based logs, use `zerops_logs` MCP tool.
+**Log access differs because**: in dev, the agent starts the server via SSH with `run_in_background=true` — output streams to `TaskOutput`. In stage, Zerops manages the process — use `zerops_logs` MCP tool.
 
 **zcli usage**: `zcli` is available ONLY inside dev containers. The only `zcli` command the agent uses is `zcli push` to deploy from dev to stage. All other operations (logs, scaling, restarts, env vars, discovery) are done through MCP tools (`zerops_logs`, `zerops_scale`, `zerops_manage`, `zerops_env`, `zerops_discover`).
 
@@ -242,7 +242,7 @@ Verification is attestation-based: the agent verifies using tools, then records 
 
 | Runtime | Type check | HTTP check | Log check |
 |---------|-----------|------------|-----------|
-| Go | `ssh dev "go build -n ."` | `curl -s http://localhost:8080/` | `ssh dev "tail -30 /tmp/app.log"` |
+| Go | `ssh dev "go build -n ."` | `curl -s http://localhost:8080/` | `TaskOutput task_id=... block=false` |
 | Bun | `ssh dev "bun x tsc --noEmit"` | same | same |
 | Node.js | `ssh dev "npx tsc --noEmit"` | same | same |
 | Python | `ssh dev "python -m py_compile *.py"` | same | same |
@@ -258,7 +258,7 @@ Verification is attestation-based: the agent verifies using tools, then records 
 |---------|-------|-----|
 | Service stuck in `READY_TO_DEPLOY` | Missing `buildFromGit` or `startWithoutCode` in import.yml | Delete service, fix import.yml, re-import |
 | HTTP 000 (connection refused) | Server not running on dev service | Start the server via SSH first |
-| SSH hangs forever | Server process blocking terminal | Use `nohup cmd > /tmp/app.log 2>&1 &` |
+| SSH hangs after starting server | Expected on Zerops — SSH session stays open while server runs | Use `run_in_background=true` on the Bash call. Read output via `TaskOutput task_id=... block=false`. Stop with `TaskStop`. |
 | SSH repeatedly fails | Container OOM/restarting | Check: `zerops_logs` MCP tool, scale: `zerops_scale` MCP tool |
 | `jq: command not found` via SSH | jq not available inside containers | Pipe outside: `ssh dev "curl ..." \| jq .` |
 | `psql: command not found` via SSH | DB tools only on ZCP | Run from ZCP: `psql "$db_connectionString"` |

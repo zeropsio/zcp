@@ -155,7 +155,7 @@ For compiled binaries: `deno compile --output app main.ts` → `deployFiles: app
 - Missing `--bind 0.0.0.0` -> 502 Bad Gateway
 - Missing `CSRF_TRUSTED_ORIGINS` for Django -> CSRF validation fails behind proxy
 
-**Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container — agent starts `python3 main.py` manually via SSH for iteration)
+**Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container — agent starts `python3 app.py` manually via SSH for iteration)
 **Prod deploy**: use `addToRunPrepare` + `prepareCommands` pattern for pip install, `start: gunicorn app:app --bind 0.0.0.0:8000`
 
 ## Go

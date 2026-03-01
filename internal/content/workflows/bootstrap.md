@@ -340,18 +340,22 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 - Switching between watch mode and build-and-run
 - Testing code changes instantly without redeployment
 
-**Source-mode start commands by runtime:** `go run .` (Go), `bun run index.ts` (Bun), `node index.js` (Node.js), `python app.py` (Python), `cargo run` (Rust), `dotnet run` (C#), `mix run --no-halt` (Elixir). Use the command that runs from source without a separate compile step.
+**Source-mode start commands by runtime:** `go run .` (Go), `bun run index.ts` (Bun), `node index.js` (Node.js), `python3 app.py` (Python), `cargo run` (Rust), `dotnet run` (C#), `mix run --no-halt` (Elixir), `deno run --allow-net --allow-env --allow-read main.ts` (Deno), `javac Server.java && java Server` (Java), `bundle exec ruby app.rb` (Ruby), `gleam run` (Gleam).
 
 **The cycle:**
 1. **Edit code** on the mount path — changes appear instantly in the container at `/var/www/`.
-2. **Kill any previous process and start fresh** via SSH:
-   `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; cd /var/www && nohup {start_command} > /tmp/app.log 2>&1 &"`
-   Process pattern for pkill: use the binary name — `go` for Go, `bun` for Bun, `node` for Node.js, `python` for Python.
-3. **Wait for startup**: `ssh {devHostname} "sleep 3 && head -20 /tmp/app.log"` — verify the server logged a startup message, not an error.
-4. **Test** endpoints from inside the container:
+2. **Kill any previous process**:
+   `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`
+   Process pattern for pkill: use the binary name — `go` for Go, `bun` for Bun, `node` for Node.js, `python` for Python. Also kill by port with `fuser` to prevent EADDRINUSE.
+3. **Start server** — use `run_in_background=true` on this Bash call:
+   `ssh {devHostname} "cd /var/www && {start_command}"`
+   The SSH session stays open and streams server stdout/stderr into the task output. Do NOT use `nohup` or redirect to a file — let output flow to the task.
+4. **Check startup** — wait 3-5s, then read the background task output (non-blocking):
+   `TaskOutput task_id=<from step 3> block=false` — look for startup message (`listening on`, `server started`, `ready`). If you see `error`, `panic`, `fatal`, or `EADDRINUSE` → fix code and go back to step 2.
+5. **Test** endpoints from inside the container:
    `ssh {devHostname} "curl -s localhost:{port}/health"` | jq .
-5. **If broken**: read the full log (`ssh {devHostname} "cat /tmp/app.log"`), fix code on the mount, go back to step 2.
-6. **When working**: kill the manual process (optional — deploy restarts it anyway), proceed to formal `zerops_deploy` to persist through the build pipeline and validate before deploying to stage.
+6. **If broken**: read the background task output for error details, fix code on the mount, `TaskStop` the server task, go back to step 2.
+7. **When working**: proceed to formal `zerops_deploy`. The background SSH task is stopped automatically when deploy restarts the container.
 
 **Why formal deploy is still needed:** Dev containers are volatile — only `deployFiles` content persists across container restarts. The manual-start cycle is for rapid iteration, but the final state must go through `zerops_deploy` to ensure the build pipeline works and files persist.
 
@@ -542,10 +546,10 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 1 | Write zerops.yml | Write to `{mountPath}/zerops.yml` with both setup entries | File exists with correct setup names |
 | 2 | Write app code | HTTP server on the port defined in zerops.yml `run.ports` with `/`, `/health`, `/status` | Code references discovered env vars |
 | 3 | Write .gitignore | Build artifacts and IDE files only. Do NOT include `.env` — no .env files exist on Zerops | File exists, no `.env` entry |
-| 3b | Quick-test (mandatory) | Kill previous process, start server via SSH (`nohup {cmd} > /tmp/app.log 2>&1 &`), verify startup log, test /health and /status. Fix issues. | Endpoints return expected responses |
+| 3b | Quick-test (mandatory) | Kill previous process, start server via SSH with `run_in_background=true`, check `TaskOutput` for startup, test /health and /status. Fix issues. | Endpoints return expected responses |
 | 4 | Deploy dev | `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true` | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
-| 5b | Start server (post-deploy) | Deploy restarted container — `zsc noop --silent` is running, not your app. Start your server via SSH using the runtime's source-mode command (kill-then-start pattern from Quick-test). | `ssh ... "sleep 3 && head -20 /tmp/app.log"` shows startup message |
+| 5b | Start server (post-deploy) | Deploy restarted container — `zsc noop --silent` is running, not your app. Start server via SSH with `run_in_background=true` (kill-then-start pattern from Quick-test). | `TaskOutput` shows startup message |
 | 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
 | 7 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
 | 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` | status=DEPLOYED (blocks until complete) |
@@ -556,23 +560,21 @@ Execute IN ORDER. Every step has verification — do not skip any.
 
 Dev uses `start: zsc noop --silent` — no server runs automatically. You MUST start it manually and verify before formal deploy.
 
-**Source-mode start commands:** `go run .` (Go), `bun run index.ts` (Bun), `node index.js` (Node.js), `python app.py` (Python), `cargo run` (Rust), `dotnet run` (C#). Use the runtime's native source-mode command.
+**Source-mode start commands:** `go run .` (Go), `bun run index.ts` (Bun), `node index.js` (Node.js), `python3 app.py` (Python), `cargo run` (Rust), `dotnet run` (C#), `deno run --allow-net --allow-env --allow-read main.ts` (Deno), `javac Server.java && java Server` (Java), `bundle exec ruby app.rb` (Ruby), `gleam run` (Gleam).
 
-1. **Kill any previous process** (prevents EADDRINUSE from orphaned processes):
-   `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; true"`
-   Process pattern: use the binary name — `go` for Go, `bun` for Bun, `node` for Node.js, `python` for Python.
+1. **Kill any previous process**:
+   `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`
 2. **Install dependencies** (if needed):
    `ssh {devHostname} "cd /var/www && {install_command}"`
-3. **Start server in background**:
-   `ssh {devHostname} "cd /var/www && nohup {dev_start_command} > /tmp/app.log 2>&1 &"`
-4. **Verify startup** (check log, not just exit code — nohup always returns 0):
-   `ssh {devHostname} "sleep 3 && head -20 /tmp/app.log"` — look for startup message, not error.
+3. **Start server** — use `run_in_background=true` on this Bash call:
+   `ssh {devHostname} "cd /var/www && {dev_start_command}"`
+   SSH stays open, server output streams to task. Do NOT use nohup or file redirects.
+4. **Check startup** — wait 3-5s, then `TaskOutput task_id=<from step 3> block=false`. Look for startup message. If errors visible → fix and retry.
 5. **Test endpoints**:
    `ssh {devHostname} "curl -sf localhost:{port}/health"` | jq .
    `ssh {devHostname} "curl -sf localhost:{port}/status"` | jq .
-6. **If broken**: read log, fix code on mount, go back to step 1:
-   `ssh {devHostname} "cat /tmp/app.log"`
-7. **When working**: proceed to formal deploy (task 4). Killing the manual process is optional — deploy restarts it anyway.
+6. **If broken**: read the background task output for errors. Fix code on mount, `TaskStop` the server task, go back to step 1.
+7. **When working**: proceed to formal deploy (task 4).
 
 **PHP runtimes:** Skip steps 1-7 — the web server runs automatically. Just test endpoints directly after writing files.
 
@@ -596,7 +598,7 @@ If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ah
 
 3. **Redeploy**: `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true` — `.git` persists on target when `includeGit=true` was used. SSHFS mount auto-reconnects after deploy.
 
-4. **Start server** (deploy restarted container with `zsc noop`): `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; cd /var/www && nohup {start_command} > /tmp/app.log 2>&1 &"` — then verify startup: `ssh {devHostname} "sleep 3 && head -20 /tmp/app.log"`
+4. **Start server**: kill previous: `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`, then start with `run_in_background=true`: `ssh {devHostname} "cd /var/www && {start_command}"` — check startup via `TaskOutput task_id=... block=false` after 3-5s.
 
 5. **Re-verify**: `zerops_verify serviceHostname="{devHostname}"` — check status=healthy
 

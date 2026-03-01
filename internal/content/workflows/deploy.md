@@ -103,7 +103,7 @@ Before deploying, ensure these requirements are met:
 If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow this order:
 
 1. **Deploy to dev first**: `zerops_deploy targetService="appdev" includeGit=true` — SSHFS mount auto-reconnects after deploy, no remount needed. Files are already on the dev container via SSHFS mount — deploy runs the build pipeline and ensures deployFiles persist.
-2. **Start dev server** (dev uses `zsc noop --silent` — deploy restarted container, no server is listening): start server via SSH using the runtime's source-mode command, verify startup from log
+2. **Start dev server** (dev uses `zsc noop --silent` — no server runs after deploy): kill previous process, then start with `run_in_background=true`: `ssh {devHostname} "cd /var/www && {start_command}"`. Check startup via `TaskOutput` after 3-5s — look for startup message, not errors.
 3. **Verify dev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 4. **Fix any errors on dev** — if `zerops_verify` returns degraded/unhealthy, read the `checks` array for diagnosis. Iterate until status=healthy.
 
