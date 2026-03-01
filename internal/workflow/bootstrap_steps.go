@@ -165,9 +165,9 @@ PREREQUISITES (from prior steps):
 For EACH runtime service:
 
 1. Write zerops.yml to mount path with setup entries for BOTH dev and stage hostnames
-   - Dev: deployFiles: [.] (ALWAYS), source-mode start command (LLMs know the right command per runtime)
+   - Dev: deployFiles: [.] (ALWAYS), start: zsc noop --silent (agent starts server manually via SSH; PHP runtimes: omit start, web server built-in)
    - Stage: compiled output in deployFiles, compiled/binary start command
-   - PHP runtimes: no start command needed (web server built-in)
+   - PHP runtimes: no start command needed, neither dev nor stage (web server built-in)
    - envVariables: ONLY use variables discovered in discover-envs step
 2. Write application code with required endpoints:
    - GET / — app root
@@ -180,6 +180,9 @@ Use zerops_knowledge for runtime-specific build/deploy patterns.
 Files are immediately on the dev container via SSHFS — no deploy needed for that.
 Deploy tests the build pipeline and ensures persistence.
 Consider committing generated code before proceeding to deploy.
+
+After writing code: MUST quick-test via SSH (start server, test endpoints) BEFORE formal deploy.
+After every zerops_deploy to dev: MUST start server again via SSH (deploy restarts container with zsc noop).
 
 MANDATORY PRE-DEPLOY CHECK (do NOT proceed to deploy until all pass):
 - zerops.yml has setup entry for EVERY planned runtime hostname

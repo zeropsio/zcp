@@ -103,15 +103,16 @@ Before deploying, ensure these requirements are met:
 If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow this order:
 
 1. **Deploy to dev first**: `zerops_deploy targetService="appdev" includeGit=true` — SSHFS mount auto-reconnects after deploy, no remount needed. Files are already on the dev container via SSHFS mount — deploy runs the build pipeline and ensures deployFiles persist.
-2. **Verify dev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
-3. **Fix any errors on dev** — if `zerops_verify` returns degraded/unhealthy, read the `checks` array for diagnosis. Iterate until status=healthy.
+2. **Start dev server** (dev uses `zsc noop --silent` — deploy restarted container, no server is listening): start server via SSH using the runtime's source-mode command, verify startup from log
+3. **Verify dev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
+4. **Fix any errors on dev** — if `zerops_verify` returns degraded/unhealthy, read the `checks` array for diagnosis. Iterate until status=healthy.
 
-4. **Deploy to stage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes source from dev container, zerops runs the `setup: appstage` build pipeline for production output
-5. **Verify stage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
+5. **Deploy to stage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes source from dev container, zerops runs the `setup: appstage` build pipeline for production output
+6. **Verify stage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
 
 This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation.
 
-For rapid iteration on dev without full redeployment, see the "Dev iteration: quick edit cycle" section in the bootstrap workflow. Edit code on the SSHFS mount, manually start/restart the server process via SSH, and test before running `zerops_deploy`.
+For rapid iteration on dev, see the "Dev iteration: manual start cycle" section in the bootstrap workflow. Dev services use `start: zsc noop --silent` — after every deploy to dev, the agent must start the server manually via SSH before `zerops_verify` can succeed.
 
 ### Single service — direct
 

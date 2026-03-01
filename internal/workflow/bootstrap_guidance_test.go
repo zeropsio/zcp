@@ -75,6 +75,18 @@ func TestResolveGuidance(t *testing.T) {
 			true,
 		},
 		{
+			"generate_code_has_noop_start",
+			"generate-code",
+			"zsc noop --silent",
+			true,
+		},
+		{
+			"deploy_has_manual_start_cycle",
+			"deploy",
+			"manual start cycle",
+			true,
+		},
+		{
 			"deploy_has_sshfs_note",
 			"deploy",
 			"already on the dev container",
@@ -113,6 +125,14 @@ func TestResolveGuidance(t *testing.T) {
 				t.Errorf("ResolveGuidance(%q) missing %q (got %d chars)", tt.step, tt.wantContains, len(guide))
 			}
 		})
+	}
+}
+
+func TestResolveGuidance_NoDevStartCommand(t *testing.T) {
+	t.Parallel()
+	guide := ResolveGuidance("generate-code")
+	if strings.Contains(guide, "devStartCommand") {
+		t.Error("generate-code guidance still contains 'devStartCommand' — should use 'zsc noop --silent' instead")
 	}
 }
 

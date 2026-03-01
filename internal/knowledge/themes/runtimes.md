@@ -74,7 +74,7 @@ Use `apk add` only for extensions NOT in this list.
 3. `deployFiles`: MUST include `node_modules` (runtime doesn't run package install)
 4. `run.start`: `node server.js` or framework start command
 
-**Dev deploy**: `deployFiles: [.]`, `start: node index.js` — no build step needed
+**Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container — agent starts `node index.js` manually via SSH for iteration)
 **Prod deploy**: `buildCommands: [pnpm i, pnpm build]`, `deployFiles` includes `node_modules` + build output
 
 **Binding per framework**:
@@ -112,7 +112,7 @@ Use `apk add` only for extensions NOT in this list.
 
 **Key settings**: Use `bunx` instead of `npx`. Cache: `node_modules`
 
-**Dev deploy**: `deployFiles: [.]`, `start: bun run index.ts` (source mode, fast iteration)
+**Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container — agent starts `bun run index.ts` manually via SSH for iteration)
 **Prod deploy**: `buildCommands: [bun i, bun build --outdir dist --target bun src/index.ts]`, `deployFiles: [dist, package.json]`, `start: bun dist/index.js`
 
 ## Deno
@@ -130,8 +130,8 @@ Use `apk add` only for extensions NOT in this list.
 
 **Build caching**: Run `deno cache main.ts` in buildCommands to pre-download dependencies. Ensures deployments are deterministic.
 
-**Dev and prod deploy**: Both use source deploy — Deno doesn't have a separate compile step for simple apps.
-`deployFiles: [.]`, `start: deno run --allow-net --allow-env main.ts`
+**Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container — agent starts `deno run --allow-net --allow-env main.ts` manually via SSH for iteration)
+**Prod deploy**: `deployFiles: [.]`, `start: deno run --allow-net --allow-env main.ts`
 For compiled binaries: `deno compile --output app main.ts` → `deployFiles: app`, `start: ./app`
 
 ## Python
@@ -155,7 +155,7 @@ For compiled binaries: `deno compile --output app main.ts` → `deployFiles: app
 - Missing `--bind 0.0.0.0` -> 502 Bad Gateway
 - Missing `CSRF_TRUSTED_ORIGINS` for Django -> CSRF validation fails behind proxy
 
-**Dev deploy**: `deployFiles: [.]`, `start: python3 main.py` (no build step, direct execution)
+**Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container — agent starts `python3 main.py` manually via SSH for iteration)
 **Prod deploy**: use `addToRunPrepare` + `prepareCommands` pattern for pip install, `start: gunicorn app:app --bind 0.0.0.0:8000`
 
 ## Go
@@ -179,7 +179,7 @@ For compiled binaries: `deno compile --output app main.ts` → `deployFiles: app
 **Logger**: MUST output to `os.Stdout`
 **Cache**: `~/go` (auto-cached)
 
-**Dev deploy**: `deployFiles: [.]`, `start: go run .` (compiles from source each run)
+**Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container — agent starts `go run .` manually via SSH for iteration)
 **Prod deploy**: `buildCommands: [go mod tidy && go build -o app .]`, `deployFiles: app`, `start: ./app`
 
 ## Java
@@ -208,7 +208,7 @@ NOTE: `java@latest` resolves to an older version, not the newest — always spec
 
 **JAR naming**: Without `<finalName>` in pom.xml, JAR name includes version: `target/{artifactId}-{version}.jar`. If version changes, deployFiles path breaks. Normalize: add `<build><finalName>app</finalName></build>` to pom.xml, then use `deployFiles: target/app.jar`.
 
-**Dev deploy**: `deployFiles: [.]`, install maven in prepareCommands, `start: mvn -q compile exec:java` (recompiles from source)
+**Dev deploy**: `deployFiles: [.]`, install maven in prepareCommands, `start: zsc noop --silent` (idle container — agent starts `mvn -q compile exec:java` manually via SSH for iteration)
 **Prod deploy**: `buildCommands: [mvn -q clean package -DskipTests]`, `deployFiles: target/app.jar`, `start: java -jar target/app.jar`
 
 ## Rust
@@ -224,7 +224,7 @@ NOTE: `java@latest` resolves to an older version, not the newest — always spec
 **Binding**: most frameworks (actix-web, axum, warp) default to `0.0.0.0` -- verify custom bindings
 **Binary naming**: name in `Cargo.toml [package]` → binary at `target/release/{name}` (dashes preserved, e.g., `name = "my-app"` → `target/release/my-app`)
 
-**Dev deploy**: `deployFiles: [.]`, `start: cargo run --release` (compiles at start, slow but uses source)
+**Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container — agent starts `cargo run` manually via SSH for iteration)
 **Prod deploy**: `buildCommands: [cargo build --release]`, `deployFiles: target/release/~{binary}`, `start: ./{binary}`
 
 **Native deps**: `apk add --no-cache openssl-dev pkgconfig` in prepareCommands
@@ -241,7 +241,7 @@ NOTE: `java@latest` resolves to an older version, not the newest — always spec
 4. `run.start: dotnet {ProjectName}.dll` -- DLL name = .csproj FILENAME (NOT RootNamespace)
    Example: `myapp.csproj` → output is `myapp.dll` → `start: dotnet myapp.dll`
 
-**Dev deploy**: `deployFiles: [.]`, `start: dotnet run`
+**Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container — agent starts `dotnet run` manually via SSH for iteration)
 **Prod deploy**: `buildCommands: [dotnet publish -c Release -o app]`, `deployFiles: [app/~]`, `start: dotnet {name}.dll`
 
 **Binding (CRITICAL)**: Kestrel defaults to localhost -> 502. MUST bind in code:
@@ -268,7 +268,7 @@ Do NOT rely solely on `ASPNETCORE_URLS` env var.
 3. `deployFiles: _build/prod/rel/{app_name}/~` -- release name = mix.exs `app:` property (e.g. `:my_app` → `_build/prod/rel/my_app/~`)
 4. `run.start: bin/{app_name} start` -- same name as mix.exs app
 
-**Dev deploy**: `deployFiles: [.]`, `run.prepareCommands: [mix deps.get]`, `start: mix run --no-halt`
+**Dev deploy**: `deployFiles: [.]`, `run.prepareCommands: [mix deps.get]`, `start: zsc noop --silent` (idle container — agent starts `mix run --no-halt` manually via SSH for iteration)
 **Prod deploy**: build release, deploy extracted release, `start: bin/{app_name} start`
 
 **Required env**: `PHX_SERVER=true` + `MIX_ENV=prod`
@@ -286,7 +286,7 @@ Do NOT rely solely on `ASPNETCORE_URLS` env var.
 4. `run.start: ./entrypoint.sh run` -- Erlang shipment includes entrypoint.sh
 5. Set `run.os: ubuntu`
 
-**Dev deploy**: `deployFiles: [.]`, `start: gleam run`
+**Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container — agent starts `gleam run` manually via SSH for iteration)
 **Prod deploy**: build erlang-shipment, deploy extracted, `start: ./entrypoint.sh run`
 
 **VERSION WARNING**: `gleam@1.5` on Zerops is old. Modern `gleam_stdlib` versions require Gleam >=1.14.0. If dependencies fail with version mismatch, pin older dependency versions in gleam.toml.
@@ -304,7 +304,7 @@ Do NOT rely solely on `ASPNETCORE_URLS` env var.
 3. `deployFiles: ./` (entire source + vendor/bundle)
 4. `run.start: bundle exec puma -b tcp://0.0.0.0:3000`
 
-**Dev deploy**: `deployFiles: [.]`, `run.prepareCommands: [bundle install --path vendor/bundle]`, `start: bundle exec ruby app.rb`
+**Dev deploy**: `deployFiles: [.]`, `run.prepareCommands: [bundle install --path vendor/bundle]`, `start: zsc noop --silent` (idle container — agent starts `bundle exec ruby app.rb` manually via SSH for iteration)
 **Prod deploy**: `buildCommands: [bundle install --deployment]`, `deployFiles: [.]`, `start: bundle exec puma -b tcp://0.0.0.0:3000`
 
 **Cache**: `vendor/bundle`
