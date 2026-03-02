@@ -176,6 +176,7 @@ func (r *Runner) spawnClaude(ctx context.Context, prompt, logFile string) error 
 		"--no-session-persistence",
 		"--model", r.config.Model,
 		"--max-turns", fmt.Sprintf("%d", r.config.MaxTurns),
+		"--allowedTools", "mcp__zerops__*", "Read", "Write", "Edit", "Glob", "Grep",
 	}
 
 	if r.config.MCPConfig != "" {
