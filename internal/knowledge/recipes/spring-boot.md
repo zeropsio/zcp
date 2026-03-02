@@ -17,6 +17,11 @@ zerops:
         - ./mvnw clean install --define maven.test.skip
       deployFiles: ./target/api.jar
       cache: .m2
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 8080
+          path: /
     run:
       base: java@21
       ports:
@@ -34,6 +39,10 @@ zerops:
         MAIL_HOST: mailpit
         MAIL_PORT: "1025"
       start: java -jar target/api.jar
+      healthCheck:
+        httpGet:
+          port: 8080
+          path: /
 ```
 
 ## import.yml
@@ -86,3 +95,4 @@ server.address=0.0.0.0
 - **Adminer** should have public access disabled or be removed entirely in production
 - **File upload demo** uses S3-compatible Object Storage
 - **`.m2` cache** -- Maven downloads are cached between builds to speed up subsequent deploys
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

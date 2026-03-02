@@ -82,3 +82,4 @@ Bind address -- configure your web framework (Wisp, Mist) to listen on `0.0.0.0:
 - **Cache build artifacts** -- cache both `build` and `_gleam_artefacts` directories for faster incremental builds
 - **DATABASE_URL format** -- uses `${db_connectionString}/${db_dbName}` which resolves to a full PostgreSQL connection URL including credentials
 - **Use `gleam@1.5` in import.yml** -- do not use `gleam@latest` in the import type field; use `gleam@1.5` for the specific version
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

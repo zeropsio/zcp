@@ -87,3 +87,4 @@ app.get('/status', (_, res) => {
 - **Bind to 0.0.0.0** -- Express defaults to all interfaces, but if configuring manually ensure you do not bind to `127.0.0.1`
 - **trust proxy** -- if reading client IPs behind the Zerops L7 balancer, set `app.set('trust proxy', true)`
 - **${db_password}** is auto-injected by Zerops from the `db` service secret -- do not hardcode credentials
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

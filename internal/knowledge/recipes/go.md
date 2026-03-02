@@ -82,3 +82,4 @@ http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 - **sslmode=disable** in the PostgreSQL connection string -- Zerops internal network is encrypted at the VXLAN layer
 - **${db_hostname}** and other `${db_*}` vars are auto-injected by Zerops from the `db` service
 - **Module cache** -- `~/go/pkg/mod` in build cache speeds up subsequent builds significantly
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

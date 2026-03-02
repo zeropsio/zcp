@@ -86,3 +86,4 @@ def status_check():
 - **${db_hostname}** and other `${db_*}` vars are auto-injected by Zerops from the `db` service
 - **Production WSGI server** -- for production workloads, use Gunicorn or Waitress instead of Flask's dev server (e.g., `waitress-serve --host=0.0.0.0 --port=8000 app:app`)
 - **No build step** -- this recipe has no `buildCommands` since Python is interpreted; the build phase only stages deploy files
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

@@ -120,3 +120,4 @@ Medusa v2 uses `medusa-config.ts` for all service connections. Key environment v
 - **`#yamlPreprocessor=on` required in import.yml** — envSecrets use `<@generateRandomString(...)>` which needs the YAML preprocessor
 - **STORE_CORS** must include all storefront URLs (comma-separated) for cross-origin API access from frontend applications
 - **Deploy files include `./src/scripts/seed-files`** — seed data files are needed at runtime for initial data population via initCommands
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

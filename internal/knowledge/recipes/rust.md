@@ -91,3 +91,4 @@ HttpServer::new(|| App::new().service(status))
 - **Cache `target/`** -- Rust builds are slow; caching `target` between builds avoids recompiling dependencies from scratch
 - **Logger must output to stdout** -- Zerops collects logs from stdout/stderr only; configure your logger (env_logger, tracing) accordingly
 - **Binary name must match** -- the binary name in `deployFiles` and `start` must match the `[[bin]]` name in `Cargo.toml` (defaults to the package name)
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

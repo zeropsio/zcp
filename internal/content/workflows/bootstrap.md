@@ -171,6 +171,8 @@ Present import.yml to the user for review before proceeding.
 | Purpose | Iterate, debug, test | Final validation, production-like |
 | deployFiles | `[.]` (entire source directory) | Runtime-specific build output |
 | start command | Source-mode start | Binary/compiled start |
+| healthCheck | **None** — agent controls lifecycle manually | `httpGet` on app port |
+| readinessCheck | **None** | Optional, for apps with initCommands |
 
 **Dev setup rules:**
 - `deployFiles: [.]` — ALWAYS, no exceptions. Anything else destroys source files after deploy.
@@ -181,6 +183,10 @@ Present import.yml to the user for review before proceeding.
 - `deployFiles:` — only the compiled output or production artifacts.
 - `start:` — runs the compiled artifact directly.
 - `buildCommands:` — full build pipeline: install deps, compile, produce artifacts.
+
+**Health & readiness checks — stage only:**
+- `healthCheck:` in `run:` section — Zerops monitors the container and restarts on failure. Only meaningful for stage/production where the app auto-starts. On dev, the agent controls the server lifecycle manually via SSH — a healthCheck would cause unwanted restarts when the agent stops the server for iteration.
+- `readinessCheck:` in `deploy:` section — prevents traffic before the app is ready (important for apps with migrations/initCommands). Irrelevant for dev since the agent verifies manually before enabling subdomain.
 
 **PHP runtimes (php-nginx, php-apache) are different:** The web server is built into the runtime and serves files automatically. There is no `start:` command — both dev and prod just need correct `deployFiles`.
 
@@ -498,6 +504,7 @@ zerops:
       envVariables:
         # Map discovered variables to app-expected names
       start: zsc noop --silent   # Dev: idle container, agent starts server manually via SSH. PHP runtimes: omit start entirely.
+      # NO healthCheck — agent controls lifecycle manually
 
   - setup: {stageHostname}
     build:
@@ -513,6 +520,10 @@ zerops:
       envVariables:
         # Same mappings as dev
       start: {prodStartCommand}
+      healthCheck:
+        httpGet:
+          port: {port}
+          path: /
 ```
 
 ## Application Requirements

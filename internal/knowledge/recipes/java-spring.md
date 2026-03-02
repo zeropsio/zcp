@@ -112,3 +112,4 @@ HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
 - **`build.os: ubuntu`** required when using `apt-get` -- Alpine default has no apt-get
 - **`<finalName>app</finalName>`** -- normalize artifact name so `deployFiles` and `start` paths are predictable
 - **`.m2` cache** -- Maven downloads are cached between builds to speed up subsequent deploys
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

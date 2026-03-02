@@ -53,6 +53,10 @@ zerops:
         - port: 3000
           httpSupport: true
       start: pnpm start
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -98,3 +102,4 @@ Build-time env vars use `${RUNTIME_*}` prefix to reference the runtime service's
 - Object storage required for media uploads (Payload S3 plugin)
 - `maxContainers: 1` recommended — Payload with Next.js does not reliably handle multiple containers
 - Service priorities ensure DB and storage are ready before the app service builds
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

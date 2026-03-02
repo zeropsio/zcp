@@ -44,6 +44,8 @@ deploy:
 
 **DO NOT** confuse with healthCheck -- readiness gates a deploy; healthCheck monitors continuously after.
 
+> **Dev/stage distinction**: In dev+stage pairs, healthCheck and readinessCheck belong ONLY on the stage entry. Dev services use `start: zsc noop --silent` — the agent controls server lifecycle via SSH. Adding healthCheck to dev causes unwanted container restarts during iteration.
+
 ---
 
 ## temporaryShutdown

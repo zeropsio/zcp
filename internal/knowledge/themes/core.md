@@ -298,6 +298,8 @@ zerops[]:
 - **ALWAYS** match zerops.yml `setup:` to the service hostname (e.g., `setup: evalappjava` for hostname `evalappjava`). REASON: `zcli push` defaults to hostname as setup name. If setup doesn't match hostname, deploy fails with "setup not found". For dev/stage pairs, use `setup: <hostname>` per service, not generic names like `dev`/`prod`
 - **ALWAYS** prefer `enableSubdomainAccess: true` in import.yml over calling `zerops_subdomain` after import. REASON: calling subdomain API on a READY_TO_DEPLOY service errors; the import flag activates after first deploy
 - **WHEN** shared-storage is in the stack and stage service transitions from READY_TO_DEPLOY to ACTIVE after first deploy, **THEN** connect storage post-deploy via `zerops_manage action="connect-storage" serviceHostname="{stage}" storageHostname="{storage}"`. REASON: import `mount:` only pre-configures connections for ACTIVE services; stage is not ACTIVE during import
+- **ALWAYS** add `run.healthCheck` ONLY to stage/production zerops.yml entries, NEVER to dev entries. REASON: dev uses `start: zsc noop --silent` with manual server control via SSH; healthCheck would restart the container when the agent stops the server for iteration. Stage auto-starts via `start:` command — healthCheck monitors and restarts on failure
+- **ALWAYS** add `deploy.readinessCheck` ONLY to stage/production zerops.yml entries for apps with `initCommands` (migrations, seeding). REASON: prevents traffic before init completes on stage. Irrelevant for dev — the agent verifies manually before enabling subdomain
 
 ### Runtime-Specific
 - **ALWAYS** set `server.address=0.0.0.0` for Java Spring Boot. REASON: Spring Boot defaults to localhost binding -> unreachable from LB

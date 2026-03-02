@@ -112,6 +112,8 @@ If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow
 
 This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation.
 
+**Health checks apply to stage only.** The stage zerops.yml entry should include `run.healthCheck` (continuous liveness monitoring) and optionally `deploy.readinessCheck` (deployment-time traffic gating). Dev entries must NOT have health checks — dev uses `start: zsc noop --silent` and the agent starts/stops the server manually via SSH. A healthCheck on dev would cause Zerops to restart the container whenever the agent stops the server for iteration.
+
 For rapid iteration on dev, see the "Dev iteration: manual start cycle" section in the bootstrap workflow. Dev services use `start: zsc noop --silent` — after every deploy to dev, the agent must start the server manually via SSH before `zerops_verify` can succeed.
 
 ### Single service — direct

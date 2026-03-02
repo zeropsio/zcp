@@ -23,6 +23,11 @@ zerops:
         - composer.lock
       envVariables:
         APP_ENV: prod
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 80
+          path: /
     run:
       base: php-nginx@8.3
       documentRoot: public
@@ -34,6 +39,10 @@ zerops:
         MAILER_DSN: smtp://mailpit:1025
       initCommands:
         - php bin/console doctrine:migrations:migrate --no-interaction
+      healthCheck:
+        httpGet:
+          port: 80
+          path: /
 ```
 
 ## import.yml
@@ -95,3 +104,4 @@ services:
 - **Sessions** use Redis DB index 0 via `SESSION_HANDLER` config
 - **documentRoot: public** is required for Symfony (serves from `public/` directory)
 - 3 services: app + db (PostgreSQL) + redis (Valkey)
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

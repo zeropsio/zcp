@@ -20,6 +20,11 @@ zerops:
         - app
       cache:
         - ~/go/pkg/mod
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 8080
+          path: /
     run:
       ports:
         - port: 8080
@@ -40,6 +45,10 @@ zerops:
       initCommands:
         - zsc execOnce seed -- /var/www/app -seed
       start: /var/www/app
+      healthCheck:
+        httpGet:
+          port: 8080
+          path: /
 ```
 
 ## import.yml
@@ -81,3 +90,4 @@ log.SetOutput(os.Stdout)
 - **Mailpit** is for development only -- replace with a production SMTP provider before going live
 - **Adminer** should have public access disabled or be removed entirely in production
 - **Database seeding** runs via `zsc execOnce` -- executes exactly once across all containers (HA-safe)
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

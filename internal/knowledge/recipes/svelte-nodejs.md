@@ -28,6 +28,10 @@ zerops:
         - port: 3000
           httpSupport: true
       start: pnpm start
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -61,3 +65,4 @@ export default {
 - **Port 3000** is the adapter-node default -- must be declared in `ports` with `httpSupport: true`
 - **Deploy `build/` + `package.json` + `node_modules`** -- all three are required; `build/` alone is not sufficient
 - **SvelteKit binds 0.0.0.0** by default with adapter-node -- no extra host configuration needed
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

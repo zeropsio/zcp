@@ -112,3 +112,4 @@ services:
 - **os: ubuntu** on both build and run for full compatibility
 - **siteConfigPath: site.conf.tmpl** must exist in repo root with proper nginx config for Laravel
 - 2 services: app (PHP-Nginx) + db (PostgreSQL)
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

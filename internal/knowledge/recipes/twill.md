@@ -141,3 +141,4 @@ services:
 - **AWS_USE_PATH_STYLE_ENDPOINT: true** required for Zerops S3
 - **Glide** uses S3 source disk with local caching for media transformations
 - 4 services: app + db (PostgreSQL) + redis (Valkey) + storage (Object Storage)
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

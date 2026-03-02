@@ -20,6 +20,11 @@ zerops:
         - bundle exec rake assets:precompile
       deployFiles: ./
       cache: [vendor/bundle]
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 3000
+          path: /
     run:
       base: ruby@3.4
       ports:
@@ -33,6 +38,10 @@ zerops:
       initCommands:
         - zsc execOnce migrate-${ZEROPS_appVersionId} -- bin/rails db:migrate
       start: bundle exec puma -b tcp://0.0.0.0:3000
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -95,3 +104,4 @@ Database configuration via DATABASE_URL is automatic in Rails. The `DATABASE_URL
 - **RAILS_LOG_TO_STDOUT=1** ensures logs are captured by the Zerops logging system instead of being written to files inside volatile containers.
 - **Migrations** use `zsc execOnce` with `appVersionId` for idempotency across multi-container deploys.
 - **Asset precompilation** runs in the build phase for faster deploys and to benefit from build cache.
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

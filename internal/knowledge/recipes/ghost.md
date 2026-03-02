@@ -28,6 +28,11 @@ zerops:
         - versions
         - .ghost-cli
         - config.production.json
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 2368
+          path: /
     run:
       base: nodejs@18
       envVariables:
@@ -50,6 +55,10 @@ zerops:
       prepareCommands:
         - npm install -g ghost-cli
       start: ghost run
+      healthCheck:
+        httpGet:
+          port: 2368
+          path: /
 ```
 
 ## import.yml
@@ -86,3 +95,4 @@ services:
 - S3 storage adapter requires `ghost-storage-adapter-s3` installed during build and the adapter copied to `content/adapters/storage/s3`
 - For MariaDB HA in production: switch to `mode: HA` and add `SET GLOBAL wsrep_sync_wait=1;` in initCommands for Galera sync
 - Admin interface is at `/ghost` on the subdomain URL
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

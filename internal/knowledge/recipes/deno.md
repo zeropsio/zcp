@@ -91,3 +91,4 @@ await client.connect();
 - **Cache dependencies in build** -- `deno cache main.ts` pre-downloads dependencies so the runtime start is fast
 - **Use `deno@2` in import.yml** -- Zerops supports `deno@2` as the type; do not use `deno@1` (deprecated) or `deno@latest` in import.yml
 - **DB env vars use cross-service references** -- use `${db_hostname}`, `${db_port}`, `${db_user}`, `${db_password}` syntax, not hardcoded service names
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

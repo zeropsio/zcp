@@ -110,3 +110,4 @@ services:
 - **Dev mode loads fixtures** -- remove fixtures initCommand and add `--no-dev` to composer install for production
 - **zsc execOnce ${appVersionId}-migration** and `${appVersionId}-fixtures` run once per deploy version
 - 3 services: app (PHP-Apache) + db (PostgreSQL) + redis (Valkey)
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

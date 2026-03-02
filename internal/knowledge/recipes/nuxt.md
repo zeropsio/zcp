@@ -28,6 +28,10 @@ zerops:
       envVariables:
         NODE_ENV: production
       start: node server/index.mjs
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -50,3 +54,4 @@ The deploy path `.output/~` uses the Zerops tilde wildcard to extract the conten
 - **Nuxt binds 0.0.0.0** by default in SSR mode -- no extra host configuration needed
 - **Do NOT use `nuxt generate`** for SSR -- that produces static HTML; use `nuxt build` (or `yarn build`) for SSR mode
 - **For static pre-rendered sites** use `nuxt generate` with `static` base instead of `nodejs` runtime
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

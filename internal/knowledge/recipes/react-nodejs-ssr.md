@@ -30,6 +30,10 @@ zerops:
         - port: 3000
           httpSupport: true
       start: pnpm start
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -62,3 +66,4 @@ app.listen(3000);
 - **Deploy includes `server.js`** -- the custom server file must be explicitly listed in `deployFiles`
 - **trust proxy** -- add `app.set('trust proxy', true)` in `server.js` for correct client IP behind Zerops L7 balancer
 - **For static React SPA** use `static` base with `npm run build` instead -- no Express server needed
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

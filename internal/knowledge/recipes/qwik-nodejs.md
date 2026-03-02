@@ -29,6 +29,10 @@ zerops:
         - port: 3000
           httpSupport: true
       start: pnpm serve
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -64,3 +68,4 @@ app.set('trust proxy', true);
 - **Deploy four directories** -- `package.json`, `public/`, `server/`, and `dist/` are all required for the SSR server
 - **`pnpm serve`** is the start command (not `pnpm start`) -- added by the Express adapter
 - **trust proxy** -- add `app.set('trust proxy', true)` in `entry.express.tsx` for correct client IP behind Zerops L7 balancer
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

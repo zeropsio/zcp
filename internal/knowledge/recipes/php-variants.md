@@ -91,3 +91,4 @@ services:
 - **Health check endpoint `/status`** must be implemented in the application
 - **DB_PASS** uses `${db_password}` -- no manual secret needed for database password
 - 3 services: apacheapi + nginxapi + db (PostgreSQL)
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

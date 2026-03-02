@@ -29,6 +29,10 @@ zerops:
         - port: 3000
           httpSupport: true
       start: pnpm start
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -45,4 +49,5 @@ services:
 - **`pnpm start` runs `vinxi start`** — Vinxi serves the SSR application in production mode
 - **SolidStart uses Vinxi under the hood** — configuration lives in `app.config.ts`, not `vite.config.ts`
 - **Build cache** should include `node_modules` for faster rebuilds
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.
 - **For static SolidJS** see the `solidjs-static` recipe instead (uses `static` base, no Node.js runtime)

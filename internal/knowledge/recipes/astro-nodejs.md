@@ -31,6 +31,10 @@ zerops:
         PORT: 3000
         HOST: 0.0.0.0
       start: pnpm start
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -59,4 +63,5 @@ Without this adapter, Astro defaults to static output which cannot run on a Node
 - **Deploy `dist`, `package.json`, and `node_modules`** — SSR needs runtime dependencies; deploying `./` also works but is larger
 - **HOST must be `0.0.0.0`** — Zerops internal routing requires binding to all interfaces, not localhost
 - **Port 3000** is the default — must be declared in `ports` with `httpSupport: true` for Zerops L7 routing
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.
 - For static Astro sites without SSR, use the `astro-static` recipe instead (uses `static` base, no Node.js runtime)

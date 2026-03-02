@@ -32,6 +32,10 @@ zerops:
       initCommands:
         - zsc execOnce ${appVersionId} -- bun run dist/migrate.js
       start: bun run dist/index.js
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -102,3 +106,4 @@ Bun.serve({
 - **Object Storage uses MinIO** -- `AWS_USE_PATH_STYLE_ENDPOINT: "true"` is required for S3 client compatibility
 - **`S3_ENDPOINT`** from `${storage_apiUrl}` is an internal URL -- use `http://`, never `https://`
 - **For Drizzle ORM** -- use `drizzle-orm/node-postgres` adapter (Bun compatible)
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

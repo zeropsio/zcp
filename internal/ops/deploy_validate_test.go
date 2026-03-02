@@ -155,6 +155,82 @@ func TestValidateZeropsYml(t *testing.T) {
 			noWarnings: true,
 		},
 		{
+			name:     "dev with healthCheck warns",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: bun run index.ts
+      ports:
+        - port: 8080
+      healthCheck:
+        httpGet:
+          port: 8080
+          path: /
+`,
+			wantWarnings: 1,
+			wantContains: "dev service has run.healthCheck",
+		},
+		{
+			name:     "dev with readinessCheck warns",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 8080
+          path: /
+    run:
+      start: bun run index.ts
+      ports:
+        - port: 8080
+`,
+			wantWarnings: 1,
+			wantContains: "dev service has deploy.readinessCheck",
+		},
+		{
+			name:     "stage with healthCheck is fine",
+			hostname: "appstage",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      deployFiles: [dist]
+    run:
+      start: node dist/index.js
+      ports:
+        - port: 8080
+      healthCheck:
+        httpGet:
+          port: 8080
+          path: /
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "stage with readinessCheck is fine",
+			hostname: "appstage",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      deployFiles: [dist]
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 8080
+          path: /
+    run:
+      start: node dist/index.js
+      ports:
+        - port: 8080
+`,
+			noWarnings: true,
+		},
+		{
 			name:     "multiple issues",
 			hostname: "appdev",
 			yml: `zerops:

@@ -38,6 +38,10 @@ zerops:
         PORT: "4000"
         POOL_SIZE: "10"
       start: bin/app start
+      healthCheck:
+        httpGet:
+          port: 4000
+          path: /
 ```
 
 ## import.yml
@@ -111,3 +115,4 @@ end
 - **DATABASE_URL** uses the `${db_connectionString}/${db_dbName}` pattern which resolves to the full `ecto://user:pass@host:port/dbname` URL.
 - **POOL_SIZE** should match or be less than PostgreSQL max_connections. Default `10` works for NON_HA single-container setups.
 - Replace `app` in the release path and start command with the actual application name from `mix.exs`.
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

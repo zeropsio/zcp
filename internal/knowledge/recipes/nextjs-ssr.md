@@ -27,6 +27,10 @@ zerops:
       envVariables:
         NODE_ENV: production
       start: pnpm start
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -44,3 +48,4 @@ services:
 - **Next.js binds 0.0.0.0** by default -- no extra host configuration needed
 - **Build cache** should include `node_modules` for faster rebuilds
 - **For static export** see the `nextjs-static` recipe instead (uses `static` base, no Node.js runtime)
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

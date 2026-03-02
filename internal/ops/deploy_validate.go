@@ -61,6 +61,17 @@ func ValidateZeropsYml(workingDir, targetHostname string) []string {
 		}
 	}
 
+	if strings.Contains(targetHostname, "dev") && entry.Run.HealthCheck != nil {
+		warnings = append(warnings, fmt.Sprintf(
+			"setup %q: dev service has run.healthCheck — this causes unwanted container restarts during iteration. Remove healthCheck from dev entries (keep it on stage only).",
+			entry.Setup))
+	}
+	if strings.Contains(targetHostname, "dev") && entry.Deploy.ReadinessCheck != nil {
+		warnings = append(warnings, fmt.Sprintf(
+			"setup %q: dev service has deploy.readinessCheck — unnecessary for dev (agent verifies manually). Remove readinessCheck from dev entries.",
+			entry.Setup))
+	}
+
 	return warnings
 }
 
@@ -70,9 +81,14 @@ type zeropsYmlDoc struct {
 }
 
 type zeropsYmlEntry struct {
-	Setup string         `yaml:"setup"`
-	Build zeropsYmlBuild `yaml:"build"`
-	Run   zeropsYmlRun   `yaml:"run"`
+	Setup  string          `yaml:"setup"`
+	Build  zeropsYmlBuild  `yaml:"build"`
+	Deploy zeropsYmlDeploy `yaml:"deploy"`
+	Run    zeropsYmlRun    `yaml:"run"`
+}
+
+type zeropsYmlDeploy struct {
+	ReadinessCheck any `yaml:"readinessCheck"`
 }
 
 type zeropsYmlBuild struct {
@@ -80,8 +96,9 @@ type zeropsYmlBuild struct {
 }
 
 type zeropsYmlRun struct {
-	Start string          `yaml:"start"`
-	Ports []zeropsYmlPort `yaml:"ports"`
+	Start       string          `yaml:"start"`
+	Ports       []zeropsYmlPort `yaml:"ports"`
+	HealthCheck any             `yaml:"healthCheck"`
 }
 
 type zeropsYmlPort struct {

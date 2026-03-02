@@ -16,6 +16,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// healthCheckExemptSetups lists setup names exempt from the healthCheck requirement.
+// These services have no HTTP endpoint (e.g., Discord bots use gateway connections).
+var healthCheckExemptSetups = map[string]bool{
+	"bot": true,
+}
+
 // knownValidVersions contains base@version strings known to be valid on Zerops.
 // Derived from zerops-docs and platform catalog. Updated when versions change.
 // E2E tests (Phase3) verify these against the live platform.
@@ -209,9 +215,14 @@ type zeropsYmlRoot struct {
 }
 
 type zeropsYmlEntry struct {
-	Setup string          `yaml:"setup"`
-	Build *zeropsYmlBuild `yaml:"build,omitempty"`
-	Run   *zeropsYmlRun   `yaml:"run,omitempty"`
+	Setup  string           `yaml:"setup"`
+	Build  *zeropsYmlBuild  `yaml:"build,omitempty"`
+	Deploy *zeropsYmlDeploy `yaml:"deploy,omitempty"`
+	Run    *zeropsYmlRun    `yaml:"run,omitempty"`
+}
+
+type zeropsYmlDeploy struct {
+	ReadinessCheck *zeropsYmlProbe `yaml:"readinessCheck,omitempty"`
 }
 
 type zeropsYmlBuild struct {
@@ -224,6 +235,22 @@ type zeropsYmlRun struct {
 	Start         string          `yaml:"start"`
 	StartCommands any             `yaml:"startCommands"`
 	Ports         []zeropsYmlPort `yaml:"ports"`
+	HealthCheck   *zeropsYmlProbe `yaml:"healthCheck,omitempty"`
+}
+
+// zeropsYmlProbe represents a health or readiness check probe.
+type zeropsYmlProbe struct {
+	HTTPGet *zeropsYmlHTTPGet `yaml:"httpGet,omitempty"`
+	Exec    *zeropsYmlExec    `yaml:"exec,omitempty"`
+}
+
+type zeropsYmlHTTPGet struct {
+	Port int    `yaml:"port"`
+	Path string `yaml:"path"`
+}
+
+type zeropsYmlExec struct {
+	Command string `yaml:"command"`
 }
 
 type zeropsYmlPort struct {
@@ -287,6 +314,45 @@ func validateZeropsYml(t *testing.T, block string) {
 			needsStart := !isImplicitStartBase(runBase)
 			if needsStart && entry.Run.Start == "" && entry.Run.StartCommands == nil {
 				t.Errorf("entry[%d]: run exists without 'start' (base=%q requires explicit start)", i, runBase)
+			}
+
+			// healthCheck is recommended for services with explicit ports (production recipes)
+			if !isImplicitPortBase(runBase) && len(entry.Run.Ports) > 0 && entry.Run.HealthCheck == nil {
+				if !healthCheckExemptSetups[entry.Setup] {
+					t.Errorf("entry[%d] (setup=%q): run has ports but no healthCheck (recommended for production services)", i, entry.Setup)
+				}
+			}
+
+			// healthCheck port must match a declared port
+			if entry.Run.HealthCheck != nil && entry.Run.HealthCheck.HTTPGet != nil {
+				hcPort := entry.Run.HealthCheck.HTTPGet.Port
+				portFound := false
+				for _, p := range entry.Run.Ports {
+					if p.Port == hcPort {
+						portFound = true
+						break
+					}
+				}
+				if !portFound && !isImplicitPortBase(runBase) {
+					t.Errorf("entry[%d]: healthCheck port %d not in declared ports", i, hcPort)
+				}
+			}
+		}
+
+		// readinessCheck port must match a declared port
+		if entry.Deploy != nil && entry.Deploy.ReadinessCheck != nil && entry.Deploy.ReadinessCheck.HTTPGet != nil {
+			rcPort := entry.Deploy.ReadinessCheck.HTTPGet.Port
+			if entry.Run != nil {
+				portFound := false
+				for _, p := range entry.Run.Ports {
+					if p.Port == rcPort {
+						portFound = true
+						break
+					}
+				}
+				if !portFound && !isImplicitPortBase(runBase) {
+					t.Errorf("entry[%d]: readinessCheck port %d not in declared ports", i, rcPort)
+				}
 			}
 		}
 	}

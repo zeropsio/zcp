@@ -22,6 +22,11 @@ zerops:
         - node_modules
         - package.json
       cache: node_modules
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 3000
+          path: /
     run:
       base: nodejs@20
       ports:
@@ -46,6 +51,10 @@ zerops:
       initCommands:
         - zsc execOnce $ZEROPS_appVersionId npm run typeorm:migrate
       start: npm run start:prod
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -102,3 +111,4 @@ export const dataSource = new DataSource({
 - **DATABASE_HOST** uses hardcoded `db` hostname matching the import.yml service hostname
 - **Mailpit** is a dev-only SMTP mock; replace with production SMTP service and update SMTP env vars for production
 - **Adminer** (DB GUI) omitted from import.yml by default; add `php-apache@8.1` service if needed for development
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

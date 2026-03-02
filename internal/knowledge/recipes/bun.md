@@ -93,3 +93,4 @@ console.log(`Listening on ${server.hostname}:${server.port}`);
 - **Valkey** -- no password needed on the private network, use `${cache_host}` and `${cache_port}` for connection
 - **envSecrets vs envVariables** -- use `envSecrets` in import.yml for values containing cross-service references; use `envVariables` in zerops.yml for static config
 - **Health check** -- `/status` endpoint is recommended for Zerops readiness verification
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

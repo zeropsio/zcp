@@ -96,3 +96,4 @@ app.MapGet("/status", () => Results.Ok(new { status = "ok" }));
 - **Cache NuGet packages** -- `~/.nuget` caching avoids re-downloading packages on every build
 - **Target framework** -- ensure `.csproj` `TargetFramework` matches the Zerops service version (e.g., `net9.0` for `dotnet@9`). Update NuGet packages (EF Core, Npgsql) to matching major versions
 - **Port 5000 is the default** -- ASP.NET Core defaults to port 5000; match it in both `ports[]` and `ASPNETCORE_URLS`
+- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

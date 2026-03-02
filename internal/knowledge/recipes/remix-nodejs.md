@@ -29,6 +29,10 @@ zerops:
         - port: 3000
           httpSupport: true
       start: pnpm start
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -44,4 +48,5 @@ services:
 - **Custom Express server (`server.js`)** — this recipe uses `@remix-run/express` with a custom `server.js`; it must be included in `deployFiles`
 - **Port 3000** is the default in `server.js` (reads `process.env.PORT || 3000`) — must be declared in `ports` with `httpSupport: true` for Zerops L7 routing
 - **`pnpm start` runs `cross-env NODE_ENV=production node ./server.js`** — ensure `cross-env` is in `dependencies` (not just `devDependencies`) or inline the env var
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.
 - **Build cache** should include `node_modules` for faster rebuilds

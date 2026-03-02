@@ -26,6 +26,10 @@ zerops:
         - port: 3000
           httpSupport: true
       start: node dist/analog/server/index.mjs
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /
 ```
 
 ## import.yml
@@ -46,4 +50,5 @@ No special configuration is needed in `vite.config.ts` -- Analog auto-detects th
 - **Deploy `dist/~`** -- the tilde extracts contents to `/var/www/` so start path is relative to that root
 - **Port 3000** is the default Analog/Nitro port -- must be declared in `ports` with `httpSupport: true`
 - **Analog binds 0.0.0.0** by default in SSR mode -- no extra host configuration needed
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.
 - **For static pre-rendered sites** use the `analog-static` recipe with `static` base instead of `nodejs` runtime

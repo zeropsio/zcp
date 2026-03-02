@@ -31,6 +31,11 @@ zerops:
       cache:
         - deps
         - _build
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 4000
+          path: /
     run:
       base: alpine@latest
       ports:
@@ -45,6 +50,10 @@ zerops:
       initCommands:
         - zsc execOnce migrate-${ZEROPS_appVersionId} -- _build/prod/rel/myapp/bin/myapp eval "MyApp.Release.migrate()"
       start: _build/prod/rel/myapp/bin/myapp start
+      healthCheck:
+        httpGet:
+          port: 4000
+          path: /
 ```
 
 ## import.yml
@@ -133,3 +142,4 @@ end
 - **DATABASE_URL** uses the `${db_connectionString}/${db_dbName}` pattern which includes the full `ecto://user:pass@host:port` prefix.
 - **POOL_SIZE** should match or be less than the PostgreSQL max_connections. Default `10` works for NON_HA single-container setups.
 - Replace `myapp` and `MyApp` with the actual application name from `mix.exs` throughout the zerops.yml and configuration files.
+- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.
