@@ -81,10 +81,15 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 					fmt.Sprintf("Failed to load core reference: %v", err),
 					"Check that core knowledge files are embedded")), nil, nil
 			}
+			// Prepend platform universals to scope response
+			result := core
+			if universals, uErr := store.GetUniversals(); uErr == nil {
+				result = universals + "\n\n---\n\n" + core
+			}
 			if tracker != nil {
 				tracker.RecordScope()
 			}
-			return textResult(core), nil, nil
+			return textResult(result), nil, nil
 		}
 
 		// Mode 2: Search

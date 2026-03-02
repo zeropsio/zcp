@@ -248,9 +248,25 @@ func validateZeropsYml(t *testing.T, block string) {
 			t.Errorf("entry[%d]: missing 'setup' field", i)
 		}
 
+		// Resolve the effective base for this entry
+		runBase := ""
+		if entry.Run != nil {
+			runBase = entry.Run.Base
+		}
+		if runBase == "" && entry.Build != nil {
+			if s, ok := entry.Build.Base.(string); ok {
+				runBase = s
+			}
+		}
+
 		if entry.Build != nil {
 			if entry.Build.Base == nil {
 				t.Errorf("entry[%d]: build exists but missing 'base'", i)
+			}
+
+			// deployFiles is MANDATORY in every build section
+			if entry.Build.DeployFiles == nil {
+				t.Errorf("entry[%d]: build exists but missing 'deployFiles' (mandatory — nothing deploys without it)", i)
 			}
 		}
 
@@ -262,14 +278,12 @@ func validateZeropsYml(t *testing.T, block string) {
 				}
 			}
 
-			// Check start exists for non-static/non-php bases
-			runBase := entry.Run.Base
-			if runBase == "" && entry.Build != nil {
-				// Inherit from build base
-				if s, ok := entry.Build.Base.(string); ok {
-					runBase = s
-				}
+			// ports is MANDATORY for HTTP services (skip for static, php-apache, php-nginx which handle it implicitly)
+			if !isImplicitPortBase(runBase) && len(entry.Run.Ports) == 0 {
+				t.Errorf("entry[%d]: run exists without 'ports' (base=%q requires explicit port declaration for L7 routing)", i, runBase)
 			}
+
+			// Check start exists for non-static/non-php bases
 			needsStart := !isImplicitStartBase(runBase)
 			if needsStart && entry.Run.Start == "" && entry.Run.StartCommands == nil {
 				t.Errorf("entry[%d]: run exists without 'start' (base=%q requires explicit start)", i, runBase)
@@ -281,6 +295,16 @@ func validateZeropsYml(t *testing.T, block string) {
 // isImplicitStartBase returns true if the base type has an implicit start
 // command (static sites, PHP with Apache/Nginx).
 func isImplicitStartBase(base string) bool {
+	if base == "" || base == "static" {
+		return true
+	}
+	b, _, _ := strings.Cut(base, "@")
+	return b == "php-apache" || b == "php-nginx" || b == "static"
+}
+
+// isImplicitPortBase returns true if the base type handles port configuration
+// implicitly (static sites serve on :80, PHP with Apache/Nginx on :80).
+func isImplicitPortBase(base string) bool {
 	if base == "" || base == "static" {
 		return true
 	}

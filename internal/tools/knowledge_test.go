@@ -19,6 +19,11 @@ func testKnowledgeStore(t *testing.T) *knowledge.Store {
 			Title:   "Zerops Core Reference",
 			Content: "# Zerops Core Reference\n\nUniversal rules here.",
 		},
+		"zerops://themes/universals": {
+			URI:     "zerops://themes/universals",
+			Title:   "Zerops Platform Universals",
+			Content: "# Zerops Platform Universals\n\nBind 0.0.0.0. deployFiles mandatory.",
+		},
 		"zerops://themes/runtimes": {
 			URI:     "zerops://themes/runtimes",
 			Title:   "Runtime Deltas",
@@ -203,6 +208,53 @@ func TestKnowledgeTool_ScopeInfrastructure_ReturnsCore(t *testing.T) {
 	}
 	if !strings.Contains(text, "Universal rules here") {
 		t.Error("scope=infrastructure should return full core content")
+	}
+}
+
+func TestKnowledgeTool_ScopeInfrastructure_PrependsUniversals(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"scope": "infrastructure",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "Platform Universals") {
+		t.Error("scope=infrastructure should prepend universals")
+	}
+	// Universals should appear before core content
+	uIdx := strings.Index(text, "Platform Universals")
+	cIdx := strings.Index(text, "Zerops Core Reference")
+	if uIdx >= cIdx {
+		t.Error("universals should appear before core reference")
+	}
+}
+
+func TestKnowledgeTool_RecipeMode_PrependsUniversals(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{"recipe": "ghost"})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "Platform Universals") {
+		t.Error("recipe should be prepended with universals")
+	}
+	if !strings.Contains(text, "maxContainers") {
+		t.Error("recipe should still contain original content")
 	}
 }
 

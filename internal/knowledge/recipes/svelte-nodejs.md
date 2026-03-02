@@ -1,25 +1,12 @@
 # SvelteKit SSR on Zerops
 
-SvelteKit with Node.js adapter. Requires adapter-node configuration.
+SvelteKit with `@sveltejs/adapter-node` for Node.js server-side rendering.
 
 ## Keywords
-svelte, sveltekit, nodejs, ssr, adapter-node, javascript
+svelte, sveltekit, nodejs, ssr, adapter-node, javascript, typescript
 
 ## TL;DR
-SvelteKit SSR with `@sveltejs/adapter-node` — deploy `build/` + `node_modules` + `package.json`.
-
-## svelte.config.js (REQUIRED)
-```javascript
-import adapter from '@sveltejs/adapter-node';
-import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-
-export default {
-  preprocess: vitePreprocess(),
-  kit: {
-    adapter: adapter()
-  }
-};
-```
+SvelteKit SSR with `@sveltejs/adapter-node` — deploy `build/`, `node_modules`, and `package.json`, port 3000.
 
 ## zerops.yml
 ```yaml
@@ -31,10 +18,14 @@ zerops:
         - pnpm i
         - pnpm run build
       deployFiles:
-        - build/
+        - build
         - package.json
         - node_modules
+      cache: node_modules
     run:
+      ports:
+        - port: 3000
+          httpSupport: true
       start: pnpm start
 ```
 
@@ -46,7 +37,26 @@ services:
     enableSubdomainAccess: true
 ```
 
+## Configuration
+
+SvelteKit requires `@sveltejs/adapter-node` for Zerops deployment. The default auto adapter will not work.
+
+```javascript
+// svelte.config.js
+import adapter from '@sveltejs/adapter-node';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+
+export default {
+  preprocess: vitePreprocess(),
+  kit: {
+    adapter: adapter()
+  }
+};
+```
+
 ## Gotchas
-- **@sveltejs/adapter-node** required (not auto adapter)
-- **@sveltejs/vite-plugin-svelte** required to avoid errors
-- Deploy includes build/, package.json, node_modules
+- **`@sveltejs/adapter-node` is required** -- the default auto adapter does not produce a Node.js server; install and configure it in `svelte.config.js`
+- **`@sveltejs/vite-plugin-svelte` must be installed** -- required for `vitePreprocess()` to avoid build errors
+- **Port 3000** is the adapter-node default -- must be declared in `ports` with `httpSupport: true`
+- **Deploy `build/` + `package.json` + `node_modules`** -- all three are required; `build/` alone is not sufficient
+- **SvelteKit binds 0.0.0.0** by default with adapter-node -- no extra host configuration needed

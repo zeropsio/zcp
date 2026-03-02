@@ -1,12 +1,11 @@
 # Bun + Hono + PostgreSQL + Object Storage on Zerops
-
 Bun runtime with Hono web framework, PostgreSQL database, and S3-compatible Object Storage.
 
 ## Keywords
 bun, hono, postgresql, postgres, object-storage, s3, api, typescript
 
 ## TL;DR
-Bun + Hono framework with PostgreSQL and Object Storage — includes build step, migrations, and 0.0.0.0 binding.
+Bun + Hono framework with PostgreSQL and Object Storage -- includes build step, migrations via `zsc execOnce`, and mandatory 0.0.0.0 binding.
 
 ## zerops.yml
 ```yaml
@@ -17,20 +16,22 @@ zerops:
       buildCommands:
         - bun install
         - bun build src/index.ts --outdir dist --target bun
+        - bun build src/migrate.ts --outdir dist --target bun
       deployFiles:
         - dist
         - package.json
+        - node_modules
       cache:
         - node_modules
     run:
       ports:
         - port: 3000
           httpSupport: true
-      initCommands:
-        - zsc execOnce migrate -- bun run src/migrate.ts
-      start: bun run dist/index.js
       envVariables:
         PORT: "3000"
+      initCommands:
+        - zsc execOnce ${appVersionId} -- bun run dist/migrate.js
+      start: bun run dist/index.js
 ```
 
 ## import.yml
@@ -45,6 +46,7 @@ services:
   - hostname: storage
     type: object-storage
     objectStorageSize: 2
+    objectStoragePolicy: public-read
     priority: 10
 
   - hostname: app
@@ -64,16 +66,17 @@ services:
       AWS_USE_PATH_STYLE_ENDPOINT: "true"
 ```
 
-## App code requirement
+## Configuration
 
-**CRITICAL**: Hono on Bun must bind to `0.0.0.0`. Default = 502 Bad Gateway.
+**CRITICAL**: Hono on Bun must bind to `0.0.0.0`. Default causes 502 Bad Gateway.
 
+Export-based pattern (recommended for Hono + Bun):
 ```typescript
 import { Hono } from "hono";
 
 const app = new Hono();
 
-app.get("/health", (c) => c.text("OK"));
+app.get("/status", (c) => c.json({ status: "ok" }));
 
 export default {
   hostname: "0.0.0.0",
@@ -92,9 +95,10 @@ Bun.serve({
 ```
 
 ## Gotchas
-- **`hostname: "0.0.0.0"` is mandatory** — without it, Zerops L7 balancer cannot reach the app
-- Bundled output (`bun build --target bun`): deploy `dist/` only, no `node_modules`
-- Migrations via `zsc execOnce` — runs exactly once across all containers (HA-safe)
-- Object Storage uses MinIO — `AWS_USE_PATH_STYLE_ENDPOINT: true` is required
-- `S3_ENDPOINT` from `${storage_apiUrl}` is internal URL — use `http://`, never `https://`
-- For Drizzle ORM: use `drizzle-orm/node-postgres` adapter (Bun compatible)
+- **`hostname: "0.0.0.0"` is mandatory** -- without it, Zerops L7 balancer cannot reach the app (502)
+- **Migration path** -- `src/migrate.ts` must be built into `dist/migrate.js` via `bun build` so it exists at runtime; running `bun run src/migrate.ts` will fail because source files are not deployed
+- **`zsc execOnce ${appVersionId}`** -- uses version-specific key so migrations re-run on each new deploy (not a static key like `migrate`)
+- **`node_modules` in deployFiles** -- required if migration scripts import ORM packages that cannot be fully bundled (e.g., drizzle-kit, native bindings); omit if `bun build` fully resolves all imports
+- **Object Storage uses MinIO** -- `AWS_USE_PATH_STYLE_ENDPOINT: "true"` is required for S3 client compatibility
+- **`S3_ENDPOINT`** from `${storage_apiUrl}` is an internal URL -- use `http://`, never `https://`
+- **For Drizzle ORM** -- use `drizzle-orm/node-postgres` adapter (Bun compatible)

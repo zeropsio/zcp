@@ -19,6 +19,11 @@ func testStoreWithCore(t *testing.T) *Store {
 				"## Schema Rules\n\nPorts 10-65435.\n\n" +
 				"## Build/Deploy Lifecycle\n\nBuild and Run are SEPARATE containers.",
 		},
+		"zerops://themes/universals": {
+			URI:     "zerops://themes/universals",
+			Title:   "Zerops Platform Universals",
+			Content: "# Zerops Platform Universals\n\nBind 0.0.0.0. deployFiles mandatory. No .env files.",
+		},
 		"zerops://themes/runtimes": {
 			URI:     "zerops://themes/runtimes",
 			Title:   "Runtime Deltas",
@@ -93,6 +98,38 @@ func TestStore_GetCore_NotFound(t *testing.T) {
 	}
 }
 
+// --- GetUniversals Tests ---
+
+func TestStore_GetUniversals_Success(t *testing.T) {
+	t.Parallel()
+	store := testStoreWithCore(t)
+
+	content, err := store.GetUniversals()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(content, "Platform Universals") {
+		t.Error("expected universals title")
+	}
+	if !strings.Contains(content, "0.0.0.0") {
+		t.Error("expected bind address rule")
+	}
+	if !strings.Contains(content, "deployFiles") {
+		t.Error("expected deployFiles rule")
+	}
+}
+
+func TestStore_GetUniversals_NotFound(t *testing.T) {
+	t.Parallel()
+	store, _ := NewStore(map[string]*Document{})
+
+	_, err := store.GetUniversals()
+	if err == nil {
+		t.Error("expected error when universals not found")
+	}
+}
+
 // --- GetRecipe Tests ---
 
 func TestStore_GetRecipe_Success(t *testing.T) {
@@ -128,6 +165,54 @@ func TestStore_GetRecipe_Success(t *testing.T) {
 				t.Errorf("recipe missing expected content %q", tt.want)
 			}
 		})
+	}
+}
+
+func TestStore_GetRecipe_PrependsUniversals(t *testing.T) {
+	t.Parallel()
+	store := testStoreWithCore(t)
+
+	recipe, err := store.GetRecipe("ghost")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should contain universals before recipe content
+	if !strings.Contains(recipe, "Platform Universals") {
+		t.Error("recipe should be prepended with universals")
+	}
+	if !strings.Contains(recipe, "maxContainers: 1") {
+		t.Error("recipe should still contain original content")
+	}
+
+	// Universals should appear before recipe content
+	uIdx := strings.Index(recipe, "Platform Universals")
+	rIdx := strings.Index(recipe, "maxContainers: 1")
+	if uIdx >= rIdx {
+		t.Error("universals should appear before recipe content")
+	}
+}
+
+func TestStore_GetRecipe_WithoutUniversals(t *testing.T) {
+	t.Parallel()
+	// Store without universals document
+	docs := map[string]*Document{
+		"zerops://recipes/ghost": {
+			URI:     "zerops://recipes/ghost",
+			Title:   "Ghost",
+			Content: "maxContainers: 1",
+		},
+	}
+	store, _ := NewStore(docs)
+
+	recipe, err := store.GetRecipe("ghost")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should still return recipe content without universals
+	if !strings.Contains(recipe, "maxContainers: 1") {
+		t.Error("recipe should return content even without universals")
 	}
 }
 

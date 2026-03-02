@@ -1,12 +1,12 @@
 # Next.js SSR on Zerops
 
-Next.js with server-side rendering on Node.js. Not a static export.
+Next.js with server-side rendering on Node.js runtime. Not a static export.
 
 ## Keywords
-nextjs, next.js, nodejs, ssr, react, server-side rendering
+nextjs, next.js, nodejs, ssr, react, server-side rendering, typescript
 
 ## TL;DR
-Next.js SSR on Node.js — deploy `.next` + `node_modules` + `package.json`, do NOT set `output: 'export'`.
+Next.js SSR on Node.js — deploy the entire workspace, port 3000 with httpSupport, do NOT set `output: 'export'`.
 
 ## zerops.yml
 ```yaml
@@ -16,11 +16,9 @@ zerops:
       base: nodejs@20
       buildCommands:
         - pnpm i
-        - pnpm build
-      deployFiles:
-        - .next
-        - node_modules
-        - package.json
+        - pnpm run build
+      deployFiles: ./
+      cache: node_modules
     run:
       ports:
         - port: 3000
@@ -39,8 +37,9 @@ services:
 ```
 
 ## Gotchas
-- **Do NOT set `output: 'export'`** in next.config.mjs — that disables SSR and forces static export
-- **Deploy `.next` + `node_modules` + `package.json`** — all three are required for SSR
-- **Port 3000** is the default Next.js port — match it in `ports[]`
-- **Bind 0.0.0.0** — Next.js binds `0.0.0.0` by default, no extra config needed
-- **For static export** see `nextjs-static` recipe instead
+- **Do NOT set `output: 'export'`** in next.config.mjs -- that disables SSR and forces static export; use the `nextjs-static` recipe for static sites
+- **Deploy `./` (entire workspace)** -- Next.js SSR requires `.next/`, `node_modules/`, and `package.json` at minimum; deploying `./` is simplest
+- **Port 3000** is the Next.js default -- must be declared in `ports` with `httpSupport: true` for Zerops L7 routing
+- **Next.js binds 0.0.0.0** by default -- no extra host configuration needed
+- **Build cache** should include `node_modules` for faster rebuilds
+- **For static export** see the `nextjs-static` recipe instead (uses `static` base, no Node.js runtime)

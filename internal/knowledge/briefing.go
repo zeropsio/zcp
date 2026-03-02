@@ -101,7 +101,7 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 	return sb.String(), nil
 }
 
-// GetRecipe returns the full content of a named recipe.
+// GetRecipe returns the full content of a named recipe, prepended with platform universals.
 // name: recipe filename without extension (e.g., "laravel-jetstream")
 // Returns error if recipe not found.
 func (s *Store) GetRecipe(name string) (string, error) {
@@ -111,7 +111,12 @@ func (s *Store) GetRecipe(name string) (string, error) {
 		available := s.ListRecipes()
 		return "", fmt.Errorf("recipe %q not found (available: %s)", name, strings.Join(available, ", "))
 	}
-	return doc.Content, nil
+
+	universals, uErr := s.GetUniversals()
+	if uErr != nil {
+		return doc.Content, nil //nolint:nilerr // graceful fallback: return recipe without universals
+	}
+	return universals + "\n\n---\n\n" + doc.Content, nil
 }
 
 // ListRecipes returns names of all available recipes (without extension).

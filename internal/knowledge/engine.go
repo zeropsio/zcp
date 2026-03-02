@@ -31,6 +31,7 @@ type Provider interface {
 	Get(uri string) (*Document, error)
 	Search(query string, limit int) []SearchResult
 	GetCore() (string, error)
+	GetUniversals() (string, error)
 	GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error)
 	GetRecipe(name string) (string, error)
 }
@@ -207,6 +208,15 @@ func (s *Store) GetCore() (string, error) {
 	doc, err := s.Get("zerops://themes/core")
 	if err != nil {
 		return "", fmt.Errorf("core reference not found: %w", err)
+	}
+	return doc.Content, nil
+}
+
+// GetUniversals returns the platform universals content.
+func (s *Store) GetUniversals() (string, error) {
+	doc, err := s.Get("zerops://themes/universals")
+	if err != nil {
+		return "", fmt.Errorf("universals not found: %w", err)
 	}
 	return doc.Content, nil
 }
