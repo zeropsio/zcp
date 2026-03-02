@@ -158,6 +158,8 @@ func (r *Runner) spawnClaude(ctx context.Context, prompt, logFile string) error 
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json",
+		"--verbose",
+		"--no-session-persistence",
 		"--model", r.config.Model,
 		"--max-turns", fmt.Sprintf("%d", r.config.MaxTurns),
 	}
