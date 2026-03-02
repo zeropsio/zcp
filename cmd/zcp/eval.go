@@ -209,8 +209,8 @@ func evalMCPConfig() string {
 	if cfg := os.Getenv("ZCP_EVAL_MCP_CONFIG"); cfg != "" {
 		return cfg
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".mcp.json")
+	// On zcpx, .mcp.json is in the work directory (/var/www), not $HOME
+	return filepath.Join(evalWorkDir(), ".mcp.json")
 }
 
 func initPlatformClient() (platform.Client, string, context.Context) {

@@ -63,6 +63,15 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 		StartedAt: startedAt,
 	}
 
+	// 0. Validate MCP config exists (Claude silently produces no output for missing config)
+	if r.config.MCPConfig != "" {
+		if _, err := os.Stat(r.config.MCPConfig); err != nil {
+			result.Error = fmt.Sprintf("mcp config not found: %s", r.config.MCPConfig)
+			result.Duration = Duration(time.Since(startedAt))
+			return result, nil
+		}
+	}
+
 	// 1. Load recipe from knowledge store
 	doc, err := r.store.Get("zerops://recipes/" + recipeName)
 	if err != nil {
@@ -119,6 +128,11 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 
 	// 7. Extract assessment from log
 	logData, _ := os.ReadFile(logFile)
+
+	// Detect empty log (Claude exits 0 but produces nothing for bad MCP config, etc.)
+	if len(logData) == 0 && result.Error == "" {
+		result.Error = "claude produced no output (check --mcp-config path exists)"
+	}
 	logStr := string(logData)
 
 	assessment, found := ExtractAssessment(logStr)
