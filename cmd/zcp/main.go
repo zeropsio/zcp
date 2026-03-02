@@ -34,6 +34,9 @@ func main() {
 		case "update":
 			runUpdate()
 			return
+		case "eval":
+			runEval(os.Args[2:])
+			return
 		}
 	}
 
