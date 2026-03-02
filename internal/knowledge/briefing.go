@@ -102,21 +102,99 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 }
 
 // GetRecipe returns the full content of a named recipe, prepended with platform universals.
-// name: recipe filename without extension (e.g., "laravel-jetstream")
-// Returns error if recipe not found.
+// name: recipe filename without extension (e.g., "laravel")
+// Resolution chain: exact match → single fuzzy → disambiguation list → error.
 func (s *Store) GetRecipe(name string) (string, error) {
+	// Try exact match first.
 	uri := "zerops://recipes/" + name
-	doc, err := s.Get(uri)
-	if err != nil {
-		available := s.ListRecipes()
-		return "", fmt.Errorf("recipe %q not found (available: %s)", name, strings.Join(available, ", "))
+	if doc, err := s.Get(uri); err == nil {
+		return s.prependUniversals(doc.Content), nil
 	}
 
-	universals, uErr := s.GetUniversals()
-	if uErr != nil {
-		return doc.Content, nil //nolint:nilerr // graceful fallback: return recipe without universals
+	// Fuzzy fallback: find matching recipes.
+	matches := s.findMatchingRecipes(name)
+	switch len(matches) {
+	case 0:
+		available := s.ListRecipes()
+		return "", fmt.Errorf("recipe %q not found (available: %s)", name, strings.Join(available, ", "))
+	case 1:
+		// Auto-resolve single match.
+		doc, err := s.Get("zerops://recipes/" + matches[0])
+		if err != nil {
+			return "", fmt.Errorf("recipe %q not found: %w", matches[0], err)
+		}
+		return s.prependUniversals(doc.Content), nil
+	default:
+		// Multiple matches — return disambiguation.
+		return s.formatDisambiguation(name, matches), nil
 	}
-	return universals + "\n\n---\n\n" + doc.Content, nil
+}
+
+// findMatchingRecipes returns recipe names matching the query via prefix, substring, or keyword.
+// Case-insensitive. Results are deduplicated and sorted alphabetically.
+func (s *Store) findMatchingRecipes(query string) []string {
+	queryLower := strings.ToLower(query)
+	allRecipes := s.ListRecipes()
+	seen := make(map[string]bool, len(allRecipes))
+
+	for _, name := range allRecipes {
+		nameLower := strings.ToLower(name)
+		// Prefix match.
+		if strings.HasPrefix(nameLower, queryLower) {
+			seen[name] = true
+			continue
+		}
+		// Substring match.
+		if strings.Contains(nameLower, queryLower) {
+			seen[name] = true
+			continue
+		}
+		// Keyword match.
+		doc, err := s.Get("zerops://recipes/" + name)
+		if err != nil {
+			continue
+		}
+		for _, kw := range doc.Keywords {
+			if strings.EqualFold(kw, queryLower) {
+				seen[name] = true
+				break
+			}
+		}
+	}
+
+	result := make([]string, 0, len(seen))
+	for name := range seen {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// formatDisambiguation returns a disambiguation message listing matching recipes with TL;DR.
+func (s *Store) formatDisambiguation(query string, matches []string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Multiple recipes match %q. Specify the full name:\n\n", query))
+	for _, name := range matches {
+		sb.WriteString("- **")
+		sb.WriteString(name)
+		sb.WriteString("**")
+		if doc, err := s.Get("zerops://recipes/" + name); err == nil && doc.TLDR != "" {
+			sb.WriteString(" — ")
+			sb.WriteString(doc.TLDR)
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString(fmt.Sprintf("\nUse: zerops_knowledge recipe=\"%s\"", matches[0]))
+	return sb.String()
+}
+
+// prependUniversals prepends platform universals to content, falling back to content alone.
+func (s *Store) prependUniversals(content string) string {
+	universals, err := s.GetUniversals()
+	if err != nil {
+		return content
+	}
+	return universals + "\n\n---\n\n" + content
 }
 
 // ListRecipes returns names of all available recipes (without extension).

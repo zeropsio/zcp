@@ -85,8 +85,8 @@ func TestStore_RecipesEmbedded(t *testing.T) {
 		t.Errorf("ListRecipes() = %d, want >= 20", len(recipes))
 	}
 	// Spot-check a known recipe
-	if !slices.Contains(recipes, "laravel-jetstream") {
-		t.Errorf("expected laravel-jetstream in recipes, got: %v", recipes)
+	if !slices.Contains(recipes, "laravel") {
+		t.Errorf("expected laravel in recipes, got: %v", recipes)
 	}
 }
 
@@ -100,7 +100,7 @@ func TestPathToURI(t *testing.T) {
 		{"themes/core.md", "zerops://themes/core"},
 		{"themes/runtimes.md", "zerops://themes/runtimes"},
 		{"themes/services.md", "zerops://themes/services"},
-		{"recipes/laravel-jetstream.md", "zerops://recipes/laravel-jetstream"},
+		{"recipes/laravel.md", "zerops://recipes/laravel"},
 	}
 	for _, tt := range tests {
 		got := pathToURI(tt.path)
@@ -116,7 +116,7 @@ func TestURIToPath(t *testing.T) {
 		path string
 	}{
 		{"zerops://themes/core", "themes/core.md"},
-		{"zerops://recipes/laravel-jetstream", "recipes/laravel-jetstream.md"},
+		{"zerops://recipes/laravel", "recipes/laravel.md"},
 	}
 	for _, tt := range tests {
 		got := uriToPath(tt.uri)

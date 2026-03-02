@@ -66,7 +66,7 @@ Skip this if just re-deploying existing code with unchanged zerops.yml.
 ```
 zerops_knowledge recipe="{recipe-name}"
 ```
-Examples: `laravel-jetstream`, `phoenix`, `django`
+Examples: `laravel`, `phoenix`, `django`
 
 If the briefing doesn't cover the user's framework specifics, ask for build/deploy details before generating zerops.yml.
 

@@ -34,7 +34,7 @@ zerops:
     run:
       base: php-nginx@8.3
       os: ubuntu
-      siteConfigPath: site.conf.tmpl
+      documentRoot: public
       envVariables:
         APP_LOCALE: en
         APP_FAKER_LOCALE: en_US
@@ -68,11 +68,12 @@ zerops:
         SESSION_PATH: /
 
         BCRYPT_ROUNDS: 12
+        TRUSTED_PROXIES: "*"
         MEDIA_LIBRARY_ENDPOINT_TYPE: s3
         GLIDE_USE_SOURCE_DISK: s3
 
         AWS_ACCESS_KEY_ID: ${storage_accessKeyId}
-        AWS_REGION: us-east-1
+        AWS_DEFAULT_REGION: us-east-1
         AWS_BUCKET: ${storage_bucketName}
         AWS_ENDPOINT: ${storage_apiUrl}
         AWS_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
@@ -119,12 +120,13 @@ services:
 ```
 
 ## Configuration
+- **TRUSTED_PROXIES: "\*"** -- required for Laravel behind Zerops load balancer
 - **LOG_CHANNEL: syslog** -- routes logs to Zerops log collector
 - **MEDIA_LIBRARY_ENDPOINT_TYPE: s3** -- Twill media library uses S3 backend
 - **GLIDE_USE_SOURCE_DISK: s3** -- Glide image processing reads from S3, caches locally
 - **AWS_USE_PATH_STYLE_ENDPOINT: true** -- required for Zerops S3-compatible storage
 - **APP_KEY** is generated via `<@generateRandomString(<32>)>` in import.yml envSecrets
-- **siteConfigPath: site.conf.tmpl** -- custom nginx config for Twill (must exist in repo root)
+- **documentRoot: public** -- serves Laravel from the `public/` directory
 - Default superadmin: twill@zerops.io / zerops (created via `zsc execOnce initializeadmin`)
 
 ## Common Failures

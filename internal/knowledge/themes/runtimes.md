@@ -49,7 +49,7 @@ Use `apk add` only for extensions NOT in this list.
 - `TRUSTED_PROXIES: "127.0.0.1,10.0.0.0/8"` -- REQUIRED or CSRF breaks
 - Alpine extensions: `sudo apk add --no-cache php84-<ext>` (version prefix = PHP major+minor, `sudo` required)
 - Cache: `vendor`
-- Custom nginx: `siteConfigPath: site.conf.tmpl` -- use `{{.PhpSocket}}` for fastcgi_pass (NOT `127.0.0.1:9000`)
+- Document root: `documentRoot: public` (Laravel, Symfony) or `documentRoot: www/` (Nette). Default nginx handles PHP routing. Custom config via `siteConfigPath: site.conf.tmpl` only if non-standard rules needed — use `fastcgi_pass unix:{{.PhpSocket}};` (MUST include `unix:` prefix)
 
 **Common mistakes**:
 - Missing `documentRoot` -> Nginx doesn't know where to serve from

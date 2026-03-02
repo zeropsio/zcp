@@ -87,7 +87,7 @@ Examples:
 ```
 zerops_knowledge recipe="{recipe-name}"
 ```
-Examples: `bun`, `bun-hono`, `laravel-jetstream`, `ghost`, `django`, `phoenix`
+Examples: `bun`, `bun-hono`, `laravel`, `ghost`, `django`, `phoenix`
 
 ### Step 3 — Load infrastructure knowledge
 

@@ -28,7 +28,7 @@ zerops:
     run:
       base: php-nginx@8.3
       os: alpine
-      siteConfigPath: site.conf.tmpl
+      documentRoot: public
       envVariables:
         APP_LOCALE: en
         APP_FAKER_LOCALE: en_US
@@ -62,7 +62,7 @@ zerops:
         SESSION_PATH: /
 
         AWS_ACCESS_KEY_ID: ${storage_accessKeyId}
-        AWS_REGION: us-east-1
+        AWS_DEFAULT_REGION: us-east-1
         AWS_BUCKET: ${storage_bucketName}
         AWS_ENDPOINT: ${storage_apiUrl}
         AWS_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
@@ -70,6 +70,7 @@ zerops:
         AWS_USE_PATH_STYLE_ENDPOINT: true
 
         BCRYPT_ROUNDS: 12
+        TRUSTED_PROXIES: "*"
         FILESYSTEM_DISK: s3
         FILAMENT_FILESYSTEM_DISK: s3
       initCommands:
@@ -115,12 +116,12 @@ services:
 ```
 
 ## Configuration
-- **TRUSTED_PROXIES** -- not set by default in Filament recipe; add `TRUSTED_PROXIES: "*"` if behind Zerops L7 balancer
+- **TRUSTED_PROXIES: "\*"** -- required for Laravel behind Zerops load balancer
 - **LOG_CHANNEL: syslog** -- routes logs to Zerops log collector
 - **FILAMENT_FILESYSTEM_DISK: s3** -- Filament-specific S3 configuration for media uploads
 - **SESSION_DRIVER / CACHE_STORE: redis** -- use Valkey instead of file-based sessions
 - **APP_KEY** is generated via `<@generateRandomString(<32>)>` in import.yml envSecrets
-- **siteConfigPath: site.conf.tmpl** -- custom nginx config (must exist in repo root)
+- **documentRoot: public** -- serves Laravel from the `public/` directory
 
 ## Common Failures
 - **S3 driver not found** -- add `league/flysystem-aws-s3-v3` to composer.json

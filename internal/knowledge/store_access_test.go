@@ -44,10 +44,11 @@ func testStoreWithCore(t *testing.T) *Store {
 			Title:   "Ghost CMS Recipe",
 			Content: "maxContainers: 1\n\nUse MariaDB with wsrep.",
 		},
-		"zerops://recipes/laravel-jetstream": {
-			URI:     "zerops://recipes/laravel-jetstream",
-			Title:   "Laravel Jetstream Recipe",
-			Content: "Multi-base build. S3 + Redis + Mailpit.",
+		"zerops://recipes/laravel": {
+			URI:      "zerops://recipes/laravel",
+			Title:    "Laravel on Zerops",
+			Content:  "Multi-base build. S3 + Redis + PostgreSQL.",
+			Keywords: []string{"laravel", "php", "postgresql"},
 		},
 	}
 	store, err := NewStore(docs)
@@ -145,8 +146,8 @@ func TestStore_GetRecipe_Success(t *testing.T) {
 			want:       "maxContainers: 1",
 		},
 		{
-			name:       "laravel-jetstream recipe",
-			recipeName: "laravel-jetstream",
+			name:       "laravel recipe",
+			recipeName: "laravel",
 			want:       "Multi-base build",
 		},
 	}
@@ -247,8 +248,8 @@ func TestStore_ListRecipes_Success(t *testing.T) {
 	if recipes[0] != "ghost" {
 		t.Errorf("first recipe should be 'ghost', got %q", recipes[0])
 	}
-	if recipes[1] != "laravel-jetstream" {
-		t.Errorf("second recipe should be 'laravel-jetstream', got %q", recipes[1])
+	if recipes[1] != "laravel" {
+		t.Errorf("second recipe should be 'laravel', got %q", recipes[1])
 	}
 }
 
@@ -260,5 +261,109 @@ func TestStore_ListRecipes_Empty(t *testing.T) {
 
 	if len(recipes) != 0 {
 		t.Errorf("expected empty list, got %d recipes", len(recipes))
+	}
+}
+
+// --- Fuzzy Recipe Lookup Tests ---
+
+func TestStore_GetRecipe_FuzzyMatch(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		query      string
+		docs       map[string]*Document
+		wantErr    bool
+		wantSubstr string // substring expected in result (content or disambiguation)
+	}{
+		{
+			name:  "PrefixAutoResolve",
+			query: "laravel",
+			docs: map[string]*Document{
+				"zerops://recipes/ghost":   {URI: "zerops://recipes/ghost", Content: "Ghost recipe"},
+				"zerops://recipes/laravel": {URI: "zerops://recipes/laravel", Content: "Laravel recipe content"},
+			},
+			wantSubstr: "Laravel recipe content",
+		},
+		{
+			name:  "PrefixSingleFuzzy",
+			query: "next",
+			docs: map[string]*Document{
+				"zerops://recipes/ghost":      {URI: "zerops://recipes/ghost", Content: "Ghost recipe"},
+				"zerops://recipes/nextjs-ssr": {URI: "zerops://recipes/nextjs-ssr", Content: "Next.js SSR recipe", TLDR: "SSR on Node.js"},
+			},
+			wantSubstr: "Next.js SSR recipe",
+		},
+		{
+			name:  "PrefixMultipleResults",
+			query: "next",
+			docs: map[string]*Document{
+				"zerops://recipes/ghost":         {URI: "zerops://recipes/ghost", Content: "Ghost recipe"},
+				"zerops://recipes/nextjs-ssr":    {URI: "zerops://recipes/nextjs-ssr", Content: "SSR recipe", TLDR: "Next.js SSR on Node.js"},
+				"zerops://recipes/nextjs-static": {URI: "zerops://recipes/nextjs-static", Content: "Static recipe", TLDR: "Next.js static export"},
+			},
+			wantSubstr: "Multiple recipes match",
+		},
+		{
+			name:  "ContainsMatch",
+			query: "spring",
+			docs: map[string]*Document{
+				"zerops://recipes/ghost":       {URI: "zerops://recipes/ghost", Content: "Ghost recipe"},
+				"zerops://recipes/java-spring": {URI: "zerops://recipes/java-spring", Content: "Java Spring recipe"},
+			},
+			wantSubstr: "Java Spring recipe",
+		},
+		{
+			name:  "KeywordSingleMatch",
+			query: "wsgi",
+			docs: map[string]*Document{
+				"zerops://recipes/ghost":  {URI: "zerops://recipes/ghost", Content: "Ghost recipe"},
+				"zerops://recipes/django": {URI: "zerops://recipes/django", Content: "Django recipe", Keywords: []string{"wsgi", "python"}},
+			},
+			wantSubstr: "Django recipe",
+		},
+		{
+			name:  "CaseInsensitive",
+			query: "Django",
+			docs: map[string]*Document{
+				"zerops://recipes/ghost":  {URI: "zerops://recipes/ghost", Content: "Ghost recipe"},
+				"zerops://recipes/django": {URI: "zerops://recipes/django", Content: "Django recipe"},
+			},
+			wantSubstr: "Django recipe",
+		},
+		{
+			name:  "NoMatch",
+			query: "foobar",
+			docs: map[string]*Document{
+				"zerops://recipes/ghost": {URI: "zerops://recipes/ghost", Content: "Ghost recipe"},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store, err := NewStore(tt.docs)
+			if err != nil {
+				t.Fatalf("NewStore: %v", err)
+			}
+
+			result, err := store.GetRecipe(tt.query)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				if err != nil && !strings.Contains(err.Error(), "not found") {
+					t.Errorf("error should contain 'not found', got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(result, tt.wantSubstr) {
+				t.Errorf("result missing expected substring %q, got:\n%s", tt.wantSubstr, result)
+			}
+		})
 	}
 }

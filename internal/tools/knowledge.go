@@ -17,7 +17,7 @@ type KnowledgeInput struct {
 	Limit    int      `json:"limit,omitempty"    jsonschema:"Maximum number of search results to return (query mode only)."`
 	Runtime  string   `json:"runtime,omitempty"  jsonschema:"Runtime type for stack briefing (e.g. php-nginx@8.4 or bun@1.2). Use with or without services (briefing mode)."`
 	Services []string `json:"services,omitempty" jsonschema:"Service types for stack briefing (e.g. [postgresql@16, valkey@7.2]). Use with or without runtime (briefing mode)."`
-	Recipe   string   `json:"recipe,omitempty"   jsonschema:"Recipe name to retrieve pre-built framework config (e.g. laravel-jetstream, nextjs). Use alone (recipe mode)."`
+	Recipe   string   `json:"recipe,omitempty"   jsonschema:"Recipe name to retrieve pre-built framework config (e.g. laravel, nextjs). Use alone (recipe mode)."`
 	Scope    string   `json:"scope,omitempty"    jsonschema:"Platform reference scope. Use scope=infrastructure for complete Zerops knowledge (YAML schemas, env vars, build/deploy lifecycle). Required before generating YAML. Use alone (scope mode)."`
 }
 
