@@ -1,99 +1,80 @@
 # ZCP — Zerops Control Plane
 
-Single Go binary. MCP server over STDIO. Runs inside a `zcp@1` service in the project it manages.
+MCP server that gives an LLM full control over a Zerops project. Runs as a `zcp@1` service inside the project it manages.
 
-LLM connects via Claude Code, calls MCP tools, ZCP translates to Zerops API. No subprocess shelling, no intermediate CLI — direct API calls.
-
-## Why
-
-Previously two binaries: `zaia` (Go CLI with business logic) + `zaia-mcp` (MCP wrapper that shelled out to zaia). Subprocess overhead, double serialization, error propagation friction. ZCP merges both into one process.
-
-## How it works
+## Integration model
 
 ```
-Claude Code ←→ STDIO (JSON-RPC) ←→ ZCP binary ←→ Zerops API
+User ←→ Claude Code (terminal in code-server) ←→ ZCP (MCP over STDIO) ←→ Zerops API
+                                                                        ←→ sibling services (SSH/SSHFS over VXLAN)
 ```
 
-On startup, ZCP:
-1. Resolves auth (env var `ZCP_API_KEY` or zcli token fallback)
-2. Validates token, discovers project ID
-3. Builds system prompt with project state (service list, routing directives)
-4. Registers MCP tools, starts STDIO transport
+The user opens code-server on the `zcp` service subdomain. Claude Code is preconfigured with ZCP as its MCP server. The user describes what they want, the LLM figures out what to do, calls ZCP tools to make it happen.
 
-The system prompt tells the LLM which workflow to start based on project state. The LLM drives from there — ZCP is reactive, not prescriptive.
+ZCP authenticates once at startup (env var or zcli token), discovers which project it's in, and exposes everything as MCP tools. The LLM sees a system prompt with the current project state and a routing table that tells it which workflow to start.
 
-## Architecture
+## What the LLM can do
 
-```
-cmd/zcp/main.go        Entrypoint, subcommands (init, version, update), MCP server
+Through ZCP tools, the LLM can:
 
-internal/
-  server/              MCP server setup, tool registration, system prompt builder
-  tools/               MCP tool handlers — thin wrappers that validate input, call ops
-  ops/                 Business logic — validation, orchestration, caching
-  platform/            Zerops API client, types, error codes
-  auth/                Token resolution, project discovery
-  knowledge/           BM25 search engine, embedded platform docs + recipes
-  workflow/            Bootstrap conductor, session state, phase gates
-  content/             Embedded workflow guides + templates (go:embed)
-  runtime/             Zerops container vs local detection
-  init/                `zcp init` — config file generation
-  update/              Self-update from GitHub releases
-```
+- **Bootstrap a full stack** — from "I need a Node.js app with PostgreSQL" to running services with health checks, in one conversation
+- **Deploy code** — writes files via SSHFS mount, triggers build pipeline via SSH push
+- **Debug** — read logs, check events, verify service health
+- **Scale** — adjust CPU, RAM, disk, container count
+- **Configure** — manage env vars, subdomains, shared storage connections
+- **Monitor** — discover services, check statuses
 
-## Key concepts
+## How bootstrap works
 
-### Tools
+Bootstrap is the core flow. The LLM gets a user request ("deploy a Go API with Postgres") and ZCP guides it through 11 sequential steps:
 
-MCP tools are what the LLM calls. Each tool is a thin handler in `internal/tools/` that validates input and delegates to `internal/ops/`. Two categories:
+1. **detect** — discover existing services, classify project state
+2. **plan** — choose runtimes, managed services, hostnames (strict `[a-z0-9]`, dev/stage pairs)
+3. **load-knowledge** — fetch platform rules for the chosen stack (binding, ports, env vars, wiring)
+4. **generate-import** — write import.yml to create the infrastructure
+5. **import-services** — call Zerops API, wait for services to come up
+6. **mount-dev** — SSHFS mount dev service filesystems
+7. **discover-envs** — read actual env vars Zerops set for managed services (connection strings, ports, credentials)
+8. **generate-code** — write zerops.yml + app code using real env vars from step 7
+9. **deploy** — SSH push to trigger build pipeline, verify with health checks
+10. **verify** — independent verification of all services
+11. **report** — present results with URLs
 
-**Read-only**: discover, knowledge, logs, events, process, verify, workflow
-**Mutating**: deploy, manage, scale, env, import, delete, subdomain, mount
+The ordering matters. Code generation happens *after* env var discovery — no hardcoded guesses. The conductor enforces this sequence; the LLM can't skip ahead.
 
-Deploy and mount only work inside Zerops containers (need SSH/SSHFS to sibling services on the VXLAN network). When running locally, these tools are not registered.
+When verification fails, the LLM iterates: read logs, fix code on the mount, redeploy, re-verify. Up to 3 attempts per service.
 
-### Workflows
+## Deploy mechanics
 
-The LLM doesn't freestyle — it follows workflow guides. `zerops_workflow` is the entry point for every operation. Workflow guides are markdown files embedded at compile time (`internal/content/workflows/`).
+ZCP sits on the same VXLAN network as all project services. It deploys via SSH:
 
-**bootstrap** is the main one. It's a stateful 11-step conductor that takes a project from empty to fully deployed:
+1. SSHFS mount gives filesystem access to the target container
+2. LLM writes code + zerops.yml directly to the mount path
+3. `zerops_deploy` SSHes into the target, initializes git, runs `zcli push`
+4. Zerops build pipeline picks it up from there
 
-detect → plan → load-knowledge → generate-import → import-services → mount-dev → discover-envs → generate-code → deploy → verify → report
+Dev services get source-deployed (`deployFiles: [.]`). Stage services get proper build output. Dev uses `startWithoutCode: true` so the container is already running before the first deploy.
 
-Each step has: guidance text (what to do), required tools, verification criteria, and a skippable flag. The conductor enforces sequential progression — the LLM can't skip ahead.
+## Knowledge system
 
-Other workflows (deploy, debug, scale, configure, monitor) are stateless — just markdown guides returned to the LLM.
+Platform knowledge is compiled into the binary. The LLM queries it before generating any configuration:
 
-### Knowledge system
+- **Briefings** — stack-specific rules (e.g., "Node.js must bind 0.0.0.0, deploy node_modules, use these env var patterns for PostgreSQL wiring")
+- **Recipes** — complete framework configs (Laravel, Next.js, Django, etc.)
+- **Infrastructure scope** — full import.yml and zerops.yml schema reference
+- **Text search** — BM25 search across all embedded docs
 
-Platform knowledge is embedded in the binary via `go:embed`. Three layers:
+This prevents the LLM from guessing Zerops-specific syntax. It reads the rules, then generates config.
 
-- **Themes** (`knowledge/themes/`) — core platform rules, runtime specifics, managed service reference, architecture decisions
-- **Recipes** (`knowledge/recipes/`) — framework-specific configs (Laravel, Next.js, Django, etc.)
-- **Guides** (`knowledge/guides/`) — operational topics (scaling, networking, CI/CD, etc.)
+## System prompt and routing
 
-`zerops_knowledge` has four modes: text search (BM25), contextual briefing (layered composition for a specific stack), recipe retrieval, infrastructure scope (full YAML schema reference).
+At startup, ZCP calls the API to list services and classifies project state:
 
-### Deploy model
+- **FRESH** (no runtime services) → route to bootstrap
+- **CONFORMANT** (dev+stage pairs detected) → route to deploy
+- **NON_CONFORMANT** (services exist without dev/stage pattern) → route to bootstrap alongside existing services, never delete without explicit approval
 
-ZCP runs inside the project as a `zcp@1` service. It deploys to sibling services via SSH over the private VXLAN network. The flow:
-
-1. Mount target service filesystem via SSHFS
-2. Write code + zerops.yml to mount path
-3. `zerops_deploy` triggers SSH push (git init + zcli push on the target)
-4. Zerops build pipeline runs, container restarts with deployed code
-
-Dev services use `deployFiles: [.]` (source deploy). Stage services use build output.
-
-### System prompt
-
-Built dynamically at startup by `instructions.go`. Contains:
-- Routing table (which workflow to start for which task)
-- Active workflow hint (if resuming a session)
-- Runtime context (service name when inside Zerops)
-- Project summary (service list + project state classification)
-
-Project state drives the routing: FRESH/empty → bootstrap, CONFORMANT → deploy, NON_CONFORMANT → bootstrap alongside existing services.
+This classification is injected into the system prompt so the LLM knows what to do before its first tool call.
 
 ## Development
 
