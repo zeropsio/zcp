@@ -122,7 +122,7 @@ func TestE2E_Subdomain(t *testing.T) {
 	waitForServiceReady(s, appHostname)
 	t.Log("  Service ready")
 
-	// --- Step 3: Deploy via zerops_deploy (local mode) ---
+	// --- Step 3: Deploy via zerops_deploy (SSH self-deploy) ---
 	step++
 	logStep(t, step, "zerops_deploy targetService=%s", appHostname)
 	deployText := s.mustCallSuccess("zerops_deploy", map[string]any{

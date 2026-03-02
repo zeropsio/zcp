@@ -69,8 +69,8 @@ func newHarness(t *testing.T) *e2eHarness {
 	}
 
 	logFetcher := platform.NewLogFetcher()
-	localDeployer := platform.NewSystemLocalDeployer()
-	srv := server.New(context.Background(), client, authInfo, store, logFetcher, nil, localDeployer, nil, nil, runtime.Info{})
+	sshDeployer := platform.NewSystemSSHDeployer()
+	srv := server.New(context.Background(), client, authInfo, store, logFetcher, sshDeployer, nil, nil, runtime.Info{})
 
 	return &e2eHarness{
 		t:         t,

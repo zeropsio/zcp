@@ -114,10 +114,7 @@ func run() error {
 		mounter = platform.NewSystemMounter()
 	}
 
-	// Local deployer for zcli push (zerops_deploy tool) — works from anywhere.
-	localDeployer := platform.NewSystemLocalDeployer()
-
-	// SSH deployer for cross-service deploys — only available inside Zerops containers.
+	// SSH deployer for deploy — only available inside Zerops containers.
 	var sshDeployer ops.SSHDeployer
 	if rtInfo.InContainer {
 		sshDeployer = platform.NewSystemSSHDeployer()
@@ -127,7 +124,7 @@ func run() error {
 	idleWaiter := update.NewIdleWaiter()
 
 	// Create and run MCP server on STDIO.
-	srv := server.New(ctx, client, authInfo, store, logFetcher, sshDeployer, localDeployer, mounter, idleWaiter, rtInfo)
+	srv := server.New(ctx, client, authInfo, store, logFetcher, sshDeployer, mounter, idleWaiter, rtInfo)
 
 	// Silent background update — completely invisible to LLM.
 	// Checks GitHub (24h cache), downloads if newer, waits for idle, then exits.

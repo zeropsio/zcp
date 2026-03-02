@@ -186,7 +186,7 @@ Present import.yml to the user for review before proceeding.
 
 The zerops.yml MUST have TWO separate `setup:` entries — one for the dev hostname, one for the stage hostname — with their own build/deploy/start pipelines.
 
-> **CRITICAL — dev `deployFiles` MUST be `[.]`:** Dev containers are volatile. After deploy, ONLY `deployFiles` content survives. If dev setup uses `[dist]`, `[app]`, or any build output path, all source files + zerops.yml are DESTROYED. Further iteration becomes impossible. Dev setup MUST ALWAYS use `deployFiles: [.]` regardless of runtime. No exceptions.
+> **CRITICAL — self-deploying services MUST use `deployFiles: [.]`:** Containers are volatile. After deploy, ONLY `deployFiles` content survives. If a self-deploying service uses `[dist]`, `[app]`, or any build output path, all source files + zerops.yml are DESTROYED. Further iteration becomes impossible. Any service that deploys to itself (dev services, simple mode services) MUST ALWAYS use `deployFiles: [.]`. No exceptions. Cross-deploy targets (stage) can use specific paths for compiled output because their source lives on the dev service.
 
 #### Application code requirements
 
@@ -312,7 +312,9 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 
 > **Files are already on the dev container** via SSHFS mount — deploy does not "send" files there. Deploy runs the build pipeline (buildCommands, deployFiles) and restarts the process. It also ensures persistence — dev containers are volatile, only `deployFiles` content survives.
 
-> **Bootstrap deploys ALWAYS use SSH mode** (sourceService + targetService). NEVER use local mode (targetService only) — git operations fail on SSHFS mounts.
+> Bootstrap deploys: `zerops_deploy targetService="{devHostname}"` for self-deploy.
+> Cross-deploy to stage: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`.
+> Self-deploying services MUST use `deployFiles: [.]` — source files and zerops.yml must survive the deploy for continued iteration.
 
 `zerops_deploy` blocks until the build pipeline completes. It returns the final status (`DEPLOYED` or `BUILD_FAILED`) along with build duration. No manual polling needed.
 `zerops_import` blocks until all import processes complete. It returns final statuses (`FINISHED` or `FAILED`) for each process.
@@ -321,7 +323,7 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 
 **Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path (steps 4-7).
 
-1. **Deploy to appdev** (SSH self-deploy): `zerops_deploy sourceService="appdev" targetService="appdev" includeGit=true` — SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. Files got there via SSHFS mount writes. `includeGit=true` preserves `.git` on the target so subsequent deploys work. SSHFS mount auto-reconnects after deploy — no remount needed. Deploy tests the build pipeline and ensures deployFiles artifacts persist.
+1. **Deploy to appdev**: `zerops_deploy targetService="appdev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. SSHFS mount auto-reconnects after deploy — no remount needed. Deploy tests the build pipeline and ensures deployFiles artifacts persist.
 2. **Start appdev** (deploy restarted container with `zsc noop`): wait ~10s for SSH to become available after container restart, then start server via SSH (same kill-then-start pattern from Dev iteration below), verify startup log
 3. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
@@ -372,28 +374,34 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 
 ### Simple mode — deploy flow
 
-1. **Import services:**
+1. **Import services** with `startWithoutCode: true` so the service starts immediately:
    ```
-   zerops_import content="<import.yml>"           # blocks until all processes finish
-   zerops_discover                                # verify services reached RUNNING
+   zerops_import content="<import.yml>"
+   zerops_discover
    ```
 
    > **Subdomain activation:** `enableSubdomainAccess: true` in import.yml pre-configures routing, but **does NOT activate it**. You MUST call `zerops_subdomain action="enable"` after deploy to activate the L7 balancer route. The enable response contains `subdomainUrls` — this is the **only** source for subdomain URLs. Without the explicit enable call, the subdomain returns 502. The call is idempotent — safe to call even if already active.
 
-2. **Discover env vars:**
+2. **Mount and discover:**
    ```
+   zerops_mount action="mount" serviceHostname="{hostname}"
    zerops_discover includeEnvs=true
    ```
-   Single call returns env vars for all services. Record available env vars. Use ONLY discovered variable names in zerops.yml.
 
-3. **Create files and deploy:**
-   Write zerops.yml + app code following Application Code Requirements. Then:
+3. **Write code** to mount path `/var/www/{hostname}/`
+
+4. **Deploy:**
    ```
-   zerops_deploy targetService="<runtime>" workingDir="/path/to/app"
-   # Blocks until build completes — returns DEPLOYED or BUILD_FAILED
+   zerops_deploy targetService="{hostname}"
    ```
 
-4. Run the full verification protocol. If it fails, iterate (diagnose -> fix -> redeploy).
+5. **Verify:**
+   ```
+   zerops_subdomain serviceHostname="{hostname}" action="enable"
+   zerops_verify serviceHostname="{hostname}"
+   ```
+
+6. If verification fails, iterate (diagnose -> fix -> redeploy).
 
 ### For 2+ runtime service pairs — agent orchestration
 
@@ -549,7 +557,7 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 2 | Write app code | HTTP server on the port defined in zerops.yml `run.ports` with `/`, `/health`, `/status` | Code references discovered env vars |
 | 3 | Write .gitignore | Build artifacts and IDE files only. Do NOT include `.env` — no .env files exist on Zerops | File exists, no `.env` entry |
 | 3b | Quick-test (mandatory) | Kill previous process, start server via SSH (Bash tool `run_in_background=true` — server runs in SSH foreground), check `TaskOutput` for startup, test /health and /status. Fix issues. | Endpoints return expected responses |
-| 4 | Deploy dev | `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true` | status=DEPLOYED (blocks until complete) |
+| 4 | Deploy dev | `zerops_deploy targetService="{devHostname}"` | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
 | 5b | Start server (post-deploy) | Deploy restarted container — `zsc noop --silent` is running, not your app. Wait ~10s for SSH to reconnect, then start server via SSH (Bash tool `run_in_background=true`, kill-then-start pattern from Quick-test). | `TaskOutput` shows startup message |
 | 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
@@ -598,7 +606,7 @@ If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ah
 
 2. **Fix**: Edit files at `{mountPath}/` — fix zerops.yml, app code, or both
 
-3. **Redeploy**: `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true` — `.git` persists on target when `includeGit=true` was used. SSHFS mount auto-reconnects after deploy.
+3. **Redeploy**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHFS mount auto-reconnects after deploy.
 
 4. **Start server**: wait ~10s for SSH after deploy, then kill previous: `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`, then start via Bash tool with `run_in_background=true` (server in SSH foreground): `ssh {devHostname} "cd /var/www && {start_command}"` — check startup via `TaskOutput task_id=... block=false` after 3-5s.
 
@@ -608,12 +616,10 @@ Max 3 iterations. After that, report failure with diagnosis.
 
 ## Platform Rules
 
-- **Bootstrap deploys ALWAYS use SSH mode** — `zerops_deploy sourceService="{devHostname}" targetService="{devHostname}" includeGit=true`. Git is initialized automatically if missing. `includeGit=true` preserves `.git` on target so subsequent deploys work. NEVER use local mode (targetService only) — git operations fail on SSHFS mounts.
-- **Dev setup MUST use `deployFiles: [.]`** — containers are volatile, only deployFiles content persists. Using `[dist]` or `[app]` in dev destroys source code after deploy.
+- All deploys use SSH — `zerops_deploy targetService="{hostname}"` for self-deploy (sourceService auto-inferred, includeGit auto-forced), `sourceService="{dev}" targetService="{stage}"` for cross-deploy. Self-deploying services MUST use `deployFiles: [.]` — after deploy, only deployFiles content survives in /var/www. Using specific paths (e.g. `[dist]`, `[bin]`) in a self-deploying service destroys source files and zerops.yml, making further iteration impossible. Cross-deploy targets (e.g. stage) can use specific deployFiles for compiled output.
 - NEVER write lock files (go.sum, bun.lock, package-lock.json). Write manifests only (go.mod, package.json). Let build commands generate locks.
 - NEVER write dependency dirs (node_modules/, vendor/).
 - zerops_deploy blocks until build completes — returns DEPLOYED or BUILD_FAILED with build duration.
-- `includeGit=true` requires `deployFiles: [.]` in zerops.yml — individual paths break git repository structure.
 - zerops_subdomain MUST be called after deploy (even if enableSubdomainAccess was in import). The enable response contains `subdomainUrls` — the only source for subdomain URLs.
 - subdomainUrls from enable response are already full URLs — do NOT prepend https://.
 - Internal connections use http://, never https://.

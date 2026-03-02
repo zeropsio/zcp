@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -29,7 +28,7 @@ func shellQuote(s string) string {
 // DeployResult contains the outcome of a deploy operation.
 type DeployResult struct {
 	Status          string   `json:"status"`
-	Mode            string   `json:"mode"` // "ssh" or "local"
+	Mode            string   `json:"mode"` // "ssh"
 	SourceService   string   `json:"sourceService,omitempty"`
 	TargetService   string   `json:"targetService"`
 	TargetServiceID string   `json:"targetServiceId"`
@@ -48,59 +47,47 @@ type SSHDeployer interface {
 	ExecSSH(ctx context.Context, hostname string, command string) ([]byte, error)
 }
 
-// LocalDeployer executes zcli commands locally.
-type LocalDeployer interface {
-	ExecZcli(ctx context.Context, args ...string) ([]byte, error)
-}
-
-// Deploy deploys code to a Zerops service via SSH or local zcli.
+// Deploy deploys code to a Zerops service via SSH.
 //
-// Mode detection:
-//   - sourceService != "" -> SSH mode (targetService required)
-//   - sourceService == "" && targetService != "" -> Local mode
-//   - neither -> INVALID_PARAMETER error
+// Auto-inference:
+//   - targetService is required
+//   - sourceService == "" → auto-inferred as targetService (self-deploy)
+//   - sourceService == targetService → includeGit forced to true
 func Deploy(
 	ctx context.Context,
 	client platform.Client,
 	projectID string,
 	sshDeployer SSHDeployer,
-	localDeployer LocalDeployer,
 	authInfo auth.Info,
 	sourceService string,
 	targetService string,
-	setup string,
 	workingDir string,
 	includeGit bool,
 ) (*DeployResult, error) {
-	id := GitIdentity{Name: authInfo.FullName, Email: authInfo.Email}
+	if sshDeployer == nil {
+		return nil, platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			"SSH deployer not configured",
+			"SSH deploy requires a running Zerops container with SSH access",
+		)
+	}
+	if targetService == "" {
+		return nil, platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"targetService is required",
+			"Provide targetService for deploy. Omit sourceService for self-deploy (auto-inferred).",
+		)
+	}
+	if sourceService == "" {
+		sourceService = targetService // auto-infer self-deploy
+	}
+	if sourceService == targetService {
+		includeGit = true // self-deploy always preserves .git
+	}
 
-	if sourceService != "" {
-		if sshDeployer == nil {
-			return nil, platform.NewPlatformError(
-				platform.ErrNotImplemented,
-				"SSH deploy is not available (deployer not configured)",
-				"SSH deploy requires a running Zerops container with SSH access",
-			)
-		}
-		return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
-			sourceService, targetService, setup, workingDir, includeGit, id)
-	}
-	if targetService != "" {
-		if localDeployer == nil {
-			return nil, platform.NewPlatformError(
-				platform.ErrNotImplemented,
-				"Local deploy is not available (deployer not configured)",
-				"Local deploy requires zcli to be installed",
-			)
-		}
-		return deployLocal(ctx, client, projectID, localDeployer, authInfo,
-			targetService, workingDir, includeGit, id)
-	}
-	return nil, platform.NewPlatformError(
-		platform.ErrInvalidParameter,
-		"Either sourceService (SSH mode) or targetService (local mode) is required",
-		"Provide sourceService + targetService for SSH deploy, or targetService for local deploy",
-	)
+	id := GitIdentity{Name: authInfo.FullName, Email: authInfo.Email}
+	return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
+		sourceService, targetService, workingDir, includeGit, id)
 }
 
 func deploySSH(
@@ -111,7 +98,6 @@ func deploySSH(
 	authInfo auth.Info,
 	sourceService string,
 	targetService string,
-	setup string,
 	workingDir string,
 	includeGit bool,
 	id GitIdentity,
@@ -135,7 +121,15 @@ func deploySSH(
 		workingDir = defaultWorkingDir
 	}
 
-	cmd := buildSSHCommand(authInfo, target.ID, setup, workingDir, includeGit, id)
+	// Pre-deploy validation: read zerops.yml from SSHFS mount (local filesystem).
+	// Mount path: /var/www/{sourceService}/ maps to remote /var/www/
+	var warnings []string
+	mountPath := filepath.Join("/var/www", sourceService)
+	if _, statErr := os.Stat(mountPath); statErr == nil {
+		warnings = ValidateZeropsYml(mountPath, targetService)
+	}
+
+	cmd := buildSSHCommand(authInfo, target.ID, workingDir, includeGit, id)
 
 	output, err := sshDeployer.ExecSSH(ctx, source.Name, cmd)
 	if err != nil {
@@ -150,6 +144,7 @@ func deploySSH(
 				TargetServiceID: target.ID,
 				Message:         fmt.Sprintf("Build triggered from %s to %s (SSH session closed after push)", sourceService, targetService),
 				MonitorHint:     "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
+				Warnings:        warnings,
 			}, nil
 		}
 		return nil, classifySSHError(err, sourceService, targetService)
@@ -163,83 +158,16 @@ func deploySSH(
 		TargetServiceID: target.ID,
 		Message:         fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService),
 		MonitorHint:     "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
-	}, nil
-}
-
-func deployLocal(
-	ctx context.Context,
-	client platform.Client,
-	projectID string,
-	localDeployer LocalDeployer,
-	authInfo auth.Info,
-	targetService string,
-	workingDir string,
-	includeGit bool,
-	id GitIdentity,
-) (*DeployResult, error) {
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("list services: %w", err)
-	}
-
-	target, err := resolveServiceID(services, targetService)
-	if err != nil {
-		return nil, err
-	}
-
-	// Login zcli before push (mirrors SSH mode behavior).
-	loginArgs := []string{"login", authInfo.Token}
-	if _, err := localDeployer.ExecZcli(ctx, loginArgs...); err != nil {
-		return nil, fmt.Errorf("zcli login: %w", err)
-	}
-
-	// zcli push requires a git repo — auto-init if missing.
-	if workingDir != "" {
-		if info, statErr := os.Stat(workingDir); statErr == nil && info.IsDir() {
-			if err := prepareGitRepo(ctx, workingDir, id); err != nil {
-				return nil, fmt.Errorf("prepare git repo in %s: %w", workingDir, err)
-			}
-		}
-	}
-
-	// Pre-deploy validation (warnings only, does not block deploy).
-	var warnings []string
-	if workingDir != "" {
-		warnings = ValidateZeropsYml(workingDir, targetService)
-	}
-
-	args := buildZcliArgs(target.ID, workingDir, includeGit)
-
-	_, err = localDeployer.ExecZcli(ctx, args...)
-	if err != nil {
-		return nil, fmt.Errorf("local deploy to %s: %w", targetService, err)
-	}
-
-	return &DeployResult{
-		Status:          "BUILD_TRIGGERED",
-		Mode:            "local",
-		TargetService:   targetService,
-		TargetServiceID: target.ID,
-		Message:         fmt.Sprintf("Build triggered for %s via local zcli", targetService),
-		MonitorHint:     "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
 		Warnings:        warnings,
 	}, nil
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir string, includeGit bool, id GitIdentity) string {
-	var parts []string
+func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir string, includeGit bool, id GitIdentity) string {
+	parts := make([]string, 0, 2)
 
 	// Login to zcli on the remote host.
 	loginCmd := fmt.Sprintf("zcli login %s", authInfo.Token)
 	parts = append(parts, loginCmd)
-
-	// Security note: setup is intentionally passed as-is — it is a shell command
-	// provided by the LLM (e.g. "npm install", "cp config.json /etc/app/").
-	// The LLM already has full shell access via the MCP deploy tool.
-	// Do NOT apply shellQuote() here — it would break multi-command setup strings.
-	if setup != "" {
-		parts = append(parts, setup)
-	}
 
 	email := shellQuote(id.Email)
 	name := shellQuote(id.Name)
@@ -256,42 +184,4 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, setup, workingDir stri
 	parts = append(parts, pushCmd)
 
 	return strings.Join(parts, " && ")
-}
-
-// prepareGitRepo ensures workingDir contains a git repository.
-// zcli push requires a .git directory. If missing, initializes one
-// with all files committed. If .git already exists, no-op.
-func prepareGitRepo(ctx context.Context, workingDir string, id GitIdentity) error {
-	gitDir := filepath.Join(workingDir, ".git")
-
-	if _, err := os.Stat(gitDir); err == nil {
-		return nil // already a git repo, no-op
-	}
-
-	cmds := [][]string{
-		{"git", "init", "-q"},
-		{"git", "config", "user.email", id.Email},
-		{"git", "config", "user.name", id.Name},
-		{"git", "add", "-A"},
-		{"git", "commit", "-q", "-m", "deploy", "--allow-empty"},
-	}
-	for _, args := range cmds {
-		cmd := exec.CommandContext(ctx, args[0], args[1:]...) //nolint:gosec // args are from trusted API
-		cmd.Dir = workingDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("%s: %w\n%s", strings.Join(args, " "), err, out)
-		}
-	}
-	return nil
-}
-
-func buildZcliArgs(targetServiceID, workingDir string, includeGit bool) []string {
-	args := []string{"push", "--serviceId", targetServiceID}
-	if workingDir != "" {
-		args = append(args, "--workingDir", workingDir)
-	}
-	if includeGit {
-		args = append(args, "-g")
-	}
-	return args
 }

@@ -14,11 +14,10 @@ import (
 
 // DeployInput is the input type for zerops_deploy.
 type DeployInput struct {
-	SourceService string `json:"sourceService,omitempty" jsonschema:"SSH mode only: hostname of the container to execute deploy from (e.g. a builder service). Omit for local deploy."`
-	TargetService string `json:"targetService,omitempty" jsonschema:"Hostname of the service to deploy code to. Required for both SSH and local modes."`
-	Setup         string `json:"setup,omitempty"         jsonschema:"SSH mode only: custom shell command to run before push (e.g. npm install or cp config)."`
-	WorkingDir    string `json:"workingDir,omitempty"    jsonschema:"Directory containing the code to deploy. SSH mode default: /var/www. In local mode: path on your machine."`
-	IncludeGit    bool   `json:"includeGit,omitempty"    jsonschema:"Include .git directory in the push (zcli -g flag). Required for SSH self-deploy workflows so .git persists on the target across deploys. Without this flag, each deploy replaces /var/www entirely and .git is lost."`
+	SourceService string `json:"sourceService,omitempty" jsonschema:"Hostname to deploy FROM. Omit for self-deploy (auto-inferred from targetService). Set for cross-deploy (e.g. dev→stage)."`
+	TargetService string `json:"targetService"           jsonschema:"Hostname of the service to deploy to."`
+	WorkingDir    string `json:"workingDir,omitempty"    jsonschema:"Directory containing the code to deploy. Default: /var/www."`
+	IncludeGit    bool   `json:"includeGit,omitempty"    jsonschema:"Include .git directory in the push (-g flag). Auto-forced for self-deploy."`
 }
 
 // RegisterDeploy registers the zerops_deploy tool.
@@ -27,13 +26,12 @@ func RegisterDeploy(
 	client platform.Client,
 	projectID string,
 	sshDeployer ops.SSHDeployer,
-	localDeployer ops.LocalDeployer,
 	authInfo *auth.Info,
 	engine *workflow.Engine,
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
-		Description: "REQUIRES active workflow session — call zerops_workflow action=\"start\" first. Deploy code to a Zerops service via SSH (cross-service) or local zcli push. Blocks until build pipeline completes — returns final status (DEPLOYED or BUILD_FAILED) with build duration. Automatically handles git initialization — git is initialized if no .git directory exists. Use includeGit=true for SSH self-deploy workflows so .git persists on the target across deploys (without it, each deploy replaces /var/www entirely and .git is lost). SSH mode: set sourceService (container to run from) + targetService. Local mode: set only targetService. SSH mode requires zerops.yml in workingDir. After deploy, /var/www only contains deployFiles artifacts — dev services must use deployFiles: [.] so zerops.yml survives for SSH cross-service deploys. For dev services mounted via SSHFS, files are already on the container — deploy tests the build pipeline and ensures persistence.",
+		Description: "REQUIRES active workflow session — call zerops_workflow action=\"start\" first. Deploy code to a Zerops service via SSH. Blocks until build pipeline completes — returns final status (DEPLOYED or BUILD_FAILED) with build duration. Automatically handles git initialization — git is initialized if no .git directory exists. Self-deploy: set targetService only (sourceService auto-inferred, includeGit auto-forced). Cross-deploy (dev→stage): set sourceService + targetService. Requires zerops.yml in workingDir (/var/www default). After deploy, /var/www only contains deployFiles artifacts. Self-deploying services MUST use deployFiles: [.] — otherwise source files and zerops.yml are destroyed, breaking further iteration. Cross-deploy targets (e.g. stage) can use specific deployFiles for compiled output.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),
@@ -42,8 +40,8 @@ func RegisterDeploy(
 		if blocked := requireWorkflow(engine); blocked != nil {
 			return blocked, nil, nil
 		}
-		result, err := ops.Deploy(ctx, client, projectID, sshDeployer, localDeployer, *authInfo,
-			input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit)
+		result, err := ops.Deploy(ctx, client, projectID, sshDeployer, *authInfo,
+			input.SourceService, input.TargetService, input.WorkingDir, input.IncludeGit)
 		if err != nil {
 			return convertError(err), nil, nil
 		}

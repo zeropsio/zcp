@@ -1,7 +1,7 @@
 // Tests for: integration — deploy tool flow with mock backend.
 //
 // Verifies the full zerops_deploy MCP tool path: discover → deploy → verify
-// result shape, using a mock local deployer and mock API backend.
+// result shape, using a mock SSH deployer and mock API backend.
 
 package integration_test
 
@@ -20,18 +20,18 @@ import (
 	"github.com/zeropsio/zcp/internal/server"
 )
 
-// mockLocalDeployer implements ops.LocalDeployer for integration tests.
-type mockLocalDeployer struct {
+// mockSSHDeployer implements ops.SSHDeployer for integration tests.
+type mockSSHDeployer struct {
 	output []byte
 	err    error
 }
 
-func (m *mockLocalDeployer) ExecZcli(_ context.Context, _ ...string) ([]byte, error) {
+func (m *mockSSHDeployer) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
 	return m.output, m.err
 }
 
-// setupTestServerWithDeploy creates a full MCP server with a mock local deployer.
-func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher platform.LogFetcher, localDeployer ops.LocalDeployer) (*mcp.ClientSession, func()) {
+// setupTestServerWithDeploy creates a full MCP server with a mock SSH deployer.
+func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer) (*mcp.ClientSession, func()) {
 	t.Helper()
 
 	authInfo := &auth.Info{
@@ -48,7 +48,7 @@ func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher pla
 		t.Fatalf("knowledge store: %v", err)
 	}
 
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, nil, localDeployer, nil, nil, runtime.Info{})
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, sshDeployer, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -70,11 +70,11 @@ func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher pla
 	return session, cleanup
 }
 
-func TestIntegration_DeployLocalFlow(t *testing.T) {
+func TestIntegration_DeploySSHSelfDeploy(t *testing.T) {
 	t.Parallel()
 
 	mock := defaultMock()
-	deployer := &mockLocalDeployer{output: []byte("push ok")}
+	deployer := &mockSSHDeployer{output: []byte("push ok")}
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()
 
@@ -100,7 +100,7 @@ func TestIntegration_DeployLocalFlow(t *testing.T) {
 		t.Errorf("hostname = %q, want %q", dr.Services[0].Hostname, "app")
 	}
 
-	// Step 2: Deploy to the service.
+	// Step 2: Deploy to the service (self-deploy: targetService only).
 	deployText := callAndGetText(t, session, "zerops_deploy", map[string]any{
 		"targetService": "app",
 	})
@@ -109,12 +109,14 @@ func TestIntegration_DeployLocalFlow(t *testing.T) {
 	if err := json.Unmarshal([]byte(deployText), &deployResult); err != nil {
 		t.Fatalf("parse deploy result: %v", err)
 	}
-	// Deploy now blocks until build completes — status should be DEPLOYED.
 	if deployResult.Status != "DEPLOYED" {
 		t.Errorf("status = %q, want %q", deployResult.Status, "DEPLOYED")
 	}
-	if deployResult.Mode != "local" {
-		t.Errorf("mode = %q, want %q", deployResult.Mode, "local")
+	if deployResult.Mode != "ssh" {
+		t.Errorf("mode = %q, want %q", deployResult.Mode, "ssh")
+	}
+	if deployResult.SourceService != "app" {
+		t.Errorf("sourceService = %q, want %q (auto-inferred)", deployResult.SourceService, "app")
 	}
 	if deployResult.BuildStatus != "ACTIVE" {
 		t.Errorf("buildStatus = %q, want %q", deployResult.BuildStatus, "ACTIVE")
@@ -136,11 +138,11 @@ func TestIntegration_DeployLocalFlow(t *testing.T) {
 	}
 }
 
-func TestIntegration_DeployLocalWithWorkingDir(t *testing.T) {
+func TestIntegration_DeploySSHWithWorkingDir(t *testing.T) {
 	t.Parallel()
 
 	mock := defaultMock()
-	deployer := &mockLocalDeployer{output: []byte("push ok")}
+	deployer := &mockSSHDeployer{output: []byte("push ok")}
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()
 
@@ -160,12 +162,11 @@ func TestIntegration_DeployLocalWithWorkingDir(t *testing.T) {
 	if err := json.Unmarshal([]byte(deployText), &deployResult); err != nil {
 		t.Fatalf("parse deploy result: %v", err)
 	}
-	// Deploy now blocks until build completes — status should be DEPLOYED.
 	if deployResult.Status != "DEPLOYED" {
 		t.Errorf("status = %q, want %q", deployResult.Status, "DEPLOYED")
 	}
-	if deployResult.Mode != "local" {
-		t.Errorf("mode = %q, want %q", deployResult.Mode, "local")
+	if deployResult.Mode != "ssh" {
+		t.Errorf("mode = %q, want %q", deployResult.Mode, "ssh")
 	}
 }
 
@@ -192,9 +193,9 @@ func TestIntegration_DeployError(t *testing.T) {
 	t.Parallel()
 
 	mock := defaultMock()
-	deployer := &mockLocalDeployer{
+	deployer := &mockSSHDeployer{
 		output: []byte("error: push failed"),
-		err:    fmt.Errorf("zcli push: exit status 1"),
+		err:    fmt.Errorf("ssh app: exit status 1"),
 	}
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()

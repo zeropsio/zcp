@@ -25,20 +25,19 @@ var (
 
 // Server wraps the MCP server with Zerops-specific configuration.
 type Server struct {
-	server        *mcp.Server
-	client        platform.Client
-	authInfo      *auth.Info
-	store         knowledge.Provider
-	logFetcher    platform.LogFetcher
-	sshDeployer   ops.SSHDeployer
-	localDeployer ops.LocalDeployer
-	mounter       ops.Mounter
-	idleWaiter    *update.IdleWaiter
-	rtInfo        runtime.Info
+	server      *mcp.Server
+	client      platform.Client
+	authInfo    *auth.Info
+	store       knowledge.Provider
+	logFetcher  platform.LogFetcher
+	sshDeployer ops.SSHDeployer
+	mounter     ops.Mounter
+	idleWaiter  *update.IdleWaiter
+	rtInfo      runtime.Info
 }
 
 // New creates a new ZCP MCP server with all tools registered.
-func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, localDeployer ops.LocalDeployer, mounter ops.Mounter, idleWaiter *update.IdleWaiter, rtInfo runtime.Info) *Server {
+func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, idleWaiter *update.IdleWaiter, rtInfo runtime.Info) *Server {
 	// Determine workflow state directory for system prompt hint.
 	var stateDir string
 	if cwd, err := os.Getwd(); err == nil {
@@ -56,16 +55,15 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	}
 
 	s := &Server{
-		server:        srv,
-		client:        client,
-		authInfo:      authInfo,
-		store:         store,
-		logFetcher:    logFetcher,
-		sshDeployer:   sshDeployer,
-		localDeployer: localDeployer,
-		mounter:       mounter,
-		idleWaiter:    idleWaiter,
-		rtInfo:        rtInfo,
+		server:      srv,
+		client:      client,
+		authInfo:    authInfo,
+		store:       store,
+		logFetcher:  logFetcher,
+		sshDeployer: sshDeployer,
+		mounter:     mounter,
+		idleWaiter:  idleWaiter,
+		rtInfo:      rtInfo,
 	}
 
 	s.registerTools()
@@ -97,8 +95,8 @@ func (s *Server) registerTools() {
 	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID)
 
 	// Mutating tools
-	if s.sshDeployer != nil || s.localDeployer != nil {
-		tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.localDeployer, s.authInfo, wfEngine)
+	if s.sshDeployer != nil {
+		tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.authInfo, wfEngine)
 	}
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)

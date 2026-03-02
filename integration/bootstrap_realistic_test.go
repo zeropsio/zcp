@@ -40,10 +40,10 @@ func (*nopMounter) ListMountDirs(_ context.Context, _ string) ([]string, error) 
 func (*nopMounter) HasUnit(_ context.Context, _ string) (bool, error) { return false, nil }
 func (*nopMounter) CleanupUnit(_ context.Context, _ string) error     { return nil }
 
-// nopLocal satisfies ops.LocalDeployer for realistic integration tests.
-type nopLocal struct{}
+// nopSSH satisfies ops.SSHDeployer for realistic integration tests.
+type nopSSH struct{}
 
-func (*nopLocal) ExecZcli(_ context.Context, _ ...string) ([]byte, error) {
+func (*nopSSH) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
 	return []byte("push ok"), nil
 }
 
@@ -121,7 +121,7 @@ func setupRealisticServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession
 	tools.RegisterImport(mcpSrv, mock, projectID, nil, engine)
 	tools.RegisterProcess(mcpSrv, mock)
 	tools.RegisterMount(mcpSrv, mock, projectID, &nopMounter{})
-	tools.RegisterDeploy(mcpSrv, mock, projectID, nil, &nopLocal{}, authInfo, engine)
+	tools.RegisterDeploy(mcpSrv, mock, projectID, &nopSSH{}, authInfo, engine)
 	tools.RegisterSubdomain(mcpSrv, mock, projectID)
 	tools.RegisterLogs(mcpSrv, mock, logFetcher, projectID)
 	tools.RegisterEvents(mcpSrv, mock, projectID)

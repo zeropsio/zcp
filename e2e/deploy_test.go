@@ -2,13 +2,13 @@
 
 // Tests for: e2e — deploy lifecycle via zerops_deploy with real Zerops API.
 //
-// This test creates a nodejs@22 service, deploys a minimal app via zcli push
-// (local mode), waits for build completion (synchronous polling), and verifies
+// This test creates a nodejs@22 service, deploys a minimal app via SSH,
+// waits for build completion (synchronous polling), and verifies
 // the service is running.
 //
 // Prerequisites:
 //   - ZCP_API_KEY set
-//   - zcli installed and in PATH
+//   - Running inside a Zerops container (SSH access required)
 //
 // Run: go test ./e2e/ -tags e2e -run TestE2E_Deploy -v -timeout 600s
 
@@ -162,12 +162,11 @@ func TestE2E_Deploy(t *testing.T) {
 	waitForServiceReady(s, appHostname)
 	t.Log("  Service ready")
 
-	// --- Step 3: Deploy via zerops_deploy (local mode) ---
+	// --- Step 3: Deploy via zerops_deploy (SSH self-deploy) ---
 	step++
-	logStep(t, step, "zerops_deploy targetService=%s workingDir=%s", appHostname, appDir)
+	logStep(t, step, "zerops_deploy targetService=%s", appHostname)
 	deployText := s.mustCallSuccess("zerops_deploy", map[string]any{
 		"targetService": appHostname,
-		"workingDir":    appDir,
 	})
 
 	var deployResult struct {
@@ -182,8 +181,8 @@ func TestE2E_Deploy(t *testing.T) {
 	if deployResult.Status != "DEPLOYED" {
 		t.Errorf("status = %s, want DEPLOYED", deployResult.Status)
 	}
-	if deployResult.Mode != "local" {
-		t.Errorf("mode = %s, want local", deployResult.Mode)
+	if deployResult.Mode != "ssh" {
+		t.Errorf("mode = %s, want ssh", deployResult.Mode)
 	}
 	if deployResult.BuildStatus != "ACTIVE" {
 		t.Errorf("buildStatus = %s, want ACTIVE", deployResult.BuildStatus)
