@@ -13,6 +13,7 @@ zerops:
   - setup: app
     build:
       base: php@8.3
+      os: alpine
       buildCommands:
         - composer install --optimize-autoloader --no-dev
       deployFiles: ./
@@ -26,6 +27,7 @@ zerops:
           path: /
     run:
       base: php-apache@8.3
+      os: alpine
       documentRoot: www/
       envVariables:
         DATABASE_DSN: pgsql:host=${db_hostname};port=${db_port};dbname=${db_dbName}

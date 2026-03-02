@@ -15,6 +15,7 @@ zerops:
   - setup: app
     build:
       base: python@3.12
+      os: alpine
       buildCommands:
         - pip install --no-cache-dir -r requirements.txt
       deployFiles: ./
@@ -23,7 +24,9 @@ zerops:
       cache: .venv
     run:
       base: python@3.12
+      os: alpine
       prepareCommands:
+        - sudo apk add tzdata
         - pip install --no-cache-dir -r requirements.txt
       ports:
         - port: 8000
@@ -111,7 +114,7 @@ Database configuration reading env vars:
 # settings.py — PostgreSQL database
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "django.db.backends.postgresql_psycopg2",
         "HOST": os.environ.get("DB_HOST", "db"),
         "PORT": os.environ.get("DB_PORT", "5432"),
         "NAME": os.environ.get("DB_NAME", "db"),
@@ -137,3 +140,4 @@ DATABASES = {
 - **SECRET_KEY** is generated as envSecret in import.yml and must be read via `os.environ["SECRET_KEY"]` in settings.py.
 - **PYTHONDONTWRITEBYTECODE=1** and **PYTHONUNBUFFERED=1** prevent .pyc file creation and ensure log output is not buffered.
 - Replace the `myproject.wsgi` start command with your actual Django project's WSGI module path.
+- **Selective deploy** -- for production, consider listing specific directories in `deployFiles` instead of `./` to reduce deploy size.

@@ -21,6 +21,7 @@ zerops:
       deployFiles: ./
       cache: [vendor/bundle]
     run:
+      base: ruby@3.4
       ports:
         - port: 3000
           httpSupport: true

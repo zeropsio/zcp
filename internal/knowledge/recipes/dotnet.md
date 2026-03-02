@@ -94,4 +94,5 @@ app.MapGet("/status", () => Results.Ok(new { status = "ok" }));
 - **Deploy with tilde** -- `app/~` extracts the contents of the `app/` folder directly into `/var/www/` (not `/var/www/app/`)
 - **DLL name matches .csproj filename** -- if the project file is `MyApp.csproj`, the output is `MyApp.dll`, update the `start` command accordingly
 - **Cache NuGet packages** -- `~/.nuget` caching avoids re-downloading packages on every build
+- **Target framework** -- ensure `.csproj` `TargetFramework` matches the Zerops service version (e.g., `net9.0` for `dotnet@9`). Update NuGet packages (EF Core, Npgsql) to matching major versions
 - **Port 5000 is the default** -- ASP.NET Core defaults to port 5000; match it in both `ports[]` and `ASPNETCORE_URLS`

@@ -223,11 +223,11 @@ func (s *Store) GetUniversals() (string, error) {
 
 // runtimeRecipeHints maps runtime base names to recipe name prefixes/matches.
 var runtimeRecipeHints = map[string][]string{
-	"bun":    {"bun"},
-	"nodejs": {"nestjs", "nextjs-ssr", "svelte-nodejs", "react-nodejs", "qwik-nodejs", "payload", "ghost", "nuxt"},
-	"go":     {"echo-go"},
-	"python": {"django"},
-	"elixir": {"phoenix"},
+	"bun":    {"bun", "discord-bun"},
+	"nodejs": {"nestjs", "nextjs-ssr", "svelte-nodejs", "react-nodejs", "qwik-nodejs", "payload", "ghost", "nuxt", "astro-nodejs", "remix", "solidjs-nodejs", "analog-nodejs", "nodejs", "discord-nodejs", "medusa"},
+	"go":     {"echo-go", "go"},
+	"python": {"django", "python", "discord-py"},
+	"elixir": {"phoenix", "elixir"},
 	"php":    {"laravel", "symfony", "nette", "filament", "twill", "php-"},
 	"java":   {"java-spring", "spring-boot"},
 	"ruby":   {"rails"},
@@ -235,7 +235,7 @@ var runtimeRecipeHints = map[string][]string{
 	"dotnet": {"dotnet"},
 	"deno":   {"deno"},
 	"gleam":  {"gleam"},
-	"static": {"svelte-static", "nextjs-static", "qwik-static"},
+	"static": {"svelte-static", "nextjs-static", "qwik-static", "astro-static", "angular", "vue", "solidjs-static", "react-static", "analog-static", "nuxt-static"},
 }
 
 // matchingRecipes returns recipe names that match the given runtime base name.

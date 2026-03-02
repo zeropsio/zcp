@@ -23,6 +23,7 @@ zerops:
         - node_modules
       cache: node_modules
     run:
+      base: nodejs@20
       ports:
         - port: 3000
           httpSupport: true

@@ -38,7 +38,7 @@ zerops:
         REDIS_HOST: cache
         REDIS_PORT: ${cache_port}
       initCommands:
-        - zsc execOnce ${appVersionId} -- /var/www/app -seed
+        - zsc execOnce seed -- /var/www/app -seed
       start: /var/www/app
 ```
 
@@ -77,7 +77,7 @@ log.SetOutput(os.Stdout)
 - **Logger must use `os.Stdout`** for Zerops log collection -- `os.Stderr` logs are not captured
 - **HTTPS termination disabled** in app code -- Zerops SSL proxy handles TLS termination
 - **Sessions stored in Valkey** (Redis-compatible), files in S3 Object Storage
-- **`S3_ENDPOINT`** from `${storage_apiUrl}` is an internal URL -- use `http://`, never `https://`
+- **S3 endpoint** -- `${storage_apiUrl}` may return an HTTPS URL. The Go MinIO client needs the hostname without protocol prefix and `Secure: true`
 - **Mailpit** is for development only -- replace with a production SMTP provider before going live
 - **Adminer** should have public access disabled or be removed entirely in production
 - **Database seeding** runs via `zsc execOnce` -- executes exactly once across all containers (HA-safe)

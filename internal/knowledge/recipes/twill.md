@@ -128,7 +128,7 @@ services:
 - Default superadmin: twill@zerops.io / zerops (created via `zsc execOnce initializeadmin`)
 
 ## Common Failures
-- **S3 driver not found** -- add `league/flysystem-aws-s3-v3` to composer.json
+- **S3 driver not found** -- `area17/twill` bundles `league/flysystem-aws-s3-v3` as a transitive dependency; verify it is resolved in `composer.lock`
 - **Twill install fails** -- `zsc execOnce initialize` runs `twill:install -n` only once; if it fails, reset the key in Zerops GUI
 - **Media images broken** -- verify `GLIDE_USE_SOURCE_DISK: s3` and `objectStoragePolicy: public-read`
 - **OS mismatch errors** -- Alpine build is fine for composer/npm, Ubuntu runtime needed for PHP extensions
@@ -137,7 +137,7 @@ services:
 - **Multi-base build** `[php, nodejs]` required for frontend assets
 - **OS mismatch**: Alpine build (faster) with Ubuntu runtime (compatibility)
 - **zsc execOnce** with static keys (`initialize`, `initializeadmin`, `initializeSeed`) run once ever; `${appVersionId}` runs once per deploy
-- **league/flysystem-aws-s3-v3** must be in composer.json
+- **S3 filesystem** -- `area17/twill` bundles S3 support via `league/flysystem-aws-s3-v3` as a transitive dependency; no need to add it directly to composer.json
 - **AWS_USE_PATH_STYLE_ENDPOINT: true** required for Zerops S3
 - **Glide** uses S3 source disk with local caching for media transformations
 - 4 services: app + db (PostgreSQL) + redis (Valkey) + storage (Object Storage)

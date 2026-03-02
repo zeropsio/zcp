@@ -10,7 +10,7 @@ Bun runtime with PostgreSQL and Valkey -- bundled deploy with `bun build`, 0.0.0
 ## zerops.yml
 ```yaml
 zerops:
-  - setup: app
+  - setup: api
     build:
       base: bun@1.2
       buildCommands:
@@ -53,7 +53,7 @@ services:
     mode: NON_HA
     priority: 10
 
-  - hostname: app
+  - hostname: api
     type: bun@1.2
     priority: 5
     enableSubdomainAccess: true
@@ -78,7 +78,7 @@ const server = Bun.serve({
       return Response.json({ status: "ok" });
     }
 
-    return new Response("Service: app");
+    return new Response("Service: api");
   },
 });
 

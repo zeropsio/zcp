@@ -50,10 +50,11 @@ export default {
 **src/routes/+layout.ts** — must enable prerendering:
 ```typescript
 export const prerender = true;
+export const ssr = false;
 ```
 
 ## Gotchas
 - **Prerendering must be explicitly enabled** — add `export const prerender = true;` in `src/routes/+layout.ts` or SvelteKit attempts SSR which fails on a static service
 - **adapter-static required** — install `@sveltejs/adapter-static` and configure in `svelte.config.js`
 - Deploy `build/~` (tilde deploys directory contents to webroot, not the `build/` folder itself)
-- For SSR SvelteKit with Node.js runtime, use the `svelte-ssr` recipe instead
+- For SSR SvelteKit with Node.js runtime, use the `svelte-nodejs` recipe instead

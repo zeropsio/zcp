@@ -13,6 +13,7 @@ zerops:
   - setup: app
     build:
       base: php@8.3
+      os: alpine
       buildCommands:
         - composer install --ignore-platform-reqs
       deployFiles: ./
@@ -26,6 +27,7 @@ zerops:
           path: /up
     run:
       base: php-nginx@8.3
+      os: alpine
       siteConfigPath: site.conf.tmpl
       envVariables:
         APP_LOCALE: en
