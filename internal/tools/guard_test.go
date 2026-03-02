@@ -8,11 +8,18 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-func TestRequireWorkflow_NilEngine_Passes(t *testing.T) {
+func TestRequireWorkflow_NilEngine_Blocks(t *testing.T) {
 	t.Parallel()
 	result := requireWorkflow(nil)
-	if result != nil {
-		t.Errorf("nil engine should pass (backward compat), got: %v", result)
+	if result == nil {
+		t.Fatal("expected non-nil result when engine is nil")
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true")
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "NOT_IMPLEMENTED") {
+		t.Errorf("expected NOT_IMPLEMENTED in error, got: %s", text)
 	}
 }
 

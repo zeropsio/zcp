@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // callTool connects to a test server and calls a named tool with the given arguments.
@@ -56,6 +57,16 @@ func callToolMayError(t *testing.T, srv *mcp.Server, name string, args map[strin
 
 	_, err = session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	return err
+}
+
+// testEngine creates a workflow engine with an active session for tests.
+func testEngine(t *testing.T) *workflow.Engine {
+	t.Helper()
+	engine := workflow.NewEngine(t.TempDir())
+	if _, err := engine.Start("proj-1", "deploy", "test"); err != nil {
+		t.Fatalf("start test session: %v", err)
+	}
+	return engine
 }
 
 // getTextContent extracts the text string from the first content item of a CallToolResult.

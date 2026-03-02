@@ -7,11 +7,14 @@ import (
 )
 
 // requireWorkflow checks that a workflow session is active.
-// Returns nil (pass) when engine is nil (backward compat / --without-zerops-flow)
-// or when a session exists. Returns an error result otherwise.
+// Fails closed: returns error when engine is nil or no session exists.
 func requireWorkflow(engine *workflow.Engine) *mcp.CallToolResult {
 	if engine == nil {
-		return nil
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			"Workflow engine unavailable — state directory could not be determined",
+			"Ensure ZCP runs from a valid working directory",
+		))
 	}
 	if engine.HasActiveSession() {
 		return nil

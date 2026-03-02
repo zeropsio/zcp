@@ -20,7 +20,7 @@ func TestDeleteTool_Confirmed(t *testing.T) {
 	RegisterDelete(srv, mock, "proj-1")
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
-		"serviceHostname": "api", "confirm": true,
+		"serviceHostname": "api", "confirmHostname": "api",
 	})
 
 	if result.IsError {
@@ -46,7 +46,7 @@ func TestDeleteTool_NotConfirmed(t *testing.T) {
 	RegisterDelete(srv, mock, "proj-1")
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
-		"serviceHostname": "api", "confirm": false,
+		"serviceHostname": "api", "confirmHostname": "wrong",
 	})
 
 	if !result.IsError {
@@ -62,7 +62,7 @@ func TestDeleteTool_EmptyHostname(t *testing.T) {
 	RegisterDelete(srv, mock, "proj-1")
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
-		"serviceHostname": "", "confirm": true,
+		"serviceHostname": "", "confirmHostname": "",
 	})
 
 	if !result.IsError {

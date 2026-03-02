@@ -7,19 +7,19 @@ import (
 )
 
 // Delete deletes a service by hostname.
-// Safety gate: confirm must be true.
+// Safety gate: confirmHostname must exactly match hostname.
 func Delete(
 	ctx context.Context,
 	client platform.Client,
 	projectID string,
 	hostname string,
-	confirm bool,
+	confirmHostname string,
 ) (*platform.Process, error) {
-	if !confirm {
+	if confirmHostname != hostname {
 		return nil, platform.NewPlatformError(
 			platform.ErrConfirmRequired,
-			"Deletion requires confirmation",
-			"Set confirm=true to proceed with deletion",
+			"Deletion confirmation mismatch",
+			"Set confirmHostname to exactly match serviceHostname",
 		)
 	}
 	if hostname == "" {

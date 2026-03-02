@@ -17,38 +17,45 @@ func TestDelete(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		mock     *platform.Mock
-		hostname string
-		confirm  bool
-		wantErr  string
+		name            string
+		mock            *platform.Mock
+		hostname        string
+		confirmHostname string
+		wantErr         string
 	}{
 		{
-			name:     "Success",
-			mock:     platform.NewMock().WithServices(services),
-			hostname: "api",
-			confirm:  true,
+			name:            "Success",
+			mock:            platform.NewMock().WithServices(services),
+			hostname:        "api",
+			confirmHostname: "api",
 		},
 		{
-			name:     "NoConfirm",
-			mock:     platform.NewMock().WithServices(services),
-			hostname: "api",
-			confirm:  false,
-			wantErr:  platform.ErrConfirmRequired,
+			name:            "NoConfirm",
+			mock:            platform.NewMock().WithServices(services),
+			hostname:        "api",
+			confirmHostname: "",
+			wantErr:         platform.ErrConfirmRequired,
 		},
 		{
-			name:     "ServiceNotFound",
-			mock:     platform.NewMock().WithServices(services),
-			hostname: "missing",
-			confirm:  true,
-			wantErr:  platform.ErrServiceNotFound,
+			name:            "ConfirmMismatch",
+			mock:            platform.NewMock().WithServices(services),
+			hostname:        "api",
+			confirmHostname: "db",
+			wantErr:         platform.ErrConfirmRequired,
 		},
 		{
-			name:     "EmptyHostname",
-			mock:     platform.NewMock().WithServices(services),
-			hostname: "",
-			confirm:  true,
-			wantErr:  platform.ErrServiceRequired,
+			name:            "ServiceNotFound",
+			mock:            platform.NewMock().WithServices(services),
+			hostname:        "missing",
+			confirmHostname: "missing",
+			wantErr:         platform.ErrServiceNotFound,
+		},
+		{
+			name:            "EmptyHostname",
+			mock:            platform.NewMock().WithServices(services),
+			hostname:        "",
+			confirmHostname: "",
+			wantErr:         platform.ErrServiceRequired,
 		},
 		{
 			name: "APIError",
@@ -57,9 +64,9 @@ func TestDelete(t *testing.T) {
 					Code:    platform.ErrAPIError,
 					Message: "delete failed",
 				}),
-			hostname: "api",
-			confirm:  true,
-			wantErr:  platform.ErrAPIError,
+			hostname:        "api",
+			confirmHostname: "api",
+			wantErr:         platform.ErrAPIError,
 		},
 	}
 
@@ -67,7 +74,7 @@ func TestDelete(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result, err := Delete(context.Background(), tt.mock, "proj-1", tt.hostname, tt.confirm)
+			result, err := Delete(context.Background(), tt.mock, "proj-1", tt.hostname, tt.confirmHostname)
 
 			if tt.wantErr != "" {
 				if err == nil {

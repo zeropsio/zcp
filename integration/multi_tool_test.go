@@ -344,23 +344,23 @@ func TestIntegration_DeleteWithConfirmGate(t *testing.T) {
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 
-	// Step 1: Delete without confirm — must return error.
+	// Step 1: Delete with mismatched confirmHostname — must return error.
 	noConfirmResult := callAndGetResult(t, session, "zerops_delete", map[string]any{
 		"serviceHostname": "app",
-		"confirm":         false,
+		"confirmHostname": "wrong",
 	})
 	if !noConfirmResult.IsError {
-		t.Fatal("expected IsError when confirm=false")
+		t.Fatal("expected IsError when confirmHostname mismatches")
 	}
 	errText := getTextContent(t, noConfirmResult)
 	if !strings.Contains(errText, "CONFIRM_REQUIRED") {
 		t.Errorf("error should contain CONFIRM_REQUIRED, got: %s", errText)
 	}
 
-	// Step 2: Delete with confirm — must succeed.
+	// Step 2: Delete with matching confirmHostname — must succeed.
 	confirmResult := callAndGetResult(t, session, "zerops_delete", map[string]any{
 		"serviceHostname": "app",
-		"confirm":         true,
+		"confirmHostname": "app",
 	})
 	if confirmResult.IsError {
 		t.Fatalf("delete with confirm returned error: %s", getTextContent(t, confirmResult))
