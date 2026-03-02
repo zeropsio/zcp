@@ -9,9 +9,8 @@ Single Go binary merging ZAIA CLI + ZAIA-MCP. AI-driven Zerops PaaS management v
 ```
 1. Tests (table-driven, executable)    ← AUTHORITATIVE for behavior
 2. Code (Go types, interfaces)         ← AUTHORITATIVE for implementation
-3. Design docs (design/*.md)           ← AUTHORITATIVE for intent & invariants
-4. Plans (plans/*.md)                  ← TRANSIENT (roadmap, expires)
-5. CLAUDE.md                           ← OPERATIONAL (workflow, conventions)
+3. Plans (plans/*.md)                  ← TRANSIENT (roadmap, expires)
+4. CLAUDE.md                           ← OPERATIONAL (workflow, conventions)
 ```
 
 ---
@@ -39,8 +38,6 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 
 Error codes: see `internal/platform/errors.go` for all codes (AUTH_REQUIRED, SERVICE_NOT_FOUND, etc.)
-
-Knowledge system context flow: see [`docs/knowledge-flow.md`](docs/knowledge-flow.md) for how context reaches the LLM via MCP tools.
 
 ---
 
@@ -94,17 +91,6 @@ A change is not complete until all affected layers pass.
 - **`testing.Short()`** — long tests must check and skip
 - **`t.Parallel()` only where safe** — document global state preventing it (see seed patterns above)
 - **Test naming**: `Test{Op}_{Scenario}_{Result}` (e.g. `TestDiscover_WithService_Success`)
-- **Test headers**: `// Tests for: design/<feature>.md § <section>`
-
-### Design-doc workflow
-
-For features with `design/<feature>.md`:
-1. Read design doc (MUST/WHEN-THEN contracts) → read plan (scope, test cases)
-2. Write failing tests with header → implement minimal code to pass
-3. Update plan status (RED → GREEN → DONE), capture divergent decisions
-
-Design docs: **stable**, MUST/WHEN-THEN only, no code. Without design doc: standard TDD. >50 lines: create design doc first.
-
 Automated: Tier 1 (edit) → Tier 2 (turn) → Tier 3 (commit) → Tier 4 (CI). See `.claude/settings.json`.
 
 ---
@@ -160,7 +146,5 @@ make lint-local                             # Full lint (~15s)
 | Interface change | Verify key file reference still accurate |
 | New error code | Add to `internal/platform/errors.go` |
 | Global state added | Document in test seed as non-parallel + add comment |
-| Design doc concept change | Update design doc, verify tests still match |
 | Plan completed | Move to plans/archive/ |
-| New feature area | Create design doc before implementation |
 | `/status` format change | Update both `bootstrap.md` /status spec AND `ops/verify.go` `statusResponse` struct |

@@ -10,7 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform/apitest"
 )
 
-// Tests for: design/zcp-prd.md section 4.3 (ZeropsClient API Contract)
+// Tests for: ZeropsClient API Contract (internal/platform/client.go)
 
 func TestAPI_GetUserInfo(t *testing.T) {
 	h := apitest.New(t)

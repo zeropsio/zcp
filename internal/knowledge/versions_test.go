@@ -1,4 +1,4 @@
-// Tests for: design/context-first-delivery.md § Response-Driven Steering
+// Tests for: Response-Driven Steering (internal/knowledge/versions.go)
 package knowledge
 
 import (

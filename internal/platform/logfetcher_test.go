@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Tests for: design/zcp-prd.md section 5.7 (Log Fetching)
+// Tests for: Log Fetching (internal/platform/logfetcher.go)
 
 func TestParseLogResponse_ValidJSON(t *testing.T) {
 	t.Parallel()

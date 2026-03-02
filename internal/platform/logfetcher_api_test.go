@@ -9,7 +9,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform/apitest"
 )
 
-// Tests for: design/zcp-prd.md section 5.7 (Log Fetching API Contract)
+// Tests for: Log Fetching API Contract (internal/platform/logfetcher.go)
 
 func TestAPI_FetchLogs_RealBackend(t *testing.T) {
 	h := apitest.New(t)

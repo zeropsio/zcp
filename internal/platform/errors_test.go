@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Tests for: design/zcp-prd.md section 4.4 (Error Codes)
+// Tests for: Error Codes (internal/platform/errors.go)
 
 func TestNewPlatformError_Fields(t *testing.T) {
 	t.Parallel()

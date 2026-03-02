@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// Tests for: design/zcp-prd.md section 4.3 (ZeropsClient)
+// Tests for: ZeropsClient (internal/platform/client.go)
 
 func TestNewZeropsClient_URLNormalization(t *testing.T) {
 	t.Parallel()
