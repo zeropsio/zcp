@@ -419,6 +419,62 @@ func (d *deletingMock) ListServices(_ context.Context, _ string) ([]platform.Ser
 	return d.listServicesFunc(), nil
 }
 
+func TestImport_InvalidHostname(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "uppercase hostname",
+			content: `services:
+  - hostname: MyApp
+    type: nodejs@22
+`,
+		},
+		{
+			name: "hostname with hyphen",
+			content: `services:
+  - hostname: my-app
+    type: nodejs@22
+`,
+		},
+		{
+			name: "hostname starts with digit",
+			content: `services:
+  - hostname: 1app
+    type: nodejs@22
+`,
+		},
+		{
+			name: "hostname too long",
+			content: `services:
+  - hostname: a2345678901234567890123456
+    type: nodejs@22
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := importMock()
+			_, err := Import(context.Background(), mock, "proj-1", tt.content, "", nil)
+			if err == nil {
+				t.Fatal("expected error for invalid hostname")
+			}
+			pe, ok := err.(*platform.PlatformError)
+			if !ok {
+				t.Fatalf("expected *PlatformError, got %T: %v", err, err)
+			}
+			if pe.Code != platform.ErrInvalidHostname {
+				t.Errorf("expected code %s, got %s", platform.ErrInvalidHostname, pe.Code)
+			}
+		})
+	}
+}
+
 func TestImport_APIError(t *testing.T) {
 	t.Parallel()
 	content := `services:

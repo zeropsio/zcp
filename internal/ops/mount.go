@@ -6,14 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
 const mountBase = "/var/www"
-
-var hostnameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,62}$`)
 
 // Mounter abstracts filesystem mount operations for testing.
 type Mounter interface {
@@ -61,7 +58,14 @@ func MountService(
 	mounter Mounter,
 	hostname string,
 ) (*MountResult, error) {
-	if err := validateHostname(hostname); err != nil {
+	if hostname == "" {
+		return nil, platform.NewPlatformError(
+			platform.ErrServiceRequired,
+			"Service hostname is required",
+			"Provide serviceHostname parameter",
+		)
+	}
+	if err := platform.ValidateHostname(hostname); err != nil {
 		return nil, err
 	}
 
@@ -139,7 +143,14 @@ func UnmountService(
 	mounter Mounter,
 	hostname string,
 ) (*MountResult, error) {
-	if err := validateHostname(hostname); err != nil {
+	if hostname == "" {
+		return nil, platform.NewPlatformError(
+			platform.ErrServiceRequired,
+			"Service hostname is required",
+			"Provide serviceHostname parameter",
+		)
+	}
+	if err := platform.ValidateHostname(hostname); err != nil {
 		return nil, err
 	}
 
@@ -259,7 +270,7 @@ func MountStatus(
 	}
 
 	if hostname != "" {
-		if err := validateHostname(hostname); err != nil {
+		if err := platform.ValidateHostname(hostname); err != nil {
 			return nil, err
 		}
 		svc, err := resolveServiceID(services, hostname)
@@ -327,22 +338,4 @@ func checkMountInfo(ctx context.Context, mounter Mounter, hostname string, orpha
 		}
 	}
 	return info
-}
-
-func validateHostname(hostname string) error {
-	if hostname == "" {
-		return platform.NewPlatformError(
-			platform.ErrServiceRequired,
-			"Service hostname is required",
-			"Provide serviceHostname parameter",
-		)
-	}
-	if !hostnameRegex.MatchString(hostname) {
-		return platform.NewPlatformError(
-			platform.ErrInvalidHostname,
-			fmt.Sprintf("Invalid hostname format: %s", hostname),
-			"Hostname must start with a letter and contain only letters, digits, hyphens, underscores (max 63 chars)",
-		)
-	}
-	return nil
 }

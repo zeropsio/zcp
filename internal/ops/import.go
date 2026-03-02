@@ -83,8 +83,15 @@ func Import(
 		}
 	}
 
-	// Wait for any DELETING services with conflicting hostnames to finish.
+	// Validate hostnames before hitting the API.
 	hostnames := extractHostnames(doc)
+	for _, h := range hostnames {
+		if err := platform.ValidateHostname(h); err != nil {
+			return nil, err
+		}
+	}
+
+	// Wait for any DELETING services with conflicting hostnames to finish.
 	if err := waitForDeletingServices(ctx, client, projectID, hostnames); err != nil {
 		return nil, err
 	}

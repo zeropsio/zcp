@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -22,23 +21,11 @@ type PlannedService struct {
 	Mode     string `json:"mode,omitempty"` // NON_HA or HA, defaults to NON_HA for managed services
 }
 
-var hostnameRe = regexp.MustCompile(`^[a-z][a-z0-9]{0,24}$`)
-
 // ValidatePlanHostname checks that a hostname matches Zerops constraints.
-// Must start with a letter (a-z), followed by lowercase letters/digits, max 25 chars.
-// Verified: Zerops API rejects hostnames starting with a digit (e.g. "3test").
+// Delegates to platform.ValidateHostname for canonical validation rules.
 func ValidatePlanHostname(hostname string) error {
-	if hostname == "" {
-		return fmt.Errorf("hostname is empty")
-	}
-	if len(hostname) > 25 {
-		return fmt.Errorf("hostname %q exceeds 25 characters", hostname)
-	}
-	if hostname[0] >= '0' && hostname[0] <= '9' {
-		return fmt.Errorf("hostname %q must start with a letter (a-z)", hostname)
-	}
-	if !hostnameRe.MatchString(hostname) {
-		return fmt.Errorf("hostname %q has invalid characters (only lowercase a-z and 0-9 allowed)", hostname)
+	if err := platform.ValidateHostname(hostname); err != nil {
+		return fmt.Errorf("%s", err.Message)
 	}
 	return nil
 }

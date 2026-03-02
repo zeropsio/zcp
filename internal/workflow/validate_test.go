@@ -19,12 +19,12 @@ func TestValidatePlanHostname(t *testing.T) {
 		{"valid_with_digits", "app1dev2", ""},
 		{"single_char", "a", ""},
 		{"max_length_25", strings.Repeat("a", 25), ""},
-		{"leading_digit", "3test", "must start with a letter"},
-		{"all_digits", "123", "must start with a letter"},
-		{"has_hyphen", "my-app", "invalid characters"},
-		{"has_underscore", "my_app", "invalid characters"},
-		{"has_uppercase", "AppDev", "invalid characters"},
-		{"too_long", strings.Repeat("a", 26), "exceeds 25"},
+		{"leading_digit", "3test", "invalid hostname"},
+		{"all_digits", "123", "invalid hostname"},
+		{"has_hyphen", "my-app", "invalid hostname"},
+		{"has_underscore", "my_app", "invalid hostname"},
+		{"has_uppercase", "AppDev", "invalid hostname"},
+		{"too_long", strings.Repeat("a", 26), "invalid hostname"},
 		{"empty", "", "empty"},
 	}
 	for _, tt := range tests {
@@ -109,7 +109,7 @@ func TestValidateServicePlan(t *testing.T) {
 				{Hostname: "my-app", Type: "bun@1.2"},
 			},
 			liveTypes: liveTypes,
-			wantErr:   "invalid characters",
+			wantErr:   "invalid hostname",
 		},
 		{
 			name: "empty_type",

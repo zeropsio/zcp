@@ -671,8 +671,8 @@ func TestWorkflowTool_Action_BootstrapComplete_PlanStep_InvalidPlan(t *testing.T
 		t.Error("expected error for invalid hostname in plan")
 	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "invalid characters") {
-		t.Errorf("expected 'invalid characters' error, got: %s", text)
+	if !strings.Contains(text, "invalid hostname") {
+		t.Errorf("expected 'invalid hostname' error, got: %s", text)
 	}
 }
 
