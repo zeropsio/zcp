@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -89,7 +90,13 @@ func CleanupProject(ctx context.Context, client platform.Client, projectID, work
 		}
 	}
 
-	// 2. Clean generated files in workDir
+	// 2. Unmount any stale SSHFS mounts before cleaning files
+	unmounted := unmountAll(ctx, workDir)
+	if len(unmounted) > 0 {
+		fmt.Fprintf(os.Stderr, "  unmounted %d SSHFS mounts: %s\n", len(unmounted), strings.Join(unmounted, ", "))
+	}
+
+	// 3. Clean generated files in workDir
 	cleaned, err := cleanWorkDir(workDir)
 	if err != nil {
 		return fmt.Errorf("cleanup work dir: %w", err)
@@ -98,7 +105,7 @@ func CleanupProject(ctx context.Context, client platform.Client, projectID, work
 		fmt.Fprintf(os.Stderr, "  removed %d files/dirs: %s\n", len(cleaned), strings.Join(cleaned, ", "))
 	}
 
-	// 3. Reset workflow state
+	// 4. Reset workflow state
 	stateDir := filepath.Join(workDir, ".zcp", "state")
 	if err := workflow.ResetSession(stateDir); err != nil {
 		return fmt.Errorf("cleanup reset workflow: %w", err)
@@ -133,6 +140,31 @@ func cleanWorkDir(dir string) ([]string, error) {
 	}
 
 	return removed, nil
+}
+
+// unmountAll force-unmounts any SSHFS mounts under dir and removes the empty mount directories.
+// Returns the list of unmounted directory names. Errors are logged but not fatal.
+func unmountAll(ctx context.Context, dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+
+	var unmounted []string
+	for _, entry := range entries {
+		if !entry.IsDir() || IsProtectedPath(entry.Name()) {
+			continue
+		}
+		mountPath := filepath.Join(dir, entry.Name())
+		// Try fusermount -uz (lazy unmount) — works even if the remote is gone
+		if err := exec.CommandContext(ctx, "fusermount", "-uz", mountPath).Run(); err != nil {
+			continue // not a FUSE mount or already unmounted
+		}
+		// Remove empty mount directory
+		_ = os.Remove(mountPath)
+		unmounted = append(unmounted, entry.Name())
+	}
+	return unmounted
 }
 
 // deleteServices deletes a list of services and polls each to completion.
