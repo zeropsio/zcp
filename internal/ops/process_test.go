@@ -102,6 +102,52 @@ func TestGetProcessStatus(t *testing.T) {
 	}
 }
 
+func TestGetProcessStatus_ErrorPropagation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mock    *platform.Mock
+		wantErr string
+	}{
+		{
+			name: "AuthExpired_Propagated",
+			mock: platform.NewMock().
+				WithError("GetProcess", platform.NewPlatformError(platform.ErrAuthTokenExpired, "token expired", "Refresh token")),
+			wantErr: platform.ErrAuthTokenExpired,
+		},
+		{
+			name: "NetworkError_Propagated",
+			mock: platform.NewMock().
+				WithError("GetProcess", platform.NewPlatformError(platform.ErrNetworkError, "connection refused", "Check network")),
+			wantErr: platform.ErrNetworkError,
+		},
+		{
+			name:    "PlainError_FallbackToProcessNotFound",
+			mock:    platform.NewMock(), // no process configured → returns plain fmt.Errorf
+			wantErr: platform.ErrProcessNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := GetProcessStatus(context.Background(), tt.mock, "proc-test")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			pe, ok := err.(*platform.PlatformError)
+			if !ok {
+				t.Fatalf("expected *PlatformError, got %T: %v", err, err)
+			}
+			if pe.Code != tt.wantErr {
+				t.Errorf("Code = %q, want %q", pe.Code, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestCancelProcess(t *testing.T) {
 	t.Parallel()
 
@@ -192,6 +238,48 @@ func TestCancelProcess(t *testing.T) {
 			}
 			if result.Status != "CANCELED" {
 				t.Errorf("expected status=CANCELED, got %s", result.Status)
+			}
+		})
+	}
+}
+
+func TestCancelProcess_ErrorPropagation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mock    *platform.Mock
+		wantErr string
+	}{
+		{
+			name: "GetProcess_AuthExpired_Propagated",
+			mock: platform.NewMock().
+				WithError("GetProcess", platform.NewPlatformError(platform.ErrAuthTokenExpired, "token expired", "")),
+			wantErr: platform.ErrAuthTokenExpired,
+		},
+		{
+			name: "CancelProcess_APIError_Propagated",
+			mock: platform.NewMock().
+				WithProcess(&platform.Process{ID: "proc-1", Status: "RUNNING"}).
+				WithError("CancelProcess", platform.NewPlatformError(platform.ErrPermissionDenied, "no permission", "")),
+			wantErr: platform.ErrPermissionDenied,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := CancelProcess(context.Background(), tt.mock, "proc-1")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			pe, ok := err.(*platform.PlatformError)
+			if !ok {
+				t.Fatalf("expected *PlatformError, got %T: %v", err, err)
+			}
+			if pe.Code != tt.wantErr {
+				t.Errorf("Code = %q, want %q", pe.Code, tt.wantErr)
 			}
 		})
 	}

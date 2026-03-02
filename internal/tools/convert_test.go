@@ -169,6 +169,44 @@ func TestTextResult(t *testing.T) {
 	}
 }
 
+func TestConvertError_WithAPICode(t *testing.T) {
+	t.Parallel()
+	pe := platform.NewPlatformError(platform.ErrAPIError, "invalid yaml", "Check input")
+	pe.APICode = "projectImportInvalidYaml"
+	result := convertError(pe)
+
+	if !result.IsError {
+		t.Error("IsError = false, want true")
+	}
+
+	text := getResultText(t, result)
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("failed to parse result JSON: %v", err)
+	}
+	if parsed["apiCode"] != "projectImportInvalidYaml" {
+		t.Errorf("apiCode = %q, want %q", parsed["apiCode"], "projectImportInvalidYaml")
+	}
+	if parsed["code"] != platform.ErrAPIError {
+		t.Errorf("code = %q, want %q", parsed["code"], platform.ErrAPIError)
+	}
+}
+
+func TestConvertError_WithoutAPICode(t *testing.T) {
+	t.Parallel()
+	pe := platform.NewPlatformError(platform.ErrServiceNotFound, "not found", "Check hostname")
+	result := convertError(pe)
+
+	text := getResultText(t, result)
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("failed to parse result JSON: %v", err)
+	}
+	if _, hasAPICode := parsed["apiCode"]; hasAPICode {
+		t.Errorf("apiCode should not be present when empty, got %q", parsed["apiCode"])
+	}
+}
+
 // getResultText extracts the text content from a CallToolResult.
 func getResultText(t *testing.T, result *mcp.CallToolResult) string {
 	t.Helper()

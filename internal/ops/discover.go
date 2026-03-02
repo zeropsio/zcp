@@ -13,6 +13,7 @@ type DiscoverResult struct {
 	Project  ProjectInfo   `json:"project"`
 	Services []ServiceInfo `json:"services"`
 	Notes    []string      `json:"notes,omitempty"`
+	Warnings []string      `json:"warnings,omitempty"`
 }
 
 // ProjectInfo contains basic project information.
@@ -74,7 +75,7 @@ func Discover(
 		}
 		info := buildDetailedServiceInfo(detail)
 		if includeEnvs {
-			attachEnvs(ctx, client, &info, detail.ID)
+			attachEnvs(ctx, client, &info, detail.ID, result)
 		}
 		result.Services = []ServiceInfo{info}
 		addEnvRefNotes(result)
@@ -88,13 +89,13 @@ func Discover(
 		}
 		info := buildSummaryServiceInfo(&services[i])
 		if includeEnvs {
-			attachEnvs(ctx, client, &info, services[i].ID)
+			attachEnvs(ctx, client, &info, services[i].ID, result)
 		}
 		result.Services = append(result.Services, info)
 	}
 
 	if includeEnvs {
-		attachProjectEnvs(ctx, client, &result.Project, projectID)
+		attachProjectEnvs(ctx, client, &result.Project, projectID, result)
 	}
 
 	addEnvRefNotes(result)
@@ -183,18 +184,22 @@ func buildContainersMap(a *platform.CustomAutoscaling) map[string]any {
 	return m
 }
 
-func attachProjectEnvs(ctx context.Context, client platform.Client, info *ProjectInfo, projectID string) {
+func attachProjectEnvs(ctx context.Context, client platform.Client, info *ProjectInfo, projectID string, result *DiscoverResult) {
 	envs, err := client.GetProjectEnv(ctx, projectID)
 	if err != nil {
-		return // silently ignore project env fetch errors
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("Failed to fetch project env vars: %s", err.Error()))
+		return
 	}
 	info.Envs = envVarsToMaps(envs)
 }
 
-func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, serviceID string) {
+func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, serviceID string, result *DiscoverResult) {
 	envs, err := client.GetServiceEnv(ctx, serviceID)
 	if err != nil {
-		return // silently ignore env fetch errors
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("Failed to fetch env vars for %s: %s", info.Hostname, err.Error()))
+		return
 	}
 	info.Envs = envVarsToMaps(envs)
 }

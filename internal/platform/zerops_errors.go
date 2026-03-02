@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -44,6 +45,12 @@ func mapSDKError(err error, entityType string) error {
 	return NewPlatformError(ErrAPIError, errStr, "")
 }
 
+// withAPICode sets the APICode field on a PlatformError and returns it.
+func withAPICode(pe *PlatformError, apiCode string) *PlatformError {
+	pe.APICode = apiCode
+	return pe
+}
+
 func mapAPIError(apiErr apiError.Error, entityType string) error {
 	code := apiErr.GetHttpStatusCode()
 	errCode := apiErr.GetErrorCode()
@@ -51,18 +58,18 @@ func mapAPIError(apiErr apiError.Error, entityType string) error {
 
 	switch code {
 	case http.StatusUnauthorized:
-		return NewPlatformError(ErrAuthTokenExpired, msg, "Check token validity")
+		return withAPICode(NewPlatformError(ErrAuthTokenExpired, msg, "Check token validity"), errCode)
 	case http.StatusForbidden:
-		return NewPlatformError(ErrPermissionDenied, msg, "Check token permissions")
+		return withAPICode(NewPlatformError(ErrPermissionDenied, msg, "Check token permissions"), errCode)
 	case http.StatusNotFound:
 		switch entityType {
 		case "process":
-			return NewPlatformError(ErrProcessNotFound, msg, "Check process ID")
+			return withAPICode(NewPlatformError(ErrProcessNotFound, msg, "Check process ID"), errCode)
 		default:
-			return NewPlatformError(ErrServiceNotFound, msg, "Check service hostname")
+			return withAPICode(NewPlatformError(ErrServiceNotFound, msg, "Check service hostname"), errCode)
 		}
 	case http.StatusTooManyRequests:
-		return NewPlatformError(ErrAPIRateLimited, msg, "Wait and retry")
+		return withAPICode(NewPlatformError(ErrAPIRateLimited, msg, "Wait and retry"), errCode)
 	}
 
 	switch {
@@ -75,8 +82,13 @@ func mapAPIError(apiErr apiError.Error, entityType string) error {
 	}
 
 	if code >= 500 {
-		return NewPlatformError(ErrAPIError, msg, "Zerops API error -- retry later")
+		return withAPICode(NewPlatformError(ErrAPIError, msg, "Zerops API server error — retry later"), errCode)
 	}
 
-	return NewPlatformError(ErrAPIError, msg, "")
+	// Client error (4xx) — tell LLM to fix input
+	suggestion := "Check the request parameters"
+	if errCode != "" {
+		suggestion = fmt.Sprintf("API rejected the request (code: %s) — check the input parameters", errCode)
+	}
+	return withAPICode(NewPlatformError(ErrAPIError, msg, suggestion), errCode)
 }

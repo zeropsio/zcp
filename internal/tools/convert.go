@@ -36,6 +36,9 @@ func convertError(err error) *mcp.CallToolResult {
 	if pe.Suggestion != "" {
 		result["suggestion"] = pe.Suggestion
 	}
+	if pe.APICode != "" {
+		result["apiCode"] = pe.APICode
+	}
 	b, err := json.Marshal(result)
 	if err != nil {
 		return &mcp.CallToolResult{

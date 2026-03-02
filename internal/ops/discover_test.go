@@ -272,6 +272,10 @@ func TestDiscover_EnvFetchError_Graceful(t *testing.T) {
 	if result.Services[0].Envs != nil {
 		t.Error("expected nil envs when fetch fails")
 	}
+	// Should produce a warning
+	if len(result.Warnings) == 0 {
+		t.Error("expected warnings when env fetch fails, got none")
+	}
 }
 
 func TestDiscover_ProjectEnvs_NoFilter(t *testing.T) {
@@ -353,6 +357,43 @@ func TestDiscover_ProjectEnvFetchError_Graceful(t *testing.T) {
 	}
 	if len(result.Services) != 1 {
 		t.Fatalf("expected 1 service, got %d", len(result.Services))
+	}
+	// Should produce a warning
+	if len(result.Warnings) == 0 {
+		t.Error("expected warnings when project env fetch fails, got none")
+	}
+}
+
+func TestDiscover_SuccessfulEnvs_NoWarnings(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithServiceEnv("svc-1", []platform.EnvVar{
+			{ID: "e1", Key: "PORT", Content: "3000"},
+		}).
+		WithProjectEnv([]platform.EnvVar{
+			{ID: "pe1", Key: "APP_ENV", Content: "production"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Warnings) != 0 {
+		t.Errorf("expected no warnings on successful env fetch, got %v", result.Warnings)
+	}
+	if result.Services[0].Envs == nil {
+		t.Error("expected envs to be populated")
+	}
+	if result.Project.Envs == nil {
+		t.Error("expected project envs to be populated")
 	}
 }
 

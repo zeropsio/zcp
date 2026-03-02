@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -43,6 +44,10 @@ func GetProcessStatus(ctx context.Context, client platform.Client, processID str
 
 	p, err := client.GetProcess(ctx, processID)
 	if err != nil {
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) {
+			return nil, pe
+		}
 		return nil, platform.NewPlatformError(platform.ErrProcessNotFound,
 			fmt.Sprintf("Process '%s' not found", processID), "Check the process ID")
 	}
@@ -68,6 +73,10 @@ func CancelProcess(ctx context.Context, client platform.Client, processID string
 
 	p, err := client.GetProcess(ctx, processID)
 	if err != nil {
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) {
+			return nil, pe
+		}
 		return nil, platform.NewPlatformError(platform.ErrProcessNotFound,
 			fmt.Sprintf("Process '%s' not found", processID), "Check the process ID")
 	}
@@ -80,6 +89,10 @@ func CancelProcess(ctx context.Context, client platform.Client, processID string
 
 	_, err = client.CancelProcess(ctx, processID)
 	if err != nil {
+		var pe *platform.PlatformError
+		if errors.As(err, &pe) {
+			return nil, pe
+		}
 		return nil, fmt.Errorf("cancel process %s: %w", processID, err)
 	}
 

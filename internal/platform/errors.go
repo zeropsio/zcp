@@ -53,6 +53,7 @@ type PlatformError struct {
 	Code       string
 	Message    string
 	Suggestion string
+	APICode    string // raw API error code, empty if not from API
 }
 
 func (e *PlatformError) Error() string {
