@@ -86,3 +86,12 @@ make lint-fast                   # Lint (~3s)
 ```
 
 E2E tests need a real Zerops project: `go test ./e2e/ -tags e2e` (requires `ZCP_API_KEY` or zcli login).
+
+## Release
+
+```bash
+make release        # Minor bump (v2.62.0 → v2.63.0)
+make release-patch  # Patch bump (v2.62.0 → v2.62.1)
+```
+
+Both run tests before tagging. If tests fail, the release is aborted. Requires a clean worktree (no uncommitted changes to tracked files; untracked files are ignored).
