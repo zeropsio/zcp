@@ -39,7 +39,7 @@ Use `apk add` only for extensions NOT in this list.
 
 **Build procedure**:
 1. Set `build.base: php@8.4` (or desired version)
-2. If assets needed: `base: [php@8.4, nodejs@18]` (multi-base)
+2. If assets needed: `base: [php@8.4, nodejs@22]` (multi-base)
 3. `buildCommands`: `composer install --ignore-platform-reqs` (Alpine musl compat)
 4. `deployFiles`: include `vendor/`, app files
 5. Set `run.base: php-nginx@8.4` (or `php-apache@8.4`)

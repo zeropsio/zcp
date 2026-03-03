@@ -198,7 +198,7 @@ Enable with `#yamlPreprocessor=on` as first line. Syntax: `<@function(<args>)>`,
 zerops[]:
   setup: string                        # REQUIRED, matches service hostname
   build:
-    base: string | string[]            # runtime(s) -- multi-base: [php@8.4, nodejs@18]
+    base: string | string[]            # runtime(s) -- multi-base: [php@8.4, nodejs@22]
     os: alpine | ubuntu                # default alpine
     prepareCommands: string[]          # cached in base layer
     buildCommands: string[]            # runs every build

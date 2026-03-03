@@ -21,7 +21,7 @@ zerops:
     build:
       base:
         - php@8.4
-        - nodejs@18
+        - nodejs@22
       os: ubuntu
       buildCommands:
         - composer install --optimize-autoloader --no-dev
@@ -227,7 +227,7 @@ services:
 - **S3 driver not found** -- add `league/flysystem-aws-s3-v3` to composer.json (full setup only)
 - **502 after deploy** -- ensure `enableSubdomainAccess: true` is set and subdomain is activated after first deploy
 - **Session not persisting** -- verify `REDIS_HOST: redis` matches the Valkey service hostname (full setup) or `SESSION_DRIVER: database` is set (minimal setup)
-- **Assets not loading** -- confirm multi-base build includes `nodejs@18` and `npm run build` completes (full setup)
+- **Assets not loading** -- confirm multi-base build includes `nodejs@22` and `npm run build` completes (full setup)
 - **Migration fails** -- verify `DB_HOST: db` matches the PostgreSQL service hostname
 
 ## Gotchas

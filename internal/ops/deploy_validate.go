@@ -51,12 +51,13 @@ func ValidateZeropsYml(workingDir, targetHostname string) []string {
 		warnings = append(warnings, "run.ports is empty — no ports exposed, HTTP checks will fail")
 	}
 
-	if len(entry.Build.DeployFiles) == 0 {
+	deployFiles := entry.Build.deployFilesList()
+	if len(deployFiles) == 0 {
 		warnings = append(warnings, "build.deployFiles is empty — nothing will be deployed to run container")
 	}
 
-	if strings.Contains(targetHostname, "dev") && len(entry.Build.DeployFiles) > 0 {
-		if !slices.Contains(entry.Build.DeployFiles, ".") {
+	if strings.Contains(targetHostname, "dev") && len(deployFiles) > 0 {
+		if !slices.Contains(deployFiles, ".") && !slices.Contains(deployFiles, "./") {
 			warnings = append(warnings, "dev service should use deployFiles: [.] — ensures source files persist across deploys for continued iteration")
 		}
 	}
@@ -92,7 +93,28 @@ type zeropsYmlDeploy struct {
 }
 
 type zeropsYmlBuild struct {
-	DeployFiles []string `yaml:"deployFiles"`
+	DeployFiles any `yaml:"deployFiles"` // string or []string — Zerops accepts both
+}
+
+// deployFilesList normalizes DeployFiles to []string regardless of YAML format.
+func (b zeropsYmlBuild) deployFilesList() []string {
+	switch v := b.DeployFiles.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 type zeropsYmlRun struct {

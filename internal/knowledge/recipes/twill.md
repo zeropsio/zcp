@@ -14,7 +14,7 @@ zerops:
     build:
       base:
         - php@8.3
-        - nodejs@18
+        - nodejs@22
       os: alpine
       buildCommands:
         - composer install --optimize-autoloader --no-dev

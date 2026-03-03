@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestValidateZeropsYml(t *testing.T) {
+func TestValidateZeropsYml_Parsing(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -83,6 +83,36 @@ func TestValidateZeropsYml(t *testing.T) {
 			wantContains: "run.ports is empty",
 		},
 		{
+			name:     "multiple issues",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    run: {}
+`,
+			wantWarnings: 3, // missing start, ports, and deployFiles
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runValidateTest(t, tt.hostname, tt.yml, tt.wantWarnings, tt.wantContains, tt.noWarnings)
+		})
+	}
+}
+
+func TestValidateZeropsYml_DeployFiles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		hostname     string
+		yml          string
+		wantWarnings int
+		wantContains string
+		noWarnings   bool
+	}{
+		{
 			name:     "missing deployFiles",
 			hostname: "appdev",
 			yml: `zerops:
@@ -139,6 +169,49 @@ func TestValidateZeropsYml(t *testing.T) {
 			noWarnings: true,
 		},
 		{
+			name:     "dev with dot-slash deployFiles is valid",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [./]
+    run:
+      start: bun run index.ts
+      ports:
+        - port: 8080
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "scalar deployFiles string is valid",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: ./
+    run:
+      start: bun run index.ts
+      ports:
+        - port: 8080
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "scalar deployFiles non-dot warns for dev",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: dist
+    run:
+      start: node dist/index.js
+      ports:
+        - port: 8080
+`,
+			wantWarnings: 1,
+			wantContains: "dev service should use deployFiles: [.]",
+		},
+		{
 			name:     "valid prod config with build output",
 			hostname: "appstage",
 			yml: `zerops:
@@ -154,6 +227,27 @@ func TestValidateZeropsYml(t *testing.T) {
 `,
 			noWarnings: true,
 		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runValidateTest(t, tt.hostname, tt.yml, tt.wantWarnings, tt.wantContains, tt.noWarnings)
+		})
+	}
+}
+
+func TestValidateZeropsYml_HealthChecks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		hostname     string
+		yml          string
+		wantWarnings int
+		wantContains string
+		noWarnings   bool
+	}{
 		{
 			name:     "dev with healthCheck warns",
 			hostname: "appdev",
@@ -230,46 +324,42 @@ func TestValidateZeropsYml(t *testing.T) {
 `,
 			noWarnings: true,
 		},
-		{
-			name:     "multiple issues",
-			hostname: "appdev",
-			yml: `zerops:
-  - setup: appdev
-    run: {}
-`,
-			wantWarnings: 3, // missing start, ports, and deployFiles
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
-			dir := t.TempDir()
-			if tt.yml != "" {
-				if err := os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte(tt.yml), 0644); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			warnings := ValidateZeropsYml(dir, tt.hostname)
-
-			if tt.noWarnings {
-				if len(warnings) != 0 {
-					t.Errorf("expected no warnings, got %d: %v", len(warnings), warnings)
-				}
-				return
-			}
-
-			if tt.wantWarnings > 0 && len(warnings) < tt.wantWarnings {
-				t.Errorf("want >= %d warnings, got %d: %v", tt.wantWarnings, len(warnings), warnings)
-			}
-
-			if tt.wantContains != "" && len(warnings) > 0 {
-				if !strings.Contains(warnings[0], tt.wantContains) {
-					t.Errorf("first warning %q should contain %q", warnings[0], tt.wantContains)
-				}
-			}
+			runValidateTest(t, tt.hostname, tt.yml, tt.wantWarnings, tt.wantContains, tt.noWarnings)
 		})
+	}
+}
+
+func runValidateTest(t *testing.T, hostname, yml string, wantWarnings int, wantContains string, noWarnings bool) {
+	t.Helper()
+
+	dir := t.TempDir()
+	if yml != "" {
+		if err := os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte(yml), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	warnings := ValidateZeropsYml(dir, hostname)
+
+	if noWarnings {
+		if len(warnings) != 0 {
+			t.Errorf("expected no warnings, got %d: %v", len(warnings), warnings)
+		}
+		return
+	}
+
+	if wantWarnings > 0 && len(warnings) < wantWarnings {
+		t.Errorf("want >= %d warnings, got %d: %v", wantWarnings, len(warnings), warnings)
+	}
+
+	if wantContains != "" && len(warnings) > 0 {
+		if !strings.Contains(warnings[0], wantContains) {
+			t.Errorf("first warning %q should contain %q", warnings[0], wantContains)
+		}
 	}
 }
