@@ -12,7 +12,7 @@ Filament (Laravel) admin panel with PHP-Nginx, PostgreSQL, Valkey, and S3 -- hea
 zerops:
   - setup: app
     build:
-      base: php@8.3
+      base: php@8.4
       os: alpine
       buildCommands:
         - composer install --ignore-platform-reqs
@@ -26,19 +26,22 @@ zerops:
           port: 80
           path: /up
     run:
-      base: php-nginx@8.3
+      base: php-nginx@8.4
       os: alpine
       documentRoot: public
       envVariables:
+        APP_NAME: MyFilamentApp
         APP_ENV: production
         APP_DEBUG: "false"
         APP_LOCALE: en
         APP_FAKER_LOCALE: en_US
         APP_FALLBACK_LOCALE: en
-        APP_MAINTENANCE_DRIVER: file
+        APP_MAINTENANCE_DRIVER: cache
         APP_MAINTENANCE_STORE: database
         APP_TIMEZONE: UTC
         APP_URL: ${zeropsSubdomain}
+        ASSET_URL: ${APP_URL}
+        VITE_APP_NAME: ${APP_NAME}
 
         DB_CONNECTION: pgsql
         DB_DATABASE: db
@@ -48,7 +51,7 @@ zerops:
         DB_PORT: 5432
 
         LOG_CHANNEL: syslog
-        LOG_LEVEL: debug
+        LOG_LEVEL: info
         LOG_STACK: single
 
         BROADCAST_CONNECTION: redis
@@ -93,7 +96,7 @@ zerops:
 #yamlPreprocessor=on
 services:
   - hostname: app
-    type: php-nginx@8.3
+    type: php-nginx@8.4
     enableSubdomainAccess: true
     envSecrets:
       APP_KEY: <@generateRandomString(<32>)>
@@ -114,6 +117,23 @@ services:
     objectStoragePolicy: public-read
     priority: 10
 ```
+
+## Scaffolding
+
+Fresh project setup on a Zerops container (bootstrap or manual):
+
+```bash
+zsc scale ram 1GiB 10m
+composer create-project laravel/laravel . --no-scripts
+composer run post-autoload-dump
+rm -f .env.example
+zsc scale ram auto
+```
+
+- `zsc scale ram 1GiB 10m` temporarily bumps container RAM to 1 GB for composer (default 128 MB causes OOM). `zsc scale ram auto` returns to autoscaling after scaffolding.
+- `--no-scripts` skips all post-create hooks: no `.env` file created, no `database.sqlite`, no `key:generate`. Without this flag, Laravel creates `.env` with empty `APP_KEY=` which **shadows the valid OS env var from envSecrets** — breaking encryption at runtime.
+- `post-autoload-dump` triggers package discovery (the only useful post-install hook).
+- `rm .env.example` removes the template file (not needed — Zerops uses OS env vars exclusively).
 
 ## Configuration
 - **TRUSTED_PROXIES: "\*"** -- required for Laravel behind Zerops load balancer
@@ -136,3 +156,5 @@ services:
 - **zsc execOnce initialize** runs db:seed only once ever (static key, not per-deploy)
 - **FILAMENT_FILESYSTEM_DISK** must be set separately from `FILESYSTEM_DISK` for Filament panel uploads
 - 4 services: app + db (PostgreSQL) + redis (Valkey) + storage (Object Storage)
+- **No `.env` file** — scaffold with `composer create-project --no-scripts`, then `composer run post-autoload-dump`. Delete `.env.example`. APP_KEY comes from envSecrets. Without `--no-scripts`, `.env` is created with empty `APP_KEY=` which shadows the valid OS env var.
+- **No SQLite** — containers are volatile. Always use a database service (PostgreSQL or MariaDB). SQLite only for PHPUnit tests.

@@ -49,7 +49,7 @@ zerops:
         APP_LOCALE: en
         APP_FAKER_LOCALE: en_US
         APP_FALLBACK_LOCALE: en
-        APP_MAINTENANCE_DRIVER: file
+        APP_MAINTENANCE_DRIVER: cache
         APP_MAINTENANCE_STORE: database
         APP_TIMEZONE: UTC
         APP_URL: ${zeropsSubdomain}
@@ -72,7 +72,7 @@ zerops:
         AWS_USE_PATH_STYLE_ENDPOINT: true
 
         LOG_CHANNEL: syslog
-        LOG_LEVEL: debug
+        LOG_LEVEL: info
         LOG_STACK: single
 
         BROADCAST_CONNECTION: redis
@@ -94,7 +94,7 @@ zerops:
         - php artisan view:cache
         - php artisan config:cache
         - php artisan route:cache
-        - php artisan migrate --isolated --force
+        - sudo -E -u zerops -- zsc execOnce ${appVersionId} -- php artisan migrate --isolated --force
         - php artisan optimize
       healthCheck:
         httpGet:
@@ -135,6 +135,8 @@ zerops:
         APP_ENV: production
         APP_DEBUG: "false"
         APP_URL: ${zeropsSubdomain}
+        ASSET_URL: ${APP_URL}
+        VITE_APP_NAME: ${APP_NAME}
 
         DB_CONNECTION: pgsql
         DB_DATABASE: db
@@ -144,7 +146,7 @@ zerops:
         DB_PORT: 5432
 
         LOG_CHANNEL: syslog
-        LOG_LEVEL: debug
+        LOG_LEVEL: info
         LOG_STACK: single
 
         SESSION_DRIVER: database
@@ -162,7 +164,7 @@ zerops:
         - php artisan view:cache
         - php artisan config:cache
         - php artisan route:cache
-        - php artisan migrate --isolated --force
+        - sudo -E -u zerops -- zsc execOnce ${appVersionId} -- php artisan migrate --isolated --force
         - php artisan optimize
       healthCheck:
         httpGet:
@@ -213,6 +215,23 @@ services:
     priority: 10
 ```
 
+## Scaffolding
+
+Fresh project setup on a Zerops container (bootstrap or manual):
+
+```bash
+zsc scale ram 1GiB 10m
+composer create-project laravel/laravel . --no-scripts
+composer run post-autoload-dump
+rm -f .env.example
+zsc scale ram auto
+```
+
+- `zsc scale ram 1GiB 10m` temporarily bumps container RAM to 1 GB for composer (default 128 MB causes OOM). `zsc scale ram auto` returns to autoscaling after scaffolding.
+- `--no-scripts` skips all post-create hooks: no `.env` file created, no `database.sqlite`, no `key:generate`. Without this flag, Laravel creates `.env` with empty `APP_KEY=` which **shadows the valid OS env var from envSecrets** — breaking encryption at runtime.
+- `post-autoload-dump` triggers package discovery (the only useful post-install hook).
+- `rm .env.example` removes the template file (not needed — Zerops uses OS env vars exclusively).
+
 ## Configuration
 - **TRUSTED_PROXIES: "\*"** -- required for Laravel behind Zerops load balancer
 - **LOG_CHANNEL: syslog** -- routes logs to Zerops log collector
@@ -229,6 +248,8 @@ services:
 - **Session not persisting** -- verify `REDIS_HOST: redis` matches the Valkey service hostname (full setup) or `SESSION_DRIVER: database` is set (minimal setup)
 - **Assets not loading** -- confirm multi-base build includes `nodejs@22` and `npm run build` completes (full setup)
 - **Migration fails** -- verify `DB_HOST: db` matches the PostgreSQL service hostname
+- **APP_KEY empty / encryption broken** -- if `.env` exists with empty `APP_KEY=`, it shadows the valid OS env var from envSecrets. Cause: `composer create-project` was run without `--no-scripts`. Fix: delete `.env` or scaffold with `--no-scripts`.
+- **Data lost after redeploy** -- SQLite database is destroyed when the container rebuilds. Switch to a database service (PostgreSQL or MariaDB).
 
 ## Gotchas
 - **Multi-base build** `[php, nodejs]` required only if project has npm/Vite assets (full setup)
@@ -238,3 +259,5 @@ services:
 - **Minimal setup** has no Redis/Valkey -- sessions, cache, and queue all use database driver
 - **Minimal setup** has no Object Storage -- file uploads use local filesystem (not suitable for multi-container scaling)
 - Full setup: 4 services (app + db + redis + storage). Minimal: 2 services (app + db).
+- **No `.env` file** — Zerops injects all variables as OS env vars. Scaffold with `composer create-project laravel/laravel . --no-scripts` — this prevents `.env` and `database.sqlite` from being created. Without `--no-scripts`, `.env` is created with empty `APP_KEY=` which **shadows the valid OS env var from envSecrets**, breaking encryption at runtime. After scaffolding: `composer run post-autoload-dump` for package discovery, then `rm -f .env.example`.
+- **No SQLite** — Laravel defaults to SQLite but containers are volatile (data lost on redeploy). Always use a database service (PostgreSQL preferred, or MariaDB). SQLite is acceptable only for PHPUnit test suites.
