@@ -15,7 +15,7 @@ Core platform constraints every Zerops app must satisfy: bind 0.0.0.0, use deplo
 - Apps MUST bind `0.0.0.0` (not `localhost` or `127.0.0.1`). L7 load balancer routes to the container's VXLAN IP, not loopback. Binding localhost = 502 Bad Gateway.
 - SSL terminates at the L7 balancer. All internal traffic is plain HTTP. Service-to-service calls: `http://hostname:port`, NEVER `https://`.
 - Apps MUST trust proxy headers (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`). Without this: CSRF failures, mixed-content warnings, incorrect redirect URLs.
-  - **Laravel/Symfony**: `TRUSTED_PROXIES="*"` env var + middleware config
+  - **Laravel/Symfony**: `TRUSTED_PROXIES="127.0.0.1,10.0.0.0/8"` env var + middleware config
   - **Django**: `CSRF_TRUSTED_ORIGINS`, `SECURE_PROXY_SSL_HEADER`
   - **.NET**: `ForwardedHeadersOptions` middleware with `KnownNetworks`
   - **Rails**: `config.hosts` + `config.action_dispatch.trusted_proxies`

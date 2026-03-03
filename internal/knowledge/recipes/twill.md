@@ -39,15 +39,7 @@ zerops:
         APP_NAME: MyTwillApp
         APP_ENV: production
         APP_DEBUG: "false"
-        APP_LOCALE: en
-        APP_FAKER_LOCALE: en_US
-        APP_FALLBACK_LOCALE: en
-        APP_MAINTENANCE_DRIVER: cache
-        APP_MAINTENANCE_STORE: database
-        APP_TIMEZONE: UTC
         APP_URL: ${zeropsSubdomain}
-        ASSET_URL: ${APP_URL}
-        VITE_APP_NAME: ${APP_NAME}
 
         DB_CONNECTION: pgsql
         DB_DATABASE: db
@@ -58,22 +50,14 @@ zerops:
 
         LOG_CHANNEL: syslog
         LOG_LEVEL: info
-        LOG_STACK: single
 
-        BROADCAST_CONNECTION: redis
-        CACHE_PREFIX: cache
         CACHE_STORE: redis
         QUEUE_CONNECTION: redis
         REDIS_CLIENT: phpredis
         REDIS_HOST: redis
-        REDIS_PORT: 6379
         SESSION_DRIVER: redis
-        SESSION_ENCRYPT: false
-        SESSION_LIFETIME: 120
-        SESSION_PATH: /
 
-        BCRYPT_ROUNDS: 12
-        TRUSTED_PROXIES: "*"
+        TRUSTED_PROXIES: "127.0.0.1,10.0.0.0/8"
         MEDIA_LIBRARY_ENDPOINT_TYPE: s3
         GLIDE_USE_SOURCE_DISK: s3
 
@@ -124,8 +108,15 @@ services:
 ```
 
 ## Configuration
-- **TRUSTED_PROXIES: "\*"** -- required for Laravel behind Zerops load balancer
-- **LOG_CHANNEL: syslog** -- routes logs to Zerops log collector
+- **Trusted proxies** — Laravel 11+ does not auto-read `TRUSTED_PROXIES` from env. Wire it in `bootstrap/app.php`:
+  ```php
+  ->withMiddleware(function (Middleware $middleware) {
+      $middleware->trustProxies(
+          at: explode(',', env('TRUSTED_PROXIES', '127.0.0.1')),
+      );
+  })
+  ```
+- **LOG_CHANNEL: syslog** — routes logs to Zerops log collector
 - **MEDIA_LIBRARY_ENDPOINT_TYPE: s3** -- Twill media library uses S3 backend
 - **GLIDE_USE_SOURCE_DISK: s3** -- Glide image processing reads from S3, caches locally
 - **AWS_USE_PATH_STYLE_ENDPOINT: true** -- required for Zerops S3-compatible storage

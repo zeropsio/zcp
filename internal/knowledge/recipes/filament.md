@@ -33,15 +33,7 @@ zerops:
         APP_NAME: MyFilamentApp
         APP_ENV: production
         APP_DEBUG: "false"
-        APP_LOCALE: en
-        APP_FAKER_LOCALE: en_US
-        APP_FALLBACK_LOCALE: en
-        APP_MAINTENANCE_DRIVER: cache
-        APP_MAINTENANCE_STORE: database
-        APP_TIMEZONE: UTC
         APP_URL: ${zeropsSubdomain}
-        ASSET_URL: ${APP_URL}
-        VITE_APP_NAME: ${APP_NAME}
 
         DB_CONNECTION: pgsql
         DB_DATABASE: db
@@ -52,19 +44,12 @@ zerops:
 
         LOG_CHANNEL: syslog
         LOG_LEVEL: info
-        LOG_STACK: single
 
-        BROADCAST_CONNECTION: redis
-        CACHE_PREFIX: cache
         CACHE_STORE: redis
         QUEUE_CONNECTION: redis
         REDIS_CLIENT: phpredis
         REDIS_HOST: redis
-        REDIS_PORT: 6379
         SESSION_DRIVER: redis
-        SESSION_ENCRYPT: false
-        SESSION_LIFETIME: 120
-        SESSION_PATH: /
 
         AWS_ACCESS_KEY_ID: ${storage_accessKeyId}
         AWS_DEFAULT_REGION: us-east-1
@@ -74,8 +59,7 @@ zerops:
         AWS_URL: ${storage_apiUrl}/${storage_bucketName}
         AWS_USE_PATH_STYLE_ENDPOINT: true
 
-        BCRYPT_ROUNDS: 12
-        TRUSTED_PROXIES: "*"
+        TRUSTED_PROXIES: "127.0.0.1,10.0.0.0/8"
         FILESYSTEM_DISK: s3
         FILAMENT_FILESYSTEM_DISK: s3
       initCommands:
@@ -119,12 +103,19 @@ services:
 ```
 
 ## Configuration
-- **TRUSTED_PROXIES: "\*"** -- required for Laravel behind Zerops load balancer
-- **LOG_CHANNEL: syslog** -- routes logs to Zerops log collector
-- **FILAMENT_FILESYSTEM_DISK: s3** -- Filament-specific S3 configuration for media uploads
-- **SESSION_DRIVER / CACHE_STORE: redis** -- use Valkey instead of file-based sessions
+- **Trusted proxies** — Laravel 11+ does not auto-read `TRUSTED_PROXIES` from env. Wire it in `bootstrap/app.php`:
+  ```php
+  ->withMiddleware(function (Middleware $middleware) {
+      $middleware->trustProxies(
+          at: explode(',', env('TRUSTED_PROXIES', '127.0.0.1')),
+      );
+  })
+  ```
+- **LOG_CHANNEL: syslog** — routes logs to Zerops log collector
+- **FILAMENT_FILESYSTEM_DISK: s3** — Filament-specific S3 configuration for media uploads
+- **SESSION_DRIVER / CACHE_STORE: redis** — use Valkey instead of file-based sessions
 - **APP_KEY** is generated via `<@generateRandomString(<32>)>` in import.yml envSecrets
-- **documentRoot: public** -- serves Laravel from the `public/` directory
+- **documentRoot: public** — serves Laravel from the `public/` directory
 
 ## Common Failures
 - **S3 driver not found** -- add `league/flysystem-aws-s3-v3` to composer.json
