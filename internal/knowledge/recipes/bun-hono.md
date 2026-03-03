@@ -29,6 +29,16 @@ zerops:
           httpSupport: true
       envVariables:
         PORT: "3000"
+        DATABASE_HOST: db
+        DATABASE_PORT: ${db_port}
+        DATABASE_NAME: ${db_dbName}
+        DATABASE_USER: ${db_user}
+        DATABASE_PASSWORD: ${db_password}
+        S3_ENDPOINT: ${storage_apiUrl}
+        S3_ACCESS_KEY_ID: ${storage_accessKeyId}
+        S3_BUCKET: ${storage_bucketName}
+        S3_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
+        AWS_USE_PATH_STYLE_ENDPOINT: "true"
       initCommands:
         - zsc execOnce ${appVersionId} -- bun run dist/migrate.js
       start: bun run dist/index.js
@@ -40,7 +50,6 @@ zerops:
 
 ## import.yml
 ```yaml
-#yamlPreprocessor=on
 services:
   - hostname: db
     type: postgresql@16
@@ -57,17 +66,6 @@ services:
     type: bun@1.2
     priority: 5
     enableSubdomainAccess: true
-    envSecrets:
-      DATABASE_HOST: db
-      DATABASE_PORT: ${db_port}
-      DATABASE_NAME: ${db_dbName}
-      DATABASE_USER: ${db_user}
-      DATABASE_PASSWORD: ${db_password}
-      S3_ENDPOINT: ${storage_apiUrl}
-      S3_ACCESS_KEY_ID: ${storage_accessKeyId}
-      S3_BUCKET: ${storage_bucketName}
-      S3_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
-      AWS_USE_PATH_STYLE_ENDPOINT: "true"
 ```
 
 ## Configuration

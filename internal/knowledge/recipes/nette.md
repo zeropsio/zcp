@@ -30,6 +30,7 @@ zerops:
       os: alpine
       documentRoot: www/
       envVariables:
+        APP_ENV: production
         DATABASE_DSN: pgsql:host=${db_hostname};port=${db_port};dbname=${db_dbName}
         DATABASE_USER: ${db_user}
         DATABASE_PASSWORD: ${db_password}
@@ -52,7 +53,6 @@ services:
     enableSubdomainAccess: true
     envSecrets:
       ADMIN_PASSWORD: <@generateRandomString(<24>)>
-      APP_ENV: dev
 
   - hostname: db
     type: postgresql@16
@@ -70,7 +70,7 @@ services:
 - **DATABASE_USER / DATABASE_PASSWORD** -- explicit cross-service references `${db_user}` / `${db_password}`
 - **REDIS_URI** -- uses `tcp://${redis_hostname}:${redis_port}` for Redis connection
 - **ADMIN_PASSWORD** is generated via `<@generateRandomString(<24>)>` in import.yml envSecrets
-- **APP_ENV** -- set to `dev` for development; change to `prod` for production
+- **APP_ENV** -- set in zerops.yml `run.envVariables` (defaults to `production`)
 - **documentRoot: www/** -- Nette serves from the `www/` directory
 
 ## Common Failures

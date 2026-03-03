@@ -21,16 +21,15 @@ When you create an Object Storage service, Zerops auto-generates these env vars 
 | `serviceId` | Service ID (Zerops-generated) |
 | `hostname` | Service hostname |
 
-Reference them in your app's env:
+Reference them in zerops.yml `run.envVariables`:
 ```yaml
-envSecrets:
-  S3_ENDPOINT: ${storage_apiUrl}
-  S3_ACCESS_KEY: ${storage_accessKeyId}
-  S3_SECRET_KEY: ${storage_secretAccessKey}
-  S3_BUCKET: ${storage_bucketName}
-envVariables:
-  S3_REGION: us-east-1
-  AWS_USE_PATH_STYLE_ENDPOINT: "true"
+# zerops.yml run.envVariables
+S3_ENDPOINT: ${storage_apiUrl}
+S3_ACCESS_KEY: ${storage_accessKeyId}
+S3_SECRET_KEY: ${storage_secretAccessKey}
+S3_BUCKET: ${storage_bucketName}
+S3_REGION: us-east-1
+AWS_USE_PATH_STYLE_ENDPOINT: "true"
 ```
 
 ## Path Style Endpoint (Required)

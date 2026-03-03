@@ -11,15 +11,28 @@ postgresql, mariadb, valkey, keydb, elasticsearch, kafka, nats, meilisearch, cli
 - **Hostname substitution**: In templates below, each service uses a sample hostname (e.g., `db`, `cache`, `search`). Replace it with your actual service hostname. The syntax `${hostname_varname}` is real Zerops cross-service reference syntax — `hostname` must match the target service hostname exactly, with dashes converted to underscores.
 - **Reference**: `${hostname_variablename}` — dashes in hostnames become underscores
 - **envSecrets**: passwords, tokens, keys (blurred in GUI by default, editable/deletable)
-- **import.yml service level**: ONLY `envSecrets` and `dotEnvSecrets` exist. There is NO `envVariables` at service level (only at project level). Put ALL connection vars in `envSecrets`.
+- **import.yml service level**: ONLY `envSecrets` and `dotEnvSecrets` exist. There is NO `envVariables` at service level (only at project level). Use `envSecrets` only for generated secrets (`<@generateRandomString(...)>`) and real credentials.
 - **Hostname = DNS**: use hostname directly for host (`db`, NOT `${db_hostname}`), but use `${db_port}` for port
 - **Internal**: ALWAYS `http://` — NEVER `https://` (SSL at L7 balancer)
 - **Project vars**: auto-inherited by all services — do NOT re-reference (creates shadow)
 - **Password sync**: changing DB password in GUI does NOT update env vars (manual sync)
 
-**CRITICAL: Wire credentials in import.yml** — Managed services auto-generate credentials but they are NOT automatically available to runtime services. You MUST wire them via `envSecrets` on the **runtime service** in import.yml (there is no `envVariables` at service level in import.yml):
+**Wire credentials in zerops.yml `run.envVariables`** — Managed services auto-generate credentials but they are NOT automatically available to runtime services. Wire them via `run.envVariables` in zerops.yml (the deploy-time config). Use import.yml `envSecrets` ONLY for generated secrets like `<@generateRandomString(...)>`:
 
 ```yaml
+# zerops.yml — wire cross-service references here
+zerops:
+  - setup: myapp
+    run:
+      envVariables:
+        DB_HOST: mydb
+        DB_PORT: ${mydb_port}
+        DB_NAME: ${mydb_dbName}
+        DB_USER: ${mydb_user}
+        DB_PASSWORD: ${mydb_password}
+```
+```yaml
+# import.yml — only generated secrets here
 services:
   - hostname: mydb
     type: mariadb@{version}
@@ -29,18 +42,14 @@ services:
   - hostname: myapp
     type: nodejs@22
     envSecrets:
-      DB_HOST: mydb
-      DB_PORT: ${mydb_port}
-      DB_NAME: ${mydb_dbName}
-      DB_USER: ${mydb_user}
-      DB_PASSWORD: ${mydb_password}
+      APP_SECRET: <@generateRandomString(<32>)>
 ```
 
-Without this wiring, the runtime service has no way to connect to managed services.
+Without zerops.yml wiring, the runtime service has no way to connect to managed services.
 
 ## Service Wiring Templates
 
-Below, **VARS** = config values, **SECRETS** = credentials. **CRITICAL: In import.yml, put ALL of them (both VARS and SECRETS) in `envSecrets`.** There is no `envVariables` at service level in import.yml — using it will silently drop the values. In zerops.yml, use `run.envVariables` for VARS. Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
+Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-service references (both VARS and SECRETS) in zerops.yml `run.envVariables`. Use import.yml `envSecrets` ONLY for generated secrets (`<@generateRandomString(...)>`) and real credentials that must exist before first deploy. There is no `envVariables` at service level in import.yml — using it will silently drop the values. Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
 
 ## PostgreSQL
 **Type**: `postgresql` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable

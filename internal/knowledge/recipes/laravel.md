@@ -43,6 +43,9 @@ zerops:
       os: ubuntu
       documentRoot: public
       envVariables:
+        APP_NAME: MyLaravelApp
+        APP_ENV: production
+        APP_DEBUG: "false"
         APP_LOCALE: en
         APP_FAKER_LOCALE: en_US
         APP_FALLBACK_LOCALE: en
@@ -128,6 +131,9 @@ zerops:
         APP_MAINTENANCE_DRIVER: file
         APP_MAINTENANCE_STORE: database
         APP_TIMEZONE: UTC
+        APP_NAME: MyLaravelApp
+        APP_ENV: production
+        APP_DEBUG: "false"
         APP_URL: ${zeropsSubdomain}
 
         DB_CONNECTION: pgsql
@@ -172,9 +178,6 @@ services:
     type: php-nginx@8.4
     enableSubdomainAccess: true
     envSecrets:
-      APP_NAME: MyLaravelApp
-      APP_DEBUG: true
-      APP_ENV: development
       APP_KEY: <@generateRandomString(<32>)>
 
   - hostname: db
@@ -202,9 +205,6 @@ services:
     type: php-nginx@8.4
     enableSubdomainAccess: true
     envSecrets:
-      APP_NAME: MyLaravelApp
-      APP_DEBUG: true
-      APP_ENV: development
       APP_KEY: <@generateRandomString(<32>)>
 
   - hostname: db

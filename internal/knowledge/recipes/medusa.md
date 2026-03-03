@@ -26,6 +26,8 @@ zerops:
     run:
       base: nodejs@22
       envVariables:
+        ADMIN_CORS: ${zeropsSubdomain}
+        SUPERADMIN_EMAIL: admin@example.com
         DATABASE_TYPE: postgres
         NODE_ENV: production
         BACKEND_URL: ${MEDUSA_INSTANCE_URL}
@@ -87,10 +89,8 @@ services:
     type: nodejs@22
     enableSubdomainAccess: true
     envSecrets:
-      ADMIN_CORS: ${zeropsSubdomain}
       COOKIE_SECRET: <@generateRandomString(<32>)>
       JWT_SECRET: <@generateRandomString(<32>)>
-      SUPERADMIN_EMAIL: admin@example.com
       SUPERADMIN_PASSWORD: s4lt_<@generateRandomString(<16>)>
     verticalAutoscaling:
       minRam: 0.5
@@ -105,7 +105,7 @@ Medusa v2 uses `medusa-config.ts` for all service connections. Key environment v
 - `REDIS_URL`, `CACHE_REDIS_URL`, `EVENTS_REDIS_URL` — all point to the Valkey service via `${redis_hostname}`
 - `MINIO_*` — S3-compatible object storage via Zerops object-storage service
 - `MEILISEARCH_HOST` and `MEILISEARCH_API_KEY` — full-text search via `${search_hostname}` and `${search_masterKey}`
-- `ADMIN_CORS` — set as envSecret resolving to `${zeropsSubdomain}` for admin panel access
+- `ADMIN_CORS` — set in zerops.yml `run.envVariables` using `${zeropsSubdomain}` for admin panel access
 
 ## Common Failures
 - **Build OOM**: Medusa v2 build is memory-intensive; set `minRam: 0.5` or higher in verticalAutoscaling

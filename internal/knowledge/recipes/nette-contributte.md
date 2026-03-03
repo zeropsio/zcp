@@ -30,6 +30,8 @@ zerops:
       os: alpine
       documentRoot: www/
       envVariables:
+        NETTE_DEBUG: "0"
+        NETTE_ENV: production
         DATABASE_HOSTNAME: ${db_hostname}
         DATABASE_USER: ${db_user}
         DATABASE_PASSWORD: ${db_password}
@@ -55,8 +57,6 @@ services:
     enableSubdomainAccess: true
     envSecrets:
       ADMIN_PASSWORD: <@generateRandomString(<24>)>
-      NETTE_DEBUG: 1
-      NETTE_ENV: dev
 
   - hostname: db
     type: postgresql@16
@@ -73,8 +73,8 @@ services:
 - **DATABASE_HOSTNAME / DATABASE_USER / DATABASE_PASSWORD / DATABASE_NAME / DATABASE_PORT** -- explicit cross-service refs for granular DB config
 - **REDIS_URI** -- uses `tcp://${redis_hostname}:${redis_port}` for Redis connection
 - **ADMIN_PASSWORD** -- generated via `<@generateRandomString(<24>)>` in import.yml envSecrets
-- **NETTE_DEBUG** -- set to `1` for dev; set to `0` for production
-- **NETTE_ENV** -- set to `dev` for development; set to `prod` for production
+- **NETTE_DEBUG** -- set in zerops.yml `run.envVariables` (defaults to `0` for production)
+- **NETTE_ENV** -- set in zerops.yml `run.envVariables` (defaults to `production`)
 - **documentRoot: www/** -- Nette-specific web root
 - **No --no-dev flag** on composer install -- dev dependencies are needed for fixtures in dev mode
 - Nette config for Redis sessions:

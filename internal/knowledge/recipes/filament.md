@@ -30,6 +30,8 @@ zerops:
       os: alpine
       documentRoot: public
       envVariables:
+        APP_ENV: production
+        APP_DEBUG: "false"
         APP_LOCALE: en
         APP_FAKER_LOCALE: en_US
         APP_FALLBACK_LOCALE: en
@@ -95,8 +97,6 @@ services:
     enableSubdomainAccess: true
     envSecrets:
       APP_KEY: <@generateRandomString(<32>)>
-      APP_DEBUG: true
-      APP_ENV: development
 
   - hostname: db
     type: postgresql@16
