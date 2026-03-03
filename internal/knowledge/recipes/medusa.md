@@ -115,11 +115,9 @@ Medusa v2 uses `medusa-config.ts` for all service connections. Key environment v
 
 ## Gotchas
 
-- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **initCommands use `zsc execOnce`** — per-deploy migrations use `${appVersionId}` suffix so they run once per version; initial setup commands (superadmin, seed data) use fixed keys so they run once in the service lifetime
 - **Port 9000** — Medusa listens on 9000, not the typical 3000; both readinessCheck and healthCheck must target `/health` on port 9000
 - **Four managed services required** — PostgreSQL, Valkey, Meilisearch, and object-storage must all be created before Medusa can start
 - **`#yamlPreprocessor=on` required in import.yml** — envSecrets use `<@generateRandomString(...)>` which needs the YAML preprocessor
 - **STORE_CORS** must include all storefront URLs (comma-separated) for cross-origin API access from frontend applications
 - **Deploy files include `./src/scripts/seed-files`** — seed data files are needed at runtime for initial data population via initCommands
-- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

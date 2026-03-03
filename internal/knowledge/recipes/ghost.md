@@ -90,11 +90,9 @@ services:
 
 ## Gotchas
 
-- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **maxContainers: 1** is MANDATORY — Ghost uses local file locks and cannot run in multiple containers
 - Ghost listens on port **2368** (not 3000 or 8080)
 - The `url` env var controls all generated links; set it to `${zeropsSubdomain}` for development or your domain for production
 - S3 storage adapter requires `ghost-storage-adapter-s3` installed during build and the adapter copied to `content/adapters/storage/s3`
 - For MariaDB HA in production: switch to `mode: HA` and add `SET GLOBAL wsrep_sync_wait=1;` in initCommands for Galera sync
 - Admin interface is at `/ghost` on the subdomain URL
-- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

@@ -209,61 +209,61 @@ func TestNormalizeRuntimeName(t *testing.T) {
 		want  string
 	}{
 		// PHP variants
-		{"php-nginx@8.4", "PHP"},
-		{"php-apache@8.3", "PHP"},
-		{"php@8.4", "PHP"},
-		{"php", "PHP"},
+		{"php-nginx@8.4", "php"},
+		{"php-apache@8.3", "php"},
+		{"php@8.4", "php"},
+		{"php", "php"},
 
 		// Node.js ecosystem
-		{"nodejs@22", "Node.js"},
-		{"nodejs@20", "Node.js"},
-		{"nodejs", "Node.js"},
-		{"bun@1.2", "Bun"},
-		{"bun", "Bun"},
-		{"deno@2", "Deno"},
+		{"nodejs@22", "nodejs"},
+		{"nodejs@20", "nodejs"},
+		{"nodejs", "nodejs"},
+		{"bun@1.2", "bun"},
+		{"bun", "bun"},
+		{"deno@2", "deno"},
 
 		// Python
-		{"python@3.12", "Python"},
-		{"python@3.11", "Python"},
-		{"python", "Python"},
+		{"python@3.12", "python"},
+		{"python@3.11", "python"},
+		{"python", "python"},
 
 		// Go
-		{"go@1", "Go"},
-		{"go", "Go"},
+		{"go@1", "go"},
+		{"go", "go"},
 
 		// Java
-		{"java@21", "Java"},
-		{"java", "Java"},
+		{"java@21", "java"},
+		{"java", "java"},
 
 		// .NET
-		{"dotnet@8", ".NET"},
-		{"dotnet", ".NET"},
+		{"dotnet@8", "dotnet"},
+		{"dotnet", "dotnet"},
 
 		// Rust
-		{"rust@1", "Rust"},
-		{"rust", "Rust"},
+		{"rust@1", "rust"},
+		{"rust", "rust"},
 
 		// Elixir
-		{"elixir@1", "Elixir"},
+		{"elixir@1", "elixir"},
 
 		// Gleam
-		{"gleam@1", "Gleam"},
+		{"gleam@1", "gleam"},
 
 		// Ruby
-		{"ruby@3.4", "Ruby"},
-		{"ruby@3.3", "Ruby"},
-		{"ruby", "Ruby"},
+		{"ruby@3.4", "ruby"},
+		{"ruby@3.3", "ruby"},
+		{"ruby", "ruby"},
 
 		// Static
-		{"static", "Static"},
+		{"static", "static"},
 
 		// Docker
-		{"docker@26", "Docker"},
-		{"docker", "Docker"},
+		{"docker@26", "docker"},
+		{"docker", "docker"},
 
 		// Base OS
-		{"alpine", "Alpine"},
-		{"ubuntu", "Ubuntu"},
+		{"alpine", "alpine"},
+		{"ubuntu", "ubuntu"},
 
 		// Unknown
 		{"unknown@1.0", ""},

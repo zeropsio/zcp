@@ -24,10 +24,15 @@ func testStoreWithCore(t *testing.T) *Store {
 			Title:   "Zerops Platform Universals",
 			Content: "# Zerops Platform Universals\n\nBind 0.0.0.0. deployFiles mandatory. No .env files.",
 		},
-		"zerops://themes/runtimes": {
-			URI:     "zerops://themes/runtimes",
-			Title:   "Runtime Deltas",
-			Content: "## PHP\n\nBuild php@X, run php-nginx@X. Port 80.\n\n## Node.js\n\nnode_modules in deployFiles. SSR patterns.",
+		"zerops://runtimes/php": {
+			URI:     "zerops://runtimes/php",
+			Title:   "PHP on Zerops",
+			Content: "# PHP on Zerops\n\n## Keywords\nphp, php-nginx, zerops.yml\n\n## TL;DR\nBuild php@X, run php-nginx@X. Port 80.\n\n### Build != Run\nBuild php@X, run php-nginx@X. Port 80.",
+		},
+		"zerops://runtimes/nodejs": {
+			URI:     "zerops://runtimes/nodejs",
+			Title:   "Node.js on Zerops",
+			Content: "# Node.js on Zerops\n\n## Keywords\nnodejs, node, npm\n\n## TL;DR\nnode_modules in deployFiles. SSR patterns.\n\n### Build Procedure\nnode_modules in deployFiles. SSR patterns.",
 		},
 		"zerops://themes/services": {
 			URI:     "zerops://themes/services",
@@ -297,9 +302,9 @@ func TestStore_GetRecipe_FuzzyMatch(t *testing.T) {
 			name:  "PrefixMultipleResults",
 			query: "next",
 			docs: map[string]*Document{
-				"zerops://recipes/ghost":         {URI: "zerops://recipes/ghost", Content: "Ghost recipe"},
-				"zerops://recipes/nextjs-ssr":    {URI: "zerops://recipes/nextjs-ssr", Content: "SSR recipe", TLDR: "Next.js SSR on Node.js"},
-				"zerops://recipes/nextjs-static": {URI: "zerops://recipes/nextjs-static", Content: "Static recipe", TLDR: "Next.js static export"},
+				"zerops://recipes/ghost":      {URI: "zerops://recipes/ghost", Content: "Ghost recipe"},
+				"zerops://recipes/nextjs-ssr": {URI: "zerops://recipes/nextjs-ssr", Content: "SSR recipe", TLDR: "Next.js SSR on Node.js"},
+				"zerops://recipes/nextjs":     {URI: "zerops://recipes/nextjs", Content: "Merged recipe", TLDR: "Next.js on Zerops"},
 			},
 			wantSubstr: "Multiple recipes match",
 		},
@@ -365,5 +370,120 @@ func TestStore_GetRecipe_FuzzyMatch(t *testing.T) {
 				t.Errorf("result missing expected substring %q, got:\n%s", tt.wantSubstr, result)
 			}
 		})
+	}
+}
+
+// --- getRuntimeGuide Tests ---
+
+func TestStore_GetRuntimeGuide(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		slug string
+		want string // substring expected in guide
+	}{
+		{
+			name: "PHP guide",
+			slug: "php",
+			want: "PHP on Zerops",
+		},
+		{
+			name: "Node.js guide",
+			slug: "nodejs",
+			want: "Node.js on Zerops",
+		},
+		{
+			name: "unknown returns empty",
+			slug: "nonexistent",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := testStoreWithCore(t)
+			guide := store.getRuntimeGuide(tt.slug)
+			if tt.want == "" {
+				if guide != "" {
+					t.Errorf("expected empty guide, got %d chars", len(guide))
+				}
+				return
+			}
+			if !strings.Contains(guide, tt.want) {
+				t.Errorf("guide missing %q", tt.want)
+			}
+		})
+	}
+}
+
+// --- detectRecipeRuntime Tests ---
+
+func TestStore_DetectRecipeRuntime(t *testing.T) {
+	t.Parallel()
+	store := testStoreWithCore(t)
+
+	tests := []struct {
+		recipe string
+		want   string
+	}{
+		{"laravel", "php"},
+		{"nextjs-ssr", "nodejs"},
+		{"svelte-nodejs", "nodejs"},
+		{"django", "python"},
+		{"echo-go", "go"},
+		{"rust", "rust"},
+		{"ghost", "nodejs"},
+		{"bun-hono", "bun"},
+		// Static-only recipes should return "" (static skipped)
+		{"angular", ""},
+		{"vue", ""},
+		// Unknown recipe
+		{"unknown-recipe", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.recipe, func(t *testing.T) {
+			t.Parallel()
+			got := store.detectRecipeRuntime(tt.recipe)
+			if got != tt.want {
+				t.Errorf("detectRecipeRuntime(%q) = %q, want %q", tt.recipe, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- GetRecipe auto-prepend Tests ---
+
+func TestStore_GetRecipe_PrependsRuntimeGuide(t *testing.T) {
+	t.Parallel()
+	store := testStoreWithCore(t)
+
+	recipe, err := store.GetRecipe("laravel")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should contain universals
+	if !strings.Contains(recipe, "Platform Universals") {
+		t.Error("recipe should be prepended with universals")
+	}
+	// Should contain PHP runtime guide (auto-detected from "laravel" -> "php")
+	if !strings.Contains(recipe, "PHP on Zerops") {
+		t.Error("recipe should be prepended with PHP runtime guide")
+	}
+	// Should contain recipe content
+	if !strings.Contains(recipe, "Multi-base build") {
+		t.Error("recipe should contain original content")
+	}
+	// Order: universals -> runtime guide -> recipe
+	uIdx := strings.Index(recipe, "Platform Universals")
+	rIdx := strings.Index(recipe, "PHP on Zerops")
+	cIdx := strings.Index(recipe, "Multi-base build")
+	if uIdx >= rIdx {
+		t.Error("universals should appear before runtime guide")
+	}
+	if rIdx >= cIdx {
+		t.Error("runtime guide should appear before recipe content")
 	}
 }

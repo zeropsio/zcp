@@ -4,6 +4,9 @@ import (
 	"strings"
 )
 
+// runtimeStatic is the slug for the static runtime type.
+const runtimeStatic = "static"
+
 // parseH2Sections splits markdown content by H2 headers (## ), respecting fenced code blocks.
 // Returns map[sectionName]sectionContent.
 // If no H2 headers found, returns empty map.
@@ -52,27 +55,27 @@ func parseH2Sections(content string) map[string]string {
 	return sections
 }
 
-// runtimeNormalizer maps MCP runtime types to runtimes.md section names.
+// runtimeNormalizer maps MCP runtime types to runtime guide file slugs.
 var runtimeNormalizer = map[string]string{
-	"php":        "PHP",
-	"php-nginx":  "PHP",
-	"php-apache": "PHP",
-	"nodejs":     "Node.js",
-	"bun":        "Bun",
-	"deno":       "Deno",
-	"python":     "Python",
-	"go":         "Go",
-	"java":       "Java",
-	"dotnet":     ".NET",
-	"rust":       "Rust",
-	"elixir":     "Elixir",
-	"gleam":      "Gleam",
-	"ruby":       "Ruby",
-	"nginx":      "Nginx",
-	"static":     "Static",
-	"docker":     "Docker",
-	"alpine":     "Alpine",
-	"ubuntu":     "Ubuntu",
+	"php":        "php",
+	"php-nginx":  "php",
+	"php-apache": "php",
+	"nodejs":     "nodejs",
+	"bun":        "bun",
+	"deno":       "deno",
+	"python":     "python",
+	"go":         "go",
+	"java":       "java",
+	"dotnet":     "dotnet",
+	"rust":       "rust",
+	"elixir":     "elixir",
+	"gleam":      "gleam",
+	"ruby":       "ruby",
+	"nginx":      "nginx",
+	"static":     runtimeStatic,
+	"docker":     "docker",
+	"alpine":     "alpine",
+	"ubuntu":     "ubuntu",
 }
 
 // normalizeRuntimeName extracts runtime base name from versioned string and maps to section name.
@@ -150,13 +153,13 @@ func normalizeServiceName(service string) string {
 
 // --- Section extraction helpers for GetBriefing layers ---
 
-// getRuntimeException returns the section content for a normalized runtime name from runtimes.md.
-func (s *Store) getRuntimeException(normalizedName string) string {
-	doc, err := s.Get("zerops://themes/runtimes")
+// getRuntimeGuide returns the full content of a per-runtime guide document.
+func (s *Store) getRuntimeGuide(slug string) string {
+	doc, err := s.Get("zerops://runtimes/" + slug)
 	if err != nil {
 		return ""
 	}
-	return doc.H2Sections()[normalizedName]
+	return doc.Content
 }
 
 // getServiceCard returns the section content for a normalized service name from services.md.

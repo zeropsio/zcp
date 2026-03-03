@@ -85,7 +85,6 @@ console.log(`Listening on ${server.hostname}:${server.port}`);
 
 ## Gotchas
 
-- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **`hostname: "0.0.0.0"` is mandatory** in Bun.serve() -- without it, Zerops L7 balancer cannot reach the app (502)
 - **Bundled deploy** -- use `bun build --outdir dist --target bun`, deploy `dist/` + `package.json` only, do NOT deploy `node_modules`
 - **`DATABASE_URL` completeness** -- the full connection string is assembled from cross-service references in zerops.yml `run.envVariables`
@@ -93,4 +92,3 @@ console.log(`Listening on ${server.hostname}:${server.port}`);
 - **Valkey** -- no password needed on the private network, use `${cache_host}` and `${cache_port}` for connection
 - **envSecrets vs envVariables** -- use `envSecrets` in import.yml only for generated secrets (`<@generateRandomString(...)>`); use zerops.yml `run.envVariables` for all configuration including cross-service references
 - **Health check** -- `/status` endpoint is recommended for Zerops readiness verification
-- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

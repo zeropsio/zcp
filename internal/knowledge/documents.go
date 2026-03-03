@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-//go:embed themes/*.md recipes/*.md guides/*.md decisions/*.md
+//go:embed themes/*.md recipes/*.md guides/*.md decisions/*.md runtimes/*.md
 var contentFS embed.FS
 
 // knowledgeDirs lists the top-level directories in the embedded knowledge filesystem.
-var knowledgeDirs = []string{"themes", "recipes", "guides", "decisions"}
+var knowledgeDirs = []string{"themes", "recipes", "guides", "decisions", "runtimes"}
 
 // Document represents a parsed knowledge document.
 type Document struct {

@@ -97,11 +97,9 @@ Build-time env vars use `${RUNTIME_*}` prefix to reference the runtime service's
 
 ## Gotchas
 
-- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Ubuntu OS required** — both build and run must set `os: ubuntu` (Alpine lacks dependencies Payload needs)
 - **Migrations run during BUILD** (not runtime) — `zsc test tcp` ensures PostgreSQL is ready before `pnpm payload migrate`
 - **Build env vars use RUNTIME_ prefix** to access runtime secrets during build phase
 - Object storage required for media uploads (Payload S3 plugin)
 - `maxContainers: 1` recommended — Payload with Next.js does not reliably handle multiple containers
 - Service priorities ensure DB and storage are ready before the app service builds
-- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

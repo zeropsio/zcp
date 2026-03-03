@@ -106,11 +106,9 @@ export const dataSource = new DataSource({
 
 ## Gotchas
 
-- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **TypeORM migrations** use `zsc execOnce ${appVersionId}` in initCommands so they run exactly once per deploy, not per container
 - **trust proxy** required: `app.set('trust proxy', true)` in main.ts for Express-based NestJS behind Zerops L7 balancer
 - **S3 file uploads** use multer + aws-sdk; `STORAGE_REGION` must be set (use `us-east-1` for Zerops object storage)
 - **DATABASE_HOST** uses hardcoded `db` hostname matching the import.yml service hostname
 - **Mailpit** is a dev-only SMTP mock; replace with production SMTP service and update SMTP env vars for production
 - **Adminer** (DB GUI) omitted from import.yml by default; add `php-apache@8.1` service if needed for development
-- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

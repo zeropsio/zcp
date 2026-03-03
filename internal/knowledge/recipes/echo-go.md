@@ -84,7 +84,6 @@ log.SetOutput(os.Stdout)
 
 ## Gotchas
 
-- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Logger must use `os.Stdout`** for Zerops log collection -- `os.Stderr` logs are not captured
 - **HTTPS termination disabled** in app code -- Zerops SSL proxy handles TLS termination
 - **Sessions stored in Valkey** (Redis-compatible), files in S3 Object Storage
@@ -92,4 +91,3 @@ log.SetOutput(os.Stdout)
 - **Mailpit** is for development only -- replace with a production SMTP provider before going live
 - **Adminer** should have public access disabled or be removed entirely in production
 - **Database seeding** runs via `zsc execOnce` -- executes exactly once across all containers (HA-safe)
-- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

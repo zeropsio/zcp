@@ -16,12 +16,12 @@ func TestStore_GetBriefing_RuntimeOnly(t *testing.T) {
 		{
 			name:    "PHP runtime",
 			runtime: "php-nginx@8.4",
-			want:    []string{"PHP", "Build php@X", "Port 80"},
+			want:    []string{"PHP on Zerops", "Build php@X", "Port 80"},
 		},
 		{
 			name:    "Node.js runtime",
 			runtime: "nodejs@22",
-			want:    []string{"Node.js", "node_modules"},
+			want:    []string{"Node.js on Zerops", "node_modules"},
 		},
 	}
 
@@ -161,11 +161,11 @@ func TestStore_GetBriefing_LayerOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runtimeIdx := strings.Index(briefing, "Runtime-Specific:")
+	runtimeIdx := strings.Index(briefing, "PHP on Zerops")
 	serviceIdx := strings.Index(briefing, "Service Cards")
 
 	if runtimeIdx < 0 {
-		t.Fatal("briefing missing runtime section")
+		t.Fatal("briefing missing runtime guide")
 	}
 	if serviceIdx < 0 {
 		t.Fatal("briefing missing service cards")

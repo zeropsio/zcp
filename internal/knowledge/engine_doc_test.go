@@ -62,7 +62,6 @@ func TestStore_ThemeDocsEmbedded(t *testing.T) {
 	store := newTestStore(t)
 	themeURIs := []string{
 		"zerops://themes/core",
-		"zerops://themes/runtimes",
 		"zerops://themes/services",
 		"zerops://themes/operations",
 	}
@@ -98,9 +97,9 @@ func TestPathToURI(t *testing.T) {
 		uri  string
 	}{
 		{"themes/core.md", "zerops://themes/core"},
-		{"themes/runtimes.md", "zerops://themes/runtimes"},
 		{"themes/services.md", "zerops://themes/services"},
 		{"recipes/laravel.md", "zerops://recipes/laravel"},
+		{"runtimes/nodejs.md", "zerops://runtimes/nodejs"},
 	}
 	for _, tt := range tests {
 		got := pathToURI(tt.path)

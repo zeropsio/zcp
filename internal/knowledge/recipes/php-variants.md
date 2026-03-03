@@ -86,11 +86,9 @@ services:
 
 ## Gotchas
 
-- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Build base** is generic `php@8.3` (for composer), **run base** includes web server
 - **Apache requires .htaccess** in deployFiles, Nginx does not
 - Both services can coexist in the same project with separate load balancing
 - **Health check endpoint `/status`** must be implemented in the application
 - **DB_PASS** uses `${db_password}` -- no manual secret needed for database password
 - 3 services: apacheapi + nginxapi + db (PostgreSQL)
-- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

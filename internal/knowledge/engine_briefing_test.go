@@ -135,8 +135,8 @@ func TestStore_GetBriefing_StaticRecipes(t *testing.T) {
 	if !strings.Contains(briefing, "Matching Recipes") {
 		t.Error("static briefing missing Matching Recipes section")
 	}
-	if !strings.Contains(briefing, "svelte-static") {
-		t.Error("static briefing missing svelte-static recipe hint")
+	if !strings.Contains(briefing, "svelte") {
+		t.Error("static briefing missing svelte recipe hint")
 	}
 }
 
@@ -168,21 +168,21 @@ func TestStore_GetBriefing_AutoPromotesRuntimeFromServices(t *testing.T) {
 		{
 			name:          "python in services gets promoted",
 			services:      []string{"python@3.12", "valkey@7.2"},
-			wantRuntime:   "Runtime-Specific: Python",
+			wantRuntime:   "Python on Zerops",
 			wantService:   "Valkey",
 			wantNoService: "", // Python may appear in runtime section, not as service card
 		},
 		{
 			name:          "java in services gets promoted",
 			services:      []string{"java@21", "mariadb@10.6"},
-			wantRuntime:   "Runtime-Specific: Java",
+			wantRuntime:   "Java on Zerops",
 			wantService:   "MariaDB",
 			wantNoService: "",
 		},
 		{
 			name:          "nodejs in services gets promoted",
 			services:      []string{"nodejs@22", "postgresql@16"},
-			wantRuntime:   "Runtime-Specific: Node.js",
+			wantRuntime:   "Node.js on Zerops",
 			wantService:   "PostgreSQL",
 			wantNoService: "",
 		},
@@ -205,8 +205,8 @@ func TestStore_GetBriefing_AutoPromotesRuntimeFromServices(t *testing.T) {
 					t.Errorf("briefing missing auto-promoted runtime section %q", tt.wantRuntime)
 				}
 			} else {
-				if strings.Contains(briefing, "Runtime-Specific:") {
-					t.Error("briefing should not contain runtime delta when only managed services are passed")
+				if strings.Contains(briefing, "on Zerops\n") {
+					t.Error("briefing should not contain runtime guide when only managed services are passed")
 				}
 			}
 			if tt.wantService != "" && !strings.Contains(briefing, tt.wantService) {
@@ -240,8 +240,8 @@ func TestBriefing_NginxRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	if !strings.Contains(briefing, "Runtime-Specific: Nginx") {
-		t.Error("briefing missing Nginx runtime delta section")
+	if !strings.Contains(briefing, "Nginx on Zerops") {
+		t.Error("briefing missing Nginx runtime guide")
 	}
 }
 
@@ -273,13 +273,13 @@ func TestStore_GetBriefing_NoPromotionWhenRuntimeSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	// PHP should be the runtime delta (from explicit runtime param)
-	if !strings.Contains(briefing, "Runtime-Specific: PHP") {
-		t.Error("briefing missing explicitly-set PHP runtime delta")
+	// PHP should be the runtime guide (from explicit runtime param)
+	if !strings.Contains(briefing, "PHP on Zerops") {
+		t.Error("briefing missing explicitly-set PHP runtime guide")
 	}
-	// Node.js should NOT get its own runtime delta section (it's in services, runtime is already set)
-	if strings.Contains(briefing, "Runtime-Specific: Node.js") {
-		t.Error("briefing should not have second runtime delta when runtime is already set")
+	// Node.js should NOT get its own runtime guide (it's in services, runtime is already set)
+	if strings.Contains(briefing, "Node.js on Zerops") {
+		t.Error("briefing should not have second runtime guide when runtime is already set")
 	}
 }
 
@@ -289,10 +289,10 @@ func TestStore_GetBriefing_LayerOrderRealDocs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	runtimeIdx := strings.Index(briefing, "Runtime-Specific: Bun")
+	runtimeIdx := strings.Index(briefing, "Bun on Zerops")
 	serviceIdx := strings.Index(briefing, "Service Cards")
 	if runtimeIdx < 0 {
-		t.Fatal("briefing missing Runtime-Specific: Bun section")
+		t.Fatal("briefing missing Bun runtime guide")
 	}
 	if serviceIdx < 0 {
 		t.Fatal("briefing missing Service Cards section")

@@ -195,39 +195,6 @@ func TestRecipeLint(t *testing.T) {
 				}
 			})
 
-			t.Run("DeployFilesAnnotation", func(t *testing.T) {
-				sections := parseRecipeSections(content)
-				gotchas := findSectionByPrefix(sections, "Gotchas")
-
-				needsAnnotation := false
-				for _, block := range zeropsBlocks {
-					var root zeropsYmlRoot
-					if err := yaml.Unmarshal([]byte(block), &root); err != nil {
-						continue
-					}
-					for _, entry := range root.Zerops {
-						// Skip static deploy targets — no self-deploy concept
-						if entry.Run != nil && isStaticBase(entry.Run.Base) {
-							continue
-						}
-						if entry.Build == nil || entry.Build.DeployFiles == nil {
-							continue
-						}
-						if !isWholeDirDeploy(entry.Build.DeployFiles) {
-							needsAnnotation = true
-							break
-						}
-					}
-					if needsAnnotation {
-						break
-					}
-				}
-
-				if needsAnnotation && !strings.Contains(gotchas, "deployFiles is for stage/production") {
-					t.Error("zerops.yml has non-whole-dir deployFiles but Gotchas missing 'deployFiles is for stage/production' annotation")
-				}
-			})
-
 			t.Run("VersionsKnown", func(t *testing.T) {
 				versions := extractVersionRefs(content)
 				for _, v := range versions {
@@ -528,11 +495,15 @@ func findSectionByPrefix(sections map[string]string, prefix string) string {
 	return ""
 }
 
-// hasH2Section checks if content has an H2 section whose title contains the given substring.
+// hasH2Section checks if content has an H2 section whose title contains the given substring,
+// or an H3 subsection inside any H2 body matching the substring (for merged recipes).
 func hasH2Section(content, substr string) bool {
 	for line := range strings.SplitSeq(content, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "## ") && strings.Contains(trimmed, substr) {
+			return true
+		}
+		if strings.HasPrefix(trimmed, "### ") && strings.Contains(trimmed, substr) {
 			return true
 		}
 	}
@@ -540,24 +511,63 @@ func hasH2Section(content, substr string) bool {
 }
 
 // findYAMLBlocksInSections extracts YAML code blocks from H2 sections matching sectionSubstr.
+// For merged recipes where zerops.yml/import.yml appear as H3 inside H2 sections (e.g.
+// ### zerops.yml inside ## SSR), extracts only from matching H3 sub-sections.
 func findYAMLBlocksInSections(content, sectionSubstr string) []string {
 	sections := parseRecipeSections(content)
 	var blocks []string
 	for title, body := range sections {
 		if strings.Contains(title, sectionSubstr) {
+			// H2 title matches directly — extract all YAML blocks from body.
 			blocks = append(blocks, extractYAMLBlocks(body)...)
+		} else if strings.Contains(body, "### "+sectionSubstr) {
+			// H3 match — extract only from matching H3 sub-sections.
+			for _, sub := range extractH3Subsections(body, sectionSubstr) {
+				blocks = append(blocks, extractYAMLBlocks(sub)...)
+			}
 		}
 	}
 	return blocks
 }
 
+// extractH3Subsections returns the body text of H3 sections whose title contains substr.
+func extractH3Subsections(body, substr string) []string {
+	var results []string
+	var current strings.Builder
+	inMatch := false
+
+	for line := range strings.SplitSeq(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### ") {
+			if inMatch {
+				results = append(results, current.String())
+				current.Reset()
+			}
+			inMatch = strings.Contains(trimmed, substr)
+		}
+		if inMatch {
+			current.WriteString(line + "\n")
+		}
+	}
+	if inMatch {
+		results = append(results, current.String())
+	}
+	return results
+}
+
 // findRawSectionContent returns the raw text under the first H2 section matching substr.
-// Includes the YAML code block and any text before/after it (like preprocessor comments).
+// For merged recipes, extracts only from matching H3 sub-sections within H2 bodies.
 func findRawSectionContent(content, substr string) string {
 	sections := parseRecipeSections(content)
 	for title, body := range sections {
 		if strings.Contains(title, substr) {
 			return body
+		}
+		if strings.Contains(body, "### "+substr) {
+			subs := extractH3Subsections(body, substr)
+			if len(subs) > 0 {
+				return subs[0]
+			}
 		}
 	}
 	return ""
@@ -623,38 +633,4 @@ func extractVersionRefs(content string) []string {
 	}
 
 	return refs
-}
-
-// isWholeDirDeploy returns true if the deployFiles value deploys the entire
-// build directory. Recognizes ".", "./", "/" as whole-dir patterns.
-// Handles both string and []any (YAML string or array).
-func isWholeDirDeploy(v any) bool {
-	switch val := v.(type) {
-	case string:
-		return isWholeDirPattern(val)
-	case []any:
-		if len(val) != 1 {
-			return false
-		}
-		if s, ok := val[0].(string); ok {
-			return isWholeDirPattern(s)
-		}
-		return false
-	default:
-		return false
-	}
-}
-
-func isWholeDirPattern(s string) bool {
-	switch s {
-	case ".", "./", "/":
-		return true
-	default:
-		return false
-	}
-}
-
-// isStaticBase returns true if the base is a static serving runtime.
-func isStaticBase(base string) bool {
-	return base == "static"
 }

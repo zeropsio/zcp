@@ -151,4 +151,3 @@ DATABASES = {
 - **PYTHONDONTWRITEBYTECODE=1** and **PYTHONUNBUFFERED=1** prevent .pyc file creation and ensure log output is not buffered.
 - Replace the `myproject.wsgi` start command with your actual Django project's WSGI module path.
 - **Selective deploy** -- for production, consider listing specific directories in `deployFiles` instead of `./` to reduce deploy size.
-- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

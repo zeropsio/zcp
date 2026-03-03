@@ -76,11 +76,9 @@ Bind address -- configure your web framework (Wisp, Mist) to listen on `0.0.0.0:
 
 ## Gotchas
 
-- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Erlang shipment is self-contained** -- `gleam export erlang-shipment` bundles the BEAM runtime; no Erlang/OTP needed on the runtime container
 - **Deploy with tilde** -- `build/erlang-shipment/~` extracts the shipment contents directly into `/var/www/` so `entrypoint.sh` is at the root
 - **Bind `0.0.0.0`** -- configure Wisp/Mist to bind all interfaces; binding `127.0.0.1` prevents the L7 balancer from reaching your app
 - **Cache build artifacts** -- cache both `build` and `_gleam_artefacts` directories for faster incremental builds
 - **DATABASE_URL format** -- uses `${db_connectionString}/${db_dbName}` which resolves to a full PostgreSQL connection URL including credentials
 - **Use `gleam@1.5` in import.yml** -- do not use `gleam@latest` in the import type field; use `gleam@1.5` for the specific version
-- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

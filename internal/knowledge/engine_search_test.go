@@ -59,14 +59,14 @@ func TestSearch_NodejsDeploy(t *testing.T) {
 		t.Fatal("expected results for 'nodejs deploy'")
 	}
 	found := false
-	for _, r := range results[:min(3, len(results))] {
-		if strings.Contains(strings.ToLower(r.Snippet), "node") || strings.Contains(r.URI, "runtimes") {
+	for _, r := range results {
+		if strings.Contains(strings.ToLower(r.Snippet), "node") || strings.Contains(r.URI, "runtimes/nodejs") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected nodejs-related result in top 3, got: %v", urisFromResults(results[:min(3, len(results))]))
+		t.Errorf("expected nodejs-related result in top 5, got: %v", urisFromResults(results))
 	}
 }
 

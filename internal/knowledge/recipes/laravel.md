@@ -238,4 +238,3 @@ services:
 - **Minimal setup** has no Redis/Valkey -- sessions, cache, and queue all use database driver
 - **Minimal setup** has no Object Storage -- file uploads use local filesystem (not suitable for multi-container scaling)
 - Full setup: 4 services (app + db + redis + storage). Minimal: 2 services (app + db).
-- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

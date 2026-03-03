@@ -104,4 +104,3 @@ services:
 - **Sessions** use Redis DB index 0 via `SESSION_HANDLER` config
 - **documentRoot: public** is required for Symfony (serves from `public/` directory)
 - 3 services: app + db (PostgreSQL) + redis (Valkey)
-- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

@@ -24,10 +24,15 @@ func testKnowledgeStore(t *testing.T) *knowledge.Store {
 			Title:   "Zerops Platform Universals",
 			Content: "# Zerops Platform Universals\n\nBind 0.0.0.0. deployFiles mandatory.",
 		},
-		"zerops://themes/runtimes": {
-			URI:     "zerops://themes/runtimes",
-			Title:   "Runtime Deltas",
-			Content: "## PHP\n\nPHP-specific rules.\n\n## Node.js\n\nNode.js-specific rules.",
+		"zerops://runtimes/php": {
+			URI:     "zerops://runtimes/php",
+			Title:   "PHP on Zerops",
+			Content: "# PHP on Zerops\n\n## Keywords\nphp, php-nginx, zerops.yml\n\n## TL;DR\nPHP-specific rules.\n\n### Details\nPHP-specific rules.",
+		},
+		"zerops://runtimes/nodejs": {
+			URI:     "zerops://runtimes/nodejs",
+			Title:   "Node.js on Zerops",
+			Content: "# Node.js on Zerops\n\n## Keywords\nnodejs, node, npm\n\n## TL;DR\nNode.js-specific rules.\n\n### Details\nNode.js-specific rules.",
 		},
 		"zerops://themes/services": {
 			URI:     "zerops://themes/services",

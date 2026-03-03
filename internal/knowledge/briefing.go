@@ -30,17 +30,14 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		sb.WriteString("\n\n")
 	}
 
-	// L3: Runtime delta (specific runtime only)
+	// L3: Runtime guide (specific runtime only)
 	runtimeBase := ""
 	if runtime != "" {
 		runtimeBase, _, _ = strings.Cut(runtime, "@")
-		normalized := normalizeRuntimeName(runtime)
-		if normalized != "" {
-			if section := s.getRuntimeException(normalized); section != "" {
-				sb.WriteString("## Runtime-Specific: ")
-				sb.WriteString(normalized)
-				sb.WriteString("\n\n")
-				sb.WriteString(section)
+		slug := normalizeRuntimeName(runtime)
+		if slug != "" {
+			if guide := s.getRuntimeGuide(slug); guide != "" {
+				sb.WriteString(guide)
 				sb.WriteString("\n\n---\n\n")
 			}
 		}
@@ -101,14 +98,15 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 	return sb.String(), nil
 }
 
-// GetRecipe returns the full content of a named recipe, prepended with platform universals.
+// GetRecipe returns the full content of a named recipe, prepended with platform universals
+// and an auto-detected runtime guide.
 // name: recipe filename without extension (e.g., "laravel")
 // Resolution chain: exact match → single fuzzy → disambiguation list → error.
 func (s *Store) GetRecipe(name string) (string, error) {
 	// Try exact match first.
 	uri := "zerops://recipes/" + name
 	if doc, err := s.Get(uri); err == nil {
-		return s.prependUniversals(doc.Content), nil
+		return s.prependRecipeContext(name, doc.Content), nil
 	}
 
 	// Fuzzy fallback: find matching recipes.
@@ -123,11 +121,38 @@ func (s *Store) GetRecipe(name string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("recipe %q not found: %w", matches[0], err)
 		}
-		return s.prependUniversals(doc.Content), nil
+		return s.prependRecipeContext(matches[0], doc.Content), nil
 	default:
 		// Multiple matches — return disambiguation.
 		return s.formatDisambiguation(name, matches), nil
 	}
+}
+
+// detectRecipeRuntime uses reverse runtimeRecipeHints to find the primary runtime for a recipe.
+// Skips "static" hits because merged recipes appear in both nodejs and static hints;
+// the Node.js runtime guide is the richer context.
+func (s *Store) detectRecipeRuntime(recipeName string) string {
+	for runtimeBase, prefixes := range runtimeRecipeHints {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(recipeName, prefix) {
+				if runtimeBase == runtimeStatic {
+					continue
+				}
+				return runtimeBase
+			}
+		}
+	}
+	return ""
+}
+
+// prependRecipeContext prepends universals and an auto-detected runtime guide to recipe content.
+func (s *Store) prependRecipeContext(recipeName, content string) string {
+	if rt := s.detectRecipeRuntime(recipeName); rt != "" {
+		if guide := s.getRuntimeGuide(rt); guide != "" {
+			content = guide + "\n\n---\n\n" + content
+		}
+	}
+	return s.prependUniversals(content)
 }
 
 // findMatchingRecipes returns recipe names matching the query via prefix, substring, or keyword.

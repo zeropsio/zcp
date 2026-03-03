@@ -46,5 +46,5 @@ alpine, ubuntu, docker, container, base image, linux, runtime base, os, choose b
 4. **Docker requires host networking**: Without `--network=host`, the container can't receive traffic
 
 ## See Also
-- zerops://themes/runtimes — Alpine, Ubuntu, Docker sections
+- zerops://runtimes/{name} — per-runtime guides (e.g. zerops://runtimes/alpine, zerops://runtimes/docker)
 - zerops://themes/core — build environment rules

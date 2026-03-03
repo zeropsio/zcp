@@ -86,10 +86,8 @@ HttpServer::new(|| App::new().service(status))
 
 ## Gotchas
 
-- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Bind `0.0.0.0`** -- Rust HTTP servers (Actix, Axum, Rocket) must bind `0.0.0.0`, not `127.0.0.1`, or Zerops L7 balancer cannot reach them
 - **Deploy only the binary** -- `./target/release/~/rust` uses the tilde wildcard to deploy just the compiled binary to `/var/www/rust`; do not deploy the entire `target/` directory
 - **Cache `target/`** -- Rust builds are slow; caching `target` between builds avoids recompiling dependencies from scratch
 - **Logger must output to stdout** -- Zerops collects logs from stdout/stderr only; configure your logger (env_logger, tracing) accordingly
 - **Binary name must match** -- the binary name in `deployFiles` and `start` must match the `[[bin]]` name in `Cargo.toml` (defaults to the package name)
-- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

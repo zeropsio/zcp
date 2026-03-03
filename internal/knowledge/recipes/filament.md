@@ -136,4 +136,3 @@ services:
 - **zsc execOnce initialize** runs db:seed only once ever (static key, not per-deploy)
 - **FILAMENT_FILESYSTEM_DISK** must be set separately from `FILESYSTEM_DISK` for Filament panel uploads
 - 4 services: app + db (PostgreSQL) + redis (Valkey) + storage (Object Storage)
-- **healthCheck is for stage/production only** -- the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

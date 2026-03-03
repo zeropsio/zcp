@@ -47,3 +47,8 @@ Core platform constraints every Zerops app must satisfy: bind 0.0.0.0, use deplo
 - Database migrations: use `zsc execOnce ${appVersionId} -- <command>` in `initCommands` for idempotent per-version execution. Do NOT use static keys — they prevent re-running after code changes.
 - Sessions MUST use an external store (Valkey, database) when running multiple containers. Filesystem sessions break with round-robin load balancing.
 - Cron jobs: use `zsc cronOnce` or ensure idempotency — multiple containers may execute the same cron.
+
+## Recipe Conventions
+
+- **deployFiles is for stage/production** — recipes show the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy.
+- **healthCheck is for stage/production only** — recipes show the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.

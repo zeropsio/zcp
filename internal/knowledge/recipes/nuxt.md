@@ -1,14 +1,14 @@
 # Nuxt on Zerops
 
-Nuxt 3 SSR with node-server preset on Node.js runtime.
-
 ## Keywords
-nuxt, vue, nodejs, ssr, nitro, node-server, javascript, typescript
+nuxt, vue, nodejs, ssr, static, ssg, nitro, node-server, javascript, typescript
 
 ## TL;DR
-Nuxt 3 SSR with `NITRO_PRESET=node-server` — deploy `.output/~` and start with `node server/index.mjs`.
+Nuxt 3 on Zerops -- SSR with `node-server` preset on Node.js or static pre-rendering with `nuxi generate` to static service.
 
-## zerops.yml
+## SSR (Node.js runtime)
+
+### zerops.yml
 ```yaml
 zerops:
   - setup: app
@@ -34,7 +34,7 @@ zerops:
           path: /
 ```
 
-## import.yml
+### import.yml
 ```yaml
 services:
   - hostname: app
@@ -42,18 +42,45 @@ services:
     enableSubdomainAccess: true
 ```
 
-## Configuration
+### Configuration
 
-Nuxt uses Nitro under the hood. The default Nitro preset for Zerops is `node-server`, which produces a standalone Node.js server. No explicit preset configuration is needed in `nuxt.config.ts` -- Nuxt auto-detects the correct preset during build.
+Nuxt uses Nitro under the hood. The default preset is `node-server`, auto-detected during build. The deploy path `.output/~` extracts contents into `/var/www/`, so the start command is `server/index.mjs` (not `.output/server/index.mjs`).
 
-The deploy path `.output/~` uses the Zerops tilde wildcard to extract the contents of `.output/` directly into `/var/www/`, so the start command references `server/index.mjs` (not `.output/server/index.mjs`).
+## Static Pre-rendering
+
+### zerops.yml
+```yaml
+zerops:
+  - setup: app
+    build:
+      base: nodejs@20
+      buildCommands:
+        - yarn
+        - yarn nuxi generate
+      deployFiles:
+        - .output/public/~
+      cache: node_modules
+    run:
+      base: static
+```
+
+### import.yml
+```yaml
+services:
+  - hostname: app
+    type: static
+    enableSubdomainAccess: true
+```
+
+### Configuration
+
+`nuxi generate` produces static HTML into `.output/public/`. No special `nuxt.config.ts` configuration needed.
 
 ## Gotchas
-
-- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
-- **Deploy `.output/~`** -- the tilde extracts contents to `/var/www/` so start path is `server/index.mjs` not `.output/server/index.mjs`
-- **Port 3000** is the default Nuxt/Nitro port -- must be declared in `ports` with `httpSupport: true`
-- **Nuxt binds 0.0.0.0** by default in SSR mode -- no extra host configuration needed
-- **Do NOT use `nuxt generate`** for SSR -- that produces static HTML; use `nuxt build` (or `yarn build`) for SSR mode
-- **For static pre-rendered sites** use `nuxt generate` with `static` base instead of `nodejs` runtime
-- **healthCheck is for stage/production only** — the recipe shows the production `run:` config. When using dev+stage pairs, omit `healthCheck` (and `readinessCheck`) from the dev entry. Dev uses `start: zsc noop --silent` with manual server control.
+- **SSR: deploy `.output/~`** -- tilde extracts contents so start path is `server/index.mjs`
+- **SSR: port 3000** is the default Nuxt/Nitro port -- declare in `ports` with `httpSupport: true`
+- **SSR: binds 0.0.0.0** by default in SSR mode
+- **SSR: do NOT use `nuxt generate`** for SSR -- that produces static HTML; use `nuxt build`
+- **Static: use `nuxi generate`** not `nuxt build` -- `nuxt build` produces an SSR server
+- **Static: deploy `.output/public/~`** -- tilde extracts contents to webroot
+- **Static: no server-side features** at runtime -- API routes and SSR are not available
