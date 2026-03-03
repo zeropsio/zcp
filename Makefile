@@ -67,7 +67,7 @@ release-patch: ## Patch bump, test, tag, push (e.g. v2.61.0 → v2.61.1)
 	@$(MAKE) _release BUMP=patch
 
 _release:
-	@if [ -n "$$(git status --porcelain 2>/dev/null)" ]; then \
+	@if [ -n "$$(git diff --name-only 2>/dev/null)$$(git diff --cached --name-only 2>/dev/null)" ]; then \
 		echo "ERROR: working tree is dirty. Commit first."; exit 1; \
 	fi; \
 	LATEST=$$(git describe --tags --abbrev=0 2>/dev/null); \
