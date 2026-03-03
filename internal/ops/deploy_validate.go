@@ -43,12 +43,14 @@ func ValidateZeropsYml(workingDir, targetHostname string) []string {
 		return warnings
 	}
 
-	if entry.Run.Start == "" {
-		warnings = append(warnings, "run.start is empty — app will not start after deploy")
-	}
+	if !hasImplicitWebServer(entry.Run.Base, entry.Build.Base) {
+		if entry.Run.Start == "" {
+			warnings = append(warnings, "run.start is empty — app will not start after deploy")
+		}
 
-	if len(entry.Run.Ports) == 0 {
-		warnings = append(warnings, "run.ports is empty — no ports exposed, HTTP checks will fail")
+		if len(entry.Run.Ports) == 0 {
+			warnings = append(warnings, "run.ports is empty — no ports exposed, HTTP checks will fail")
+		}
 	}
 
 	deployFiles := entry.Build.deployFilesList()
@@ -93,7 +95,8 @@ type zeropsYmlDeploy struct {
 }
 
 type zeropsYmlBuild struct {
-	DeployFiles any `yaml:"deployFiles"` // string or []string — Zerops accepts both
+	Base        string `yaml:"base"`
+	DeployFiles any    `yaml:"deployFiles"` // string or []string — Zerops accepts both
 }
 
 // deployFilesList normalizes DeployFiles to []string regardless of YAML format.
@@ -118,6 +121,7 @@ func (b zeropsYmlBuild) deployFilesList() []string {
 }
 
 type zeropsYmlRun struct {
+	Base        string          `yaml:"base"`
 	Start       string          `yaml:"start"`
 	Ports       []zeropsYmlPort `yaml:"ports"`
 	HealthCheck any             `yaml:"healthCheck"`
@@ -125,4 +129,24 @@ type zeropsYmlRun struct {
 
 type zeropsYmlPort struct {
 	Port int `yaml:"port"`
+}
+
+// hasImplicitWebServer returns true if the runtime has a built-in web server
+// that starts automatically (no run.start or run.ports needed).
+// Checks run.base first, falls back to build.base.
+func hasImplicitWebServer(runBase, buildBase string) bool {
+	for _, base := range []string{runBase, buildBase} {
+		if base == "" {
+			continue
+		}
+		if base == "static" {
+			return true
+		}
+		b, _, _ := strings.Cut(base, "@")
+		switch b {
+		case "php-apache", "php-nginx", "nginx", "static":
+			return true
+		}
+	}
+	return false
 }

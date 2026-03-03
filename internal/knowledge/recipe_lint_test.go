@@ -365,17 +365,17 @@ func isImplicitStartBase(base string) bool {
 		return true
 	}
 	b, _, _ := strings.Cut(base, "@")
-	return b == "php-apache" || b == "php-nginx" || b == "static"
+	return b == "php-apache" || b == "php-nginx" || b == "nginx" || b == "static"
 }
 
 // isImplicitPortBase returns true if the base type handles port configuration
-// implicitly (static sites serve on :80, PHP with Apache/Nginx on :80).
+// implicitly (static sites serve on :80, PHP with Apache/Nginx on :80, standalone nginx on :80).
 func isImplicitPortBase(base string) bool {
 	if base == "" || base == "static" {
 		return true
 	}
 	b, _, _ := strings.Cut(base, "@")
-	return b == "php-apache" || b == "php-nginx" || b == "static"
+	return b == "php-apache" || b == "php-nginx" || b == "nginx" || b == "static"
 }
 
 // --- import.yml validation ---

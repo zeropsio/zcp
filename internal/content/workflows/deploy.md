@@ -103,7 +103,7 @@ Before deploying, ensure these requirements are met:
 If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow this order:
 
 1. **Deploy to dev first**: `zerops_deploy targetService="appdev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHFS mount auto-reconnects after deploy, no remount needed. Files are already on the dev container via SSHFS mount — deploy runs the build pipeline and ensures deployFiles persist.
-2. **Start dev server** (dev uses `zsc noop --silent` — no server runs after deploy): wait ~10s for SSH to reconnect after container restart, then kill previous process and start via Bash tool with `run_in_background=true` (server in SSH foreground): `ssh {devHostname} "cd /var/www && {start_command}"`. Check startup via `TaskOutput` after 3-5s — look for startup message, not errors.
+2. **Start dev server** (dev uses `zsc noop --silent` — no server runs after deploy): wait ~10s for SSH to reconnect after container restart, then kill previous process and start via Bash tool with `run_in_background=true` (server in SSH foreground): `ssh {devHostname} "cd /var/www && {start_command}"`. Check startup via `TaskOutput` after 3-5s — look for startup message, not errors. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — the web server starts automatically after deploy.
 3. **Verify dev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 4. **Fix any errors on dev** — if `zerops_verify` returns degraded/unhealthy, read the `checks` array for diagnosis. Iterate until status=healthy.
 
@@ -112,9 +112,9 @@ If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow
 
 This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation.
 
-**Health checks apply to stage only.** The stage zerops.yml entry should include `run.healthCheck` (continuous liveness monitoring) and optionally `deploy.readinessCheck` (deployment-time traffic gating). Dev entries must NOT have health checks — dev uses `start: zsc noop --silent` and the agent starts/stops the server manually via SSH. A healthCheck on dev would cause Zerops to restart the container whenever the agent stops the server for iteration.
+**Health checks apply to stage only.** The stage zerops.yml entry should include `run.healthCheck` (continuous liveness monitoring) and optionally `deploy.readinessCheck` (deployment-time traffic gating). Dev entries must NOT have health checks — dev uses `start: zsc noop --silent` and the agent starts/stops the server manually via SSH. A healthCheck on dev would cause Zerops to restart the container whenever the agent stops the server for iteration. Exception: implicit-webserver runtimes (php-nginx, php-apache, nginx, static) CAN use healthCheck on dev — the web server auto-starts, no manual lifecycle needed.
 
-For rapid iteration on dev, see the "Dev iteration: manual start cycle" section in the bootstrap workflow. Dev services use `start: zsc noop --silent` — after every deploy to dev, the agent must start the server manually via SSH before `zerops_verify` can succeed.
+For rapid iteration on dev, see the "Dev iteration: manual start cycle" section in the bootstrap workflow. Dev services use `start: zsc noop --silent` — after every deploy to dev, the agent must start the server manually via SSH before `zerops_verify` can succeed. Implicit-webserver runtimes (php-nginx, php-apache, nginx, static) don't need manual start after deploy — the web server restarts automatically.
 
 ### Single service — direct
 

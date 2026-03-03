@@ -251,8 +251,8 @@ envVariables:
 **MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
 - [ ] zerops.yml has `setup:` entry for EVERY planned runtime hostname
 - [ ] Dev setup uses `deployFiles: [.]` — NO EXCEPTIONS
-- [ ] `run.start` is the RUN command (not a build tool like `go build`)
-- [ ] `run.ports` port matches what the app listens on
+- [ ] `run.start` is the RUN command (not a build tool like `go build`) — implicit-webserver runtimes (php-nginx, php-apache, nginx, static): omit start entirely
+- [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
 - [ ] `envVariables` ONLY uses variables discovered in discover-envs step
 - [ ] App binds to `0.0.0.0:{port}`, NOT localhost
 
@@ -260,7 +260,7 @@ envVariables:
 
 Since you're writing to an SSHFS mount, every file you create or modify is immediately present on the running dev container — no deploy is needed for that. You can verify or test changes right away. The deploy step exists to test the build pipeline and to ensure persistence (dev containers are volatile — only `deployFiles` content survives a deploy).
 
-> **After formal `zerops_deploy` to dev:** Deploy restarts the container with `zsc noop --silent` — no server runs. You must start it manually via SSH again before `zerops_verify` can succeed. See the deploy step for the full SSH start cycle.
+> **After formal `zerops_deploy` to dev:** Deploy restarts the container with `zsc noop --silent` — no server runs. You must start it manually via SSH again before `zerops_verify` can succeed. See the deploy step for the full SSH start cycle. Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): no manual start needed — web server restarts automatically.
 
 > Consider committing the generated code before proceeding to deploy. This preserves your work if the deploy cycle requires iteration.
 </section>
@@ -333,7 +333,7 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 **Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path (steps 4-7).
 
 1. **Deploy to appdev**: `zerops_deploy targetService="appdev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. SSHFS mount auto-reconnects after deploy — no remount needed. Deploy tests the build pipeline and ensures deployFiles artifacts persist.
-2. **Start appdev** (deploy restarted container with `zsc noop`): wait ~10s for SSH to become available after container restart, then start server via SSH (same kill-then-start pattern from Dev iteration below), verify startup log
+2. **Start appdev** (deploy restarted container with `zsc noop`): wait ~10s for SSH to become available after container restart, then start server via SSH (same kill-then-start pattern from Dev iteration below), verify startup log. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically after deploy.
 3. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
 5. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING. Stage is never a deploy source — no `.git` needed on target.
@@ -372,7 +372,7 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 
 **Why formal deploy is still needed:** Dev containers are volatile — only `deployFiles` content persists across container restarts. The manual-start cycle is for rapid iteration, but the final state must go through `zerops_deploy` to ensure the build pipeline works and files persist.
 
-**PHP runtimes (php-nginx, php-apache) skip manual start.** The web server runs automatically and serves files from the deploy directory. Editing files on the mount is enough — just test the endpoints directly via SSH curl.
+**Implicit-webserver runtimes (php-nginx, php-apache, nginx, static) skip manual start.** The web server starts automatically AFTER deploy applies zerops.yml config (documentRoot, etc.). Before first deploy, the container runs bare nginx/apache without app config — endpoint tests return 404. Skip quick-test, go straight to deploy.
 
 **When to use manual cycle vs. full deploy:**
 - Code logic changes, adding endpoints, fixing bugs → manual start cycle
@@ -540,7 +540,7 @@ zerops:
           httpSupport: true
       envVariables:
         # Map discovered variables to app-expected names
-      start: zsc noop --silent   # Dev: idle container, agent starts server manually via SSH. PHP runtimes: omit start entirely.
+      start: zsc noop --silent   # Dev: idle container. Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): omit start AND ports entirely.
       # NO healthCheck — agent controls lifecycle manually
 
   - setup: {stageHostname}
@@ -607,10 +607,10 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 1 | Write zerops.yml | Write to `{mountPath}/zerops.yml` with both setup entries | File exists with correct setup names |
 | 2 | Write app code | HTTP server on the port defined in zerops.yml `run.ports` with `/`, `/health`, `/status` | Code references discovered env vars |
 | 3 | Write .gitignore | Build artifacts and IDE files only. Do NOT include `.env` — no .env files exist on Zerops | File exists, no `.env` entry |
-| 3b | Quick-test (mandatory) | Kill previous process, start server via SSH (Bash tool `run_in_background=true` — server runs in SSH foreground), check `TaskOutput` for startup, test /health and /status. Fix issues. | Endpoints return expected responses |
+| 3b | Quick-test (mandatory, skip for implicit-webserver runtimes) | Kill previous process, start server via SSH (Bash tool `run_in_background=true` — server runs in SSH foreground), check `TaskOutput` for startup, test /health and /status. Fix issues. php-nginx, php-apache, nginx, static: skip — web server config not applied until first deploy. | Endpoints return expected responses |
 | 4 | Deploy dev | `zerops_deploy targetService="{devHostname}"` | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
-| 5b | Start server (post-deploy) | Deploy restarted container — `zsc noop --silent` is running, not your app. Wait ~10s for SSH to reconnect, then start server via SSH (Bash tool `run_in_background=true`, kill-then-start pattern from Quick-test). | `TaskOutput` shows startup message |
+| 5b | Start server (post-deploy, skip for implicit-webserver runtimes) | Deploy restarted container — `zsc noop --silent` is running, not your app. Wait ~10s for SSH to reconnect, then start server via SSH (Bash tool `run_in_background=true`, kill-then-start pattern from Quick-test). php-nginx, php-apache, nginx, static: skip — web server starts automatically. | `TaskOutput` shows startup message |
 | 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
 | 7 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
 | 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` | status=DEPLOYED (blocks until complete) |
@@ -637,7 +637,7 @@ Dev uses `start: zsc noop --silent` — no server runs automatically. You MUST s
 6. **If broken**: read the background task output for errors. Fix code on mount, `TaskStop` the server task, go back to step 1.
 7. **When working**: proceed to formal deploy (task 4).
 
-**PHP runtimes:** Skip steps 1-7 — the web server runs automatically. Just test endpoints directly after writing files.
+**Implicit-webserver runtimes (php-nginx, php-apache, nginx, static):** Skip quick-test entirely — go straight to deploy (task 4). Before first deploy, the container runs bare nginx/apache without zerops.yml config (no documentRoot, no rewrite rules). Endpoint tests return 404. The web server serves your app correctly only AFTER `zerops_deploy` applies the build pipeline and config. Task 5b is also not needed — web server starts automatically.
 
 **Piping rule:** Pipe `| jq .` OUTSIDE the SSH command. `jq` is not available inside containers.
 

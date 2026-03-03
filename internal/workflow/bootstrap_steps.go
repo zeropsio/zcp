@@ -182,6 +182,7 @@ Deploy tests the build pipeline and ensures persistence.
 Consider committing generated code before proceeding to deploy.
 
 After writing code: MUST quick-test via SSH (start server, test endpoints) BEFORE formal deploy.
+Exception: implicit-webserver runtimes (php-nginx, php-apache, nginx, static) — skip quick-test, deploy first (web server config not applied until deploy).
 After every zerops_deploy to dev: MUST start server again via SSH (deploy restarts container with zsc noop).
 
 MANDATORY PRE-DEPLOY CHECK (do NOT proceed to deploy until all pass):

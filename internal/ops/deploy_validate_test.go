@@ -334,6 +334,147 @@ func TestValidateZeropsYml_HealthChecks(t *testing.T) {
 	}
 }
 
+func TestValidateZeropsYml_ImplicitWebServer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		hostname     string
+		yml          string
+		wantWarnings int
+		wantContains string
+		noWarnings   bool
+	}{
+		{
+			name:     "php-nginx no start/ports is fine",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      base: php-nginx@8.4
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "php-apache no start/ports is fine",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      base: php-apache@8.3
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "nginx no start/ports is fine",
+			hostname: "appstage",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      deployFiles: [dist]
+    run:
+      base: nginx@1.22
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "static no start/ports is fine",
+			hostname: "appstage",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      deployFiles: [dist]
+    run:
+      base: static
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "php-nginx build.base fallback no start/ports is fine",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run: {}
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "nodejs without start still warns",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+`,
+			wantWarnings: 1,
+			wantContains: "run.start is empty",
+		},
+		{
+			name:     "nodejs without ports still warns",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      base: nodejs@22
+      start: node index.js
+`,
+			wantWarnings: 1,
+			wantContains: "run.ports is empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runValidateTest(t, tt.hostname, tt.yml, tt.wantWarnings, tt.wantContains, tt.noWarnings)
+		})
+	}
+}
+
+func TestHasImplicitWebServer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		runBase   string
+		buildBase string
+		want      bool
+	}{
+		{"php-nginx run.base", "php-nginx@8.4", "php@8.4", true},
+		{"php-apache run.base", "php-apache@8.3", "", true},
+		{"nginx run.base", "nginx@1.22", "", true},
+		{"static run.base with different build", "static", "nodejs@22", true},
+		{"php-nginx build.base fallback", "", "php-nginx@8.4", true},
+		{"nginx build.base fallback", "", "nginx@1.22", true},
+		{"php cli is not implicit", "php@8.4", "", false},
+		{"nodejs is not implicit", "nodejs@22", "", false},
+		{"both empty", "", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := hasImplicitWebServer(tt.runBase, tt.buildBase)
+			if got != tt.want {
+				t.Errorf("hasImplicitWebServer(%q, %q) = %v, want %v", tt.runBase, tt.buildBase, got, tt.want)
+			}
+		})
+	}
+}
+
 func runValidateTest(t *testing.T, hostname, yml string, wantWarnings int, wantContains string, noWarnings bool) {
 	t.Helper()
 
