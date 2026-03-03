@@ -36,7 +36,7 @@ zerops:
         RAILS_LOG_TO_STDOUT: "1"
         DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
       initCommands:
-        - zsc execOnce migrate-${ZEROPS_appVersionId} -- bin/rails db:migrate
+        - zsc execOnce migrate-${appVersionId} -- bin/rails db:migrate
       start: bundle exec puma -b tcp://0.0.0.0:3000
       healthCheck:
         httpGet:

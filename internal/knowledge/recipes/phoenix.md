@@ -48,7 +48,7 @@ zerops:
         POOL_SIZE: "10"
         PHX_SERVER: "true"
       initCommands:
-        - zsc execOnce migrate-${ZEROPS_appVersionId} -- _build/prod/rel/myapp/bin/myapp eval "MyApp.Release.migrate()"
+        - zsc execOnce migrate-${appVersionId} -- _build/prod/rel/myapp/bin/myapp eval "MyApp.Release.migrate()"
       start: _build/prod/rel/myapp/bin/myapp start
       healthCheck:
         httpGet:

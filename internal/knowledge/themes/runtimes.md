@@ -311,7 +311,7 @@ Do NOT rely solely on `ASPNETCORE_URLS` env var.
 
 **Rails specifics**:
 - `RAILS_ENV: production`, `SECRET_KEY_BASE` via preprocessor
-- Migrations: `zsc execOnce migrate-${ZEROPS_appVersionId} -- bin/rails db:migrate`
+- Migrations: `zsc execOnce migrate-${appVersionId} -- bin/rails db:migrate`
 - Assets: `bundle exec rake assets:precompile` in buildCommands
 
 ## Static

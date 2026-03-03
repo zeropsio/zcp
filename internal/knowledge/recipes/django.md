@@ -50,8 +50,8 @@ zerops:
         S3_BUCKET_NAME: ${storage_bucketName}
         S3_ENDPOINT_URL: ${storage_apiUrl}
       initCommands:
-        - zsc execOnce migrate-${ZEROPS_appVersionId} -- python manage.py migrate
-        - zsc execOnce collectstatic-${ZEROPS_appVersionId} -- python manage.py collectstatic --no-input
+        - zsc execOnce migrate-${appVersionId} -- python manage.py migrate
+        - zsc execOnce collectstatic-${appVersionId} -- python manage.py collectstatic --no-input
         - zsc execOnce createsuperuser -- python manage.py createsuperuser --no-input --username admin --email admin@example.com || true
       start: gunicorn myproject.wsgi
       healthCheck:
@@ -145,7 +145,7 @@ DATABASES = {
 - **CSRF_TRUSTED_ORIGINS** is mandatory in settings.py because Django runs behind the Zerops HTTP balancer proxy. Without it, all POST requests return 403.
 - **django-storages** and **boto3** packages are required in requirements.txt for S3 integration.
 - **Gunicorn binding** must be `0.0.0.0:8000` (not `127.0.0.1`). Configure via `gunicorn.conf.py` or `-b` flag.
-- **Migrations** use `zsc execOnce migrate-${ZEROPS_appVersionId}` so they run exactly once per deploy, not per container in multi-container setups.
+- **Migrations** use `zsc execOnce migrate-${appVersionId}` so they run exactly once per deploy, not per container in multi-container setups.
 - **SECRET_KEY** is generated as envSecret in import.yml and must be read via `os.environ["SECRET_KEY"]` in settings.py.
 - **PYTHONDONTWRITEBYTECODE=1** and **PYTHONUNBUFFERED=1** prevent .pyc file creation and ensure log output is not buffered.
 - Replace the `myproject.wsgi` start command with your actual Django project's WSGI module path.
