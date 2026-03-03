@@ -123,23 +123,6 @@ services:
     priority: 10
 ```
 
-## Scaffolding
-
-Fresh project setup on a Zerops container (bootstrap or manual):
-
-```bash
-zsc scale ram 1GiB 10m
-composer create-project laravel/laravel . --no-scripts
-composer run post-autoload-dump
-rm -f .env.example
-zsc scale ram auto
-```
-
-- `zsc scale ram 1GiB 10m` temporarily bumps container RAM to 1 GB for composer (default 128 MB causes OOM). `zsc scale ram auto` returns to autoscaling after scaffolding.
-- `--no-scripts` skips all post-create hooks: no `.env` file created, no `database.sqlite`, no `key:generate`. Without this flag, Laravel creates `.env` with empty `APP_KEY=` which **shadows the valid OS env var from envSecrets** — breaking encryption at runtime.
-- `post-autoload-dump` triggers package discovery (the only useful post-install hook).
-- `rm .env.example` removes the template file (not needed — Zerops uses OS env vars exclusively).
-
 ## Configuration
 - **TRUSTED_PROXIES: "\*"** -- required for Laravel behind Zerops load balancer
 - **LOG_CHANNEL: syslog** -- routes logs to Zerops log collector
@@ -155,6 +138,8 @@ zsc scale ram auto
 - **Twill install fails** -- `zsc execOnce initialize` runs `twill:install -n` only once; if it fails, reset the key in Zerops GUI
 - **Media images broken** -- verify `GLIDE_USE_SOURCE_DISK: s3` and `objectStoragePolicy: public-read`
 - **OS mismatch errors** -- Alpine build is fine for composer/npm, Ubuntu runtime needed for PHP extensions
+- **HTTP 500 — check logs FIRST** -- read `{mountPath}/storage/logs/laravel.log` and `zerops_logs`. The log tells you the exact error. Do not guess.
+- **Never use `php artisan serve`** -- php-nginx has built-in web server on port 80. `artisan serve` bypasses nginx config, documentRoot, and rewrite rules.
 
 ## Gotchas
 - **Multi-base build** `[php, nodejs]` required for frontend assets

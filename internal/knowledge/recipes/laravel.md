@@ -224,6 +224,7 @@ zsc scale ram 1GiB 10m
 composer create-project laravel/laravel . --no-scripts
 composer run post-autoload-dump
 rm -f .env.example
+php artisan migrate --force
 zsc scale ram auto
 ```
 
@@ -231,6 +232,7 @@ zsc scale ram auto
 - `--no-scripts` skips all post-create hooks: no `.env` file created, no `database.sqlite`, no `key:generate`. Without this flag, Laravel creates `.env` with empty `APP_KEY=` which **shadows the valid OS env var from envSecrets** — breaking encryption at runtime.
 - `post-autoload-dump` triggers package discovery (the only useful post-install hook).
 - `rm .env.example` removes the template file (not needed — Zerops uses OS env vars exclusively).
+- `php artisan migrate --force` creates required tables (sessions, cache, jobs, etc.) that Laravel needs at runtime. Without them, requests hitting cache/session middleware crash with "Undefined table."
 
 ## Configuration
 - **TRUSTED_PROXIES: "\*"** -- required for Laravel behind Zerops load balancer
@@ -250,6 +252,8 @@ zsc scale ram auto
 - **Migration fails** -- verify `DB_HOST: db` matches the PostgreSQL service hostname
 - **APP_KEY empty / encryption broken** -- if `.env` exists with empty `APP_KEY=`, it shadows the valid OS env var from envSecrets. Cause: `composer create-project` was run without `--no-scripts`. Fix: delete `.env` or scaffold with `--no-scripts`.
 - **Data lost after redeploy** -- SQLite database is destroyed when the container rebuilds. Switch to a database service (PostgreSQL or MariaDB).
+- **HTTP 500 — check logs FIRST** -- read `{mountPath}/storage/logs/laravel.log` and `zerops_logs`. The log tells you the exact error. Do not guess.
+- **Never use `php artisan serve`** -- php-nginx has built-in web server on port 80. `artisan serve` bypasses nginx config, documentRoot, and rewrite rules.
 
 ## Gotchas
 - **Multi-base build** `[php, nodejs]` required only if project has npm/Vite assets (full setup)

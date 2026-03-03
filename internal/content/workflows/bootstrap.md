@@ -645,6 +645,8 @@ Dev uses `start: zsc noop --silent` — no server runs automatically. You MUST s
 
 If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ahead to stage:
 
+**Debugging priority: ALWAYS check application logs first.** Read `zerops_logs` + framework log files on mount path (e.g., `{mountPath}/storage/logs/laravel.log` for Laravel) before trying any other fix.
+
 1. **Diagnose**: Read the `checks` array from the `zerops_verify` response:
    | Check result | Diagnosis action |
    |-------------|-----------------|
@@ -652,7 +654,7 @@ If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ah
    | no_error_logs: info | Advisory — error-severity logs found. Read detail. If SSH/infra noise, ignore. If app errors, investigate with `zerops_logs` |
    | startup_detected: fail | App crashed on start — `zerops_logs severity="error" since="5m"` |
    | no_recent_errors: info | Advisory — same as above. Recent error-severity logs found. Read detail to determine if actionable |
-   | http_health: fail | App started but /health endpoint broken — check `detail` for HTTP status |
+   | http_health: fail | App started but endpoint broken — check `zerops_logs` + framework log files on mount path (e.g., `{mountPath}/storage/logs/laravel.log`) FIRST, then check `detail` for HTTP status. Do NOT try alternative servers (`php artisan serve`, `node server.js`, etc.) — fix the underlying error. |
    | http_status: fail | Managed service connectivity issue — check `detail` for which connection failed. Verify env var mapping matches discovered vars. |
 
 2. **Fix**: Edit files at `{mountPath}/` — fix zerops.yml, app code, or both
@@ -690,6 +692,8 @@ Max 3 iterations. After that, report failure with diagnosis.
 | Empty response / "Cannot GET" | App not handling route — check app code |
 | /status: connectivity errors | Check env var mapping and managed service status |
 | Env vars show ${...} in API | Expected — resolved at runtime, not in discover response |
+| HTTP 500 from app | Check app logs FIRST (`zerops_logs` + framework log files on mount path). The log tells you the exact cause — do not guess. |
+| Agent tries alternative web server | NEVER use alternative servers (`php artisan serve`, `node server.js`, etc.) on implicit-webserver runtimes (php-nginx, php-apache, nginx, static). Fix the underlying error instead. |
 ````
 
 ### Verify-Managed Agent Prompt
@@ -748,6 +752,7 @@ When any verification check fails, enter the iteration loop instead of giving up
 | /status: "db: error" | Missing or wrong env var | Compare zerops.yml envVariables with discovered var names |
 | HTTP 502 | Subdomain not activated | Call `zerops_subdomain action="enable"` |
 | curl returns empty | App not listening on 0.0.0.0 | Add HOST=0.0.0.0 to envVariables |
+| HTTP 500 | App error | Check `zerops_logs` + framework log files on mount path — log tells exact cause. Do NOT start alternative servers. |
 </section>
 
 <section name="verify">
