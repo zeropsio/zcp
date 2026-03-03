@@ -1,6 +1,7 @@
 # Build artifacts
 bin/
 builds/
+/zcp
 
 # Secrets
 .env
@@ -29,6 +30,7 @@ vendor/
 # Eval results (logs, jsonl, extracted json)
 eval/results/*
 !eval/results/.gitkeep
+eval-results/
 
 # IDE
 .idea/
