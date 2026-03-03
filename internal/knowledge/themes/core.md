@@ -273,6 +273,7 @@ zerops[]:
 - Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) -- do NOT set these in import.yml
 - Cross-phase: build->run `${BUILD_MYVAR}`, run->build `${RUNTIME_MYVAR}`
 - Keys: alphanumeric + `_`, case-sensitive. Values: ASCII only
+- `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`. Use directly for APP_URL / CORS origins. For bare-hostname vars (e.g. PHX_HOST), strip scheme in app code
 
 ### Import & Service Creation
 - **ALWAYS** use `valkey@7.2` (not `valkey@8`). REASON: v8 passes dry-run validation but fails actual import

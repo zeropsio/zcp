@@ -272,7 +272,7 @@ Do NOT rely solely on `ASPNETCORE_URLS` env var.
 **Prod deploy**: build release, deploy extracted release, `start: bin/{app_name} start`
 
 **Required env**: `PHX_SERVER=true` + `MIX_ENV=prod`
-**Phoenix-specific**: Also set `PHX_HOST=${zeropsSubdomain}`
+**Phoenix-specific**: Also set `PHX_HOST=${zeropsSubdomain}` (full HTTPS URL -- extract hostname in runtime.exs via `URI.parse`)
 **Cache**: `deps`, `_build`
 
 ## Gleam

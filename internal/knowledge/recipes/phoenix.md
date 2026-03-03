@@ -94,7 +94,12 @@ if config_env() == :prod do
     System.get_env("SECRET_KEY_BASE") ||
       raise "SECRET_KEY_BASE is not set"
 
-  host = System.get_env("PHX_HOST") || "example.com"
+  # PHX_HOST is a full HTTPS URL from zeropsSubdomain — extract bare hostname
+  phx_host = System.get_env("PHX_HOST") || "example.com"
+  host = case URI.parse(phx_host) do
+    %URI{host: h} when is_binary(h) and h != "" -> h
+    _ -> phx_host
+  end
   port = String.to_integer(System.get_env("PORT") || "4000")
 
   config :myapp, MyAppWeb.Endpoint,
@@ -135,7 +140,7 @@ end
 ## Gotchas
 
 - **Build on elixir, run on alpine** -- Phoenix releases are self-contained BEAM binaries. The runtime uses `alpine@latest` (no Elixir/Erlang needed).
-- **PHX_HOST=${zeropsSubdomain}** is required for URL generation, WebSocket connections, and proper routing through the Zerops L7 balancer.
+- **PHX_HOST=${zeropsSubdomain}** is a full HTTPS URL (e.g. `https://app-1df2.prg1.zerops.app`). Phoenix's `url: [host: ...]` expects a bare hostname, so `runtime.exs` must extract it via `URI.parse`.
 - **PHX_SERVER=true** is required to start the HTTP server in release mode. Without it, the endpoint is not started.
 - **SECRET_KEY_BASE** is generated as envSecret in import.yml. In `build.envVariables`, reference it as `${RUNTIME_SECRET_KEY_BASE}` to access the runtime secret during build.
 - **Migrations run at runtime** via `zsc execOnce` in initCommands using the release eval command, not during build. This ensures the database is available and migrations run exactly once per deploy.

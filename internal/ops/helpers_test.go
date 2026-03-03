@@ -326,30 +326,35 @@ func TestListHostnames(t *testing.T) {
 	}
 }
 
-func TestEnvVarsToMaps_FiltersZeropsSubdomain(t *testing.T) {
+func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		envs     []platform.EnvVar
-		wantKeys []string
+		name                string
+		envs                []platform.EnvVar
+		wantKeys            []string
+		wantPlatformKeys    []string // keys that should have isPlatformInjected: true
+		wantNonPlatformKeys []string // keys that should NOT have isPlatformInjected
 	}{
 		{
-			name: "filters zeropsSubdomain",
+			name: "zeropsSubdomain annotated as platform-injected",
 			envs: []platform.EnvVar{
 				{ID: "e1", Key: "PORT", Content: "3000"},
 				{ID: "e2", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
 				{ID: "e3", Key: "HOST", Content: "0.0.0.0"},
 			},
-			wantKeys: []string{"PORT", "HOST"},
+			wantKeys:            []string{"PORT", "zeropsSubdomain", "HOST"},
+			wantPlatformKeys:    []string{"zeropsSubdomain"},
+			wantNonPlatformKeys: []string{"PORT", "HOST"},
 		},
 		{
-			name: "no zeropsSubdomain present",
+			name: "no platform-injected keys present",
 			envs: []platform.EnvVar{
 				{ID: "e1", Key: "PORT", Content: "3000"},
 				{ID: "e2", Key: "HOST", Content: "0.0.0.0"},
 			},
-			wantKeys: []string{"PORT", "HOST"},
+			wantKeys:            []string{"PORT", "HOST"},
+			wantNonPlatformKeys: []string{"PORT", "HOST"},
 		},
 		{
 			name:     "empty envs",
@@ -359,9 +364,20 @@ func TestEnvVarsToMaps_FiltersZeropsSubdomain(t *testing.T) {
 		{
 			name: "only zeropsSubdomain",
 			envs: []platform.EnvVar{
-				{ID: "e1", Key: "zeropsSubdomain", Content: "https://..."},
+				{ID: "e1", Key: "zeropsSubdomain", Content: "https://app-1df2.prg1.zerops.app"},
 			},
-			wantKeys: []string{},
+			wantKeys:         []string{"zeropsSubdomain"},
+			wantPlatformKeys: []string{"zeropsSubdomain"},
+		},
+		{
+			name: "platform-injected with isReference interaction",
+			envs: []platform.EnvVar{
+				{ID: "e1", Key: "DB_URL", Content: "${db_connectionString}"},
+				{ID: "e2", Key: "zeropsSubdomain", Content: "https://app-1df2.prg1.zerops.app"},
+			},
+			wantKeys:            []string{"DB_URL", "zeropsSubdomain"},
+			wantPlatformKeys:    []string{"zeropsSubdomain"},
+			wantNonPlatformKeys: []string{"DB_URL"},
 		},
 	}
 
@@ -376,6 +392,34 @@ func TestEnvVarsToMaps_FiltersZeropsSubdomain(t *testing.T) {
 			for i, wantKey := range tt.wantKeys {
 				if result[i]["key"] != wantKey {
 					t.Errorf("env[%d] key = %v, want %s", i, result[i]["key"], wantKey)
+				}
+			}
+
+			// Build lookup by key for annotation checks
+			byKey := make(map[string]map[string]any, len(result))
+			for _, m := range result {
+				byKey[m["key"].(string)] = m
+			}
+
+			for _, key := range tt.wantPlatformKeys {
+				m, ok := byKey[key]
+				if !ok {
+					t.Errorf("expected key %q in result", key)
+					continue
+				}
+				if m["isPlatformInjected"] != true {
+					t.Errorf("key %q: expected isPlatformInjected=true, got %v", key, m["isPlatformInjected"])
+				}
+			}
+
+			for _, key := range tt.wantNonPlatformKeys {
+				m, ok := byKey[key]
+				if !ok {
+					t.Errorf("expected key %q in result", key)
+					continue
+				}
+				if _, has := m["isPlatformInjected"]; has {
+					t.Errorf("key %q: should NOT have isPlatformInjected, but it does", key)
 				}
 			}
 		})
