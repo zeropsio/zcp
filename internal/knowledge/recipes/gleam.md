@@ -76,6 +76,7 @@ Bind address -- configure your web framework (Wisp, Mist) to listen on `0.0.0.0:
 
 ## Gotchas
 
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Erlang shipment is self-contained** -- `gleam export erlang-shipment` bundles the BEAM runtime; no Erlang/OTP needed on the runtime container
 - **Deploy with tilde** -- `build/erlang-shipment/~` extracts the shipment contents directly into `/var/www/` so `entrypoint.sh` is at the root
 - **Bind `0.0.0.0`** -- configure Wisp/Mist to bind all interfaces; binding `127.0.0.1` prevents the L7 balancer from reaching your app

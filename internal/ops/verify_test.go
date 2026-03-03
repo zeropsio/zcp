@@ -488,17 +488,33 @@ func TestCheckHTTPStatus(t *testing.T) {
 		{
 			name: "all connections ok",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
-				fmt.Fprint(w, `{"service":"app","connections":{"db":{"status":"ok"},"cache":{"status":"ok"}}}`)
+				fmt.Fprint(w, `{"service":"app","status":"ok","connections":{"db":{"status":"ok"},"cache":{"status":"ok"}}}`)
 			},
 			wantStatus: "pass",
 		},
 		{
 			name: "connection error",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
-				fmt.Fprint(w, `{"service":"app","connections":{"db":{"status":"error"}}}`)
+				fmt.Fprint(w, `{"service":"app","status":"ok","connections":{"db":{"status":"error"}}}`)
 			},
 			wantStatus: "fail",
 			wantDetail: "connection 'db': error",
+		},
+		{
+			name: "connections ok but missing top-level status",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprint(w, `{"service":"app","connections":{"db":{"status":"ok"}}}`)
+			},
+			wantStatus: "fail",
+			wantDetail: "status: ",
+		},
+		{
+			name: "connections ok but top-level status error",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprint(w, `{"service":"app","status":"error","connections":{"db":{"status":"ok"}}}`)
+			},
+			wantStatus: "fail",
+			wantDetail: "status: error",
 		},
 		{
 			name: "no connections, top-level ok",

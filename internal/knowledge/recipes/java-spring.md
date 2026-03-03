@@ -106,6 +106,8 @@ HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
 `start: java -jar target/app.jar` resolves correctly (relative to `/var/www`).
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **`server.address=0.0.0.0`** is MANDATORY for Spring Boot -- defaults to localhost, which causes 502
 - **Fat JAR required** -- thin JARs cause `ClassNotFoundException` at runtime
 - **Maven/Gradle NOT pre-installed** -- use Maven Wrapper (`./mvnw`) or install via prepareCommands with `sudo`

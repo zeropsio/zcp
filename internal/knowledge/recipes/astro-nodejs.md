@@ -58,6 +58,8 @@ export default defineConfig({
 Without this adapter, Astro defaults to static output which cannot run on a Node.js service.
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **`@astrojs/node` adapter is required** — install with `pnpm add @astrojs/node` and configure in astro.config.mjs with `mode: "standalone"`
 - **`output: "server"`** must be set in astro.config.mjs to enable SSR (without it, Astro generates static files)
 - **Deploy `dist`, `package.json`, and `node_modules`** — SSR needs runtime dependencies; deploying `./` also works but is larger

@@ -81,6 +81,8 @@ app.get('/status', (_, res) => {
 ```
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **DB_HOST uses hardcoded hostname** `db` matching the import.yml service hostname (Zerops internal VXLAN network)
 - **TypeScript must be compiled** during build -- deploy `dist/` directory, not source `.ts` files
 - **node_modules deployed alongside dist** because runtime dependencies are needed (pg, express, etc.)

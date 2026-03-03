@@ -60,6 +60,8 @@ export default {
 ```
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **`@sveltejs/adapter-node` is required** -- the default auto adapter does not produce a Node.js server; install and configure it in `svelte.config.js`
 - **`@sveltejs/vite-plugin-svelte` must be installed** -- required for `vitePreprocess()` to avoid build errors
 - **Port 3000** is the adapter-node default -- must be declared in `ports` with `httpSupport: true`

@@ -83,6 +83,7 @@ export const config = {
 
 ## Gotchas
 
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **No HTTP server** -- Discord bots connect to the Discord gateway via WebSocket. The `ports` declaration is required by Zerops for service routing but the bot does not serve HTTP traffic. A minimal health endpoint can be added if needed.
 - **envSecrets for credentials** -- `DISCORD_TOKEN` and `DISCORD_CLIENT_ID` must be set as envSecrets in import.yml or via the Zerops GUI. They are sensitive and should never be in zerops.yml envVariables.
 - **tsup build** -- the bot is compiled from TypeScript to JavaScript using tsup. The `dist/` directory, `node_modules`, and `package.json` are deployed.

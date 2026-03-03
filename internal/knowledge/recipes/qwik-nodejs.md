@@ -63,6 +63,8 @@ app.set('trust proxy', true);
 ```
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **`npm run qwik add express` MUST be run first** -- without the Express adapter, Qwik SSR will not work on Zerops; this is a one-time project setup step
 - **Port 3000** is the Express adapter default -- must be declared in `ports` with `httpSupport: true`
 - **Deploy four directories** -- `package.json`, `public/`, `server/`, and `dist/` are all required for the SSR server

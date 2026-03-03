@@ -79,6 +79,8 @@ def status_check():
 ```
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Bind to 0.0.0.0** -- `app.run(host='0.0.0.0', port=8000)` is required; binding to `127.0.0.1` makes the app unreachable through the Zerops L7 balancer
 - **Dependencies installed at runtime** via `prepareCommands`, not during build -- `addToRunPrepare` copies `requirements.txt` to the run container
 - **`--ignore-installed` flag** in pip install prevents conflicts with system packages in the Zerops base image

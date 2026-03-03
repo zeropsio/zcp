@@ -250,6 +250,16 @@ zerops[]:
   - **Directory preserved** (NO tilde): `deployFiles: [dist, package.json]` -> files at `/var/www/dist/` -> `start: bun dist/index.js`
   - **Contents extracted** (WITH tilde): `deployFiles: dist/~` -> files at `/var/www/` -> `start: bun index.js`
   REASON: tilde strips the directory prefix. If start command references the subdirectory (e.g., `dist/index.js`), tilde BREAKS it because the file is at `/var/www/index.js`, not `/var/www/dist/index.js`. Use tilde for static sites (no start command) or when start command matches the flattened layout
+- **ALWAYS** choose `deployFiles` based on deploy mode:
+
+  | Deploy mode | Who deploys? | deployFiles | start |
+  |-------------|-------------|-------------|-------|
+  | Dev (in dev+stage) | Self-deploy | `[.]` | `zsc noop --silent` |
+  | Stage (in dev+stage) | Cross-deploy from dev | Recipe pattern | Compiled/prod start |
+  | Simple (single service) | Self-deploy | `[.]` | Real start command |
+  | Production (buildFromGit) | Platform from git | Recipe pattern | Compiled/prod start |
+
+  REASON: self-deploy with specific paths (e.g., `[app]`, `dist/~`) destroys source files + zerops.yml after deploy, making iteration impossible. Only cross-deploy targets and git-based builds can use specific paths safely. Recipes show the production pattern — adapt for self-deploy by switching to `[.]`.
 - **NEVER** use `initCommands` for package installation. REASON: initCommands run on every container restart; use `prepareCommands` for one-time setup
 - **ALWAYS** use `--no-cache-dir` for pip in containers. REASON: prevents wasted disk space on ephemeral containers
 - **ALWAYS** use `--ignore-platform-reqs` for Composer on Alpine. REASON: musl libc may not satisfy platform requirements checks
@@ -336,6 +346,11 @@ zerops[]:
   - `deployFiles: dist/~` + `start: bun index.js` -- CORRECT (file at `/var/www/index.js`)
   - `deployFiles: dist/~` + `start: bun dist/index.js` -- BROKEN (no `/var/www/dist/` exists)
 - **Git required**: `zerops_deploy` uses `zcli push` which requires a git repository
+- **Self-deploy with `[.]`**: When switching from a recipe's production `deployFiles` to `[.]`, build output stays in its original directory under `/var/www/` instead of being extracted/flattened. The `start` command must reference the full path:
+  - Recipe uses `dist/~` + `start: bun index.js` → with `[.]`: `start: bun dist/index.js` (files at `/var/www/dist/`)
+  - Recipe uses `./app` + `start: ./app` → with `[.]`: same `start: ./app` (binary at `/var/www/app`)
+  - Recipe uses `target/release/~binary` + `start: ./binary` → with `[.]`: `start: ./target/release/binary`
+  - Principle: tilde extraction no longer happens, directory structure is preserved as-is. Match `start` to where build output actually lands.
 
 ### Cache Architecture (Two-Layer)
 - **Base layer**: OS + prepareCommands (invalidated only when prepareCommands change)

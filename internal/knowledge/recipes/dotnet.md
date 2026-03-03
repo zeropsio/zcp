@@ -89,6 +89,7 @@ app.MapGet("/status", () => Results.Ok(new { status = "ok" }));
 
 ## Gotchas
 
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Must bind `0.0.0.0` explicitly** -- set `ASPNETCORE_URLS=http://0.0.0.0:5000` in envVariables AND call `UseUrls` in code; the env var alone may not work reliably
 - **ForwardedHeaders middleware required** -- without it, `HttpContext.Request.Scheme` reports `http` instead of `https` behind the Zerops proxy
 - **Deploy with tilde** -- `app/~` extracts the contents of the `app/` folder directly into `/var/www/` (not `/var/www/app/`)

@@ -96,6 +96,8 @@ Build-time env vars use `${RUNTIME_*}` prefix to reference the runtime service's
 - **Images not uploading**: S3 storage not configured; check `storage_apiUrl`, `storage_accessKeyId`, `storage_secretAccessKey`, `storage_bucketName` references
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Ubuntu OS required** — both build and run must set `os: ubuntu` (Alpine lacks dependencies Payload needs)
 - **Migrations run during BUILD** (not runtime) — `zsc test tcp` ensures PostgreSQL is ready before `pnpm payload migrate`
 - **Build env vars use RUNTIME_ prefix** to access runtime secrets during build phase

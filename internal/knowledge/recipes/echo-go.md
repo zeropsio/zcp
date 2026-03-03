@@ -83,6 +83,8 @@ log.SetOutput(os.Stdout)
 ```
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Logger must use `os.Stdout`** for Zerops log collection -- `os.Stderr` logs are not captured
 - **HTTPS termination disabled** in app code -- Zerops SSL proxy handles TLS termination
 - **Sessions stored in Valkey** (Redis-compatible), files in S3 Object Storage

@@ -85,6 +85,7 @@ await client.connect();
 
 ## Gotchas
 
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Bind `0.0.0.0`** -- use `Deno.serve({ port: 8000, hostname: "0.0.0.0" }, handler)` or the L7 balancer cannot reach your app
 - **Explicit permission flags** -- Deno requires `--allow-net --allow-env --allow-read` (or `--allow-all` for development); missing flags cause silent startup failures
 - **Deploy specific files** -- deploy only `main.ts`, `deno.json`, `deno.lock` and any source directories; do not deploy `/` which includes unnecessary build artifacts

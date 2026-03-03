@@ -47,6 +47,8 @@ Analog uses Nitro under the hood for SSR. The build produces a `dist/analog/serv
 No special configuration is needed in `vite.config.ts` -- Analog auto-detects the correct Nitro preset during build.
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Deploy `dist/~`** -- the tilde extracts contents to `/var/www/` so start path is relative to that root
 - **Port 3000** is the default Analog/Nitro port -- must be declared in `ports` with `httpSupport: true`
 - **Analog binds 0.0.0.0** by default in SSR mode -- no extra host configuration needed

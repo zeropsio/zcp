@@ -109,6 +109,7 @@ end
 
 ## Gotchas
 
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Build on Elixir, run on Alpine** -- Elixir releases are self-contained BEAM binaries. The runtime uses `alpine@latest` (no Elixir/Erlang needed at runtime).
 - **Migrations during build** -- unlike Phoenix, this recipe runs `mix ecto.create` and `mix ecto.migrate` during build since there is no release eval command. For runtime migrations, add a release module and use `initCommands` with `zsc execOnce`.
 - **deployFiles trailing tilde** -- `_build/prod/rel/app/~` deploys the contents of the release directory to the root of the runtime container.

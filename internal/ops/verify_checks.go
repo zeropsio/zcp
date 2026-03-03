@@ -151,6 +151,11 @@ func checkHTTPStatus(ctx context.Context, httpClient HTTPDoer, url string) Check
 		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("response not JSON (HTTP %d): %s", resp.StatusCode, excerpt), HTTPStatus: resp.StatusCode}
 	}
 
+	// Always require top-level status.
+	if sr.Status != "ok" {
+		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("status: %s", sr.Status)}
+	}
+
 	// If connections present, check each one.
 	if len(sr.Connections) > 0 {
 		for connName, conn := range sr.Connections {
@@ -158,14 +163,9 @@ func checkHTTPStatus(ctx context.Context, httpClient HTTPDoer, url string) Check
 				return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("connection '%s': %s", connName, conn.Status)}
 			}
 		}
-		return CheckResult{Name: name, Status: CheckPass}
 	}
 
-	// No connections: check top-level status.
-	if sr.Status == "ok" {
-		return CheckResult{Name: name, Status: CheckPass}
-	}
-	return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("status: %s", sr.Status)}
+	return CheckResult{Name: name, Status: CheckPass}
 }
 
 // truncateBody returns a string-truncated body with "..." if over max bytes.

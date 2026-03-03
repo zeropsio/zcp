@@ -49,6 +49,8 @@ Nuxt uses Nitro under the hood. The default Nitro preset for Zerops is `node-ser
 The deploy path `.output/~` uses the Zerops tilde wildcard to extract the contents of `.output/` directly into `/var/www/`, so the start command references `server/index.mjs` (not `.output/server/index.mjs`).
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Deploy `.output/~`** -- the tilde extracts contents to `/var/www/` so start path is `server/index.mjs` not `.output/server/index.mjs`
 - **Port 3000** is the default Nuxt/Nitro port -- must be declared in `ports` with `httpSupport: true`
 - **Nuxt binds 0.0.0.0** by default in SSR mode -- no extra host configuration needed

@@ -85,6 +85,8 @@ services:
 - **Missing vendor/** -- `composer install --optimize-autoloader --no-dev` must run in buildCommands
 
 ## Gotchas
+
+- **deployFiles is for stage/production** — this recipe shows the optimized deploy pattern for cross-deploy targets or git-based builds. For self-deploying services (dev or simple mode), use `deployFiles: [.]` so source + zerops.yml survive the deploy. With `[.]`, build output stays in its original directory under `/var/www/` — adjust `start` path accordingly (see Deploy Semantics in platform reference).
 - **Build base** is generic `php@8.3` (for composer), **run base** includes web server
 - **Apache requires .htaccess** in deployFiles, Nginx does not
 - Both services can coexist in the same project with separate load balancing

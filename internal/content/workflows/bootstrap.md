@@ -211,12 +211,15 @@ The `/status` endpoint **MUST actually connect** to each managed service and rep
 ```json
 {
   "service": "{hostname}",
+  "status": "ok",
   "connections": {
     "db": {"status": "ok", "latency_ms": 5},
     "cache": {"status": "ok", "latency_ms": 1}
   }
 }
 ```
+
+The top-level `"status": "ok"` is ALWAYS required — with or without connections.
 
 **Required verification per service type:**
 - **PostgreSQL/MariaDB/MySQL**: Execute `SELECT 1` query
@@ -396,6 +399,40 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 
 3. **Write code** to mount path `/var/www/{hostname}/`
 
+#### Simple mode zerops.yml
+
+Simple mode services self-deploy — `deployFiles: [.]` is mandatory (same rule as dev services).
+Unlike dev, simple mode uses a real `start` command and `healthCheck` since there is no manual SSH iteration.
+
+```yaml
+zerops:
+  - setup: {hostname}
+    build:
+      base: {runtimeVersion}
+      buildCommands: [<from runtime knowledge>]
+      deployFiles: [.]   # CRITICAL: self-deploy — MUST be [.] for iteration
+      cache: [<runtime-specific cache dirs>]
+    run:
+      base: {runtimeBase}   # Omit for compiled langs (Go, Rust) or use same as build
+      ports:
+        - port: {port}
+          httpSupport: true
+      envVariables:
+        # Map discovered variables to app-expected names
+      start: {startCommand}   # Real start: ./app, node index.js, bun run src/index.ts, etc.
+      healthCheck:
+        httpGet:
+          port: {port}
+          path: /health
+```
+
+**Key differences from dev+stage template:**
+- Single `setup:` entry (not two)
+- `deployFiles: [.]` always — self-deploying service
+- `start:` uses real command (not `zsc noop --silent`)
+- `healthCheck` included — app auto-starts after deploy
+- If recipe uses tilde syntax in `deployFiles` (e.g., `.output/~`), adjust `start` to include the directory prefix (e.g., `node .output/server/index.mjs` instead of `node server/index.mjs`)
+
 4. **Deploy:**
    ```
    zerops_deploy targetService="{hostname}"
@@ -510,7 +547,7 @@ zerops:
     build:
       base: {runtimeVersion}
       buildCommands: [<from runtime knowledge — may include compilation>]
-      deployFiles: [{prodDeployFiles}]
+      deployFiles: [{prodDeployFiles}]   # From recipe/runtime knowledge — cross-deploy target
       cache: [<runtime-specific cache dirs>]
     run:
       base: {prodRunBase}
@@ -545,12 +582,15 @@ MUST actually connect to each managed service and report results:
 ```json
 {
   "service": "{devHostname}",
+  "status": "ok",
   "connections": {
     "db": {"status": "ok", "latency_ms": 5},
     "cache": {"status": "ok", "latency_ms": 1}
   }
 }
 ```
+
+The top-level `"status": "ok"` is ALWAYS required — with or without connections.
 
 - PostgreSQL/MariaDB/MySQL: execute `SELECT 1`
 - Valkey/KeyDB: execute `PING`
