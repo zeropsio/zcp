@@ -589,6 +589,98 @@ func TestCleanWorkDir(t *testing.T) {
 	}
 }
 
+// --- Claude memory cleanup tests ---
+
+func TestCleanClaudeMemory(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, base string)
+		check func(t *testing.T, base string)
+	}{
+		{
+			name: "removes memory files from multiple projects",
+			setup: func(t *testing.T, base string) {
+				t.Helper()
+				for _, proj := range []string{"proj-a", "proj-b"} {
+					memDir := filepath.Join(base, proj, "memory")
+					mustMkdir(t, memDir)
+					mustWrite(t, filepath.Join(memDir, "MEMORY.md"), "# stale memory")
+					mustWrite(t, filepath.Join(memDir, "patterns.md"), "some pattern")
+				}
+			},
+			check: func(t *testing.T, base string) {
+				t.Helper()
+				for _, proj := range []string{"proj-a", "proj-b"} {
+					memDir := filepath.Join(base, proj, "memory")
+					entries, err := os.ReadDir(memDir)
+					if err != nil {
+						t.Fatalf("read memory dir %s: %v", proj, err)
+					}
+					if len(entries) != 0 {
+						t.Errorf("project %s: expected 0 files, got %d", proj, len(entries))
+					}
+				}
+			},
+		},
+		{
+			name: "preserves non-memory project files",
+			setup: func(t *testing.T, base string) {
+				t.Helper()
+				projDir := filepath.Join(base, "proj-c")
+				mustMkdir(t, filepath.Join(projDir, "memory"))
+				mustWrite(t, filepath.Join(projDir, "memory", "MEMORY.md"), "data")
+				mustWrite(t, filepath.Join(projDir, "settings.json"), "{}")
+			},
+			check: func(t *testing.T, base string) {
+				t.Helper()
+				settings := filepath.Join(base, "proj-c", "settings.json")
+				if _, err := os.Stat(settings); os.IsNotExist(err) {
+					t.Error("settings.json was deleted")
+				}
+			},
+		},
+		{
+			name: "no-op when no memory directories exist",
+			setup: func(t *testing.T, base string) {
+				t.Helper()
+				mustMkdir(t, filepath.Join(base, "proj-d"))
+			},
+			check: func(t *testing.T, base string) {
+				t.Helper()
+				// Just verify no error occurred (checked by caller)
+			},
+		},
+		{
+			name:  "no-op when projects dir does not exist",
+			setup: func(t *testing.T, base string) { t.Helper() },
+			check: func(t *testing.T, base string) { t.Helper() },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Use temp dir as fake ~/.claude/projects
+			base := filepath.Join(t.TempDir(), ".claude", "projects")
+			if tt.name != "no-op when projects dir does not exist" {
+				mustMkdir(t, base)
+			}
+
+			tt.setup(t, base)
+
+			err := cleanClaudeMemoryDir(base)
+			if err != nil {
+				t.Fatalf("cleanClaudeMemoryDir: %v", err)
+			}
+
+			tt.check(t, base)
+		})
+	}
+}
+
 // --- Duration formatting ---
 
 func TestDurationJSON(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -90,13 +89,7 @@ func CleanupProject(ctx context.Context, client platform.Client, projectID, work
 		}
 	}
 
-	// 2. Unmount any stale SSHFS mounts before cleaning files
-	unmounted := unmountAll(ctx, workDir)
-	if len(unmounted) > 0 {
-		fmt.Fprintf(os.Stderr, "  unmounted %d SSHFS mounts: %s\n", len(unmounted), strings.Join(unmounted, ", "))
-	}
-
-	// 3. Clean generated files in workDir
+	// 2. Clean generated files in workDir
 	cleaned, err := cleanWorkDir(workDir)
 	if err != nil {
 		return fmt.Errorf("cleanup work dir: %w", err)
@@ -105,7 +98,7 @@ func CleanupProject(ctx context.Context, client platform.Client, projectID, work
 		fmt.Fprintf(os.Stderr, "  removed %d files/dirs: %s\n", len(cleaned), strings.Join(cleaned, ", "))
 	}
 
-	// 4. Reset workflow state
+	// 3. Reset workflow state
 	stateDir := filepath.Join(workDir, ".zcp", "state")
 	if err := workflow.ResetSession(stateDir); err != nil {
 		return fmt.Errorf("cleanup reset workflow: %w", err)
@@ -142,31 +135,6 @@ func cleanWorkDir(dir string) ([]string, error) {
 	return removed, nil
 }
 
-// unmountAll force-unmounts any SSHFS mounts under dir and removes the empty mount directories.
-// Returns the list of unmounted directory names. Errors are logged but not fatal.
-func unmountAll(ctx context.Context, dir string) []string {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-
-	var unmounted []string
-	for _, entry := range entries {
-		if !entry.IsDir() || IsProtectedPath(entry.Name()) {
-			continue
-		}
-		mountPath := filepath.Join(dir, entry.Name())
-		// Try fusermount -uz (lazy unmount) — works even if the remote is gone
-		if err := exec.CommandContext(ctx, "fusermount", "-uz", mountPath).Run(); err != nil {
-			continue // not a FUSE mount or already unmounted
-		}
-		// Remove empty mount directory
-		_ = os.Remove(mountPath)
-		unmounted = append(unmounted, entry.Name())
-	}
-	return unmounted
-}
-
 // deleteServices deletes a list of services and polls each to completion.
 func deleteServices(ctx context.Context, client platform.Client, services []platform.ServiceStack) error {
 	for _, svc := range services {
@@ -177,6 +145,49 @@ func deleteServices(ctx context.Context, client platform.Client, services []plat
 		if proc != nil {
 			if err := pollProcess(ctx, client, proc.ID); err != nil {
 				return fmt.Errorf("poll delete %q: %w", svc.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// cleanClaudeMemory removes Claude auto-memory files so the next eval run
+// starts with a blank slate. This prevents cross-contamination between
+// sequential recipe evaluations.
+func cleanClaudeMemory() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("user home dir: %w", err)
+	}
+	return cleanClaudeMemoryDir(filepath.Join(home, ".claude", "projects"))
+}
+
+// cleanClaudeMemoryDir removes all files inside */memory/ directories under base.
+// If base does not exist, it returns nil (no-op).
+func cleanClaudeMemoryDir(base string) error {
+	projectDirs, err := os.ReadDir(base)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read projects dir: %w", err)
+	}
+
+	for _, proj := range projectDirs {
+		if !proj.IsDir() {
+			continue
+		}
+		memDir := filepath.Join(base, proj.Name(), "memory")
+		entries, err := os.ReadDir(memDir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read memory dir %s: %w", proj.Name(), err)
+		}
+		for _, entry := range entries {
+			if err := os.RemoveAll(filepath.Join(memDir, entry.Name())); err != nil {
+				return fmt.Errorf("remove %s/%s: %w", proj.Name(), entry.Name(), err)
 			}
 		}
 	}

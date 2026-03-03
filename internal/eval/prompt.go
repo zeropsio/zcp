@@ -258,9 +258,8 @@ Requirements:
 - Status endpoint should show service connectivity where applicable
 - Enable subdomain access on the runtime service
 
-Use the Zerops MCP tools (zerops_workflow, zerops_knowledge, etc.) for all Zerops operations.
-You may use Write, Edit, Read, Glob, and Grep tools to create and manage application source files.
-Do NOT use Bash, Agent, or any other tools not mentioned above.`)
+Use the Zerops MCP tools (zerops_workflow, zerops_knowledge, etc.) to complete this task.
+Do NOT use tools outside of zerops_* MCP tools.`)
 
 	return b.String()
 }

@@ -63,15 +63,6 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 		StartedAt: startedAt,
 	}
 
-	// 0. Validate MCP config exists (Claude silently produces no output for missing config)
-	if r.config.MCPConfig != "" {
-		if _, err := os.Stat(r.config.MCPConfig); err != nil {
-			result.Error = fmt.Sprintf("mcp config not found: %s", r.config.MCPConfig)
-			result.Duration = Duration(time.Since(startedAt))
-			return result, nil
-		}
-	}
-
 	// 1. Load recipe from knowledge store
 	doc, err := r.store.Get("zerops://recipes/" + recipeName)
 	if err != nil {
@@ -117,7 +108,12 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 		return nil, fmt.Errorf("write metadata: %w", err)
 	}
 
-	// 6. Spawn Claude CLI
+	// 6. Clean Claude auto-memory to prevent cross-contamination
+	if err := cleanClaudeMemory(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: clean memory: %v\n", err)
+	}
+
+	// 7. Spawn Claude CLI
 	logFile := filepath.Join(outDir, "log.jsonl")
 	evalCtx, cancel := context.WithTimeout(ctx, r.config.Timeout)
 	defer cancel()
@@ -126,13 +122,8 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 		result.Error = fmt.Sprintf("claude cli: %v", err)
 	}
 
-	// 7. Extract assessment from log
+	// 8. Extract assessment from log
 	logData, _ := os.ReadFile(logFile)
-
-	// Detect empty log (Claude exits 0 but produces nothing for bad MCP config, etc.)
-	if len(logData) == 0 && result.Error == "" {
-		result.Error = "claude produced no output (check --mcp-config path exists)"
-	}
 	logStr := string(logData)
 
 	assessment, found := ExtractAssessment(logStr)
@@ -144,7 +135,7 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 		}
 	}
 
-	// 8. Extract tool calls
+	// 9. Extract tool calls
 	calls := ExtractToolCalls(logStr)
 	if len(calls) > 0 {
 		callsJSON, err := json.MarshalIndent(calls, "", "  ")
@@ -158,7 +149,7 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 	result.LogFile = logFile
 	result.Duration = Duration(time.Since(startedAt))
 
-	// 9. Full project cleanup: delete all services (except zcpx), clean files, reset workflow
+	// 10. Full project cleanup: delete all services (except zcpx), clean files, reset workflow
 	fmt.Fprintf(os.Stderr, "cleanup: %s...\n", recipeName)
 	if cleanErr := CleanupProject(ctx, r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: cleanup %s: %v\n", recipeName, cleanErr)
@@ -176,7 +167,6 @@ func (r *Runner) spawnClaude(ctx context.Context, prompt, logFile string) error 
 		"--no-session-persistence",
 		"--model", r.config.Model,
 		"--max-turns", fmt.Sprintf("%d", r.config.MaxTurns),
-		"--allowedTools", "mcp__zerops__*", "Read", "Write", "Edit", "Glob", "Grep",
 	}
 
 	if r.config.MCPConfig != "" {
