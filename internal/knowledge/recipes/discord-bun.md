@@ -17,7 +17,7 @@ zerops:
       base: bun@1.2
       buildCommands:
         - bun i
-      deployFiles: /
+      deployFiles: ./
       cache: node_modules
     run:
       base: bun@1.2
@@ -80,7 +80,7 @@ export const config = {
 ## Gotchas
 
 - **No HTTP server** -- Discord bots connect to the Discord gateway via WebSocket. The `ports` declaration is required by Zerops for service routing but the bot does not serve HTTP traffic.
-- **No build step** -- Bun runs TypeScript directly. The build phase only installs dependencies; the entire project is deployed via `deployFiles: /`.
+- **No build step** -- Bun runs TypeScript directly. The build phase only installs dependencies; the entire project is deployed via `deployFiles: ./`.
 - **envSecrets for credentials** -- `DISCORD_TOKEN` and `DISCORD_CLIENT_ID` must be set as envSecrets in import.yml or via the Zerops GUI. They are sensitive and should never be in zerops.yml envVariables.
 - **Single container recommended** -- running multiple bot containers causes duplicate event handling. Keep `maxContainers: 1` unless the bot is designed for sharding.
 - **bun start** -- runs the `start` script from `package.json`, which executes `bun run src/index.ts` directly.

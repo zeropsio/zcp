@@ -15,7 +15,7 @@ zerops:
   - setup: bot
     build:
       base: python@3.12
-      deployFiles: /~
+      deployFiles: ./
       addToRunPrepare:
         - requirements.txt
     run:
@@ -71,6 +71,6 @@ bot.run(os.environ["DISCORD_TOKEN"])
 - **No HTTP server** -- Discord bots connect to the Discord gateway via WebSocket. The `ports` declaration is required by Zerops for service routing but the bot does not serve HTTP traffic.
 - **prepareCommands for pip** -- Python dependencies are installed via `prepareCommands` at runtime, not during build. The `addToRunPrepare` field ensures `requirements.txt` is available in the prepare layer.
 - **envSecrets for credentials** -- `DISCORD_TOKEN` must be set as envSecret in import.yml or via the Zerops GUI. It is sensitive and should never be in zerops.yml envVariables.
-- **deployFiles: /~** -- the trailing tilde deploys the contents of the root build directory to the runtime container root.
+- **deployFiles: ./** -- deploys the entire project to the runtime container.
 - **Single container recommended** -- running multiple bot containers causes duplicate event handling. Keep `maxContainers: 1` unless the bot is designed for sharding.
 - **No build commands** -- Python does not need a compile step. The build phase only collects files for deployment.

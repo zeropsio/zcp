@@ -195,6 +195,39 @@ func TestRecipeLint(t *testing.T) {
 				}
 			})
 
+			t.Run("DeployFilesAnnotation", func(t *testing.T) {
+				sections := parseRecipeSections(content)
+				gotchas := findSectionByPrefix(sections, "Gotchas")
+
+				needsAnnotation := false
+				for _, block := range zeropsBlocks {
+					var root zeropsYmlRoot
+					if err := yaml.Unmarshal([]byte(block), &root); err != nil {
+						continue
+					}
+					for _, entry := range root.Zerops {
+						// Skip static deploy targets — no self-deploy concept
+						if entry.Run != nil && isStaticBase(entry.Run.Base) {
+							continue
+						}
+						if entry.Build == nil || entry.Build.DeployFiles == nil {
+							continue
+						}
+						if !isWholeDirDeploy(entry.Build.DeployFiles) {
+							needsAnnotation = true
+							break
+						}
+					}
+					if needsAnnotation {
+						break
+					}
+				}
+
+				if needsAnnotation && !strings.Contains(gotchas, "deployFiles is for stage/production") {
+					t.Error("zerops.yml has non-whole-dir deployFiles but Gotchas missing 'deployFiles is for stage/production' annotation")
+				}
+			})
+
 			t.Run("VersionsKnown", func(t *testing.T) {
 				versions := extractVersionRefs(content)
 				for _, v := range versions {
@@ -590,4 +623,38 @@ func extractVersionRefs(content string) []string {
 	}
 
 	return refs
+}
+
+// isWholeDirDeploy returns true if the deployFiles value deploys the entire
+// build directory. Recognizes ".", "./", "/" as whole-dir patterns.
+// Handles both string and []any (YAML string or array).
+func isWholeDirDeploy(v any) bool {
+	switch val := v.(type) {
+	case string:
+		return isWholeDirPattern(val)
+	case []any:
+		if len(val) != 1 {
+			return false
+		}
+		if s, ok := val[0].(string); ok {
+			return isWholeDirPattern(s)
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func isWholeDirPattern(s string) bool {
+	switch s {
+	case ".", "./", "/":
+		return true
+	default:
+		return false
+	}
+}
+
+// isStaticBase returns true if the base is a static serving runtime.
+func isStaticBase(base string) bool {
+	return base == "static"
 }
