@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build all clean release
+.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build all clean release release-patch
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -60,16 +60,26 @@ clean: ## Remove build artifacts
 ###########
 # RELEASE #
 ###########
-release: ## Patch bump, tag, push (requires clean worktree)
+release: ## Minor bump, test, tag, push (e.g. v2.61.0 → v2.62.0)
+	@$(MAKE) _release BUMP=minor
+
+release-patch: ## Patch bump, test, tag, push (e.g. v2.61.0 → v2.61.1)
+	@$(MAKE) _release BUMP=patch
+
+_release:
 	@if [ -n "$$(git status --porcelain 2>/dev/null)" ]; then \
-		echo "ERROR: working tree is dirty. Run /commit first."; exit 1; \
+		echo "ERROR: working tree is dirty. Commit first."; exit 1; \
 	fi; \
 	LATEST=$$(git describe --tags --abbrev=0 2>/dev/null); \
 	if [ -z "$$LATEST" ]; then echo "ERROR: no existing tags found"; exit 1; fi; \
 	MAJOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f1); \
 	MINOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f2); \
 	PATCH=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f3); \
-	NEXT="v$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
+	if [ "$(BUMP)" = "minor" ]; then \
+		NEXT="v$$MAJOR.$$((MINOR + 1)).0"; \
+	else \
+		NEXT="v$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
+	fi; \
 	COMMITS=$$(git rev-list "$$LATEST"..HEAD --count 2>/dev/null || echo 0); \
 	if [ "$$COMMITS" = "0" ]; then \
 		printf "\033[33mWarning:\033[0m no new commits since $$LATEST\n"; \
@@ -77,11 +87,13 @@ release: ## Patch bump, tag, push (requires clean worktree)
 		read ans; \
 		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 1;; esac; \
 	fi; \
+	printf "Running tests...\n"; \
+	go test ./... -count=1 -short || { echo "ERROR: tests failed, aborting release."; exit 1; }; \
 	echo "Tagging $$NEXT ($$COMMITS commits since $$LATEST)..."; \
-	git tag -a "$$NEXT" -m "$$NEXT"; \
+	git tag -a "$$NEXT" -m "Release $$NEXT"; \
 	echo "Pushing..."; \
 	git push origin HEAD "$$NEXT"; \
-	echo "Done. GitHub Actions will build and publish the release."
+	echo "Done: $$NEXT pushed. GitHub Actions will build and publish."
 
 #########
 # BUILD #
