@@ -87,17 +87,17 @@ func TestGetBriefing_BunRuntime_ContainsBindingRule(t *testing.T) {
 	}
 }
 
-func TestStore_GetRecipe_Bun(t *testing.T) {
+func TestStore_GetRecipe_BunHono(t *testing.T) {
 	store := newTestStore(t)
-	content, err := store.GetRecipe("bun")
+	content, err := store.GetRecipe("bun-hono")
 	if err != nil {
-		t.Fatalf("GetRecipe(bun): %v", err)
+		t.Fatalf("GetRecipe(bun-hono): %v", err)
 	}
 	if !strings.Contains(content, "0.0.0.0") {
-		t.Error("bun recipe missing 0.0.0.0 binding rule")
+		t.Error("bun-hono recipe missing 0.0.0.0 binding rule")
 	}
 	if !strings.Contains(content, "zerops.yml") {
-		t.Error("bun recipe missing zerops.yml example")
+		t.Error("bun-hono recipe missing zerops.yml example")
 	}
 }
 
@@ -140,14 +140,19 @@ func TestStore_GetBriefing_StaticRecipes(t *testing.T) {
 	}
 }
 
-func TestStore_GetBriefing_RustRecipe(t *testing.T) {
+func TestStore_GetBriefing_RustNoRecipes(t *testing.T) {
 	store := newTestStore(t)
 	briefing, err := store.GetBriefing("rust@1", nil, nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	if !strings.Contains(briefing, "rust") {
-		t.Error("Rust briefing missing rust recipe hint")
+	// Rust runtime guide should still be present
+	if !strings.Contains(briefing, "Rust") {
+		t.Error("Rust briefing missing runtime guide content")
+	}
+	// No recipes exist for rust, so no Matching Recipes section
+	if strings.Contains(briefing, "Matching Recipes") {
+		t.Error("Rust briefing should NOT contain Matching Recipes section (no rust recipes)")
 	}
 }
 

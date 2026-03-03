@@ -44,6 +44,7 @@ Use `apk add` only for extensions NOT in this list.
 - Missing `documentRoot` -> Nginx doesn't know where to serve from
 - Missing `TRUSTED_PROXIES` -> CSRF validation fails behind L7 LB
 - Using `php-nginx` as build base -> build needs `php@X`, not the webserver variant
+- Apache: `.htaccess` MUST be included in `deployFiles` (Nginx doesn't need it)
 - `apk add` without `sudo` -> "Permission denied" in prepareCommands
 
 ### Deploy Patterns

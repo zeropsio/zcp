@@ -432,7 +432,7 @@ func TestStore_DetectRecipeRuntime(t *testing.T) {
 		{"svelte-nodejs", "nodejs"},
 		{"django", "python"},
 		{"echo-go", "go"},
-		{"rust", "rust"},
+		{"dotnet", "dotnet"},
 		{"ghost", "nodejs"},
 		{"bun-hono", "bun"},
 		// Static-only recipes should return "" (static skipped)

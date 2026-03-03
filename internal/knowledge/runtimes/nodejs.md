@@ -44,5 +44,6 @@ Includes Node.js, `npm`, `yarn`, `pnpm`, `git`, `npx`.
 
 - Missing `node_modules` in `deployFiles` -> "Cannot find module" at runtime
 - Not binding `0.0.0.0` -> 502 Bad Gateway
+- Express behind proxy: `app.set('trust proxy', true)` for correct client IP behind Zerops L7 LB
 - Next.js missing `output: 'export'` for static -> produces SSR output instead
 - Using `npm ci` without `package-lock.json` -> EUSAGE error ("can only install with existing lockfile")
