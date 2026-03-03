@@ -108,7 +108,7 @@ func TestEvents_StatusHints(t *testing.T) {
 				ID: "av4", ServiceStackID: "svc-1", Status: statusBuildFailed,
 				Created: "2024-01-01T00:04:00Z",
 			},
-			wantHint: "FAILED: Build failed. Check build logs with zerops_logs severity=error.",
+			wantHint: "FAILED: Build failed. Run zerops_deploy — response includes buildLogs with pipeline output.",
 		},
 		{
 			name: "appVersion DEPLOYING",

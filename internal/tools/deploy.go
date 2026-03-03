@@ -28,6 +28,7 @@ func RegisterDeploy(
 	sshDeployer ops.SSHDeployer,
 	authInfo *auth.Info,
 	engine *workflow.Engine,
+	logFetcher platform.LogFetcher,
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
@@ -47,7 +48,7 @@ func RegisterDeploy(
 		}
 
 		onProgress := buildProgressCallback(ctx, req)
-		pollDeployBuild(ctx, client, projectID, result, onProgress)
+		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher)
 
 		return jsonResult(result), nil, nil
 	})
@@ -60,6 +61,7 @@ func pollDeployBuild(
 	projectID string,
 	result *ops.DeployResult,
 	onProgress ops.ProgressCallback,
+	logFetcher platform.LogFetcher,
 ) {
 	if result.TargetServiceID == "" {
 		return
@@ -83,7 +85,17 @@ func pollDeployBuild(
 		result.NextActions = nextActionDeploySuccess
 	case statusBuildFailed:
 		result.Status = statusBuildFailed
-		result.Suggestion = "Check build logs with zerops_logs for details"
+		if logFetcher != nil {
+			result.BuildLogs = ops.FetchBuildLogs(ctx, client, logFetcher, projectID, event, 50)
+			if len(result.BuildLogs) > 0 {
+				result.BuildLogsSource = "build_container"
+			}
+		}
+		if len(result.BuildLogs) > 0 {
+			result.Suggestion = "Build failed — see buildLogs field for build pipeline output. Fix the issue and redeploy."
+		} else {
+			result.Suggestion = "Build failed — build logs unavailable. Check zerops.yml buildCommands syntax and package manifests."
+		}
 		result.NextActions = nextActionDeployBuildFail
 	}
 }

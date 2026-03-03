@@ -676,7 +676,7 @@ When any verification check fails, enter the iteration loop instead of giving up
 1. **Diagnose** — what check failed?
    | Failed check | Diagnosis action |
    |-------------|-----------------|
-   | Build FAILED | `zerops_logs serviceHostname="{hostname}" severity="error" since="10m"`, fallback: `zcli service log {hostname} --showBuildLogs --limit 50` |
+   | Build FAILED | `zerops_deploy` response includes `buildLogs` with last 50 lines of build pipeline output. Check for: wrong buildCommands, missing deps, wrong base version, missing "type: module". Fix and redeploy. |
    | No startup logs | App crashed on start. Check `zerops_logs severity="error" since="5m"` |
    | Error logs after start | Runtime exception. Read error message. |
    | HTTP check failed | App started but endpoint broken. Capture response: `curl -sfm 10 "{url}" 2>&1` |

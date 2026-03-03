@@ -70,6 +70,11 @@ func mapEsAppVersionEvent(av output.EsAppVersion) AppVersionEvent {
 	if av.Build != nil {
 		bi := &BuildInfo{}
 		hasBuild := false
+		if ssid, ok := av.Build.ServiceStackId.Get(); ok {
+			v := ssid.TypedString().String()
+			bi.ServiceStackID = &v
+			hasBuild = true
+		}
 		if ps, ok := av.Build.PipelineStart.Get(); ok {
 			v := ps.String()
 			bi.PipelineStart = &v

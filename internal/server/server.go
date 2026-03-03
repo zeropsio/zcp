@@ -96,7 +96,7 @@ func (s *Server) registerTools() {
 
 	// Mutating tools
 	if s.sshDeployer != nil {
-		tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.authInfo, wfEngine)
+		tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.authInfo, wfEngine, s.logFetcher)
 	}
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)

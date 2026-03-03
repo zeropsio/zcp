@@ -198,6 +198,7 @@ type AppVersionEvent struct {
 
 // BuildInfo contains build pipeline timing.
 type BuildInfo struct {
+	ServiceStackID *string `json:"serviceStackId,omitempty"` // build container ID for log access
 	PipelineStart  *string `json:"pipelineStart,omitempty"`
 	PipelineFinish *string `json:"pipelineFinish,omitempty"`
 	PipelineFailed *string `json:"pipelineFailed,omitempty"`

@@ -15,7 +15,7 @@ func TestNextActions_ContainToolNames(t *testing.T) {
 	}{
 		{"deploy_success_subdomain", nextActionDeploySuccess, "zerops_subdomain"},
 		{"deploy_success_logs", nextActionDeploySuccess, "zerops_logs"},
-		{"deploy_build_fail", nextActionDeployBuildFail, "zerops_logs"},
+		{"deploy_build_fail", nextActionDeployBuildFail, "buildLogs"},
 		{"import_success_discover", nextActionImportSuccess, "zerops_discover"},
 		{"import_success_workflow", nextActionImportSuccess, "workflow"},
 		{"import_partial_events", nextActionImportPartial, "zerops_events"},

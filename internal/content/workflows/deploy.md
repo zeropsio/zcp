@@ -207,8 +207,8 @@ Internal network access uses hostname directly — no subdomain needed.
 SSHFS mount auto-reconnects after deploy — no explicit remount needed.
 
 If any check fails, iterate: diagnose (check logs, capture response bodies), fix the issue,
-redeploy, re-verify. Max 3 iterations. If build FAILED: check zerops_logs severity="error"
-since="10m", then fallback to bash: zcli service log {hostname} --showBuildLogs --limit 50.
+redeploy, re-verify. Max 3 iterations. If build FAILED: zerops_deploy response includes buildLogs
+with last 50 lines of build pipeline output. Check for wrong buildCommands, missing deps, wrong base version.
 
 Report: status (pass/fail) + which checks passed/failed + subdomain URL (from enable response).
 ```

@@ -40,6 +40,8 @@ type DeployResult struct {
 	TimedOut        bool     `json:"timedOut,omitempty"`
 	NextActions     string   `json:"nextActions,omitempty"`
 	Warnings        []string `json:"warnings,omitempty"`
+	BuildLogs       []string `json:"buildLogs,omitempty"`       // last N lines of build output
+	BuildLogsSource string   `json:"buildLogsSource,omitempty"` // "build_container" or empty
 }
 
 // SSHDeployer executes commands on remote Zerops services.

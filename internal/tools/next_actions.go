@@ -3,7 +3,7 @@ package tools
 // NextActions constants provide actionable follow-up instructions for LLMs.
 const (
 	nextActionDeploySuccess    = "Enable subdomain: zerops_subdomain action=enable. Check logs: zerops_logs severity=ERROR since=5m."
-	nextActionDeployBuildFail  = "Check build logs: zerops_logs severity=ERROR. Fix and redeploy."
+	nextActionDeployBuildFail  = "Build failed — check buildLogs in response for build output. Fix and redeploy."
 	nextActionImportSuccess    = "Verify services: zerops_discover. Continue workflow: mount dev, discover env vars, write code, then deploy."
 	nextActionImportPartial    = "Check failed processes: zerops_events. Fix and re-import via zerops_workflow."
 	nextActionEnvSetSuccess    = "Reload service: zerops_manage action=reload (~4s, faster than restart)."

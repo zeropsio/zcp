@@ -65,7 +65,7 @@ var processHintMap = map[string]string{
 var appVersionHintMap = map[string]string{
 	statusActive:      "DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.",
 	statusBuilding:    "IN_PROGRESS: Build is running. Continue polling.",
-	statusBuildFailed: "FAILED: Build failed. Check build logs with zerops_logs severity=error.",
+	statusBuildFailed: "FAILED: Build failed. Run zerops_deploy — response includes buildLogs with pipeline output.",
 	"DEPLOYING":       "IN_PROGRESS: Deploy is running. Continue polling.",
 }
 
