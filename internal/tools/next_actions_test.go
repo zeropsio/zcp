@@ -29,7 +29,7 @@ func TestNextActions_ContainToolNames(t *testing.T) {
 		{"manage_connect_discover", nextActionManageConnect, "zerops_discover"},
 		{"manage_disconnect_discover", nextActionManageDisconnect, "zerops_discover"},
 		{"scale_discover", nextActionScaleSuccess, "zerops_discover"},
-		{"subdomain_enable_logs", nextActionSubdomainEnable, "zerops_logs"},
+		{"subdomain_enable_verify", nextActionSubdomainEnable, "zerops_verify"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

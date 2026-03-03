@@ -15,5 +15,5 @@ const (
 	nextActionManageConnect    = "Verify storage mount: zerops_discover."
 	nextActionManageDisconnect = "Storage disconnected. Verify: zerops_discover."
 	nextActionScaleSuccess     = "Verify scaling: zerops_discover."
-	nextActionSubdomainEnable  = "Test subdomain URL. If 502: zerops_logs severity=ERROR."
+	nextActionSubdomainEnable  = "Subdomain active. Verify: zerops_verify."
 )

@@ -24,10 +24,15 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, projectID string
 			IdempotentHint:  true,
 			DestructiveHint: boolPtr(false),
 		},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input SubdomainInput) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input SubdomainInput) (*mcp.CallToolResult, any, error) {
 		result, err := ops.Subdomain(ctx, client, projectID, input.ServiceHostname, input.Action)
 		if err != nil {
 			return convertError(err), nil, nil
+		}
+		if result.Process != nil && result.Process.ID != "" {
+			onProgress := buildProgressCallback(ctx, req)
+			finalProc, _ := pollManageProcess(ctx, client, result.Process, onProgress)
+			result.Process = finalProc
 		}
 		if input.Action == "enable" {
 			result.NextActions = nextActionSubdomainEnable

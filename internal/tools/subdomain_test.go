@@ -25,6 +25,10 @@ func TestSubdomainTool_EnableReturnsUrls(t *testing.T) {
 		WithProject(&platform.Project{
 			ID: "proj-1", Name: "myproject", Status: statusActive,
 			SubdomainHost: "abc1.prg1.zerops.app",
+		}).
+		WithProcess(&platform.Process{
+			ID:     "proc-subdomain-enable-svc-1",
+			Status: statusFinished,
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -68,6 +72,10 @@ func TestSubdomainTool_EnableReturnsUrls_BarePrefix(t *testing.T) {
 		}).
 		WithServiceEnv("svc-1", []platform.EnvVar{
 			{ID: "env-1", Key: "zeropsSubdomain", Content: "https://app-abc1-3000.prg1.zerops.app"},
+		}).
+		WithProcess(&platform.Process{
+			ID:     "proc-subdomain-enable-svc-1",
+			Status: statusFinished,
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -94,10 +102,14 @@ func TestSubdomainTool_EnableReturnsUrls_BarePrefix(t *testing.T) {
 	}
 }
 
-func TestSubdomainTool_Enable(t *testing.T) {
+func TestSubdomainTool_Enable_PollsProcess(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{
+			ID:     "proc-subdomain-enable-svc-1",
+			Status: statusFinished,
+		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterSubdomain(srv, mock, "proj-1")
@@ -117,12 +129,22 @@ func TestSubdomainTool_Enable(t *testing.T) {
 	if sr.Action != "enable" {
 		t.Errorf("action = %q, want %q", sr.Action, "enable")
 	}
+	if sr.Process == nil {
+		t.Fatal("expected process in result")
+	}
+	if sr.Process.Status != statusFinished {
+		t.Errorf("process status = %q, want %q (tool must poll to completion)", sr.Process.Status, statusFinished)
+	}
 }
 
-func TestSubdomainTool_Disable(t *testing.T) {
+func TestSubdomainTool_Disable_PollsProcess(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{
+			ID:     "proc-subdomain-disable-svc-1",
+			Status: statusFinished,
+		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterSubdomain(srv, mock, "proj-1")
@@ -133,6 +155,17 @@ func TestSubdomainTool_Disable(t *testing.T) {
 
 	if result.IsError {
 		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var sr ops.SubdomainResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if sr.Process == nil {
+		t.Fatal("expected process in result")
+	}
+	if sr.Process.Status != statusFinished {
+		t.Errorf("process status = %q, want %q (tool must poll to completion)", sr.Process.Status, statusFinished)
 	}
 }
 
