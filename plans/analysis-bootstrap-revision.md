@@ -319,10 +319,15 @@ type RuntimeTarget struct {
     DevHostname string `json:"devHostname"`         // "appdev"
     Type        string `json:"type"`                 // "php-nginx@8.4"
     IsExisting  bool   `json:"isExisting,omitempty"` // true = already deployed, needs update
+    Simple      bool   `json:"simple,omitempty"`     // true = no stage pair, single service
 }
 
 // StageHostname derives stage from dev: "appdev" -> "appstage"
+// Returns "" when Simple=true or DevHostname doesn't end in "dev"
 func (r RuntimeTarget) StageHostname() string {
+    if r.Simple {
+        return ""
+    }
     if base, ok := strings.CutSuffix(r.DevHostname, "dev"); ok {
         return base + "stage"
     }
@@ -348,7 +353,7 @@ type ServicePlan struct {
 
 - All hostnames pass `ValidateHostname()` (existing function in `platform` package)
 - All types exist in live catalog (existing check)
-- Dev/stage pairing enforced via `StageHostname()` convention
+- Dev/stage pairing enforced via `StageHostname()` convention (skipped when `Simple=true`)
 - `CREATE` dependencies must NOT exist in live services
 - `EXISTS` dependencies MUST exist in live services
 - Dependencies shared across targets: if target 1 creates `db` (CREATE), target 2 can reference it as EXISTS
@@ -395,245 +400,205 @@ Plan []workflow.BootstrapTarget `json:"plan,omitempty"` // REPLACE
 
 ---
 
-## 4. Design: State Model — Registry + Session Split
+## 4. Design: State Model — Session-Only + Decision Metadata
 
-### 4.1 The Problem with Session-Centric State
+### 4.1 Reality-First Principle
 
-Current `WorkflowState` conflates two concerns:
-1. **What ZCP has set up** (persistent topology) — which services were bootstrapped, how they connect, where they're mounted
-2. **What's happening right now** (transient session) — which step we're on, what the current plan is, iteration count
+> **No document should describe project state.** The API is the source of truth. Every new session discovers reality from the live API. Documents that pretend to track "current state" are unmaintainable — anything can happen between sessions (services deleted via dashboard, scaled externally, env vars changed).
 
-When the session ends, concern #1 is lost. This is the handoff gap.
+This is a key departure from earlier drafts that proposed a persistent registry. The registry was dropped because it creates a state document that must be reconciled with reality — an unmaintainable path.
 
-### 4.2 Registry: What the API Cannot Tell Us
+### 4.2 What the API Already Provides (Sufficient)
 
-The Zerops API provides:
+The Zerops API provides on every session start:
 - Service existence, types, statuses (`ListServices()`)
 - Environment variables (`GetServiceEnv()`)
 - Resource allocation, ports (`GetService()`)
 
-The API does NOT know:
-- Dev/stage pairing (sees `appdev` and `appstage` as unrelated services)
-- Dependencies (doesn't know `appdev` uses `db`)
-- Mount paths (local SSHFS state)
-- Bootstrap lifecycle (whether ZCP completed its workflow for a service)
-- Intent (why services were created)
+What the API does NOT know (dev/stage pairing, dependencies, intent) is handled by:
+- **Per-service decision metadata** (`.zcp/services/{hostname}.json`) — records decisions made during bootstrap
+- **CLAUDE.md reflog** — historical record of what was bootstrapped and when
+- Neither of these pretends to be current state. They are historical records.
 
-### 4.3 Proposed State Model
+### 4.3 State Model — Session Only
+
+The `WorkflowState` structure remains flat and session-scoped. No persistent registry. No nesting change needed:
 
 ```go
 type WorkflowState struct {
-    Version   string                    `json:"version"`
-    ProjectID string                    `json:"projectId"`
-
-    // PERSISTENT -- survives across sessions
-    Registry  map[string]*ServiceRecord `json:"registry"`
-
-    // TRANSIENT -- cleared when session completes or resets
-    Session   *WorkflowSession          `json:"session,omitempty"`
-}
-
-type ServiceRecord struct {
-    Hostname  string   `json:"hostname"`
-    Type      string   `json:"type"`                   // "bun@1.2", "postgresql@16"
-    Role      string   `json:"role"`                   // "runtime-dev", "runtime-stage", "managed"
-    PairWith  string   `json:"pairWith,omitempty"`     // dev<->stage link
-    DependsOn []string `json:"dependsOn,omitempty"`    // managed service hostnames
-    MountPath string   `json:"mountPath,omitempty"`    // SSHFS path (dev only)
-    AddedBy   string   `json:"addedBy"`                // session ID that created it
-    AddedAt   string   `json:"addedAt"`                // RFC3339
-    Lifecycle string   `json:"lifecycle"`              // planned -> created -> deployed -> verified
-}
-
-type WorkflowSession struct {
-    SessionID string            `json:"sessionId"`
-    Workflow  string            `json:"workflow"`
-    Phase     Phase             `json:"phase"`
-    Iteration int               `json:"iteration"`
-    Intent    string            `json:"intent"`
-    CreatedAt string            `json:"createdAt"`
-    UpdatedAt string            `json:"updatedAt"`
+    Version   string           `json:"version"`
+    SessionID string           `json:"sessionId"`
+    ProjectID string           `json:"projectId"`
+    Workflow  string           `json:"workflow"`
+    Phase     Phase            `json:"phase"`
+    Iteration int              `json:"iteration"`
+    Intent    string           `json:"intent"`
+    CreatedAt string           `json:"createdAt"`
+    UpdatedAt string           `json:"updatedAt"`
     History   []PhaseTransition `json:"history"`
-    Bootstrap *BootstrapState   `json:"bootstrap,omitempty"`
+    Bootstrap *BootstrapState  `json:"bootstrap,omitempty"`
+    // NO Registry — reality comes from API on every session start
 }
 ```
 
-### 4.4 Input vs Output Separation
+No migration needed. No nesting. No `WorkflowSession` wrapper. The existing flat structure is sufficient because the state file IS the session — when the session ends (DONE + auto-reset), the state file goes away.
 
-- **BootstrapTarget** = INPUT to bootstrap (transient, lives in `BootstrapState.Plan` during session)
-- **Registry** = OUTPUT of bootstrap (persistent, lives in `WorkflowState.Registry`)
+### 4.4 Per-Service Lifecycle — Session-Scoped
 
-After each bootstrap step:
-- provision -> registry entries with `lifecycle: "created"`
-- generate -> entries updated to `lifecycle: "configured"`
-- deploy -> entries updated to `lifecycle: "deployed"`
-- verify -> entries updated to `lifecycle: "verified"`
+Per-service lifecycle tracking lives within `BootstrapState` during the bootstrap session:
 
-For `IsExisting=true` targets: existing registry entries get `DependsOn` updated.
-
-### 4.5 Registry Reconciliation
-
-At session start (`discover` step), reconcile registry against live API:
-- Service in registry but deleted from Zerops -> remove from registry
-- Service in Zerops but not in registry -> note as "externally added" in discover response
-- Service in registry with matching live service -> keep (topology preserved)
-
-This is a read-repair pattern. Cheap (one API call), prevents stale entries.
-
-### 4.6 Session Lifecycle Changes
-
-Current `InitSession` creates a new `WorkflowState` (destroys previous). Must change to:
-- `InitSession`: preserves registry, creates new `Session` within existing state
-- `ResetSession`: clears Session only, preserves registry
-- `CompleteSession`: Session -> nil, registry stays
-
-Key difference from current: `ResetSession` currently deletes the entire `zcp_state.json`. New behavior preserves registry.
-
-### 4.7 State File Migration
-
-Current state file has flat `sessionId, workflow, phase, etc.` at top level. New state nests them in `Session`. Need version check + migration on `LoadSession`:
 ```go
-if state.Version == "1" { /* migrate flat -> nested */ }
+const (
+    LifecyclePlanned    = "planned"    // after discover — service is in the plan
+    LifecycleCreated    = "created"    // after provision — import succeeded
+    LifecycleConfigured = "configured" // after generate — code/zerops.yml written
+    LifecycleDeployed   = "deployed"   // after deploy — build ACTIVE
+    LifecycleVerified   = "verified"   // after verify — health checks pass
+    LifecycleReady      = "ready"      // terminal — READY_TO_DEVELOP
+)
 ```
 
-### 4.8 Impact on Existing Code
+This tracks progress **within the session only**. When the session ends, lifecycle tracking ends. Next session discovers reality from API.
 
-Many functions access `state.SessionID`, `state.Phase`, etc. directly. These move to `state.Session.SessionID`:
-- `engine.go`: all `BootstrapXxx()` methods
-- `bootstrap_evidence.go`: `autoCompleteBootstrap()`
-- `gates.go`: uses `sessionID` from state
-- `session.go`: `InitSession`, `IterateSession`
-- `instructions.go`: `buildWorkflowHint()`
-- `tools/workflow.go`: `handleTransition`, `handleEvidence`
-- `tools/workflow_bootstrap.go`: `handleBootstrapComplete`
+After each bootstrap step, the `BootstrapState.Plan.Targets` entries get their lifecycle updated:
+- provision → targets with created dependencies get `lifecycle: "created"`
+- generate → targets get `lifecycle: "configured"`
+- deploy → targets get `lifecycle: "deployed"`
+- verify → targets passing health checks get `lifecycle: "verified"` then `"ready"`
 
-Consider adding helper methods:
-```go
-func (s *WorkflowState) ActiveSessionID() string { ... }
-func (s *WorkflowState) HasActiveSession() bool { ... }
+When ALL target services reach `ready`, bootstrap completes.
+
+### 4.5 Per-Service Decision Metadata
+
+Certain decisions made during bootstrap affect future behavior but are NOT state:
+- Deploy flow chosen (SSH self-deploy vs other)
+- Mode (standard vs simple)
+- Dev workflow preferences
+- Dependencies wired at bootstrap time
+- Framework chosen
+
+These are recorded as **per-service decision files** at `.zcp/services/{hostname}.json`:
+
+```json
+{
+  "hostname": "appdev",
+  "type": "bun@1.2",
+  "mode": "standard",
+  "stageHostname": "appstage",
+  "deployFlow": "ssh",
+  "dependencies": ["db", "cache"],
+  "bootstrapSession": "a1b2c3d4",
+  "bootstrappedAt": "2026-03-03T10:00:00Z",
+  "decisions": {
+    "devWorkflow": "mount-edit-deploy",
+    "framework": "hono"
+  }
+}
 ```
 
-### 4.9 Registry for BuildInstructions
+Key properties:
+- **Written once at bootstrap completion.** Not updated continuously.
+- **Records decisions, not state.** "We chose SSH deploy flow" is a decision. "Service is RUNNING" is state (from API).
+- **Optional.** If the file doesn't exist (service created via dashboard), LLM discovers everything from API and makes fresh decisions.
+- **Informs, doesn't control.** LLM reads it as context and can choose differently if circumstances changed.
 
-`BuildInstructions()` in `internal/server/instructions.go` currently provides:
-```
-Current services:
-- appdev (php-nginx@8.4) -- RUNNING
-- appstage (php-nginx@8.4) -- RUNNING
-- db (postgresql@16) -- RUNNING
-```
+**Difference from the dropped registry:** The registry was a project-level state document trying to be the source of truth for topology. Decision metadata files are per-service historical records ("we decided X") — they don't need reconciliation because decisions don't go stale.
 
-With registry, it can provide:
-```
-Current services:
-- appdev (php-nginx@8.4) -- RUNNING [dev, stage: appstage, deps: db+cache, mount: /var/www/appdev/]
-- appstage (php-nginx@8.4) -- RUNNING [stage of appdev]
-- db (postgresql@16) -- RUNNING [managed, used by: appdev]
-- cache (valkey@7.2) -- RUNNING [managed, used by: appdev]
-```
+Implementation: `internal/workflow/service_meta.go` (new, ~40 lines) — `WriteServiceMeta()`, `ReadServiceMeta()`
 
-This gives the next LLM session full topology context without any manual explanation.
+### 4.6 BuildInstructions — Live API Only
+
+`BuildInstructions()` in `internal/server/instructions.go` continues to:
+1. Call `ListServices(ctx, projectID)` — live API, always fresh
+2. Classify project state (FRESH/CONFORMANT/NON_CONFORMANT)
+3. Show active workflow hint if session exists
+
+No enrichment from stored topology. The system prompt shows what the API returns, period. If `.zcp/services/` metadata files exist, the deploy workflow guidance can read them for context — but they do NOT affect the system prompt.
+
+### 4.7 Session Lifecycle — No Changes Needed
+
+Current `InitSession`, `LoadSession`, `ResetSession`, `IterateSession` remain unchanged:
+- `InitSession`: creates new state file (as before)
+- `ResetSession`: deletes state file (as before — no registry to preserve)
+- Auto-reset on DONE: continues to work (as before)
+
+No migration. No helper methods needed. The flat structure is the right abstraction.
 
 ---
 
-## 5. Design: Post-Bootstrap CLAUDE.md Recording
+## 5. Design: Post-Bootstrap CLAUDE.md Reflog
 
-### 5.1 The Staleness Problem
+### 5.1 Core Principle: Reflog, Not State Document
 
-Written knowledge goes stale. Env var values change, services can be added/removed via dashboard, resources get scaled. Any detailed record creates false confidence.
+> CLAUDE.md entries are a **reflog** — historical records of what happened, like `git reflog`. They do NOT describe current state. Anything can happen between sessions: services deleted via dashboard, dependencies changed, env vars modified. The reflog says "on date X, this was bootstrapped." The LLM treats it as a hint and verifies current reality via `zerops_discover`.
 
-### 5.2 The Two-Layer Solution
+This replaces the earlier "topology snapshot with regeneration" approach. No snapshot. No regeneration. No reconciliation. Just append-only history.
 
-| Layer | Content | Staleness Risk | Where |
-|---|---|---|---|
-| **Topology** (immutable) | hostnames, types, roles, dependencies, mount paths, env var names | Very low | CLAUDE.md |
-| **State** (live) | status, env values, URLs, container counts | High | `zerops_discover` via API |
+### 5.2 What Gets Written
 
-`BuildInstructions()` already handles layer 2. CLAUDE.md handles layer 1.
-
-### 5.3 What to Record (Only Immutable Facts)
-
-**Record:**
-- Service hostnames (immutable once created)
-- Service types/versions (immutable once created)
-- Dev/stage pairing topology
-- Cross-service dependencies (which runtime uses which managed service)
-- Mount paths (deterministic: `/var/www/{hostname}/`)
-- Env var NAMES from managed services (names are stable)
-- User intent / service purpose
-- Bootstrap timestamp
-
-**Do NOT record:**
-- Env var VALUES (can change)
-- Service status (changes constantly)
-- Subdomain URLs (can be enabled/disabled)
-- Container counts, resource limits (scaling changes these)
-- Build/deploy configuration details (zerops.yml is source of truth)
-
-### 5.4 Format
-
-Appended to project's CLAUDE.md with idempotent markers for regeneration:
+After bootstrap verify step passes, append to CLAUDE.md:
 
 ```markdown
-<!-- ZEROPS:BEGIN -->
-## Zerops Infrastructure
+<!-- ZEROPS:REFLOG -->
+### 2026-03-03 — Bootstrap: Bun API + PostgreSQL + Valkey
 
-Bootstrapped: 2026-03-03 | Intent: Bun API with PostgreSQL and Valkey
+- **Runtime:** appdev/appstage (bun@1.2)
+- **Dependencies:** db (postgresql@16), cache (valkey@7.2)
+- **Evidence:** .zcp/evidence/{sessionID}/
+- **Mode:** standard (dev+stage)
 
-> For live state (status, env values, URLs), use `zerops_discover`.
-
-### Services
-
-| Hostname | Type | Role | Notes |
-|----------|------|------|-------|
-| appdev | bun@1.2 | runtime (dev) | Mount: /var/www/appdev/ |
-| appstage | bun@1.2 | runtime (stage) | Deploys from appdev |
-| db | postgresql@16 | managed | |
-| cache | valkey@7.2 | managed | |
-
-### Dependencies
-
-- **appdev/appstage** -> db (connectionString, host, port, user, password), cache (connectionString, host, port)
-
-<!-- ZEROPS:END -->
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
 ```
 
-### 5.5 Regeneration Strategy
+### 5.3 What Does NOT Get Written
 
-Always **regenerate from current state** (registry + live API), never append. Reasons:
-- External changes (dashboard) could have added/removed services
-- Appending creates duplicates on re-bootstrap
-- Regeneration is trivial
+- No service status, no URLs, no env var values, no env var names
+- No "current topology" table
+- No attempt to stay in sync with reality
+- No regeneration/reconciliation logic
 
-### 5.6 Why Both Registry AND CLAUDE.md
+### 5.4 When It Gets Written
 
-**Registry** (zcp_state.json):
-- Machine-readable, used programmatically by ZCP
-- Enriches `BuildInstructions()` system prompt
-- Lives in `.zcp/state/` directory (local, not in git)
-- Has lifecycle tracking and session provenance
+- Once, at the end of a successful bootstrap (after verify hard checks pass)
+- Never updated or regenerated
+- If user runs another bootstrap (add new runtime), a new reflog entry is appended below
+- Each entry is independent — multiple entries accumulate like a git log
 
-**CLAUDE.md** (project documentation):
-- Human/LLM-readable at session start
-- Checked into git (survives machine changes, visible to team)
-- Provides context even without ZCP's state directory
-- Contains minimal topology, explicitly defers to `zerops_discover` for live state
+### 5.5 Where It Gets Written
 
-They're complementary, not redundant.
+- Project's `CLAUDE.md` (checked into git — visible to team, survives machine changes)
+- Alternatively `CLAUDE.local.md` if user prefers not to commit it
 
-### 5.7 Staleness Mitigation
+### 5.6 How the LLM Uses It
 
-Three mechanisms:
-1. **Only immutable facts** — hostnames, types, versions cannot change after creation
-2. **Explicit scope declaration** — "For live state, use `zerops_discover`" tells LLM not to trust values
-3. **Cross-check** — `BuildInstructions()` lists services from live API. If CLAUDE.md mentions a service not in the live list, LLM can detect inconsistency
+1. LLM starts a new session, reads CLAUDE.md (automatically loaded by Claude Code)
+2. Sees reflog: "March 3rd: bootstrapped bun+postgres"
+3. Calls `zerops_discover` to verify what actually exists today
+4. If services still exist — the reflog provides useful context (intent, relationships, mode)
+5. If services were deleted — the reflog is just history, LLM works with current reality
 
-### 5.8 Implementation
+The reflog gives the LLM a **starting hypothesis** ("these services were probably set up together") that it validates against the live API. This is faster than discovering everything from scratch, but doesn't create false confidence.
 
-- `internal/workflow/report.go` (new, ~80 lines) — `GenerateInfraSection(registry, intent) string`
-- `internal/workflow/claudemd.go` (new, ~60 lines) — `UpdateCLAUDEMD(projectDir, section) error` with marker-based idempotent replacement
-- `internal/workflow/engine.go` — hook into bootstrap completion (after verify step)
-- `internal/server/instructions.go` — `BuildInstructions` reads registry for richer system prompt (add Section E between workflow hint and project summary)
+### 5.7 Why Reflog Instead of Snapshot
+
+| Approach | Problem |
+|---|---|
+| **Snapshot** (previous design) | Must be regenerated when state changes. If regeneration doesn't happen (external changes), snapshot lies. Creates reconciliation complexity. |
+| **Reflog** (current design) | Never lies — "on March 3rd, X happened" is always true. No regeneration needed. No reconciliation. Trivially simple. |
+
+### 5.8 Relationship to Decision Metadata
+
+- **CLAUDE.md reflog** = human/LLM-readable history, checked into git, gives context to anyone reading the project
+- **`.zcp/services/{hostname}.json`** = machine-readable decisions, local to workstation, informs ZCP tooling
+
+They serve different audiences. The reflog is for LLM context at session start. Decision metadata is for workflow tooling to provide appropriate guidance.
+
+### 5.9 Implementation
+
+- `internal/workflow/reflog.go` (new, ~50 lines) — `AppendReflogEntry(claudeMDPath, intent, targets, sessionID, timestamp) error`
+- Called from the bootstrap completion path (after verify step passes)
+- Pure append, no markers for replacement — each bootstrap is a new entry
 
 ---
 
@@ -666,19 +631,26 @@ This split reflects two distinct activities: infrastructure provisioning vs. app
 **Input**: User intent (natural language)
 **Output**: `[]BootstrapTarget` with Resolution filled in
 
-Actions:
-1. Call `zerops_discover` to get all existing services
-2. Read registry for existing topology
-3. Parse user intent into runtime + dependency requirements
-4. If unclear, guidance says: ask the user before proceeding
-5. For each required service, check if it already exists -> resolution
-6. Validate plan (hostnames, types, pairing, resolution consistency)
-7. Submit structured plan via `zerops_workflow action="complete" step="discover" plan=[...]`
+**Internal sequence (knowledge first, then clarify):**
+
+The discover step has an internal flow that the LLM follows via guidance:
+
+1. **Gather context**: Call `zerops_discover` to inspect current project state
+2. **Load knowledge**: Call `zerops_knowledge` for runtime briefings and recipes relevant to user intent
+3. **Form understanding**: Based on user intent + loaded knowledge + project state, form a preliminary picture
+4. **Clarify with user** (if needed): Armed with context, ask informed questions:
+   - RUNTIME: language + framework — use loaded recipes to suggest specific options
+   - MANAGED SERVICES: databases, caches, storage
+   - MODE: standard (dev+stage, recommended) or simple (single service)
+   - Only ask if ambiguous. If intent is clear, proceed without asking.
+5. **Submit structured plan**: `zerops_workflow action="complete" step="discover" plan=[...]`
+
+The clarification is NOT a separate step — it's guidance content within discover. The LLM asks informed questions (after loading knowledge), not cold generic ones.
 
 Hard checks:
 - All hostnames pass `ValidateHostname()` (existing function)
 - All types exist in live catalog
-- Dev/stage pairing: every RuntimeTarget has valid StageHostname
+- Dev/stage pairing: every RuntimeTarget has valid StageHostname (unless `Simple=true`)
 - Resolution consistency: CREATE services don't exist, EXISTS services do exist
 - Knowledge loaded for ALL target runtime types (not just any one)
 
@@ -702,7 +674,8 @@ Hard checks:
 - Dev services: SSHFS mount active
 - Each managed service has non-empty env vars
 
-Registry update: entries with `lifecycle: "created"`
+Lifecycle update: target services → `lifecycle: "created"` (session-scoped)
+**Auto-completable**: Yes — when all hard checks pass, step auto-completes without LLM calling `action="complete"`
 
 #### Step 2: generate
 
@@ -724,7 +697,10 @@ Hard checks:
 - Env ref validation: `${hostname_var}` patterns reference valid hostnames
 - Stage entries: start is NOT `zsc noop --silent`
 
-Registry update: entries updated to `lifecycle: "configured"`
+Lifecycle update: target services → `lifecycle: "configured"` (session-scoped)
+**NOT auto-completable**: Creative step — LLM decides when code is ready, calls `action="complete"`. Hard check validates but does not auto-confirm.
+
+**Mode-aware guidance**: The detailed guide is filtered by plan mode. Standard mode → only dev+stage template. Simple mode → only single-service template. Prevents LLM from mixing templates.
 
 #### Step 3: deploy
 
@@ -746,23 +722,29 @@ Hard checks:
 - `http_status` = pass
 - Degraded tolerated, only unhealthy = fail
 
-Registry update: entries updated to `lifecycle: "deployed"`
+Lifecycle update: target services → `lifecycle: "deployed"` (session-scoped)
+**NOT auto-completable**: Creative/branching step — LLM manages deploy order and iteration. Build status (ACTIVE/BUILD_FAILED) is deterministic, but verify is separate.
+
+**Creative → Verify flow**: The LLM's creative work (generate + deploy) is always followed by objective verification. The LLM decides "I think it's done" and calls `action="complete"` for deploy. Then verify objectively validates. This pattern ensures creative judgment + hard verification.
 
 #### Step 4: verify
 
 **Input**: All targets deployed
-**Output**: Final report, registry updated, CLAUDE.md written
+**Output**: Final report, service metadata written, CLAUDE.md reflog written
 
 Actions:
 1. Run `VerifyAll()` on all project services (parallel)
-2. Update registry: all target services -> `lifecycle: "verified"`
-3. Generate CLAUDE.md infrastructure section
-4. Present final report with service URLs and statuses
+2. Update target services → `lifecycle: "verified"` then `"ready"` (session-scoped)
+3. Write per-service decision metadata to `.zcp/services/{hostname}.json`
+4. Append reflog entry to CLAUDE.md
+5. Present final report with service URLs and statuses
 
 Hard checks:
 - `VerifyAll()` -- all services healthy or degraded (not unhealthy)
-- Registry fully populated with verified entries
-- CLAUDE.md written successfully
+- Verify checks endpoints against predefined expectations (/health returns 2xx, /status returns JSON with connection checks)
+- Cross-reference: /status `connections` keys should match plan dependencies (warning if mismatch)
+
+**Auto-completable**: Yes — when all hard checks pass, step auto-completes and triggers completion sequence (metadata write, reflog write, session → DONE)
 
 ### 6.4 Skip Logic
 
@@ -770,7 +752,17 @@ Simplified from current `validateConditionalSkip()`:
 - `generate` + `deploy` can be skipped (if targets are managed-only, but this is rare)
 - `discover`, `provision`, `verify` cannot be skipped
 
-### 6.5 Evidence Map Update
+### 6.5 Step Completion Model
+
+| Step | Completion | Evidence Source |
+|------|-----------|----------------|
+| **discover** | Explicit — LLM submits structured plan | Plan validation result |
+| **provision** | Auto — hard checks pass after tool calls | Import result + ListServices + env var presence |
+| **generate** | Explicit — LLM says code is ready | zerops.yml structural validation |
+| **deploy** | Explicit — LLM manages iteration loop | Deploy result (build status) |
+| **verify** | Auto — VerifyAll() passes | Health check results |
+
+Evidence is populated from actual tool results (not LLM attestation strings). The evidence map for audit trail:
 
 ```go
 var bootstrapEvidenceMap = map[string][]string{
@@ -821,36 +813,65 @@ type StepCheck struct {
 type StepChecker func(ctx context.Context, plan *ServicePlan) (*StepCheckResult, error)
 ```
 
-### 7.3 Integration with BootstrapComplete()
+### 7.3 Two Completion Modes
+
+Hard checks serve two distinct purposes depending on step type:
+
+**Auto-completion (mechanical steps: provision, verify):**
+Hard checks run server-side. When all pass, the step auto-completes — the LLM does NOT need to call `action="complete"`. The response includes the next step's guidance, reducing round-trips.
+
+**Validation (creative steps: discover, generate, deploy):**
+LLM calls `action="complete"` when it believes work is done. Hard checks validate the creative output. If checks fail, the response includes structured failure data — the LLM fixes and retries. If checks pass, step completes.
+
+### 7.4 Integration with BootstrapComplete()
 
 ```go
 // internal/workflow/engine.go
-func (e *Engine) BootstrapComplete(stepName, attestation string, checker StepChecker) (*BootstrapResponse, error) {
+func (e *Engine) BootstrapComplete(stepName string, checker StepChecker) (*BootstrapResponse, error) {
     // ... existing validation ...
 
     // Run hard checks if checker provided
     if checker != nil {
-        checkResult, err := checker(ctx, state.Session.Bootstrap.Plan)
+        checkResult, err := checker(ctx, state.Bootstrap.Plan)
         if err != nil {
             return nil, fmt.Errorf("step check error: %w", err)
         }
         if checkResult != nil && !checkResult.Passed {
-            resp := state.Session.Bootstrap.BuildResponse(state.ActiveSessionID(), state.Session.Intent)
+            resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent)
             resp.CheckResult = checkResult
             resp.Message = fmt.Sprintf("Step %q: %s -- fix issues and retry", stepName, checkResult.Summary)
             return resp, nil  // NOT an error -- structured failure
         }
     }
 
-    state.Session.Bootstrap.CompleteStep(stepName, attestation)
-    e.updateRegistryLifecycle(state, stepName)
+    state.Bootstrap.CompleteStep(stepName, checkResult.Summary)
+    e.updateLifecycle(state, stepName) // session-scoped lifecycle update
     // ...
 }
 ```
 
 Key design: Hard check failure is NOT a Go error. It returns a normal response with `CheckResult` populated. LLM sees what failed, fixes it, calls complete again.
 
-### 7.4 Building Checkers in Tool Layer
+### 7.5 Creative → Verify Pattern
+
+Creative steps (generate, deploy) are validated by the LLM's self-assessment AND subsequent hard verification:
+
+```
+LLM generates code → LLM: "I think it's ready" → action="complete" step="generate"
+  → Hard check validates zerops.yml structure → pass/fail
+
+LLM deploys → LLM: "build looks good" → action="complete" step="deploy"
+  → Hard check validates build status ACTIVE → pass/fail
+
+Both creative steps followed by:
+  → Verify step: VerifyAll() checks endpoints against expectations
+  → /health returns 2xx, /status returns JSON with connection checks
+  → If verify fails → iteration loop (fix → redeploy → re-verify)
+```
+
+This ensures creative judgment is always followed by objective verification. The LLM can't skip verify — it's a non-skippable step.
+
+### 7.6 Building Checkers in Tool Layer
 
 ```go
 // internal/tools/workflow_checks.go (new)
@@ -882,7 +903,7 @@ func buildStepChecker(ctx context.Context, step string, client platform.Client,
 }
 ```
 
-### 7.5 Registration Changes
+### 7.7 Registration Changes
 
 ```go
 // internal/tools/workflow.go
@@ -894,13 +915,32 @@ tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine, know
 // ADD s.logFetcher parameter
 ```
 
-### 7.6 Phase Gate Simplification
+### 7.8 Phase Gate Simplification
 
 Phase gates (G0-G4) are redundant for bootstrap when hard checks exist. `autoCompleteBootstrap()` currently generates synthetic evidence and auto-transitions. Hard checks at step boundaries provide strictly stronger validation.
 
 **Decision**: Keep gates for non-bootstrap workflows (deploy, debug, scale, configure). For bootstrap, hard checks ARE the gates.
 
-### 7.7 Gaps Found in Original Plan (Resolved)
+### 7.9 Failure Handling
+
+- **Partial success (3/5 imported, 2 failed):** Evidence records actual `Failed` count from tool result. Gate blocks. LLM sees per-service details.
+- **Timeout:** Treated as `inconclusive` — gates block. LLM must investigate manually.
+- **Deploy ACTIVE but app crashes:** Caught by separate verify step (not auto-confirmed from deploy).
+- **Partial verify (2/3 healthy, 1 unhealthy):** Bootstrap can complete with partial success if at least one target is verified. Failed services recorded in evidence. Reflog reflects actual outcomes.
+
+### 7.10 What Gets Eliminated
+
+- `autoCompleteBootstrap()` in its current form (synthetic evidence with Failed=0 always)
+- Attestation string requirement for mechanical steps (provision, verify)
+- The 5 separate phase gate transitions for bootstrap (hard checks at step boundaries provide strictly stronger validation)
+
+### 7.11 What Stays
+
+- Gate system for non-bootstrap workflows (deploy, debug, scale, configure)
+- Evidence files as audit trail (now populated from real tool results, not synthetic data)
+- Phase transitions (still INIT→DONE, but driven by hard check results)
+
+### 7.12 Gaps Found in Original Plan (Resolved)
 
 - **No dev/stage pairing enforcement**: Resolved -- discover hard check validates `StageHostname()` convention
 - **Single-runtime knowledge check**: Resolved -- must be loaded for ALL target types, not just any one
@@ -995,14 +1035,14 @@ Keep gates for non-bootstrap workflows (deploy, debug, scale, configure). For bo
 
 ### 10.1 Stage Hostname Convention
 
-**Decision: Strict convention enforced.**
+**Decision: Strict convention enforced (standard mode). Skipped in simple mode.**
 
-`devHostname` must end in "dev" -> stage = replace with "stage":
-- `appdev` -> `appstage`
-- `webdev` -> `webstage`
-- `apidev` -> `apistage`
+Standard mode: `devHostname` must end in "dev" → stage = replace with "stage":
+- `appdev` → `appstage`
+- `webdev` → `webstage`
+- `apidev` → `apistage`
 
-`StageHostname()` returns "" if DevHostname doesn't end in "dev" -> validation error.
+`StageHostname()` returns "" if `Simple=true` OR DevHostname doesn't end in "dev" → validation error in standard mode, valid in simple mode.
 
 ### 10.2 IsExisting Runtime Updates
 
@@ -1013,11 +1053,9 @@ When adding a managed service to an existing runtime:
 - Update `/status` endpoint to check new dependency
 - Minimal code changes -- LLM determines extent based on context
 
-### 10.3 Registry Cleanup
+### 10.3 ~~Registry Cleanup~~ — REMOVED
 
-**Decision: Auto-remove on reconciliation.**
-
-Reconciliation at session start removes stale entries. Git history preserves deleted service info if needed. Clean registry is more useful than historical clutter.
+Registry dropped entirely. No reconciliation needed. API is source of truth on every session start.
 
 ### 10.4 Multi-Target Ordering
 
@@ -1037,11 +1075,11 @@ Adding a managed service involves code changes (env vars, /status endpoint). Boo
 
 Shared storage is a `Dependency` like any other, but with extra steps in provision (mount in import.yml) and deploy (connect-storage after stage ACTIVE). The generate hard check validates `mount:` in zerops.yml `run:` section.
 
-### 10.7 CLAUDE.md Location
+### 10.7 CLAUDE.md Approach
 
-**Decision: Section in CLAUDE.md with markers.**
+**Decision: Reflog (append-only), not snapshot.**
 
-`<!-- ZEROPS:BEGIN -->` / `<!-- ZEROPS:END -->` in project CLAUDE.md. Checked into git. Auto-read by Claude Code.
+Each bootstrap appends a historical entry to CLAUDE.md. No markers for replacement. No regeneration. The entry is a point-in-time record ("on date X, this was bootstrapped"). LLM verifies current state via `zerops_discover`.
 
 ### 10.8 Evidence System Future
 
@@ -1073,6 +1111,15 @@ Evidence still records what was done (audit). For bootstrap, hard checks replace
 | `saveState()` | `internal/workflow/session.go` | Atomic write (temp+rename) |
 | `knowledge.ManagedBaseNames()` | `internal/knowledge/engine.go` | Managed type detection from live catalog |
 
+### New Files
+
+| File | Purpose | ~Lines |
+|------|---------|--------|
+| `internal/workflow/reflog.go` | `AppendReflogEntry()` — append bootstrap record to CLAUDE.md | ~50 |
+| `internal/workflow/service_meta.go` | `WriteServiceMeta()`, `ReadServiceMeta()` — per-service decision files | ~40 |
+| `internal/workflow/bootstrap_checks.go` | `StepCheckResult`, `StepCheck`, `StepChecker` types + check implementations | ~150 |
+| `internal/tools/workflow_checks.go` | `buildStepChecker()` — constructs checkers in tool layer | ~80 |
+
 ---
 
 ## 12. Implementation Order
@@ -1080,18 +1127,21 @@ Evidence still records what was done (audit). For bootstrap, hard checks replace
 Dependency order (all in one pass, TDD at each step):
 
 ```
-1. A: BootstrapTarget types + validation                    <- foundation (types used everywhere)
-2. B: Registry + Session state model + migration            <- foundation (state used by steps)
-3. F+G: Verify speedup + polling speedup                    <- independent, low risk (parallel)
-4. H: Stage validation + env ref validation                 <- independent (parallel with 3)
-5. E: Batch verify (VerifyAll)                              <- uses optimized Verify from #3
-6. D: Hard checks (StepChecker)                             <- uses Verify/VerifyAll, registry
-7. C: Step consolidation (11 -> 5)                          <- integrates hard checks, new types
-8. I: CLAUDE.md recording + enriched BuildInstructions       <- uses registry from #2
-9. J: Content deduplication                                  <- section names from #7
+1. A: BootstrapTarget types + validation                     <- foundation (types used everywhere)
+2. B: Session-scoped ServiceRecord lifecycle                  <- within BootstrapState
+3. F+G: Verify speedup + polling speedup                     <- independent, low risk (parallel)
+4. H: Stage validation + env ref validation                  <- independent (parallel with 3)
+5. E: Batch verify (VerifyAll)                               <- uses optimized Verify from #3
+6. D: Hard checks (StepChecker) + auto-completion            <- uses Verify/VerifyAll
+7. C: Step consolidation (11 -> 5)                           <- integrates hard checks, new types
+8. K: Per-service decision metadata (.zcp/services/)         <- written at bootstrap completion
+9. I: CLAUDE.md reflog writing                               <- append-only, after verify passes
+10. L: Clarification guidance in discover step               <- content change (knowledge first)
+11. M: Mode-aware generate guidance                          <- content change
+12. J: Content deduplication                                 <- section names from #7
 ```
 
-Items 3-4 run in parallel. Items 1+2 must be first. Items 6-7 are the core value.
+Items 3-4 run in parallel. Item 1 must be first. Items 6-7 are the core value. Items 8-12 are outputs/content.
 
 ---
 
@@ -1099,13 +1149,14 @@ Items 3-4 run in parallel. Items 1+2 must be first. Items 6-7 are the core value
 
 | Metric | Before | After |
 |--------|--------|-------|
-| Workflow round-trips | 11 | 5 |
+| Workflow round-trips | 11 explicit | 2-3 explicit (creative) + 2 auto (mechanical) |
 | Verify all services | N x 15-20s sequential | 1 x 7-10s parallel |
-| Gate evidence quality | LLM attestation (always passes) | Real health checks (can fail) |
+| Gate evidence quality | LLM attestation (always passes) | Real hard checks (can fail) |
 | Stage misconfig | Caught at runtime | Caught before deploy |
 | Env var typos | Caught at runtime | Caught at generate step |
 | Typical bootstrap time | 4-6 min | 2-3 min |
-| Cross-session topology | Lost | Registry + CLAUDE.md |
+| Cross-session context | Lost | Reflog in CLAUDE.md + decision metadata in .zcp/services/ |
+| State management | Persistent registry (stale risk) | API is source of truth (always fresh) |
 | Scenario support | Fresh only | Fresh, add-runtime, add-managed, multi-runtime |
 | Build poll responsiveness | 3s initial, 10s step-up | 1s initial, 5s step-up |
 
@@ -1116,31 +1167,33 @@ Items 3-4 run in parallel. Items 1+2 must be first. Items 6-7 are the core value
 | Decision | Choice | Rationale |
 |---|---|---|
 | Primary abstraction | Runtime-centric (target + dependencies) | Matches real-world: bootstrap = set up a runtime with its dependencies |
-| State model | Registry (persistent) + Session (transient) | Registry provides topology for handoff; session is ephemeral |
-| Incremental support | Same engine, LLM adapts via registry context | No Scope/Action fields needed; simplest possible model |
-| CLAUDE.md recording | Both registry AND CLAUDE.md section | Complementary: programmatic + durable handoff |
-| What to record | Only immutable facts (topology) | Prevents staleness; live state via API |
-| Step count | 11 -> 5 | Reduces round-trips while preserving decision points |
-| Two phases | Infrastructure (discover+provision) + Deploy (generate+deploy+verify) | Reflects two distinct activities |
+| State model | Session-only (no persistent registry) | API is source of truth. No state documents. Reality discovered on every session start. |
+| Per-service decisions | `.zcp/services/{hostname}.json` | Records decisions (deploy flow, mode), not state. Historical, not current. |
+| CLAUDE.md approach | Reflog (append-only history) | "On date X, this happened." Not a snapshot. No regeneration. |
+| Step count | 11 → 5 | Reduces round-trips while preserving decision points |
+| Step completion | Auto (mechanical) + Explicit (creative) | Provision/verify auto-complete. Discover/generate/deploy need LLM. |
+| Creative → Verify | Creative steps always followed by hard verification | LLM judgment + objective validation = reliable outcomes |
+| Clarification timing | Knowledge first, then ask user | LLM loads knowledge before asking informed questions |
+| Full vs Simple mode | `RuntimeTarget.Simple` field | Standard (dev+stage) default. Simple (no stage) when user wants it. |
 | Hard checks | Server-side, per-step, deterministic | Replaces trusted LLM attestations with real validation |
 | Phase gates | Simplified for bootstrap (hard checks replace) | Gates are redundant with hard checks |
 | Subdomain activation | Explicit (not auto-enable) | User decided: keep explicit |
-| Stage naming | Convention: `*dev` -> `*stage`, strict enforcement | Simple, derivable, validation error if not matching |
-| Registry cleanup | Auto-remove on reconciliation | Clean > historical; git preserves history |
+| Stage naming | Convention: `*dev` → `*stage`, strict enforcement | Simple, derivable. Skipped when `Simple=true`. |
 | Multi-runtime | Multiple targets in one session | Efficient (one import), shared dependencies |
-| Migration | Version check + auto-migrate flat -> nested | Handles existing state files |
+| Migration | Not needed | State model stays flat — no structural change |
 
 ---
 
 ## 15. Verification Plan
 
-1. `go test ./internal/workflow/... -count=1 -v` — BootstrapTarget validation, registry persistence, 5-step model, hard checks, state migration, CLAUDE.md generation
+1. `go test ./internal/workflow/... -count=1 -v` — BootstrapTarget validation, session-scoped lifecycle, 5-step model, hard checks, service metadata, reflog
 2. `go test ./internal/ops/... -count=1 -v` — verify speedup, batch verify, validation improvements
-3. `go test ./internal/tools/... -count=1 -v` — step checkers, batch verify tool, plan routing
+3. `go test ./internal/tools/... -count=1 -v` — step checkers, auto-completion, batch verify tool, plan routing
 4. `go test ./integration/... -count=1 -v` — full 5-step bootstrap (fresh + add-runtime + add-managed scenarios)
 5. `go test ./... -count=1 -short` — full suite green
 6. `make lint-fast` — no lint issues
 7. Manual E2E:
-   - Fresh: "PHP + PostgreSQL" -> 5 steps -> registry populated -> CLAUDE.md updated
-   - Add runtime: "add Node.js API" -> existing deps resolved -> new runtime bootstrapped -> registry updated
-   - Add managed: "add Valkey" -> IsExisting target -> cache created -> appdev redeployed -> CLAUDE.md regenerated
+   - Fresh: "PHP + PostgreSQL" → 5 steps → reflog written → decision metadata created → new session discovers from API
+   - Add runtime: "add Node.js API" → existing deps resolved → new runtime bootstrapped → new reflog entry appended
+   - Add managed: "add Valkey" → IsExisting target → cache created → appdev redeployed → reflog entry appended
+   - External change: delete service via dashboard → new session sees current state from API, reflog is just history
