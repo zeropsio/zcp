@@ -152,7 +152,7 @@ zsc scale ram auto
 
 ## Gotchas
 - **No `.env` file** — scaffold with `--no-scripts` to prevent `.env` with empty `APP_KEY=` shadowing envSecrets
-- **No SQLite** — containers are volatile (data lost on redeploy). Always use a database service.
+- **No SQLite** — container filesystem is replaced on deploy (data lost). Always use a database service.
 - **Multi-base build** `[php, nodejs]` required only if project has npm/Vite assets
 - **league/flysystem-aws-s3-v3** must be in composer.json for S3 filesystem
 - **os: ubuntu** on both build and run for full compatibility

@@ -55,7 +55,7 @@ Remove entirely or disable `enableSubdomainAccess`. Use VPN + pgAdmin/DBeaver lo
 
 ## File Storage
 
-**Containers are volatile** — files stored on disk are lost on restart/redeploy.
+**Container filesystem survives restarts but is replaced on every deploy** — files stored on disk persist through reload/restart/stop+start but are lost on deploy or container replacement (scale-up/down).
 
 | Use case | Solution |
 |----------|----------|
@@ -74,7 +74,7 @@ Remove entirely or disable `enableSubdomainAccess`. Use VPN + pgAdmin/DBeaver lo
 
 ## Sessions & Cache
 
-**File-based sessions are lost on container restart.**
+**File-based sessions break with multiple containers and are lost on deploy.**
 
 | Use case | Solution |
 |----------|----------|
@@ -159,7 +159,7 @@ Readiness check gates traffic during deploy. Health check runs continuously — 
 
 ## Gotchas
 1. **HA is immutable**: Must delete and recreate service to switch modes
-2. **Containers are volatile**: Any file written to disk is lost on restart
+2. **Container filesystem survives restarts but is replaced on every deploy**: use external storage for persistent data
 3. **File sessions break with scaling**: Multiple containers don't share filesystem
 4. **Mailpit is not production SMTP**: Only for dev — no delivery guarantees
 5. **Debug mode leaks secrets**: Disable APP_DEBUG in production

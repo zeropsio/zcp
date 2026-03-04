@@ -101,6 +101,6 @@ Database configuration via DATABASE_URL is automatic in Rails. The `DATABASE_URL
 - **`--deployment` flag** is required for `bundle install` -- without it, gems install to system location and are not included in deployFiles.
 - **config.hosts** in Rails 6+ blocks requests by default. Clear it or add the Zerops subdomain to allow traffic through the reverse proxy.
 - **RAILS_SERVE_STATIC_FILES=1** is required because Puma is the only server -- there is no Nginx in front to serve static assets.
-- **RAILS_LOG_TO_STDOUT=1** ensures logs are captured by the Zerops logging system instead of being written to files inside volatile containers.
+- **RAILS_LOG_TO_STDOUT=1** ensures logs are captured by the Zerops logging system instead of being written to files that are lost on deploy.
 - **Migrations** use `zsc execOnce` with `appVersionId` for idempotency across multi-container deploys.
 - **Asset precompilation** runs in the build phase for faster deploys and to benefit from build cache.

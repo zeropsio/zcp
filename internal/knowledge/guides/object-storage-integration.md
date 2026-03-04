@@ -4,7 +4,7 @@
 object storage, s3, minio, aws, upload, files, media, storage integration, flysystem, boto3, aws-sdk, path style, bucket, persistent files
 
 ## TL;DR
-Zerops Object Storage is S3-compatible (MinIO). Always set `AWS_USE_PATH_STYLE_ENDPOINT: true`. Use env var references `${storage_*}` for credentials. Containers are volatile — use Object Storage for any persistent files.
+Zerops Object Storage is S3-compatible (MinIO). Always set `AWS_USE_PATH_STYLE_ENDPOINT: true`. Use env var references `${storage_*}` for credentials. Container filesystem is lost on deploy — use Object Storage for any files that must persist across deployments.
 
 ## Environment Variables
 
@@ -132,7 +132,7 @@ Each service = one bucket (auto-named, immutable). Need multiple buckets? Create
 
 | Scenario | Use Object Storage? |
 |----------|-------------------|
-| User uploads (avatars, documents) | Yes — containers are volatile |
+| User uploads (avatars, documents) | Yes — lost on deploy |
 | Media files (images, videos) | Yes — serve via public URL |
 | Build artifacts | No — deploy via zerops.yaml |
 | Temporary files | No — container disk is fine |
@@ -141,7 +141,7 @@ Each service = one bucket (auto-named, immutable). Need multiple buckets? Create
 
 ## Gotchas
 1. **`forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` is REQUIRED**: Zerops uses MinIO which doesn't support virtual-hosted style
-2. **Containers are volatile**: Files on disk are lost on restart — always use Object Storage for persistent data
+2. **Container filesystem is replaced on deploy**: Files on disk survive restarts but are lost when a new container is created (deploy, scale-up). Always use Object Storage for persistent data
 3. **Region is required but ignored**: Set `us-east-1` — MinIO ignores it but SDKs require it
 4. **Public URL format**: `{apiUrl}/{bucketName}/path/to/file`
 5. **Independent infrastructure**: Object Storage runs on separate infra from other services — accessible from Zerops and remotely over internet

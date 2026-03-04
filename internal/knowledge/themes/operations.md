@@ -124,7 +124,7 @@ Set `minContainers: 2` or higher for zero-downtime deploys. Enable health checks
 Remove Mailpit and Adminer. Replace with production SMTP and VPN-based DB access.
 
 ### Persistent File Storage
-Use Object Storage (S3) for any files that must survive restarts. Containers are volatile.
+Use Object Storage (S3) for any files that must survive deploys or container replacement. Local filesystem survives restarts but is lost on deploy.
 
 ### Session and Cache
 Use Valkey for sessions and cache when running multiple containers.

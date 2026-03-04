@@ -133,4 +133,4 @@ services:
 - **FILAMENT_FILESYSTEM_DISK** must be set separately from `FILESYSTEM_DISK` for Filament panel uploads
 - 4 services: app + db (PostgreSQL) + redis (Valkey) + storage (Object Storage)
 - **No `.env` file** — scaffold with `composer create-project --no-scripts`, then `composer run post-autoload-dump`. Delete `.env.example`. APP_KEY comes from envSecrets. Without `--no-scripts`, `.env` is created with empty `APP_KEY=` which shadows the valid OS env var.
-- **No SQLite** — containers are volatile. Always use a database service (PostgreSQL or MariaDB). SQLite only for PHPUnit tests.
+- **No SQLite** — container filesystem is replaced on deploy. Always use a database service (PostgreSQL or MariaDB). SQLite only for PHPUnit tests.

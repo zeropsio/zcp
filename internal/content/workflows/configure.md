@@ -57,7 +57,7 @@ zerops_env action="set" project=true variables=["SHARED_SECRET=mysecret"]
 zerops_manage action="reload" serviceHostname="api"
 ```
 
-Reload is fast (~4s) vs restart (~14s) and sufficient for picking up new environment variables.
+Reload is fast (~4s) vs restart (~14s) and sufficient for picking up new environment variables. Both preserve the container filesystem — neither creates a new container.
 
 ### Step 4 — Verify
 

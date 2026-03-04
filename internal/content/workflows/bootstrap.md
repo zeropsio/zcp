@@ -370,7 +370,7 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 6. **If broken**: read the background task output for error details, fix code on the mount, `TaskStop` the server task, go back to step 2.
 7. **When working**: proceed to formal `zerops_deploy`. The background SSH task is stopped automatically when deploy restarts the container.
 
-**Why formal deploy is still needed:** Dev containers are volatile — only `deployFiles` content persists across container restarts. The manual-start cycle is for rapid iteration, but the final state must go through `zerops_deploy` to ensure the build pipeline works and files persist.
+**Why formal deploy is still needed:** Dev containers are replaced on deploy — only `deployFiles` content persists across deploys. Local filesystem survives restarts. The manual-start cycle is for rapid iteration, but the final state must go through `zerops_deploy` to ensure the build pipeline works and files persist.
 
 **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static) skip manual start.** The web server starts automatically AFTER deploy applies zerops.yml config (documentRoot, etc.). Before first deploy, the container runs bare nginx/apache without app config — endpoint tests return 404. Skip quick-test, go straight to deploy.
 

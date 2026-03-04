@@ -25,8 +25,8 @@ Core platform constraints every Zerops app must satisfy: bind 0.0.0.0, use deplo
 
 ## Filesystem
 
-- Container filesystem is **VOLATILE**. Only files listed in `deployFiles` survive a deploy. All persistent data MUST use: database, object storage (S3 API), or shared storage.
-- Sessions, cache, temp files, uploads: MUST use an external store (database, Valkey, object storage). Filesystem-based sessions and cache WILL be lost on every deploy or container restart.
+- Container filesystem is **per-container and survives restarts** (reload, restart, stop/start, vertical scaling all keep the same container). Files are only lost when **a new container is created**: deploy, scale-up (new container is fresh), or scale-down (removed container loses data). All persistent data MUST use: database, object storage (S3 API), or shared storage.
+- Sessions, cache, temp files, uploads: MUST use an external store (database, Valkey, object storage) when running multiple containers. Filesystem sessions break with round-robin load balancing and are lost on every deploy.
 - `deployFiles` is MANDATORY in every `zerops.yml` build section. Without it, nothing is deployed — the run container starts empty.
 
 ## Environment Variables
