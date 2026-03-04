@@ -136,17 +136,29 @@ Note: `run.base` is always a single runtime string — only `build.base` support
 
 ### C5. Partial import has no recovery path
 
-**Impact**: If `zerops_import` creates 3 of 5 services and then fails, the bootstrap is stuck — re-running import fails on duplicate hostnames, but skipping import leaves services incomplete.
+**Impact**: If `zerops_import` creates 3 of 5 services and then fails, the bootstrap is stuck — re-running import fails on duplicate hostnames, but skipping import leaves services incomplete. The LLM cannot recover because it can't even see what failed.
 
-**Detail**: The plan consolidates generate-import + import-services into a single provision step but doesn't address partial failure recovery.
+**Detail**: The plan consolidates generate-import + import-services into a single provision step but doesn't address partial failure recovery. Worse, `ops.Import()` has a **bug**: per-service errors from the API (`ImportedServiceStack.Error`) are silently dropped — only `Processes` are extracted. Services that fail with an API error and have no processes are invisible to the LLM.
 
-**Evidence**: `zerops_import` is atomic at the API level — but service creation within it is sequential. A failure mid-import leaves some services created and others not.
+**Evidence**: `ops/import.go` lines 104-115 — the loop over `result.ServiceStacks` only extracts processes. If `ss.Error != nil` and `ss.Processes` is empty, the service is silently lost. The LLM gets no signal about which services failed or why.
 
-**Fix**: Add idempotent import handling:
-1. Before import, query existing services via `zerops_discover`
-2. Filter the import YAML to only include services that don't already exist
-3. If all services exist, skip import entirely
-4. Document this in the provision step hard check
+**Fix**: Make the LLM aware of failures so it can recover (delete and retry, or import only missing services):
+
+1. **Bug fix** — surface per-service API errors in `ops.ImportResult`:
+   - Add `ServiceErrors []ServiceImportError` field (service name, error code, message)
+   - In the `ServiceStacks` loop, collect `ss.Error` entries alongside processes
+   - Now the LLM sees: "db created OK, cache failed: invalid type"
+
+2. **Better next-action** — replace vague `nextActionImportPartial` in `tools/next_actions.go`:
+   - Current: `"Check failed processes: zerops_events. Fix and re-import via zerops_workflow."`
+   - New: `"Some services failed — check serviceErrors. To recover: (1) zerops_discover to see what was created, (2) delete the partially created services and fix+retry the full import, or re-import with YAML containing only the missing services."`
+
+3. **Recovery guidance** — add to import-services step in `bootstrap_steps.go`:
+   - If import partially failed: read serviceErrors, zerops_discover to see actual state, delete partial results or import only missing, confirm all services exist
+
+4. **Error-aware summary** — in `tools/import.go` `pollImportProcesses`, also check `result.ServiceErrors` when deciding summary/nextActions (currently only checks polled process failures)
+
+No tool-level YAML filtering or cleverness. The tool stays a dumb pass-through. The LLM gets the information it needs and guidance on how to recover.
 
 ---
 
