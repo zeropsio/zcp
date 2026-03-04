@@ -39,6 +39,12 @@ Use `apk add` only for extensions NOT in this list.
 - Cache: `vendor`
 - Document root: `documentRoot: public` (Laravel, Symfony) or `documentRoot: www/` (Nette). Default nginx handles PHP routing. Custom config via `siteConfigPath: site.conf.tmpl` only if non-standard rules needed -- use `fastcgi_pass unix:{{.PhpSocket}};` (MUST include `unix:` prefix)
 
+### PHP/FPM Tuning
+
+Override php.ini via `PHP_INI_*` env vars, FPM pool config via `PHP_FPM_*`. Both require **restart** (reload writes config files but FPM does not re-read them). Zerops defaults differ from stock PHP: `upload_max_filesize=1024M`, `post_max_size=1024M`, `display_errors=off`, `log_errors=on`.
+
+For full reference: `zerops_knowledge query="PHP tuning"` -- covers all defaults, FPM dynamic/ondemand modes, upload limit 3-layer chain, and gotchas.
+
 ### Common Mistakes
 
 - Missing `documentRoot` -> Nginx doesn't know where to serve from

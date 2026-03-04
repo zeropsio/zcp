@@ -254,6 +254,24 @@ func TestExpandQuery(t *testing.T) {
 	}
 }
 
+func TestSearch_PHPUploadLimit(t *testing.T) {
+	store := newTestStore(t)
+	results := store.Search("PHP upload limit PHP_INI", 5)
+	if len(results) == 0 {
+		t.Fatal("expected results for 'PHP upload limit PHP_INI'")
+	}
+	found := false
+	for _, r := range results[:min(3, len(results))] {
+		if strings.Contains(r.URI, "php-tuning") || strings.Contains(strings.ToLower(r.Snippet), "php_ini") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected php-tuning guide in top 3 for 'PHP upload limit PHP_INI', got: %v", urisFromResults(results[:min(3, len(results))]))
+	}
+}
+
 func urisFromResults(results []SearchResult) []string {
 	uris := make([]string, 0, len(results))
 	for _, r := range results {

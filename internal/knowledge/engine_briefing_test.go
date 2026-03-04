@@ -337,6 +337,22 @@ func TestGetBriefing_NoStaticVersionLines(t *testing.T) {
 	}
 }
 
+func TestGetBriefing_PHPBriefingMentionsTuning(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("php-nginx@8.4", nil, nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	for _, want := range []string{
+		"PHP_INI_",
+		"restart",
+	} {
+		if !strings.Contains(briefing, want) {
+			t.Errorf("PHP briefing missing %q", want)
+		}
+	}
+}
+
 // TestGetBriefing_NoStaticServiceTypeVersions verifies that service cards returned by
 // GetBriefing do NOT contain hardcoded version numbers in **Type**: lines.
 func TestGetBriefing_NoStaticServiceTypeVersions(t *testing.T) {
