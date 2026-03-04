@@ -1,6 +1,6 @@
 # Bootstrap Flow Revision — Comprehensive Analysis
 
-This document captures the full analysis of the bootstrap workflow revision, including all findings, design decisions, trade-offs, and open questions. It serves as a foundation for the implementation plan.
+This document is the single self-contained reference for the bootstrap workflow revision. It captures the full analysis, all design decisions, current source code state, and the complete implementation plan. No external documents are required.
 
 ---
 
@@ -11,20 +11,30 @@ This document captures the full analysis of the bootstrap workflow revision, inc
 The bootstrap workflow orchestrates LLM-driven service creation on Zerops through 11 sequential steps:
 
 ```
-detect → plan → load-knowledge → generate-import → import-services → mount-dev
-→ discover-envs → generate-code → deploy → verify → report
+detect -> plan -> load-knowledge -> generate-import -> import-services -> mount-dev
+-> discover-envs -> generate-code -> deploy -> verify -> report
 ```
 
 Key files:
-- `internal/workflow/state.go` — WorkflowState, phase model
-- `internal/workflow/session.go` — state persistence to `.zcp/state/zcp_state.json`
-- `internal/workflow/bootstrap.go` — BootstrapState, step tracking, conditional skip logic
-- `internal/workflow/bootstrap_steps.go` — 11 step definitions with guidance, tools, verification
-- `internal/workflow/engine.go` — workflow engine (start, complete, skip, transition)
-- `internal/workflow/evidence.go` — evidence persistence to `baseDir/evidence/{sessionID}/`
-- `internal/workflow/gates.go` — 5 phase gates (G0-G4) requiring evidence for transitions
-- `internal/workflow/validate.go` — ServicePlan, PlannedService, hostname validation
-- `internal/content/workflows/bootstrap.md` — 751-line guidance document with section tags
+- `internal/workflow/state.go` (91 lines) — WorkflowState, phase model
+- `internal/workflow/session.go` (146 lines) — state persistence to `.zcp/state/zcp_state.json`
+- `internal/workflow/bootstrap.go` (280 lines) — BootstrapState, step tracking, conditional skip logic
+- `internal/workflow/bootstrap_steps.go` (275 lines) — 11 step definitions with guidance, tools, verification
+- `internal/workflow/engine.go` (255 lines) — workflow engine (start, complete, skip, transition)
+- `internal/workflow/evidence.go` (145 lines) — evidence persistence to `baseDir/evidence/{sessionID}/`
+- `internal/workflow/gates.go` (160 lines) — 5 phase gates (G0-G4) requiring evidence for transitions
+- `internal/workflow/validate.go` (113 lines) — ServicePlan, PlannedService, hostname validation
+- `internal/workflow/bootstrap_evidence.go` (84 lines) — autoCompleteBootstrap, evidence map
+- `internal/content/workflows/bootstrap.md` (~751 lines) — guidance document with section tags
+- `internal/ops/verify.go` (156 lines) — service verification (6 sequential checks per runtime)
+- `internal/ops/verify_checks.go` (229 lines) — individual check functions
+- `internal/ops/deploy_validate.go` (152 lines) — pre-deploy zerops.yml validation
+- `internal/ops/progress.go` (180 lines) — build/process polling with adaptive intervals
+- `internal/tools/verify.go` (43 lines) — MCP tool for zerops_verify (single hostname only)
+- `internal/tools/workflow.go` (321 lines) — MCP tool for zerops_workflow
+- `internal/tools/workflow_bootstrap.go` (106 lines) — bootstrap step handlers
+- `internal/server/server.go` (119 lines) — MCP server setup, tool registration
+- `internal/server/instructions.go` (126 lines) — BuildInstructions for system prompt
 
 ### 1.2 Current State Model
 
@@ -35,7 +45,7 @@ type WorkflowState struct {
     SessionID string                    // random 16-char hex
     ProjectID string
     Workflow  string                    // "bootstrap" or "deploy"
-    Phase     Phase                     // INIT→DISCOVER→DEVELOP→DEPLOY→VERIFY→DONE
+    Phase     Phase                     // INIT->DISCOVER->DEVELOP->DEPLOY->VERIFY->DONE
     Iteration int
     Intent    string
     CreatedAt string
@@ -57,7 +67,116 @@ type PlannedService struct {
 }
 ```
 
-### 1.3 Identified Problems
+### 1.3 Current Bootstrap State Machine
+
+```go
+// internal/workflow/bootstrap.go
+type BootstrapState struct {
+    Active      bool            `json:"active"`
+    CurrentStep int             `json:"currentStep"`
+    Steps       []BootstrapStep `json:"steps"`       // 11 steps
+    Plan        *ServicePlan    `json:"plan,omitempty"`
+}
+
+type BootstrapResponse struct {
+    SessionID       string             `json:"sessionId"`
+    Intent          string             `json:"intent"`
+    Progress        BootstrapProgress  `json:"progress"`
+    Current         *BootstrapStepInfo `json:"current,omitempty"`
+    Message         string             `json:"message"`
+    AvailableStacks string             `json:"availableStacks,omitempty"`
+}
+
+// Step constants for conditional skip
+const (
+    stepDiscoverEnvs = "discover-envs"
+    stepMountDev     = "mount-dev"
+    stepGenerateCode = "generate-code"
+    stepDeploy       = "deploy"
+)
+```
+
+### 1.4 Current Engine Flow
+
+```go
+// internal/workflow/engine.go
+func (e *Engine) BootstrapComplete(stepName, attestation string) (*BootstrapResponse, error) { ... }
+func (e *Engine) BootstrapCompletePlan(services []PlannedService, liveTypes []platform.ServiceStackType) (*BootstrapResponse, error) {
+    // Checks CurrentStepName() == "plan"
+    // Calls ValidateServicePlan()
+    // Stores plan in BootstrapState.Plan
+}
+```
+
+### 1.5 Current Evidence & Gates
+
+```go
+// internal/workflow/bootstrap_evidence.go
+var bootstrapEvidenceMap = map[string][]string{
+    "recipe_review":   {"detect", "plan", "load-knowledge"},
+    "discovery":       {"discover-envs"},
+    "dev_verify":      {"generate-code", "deploy", "verify"},
+    "deploy_evidence": {"deploy"},
+    "stage_verify":    {"verify", "report"},
+}
+// autoCompleteBootstrap() generates evidence with Failed=0, ServiceResults=nil ALWAYS
+// -> gates can NEVER fail
+
+// internal/workflow/gates.go
+var gates = []gateDefinition{
+    {"G0", PhaseInit, PhaseDiscover, []string{"recipe_review"}, 0},
+    {"G1", PhaseDiscover, PhaseDevelop, []string{"discovery"}, 24h},
+    {"G2", PhaseDevelop, PhaseDeploy, []string{"dev_verify"}, 24h},
+    {"G3", PhaseDeploy, PhaseVerify, []string{"deploy_evidence"}, 24h},
+    {"G4", PhaseVerify, PhaseDone, []string{"stage_verify"}, 24h},
+}
+```
+
+### 1.6 Current Verification
+
+```go
+// internal/ops/verify.go
+func Verify(ctx, client, fetcher, httpClient, projectID, hostname) (*VerifyResult, error) {
+    // 6 SEQUENTIAL checks for runtime, 1 for managed
+    // Checks: service_running, no_error_logs(5m), startup_detected,
+    //         no_recent_errors(2m), http_health, http_status
+    // 3 separate log fetches, 2 HTTP calls -> 15-20s per service
+}
+
+// internal/ops/verify_checks.go
+// checkErrorLogs2m() just calls checkErrorLogs with 2m duration -> redundant fetch
+
+// internal/tools/verify.go
+type VerifyInput struct {
+    ServiceHostname string `json:"serviceHostname"` // REQUIRED, no batch mode
+}
+```
+
+### 1.7 Current Polling
+
+```go
+// internal/ops/progress.go
+var defaultBuildPollConfig = pollConfig{
+    initialInterval: 3 * time.Second,    // too slow
+    stepUpInterval:  10 * time.Second,   // too slow
+    stepUpAfter:     60 * time.Second,   // too slow
+    timeout:         15 * time.Minute,
+}
+```
+
+### 1.8 Current Tool Registration
+
+```go
+// internal/server/server.go
+tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine, knowledgeTracker)
+// Note: logFetcher NOT passed -> needed for hard checks
+
+// internal/tools/workflow.go
+func RegisterWorkflow(srv, client, projectID, cache, engine, tracker) { ... }
+// handleBootstrapComplete: routes input.Step == "plan" && len(input.Plan) > 0
+```
+
+### 1.9 Identified Problems
 
 1. **Wrong abstraction**: Flat `[]PlannedService` treats all services equally. No concept of "this runtime depends on that database." No topology, no relationships.
 
@@ -71,7 +190,11 @@ type PlannedService struct {
 
 6. **11 round-trips**: Each step requires a separate `zerops_workflow action="complete"` MCP call. Many steps are mechanically sequential (load-knowledge must precede generate-import must precede import-services).
 
-7. **Sequential verification**: `zerops_verify` takes one hostname per call. 5 services = 5 × 15-20s = 75-100s.
+7. **Sequential verification**: `zerops_verify` takes one hostname per call. 5 services = 5 x 15-20s = 75-100s.
+
+8. **Redundant log fetches**: `checkErrorLogs(5m)` and `checkErrorLogs2m()` make two separate API calls that could be one.
+
+9. **Missing stage validation**: No warning for `start: zsc noop --silent` on stage, no env ref validation.
 
 ---
 
@@ -89,24 +212,24 @@ The **runtime service** (+ its dev/stage pair) is the primary object. Managed se
 
 ```
 User: "Make me a CMS for XY"
-         │
+         |
     CLARIFICATION
-         │  LLM asks: What framework? What DB? Need caching?
-         │  (happens BEFORE zerops_workflow starts)
-         │  Output: clear intent + service requirements
-         │
+         |  LLM asks: What framework? What DB? Need caching?
+         |  (happens BEFORE zerops_workflow starts)
+         |  Output: clear intent + service requirements
+         |
     BOOTSTRAP (5 steps)
-         │  discover → provision → generate → deploy → verify
-         │  Registry populated. CLAUDE.md updated.
-         │
+         |  discover -> provision -> generate -> deploy -> verify
+         |  Registry populated. CLAUDE.md updated.
+         |
     HANDOFF
-         │  Session: DONE. Registry: has topology.
-         │  System prompt: auto-detects CONFORMANT.
-         │  Routes to deploy workflow for subsequent changes.
-         │
+         |  Session: DONE. Registry: has topology.
+         |  System prompt: auto-detects CONFORMANT.
+         |  Routes to deploy workflow for subsequent changes.
+         |
     DEVELOPMENT (repeatable)
-         │  "add feature X" → deploy workflow (mount → edit → deploy → verify)
-         │  "add caching" → bootstrap with IsExisting=true target
+         |  "add feature X" -> deploy workflow (mount -> edit -> deploy -> verify)
+         |  "add caching" -> bootstrap with IsExisting=true target
 ```
 
 ### 2.3 Scenario Analysis
@@ -119,7 +242,7 @@ User: "Create a PHP app with PostgreSQL"
 
 ```
 Target: appdev/appstage (php-nginx@8.4)
-Dependencies: db (postgresql@16) → CREATE
+Dependencies: db (postgresql@16) -> CREATE
 ```
 
 Flow: Full 5-step bootstrap. Import creates all services, code generated from scratch, deployed, verified.
@@ -132,7 +255,7 @@ User has appdev+db+cache. Wants: "Add a Node.js API"
 
 ```
 Target: apidev/apistage (nodejs@22)
-Dependencies: db (EXISTS), cache (EXISTS) → just connect
+Dependencies: db (EXISTS), cache (EXISTS) -> just connect
 ```
 
 Flow: discover finds existing services. Import creates only apidev+apistage. Code generated for new runtime, wired to existing env vars.
@@ -144,7 +267,7 @@ Flow: discover finds existing services. Import creates only apidev+apistage. Cod
 User has appdev+db. Wants: "Add Redis caching"
 
 ```
-Target: appdev (IsExisting=true — already deployed, needs update)
+Target: appdev (IsExisting=true -- already deployed, needs update)
 Dependencies: db (EXISTS), cache (valkey@7.2, CREATE)
 ```
 
@@ -198,7 +321,7 @@ type RuntimeTarget struct {
     IsExisting  bool   `json:"isExisting,omitempty"` // true = already deployed, needs update
 }
 
-// StageHostname derives stage from dev: "appdev" → "appstage"
+// StageHostname derives stage from dev: "appdev" -> "appstage"
 func (r RuntimeTarget) StageHostname() string {
     if base, ok := strings.CutSuffix(r.DevHostname, "dev"); ok {
         return base + "stage"
@@ -221,15 +344,16 @@ type ServicePlan struct {
 
 ### 3.2 Plan Validation
 
-`ValidateBootstrapPlan()` replaces `ValidateServicePlan()`:
+`ValidateBootstrapTargets()` replaces `ValidateServicePlan()`:
 
-- All hostnames pass `ValidateHostname()` (existing function)
+- All hostnames pass `ValidateHostname()` (existing function in `platform` package)
 - All types exist in live catalog (existing check)
 - Dev/stage pairing enforced via `StageHostname()` convention
 - `CREATE` dependencies must NOT exist in live services
 - `EXISTS` dependencies MUST exist in live services
 - Dependencies shared across targets: if target 1 creates `db` (CREATE), target 2 can reference it as EXISTS
 - Managed service modes default to NON_HA (existing behavior)
+- Remove `PlannedService` type entirely
 
 ### 3.3 How Each Step Works with Targets
 
@@ -241,7 +365,7 @@ The engine doesn't need fresh/incremental awareness. Same 5 steps, LLM adapts:
 | **provision** | Import YAML generated for CREATE deps + non-existing runtimes. Mount dev. Discover env vars. |
 | **generate** | Code for each target runtime. IsExisting targets get config updates, not full code gen. |
 | **deploy** | Deploy each target runtime (dev first, then stage). |
-| **verify** | Verify ALL services (not just targets — catches regressions). |
+| **verify** | Verify ALL services (not just targets -- catches regressions). |
 
 ### 3.4 Multi-Runtime Handling
 
@@ -250,6 +374,24 @@ Multiple targets in one session. Dependencies are pooled:
 - Generate iterates per target, each getting its dependency env vars
 - Deploy iterates per target
 - For 2+ targets, subagent pattern (one agent per target pair) used in generate/deploy
+
+### 3.5 MCP Tool Input Changes
+
+```go
+// internal/tools/workflow.go — WorkflowInput changes
+Plan []workflow.PlannedService  `json:"plan,omitempty"` // REMOVE
+Plan []workflow.BootstrapTarget `json:"plan,omitempty"` // REPLACE
+
+// internal/tools/workflow_bootstrap.go — routing changes
+// OLD: input.Step == "plan" && len(input.Plan) > 0
+// NEW: input.Step == "discover" && len(input.Plan) > 0
+
+// internal/workflow/engine.go — BootstrapCompletePlan changes
+// OLD: checks CurrentStepName() == "plan"
+// NEW: checks CurrentStepName() == "discover"
+// OLD: accepts []PlannedService
+// NEW: accepts []BootstrapTarget
+```
 
 ---
 
@@ -284,10 +426,10 @@ type WorkflowState struct {
     Version   string                    `json:"version"`
     ProjectID string                    `json:"projectId"`
 
-    // PERSISTENT — survives across sessions
+    // PERSISTENT -- survives across sessions
     Registry  map[string]*ServiceRecord `json:"registry"`
 
-    // TRANSIENT — cleared when session completes or resets
+    // TRANSIENT -- cleared when session completes or resets
     Session   *WorkflowSession          `json:"session,omitempty"`
 }
 
@@ -295,12 +437,12 @@ type ServiceRecord struct {
     Hostname  string   `json:"hostname"`
     Type      string   `json:"type"`                   // "bun@1.2", "postgresql@16"
     Role      string   `json:"role"`                   // "runtime-dev", "runtime-stage", "managed"
-    PairWith  string   `json:"pairWith,omitempty"`     // dev↔stage link
+    PairWith  string   `json:"pairWith,omitempty"`     // dev<->stage link
     DependsOn []string `json:"dependsOn,omitempty"`    // managed service hostnames
     MountPath string   `json:"mountPath,omitempty"`    // SSHFS path (dev only)
     AddedBy   string   `json:"addedBy"`                // session ID that created it
     AddedAt   string   `json:"addedAt"`                // RFC3339
-    Lifecycle string   `json:"lifecycle"`              // planned → created → deployed → verified
+    Lifecycle string   `json:"lifecycle"`              // planned -> created -> deployed -> verified
 }
 
 type WorkflowSession struct {
@@ -322,47 +464,72 @@ type WorkflowSession struct {
 - **Registry** = OUTPUT of bootstrap (persistent, lives in `WorkflowState.Registry`)
 
 After each bootstrap step:
-- provision → registry entries with `lifecycle: "created"`
-- generate → entries updated to `lifecycle: "configured"`
-- deploy → entries updated to `lifecycle: "deployed"`
-- verify → entries updated to `lifecycle: "verified"`
+- provision -> registry entries with `lifecycle: "created"`
+- generate -> entries updated to `lifecycle: "configured"`
+- deploy -> entries updated to `lifecycle: "deployed"`
+- verify -> entries updated to `lifecycle: "verified"`
 
 For `IsExisting=true` targets: existing registry entries get `DependsOn` updated.
 
 ### 4.5 Registry Reconciliation
 
 At session start (`discover` step), reconcile registry against live API:
-- Service in registry but deleted from Zerops → remove from registry
-- Service in Zerops but not in registry → note as "externally added" in discover response
-- Service in registry with matching live service → keep (topology preserved)
+- Service in registry but deleted from Zerops -> remove from registry
+- Service in Zerops but not in registry -> note as "externally added" in discover response
+- Service in registry with matching live service -> keep (topology preserved)
 
 This is a read-repair pattern. Cheap (one API call), prevents stale entries.
 
-### 4.6 Session Lifecycle
+### 4.6 Session Lifecycle Changes
 
-- `InitSession`: preserves registry, creates new Session
+Current `InitSession` creates a new `WorkflowState` (destroys previous). Must change to:
+- `InitSession`: preserves registry, creates new `Session` within existing state
 - `ResetSession`: clears Session only, preserves registry
-- `CompleteSession`: Session → nil, registry stays
+- `CompleteSession`: Session -> nil, registry stays
 
 Key difference from current: `ResetSession` currently deletes the entire `zcp_state.json`. New behavior preserves registry.
 
-### 4.7 Registry for BuildInstructions
+### 4.7 State File Migration
+
+Current state file has flat `sessionId, workflow, phase, etc.` at top level. New state nests them in `Session`. Need version check + migration on `LoadSession`:
+```go
+if state.Version == "1" { /* migrate flat -> nested */ }
+```
+
+### 4.8 Impact on Existing Code
+
+Many functions access `state.SessionID`, `state.Phase`, etc. directly. These move to `state.Session.SessionID`:
+- `engine.go`: all `BootstrapXxx()` methods
+- `bootstrap_evidence.go`: `autoCompleteBootstrap()`
+- `gates.go`: uses `sessionID` from state
+- `session.go`: `InitSession`, `IterateSession`
+- `instructions.go`: `buildWorkflowHint()`
+- `tools/workflow.go`: `handleTransition`, `handleEvidence`
+- `tools/workflow_bootstrap.go`: `handleBootstrapComplete`
+
+Consider adding helper methods:
+```go
+func (s *WorkflowState) ActiveSessionID() string { ... }
+func (s *WorkflowState) HasActiveSession() bool { ... }
+```
+
+### 4.9 Registry for BuildInstructions
 
 `BuildInstructions()` in `internal/server/instructions.go` currently provides:
 ```
 Current services:
-- appdev (php-nginx@8.4) — RUNNING
-- appstage (php-nginx@8.4) — RUNNING
-- db (postgresql@16) — RUNNING
+- appdev (php-nginx@8.4) -- RUNNING
+- appstage (php-nginx@8.4) -- RUNNING
+- db (postgresql@16) -- RUNNING
 ```
 
 With registry, it can provide:
 ```
 Current services:
-- appdev (php-nginx@8.4) — RUNNING [dev, stage: appstage, deps: db+cache, mount: /var/www/appdev/]
-- appstage (php-nginx@8.4) — RUNNING [stage of appdev]
-- db (postgresql@16) — RUNNING [managed, used by: appdev]
-- cache (valkey@7.2) — RUNNING [managed, used by: appdev]
+- appdev (php-nginx@8.4) -- RUNNING [dev, stage: appstage, deps: db+cache, mount: /var/www/appdev/]
+- appstage (php-nginx@8.4) -- RUNNING [stage of appdev]
+- db (postgresql@16) -- RUNNING [managed, used by: appdev]
+- cache (valkey@7.2) -- RUNNING [managed, used by: appdev]
 ```
 
 This gives the next LLM session full topology context without any manual explanation.
@@ -426,7 +593,7 @@ Bootstrapped: 2026-03-03 | Intent: Bun API with PostgreSQL and Valkey
 
 ### Dependencies
 
-- **appdev/appstage** → db (connectionString, host, port, user, password), cache (connectionString, host, port)
+- **appdev/appstage** -> db (connectionString, host, port, user, password), cache (connectionString, host, port)
 
 <!-- ZEROPS:END -->
 ```
@@ -465,27 +632,34 @@ Three mechanisms:
 
 - `internal/workflow/report.go` (new, ~80 lines) — `GenerateInfraSection(registry, intent) string`
 - `internal/workflow/claudemd.go` (new, ~60 lines) — `UpdateCLAUDEMD(projectDir, section) error` with marker-based idempotent replacement
-- `internal/content/templates/claude.md` — add `<!-- ZEROPS:BEGIN --><!-- ZEROPS:END -->` markers
-- `internal/workflow/engine.go` — hook into bootstrap completion (after `autoCompleteBootstrap`)
-- `internal/server/instructions.go` — `BuildInstructions` reads registry for richer system prompt
+- `internal/workflow/engine.go` — hook into bootstrap completion (after verify step)
+- `internal/server/instructions.go` — `BuildInstructions` reads registry for richer system prompt (add Section E between workflow hint and project summary)
 
 ---
 
-## 6. Design: Step Consolidation (11 → 5)
+## 6. Design: Step Consolidation (11 -> 5)
 
 ### 6.1 Step Mapping
 
-| # | New Step | Old Steps | Category |
-|---|----------|-----------|----------|
-| 0 | **discover** | detect + plan + load-knowledge | creative |
-| 1 | **provision** | generate-import + import + mount + discover-envs | creative |
-| 2 | **generate** | generate-code | creative |
-| 3 | **deploy** | deploy | branching |
-| 4 | **verify** | verify + report | fixed |
+| # | New Step | Old Steps | Category | Skippable |
+|---|----------|-----------|----------|-----------|
+| 0 | **discover** | detect + plan + load-knowledge | creative | no |
+| 1 | **provision** | generate-import + import + mount + discover-envs | creative | no |
+| 2 | **generate** | generate-code | creative | yes |
+| 3 | **deploy** | deploy | branching | yes |
+| 4 | **verify** | verify + report | fixed | no |
 
 The `report` step is absorbed into `verify` + auto-CLAUDE.md write.
 
-### 6.2 Per-Step Detail
+### 6.2 Two Fundamental Phases
+
+**Phase A: Infrastructure (steps 0-1)** — create services, wire them up
+
+**Phase B: Deploy & Activate (steps 2-4)** — write code, deploy, verify
+
+This split reflects two distinct activities: infrastructure provisioning vs. application deployment.
+
+### 6.3 Per-Step Detail
 
 #### Step 0: discover
 
@@ -497,7 +671,7 @@ Actions:
 2. Read registry for existing topology
 3. Parse user intent into runtime + dependency requirements
 4. If unclear, guidance says: ask the user before proceeding
-5. For each required service, check if it already exists → resolution
+5. For each required service, check if it already exists -> resolution
 6. Validate plan (hostnames, types, pairing, resolution consistency)
 7. Submit structured plan via `zerops_workflow action="complete" step="discover" plan=[...]`
 
@@ -506,7 +680,7 @@ Hard checks:
 - All types exist in live catalog
 - Dev/stage pairing: every RuntimeTarget has valid StageHostname
 - Resolution consistency: CREATE services don't exist, EXISTS services do exist
-- Knowledge loaded for ALL target runtime types
+- Knowledge loaded for ALL target runtime types (not just any one)
 
 #### Step 1: provision
 
@@ -528,6 +702,8 @@ Hard checks:
 - Dev services: SSHFS mount active
 - Each managed service has non-empty env vars
 
+Registry update: entries with `lifecycle: "created"`
+
 #### Step 2: generate
 
 **Input**: Mounted dev filesystem, discovered env vars, loaded knowledge
@@ -542,11 +718,13 @@ Actions:
 Hard checks:
 - For each target: zerops.yml exists on mount path
 - Has `setup:` entries for both dev and stage hostnames
-- Dev entries: no healthCheck, no readinessCheck
-- All entries: `run.start` non-empty (except PHP/implicit-webserver runtimes)
+- Dev entries: no healthCheck, no readinessCheck, deployFiles contains `.`
+- All entries: `run.start` non-empty (except PHP/implicit-webserver runtimes -- use `hasImplicitWebServer()`)
 - All entries: `run.ports` non-empty (except non-HTTP workers)
 - Env ref validation: `${hostname_var}` patterns reference valid hostnames
 - Stage entries: start is NOT `zsc noop --silent`
+
+Registry update: entries updated to `lifecycle: "configured"`
 
 #### Step 3: deploy
 
@@ -555,7 +733,7 @@ Hard checks:
 
 Actions:
 1. Deploy dev: self-deploy via SSH
-2. Enable subdomain: `zerops_subdomain action="enable"`
+2. Enable subdomain: `zerops_subdomain action="enable"` (explicit, not auto)
 3. Verify dev: `ops.Verify()` health checks
 4. Deploy stage: cross-deploy from dev
 5. Enable subdomain + verify stage
@@ -567,7 +745,8 @@ Hard checks:
 - `http_health` = pass (if subdomain enabled)
 - `http_status` = pass
 - Degraded tolerated, only unhealthy = fail
-- Server-side `checkAttempts` counter (not just LLM-enforced)
+
+Registry update: entries updated to `lifecycle: "deployed"`
 
 #### Step 4: verify
 
@@ -576,33 +755,57 @@ Hard checks:
 
 Actions:
 1. Run `VerifyAll()` on all project services (parallel)
-2. Update registry: all target services → `lifecycle: "verified"`
+2. Update registry: all target services -> `lifecycle: "verified"`
 3. Generate CLAUDE.md infrastructure section
 4. Present final report with service URLs and statuses
 
 Hard checks:
-- `VerifyAll()` — all services healthy or degraded (not unhealthy)
+- `VerifyAll()` -- all services healthy or degraded (not unhealthy)
 - Registry fully populated with verified entries
 - CLAUDE.md written successfully
 
-### 6.3 Skip Logic
+### 6.4 Skip Logic
 
 Simplified from current `validateConditionalSkip()`:
 - `generate` + `deploy` can be skipped (if targets are managed-only, but this is rare)
 - `discover`, `provision`, `verify` cannot be skipped
 
+### 6.5 Evidence Map Update
+
+```go
+var bootstrapEvidenceMap = map[string][]string{
+    "recipe_review":   {"discover"},
+    "discovery":       {"provision"},
+    "dev_verify":      {"generate", "deploy", "verify"},
+    "deploy_evidence": {"deploy"},
+    "stage_verify":    {"verify"},
+}
+```
+
 ---
 
 ## 7. Design: Server-Side Hard Checks
 
-### 7.1 Concept
+### 7.1 Why Hard Checks Replace Attestation
 
-Each `zerops_workflow action="complete" step=X` triggers deterministic server-side validation before advancing. If checks fail → step NOT completed → response includes specific failures → LLM fixes → retries.
+The original 11-step design (visible in `../zcp-main`) provided safety through **granularity** -- separate detect, load-knowledge, and discover-envs steps acted as implicit validation gates:
+
+| Original 11-step guarantee | Replaced by hard check |
+|---|---|
+| detect prevents duplicate services | **discover** hard check: `ListServices()` -> if CONFORMANT/NON_CONFORMANT, block with structured response |
+| load-knowledge gates generate-import | **discover** hard check: verify `KnowledgeTracker.IsLoaded()` for ALL target runtime types |
+| discover-envs gates generate-code | **provision** hard check: verify each managed service has non-empty env vars |
+| verify doesn't trust deploy | **deploy** hard check: `ops.Verify()` on each service; **verify** hard check: `VerifyAll()` batch |
+
+Hard checks are **strictly better**:
+- 11-step attestations are strings LLM writes -- always "pass", never validated
+- Hard checks run real API calls / file reads -- deterministic, cannot be faked
+- Hard check failures return structured data (what failed, why, how to fix)
 
 ### 7.2 Types
 
 ```go
-// StepCheckResult holds the outcome of server-side step validation.
+// internal/workflow/bootstrap_checks.go (new)
 type StepCheckResult struct {
     Passed  bool        `json:"passed"`
     Checks  []StepCheck `json:"checks"`
@@ -615,313 +818,48 @@ type StepCheck struct {
     Detail string `json:"detail,omitempty"`
 }
 
-// StepChecker performs server-side validation for a bootstrap step.
 type StepChecker func(ctx context.Context, plan *ServicePlan) (*StepCheckResult, error)
 ```
 
-### 7.3 Key Design Decision
-
-Hard check failure is NOT a Go error. It returns a normal response with `CheckResult` populated. The LLM sees what failed, fixes it, calls complete again. This prevents the need for manual error recovery.
-
-### 7.4 Gaps Found in Original Plan
-
-- **No dev/stage pairing enforcement**: `ValidateServicePlan()` checks hostnames and types but not pairing. The discover hard check must validate `StageHostname()` convention.
-- **Single-runtime knowledge check**: `KnowledgeTracker.IsLoaded()` checks if ANY runtime briefing loaded, not that briefings for ALL target types loaded. Multi-runtime bootstrap needs per-type checking.
-- **Non-HTTP services**: Generate hard check requires `run.ports` non-empty for all entries, but workers might not have HTTP ports. Need conditional check based on service purpose.
-- **LLM-only retry limit**: Deploy iteration max (3 attempts) is guidance-enforced, not engine-enforced. Need `checkAttempts` counter in BootstrapState for server-side enforcement.
-
----
-
-## 8. Design: Performance Improvements
-
-### 8.1 Batch Verify (VerifyAll)
-
-Current: `zerops_verify` takes one hostname per call. 5 services × 15-20s = 75-100s.
-Proposed: `serviceHostname` optional. Without it → verify ALL in parallel.
+### 7.3 Integration with BootstrapComplete()
 
 ```go
-type VerifyAllResult struct {
-    Summary  string         `json:"summary"`
-    Status   string         `json:"status"`   // healthy/degraded/unhealthy
-    Services []VerifyResult `json:"services"`
-}
-```
-
-Savings: 75s → ~15s.
-
-### 8.2 Verify Internal Speedup
-
-Current: 3 separate log fetches per service.
-Proposed: Batch to 2 + parallelize log and HTTP groups.
-
-- Fetch 1: `severity=error, since=5m` → derive `no_error_logs` + `no_recent_errors`
-- Fetch 2: `search="listening|started|ready"` → `startup_detected`
-- Parallel: log group + HTTP group (health + status)
-
-Savings: Per-service 15-20s → 7-10s.
-
-### 8.3 Build Polling Speedup
-
-Current defaults: initial=3s, stepUp=10s, stepUpAfter=60s.
-Proposed: initial=1s, stepUp=5s, stepUpAfter=30s.
-
-### 8.4 Validation Improvements
-
-- Stage-specific checks in `deploy_validate.go`: `start: zsc noop --silent` on stage → warning
-- Env var reference validation: parse `${hostname_var}`, validate hostname exists as service
-
-### 8.5 Content Deduplication
-
-Reference appendix in bootstrap.md for repeated content:
-- /status endpoint specification (duplicated 3×)
-- Hostname rules (duplicated 4×)
-- Dev vs stage configuration matrix
-- PHP runtime exceptions
-
----
-
-## 9. Phase Gate Analysis
-
-### 9.1 Current Gate System
-
-5 gates (G0-G4) require evidence before phase transitions:
-
-| Gate | Transition | Required Evidence | Freshness |
-|------|-----------|-------------------|-----------|
-| G0 | INIT → DISCOVER | recipe_review | — |
-| G1 | DISCOVER → DEVELOP | discovery | 24h |
-| G2 | DEVELOP → DEPLOY | dev_verify | 24h |
-| G3 | DEPLOY → VERIFY | deploy_evidence | 24h |
-| G4 | VERIFY → DONE | stage_verify | 24h |
-
-### 9.2 The Redundancy Problem
-
-`autoCompleteBootstrap()` (bootstrap_evidence.go:18-83) generates synthetic evidence from step attestations and auto-transitions through ALL phases in one shot when bootstrap completes. Gates never actually gate anything for bootstrap — they pass trivially with synthetic evidence.
-
-Hard checks at step boundaries provide strictly stronger validation because they run real API calls and health checks.
-
-### 9.3 Recommendation
-
-Keep gates for non-bootstrap workflows (deploy, debug, scale, configure). For bootstrap, hard checks ARE the gates. `autoCompleteBootstrap()` can still auto-transition phases for compatibility, but no need for separate evidence when hard checks already validated.
-
----
-
-## 10. Open Questions & Areas for Further Discussion
-
-### 10.1 Stage Hostname Convention
-
-Current design assumes `devHostname` ends in "dev" → stage = replace with "stage":
-- `appdev` → `appstage` ✓
-- `webdev` → `webstage` ✓
-- `apidev` → `apistage` ✓
-
-What about edge cases?
-- `myapp` → no stage (simple mode, no pair)
-- `dev` → `stage` (bare, works but unusual)
-- User explicitly names differently?
-
-**Decision needed**: Is the convention strict (enforced) or advisory (LLM can override)?
-
-### 10.2 IsExisting Runtime Updates
-
-When adding a managed service to an existing runtime, the generate step "updates existing code." What does this mean concretely?
-- Update zerops.yml envVariables with new dependency refs
-- Update /status endpoint to check new dependency
-- Add usage code for new dependency (e.g., cache client initialization)
-
-How much code change should the LLM make? Full app update or minimal wiring?
-
-**Decision needed**: Scope of IsExisting updates — minimal wiring vs comprehensive integration.
-
-### 10.3 Registry Cleanup
-
-What happens to registry entries for services that are deleted?
-- Option A: Auto-remove on reconciliation (clean but lossy)
-- Option B: Mark as `lifecycle: "removed"` (preserves history but adds clutter)
-
-**Decision needed**: Which approach for deleted services?
-
-### 10.4 Multi-Target Ordering
-
-For multi-runtime bootstraps (Scenario D), targets share dependencies. The first target's CREATE dependencies become the second target's EXISTS dependencies. This ordering is implicit in the plan structure.
-
-Should the engine enforce ordering? Or trust the LLM to submit targets in the right order?
-
-**Decision needed**: Engine-enforced vs LLM-determined target ordering.
-
-### 10.5 Non-Bootstrap Managed Service Addition
-
-"Add Redis caching" when there's no code change needed (runtime already supports it, just needs env var). Is this really a bootstrap? Or should it be a simpler flow:
-
-```
-zerops_import → zerops_env → zerops_manage action="reload"
-```
-
-**Decision needed**: Is adding a managed service always a bootstrap, or sometimes a simpler configure operation?
-
-### 10.6 Shared Storage Dependencies
-
-Shared storage has a two-stage process:
-1. `mount: [hostname]` in import.yml
-2. `mount: [hostname]` in zerops.yml `run:` section
-3. `zerops_manage action="connect-storage"` after stage becomes ACTIVE
-
-This is more complex than a simple database dependency. How does it fit the Dependency model?
-
-**Decision needed**: Shared storage as a Dependency with special handling, or a separate concept?
-
-### 10.7 CLAUDE.md Location
-
-Options:
-- Section in existing project CLAUDE.md (checked into git, visible to all)
-- Separate `ZEROPS.md` file
-- `.claude/infrastructure.md` (private, not in git)
-
-**Decision made**: Section in CLAUDE.md with markers. Checked into git. Visible to all. Auto-read by Claude Code.
-
-### 10.8 Evidence System Future
-
-With hard checks, per-step evidence becomes less important (checks validate deterministically). But evidence still has value for:
-- Audit trail (what was done when)
-- Iteration history (what was tried before)
-- Gate compatibility for non-bootstrap workflows
-
-Should evidence be simplified? Per-service? Per-target? Per-session?
-
-**Open**: Evidence model may need revision once hard checks are implemented.
-
----
-
-## 11. Current Codebase Reference
-
-### Key Files
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `internal/workflow/state.go` | 55 | WorkflowState, ServiceRef, PhaseTransition types |
-| `internal/workflow/session.go` | 145 | State persistence (InitSession, LoadSession, ResetSession, saveState) |
-| `internal/workflow/engine.go` | 255 | Workflow engine (Start, Transition, BootstrapComplete, etc.) |
-| `internal/workflow/bootstrap.go` | 270 | BootstrapState, step tracking, conditional skip, BuildResponse |
-| `internal/workflow/bootstrap_steps.go` | 276 | 11 step definitions with guidance/tools/verification |
-| `internal/workflow/bootstrap_evidence.go` | 83 | autoCompleteBootstrap, evidence map |
-| `internal/workflow/bootstrap_guidance.go` | 33 | Section extraction from bootstrap.md |
-| `internal/workflow/evidence.go` | 66 | Evidence types, atomic persistence |
-| `internal/workflow/gates.go` | 114 | 5 phase gates (G0-G4) |
-| `internal/workflow/validate.go` | 100+ | ServicePlan, PlannedService, ValidateServicePlan |
-| `internal/tools/workflow.go` | 330+ | MCP tool handler (zerops_workflow) |
-| `internal/tools/workflow_bootstrap.go` | 35 | Plan routing, BootstrapCompletePlan delegation |
-| `internal/server/instructions.go` | 125 | BuildInstructions, buildProjectSummary |
-| `internal/content/workflows/bootstrap.md` | 751 | Full bootstrap guidance with section tags |
-| `internal/content/workflows/deploy.md` | 214 | Deploy workflow guidance |
-| `internal/content/content.go` | 58 | Embedded content (embed.FS) |
-| `internal/content/templates/claude.md` | 2 | CLAUDE.md template (just "# Zerops") |
-| `internal/init/init.go` | 141 | `zcp init` subcommand |
-| `internal/ops/verify.go` | 152 | Service verification (health checks) |
-| `internal/ops/verify_checks.go` | 200+ | Individual check functions |
-| `internal/ops/deploy_validate.go` | 74 | Deploy validation |
-| `internal/ops/progress.go` | 44 | Polling intervals |
-| `internal/ops/discover.go` | 102 | Service discovery |
-| `internal/ops/helpers.go` | 151 | Env var parsing, cross-ref detection |
-| `internal/platform/types.go` | 58 | Service types |
-| `internal/platform/client.go` | 100+ | API client interface |
-
-### Existing Functions to Reuse
-
-- `ValidateHostname()` in `validate.go` — hostname validation
-- `isManagedService()` in `managed_types.go` — type classification
-- `hasImplicitWebServer()` in `deploy_validate.go` — PHP/nginx detection
-- `DetectProjectState()` in engine — FRESH/CONFORMANT/NON_CONFORMANT
-- `ops.Verify()` / `ops.VerifyAll()` (to be created) — health checks
-- `buildProjectSummary()` in `instructions.go` — system prompt generation
-- `extractSection()` in `bootstrap_guidance.go` — section tag extraction
-- `KnowledgeTracker.IsLoaded()` — knowledge load validation
-- `saveState()` in `session.go` — atomic write pattern (temp+rename)
-
----
-
-## 12. Hard Check Implementation Detail
-
-### 12.1 Why Hard Checks Replace Attestation
-
-The original 11-step design provided safety through granularity — separate detect, load-knowledge, and discover-envs steps acted as implicit validation gates. Comparison with `../zcp-main` shows these exist to prevent: (1) duplicate services, (2) code generation with unvetted knowledge, (3) wrong env var names, (4) trusting deploy self-reports.
-
-With hard checks, these validations become explicit and stronger:
-
-| Original 11-step guarantee | Replaced by hard check |
-|---|---|
-| detect prevents duplicate services | **discover** hard check: `ListServices()` → if CONFORMANT/NON_CONFORMANT, block with structured response before any mutations |
-| load-knowledge gates generate-import | **discover** hard check: verify knowledge tracker loaded runtime + infrastructure before completing step |
-| discover-envs gates generate-code | **provision** hard check: verify each managed service has discoverable env vars (non-empty) |
-| verify doesn't trust deploy | **deploy** hard check: `ops.Verify()` on each deployed service; **verify** hard check: `VerifyAll()` batch |
-
-The hard check approach is strictly better because:
-- 11-step attestations are strings LLM writes — always "pass", never validated
-- Hard checks run real API calls / file reads — deterministic, cannot be faked
-- Hard check failures return structured data (what failed, why, how to fix)
-
-### 12.2 StepChecker Type
-
-**File**: `internal/workflow/bootstrap_checks.go` (new)
-
-```go
-// StepCheckResult holds the outcome of server-side step validation.
-type StepCheckResult struct {
-    Passed  bool          `json:"passed"`
-    Checks  []StepCheck   `json:"checks"`
-    Summary string        `json:"summary"` // "4/4 passed" or "2/4 passed, 2 failed"
-}
-
-type StepCheck struct {
-    Name   string `json:"name"`   // e.g. "service_exists:appdev"
-    Status string `json:"status"` // "pass", "fail", "skip"
-    Detail string `json:"detail,omitempty"`
-}
-
-// StepChecker performs server-side validation for a bootstrap step.
-// Returns nil result if no hard checks are applicable (creative-only steps).
-type StepChecker func(ctx context.Context, plan *ServicePlan) (*StepCheckResult, error)
-```
-
-### 12.3 Integration with BootstrapComplete()
-
-**File**: `internal/workflow/engine.go`
-
-```go
+// internal/workflow/engine.go
 func (e *Engine) BootstrapComplete(stepName, attestation string, checker StepChecker) (*BootstrapResponse, error) {
     // ... existing validation ...
 
     // Run hard checks if checker provided
     if checker != nil {
-        checkResult, err := checker(ctx, state.Bootstrap.Plan)
+        checkResult, err := checker(ctx, state.Session.Bootstrap.Plan)
         if err != nil {
             return nil, fmt.Errorf("step check error: %w", err)
         }
         if checkResult != nil && !checkResult.Passed {
-            // Return response with check failures — step NOT advanced
-            resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent)
+            resp := state.Session.Bootstrap.BuildResponse(state.ActiveSessionID(), state.Session.Intent)
             resp.CheckResult = checkResult
-            resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", stepName, checkResult.Summary)
-            return resp, nil  // NOT an error — structured failure
+            resp.Message = fmt.Sprintf("Step %q: %s -- fix issues and retry", stepName, checkResult.Summary)
+            return resp, nil  // NOT an error -- structured failure
         }
     }
 
-    // Existing: advance step
-    state.Bootstrap.CompleteStep(stepName, attestation)
+    state.Session.Bootstrap.CompleteStep(stepName, attestation)
+    e.updateRegistryLifecycle(state, stepName)
     // ...
 }
 ```
 
-Key design: Hard check failure is NOT a Go error — it returns a normal response with `CheckResult` populated. LLM sees what failed, fixes it, calls complete again.
+Key design: Hard check failure is NOT a Go error. It returns a normal response with `CheckResult` populated. LLM sees what failed, fixes it, calls complete again.
 
-### 12.4 Building Checkers in Tool Layer
-
-**File**: `internal/tools/workflow_bootstrap.go`
+### 7.4 Building Checkers in Tool Layer
 
 ```go
+// internal/tools/workflow_checks.go (new)
 func buildStepChecker(ctx context.Context, step string, client platform.Client,
-    fetcher platform.LogFetcher, projectID string) workflow.StepChecker {
+    fetcher platform.LogFetcher, projectID string, tracker *ops.KnowledgeTracker) workflow.StepChecker {
 
     switch step {
+    case "discover":
+        return nil // plan validation handled by BootstrapCompletePlan
     case "provision":
         return func(ctx context.Context, plan *workflow.ServicePlan) (*workflow.StepCheckResult, error) {
             return checkProvision(ctx, client, projectID, plan)
@@ -939,77 +877,44 @@ func buildStepChecker(ctx context.Context, step string, client platform.Client,
             return checkVerify(ctx, client, fetcher, projectID, plan)
         }
     default:
-        return nil // discover: plan validation handled separately in BootstrapCompletePlan
+        return nil
     }
 }
 ```
 
-Each `checkXxx` function lives in `internal/tools/workflow_checks.go` (new file).
+### 7.5 Registration Changes
 
-### 12.5 Per-Step Check Details
+```go
+// internal/tools/workflow.go
+func RegisterWorkflow(srv, client, projectID, cache, engine, tracker, logFetcher) { ... }
+// ADD logFetcher parameter -> needed by hard checks
 
-**Step 0 (discover)** — plan validation + safety checks:
-- **Duplicate prevention** (replaces old detect step): `ListServices()` → if runtime services exist, classify as CONFORMANT/NON_CONFORMANT and return structured response. LLM cannot proceed to provision without addressing existing services.
-- **Knowledge validation** (replaces old load-knowledge gate): check `KnowledgeTracker.IsLoaded()` — must be loaded for ALL target runtime types, not just "any one loaded".
-- **Plan validation**: all hostnames pass `ValidateHostname()`, types exist in live catalog, dev/stage pairing correct via `StageHostname()`, managed services have `mode`.
-- **Resolution validation**: CREATE dependencies must not exist, EXISTS dependencies must exist.
+// internal/server/server.go
+tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine, knowledgeTracker, s.logFetcher)
+// ADD s.logFetcher parameter
+```
 
-**Step 1 (provision)** — infrastructure verification:
-- `ListServices()` → all planned services exist
-- Dev runtime services: status = RUNNING (startWithoutCode)
-- Managed services: status = RUNNING
-- Stage services: status = NEW or READY_TO_DEPLOY
-- Dev services: SSHFS mount is active (`zerops_mount action=status`)
-- **Env var gating** (replaces old discover-envs gate): for each managed service (dependency), call `Discover(hostname, includeEnvs=true)` → verify non-empty env vars returned. If empty → block with "managed service {hostname} has no env vars — check if service is RUNNING"
+### 7.6 Phase Gate Simplification
 
-**Step 2 (generate)** — zerops.yml validation:
-- For each target's dev service: read zerops.yml from mount path
-- Has `setup:` entry for BOTH dev and stage hostnames
-- Dev entries: `deployFiles` contains `.`
-- Dev entries: no `healthCheck`, no `readinessCheck`
-- All entries: `run.start` non-empty (except PHP/implicit-webserver runtimes — use `hasImplicitWebServer()`)
-- All entries: `run.ports` non-empty (except non-HTTP workers — conditional check)
-- **Env ref validation**: parse `${hostname_var}` patterns from `envVariables`, validate referenced hostnames exist as services
-- Stage entries: `start` is NOT `zsc noop --silent`
+Phase gates (G0-G4) are redundant for bootstrap when hard checks exist. `autoCompleteBootstrap()` currently generates synthetic evidence and auto-transitions. Hard checks at step boundaries provide strictly stronger validation.
 
-**Step 3 (deploy)** — health verification:
-- Run `ops.Verify()` on each deployed runtime service (parallel)
-- Require `service_running` = pass
-- Require `http_health` = pass (if subdomain enabled)
-- Require `http_status` = pass (connectivity proof)
-- `degraded` tolerated (advisory checks), only `unhealthy` = fail
-- Verify errors → `skip` (network failure ≠ broken service)
-- **Server-side `checkAttempts` counter** per target (not just LLM-enforced max 3)
+**Decision**: Keep gates for non-bootstrap workflows (deploy, debug, scale, configure). For bootstrap, hard checks ARE the gates.
 
-**Step 4 (verify)** — batch verify all + registry + CLAUDE.md:
-- Run `VerifyAll()` on all project services (parallel)
-- Populate `Evidence.ServiceResults` with real health data
-- Set `Evidence.Failed` from actual failures
-- Update registry: all services → `lifecycle: "verified"`
-- Generate and write CLAUDE.md infrastructure section
-- Auto-generate final report (service list + URLs + statuses)
+### 7.7 Gaps Found in Original Plan (Resolved)
 
-### 12.6 Hard Check Files Summary
-
-- `internal/workflow/bootstrap_checks.go` (new) — `StepChecker` type, `StepCheckResult`, `StepCheck`
-- `internal/workflow/engine.go` — add `checker StepChecker` param to `BootstrapComplete()`
-- `internal/workflow/bootstrap.go` — add `CheckResult *StepCheckResult` to `BootstrapResponse`
-- `internal/tools/workflow_checks.go` (new) — `buildStepChecker()`, `checkProvision()`, `checkGenerate()`, `checkDeploy()`, `checkVerify()`
-- `internal/tools/workflow_bootstrap.go` — call `buildStepChecker()` in `handleBootstrapComplete()`
-- `internal/tools/workflow.go` — thread `logFetcher` to `handleBootstrapComplete()`
-- `internal/server/server.go` — pass `logFetcher` to `RegisterWorkflow()`
+- **No dev/stage pairing enforcement**: Resolved -- discover hard check validates `StageHostname()` convention
+- **Single-runtime knowledge check**: Resolved -- must be loaded for ALL target types, not just any one
+- **Non-HTTP services**: Resolved -- conditional check based on service purpose (workers skip port check)
+- **LLM-only retry limit**: Resolved -- deploy hard check has server-side `checkAttempts` counter
 
 ---
 
-## 13. Batch Verify Implementation Detail
+## 8. Design: Performance Improvements
 
-### 13.1 Problem
+### 8.1 Batch Verify (VerifyAll)
 
-`zerops_verify` takes one hostname. For 5 services → 5 sequential calls → 75-100s.
-
-### 13.2 Solution: VerifyAll()
-
-Make `serviceHostname` optional. Without it → verify ALL project services in parallel.
+Current: `zerops_verify` takes one hostname per call. 5 services x 15-20s = 75-100s.
+Proposed: `serviceHostname` optional. Without it -> verify ALL in parallel.
 
 ```go
 type VerifyAllResult struct {
@@ -1018,116 +923,195 @@ type VerifyAllResult struct {
     Services []VerifyResult `json:"services"`
 }
 
-func VerifyAll(ctx context.Context, client platform.Client, fetcher platform.LogFetcher,
-    httpClient HTTPDoer, projectID string) (*VerifyAllResult, error) {
-    services, _ := client.ListServices(ctx, projectID)
-    // Get log access once (shared across all)
-    logAccess, logErr := client.GetProjectLog(ctx, projectID)
-    // Run Verify per service in parallel (errgroup, max 5 concurrent)
-    // Collect, compute summary
+func VerifyAll(ctx, client, fetcher, httpClient, projectID) (*VerifyAllResult, error) {
+    // ListServices, get log access once, run Verify per service in parallel (errgroup, max 5)
 }
 ```
 
-Tool change: `internal/tools/verify.go` — make `ServiceHostname` optional, dispatch to `VerifyAll` or `Verify`.
+Savings: 75s -> ~15s.
 
-### 13.3 Files
+### 8.2 Verify Internal Speedup
 
-- `internal/ops/verify.go` — add `VerifyAll()`, `VerifyAllResult`
-- `internal/ops/verify_test.go` — `TestVerifyAll_*`
-- `internal/tools/verify.go` — optional hostname, batch dispatch
-- `internal/tools/verify_test.go` — `TestVerifyTool_BatchMode`
+Current: 3 separate log fetches per service (checkErrorLogs 5m, checkStartupDetected, checkErrorLogs2m).
+Proposed: Batch to 2 + parallelize log and HTTP groups.
 
-Savings: 5 × ~15s = 75s → 1 × ~15s (parallel) = ~60s saved.
+- Fetch 1: `severity=error, since=5m` -> derive `no_error_logs` + `no_recent_errors` (filter locally for 2m)
+- Fetch 2: `search="listening|started|ready"` -> `startup_detected`
+- Parallel: log group + HTTP group (health + status)
+
+New `batchLogChecks()` in `verify_checks.go`. Parallel restructure in `verify.go`.
+
+Savings: Per-service 15-20s -> 7-10s.
+
+### 8.3 Build Polling Speedup
+
+Current defaults: initial=3s, stepUp=10s, stepUpAfter=60s.
+Proposed: initial=1s, stepUp=5s, stepUpAfter=30s.
+
+### 8.4 Validation Improvements
+
+- Stage-specific checks in `deploy_validate.go`: `start: zsc noop --silent` on stage -> warning
+- Env var reference validation: new `ValidateEnvReferences()` -- parse `${hostname_var}`, validate hostname exists as service
+
+### 8.5 Content Deduplication
+
+Reference appendix in bootstrap.md for repeated content:
+- /status endpoint specification (duplicated 3x)
+- Hostname rules (duplicated 4x)
+- Dev vs stage configuration matrix
+- PHP runtime exceptions
+
+Merge section tags to match 5-step model. Remove old 11-step section tags.
 
 ---
 
-## 14. Verify Internal Speedup Detail
+## 9. Phase Gate Analysis
 
-### 14.1 Batch Log Checks: 3 calls → 2
+### 9.1 Current Gate System
 
-New `batchLogChecks()` in `verify_checks.go`:
-- Fetch 1: `severity=error, since=5m` → derive `no_error_logs` + `no_recent_errors` (filter `Timestamp > now-2m`)
-- Fetch 2: `search="listening|started|ready"` → `startup_detected`
+5 gates (G0-G4) require evidence before phase transitions:
 
-### 14.2 Parallelize Log + HTTP Groups
+| Gate | Transition | Required Evidence | Freshness |
+|------|-----------|-------------------|-----------|
+| G0 | INIT -> DISCOVER | recipe_review | -- |
+| G1 | DISCOVER -> DEVELOP | discovery | 24h |
+| G2 | DEVELOP -> DEPLOY | dev_verify | 24h |
+| G3 | DEPLOY -> VERIFY | deploy_evidence | 24h |
+| G4 | VERIFY -> DONE | stage_verify | 24h |
 
-In `verify.go`, run concurrently:
-- Group A: batchLogChecks() → 3 results
-- Group B: checkHTTPHealth() + checkHTTPStatus() → 2 results (also parallel)
+### 9.2 The Redundancy Problem
 
-### 14.3 Files
+`autoCompleteBootstrap()` (bootstrap_evidence.go:18-83) generates synthetic evidence from step attestations and auto-transitions through ALL phases in one shot when bootstrap completes. Gates never actually gate anything for bootstrap -- they pass trivially with synthetic evidence.
 
-- `internal/ops/verify_checks.go` — `batchLogChecks()`, `filterRecent()`
-- `internal/ops/verify.go:117-152` — parallel restructure
+Hard checks at step boundaries provide strictly stronger validation because they run real API calls and health checks.
 
-Savings: Per-service ~15-20s → ~7-10s.
+### 9.3 Decision
+
+Keep gates for non-bootstrap workflows (deploy, debug, scale, configure). For bootstrap, hard checks ARE the gates. `autoCompleteBootstrap()` can still auto-transition phases for compatibility, but no need for separate evidence when hard checks already validated.
 
 ---
 
-## 15. Build Polling Speedup Detail
+## 10. Resolved Questions
 
-`progress.go:39-44` new defaults:
-```go
-initialInterval: 1 * time.Second,   // was 3s
-stepUpInterval:  5 * time.Second,   // was 10s
-stepUpAfter:     30 * time.Second,  // was 60s
+### 10.1 Stage Hostname Convention
+
+**Decision: Strict convention enforced.**
+
+`devHostname` must end in "dev" -> stage = replace with "stage":
+- `appdev` -> `appstage`
+- `webdev` -> `webstage`
+- `apidev` -> `apistage`
+
+`StageHostname()` returns "" if DevHostname doesn't end in "dev" -> validation error.
+
+### 10.2 IsExisting Runtime Updates
+
+**Decision: Minimal wiring scope.**
+
+When adding a managed service to an existing runtime:
+- Update zerops.yml `envVariables` with new dependency refs
+- Update `/status` endpoint to check new dependency
+- Minimal code changes -- LLM determines extent based on context
+
+### 10.3 Registry Cleanup
+
+**Decision: Auto-remove on reconciliation.**
+
+Reconciliation at session start removes stale entries. Git history preserves deleted service info if needed. Clean registry is more useful than historical clutter.
+
+### 10.4 Multi-Target Ordering
+
+**Decision: LLM-determined, engine validates.**
+
+LLM submits targets in order. Engine validates cross-target dependency resolution (CREATE in target 1 satisfies EXISTS in target 2) but doesn't enforce ordering.
+
+### 10.5 Non-Bootstrap Managed Service Addition
+
+**Decision: Always bootstrap.**
+
+Adding a managed service involves code changes (env vars, /status endpoint). Bootstrap handles this via `IsExisting=true` target. Simple configure-only additions (no code) remain outside bootstrap.
+
+### 10.6 Shared Storage Dependencies
+
+**Decision: Dependency with special handling.**
+
+Shared storage is a `Dependency` like any other, but with extra steps in provision (mount in import.yml) and deploy (connect-storage after stage ACTIVE). The generate hard check validates `mount:` in zerops.yml `run:` section.
+
+### 10.7 CLAUDE.md Location
+
+**Decision: Section in CLAUDE.md with markers.**
+
+`<!-- ZEROPS:BEGIN -->` / `<!-- ZEROPS:END -->` in project CLAUDE.md. Checked into git. Auto-read by Claude Code.
+
+### 10.8 Evidence System Future
+
+**Decision: Keep for audit trail, simplify for bootstrap.**
+
+Evidence still records what was done (audit). For bootstrap, hard checks replace evidence as validation mechanism. Evidence is auto-generated from hard check results for gate compatibility.
+
+---
+
+## 11. Existing Functions to Reuse
+
+| Function | File | Purpose |
+|----------|------|---------|
+| `ValidateHostname()` | `internal/platform/validate.go` | Hostname validation |
+| `isManagedService()` | `internal/workflow/managed_types.go` | Type classification |
+| `isManagedTypeWithLive()` | `internal/workflow/validate.go` | Live type classification |
+| `hasImplicitWebServer()` | `internal/ops/deploy_validate.go` | PHP/nginx detection |
+| `DetectProjectState()` | `internal/workflow/engine.go` | FRESH/CONFORMANT/NON_CONFORMANT |
+| `ValidateZeropsYml()` | `internal/ops/deploy_validate.go` | Pre-deploy validation |
+| `ops.Verify()` | `internal/ops/verify.go` | Per-service health checks |
+| `checkServiceRunning()` | `internal/ops/verify_checks.go` | RUNNING/ACTIVE check |
+| `checkHTTPHealth()` | `internal/ops/verify_checks.go` | GET /health check |
+| `checkHTTPStatus()` | `internal/ops/verify_checks.go` | GET /status check |
+| `aggregateStatus()` | `internal/ops/verify_checks.go` | Overall health from checks |
+| `resolveSubdomainURL()` | `internal/ops/verify_checks.go` | Subdomain URL construction |
+| `buildProjectSummary()` | `internal/server/instructions.go` | System prompt generation |
+| `extractSection()` | `internal/workflow/bootstrap_guidance.go` | Section tag extraction |
+| `KnowledgeTracker.IsLoaded()` | `internal/ops/knowledge_tracker.go` | Knowledge load validation |
+| `saveState()` | `internal/workflow/session.go` | Atomic write (temp+rename) |
+| `knowledge.ManagedBaseNames()` | `internal/knowledge/engine.go` | Managed type detection from live catalog |
+
+---
+
+## 12. Implementation Order
+
+Dependency order (all in one pass, TDD at each step):
+
+```
+1. A: BootstrapTarget types + validation                    <- foundation (types used everywhere)
+2. B: Registry + Session state model + migration            <- foundation (state used by steps)
+3. F+G: Verify speedup + polling speedup                    <- independent, low risk (parallel)
+4. H: Stage validation + env ref validation                 <- independent (parallel with 3)
+5. E: Batch verify (VerifyAll)                              <- uses optimized Verify from #3
+6. D: Hard checks (StepChecker)                             <- uses Verify/VerifyAll, registry
+7. C: Step consolidation (11 -> 5)                          <- integrates hard checks, new types
+8. I: CLAUDE.md recording + enriched BuildInstructions       <- uses registry from #2
+9. J: Content deduplication                                  <- section names from #7
 ```
 
-Files: `internal/ops/progress.go`, `internal/ops/progress_test.go`
+Items 3-4 run in parallel. Items 1+2 must be first. Items 6-7 are the core value.
 
 ---
 
-## 16. Validation Improvements Detail
-
-### 16.1 Stage Warnings
-
-In `deploy_validate.go` after line 74, add stage-specific checks:
-- `start: zsc noop --silent` on stage → warning ("stage should have real start command")
-- This is a warning, not an error — allows deploy to proceed but alerts the LLM
-
-### 16.2 Env Var Reference Validation
-
-New function `ValidateEnvReferences()`:
-- Parse `${hostname_var}` patterns from zerops.yml `envVariables` section
-- Extract hostname prefix (before first `_`)
-- Validate hostname exists as a service in the project
-- Return warnings for unresolvable references
-
-Files: `internal/ops/deploy_validate.go`, `internal/ops/deploy_validate_test.go`
-
----
-
-## 17. Content Deduplication Detail
-
-Add `## Reference` appendix in bootstrap.md to deduplicate repeated content:
-
-- **A. /status Endpoint Specification** — currently duplicated 3× across step sections. Consolidate into one reference, link from steps.
-- **B. Hostname Rules** — currently duplicated 4×. Single reference.
-- **C. Dev vs Stage Configuration Matrix** — table showing what differs between dev and stage setup entries (start command, healthCheck, readinessCheck, deployFiles).
-- **D. PHP/Implicit-Webserver Runtime Exceptions** — what's different for php-nginx, php-apache, nginx, static runtimes (no start/ports needed).
-
-Merge section tags (`<section name="...">`) to match 5-step model. Remove old 11-step section tags.
-
-Files: `internal/content/workflows/bootstrap.md`, `internal/workflow/bootstrap_guidance_test.go`
-
----
-
-## 18. Estimated Impact
+## 13. Estimated Impact
 
 | Metric | Before | After |
 |--------|--------|-------|
 | Workflow round-trips | 11 | 5 |
-| Verify all services | N × 15-20s sequential | 1 × 7-10s parallel |
+| Verify all services | N x 15-20s sequential | 1 x 7-10s parallel |
 | Gate evidence quality | LLM attestation (always passes) | Real health checks (can fail) |
 | Stage misconfig | Caught at runtime | Caught before deploy |
 | Env var typos | Caught at runtime | Caught at generate step |
 | Typical bootstrap time | 4-6 min | 2-3 min |
-| Handoff context | Lost between sessions | Registry + CLAUDE.md |
-| Incremental support | Not possible | Same engine, IsExisting target |
+| Cross-session topology | Lost | Registry + CLAUDE.md |
+| Scenario support | Fresh only | Fresh, add-runtime, add-managed, multi-runtime |
+| Build poll responsiveness | 3s initial, 10s step-up | 1s initial, 5s step-up |
 
 ---
 
-## 19. Summary of Design Decisions Made
+## 14. Design Decisions Summary
 
 | Decision | Choice | Rationale |
 |---|---|---|
@@ -1136,9 +1120,27 @@ Files: `internal/content/workflows/bootstrap.md`, `internal/workflow/bootstrap_g
 | Incremental support | Same engine, LLM adapts via registry context | No Scope/Action fields needed; simplest possible model |
 | CLAUDE.md recording | Both registry AND CLAUDE.md section | Complementary: programmatic + durable handoff |
 | What to record | Only immutable facts (topology) | Prevents staleness; live state via API |
-| Step count | 11 → 5 | Reduces round-trips while preserving decision points |
+| Step count | 11 -> 5 | Reduces round-trips while preserving decision points |
+| Two phases | Infrastructure (discover+provision) + Deploy (generate+deploy+verify) | Reflects two distinct activities |
 | Hard checks | Server-side, per-step, deterministic | Replaces trusted LLM attestations with real validation |
 | Phase gates | Simplified for bootstrap (hard checks replace) | Gates are redundant with hard checks |
-| Migration | Not needed (dev phase) | No backward compatibility required |
+| Subdomain activation | Explicit (not auto-enable) | User decided: keep explicit |
+| Stage naming | Convention: `*dev` -> `*stage`, strict enforcement | Simple, derivable, validation error if not matching |
+| Registry cleanup | Auto-remove on reconciliation | Clean > historical; git preserves history |
 | Multi-runtime | Multiple targets in one session | Efficient (one import), shared dependencies |
-| Stage naming | Convention: `*dev` → `*stage` | Simple, derivable, no separate field needed |
+| Migration | Version check + auto-migrate flat -> nested | Handles existing state files |
+
+---
+
+## 15. Verification Plan
+
+1. `go test ./internal/workflow/... -count=1 -v` — BootstrapTarget validation, registry persistence, 5-step model, hard checks, state migration, CLAUDE.md generation
+2. `go test ./internal/ops/... -count=1 -v` — verify speedup, batch verify, validation improvements
+3. `go test ./internal/tools/... -count=1 -v` — step checkers, batch verify tool, plan routing
+4. `go test ./integration/... -count=1 -v` — full 5-step bootstrap (fresh + add-runtime + add-managed scenarios)
+5. `go test ./... -count=1 -short` — full suite green
+6. `make lint-fast` — no lint issues
+7. Manual E2E:
+   - Fresh: "PHP + PostgreSQL" -> 5 steps -> registry populated -> CLAUDE.md updated
+   - Add runtime: "add Node.js API" -> existing deps resolved -> new runtime bootstrapped -> registry updated
+   - Add managed: "add Valkey" -> IsExisting target -> cache created -> appdev redeployed -> CLAUDE.md regenerated
