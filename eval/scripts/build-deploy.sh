@@ -42,7 +42,7 @@ echo "==> Deploy OK (hash match: ${LOCAL_HASH:0:12}...)"
 
 # Kill stale zcp processes so Claude Code starts a fresh MCP server with the new binary.
 # Without this, a running "zcp serve" keeps the old binary's embedded knowledge in memory.
-KILLED=$(ssh "$REMOTE_HOST" "pkill -f 'zcp serve' 2>/dev/null && echo killed || echo none")
+KILLED=$(ssh "$REMOTE_HOST" "pkill -f '[z]cp serve' 2>/dev/null; echo done")
 if [ "$KILLED" = "killed" ]; then
     echo "==> Killed stale zcp serve process(es) — next Claude invocation will start fresh"
 else
