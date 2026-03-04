@@ -6,17 +6,72 @@ Multi-agent stress-test of `plans/analysis-bootstrap-revision.md`. Four speciali
 
 ## Critical — Must fix before implementation
 
-### C1. Static/nginx services fail /status hard check
+### C1. Verification endpoint model needs runtime-class awareness and simplification
 
-**Impact**: Any bootstrap with `static` or `nginx` runtime fails verification unconditionally.
+**Impact**: (a) Any bootstrap with `static` or `nginx` runtime fails verification unconditionally — these runtimes cannot implement `/status` or `/health`. (b) The current 3-endpoint contract (`/`, `/health`, `/status`) is more complex than necessary — `/health` is provably redundant. (c) Services without subdomain enabled pass verification with all HTTP checks skipped, creating a false-healthy gap.
 
-**Detail**: The plan's `checkHTTPStatus` hard check requires a `/status` endpoint returning JSON with connectivity proof. Static sites and nginx reverse proxies have no server-side logic — they cannot implement `/status`.
+**Detail — verified on live Zerops services (2026-03-04):**
 
-**Evidence**: `ops/verify_checks.go:checkHTTPStatus()` makes HTTP GET to `/status` and parses JSON response. Static services serve files from disk only.
+The plan requires every generated app to expose 3 endpoints. Live testing reveals:
 
-**Fix**: Add runtime class awareness to verification. For static/nginx, check HTTP 200 on `/` instead of `/status`. Update `hasImplicitWebServer()` in `ops/deploy_validate.go` to include this classification. The hard check for verify must branch:
-- Interpreted/compiled runtimes → `/status` with connectivity proof
-- Implicit webserver without app logic (static, nginx) → HTTP 200 on `/`
+1. **`/health` is redundant with Zerops platform health probing.** The platform runs its own `Zerops-http-probe/1.0` at a configurable path (`healthCheck.httpGet.path` in zerops.yml) — e.g., `/up` on laravelstage, `/health` on nodejsstage. Our verify check #5 (`http_health`) hits `/health` — a DIFFERENT path from the platform probe. It provides the same signal as `GET /` (HTTP server responds). When `/status` fails, the detail message already specifies which connection broke — `/health` passing adds no diagnostic value.
+
+2. **Static/nginx cannot implement any dynamic endpoint.** They serve files from disk. No `/health`, no `/status`. Any bootstrap with these runtimes fails verification.
+
+3. **Subdomain-off = false healthy.** `persisttest` returns plain text `ok` at `/status` (NOT valid JSON) but reports `status: "healthy"` because subdomain isn't enabled and both `http_health` and `http_status` are skipped. Any service without subdomain bypasses all HTTP verification.
+
+4. **Dev services MUST NOT have healthCheck configured.** Dev uses `start: zsc noop --silent` (no server running). If healthCheck were configured, the platform probe would fail and kill the container. Verified: nodejsdev has no healthCheck.
+
+5. **`hostname` env var is always available.** Zerops injects `hostname=<service_hostname>` in every container. Apps should use this for self-identification instead of hardcoding. Verified bug: nodejsstage code hardcodes `'nodejsdev'` in root response — wrong hostname on stage.
+
+**Evidence**:
+- `ops/verify_checks.go:checkHTTPStatus()` — requires `/status` JSON, impossible for static/nginx
+- `ops/verify.go:135-152` — subdomain URL empty → skip http_health + http_status → healthy with no HTTP checks
+- `laravelstage` logs: `Zerops-http-probe/1.0` probes `/up`, not `/health`
+- `persisttest`: returns `ok` (plain text) at `/status`, passes verify as healthy
+- `nodejsdev` zerops.yml: no healthCheck (correct for dev)
+- `nodejsstage` zerops.yml: `healthCheck.httpGet.path: /health`
+- All containers: `hostname` env var = service hostname (e.g., `hostname=nodejsstage`)
+
+**Fix — simplify to 2-tier, 2-endpoint model:**
+
+Runtime classification for verification (new function in `ops/verify.go`, separate from `hasImplicitWebServer()` which answers a different question about `run.start`/`run.ports`):
+
+| Runtime class | Examples | Can execute code? | Verify endpoints |
+|---------------|----------|-------------------|------------------|
+| **Explicit server** | nodejs, go, bun, python, rust, java, deno, dotnet | Yes | `GET /` + `GET /status` |
+| **Implicit webserver + app logic** | php-apache, php-nginx | Yes (PHP) | `GET /` + `GET /status` |
+| **Static-only** | static, nginx | No | `GET /` only |
+
+LLM generation contract (simplified from 3 to 2 endpoints):
+
+| Class | What LLM generates | Verify check |
+|-------|--------------------|----|
+| Dynamic (explicit + implicit) | `GET /` → any 200 response; `GET /status` → connectivity JSON | `http_root` (200) + `http_status` (JSON) |
+| Static-only | `index.html` containing hostname | `http_root` (200 + body contains hostname) |
+
+Verify check changes:
+```
+Current:  service_running → logs → startup_detected → logs → http_health(/health) → http_status(/status)
+Revised:  service_running → logs → startup_detected → logs → http_root(GET /) → http_status(/status)
+```
+
+- `http_health` (GET /health) → **REPLACED** by `http_root` (GET /) — same signal (HTTP 200) plus deployment proof for static
+- `http_status` (GET /status) → **SKIP for static/nginx** (no server-side logic)
+- `startup_detected` → **SKIP for implicit webserver + static** (detects Apache/nginx startup, not PHP readiness — see M1)
+- `http_root` body check → hostname-in-body ONLY for static/nginx (dynamic runtimes may return full HTML apps where hostname isn't present)
+
+zerops.yml changes:
+- Dev: `start: zsc noop --silent`, NO healthCheck (would kill container)
+- Stage: `start: {real command}`, NO healthCheck for bootstrap scaffolds (process monitoring sufficient; user configures own healthCheck when replacing scaffold with real app)
+- `/health` endpoint eliminated entirely — not generated, not checked, not in healthCheck config
+
+Subdomain gate: bootstrap verify step must enforce subdomain enabling as a hard prerequisite. Without it, all HTTP checks are skipped and the service falsely reports healthy.
+
+Why `/status` stays at `/status` (not merged into `/`):
+1. **HealthCheck isolation** — if someone configures `healthCheck.httpGet.path: /`, DB queries at root would cascade DB outages into container restarts
+2. **Diagnostic clarity** — `http_root` fail = app crashed; `http_root` pass + `http_status` fail = app works but DB/cache wiring broken
+3. **Landing page stays human-friendly** — root returns app content, not JSON
 
 ---
 
@@ -57,13 +112,25 @@ Multi-agent stress-test of `plans/analysis-bootstrap-revision.md`. Four speciali
 
 ### C4. `zeropsYmlBuild.Base` string type breaks multi-base runtimes
 
-**Impact**: PHP+Node builds (e.g., Laravel with Vite) use `base: [php@8.4, nodejs@22]` which is a YAML array, but `zeropsYmlBuild.Base` is typed as `string`.
+**Impact**: PHP+Node builds (e.g., Laravel with Vite) use `base: [php@8.4, nodejs@22]` which is a YAML array, but `zeropsYmlBuild.Base` is typed as `string` in the validation code. Array values are silently dropped during YAML unmarshal.
 
-**Detail**: The generate hard check validates `run.start` and `run.ports` but must also validate `build.base`. Multi-base is common for PHP frameworks with JS tooling.
+**Detail**: Zerops docs confirm `build.base` accepts both string and array. Array installs multiple runtimes in the build container — used by Laravel Jetstream, Twill CMS, and any PHP framework with JS tooling. Real project services (`laraveldev`/`laravelstage`) currently use single `base: php@8.4` but would break if Vite were added.
 
-**Evidence**: `ops/deploy_validate.go` — `zeropsYmlBuild` struct has `Base string`. Actual Zerops YAML supports both string and array for `base`.
+Three copies of `zeropsYmlBuild` exist in the codebase with inconsistent typing:
+- `ops/deploy_validate.go:98` — `Base string` (**wrong**, silently drops arrays)
+- `eval/prompt.go:115` — `Base any` (correct, defensive type assertion)
+- `knowledge/recipe_lint_test.go:229` — `Base any` (correct)
 
-**Fix**: Change `Base` to `interface{}` or create a custom type that unmarshals both string and `[]string`. Add validation that all base entries exist in the live type catalog.
+`hasImplicitWebServer(runBase, buildBase string)` in `deploy_validate.go:137` also only accepts string — cannot detect `php-nginx` inside an array base.
+
+Note: `run.base` is always a single runtime string — only `build.base` supports arrays.
+
+**Fix**: In `deploy_validate.go`:
+1. Change `Base` to `any` (matching `eval/prompt.go` and `recipe_lint_test.go`)
+2. Add `baseStrings()` normalizer (following existing `deployFilesList()` pattern)
+3. Change `hasImplicitWebServer()` to accept `[]string` for buildBases
+4. Update call site: `hasImplicitWebServer(entry.Run.Base, entry.Build.baseStrings())`
+5. Add test cases for array base, including implicit webserver detection within arrays
 
 ---
 
@@ -117,7 +184,7 @@ Multi-agent stress-test of `plans/analysis-bootstrap-revision.md`. Four speciali
 
 **Evidence**: `bootstrap_steps.go` verify step guidance: "Record the failure in attestation... Do NOT block."
 
-**Fix**: Distinguish between "advisory partial success" (dev working, stage build timing out) and "real failure" (dev not working). The hard check for verify should require at minimum: all dev services passing HTTP health + all managed services RUNNING. Stage failures are warnings, not blockers.
+**Fix**: Distinguish between "advisory partial success" (dev working, stage build timing out) and "real failure" (dev not working). The hard check for verify should require at minimum: all dev services passing `http_root` + `http_status` + all managed services RUNNING. Stage failures are warnings, not blockers. **Prerequisite**: subdomain must be enabled before verify — without it, HTTP checks are skipped and services falsely report healthy (see C1 subdomain gap finding).
 
 ---
 
@@ -216,7 +283,7 @@ type Engine struct {
 
 #### Migration
 
-If `zcp_state.json` exists but `registry.json` does not: move old state to `sessions/{id}.json`, create registry with one entry (`PID=0` → auto-marked stale), delete old file. Transparent, one-time.
+Not needed. ZCP is in early development — no backward compatibility requirement for state files. Old `zcp_state.json` can be ignored or deleted. New sessions start fresh with the registry model.
 
 #### Implementation: new file `internal/workflow/registry.go` (~120 lines)
 
@@ -224,15 +291,15 @@ Types, `withRegistryLock()` flock wrapper, `registerSession()`, `unregisterSessi
 
 ---
 
-### H5. SSHFS mount volatility not addressed
+### H5. SSHFS mount — deploy overwrites filesystem
 
-**Impact**: Files written via SSHFS mount can be lost if the container restarts before deploy.
+**Impact**: Files written via SSHFS mount are lost when deploy runs, because deploy replaces the container filesystem with the build output (deployFiles).
 
-**Detail**: The plan mentions mounts but doesn't address the fundamental volatility issue. Code written to dev via mount lives only in the container's filesystem. Container restarts (OOM, scaling, platform updates) lose all non-deployed files.
+**Detail**: Zerops containers are NOT volatile on restart — they survive container restarts, scaling events, and platform updates. The only events that replace the filesystem are: (1) a new deploy (build output replaces prior content), and (2) hardware failure (rare). This means mounted files are safe between writes and restarts, but the act of deploying itself overwrites them. For dev services using `deployFiles: [.]`, this is fine — the deploy includes all files. But if the mount path and deploy source diverge (e.g., files written to mount but deploy triggered from a different source), work is lost.
 
-**Evidence**: `bootstrap_steps.go` mount-dev step — no warning about volatility. Generate-code step says "Consider committing generated code before proceeding to deploy" but this is a suggestion, not a guard.
+**Evidence**: `bootstrap_steps.go` generate-code step says "Consider committing generated code before proceeding to deploy" — but the real risk isn't container volatility, it's deploy overwrite semantics.
 
-**Fix**: Add a pre-deploy hard check: if mount was used, verify files still exist before deploying. Or: in the generate step guidance, make git commit mandatory before deploy (not "consider").
+**Fix**: Downgrade from original "volatility" concern. The actual guard needed: ensure dev services use `deployFiles: [.]` so that deploy preserves all files written via mount. This is already enforced by the generate hard check ("Dev setup uses deployFiles: [.] — NO EXCEPTIONS"). No additional pre-deploy file existence check needed.
 
 ---
 
@@ -244,7 +311,7 @@ Types, `withRegistryLock()` flock wrapper, `registerSession()`, `unregisterSessi
 
 **Evidence**: `bootstrap.go` lines 24-29 — hardcoded step name constants.
 
-**Fix**: When implementing step consolidation, update all constants and add a test that verifies every skip guard constant exists in `stepDetails[].Name`.
+**Fix**: When implementing step consolidation, update all constants and add a test that verifies every skip guard constant exists in `stepDetails[].Name`. Breaking backward compatibility here is fine — ZCP is in early development with no external consumers of the step name API.
 
 ---
 
@@ -306,7 +373,7 @@ Types, `withRegistryLock()` flock wrapper, `registerSession()`, `unregisterSessi
 
 **Evidence**: `validate_test.go`, `bootstrap_test.go`, `engine_test.go`, `workflow_bootstrap_test.go` all use `PlannedService`.
 
-**Mitigation**: Plan test migration as a separate task. Consider keeping `PlannedService` as an internal alias initially and migrating tests incrementally.
+**Mitigation**: Plan test migration as a separate task. No backward compatibility needed — ZCP is in early development. Delete `PlannedService` outright and rewrite all tests against `BootstrapTarget` in one pass.
 
 ---
 
@@ -320,25 +387,23 @@ Types, `withRegistryLock()` flock wrapper, `registerSession()`, `unregisterSessi
 
 ---
 
-### I3. Reflog in CLAUDE.md grows unbounded
+### I3. Reflog in CLAUDE.md — not a real concern
 
-**Impact**: Over many bootstrap sessions, the reflog section in CLAUDE.md grows indefinitely, bloating the system prompt.
+**Impact**: Theoretical — unlikely to materialize.
 
-**Detail**: The plan says "append-only history" with no rotation.
+**Detail**: Bootstrap runs are infrequent — they only happen when adding or removing runtime services, not for deploys, config changes, or scaling. A typical project might run bootstrap 2-5 times total. The reflog will stay small naturally.
 
-**Mitigation**: Cap reflog at N entries (e.g., 20). Oldest entries are rotated out. Or move reflog to a separate file (`.zcp/reflog.md`) that isn't loaded into every conversation.
+**Mitigation**: No action needed. If it ever becomes a problem (unlikely), a simple cap at N entries is trivial to add later.
 
 ---
 
 ### I4. `autoCompleteBootstrap` evidence always reports Failed=0
 
-**Impact**: Phase gates never reject bootstrap evidence because failures are never recorded.
+**Impact**: None — this code is being replaced entirely.
 
-**Detail**: `bootstrap_evidence.go:autoCompleteBootstrap()` generates synthetic evidence with `Passed: 1, Failed: 0` regardless of actual outcomes.
+**Detail**: Hard checks replace LLM attestation + synthetic evidence. No transition period needed (no backward compatibility). The `autoCompleteBootstrap` function and the evidence system it feeds will be deleted when hard checks land.
 
-**Evidence**: `bootstrap_evidence.go` — hardcoded `Failed: 0`.
-
-**Mitigation**: With hard checks replacing attestation, this becomes moot — but during the transition, ensure hard check failures are properly recorded in evidence.
+**Mitigation**: No action. Delete `autoCompleteBootstrap` and `bootstrapEvidenceMap` as part of the hard checks implementation.
 
 ---
 
@@ -354,11 +419,11 @@ Types, `withRegistryLock()` flock wrapper, `registerSession()`, `unregisterSessi
 
 ## Minor — Nice to have
 
-### M1. PHP `startup_detected` false negatives
+### M1. PHP `startup_detected` false positives (VERIFIED)
 
-PHP with implicit webservers (php-apache, php-nginx) starts Apache/nginx which binds to the port, but the PHP app itself might not be ready. The `startup_detected` check passes on webserver startup, not app readiness.
+PHP with implicit webservers (php-apache, php-nginx) starts Apache/nginx which binds to the port, but the PHP app itself might not be ready. The `startup_detected` check passes on webserver startup, not app readiness. Verified on laraveldev: `startup_detected: pass` is from Apache startup logs, not PHP.
 
-**Mitigation**: For PHP, rely on HTTP health check (GET /) rather than startup detection.
+**Mitigation**: Skip `startup_detected` for implicit webserver runtimes (php-apache, php-nginx, nginx, static). Rely on `http_root` (GET /) for deployment proof. This is addressed as part of C1's runtime-class-aware verification.
 
 ---
 
