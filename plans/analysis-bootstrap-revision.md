@@ -152,6 +152,13 @@ type VerifyInput struct {
 }
 ```
 
+**Verified issues (2026-03-04 live testing):**
+- `http_health` (GET /health) is redundant — Zerops runs its own `Zerops-http-probe/1.0` at a configurable path (e.g. `/up` on laravelstage, `/health` on nodejsstage). Our check adds no diagnostic value beyond `GET /`.
+- Static/nginx runtimes cannot implement `/health` or `/status` — verification fails unconditionally for these runtimes.
+- Services without subdomain enabled skip both `http_health` and `http_status` → falsely report healthy (verified: `persisttest` returns plain text `ok` at `/status`, not valid JSON, but passes as healthy because HTTP checks are skipped).
+- Dev services must NOT have `healthCheck` configured — `start: zsc noop --silent` means no server running; healthCheck would kill the container (verified: nodejsdev has no healthCheck).
+- `hostname` env var is always injected by Zerops (e.g. `hostname=nodejsstage`). Apps should use this for self-identification.
+
 ### 1.7 Current Polling
 
 ```go
@@ -338,8 +345,14 @@ type Dependency struct {
     Hostname   string `json:"hostname"`        // "db"
     Type       string `json:"type"`            // "postgresql@16"
     Mode       string `json:"mode,omitempty"`  // "NON_HA" (default) or "HA"
-    Resolution string `json:"resolution"`      // "CREATE" or "EXISTS"
+    Resolution string `json:"resolution"`      // "CREATE", "EXISTS", or "SHARED"
 }
+// Resolution semantics:
+//   CREATE         — service does not exist, provision must create it
+//   EXISTS         — service pre-exists in project (verified against live API)
+//   SHARED         — another target in the same bootstrap creates it (dedup at provision)
+// At plan time, only CREATE and EXISTS are valid. SHARED is resolved during
+// cross-target dependency analysis in ValidateBootstrapTargets().
 
 type ServicePlan struct {
     Targets   []BootstrapTarget `json:"targets"`
@@ -354,10 +367,12 @@ type ServicePlan struct {
 - All hostnames pass `ValidateHostname()` (existing function in `platform` package)
 - All types exist in live catalog (existing check)
 - Dev/stage pairing enforced via `StageHostname()` convention (skipped when `Simple=true`)
+- **Hostname length overflow**: validate BOTH dev AND derived stage hostname lengths (stage = dev suffix "dev"→"stage" adds 2 chars; `myverylongservicenamedev` → `myverylongservicenamestage` = 25+ chars overflow)
 - `CREATE` dependencies must NOT exist in live services
 - `EXISTS` dependencies MUST exist in live services
-- Dependencies shared across targets: if target 1 creates `db` (CREATE), target 2 can reference it as EXISTS
+- Dependencies shared across targets: if target 1 creates `db` (CREATE), target 2 references it as `SHARED` (auto-resolved, deduplicated at provision)
 - Managed service modes default to NON_HA (existing behavior)
+- **Storage services excluded from env var checks**: shared-storage and object-storage have no connection env vars. Classify managed services as `MANAGED_WITH_ENVS` (postgresql, mariadb, valkey, etc.) and `MANAGED_STORAGE` (shared-storage, object-storage).
 - Remove `PlannedService` type entirely
 
 ### 3.3 How Each Step Works with Targets
@@ -515,14 +530,52 @@ Implementation: `internal/workflow/service_meta.go` (new, ~40 lines) — `WriteS
 
 No enrichment from stored topology. The system prompt shows what the API returns, period. If `.zcp/services/` metadata files exist, the deploy workflow guidance can read them for context — but they do NOT affect the system prompt.
 
-### 4.7 Session Lifecycle — No Changes Needed
+### 4.7 Session Lifecycle — Registry Model (H4)
 
-Current `InitSession`, `LoadSession`, `ResetSession`, `IterateSession` remain unchanged:
-- `InitSession`: creates new state file (as before)
-- `ResetSession`: deletes state file (as before — no registry to preserve)
-- Auto-reset on DONE: continues to work (as before)
+**Problem**: Singleton `zcp_state.json` has no locking — concurrent sessions can corrupt state. Crashed processes leave stale sessions blocking new ones. Only one workflow can run per project at a time.
 
-No migration. No helper methods needed. The flat structure is the right abstraction.
+**Solution**: Replace singleton state file with registry + per-session files:
+
+```
+.zcp/state/
+  registry.json          # Index of sessions (flock-protected)
+  sessions/
+    {id1}.json           # Full WorkflowState (single-writer: owner PID)
+    {id2}.json
+  evidence/              # Unchanged — per-session evidence
+    {id1}/*.json
+```
+
+**Registry** (`registry.json`):
+```go
+type Registry struct {
+    Version  string         `json:"version"`
+    Sessions []SessionEntry `json:"sessions"`
+}
+type SessionEntry struct {
+    SessionID string `json:"sessionId"`
+    Workflow  string `json:"workflow"`
+    Phase     Phase  `json:"phase"`
+    PID       int    `json:"pid"`
+    Stale     bool   `json:"stale"`
+    CreatedAt string `json:"createdAt"`
+    UpdatedAt string `json:"updatedAt"`
+}
+```
+
+**Ownership**: leader-only. Worker agents use Zerops API directly and report to leader via SendMessage. Leader updates session state. This eliminates multi-writer complexity.
+
+**Locking**: `LOCK_EX` on `registry.json` for register/unregister (brief read-modify-write). No session-level flock — single-writer (owner PID), temp+rename atomicity suffices.
+
+**Stale detection**: `syscall.Kill(pid, 0)` on every registry read. Dead PID + non-DONE → `Stale: true`. Stale sessions reported but never auto-deleted — user cleans via `action="reset" sessionId="..."`.
+
+**Constraints**: One active bootstrap per project. Multiple deploys OK (different services). Immediate workflows (debug, scale) are stateless — no session.
+
+**Engine changes**: `HasActiveSession()` becomes process-local check. `Start()` registers in registry. `Reset()` accepts optional `sessionId` for targeted cleanup.
+
+**Migration**: Not needed — early development, no backward compat. Old `zcp_state.json` ignored or deleted.
+
+**Implementation**: `internal/workflow/registry.go` (~120 lines) — types, `withRegistryLock()`, `registerSession()`, `unregisterSession()`, `listSessions()`, `refreshStale()`, `processAlive()`.
 
 ---
 
@@ -672,7 +725,7 @@ Hard checks:
 - Managed services: status = RUNNING
 - Stage runtimes: status = NEW or READY_TO_DEPLOY
 - Dev services: SSHFS mount active
-- Each managed service has non-empty env vars
+- Each `MANAGED_WITH_ENVS` service (databases, caches) has non-empty env vars — excludes `MANAGED_STORAGE` (shared-storage, object-storage) which have no connection env vars
 
 Lifecycle update: target services → `lifecycle: "created"` (session-scoped)
 **Auto-completable**: Yes — when all hard checks pass, step auto-completes without LLM calling `action="complete"`
@@ -684,18 +737,32 @@ Lifecycle update: target services → `lifecycle: "created"` (session-scoped)
 
 Actions:
 1. Write zerops.yml with entries for both dev and stage hostnames
-2. Write application code with `/`, `/health`, `/status` endpoints
+2. Write application code with `/` and `/status` endpoints (2-endpoint model — no `/health`, see runtime classification below)
 3. Wire env vars using EXACT variables from provision step
 4. For IsExisting targets: update existing code, don't regenerate from scratch
+
+**Runtime classification for code generation:**
+
+| Runtime class | Examples | Endpoints to generate |
+|---------------|----------|-----------------------|
+| **Dynamic** (explicit server) | nodejs, go, bun, python, rust, java, deno, dotnet | `GET /` → any 200; `GET /status` → connectivity JSON |
+| **Dynamic** (implicit webserver) | php-apache, php-nginx | `GET /` → any 200; `GET /status` → connectivity JSON |
+| **Static-only** | static, nginx | `index.html` containing hostname (no server-side logic possible) |
+
+zerops.yml rules:
+- Dev: `start: zsc noop --silent`, NO healthCheck (would kill container — no server running)
+- Stage: `start: {real command}`, NO healthCheck for bootstrap scaffolds (process monitoring sufficient)
+- `/health` endpoint eliminated entirely — not generated, not checked, not configured
 
 Hard checks:
 - For each target: zerops.yml exists on mount path
 - Has `setup:` entries for both dev and stage hostnames
 - Dev entries: no healthCheck, no readinessCheck, deployFiles contains `.`
-- All entries: `run.start` non-empty (except PHP/implicit-webserver runtimes -- use `hasImplicitWebServer()`)
+- All entries: `run.start` non-empty (except PHP/implicit-webserver runtimes — use `hasImplicitWebServer()`)
 - All entries: `run.ports` non-empty (except non-HTTP workers)
-- Env ref validation: `${hostname_var}` patterns reference valid hostnames
+- **Env ref full validation**: `${hostname_var}` patterns must reference (1) valid hostname AND (2) valid variable name from discovered env vars (case-sensitive). Zerops silently keeps invalid refs as literal strings — no API error, no deploy failure, silent data corruption.
 - Stage entries: start is NOT `zsc noop --silent`
+- **`build.base` type handling**: `Base` field accepts both string and `[]string` (PHP+Node builds use `base: [php@8.4, nodejs@22]`). Three copies exist in codebase — `ops/deploy_validate.go` uses `string` (wrong), `eval/prompt.go` and `recipe_lint_test.go` use `any` (correct). Fix: change to `any` + `baseStrings()` normalizer.
 
 Lifecycle update: target services → `lifecycle: "configured"` (session-scoped)
 **NOT auto-completable**: Creative step — LLM decides when code is ready, calls `action="complete"`. Hard check validates but does not auto-confirm.
@@ -716,11 +783,14 @@ Actions:
 6. Iteration loop on failure (max 3 attempts)
 
 Hard checks:
-- `ops.Verify()` per deployed target (parallel)
-- `service_running` = pass
-- `http_health` = pass (if subdomain enabled)
-- `http_status` = pass
+- **Subdomain gate**: subdomain MUST be enabled before verify — without it, all HTTP checks are skipped and service falsely reports healthy
+- `ops.Verify()` per deployed target (parallel), using revised check sequence:
+  - `service_running` = pass
+  - `http_root` (GET /) = pass (replaces `http_health`; same signal + deployment proof for static)
+  - `http_status` (GET /status) = pass for dynamic runtimes, SKIP for static/nginx
+  - `startup_detected` = SKIP for implicit webserver + static runtimes (detects Apache/nginx startup, not PHP/content readiness)
 - Degraded tolerated, only unhealthy = fail
+- **Runtime-class-aware timeout defaults**: interpreted=5min, compiled=15min, Rust=20min
 
 Lifecycle update: target services → `lifecycle: "deployed"` (session-scoped)
 **NOT auto-completable**: Creative/branching step — LLM manages deploy order and iteration. Build status (ACTIVE/BUILD_FAILED) is deterministic, but verify is separate.
@@ -740,9 +810,14 @@ Actions:
 5. Present final report with service URLs and statuses
 
 Hard checks:
-- `VerifyAll()` -- all services healthy or degraded (not unhealthy)
-- Verify checks endpoints against predefined expectations (/health returns 2xx, /status returns JSON with connection checks)
-- Cross-reference: /status `connections` keys should match plan dependencies (warning if mismatch)
+- `VerifyAll()` — all services healthy or degraded (not unhealthy)
+- Revised check sequence per runtime class:
+  - **Dynamic runtimes**: `service_running` → `logs` → `http_root` (GET / → 200) → `http_status` (GET /status → JSON with connection checks)
+  - **Static/nginx**: `service_running` → `http_root` (GET / → 200 + body contains hostname)
+  - **Managed services**: `service_running` only (1 check)
+- `startup_detected` SKIPPED for implicit webserver + static runtimes
+- Cross-reference: `/status` `connections` keys should match plan dependencies (warning if mismatch)
+- Filter verify results by services in current `BootstrapTarget` list — pre-existing unhealthy services don't cause false failures
 
 **Auto-completable**: Yes — when all hard checks pass, step auto-completes and triggers completion sequence (metadata write, reflog write, session → DONE)
 
@@ -825,9 +900,11 @@ LLM calls `action="complete"` when it believes work is done. Hard checks validat
 
 ### 7.4 Integration with BootstrapComplete()
 
+**Signature change (H1)**: `BootstrapComplete` needs `context.Context` — hard checks call the Zerops API (ListServices, Verify, env var discovery) which require context for timeouts and cancellation.
+
 ```go
 // internal/workflow/engine.go
-func (e *Engine) BootstrapComplete(stepName string, checker StepChecker) (*BootstrapResponse, error) {
+func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, checker StepChecker) (*BootstrapResponse, error) {
     // ... existing validation ...
 
     // Run hard checks if checker provided
@@ -865,7 +942,8 @@ LLM deploys → LLM: "build looks good" → action="complete" step="deploy"
 
 Both creative steps followed by:
   → Verify step: VerifyAll() checks endpoints against expectations
-  → /health returns 2xx, /status returns JSON with connection checks
+  → GET / returns 200 (all runtimes); GET /status returns JSON (dynamic runtimes only)
+  → startup_detected skipped for implicit webserver + static runtimes
   → If verify fails → iteration loop (fix → redeploy → re-verify)
 ```
 
@@ -923,6 +1001,7 @@ Phase gates (G0-G4) are redundant for bootstrap when hard checks exist. `autoCom
 
 ### 7.9 Failure Handling
 
+- **Partial import (C5 — bug fix required):** `ops/import.go` has a bug: per-service API errors (`ImportedServiceStack.Error`) are silently dropped — only `Processes` are extracted. Services that fail with an API error and have no processes are invisible to the LLM. **Fix**: Add `ServiceErrors []ServiceImportError` field to `ImportResult`, collect `ss.Error` entries in the `ServiceStacks` loop. Update `nextActionImportPartial` to guide LLM: "check serviceErrors, zerops_discover to see what was created, delete partial results or import only missing services." Update `pollImportProcesses` to also check `result.ServiceErrors` when deciding summary/nextActions.
 - **Partial success (3/5 imported, 2 failed):** Evidence records actual `Failed` count from tool result. Gate blocks. LLM sees per-service details.
 - **Timeout:** Treated as `inconclusive` — gates block. LLM must investigate manually.
 - **Deploy ACTIVE but app crashes:** Caught by separate verify step (not auto-confirmed from deploy).
@@ -942,10 +1021,14 @@ Phase gates (G0-G4) are redundant for bootstrap when hard checks exist. `autoCom
 
 ### 7.12 Gaps Found in Original Plan (Resolved)
 
-- **No dev/stage pairing enforcement**: Resolved -- discover hard check validates `StageHostname()` convention
-- **Single-runtime knowledge check**: Resolved -- must be loaded for ALL target types, not just any one
-- **Non-HTTP services**: Resolved -- conditional check based on service purpose (workers skip port check)
-- **LLM-only retry limit**: Resolved -- deploy hard check has server-side `checkAttempts` counter
+- **No dev/stage pairing enforcement**: Resolved — discover hard check validates `StageHostname()` convention
+- **Single-runtime knowledge check**: Resolved — must be loaded for ALL target types, not just any one (H10: per-type `map[string]bool`)
+- **Non-HTTP services**: Resolved — conditional check based on runtime class (C1: static/nginx skip `/status`)
+- **LLM-only retry limit**: Resolved — deploy hard check has server-side `checkAttempts` counter
+- **Import error visibility (C5)**: Resolved — surface per-service API errors in `ImportResult`
+- **Hostname length overflow (H7)**: Resolved — validate both dev AND derived stage hostname
+- **Storage env var check (H9)**: Resolved — exclude `MANAGED_STORAGE` from env var hard check
+- **`BootstrapComplete` context (H1)**: Resolved — add `context.Context` parameter for API calls in hard checks
 
 ---
 
@@ -990,8 +1073,12 @@ Proposed: initial=1s, stepUp=5s, stepUpAfter=30s.
 
 ### 8.4 Validation Improvements
 
-- Stage-specific checks in `deploy_validate.go`: `start: zsc noop --silent` on stage -> warning
-- Env var reference validation: new `ValidateEnvReferences()` -- parse `${hostname_var}`, validate hostname exists as service
+- Stage-specific checks in `deploy_validate.go`: `start: zsc noop --silent` on stage → warning
+- **Full env var reference validation** (C2): `ValidateEnvReferences()` must validate BOTH parts of `${hostname_varName}`:
+  1. `hostname` exists as a service in the project
+  2. `varName` exists in the discovered env var set for that hostname (case-sensitive match)
+  - **Platform behavior (verified 2026-03-04)**: Zerops API accepts ALL env var references without error. Invalid refs are kept as literal strings in the container env — no deploy failure, no warning, silent data corruption. Example: `${db_totallyFakeVar}` → literal string `${db_totallyFakeVar}` in container.
+  - Store discovered env var names per service in session state (from discover-envs/provision step).
 
 ### 8.5 Content Deduplication
 
@@ -1049,13 +1136,14 @@ Standard mode: `devHostname` must end in "dev" → stage = replace with "stage":
 **Decision: Minimal wiring scope.**
 
 When adding a managed service to an existing runtime:
-- Update zerops.yml `envVariables` with new dependency refs
-- Update `/status` endpoint to check new dependency
-- Minimal code changes -- LLM determines extent based on context
+- ONLY update zerops.yml `envVariables` with new dependency refs
+- ONLY update `/status` endpoint to check new dependency
+- Do NOT regenerate application code or change build/run configuration
+- Minimal code changes — LLM determines extent based on context
 
-### 10.3 ~~Registry Cleanup~~ — REMOVED
+### 10.3 Session State Migration — Not Needed
 
-Registry dropped entirely. No reconciliation needed. API is source of truth on every session start.
+ZCP is in early development — no backward compatibility requirement for state files. Old `zcp_state.json` can be ignored or deleted. New sessions start fresh. No migration code, no backward-compat shims.
 
 ### 10.4 Multi-Target Ordering
 
@@ -1101,13 +1189,13 @@ Evidence still records what was done (audit). For bootstrap, hard checks replace
 | `ValidateZeropsYml()` | `internal/ops/deploy_validate.go` | Pre-deploy validation |
 | `ops.Verify()` | `internal/ops/verify.go` | Per-service health checks |
 | `checkServiceRunning()` | `internal/ops/verify_checks.go` | RUNNING/ACTIVE check |
-| `checkHTTPHealth()` | `internal/ops/verify_checks.go` | GET /health check |
-| `checkHTTPStatus()` | `internal/ops/verify_checks.go` | GET /status check |
+| `checkHTTPHealth()` | `internal/ops/verify_checks.go` | **REPLACE** with `checkHTTPRoot()` (GET / → 200; same signal, eliminates redundant `/health` endpoint) |
+| `checkHTTPStatus()` | `internal/ops/verify_checks.go` | GET /status check (**SKIP for static/nginx** — no server-side logic) |
 | `aggregateStatus()` | `internal/ops/verify_checks.go` | Overall health from checks |
 | `resolveSubdomainURL()` | `internal/ops/verify_checks.go` | Subdomain URL construction |
-| `buildProjectSummary()` | `internal/server/instructions.go` | System prompt generation |
+| `buildProjectSummary()` | `internal/server/instructions.go` | System prompt generation (**H2**: fix CONFORMANT→bootstrap routing when intent includes a runtime type not present in existing services) |
 | `extractSection()` | `internal/workflow/bootstrap_guidance.go` | Section tag extraction |
-| `KnowledgeTracker.IsLoaded()` | `internal/ops/knowledge_tracker.go` | Knowledge load validation |
+| `KnowledgeTracker.IsLoaded()` | `internal/ops/knowledge_tracker.go` | Knowledge load validation (**H10**: must track per runtime type as `map[string]bool`, not just boolean — multi-runtime bootstrap needs "has php-nginx briefing been loaded?" separately from "has nodejs briefing been loaded?") |
 | `saveState()` | `internal/workflow/session.go` | Atomic write (temp+rename) |
 | `knowledge.ManagedBaseNames()` | `internal/knowledge/engine.go` | Managed type detection from live catalog |
 
@@ -1118,6 +1206,7 @@ Evidence still records what was done (audit). For bootstrap, hard checks replace
 | `internal/workflow/reflog.go` | `AppendReflogEntry()` — append bootstrap record to CLAUDE.md | ~50 |
 | `internal/workflow/service_meta.go` | `WriteServiceMeta()`, `ReadServiceMeta()` — per-service decision files | ~40 |
 | `internal/workflow/bootstrap_checks.go` | `StepCheckResult`, `StepCheck`, `StepChecker` types + check implementations | ~150 |
+| `internal/workflow/registry.go` | Registry + per-session files, flock locking, stale detection (H4) | ~120 |
 | `internal/tools/workflow_checks.go` | `buildStepChecker()` — constructs checkers in tool layer | ~80 |
 
 ---
@@ -1127,21 +1216,24 @@ Evidence still records what was done (audit). For bootstrap, hard checks replace
 Dependency order (all in one pass, TDD at each step):
 
 ```
-1. A: BootstrapTarget types + validation                     <- foundation (types used everywhere)
-2. B: Session-scoped ServiceRecord lifecycle                  <- within BootstrapState
-3. F+G: Verify speedup + polling speedup                     <- independent, low risk (parallel)
-4. H: Stage validation + env ref validation                  <- independent (parallel with 3)
-5. E: Batch verify (VerifyAll)                               <- uses optimized Verify from #3
-6. D: Hard checks (StepChecker) + auto-completion            <- uses Verify/VerifyAll
-7. C: Step consolidation (11 -> 5)                           <- integrates hard checks, new types
-8. K: Per-service decision metadata (.zcp/services/)         <- written at bootstrap completion
-9. I: CLAUDE.md reflog writing                               <- append-only, after verify passes
-10. L: Clarification guidance in discover step               <- content change (knowledge first)
-11. M: Mode-aware generate guidance                          <- content change
-12. J: Content deduplication                                 <- section names from #7
+1.  A: BootstrapTarget types + validation (incl. H7 hostname overflow, H9 storage exclusion, C3 SHARED resolution)
+2.  B: Session-scoped ServiceRecord lifecycle
+3.  F+G: Verify speedup + polling speedup + runtime classification (C1: 2-endpoint model, skip rules)
+4.  H: Stage validation + full env ref validation (C2: hostname + varName, C4: multi-base type fix)
+5.  E: Batch verify (VerifyAll) with runtime-class awareness
+6.  D: Hard checks (StepChecker) + auto-completion (H1: add context.Context)
+7.  C: Step consolidation (11 -> 5) (H6: update skip guard constants)
+8.  C5: Import error surfacing (bug fix in ops/import.go)
+9.  K: Per-service decision metadata (.zcp/services/)
+10. I: CLAUDE.md reflog writing
+11. H2: BuildInstructions routing fix (CONFORMANT + new runtime → bootstrap)
+12. H10: KnowledgeTracker per-type tracking
+13. L: Clarification guidance in discover step
+14. M: Mode-aware generate guidance (M3: Simple mode handling)
+15. J: Content deduplication
 ```
 
-Items 3-4 run in parallel. Item 1 must be first. Items 6-7 are the core value. Items 8-12 are outputs/content.
+Items 3-4 run in parallel. Item 1 must be first. Items 6-7 are the core value. Items 8-15 are fixes/outputs/content. I1 test blast radius: delete `PlannedService` outright and rewrite all tests against `BootstrapTarget` in one pass (no backward compat needed).
 
 ---
 
@@ -1153,7 +1245,9 @@ Items 3-4 run in parallel. Item 1 must be first. Items 6-7 are the core value. I
 | Verify all services | N x 15-20s sequential | 1 x 7-10s parallel |
 | Gate evidence quality | LLM attestation (always passes) | Real hard checks (can fail) |
 | Stage misconfig | Caught at runtime | Caught before deploy |
-| Env var typos | Caught at runtime | Caught at generate step |
+| Env var typos | Caught at runtime (silent corruption) | Caught at generate step (full ref validation) |
+| Static/nginx verify | Fails unconditionally (requires /status) | Runtime-class-aware (GET / only for static) |
+| Session concurrency | Single file, no locking, stale risk | Registry + per-session files, flock, PID-based stale detection |
 | Typical bootstrap time | 4-6 min | 2-3 min |
 | Cross-session context | Lost | Reflog in CLAUDE.md + decision metadata in .zcp/services/ |
 | State management | Persistent registry (stale risk) | API is source of truth (always fresh) |
@@ -1177,14 +1271,67 @@ Items 3-4 run in parallel. Item 1 must be first. Items 6-7 are the core value. I
 | Full vs Simple mode | `RuntimeTarget.Simple` field | Standard (dev+stage) default. Simple (no stage) when user wants it. |
 | Hard checks | Server-side, per-step, deterministic | Replaces trusted LLM attestations with real validation |
 | Phase gates | Simplified for bootstrap (hard checks replace) | Gates are redundant with hard checks |
-| Subdomain activation | Explicit (not auto-enable) | User decided: keep explicit |
+| Verification model | 2-endpoint (GET / + GET /status), runtime-class-aware | `/health` eliminated (redundant with platform probe); static/nginx skip `/status`; subdomain required before verify |
+| Subdomain activation | Explicit (not auto-enable), but REQUIRED before verify | Without subdomain, all HTTP checks skipped → false healthy |
 | Stage naming | Convention: `*dev` → `*stage`, strict enforcement | Simple, derivable. Skipped when `Simple=true`. |
 | Multi-runtime | Multiple targets in one session | Efficient (one import), shared dependencies |
-| Migration | Not needed | State model stays flat — no structural change |
+| Migration | Not needed | Early development — no backward compat requirement for state files |
+| Env var validation | Full ref validation (hostname + varName) | Zerops silently keeps invalid refs as literal strings — must validate both parts |
+| Build base type | `any` (supports string and []string) | PHP+Node builds need `base: [php@8.4, nodejs@22]` |
 
 ---
 
-## 15. Verification Plan
+## 15. Integrated Findings (from multi-agent stress-test, 2026-03-04)
+
+All findings from `analysis-bootstrap-revision-findings.md` have been integrated into the relevant sections above. This section provides a cross-reference and disposition summary.
+
+### Critical (C1-C5) — All integrated
+
+| ID | Finding | Integrated into | Key change |
+|----|---------|----------------|------------|
+| C1 | Verification needs runtime-class awareness | §1.6, §6.3 steps 2-4, §7.5, §11, §14 | 3→2 endpoint model; `/health` eliminated; static/nginx skip `/status`; subdomain gate; `startup_detected` skip for implicit webserver |
+| C2 | Env var NAME validation missing | §6.3 step 2, §8.4 | Full `${hostname_varName}` validation — both parts, case-sensitive |
+| C3 | Cross-target dependency ordering | §3.1 Dependency type | `SHARED` resolution for intra-session dependencies |
+| C4 | `zeropsYmlBuild.Base` string type | §6.3 step 2 | Change to `any` + `baseStrings()` normalizer; 3 copies in codebase |
+| C5 | Partial import no recovery path | §7.9 | Bug fix: surface per-service API errors in `ImportResult`; improve next-action guidance |
+
+### High (H1-H10) — All integrated
+
+| ID | Finding | Integrated into | Key change |
+|----|---------|----------------|------------|
+| H1 | `BootstrapComplete` needs `context.Context` | §7.4 | Signature: `BootstrapComplete(ctx context.Context, stepName string, checker StepChecker)` |
+| H2 | BuildInstructions routing gap for Scenario B | §11, §12 | Stack-match detection before CONFORMANT short-circuit |
+| H3 | Stage deploy failure doesn't block bootstrap | §6.3 step 3 | Subdomain gate as hard prerequisite for verify |
+| H4 | Session state file has no locking | §4 (session model), §10.3 | Registry + per-session files pattern; PID-based stale detection; migration not needed |
+| H5 | SSHFS mount — deploy overwrites filesystem | §6.3 step 2 | Downgraded from "volatility" to "deploy overwrite semantics"; `deployFiles: [.]` already enforced |
+| H6 | `validateConditionalSkip` step constants | §12 | Update constants when consolidating 11→5; test that constants match `stepDetails[].Name` |
+| H7 | Hostname length overflow for stage | §3.2 | Validate both dev AND derived stage hostname lengths |
+| H8 | Rust/Go/Java build timeouts | §6.3 step 3 | Runtime-class-aware timeout defaults |
+| H9 | shared-storage fails provision env var check | §3.2, §6.3 step 1 | `MANAGED_WITH_ENVS` vs `MANAGED_STORAGE` classification |
+| H10 | KnowledgeTracker per-type tracking | §11, §12 | `map[string]bool` keyed by runtime type |
+
+### Important (I1-I5) — Integrated or downgraded
+
+| ID | Finding | Disposition |
+|----|---------|-------------|
+| I1 | Test blast radius understated | §12 — plan as separate task, delete `PlannedService` outright (no backward compat) |
+| I2 | Decision metadata staleness | §10 — reconcile `.zcp/services/` against live API on each detect step |
+| I3 | Reflog size concern | Dismissed — bootstrap runs are infrequent (2-5 per project lifetime); trivial cap if ever needed |
+| I4 | `autoCompleteBootstrap` always reports Failed=0 | Dismissed — being replaced entirely by hard checks; delete outright |
+| I5 | Generate guidance for IsExisting targets | §10.2 — explicit: "ONLY update envVariables, do NOT regenerate app code" |
+
+### Minor (M1-M4) — Integrated
+
+| ID | Finding | Disposition |
+|----|---------|-------------|
+| M1 | PHP `startup_detected` false positives | Absorbed into C1 — skip `startup_detected` for implicit webserver runtimes |
+| M2 | Verify should filter by BootstrapTarget list | §6.3 step 4 — filter verify results by targets, not all project services |
+| M3 | Simple mode underspecified | §12 — add to mode-aware generate guidance task |
+| M4 | Performance improvements are independent | §12 — items 3-4 run in parallel, low risk |
+
+---
+
+## 16. Verification Plan
 
 1. `go test ./internal/workflow/... -count=1 -v` — BootstrapTarget validation, session-scoped lifecycle, 5-step model, hard checks, service metadata, reflog
 2. `go test ./internal/ops/... -count=1 -v` — verify speedup, batch verify, validation improvements
