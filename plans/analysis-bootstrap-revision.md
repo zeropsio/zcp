@@ -372,7 +372,7 @@ type ServicePlan struct {
 - `EXISTS` dependencies MUST exist in live services
 - Dependencies shared across targets: if target 1 creates `db` (CREATE), target 2 references it as `SHARED` (auto-resolved, deduplicated at provision)
 - Managed service modes default to NON_HA (existing behavior)
-- **Storage services excluded from env var checks**: shared-storage and object-storage have no connection env vars. Classify managed services as `MANAGED_WITH_ENVS` (postgresql, mariadb, valkey, etc.) and `MANAGED_STORAGE` (shared-storage, object-storage).
+- **Storage services excluded from env var checks**: shared-storage has no connection env vars (filesystem mount only). Object-storage exposes S3-compatible env vars (accessKeyId, secretAccessKey, apiUrl, bucketName). Classify: `MANAGED_WITH_ENVS` (postgresql, mariadb, valkey, object-storage, etc.), `MANAGED_STORAGE` (shared-storage only).
 - Remove `PlannedService` type entirely
 
 ### 3.3 How Each Step Works with Targets
@@ -725,7 +725,7 @@ Hard checks:
 - Managed services: status = RUNNING
 - Stage runtimes: status = NEW or READY_TO_DEPLOY
 - Dev services: SSHFS mount active
-- Each `MANAGED_WITH_ENVS` service (databases, caches) has non-empty env vars — excludes `MANAGED_STORAGE` (shared-storage, object-storage) which have no connection env vars
+- Each `MANAGED_WITH_ENVS` service (databases, caches) has non-empty env vars — excludes `MANAGED_STORAGE` (shared-storage) which has no connection env vars
 
 Lifecycle update: target services → `lifecycle: "created"` (session-scoped)
 **Auto-completable**: Yes — when all hard checks pass, step auto-completes without LLM calling `action="complete"`
@@ -1027,7 +1027,7 @@ Phase gates (G0-G4) are redundant for bootstrap when hard checks exist. `autoCom
 - **LLM-only retry limit**: Resolved — deploy hard check has server-side `checkAttempts` counter
 - **Import error visibility (C5)**: Resolved — surface per-service API errors in `ImportResult`
 - **Hostname length overflow (H7)**: Resolved — validate both dev AND derived stage hostname
-- **Storage env var check (H9)**: Resolved — exclude `MANAGED_STORAGE` from env var hard check
+- **Storage env var check (H9)**: Resolved — MANAGED_STORAGE = shared-storage only (object-storage has S3 env vars → MANAGED_WITH_ENVS)
 - **`BootstrapComplete` context (H1)**: Resolved — add `context.Context` parameter for API calls in hard checks
 
 ---
@@ -1307,7 +1307,7 @@ All findings from `analysis-bootstrap-revision-findings.md` have been integrated
 | H6 | `validateConditionalSkip` step constants | §12 | Update constants when consolidating 11→5; test that constants match `stepDetails[].Name` |
 | H7 | Hostname length overflow for stage | §3.2 | Validate both dev AND derived stage hostname lengths |
 | H8 | Rust/Go/Java build timeouts | §6.3 step 3 | Runtime-class-aware timeout defaults |
-| H9 | shared-storage fails provision env var check | §3.2, §6.3 step 1 | `MANAGED_WITH_ENVS` vs `MANAGED_STORAGE` classification |
+| H9 | shared-storage fails provision env var check | §3.2, §6.3 step 1 | `MANAGED_WITH_ENVS` (includes object-storage) vs `MANAGED_STORAGE` (shared-storage only) |
 | H10 | KnowledgeTracker per-type tracking | §11, §12 | `map[string]bool` keyed by runtime type |
 
 ### Important (I1-I5) — Integrated or downgraded
