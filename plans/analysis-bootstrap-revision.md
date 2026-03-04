@@ -475,6 +475,19 @@ const (
 
 This tracks progress **within the session only**. When the session ends, lifecycle tracking ends. Next session discovers reality from API.
 
+### 4.4.1 Discovered Env Vars — Session-Scoped
+
+The provision step discovers env vars for each managed service via `zerops_discover includeEnvs=true`. The discovered var **names** (not values) are stored in `BootstrapState` for use by the generate hard check (C2 env ref validation):
+
+```go
+type BootstrapState struct {
+    // ... existing fields ...
+    DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"` // hostname -> var names
+}
+```
+
+Populated during provision when `zerops_discover service=X includeEnvs=true` returns. Example: `{"db": ["connectionString", "host", "port", "user", "password", "dbName"], "cache": ["connectionString", "host", "port"]}`. The generate hard check uses this to validate that every `${hostname_varName}` reference in zerops.yml points to a real hostname AND a real var name (case-sensitive). Without this field, C2 validation has no data source and cannot function.
+
 After each bootstrap step, the `BootstrapState.Plan.Targets` entries get their lifecycle updated:
 - provision → targets with created dependencies get `lifecycle: "created"`
 - generate → targets get `lifecycle: "configured"`
@@ -748,6 +761,7 @@ Actions:
 | **Dynamic** (explicit server) | nodejs, go, bun, python, rust, java, deno, dotnet | `GET /` → any 200; `GET /status` → connectivity JSON |
 | **Dynamic** (implicit webserver) | php-apache, php-nginx | `GET /` → any 200; `GET /status` → connectivity JSON |
 | **Static-only** | static, nginx | `index.html` containing hostname (no server-side logic possible) |
+| **Worker** (no HTTP) | any runtime used as queue consumer, cron, background processor | No endpoints — no `run.ports`, no HTTP checks. Verify: `service_running` + logs only. |
 
 zerops.yml rules:
 - Dev: `start: zsc noop --silent`, NO healthCheck (would kill container — no server running)
@@ -814,8 +828,9 @@ Hard checks:
 - Revised check sequence per runtime class:
   - **Dynamic runtimes**: `service_running` → `logs` → `http_root` (GET / → 200) → `http_status` (GET /status → JSON with connection checks)
   - **Static/nginx**: `service_running` → `http_root` (GET / → 200 + body contains hostname)
+  - **Worker runtimes** (no `run.ports`): `service_running` → `logs` only (no HTTP checks — no listener)
   - **Managed services**: `service_running` only (1 check)
-- `startup_detected` SKIPPED for implicit webserver + static runtimes
+- `startup_detected` SKIPPED for implicit webserver + static runtimes + worker runtimes
 - Cross-reference: `/status` `connections` keys should match plan dependencies (warning if mismatch)
 - Filter verify results by services in current `BootstrapTarget` list — pre-existing unhealthy services don't cause false failures
 
@@ -1078,7 +1093,7 @@ Proposed: initial=1s, stepUp=5s, stepUpAfter=30s.
   1. `hostname` exists as a service in the project
   2. `varName` exists in the discovered env var set for that hostname (case-sensitive match)
   - **Platform behavior (verified 2026-03-04)**: Zerops API accepts ALL env var references without error. Invalid refs are kept as literal strings in the container env — no deploy failure, no warning, silent data corruption. Example: `${db_totallyFakeVar}` → literal string `${db_totallyFakeVar}` in container.
-  - Store discovered env var names per service in session state (from discover-envs/provision step).
+  - Discovered env var names stored in `BootstrapState.DiscoveredEnvVars` (populated during provision, see §4.4.1).
 
 ### 8.5 Content Deduplication
 
