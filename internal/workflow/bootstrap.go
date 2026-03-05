@@ -33,16 +33,6 @@ type BootstrapStep struct {
 	CompletedAt string `json:"completedAt,omitempty"`
 }
 
-// Lifecycle constants track per-target progress through bootstrap.
-const (
-	LifecyclePlanned    = "planned"
-	LifecycleCreated    = "created"
-	LifecycleConfigured = "configured"
-	LifecycleDeployed   = "deployed"
-	LifecycleVerified   = "verified"
-	LifecycleReady      = "ready"
-)
-
 // BootstrapState tracks progress through the bootstrap subflow.
 type BootstrapState struct {
 	Active            bool                `json:"active"`

@@ -514,24 +514,6 @@ func TestBuildResponse_PriorContext_FirstStep_Empty(t *testing.T) {
 	}
 }
 
-func TestLifecycle_Constants(t *testing.T) {
-	t.Parallel()
-	vals := []string{
-		LifecyclePlanned, LifecycleCreated, LifecycleConfigured,
-		LifecycleDeployed, LifecycleVerified, LifecycleReady,
-	}
-	seen := make(map[string]bool, len(vals))
-	for _, v := range vals {
-		if v == "" {
-			t.Error("lifecycle constant is empty")
-		}
-		if seen[v] {
-			t.Errorf("duplicate lifecycle constant: %q", v)
-		}
-		seen[v] = true
-	}
-}
-
 func TestBootstrapState_DiscoveredEnvVars(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()

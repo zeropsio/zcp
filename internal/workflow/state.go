@@ -36,15 +36,8 @@ type WorkflowState struct {
 	Intent    string                `json:"intent"`
 	CreatedAt string                `json:"createdAt"`
 	UpdatedAt string                `json:"updatedAt"`
-	Services  map[string]ServiceRef `json:"services,omitempty"`
 	History   []PhaseTransition     `json:"history"`
 	Bootstrap *BootstrapState       `json:"bootstrap,omitempty"`
-}
-
-// ServiceRef is a lightweight service reference in workflow state.
-type ServiceRef struct {
-	ID       string `json:"id"`
-	Hostname string `json:"hostname"`
 }
 
 // PhaseTransition records a phase change.
