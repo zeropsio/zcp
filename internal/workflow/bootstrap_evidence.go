@@ -124,9 +124,9 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			BootstrappedAt:   now,
 		}
 		if target.Runtime.Simple {
-			meta.Mode = "simple"
+			meta.Mode = PlanModeSimple
 		} else {
-			meta.Mode = "standard"
+			meta.Mode = PlanModeStandard
 		}
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", target.Runtime.DevHostname, err)

@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// Plan mode constants.
+const (
+	PlanModeStandard = "standard"
+	PlanModeSimple   = "simple"
+)
+
 // StepCategory classifies bootstrap steps.
 type StepCategory string
 
@@ -252,10 +258,10 @@ func (b *BootstrapState) planMode() string {
 	}
 	for _, t := range b.Plan.Targets {
 		if t.Runtime.Simple {
-			return "simple"
+			return PlanModeSimple
 		}
 	}
-	return "standard"
+	return PlanModeStandard
 }
 
 // validateConditionalSkip prevents skipping steps that are required based on the plan.
