@@ -183,8 +183,8 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 	if state.Bootstrap == nil || !state.Bootstrap.Active {
 		return nil, fmt.Errorf("bootstrap complete plan: bootstrap not active")
 	}
-	if state.Bootstrap.CurrentStepName() != "discover" {
-		return nil, fmt.Errorf("bootstrap complete plan: current step is %q, not \"discover\"", state.Bootstrap.CurrentStepName())
+	if state.Bootstrap.CurrentStepName() != StepDiscover {
+		return nil, fmt.Errorf("bootstrap complete plan: current step is %q, not %q", state.Bootstrap.CurrentStepName(), StepDiscover)
 	}
 
 	defaulted, err := ValidateBootstrapTargets(targets, liveTypes, liveServices)
@@ -215,7 +215,7 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 	}
 	attestation := "Planned targets: " + strings.Join(parts, ", ")
 
-	if err := state.Bootstrap.CompleteStep("discover", attestation); err != nil {
+	if err := state.Bootstrap.CompleteStep(StepDiscover, attestation); err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
 	}
 

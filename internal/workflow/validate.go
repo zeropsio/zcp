@@ -8,6 +8,12 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// HA mode constants.
+const (
+	ModeHA    = "HA"
+	ModeNonHA = "NON_HA"
+)
+
 // BootstrapTarget represents one runtime service and its dependencies in the bootstrap plan.
 type BootstrapTarget struct {
 	Runtime      RuntimeTarget `json:"runtime"`
@@ -176,9 +182,9 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 			// Mode defaulting for managed services.
 			if isManagedTypeWithLive(dep.Type, liveManaged) {
 				if dep.Mode == "" {
-					targets[i].Dependencies[j].Mode = "NON_HA"
+					targets[i].Dependencies[j].Mode = ModeNonHA
 					defaulted = append(defaulted, dep.Hostname)
-				} else if dep.Mode != "HA" && dep.Mode != "NON_HA" {
+				} else if dep.Mode != ModeHA && dep.Mode != ModeNonHA {
 					errs = append(errs, fmt.Sprintf("target %q dependency %q mode %q must be HA or NON_HA", rt.DevHostname, dep.Hostname, dep.Mode))
 				}
 			}

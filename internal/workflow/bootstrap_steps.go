@@ -1,10 +1,19 @@
 package workflow
 
+// Step name constants.
+const (
+	StepDiscover  = "discover"
+	StepProvision = "provision"
+	StepGenerate  = "generate"
+	StepDeploy    = "deploy"
+	StepVerify    = "verify"
+)
+
 // stepDetails defines the 5 consolidated bootstrap steps in order.
 // Skippable: generate, deploy (managed-only fast path).
 var stepDetails = []StepDetail{
 	{
-		Name:     "discover",
+		Name:     StepDiscover,
 		Category: CategoryFixed,
 		Guidance: `Discover project state and plan services.
 1. Call zerops_discover to inspect the current project
@@ -21,7 +30,7 @@ NON_CONFORMANT: ASK user before any changes.`,
 		Skippable:    false,
 	},
 	{
-		Name:     "provision",
+		Name:     StepProvision,
 		Category: CategoryFixed,
 		Guidance: `Generate import.yml, import services, mount dev filesystems, discover env vars.
 1. Generate import.yml with correct hostnames, types, enableSubdomainAccess
@@ -35,7 +44,7 @@ NON_CONFORMANT: ASK user before any changes.`,
 		Skippable:    false,
 	},
 	{
-		Name:     "generate",
+		Name:     StepGenerate,
 		Category: CategoryCreative,
 		Guidance: `Write zerops.yml and application code to mounted dev filesystem.
 PREREQUISITES: dev services mounted, env vars discovered from provision step.
@@ -52,7 +61,7 @@ Skip if no runtime services exist (managed-only project).`,
 		Skippable:    true,
 	},
 	{
-		Name:     "deploy",
+		Name:     StepDeploy,
 		Category: CategoryBranching,
 		Guidance: `Deploy to all runtime services, enable subdomains, verify.
 For EACH runtime service pair (dev + stage):
@@ -69,7 +78,7 @@ Skip if no runtime services exist.`,
 		Skippable:    true,
 	},
 	{
-		Name:     "verify",
+		Name:     StepVerify,
 		Category: CategoryFixed,
 		Guidance: `Independent verification and final report.
 1. zerops_verify (batch) — verify all plan target services
