@@ -26,7 +26,7 @@ func TestCheckProvision_AllServicesExist_Pass(t *testing.T) {
 		}},
 	}
 
-	checker := checkProvision(mock, "proj-1")
+	checker := checkProvision(mock, "proj-1", nil)
 	result, err := checker(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
@@ -56,7 +56,7 @@ func TestCheckProvision_ActiveStatus_Pass(t *testing.T) {
 		}},
 	}
 
-	checker := checkProvision(mock, "proj-1")
+	checker := checkProvision(mock, "proj-1", nil)
 	result, err := checker(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
@@ -84,7 +84,7 @@ func TestCheckProvision_MissingService_Fail(t *testing.T) {
 		}},
 	}
 
-	checker := checkProvision(mock, "proj-1")
+	checker := checkProvision(mock, "proj-1", nil)
 	result, err := checker(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
@@ -121,7 +121,7 @@ func TestCheckProvision_NoEnvVars_Fail(t *testing.T) {
 		}},
 	}
 
-	checker := checkProvision(mock, "proj-1")
+	checker := checkProvision(mock, "proj-1", nil)
 	result, err := checker(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
@@ -148,7 +148,7 @@ func TestCheckProvision_SharedStorage_SkipEnvCheck(t *testing.T) {
 		}},
 	}
 
-	checker := checkProvision(mock, "proj-1")
+	checker := checkProvision(mock, "proj-1", nil)
 	result, err := checker(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
@@ -177,7 +177,7 @@ func TestCheckProvision_ObjectStorage_SkipEnvCheck(t *testing.T) {
 		}},
 	}
 
-	checker := checkProvision(mock, "proj-1")
+	checker := checkProvision(mock, "proj-1", nil)
 	result, err := checker(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
@@ -368,7 +368,7 @@ func TestCheckVerify_TargetUnhealthy_Fail(t *testing.T) {
 func TestCheckProvision_NilPlan_ReturnsNil(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	checker := checkProvision(mock, "proj-1")
+	checker := checkProvision(mock, "proj-1", nil)
 	result, err := checker(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -386,7 +386,7 @@ func TestCheckProvision_APIError_ReturnsError(t *testing.T) {
 			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
 		}},
 	}
-	checker := checkProvision(mock, "proj-1")
+	checker := checkProvision(mock, "proj-1", nil)
 	_, err := checker(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected error from API failure")
@@ -395,7 +395,7 @@ func TestCheckProvision_APIError_ReturnsError(t *testing.T) {
 
 func TestBuildStepChecker_UnknownStep_ReturnsNil(t *testing.T) {
 	t.Parallel()
-	checker := buildStepChecker("discover", nil, nil, "", nil)
+	checker := buildStepChecker("discover", nil, nil, "", nil, nil)
 	if checker != nil {
 		t.Error("expected nil checker for unknown step 'discover'")
 	}
@@ -418,7 +418,7 @@ func TestBuildStepChecker_KnownSteps(t *testing.T) {
 		t.Run(tt.step, func(t *testing.T) {
 			t.Parallel()
 			mock := platform.NewMock()
-			checker := buildStepChecker(tt.step, mock, nil, "proj-1", nil)
+			checker := buildStepChecker(tt.step, mock, nil, "proj-1", nil, nil)
 			if tt.wantNil && checker != nil {
 				t.Errorf("expected nil checker for step %q", tt.step)
 			}
@@ -426,6 +426,66 @@ func TestBuildStepChecker_KnownSteps(t *testing.T) {
 				t.Errorf("expected non-nil checker for step %q", tt.step)
 			}
 		})
+	}
+}
+
+func TestCheckProvision_StoresDiscoveredEnvVars(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := workflow.NewEngine(dir)
+
+	// Start a bootstrap session.
+	_, err := eng.BootstrapStart("proj-1", "test intent")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	// Submit plan to complete discover step.
+	_, err = eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
+		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Dependencies: []workflow.Dependency{
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING"},
+		{ID: "s2", Name: "appstage", Status: "NEW"},
+		{ID: "s3", Name: "db", Status: "RUNNING"},
+	}).WithServiceEnv("s3", []platform.EnvVar{
+		{Key: "connectionString", Content: "pg://..."},
+		{Key: "port", Content: "5432"},
+		{Key: "user", Content: "zerops"},
+	})
+
+	state, err := eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+
+	checker := checkProvision(mock, "proj-1", eng)
+	result, err := checker(context.Background(), state.Bootstrap.Plan)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass: %s", result.Summary)
+	}
+
+	// Verify env vars were stored.
+	state, err = eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState after check: %v", err)
+	}
+	if state.Bootstrap.DiscoveredEnvVars == nil {
+		t.Fatal("DiscoveredEnvVars should not be nil after provision check")
+	}
+	dbVars := state.Bootstrap.DiscoveredEnvVars["db"]
+	if len(dbVars) != 3 {
+		t.Errorf("db env vars: want 3, got %d", len(dbVars))
 	}
 }
 

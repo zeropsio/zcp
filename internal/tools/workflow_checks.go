@@ -20,10 +20,10 @@ const (
 	statusPass    = "pass"
 )
 
-func buildStepChecker(step string, client platform.Client, fetcher platform.LogFetcher, projectID string, httpClient ops.HTTPDoer) workflow.StepChecker {
+func buildStepChecker(step string, client platform.Client, fetcher platform.LogFetcher, projectID string, httpClient ops.HTTPDoer, engine *workflow.Engine) workflow.StepChecker {
 	switch step {
 	case stepProvision:
-		return checkProvision(client, projectID)
+		return checkProvision(client, projectID, engine)
 	case stepGenerate:
 		return checkGenerate()
 	case stepDeploy:
@@ -34,7 +34,7 @@ func buildStepChecker(step string, client platform.Client, fetcher platform.LogF
 	return nil
 }
 
-func checkProvision(client platform.Client, projectID string) workflow.StepChecker {
+func checkProvision(client platform.Client, projectID string, engine *workflow.Engine) workflow.StepChecker {
 	return func(ctx context.Context, plan *workflow.ServicePlan) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
@@ -93,6 +93,13 @@ func checkProvision(client platform.Client, projectID string) workflow.StepCheck
 							Status: statusPass,
 							Detail: fmt.Sprintf("%d env vars", len(envVars)),
 						})
+						if engine != nil {
+							varNames := make([]string, len(envVars))
+							for vi, v := range envVars {
+								varNames[vi] = v.Key
+							}
+							_ = engine.StoreDiscoveredEnvVars(dep.Hostname, varNames)
+						}
 					}
 				}
 			}
@@ -117,6 +124,9 @@ func checkProvision(client platform.Client, projectID string) workflow.StepCheck
 	}
 }
 
+// checkGenerate returns nil — the generate step is creative (LLM writes code).
+// The MCP server is STDIO with no filesystem access, so it cannot validate
+// zerops.yml structure or env var references. Validation happens at deploy time.
 func checkGenerate() workflow.StepChecker {
 	return nil
 }
