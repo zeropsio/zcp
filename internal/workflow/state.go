@@ -27,17 +27,17 @@ const (
 
 // WorkflowState is the persistent state stored at .zcp/state/zcp_state.json.
 type WorkflowState struct {
-	Version   string                `json:"version"`
-	SessionID string                `json:"sessionId"`
-	ProjectID string                `json:"projectId"`
-	Workflow  string                `json:"workflow"`
-	Phase     Phase                 `json:"phase"`
-	Iteration int                   `json:"iteration"`
-	Intent    string                `json:"intent"`
-	CreatedAt string                `json:"createdAt"`
-	UpdatedAt string                `json:"updatedAt"`
-	History   []PhaseTransition     `json:"history"`
-	Bootstrap *BootstrapState       `json:"bootstrap,omitempty"`
+	Version   string            `json:"version"`
+	SessionID string            `json:"sessionId"`
+	ProjectID string            `json:"projectId"`
+	Workflow  string            `json:"workflow"`
+	Phase     Phase             `json:"phase"`
+	Iteration int               `json:"iteration"`
+	Intent    string            `json:"intent"`
+	CreatedAt string            `json:"createdAt"`
+	UpdatedAt string            `json:"updatedAt"`
+	History   []PhaseTransition `json:"history"`
+	Bootstrap *BootstrapState   `json:"bootstrap,omitempty"`
 }
 
 // PhaseTransition records a phase change.
