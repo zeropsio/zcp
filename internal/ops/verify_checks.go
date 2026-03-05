@@ -12,6 +12,40 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+const (
+	checkNameErrorLogs       = "error_logs"
+	checkNameStartupDetected = "startup_detected"
+	checkNameHTTPRoot        = "http_root"
+	runtimeStatic            = "static"
+)
+
+// RuntimeClass categorizes services for verify check dispatch.
+type RuntimeClass int
+
+const (
+	RuntimeDynamic  RuntimeClass = iota // nodejs, go, bun, python, rust, java, deno, dotnet
+	RuntimeImplicit                     // php-apache, php-nginx
+	RuntimeStatic                       // static, nginx
+	RuntimeWorker                       // any runtime with no run.ports
+	RuntimeManaged                      // postgresql, valkey, etc.
+)
+
+// classifyRuntime determines the runtime class from service type and port presence.
+func classifyRuntime(serviceType string, hasPorts bool) RuntimeClass {
+	base, _, _ := strings.Cut(serviceType, "@")
+	switch base {
+	case "php-apache", "php-nginx":
+		return RuntimeImplicit
+	case runtimeStatic, "nginx":
+		return RuntimeStatic
+	}
+	// Dynamic runtimes become workers when they have no ports.
+	if !hasPorts {
+		return RuntimeWorker
+	}
+	return RuntimeDynamic
+}
+
 func checkServiceRunning(svc *platform.ServiceStack) CheckResult {
 	if svc.Status == "RUNNING" || svc.Status == "ACTIVE" {
 		return CheckResult{Name: "service_running", Status: CheckPass}
@@ -23,27 +57,26 @@ func checkServiceRunning(svc *platform.ServiceStack) CheckResult {
 	}
 }
 
-func checkErrorLogs(
+// batchLogChecks fetches error logs once and produces a single "error_logs" check.
+func batchLogChecks(
 	ctx context.Context, fetcher platform.LogFetcher,
 	logAccess *platform.LogAccess, logErr error,
-	serviceID string, since time.Duration,
-) CheckResult {
-	name := "no_error_logs"
+	serviceID string,
+) []CheckResult {
+	name := checkNameErrorLogs
 	if logErr != nil {
-		return CheckResult{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("log backend unavailable: %v", logErr)}
+		return []CheckResult{{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("log backend unavailable: %v", logErr)}}
 	}
 	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
 		ServiceID: serviceID,
 		Severity:  "error",
-		Since:     time.Now().Add(-since),
+		Since:     time.Now().Add(-5 * time.Minute),
 		Limit:     5,
 	})
 	if err != nil {
-		return CheckResult{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("log backend unavailable: %v", err)}
+		return []CheckResult{{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("log backend unavailable: %v", err)}}
 	}
 	if len(entries) > 0 {
-		// Advisory: error-severity logs found. SSH deploy logs are often classified
-		// as errors by the Zerops log backend, causing false positives.
 		msgs := make([]string, 0, 3)
 		for i := range entries {
 			if i >= 3 {
@@ -51,19 +84,9 @@ func checkErrorLogs(
 			}
 			msgs = append(msgs, entries[i].Message)
 		}
-		return CheckResult{Name: name, Status: CheckInfo, Detail: strings.Join(msgs, " | ")}
+		return []CheckResult{{Name: name, Status: CheckInfo, Detail: strings.Join(msgs, " | ")}}
 	}
-	return CheckResult{Name: name, Status: CheckPass}
-}
-
-func checkErrorLogs2m(
-	ctx context.Context, fetcher platform.LogFetcher,
-	logAccess *platform.LogAccess, logErr error,
-	serviceID string,
-) CheckResult {
-	c := checkErrorLogs(ctx, fetcher, logAccess, logErr, serviceID, 2*time.Minute)
-	c.Name = "no_recent_errors"
-	return c
+	return []CheckResult{{Name: name, Status: CheckPass}}
 }
 
 func checkStartupDetected(
@@ -71,7 +94,7 @@ func checkStartupDetected(
 	logAccess *platform.LogAccess, logErr error,
 	serviceID string,
 ) CheckResult {
-	name := "startup_detected"
+	name := checkNameStartupDetected
 	if logErr != nil {
 		return CheckResult{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("log backend unavailable: %v", logErr)}
 	}
@@ -90,8 +113,9 @@ func checkStartupDetected(
 	return CheckResult{Name: name, Status: CheckPass}
 }
 
-func checkHTTPHealth(ctx context.Context, httpClient HTTPDoer, url string) CheckResult {
-	name := "http_health"
+// checkHTTPRoot performs GET / and expects a 2xx response.
+func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckResult {
+	name := checkNameHTTPRoot
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -151,12 +175,10 @@ func checkHTTPStatus(ctx context.Context, httpClient HTTPDoer, url string) Check
 		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("response not JSON (HTTP %d): %s", resp.StatusCode, excerpt), HTTPStatus: resp.StatusCode}
 	}
 
-	// Always require top-level status.
 	if sr.Status != "ok" {
 		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("status: %s", sr.Status)}
 	}
 
-	// If connections present, check each one.
 	if len(sr.Connections) > 0 {
 		for connName, conn := range sr.Connections {
 			if conn.Status != "ok" {

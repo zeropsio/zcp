@@ -37,9 +37,9 @@ func PollProcess(
 }
 
 var defaultBuildPollConfig = pollConfig{
-	initialInterval: 3 * time.Second,
-	stepUpInterval:  10 * time.Second,
-	stepUpAfter:     60 * time.Second,
+	initialInterval: 1 * time.Second,
+	stepUpInterval:  5 * time.Second,
+	stepUpAfter:     30 * time.Second,
 	timeout:         15 * time.Minute,
 }
 

@@ -444,34 +444,280 @@ func TestValidateZeropsYml_ImplicitWebServer(t *testing.T) {
 	}
 }
 
-func TestHasImplicitWebServer(t *testing.T) {
+func TestValidateZeropsYml_MultiBaseType(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		runBase   string
-		buildBase string
-		want      bool
+		name         string
+		hostname     string
+		yml          string
+		wantWarnings int
+		wantContains string
+		noWarnings   bool
 	}{
-		{"php-nginx run.base", "php-nginx@8.4", "php@8.4", true},
-		{"php-apache run.base", "php-apache@8.3", "", true},
-		{"nginx run.base", "nginx@1.22", "", true},
-		{"static run.base with different build", "static", "nodejs@22", true},
-		{"php-nginx build.base fallback", "", "php-nginx@8.4", true},
-		{"nginx build.base fallback", "", "nginx@1.22", true},
-		{"php cli is not implicit", "php@8.4", "", false},
-		{"nodejs is not implicit", "nodejs@22", "", false},
-		{"both empty", "", "", false},
+		{
+			name:     "array base in build is valid",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      base: [php-nginx@8.4, nodejs@22]
+      deployFiles: [.]
+    run:
+      base: php-nginx@8.4
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "string base in build is valid",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      base: nodejs@22
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 3000
+`,
+			noWarnings: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := hasImplicitWebServer(tt.runBase, tt.buildBase)
+			runValidateTest(t, tt.hostname, tt.yml, tt.wantWarnings, tt.wantContains, tt.noWarnings)
+		})
+	}
+}
+
+func TestValidateZeropsYml_StageZscNoop_Warning(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		hostname     string
+		yml          string
+		wantWarnings int
+		wantContains string
+		noWarnings   bool
+	}{
+		{
+			name:     "stage with zsc noop warns",
+			hostname: "appstage",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      base: nodejs@22
+      buildCommands:
+        - zsc noop
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 3000
+`,
+			wantWarnings: 1,
+			wantContains: "zsc noop",
+		},
+		{
+			name:     "dev with zsc noop is fine",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      base: nodejs@22
+      buildCommands:
+        - zsc noop
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 3000
+`,
+			noWarnings: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			runValidateTest(t, tt.hostname, tt.yml, tt.wantWarnings, tt.wantContains, tt.noWarnings)
+		})
+	}
+}
+
+func TestHasImplicitWebServer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		runBase    string
+		buildBases []string
+		want       bool
+	}{
+		{"php-nginx run.base", "php-nginx@8.4", []string{"php@8.4"}, true},
+		{"php-apache run.base", "php-apache@8.3", nil, true},
+		{"nginx run.base", "nginx@1.22", nil, true},
+		{"static run.base with different build", "static", []string{"nodejs@22"}, true},
+		{"php-nginx build.base fallback", "", []string{"php-nginx@8.4"}, true},
+		{"nginx build.base fallback", "", []string{"nginx@1.22"}, true},
+		{"php cli is not implicit", "php@8.4", nil, false},
+		{"nodejs is not implicit", "nodejs@22", nil, false},
+		{"both empty", "", nil, false},
+		{"multi build bases with implicit", "", []string{"php-nginx@8.4", "nodejs@22"}, true},
+		{"multi build bases without implicit", "", []string{"nodejs@22", "bun@1.2"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := hasImplicitWebServer(tt.runBase, tt.buildBases)
 			if got != tt.want {
-				t.Errorf("hasImplicitWebServer(%q, %q) = %v, want %v", tt.runBase, tt.buildBase, got, tt.want)
+				t.Errorf("hasImplicitWebServer(%q, %v) = %v, want %v", tt.runBase, tt.buildBases, got, tt.want)
 			}
 		})
+	}
+}
+
+// --- ValidateEnvReferences ---
+
+func TestValidateEnvReferences_ValidRef_NoError(t *testing.T) {
+	t.Parallel()
+
+	envVars := map[string]string{
+		"DATABASE_URL": "${db_connectionString}",
+	}
+	discovered := map[string][]string{
+		"db": {"connectionString", "host", "port"},
+	}
+	hostnames := []string{"db", "app"}
+
+	errs := ValidateEnvReferences(envVars, discovered, hostnames)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidateEnvReferences_InvalidHostname_Error(t *testing.T) {
+	t.Parallel()
+
+	envVars := map[string]string{
+		"DATABASE_URL": "${nonexistent_connectionString}",
+	}
+	discovered := map[string][]string{
+		"db": {"connectionString"},
+	}
+	hostnames := []string{"db", "app"}
+
+	errs := ValidateEnvReferences(envVars, discovered, hostnames)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+	}
+	if errs[0].Reference != "${nonexistent_connectionString}" {
+		t.Errorf("Reference = %q, want ${nonexistent_connectionString}", errs[0].Reference)
+	}
+	if !strings.Contains(errs[0].Reason, "unknown hostname") {
+		t.Errorf("Reason = %q, want to contain 'unknown hostname'", errs[0].Reason)
+	}
+}
+
+func TestValidateEnvReferences_InvalidVarName_Error(t *testing.T) {
+	t.Parallel()
+
+	envVars := map[string]string{
+		"DATABASE_URL": "${db_totallyFakeVar}",
+	}
+	discovered := map[string][]string{
+		"db": {"connectionString", "host", "port"},
+	}
+	hostnames := []string{"db"}
+
+	errs := ValidateEnvReferences(envVars, discovered, hostnames)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+	}
+	if !strings.Contains(errs[0].Reason, "unknown variable") {
+		t.Errorf("Reason = %q, want to contain 'unknown variable'", errs[0].Reason)
+	}
+}
+
+func TestValidateEnvReferences_CaseSensitive_Error(t *testing.T) {
+	t.Parallel()
+
+	envVars := map[string]string{
+		"DATABASE_URL": "${db_ConnectionString}", // wrong case
+	}
+	discovered := map[string][]string{
+		"db": {"connectionString"},
+	}
+	hostnames := []string{"db"}
+
+	errs := ValidateEnvReferences(envVars, discovered, hostnames)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+	}
+	if !strings.Contains(errs[0].Reason, "unknown variable") {
+		t.Errorf("Reason = %q, want to contain 'unknown variable'", errs[0].Reason)
+	}
+}
+
+func TestValidateEnvReferences_MultipleRefs_AllChecked(t *testing.T) {
+	t.Parallel()
+
+	envVars := map[string]string{
+		"COMBINED": "${db_host}:${db_port}/${cache_fakeVar}",
+	}
+	discovered := map[string][]string{
+		"db":    {"host", "port"},
+		"cache": {"connectionString"},
+	}
+	hostnames := []string{"db", "cache"}
+
+	errs := ValidateEnvReferences(envVars, discovered, hostnames)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error (cache_fakeVar), got %d: %v", len(errs), errs)
+	}
+	if errs[0].Reference != "${cache_fakeVar}" {
+		t.Errorf("Reference = %q, want ${cache_fakeVar}", errs[0].Reference)
+	}
+}
+
+func TestValidateEnvReferences_NoRefs_NoError(t *testing.T) {
+	t.Parallel()
+
+	envVars := map[string]string{
+		"PORT":       "3000",
+		"NODE_ENV":   "production",
+		"PLAIN_TEXT": "hello world",
+	}
+	discovered := map[string][]string{
+		"db": {"connectionString"},
+	}
+	hostnames := []string{"db"}
+
+	errs := ValidateEnvReferences(envVars, discovered, hostnames)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidateEnvReferences_LiteralDollar_Ignored(t *testing.T) {
+	t.Parallel()
+
+	envVars := map[string]string{
+		"ESCAPED": "$$dollar",
+		"PARTIAL": "$notaref",
+		"CURLY":   "${incomplete",
+	}
+	discovered := map[string][]string{}
+	hostnames := []string{"db"}
+
+	errs := ValidateEnvReferences(envVars, discovered, hostnames)
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for non-ref dollar signs, got %v", errs)
 	}
 }
 

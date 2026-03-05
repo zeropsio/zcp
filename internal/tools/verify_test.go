@@ -159,10 +159,74 @@ func TestVerifyTool_GracefulLogError(t *testing.T) {
 	}
 	// Log checks should be skip, not fail or crash.
 	for _, c := range vr.Checks {
-		if c.Name == "no_error_logs" || c.Name == "startup_detected" || c.Name == "no_recent_errors" {
+		if c.Name == "error_logs" || c.Name == "startup_detected" {
 			if c.Status != "skip" {
 				t.Errorf("Check %q: status = %q, want skip", c.Name, c.Status)
 			}
 		}
+	}
+}
+
+func TestVerifyTool_BatchMode(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}},
+			{ID: "svc-2", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
+		})
+	fetcher := platform.NewMockLogFetcher()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, fetcher, "proj-1")
+
+	// Call with empty serviceHostname → batch mode.
+	result := callTool(t, srv, "zerops_verify", map[string]any{})
+
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var vr ops.VerifyAllResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if len(vr.Services) != 2 {
+		t.Errorf("Services count = %d, want 2", len(vr.Services))
+	}
+	if vr.Status != "healthy" {
+		t.Errorf("Status = %q, want healthy", vr.Status)
+	}
+}
+
+func TestVerifyTool_SingleMode(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}},
+			{ID: "svc-2", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
+		})
+	fetcher := platform.NewMockLogFetcher()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, fetcher, "proj-1")
+
+	// Call with serviceHostname → single mode, returns VerifyResult.
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
+
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var vr ops.VerifyResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &vr); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if vr.Hostname != "app" {
+		t.Errorf("Hostname = %q, want app", vr.Hostname)
+	}
+	if vr.Type != "runtime" {
+		t.Errorf("Type = %q, want runtime", vr.Type)
 	}
 }

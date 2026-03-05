@@ -291,11 +291,7 @@ func TestWorkflowTool_Action_Start_AutoResetDone(t *testing.T) {
 		"action": "start", "workflow": "bootstrap",
 		"intent": "first bootstrap",
 	})
-	steps := []string{
-		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs", "generate-code",
-		"deploy", "verify", "report",
-	}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
 	for _, step := range steps {
 		callTool(t, srv, "zerops_workflow", map[string]any{
 			"action":      "complete",
@@ -474,11 +470,11 @@ func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Progress.Total != 11 {
-		t.Errorf("Total: want 11, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 5 {
+		t.Errorf("Total: want 5, got %d", resp.Progress.Total)
 	}
-	if resp.Current == nil || resp.Current.Name != "detect" {
-		t.Error("expected current step to be 'detect'")
+	if resp.Current == nil || resp.Current.Name != "discover" {
+		t.Error("expected current step to be 'discover'")
 	}
 }
 
@@ -493,10 +489,10 @@ func TestWorkflowTool_Action_BootstrapComplete(t *testing.T) {
 		"action": "start", "workflow": "bootstrap",
 	})
 
-	// Complete detect step.
+	// Complete discover step.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "complete",
-		"step":        "detect",
+		"step":        "discover",
 		"attestation": "FRESH project, no existing services",
 	})
 
@@ -508,8 +504,8 @@ func TestWorkflowTool_Action_BootstrapComplete(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Current == nil || resp.Current.Name != "plan" {
-		t.Error("expected current step to be 'plan'")
+	if resp.Current == nil || resp.Current.Name != "provision" {
+		t.Error("expected current step to be 'provision'")
 	}
 }
 
@@ -533,7 +529,7 @@ func TestWorkflowTool_Action_BootstrapComplete_MissingFields(t *testing.T) {
 
 	// Missing attestation.
 	result = callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "detect",
+		"action": "complete", "step": "discover",
 	})
 	if !result.IsError {
 		t.Error("expected IsError for missing attestation")
@@ -546,11 +542,11 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
 
-	// Start and advance to mount-dev.
+	// Start and advance to generate.
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "start", "workflow": "bootstrap",
 	})
-	preSteps := []string{"detect", "plan", "load-knowledge", "generate-import", "import-services"}
+	preSteps := []string{"discover", "provision"}
 	for _, step := range preSteps {
 		callTool(t, srv, "zerops_workflow", map[string]any{
 			"action": "complete", "step": step,
@@ -558,10 +554,10 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 		})
 	}
 
-	// Skip mount-dev.
+	// Skip generate.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "skip",
-		"step":   "mount-dev",
+		"step":   "generate",
 		"reason": "no runtime services",
 	})
 
@@ -573,8 +569,8 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Current == nil || resp.Current.Name != "discover-envs" {
-		t.Error("expected current step to be 'discover-envs'")
+	if resp.Current == nil || resp.Current.Name != "deploy" {
+		t.Error("expected current step to be 'deploy'")
 	}
 }
 
@@ -600,33 +596,33 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Progress.Total != 11 {
-		t.Errorf("Total: want 11, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 5 {
+		t.Errorf("Total: want 5, got %d", resp.Progress.Total)
 	}
 }
 
-func TestWorkflowTool_Action_BootstrapComplete_PlanStep_Structured(t *testing.T) {
+func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_Structured(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
 
-	// Start bootstrap and complete detect.
+	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "start", "workflow": "bootstrap",
 	})
-	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "detect",
-		"attestation": "FRESH project, no existing services",
-	})
 
-	// Complete plan step with structured plan.
+	// Complete discover step with structured plan.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete",
-		"step":   "plan",
+		"step":   "discover",
 		"plan": []any{
-			map[string]any{"hostname": "appdev", "type": "bun@1.2"},
-			map[string]any{"hostname": "db", "type": "postgresql@16", "mode": "NON_HA"},
+			map[string]any{
+				"runtime": map[string]any{"devHostname": "appdev", "type": "bun@1.2"},
+				"dependencies": []any{
+					map[string]any{"hostname": "db", "type": "postgresql@16", "mode": "NON_HA", "resolution": "CREATE"},
+				},
+			},
 		},
 	})
 
@@ -638,32 +634,30 @@ func TestWorkflowTool_Action_BootstrapComplete_PlanStep_Structured(t *testing.T)
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Current == nil || resp.Current.Name != "load-knowledge" {
-		t.Error("expected current step to be 'load-knowledge'")
+	if resp.Current == nil || resp.Current.Name != "provision" {
+		t.Error("expected current step to be 'provision'")
 	}
 }
 
-func TestWorkflowTool_Action_BootstrapComplete_PlanStep_InvalidPlan(t *testing.T) {
+func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_InvalidPlan(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
 
-	// Start bootstrap and complete detect.
+	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "start", "workflow": "bootstrap",
 	})
-	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "detect",
-		"attestation": "FRESH project, no existing services",
-	})
 
-	// Complete plan step with invalid hostname.
+	// Complete discover step with invalid hostname.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete",
-		"step":   "plan",
+		"step":   "discover",
 		"plan": []any{
-			map[string]any{"hostname": "my-app", "type": "bun@1.2"},
+			map[string]any{
+				"runtime": map[string]any{"devHostname": "my-app", "type": "bun@1.2"},
+			},
 		},
 	})
 
@@ -770,10 +764,10 @@ func TestWorkflow_BootstrapComplete_IncludesStacks(t *testing.T) {
 		"action": "start", "workflow": "bootstrap",
 	})
 
-	// Complete detect step.
+	// Complete discover step.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "complete",
-		"step":        "detect",
+		"step":        "discover",
 		"attestation": "FRESH project, no existing services",
 	})
 
@@ -833,25 +827,21 @@ func TestWorkflow_BootstrapStatus_IncludesStacks(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Action_BootstrapComplete_PlanStep_FallbackAttestation(t *testing.T) {
+func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_FallbackAttestation(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
 
-	// Start bootstrap and complete detect.
+	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "start", "workflow": "bootstrap",
 	})
-	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "detect",
-		"attestation": "FRESH project, no existing services",
-	})
 
-	// Complete plan step with attestation only (no structured plan).
+	// Complete discover step with attestation only (no structured plan).
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "complete",
-		"step":        "plan",
+		"step":        "discover",
 		"attestation": "Services: appdev (bun@1.2), db (postgresql@16 NON_HA) — validated manually",
 	})
 

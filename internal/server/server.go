@@ -86,7 +86,7 @@ func (s *Server) registerTools() {
 	knowledgeTracker := ops.NewKnowledgeTracker()
 
 	// Read-only tools
-	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine, knowledgeTracker)
+	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine, s.logFetcher)
 	tools.RegisterDiscover(s.server, s.client, projectID)
 	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache, knowledgeTracker)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)

@@ -1,276 +1,84 @@
 package workflow
 
-// stepDetails defines the 11 bootstrap steps in order.
-// Skippable: mount-dev, discover-envs, generate-code, deploy (managed-only fast path).
+// stepDetails defines the 5 consolidated bootstrap steps in order.
+// Skippable: generate, deploy (managed-only fast path).
 var stepDetails = []StepDetail{
 	{
-		Name:     "detect",
+		Name:     "discover",
 		Category: CategoryFixed,
-		Guidance: `Call zerops_discover to inspect the current project.
-Classify the project state:
-- FRESH: no runtime services exist (only managed or none)
-- CONFORMANT: dev+stage naming pattern detected (e.g., appdev+appstage, apidev+apistage, webdev+webstage)
-- NON_CONFORMANT: runtime services exist without dev/stage pattern
+		Guidance: `Discover project state and plan services.
+1. Call zerops_discover to inspect the current project
+2. Classify: FRESH (no runtime services), CONFORMANT (dev+stage pattern), NON_CONFORMANT
+3. Identify runtime + managed services from user intent
+4. Validate types against availableStacks
+5. Load knowledge: zerops_knowledge runtime="{type}" services=[...] AND scope="infrastructure"
+6. Submit plan via zerops_workflow action="complete" step="discover" plan=[...]
 
-Route:
-- FRESH → proceed normally through all steps
-- CONFORMANT → if stack matches request, skip to deploy. If user wants a different stack, ASK how to proceed. Do NOT delete existing services without explicit user approval.
-- NON_CONFORMANT → STOP. Present existing services to user with types and status. Ask how to proceed. NEVER delete without explicit user approval naming each service.`,
-		Tools:        []string{"zerops_discover"},
-		Verification: "Project state classified as FRESH/CONFORMANT/NON_CONFORMANT with evidence",
+CONFORMANT projects with matching stack: route to deploy workflow instead.
+NON_CONFORMANT: ASK user before any changes.`,
+		Tools:        []string{"zerops_discover", "zerops_knowledge", "zerops_workflow"},
+		Verification: "Project classified, plan submitted and validated",
 		Skippable:    false,
 	},
 	{
-		Name:     "plan",
+		Name:     "provision",
+		Category: CategoryFixed,
+		Guidance: `Generate import.yml, import services, mount dev filesystems, discover env vars.
+1. Generate import.yml with correct hostnames, types, enableSubdomainAccess
+2. zerops_import to create services, poll process to completion
+3. zerops_discover to verify all services exist in expected states
+4. zerops_mount dev runtime filesystems (NOT stage, NOT managed)
+5. zerops_discover includeEnvs=true for each managed service
+6. Record discovered env var names for use in generate step`,
+		Tools:        []string{"zerops_import", "zerops_process", "zerops_discover", "zerops_mount"},
+		Verification: "All services created, dev mounted, env vars discovered",
+		Skippable:    false,
+	},
+	{
+		Name:     "generate",
 		Category: CategoryCreative,
-		Guidance: `Identify the application stack from user intent:
-1. Runtime services: language + framework (e.g., bun@1.2 + Hono, go@1 + net/http)
-2. Managed services: databases, caches, storage (e.g., postgresql@16, valkey@7.2)
-3. Environment mode: standard (dev+stage pairs) or simple (single service)
+		Guidance: `Write zerops.yml and application code to mounted dev filesystem.
+PREREQUISITES: dev services mounted, env vars discovered from provision step.
+1. Write zerops.yml with setup entries for BOTH dev and stage hostnames
+2. Dev: deployFiles: [.], start: zsc noop --silent (or omit for implicit webserver)
+3. Stage: real build commands, compiled start command
+4. envVariables: ONLY use variables discovered in provision step
+5. Write application code with GET /, GET /health, GET /status endpoints
+6. Quick-test via SSH before proceeding to deploy
 
-Hostname rules (STRICT):
-- Only [a-z0-9], NO hyphens, NO underscores
-- Max 25 characters, immutable after creation
-- Dev pattern: {name}dev (e.g., "appdev", "apidev", "webdev")
-- Stage pattern: {name}stage (e.g., "appstage", "apistage", "webstage")
-
-Managed services default to mode: NON_HA. Set HA explicitly for production.
-
-Output: list of services with hostnames, types, and versions.
-Validate all types against the availableStacks field in this response.`,
+Skip if no runtime services exist (managed-only project).`,
 		Tools:        []string{"zerops_knowledge"},
-		Verification: "Service list with hostnames, types, versions documented",
-		Skippable:    false,
-	},
-	{
-		Name:     "load-knowledge",
-		Category: CategoryFixed,
-		Guidance: `Two MANDATORY knowledge calls:
-
-1. Runtime briefing: zerops_knowledge runtime="{type}" services=["{managed1}", "{managed2}"]
-   - Returns binding rules, ports, env vars, wiring patterns
-   - Call once per unique runtime type
-
-2. Infrastructure rules: zerops_knowledge scope="infrastructure"
-   - Returns import.yml schema, zerops.yml schema, env var system
-   - MUST be loaded before generating any YAML
-
-Optional: zerops_knowledge recipe="{framework}" for framework-specific configs.
-
-Do NOT proceed to generate-import without both calls completed.`,
-		Tools:        []string{"zerops_knowledge"},
-		Verification: "Runtime briefing loaded for each runtime type AND infrastructure scope loaded",
-		Skippable:    false,
-	},
-	{
-		Name:     "generate-import",
-		Category: CategoryCreative,
-		Guidance: `Generate import.yml ONLY — do NOT write zerops.yml or application code yet.
-
-Dev services:
-- enableSubdomainAccess: true
-- startWithoutCode: true (allows service to start without initial deploy)
-- minContainers: 1, maxContainers: 1
-
-Stage services:
-- enableSubdomainAccess: true
-- Do NOT set startWithoutCode (starts on first deploy)
-- minContainers: 1, maxContainers: auto-scale as needed
-
-Managed services:
-- Shared between dev and stage
-- Use mode: NON_HA for dev environments
-- Set appropriate versions (e.g., postgresql@16, valkey@7.2)
-
-Validation checklist:
-- All hostnames follow [a-z0-9] pattern
-- Service types match available stacks
-- No duplicate hostnames
-- object-storage requires objectStorageSize field
-- Preprocessor: #yamlPreprocessor=on if using <@...> functions
-
-Output: import.yml content only. Code and zerops.yml are written in the generate-code step AFTER env var discovery.`,
-		Tools:        []string{"zerops_knowledge"},
-		Verification: "import.yml generated with valid hostnames, types, and all required fields",
-		Skippable:    false,
-	},
-	{
-		Name:     "import-services",
-		Category: CategoryFixed,
-		Guidance: `Execute the import:
-
-1. zerops_import content="<generated import.yml>"
-2. Poll: zerops_process processId="<returned id>" until status is FINISHED
-3. Verify: zerops_discover to confirm all services exist and states are correct
-   - Dev runtime services: should be RUNNING (startWithoutCode: true)
-   - Stage runtime services: should be NEW or READY_TO_DEPLOY
-   - Managed services: should be RUNNING
-
-If import fails, check zerops_events for error details.
-Common failures: invalid hostname, unknown type, duplicate service name.`,
-		Tools:        []string{"zerops_import", "zerops_process", "zerops_discover"},
-		Verification: "All services imported and verified in expected states",
-		Skippable:    false,
-	},
-	{
-		Name:     "mount-dev",
-		Category: CategoryFixed,
-		Guidance: `Mount ONLY dev runtime service filesystems:
-
-zerops_mount action="mount" serviceHostname="{devHostname}"
-
-Rules:
-- Mount each dev RUNTIME service (e.g., appdev, apidev)
-- Do NOT mount stage services
-- Do NOT mount managed services (postgresql, valkey, etc.)
-- Do NOT mount shared-storage (it has no filesystem to mount)
-
-After mounting, the service filesystem is available at the mount path
-(typically /var/www/{hostname}/ or shown in mount output).
-
-Skip this step if no runtime services exist (managed-only project).`,
-		Tools:        []string{"zerops_mount"},
-		Verification: "All dev runtime service filesystems mounted successfully",
-		Skippable:    true,
-	},
-	{
-		Name:     "discover-envs",
-		Category: CategoryFixed,
-		Guidance: `Discover actual environment variables for each managed service:
-
-zerops_discover service="{hostname}" includeEnvs=true
-
-For EACH managed service (db, cache, storage, etc.):
-- Record exact env var names (connectionString, host, port, user, password, dbName)
-- These are the REAL values set by Zerops, not guesses
-- Use these exact names in zerops.yml envVariables section
-
-This data MUST be available BEFORE writing any application code or zerops.yml.
-Do NOT hardcode env var names — always discover them first.
-
-Skip this step if no managed services exist.`,
-		Tools:        []string{"zerops_discover"},
-		Verification: "All managed service env vars discovered and documented",
-		Skippable:    true,
-	},
-	{
-		Name:     "generate-code",
-		Category: CategoryCreative,
-		Guidance: `Write zerops.yml and application code to the mounted dev service filesystem.
-
-PREREQUISITES (from prior steps):
-- Dev services mounted at /var/www/{devHostname}/
-- Env vars discovered from managed services
-
-For EACH runtime service:
-
-1. Write zerops.yml to mount path with setup entries for BOTH dev and stage hostnames
-   - Dev: deployFiles: [.] (ALWAYS), start: zsc noop --silent (agent starts server manually via SSH; PHP runtimes: omit start, web server built-in)
-   - Stage: compiled output in deployFiles, compiled/binary start command
-   - PHP runtimes: no start command needed, neither dev nor stage (web server built-in)
-   - envVariables: ONLY use variables discovered in discover-envs step
-2. Write application code with required endpoints:
-   - GET / — app root
-   - GET /health — health check (200 OK)
-   - GET /status — connectivity proof (SELECT 1 for DB, PING for cache)
-3. Write .gitignore appropriate for the runtime
-
-Use zerops_knowledge for runtime-specific build/deploy patterns.
-
-Files are immediately on the dev container via SSHFS — no deploy needed for that.
-Deploy tests the build pipeline and ensures persistence.
-Consider committing generated code before proceeding to deploy.
-
-After writing code: MUST quick-test via SSH (start server, test endpoints) BEFORE formal deploy.
-Exception: implicit-webserver runtimes (php-nginx, php-apache, nginx, static) — skip quick-test, deploy first (web server config not applied until deploy).
-After every zerops_deploy to dev: MUST start server again via SSH (deploy restarts container with zsc noop).
-
-MANDATORY PRE-DEPLOY CHECK (do NOT proceed to deploy until all pass):
-- zerops.yml has setup entry for EVERY planned runtime hostname
-- Dev setup uses deployFiles: [.] — NO EXCEPTIONS
-- run.start is the RUN command (not a build tool like go build)
-- run.ports port matches what the app listens on
-- envVariables ONLY uses variables discovered in discover-envs step
-- App binds to 0.0.0.0:{port}, NOT localhost
-
-Skip this step if no runtime services exist (managed-only project).`,
-		Tools:        []string{"zerops_knowledge"},
-		Verification: "zerops.yml and app code written to mount path with correct env var mappings and /status endpoint",
+		Verification: "zerops.yml and app code written with correct env mappings",
 		Skippable:    true,
 	},
 	{
 		Name:     "deploy",
 		Category: CategoryBranching,
-		Guidance: `Deploy application code to all runtime services.
-Files are already on dev via SSHFS mount. Deploy runs the build pipeline,
-restarts the process, and ensures persistence (volatile containers retain
-only deployFiles content).
-
-BRANCH by service count:
-- 1 service pair (or inline): deploy directly in this conversation
-- 2+ service pairs: spawn one subagent per service pair
-
+		Guidance: `Deploy to all runtime services, enable subdomains, verify.
 For EACH runtime service pair (dev + stage):
-
 1. Deploy dev: zerops_deploy targetService="{devHostname}"
-2. Enable subdomain + verify dev: zerops_subdomain action="enable" → zerops_verify
+2. Enable subdomain: zerops_subdomain action="enable"
 3. Deploy stage: zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"
-4. Enable subdomain + verify stage: zerops_subdomain action="enable" → zerops_verify
-5. If shared-storage is in the stack: after stage becomes ACTIVE, connect storage:
-   zerops_manage action="connect-storage" serviceHostname="{stageHostname}" storageHostname="{storageHostname}"
+4. Enable subdomain for stage
+5. Connect shared-storage if applicable
 
-Self-deploying services MUST use deployFiles: [.] — source files and zerops.yml
-must survive the deploy for continued iteration.
-
-Iteration loop (max 3 attempts per service):
-- If deploy fails → check logs → fix → redeploy
-- If /status fails → check connectivity → fix code → redeploy
-
-Skip this step if no runtime services exist (managed-only project).`,
-		Tools:        []string{"zerops_deploy", "zerops_discover", "zerops_subdomain", "zerops_logs", "zerops_mount", "zerops_verify"},
-		Verification: "All runtime services deployed, /status endpoints returning 200 with connectivity proof",
+Iteration loop (max 3 per service): fail -> fix -> redeploy.
+Skip if no runtime services exist.`,
+		Tools:        []string{"zerops_deploy", "zerops_discover", "zerops_subdomain", "zerops_logs", "zerops_mount", "zerops_verify", "zerops_manage"},
+		Verification: "All services deployed with subdomains enabled",
 		Skippable:    true,
 	},
 	{
 		Name:     "verify",
 		Category: CategoryFixed,
-		Guidance: `Independent verification of ALL services — do NOT trust self-reports from deploy step.
-
-For each runtime service:
-1. zerops_discover service="{hostname}" — confirm status is RUNNING
-2. zerops_subdomain action="enable" — get subdomainUrls from response, HTTP check
-3. Check /status endpoint returns 200 with connectivity proof
-
-For each managed service:
-1. zerops_discover service="{hostname}" — confirm status is RUNNING
-
-If any service fails verification:
-- Record the failure in attestation (e.g., "3/5 services healthy, apidev failing")
-- Do NOT block — the conductor accepts partial success
-- The attestation captures the actual state`,
+		Guidance: `Independent verification and final report.
+1. zerops_verify (batch) — verify all plan target services
+2. Check /status endpoints for connectivity proof
+3. Present final results: hostnames, types, status, URLs
+4. Group by: runtime dev, runtime stage, managed
+5. Include subdomain URLs and actionable next steps`,
 		Tools:        []string{"zerops_discover", "zerops_verify"},
-		Verification: "All services independently verified with status documented",
-		Skippable:    false,
-	},
-	{
-		Name:     "report",
-		Category: CategoryFixed,
-		Guidance: `Present final results to the user:
-
-Format:
-- List each service with: hostname, type, status, URL (if applicable)
-- Group by: runtime dev, runtime stage, managed
-- Include subdomainUrls from zerops_subdomain enable responses
-- Mention /status endpoint for connectivity monitoring
-
-Summary:
-- Total services created/verified
-- Any skipped steps and reasons
-- Any partial failures from deploy/verify steps
-
-End with actionable next steps (e.g., "Your dev environment is ready at...")`,
-		Tools:        []string{"zerops_discover"},
-		Verification: "Final report presented to user with all service URLs and statuses",
+		Verification: "All services verified, final report presented",
 		Skippable:    false,
 	},
 }

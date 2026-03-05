@@ -33,12 +33,23 @@ type BootstrapStep struct {
 	CompletedAt string `json:"completedAt,omitempty"`
 }
 
+// Lifecycle constants track per-target progress through bootstrap.
+const (
+	LifecyclePlanned    = "planned"
+	LifecycleCreated    = "created"
+	LifecycleConfigured = "configured"
+	LifecycleDeployed   = "deployed"
+	LifecycleVerified   = "verified"
+	LifecycleReady      = "ready"
+)
+
 // BootstrapState tracks progress through the bootstrap subflow.
 type BootstrapState struct {
-	Active      bool            `json:"active"`
-	CurrentStep int             `json:"currentStep"`
-	Steps       []BootstrapStep `json:"steps"`
-	Plan        *ServicePlan    `json:"plan,omitempty"`
+	Active            bool                `json:"active"`
+	CurrentStep       int                 `json:"currentStep"`
+	Steps             []BootstrapStep     `json:"steps"`
+	Plan              *ServicePlan        `json:"plan,omitempty"`
+	DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"`
 }
 
 // BootstrapResponse is returned from conductor actions.
@@ -49,6 +60,7 @@ type BootstrapResponse struct {
 	Current         *BootstrapStepInfo `json:"current,omitempty"`
 	Message         string             `json:"message"`
 	AvailableStacks string             `json:"availableStacks,omitempty"`
+	CheckResult     *StepCheckResult   `json:"checkResult,omitempty"`
 }
 
 // BootstrapProgress summarizes overall bootstrap progress.
@@ -80,9 +92,10 @@ type BootstrapStepInfo struct {
 	Verification  string       `json:"verification"`
 	DetailedGuide string       `json:"detailedGuide,omitempty"`
 	PriorContext  *StepContext `json:"priorContext,omitempty"`
+	PlanMode      string       `json:"planMode,omitempty"` // "standard" or "simple", set after plan submission
 }
 
-// NewBootstrapState creates a new bootstrap state with all 11 steps pending.
+// NewBootstrapState creates a new bootstrap state with all 5 steps pending.
 func NewBootstrapState() *BootstrapState {
 	steps := make([]BootstrapStep, len(stepDetails))
 	for i, d := range stepDetails {
@@ -113,10 +126,8 @@ const (
 
 // Step name constants for conditional skip validation.
 const (
-	stepDiscoverEnvs = "discover-envs"
-	stepMountDev     = "mount-dev"
-	stepGenerateCode = "generate-code"
-	stepDeploy       = "deploy"
+	stepGenerate = "generate"
+	stepDeploy   = "deploy"
 )
 
 const minAttestationLen = 10
@@ -213,6 +224,7 @@ func (b *BootstrapState) BuildResponse(sessionID, intent string) *BootstrapRespo
 			Verification:  detail.Verification,
 			DetailedGuide: ResolveGuidance(detail.Name),
 			PriorContext:  b.buildPriorContext(),
+			PlanMode:      b.planMode(),
 		}
 		resp.Message = fmt.Sprintf("Step %d/%d: %s", b.CurrentStep+1, len(b.Steps), detail.Name)
 	} else {
@@ -242,25 +254,28 @@ func (b *BootstrapState) buildPriorContext() *StepContext {
 	}
 }
 
+// planMode returns "standard" or "simple" based on the plan targets.
+// Returns empty if no plan has been submitted yet.
+func (b *BootstrapState) planMode() string {
+	if b.Plan == nil || len(b.Plan.Targets) == 0 {
+		return ""
+	}
+	for _, t := range b.Plan.Targets {
+		if t.Runtime.Simple {
+			return "simple"
+		}
+	}
+	return "standard"
+}
+
 // validateConditionalSkip prevents skipping steps that are required based on the plan.
 func validateConditionalSkip(plan *ServicePlan, stepName string) error {
 	if plan == nil {
 		return nil
 	}
-	hasManagedServices, hasRuntimeServices := false, false
-	for _, svc := range plan.Services {
-		if isManagedService(svc.Type) {
-			hasManagedServices = true
-		} else {
-			hasRuntimeServices = true
-		}
-	}
+	hasRuntimeServices := len(plan.Targets) > 0
 	switch stepName {
-	case stepDiscoverEnvs:
-		if hasManagedServices {
-			return fmt.Errorf("skip step: cannot skip %q — managed services require env var discovery", stepName)
-		}
-	case stepMountDev, stepGenerateCode, stepDeploy:
+	case stepGenerate, stepDeploy:
 		if hasRuntimeServices {
 			return fmt.Errorf("skip step: cannot skip %q — runtime services in plan require it", stepName)
 		}

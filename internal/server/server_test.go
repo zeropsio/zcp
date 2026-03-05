@@ -299,12 +299,12 @@ func TestBuildInstructions_WorkflowHint_ActiveBootstrap(t *testing.T) {
 	dir := t.TempDir()
 	eng := workflow.NewEngine(dir)
 
-	// Start bootstrap and complete 3 steps.
+	// Start bootstrap and complete 2 steps.
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
-	for _, step := range []string{"detect", "plan", "load-knowledge"} {
-		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" ok"); err != nil {
+	for _, step := range []string{"discover", "provision"} {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}
@@ -316,8 +316,8 @@ func TestBuildInstructions_WorkflowHint_ActiveBootstrap(t *testing.T) {
 	if !strings.Contains(inst, "bootstrap") {
 		t.Error("hint should mention bootstrap workflow")
 	}
-	if !strings.Contains(inst, "step 4/11") {
-		t.Errorf("hint should mention step 4/11, got: %s", inst)
+	if !strings.Contains(inst, "step 3/5") {
+		t.Errorf("hint should mention step 3/5, got: %s", inst)
 	}
 }
 
@@ -341,12 +341,11 @@ func TestBuildInstructions_WorkflowHint_PhaseDone(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	steps := []string{
-		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs", "generate-code",
-		"deploy", "verify", "report",
+		"discover", "provision", "generate",
+		"deploy", "verify",
 	}
 	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" ok"); err != nil {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}

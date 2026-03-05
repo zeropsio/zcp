@@ -8,11 +8,11 @@ import (
 
 // bootstrapEvidenceMap maps evidence types to the bootstrap steps that contribute to them.
 var bootstrapEvidenceMap = map[string][]string{
-	"recipe_review":   {"detect", "plan", "load-knowledge"},
-	"discovery":       {"discover-envs"},
-	"dev_verify":      {"generate-code", "deploy", "verify"},
+	"recipe_review":   {"discover"},
+	"discovery":       {"provision"},
+	"dev_verify":      {"generate", "deploy", "verify"},
 	"deploy_evidence": {"deploy"},
-	"stage_verify":    {"verify", "report"},
+	"stage_verify":    {"verify"},
 }
 
 // autoCompleteBootstrap records evidence and transitions through all phases to DONE.

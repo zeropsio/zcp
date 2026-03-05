@@ -24,18 +24,18 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name for static guidance: bootstrap, deploy, debug, scale, or configure."`
 
 	// Multi-action fields.
-	Action         string                    `json:"action,omitempty"         jsonschema:"Orchestration action: start, complete, skip, status, transition, evidence, reset, or iterate."`
-	Phase          string                    `json:"phase,omitempty"          jsonschema:"Target phase for transition action: DISCOVER, DEVELOP, DEPLOY, VERIFY, or DONE."`
-	Intent         string                    `json:"intent,omitempty"         jsonschema:"User intent description for start action (what you want to accomplish)."`
-	Type           string                    `json:"type,omitempty"           jsonschema:"Evidence type for evidence action: recipe_review, discovery, dev_verify, deploy_evidence, or stage_verify."`
-	Service        string                    `json:"service,omitempty"        jsonschema:"Service hostname to associate with evidence."`
-	Attestation    string                    `json:"attestation,omitempty"    jsonschema:"Description of what was verified or accomplished (required for evidence and complete actions)."`
-	Step           string                    `json:"step,omitempty"           jsonschema:"Bootstrap step name for complete/skip actions (e.g. detect, mount-dev, discover-envs, deploy)."`
-	Plan           []workflow.PlannedService `json:"plan,omitempty"           jsonschema:"Structured service plan for the 'plan' step: array of {hostname, type, mode?}. Validates hostnames and types."`
-	Reason         string                    `json:"reason,omitempty"         jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
-	Passed         *int                      `json:"passed,omitempty"         jsonschema:"Number of passed verifications (evidence action). Defaults to 1."`
-	Failed         *int                      `json:"failed,omitempty"         jsonschema:"Number of failed verifications (evidence action). Defaults to 0."`
-	ServiceResults []workflow.ServiceResult  `json:"serviceResults,omitempty" jsonschema:"Per-service verification results (evidence action)."`
+	Action         string                     `json:"action,omitempty"         jsonschema:"Orchestration action: start, complete, skip, status, transition, evidence, reset, or iterate."`
+	Phase          string                     `json:"phase,omitempty"          jsonschema:"Target phase for transition action: DISCOVER, DEVELOP, DEPLOY, VERIFY, or DONE."`
+	Intent         string                     `json:"intent,omitempty"         jsonschema:"User intent description for start action (what you want to accomplish)."`
+	Type           string                     `json:"type,omitempty"           jsonschema:"Evidence type for evidence action: recipe_review, discovery, dev_verify, deploy_evidence, or stage_verify."`
+	Service        string                     `json:"service,omitempty"        jsonschema:"Service hostname to associate with evidence."`
+	Attestation    string                     `json:"attestation,omitempty"    jsonschema:"Description of what was verified or accomplished (required for evidence and complete actions)."`
+	Step           string                     `json:"step,omitempty"           jsonschema:"Bootstrap step name for complete/skip actions (e.g. discover, provision, generate, deploy, verify)."`
+	Plan           []workflow.BootstrapTarget `json:"plan,omitempty"           jsonschema:"Structured service plan: array of {runtime: {devHostname, type}, dependencies: [{hostname, type, mode?, resolution?}]}."`
+	Reason         string                     `json:"reason,omitempty"         jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
+	Passed         *int                       `json:"passed,omitempty"         jsonschema:"Number of passed verifications (evidence action). Defaults to 1."`
+	Failed         *int                       `json:"failed,omitempty"         jsonschema:"Number of failed verifications (evidence action). Defaults to 0."`
+	ServiceResults []workflow.ServiceResult   `json:"serviceResults,omitempty" jsonschema:"Per-service verification results (evidence action)."`
 }
 
 // startResponse wraps WorkflowState with workflow guidance for non-bootstrap orchestrated start.
@@ -53,7 +53,7 @@ type immediateResponse struct {
 }
 
 // RegisterWorkflow registers the zerops_workflow tool.
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, tracker *ops.KnowledgeTracker) {
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, logFetcher platform.LogFetcher) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
 		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"transition|evidence|reset|iterate\" (phase management).",
@@ -66,7 +66,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, cache, tracker, input)
+			return handleWorkflowAction(ctx, projectID, engine, client, cache, logFetcher, input)
 		}
 
 		// Legacy: static workflow guidance.
@@ -93,7 +93,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, logFetcher platform.LogFetcher, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -117,11 +117,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if cache != nil && client != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
-		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, tracker)
+		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID)
 	case "skip":
 		return handleBootstrapSkip(ctx, engine, client, cache, input)
 	case "status":
-		return handleBootstrapStatus(ctx, engine, client, cache, tracker)
+		return handleBootstrapStatus(ctx, engine, client, cache)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

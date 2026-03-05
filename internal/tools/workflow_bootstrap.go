@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -10,24 +13,23 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, tracker *ops.KnowledgeTracker) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Step is required for complete action",
-			"Specify step name (e.g., step=\"detect\")")), nil, nil
+			"Specify step name (e.g., step=\"discover\")")), nil, nil
 	}
 
-	// Structured plan routing for "plan" step.
-	if input.Step == "plan" && len(input.Plan) > 0 {
-		resp, err := engine.BootstrapCompletePlan(input.Plan, liveTypes)
+	// Structured plan routing for "discover" step.
+	if input.Step == "discover" && len(input.Plan) > 0 {
+		resp, err := engine.BootstrapCompletePlan(input.Plan, liveTypes, nil)
 		if err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Plan validation failed: %v", err),
-				"Provide valid plan: [{hostname, type, mode?}]. Hostnames: lowercase a-z0-9, max 25 chars. Managed services default to mode: NON_HA. Specify HA explicitly for production.")), nil, nil
+				"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars.")), nil, nil
 		}
-		injectKnowledgeHint(resp, tracker)
 		populateStacks(ctx, resp, client, cache)
 		return jsonResult(resp), nil, nil
 	}
@@ -40,14 +42,19 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			"Describe what was accomplished in this step")), nil, nil
 	}
 
-	resp, err := engine.BootstrapComplete(input.Step, input.Attestation)
+	httpClient := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
+	}
+	checker := buildStepChecker(input.Step, client, logFetcher, projectID, httpClient)
+
+	resp, err := engine.BootstrapComplete(ctx, input.Step, input.Attestation, checker)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrBootstrapNotActive,
 			fmt.Sprintf("Complete step failed: %v", err),
 			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
 	}
-	injectKnowledgeHint(resp, tracker)
 	populateStacks(ctx, resp, client, cache)
 	return jsonResult(resp), nil, nil
 }
@@ -57,7 +64,7 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Step is required for skip action",
-			"Specify step name (e.g., step=\"mount-dev\")")), nil, nil
+			"Specify step name (e.g., step=\"generate\")")), nil, nil
 	}
 
 	reason := input.Reason
@@ -70,13 +77,13 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 		return convertError(platform.NewPlatformError(
 			platform.ErrBootstrapNotActive,
 			fmt.Sprintf("Skip step failed: %v", err),
-			"Only skippable steps (mount-dev, discover-envs, deploy) can be skipped")), nil, nil
+			"Only skippable steps (generate, deploy) can be skipped")), nil, nil
 	}
 	populateStacks(ctx, resp, client, cache)
 	return jsonResult(resp), nil, nil
 }
 
-func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker) (*mcp.CallToolResult, any, error) {
+func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
 	resp, err := engine.BootstrapStatus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -84,22 +91,6 @@ func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client 
 			fmt.Sprintf("Bootstrap status failed: %v", err),
 			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
 	}
-	injectKnowledgeHint(resp, tracker)
 	populateStacks(ctx, resp, client, cache)
 	return jsonResult(resp), nil, nil
-}
-
-// injectKnowledgeHint adds a hint to the load-knowledge step guidance when
-// knowledge has already been loaded via prior zerops_knowledge calls.
-func injectKnowledgeHint(resp *workflow.BootstrapResponse, tracker *ops.KnowledgeTracker) {
-	if resp.Current == nil || resp.Current.Name != "load-knowledge" {
-		return
-	}
-	if tracker == nil || !tracker.IsLoaded() {
-		return
-	}
-	resp.Current.Guidance = fmt.Sprintf(
-		"Knowledge already loaded (%s).\nComplete this step with: zerops_workflow action=\"complete\" step=\"load-knowledge\" attestation=\"Already loaded\"",
-		tracker.Summary(),
-	)
 }

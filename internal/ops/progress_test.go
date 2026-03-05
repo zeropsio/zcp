@@ -492,6 +492,20 @@ func TestPollBuild_PublicFunction(t *testing.T) {
 	}
 }
 
+func TestDefaultBuildPollConfig_Intervals(t *testing.T) {
+	t.Parallel()
+
+	if defaultBuildPollConfig.initialInterval != 1*time.Second {
+		t.Errorf("initialInterval = %v, want 1s", defaultBuildPollConfig.initialInterval)
+	}
+	if defaultBuildPollConfig.stepUpInterval != 5*time.Second {
+		t.Errorf("stepUpInterval = %v, want 5s", defaultBuildPollConfig.stepUpInterval)
+	}
+	if defaultBuildPollConfig.stepUpAfter != 30*time.Second {
+		t.Errorf("stepUpAfter = %v, want 30s", defaultBuildPollConfig.stepUpAfter)
+	}
+}
+
 // errorAs is a test helper that wraps errors.As to avoid importing errors.
 func errorAs(err error, target any) bool {
 	if t, ok := target.(**platform.PlatformError); ok {

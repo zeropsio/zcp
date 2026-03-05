@@ -103,6 +103,86 @@ func TestKnowledgeTracker(t *testing.T) {
 	}
 }
 
+func TestKnowledgeTracker_IsLoadedForType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		setup       func(kt *KnowledgeTracker)
+		runtimeType string
+		want        bool
+	}{
+		{
+			name: "SingleRuntime_Loaded",
+			setup: func(kt *KnowledgeTracker) {
+				kt.RecordBriefing("php-nginx@8.4", []string{"postgresql@16"})
+			},
+			runtimeType: "php-nginx@8.4",
+			want:        true,
+		},
+		{
+			name: "SingleRuntime_NotLoaded",
+			setup: func(kt *KnowledgeTracker) {
+				kt.RecordBriefing("php-nginx@8.4", []string{"postgresql@16"})
+			},
+			runtimeType: "nodejs@22",
+			want:        false,
+		},
+		{
+			name: "MultiRuntime_LoadedPHPNotNode",
+			setup: func(kt *KnowledgeTracker) {
+				kt.RecordBriefing("php-nginx@8.4", []string{"postgresql@16"})
+			},
+			runtimeType: "nodejs@22",
+			want:        false,
+		},
+		{
+			name: "MultiRuntime_BothLoaded",
+			setup: func(kt *KnowledgeTracker) {
+				kt.RecordBriefing("php-nginx@8.4", []string{"postgresql@16"})
+				kt.RecordBriefing("nodejs@22", []string{"valkey@7.2"})
+			},
+			runtimeType: "nodejs@22",
+			want:        true,
+		},
+		{
+			name: "EmptyRuntime_InEntry",
+			setup: func(kt *KnowledgeTracker) {
+				kt.RecordBriefing("", []string{"postgresql@16"})
+			},
+			runtimeType: "",
+			want:        true,
+		},
+		{
+			name:        "EmptyTracker",
+			setup:       func(_ *KnowledgeTracker) {},
+			runtimeType: "nodejs@22",
+			want:        false,
+		},
+		{
+			name: "NoServices_RuntimeOnly",
+			setup: func(kt *KnowledgeTracker) {
+				kt.RecordBriefing("go@1", nil)
+			},
+			runtimeType: "go@1",
+			want:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			kt := NewKnowledgeTracker()
+			tt.setup(kt)
+
+			got := kt.IsLoadedForType(tt.runtimeType)
+			if got != tt.want {
+				t.Errorf("IsLoadedForType(%q) = %v, want %v", tt.runtimeType, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestKnowledgeTracker_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	kt := NewKnowledgeTracker()

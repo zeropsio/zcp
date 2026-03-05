@@ -475,6 +475,183 @@ func TestImport_InvalidHostname(t *testing.T) {
 	}
 }
 
+func TestImport_ServiceError_Surfaced(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: api
+    type: nodejs@22
+    mode: NON_HA
+`
+	mock := platform.NewMock().
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "proj-1",
+			ProjectName: "myproject",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{
+					ID:   "svc-1",
+					Name: "api",
+					Error: &platform.APIError{
+						Code:    "SERVICE_LIMIT_REACHED",
+						Message: "maximum number of services reached",
+					},
+				},
+			},
+		})
+
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ServiceErrors) != 1 {
+		t.Fatalf("expected 1 service error, got %d", len(result.ServiceErrors))
+	}
+	se := result.ServiceErrors[0]
+	if se.Service != "api" {
+		t.Errorf("expected service=api, got %s", se.Service)
+	}
+	if se.Code != "SERVICE_LIMIT_REACHED" {
+		t.Errorf("expected code=SERVICE_LIMIT_REACHED, got %s", se.Code)
+	}
+	if se.Message != "maximum number of services reached" {
+		t.Errorf("expected message='maximum number of services reached', got %s", se.Message)
+	}
+}
+
+func TestImport_MixedSuccessAndError(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: api
+    type: nodejs@22
+    mode: NON_HA
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+`
+	mock := platform.NewMock().
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "proj-1",
+			ProjectName: "myproject",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{
+					ID:   "svc-1",
+					Name: "api",
+					Processes: []platform.Process{
+						{ID: "proc-1", ActionName: "serviceStackImport", Status: "PENDING"},
+					},
+				},
+				{
+					ID:   "svc-2",
+					Name: "db",
+					Error: &platform.APIError{
+						Code:    "QUOTA_EXCEEDED",
+						Message: "disk quota exceeded",
+					},
+				},
+			},
+		})
+
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Processes) != 1 {
+		t.Fatalf("expected 1 process, got %d", len(result.Processes))
+	}
+	if len(result.ServiceErrors) != 1 {
+		t.Fatalf("expected 1 service error, got %d", len(result.ServiceErrors))
+	}
+	if result.ServiceErrors[0].Service != "db" {
+		t.Errorf("expected error service=db, got %s", result.ServiceErrors[0].Service)
+	}
+}
+
+func TestImport_AllErrors(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: api
+    type: nodejs@22
+    mode: NON_HA
+`
+	mock := platform.NewMock().
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "proj-1",
+			ProjectName: "myproject",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{
+					ID:   "svc-1",
+					Name: "api",
+					Error: &platform.APIError{
+						Code:    "ERR1",
+						Message: "error one",
+					},
+				},
+				{
+					ID:   "svc-2",
+					Name: "db",
+					Error: &platform.APIError{
+						Code:    "ERR2",
+						Message: "error two",
+					},
+				},
+			},
+		})
+
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Processes) != 0 {
+		t.Errorf("expected 0 processes, got %d", len(result.Processes))
+	}
+	if len(result.ServiceErrors) != 2 {
+		t.Fatalf("expected 2 service errors, got %d", len(result.ServiceErrors))
+	}
+}
+
+func TestImport_FailReason_Mapped(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: api
+    type: nodejs@22
+    mode: NON_HA
+`
+	reason := "build compilation error"
+	mock := platform.NewMock().
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "proj-1",
+			ProjectName: "myproject",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{
+					ID:   "svc-1",
+					Name: "api",
+					Processes: []platform.Process{
+						{
+							ID:         "proc-1",
+							ActionName: "serviceStackImport",
+							Status:     "FAILED",
+							FailReason: &reason,
+						},
+					},
+				},
+			},
+		})
+
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Processes) != 1 {
+		t.Fatalf("expected 1 process, got %d", len(result.Processes))
+	}
+	p := result.Processes[0]
+	if p.FailReason == nil {
+		t.Fatal("expected failReason to be mapped, got nil")
+	}
+	if *p.FailReason != reason {
+		t.Errorf("expected failReason=%q, got %q", reason, *p.FailReason)
+	}
+}
+
 func TestImport_APIError(t *testing.T) {
 	t.Parallel()
 	content := `services:

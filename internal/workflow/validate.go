@@ -8,17 +8,44 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// ServicePlan is the structured plan submitted during the bootstrap "plan" step.
-type ServicePlan struct {
-	Services  []PlannedService `json:"services"`
-	CreatedAt string           `json:"createdAt"`
+// BootstrapTarget represents one runtime service and its dependencies in the bootstrap plan.
+type BootstrapTarget struct {
+	Runtime      RuntimeTarget `json:"runtime"`
+	Dependencies []Dependency  `json:"dependencies,omitempty"`
 }
 
-// PlannedService describes one service in the bootstrap plan.
-type PlannedService struct {
-	Hostname string `json:"hostname"`
-	Type     string `json:"type"`
-	Mode     string `json:"mode,omitempty"` // NON_HA or HA, defaults to NON_HA for managed services
+// RuntimeTarget describes a runtime service to bootstrap.
+type RuntimeTarget struct {
+	DevHostname string `json:"devHostname"`
+	Type        string `json:"type"`
+	IsExisting  bool   `json:"isExisting,omitempty"`
+	Simple      bool   `json:"simple,omitempty"`
+}
+
+// StageHostname derives the stage hostname from the dev hostname.
+// Returns empty for Simple mode or when the hostname doesn't end in "dev".
+func (r RuntimeTarget) StageHostname() string {
+	if r.Simple {
+		return ""
+	}
+	if base, ok := strings.CutSuffix(r.DevHostname, "dev"); ok {
+		return base + "stage"
+	}
+	return ""
+}
+
+// Dependency describes a service dependency for a bootstrap target.
+type Dependency struct {
+	Hostname   string `json:"hostname"`
+	Type       string `json:"type"`
+	Mode       string `json:"mode,omitempty"` // NON_HA or HA, defaults to NON_HA for managed services
+	Resolution string `json:"resolution"`     // CREATE, EXISTS, SHARED
+}
+
+// ServicePlan is the structured plan submitted during the bootstrap "plan" step.
+type ServicePlan struct {
+	Targets   []BootstrapTarget `json:"targets"`
+	CreatedAt string            `json:"createdAt"`
 }
 
 // ValidatePlanHostname checks that a hostname matches Zerops constraints.
@@ -40,52 +67,120 @@ func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool
 	return isManagedService(serviceType)
 }
 
-// ValidateServicePlan validates a list of planned services against constraints.
+// ValidateBootstrapTargets validates a list of bootstrap targets against constraints.
 // liveTypes may be nil — type checking is skipped when unavailable.
-// Returns the list of hostnames that had mode auto-defaulted to NON_HA.
-// Collects all errors and returns them as a batch.
-func ValidateServicePlan(services []PlannedService, liveTypes []platform.ServiceStackType) ([]string, error) {
-	if len(services) == 0 {
-		return nil, fmt.Errorf("plan must contain at least one service")
+// liveServices may be nil — CREATE/EXISTS checks are skipped when unavailable.
+// Returns the list of dependency hostnames that had mode auto-defaulted to NON_HA.
+func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.ServiceStackType, liveServices []platform.ServiceStack) ([]string, error) {
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("plan must contain at least one target")
 	}
 
-	// Derive managed base names from live types when available.
 	liveManaged := knowledge.ManagedBaseNames(liveTypes)
+
+	// Build set of live service hostnames for CREATE/EXISTS validation.
+	liveServiceNames := make(map[string]bool, len(liveServices))
+	for _, svc := range liveServices {
+		liveServiceNames[svc.Name] = true
+	}
+
+	// Collect all CREATE hostnames across targets for SHARED validation.
+	createHostnames := make(map[string]bool)
+	for _, target := range targets {
+		for _, dep := range target.Dependencies {
+			if dep.Resolution == "CREATE" {
+				createHostnames[dep.Hostname] = true
+			}
+		}
+	}
 
 	var errs []string
 	var defaulted []string
-	seen := make(map[string]bool, len(services))
-	for i, svc := range services {
-		if err := ValidatePlanHostname(svc.Hostname); err != nil {
-			errs = append(errs, fmt.Sprintf("service %q: %v", svc.Hostname, err))
-			continue
-		}
-		if seen[svc.Hostname] {
-			errs = append(errs, fmt.Sprintf("duplicate hostname %q", svc.Hostname))
-			continue
-		}
-		seen[svc.Hostname] = true
 
-		if svc.Type == "" {
-			errs = append(errs, fmt.Sprintf("service %q has empty type", svc.Hostname))
+	for i, target := range targets {
+		rt := target.Runtime
+
+		// Validate dev hostname.
+		if err := ValidatePlanHostname(rt.DevHostname); err != nil {
+			errs = append(errs, fmt.Sprintf("target %q: %v", rt.DevHostname, err))
 			continue
 		}
 
-		// Type check against live catalog.
-		if liveTypes != nil {
-			if !typeExists(svc.Type, liveTypes) {
-				errs = append(errs, fmt.Sprintf("service %q type %q not found in available service types", svc.Hostname, svc.Type))
+		// Validate runtime type against live catalog.
+		if rt.Type == "" {
+			errs = append(errs, fmt.Sprintf("target %q has empty type", rt.DevHostname))
+			continue
+		}
+		if liveTypes != nil && !typeExists(rt.Type, liveTypes) {
+			errs = append(errs, fmt.Sprintf("target %q type %q not found in available service types", rt.DevHostname, rt.Type))
+			continue
+		}
+
+		// H7: validate derived stage hostname length for standard mode.
+		if !rt.Simple {
+			stageHostname := rt.StageHostname()
+			if stageHostname == "" {
+				errs = append(errs, fmt.Sprintf("target %q: dev hostname must end in 'dev' for standard mode (or set simple=true)", rt.DevHostname))
+				continue
+			}
+			if err := ValidatePlanHostname(stageHostname); err != nil {
+				errs = append(errs, fmt.Sprintf("target %q: derived stage hostname %q: %v", rt.DevHostname, stageHostname, err))
 				continue
 			}
 		}
 
-		// Managed services: defaults to NON_HA for managed services.
-		if isManagedTypeWithLive(svc.Type, liveManaged) {
-			if svc.Mode == "" {
-				services[i].Mode = "NON_HA"
-				defaulted = append(defaulted, svc.Hostname)
-			} else if svc.Mode != "HA" && svc.Mode != "NON_HA" {
-				errs = append(errs, fmt.Sprintf("service %q mode %q must be HA or NON_HA", svc.Hostname, svc.Mode))
+		// Validate dependencies.
+		depSeen := make(map[string]bool, len(target.Dependencies))
+		for j, dep := range target.Dependencies {
+			if err := ValidatePlanHostname(dep.Hostname); err != nil {
+				errs = append(errs, fmt.Sprintf("target %q dependency %q: %v", rt.DevHostname, dep.Hostname, err))
+				continue
+			}
+			if depSeen[dep.Hostname] {
+				errs = append(errs, fmt.Sprintf("target %q: duplicate dependency hostname %q", rt.DevHostname, dep.Hostname))
+				continue
+			}
+			depSeen[dep.Hostname] = true
+
+			if dep.Type == "" {
+				errs = append(errs, fmt.Sprintf("target %q dependency %q has empty type", rt.DevHostname, dep.Hostname))
+				continue
+			}
+			if liveTypes != nil && !typeExists(dep.Type, liveTypes) {
+				errs = append(errs, fmt.Sprintf("target %q dependency %q type %q not found in available service types", rt.DevHostname, dep.Hostname, dep.Type))
+				continue
+			}
+
+			// Resolution validation.
+			switch dep.Resolution {
+			case "CREATE":
+				if liveServices != nil && liveServiceNames[dep.Hostname] {
+					errs = append(errs, fmt.Sprintf("target %q dependency %q: CREATE but service already exists", rt.DevHostname, dep.Hostname))
+					continue
+				}
+			case "EXISTS":
+				if liveServices != nil && !liveServiceNames[dep.Hostname] {
+					errs = append(errs, fmt.Sprintf("target %q dependency %q: EXISTS but service not found in project", rt.DevHostname, dep.Hostname))
+					continue
+				}
+			case "SHARED":
+				if !createHostnames[dep.Hostname] {
+					errs = append(errs, fmt.Sprintf("target %q dependency %q: SHARED resolution requires another target to CREATE it", rt.DevHostname, dep.Hostname))
+					continue
+				}
+			default:
+				errs = append(errs, fmt.Sprintf("target %q dependency %q: invalid resolution %q (must be CREATE, EXISTS, or SHARED)", rt.DevHostname, dep.Hostname, dep.Resolution))
+				continue
+			}
+
+			// Mode defaulting for managed services.
+			if isManagedTypeWithLive(dep.Type, liveManaged) {
+				if dep.Mode == "" {
+					targets[i].Dependencies[j].Mode = "NON_HA"
+					defaulted = append(defaulted, dep.Hostname)
+				} else if dep.Mode != "HA" && dep.Mode != "NON_HA" {
+					errs = append(errs, fmt.Sprintf("target %q dependency %q mode %q must be HA or NON_HA", rt.DevHostname, dep.Hostname, dep.Mode))
+				}
 			}
 		}
 	}

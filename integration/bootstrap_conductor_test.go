@@ -1,7 +1,7 @@
 // Tests for: integration — bootstrap conductor full E2E flow through MCP server.
 //
 // Exercises the complete bootstrap conductor lifecycle:
-// start → complete all 11 steps → auto-evidence → auto-transition → DONE
+// start → complete all 5 steps → auto-evidence → auto-transition → DONE
 // Also tests: skip flow, status recovery, error cases.
 
 package integration_test
@@ -80,11 +80,11 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 	if err := json.Unmarshal([]byte(startText), &startResp); err != nil {
 		t.Fatalf("parse start response: %v", err)
 	}
-	if startResp.Progress.Total != 11 {
-		t.Fatalf("total steps: want 11, got %d", startResp.Progress.Total)
+	if startResp.Progress.Total != 5 {
+		t.Fatalf("total steps: want 5, got %d", startResp.Progress.Total)
 	}
-	if startResp.Current == nil || startResp.Current.Name != "detect" {
-		t.Fatal("expected first step to be 'detect'")
+	if startResp.Current == nil || startResp.Current.Name != "discover" {
+		t.Fatal("expected first step to be 'discover'")
 	}
 	if startResp.SessionID == "" {
 		t.Fatal("expected non-empty session ID")
@@ -98,25 +98,19 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 		t.Errorf("guidance too short (%d chars), expected rich instructions", len(startResp.Current.Guidance))
 	}
 	if len(startResp.Current.Tools) == 0 {
-		t.Error("expected non-empty tools list for detect step")
+		t.Error("expected non-empty tools list for discover step")
 	}
 
-	// Step 2: Complete all 11 steps sequentially.
+	// Step 2: Complete all 5 steps sequentially.
 	steps := []struct {
 		name        string
 		attestation string
 	}{
-		{"detect", "FRESH project detected — no runtime services, 2 managed services found (db, cache)"},
-		{"plan", "Planned: bundev/bunstage (bun@1.2), db (postgresql@16). All hostnames validated [a-z0-9]."},
-		{"load-knowledge", "Loaded bun runtime briefing + infrastructure rules. Recipe: hono-bun loaded."},
-		{"generate-import", "import.yml generated with 4 services: bundev, bunstage, db. Validated hostnames and types."},
-		{"import-services", "All services imported. bundev=RUNNING, bunstage=NEW, db=RUNNING. Process ID proc-123 FINISHED."},
-		{"mount-dev", "Mounted bundev at /var/www/bundev/. Stage and managed services skipped as expected."},
-		{"discover-envs", "Discovered db envs: connectionString, host, port, user, password, dbName. Recorded all 6 vars."},
-		{"generate-code", "zerops.yml and app code written to /var/www/bundev/ with correct env var mappings and /status endpoint."},
+		{"discover", "FRESH project detected. Planned: bundev/bunstage (bun@1.2), db (postgresql@16). All hostnames validated."},
+		{"provision", "import.yml generated, services imported. bundev=RUNNING, bunstage=NEW, db=RUNNING. Dev mounted, envs discovered."},
+		{"generate", "zerops.yml and app code written to /var/www/bundev/ with correct env var mappings and /status endpoint."},
 		{"deploy", "Deployed bundev: /status returns 200 with SELECT 1 proof. Deployed bunstage: /status 200. Both subdomains enabled."},
-		{"verify", "Independent verification: bundev RUNNING + HTTP 200, bunstage RUNNING + HTTP 200, db RUNNING. 3/3 healthy."},
-		{"report", "All services operational. Dev: https://bundev-proj1.zerops.app, Stage: https://bunstage-proj1.zerops.app"},
+		{"verify", "Independent verification: bundev RUNNING + HTTP 200, bunstage RUNNING + HTTP 200, db RUNNING. 3/3 healthy. Report presented."},
 	}
 
 	var lastResp workflow.BootstrapResponse
@@ -150,7 +144,7 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 		}
 	}
 
-	// After all 11 steps: bootstrap complete.
+	// After all 5 steps: bootstrap complete.
 	// Use a fresh variable — json.Unmarshal doesn't zero omitted pointer fields.
 	var finalResp workflow.BootstrapResponse
 	finalRaw := callAndGetText(t, session, "zerops_workflow", map[string]any{
@@ -162,8 +156,8 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 	if finalResp.Current != nil {
 		t.Errorf("current should be nil after all steps complete, got: name=%q", finalResp.Current.Name)
 	}
-	if finalResp.Progress.Completed != 11 {
-		t.Errorf("final completed: want 11, got %d", finalResp.Progress.Completed)
+	if finalResp.Progress.Completed != 5 {
+		t.Errorf("final completed: want 5, got %d", finalResp.Progress.Completed)
 	}
 	if !strings.Contains(strings.ToLower(finalResp.Message), "complete") {
 		t.Errorf("final message should contain 'complete', got: %q", finalResp.Message)
@@ -182,36 +176,25 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 		"action": "start", "workflow": "bootstrap", "intent": "managed-only project",
 	})
 
-	// Complete mandatory steps up to import-services.
-	mandatorySteps := []string{"detect", "plan", "load-knowledge", "generate-import", "import-services"}
-	for _, step := range mandatorySteps {
+	// Complete mandatory steps: discover and provision.
+	for _, step := range []string{"discover", "provision"} {
 		callAndGetText(t, session, "zerops_workflow", map[string]any{
 			"action": "complete", "step": step,
 			"attestation": "Completed " + step + " for managed-only project",
 		})
 	}
 
-	// Skip mount-dev (no runtime services).
+	// Skip generate (no runtime services).
 	skipText := callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "skip", "step": "mount-dev", "reason": "managed-only project, no runtime services to mount",
+		"action": "skip", "step": "generate", "reason": "managed-only project, no code to generate",
 	})
 	var skipResp workflow.BootstrapResponse
 	if err := json.Unmarshal([]byte(skipText), &skipResp); err != nil {
 		t.Fatalf("parse skip response: %v", err)
 	}
-	if skipResp.Current == nil || skipResp.Current.Name != "discover-envs" {
-		t.Fatal("after skipping mount-dev, expected discover-envs")
+	if skipResp.Current == nil || skipResp.Current.Name != "deploy" {
+		t.Fatal("after skipping generate, expected deploy")
 	}
-
-	// Skip discover-envs (no managed services needing env discovery).
-	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "skip", "step": "discover-envs", "reason": "env vars already known from import",
-	})
-
-	// Skip generate-code (no runtime services).
-	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "skip", "step": "generate-code", "reason": "managed-only project, no code to generate",
-	})
 
 	// Skip deploy (no runtime services).
 	skipText = callAndGetText(t, session, "zerops_workflow", map[string]any{
@@ -224,14 +207,10 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 		t.Fatal("after skipping deploy, expected verify")
 	}
 
-	// Complete verify and report.
-	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "verify",
-		"attestation": "All managed services verified RUNNING: db, cache",
-	})
+	// Complete verify.
 	finalText := callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "report",
-		"attestation": "Report presented to user: db and cache running, no runtime services",
+		"action": "complete", "step": "verify",
+		"attestation": "All managed services verified RUNNING: db, cache. Report presented to user.",
 	})
 
 	var finalResp workflow.BootstrapResponse
@@ -239,9 +218,9 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 		t.Fatalf("parse final response: %v", err)
 	}
 
-	// 7 completed + 4 skipped = 11 total.
-	if finalResp.Progress.Completed != 11 {
-		t.Errorf("completed: want 11, got %d", finalResp.Progress.Completed)
+	// 3 completed + 2 skipped = 5 total.
+	if finalResp.Progress.Completed != 5 {
+		t.Errorf("completed: want 5, got %d", finalResp.Progress.Completed)
 	}
 	if finalResp.Current != nil {
 		t.Error("current should be nil after completion")
@@ -258,11 +237,11 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 			completedCount++
 		}
 	}
-	if skippedCount != 4 {
-		t.Errorf("skipped count: want 4, got %d", skippedCount)
+	if skippedCount != 2 {
+		t.Errorf("skipped count: want 2, got %d", skippedCount)
 	}
-	if completedCount != 7 {
-		t.Errorf("completed count: want 7, got %d", completedCount)
+	if completedCount != 3 {
+		t.Errorf("completed count: want 3, got %d", completedCount)
 	}
 }
 
@@ -273,17 +252,13 @@ func TestIntegration_BootstrapConductor_StatusRecovery(t *testing.T) {
 	session, cleanup := setupWorkflowServer(t, mock)
 	defer cleanup()
 
-	// Start bootstrap and complete a few steps.
+	// Start bootstrap and complete a step.
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
 		"action": "start", "workflow": "bootstrap", "intent": "recovery test",
 	})
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "detect",
-		"attestation": "FRESH project — no existing services detected",
-	})
-	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "plan",
-		"attestation": "Plan: appdev, appstage, db — all hostnames validated",
+		"action": "complete", "step": "discover",
+		"attestation": "FRESH project — no existing services. Plan: appdev, appstage, db validated.",
 	})
 
 	// Simulate context compaction: call status to get all attestations.
@@ -296,11 +271,11 @@ func TestIntegration_BootstrapConductor_StatusRecovery(t *testing.T) {
 		t.Fatalf("parse status response: %v", err)
 	}
 
-	if statusResp.Progress.Completed != 2 {
-		t.Errorf("completed: want 2, got %d", statusResp.Progress.Completed)
+	if statusResp.Progress.Completed != 1 {
+		t.Errorf("completed: want 1, got %d", statusResp.Progress.Completed)
 	}
-	if statusResp.Current == nil || statusResp.Current.Name != "load-knowledge" {
-		t.Error("expected current step to be 'load-knowledge'")
+	if statusResp.Current == nil || statusResp.Current.Name != "provision" {
+		t.Error("expected current step to be 'provision'")
 	}
 	if statusResp.SessionID == "" {
 		t.Error("expected session ID in status response")
@@ -308,19 +283,16 @@ func TestIntegration_BootstrapConductor_StatusRecovery(t *testing.T) {
 
 	// Verify step statuses are preserved.
 	if statusResp.Progress.Steps[0].Status != "complete" {
-		t.Errorf("detect status: want complete, got %s", statusResp.Progress.Steps[0].Status)
+		t.Errorf("discover status: want complete, got %s", statusResp.Progress.Steps[0].Status)
 	}
-	if statusResp.Progress.Steps[1].Status != "complete" {
-		t.Errorf("plan status: want complete, got %s", statusResp.Progress.Steps[1].Status)
-	}
-	if statusResp.Progress.Steps[2].Status != "in_progress" {
-		t.Errorf("load-knowledge status: want in_progress, got %s", statusResp.Progress.Steps[2].Status)
+	if statusResp.Progress.Steps[1].Status != "in_progress" {
+		t.Errorf("provision status: want in_progress, got %s", statusResp.Progress.Steps[1].Status)
 	}
 
 	// Verify we can continue from where we left off.
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "load-knowledge",
-		"attestation": "Loaded runtime briefing and infrastructure rules successfully",
+		"action": "complete", "step": "provision",
+		"attestation": "Services imported, dev mounted, env vars discovered successfully",
 	})
 
 	status2Text := callAndGetText(t, session, "zerops_workflow", map[string]any{
@@ -330,11 +302,11 @@ func TestIntegration_BootstrapConductor_StatusRecovery(t *testing.T) {
 	if err := json.Unmarshal([]byte(status2Text), &status2Resp); err != nil {
 		t.Fatalf("parse status2 response: %v", err)
 	}
-	if status2Resp.Progress.Completed != 3 {
-		t.Errorf("completed after resume: want 3, got %d", status2Resp.Progress.Completed)
+	if status2Resp.Progress.Completed != 2 {
+		t.Errorf("completed after resume: want 2, got %d", status2Resp.Progress.Completed)
 	}
-	if status2Resp.Current == nil || status2Resp.Current.Name != "generate-import" {
-		t.Error("expected current step to be 'generate-import' after resume")
+	if status2Resp.Current == nil || status2Resp.Current.Name != "generate" {
+		t.Error("expected current step to be 'generate' after resume")
 	}
 }
 
@@ -347,7 +319,7 @@ func TestIntegration_BootstrapConductor_ErrorCases(t *testing.T) {
 
 	// Error: complete without starting.
 	result := callAndGetResult(t, session, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "detect", "attestation": "test attestation here",
+		"action": "complete", "step": "discover", "attestation": "test attestation here",
 	})
 	if !result.IsError {
 		t.Error("expected error completing step without active bootstrap")
@@ -376,23 +348,23 @@ func TestIntegration_BootstrapConductor_ErrorCases(t *testing.T) {
 
 	// Error: complete wrong step.
 	result = callAndGetResult(t, session, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "plan", "attestation": "wrong step attestation here",
+		"action": "complete", "step": "provision", "attestation": "wrong step attestation here",
 	})
 	if !result.IsError {
 		t.Error("expected error completing out-of-order step")
 	}
 
-	// Error: skip mandatory step (detect).
+	// Error: skip mandatory step (discover).
 	result = callAndGetResult(t, session, "zerops_workflow", map[string]any{
-		"action": "skip", "step": "detect", "reason": "want to skip",
+		"action": "skip", "step": "discover", "reason": "want to skip",
 	})
 	if !result.IsError {
-		t.Error("expected error skipping mandatory step 'detect'")
+		t.Error("expected error skipping mandatory step 'discover'")
 	}
 
 	// Error: short attestation.
 	result = callAndGetResult(t, session, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "detect", "attestation": "short",
+		"action": "complete", "step": "discover", "attestation": "short",
 	})
 	if !result.IsError {
 		t.Error("expected error for short attestation")
@@ -423,7 +395,7 @@ func TestIntegration_BootstrapConductor_ResetAndRestart(t *testing.T) {
 		"action": "start", "workflow": "bootstrap", "intent": "will reset",
 	})
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "complete", "step": "detect", "attestation": "FRESH project detected successfully",
+		"action": "complete", "step": "discover", "attestation": "FRESH project detected successfully",
 	})
 
 	// Reset.
@@ -445,8 +417,8 @@ func TestIntegration_BootstrapConductor_ResetAndRestart(t *testing.T) {
 	if restartResp.Intent != "restarted" {
 		t.Errorf("intent: want 'restarted', got %q", restartResp.Intent)
 	}
-	if restartResp.Current == nil || restartResp.Current.Name != "detect" {
-		t.Error("expected fresh start at detect step")
+	if restartResp.Current == nil || restartResp.Current.Name != "discover" {
+		t.Error("expected fresh start at discover step")
 	}
 	if restartResp.Progress.Completed != 0 {
 		t.Errorf("completed: want 0 after restart, got %d", restartResp.Progress.Completed)
@@ -466,24 +438,14 @@ func TestIntegration_BootstrapConductor_StepGuidanceQuality(t *testing.T) {
 	})
 
 	expectedTools := map[string]string{
-		"detect":          "zerops_discover",
-		"plan":            "zerops_knowledge",
-		"load-knowledge":  "zerops_knowledge",
-		"generate-import": "zerops_knowledge",
-		"import-services": "zerops_import",
-		"mount-dev":       "zerops_mount",
-		"discover-envs":   "zerops_discover",
-		"generate-code":   "zerops_knowledge",
-		"deploy":          "zerops_deploy",
-		"verify":          "zerops_discover",
-		"report":          "zerops_discover",
+		"discover":  "zerops_discover",
+		"provision": "zerops_import",
+		"generate":  "zerops_knowledge",
+		"deploy":    "zerops_deploy",
+		"verify":    "zerops_discover",
 	}
 
-	steps := []string{
-		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs", "generate-code",
-		"deploy", "verify", "report",
-	}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
 
 	// Check first step guidance from start response.
 	statusText := callAndGetText(t, session, "zerops_workflow", map[string]any{

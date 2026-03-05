@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -123,13 +124,29 @@ func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, e
 }
 
 // BootstrapComplete completes the current step and returns the next.
-func (e *Engine) BootstrapComplete(stepName, attestation string) (*BootstrapResponse, error) {
+// If checker is non-nil, it runs before completing the step; a failed check
+// returns a structured failure (not an error) with CheckResult populated.
+func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attestation string, checker StepChecker) (*BootstrapResponse, error) {
 	state, err := LoadSession(e.stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap complete: %w", err)
 	}
 	if state.Bootstrap == nil || !state.Bootstrap.Active {
 		return nil, fmt.Errorf("bootstrap complete: bootstrap not active")
+	}
+
+	// Run hard check before completing step.
+	if checker != nil {
+		result, checkErr := checker(ctx, state.Bootstrap.Plan)
+		if checkErr != nil {
+			return nil, fmt.Errorf("step check: %w", checkErr)
+		}
+		if result != nil && !result.Passed {
+			resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent)
+			resp.CheckResult = result
+			resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", stepName, result.Summary)
+			return resp, nil
+		}
 	}
 
 	if err := state.Bootstrap.CompleteStep(stepName, attestation); err != nil {
@@ -157,7 +174,8 @@ func (e *Engine) BootstrapComplete(stepName, attestation string) (*BootstrapResp
 
 // BootstrapCompletePlan validates a structured plan, completes the "plan" step, and stores the plan.
 // liveTypes may be nil — type checking is skipped when unavailable.
-func (e *Engine) BootstrapCompletePlan(services []PlannedService, liveTypes []platform.ServiceStackType) (*BootstrapResponse, error) {
+// liveServices may be nil — CREATE/EXISTS checks are skipped when unavailable.
+func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []platform.ServiceStackType, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
 	state, err := LoadSession(e.stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
@@ -165,11 +183,11 @@ func (e *Engine) BootstrapCompletePlan(services []PlannedService, liveTypes []pl
 	if state.Bootstrap == nil || !state.Bootstrap.Active {
 		return nil, fmt.Errorf("bootstrap complete plan: bootstrap not active")
 	}
-	if state.Bootstrap.CurrentStepName() != "plan" {
-		return nil, fmt.Errorf("bootstrap complete plan: current step is %q, not \"plan\"", state.Bootstrap.CurrentStepName())
+	if state.Bootstrap.CurrentStepName() != "discover" {
+		return nil, fmt.Errorf("bootstrap complete plan: current step is %q, not \"discover\"", state.Bootstrap.CurrentStepName())
 	}
 
-	defaulted, err := ValidateServicePlan(services, liveTypes)
+	defaulted, err := ValidateBootstrapTargets(targets, liveTypes, liveServices)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
 	}
@@ -180,26 +198,30 @@ func (e *Engine) BootstrapCompletePlan(services []PlannedService, liveTypes []pl
 		defaultedSet[h] = true
 	}
 	var parts []string
-	for _, svc := range services {
-		entry := svc.Hostname + " (" + svc.Type
-		if svc.Mode != "" {
-			entry += ", " + svc.Mode
-			if defaultedSet[svc.Hostname] {
-				entry += " [defaulted]"
-			}
-		}
-		entry += ")"
+	for _, target := range targets {
+		entry := target.Runtime.DevHostname + " (" + target.Runtime.Type + ")"
 		parts = append(parts, entry)
+		for _, dep := range target.Dependencies {
+			depEntry := dep.Hostname + " (" + dep.Type
+			if dep.Mode != "" {
+				depEntry += ", " + dep.Mode
+				if defaultedSet[dep.Hostname] {
+					depEntry += " [defaulted]"
+				}
+			}
+			depEntry += ")"
+			parts = append(parts, depEntry)
+		}
 	}
-	attestation := "Planned services: " + strings.Join(parts, ", ")
+	attestation := "Planned targets: " + strings.Join(parts, ", ")
 
-	if err := state.Bootstrap.CompleteStep("plan", attestation); err != nil {
+	if err := state.Bootstrap.CompleteStep("discover", attestation); err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
 	}
 
 	// Store plan in bootstrap state.
 	state.Bootstrap.Plan = &ServicePlan{
-		Services:  services,
+		Targets:   targets,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -239,6 +261,24 @@ func (e *Engine) BootstrapSkip(stepName, reason string) (*BootstrapResponse, err
 		return nil, fmt.Errorf("bootstrap skip save: %w", err)
 	}
 	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
+}
+
+// StoreDiscoveredEnvVars saves discovered environment variable names for a service hostname.
+func (e *Engine) StoreDiscoveredEnvVars(hostname string, vars []string) error {
+	state, err := LoadSession(e.stateDir)
+	if err != nil {
+		return fmt.Errorf("store discovered env vars: %w", err)
+	}
+	if state.Bootstrap == nil {
+		return fmt.Errorf("store discovered env vars: no bootstrap state")
+	}
+	if state.Bootstrap.DiscoveredEnvVars == nil {
+		state.Bootstrap.DiscoveredEnvVars = make(map[string][]string)
+	}
+	state.Bootstrap.DiscoveredEnvVars[hostname] = vars
+
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return saveState(e.stateDir, state)
 }
 
 // BootstrapStatus returns the current bootstrap progress (read-only).

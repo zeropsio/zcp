@@ -2,8 +2,9 @@ package ops
 
 import (
 	"context"
+	"fmt"
 	"net/http"
-	"time"
+	"sync"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -34,7 +35,7 @@ type VerifyResult struct {
 
 // CheckResult is the result of a single verification check.
 type CheckResult struct {
-	Name       string `json:"name"`                 // "service_running", "no_error_logs", etc.
+	Name       string `json:"name"`                 // "service_running", "error_logs", etc.
 	Status     string `json:"status"`               // "pass", "fail", "skip"
 	Detail     string `json:"detail,omitempty"`     // human-readable detail on fail/skip
 	HTTPStatus int    `json:"httpStatus,omitempty"` // HTTP status code (0 = N/A)
@@ -90,7 +91,7 @@ func Verify(
 		result.Type = "managed"
 	}
 
-	// Check 1: service_running
+	// Check 1: service_running (must pass first).
 	runningCheck := checkServiceRunning(svc)
 	result.Checks = append(result.Checks, runningCheck)
 
@@ -100,57 +101,205 @@ func Verify(
 		return result, nil
 	}
 
-	// If not running, skip remaining checks.
+	// Classify runtime for check dispatch.
+	rc := classifyRuntime(
+		svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+		len(svc.Ports) > 0,
+	)
+
+	// If not running, skip remaining checks based on runtime class.
 	if runningCheck.Status != CheckPass {
-		skipDetail := "service not running"
-		result.Checks = append(result.Checks,
-			CheckResult{Name: "no_error_logs", Status: CheckSkip, Detail: skipDetail},
-			CheckResult{Name: "startup_detected", Status: CheckSkip, Detail: skipDetail},
-			CheckResult{Name: "no_recent_errors", Status: CheckSkip, Detail: skipDetail},
-			CheckResult{Name: "http_health", Status: CheckSkip, Detail: skipDetail},
-			CheckResult{Name: "http_status", Status: CheckSkip, Detail: skipDetail},
-		)
+		result.Checks = append(result.Checks, skipChecksForClass(rc)...)
 		result.Status = aggregateStatus(result.Checks)
 		return result, nil
 	}
 
-	// Get log access (single call, reused across log checks).
-	logAccess, logErr := client.GetProjectLog(ctx, projectID)
+	// Run checks in parallel groups.
+	var (
+		mu         sync.Mutex
+		logChecks  []CheckResult
+		httpChecks []CheckResult
+		wg         sync.WaitGroup
+	)
 
-	// Check 2: no_error_logs (5m)
-	result.Checks = append(result.Checks,
-		checkErrorLogs(ctx, fetcher, logAccess, logErr, svc.ID, 5*time.Minute))
-
-	// Check 3: startup_detected
-	result.Checks = append(result.Checks,
-		checkStartupDetected(ctx, fetcher, logAccess, logErr, svc.ID))
-
-	// Check 4: no_recent_errors (2m)
-	result.Checks = append(result.Checks,
-		checkErrorLogs2m(ctx, fetcher, logAccess, logErr, svc.ID))
-
-	// Resolve subdomain URL for HTTP checks.
-	subdomainURL := resolveSubdomainURL(ctx, client, projectID, svc)
-
-	if subdomainURL == "" {
-		skipDetail := "subdomain not enabled — call zerops_subdomain action=enable first"
-		if svc.SubdomainAccess {
-			skipDetail = "cannot resolve subdomain URL"
-		}
-		result.Checks = append(result.Checks,
-			CheckResult{Name: "http_health", Status: CheckSkip, Detail: skipDetail},
-			CheckResult{Name: "http_status", Status: CheckSkip, Detail: skipDetail},
-		)
-	} else {
-		// Check 5: http_health
-		result.Checks = append(result.Checks,
-			checkHTTPHealth(ctx, httpClient, subdomainURL+"/health"))
-
-		// Check 6: http_status
-		result.Checks = append(result.Checks,
-			checkHTTPStatus(ctx, httpClient, subdomainURL+"/status"))
+	// Group A: log checks (single API call).
+	needLogs := rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeWorker
+	if needLogs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			logAccess, logErr := client.GetProjectLog(ctx, projectID)
+			checks := batchLogChecks(ctx, fetcher, logAccess, logErr, svc.ID)
+			if rc == RuntimeDynamic {
+				checks = append(checks, checkStartupDetected(ctx, fetcher, logAccess, logErr, svc.ID))
+			}
+			mu.Lock()
+			logChecks = checks
+			mu.Unlock()
+		}()
 	}
+
+	// Group B: HTTP checks.
+	needHTTP := rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeStatic
+	if needHTTP {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			subdomainURL := resolveSubdomainURL(ctx, client, projectID, svc)
+			var checks []CheckResult
+			if subdomainURL == "" {
+				skipDetail := "subdomain not enabled — call zerops_subdomain action=enable first"
+				if svc.SubdomainAccess {
+					skipDetail = "cannot resolve subdomain URL"
+				}
+				checks = append(checks, CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail})
+				if rc != RuntimeStatic {
+					checks = append(checks, CheckResult{Name: "http_status", Status: CheckSkip, Detail: skipDetail})
+				}
+			} else {
+				checks = append(checks, checkHTTPRoot(ctx, httpClient, subdomainURL+"/"))
+				if rc != RuntimeStatic {
+					checks = append(checks, checkHTTPStatus(ctx, httpClient, subdomainURL+"/status"))
+				}
+			}
+			mu.Lock()
+			httpChecks = checks
+			mu.Unlock()
+		}()
+	}
+
+	wg.Wait()
+
+	// Assemble checks in deterministic order: logs, then HTTP.
+	result.Checks = append(result.Checks, logChecks...)
+	result.Checks = append(result.Checks, httpChecks...)
 
 	result.Status = aggregateStatus(result.Checks)
 	return result, nil
+}
+
+// skipChecksForClass returns skip results for all checks applicable to the runtime class.
+func skipChecksForClass(rc RuntimeClass) []CheckResult {
+	skipDetail := "service not running"
+	var checks []CheckResult
+
+	switch rc {
+	case RuntimeDynamic:
+		checks = append(checks,
+			CheckResult{Name: "error_logs", Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: "startup_detected", Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: "http_status", Status: CheckSkip, Detail: skipDetail},
+		)
+	case RuntimeImplicit:
+		checks = append(checks,
+			CheckResult{Name: "error_logs", Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail},
+			CheckResult{Name: "http_status", Status: CheckSkip, Detail: skipDetail},
+		)
+	case RuntimeStatic:
+		checks = append(checks,
+			CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail},
+		)
+	case RuntimeWorker:
+		checks = append(checks,
+			CheckResult{Name: "error_logs", Status: CheckSkip, Detail: skipDetail},
+		)
+	case RuntimeManaged:
+		// Managed services only get service_running check — no extra skips needed.
+	}
+
+	return checks
+}
+
+// VerifyAllResult is the verification result for all services in a project.
+type VerifyAllResult struct {
+	Summary  string         `json:"summary"`
+	Status   string         `json:"status"` // healthy/degraded/unhealthy
+	Services []VerifyResult `json:"services"`
+}
+
+// VerifyAll runs health verification for all non-system services in a project.
+func VerifyAll(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	httpClient HTTPDoer,
+	projectID string,
+) (*VerifyAllResult, error) {
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter to user-facing services.
+	var targets []platform.ServiceStack
+	for _, svc := range services {
+		if !svc.IsSystem() {
+			targets = append(targets, svc)
+		}
+	}
+
+	if len(targets) == 0 {
+		return &VerifyAllResult{
+			Summary:  "0/0 healthy",
+			Status:   StatusHealthy,
+			Services: []VerifyResult{},
+		}, nil
+	}
+
+	// Run Verify per service with bounded concurrency.
+	results := make([]VerifyResult, len(targets))
+	sem := make(chan struct{}, 5) // max 5 concurrent
+	var wg sync.WaitGroup
+
+	for i, svc := range targets {
+		wg.Add(1)
+		go func(idx int, hostname string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			r, verifyErr := Verify(ctx, client, fetcher, httpClient, projectID, hostname)
+			if verifyErr != nil {
+				results[idx] = VerifyResult{
+					Hostname: hostname,
+					Type:     "unknown",
+					Status:   StatusUnhealthy,
+					Checks: []CheckResult{
+						{Name: "verify_error", Status: CheckFail, Detail: verifyErr.Error()},
+					},
+				}
+				return
+			}
+			results[idx] = *r
+		}(i, svc.Name)
+	}
+	wg.Wait()
+
+	// Aggregate.
+	healthy := 0
+	hasUnhealthy := false
+	for i := range results {
+		if results[i].Status == StatusHealthy {
+			healthy++
+		} else {
+			hasUnhealthy = true
+		}
+	}
+
+	overall := StatusHealthy
+	if hasUnhealthy {
+		if healthy == 0 {
+			overall = StatusUnhealthy
+		} else {
+			overall = StatusDegraded
+		}
+	}
+
+	return &VerifyAllResult{
+		Summary:  fmt.Sprintf("%d/%d healthy", healthy, len(targets)),
+		Status:   overall,
+		Services: results,
+	}, nil
 }

@@ -15,7 +15,7 @@ Two phases: generate correct configuration (the hard part), then deploy and veri
 
 ## Phase 1: Configuration
 
-<section name="detect">
+<section name="discover">
 ### Step 0 — Detect project state and route
 
 Call `zerops_discover` to see what exists. Then classify:
@@ -32,9 +32,7 @@ Route:
 - FRESH: proceed normally through all steps
 - CONFORMANT: if stack matches, skip bootstrap — route to deploy workflow (`zerops_workflow action="start" workflow="deploy"`). If user wants a different stack, ASK before making any changes. Do NOT delete existing services without explicit user approval.
 - NON_CONFORMANT: STOP. Present existing services to user with types and status. Ask how to proceed. NEVER delete without explicit user approval naming each service.
-</section>
 
-<section name="plan">
 ### Step 1 — Identify stack components + environment mode
 
 > **mode defaults to NON_HA for managed services** — databases, caches, object-storage, shared-storage.
@@ -60,9 +58,7 @@ Multi-runtime naming: use role or runtime as prefix — `phpdev`/`phpstage` + `b
 - **Full** (default): Configure -> validate -> deploy dev -> verify -> deploy stage -> verify.
 - **Dev-only**: Configure -> deploy to dev only, skip stage. When user says "just get it running" or "prototype."
 - **Quick**: Skip config, deploy with existing zerops.yml. Only when user says "just deploy" and config already exists -> redirect to deploy workflow.
-</section>
 
-<section name="load-knowledge">
 ### Step 2 — Load stack-specific knowledge
 
 **Mandatory.** Call `zerops_knowledge` with the identified runtime and services:
@@ -117,10 +113,10 @@ Steps 2 and 3 together provide everything needed for YAML generation — stack-s
 If the briefing doesn't cover your stack, call `zerops_knowledge recipe="{name}"` before generating YAML.
 </section>
 
-<section name="generate-import">
+<section name="provision">
 ### Step 4 — Generate import.yml
 
-Using the loaded knowledge from Steps 2+3, generate import.yml ONLY. Do NOT write zerops.yml or application code — that happens in the generate-code step AFTER env var discovery.
+Using the loaded knowledge from Steps 2+3, generate import.yml ONLY. Do NOT write zerops.yml or application code — that happens in the generate step AFTER env var discovery.
 
 > **mode defaults to NON_HA for managed services** — databases, caches, object-storage, shared-storage.
 > Set `HA` explicitly for production.
@@ -155,9 +151,41 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 | Mode present | Managed services default to NON_HA if omitted |
 
 Present import.yml to the user for review before proceeding.
+
+### Env var discovery protocol (mandatory before generate)
+
+After importing services and waiting for them to reach RUNNING, discover the ACTUAL env vars available to each service. This data is critical for writing correct zerops.yml envVariables and for subagent prompts.
+
+**Single call — returns env vars for ALL services:**
+```
+zerops_discover includeEnvs=true
+```
+
+Record which env vars exist. Common patterns by service type:
+
+| Service type | Available env vars | Notes |
+|-------------|-------------------|-------|
+| PostgreSQL | `{host}_connectionString`, `{host}_host`, `{host}_port`, `{host}_user`, `{host}_password`, `{host}_dbName` | connectionString preferred |
+| Valkey/KeyDB | `{host}_host`, `{host}_port` | **No password** — private network, no auth needed |
+| MariaDB/MySQL | `{host}_connectionString`, `{host}_host`, `{host}_port`, `{host}_user`, `{host}_password`, `{host}_dbName` | connectionString preferred |
+| MongoDB | `{host}_connectionString`, `{host}_host`, `{host}_port`, `{host}_user`, `{host}_password` | connectionString preferred |
+| RabbitMQ | `{host}_connectionString`, `{host}_host`, `{host}_port`, `{host}_user`, `{host}_password` | Use AMQP connection string |
+
+**In zerops.yml envVariables**, map discovered vars to what the app expects:
+```yaml
+envVariables:
+  DATABASE_URL: ${db_connectionString}
+  REDIS_HOST: ${cache_host}
+  REDIS_PORT: ${cache_port}
+  # Do NOT add variables that don't exist (e.g., cache_password for Valkey)
+```
+
+**ONLY use variables that were actually discovered.** Guessing variable names causes runtime failures. If a variable doesn't appear in discovery, it doesn't exist.
+
+**How these reach your app**: All variables mapped in zerops.yml `envVariables` are injected as standard OS environment variables at container start. Your app reads them with the runtime's native env var API. No `.env` files or dotenv libraries needed.
 </section>
 
-<section name="generate-code">
+<section name="generate">
 ### Step 7 — Generate zerops.yml and application code
 
 **Prerequisites**: Dev services mounted (step 5), env vars discovered (step 6). Write files to the mounted dev service filesystem at `/var/www/{devHostname}/`.
@@ -239,7 +267,7 @@ Zerops injects all `envVariables` and `envSecrets` as **standard OS environment 
 
 #### Env var mapping in zerops.yml
 
-In zerops.yml `envVariables`, ONLY use variables discovered in the discover-envs step:
+In zerops.yml `envVariables`, ONLY use variables discovered in the provision step:
 ```yaml
 envVariables:
   DATABASE_URL: ${db_connectionString}
@@ -253,7 +281,7 @@ envVariables:
 - [ ] Dev setup uses `deployFiles: [.]` — NO EXCEPTIONS
 - [ ] `run.start` is the RUN command (not a build tool like `go build`) — implicit-webserver runtimes (php-nginx, php-apache, nginx, static): omit start entirely
 - [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
-- [ ] `envVariables` ONLY uses variables discovered in discover-envs step
+- [ ] `envVariables` ONLY uses variables discovered in provision step
 - [ ] App binds to `0.0.0.0:{port}`, NOT localhost
 
 #### Files are already on dev
@@ -268,40 +296,6 @@ Since you're writing to an SSHFS mount, every file you create or modify is immed
 ---
 
 ## Phase 2: Deployment and Verification
-
-<section name="discover-envs">
-### Env var discovery protocol (mandatory before deploy)
-
-After importing services and waiting for them to reach RUNNING, discover the ACTUAL env vars available to each service. This data is critical for writing correct zerops.yml envVariables and for subagent prompts.
-
-**Single call — returns env vars for ALL services:**
-```
-zerops_discover includeEnvs=true
-```
-
-Record which env vars exist. Common patterns by service type:
-
-| Service type | Available env vars | Notes |
-|-------------|-------------------|-------|
-| PostgreSQL | `{host}_connectionString`, `{host}_host`, `{host}_port`, `{host}_user`, `{host}_password`, `{host}_dbName` | connectionString preferred |
-| Valkey/KeyDB | `{host}_host`, `{host}_port` | **No password** — private network, no auth needed |
-| MariaDB/MySQL | `{host}_connectionString`, `{host}_host`, `{host}_port`, `{host}_user`, `{host}_password`, `{host}_dbName` | connectionString preferred |
-| MongoDB | `{host}_connectionString`, `{host}_host`, `{host}_port`, `{host}_user`, `{host}_password` | connectionString preferred |
-| RabbitMQ | `{host}_connectionString`, `{host}_host`, `{host}_port`, `{host}_user`, `{host}_password` | Use AMQP connection string |
-
-**In zerops.yml envVariables**, map discovered vars to what the app expects:
-```yaml
-envVariables:
-  DATABASE_URL: ${db_connectionString}
-  REDIS_HOST: ${cache_host}
-  REDIS_PORT: ${cache_port}
-  # Do NOT add variables that don't exist (e.g., cache_password for Valkey)
-```
-
-**ONLY use variables that were actually discovered.** Guessing variable names causes runtime failures. If a variable doesn't appear in discovery, it doesn't exist.
-
-**How these reach your app**: All variables mapped in zerops.yml `envVariables` are injected as standard OS environment variables at container start. Your app reads them with the runtime's native env var API. No `.env` files or dotenv libraries needed.
-</section>
 
 <section name="deploy">
 ### Deploy overview
@@ -774,9 +768,7 @@ For managed services (DB, cache, storage): skip step 2 (no subdomain), just step
 - Check 3: `zerops_verify` performs 6 checks for runtime services (service_running, no_error_logs, startup_detected, no_recent_errors, http_health, http_status) and 1 check for managed services (service_running only). The response includes a `checks` array — each entry has `name`, `status` (pass/fail/skip/info), and optional `detail`. Status values: `healthy` (all pass/skip/info), `degraded` (running but some checks fail), `unhealthy` (service not running). Error log checks (no_error_logs, no_recent_errors) return `info` instead of `fail` — they are advisory because SSH deploy logs are often classified as errors.
 
 **Do NOT deploy to stage until dev passes ALL checks.** Stage is for final validation, not debugging.
-</section>
 
-<section name="report">
 ### After completion — next iteration
 
 If the user asks for changes after initial bootstrap:

@@ -15,69 +15,45 @@ func TestResolveGuidance(t *testing.T) {
 		wantNonEmpty bool
 	}{
 		{
-			"deploy_has_agent_prompt",
-			"deploy",
-			"Service Bootstrap Agent Prompt",
-			true,
-		},
-		{
-			"verify_has_verification",
-			"verify",
-			"Verification Protocol",
-			true,
-		},
-		{
-			"discover_envs_has_env_protocol",
-			"discover-envs",
-			"discovery protocol",
-			true,
-		},
-		{
-			"generate_import_has_import_yml",
-			"generate-import",
-			"import.yml",
-			true,
-		},
-		{
-			"detect_returns_content",
-			"detect",
+			"discover_returns_content",
+			"discover",
 			"Detect",
 			true,
 		},
 		{
-			"plan_returns_content",
-			"plan",
-			"Identify stack",
+			"provision_has_import_yml",
+			"provision",
+			"import.yml",
 			true,
 		},
 		{
-			"load_knowledge_returns_content",
-			"load-knowledge",
-			"zerops_knowledge",
+			"provision_has_env_discovery",
+			"provision",
+			"discovery protocol",
 			true,
 		},
 		{
-			"report_returns_content",
-			"report",
-			"completion",
-			true,
-		},
-		{
-			"generate_code_returns_content",
-			"generate-code",
+			"generate_returns_content",
+			"generate",
 			"zerops.yml",
 			true,
 		},
 		{
-			"generate_code_has_commit_recommendation",
-			"generate-code",
+			"generate_has_commit_recommendation",
+			"generate",
 			"committing",
 			true,
 		},
 		{
-			"generate_code_has_noop_start",
-			"generate-code",
+			"generate_has_noop_start",
+			"generate",
 			"zsc noop --silent",
+			true,
+		},
+		{
+			"deploy_has_agent_prompt",
+			"deploy",
+			"Service Bootstrap Agent Prompt",
 			true,
 		},
 		{
@@ -93,16 +69,16 @@ func TestResolveGuidance(t *testing.T) {
 			true,
 		},
 		{
-			"import_services_returns_empty",
-			"import-services",
-			"",
-			false,
+			"verify_has_verification",
+			"verify",
+			"Verification Protocol",
+			true,
 		},
 		{
-			"mount_dev_returns_empty",
-			"mount-dev",
-			"",
-			false,
+			"verify_has_next_iteration",
+			"verify",
+			"next iteration",
+			true,
 		},
 		{
 			"unknown_step_returns_empty",
@@ -130,9 +106,9 @@ func TestResolveGuidance(t *testing.T) {
 
 func TestResolveGuidance_NoDevStartCommand(t *testing.T) {
 	t.Parallel()
-	guide := ResolveGuidance("generate-code")
+	guide := ResolveGuidance("generate")
 	if strings.Contains(guide, "devStartCommand") {
-		t.Error("generate-code guidance still contains 'devStartCommand' — should use 'zsc noop --silent' instead")
+		t.Error("generate guidance still contains 'devStartCommand' — should use 'zsc noop --silent' instead")
 	}
 }
 

@@ -13,14 +13,22 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// ServiceImportError represents an error for a specific service during import.
+type ServiceImportError struct {
+	Service string `json:"service"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 // ImportResult is returned after a successful API import.
 type ImportResult struct {
-	ProjectID   string                `json:"projectId"`
-	ProjectName string                `json:"projectName"`
-	Processes   []ImportProcessOutput `json:"processes"`
-	Warnings    []string              `json:"warnings,omitempty"`
-	Summary     string                `json:"summary,omitempty"`
-	NextActions string                `json:"nextActions,omitempty"`
+	ProjectID     string                `json:"projectId"`
+	ProjectName   string                `json:"projectName"`
+	Processes     []ImportProcessOutput `json:"processes"`
+	ServiceErrors []ServiceImportError  `json:"serviceErrors,omitempty"`
+	Warnings      []string              `json:"warnings,omitempty"`
+	Summary       string                `json:"summary,omitempty"`
+	NextActions   string                `json:"nextActions,omitempty"`
 }
 
 // ImportProcessOutput represents one process from the import result.
@@ -102,7 +110,15 @@ func Import(
 	}
 
 	var processes []ImportProcessOutput
+	var serviceErrors []ServiceImportError
 	for _, ss := range result.ServiceStacks {
+		if ss.Error != nil {
+			serviceErrors = append(serviceErrors, ServiceImportError{
+				Service: ss.Name,
+				Code:    ss.Error.Code,
+				Message: ss.Error.Message,
+			})
+		}
 		for _, p := range ss.Processes {
 			processes = append(processes, ImportProcessOutput{
 				ProcessID:  p.ID,
@@ -110,15 +126,17 @@ func Import(
 				Status:     p.Status,
 				Service:    ss.Name,
 				ServiceID:  ss.ID,
+				FailReason: p.FailReason,
 			})
 		}
 	}
 
 	return &ImportResult{
-		ProjectID:   result.ProjectID,
-		ProjectName: result.ProjectName,
-		Processes:   processes,
-		Warnings:    warnings,
+		ProjectID:     result.ProjectID,
+		ProjectName:   result.ProjectName,
+		Processes:     processes,
+		ServiceErrors: serviceErrors,
+		Warnings:      warnings,
 	}, nil
 }
 

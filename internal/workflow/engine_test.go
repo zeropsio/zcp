@@ -3,6 +3,7 @@ package workflow
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -312,14 +313,14 @@ func TestEngine_BootstrapStart_Success(t *testing.T) {
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
 	}
-	if resp.Progress.Total != 11 {
-		t.Errorf("Total: want 11, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 5 {
+		t.Errorf("Total: want 5, got %d", resp.Progress.Total)
 	}
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	if resp.Current.Name != "detect" {
-		t.Errorf("Current.Name: want detect, got %s", resp.Current.Name)
+	if resp.Current.Name != "discover" {
+		t.Errorf("Current.Name: want discover, got %s", resp.Current.Name)
 	}
 
 	// Verify bootstrap state is persisted.
@@ -359,15 +360,15 @@ func TestEngine_BootstrapComplete_Success(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	resp, err := eng.BootstrapComplete("detect", "FRESH project, no services found")
+	resp, err := eng.BootstrapComplete(context.Background(), "discover", "FRESH project, plan submitted", nil)
 	if err != nil {
 		t.Fatalf("BootstrapComplete: %v", err)
 	}
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil after first complete")
 	}
-	if resp.Current.Name != "plan" {
-		t.Errorf("Current.Name: want plan, got %s", resp.Current.Name)
+	if resp.Current.Name != "provision" {
+		t.Errorf("Current.Name: want provision, got %s", resp.Current.Name)
 	}
 	if resp.Progress.Completed != 1 {
 		t.Errorf("Completed: want 1, got %d", resp.Progress.Completed)
@@ -383,15 +384,11 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	steps := []string{
-		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs", "generate-code",
-		"deploy", "verify", "report",
-	}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
 	var resp *BootstrapResponse
 	for _, step := range steps {
 		var err error
-		resp, err = eng.BootstrapComplete(step, "Attestation for "+step+" completed ok")
+		resp, err = eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil)
 		if err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -401,8 +398,8 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 	if resp.Current != nil {
 		t.Error("Current should be nil after all steps")
 	}
-	if resp.Progress.Completed != 11 {
-		t.Errorf("Completed: want 11, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 5 {
+		t.Errorf("Completed: want 5, got %d", resp.Progress.Completed)
 	}
 
 	// Phase should be DONE.
@@ -427,13 +424,9 @@ func TestEngine_BootstrapComplete_AutoEvidence(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	steps := []string{
-		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs", "generate-code",
-		"deploy", "verify", "report",
-	}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
 	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}
@@ -462,13 +455,9 @@ func TestEngine_BootstrapComplete_AutoTransition(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	steps := []string{
-		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs", "generate-code",
-		"deploy", "verify", "report",
-	}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
 	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}
@@ -495,24 +484,24 @@ func TestEngine_BootstrapSkip_Success(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Complete up to mount-dev (steps 0-4).
-	preSteps := []string{"detect", "plan", "load-knowledge", "generate-import", "import-services"}
+	// Complete discover and provision (steps 0-1).
+	preSteps := []string{"discover", "provision"}
 	for _, step := range preSteps {
-		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}
 
-	// Skip mount-dev.
-	resp, err := eng.BootstrapSkip("mount-dev", "no runtime services")
+	// Skip generate (skippable step).
+	resp, err := eng.BootstrapSkip("generate", "no runtime services")
 	if err != nil {
 		t.Fatalf("BootstrapSkip: %v", err)
 	}
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	if resp.Current.Name != "discover-envs" {
-		t.Errorf("Current.Name: want discover-envs, got %s", resp.Current.Name)
+	if resp.Current.Name != "deploy" {
+		t.Errorf("Current.Name: want deploy, got %s", resp.Current.Name)
 	}
 }
 
@@ -525,15 +514,11 @@ func TestEngine_BootstrapSkip_Mandatory(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Skip plan (mandatory) — should fail.
-	// First complete detect so plan is current.
-	if _, err := eng.BootstrapComplete("detect", "FRESH project detected ok"); err != nil {
-		t.Fatalf("BootstrapComplete: %v", err)
-	}
-
-	_, err := eng.BootstrapSkip("plan", "skip reason")
+	// Skip discover (mandatory) — should fail.
+	// discover is the first step and not skippable.
+	_, err := eng.BootstrapSkip("discover", "skip reason")
 	if err == nil {
-		t.Fatal("expected error skipping mandatory step 'plan'")
+		t.Fatal("expected error skipping mandatory step 'discover'")
 	}
 }
 
@@ -546,26 +531,23 @@ func TestEngine_BootstrapStatus_Active(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Complete 3 steps.
-	steps := []string{"detect", "plan", "load-knowledge"}
-	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
+	// Complete 1 step.
+	if _, err := eng.BootstrapComplete(context.Background(), "discover", "FRESH project, plan submitted", nil); err != nil {
+		t.Fatalf("BootstrapComplete(discover): %v", err)
 	}
 
 	resp, err := eng.BootstrapStatus()
 	if err != nil {
 		t.Fatalf("BootstrapStatus: %v", err)
 	}
-	if resp.Progress.Completed != 3 {
-		t.Errorf("Completed: want 3, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 1 {
+		t.Errorf("Completed: want 1, got %d", resp.Progress.Completed)
 	}
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	if resp.Current.Name != "generate-import" {
-		t.Errorf("Current.Name: want generate-import, got %s", resp.Current.Name)
+	if resp.Current.Name != "provision" {
+		t.Errorf("Current.Name: want provision, got %s", resp.Current.Name)
 	}
 }
 
@@ -578,7 +560,7 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	if _, err := eng.BootstrapComplete("detect", "FRESH project, no services"); err != nil {
+	if _, err := eng.BootstrapComplete(context.Background(), "discover", "FRESH project, plan submitted", nil); err != nil {
 		t.Fatalf("BootstrapComplete: %v", err)
 	}
 
@@ -588,8 +570,8 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 	}
 
 	// Verify first step shows as complete in summary.
-	if len(resp.Progress.Steps) != 11 {
-		t.Fatalf("Steps count: want 11, got %d", len(resp.Progress.Steps))
+	if len(resp.Progress.Steps) != 5 {
+		t.Fatalf("Steps count: want 5, got %d", len(resp.Progress.Steps))
 	}
 	if resp.Progress.Steps[0].Status != "complete" {
 		t.Errorf("step[0].Status: want complete, got %s", resp.Progress.Steps[0].Status)
@@ -606,13 +588,9 @@ func TestBootstrapComplete_AutoComplete_GatesChecked(t *testing.T) {
 	}
 
 	// Complete all steps with valid attestations.
-	steps := []string{
-		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs", "generate-code",
-		"deploy", "verify", "report",
-	}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
 	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}
@@ -636,14 +614,10 @@ func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Complete steps 0-9 normally.
-	preSteps := []string{
-		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs", "generate-code",
-		"deploy", "verify",
-	}
+	// Complete steps 0-3 normally.
+	preSteps := []string{"discover", "provision", "generate", "deploy"}
 	for _, step := range preSteps {
-		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}
@@ -663,9 +637,9 @@ func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
 	}
 
 	// Complete the last step — auto-complete will overwrite the evidence.
-	_, err = eng.BootstrapComplete("report", "Final report complete")
+	_, err = eng.BootstrapComplete(context.Background(), "verify", "Final verification complete", nil)
 	if err != nil {
-		t.Fatalf("BootstrapComplete(report): %v", err)
+		t.Fatalf("BootstrapComplete(verify): %v", err)
 	}
 
 	// Verify gates were checked by confirming the history has proper transitions.
@@ -690,29 +664,25 @@ func TestEngine_BootstrapComplete_AutoEvidence_PassedCount(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	steps := []string{
-		"detect", "plan", "load-knowledge", "generate-import",
-		"import-services", "mount-dev", "discover-envs", "generate-code",
-		"deploy", "verify", "report",
-	}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
 	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}
 
 	state, _ := eng.GetState()
 
-	// recipe_review maps to steps: detect, plan, load-knowledge — all 3 completed.
+	// recipe_review maps to step: discover — 1 step completed.
 	ev, err := LoadEvidence(eng.evidenceDir, state.SessionID, "recipe_review")
 	if err != nil {
 		t.Fatalf("load recipe_review: %v", err)
 	}
-	if ev.Passed < 2 {
-		t.Errorf("recipe_review.Passed: want >=2, got %d", ev.Passed)
+	if ev.Passed < 1 {
+		t.Errorf("recipe_review.Passed: want >=1, got %d", ev.Passed)
 	}
 
-	// dev_verify maps to steps: generate-code, deploy, verify — all completed.
+	// dev_verify maps to steps: generate, deploy, verify — all 3 completed.
 	ev, err = LoadEvidence(eng.evidenceDir, state.SessionID, "dev_verify")
 	if err != nil {
 		t.Fatalf("load dev_verify: %v", err)
@@ -731,28 +701,23 @@ func TestEngine_BootstrapComplete_AutoEvidence_ServiceResults(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Complete detect.
-	if _, err := eng.BootstrapComplete("detect", "FRESH project detected"); err != nil {
-		t.Fatalf("BootstrapComplete(detect): %v", err)
+	// Complete discover with structured plan.
+	plan := []BootstrapTarget{
+		{
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"},
+			Dependencies: []Dependency{
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		},
 	}
-
-	// Complete plan with structured plan.
-	plan := []PlannedService{
-		{Hostname: "appdev", Type: "bun@1.2"},
-		{Hostname: "appstage", Type: "bun@1.2"},
-		{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
-	}
-	if _, err := eng.BootstrapCompletePlan(plan, nil); err != nil {
+	if _, err := eng.BootstrapCompletePlan(plan, nil, nil); err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
 	// Complete remaining steps.
-	remaining := []string{
-		"load-knowledge", "generate-import", "import-services",
-		"mount-dev", "discover-envs", "generate-code", "deploy", "verify", "report",
-	}
+	remaining := []string{"provision", "generate", "deploy", "verify"}
 	for _, step := range remaining {
-		if _, err := eng.BootstrapComplete(step, "Attestation for "+step+" completed ok"); err != nil {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}
@@ -799,21 +764,22 @@ func TestEngine_BootstrapCompletePlan_Valid(t *testing.T) {
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
-	// Complete detect first.
-	if _, err := eng.BootstrapComplete("detect", "FRESH project detected"); err != nil {
-		t.Fatalf("BootstrapComplete(detect): %v", err)
-	}
+	// Current step is "discover" — plan submission happens here.
 
-	plan := []PlannedService{
-		{Hostname: "appdev", Type: "bun@1.2"},
-		{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
+	plan := []BootstrapTarget{
+		{
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"},
+			Dependencies: []Dependency{
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		},
 	}
-	resp, err := eng.BootstrapCompletePlan(plan, nil)
+	resp, err := eng.BootstrapCompletePlan(plan, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
-	if resp.Current == nil || resp.Current.Name != "load-knowledge" {
-		t.Errorf("expected current step to be 'load-knowledge', got %v", resp.Current)
+	if resp.Current == nil || resp.Current.Name != "provision" {
+		t.Errorf("expected current step to be 'provision', got %v", resp.Current)
 	}
 
 	// Verify plan is persisted in state.
@@ -824,8 +790,8 @@ func TestEngine_BootstrapCompletePlan_Valid(t *testing.T) {
 	if state.Bootstrap.Plan == nil {
 		t.Fatal("Plan should be stored in bootstrap state")
 	}
-	if len(state.Bootstrap.Plan.Services) != 2 {
-		t.Errorf("Plan.Services length: want 2, got %d", len(state.Bootstrap.Plan.Services))
+	if len(state.Bootstrap.Plan.Targets) != 1 {
+		t.Errorf("Plan.Targets length: want 1, got %d", len(state.Bootstrap.Plan.Targets))
 	}
 }
 
@@ -837,14 +803,12 @@ func TestEngine_BootstrapCompletePlan_InvalidHostname(t *testing.T) {
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
-	if _, err := eng.BootstrapComplete("detect", "FRESH project detected"); err != nil {
-		t.Fatalf("BootstrapComplete(detect): %v", err)
-	}
+	// Current step is "discover" — plan submission happens here.
 
-	plan := []PlannedService{
-		{Hostname: "my-app", Type: "bun@1.2"},
+	plan := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "my-app", Type: "bun@1.2"}},
 	}
-	_, err := eng.BootstrapCompletePlan(plan, nil)
+	_, err := eng.BootstrapCompletePlan(plan, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid hostname")
 	}
@@ -858,13 +822,211 @@ func TestEngine_BootstrapCompletePlan_WrongStep(t *testing.T) {
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
-	// Don't complete detect — current step is detect, not plan.
-
-	plan := []PlannedService{
-		{Hostname: "app", Type: "bun@1.2"},
+	// Complete discover so current step is "provision" — not the plan step.
+	if _, err := eng.BootstrapComplete(context.Background(), "discover", "FRESH project detected", nil); err != nil {
+		t.Fatalf("BootstrapComplete(discover): %v", err)
 	}
-	_, err := eng.BootstrapCompletePlan(plan, nil)
+
+	plan := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+	}
+	_, err := eng.BootstrapCompletePlan(plan, nil, nil)
 	if err == nil {
-		t.Fatal("expected error when current step is not 'plan'")
+		t.Fatal("expected error when current step is not 'discover'")
+	}
+}
+
+func TestEngine_StoreDiscoveredEnvVars(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	// Store env vars for "db".
+	err := eng.StoreDiscoveredEnvVars("db", []string{"connectionString", "port", "user"})
+	if err != nil {
+		t.Fatalf("StoreDiscoveredEnvVars: %v", err)
+	}
+
+	// Store env vars for "cache".
+	err = eng.StoreDiscoveredEnvVars("cache", []string{"connectionString"})
+	if err != nil {
+		t.Fatalf("StoreDiscoveredEnvVars: %v", err)
+	}
+
+	// Verify persisted.
+	state, err := eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state.Bootstrap.DiscoveredEnvVars == nil {
+		t.Fatal("DiscoveredEnvVars should not be nil")
+	}
+	if len(state.Bootstrap.DiscoveredEnvVars["db"]) != 3 {
+		t.Errorf("db vars: want 3, got %d", len(state.Bootstrap.DiscoveredEnvVars["db"]))
+	}
+	if len(state.Bootstrap.DiscoveredEnvVars["cache"]) != 1 {
+		t.Errorf("cache vars: want 1, got %d", len(state.Bootstrap.DiscoveredEnvVars["cache"]))
+	}
+}
+
+func TestEngine_StoreDiscoveredEnvVars_NoBootstrap(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	// Start a non-bootstrap session.
+	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	err := eng.StoreDiscoveredEnvVars("db", []string{"connectionString"})
+	if err == nil {
+		t.Fatal("expected error when no bootstrap state")
+	}
+}
+
+func TestEngine_StoreDiscoveredEnvVars_MultipleServices(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	services := map[string][]string{
+		"db":      {"connectionString", "port", "user", "password"},
+		"cache":   {"connectionString", "port"},
+		"storage": {"accessKeyId", "secretAccessKey", "bucketName"},
+	}
+	for hostname, vars := range services {
+		if err := eng.StoreDiscoveredEnvVars(hostname, vars); err != nil {
+			t.Fatalf("StoreDiscoveredEnvVars(%s): %v", hostname, err)
+		}
+	}
+
+	state, err := eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if len(state.Bootstrap.DiscoveredEnvVars) != 3 {
+		t.Errorf("service count: want 3, got %d", len(state.Bootstrap.DiscoveredEnvVars))
+	}
+	for hostname, want := range services {
+		got := state.Bootstrap.DiscoveredEnvVars[hostname]
+		if len(got) != len(want) {
+			t.Errorf("%s: want %d vars, got %d", hostname, len(want), len(got))
+		}
+	}
+}
+
+// --- StepChecker integration tests ---
+
+func TestEngine_BootstrapComplete_WithChecker_Pass(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	checker := func(_ context.Context, _ *ServicePlan) (*StepCheckResult, error) {
+		return &StepCheckResult{
+			Passed:  true,
+			Summary: "all good",
+			Checks:  []StepCheck{{Name: "test_check", Status: "pass"}},
+		}, nil
+	}
+
+	resp, err := eng.BootstrapComplete(context.Background(), "discover", "FRESH project detected fine", checker)
+	if err != nil {
+		t.Fatalf("BootstrapComplete: %v", err)
+	}
+	if resp.CheckResult != nil {
+		t.Error("CheckResult should be nil on pass")
+	}
+	if resp.Current == nil || resp.Current.Name != "provision" {
+		t.Errorf("expected next step 'provision', got %v", resp.Current)
+	}
+}
+
+func TestEngine_BootstrapComplete_WithChecker_Fail(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	checker := func(_ context.Context, _ *ServicePlan) (*StepCheckResult, error) {
+		return &StepCheckResult{
+			Passed:  false,
+			Summary: "service missing",
+			Checks: []StepCheck{
+				{Name: "service_exists", Status: "fail", Detail: "appdev not found"},
+			},
+		}, nil
+	}
+
+	resp, err := eng.BootstrapComplete(context.Background(), "discover", "FRESH project detected fine", checker)
+	if err != nil {
+		t.Fatalf("BootstrapComplete should not return error on check failure: %v", err)
+	}
+	if resp.CheckResult == nil {
+		t.Fatal("CheckResult should be populated on failure")
+	}
+	if resp.CheckResult.Passed {
+		t.Error("CheckResult.Passed should be false")
+	}
+	if resp.CheckResult.Summary != "service missing" {
+		t.Errorf("CheckResult.Summary: want 'service missing', got %q", resp.CheckResult.Summary)
+	}
+	// Step should NOT have advanced.
+	state, _ := eng.GetState()
+	if state.Bootstrap.CurrentStep != 0 {
+		t.Errorf("CurrentStep should still be 0, got %d", state.Bootstrap.CurrentStep)
+	}
+}
+
+func TestEngine_BootstrapComplete_NilChecker(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	resp, err := eng.BootstrapComplete(context.Background(), "discover", "FRESH project detected fine", nil)
+	if err != nil {
+		t.Fatalf("BootstrapComplete: %v", err)
+	}
+	if resp.Current == nil || resp.Current.Name != "provision" {
+		t.Errorf("expected next step 'provision', got %v", resp.Current)
+	}
+}
+
+func TestEngine_BootstrapComplete_CheckerError(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	checker := func(_ context.Context, _ *ServicePlan) (*StepCheckResult, error) {
+		return nil, fmt.Errorf("API unreachable")
+	}
+
+	_, err := eng.BootstrapComplete(context.Background(), "discover", "FRESH project detected fine", checker)
+	if err == nil {
+		t.Fatal("expected error from checker")
 	}
 }

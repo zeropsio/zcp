@@ -13,7 +13,7 @@ import (
 
 // VerifyInput is the input type for zerops_verify.
 type VerifyInput struct {
-	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to verify."`
+	ServiceHostname string `json:"serviceHostname,omitempty" jsonschema:"Hostname of the service to verify. Omit to verify all services."`
 }
 
 // RegisterVerify registers the zerops_verify tool.
@@ -27,13 +27,20 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_verify",
-		Description: "Run health verification checks on a service. Returns structured check results: service status, error logs, startup detection, HTTP health, and /status endpoint connectivity. For runtime services: 6 checks. For managed services (DB, cache): 1 check (service_running only). Check statuses: pass, fail, skip, info (advisory — error log checks use info since SSH deploy logs often appear as errors).",
+		Description: "Run health verification checks on a service. Returns structured check results: service status, error logs, startup detection, HTTP root, and /status endpoint connectivity. Checks vary by runtime class: dynamic (5), implicit webserver (4), static (2), worker (2), managed (1). Check statuses: pass, fail, skip, info (advisory — error log checks use info since SSH deploy logs often appear as errors). Omit serviceHostname to verify all services at once.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Verify service health",
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input VerifyInput) (*mcp.CallToolResult, any, error) {
+		if input.ServiceHostname == "" {
+			result, err := ops.VerifyAll(ctx, client, fetcher, httpClient, projectID)
+			if err != nil {
+				return convertError(err), nil, nil
+			}
+			return jsonResult(result), nil, nil
+		}
 		result, err := ops.Verify(ctx, client, fetcher, httpClient, projectID, input.ServiceHostname)
 		if err != nil {
 			return convertError(err), nil, nil

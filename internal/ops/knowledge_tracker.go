@@ -36,6 +36,20 @@ func (kt *KnowledgeTracker) RecordScope() {
 	kt.scopeLoaded = true
 }
 
+// IsLoadedForType returns true if a briefing has been recorded for the given runtime type.
+func (kt *KnowledgeTracker) IsLoadedForType(runtimeType string) bool {
+	kt.mu.Lock()
+	defer kt.mu.Unlock()
+	for _, entry := range kt.briefingCalls {
+		// Entry format: "runtime+service1,service2" or just "runtime"
+		rt, _, _ := strings.Cut(entry, "+")
+		if rt == runtimeType {
+			return true
+		}
+	}
+	return false
+}
+
 // IsLoaded returns true if both briefing and scope knowledge have been loaded.
 func (kt *KnowledgeTracker) IsLoaded() bool {
 	kt.mu.Lock()
