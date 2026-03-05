@@ -39,6 +39,36 @@ func TestCheckProvision_AllServicesExist_Pass(t *testing.T) {
 	}
 }
 
+func TestCheckProvision_ActiveStatus_Pass(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "ACTIVE"},
+		{ID: "s2", Name: "appstage", Status: "READY_TO_DEPLOY"},
+		{ID: "s3", Name: "db", Status: "ACTIVE"},
+	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	checker := checkProvision(mock, "proj-1")
+	result, err := checker(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass for ACTIVE status, got fail: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
 func TestCheckProvision_MissingService_Fail(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{

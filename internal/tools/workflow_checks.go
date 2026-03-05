@@ -240,9 +240,9 @@ func checkVerify(client platform.Client, fetcher platform.LogFetcher, projectID 
 	}
 }
 
-// checkServiceRunning checks a service exists and has RUNNING status.
+// checkServiceRunning checks a service exists and is running (RUNNING or ACTIVE).
 func checkServiceRunning(svcMap map[string]platform.ServiceStack, hostname string) []workflow.StepCheck {
-	return checkServiceStatusAny(svcMap, hostname, "RUNNING")
+	return checkServiceStatusAny(svcMap, hostname, "RUNNING", "ACTIVE")
 }
 
 // checkServiceStatusAny checks a service exists with any of the expected statuses.
