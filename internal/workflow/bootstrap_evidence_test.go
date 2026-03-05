@@ -118,7 +118,7 @@ func TestAutoCompleteBootstrap_OutputErrorsNonFatal(t *testing.T) {
 	if err := os.Chmod(servicesDir, 0o000); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	t.Cleanup(func() { os.Chmod(servicesDir, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(servicesDir, 0o755) })
 
 	// Bootstrap completion should still succeed despite output errors.
 	for _, step := range []string{"provision", "generate", "deploy", "verify"} {
