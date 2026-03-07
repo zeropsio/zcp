@@ -2,6 +2,8 @@
 
 Analysis of current workflow system, context delivery, and validated designs for dynamic flow routing, post-bootstrap strategies, and context optimization. Includes stress-test results from 30+ edge case simulations.
 
+**Extended 2026-03-07**: Deep knowledge delivery analysis by 10 specialized agents across 6 dimensions (progressive disclosure, semantic dedup, gate intelligence, pull-based delivery, context compression, LLM behavioral patterns). Sections 8, 10, and new sections 14-17 contain the integrated results.
+
 ---
 
 ## 1. Current Architecture Overview
@@ -204,12 +206,34 @@ When `zerops_workflow action="start" workflow="bootstrap"`:
 
 **File**: `internal/tools/knowledge.go`
 
-| Mode | Input | Output | Token estimate |
+| Mode | Input | Output | Token estimate (corrected) |
 |------|-------|--------|---------------|
-| scope="infrastructure" | — | Complete platform reference: YAML schemas, env var system, build/deploy lifecycle | ~3000-4000 |
-| briefing | runtime + services | Stack-specific: binding rules, ports, env vars, wiring, version check | ~1500-2500 |
-| query | search text | BM25 results: [{uri, title, score, snippet}] | ~500-1000 |
-| recipe | name | Full recipe markdown: title, keywords, TL;DR, YAML, gotchas | ~800-1500 |
+| scope="infrastructure" | — | `universals.md` (1,032 tokens) + `core.md` (7,935 tokens) concatenated | **~8,967** |
+| briefing | runtime + services | 7-layer composition: live stacks → runtime guide → recipe hints → service cards → wiring → decisions → version check | **~1,500-4,000** |
+| query | search text | BM25 results: [{uri, title, score, snippet}] with title 2.0x boost, keywords 1.5x boost | ~500-2,000 |
+| recipe | name | universals (prepended) + auto-detected runtime guide + full recipe markdown | **~2,000-4,500** |
+
+**Embedded Knowledge Base** (total: ~168 KB, ~45-60K tokens):
+- `themes/`: core.md (~8K), universals.md (~1K), services.md (~4K), operations.md (~3.5K)
+- `runtimes/`: 10+ per-runtime guides (~700-1,200 tokens each)
+- `recipes/`: 29 pre-built framework configs (~500-1,500 tokens each)
+- `guides/`: 18 topic guides (~500-2,000 tokens each)
+- `decisions/`: 2-3 architectural choice docs
+
+**Briefing 7-Layer Composition** (`internal/knowledge/briefing.go`):
+1. Live service stacks (from API cache, ~200 tokens)
+2. Runtime guide (e.g., `runtimes/nodejs.md`, ~800 tokens)
+3. Matching recipe hints (list, ~200 tokens — requires separate `recipe` call for content)
+4. Service cards (H2 extracts from `themes/services.md`, ~300 tokens each)
+5. Wiring patterns (cross-service reference syntax, ~400 tokens)
+6. Decision hints (auto-selected from `themes/operations.md`, ~200 tokens)
+7. Version check (live API validation, ~200 tokens)
+
+**Cross-Mode Overlap** (identified by deep analysis):
+- Universals prepended to BOTH scope AND recipe → ~1K tokens duplicated if both called
+- Runtime guide included in BOTH briefing AND recipe → ~800 tokens duplicated
+- Live stacks in briefing L1 AND `injectStacks()` into workflow markdown → ~400 tokens duplicated
+- Service cards in briefing L4 AND full scope → ~600 tokens duplicated
 
 ### 2.5 Tool Response Patterns
 
@@ -255,7 +279,7 @@ Rules repeated across multiple locations:
 
 **Note**: This repetition is partially **intentional reinforcement** — rules stated near point of use are more reliably followed by LLMs than rules loaded in a separate prior call. Deduplication should consolidate (e.g., 21→4 mentions), not eliminate entirely.
 
-### 3.3 Corrected Token Budget
+### 3.3 Corrected Token Budget (Comprehensive)
 
 **The original 24K estimate was wrong.** It double-counted the legacy path (full bootstrap.md dump) and conductor path (per-step sections), which are mutually exclusive code paths.
 
@@ -265,7 +289,21 @@ Actual measured delivery via conductor path:
 | Inline Guidance (all 5 steps) | ~607 |
 | DetailedGuide (all 5 steps) | ~11,737 |
 | Deploy section dominates | ~6,901 (59% of total) |
-| **Total per bootstrap** | **~12,344** |
+| **Total per bootstrap (guidance only)** | **~12,344** |
+
+**Full session token budget** (all 7 delivery channels):
+| Channel | Tokens | When |
+|---------|--------|------|
+| System prompt (sections A-D) | 400-1,200 | MCP startup (once) |
+| DetailedGuide (5 steps cumulative) | 11,737 | Per step transition |
+| AvailableStacks (re-injected 5x) | 2,500 | Every step response |
+| PriorContext (linear growth) | 0→2,000 | Growing per step |
+| Inline Guidance (all 5 steps) | 607 | Per step |
+| scope="infrastructure" (pull) | 8,967 | Step 2-3 (once) |
+| Briefing (pull) | 1,500-4,000 | Step 1-2 (once) |
+| **Grand total first run** | **~28,000-30,000** |  |
+| **Iteration 2 cost** | **~20,000-21,000** | Near-full re-delivery |
+| **3-iteration total** | **~68,000-71,000** | |
 
 ### 3.4 Deploy.md Terminology Clash
 
@@ -275,7 +313,40 @@ Deploy.md uses "Phase 1" and "Phase 2" — these conflict with workflow engine p
 
 Steps list actions but don't state explicit completion conditions. `Verification` field exists but is vague (e.g., "All services created, dev mounted, env vars discovered"). LLM must infer when a step is "done."
 
-### 3.6 No Post-Bootstrap Strategy Awareness
+### 3.6 No Delivery Tracking (NEW — from deep analysis)
+
+**`KnowledgeTracker`** (`internal/ops/knowledge_tracker.go`, 77 lines) is in-memory only:
+- Created as `ops.NewKnowledgeTracker()` in `server.go:86`
+- Tracks briefing calls (runtime+services) and scope loaded (bool)
+- **Lost on process restart** — no persistence to session state
+- **Not connected to gates** — gates never check whether LLM loaded required knowledge
+- `IsLoaded()` returns true only when BOTH briefing AND scope loaded, but nothing enforces this
+
+**`DetailedGuide` re-sent on every `status` call**: `BuildResponse()` calls `ResolveGuidance(detail.Name)` every time with no caching. Deploy section = 6,901 tokens re-delivered on every status check.
+
+**`AvailableStacks` re-injected on every step**: `populateStacks()` called in `handleBootstrapComplete`, `handleBootstrapSkip`, and `handleBootstrapStatus`. Stacks only needed during discover step but injected 5x.
+
+**No dedup between knowledge modes**: If LLM calls scope then recipe in same session, universals are delivered twice (~1K tokens). No mechanism prevents this.
+
+### 3.7 Linear Context Growth (NEW — from deep analysis)
+
+**PriorContext is append-only**: `buildPriorContext()` at `bootstrap.go:235-251` collects ALL attestations from ALL completed steps. By step 5 (verify), carries discover + provision + generate + deploy attestations (each ~100-300 tokens).
+
+**Iterations re-deliver everything**: `IterateSession()` resets to `PhaseDevelop` but next `status`/`complete` call re-sends full detailedGuide + priorContext + stacks. The iteration only archives evidence files — does not compress carried context.
+
+**No summarization or compression**: Old step context kept verbatim, never condensed. Step 5 context is O(n * attestation_length) instead of O(1).
+
+### 3.8 Gates Are Knowledge-Blind (NEW — from deep analysis)
+
+Current gate system (`gates.go`, 160 lines):
+- 5 gates (G0-G4) check evidence existence + freshness (flat 24h for all)
+- **Never checks whether LLM loaded required knowledge** (scope, briefing) before producing evidence
+- A gate can pass even if the LLM never called `zerops_knowledge` at all
+- Gate failures return bare `fmt.Errorf("transition: gate %s failed, missing evidence: %v", ...)` — no remediation guidance
+- No complexity-based simplification — simple single-service project goes through identical gates as complex multi-service
+- **Flat freshness**: A typo fix and an architecture change both require 24h re-validation
+
+### 3.9 No Post-Bootstrap Strategy Awareness
 
 After bootstrap completes:
 - ServiceMeta written but `decisions` map empty, `deployFlow` always empty
@@ -283,7 +354,7 @@ After bootstrap completes:
 - System prompt has no strategy-specific routing
 - No mechanism to ask "how do you want to deploy going forward?"
 
-### 3.7 Abandoned Bootstrap Data Loss
+### 3.10 Abandoned Bootstrap Data Loss
 
 **BUG**: `writeBootstrapOutputs` in `bootstrap_evidence.go` only fires when `Bootstrap.Active` becomes `false` (after ALL steps complete via `autoCompleteBootstrap`). If user abandons bootstrap after 4 successful steps → zero ServiceMeta files written to disk. All context from the session is lost.
 
@@ -291,11 +362,11 @@ Additionally:
 - No session resume mechanism exists. Orphaned session JSON files persist but cannot be re-attached.
 - `pruneDeadSessions` removes from registry but does NOT delete `sessions/{id}.json` or `evidence/{id}/`.
 
-### 3.8 Bootstrap Exclusivity TOCTOU Race
+### 3.11 Bootstrap Exclusivity TOCTOU Race
 
 `ListSessions()` + `InitSession()` in `engine.go` are not in the same lock scope. Two processes can both pass the "no active bootstrap" check and both start bootstrap. Window is small but exists.
 
-### 3.9 ServiceMeta Overwrites for Shared Dependencies
+### 3.12 ServiceMeta Overwrites for Shared Dependencies
 
 `writeBootstrapOutputs` writes ServiceMeta for ALL dependencies regardless of `Resolution`. If service A and B share postgres (Resolution: SHARED), re-bootstrapping B overwrites postgres's ServiceMeta with the new session ID, losing provenance from A's bootstrap.
 
@@ -556,7 +627,20 @@ Preserved from original analysis for when blockers are resolved:
 
 ---
 
-## 8. Context Delivery Optimization — Validated Changes
+## 8. Context Delivery Optimization — Validated Changes (EXPANDED)
+
+### 8.0 4-Layer Progressive Delivery Architecture (NEW)
+
+Knowledge should be organized into four layers delivered just-in-time:
+
+| Layer | Content | Delivery | Tokens |
+|-------|---------|----------|--------|
+| **L0: Routing** | System prompt + step name + tools + verification criteria | Always pushed | ~200/step |
+| **L1: Procedural** | Compact step guidance (current `Guidance` field) | Pushed per step | ~150/step |
+| **L2: Detailed** | Mode-filtered sections from bootstrap.md | Pushed on first delivery, stub on repeat | ~1000-3500/step |
+| **L3: Reference** | Scope, briefings, recipes | Pull-based (LLM-initiated) | Variable |
+
+**Key Principle**: "Deliver once, track delivery, compress history"
 
 ### 8.1 Remove Dual Delivery (IMPLEMENT)
 
@@ -575,20 +659,74 @@ Stop serializing `guidance` field to `BootstrapStepInfo` JSON responses. Keep `d
 
 ### 8.2 Conditional Deploy Section by PlanMode (IMPLEMENT)
 
-The deploy section in bootstrap.md is ~6,901 tokens — 59% of total guidance. Split into subsections loadable by planMode (standard vs simple). When a service uses Simple mode, serve only the simple deployment guidance.
+The deploy section in bootstrap.md is ~6,901 tokens — 59% of total guidance. Split into subsections loadable by planMode AND plan context:
 
-**Implementation**: Split `<section name="deploy">` into `<section name="deploy-standard">` and `<section name="deploy-simple">`. Modify `ResolveGuidance()` to accept optional planMode parameter. `bootstrap.go:221` passes `planMode` from BootstrapState.
+**Sub-section breakdown** (from deep analysis token measurement):
+| Sub-section | Tokens | When to deliver |
+|-------------|--------|----------------|
+| `<section name="deploy-overview">` | 426 | Always |
+| `<section name="deploy-standard">` | 526 | PlanMode=standard |
+| `<section name="deploy-iteration">` | 869 | Dynamic runtimes only (not implicit-webserver) |
+| `<section name="deploy-simple">` | 612 | PlanMode=simple |
+| `<section name="deploy-agents">` | 757 | 2+ runtime targets in plan |
+| `<section name="deploy-status-spec">` | 2,521 | Managed services exist in plan |
+| `<section name="deploy-verify-loop">` | 619 | Only after first verification failure (reactive) |
 
-**Savings**: ~1,500-2,500 tokens per deploy step depending on mode.
+**Implementation**: New `ResolveProgressiveGuidance(step, plan, failureCount)` in `bootstrap_guidance.go`:
+```go
+func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int) string {
+    if step != StepDeploy {
+        return ResolveGuidance(step) // non-deploy steps are reasonably sized
+    }
+    var parts []string
+    parts = append(parts, resolveSubSection("deploy-overview"))
+    mode := planMode(plan) // existing function at bootstrap.go:254
+    if mode == PlanModeStandard {
+        parts = append(parts, resolveSubSection("deploy-standard"))
+        if hasNonImplicitWebserverRuntime(plan) {
+            parts = append(parts, resolveSubSection("deploy-iteration"))
+        }
+    } else {
+        parts = append(parts, resolveSubSection("deploy-simple"))
+    }
+    if len(plan.Targets) > 1 {
+        parts = append(parts, resolveSubSection("deploy-agents"))
+    }
+    if hasManagedServices(plan) {
+        parts = append(parts, resolveSubSection("deploy-status-spec"))
+    }
+    if failureCount > 0 {
+        parts = append(parts, resolveSubSection("deploy-verify-loop"))
+    }
+    return strings.Join(parts, "\n\n---\n\n")
+}
+```
+
+**Standard mode with managed**: overview(426) + standard(526) + iteration(869) + status-spec(2,521) = **4,342 tokens** (was 6,901)
+**Simple mode with managed**: overview(426) + simple(612) + status-spec(2,521) = **3,559 tokens**
+**Savings**: 2,600-3,400 tokens per deploy step.
 
 ### 8.3 Reduce Deploy Section Redundancy (IMPLEMENT)
 
-Consolidate repeated rules within bootstrap.md:
-- `deployFiles: [.]` — from 21 mentions to 4 (section header, agent prompt, simple mode, iteration loop)
-- `zsc noop --silent` — from 9 mentions to 3 (generate, deploy, simple mode)
-- Preserve contextual proximity — keep rules near point of use, just eliminate verbatim repetition
+Consolidate repeated rules within bootstrap.md using a "Key Rules" block pattern:
 
-**Savings**: ~500-800 tokens. More importantly, reduces maintenance burden.
+**Optimal repetition** (from LLM behavioral analysis):
+- **Critical rules** (deployFiles, 0.0.0.0 binding): 2-3 full + N short references
+- **Operational rules** (noop start): 2 full + N short references
+- **Exception rules** (implicit-webserver): 1 full + N inline tags
+
+**Concrete targets**:
+- `deployFiles: [.]` — from 21 mentions to 5 (full text in Key Rules block + YAML template + agent prompt; short reference elsewhere)
+- `zsc noop --silent` — from 9 mentions to 3 (generate, deploy, simple mode)
+- `implicit-webserver` — from 5 to 2 (one full definition, one inline exception)
+- `/status` spec — from 3-4 full to 1 full + 2 cross-references
+
+**Positive phrasing** (from LLM behavioral model): Rephrase negation rules as directives:
+- "Do NOT generate hello-world apps" → "Generate apps with /status endpoint that proves real managed service connectivity"
+- "NEVER write lock files" → "Write manifests only (go.mod, package.json) — build commands generate locks"
+- "Do NOT add variables that don't exist" → "Map ONLY variables listed in the discovery response"
+
+**Savings**: ~3,000 tokens (21→5 deployFiles mentions × ~40 tokens each = ~640 saved; similar for other rules).
 **Risk**: Zero (markdown-only change, no code impact).
 
 ### 8.4 Expand Verification with SUCCESS WHEN (IMPLEMENT)
@@ -604,25 +742,147 @@ After: `"SUCCESS WHEN: all plan services exist in API with ACTIVE status AND dev
 
 Rename deploy.md's "Phase 1" / "Phase 2" to "Part 1: Configuration Check" / "Part 2: Deploy and Monitor". Prevents confusion with engine phases.
 
-### 8.6 DROPPED Optimizations
+### 8.6 Delivery Tracking via ContextDelivery (NEW — IMPLEMENT)
+
+**Problem**: No mechanism tracks what knowledge was delivered to the LLM. `KnowledgeTracker` is in-memory only, lost on restart, not visible to gates.
+
+**Solution**: Add persistent `ContextDelivery` struct to `BootstrapState`:
+
+```go
+// internal/workflow/state.go
+type ContextDelivery struct {
+    GuideSentFor  map[string]int `json:"guideSentFor,omitempty"`  // step → delivery count
+    StacksSentAt  string         `json:"stacksSentAt,omitempty"`  // timestamp
+    ScopeLoaded   bool           `json:"scopeLoaded,omitempty"`
+    BriefingFor   string         `json:"briefingFor,omitempty"`   // "nodejs@22+postgresql@16"
+    RecipesViewed []string       `json:"recipesViewed,omitempty"`
+    IterationNum  int            `json:"iterationNum,omitempty"`
+}
+```
+
+**Behavior**:
+1. **Gate DetailedGuide re-delivery**: First delivery → full `ResolveGuidance()`, mark `GuideSentFor[step]=1`. Repeat → stub: `"[Guide for {step} already delivered. Tools: X. Verification: Y]"` (~50 tokens). Add `forceGuide` param for recovery.
+2. **Gate AvailableStacks**: Only inject during discover step or if never sent. Saves ~2,000 tokens (500/step × 4 steps).
+3. **Persist knowledge calls**: When `zerops_knowledge` called with active session, write scope/briefing flags to `ContextDelivery`. Survives process restart.
+4. **Briefing dedup**: Skip universals if scope already loaded; skip runtime guide if briefing already loaded. Saves ~2,000 tokens.
+
+**Savings**: ~14,000-21,000 tokens across typical bootstrap (2-3 status calls per step × 6,901 deploy section).
+
+### 8.7 PriorContext Compression (NEW — IMPLEMENT)
+
+Replace `buildPriorContext()` with sliding-window version:
+
+```go
+func (b *BootstrapState) buildPriorContext() *StepContext {
+    attestations := make(map[string]string)
+    for i := 0; i < b.CurrentStep && i < len(b.Steps); i++ {
+        if b.Steps[i].Attestation == "" { continue }
+        if i == b.CurrentStep-1 {
+            attestations[b.Steps[i].Name] = b.Steps[i].Attestation // full
+        } else {
+            att := b.Steps[i].Attestation
+            if len(att) > 80 { att = att[:77] + "..." }
+            attestations[b.Steps[i].Name] = fmt.Sprintf("[%s: %s]", b.Steps[i].Status, att) // compressed
+        }
+    }
+    return &StepContext{Plan: b.Plan, Attestations: attestations}
+}
+```
+
+**Safety**: Plan always included in full (referenced by every subsequent step). Only old attestations compressed. Current step's attestation (N-1) kept verbatim.
+
+**Savings**: ~510 tokens at step 5, compounds across iterations.
+
+### 8.8 Iteration Delta Guidance (NEW — IMPLEMENT)
+
+When `ContextDelivery.IterationNum > 0`, replace full DetailedGuide with focused delta:
+
+```
+"ITERATION N for step {step}.
+Previous attempt: {last attestation from failed step}.
+Focus: identify root cause from logs/errors, fix, and retry.
+Tools: zerops_logs severity=ERROR since=5m, then fix and redeploy."
+```
+
+~100 tokens instead of ~6,900 tokens (deploy section).
+
+**Savings**: ~6,800 tokens per iteration. Over 2 iterations: ~13,600 tokens.
+
+### 8.9 Knowledge-Aware Gates (NEW — IMPLEMENT)
+
+**8.9.1 Rich Gate Failure Responses**
+
+Add `Remediation` to `GateResult`:
+```go
+type RemediationStep struct {
+    Action      string `json:"action"`      // "load_knowledge", "record_evidence"
+    Tool        string `json:"tool"`        // "zerops_knowledge", "zerops_workflow"
+    Params      string `json:"params"`      // "scope=\"infrastructure\""
+    Explanation string `json:"explanation"` // "Platform knowledge required before generating YAML"
+}
+```
+
+Return structured JSON instead of flat error string. LLM knows exactly what to do.
+
+**8.9.2 Gate Knowledge Prerequisites**
+
+Add `knowledgePrereqs []string` to `gateDefinition`:
+- G2 (DEVELOP→DEPLOY) requires `scope` + `briefing` loaded (checked via `ContextDelivery`)
+- Prevents generating code without platform knowledge
+
+**8.9.3 Complexity-Based Gate Simplification**
+
+Add `skippableFor []string`:
+- `managed_only` projects skip G2, G3 (no code to write/deploy)
+- Complexity derived from `state.Bootstrap.Plan` after discover step
+
+**8.9.4 Adaptive Freshness**
+
+- Iteration 0: 24h (current behavior)
+- Iteration 1+: 1h for `dev_verify`/`deploy_evidence`, 24h for `discovery`
+- Benefit: typo fix doesn't require full re-validation
+
+### 8.10 Cross-Workflow Content Dedup (NEW — IMPLEMENT)
+
+- Extract shared deploy/verify protocol (~120 lines) from bootstrap.md and deploy.md into `<section name="deploy-common">`
+- Deduplicate universals-core overlap: remove verbatim duplicates in core.md networking/filesystem sections
+- Savings: ~2,300 tokens
+
+### 8.11 DROPPED Optimizations
 
 | Proposal | Why Dropped |
 |----------|-------------|
 | Extract rules to separate `zerops_knowledge scope="rules"` | Adds mandatory tool call dependency. LLMs may skip it. Loses contextual proximity. Saves only ~500 tokens — achievable via in-place dedup instead. |
 | Concept-based doc restructure | Breaks 1:1 step-to-section mapping in `ResolveGuidance(step)`. 13 tests need rewriting. No actual token savings — multiple section extracts per step would be equal or larger. |
 | Agent handoff decision log | `PriorContext` at `bootstrap.go:235-251` already collects prior attestations and plan. Adding separate decision log is redundant. |
+| Full pull-based model (no push) | Too risky — LLM may skip critical knowledge. Progressive push (first delivery full, repeat delivery stub) is safer than pure pull. |
+| Scope sub-sectioning (split core.md) | High risk, requires restructuring core.md with section tags + new Provider interface method. Savings achievable more simply via briefing dedup. Defer to future. |
 
-### 8.7 Corrected Token Savings Estimate
+### 8.12 Corrected Token Savings Estimate (COMPREHENSIVE)
 
-| Change | Savings | Risk |
-|--------|---------|------|
-| Remove dual delivery (inline guidance) | ~607 tokens | Low (4 tests to update) |
-| Conditional deploy by planMode | ~1,500-2,500 tokens | Low (section split + ResolveGuidance change) |
-| Deduplicate repeated rules | ~500-800 tokens | Zero (markdown only) |
-| Strategy-specific deploy sections | ~1,600 tokens (for deploy workflow) | Low (new sections in deploy.md) |
-| Total | **~4,200-5,500 tokens (~35-45%)** | |
+**First-run bootstrap (standard mode, 1 service pair)**:
+| Change | Current | Proposed | Savings |
+|--------|---------|----------|---------|
+| DetailedGuide (mode-filtered) | 11,785 | ~7,500 | 36% |
+| AvailableStacks (5x→1x) | 2,500 | 500 | 80% |
+| PriorContext (compressed) | 2,000 | 600 | 70% |
+| Inline Guidance (removed) | 607 | 0 | 100% |
+| Content dedup (bootstrap.md) | — | — | ~3,000 saved |
+| Cross-workflow dedup | — | — | ~2,300 saved |
+| **Total** | **~28,961** | **~20,567** | **29%** |
 
-Realistic improvement from 12,344 → ~7,000-8,000 tokens per bootstrap.
+**Iteration 2 (deploy fails, retry)**:
+| Change | Current | Proposed | Savings |
+|--------|---------|----------|---------|
+| DetailedGuide (delta) | 7,547 | ~200 | 97% |
+| scope/briefing (tracked) | ~12,000 | 0 | 100% |
+| PriorContext | 800 | 200 | 75% |
+| Stacks | 500 | 0 | 100% |
+| **Total** | **~20,847** | **~400** | **98%** |
+
+**3-iteration total**: Current ~69K → Proposed ~21K (**70% reduction**).
+
+Realistic improvement from 12,344 → ~7,000-8,000 tokens per bootstrap (first run). Iteration cost drops from ~20K to ~400 tokens.
 
 ---
 
@@ -660,60 +920,77 @@ Realistic improvement from 12,344 → ~7,000-8,000 tokens per bootstrap.
 
 ---
 
-## 10. Implementation Waves
+## 10. Implementation Waves (REVISED — Integrated Knowledge Optimization)
 
-### Wave 1 — Cleanup (no dependencies, all S-scope)
+### Wave 1 — Cleanup + Content Dedup (no dependencies, all S-scope)
 
-| # | Action | Files |
-|---|--------|-------|
-| 1 | Delete `DeployFlow` field, migrate test fixtures to `Decisions["deployStrategy"]` | `service_meta.go`, `service_meta_test.go`, `bootstrap_evidence.go` |
-| 2 | Stop serializing inline `Guidance` to LLM responses | `bootstrap.go:216`, update 4 tests |
-| 3 | Rename "Phase 1/2" to "Part 1/2" in deploy.md | `deploy.md` |
-| 4 | Expand `Verification` strings with `SUCCESS WHEN:` criteria | `bootstrap_steps.go` |
-| 5 | Add `ListServiceMetas(stateDir)` function + tests | `service_meta.go`, `service_meta_test.go` |
-| 6 | Add strategy constants (`StrategyPushDev`, `StrategyCICD`, `StrategyManual`, `DecisionDeployStrategy`) | `service_meta.go` |
+| # | Action | Files | Section |
+|---|--------|-------|---------|
+| 1 | Delete `DeployFlow` field, migrate test fixtures to `Decisions["deployStrategy"]` | `service_meta.go`, `service_meta_test.go`, `bootstrap_evidence.go` | 5.2 |
+| 2 | Stop serializing inline `Guidance` to LLM responses | `bootstrap.go:216`, update 4 tests | 8.1 |
+| 3 | Rename "Phase 1/2" to "Part 1/2" in deploy.md | `deploy.md` | 8.5 |
+| 4 | Expand `Verification` strings with `SUCCESS WHEN:` criteria | `bootstrap_steps.go` | 8.4 |
+| 5 | Add `ListServiceMetas(stateDir)` function + tests | `service_meta.go`, `service_meta_test.go` | 4.4 |
+| 6 | Add strategy constants (`StrategyPushDev`, `StrategyCICD`, `StrategyManual`, `DecisionDeployStrategy`) | `service_meta.go` | 5.5 |
+| 7 | **Consolidate bootstrap.md rules** (deployFiles 21→5, noop 9→3, positive phrasing) | `bootstrap.md` | 8.3 |
+| 8 | **Factor shared deploy logic** between bootstrap.md and deploy.md | `bootstrap.md`, `deploy.md` | 8.10 |
+| 9 | **Deduplicate universals-core overlap** | `themes/core.md` | 8.10 |
 
-### Wave 2 — Router + Deploy Guidance (depends on wave 1)
-
-| # | Action | Files | Scope |
-|---|--------|-------|-------|
-| 7 | Implement `Route()` pure function with table-driven tests | New: `router.go`, `router_test.go` | M |
-| 8 | Add strategy-specific `<section>` tags to deploy.md | `deploy.md` | S |
-| 9 | Create `ResolveDeployGuidance()` reusing `extractSection` pattern | New: `deploy_guidance.go`, `deploy_guidance_test.go` | S |
-| 10 | Add `DeleteServiceMeta()` + hook in `zerops_delete` | `service_meta.go`, `tools/delete.go` | S |
-| 11 | Skip shared-dep meta overwrite for EXISTS/SHARED deps | `bootstrap_evidence.go` | S |
-| 12 | Deduplicate repeated rules in bootstrap.md | `bootstrap.md` | S |
-
-### Wave 3 — Strategy System (depends on wave 2)
+### Wave 2 — Delivery Tracking + Router (depends on wave 1)
 
 | # | Action | Files | Scope |
 |---|--------|-------|-------|
-| 13 | Wire router into `buildProjectSummary`, add `StateUnknown` | `instructions.go`, `managed_types.go` | M |
-| 14 | Add "strategy" step 6 with `Skippable: true` + auto-skip | `bootstrap_steps.go`, `bootstrap.go` | M |
-| 15 | Add `Strategies` map to BootstrapState for structured capture | `state.go`, `bootstrap.go` | S |
-| 16 | Add `action="strategy"` handler for post-bootstrap changes | `tools/workflow.go` | M |
-| 17 | Implement incremental ServiceMeta writes (after provision) | `bootstrap_evidence.go`, `service_meta.go` | M |
-| 18 | Fix bootstrap exclusivity TOCTOU race | `engine.go` | S |
-| 19 | Conditional deploy section by planMode | `bootstrap_guidance.go`, `bootstrap.go`, `bootstrap.md` | M |
+| 10 | **Add `ContextDelivery` struct to BootstrapState** | `state.go` | M |
+| 11 | **Gate DetailedGuide re-delivery** (first=full, repeat=stub) | `bootstrap.go` | M |
+| 12 | **Gate AvailableStacks delivery** (discover step only) | `tools/workflow.go` | S |
+| 13 | **Compress PriorContext** (N-1 full, older compressed) | `bootstrap.go` | S |
+| 14 | **Iteration delta guidance** (delta instead of full guide on iter 2+) | `bootstrap.go` | M |
+| 15 | **Persist knowledge tracking to session** | `tools/knowledge.go`, `engine.go`, `knowledge_tracker.go` | M |
+| 16 | Implement `Route()` pure function with table-driven tests | New: `router.go`, `router_test.go` | M |
+| 17 | Add strategy-specific `<section>` tags to deploy.md | `deploy.md` | S |
+| 18 | Create `ResolveDeployGuidance()` reusing `extractSection` pattern | New: `deploy_guidance.go`, `deploy_guidance_test.go` | S |
+| 19 | Add `DeleteServiceMeta()` + hook in `zerops_delete` | `service_meta.go`, `tools/delete.go` | S |
+| 20 | Skip shared-dep meta overwrite for EXISTS/SHARED deps | `bootstrap_evidence.go` | S |
 
-### Wave 4 — Pipeline + Future (depends on wave 3 + design decisions)
+### Wave 3 — Mode-Filtered Knowledge + Strategy System (depends on wave 2)
 
-| # | Action | Blocker |
-|---|--------|---------|
-| 20 | Clarify zcli prohibition scope in CLAUDE.local.md | User confirmation needed |
-| 21 | Implement pipeline generation (MCP tool or guidance-only) | Design decision on approach |
-| 22 | Add `Mode` field to `runtime.Info` (no-op extension) | None |
+| # | Action | Files | Scope |
+|---|--------|-------|-------|
+| 21 | **Split deploy section into progressive sub-sections** (7 sub-sections) | `bootstrap.md` | M |
+| 22 | **Implement `ResolveProgressiveGuidance()`** | `bootstrap_guidance.go`, `bootstrap.go` | M |
+| 23 | **Briefing dedup via tracker** (skip universals/runtime if already loaded) | `tools/knowledge.go` | S |
+| 24 | Wire router into `buildProjectSummary`, add `StateUnknown` | `instructions.go`, `managed_types.go` | M |
+| 25 | Add "strategy" step 6 with `Skippable: true` + auto-skip | `bootstrap_steps.go`, `bootstrap.go` | M |
+| 26 | Add `Strategies` map to BootstrapState for structured capture | `state.go`, `bootstrap.go` | S |
+| 27 | Add `action="strategy"` handler for post-bootstrap changes | `tools/workflow.go` | M |
+| 28 | Implement incremental ServiceMeta writes (after provision) | `bootstrap_evidence.go`, `service_meta.go` | M |
+| 29 | Fix bootstrap exclusivity TOCTOU race | `engine.go` | S |
+
+### Wave 4 — Knowledge-Aware Gates + Pipeline (depends on wave 3)
+
+| # | Action | Files | Scope |
+|---|--------|-------|-------|
+| 30 | **Rich gate failure responses** (Remediation in GateResult) | `gates.go`, `tools/workflow.go` | M |
+| 31 | **Gate knowledge prerequisites** (G2 requires scope+briefing) | `gates.go`, `engine.go` | M |
+| 32 | **Complexity-based gate simplification** (managed_only skips G2,G3) | `gates.go` | S |
+| 33 | **Adaptive freshness** (iteration-aware: 1h vs 24h) | `gates.go` | S |
+| 34 | Clarify zcli prohibition scope in CLAUDE.local.md | User confirmation needed | S |
+| 35 | Implement pipeline generation (MCP tool or guidance-only) | Design decision on approach | M |
+| 36 | Add `Mode` field to `runtime.Info` (no-op extension) | `runtime.go` | S |
 
 ### Dependency Graph
 
 ```
-Wave 1: [1,2,3,4,5,6] ─── all independent, parallel
+Wave 1: [1,2,3,4,5,6,7,8,9] ─── all independent, parallel (content + cleanup)
            │
-Wave 2: [7←5, 8, 9←8, 10, 11, 12] ─── 7 needs ListServiceMetas; 9 needs sections
+Wave 2: [10, 11←10, 12, 13, 14←10, 15←10, 16←5, 17, 18←17, 19, 20]
+           │     context tracking              router + deploy guidance
            │
-Wave 3: [13←7, 14←1+4, 15, 16←14, 17, 18, 19] ─── router wiring needs router; strategy step needs DeployFlow cleanup
+Wave 3: [21←7, 22←21, 23←15, 24←16, 25←1+4, 26, 27←25, 28, 29]
+           │   progressive guidance    strategy system + bugfixes
            │
-Wave 4: [20, 21←14+20, 22] ─── pipeline needs strategy system + zcli clarification
+Wave 4: [30←15, 31←15+30, 32←31, 33, 34, 35←25+34, 36]
+             knowledge-aware gates        pipeline + future
 ```
 
 ---
@@ -803,3 +1080,164 @@ No behavioral change — strategy step auto-skips.
 ```
 
 Error codes: AUTH_REQUIRED, SERVICE_NOT_FOUND, INVALID_PARAMETER, WORKFLOW_REQUIRED, BOOTSTRAP_NOT_ACTIVE, etc. (see `internal/platform/errors.go`).
+
+---
+
+## 14. LLM Behavioral Model for Knowledge Delivery (NEW)
+
+### 14.1 Eight Hypotheses (from deep analysis)
+
+**H1: Recency Bias** — LLMs weight the most recently received content (last ~2K tokens) much more than earlier context. When `zerops_knowledge scope="infrastructure"` delivers 9K tokens after step guidance, rules from step guidance are displaced. Rules that appear in BOTH scope AND step guidance survive displacement; rules only in step guidance may be forgotten.
+
+**H2: Repetition Diminishing Returns** — First 2-3 mentions of a rule establish it. Mentions 4-7 reinforce at different action points. Mentions 8+ create cognitive clutter — LLM spends attention processing "is this new or same?" instead of following the rule. **Optimal: 3-5 mentions per knowledge dump.** Beyond that, each additional mention has negative marginal value. `deployFiles` at 21 mentions is well past the crossover.
+
+**H3: Structured > Unstructured** — Rules in structured format (tables, `ALWAYS`/`NEVER` prefix, checklists, JSON) are followed more reliably than rules in prose. The `core.md` "Rules & Pitfalls" section with `**ALWAYS**`/`**NEVER** + REASON` format maps cleanly to LLM pattern-matching. The causal chains table is particularly effective as a direct lookup.
+
+**H4: Volume Penalty Beyond ~4K Tokens** — The deploy section (6,986 tokens) causes decreased compliance on rules stated early in the dump vs rules near the action items. The provision section (~1,128 tokens) has much higher rule compliance. **Recommendation: cap step guidance at ~3,500 tokens.**
+
+**H5: Example > Description** — YAML templates are the most copied artifact. LLMs reproduce examples almost verbatim. If the template shows `deployFiles: [.]`, that's followed — even if prose elsewhere contradicts. The template in the subagent prompt is the most effective knowledge delivery per token. **Implication: invest in correct templates, not verbose prose.**
+
+**H6: Context Rot in Multi-Step Workflows** — By step 4, the LLM has consumed 12K+ tokens of knowledge. PriorContext attestations from steps 0-3 become noise. The discover attestation is useful at step 1; by step 4 it's an historical artifact consuming tokens without driving action.
+
+**H7: Gate Failure Messaging Too Abstract** — `"Record required evidence before transitioning"` is procedurally correct but behaviorally insufficient. The LLM may record evidence without performing verification. Structured failure with `{action, tool, params, explanation}` drives correct recovery.
+
+**H8: Subagent Prompt is Gold Standard** — The Service Bootstrap Agent Prompt (~3,250 tokens) is the most effective knowledge delivery because: (1) self-contained, (2) uses concrete pre-resolved values, (3) numbered task table with verification, (4) recovery patterns table, (5) combines rules and examples in one document. All other delivery should aspire to this pattern.
+
+### 14.2 Delivery Pattern Guidelines
+
+| Aspect | Current | Recommended |
+|--------|---------|-------------|
+| Guidance size per step | 500-7,000 tokens | Max 3,500 tokens |
+| Rule repetition per dump | Up to 21 | 3-5 (2-3 full + N short refs) |
+| Critical rule placement | Scattered in prose | Near action point + in YAML template + in verification error |
+| Rule phrasing | 40% negation ("Do NOT") | Positive directives ("Map ONLY variables from discovery") |
+| Iteration guidance | Full re-delivery | Delta only (what changed, what to try) |
+| PriorContext | All attestations verbatim | Last step full, older compressed |
+| Gate failures | "missing evidence: X" | Structured remediation with tool+params |
+
+### 14.3 Anti-Patterns to Avoid
+
+1. **Knowledge dump without action anchor**: `scope="infrastructure"` returns 9K tokens of reference. LLMs are action-oriented — "do X" is processed more reliably than "here is everything you might need"
+2. **Conflicting authority between layers**: `Guidance` and `DetailedGuide` can diverge since maintained in different files
+3. **Negation-heavy rules**: "Do NOT" is less reliable than "Do X instead"
+4. **Exception proliferation**: `"Implicit-webserver runtimes (php-nginx, php-apache, nginx, static)"` repeated 11+ times creates visual noise; define once, reference by label
+5. **Volume-error correlation**: Steps with ~500 tokens guidance (discover, verify) have low error rates; steps with ~7K tokens (deploy) are primary error source — volume exacerbates inherent difficulty
+
+---
+
+## 15. Complete Knowledge Delivery Channel Map (NEW)
+
+### 15.1 Seven Delivery Channels
+
+| # | Channel | Trigger | Tokens | Push/Pull | LLM Control |
+|---|---------|---------|--------|-----------|-------------|
+| 1 | System prompt | MCP startup | 400-1,200 | Push | None |
+| 2 | Bootstrap step guidance | Step transition | 200-7,000/step | Push | Partial (controls step progression) |
+| 3 | Workflow markdown | `zerops_workflow` | 400-12,000 | Push | Yes (chooses workflow) |
+| 4 | Knowledge system | `zerops_knowledge` | 500-9,000 | Pull | Yes (chooses mode + params) |
+| 5 | State + prior context | Every step response | 0-2,000 (growing) | Push | None |
+| 6 | Next actions | Every tool response | 50-200 | Push | None |
+| 7 | Tool responses | Any tool call | 100-5,000 | Pull | Yes (chooses which tools) |
+
+### 15.2 Per-Step Token Delivery
+
+| Step | DetailedGuide | PriorContext | Stacks | scope/briefing | Total |
+|------|--------------|-------------|--------|---------------|-------|
+| 0 discover | 1,368 | 0 | 500 | — | 1,868 |
+| 1 provision | 1,128 | 200 | 500 | — | 1,828 |
+| 2 generate | 1,742 | 400 | 500 | 8,967+3,000 | 14,609 |
+| 3 deploy | 6,986 | 600 | 500 | — | 8,086 |
+| 4 verify | 561 | 800 | 500 | — | 1,861 |
+| **Total** | **11,785** | **2,000** | **2,500** | **~12,000** | **~28,252** |
+
+### 15.3 Cross-Channel Redundancy Map
+
+| Content | Channels Present | Overlap Tokens |
+|---------|-----------------|---------------|
+| Universals | scope(4) + recipe(4) | ~1,000 |
+| Runtime guide | briefing(4) + recipe(4) | ~800 |
+| Live stacks | briefing(4) + workflow(3) + bootstrap response(2) | ~400 |
+| Service cards | briefing(4) + scope(4) | ~600 |
+| Deploy rules | step guidance(2) + scope(4) | ~500 |
+| **Total cross-channel waste** | | **~3,300** |
+
+### 15.4 Knowledge Storage Structure
+
+```
+internal/knowledge/
+├── themes/       core.md(8K), universals.md(1K), services.md(4K), operations.md(3.5K)
+├── runtimes/     10+ per-runtime guides (700-1,200 tokens each)
+├── recipes/      29 framework configs (500-1,500 tokens each)
+├── guides/       18 topic guides (500-2,000 tokens each)
+└── decisions/    2-3 architectural choice docs
+
+internal/content/workflows/
+├── bootstrap.md  785 lines (~12K tokens) — 5 <section> tags for step extraction
+├── deploy.md     213 lines (~3K tokens)
+├── debug.md      161 lines (~500 tokens)
+├── configure.md  124 lines (~400 tokens)
+├── monitor.md    144 lines (~450 tokens)
+└── scale.md      114 lines (~350 tokens)
+```
+
+---
+
+## 16. Comprehensive Token Budget — Before vs After (NEW)
+
+### 16.1 First-Run Bootstrap (standard, 1 service pair, with managed services)
+
+| Component | Current | After Wave 1 | After Wave 2 | After Wave 3 | After Wave 4 |
+|-----------|---------|-------------|-------------|-------------|-------------|
+| DetailedGuide (5 steps) | 11,785 | 8,785 (-3K dedup) | 8,785 | ~5,400 (mode-filtered) | ~5,400 |
+| scope="infrastructure" | 8,967 | 8,167 (-800 dedup) | 8,167 | 8,167 | 8,167 |
+| Briefing | 3,000 | 3,000 | 3,000 | ~1,800 (dedup) | ~1,800 |
+| AvailableStacks | 2,500 | 2,500 | 500 (1x only) | 500 | 500 |
+| PriorContext | 2,000 | 2,000 | 600 (compressed) | 600 | 600 |
+| Inline Guidance | 607 | 607 | 0 (removed) | 0 | 0 |
+| **Total** | **28,859** | **25,059** | **21,052** | **16,467** | **16,467** |
+| **Savings** | — | **13%** | **27%** | **43%** | **43%** |
+
+### 16.2 Iteration 2 (deploy fails, retry)
+
+| Component | Current | After Wave 2 | After Wave 3 |
+|-----------|---------|-------------|-------------|
+| DetailedGuide | 7,547 | ~200 (delta) | ~200 |
+| scope/briefing re-calls | 12,000 | 0 (tracked) | 0 |
+| PriorContext | 800 | 200 | 200 |
+| Stacks | 500 | 0 | 0 |
+| **Total** | **20,847** | **~400** | **~400** |
+
+### 16.3 Three-Iteration Cumulative
+
+| Scenario | Current | After All Waves |
+|----------|---------|----------------|
+| Run 1 | 28,859 | 16,467 |
+| Iteration 2 | 20,847 | 400 |
+| Iteration 3 | 20,847 | 400 |
+| **Total** | **70,553** | **17,267** |
+| **Savings** | — | **76%** |
+
+---
+
+## 17. Extended Reusable Code Reference (NEW)
+
+| Function | File | Reuse For |
+|----------|------|-----------|
+| `ReadServiceMeta` / `WriteServiceMeta` | `service_meta.go` | Strategy persistence |
+| `ResolveGuidance(step)` | `bootstrap_guidance.go` | Base for progressive resolver |
+| `extractSection(md, name)` | `bootstrap_guidance.go:20-32` | Deploy sub-section extraction, deploy guidance |
+| `DetectProjectState()` | `managed_types.go` | Router input |
+| `ListSessions()` | `registry.go` | Router input |
+| `validateConditionalSkip()` | `bootstrap.go` | Strategy step skip logic, gate simplification model |
+| `populateStacks()` / `injectStacks()` | `tools/workflow.go` | Stack catalog injection + gating |
+| `jsonResult()` / `textResult()` | `tools/convert.go` | Response formatting |
+| `content.GetWorkflow()` | `content/content.go` | Markdown loading |
+| `buildPriorContext()` | `bootstrap.go:235-251` | Modify for compression |
+| `planMode()` | `bootstrap.go:254` | Already computes standard/simple for progressive guidance |
+| `KnowledgeTracker` | `ops/knowledge_tracker.go` | Extend with session persistence + dedup |
+| `Document.H2Sections()` | `knowledge/documents.go` | Lazy section parsing for scope sub-sections (future) |
+| `FormatStackList()` / `FormatServiceStacks()` | `knowledge/versions.go` | Two formats for different contexts |
+| `GetBriefing()` | `knowledge/briefing.go` | 7-layer composition, extend with depth/dedup |
+| `prependUniversals()` | `knowledge/briefing.go` | Guard with tracker to prevent double-delivery |
+| `GateResult` | `gates.go` | Extend with Remediation field |
+| `CheckGate()` | `gates.go` | Extend with ContextDelivery + complexity params |
