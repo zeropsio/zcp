@@ -21,6 +21,8 @@ func TestSSHArgs_HostKeyOptions(t *testing.T) {
 			want: []string{
 				"-o", "StrictHostKeyChecking=no",
 				"-o", "UserKnownHostsFile=/dev/null",
+				"-o", "ServerAliveInterval=15",
+				"-o", "ServerAliveCountMax=3",
 				"appstage", "cd /var/www && zcli push",
 			},
 		},

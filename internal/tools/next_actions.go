@@ -1,5 +1,11 @@
 package tools
 
+import (
+	"fmt"
+
+	"github.com/zeropsio/zcp/internal/ops"
+)
+
 // NextActions constants provide actionable follow-up instructions for LLMs.
 const (
 	nextActionDeploySuccess    = "Enable subdomain: zerops_subdomain action=enable. Check logs: zerops_logs severity=ERROR since=5m."
@@ -17,3 +23,19 @@ const (
 	nextActionScaleSuccess     = "Verify scaling: zerops_discover."
 	nextActionSubdomainEnable  = "Subdomain active. Verify: zerops_verify."
 )
+
+// deploySuccessNextActions returns dev-aware next actions for successful deploys.
+// Self-deploy to dynamic runtimes warns that the server is NOT running.
+func deploySuccessNextActions(result *ops.DeployResult) string {
+	isSelfDeploy := result.SourceService == result.TargetService
+	if isSelfDeploy && ops.NeedsManualStart(result.TargetServiceType) {
+		return fmt.Sprintf(
+			"CRITICAL: Deploy restarted the container — dev server is NOT running. "+
+				"Start it via SSH immediately (Bash run_in_background=true): "+
+				"ssh %s \"cd /var/www && {start_command}\". "+
+				"Check TaskOutput after 3-5s. Then: zerops_subdomain action=enable, zerops_verify.",
+			result.TargetService,
+		)
+	}
+	return nextActionDeploySuccess
+}

@@ -308,6 +308,101 @@ func TestDeployTool_SSHReadinessTimeout(t *testing.T) {
 	}
 }
 
+func TestDeployTool_SelfDeploy_DevAwareResponse(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{
+				ID:   "svc-1",
+				Name: "appdev",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName: "nodejs@22",
+				},
+			},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: statusActive, Sequence: 1},
+		})
+	ssh := &stubSSH{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, testEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed.TargetServiceType != "nodejs@22" {
+		t.Errorf("targetServiceType = %q, want %q", parsed.TargetServiceType, "nodejs@22")
+	}
+	if !strings.Contains(parsed.NextActions, "NOT running") {
+		t.Errorf("nextActions should warn about server NOT running for self-deploy dynamic runtime, got: %s", parsed.NextActions)
+	}
+	if !strings.Contains(parsed.Message, "NOT running") {
+		t.Errorf("message should indicate server NOT running for self-deploy dynamic runtime, got: %s", parsed.Message)
+	}
+}
+
+func TestDeployTool_CrossDeploy_StandardResponse(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{
+				ID:   "svc-1",
+				Name: "appdev",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName: "nodejs@22",
+				},
+			},
+			{
+				ID:   "svc-2",
+				Name: "appstage",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName: "nodejs@22",
+				},
+			},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-2", Status: statusActive, Sequence: 1},
+		})
+	ssh := &stubSSH{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, testEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"sourceService": "appdev",
+		"targetService": "appstage",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed.TargetServiceType != "nodejs@22" {
+		t.Errorf("targetServiceType = %q, want %q", parsed.TargetServiceType, "nodejs@22")
+	}
+	if strings.Contains(parsed.NextActions, "NOT running") {
+		t.Errorf("cross-deploy nextActions should NOT warn about server, got: %s", parsed.NextActions)
+	}
+}
+
 func TestDeployTool_NoParams(t *testing.T) {
 	t.Parallel()
 

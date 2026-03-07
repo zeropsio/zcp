@@ -27,22 +27,23 @@ func shellQuote(s string) string {
 
 // DeployResult contains the outcome of a deploy operation.
 type DeployResult struct {
-	Status          string   `json:"status"`
-	Mode            string   `json:"mode"` // "ssh"
-	SourceService   string   `json:"sourceService,omitempty"`
-	TargetService   string   `json:"targetService"`
-	TargetServiceID string   `json:"targetServiceId"`
-	Message         string   `json:"message"`
-	MonitorHint     string   `json:"monitorHint,omitempty"`
-	BuildStatus     string   `json:"buildStatus,omitempty"`
-	BuildDuration   string   `json:"buildDuration,omitempty"`
-	Suggestion      string   `json:"suggestion,omitempty"`
-	SSHReady        bool     `json:"sshReady,omitempty"`
-	TimedOut        bool     `json:"timedOut,omitempty"`
-	NextActions     string   `json:"nextActions,omitempty"`
-	Warnings        []string `json:"warnings,omitempty"`
-	BuildLogs       []string `json:"buildLogs,omitempty"`       // last N lines of build output
-	BuildLogsSource string   `json:"buildLogsSource,omitempty"` // "build_container" or empty
+	Status            string   `json:"status"`
+	Mode              string   `json:"mode"` // "ssh"
+	SourceService     string   `json:"sourceService,omitempty"`
+	TargetService     string   `json:"targetService"`
+	TargetServiceID   string   `json:"targetServiceId"`
+	TargetServiceType string   `json:"targetServiceType,omitempty"`
+	Message           string   `json:"message"`
+	MonitorHint       string   `json:"monitorHint,omitempty"`
+	BuildStatus       string   `json:"buildStatus,omitempty"`
+	BuildDuration     string   `json:"buildDuration,omitempty"`
+	Suggestion        string   `json:"suggestion,omitempty"`
+	SSHReady          bool     `json:"sshReady,omitempty"`
+	TimedOut          bool     `json:"timedOut,omitempty"`
+	NextActions       string   `json:"nextActions,omitempty"`
+	Warnings          []string `json:"warnings,omitempty"`
+	BuildLogs         []string `json:"buildLogs,omitempty"`       // last N lines of build output
+	BuildLogsSource   string   `json:"buildLogsSource,omitempty"` // "build_container" or empty
 }
 
 // SSHDeployer executes commands on remote Zerops services.
@@ -140,28 +141,30 @@ func deploySSH(
 			// SSH connection dropped after successful zcli push (common exit 255).
 			// Build was submitted — let pollDeployBuild take over.
 			return &DeployResult{
-				Status:          "BUILD_TRIGGERED",
-				Mode:            "ssh",
-				SourceService:   sourceService,
-				TargetService:   targetService,
-				TargetServiceID: target.ID,
-				Message:         fmt.Sprintf("Build triggered from %s to %s (SSH session closed after push)", sourceService, targetService),
-				MonitorHint:     "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
-				Warnings:        warnings,
+				Status:            "BUILD_TRIGGERED",
+				Mode:              "ssh",
+				SourceService:     sourceService,
+				TargetService:     targetService,
+				TargetServiceID:   target.ID,
+				TargetServiceType: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+				Message:           fmt.Sprintf("Build triggered from %s to %s (SSH session closed after push)", sourceService, targetService),
+				MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
+				Warnings:          warnings,
 			}, nil
 		}
 		return nil, classifySSHError(err, sourceService, targetService)
 	}
 
 	return &DeployResult{
-		Status:          "BUILD_TRIGGERED",
-		Mode:            "ssh",
-		SourceService:   sourceService,
-		TargetService:   targetService,
-		TargetServiceID: target.ID,
-		Message:         fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService),
-		MonitorHint:     "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
-		Warnings:        warnings,
+		Status:            "BUILD_TRIGGERED",
+		Mode:              "ssh",
+		SourceService:     sourceService,
+		TargetService:     targetService,
+		TargetServiceID:   target.ID,
+		TargetServiceType: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+		Message:           fmt.Sprintf("Build triggered from %s to %s via SSH", sourceService, targetService),
+		MonitorHint:       "Build runs asynchronously. Poll zerops_events for build/deploy FINISHED status.",
+		Warnings:          warnings,
 	}, nil
 }
 

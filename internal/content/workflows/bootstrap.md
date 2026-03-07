@@ -594,6 +594,10 @@ Do NOT generate hello-world apps. The /status endpoint must PROVE real connectiv
 
 ## Tasks
 
+**CRITICAL**: `zerops_deploy` to dev restarts the container with `zsc noop --silent` — your server DIES.
+After every deploy to dev, you MUST start the server via SSH before `zerops_verify` can pass.
+This applies EVERY time — not just the first deploy. Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): server auto-starts, skip manual start.
+
 Execute IN ORDER. Every step has verification — do not skip any.
 
 | # | Task | Action | Verify |
@@ -601,15 +605,17 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 1 | Write zerops.yml | Write to `{mountPath}/zerops.yml` with both setup entries | File exists with correct setup names |
 | 2 | Write app code | HTTP server on the port defined in zerops.yml `run.ports` with `/`, `/health`, `/status` | Code references discovered env vars |
 | 3 | Write .gitignore | Build artifacts and IDE files only. Do NOT include `.env` — no .env files exist on Zerops | File exists, no `.env` entry |
-| 3b | Quick-test (mandatory, skip for implicit-webserver runtimes) | Kill previous process, start server via SSH (Bash tool `run_in_background=true` — server runs in SSH foreground), check `TaskOutput` for startup, test /health and /status. Fix issues. php-nginx, php-apache, nginx, static: skip — web server config not applied until first deploy. | Endpoints return expected responses |
-| 4 | Deploy dev | `zerops_deploy targetService="{devHostname}"` | status=DEPLOYED (blocks until complete) |
-| 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
-| 5b | Start server (post-deploy, skip for implicit-webserver runtimes) | Deploy restarted container — `zsc noop --silent` is running, not your app. `zerops_deploy` waits for SSH readiness — start server via SSH immediately (Bash tool `run_in_background=true`, kill-then-start pattern from Quick-test). php-nginx, php-apache, nginx, static: skip — web server starts automatically. | `TaskOutput` shows startup message |
-| 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
-| 7 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
-| 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` | status=DEPLOYED (blocks until complete) |
-| 9 | Verify stage | `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{stageHostname}"` | status=healthy |
-| 10 | Report | Status (pass/fail) + dev URL + stage URL | — |
+| 4 | Quick-test (mandatory, skip for implicit-webserver runtimes) | Kill previous process, start server via SSH (Bash tool `run_in_background=true` — server runs in SSH foreground), check `TaskOutput` for startup, test /health and /status. Fix issues. php-nginx, php-apache, nginx, static: skip — web server config not applied until first deploy. | Endpoints return expected responses |
+| 5 | Deploy dev | `zerops_deploy targetService="{devHostname}"` | status=DEPLOYED (blocks until complete) |
+| 6 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
+| 7 | Start server | Deploy killed your server. Start via SSH (kill-then-start from task 4). Skip for implicit-webserver runtimes (php-nginx, php-apache, nginx, static — auto-starts). `zerops_deploy` waits for SSH readiness — start immediately (Bash tool `run_in_background=true`). | `TaskOutput` shows startup message |
+| 8 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
+| 9 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
+| 10 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` | status=DEPLOYED (blocks until complete) |
+| 11 | Verify stage | `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{stageHostname}"` | status=healthy |
+| 12 | Report | Status (pass/fail) + dev URL + stage URL | — |
+
+Tasks 7→8→9 are gated: subdomain activation (8) and verify (9) WILL FAIL if server not started (7).
 
 ## Quick-test before deploy (mandatory)
 
@@ -629,9 +635,9 @@ Dev uses `start: zsc noop --silent` — no server runs automatically. You MUST s
    `ssh {devHostname} "curl -sf localhost:{port}/health"` | jq .
    `ssh {devHostname} "curl -sf localhost:{port}/status"` | jq .
 6. **If broken**: read the background task output for errors. Fix code on mount, `TaskStop` the server task, go back to step 1.
-7. **When working**: proceed to formal deploy (task 4).
+7. **When working**: proceed to formal deploy (task 5).
 
-**Implicit-webserver runtimes (php-nginx, php-apache, nginx, static):** Skip quick-test entirely — go straight to deploy (task 4). Before first deploy, the container runs bare nginx/apache without zerops.yml config (no documentRoot, no rewrite rules). Endpoint tests return 404. The web server serves your app correctly only AFTER `zerops_deploy` applies the build pipeline and config. Task 5b is also not needed — web server starts automatically.
+**Implicit-webserver runtimes (php-nginx, php-apache, nginx, static):** Skip quick-test entirely — go straight to deploy (task 5). Before first deploy, the container runs bare nginx/apache without zerops.yml config (no documentRoot, no rewrite rules). Endpoint tests return 404. The web server serves your app correctly only AFTER `zerops_deploy` applies the build pipeline and config. Task 7 (Start server) is also not needed — web server starts automatically.
 
 **Piping rule:** Pipe `| jq .` OUTSIDE the SSH command. `jq` is not available inside containers.
 

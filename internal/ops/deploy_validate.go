@@ -252,6 +252,17 @@ func parseEnvRefs(s string) []envRef {
 	return refs
 }
 
+// NeedsManualStart returns true if the service type requires manual server
+// start after deploy (dynamic runtimes without implicit web servers).
+func NeedsManualStart(serviceType string) bool {
+	base, _, _ := strings.Cut(serviceType, "@")
+	switch base {
+	case runtimePHPApach, runtimePHPNginx, runtimeNginx, runtimeStatic:
+		return false
+	}
+	return true
+}
+
 // hasImplicitWebServer returns true if the runtime has a built-in web server
 // that starts automatically (no run.start or run.ports needed).
 // Checks run.base first, falls back to build.base strings.
@@ -261,12 +272,12 @@ func hasImplicitWebServer(runBase string, buildBases []string) bool {
 		if base == "" {
 			continue
 		}
-		if base == "static" {
+		if base == runtimeStatic {
 			return true
 		}
 		b, _, _ := strings.Cut(base, "@")
 		switch b {
-		case "php-apache", "php-nginx", "nginx", "static":
+		case runtimePHPApach, runtimePHPNginx, runtimeNginx, runtimeStatic:
 			return true
 		}
 	}

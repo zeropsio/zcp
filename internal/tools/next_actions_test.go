@@ -1,9 +1,11 @@
-// Tests for: next_actions.go — NextActions constants contain correct tool names.
+// Tests for: next_actions.go — NextActions constants and functions.
 package tools
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/ops"
 )
 
 func TestNextActions_ContainToolNames(t *testing.T) {
@@ -36,6 +38,70 @@ func TestNextActions_ContainToolNames(t *testing.T) {
 			t.Parallel()
 			if !strings.Contains(tt.action, tt.wantTool) {
 				t.Errorf("nextAction %q should contain tool name %q", tt.action, tt.wantTool)
+			}
+		})
+	}
+}
+
+func TestDeploySuccessNextActions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		result       *ops.DeployResult
+		wantContains string
+		wantAbsent   string
+	}{
+		{
+			name: "self_deploy_dynamic_warns_server_not_running",
+			result: &ops.DeployResult{
+				SourceService:     "appdev",
+				TargetService:     "appdev",
+				TargetServiceType: "nodejs@22",
+			},
+			wantContains: "NOT running",
+		},
+		{
+			name: "self_deploy_implicit_uses_standard",
+			result: &ops.DeployResult{
+				SourceService:     "appdev",
+				TargetService:     "appdev",
+				TargetServiceType: "php-nginx@8.4",
+			},
+			wantContains: "zerops_subdomain",
+			wantAbsent:   "NOT running",
+		},
+		{
+			name: "cross_deploy_uses_standard",
+			result: &ops.DeployResult{
+				SourceService:     "appdev",
+				TargetService:     "appstage",
+				TargetServiceType: "nodejs@22",
+			},
+			wantContains: "zerops_subdomain",
+			wantAbsent:   "NOT running",
+		},
+		{
+			name: "self_deploy_static_uses_standard",
+			result: &ops.DeployResult{
+				SourceService:     "webdev",
+				TargetService:     "webdev",
+				TargetServiceType: "static",
+			},
+			wantContains: "zerops_subdomain",
+			wantAbsent:   "NOT running",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := deploySuccessNextActions(tt.result)
+			if tt.wantContains != "" && !strings.Contains(got, tt.wantContains) {
+				t.Errorf("deploySuccessNextActions() = %q, want to contain %q", got, tt.wantContains)
+			}
+			if tt.wantAbsent != "" && strings.Contains(got, tt.wantAbsent) {
+				t.Errorf("deploySuccessNextActions() = %q, should NOT contain %q", got, tt.wantAbsent)
 			}
 		})
 	}

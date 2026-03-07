@@ -549,6 +549,39 @@ func TestValidateZeropsYml_StageZscNoop_Warning(t *testing.T) {
 	}
 }
 
+func TestNeedsManualStart(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		serviceType string
+		want        bool
+	}{
+		{"nodejs needs start", "nodejs@22", true},
+		{"go needs start", "go@1", true},
+		{"bun needs start", "bun@1.2", true},
+		{"python needs start", "python@3.12", true},
+		{"rust needs start", "rust@stable", true},
+		{"deno needs start", "deno@2", true},
+		{"php-nginx auto-starts", "php-nginx@8.4", false},
+		{"php-apache auto-starts", "php-apache@8.3", false},
+		{"nginx auto-starts", "nginx@1.22", false},
+		{"static auto-starts", "static", false},
+		{"empty defaults to needs start", "", true},
+		{"bare nodejs", "nodejs", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := NeedsManualStart(tt.serviceType)
+			if got != tt.want {
+				t.Errorf("NeedsManualStart(%q) = %v, want %v", tt.serviceType, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHasImplicitWebServer(t *testing.T) {
 	t.Parallel()
 

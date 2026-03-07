@@ -24,6 +24,8 @@ func sshArgs(hostname, command string) []string {
 	return []string{
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=3",
 		hostname, command,
 	}
 }

@@ -126,6 +126,14 @@ func TestE2E_Deploy(t *testing.T) {
 
 	step := 0
 
+	// --- Step 0: Start workflow session ---
+	step++
+	logStep(t, step, "zerops_workflow bootstrap")
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+	})
+
 	// --- Step 1: Import nodejs service ---
 	step++
 	logStep(t, step, "zerops_import (nodejs with enableSubdomainAccess)")
@@ -170,9 +178,14 @@ func TestE2E_Deploy(t *testing.T) {
 	})
 
 	var deployResult struct {
-		Status      string `json:"status"`
-		Mode        string `json:"mode"`
-		BuildStatus string `json:"buildStatus"`
+		Status            string `json:"status"`
+		Mode              string `json:"mode"`
+		BuildStatus       string `json:"buildStatus"`
+		TargetServiceType string `json:"targetServiceType"`
+		SourceService     string `json:"sourceService"`
+		TargetService     string `json:"targetService"`
+		NextActions       string `json:"nextActions"`
+		Message           string `json:"message"`
 	}
 	if err := json.Unmarshal([]byte(deployText), &deployResult); err != nil {
 		t.Fatalf("parse deploy result: %v", err)
@@ -187,7 +200,22 @@ func TestE2E_Deploy(t *testing.T) {
 	if deployResult.BuildStatus != "ACTIVE" {
 		t.Errorf("buildStatus = %s, want ACTIVE", deployResult.BuildStatus)
 	}
-	t.Logf("  Deploy result: status=%s mode=%s buildStatus=%s", deployResult.Status, deployResult.Mode, deployResult.BuildStatus)
+
+	// Dev-aware response: self-deploy to nodejs should populate TargetServiceType
+	// and warn about server not running.
+	if !strings.Contains(deployResult.TargetServiceType, "nodejs") {
+		t.Errorf("targetServiceType = %q, want to contain 'nodejs'", deployResult.TargetServiceType)
+	}
+	// Self-deploy (sourceService == targetService) to dynamic runtime → dev-aware warning.
+	if deployResult.SourceService == deployResult.TargetService {
+		if !strings.Contains(deployResult.NextActions, "NOT running") {
+			t.Errorf("self-deploy nextActions should warn about server NOT running, got: %s", deployResult.NextActions)
+		}
+		if !strings.Contains(deployResult.Message, "NOT running") {
+			t.Errorf("self-deploy message should indicate server NOT running, got: %s", deployResult.Message)
+		}
+	}
+	t.Logf("  Deploy result: status=%s mode=%s buildStatus=%s serviceType=%s", deployResult.Status, deployResult.Mode, deployResult.BuildStatus, deployResult.TargetServiceType)
 
 	// --- Step 4: Check for error logs ---
 	step++

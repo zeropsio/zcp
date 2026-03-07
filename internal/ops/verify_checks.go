@@ -17,6 +17,9 @@ const (
 	checkNameStartupDetected = "startup_detected"
 	checkNameHTTPRoot        = "http_root"
 	runtimeStatic            = "static"
+	runtimeNginx             = "nginx"
+	runtimePHPApach          = "php-apache"
+	runtimePHPNginx          = "php-nginx"
 )
 
 // RuntimeClass categorizes services for verify check dispatch.
@@ -34,9 +37,9 @@ const (
 func classifyRuntime(serviceType string, hasPorts bool) RuntimeClass {
 	base, _, _ := strings.Cut(serviceType, "@")
 	switch base {
-	case "php-apache", "php-nginx":
+	case runtimePHPApach, runtimePHPNginx:
 		return RuntimeImplicit
-	case runtimeStatic, "nginx":
+	case runtimeStatic, runtimeNginx:
 		return RuntimeStatic
 	}
 	// Dynamic runtimes become workers when they have no ports.

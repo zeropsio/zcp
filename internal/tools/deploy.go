@@ -82,8 +82,13 @@ func pollDeployBuild(
 	case statusActive:
 		result.Status = statusDeployed
 		result.MonitorHint = ""
-		result.Message = fmt.Sprintf("Successfully deployed to %s", result.TargetService)
-		result.NextActions = nextActionDeploySuccess
+		isSelfDeploy := result.SourceService == result.TargetService
+		if isSelfDeploy && ops.NeedsManualStart(result.TargetServiceType) {
+			result.Message = fmt.Sprintf("Successfully deployed to %s. Container restarted — dev server NOT running.", result.TargetService)
+		} else {
+			result.Message = fmt.Sprintf("Successfully deployed to %s", result.TargetService)
+		}
+		result.NextActions = deploySuccessNextActions(result)
 		if sshDeployer != nil {
 			if err := ops.WaitSSHReady(ctx, sshDeployer, result.TargetService); err != nil {
 				result.Warnings = append(result.Warnings,
