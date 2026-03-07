@@ -56,7 +56,7 @@ type immediateResponse struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, logFetcher platform.LogFetcher) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"transition|evidence|reset|iterate\" (phase management).",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"transition|evidence|reset|iterate|list\" (phase management).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -122,11 +122,13 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleBootstrapSkip(ctx, engine, client, cache, input)
 	case "status":
 		return handleBootstrapStatus(ctx, engine, client, cache)
+	case "list":
+		return handleListSessions(engine)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, skip, status, transition, evidence, reset, iterate")), nil, nil
+			"Valid actions: start, complete, skip, status, transition, evidence, reset, iterate, list")), nil, nil
 	}
 }
 
@@ -286,6 +288,17 @@ func handleIterate(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
 			"Start a session first")), nil, nil
 	}
 	return jsonResult(state), nil, nil
+}
+
+func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
+	sessions, err := engine.ListActiveSessions()
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrSessionNotFound,
+			fmt.Sprintf("List sessions failed: %v", err),
+			"")), nil, nil
+	}
+	return jsonResult(sessions), nil, nil
 }
 
 // populateStacks injects live stack catalog into a bootstrap response.

@@ -11,16 +11,15 @@ import (
 )
 
 const (
-	stateFileName = "zcp_state.json"
-	stateVersion  = "1"
+	sessionsDirName = "sessions"
+	legacyStateFile = "zcp_state.json"
+	stateVersion    = "1"
 )
 
-// InitSession creates a new workflow session and persists it to disk.
-// Returns an error if a session already exists (call ResetSession first).
+// InitSession creates a new workflow session, persists it to sessions/{id}.json,
+// and registers it in the registry. Cleans up legacy zcp_state.json if found.
 func InitSession(stateDir, projectID, workflowName, intent string) (*WorkflowState, error) {
-	if _, err := LoadSession(stateDir); err == nil {
-		return nil, fmt.Errorf("init session: active session exists, reset first")
-	}
+	cleanupLegacyState(stateDir)
 
 	sessionID, err := generateSessionID()
 	if err != nil {
@@ -31,6 +30,7 @@ func InitSession(stateDir, projectID, workflowName, intent string) (*WorkflowSta
 	state := &WorkflowState{
 		Version:   stateVersion,
 		SessionID: sessionID,
+		PID:       os.Getpid(),
 		ProjectID: projectID,
 		Workflow:  workflowName,
 		Phase:     PhaseInit,
@@ -41,46 +41,60 @@ func InitSession(stateDir, projectID, workflowName, intent string) (*WorkflowSta
 		History:   []PhaseTransition{},
 	}
 
-	if err := saveState(stateDir, state); err != nil {
+	if err := saveSessionState(stateDir, sessionID, state); err != nil {
 		return nil, err
 	}
+
+	entry := SessionEntry{
+		SessionID: sessionID,
+		PID:       os.Getpid(),
+		Workflow:  workflowName,
+		ProjectID: projectID,
+		Phase:     PhaseInit,
+		Intent:    intent,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := RegisterSession(stateDir, entry); err != nil {
+		return nil, fmt.Errorf("init session register: %w", err)
+	}
+
 	return state, nil
 }
 
-// LoadSession reads the workflow state from disk.
-func LoadSession(stateDir string) (*WorkflowState, error) {
-	path := filepath.Join(stateDir, stateFileName)
+// LoadSessionByID reads a per-session state file from sessions/{sessionID}.json.
+func LoadSessionByID(stateDir, sessionID string) (*WorkflowState, error) {
+	path := sessionFilePath(stateDir, sessionID)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("load session: %w", err)
+		return nil, fmt.Errorf("load session %s: %w", sessionID, err)
 	}
 	var state WorkflowState
 	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("load session unmarshal: %w", err)
+		return nil, fmt.Errorf("load session %s unmarshal: %w", sessionID, err)
 	}
 	return &state, nil
 }
 
-// ResetSession removes the state file.
-func ResetSession(stateDir string) error {
-	path := filepath.Join(stateDir, stateFileName)
+// ResetSessionByID removes the per-session state file and unregisters from the registry.
+func ResetSessionByID(stateDir, sessionID string) error {
+	path := sessionFilePath(stateDir, sessionID)
 	err := os.Remove(path)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("reset session: %w", err)
+		return fmt.Errorf("reset session %s: %w", sessionID, err)
 	}
-	return nil
+	return UnregisterSession(stateDir, sessionID)
 }
 
 // IterateSession archives evidence, resets phase to DEVELOP, and increments the counter.
-func IterateSession(stateDir, evidenceDir string) (*WorkflowState, error) {
-	state, err := LoadSession(stateDir)
+func IterateSession(stateDir, evidenceDir, sessionID string) (*WorkflowState, error) {
+	state, err := LoadSessionByID(stateDir, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("iterate session: %w", err)
 	}
 
 	nextIter := state.Iteration + 1
 
-	// Archive evidence for the current iteration.
 	if err := ArchiveEvidence(evidenceDir, state.SessionID, nextIter); err != nil {
 		return nil, fmt.Errorf("iterate session archive: %w", err)
 	}
@@ -95,15 +109,16 @@ func IterateSession(stateDir, evidenceDir string) (*WorkflowState, error) {
 		At:   state.UpdatedAt,
 	})
 
-	if err := saveState(stateDir, state); err != nil {
+	if err := saveSessionState(stateDir, sessionID, state); err != nil {
 		return nil, err
 	}
 	return state, nil
 }
 
-// saveState atomically writes the state to disk.
-func saveState(stateDir string, state *WorkflowState) error {
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+// saveSessionState atomically writes state to sessions/{sessionID}.json.
+func saveSessionState(stateDir, sessionID string, state *WorkflowState) error {
+	sessDir := filepath.Join(stateDir, sessionsDirName)
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
 		return fmt.Errorf("save state mkdir: %w", err)
 	}
 
@@ -112,8 +127,8 @@ func saveState(stateDir string, state *WorkflowState) error {
 		return fmt.Errorf("save state marshal: %w", err)
 	}
 
-	target := filepath.Join(stateDir, stateFileName)
-	tmp, err := os.CreateTemp(stateDir, ".state-*.tmp")
+	target := sessionFilePath(stateDir, sessionID)
+	tmp, err := os.CreateTemp(sessDir, ".state-*.tmp")
 	if err != nil {
 		return fmt.Errorf("save state temp: %w", err)
 	}
@@ -133,6 +148,17 @@ func saveState(stateDir string, state *WorkflowState) error {
 		return fmt.Errorf("save state rename: %w", err)
 	}
 	return nil
+}
+
+// sessionFilePath returns the path for a per-session state file.
+func sessionFilePath(stateDir, sessionID string) string {
+	return filepath.Join(stateDir, sessionsDirName, sessionID+".json")
+}
+
+// cleanupLegacyState removes the old singleton zcp_state.json if found.
+func cleanupLegacyState(stateDir string) {
+	path := filepath.Join(stateDir, legacyStateFile)
+	_ = os.Remove(path)
 }
 
 // generateSessionID creates a random session ID.

@@ -31,8 +31,7 @@ func TestAutoCompleteBootstrap_WritesServiceMeta(t *testing.T) {
 
 	// Complete remaining steps to trigger autoComplete.
 	for _, step := range []string{"provision", "generate", "deploy", "verify"} {
-		_, err = eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil)
-		if err != nil {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}
@@ -122,8 +121,7 @@ func TestAutoCompleteBootstrap_OutputErrorsNonFatal(t *testing.T) {
 
 	// Bootstrap completion should still succeed despite output errors.
 	for _, step := range []string{"provision", "generate", "deploy", "verify"} {
-		_, err = eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil)
-		if err != nil {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s) should not fail due to output errors: %v", step, err)
 		}
 	}

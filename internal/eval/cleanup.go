@@ -98,10 +98,15 @@ func CleanupProject(ctx context.Context, client platform.Client, projectID, work
 		fmt.Fprintf(os.Stderr, "  removed %d files/dirs: %s\n", len(cleaned), strings.Join(cleaned, ", "))
 	}
 
-	// 3. Reset workflow state
+	// 3. Reset all workflow sessions
 	stateDir := filepath.Join(workDir, ".zcp", "state")
-	if err := workflow.ResetSession(stateDir); err != nil {
-		return fmt.Errorf("cleanup reset workflow: %w", err)
+	sessions, listErr := workflow.ListSessions(stateDir)
+	if listErr == nil {
+		for _, sess := range sessions {
+			if err := workflow.ResetSessionByID(stateDir, sess.SessionID); err != nil {
+				return fmt.Errorf("cleanup reset session %s: %w", sess.SessionID, err)
+			}
+		}
 	}
 
 	return nil

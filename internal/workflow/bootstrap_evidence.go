@@ -84,6 +84,11 @@ func (e *Engine) autoCompleteBootstrap(state *WorkflowState) error {
 	// Best-effort: write service meta and reflog. Errors are logged but don't fail bootstrap.
 	e.writeBootstrapOutputs(state)
 
+	// Immediately unregister DONE sessions from the registry.
+	if err := UnregisterSession(e.stateDir, state.SessionID); err != nil {
+		fmt.Fprintf(os.Stderr, "zcp: unregister completed session: %v\n", err)
+	}
+
 	return nil
 }
 

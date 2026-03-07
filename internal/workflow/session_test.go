@@ -33,31 +33,65 @@ func TestInitSession_CreatesState(t *testing.T) {
 	if state.Iteration != 0 {
 		t.Errorf("Iteration: want 0, got %d", state.Iteration)
 	}
-
-	// File should exist on disk.
-	statePath := filepath.Join(dir, "zcp_state.json")
-	if _, err := os.Stat(statePath); err != nil {
-		t.Fatalf("expected state file at %s: %v", statePath, err)
-	}
 }
 
-func TestInitSession_ExistingSessionBlocked(t *testing.T) {
+func TestInitSession_PerSessionFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	// First init should succeed.
-	if _, err := InitSession(dir, "proj-1", "bootstrap", "first"); err != nil {
-		t.Fatalf("first InitSession: %v", err)
+	state, err := InitSession(dir, "proj-1", "bootstrap", "test")
+	if err != nil {
+		t.Fatalf("InitSession: %v", err)
 	}
 
-	// Second init should fail.
-	_, err := InitSession(dir, "proj-1", "bootstrap", "second")
-	if err == nil {
-		t.Fatal("expected error for second InitSession with existing session")
+	// File should exist at sessions/{id}.json
+	statePath := sessionFilePath(dir, state.SessionID)
+	if _, err := os.Stat(statePath); err != nil {
+		t.Fatalf("expected session file at %s: %v", statePath, err)
+	}
+
+	// Legacy file should NOT exist.
+	legacyPath := filepath.Join(dir, legacyStateFile)
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Error("legacy zcp_state.json should not exist")
 	}
 }
 
-func TestLoadSession_Success(t *testing.T) {
+func TestInitSession_SetsPID(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	state, err := InitSession(dir, "proj-1", "bootstrap", "test")
+	if err != nil {
+		t.Fatalf("InitSession: %v", err)
+	}
+	if state.PID != os.Getpid() {
+		t.Errorf("PID: want %d, got %d", os.Getpid(), state.PID)
+	}
+}
+
+func TestInitSession_RegistersInRegistry(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	state, err := InitSession(dir, "proj-1", "bootstrap", "test")
+	if err != nil {
+		t.Fatalf("InitSession: %v", err)
+	}
+
+	sessions, err := ListSessions(dir)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("want 1 session in registry, got %d", len(sessions))
+	}
+	if sessions[0].SessionID != state.SessionID {
+		t.Errorf("registry SessionID mismatch: want %s, got %s", state.SessionID, sessions[0].SessionID)
+	}
+}
+
+func TestLoadSessionByID_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
@@ -66,9 +100,9 @@ func TestLoadSession_Success(t *testing.T) {
 		t.Fatalf("InitSession: %v", err)
 	}
 
-	loaded, err := LoadSession(dir)
+	loaded, err := LoadSessionByID(dir, original.SessionID)
 	if err != nil {
-		t.Fatalf("LoadSession: %v", err)
+		t.Fatalf("LoadSessionByID: %v", err)
 	}
 	if loaded.SessionID != original.SessionID {
 		t.Errorf("SessionID mismatch: want %s, got %s", original.SessionID, loaded.SessionID)
@@ -78,41 +112,64 @@ func TestLoadSession_Success(t *testing.T) {
 	}
 }
 
-func TestLoadSession_NoFile(t *testing.T) {
+func TestLoadSessionByID_NotFound(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	_, err := LoadSession(dir)
+	_, err := LoadSessionByID(dir, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error loading non-existent session")
 	}
 }
 
-func TestResetSession_DeletesState(t *testing.T) {
+func TestResetSessionByID_DeletesFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	if _, err := InitSession(dir, "proj-3", "bootstrap", "test"); err != nil {
+	state, err := InitSession(dir, "proj-3", "bootstrap", "test")
+	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 
-	if err := ResetSession(dir); err != nil {
-		t.Fatalf("ResetSession: %v", err)
+	if err := ResetSessionByID(dir, state.SessionID); err != nil {
+		t.Fatalf("ResetSessionByID: %v", err)
 	}
 
-	statePath := filepath.Join(dir, "zcp_state.json")
+	statePath := sessionFilePath(dir, state.SessionID)
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
-		t.Error("expected state file to be removed after reset")
+		t.Error("expected session file to be removed after reset")
 	}
 }
 
-func TestResetSession_NoExistingState(t *testing.T) {
+func TestResetSessionByID_Unregisters(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	state, err := InitSession(dir, "proj-3", "bootstrap", "test")
+	if err != nil {
+		t.Fatalf("InitSession: %v", err)
+	}
+
+	if err := ResetSessionByID(dir, state.SessionID); err != nil {
+		t.Fatalf("ResetSessionByID: %v", err)
+	}
+
+	sessions, err := ListSessions(dir)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("want 0 sessions after reset, got %d", len(sessions))
+	}
+}
+
+func TestResetSessionByID_NotFound(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
 	// Reset with no state should not error.
-	if err := ResetSession(dir); err != nil {
-		t.Fatalf("ResetSession on empty dir: %v", err)
+	if err := ResetSessionByID(dir, "nonexistent"); err != nil {
+		t.Fatalf("ResetSessionByID on empty dir: %v", err)
 	}
 }
 
@@ -121,22 +178,20 @@ func TestIterateSession_IncrementsCounter(t *testing.T) {
 	dir := t.TempDir()
 	evidenceDir := filepath.Join(dir, "evidence")
 
-	if _, err := InitSession(dir, "proj-4", "bootstrap", "iterate test"); err != nil {
+	state, err := InitSession(dir, "proj-4", "bootstrap", "iterate test")
+	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 
 	// Save some evidence.
 	ev := &Evidence{
-		SessionID: "", Type: "dev_verify", VerificationType: "attestation",
+		SessionID: state.SessionID, Type: "dev_verify", VerificationType: "attestation",
 	}
-	// For iterate, we need to know the session ID.
-	state, _ := LoadSession(dir)
-	ev.SessionID = state.SessionID
 	if err := SaveEvidence(evidenceDir, state.SessionID, ev); err != nil {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	iterated, err := IterateSession(dir, evidenceDir)
+	iterated, err := IterateSession(dir, evidenceDir, state.SessionID)
 	if err != nil {
 		t.Fatalf("IterateSession: %v", err)
 	}
@@ -153,11 +208,11 @@ func TestIterateSession_ArchivesEvidence(t *testing.T) {
 	dir := t.TempDir()
 	evidenceDir := filepath.Join(dir, "evidence")
 
-	if _, err := InitSession(dir, "proj-5", "bootstrap", "archive test"); err != nil {
+	state, err := InitSession(dir, "proj-5", "bootstrap", "archive test")
+	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 
-	state, _ := LoadSession(dir)
 	ev := &Evidence{
 		SessionID: state.SessionID, Type: "discovery", VerificationType: "attestation",
 	}
@@ -165,7 +220,7 @@ func TestIterateSession_ArchivesEvidence(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	if _, err := IterateSession(dir, evidenceDir); err != nil {
+	if _, err := IterateSession(dir, evidenceDir, state.SessionID); err != nil {
 		t.Fatalf("IterateSession: %v", err)
 	}
 
@@ -181,18 +236,15 @@ func TestIterateSession_HistoryRecordsCorrectSourcePhase(t *testing.T) {
 	dir := t.TempDir()
 	evidenceDir := filepath.Join(dir, "evidence")
 
-	if _, err := InitSession(dir, "proj-6", "bootstrap", "history test"); err != nil {
+	state, err := InitSession(dir, "proj-6", "bootstrap", "history test")
+	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 
 	// Manually set the phase to VERIFY (simulating a session that advanced).
-	state, err := LoadSession(dir)
-	if err != nil {
-		t.Fatalf("LoadSession: %v", err)
-	}
 	state.Phase = PhaseVerify
-	if err := saveState(dir, state); err != nil {
-		t.Fatalf("saveState: %v", err)
+	if err := saveSessionState(dir, state.SessionID, state); err != nil {
+		t.Fatalf("saveSessionState: %v", err)
 	}
 
 	// Save evidence so iterate doesn't fail.
@@ -203,7 +255,7 @@ func TestIterateSession_HistoryRecordsCorrectSourcePhase(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	iterated, err := IterateSession(dir, evidenceDir)
+	iterated, err := IterateSession(dir, evidenceDir, state.SessionID)
 	if err != nil {
 		t.Fatalf("IterateSession: %v", err)
 	}
@@ -226,8 +278,28 @@ func TestIterateSession_NoExistingState(t *testing.T) {
 	dir := t.TempDir()
 	evidenceDir := filepath.Join(dir, "evidence")
 
-	_, err := IterateSession(dir, evidenceDir)
+	_, err := IterateSession(dir, evidenceDir, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error iterating non-existent session")
+	}
+}
+
+func TestInitSession_CleansUpLegacyState(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Create a legacy state file.
+	legacyPath := filepath.Join(dir, legacyStateFile)
+	if err := os.WriteFile(legacyPath, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("create legacy file: %v", err)
+	}
+
+	if _, err := InitSession(dir, "proj-1", "bootstrap", "test"); err != nil {
+		t.Fatalf("InitSession: %v", err)
+	}
+
+	// Legacy file should be gone.
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Error("legacy zcp_state.json should be removed")
 	}
 }

@@ -202,8 +202,49 @@ func TestEngine_Reset(t *testing.T) {
 	if err := eng.Reset(); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if _, err := eng.GetState(); err == nil {
-		t.Fatal("expected error getting state after reset")
+	if eng.HasActiveSession() {
+		t.Error("expected no active session after reset")
+	}
+}
+
+func TestEngine_Reset_ClearsSessionID(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if eng.SessionID() == "" {
+		t.Fatal("expected non-empty session ID after Start")
+	}
+
+	if err := eng.Reset(); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if eng.SessionID() != "" {
+		t.Error("expected empty session ID after Reset")
+	}
+}
+
+func TestEngine_Reset_Unregisters(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := eng.Reset(); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	sessions, err := ListSessions(dir)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("want 0 sessions after reset, got %d", len(sessions))
 	}
 }
 
@@ -246,6 +287,42 @@ func TestEngine_GetState(t *testing.T) {
 	}
 }
 
+func TestEngine_Start_StoresSessionID(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	state, err := eng.Start("proj-1", "deploy", "test")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if eng.SessionID() != state.SessionID {
+		t.Errorf("engine SessionID mismatch: want %s, got %s", state.SessionID, eng.SessionID())
+	}
+}
+
+func TestEngine_Start_RegistersInRegistry(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	state, err := eng.Start("proj-1", "deploy", "test")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	sessions, err := eng.ListActiveSessions()
+	if err != nil {
+		t.Fatalf("ListActiveSessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("want 1 session, got %d", len(sessions))
+	}
+	if sessions[0].SessionID != state.SessionID {
+		t.Errorf("registry session mismatch")
+	}
+}
+
 // --- Auto-reset DONE session tests ---
 
 func TestEngine_Start_AutoResetDoneSession(t *testing.T) {
@@ -260,8 +337,8 @@ func TestEngine_Start_AutoResetDoneSession(t *testing.T) {
 	}
 	// Manually set phase to DONE (simulating completed workflow).
 	state.Phase = PhaseDone
-	if err := saveState(dir, state); err != nil {
-		t.Fatalf("saveState: %v", err)
+	if err := saveSessionState(dir, eng.SessionID(), state); err != nil {
+		t.Fatalf("saveSessionState: %v", err)
 	}
 
 	// Start again — should auto-reset the DONE session.
@@ -293,6 +370,135 @@ func TestEngine_Start_ActiveSessionBlocks(t *testing.T) {
 	_, err := eng.Start("proj-1", "deploy", "second")
 	if err == nil {
 		t.Fatal("expected error for second Start with active session")
+	}
+}
+
+// --- Bootstrap exclusivity tests ---
+
+func TestEngine_BootstrapExclusivity(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng1 := NewEngine(dir)
+	eng2 := NewEngine(dir)
+
+	if _, err := eng1.BootstrapStart("proj-1", "first bootstrap"); err != nil {
+		t.Fatalf("first BootstrapStart: %v", err)
+	}
+
+	// Second bootstrap on different engine should fail.
+	_, err := eng2.BootstrapStart("proj-1", "second bootstrap")
+	if err == nil {
+		t.Fatal("expected error for second bootstrap (exclusivity)")
+	}
+}
+
+func TestEngine_BootstrapExclusivity_DeadPID(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Register a bootstrap session with a dead PID directly.
+	entry := SessionEntry{
+		SessionID: "dead-bootstrap",
+		PID:       9999999,
+		Workflow:  "bootstrap",
+		ProjectID: "proj-1",
+		Phase:     PhaseInit,
+	}
+	if err := RegisterSession(dir, entry); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	// New bootstrap should succeed because the dead PID will be pruned.
+	eng := NewEngine(dir)
+	_, err := eng.BootstrapStart("proj-1", "test")
+	if err != nil {
+		t.Fatalf("BootstrapStart should succeed after dead PID pruned: %v", err)
+	}
+}
+
+// --- Multiple engines coexist tests ---
+
+func TestEngine_MultipleEngines_Coexist(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng1 := NewEngine(dir)
+	eng2 := NewEngine(dir)
+
+	// Both can start deploy sessions (different from bootstrap exclusivity).
+	if _, err := eng1.Start("proj-1", "deploy", "first"); err != nil {
+		t.Fatalf("eng1.Start: %v", err)
+	}
+	if _, err := eng2.Start("proj-1", "deploy", "second"); err != nil {
+		t.Fatalf("eng2.Start: %v", err)
+	}
+
+	sessions, err := ListSessions(dir)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Errorf("want 2 sessions, got %d", len(sessions))
+	}
+}
+
+func TestEngine_Transition_UpdatesRegistry(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	state, err := eng.Start("proj-1", "deploy", "test")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	ev := &Evidence{
+		SessionID: state.SessionID, Type: "recipe_review", VerificationType: "attestation",
+		Attestation: "recipe reviewed", Passed: 1,
+	}
+	if err := eng.RecordEvidence(ev); err != nil {
+		t.Fatalf("RecordEvidence: %v", err)
+	}
+
+	if _, err := eng.Transition(PhaseDiscover); err != nil {
+		t.Fatalf("Transition: %v", err)
+	}
+
+	sessions, err := eng.ListActiveSessions()
+	if err != nil {
+		t.Fatalf("ListActiveSessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("want 1 session, got %d", len(sessions))
+	}
+	if sessions[0].Phase != PhaseDiscover {
+		t.Errorf("registry phase: want DISCOVER, got %s", sessions[0].Phase)
+	}
+}
+
+func TestEngine_SameEngine_ActiveSessionBlocks(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	state, err := eng.Start("proj-1", "deploy", "original")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	sessionID := state.SessionID
+
+	// Second start on same engine should fail (active non-DONE session).
+	_, err = eng.Start("proj-1", "deploy", "retry")
+	if err == nil {
+		t.Fatal("expected error: active session should block")
+	}
+
+	// Original session still accessible.
+	state, err = eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state.SessionID != sessionID {
+		t.Errorf("session ID changed unexpectedly")
 	}
 }
 
@@ -402,16 +608,13 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 		t.Errorf("Completed: want 5, got %d", resp.Progress.Completed)
 	}
 
-	// Phase should be DONE.
-	state, err := eng.GetState()
+	// Session should be unregistered (DONE sessions are immediately cleaned up).
+	sessions, err := ListSessions(dir)
 	if err != nil {
-		t.Fatalf("GetState: %v", err)
+		t.Fatalf("ListSessions: %v", err)
 	}
-	if state.Phase != PhaseDone {
-		t.Errorf("Phase: want DONE, got %s", state.Phase)
-	}
-	if state.Bootstrap.Active {
-		t.Error("Bootstrap should be inactive after completion")
+	if len(sessions) != 0 {
+		t.Errorf("want 0 sessions after bootstrap done, got %d", len(sessions))
 	}
 }
 
@@ -515,7 +718,6 @@ func TestEngine_BootstrapSkip_Mandatory(t *testing.T) {
 	}
 
 	// Skip discover (mandatory) — should fail.
-	// discover is the first step and not skippable.
 	_, err := eng.BootstrapSkip("discover", "skip reason")
 	if err == nil {
 		t.Fatal("expected error skipping mandatory step 'discover'")
@@ -569,7 +771,6 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 		t.Fatalf("BootstrapStatus: %v", err)
 	}
 
-	// Verify first step shows as complete in summary.
 	if len(resp.Progress.Steps) != 5 {
 		t.Fatalf("Steps count: want 5, got %d", len(resp.Progress.Steps))
 	}
@@ -587,7 +788,6 @@ func TestBootstrapComplete_AutoComplete_GatesChecked(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Complete all steps with valid attestations.
 	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
 	for _, step := range steps {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
@@ -595,7 +795,6 @@ func TestBootstrapComplete_AutoComplete_GatesChecked(t *testing.T) {
 		}
 	}
 
-	// After auto-complete, phase should be DONE — gates were checked and passed.
 	state, err := eng.GetState()
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
@@ -623,27 +822,23 @@ func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
 	}
 
 	// Overwrite stage_verify evidence with Failed: 1.
-	state, err := eng.GetState()
-	if err != nil {
-		t.Fatalf("GetState: %v", err)
-	}
+	sessionID := eng.SessionID()
 	badEv := &Evidence{
-		SessionID: state.SessionID, Type: "stage_verify", VerificationType: "attestation",
+		SessionID: sessionID, Type: "stage_verify", VerificationType: "attestation",
 		Timestamp: "2026-02-23T12:00:00Z", Attestation: "stage failed",
 		Passed: 1, Failed: 1,
 	}
-	if err := SaveEvidence(eng.evidenceDir, state.SessionID, badEv); err != nil {
+	if err := SaveEvidence(eng.evidenceDir, sessionID, badEv); err != nil {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
 	// Complete the last step — auto-complete will overwrite the evidence.
-	_, err = eng.BootstrapComplete(context.Background(), "verify", "Final verification complete", nil)
+	_, err := eng.BootstrapComplete(context.Background(), "verify", "Final verification complete", nil)
 	if err != nil {
 		t.Fatalf("BootstrapComplete(verify): %v", err)
 	}
 
-	// Verify gates were checked by confirming the history has proper transitions.
-	state, err = eng.GetState()
+	state, err := eng.GetState()
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
 	}
@@ -672,9 +867,10 @@ func TestEngine_BootstrapComplete_AutoEvidence_PassedCount(t *testing.T) {
 	}
 
 	state, _ := eng.GetState()
+	sessionID := state.SessionID
 
 	// recipe_review maps to step: discover — 1 step completed.
-	ev, err := LoadEvidence(eng.evidenceDir, state.SessionID, "recipe_review")
+	ev, err := LoadEvidence(eng.evidenceDir, sessionID, "recipe_review")
 	if err != nil {
 		t.Fatalf("load recipe_review: %v", err)
 	}
@@ -683,7 +879,7 @@ func TestEngine_BootstrapComplete_AutoEvidence_PassedCount(t *testing.T) {
 	}
 
 	// dev_verify maps to steps: generate, deploy, verify — all 3 completed.
-	ev, err = LoadEvidence(eng.evidenceDir, state.SessionID, "dev_verify")
+	ev, err = LoadEvidence(eng.evidenceDir, sessionID, "dev_verify")
 	if err != nil {
 		t.Fatalf("load dev_verify: %v", err)
 	}
@@ -764,7 +960,6 @@ func TestEngine_BootstrapCompletePlan_Valid(t *testing.T) {
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
-	// Current step is "discover" — plan submission happens here.
 
 	plan := []BootstrapTarget{
 		{
@@ -782,7 +977,6 @@ func TestEngine_BootstrapCompletePlan_Valid(t *testing.T) {
 		t.Errorf("expected current step to be 'provision', got %v", resp.Current)
 	}
 
-	// Verify plan is persisted in state.
 	state, err := eng.GetState()
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
@@ -803,7 +997,6 @@ func TestEngine_BootstrapCompletePlan_InvalidHostname(t *testing.T) {
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
-	// Current step is "discover" — plan submission happens here.
 
 	plan := []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "my-app", Type: "bun@1.2"}},
@@ -822,7 +1015,6 @@ func TestEngine_BootstrapCompletePlan_WrongStep(t *testing.T) {
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
-	// Complete discover so current step is "provision" — not the plan step.
 	if _, err := eng.BootstrapComplete(context.Background(), "discover", "FRESH project detected", nil); err != nil {
 		t.Fatalf("BootstrapComplete(discover): %v", err)
 	}
@@ -845,19 +1037,16 @@ func TestEngine_StoreDiscoveredEnvVars(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Store env vars for "db".
 	err := eng.StoreDiscoveredEnvVars("db", []string{"connectionString", "port", "user"})
 	if err != nil {
 		t.Fatalf("StoreDiscoveredEnvVars: %v", err)
 	}
 
-	// Store env vars for "cache".
 	err = eng.StoreDiscoveredEnvVars("cache", []string{"connectionString"})
 	if err != nil {
 		t.Fatalf("StoreDiscoveredEnvVars: %v", err)
 	}
 
-	// Verify persisted.
 	state, err := eng.GetState()
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
@@ -878,7 +1067,6 @@ func TestEngine_StoreDiscoveredEnvVars_NoBootstrap(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	// Start a non-bootstrap session.
 	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}

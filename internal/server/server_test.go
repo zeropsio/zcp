@@ -331,12 +331,12 @@ func TestBuildInstructions_WorkflowHint_NoState(t *testing.T) {
 	}
 }
 
-func TestBuildInstructions_WorkflowHint_PhaseDone(t *testing.T) {
+func TestBuildInstructions_WorkflowHint_PhaseDone_NoHint(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := workflow.NewEngine(dir)
 
-	// Complete full bootstrap.
+	// Complete full bootstrap — DONE sessions are immediately unregistered.
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
@@ -351,8 +351,8 @@ func TestBuildInstructions_WorkflowHint_PhaseDone(t *testing.T) {
 	}
 
 	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, dir)
-	if !strings.Contains(inst, "DONE") {
-		t.Errorf("hint should mention DONE phase, got: %s", inst)
+	if strings.Contains(inst, "Active workflow") {
+		t.Error("DONE sessions should not appear as active workflow hints")
 	}
 }
 

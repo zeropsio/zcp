@@ -25,10 +25,11 @@ const (
 	StateConformant    ProjectState = "CONFORMANT"
 )
 
-// WorkflowState is the persistent state stored at .zcp/state/zcp_state.json.
+// WorkflowState is the persistent state stored at .zcp/state/sessions/{sessionID}.json.
 type WorkflowState struct {
 	Version   string            `json:"version"`
 	SessionID string            `json:"sessionId"`
+	PID       int               `json:"pid"`
 	ProjectID string            `json:"projectId"`
 	Workflow  string            `json:"workflow"`
 	Phase     Phase             `json:"phase"`

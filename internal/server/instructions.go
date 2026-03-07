@@ -54,25 +54,35 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 	return b.String()
 }
 
-// buildWorkflowHint reads the local workflow state and returns a 1-line hint.
+// buildWorkflowHint reads the registry and returns hints for all active sessions.
 // Returns empty string on any error (graceful fallback).
 func buildWorkflowHint(stateDir string) string {
 	if stateDir == "" {
 		return ""
 	}
-	state, err := workflow.LoadSession(stateDir)
-	if err != nil {
+	sessions, err := workflow.ListSessions(stateDir)
+	if err != nil || len(sessions) == 0 {
 		return ""
 	}
 
-	hint := fmt.Sprintf("Active workflow: %s phase=%s", state.Workflow, state.Phase)
-	if state.Bootstrap != nil && state.Bootstrap.Active {
-		stepNum := state.Bootstrap.CurrentStep + 1
-		total := len(state.Bootstrap.Steps)
-		stepName := state.Bootstrap.CurrentStepName()
-		hint += fmt.Sprintf(" (step %d/%d: %s)", stepNum, total, stepName)
+	var hints []string
+	for _, s := range sessions {
+		hint := fmt.Sprintf("Active workflow: %s phase=%s", s.Workflow, s.Phase)
+
+		// For bootstrap sessions, try to load full state for step detail.
+		if s.Workflow == "bootstrap" {
+			if state, loadErr := workflow.LoadSessionByID(stateDir, s.SessionID); loadErr == nil {
+				if state.Bootstrap != nil && state.Bootstrap.Active {
+					stepNum := state.Bootstrap.CurrentStep + 1
+					total := len(state.Bootstrap.Steps)
+					stepName := state.Bootstrap.CurrentStepName()
+					hint += fmt.Sprintf(" (step %d/%d: %s)", stepNum, total, stepName)
+				}
+			}
+		}
+		hints = append(hints, hint)
 	}
-	return hint
+	return strings.Join(hints, "\n")
 }
 
 // buildProjectSummary calls the API to list services and detect project state.
