@@ -157,6 +157,10 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 				continue
 			}
 
+			// Normalize resolution to uppercase (LLMs send mixed case).
+			targets[i].Dependencies[j].Resolution = strings.ToUpper(dep.Resolution)
+			dep = targets[i].Dependencies[j]
+
 			// Resolution validation.
 			switch dep.Resolution {
 			case "CREATE":
@@ -177,6 +181,12 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 			default:
 				errs = append(errs, fmt.Sprintf("target %q dependency %q: invalid resolution %q (must be CREATE, EXISTS, or SHARED)", rt.DevHostname, dep.Hostname, dep.Resolution))
 				continue
+			}
+
+			// Normalize mode to uppercase (LLMs send mixed case).
+			if dep.Mode != "" {
+				targets[i].Dependencies[j].Mode = strings.ToUpper(dep.Mode)
+				dep = targets[i].Dependencies[j]
 			}
 
 			// Mode defaulting for managed services.

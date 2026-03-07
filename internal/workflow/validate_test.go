@@ -305,6 +305,82 @@ func TestValidateBootstrapTargets_UnknownType_Error(t *testing.T) {
 	}
 }
 
+func TestValidateBootstrapTargets_CaseInsensitiveResolution(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		resolution string
+		wantUpper  string
+	}{
+		{"lowercase_create", "create", "CREATE"},
+		{"mixed_case_exists", "Exists", "EXISTS"},
+		{"lowercase_shared", "shared", "SHARED"},
+		{"already_uppercase", "CREATE", "CREATE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// Two targets so SHARED has a CREATE to reference.
+			targets := []BootstrapTarget{
+				{
+					Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+					Dependencies: []Dependency{
+						{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
+					},
+				},
+				{
+					Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2"},
+					Dependencies: []Dependency{
+						{Hostname: "db", Type: "postgresql@16", Resolution: tt.resolution},
+					},
+				},
+			}
+			_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := targets[1].Dependencies[0].Resolution
+			if got != tt.wantUpper {
+				t.Errorf("resolution: want %q, got %q", tt.wantUpper, got)
+			}
+		})
+	}
+}
+
+func TestValidateBootstrapTargets_CaseInsensitiveMode(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		mode      string
+		wantUpper string
+	}{
+		{"lowercase_ha", "ha", "HA"},
+		{"mixed_case_non_ha", "non_ha", "NON_HA"},
+		{"already_uppercase", "HA", "HA"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			targets := []BootstrapTarget{
+				{
+					Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+					Dependencies: []Dependency{
+						{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE", Mode: tt.mode},
+					},
+				},
+			}
+			_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := targets[0].Dependencies[0].Mode
+			if got != tt.wantUpper {
+				t.Errorf("mode: want %q, got %q", tt.wantUpper, got)
+			}
+		})
+	}
+}
+
 func TestValidateBootstrapTargets_ManagedModeDefault_NON_HA(t *testing.T) {
 	t.Parallel()
 	targets := []BootstrapTarget{
