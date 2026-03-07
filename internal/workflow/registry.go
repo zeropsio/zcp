@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -100,7 +99,7 @@ func RefreshRegistry(stateDir string) error {
 	})
 }
 
-// withRegistryLock acquires an exclusive flock, reads the registry, calls fn, and writes back.
+// withRegistryLock acquires an exclusive file lock, reads the registry, calls fn, and writes back.
 func withRegistryLock(stateDir string, fn func(*Registry) (*Registry, error)) error {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return fmt.Errorf("registry mkdir: %w", err)
@@ -113,10 +112,10 @@ func withRegistryLock(stateDir string, fn func(*Registry) (*Registry, error)) er
 	}
 	defer lockFile.Close()
 
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFileExclusive(lockFile); err != nil {
 		return fmt.Errorf("registry flock: %w", err)
 	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) //nolint:errcheck
+	defer unlockFile(lockFile)
 
 	reg, err := readRegistry(stateDir)
 	if err != nil {
@@ -194,13 +193,4 @@ func pruneDeadSessions(sessions []SessionEntry) []SessionEntry {
 		alive = append(alive, s)
 	}
 	return alive
-}
-
-// isProcessAlive checks if a process with the given PID exists.
-func isProcessAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
 }
