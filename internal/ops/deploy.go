@@ -37,6 +37,7 @@ type DeployResult struct {
 	BuildStatus     string   `json:"buildStatus,omitempty"`
 	BuildDuration   string   `json:"buildDuration,omitempty"`
 	Suggestion      string   `json:"suggestion,omitempty"`
+	SSHReady        bool     `json:"sshReady,omitempty"`
 	TimedOut        bool     `json:"timedOut,omitempty"`
 	NextActions     string   `json:"nextActions,omitempty"`
 	Warnings        []string `json:"warnings,omitempty"`

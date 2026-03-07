@@ -124,6 +124,9 @@ func TestIntegration_DeploySSHSelfDeploy(t *testing.T) {
 	if deployResult.TargetService != "app" {
 		t.Errorf("targetService = %q, want %q", deployResult.TargetService, "app")
 	}
+	if !deployResult.SSHReady {
+		t.Error("expected SSHReady=true after successful deploy with SSH deployer")
+	}
 
 	// Step 3: Verify service still RUNNING after deploy.
 	postDeployText := callAndGetText(t, session, "zerops_discover", map[string]any{

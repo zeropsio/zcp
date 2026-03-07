@@ -48,7 +48,7 @@ func RegisterDeploy(
 		}
 
 		onProgress := buildProgressCallback(ctx, req)
-		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher)
+		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer)
 
 		return jsonResult(result), nil, nil
 	})
@@ -62,6 +62,7 @@ func pollDeployBuild(
 	result *ops.DeployResult,
 	onProgress ops.ProgressCallback,
 	logFetcher platform.LogFetcher,
+	sshDeployer ops.SSHDeployer,
 ) {
 	if result.TargetServiceID == "" {
 		return
@@ -83,6 +84,14 @@ func pollDeployBuild(
 		result.MonitorHint = ""
 		result.Message = fmt.Sprintf("Successfully deployed to %s", result.TargetService)
 		result.NextActions = nextActionDeploySuccess
+		if sshDeployer != nil {
+			if err := ops.WaitSSHReady(ctx, sshDeployer, result.TargetService); err != nil {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("SSH not ready on %s after 30s — deployed but SSH may need more time", result.TargetService))
+			} else {
+				result.SSHReady = true
+			}
+		}
 	case statusBuildFailed:
 		result.Status = statusBuildFailed
 		if logFetcher != nil {

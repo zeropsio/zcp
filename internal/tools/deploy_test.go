@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
@@ -72,6 +73,9 @@ func TestDeployTool_SSHMode(t *testing.T) {
 	if parsed.MonitorHint != "" {
 		t.Errorf("monitorHint should be empty after successful deploy, got %q", parsed.MonitorHint)
 	}
+	if !parsed.SSHReady {
+		t.Error("expected SSHReady=true after successful deploy with SSH deployer")
+	}
 }
 
 func TestDeployTool_SelfDeploy_TargetOnly(t *testing.T) {
@@ -116,6 +120,9 @@ func TestDeployTool_SelfDeploy_TargetOnly(t *testing.T) {
 	}
 	if parsed.Status != statusDeployed {
 		t.Errorf("status = %s, want DEPLOYED", parsed.Status)
+	}
+	if !parsed.SSHReady {
+		t.Error("expected SSHReady=true after successful self-deploy with SSH deployer")
 	}
 }
 
@@ -229,6 +236,78 @@ func TestDeployTool_BuildFailed_WithBuildLogs(t *testing.T) {
 	}
 }
 
+type stubSSHWithReadiness struct {
+	deployOutput []byte
+	deployErr    error
+	readyErr     error
+}
+
+func (s *stubSSHWithReadiness) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
+	if command == "true" {
+		return nil, s.readyErr
+	}
+	return s.deployOutput, s.deployErr
+}
+
+func TestDeployTool_SSHReadinessTimeout(t *testing.T) {
+	restore := ops.OverrideSSHReadyConfigForTest(time.Millisecond, 10*time.Millisecond)
+	defer restore()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-1",
+				ProjectID:      "proj-1",
+				ServiceStackID: "svc-1",
+				Status:         statusActive,
+				Sequence:       1,
+			},
+		})
+	ssh := &stubSSHWithReadiness{
+		deployOutput: []byte("ok"),
+		readyErr:     fmt.Errorf("connection refused"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, testEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "app",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed.Status != statusDeployed {
+		t.Errorf("status = %s, want DEPLOYED", parsed.Status)
+	}
+	if parsed.SSHReady {
+		t.Error("expected SSHReady=false when SSH readiness times out")
+	}
+	if len(parsed.Warnings) == 0 {
+		t.Error("expected warning about SSH readiness timeout")
+	}
+	foundWarning := false
+	for _, w := range parsed.Warnings {
+		if strings.Contains(w, "SSH not ready") {
+			foundWarning = true
+			break
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected warning containing 'SSH not ready', got: %v", parsed.Warnings)
+	}
+}
+
 func TestDeployTool_NoParams(t *testing.T) {
 	t.Parallel()
 
@@ -247,7 +326,8 @@ func TestDeployTool_NoParams(t *testing.T) {
 }
 
 func TestDeployTool_SSHMode_Exit255PollsSuccessfully(t *testing.T) {
-	t.Parallel()
+	restore := ops.OverrideSSHReadyConfigForTest(time.Millisecond, 10*time.Millisecond)
+	defer restore()
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{

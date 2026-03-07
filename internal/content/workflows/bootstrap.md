@@ -327,7 +327,7 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 **Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path (steps 4-7).
 
 1. **Deploy to appdev**: `zerops_deploy targetService="appdev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. SSHFS mount auto-reconnects after deploy — no remount needed. Deploy tests the build pipeline and ensures deployFiles artifacts persist.
-2. **Start appdev** (deploy restarted container with `zsc noop`): wait ~10s for SSH to become available after container restart, then start server via SSH (same kill-then-start pattern from Dev iteration below), verify startup log. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically after deploy.
+2. **Start appdev** (deploy restarted container with `zsc noop`): `zerops_deploy` blocks until SSH is ready (sshReady=true in response) — start server via SSH immediately (same kill-then-start pattern from Dev iteration below), verify startup log. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically after deploy.
 3. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
 5. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING. Stage is never a deploy source — no `.git` needed on target.
@@ -604,7 +604,7 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 3b | Quick-test (mandatory, skip for implicit-webserver runtimes) | Kill previous process, start server via SSH (Bash tool `run_in_background=true` — server runs in SSH foreground), check `TaskOutput` for startup, test /health and /status. Fix issues. php-nginx, php-apache, nginx, static: skip — web server config not applied until first deploy. | Endpoints return expected responses |
 | 4 | Deploy dev | `zerops_deploy targetService="{devHostname}"` | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
-| 5b | Start server (post-deploy, skip for implicit-webserver runtimes) | Deploy restarted container — `zsc noop --silent` is running, not your app. Wait ~10s for SSH to reconnect, then start server via SSH (Bash tool `run_in_background=true`, kill-then-start pattern from Quick-test). php-nginx, php-apache, nginx, static: skip — web server starts automatically. | `TaskOutput` shows startup message |
+| 5b | Start server (post-deploy, skip for implicit-webserver runtimes) | Deploy restarted container — `zsc noop --silent` is running, not your app. `zerops_deploy` waits for SSH readiness — start server via SSH immediately (Bash tool `run_in_background=true`, kill-then-start pattern from Quick-test). php-nginx, php-apache, nginx, static: skip — web server starts automatically. | `TaskOutput` shows startup message |
 | 6 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
 | 7 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
 | 8 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` | status=DEPLOYED (blocks until complete) |
@@ -655,7 +655,7 @@ If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ah
 
 3. **Redeploy**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHFS mount auto-reconnects after deploy.
 
-4. **Start server**: wait ~10s for SSH after deploy, then kill previous: `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`, then start via Bash tool with `run_in_background=true` (server in SSH foreground): `ssh {devHostname} "cd /var/www && {start_command}"` — check startup via `TaskOutput task_id=... block=false` after 3-5s.
+4. **Start server**: `zerops_deploy` waits for SSH readiness — kill previous: `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`, then start via Bash tool with `run_in_background=true` (server in SSH foreground): `ssh {devHostname} "cd /var/www && {start_command}"` — check startup via `TaskOutput task_id=... block=false` after 3-5s.
 
 5. **Re-verify**: `zerops_verify serviceHostname="{devHostname}"` — check status=healthy
 
