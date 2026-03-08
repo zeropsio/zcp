@@ -885,7 +885,7 @@ func (b *BootstrapState) buildPriorContext() *StepContext {
 
 ### 8.8 Iteration Delta Guidance (NEW — IMPLEMENT)
 
-Iteration means the previous attempt failed. The LLM needs "what went wrong + what to try", not "here's everything from scratch." Delta guidance focuses attention on the failure, preventing the LLM from re-reading known-good context and missing the actual problem (H5 — §14.1). Related: §9.8 (max iteration limit), Wave 4 item 29 (§10).
+Iteration means the previous attempt failed. The LLM needs "what went wrong + what to try", not "here's everything from scratch." Delta guidance focuses attention on the failure, preventing the LLM from re-reading known-good context and missing the actual problem (H1 recency bias + H6 context rot — §14.1). Related: §9.8 (max iteration limit), Wave 4 item 29 (§10).
 
 When `WorkflowState.Iteration > 0`, replace full DetailedGuide with ~300-token focused template:
 
@@ -1130,7 +1130,7 @@ Redesigned by robustness analysis (30 agents, 4 robustness teams) with correct d
 | 17 | Fix two-write inconsistency (move `saveSessionState` inside lock) | `engine.go` | S |
 | 18 | Add `action="resume"` for abandoned sessions | `engine.go`, `tools/workflow.go` | M |
 | 19 | Wire `ValidateEnvReferences()` via `ValidateZeropsYmlEnvRefs()` | `ops/deploy_validate.go`, `bootstrap.go` | M |
-| 20 | Implement `checkGenerate()` with 5 real checks | `workflow_checks.go` | M | Requires StepChecker signature change to accept *BootstrapState (G3) |
+| 20 | Implement `checkGenerate()` with 5 real checks (requires StepChecker signature change to accept `*BootstrapState`) | `workflow_checks.go` | M |
 | 21 | Incremental ServiceMeta writes (planned→provisioned→deployed→bootstrapped) | `bootstrap_evidence.go`, `service_meta.go` | M |
 
 ### Wave 4 — Knowledge-Aware Gates + Context Tracking (9 items, depends on Wave 3)
