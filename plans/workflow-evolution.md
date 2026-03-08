@@ -30,7 +30,7 @@ Analysis of current workflow system, context delivery, and validated designs for
 | 15 | Delivery channel map | 7 channels with per-step token delivery (quantifies §2 channels) |
 | 16 | Token budget | Before/after comparison across waves (validates §8.12 estimates) |
 | 17 | Extended code reference | All reusable functions with file locations (extends §12) |
-| 18 | Robustness decisions | 6 critical design decisions validated (validates §8.9, §9.10, §9.3) |
+| 18 | Robustness decisions | 5 active + 1 dropped design decisions (validates §8.9, §9.10, §9.3) |
 
 ---
 
@@ -404,7 +404,7 @@ Additionally:
 
 ### 4.1 Concept
 
-Replace hardcoded routing in `instructions.go` with a pure function that takes environmental signals and returns ranked workflow offerings.
+Replace hardcoded routing in `instructions.go` with a pure function that takes environmental signals and returns ranked workflow offerings. The router is an **architectural prerequisite for multi-mode bootstrap**: container mode (dev+stage, SSH deploy, SSHFS mount) and local VPN mode (§7) have fundamentally different bootstrap steps — different provisioning, no mount, API archive deploy instead of SSH, .env generation instead of container-injected vars. Without a router, this branching would be scattered as conditionals across bootstrap steps, guidance resolution, and deploy logic. The router centralizes mode-aware flow decisions in one pure function.
 
 ### 4.2 Data Model
 
@@ -419,6 +419,7 @@ type FlowOffering struct {
 }
 
 type RouterInput struct {
+    Mode           runtime.Mode       // container, local, local_vpn — determines bootstrap flow shape
     ProjectState   ProjectState       // FRESH, CONFORMANT, NON_CONFORMANT, UNKNOWN
     ServiceMetas   []*ServiceMeta     // per-service bootstrap records (filtered against live services)
     ActiveSessions []SessionEntry     // currently active workflow sessions
@@ -430,19 +431,21 @@ func Route(input RouterInput) []FlowOffering
 
 ### 4.3 Routing Decision Table
 
-| ProjectState | ActiveSessions | ServiceMetas | Top Offering |
-|---|---|---|---|
-| FRESH | none | none | bootstrap (p=1) |
-| FRESH | bootstrap active | — | resume bootstrap hint |
-| CONFORMANT | none | with strategy=ci-cd | "Push to git for CI/CD" (p=1), bootstrap-new (p=2) |
-| CONFORMANT | none | with strategy=push-dev | "zerops_workflow deploy" (p=1), bootstrap-new (p=2) |
-| CONFORMANT | none | with strategy=manual | "Deploy manually" (p=1), bootstrap-new (p=2) |
-| CONFORMANT | none | no metas | deploy (p=1), bootstrap (p=2) |
-| CONFORMANT | none | mixed (some metas, some without) | strategy-based for covered services, deploy for uncovered |
-| NON_CONFORMANT | none | some metas | strategy-based for covered, bootstrap for uncovered |
-| NON_CONFORMANT | none | no metas | bootstrap (p=1), debug (p=2) |
-| UNKNOWN | — | — | all workflows at equal priority, note that state could not be determined |
-| any | any | any | always include: debug(p=5), scale(p=5), configure(p=5) |
+| Mode | ProjectState | ActiveSessions | ServiceMetas | Top Offering |
+|---|---|---|---|---|
+| container | FRESH | none | none | bootstrap (p=1) |
+| container | FRESH | bootstrap active | — | resume bootstrap hint |
+| container | CONFORMANT | none | with strategy=ci-cd | "Push to git for CI/CD" (p=1), bootstrap-new (p=2) |
+| container | CONFORMANT | none | with strategy=push-dev | "zerops_workflow deploy" (p=1), bootstrap-new (p=2) |
+| container | CONFORMANT | none | with strategy=manual | "Deploy manually" (p=1), bootstrap-new (p=2) |
+| container | CONFORMANT | none | no metas | deploy (p=1), bootstrap (p=2) |
+| container | CONFORMANT | none | mixed | strategy-based for covered services, deploy for uncovered |
+| container | NON_CONFORMANT | none | some metas | strategy-based for covered, bootstrap for uncovered |
+| container | NON_CONFORMANT | none | no metas | bootstrap (p=1), debug (p=2) |
+| local_vpn | FRESH | none | none | bootstrap-local (p=1) — no dev service, .env gen, API deploy |
+| local_vpn | CONFORMANT | none | any | deploy-local (p=1) — API archive upload, no SSH |
+| any | UNKNOWN | — | — | all workflows at equal priority |
+| any | any | any | any | always include: debug(p=5), scale(p=5), configure(p=5) |
 
 ### 4.4 Integration with instructions.go
 
@@ -914,11 +917,9 @@ RECOVERY: use forceGuide=true to re-fetch full guidance if stuck.
 
 **Savings**: ~6,600 tokens per iteration. Over 2 iterations: ~13,200 tokens.
 
-### 8.9 Knowledge-Aware Gates (NEW — IMPLEMENT)
+### 8.9 Rich Gate Failure Responses (NEW — IMPLEMENT)
 
-Current gates verify evidence exists but not that the LLM had the knowledge to produce correct evidence. A gate that passes without knowledge loading is a false positive — it validates form without substance. Related: §18.1 (managed-only bypass), §18.5 (TOCTOU fix), §9.3 (TOCTOU bug), Wave 4 items 24-25 (§10).
-
-**8.9.1 Rich Gate Failure Responses**
+Gate failures currently return bare `fmt.Errorf("transition: gate %s failed, missing evidence: %v", ...)` — no remediation guidance. Research shows structured corrective feedback yields 26% improvement in agent task success (AgentDebug, ICLR 2026). Related: §18.5 (TOCTOU fix), §9.3 (TOCTOU bug), Wave 4 item 24 (§10).
 
 Add `Remediation` to `GateResult`:
 ```go
@@ -932,42 +933,11 @@ type RemediationStep struct {
 
 Return structured JSON instead of flat error string. LLM knows exactly what to do.
 
-**8.9.2 Gate Knowledge Prerequisites**
+**Error path refactoring**: `GateResult.Remediation` requires structured error responses. Current error wrapping at `engine.go` flattens to string. The `Transition()` method must return `*GateResult` on gate failure (not just `error`) so callers can extract `RemediationStep`.
 
-Add `knowledgePrereqs []string` to `gateDefinition`:
-- G2 (DEVELOP→DEPLOY) requires `scope` + `briefing` loaded (checked via `ContextDelivery`)
-- Prevents generating code without platform knowledge
-
-**8.9.3 Complexity-Based Gate Simplification**
-
-Add `skippableFor []string`:
-- `managed_only` projects skip G2, G3 (no code to write/deploy)
-- Complexity derived from `state.Bootstrap.Plan` after discover step
-
-**8.9.4 Adaptive Freshness**
-
-- Iteration 0: 24h (current behavior)
-- Iteration 1+: 1h for `dev_verify`/`deploy_evidence`, 24h for `discovery`
-- Benefit: typo fix doesn't require full re-validation
-
-**8.9.5 CheckGate Signature Extension**
-
-Current signature: `CheckGate(from, to Phase, evidenceDir, sessionID string) (*GateResult, error)`
-
-This signature lacks access to `ContextDelivery`, iteration count, and `BootstrapState` — all required for knowledge prerequisites (8.9.2), complexity bypass (8.9.3), and adaptive freshness (8.9.4).
-
-**Extended signature**:
-```go
-func CheckGate(from, to Phase, evidenceDir, sessionID string,
-               iteration int, bs *BootstrapState) (*GateResult, error)
-```
-
-Changes:
-- `iteration int`: enables adaptive freshness (shorter evidence TTL on retry)
-- `bs *BootstrapState`: provides `Plan` (for complexity bypass via `shouldSkipGateForComplexity`), `ContextDelivery` (for knowledge prerequisite checks), and `DiscoveredEnvVars` (for validation)
-- Callers in `engine.go` already have access to both values — pass-through only
-
-**Error path refactoring**: `GateResult.Remediation` (8.9.1) requires structured error responses. Current error wrapping at `engine.go` flattens to string. The `Transition()` method must return `*GateResult` on gate failure (not just `error`) so callers can extract `RemediationStep`.
+**DROPPED from this section** (knowledge-aware gates, complexity bypass, adaptive freshness):
+- §8.9.2-8.9.4 removed — these solved anticipated problems with no measured failures. Knowledge prerequisites (G2 requires scope+briefing loaded), complexity-based gate simplification (managed-only skip G2/G3), and adaptive freshness (shorter TTL on retry) added orchestration complexity without evidence that gates currently pass incorrectly. If post-Wave-3 measurements show gates producing false positives, revisit then.
+- CheckGate signature stays unchanged — the extended signature was only needed for the dropped features.
 
 ### 8.10 Cross-Workflow Content Dedup (NEW — IMPLEMENT)
 
@@ -1133,14 +1103,14 @@ Redesigned by robustness analysis (30 agents, 4 robustness teams) with correct d
 | 20 | Implement `checkGenerate()` with 5 real checks (requires StepChecker signature change to accept `*BootstrapState`) | `workflow_checks.go` | M |
 | 21 | Incremental ServiceMeta writes (planned→provisioned→deployed→bootstrapped) | `bootstrap_evidence.go`, `service_meta.go` | M |
 
-### Wave 4 — Knowledge-Aware Gates + Context Tracking (9 items, depends on Wave 3)
+### Wave 4 — Context Tracking + Optimization (8 items, depends on Wave 3)
 
 | # | Action | Files | Scope |
 |---|--------|-------|-------|
 | 22 | Add `ContextDelivery` struct (4 fields) to `BootstrapState` | `state.go` | M |
 | 23 | Persist knowledge tracking via `SetOnUpdate` callback | `tools/knowledge.go`, `engine.go` | M |
 | 24 | Rich gate failures (`RemediationStep` in `GateResult`) | `gates.go`, `tools/workflow.go` | M |
-| 25 | Knowledge-aware G2 gate + `shouldSkipGateForComplexity()` — **ATOMIC with #24** | `gates.go`, `engine.go` | M |
+| 25 | ~~DROPPED~~ ~~Knowledge-aware G2 gate + shouldSkipGateForComplexity()~~ | — | — |
 | 26 | Gate AvailableStacks to discover+generate only | `tools/workflow.go` | S |
 | 27 | Gate DetailedGuide re-delivery (first=full, repeat=stub) | `bootstrap.go` | M |
 | 28 | `ResolveProgressiveGuidance()` (mode-filtered deploy sub-sections) | `bootstrap_guidance.go`, `bootstrap.go` | M |
@@ -1166,7 +1136,8 @@ Redesigned by robustness analysis (30 agents, 4 robustness teams) with correct d
 Wave 1: [1-11] ─── all independent, parallel
 Wave 2: [12-15] ── markdown only, parallel with Wave 1
 Wave 3: [16←W1, 17←16, 18←16, 19←W1, 20←19, 21←8]
-Wave 4: [22←W3, 23←22, 24, 25←22+24, 26, 27←22+13, 28←13+22, 29←28, 30]
+Wave 4: [22←W3, 23←22, 24, 26, 27←22+13, 28←13+22, 29←28, 30]
+         (item 25 DROPPED — knowledge-aware gates removed)
 Wave 5: [31←5+6+11, 32←31, 33←1+4, 34, 35←33, 36←31, 37←14, 38←23]
 ```
 
@@ -1412,9 +1383,8 @@ Iteration 2+ drops to ~740-820 tokens (96% savings). Delta guidance template (~3
 | `GetBriefing()` | `knowledge/briefing.go` | 7-layer composition, extend with depth/dedup |
 | `prependUniversals()` | `knowledge/briefing.go` | Guard with tracker to prevent double-delivery |
 | `GateResult` | `gates.go` | Extend with Remediation field |
-| `CheckGate()` | `gates.go` | Extend with iteration int + *BootstrapState (provides ContextDelivery, Plan, DiscoveredEnvVars) |
+| `CheckGate()` | `gates.go` | Extend with Remediation field on GateResult |
 | `initSessionLocked()` | `registry.go` | TOCTOU-safe session init within existing lock scope |
-| `shouldSkipGateForComplexity()` | `gates.go` | Managed-only gate bypass (auto-skip G2/G3 when all targets are managed-only) |
 | `ValidateZeropsYmlEnvRefs()` | `ops/deploy_validate.go` | Env ref validation from mount, wires dead `ValidateEnvReferences()` |
 | `cleanOrphanedFiles()` | `registry.go` | Orphan cleanup in `RefreshRegistry` |
 
@@ -1429,11 +1399,11 @@ Iteration 2+ drops to ~740-820 tokens (96% savings). Delta guidance template (~3
 
 ## 18. Key Design Decisions (from Robustness Analysis)
 
-Six critical design decisions validated by robustness teams:
+Five active + one dropped design decision from robustness teams:
 
-### 18.1 Knowledge Gates Don't Break Managed-Only
+### 18.1 ~~Knowledge Gates Don't Break Managed-Only~~ — DROPPED
 
-`shouldSkipGateForComplexity()` auto-skips G2/G3 when the plan contains zero runtime targets (managed-only project). Detection: `len(plan.Targets) == 0` is invalid per `ValidateBootstrapTargets` (requires at least one target). Instead, check if all targets have `Simple: true` with no generate/deploy-requiring runtimes, OR add `ManagedOnly bool` field to `ServicePlan` set during discover step when user intent is managed-only. Items 24+25 (Wave 4) ship as ONE atomic change — knowledge-aware G2 gate is meaningless without the complexity bypass.
+Originally designed `shouldSkipGateForComplexity()` to auto-skip G2/G3 for managed-only projects. **Removed**: knowledge-aware gates (§8.9.2-8.9.4) were dropped entirely — no measured failures where gates pass without knowledge, adding orchestration complexity without evidence. If post-Wave-3 data shows gates producing false positives, revisit with the managed-only bypass design preserved here for reference.
 
 ### 18.2 ContextDelivery is 4 Fields, Not 6
 
@@ -1443,9 +1413,9 @@ Drop `RecipesViewed` (pull-based via `zerops_knowledge`, never pushed in workflo
 
 Recovery patterns table + pre-resolved placeholders (hostname, port, connectionString) + `forceGuide` recovery mention + max iterations counter. 100 tokens found too sparse by Teams 1, 3, 6 — LLM needs error-pattern-to-fix mapping to avoid repeating the same mistake.
 
-### 18.4 Router Serves Two Channels
+### 18.4 Router Serves Two Channels and Multiple Modes
 
-Cross-session (system prompt via `buildProjectSummary`) + mid-session (`action="route"` for live re-routing). Compact `formatOfferings()` caps output at 5-8 lines even for 10+ services. Both channels use the same `Route()` pure function.
+Cross-session (system prompt via `buildProjectSummary`) + mid-session (`action="route"` for live re-routing). Compact `formatOfferings()` caps output at 5-8 lines even for 10+ services. Both channels use the same `Route()` pure function. Primary architectural value: centralizes mode-aware flow decisions (container vs local VPN — §7) so bootstrap steps, guidance resolution, and deploy logic don't need scattered conditionals.
 
 ### 18.5 TOCTOU Fix Requires `initSessionLocked()`
 
