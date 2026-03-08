@@ -4,6 +4,8 @@ Analysis of current workflow system, context delivery, and validated designs for
 
 **Extended 2026-03-07**: Deep knowledge delivery analysis by 10 specialized agents across 6 dimensions (progressive disclosure, semantic dedup, gate intelligence, pull-based delivery, context compression, LLM behavioral patterns). Sections 8, 10, and new sections 14-17 contain the integrated results.
 
+**Robustness Analysis 2026-03-07**: 30 agents across 10 analysis teams + 4 robustness teams validated all 36 items. Redesigned implementation into 5 waves (38 items) with correct dependency ordering. Key findings in sections 9, 10, and new section 18.
+
 ---
 
 ## 1. Current Architecture Overview
@@ -661,16 +663,17 @@ Stop serializing `guidance` field to `BootstrapStepInfo` JSON responses. Keep `d
 
 The deploy section in bootstrap.md is ~6,901 tokens — 59% of total guidance. Split into subsections loadable by planMode AND plan context:
 
-**Sub-section breakdown** (from deep analysis token measurement):
+**Sub-section breakdown** (from robustness analysis token measurement):
 | Sub-section | Tokens | When to deliver |
 |-------------|--------|----------------|
-| `<section name="deploy-overview">` | 426 | Always |
-| `<section name="deploy-standard">` | 526 | PlanMode=standard |
-| `<section name="deploy-iteration">` | 869 | Dynamic runtimes only (not implicit-webserver) |
-| `<section name="deploy-simple">` | 612 | PlanMode=simple |
-| `<section name="deploy-agents">` | 757 | 2+ runtime targets in plan |
-| `<section name="deploy-status-spec">` | 2,521 | Managed services exist in plan |
-| `<section name="deploy-verify-loop">` | 619 | Only after first verification failure (reactive) |
+| `<section name="deploy-overview">` | 450 | Always |
+| `<section name="deploy-standard">` | 500 | PlanMode=standard |
+| `<section name="deploy-iteration">` | 850 | Dynamic runtimes only (not implicit-webserver) |
+| `<section name="deploy-simple">` | 600 | PlanMode=simple |
+| `<section name="deploy-agents">` | 2,900 | 2+ runtime targets in plan |
+| `<section name="deploy-recovery">` | 850 | Only after first verification failure (reactive) |
+
+Note: `deploy-status-spec` and `deploy-verify-loop` merged into `deploy-agents` and `deploy-recovery` respectively.
 
 **Implementation**: New `ResolveProgressiveGuidance(step, plan, failureCount)` in `bootstrap_guidance.go`:
 ```go
@@ -692,19 +695,16 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
     if len(plan.Targets) > 1 {
         parts = append(parts, resolveSubSection("deploy-agents"))
     }
-    if hasManagedServices(plan) {
-        parts = append(parts, resolveSubSection("deploy-status-spec"))
-    }
     if failureCount > 0 {
-        parts = append(parts, resolveSubSection("deploy-verify-loop"))
+        parts = append(parts, resolveSubSection("deploy-recovery"))
     }
     return strings.Join(parts, "\n\n---\n\n")
 }
 ```
 
-**Standard mode with managed**: overview(426) + standard(526) + iteration(869) + status-spec(2,521) = **4,342 tokens** (was 6,901)
-**Simple mode with managed**: overview(426) + simple(612) + status-spec(2,521) = **3,559 tokens**
-**Savings**: 2,600-3,400 tokens per deploy step.
+**Standard mode with agents**: overview(450) + standard(500) + iteration(850) + agents(2,900) = **4,700 tokens** (was 6,901)
+**Simple mode**: overview(450) + simple(600) = **1,050 tokens**
+**Savings**: 2,200-5,850 tokens per deploy step.
 
 ### 8.3 Reduce Deploy Section Redundancy (IMPLEMENT)
 
@@ -755,9 +755,8 @@ type ContextDelivery struct {
     StacksSentAt  string         `json:"stacksSentAt,omitempty"`  // timestamp
     ScopeLoaded   bool           `json:"scopeLoaded,omitempty"`
     BriefingFor   string         `json:"briefingFor,omitempty"`   // "nodejs@22+postgresql@16"
-    RecipesViewed []string       `json:"recipesViewed,omitempty"`
-    IterationNum  int            `json:"iterationNum,omitempty"`
 }
+// Dropped RecipesViewed (pull-based, never pushed) and IterationNum (already exists as WorkflowState.Iteration)
 ```
 
 **Behavior**:
@@ -795,18 +794,32 @@ func (b *BootstrapState) buildPriorContext() *StepContext {
 
 ### 8.8 Iteration Delta Guidance (NEW — IMPLEMENT)
 
-When `ContextDelivery.IterationNum > 0`, replace full DetailedGuide with focused delta:
+When `WorkflowState.Iteration > 0`, replace full DetailedGuide with ~300-token focused template:
 
 ```
-"ITERATION N for step {step}.
-Previous attempt: {last attestation from failed step}.
-Focus: identify root cause from logs/errors, fix, and retry.
-Tools: zerops_logs severity=ERROR since=5m, then fix and redeploy."
+ITERATION {N} for step {step} — {hostname} ({runtime}@{version})
+
+PREVIOUS ATTEMPT:
+{last attestation from failed step}
+
+RECOVERY PATTERNS:
+| Error Pattern        | Fix                              | Then              |
+|----------------------|----------------------------------|-------------------|
+| port already in use  | check initCommands binding       | redeploy          |
+| module not found     | verify build.base in zerops.yml  | redeploy          |
+| connection refused   | check ${hostname_port} env ref   | redeploy          |
+| timeout on /status   | verify 0.0.0.0 binding + port    | redeploy          |
+| permission denied    | check deployFiles paths          | redeploy          |
+
+PRE-RESOLVED: hostname={hostname}, port={port}, connectionString={db_connectionString}
+PREVIOUS ATTESTATION: {N-1 attestation for continuity}
+MAX ITERATIONS REMAINING: {max - N}
+RECOVERY: use forceGuide=true to re-fetch full guidance if stuck.
 ```
 
-~100 tokens instead of ~6,900 tokens (deploy section).
+~300 tokens instead of ~6,900 tokens (deploy section). Rationale: 100 tokens found too sparse by Teams 1, 3, 6.
 
-**Savings**: ~6,800 tokens per iteration. Over 2 iterations: ~13,600 tokens.
+**Savings**: ~6,600 tokens per iteration. Over 2 iterations: ~13,200 tokens.
 
 ### 8.9 Knowledge-Aware Gates (NEW — IMPLEMENT)
 
@@ -918,79 +931,119 @@ Realistic improvement from 12,344 → ~7,000-8,000 tokens per bootstrap (first r
 
 **Fix**: Optionally clean up orphaned files during prune, or add separate `CleanOrphanedSessions()`.
 
+### 9.6 Two-Write Inconsistency
+
+`saveSessionState` and registry update not in same lock scope in `engine.go:101-106`. State file and registry can diverge if process crashes between the two writes.
+
+**Fix**: Move `saveSessionState` inside `withRegistryLock` scope.
+
+### 9.7 No Session Resume Mechanism
+
+Abandoned sessions (process died) cannot be resumed. User must reset and start over, losing all progress.
+
+**Fix**: `Engine.Resume(sessionID)` checks dead PID, updates PID to current process, re-attaches to existing state.
+
+### 9.8 No Max Iteration Limit
+
+Infinite iteration loop possible if verification never passes. LLM can loop forever burning tokens.
+
+**Fix**: Default limit of 10 iterations, configurable via `ZCP_MAX_ITERATIONS` env var.
+
+### 9.9 Missing `StateUnknown`
+
+`ProjectState` has no unknown/error state. `DetectProjectState()` must always return one of the existing states even when detection fails.
+
+**Fix**: Add `StateUnknown` constant to `managed_types.go`.
+
+### 9.10 `checkGenerate()` Returns nil
+
+Zero validation at generate step completion (`workflow_checks.go:130`). Gate always passes regardless of what was generated.
+
+**Fix**: Implement 5 real checks: zerops.yml existence, hostname match, env ref validation, port presence, deployFiles sanity.
+
+### 9.11 `ValidateEnvReferences()` is Dead Code
+
+Found independently by 3 robustness teams. Fully implemented (68 lines, 8 tests) at `ops/deploy_validate.go:187`, never called from any production path. Zerops silently keeps invalid `${hostname_varName}` references as literal strings (verified on live platform). **#1 reliability fix.**
+
+**Fix**: Wire via `ValidateZeropsYmlEnvRefs()` called from `checkGenerate()` (see 9.10).
+
 ---
 
-## 10. Implementation Waves (REVISED — Integrated Knowledge Optimization)
+## 10. Implementation Waves (ROBUST — 5 Waves, 38 Items)
 
-### Wave 1 — Cleanup + Content Dedup (no dependencies, all S-scope)
+Redesigned by robustness analysis (30 agents, 4 robustness teams) with correct dependency ordering.
+
+### Wave 1 — Bug Fixes + Cleanup (11 items, all parallelizable, all S-scope)
 
 | # | Action | Files | Section |
 |---|--------|-------|---------|
 | 1 | Delete `DeployFlow` field, migrate test fixtures to `Decisions["deployStrategy"]` | `service_meta.go`, `service_meta_test.go`, `bootstrap_evidence.go` | 5.2 |
-| 2 | Stop serializing inline `Guidance` to LLM responses | `bootstrap.go:216`, update 4 tests | 8.1 |
+| 2 | Stop serializing inline `Guidance` to LLM responses (`json:"-"`) | `bootstrap.go:216`, update 4 tests | 8.1 |
 | 3 | Rename "Phase 1/2" to "Part 1/2" in deploy.md | `deploy.md` | 8.5 |
 | 4 | Expand `Verification` strings with `SUCCESS WHEN:` criteria | `bootstrap_steps.go` | 8.4 |
 | 5 | Add `ListServiceMetas(stateDir)` function + tests | `service_meta.go`, `service_meta_test.go` | 4.4 |
 | 6 | Add strategy constants (`StrategyPushDev`, `StrategyCICD`, `StrategyManual`, `DecisionDeployStrategy`) | `service_meta.go` | 5.5 |
-| 7 | **Consolidate bootstrap.md rules** (deployFiles 21→5, noop 9→3, positive phrasing) | `bootstrap.md` | 8.3 |
-| 8 | **Factor shared deploy logic** between bootstrap.md and deploy.md | `bootstrap.md`, `deploy.md` | 8.10 |
-| 9 | **Deduplicate universals-core overlap** | `themes/core.md` | 8.10 |
+| 7 | Add `DeleteServiceMeta()` + delete hook in `zerops_delete` | `service_meta.go`, `tools/delete.go` | 9.4 |
+| 8 | Skip shared-dep meta overwrite for EXISTS/SHARED deps | `bootstrap_evidence.go` | 9.2 |
+| 9 | Add max iteration limit (default 10, `ZCP_MAX_ITERATIONS`) | `engine.go` | 9.8 |
+| 10 | Orphaned session file cleanup in `RefreshRegistry` | `registry.go` | 9.5 |
+| 11 | Add `StateUnknown` constant | `managed_types.go` | 9.9 |
 
-### Wave 2 — Delivery Tracking + Router (depends on wave 1)
+### Wave 2 — Content Quality (4 items, markdown only, parallel with Wave 1)
 
-| # | Action | Files | Scope |
-|---|--------|-------|-------|
-| 10 | **Add `ContextDelivery` struct to BootstrapState** | `state.go` | M |
-| 11 | **Gate DetailedGuide re-delivery** (first=full, repeat=stub) | `bootstrap.go` | M |
-| 12 | **Gate AvailableStacks delivery** (discover step only) | `tools/workflow.go` | S |
-| 13 | **Compress PriorContext** (N-1 full, older compressed) | `bootstrap.go` | S |
-| 14 | **Iteration delta guidance** (delta instead of full guide on iter 2+) | `bootstrap.go` | M |
-| 15 | **Persist knowledge tracking to session** | `tools/knowledge.go`, `engine.go`, `knowledge_tracker.go` | M |
-| 16 | Implement `Route()` pure function with table-driven tests | New: `router.go`, `router_test.go` | M |
-| 17 | Add strategy-specific `<section>` tags to deploy.md | `deploy.md` | S |
-| 18 | Create `ResolveDeployGuidance()` reusing `extractSection` pattern | New: `deploy_guidance.go`, `deploy_guidance_test.go` | S |
-| 19 | Add `DeleteServiceMeta()` + hook in `zerops_delete` | `service_meta.go`, `tools/delete.go` | S |
-| 20 | Skip shared-dep meta overwrite for EXISTS/SHARED deps | `bootstrap_evidence.go` | S |
+| # | Action | Files | Section |
+|---|--------|-------|---------|
+| 12 | Consolidate bootstrap.md rules (deployFiles 21→5, noop 9→3, positive phrasing) | `bootstrap.md` | 8.3 |
+| 13 | Split deploy section into 6 progressive sub-sections | `bootstrap.md` | 8.2 |
+| 14 | Add strategy-specific `<section>` tags to deploy.md | `deploy.md` | 5.5 |
+| 15 | Deduplicate universals-core overlap | `themes/core.md` | 8.10 |
 
-### Wave 3 — Mode-Filtered Knowledge + Strategy System (depends on wave 2)
+### Wave 3 — Registry Refactor + Validation (6 items, depends on Wave 1)
 
 | # | Action | Files | Scope |
 |---|--------|-------|-------|
-| 21 | **Split deploy section into progressive sub-sections** (7 sub-sections) | `bootstrap.md` | M |
-| 22 | **Implement `ResolveProgressiveGuidance()`** | `bootstrap_guidance.go`, `bootstrap.go` | M |
-| 23 | **Briefing dedup via tracker** (skip universals/runtime if already loaded) | `tools/knowledge.go` | S |
-| 24 | Wire router into `buildProjectSummary`, add `StateUnknown` | `instructions.go`, `managed_types.go` | M |
-| 25 | Add "strategy" step 6 with `Skippable: true` + auto-skip | `bootstrap_steps.go`, `bootstrap.go` | M |
-| 26 | Add `Strategies` map to BootstrapState for structured capture | `state.go`, `bootstrap.go` | S |
-| 27 | Add `action="strategy"` handler for post-bootstrap changes | `tools/workflow.go` | M |
-| 28 | Implement incremental ServiceMeta writes (after provision) | `bootstrap_evidence.go`, `service_meta.go` | M |
-| 29 | Fix bootstrap exclusivity TOCTOU race | `engine.go` | S |
+| 16 | Fix TOCTOU race via `initSessionLocked()` | `registry.go`, `engine.go` | S |
+| 17 | Fix two-write inconsistency (move `saveSessionState` inside lock) | `engine.go` | S |
+| 18 | Add `action="resume"` for abandoned sessions | `engine.go`, `tools/workflow.go` | M |
+| 19 | Wire `ValidateEnvReferences()` via `ValidateZeropsYmlEnvRefs()` | `ops/deploy_validate.go`, `bootstrap.go` | M |
+| 20 | Implement `checkGenerate()` with 5 real checks | `workflow_checks.go` | M |
+| 21 | Incremental ServiceMeta writes (planned→provisioned→deployed→bootstrapped) | `bootstrap_evidence.go`, `service_meta.go` | M |
 
-### Wave 4 — Knowledge-Aware Gates + Pipeline (depends on wave 3)
+### Wave 4 — Knowledge-Aware Gates + Context Tracking (9 items, depends on Wave 3)
 
 | # | Action | Files | Scope |
 |---|--------|-------|-------|
-| 30 | **Rich gate failure responses** (Remediation in GateResult) | `gates.go`, `tools/workflow.go` | M |
-| 31 | **Gate knowledge prerequisites** (G2 requires scope+briefing) | `gates.go`, `engine.go` | M |
-| 32 | **Complexity-based gate simplification** (managed_only skips G2,G3) | `gates.go` | S |
-| 33 | **Adaptive freshness** (iteration-aware: 1h vs 24h) | `gates.go` | S |
-| 34 | Clarify zcli prohibition scope in CLAUDE.local.md | User confirmation needed | S |
-| 35 | Implement pipeline generation (MCP tool or guidance-only) | Design decision on approach | M |
-| 36 | Add `Mode` field to `runtime.Info` (no-op extension) | `runtime.go` | S |
+| 22 | Add `ContextDelivery` struct (4 fields) to `BootstrapState` | `state.go` | M |
+| 23 | Persist knowledge tracking via `SetOnUpdate` callback | `tools/knowledge.go`, `engine.go` | M |
+| 24 | Rich gate failures (`RemediationStep` in `GateResult`) | `gates.go`, `tools/workflow.go` | M |
+| 25 | Knowledge-aware G2 gate + `shouldSkipGateForComplexity()` — **ATOMIC with #24** | `gates.go`, `engine.go` | M |
+| 26 | Gate AvailableStacks to discover+generate only | `tools/workflow.go` | S |
+| 27 | Gate DetailedGuide re-delivery (first=full, repeat=stub) | `bootstrap.go` | M |
+| 28 | `ResolveProgressiveGuidance()` (mode-filtered deploy sub-sections) | `bootstrap_guidance.go`, `bootstrap.go` | M |
+| 29 | Iteration guidance template (~300 tokens) | `bootstrap.go` | M |
+| 30 | Compress PriorContext (N-1 full, older truncated) | `bootstrap.go` | S |
+
+### Wave 5 — Flow Router + Strategy System (8 items, depends on Wave 4)
+
+| # | Action | Files | Scope |
+|---|--------|-------|-------|
+| 31 | `Route()` pure function with compact `formatOfferings()` | New: `router.go`, `router_test.go` | M |
+| 32 | Wire router into `buildProjectSummary` | `instructions.go` | M |
+| 33 | Add "strategy" step 6 with `Skippable: true` | `bootstrap_steps.go`, `bootstrap.go` | M |
+| 34 | Add `Strategies` map to `BootstrapState` | `state.go`, `bootstrap.go` | S |
+| 35 | `action="strategy"` handler | `tools/workflow.go` | M |
+| 36 | `action="route"` handler (mid-session live routing) | `tools/workflow.go` | M |
+| 37 | `ResolveDeployGuidance()` (strategy-specific section extraction) | New: `deploy_guidance.go`, `deploy_guidance_test.go` | S |
+| 38 | Briefing dedup (skip universals when scope loaded) | `tools/knowledge.go` | S |
 
 ### Dependency Graph
 
 ```
-Wave 1: [1,2,3,4,5,6,7,8,9] ─── all independent, parallel (content + cleanup)
-           │
-Wave 2: [10, 11←10, 12, 13, 14←10, 15←10, 16←5, 17, 18←17, 19, 20]
-           │     context tracking              router + deploy guidance
-           │
-Wave 3: [21←7, 22←21, 23←15, 24←16, 25←1+4, 26, 27←25, 28, 29]
-           │   progressive guidance    strategy system + bugfixes
-           │
-Wave 4: [30←15, 31←15+30, 32←31, 33, 34, 35←25+34, 36]
-             knowledge-aware gates        pipeline + future
+Wave 1: [1-11] ─── all independent, parallel
+Wave 2: [12-15] ── markdown only, parallel with Wave 1
+Wave 3: [16←W1, 17←16, 18←16, 19←W1, 20←19, 21←8]
+Wave 4: [22←W3, 23←22, 24, 25←22+24, 26, 27←22+13, 28←13+22, 29←28, 30]
+Wave 5: [31←5+6+11, 32←31, 33←1+4, 34, 35←33, 36←31, 37←14, 38←23]
 ```
 
 ---
@@ -1182,40 +1235,35 @@ internal/content/workflows/
 
 ---
 
-## 16. Comprehensive Token Budget — Before vs After (NEW)
+## 16. Comprehensive Token Budget — Before vs After (ROBUST)
+
+Revised by robustness analysis with validated token measurements.
 
 ### 16.1 First-Run Bootstrap (standard, 1 service pair, with managed services)
 
-| Component | Current | After Wave 1 | After Wave 2 | After Wave 3 | After Wave 4 |
-|-----------|---------|-------------|-------------|-------------|-------------|
-| DetailedGuide (5 steps) | 11,785 | 8,785 (-3K dedup) | 8,785 | ~5,400 (mode-filtered) | ~5,400 |
-| scope="infrastructure" | 8,967 | 8,167 (-800 dedup) | 8,167 | 8,167 | 8,167 |
-| Briefing | 3,000 | 3,000 | 3,000 | ~1,800 (dedup) | ~1,800 |
-| AvailableStacks | 2,500 | 2,500 | 500 (1x only) | 500 | 500 |
-| PriorContext | 2,000 | 2,000 | 600 (compressed) | 600 | 600 |
-| Inline Guidance | 607 | 607 | 0 (removed) | 0 | 0 |
-| **Total** | **28,859** | **25,059** | **21,052** | **16,467** | **16,467** |
-| **Savings** | — | **13%** | **27%** | **43%** | **43%** |
+| Component | Current | After | Savings |
+|-----------|---------|-------|---------|
+| DetailedGuide | 11,700 | 4,100 | 65% |
+| AvailableStacks | 2,500 | 500 | 80% |
+| PriorContext | 2,000 | 1,280 | 36% |
+| Inline Guidance | 607 | 0 | 100% |
+| scope="infrastructure" | 8,967 | 8,967 | 0% |
+| Briefing | 3,000 | 1,600 | 47% |
+| **Total** | **~28,800** | **~16,450** | **43%** |
 
-### 16.2 Iteration 2 (deploy fails, retry)
+### 16.2 Iteration 2+ (deploy fails, retry)
 
-| Component | Current | After Wave 2 | After Wave 3 |
-|-----------|---------|-------------|-------------|
-| DetailedGuide | 7,547 | ~200 (delta) | ~200 |
-| scope/briefing re-calls | 12,000 | 0 (tracked) | 0 |
-| PriorContext | 800 | 200 | 200 |
-| Stacks | 500 | 0 | 0 |
-| **Total** | **20,847** | **~400** | **~400** |
+Iteration 2+ drops to ~740-820 tokens (96% savings). Delta guidance template (~300t) + compressed PriorContext (~440-520t) replaces full re-delivery.
 
 ### 16.3 Three-Iteration Cumulative
 
 | Scenario | Current | After All Waves |
 |----------|---------|----------------|
-| Run 1 | 28,859 | 16,467 |
-| Iteration 2 | 20,847 | 400 |
-| Iteration 3 | 20,847 | 400 |
-| **Total** | **70,553** | **17,267** |
-| **Savings** | — | **76%** |
+| Run 1 | ~28,800 | ~16,450 |
+| Iteration 2 | ~20,800 | ~820 |
+| Iteration 3 | ~20,800 | ~740 |
+| **Total** | **~70,400** | **~18,010** |
+| **Savings** | — | **74%** |
 
 ---
 
@@ -1241,3 +1289,48 @@ internal/content/workflows/
 | `prependUniversals()` | `knowledge/briefing.go` | Guard with tracker to prevent double-delivery |
 | `GateResult` | `gates.go` | Extend with Remediation field |
 | `CheckGate()` | `gates.go` | Extend with ContextDelivery + complexity params |
+| `initSessionLocked()` | `registry.go` | TOCTOU-safe session init within existing lock scope |
+| `shouldSkipGateForComplexity()` | `gates.go` | Managed-only gate bypass (auto-skip G2/G3 when plan==nil) |
+| `ValidateZeropsYmlEnvRefs()` | `ops/deploy_validate.go` | Env ref validation from mount, wires dead `ValidateEnvReferences()` |
+| `cleanOrphanedFiles()` | `registry.go` | Orphan cleanup in `RefreshRegistry` |
+
+### New Files
+
+| File | Contents |
+|------|----------|
+| `internal/workflow/router.go` | `Route()` pure function + `formatOfferings()` |
+| `internal/workflow/deploy_guidance.go` | `ResolveDeployGuidance()` strategy-specific section extraction |
+
+---
+
+## 18. Key Design Decisions (from Robustness Analysis)
+
+Six critical design decisions validated by robustness teams:
+
+### 18.1 Knowledge Gates Don't Break Managed-Only
+
+`shouldSkipGateForComplexity()` auto-skips G2/G3 when `plan==nil` (no runtime services to code/deploy). Items 24+25 (Wave 4) ship as ONE atomic change — knowledge-aware G2 gate is meaningless without the complexity bypass.
+
+### 18.2 ContextDelivery is 4 Fields, Not 6
+
+Drop `RecipesViewed` (pull-based via `zerops_knowledge`, never pushed in workflow responses) and `IterationNum` (already exists as `WorkflowState.Iteration` — duplicating it violates single source of truth).
+
+### 18.3 Iteration Guidance is 300 Tokens, Not 100
+
+Recovery patterns table + pre-resolved placeholders (hostname, port, connectionString) + `forceGuide` recovery mention + max iterations counter. 100 tokens found too sparse by Teams 1, 3, 6 — LLM needs error-pattern-to-fix mapping to avoid repeating the same mistake.
+
+### 18.4 Router Serves Two Channels
+
+Cross-session (system prompt via `buildProjectSummary`) + mid-session (`action="route"` for live re-routing). Compact `formatOfferings()` caps output at 5-8 lines even for 10+ services. Both channels use the same `Route()` pure function.
+
+### 18.5 TOCTOU Fix Requires `initSessionLocked()`
+
+Can't simply wrap `ListSessions()` + `InitSession()` in one `withRegistryLock` call because `RegisterSession` internally acquires the lock (deadlock). New `initSessionLocked()` variant operates within existing lock scope without re-acquiring.
+
+### 18.6 checkGenerate Has 5 Real Checks
+
+1. zerops.yml existence in workspace
+2. Hostname match (service names in zerops.yml match plan targets)
+3. Env ref validation (wires the dead `ValidateEnvReferences()` — bug 9.11)
+4. Port presence (at least one service binds a port)
+5. deployFiles sanity (paths exist, no obvious mistakes)
