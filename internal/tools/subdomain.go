@@ -8,6 +8,8 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+const actionEnable = "enable"
+
 // SubdomainInput is the input type for zerops_subdomain.
 type SubdomainInput struct {
 	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to enable/disable subdomain for."`
@@ -34,7 +36,14 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, projectID string
 			finalProc, _ := pollManageProcess(ctx, client, result.Process, onProgress)
 			result.Process = finalProc
 		}
-		if input.Action == "enable" {
+		// API sometimes returns a process that immediately FAILs instead of
+		// returning SUBDOMAIN_ALREADY_ENABLED error. Detect and normalize.
+		if input.Action == actionEnable && result.Process != nil &&
+			result.Process.Status == statusFailed && len(result.SubdomainUrls) > 0 {
+			result.Status = "already_enabled"
+			result.Process = nil
+		}
+		if input.Action == actionEnable {
 			result.NextActions = nextActionSubdomainEnable
 		}
 		return jsonResult(result), nil, nil

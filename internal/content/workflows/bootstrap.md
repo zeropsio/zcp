@@ -325,6 +325,10 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-8) only after dev is healthy
 
 **Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path (steps 4-7).
 
+> **Path distinction:** SSHFS mount path `/var/www/{devHostname}/` is LOCAL only.
+> Inside the container, code lives at `/var/www/`. Never use the mount path as
+> `workingDir` in `zerops_deploy` — the default `/var/www` is always correct.
+
 1. **Deploy to appdev**: `zerops_deploy targetService="appdev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. SSHFS mount auto-reconnects after deploy — no remount needed. Deploy tests the build pipeline and ensures deployFiles artifacts persist.
 2. **Start appdev** (deploy restarted the container — no server runs): `zerops_deploy` blocks until SSH is ready (sshReady=true in response) — start server via SSH immediately (same kill-then-start pattern from Dev iteration below), verify startup log. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically after deploy.
 3. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
@@ -776,6 +780,10 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-8) only after dev is healthy
 ### Standard mode (dev+stage) — deploy flow
 
 **Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path.
+
+> **Path distinction:** SSHFS mount path `/var/www/{devHostname}/` is LOCAL only.
+> Inside the container, code lives at `/var/www/`. Never use the mount path as
+> `workingDir` in `zerops_deploy` — the default `/var/www` is always correct.
 
 1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHFS mount auto-reconnects after deploy.
 2. **Start dev** (deploy restarted the container — no server runs): start server via SSH immediately (kill-then-start pattern from Dev iteration), verify startup log. **Implicit-webserver runtimes: skip this step.**

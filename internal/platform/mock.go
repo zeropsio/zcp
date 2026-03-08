@@ -30,6 +30,9 @@ type Mock struct {
 	stackTypes         []ServiceStackType
 	autoscalingProcess *Process // non-nil → SetAutoscaling returns this process
 
+	// CapturedImportYAML stores the YAML content passed to ImportServices.
+	CapturedImportYAML string
+
 	// Error overrides: method name -> error
 	errors map[string]error
 }

@@ -211,10 +211,14 @@ func (m *Mock) DeleteProjectEnv(_ context.Context, envID string) (*Process, erro
 	}, nil
 }
 
-func (m *Mock) ImportServices(_ context.Context, _ string, _ string) (*ImportResult, error) {
+func (m *Mock) ImportServices(_ context.Context, _ string, yamlContent string) (*ImportResult, error) {
 	if err := m.getError("ImportServices"); err != nil {
 		return nil, err
 	}
+	m.mu.Lock()
+	m.CapturedImportYAML = yamlContent
+	m.mu.Unlock()
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.importResult == nil {

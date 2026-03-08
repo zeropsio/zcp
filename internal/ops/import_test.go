@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -649,6 +651,95 @@ func TestImport_FailReason_Mapped(t *testing.T) {
 	}
 	if *p.FailReason != reason {
 		t.Errorf("expected failReason=%q, got %q", reason, *p.FailReason)
+	}
+}
+
+func TestImport_ZeropsYamlNormalization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		content       string
+		wantStringKey bool // expect zeropsYaml as string in captured YAML
+	}{
+		{
+			name: "zeropsYaml as string passes through",
+			content: `services:
+  - hostname: app
+    type: nodejs@22
+    mode: NON_HA
+    zeropsYaml: |
+      zerops:
+        - setup: app
+          run:
+            start: node index.js
+`,
+			wantStringKey: true,
+		},
+		{
+			name: "zeropsYaml as nested map normalized to string",
+			content: `services:
+  - hostname: app
+    type: nodejs@22
+    mode: NON_HA
+    zeropsYaml:
+      zerops:
+        - setup: app
+          run:
+            start: node index.js
+`,
+			wantStringKey: true,
+		},
+		{
+			name: "zeropsYaml as nested map with complex shell commands",
+			content: `services:
+  - hostname: app
+    type: nodejs@22
+    mode: NON_HA
+    zeropsYaml:
+      zerops:
+        - setup: app
+          build:
+            buildCommands:
+              - node -e "console.log('hello: world')"
+          run:
+            start: node index.js
+`,
+			wantStringKey: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := importMock()
+			_, err := Import(context.Background(), mock, "proj-1", tt.content, "", nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantStringKey {
+				// Parse captured YAML and verify zeropsYaml is a string
+				var doc map[string]any
+				if err := yaml.Unmarshal([]byte(mock.CapturedImportYAML), &doc); err != nil {
+					t.Fatalf("captured YAML parse error: %v", err)
+				}
+				services, ok := doc["services"].([]any)
+				if !ok || len(services) == 0 {
+					t.Fatal("expected services in captured YAML")
+				}
+				svcMap, ok := services[0].(map[string]any)
+				if !ok {
+					t.Fatal("expected service map")
+				}
+				zy, exists := svcMap["zeropsYaml"]
+				if !exists {
+					t.Fatal("expected zeropsYaml in captured YAML")
+				}
+				if _, isString := zy.(string); !isString {
+					t.Errorf("zeropsYaml should be a string after normalization, got %T", zy)
+				}
+			}
+		})
 	}
 }
 

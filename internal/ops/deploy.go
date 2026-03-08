@@ -124,6 +124,15 @@ func deploySSH(
 	if workingDir == "" {
 		workingDir = defaultWorkingDir
 	}
+	// Reject mount-style paths — workingDir runs INSIDE the container where
+	// /var/www/{hostname} doesn't exist. The correct container path is /var/www.
+	if workingDir != defaultWorkingDir && strings.HasPrefix(workingDir, defaultWorkingDir+"/") {
+		return nil, platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("workingDir %q looks like a local SSHFS mount path, not a container path. Inside the container, code lives at /var/www", workingDir),
+			"Use workingDir=\"/var/www\" or omit workingDir (defaults to /var/www). The mount path /var/www/{hostname} is only valid on the local machine.",
+		)
+	}
 
 	// Pre-deploy validation: read zerops.yml from SSHFS mount (local filesystem).
 	// Mount path: /var/www/{sourceService}/ maps to remote /var/www/

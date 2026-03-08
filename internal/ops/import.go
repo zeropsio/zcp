@@ -91,6 +91,12 @@ func Import(
 		}
 	}
 
+	// Normalize zeropsYaml fields: convert nested maps to YAML strings.
+	yamlContent, err = normalizeZeropsYaml(doc, yamlContent)
+	if err != nil {
+		return nil, err
+	}
+
 	// Validate hostnames before hitting the API.
 	hostnames := extractHostnames(doc)
 	for _, h := range hostnames {
@@ -222,6 +228,52 @@ func waitForDeletingServices(
 			// Continue polling.
 		}
 	}
+}
+
+// normalizeZeropsYaml converts zeropsYaml map fields to YAML strings.
+// The Zerops API expects zeropsYaml as a string, but LLMs often send it
+// as a nested YAML object. This detects and re-serializes.
+func normalizeZeropsYaml(doc map[string]any, yamlContent string) (string, error) {
+	services, ok := doc["services"].([]any)
+	if !ok {
+		return yamlContent, nil
+	}
+	modified := false
+	for _, svc := range services {
+		svcMap, ok := svc.(map[string]any)
+		if !ok {
+			continue
+		}
+		zy, exists := svcMap["zeropsYaml"]
+		if !exists {
+			continue
+		}
+		if _, isString := zy.(string); isString {
+			continue
+		}
+		serialized, err := yaml.Marshal(zy)
+		if err != nil {
+			return "", platform.NewPlatformError(
+				platform.ErrInvalidImportYml,
+				fmt.Sprintf("failed to serialize zeropsYaml: %v", err),
+				"Provide zeropsYaml as a YAML string instead of a nested object",
+			)
+		}
+		svcMap["zeropsYaml"] = string(serialized)
+		modified = true
+	}
+	if !modified {
+		return yamlContent, nil
+	}
+	newContent, err := yaml.Marshal(doc)
+	if err != nil {
+		return "", platform.NewPlatformError(
+			platform.ErrInvalidImportYml,
+			fmt.Sprintf("failed to re-serialize import YAML: %v", err),
+			"Check YAML syntax",
+		)
+	}
+	return string(newContent), nil
 }
 
 // resolveInput resolves content XOR filePath into YAML content string.
