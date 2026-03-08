@@ -6,6 +6,8 @@ Analysis of current workflow system, context delivery, and validated designs for
 
 **Robustness Analysis 2026-03-07**: 30 agents across 10 analysis teams + 4 robustness teams validated all 36 items. Redesigned implementation into 5 waves (38 items) with correct dependency ordering. Key findings in sections 9, 10, and new section 18.
 
+**Audit 2026-03-08**: 14-agent audit identified 10 gaps (G1-G10). All fixes applied inline. Audit report: `plans/workflow-evolution-audit.md`.
+
 ---
 
 ## 1. Current Architecture Overview
@@ -18,9 +20,9 @@ Analysis of current workflow system, context delivery, and validated designs for
 | `internal/server` | `server.go` | 119 | MCP server setup, tool registration |
 | `internal/server` | `instructions.go` | 137 | System prompt construction (4 sections) |
 | `internal/workflow` | `engine.go` | 341 | Session lifecycle, phase transitions |
-| `internal/workflow` | `state.go` | 291 | WorkflowState persistence, phase enum |
-| `internal/workflow` | `session.go` | 172 | Session creation, registry management |
-| `internal/workflow` | `bootstrap.go` | 172 | Bootstrap conductor, BootstrapResponse |
+| `internal/workflow` | `state.go` | 84 | WorkflowState persistence, phase enum |
+| `internal/workflow` | `session.go` | 171 | Session creation, registry management |
+| `internal/workflow` | `bootstrap.go` | 290 | Bootstrap conductor, BootstrapResponse |
 | `internal/workflow` | `bootstrap_steps.go` | 94 | 5 step definitions with inline guidance |
 | `internal/workflow` | `bootstrap_guidance.go` | 34 | `<section>` extraction from bootstrap.md |
 | `internal/workflow` | `bootstrap_evidence.go` | 149 | Auto-completion, ServiceMeta writes, reflog |
@@ -273,13 +275,13 @@ Rules repeated across multiple locations:
 
 | Rule | Occurrences | Locations |
 |------|-------------|-----------|
-| `deployFiles: [.]` for self-deploy | 6x (21 mentions) | generate(3), deploy(2), provision(1) |
+| `deployFiles: [.]` for self-deploy | 6x (27 mentions) | generate(3), deploy(2), provision(1) |
 | Dev uses `start: zsc noop --silent` | 3x (9 mentions) | generate, deploy, bootstrap_steps.go |
-| Implicit-webserver skip manual start | 4x | generate, deploy(2), deploy subsection |
+| Implicit-webserver skip manual start | 4x (11 mentions) | generate, deploy(2), deploy subsection |
 | Shared storage two-stage mount | 3x | provision, bootstrap_steps.go, deploy |
 | Env var discovery protocol | 4x | provision, generate, bootstrap_steps, agent prompt |
 
-**Note**: This repetition is partially **intentional reinforcement** — rules stated near point of use are more reliably followed by LLMs than rules loaded in a separate prior call. Deduplication should consolidate (e.g., 21→4 mentions), not eliminate entirely.
+**Note**: This repetition is partially **intentional reinforcement** — rules stated near point of use are more reliably followed by LLMs than rules loaded in a separate prior call. Deduplication should consolidate (e.g., 27→5 mentions), not eliminate entirely.
 
 ### 3.3 Corrected Token Budget (Comprehensive)
 
@@ -652,7 +654,7 @@ Stop serializing `guidance` field to `BootstrapStepInfo` JSON responses. Keep `d
 
 **Fallback safety**: If `ResolveGuidance()` returns `""` (section extraction fails), LLM still gets: step name, tools list, verification criteria, and priorContext. This is minimal but sufficient for an experienced LLM. `ResolveGuidance` only fails if bootstrap.md is missing from embed.FS — which would mean a broken build.
 
-**Test impact**: 4 test assertions check `Guidance != ""` — these need updating:
+**Test impact**: 7+ test assertions check `Guidance != ""` — these need updating (assertions span more test functions than listed below):
 - `TestStepDetails_AllStepsCovered` at `bootstrap_test.go:19-20`
 - `TestStepDetails_DiscoverGuidance_ThreeStates` at `bootstrap_test.go:51-64`
 - `TestBuildResponse_FirstStep` at `bootstrap_test.go:297-298`
@@ -702,6 +704,10 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 }
 ```
 
+**failureCount source**: Add `FailureCount int` field to `BootstrapStep`. Increment in `Iterate()` when current step is deploy and previous verification failed. Alternatively, use `state.Iteration` as proxy (simpler but less precise — counts all iterations, not per-step failures). Recommend the dedicated field for accuracy.
+
+**hasNonImplicitWebserverRuntime()**: New helper function — iterates plan targets, checks runtime type against implicit-webserver list (php-nginx, php-apache, nginx, static). Returns true if any target has a non-implicit-webserver runtime.
+
 **Standard mode with agents**: overview(450) + standard(500) + iteration(850) + agents(2,900) = **4,700 tokens** (was 6,901)
 **Simple mode**: overview(450) + simple(600) = **1,050 tokens**
 **Savings**: 2,200-5,850 tokens per deploy step.
@@ -716,9 +722,9 @@ Consolidate repeated rules within bootstrap.md using a "Key Rules" block pattern
 - **Exception rules** (implicit-webserver): 1 full + N inline tags
 
 **Concrete targets**:
-- `deployFiles: [.]` — from 21 mentions to 5 (full text in Key Rules block + YAML template + agent prompt; short reference elsewhere)
+- `deployFiles: [.]` — from 27 mentions to 5 (full text in Key Rules block + YAML template + agent prompt; short reference elsewhere)
 - `zsc noop --silent` — from 9 mentions to 3 (generate, deploy, simple mode)
-- `implicit-webserver` — from 5 to 2 (one full definition, one inline exception)
+- `implicit-webserver` — from 11 to 2 (one full definition, one inline exception)
 - `/status` spec — from 3-4 full to 1 full + 2 cross-references
 
 **Positive phrasing** (from LLM behavioral model): Rephrase negation rules as directives:
@@ -726,8 +732,10 @@ Consolidate repeated rules within bootstrap.md using a "Key Rules" block pattern
 - "NEVER write lock files" → "Write manifests only (go.mod, package.json) — build commands generate locks"
 - "Do NOT add variables that don't exist" → "Map ONLY variables listed in the discovery response"
 
-**Savings**: ~3,000 tokens (21→5 deployFiles mentions × ~40 tokens each = ~640 saved; similar for other rules).
+**Savings**: ~1,120 tokens (27→5 deployFiles × ~40 tokens = ~880; 11→2 implicit-webserver × ~30 tokens = ~270; minus overlap). Original ~3,000 estimate was overstated.
 **Risk**: Zero (markdown-only change, no code impact).
+
+**Regression prevention** [G6]: Add `TestBootstrapMd_RedundancyLimits(t *testing.T)` that counts occurrences of key patterns (deployFiles, noop, implicit-webserver) and fails if counts exceed consolidated targets. Prevents re-proliferation during future edits.
 
 ### 8.4 Expand Verification with SUCCESS WHEN (IMPLEMENT)
 
@@ -761,6 +769,14 @@ type ContextDelivery struct {
 
 **Behavior**:
 1. **Gate DetailedGuide re-delivery**: First delivery → full `ResolveGuidance()`, mark `GuideSentFor[step]=1`. Repeat → stub: `"[Guide for {step} already delivered. Tools: X. Verification: Y]"` (~50 tokens). Add `forceGuide` param for recovery.
+
+**Iteration reset semantics**: `GuideSentFor` stores `map[string]int` where the int value is the iteration number when the guide was last sent (not a simple counter). On iteration N:
+- If `GuideSentFor[step] < state.Iteration` → deliver full guide, update `GuideSentFor[step] = state.Iteration`
+- If `GuideSentFor[step] == state.Iteration` → deliver stub (~50 tokens)
+- Delta template (section 8.8) takes precedence for deploy step on iteration 2+: when `state.Iteration > 0 AND step == deploy`, always deliver delta template instead of full guide, regardless of GuideSentFor value.
+
+This resolves the contradiction between stub delivery and delta template — delta template is a separate mechanism that overrides the GuideSentFor tracking specifically for deploy iterations.
+
 2. **Gate AvailableStacks**: Only inject during discover step or if never sent. Saves ~2,000 tokens (500/step × 4 steps).
 3. **Persist knowledge calls**: When `zerops_knowledge` called with active session, write scope/briefing flags to `ContextDelivery`. Survives process restart.
 4. **Briefing dedup**: Skip universals if scope already loaded; skip runtime guide if briefing already loaded. Saves ~2,000 tokens.
@@ -855,11 +871,30 @@ Add `skippableFor []string`:
 - Iteration 1+: 1h for `dev_verify`/`deploy_evidence`, 24h for `discovery`
 - Benefit: typo fix doesn't require full re-validation
 
+**8.9.5 CheckGate Signature Extension**
+
+Current signature: `CheckGate(from, to Phase, evidenceDir, sessionID string) (*GateResult, error)`
+
+This signature lacks access to `ContextDelivery`, iteration count, and `BootstrapState` — all required for knowledge prerequisites (8.9.2), complexity bypass (8.9.3), and adaptive freshness (8.9.4).
+
+**Extended signature**:
+```go
+func CheckGate(from, to Phase, evidenceDir, sessionID string,
+               iteration int, bs *BootstrapState) (*GateResult, error)
+```
+
+Changes:
+- `iteration int`: enables adaptive freshness (shorter evidence TTL on retry)
+- `bs *BootstrapState`: provides `Plan` (for complexity bypass via `shouldSkipGateForComplexity`), `ContextDelivery` (for knowledge prerequisite checks), and `DiscoveredEnvVars` (for validation)
+- Callers in `engine.go` already have access to both values — pass-through only
+
+**Error path refactoring**: `GateResult.Remediation` (8.9.1) requires structured error responses. Current error wrapping at `engine.go` flattens to string. The `Transition()` method must return `*GateResult` on gate failure (not just `error`) so callers can extract `RemediationStep`.
+
 ### 8.10 Cross-Workflow Content Dedup (NEW — IMPLEMENT)
 
 - Extract shared deploy/verify protocol (~120 lines) from bootstrap.md and deploy.md into `<section name="deploy-common">`
 - Deduplicate universals-core overlap: remove verbatim duplicates in core.md networking/filesystem sections
-- Savings: ~2,300 tokens
+- Savings: ~1,500 tokens (original estimate included overlap already counted in 8.3 dedup)
 
 ### 8.11 DROPPED Optimizations
 
@@ -880,9 +915,9 @@ Add `skippableFor []string`:
 | AvailableStacks (5x→1x) | 2,500 | 500 | 80% |
 | PriorContext (compressed) | 2,000 | 600 | 70% |
 | Inline Guidance (removed) | 607 | 0 | 100% |
-| Content dedup (bootstrap.md) | — | — | ~3,000 saved |
-| Cross-workflow dedup | — | — | ~2,300 saved |
-| **Total** | **~28,961** | **~20,567** | **29%** |
+| Content dedup (bootstrap.md) | — | — | ~1,120 saved |
+| Cross-workflow dedup | — | — | ~1,500 saved |
+| **Total** | **~28,961** | **~23,247** | **20%** |
 
 **Iteration 2 (deploy fails, retry)**:
 | Change | Current | Proposed | Savings |
@@ -906,6 +941,8 @@ Realistic improvement from 12,344 → ~7,000-8,000 tokens per bootstrap (first r
 `writeBootstrapOutputs` only fires on full completion. Abandoned bootstrap = zero ServiceMeta.
 
 **Fix**: Write ServiceMeta incrementally. After provision step completes (services exist in API), write meta with `Decisions: {}` (empty). After strategy step, update with strategy. Need a `Status` field on ServiceMeta to distinguish partial from complete: `"provisioned"` vs `"bootstrapped"`.
+
+**Backward compatibility**: Old ServiceMeta files without `Status` field unmarshal with Go zero-value (empty string). Add explicit fallback: `if meta.Status == "" { meta.Status = "bootstrapped" }` in `ReadServiceMeta()`. This treats pre-evolution metas as complete (correct — they were only written on full completion).
 
 ### 9.2 Shared Dependency Meta Overwrite
 
@@ -961,6 +998,12 @@ Zero validation at generate step completion (`workflow_checks.go:130`). Gate alw
 
 **Fix**: Implement 5 real checks: zerops.yml existence, hostname match, env ref validation, port presence, deployFiles sanity.
 
+**StepChecker signature gap**: Current `StepChecker` type is `func(ctx context.Context, plan *ServicePlan) (*StepCheckResult, error)`. Checks 3 and 5 (env ref validation, deployFiles sanity) need `DiscoveredEnvVars` from `BootstrapState`, which `ServicePlan` doesn't contain. Two options:
+- **(a) Expand signature**: `func(ctx context.Context, plan *ServicePlan, state *BootstrapState) (*StepCheckResult, error)` — clean but changes all checker signatures
+- **(b) Move env ref validation to deploy step**: Where SSH mount provides filesystem access and state is fully populated. Less architecturally clean but avoids signature change.
+
+**Recommendation**: Option (a) — expand to accept `*BootstrapState`. Only 5 checkers exist, signature change is contained.
+
 ### 9.11 `ValidateEnvReferences()` is Dead Code
 
 Found independently by 3 robustness teams. Fully implemented (68 lines, 8 tests) at `ops/deploy_validate.go:187`, never called from any production path. Zerops silently keeps invalid `${hostname_varName}` references as literal strings (verified on live platform). **#1 reliability fix.**
@@ -978,7 +1021,7 @@ Redesigned by robustness analysis (30 agents, 4 robustness teams) with correct d
 | # | Action | Files | Section |
 |---|--------|-------|---------|
 | 1 | Delete `DeployFlow` field, migrate test fixtures to `Decisions["deployStrategy"]` | `service_meta.go`, `service_meta_test.go`, `bootstrap_evidence.go` | 5.2 |
-| 2 | Stop serializing inline `Guidance` to LLM responses (`json:"-"`) | `bootstrap.go:216`, update 4 tests | 8.1 |
+| 2 | Stop serializing inline `Guidance` to LLM responses (`json:"-"`) | `bootstrap.go:216`, update 7+ tests | 8.1 |
 | 3 | Rename "Phase 1/2" to "Part 1/2" in deploy.md | `deploy.md` | 8.5 |
 | 4 | Expand `Verification` strings with `SUCCESS WHEN:` criteria | `bootstrap_steps.go` | 8.4 |
 | 5 | Add `ListServiceMetas(stateDir)` function + tests | `service_meta.go`, `service_meta_test.go` | 4.4 |
@@ -993,7 +1036,7 @@ Redesigned by robustness analysis (30 agents, 4 robustness teams) with correct d
 
 | # | Action | Files | Section |
 |---|--------|-------|---------|
-| 12 | Consolidate bootstrap.md rules (deployFiles 21→5, noop 9→3, positive phrasing) | `bootstrap.md` | 8.3 |
+| 12 | Consolidate bootstrap.md rules (deployFiles 27→5, noop 9→3, positive phrasing) | `bootstrap.md` | 8.3 |
 | 13 | Split deploy section into 6 progressive sub-sections | `bootstrap.md` | 8.2 |
 | 14 | Add strategy-specific `<section>` tags to deploy.md | `deploy.md` | 5.5 |
 | 15 | Deduplicate universals-core overlap | `themes/core.md` | 8.10 |
@@ -1006,7 +1049,7 @@ Redesigned by robustness analysis (30 agents, 4 robustness teams) with correct d
 | 17 | Fix two-write inconsistency (move `saveSessionState` inside lock) | `engine.go` | S |
 | 18 | Add `action="resume"` for abandoned sessions | `engine.go`, `tools/workflow.go` | M |
 | 19 | Wire `ValidateEnvReferences()` via `ValidateZeropsYmlEnvRefs()` | `ops/deploy_validate.go`, `bootstrap.go` | M |
-| 20 | Implement `checkGenerate()` with 5 real checks | `workflow_checks.go` | M |
+| 20 | Implement `checkGenerate()` with 5 real checks | `workflow_checks.go` | M | Requires StepChecker signature change to accept *BootstrapState (G3) |
 | 21 | Incremental ServiceMeta writes (planned→provisioned→deployed→bootstrapped) | `bootstrap_evidence.go`, `service_meta.go` | M |
 
 ### Wave 4 — Knowledge-Aware Gates + Context Tracking (9 items, depends on Wave 3)
@@ -1288,9 +1331,9 @@ Iteration 2+ drops to ~740-820 tokens (96% savings). Delta guidance template (~3
 | `GetBriefing()` | `knowledge/briefing.go` | 7-layer composition, extend with depth/dedup |
 | `prependUniversals()` | `knowledge/briefing.go` | Guard with tracker to prevent double-delivery |
 | `GateResult` | `gates.go` | Extend with Remediation field |
-| `CheckGate()` | `gates.go` | Extend with ContextDelivery + complexity params |
+| `CheckGate()` | `gates.go` | Extend with iteration int + *BootstrapState (provides ContextDelivery, Plan, DiscoveredEnvVars) |
 | `initSessionLocked()` | `registry.go` | TOCTOU-safe session init within existing lock scope |
-| `shouldSkipGateForComplexity()` | `gates.go` | Managed-only gate bypass (auto-skip G2/G3 when plan==nil) |
+| `shouldSkipGateForComplexity()` | `gates.go` | Managed-only gate bypass (auto-skip G2/G3 when all targets are managed-only) |
 | `ValidateZeropsYmlEnvRefs()` | `ops/deploy_validate.go` | Env ref validation from mount, wires dead `ValidateEnvReferences()` |
 | `cleanOrphanedFiles()` | `registry.go` | Orphan cleanup in `RefreshRegistry` |
 
@@ -1309,7 +1352,7 @@ Six critical design decisions validated by robustness teams:
 
 ### 18.1 Knowledge Gates Don't Break Managed-Only
 
-`shouldSkipGateForComplexity()` auto-skips G2/G3 when `plan==nil` (no runtime services to code/deploy). Items 24+25 (Wave 4) ship as ONE atomic change — knowledge-aware G2 gate is meaningless without the complexity bypass.
+`shouldSkipGateForComplexity()` auto-skips G2/G3 when the plan contains zero runtime targets (managed-only project). Detection: `len(plan.Targets) == 0` is invalid per `ValidateBootstrapTargets` (requires at least one target). Instead, check if all targets have `Simple: true` with no generate/deploy-requiring runtimes, OR add `ManagedOnly bool` field to `ServicePlan` set during discover step when user intent is managed-only. Items 24+25 (Wave 4) ship as ONE atomic change — knowledge-aware G2 gate is meaningless without the complexity bypass.
 
 ### 18.2 ContextDelivery is 4 Fields, Not 6
 
