@@ -165,6 +165,7 @@ func (r *Runner) spawnClaude(ctx context.Context, prompt, logFile string) error 
 		"--output-format", "stream-json",
 		"--verbose",
 		"--no-session-persistence",
+		"--dangerously-skip-permissions",
 		"--model", r.config.Model,
 		"--max-turns", fmt.Sprintf("%d", r.config.MaxTurns),
 	}

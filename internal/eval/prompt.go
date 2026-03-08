@@ -242,50 +242,17 @@ func BuildTaskPrompt(meta *RecipeMetadata, hostnames map[string]string) string {
 	}
 
 	fmt.Fprintf(&b, "Deploy a %s application on Zerops.\n\n", framework)
-	b.WriteString("Services to create:\n")
-	fmt.Fprintf(&b, "- Runtime: %s (%s)\n", hostnames["runtime"], meta.Runtime)
+	b.WriteString("Use these hostnames:\n")
+	fmt.Fprintf(&b, "- %s as runtime (%s)\n", hostnames["runtime"], meta.Runtime)
 
-	for _, svc := range meta.Services {
-		h := hostnames[svc.Role]
-		fmt.Fprintf(&b, "- %s: %s (%s)\n", capitalize(svc.Role), h, svc.Type)
-	}
-
-	b.WriteString(`
-Requirements:
-- All services should be created and running
-- The application should be deployed with working code
-- Health endpoint should return HTTP 200
-- Status endpoint should show service connectivity where applicable
-- Enable subdomain access on the runtime service
-
-Workflow:
-1. Start bootstrap: zerops_workflow action="start" workflow="bootstrap"
-2. Follow the step-by-step flow returned by the workflow system
-3. Complete each step with: zerops_workflow action="complete" step="{name}" attestation="{what you did}"
-4. If verification fails, iterate: zerops_workflow action="iterate"
-5. After all steps pass, set deploy strategies: zerops_workflow action="strategy" strategies={"hostname": "push-dev"}
-
-Use these EXACT hostnames in your bootstrap plan:
-`)
-
-	fmt.Fprintf(&b, "- %s as the runtime (%s)\n", hostnames["runtime"], meta.Runtime)
 	for _, svc := range meta.Services {
 		fmt.Fprintf(&b, "- %s as %s (%s)\n", hostnames[svc.Role], svc.Role, svc.Type)
 	}
 
-	b.WriteString(`
-Use the Zerops MCP tools (zerops_workflow, zerops_knowledge, etc.) to complete this task.
-Do NOT use tools outside of zerops_* MCP tools.`)
+	b.WriteString("\nVerify the runtime is working — the app should respond with HTTP 200.\n")
+	b.WriteString("Do NOT use tools outside of zerops_* MCP tools.")
 
 	return b.String()
-}
-
-// capitalize uppercases the first letter of a string.
-func capitalize(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // assessmentInstructions is the self-assessment prompt appended after the task.

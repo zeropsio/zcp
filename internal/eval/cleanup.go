@@ -2,8 +2,10 @@ package eval
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -89,16 +91,19 @@ func CleanupProject(ctx context.Context, client platform.Client, projectID, work
 		}
 	}
 
-	// 2. Clean generated files in workDir
-	cleaned, err := cleanWorkDir(workDir)
-	if err != nil {
-		return fmt.Errorf("cleanup work dir: %w", err)
+	// 2. Unmount stale SSHFS entries before removing files
+	unmountStaleEntries(workDir)
+
+	// 3. Clean generated files in workDir
+	cleaned, cleanErr := cleanWorkDir(workDir)
+	if cleanErr != nil {
+		fmt.Fprintf(os.Stderr, "  warning: cleanup work dir: %v\n", cleanErr)
 	}
 	if len(cleaned) > 0 {
 		fmt.Fprintf(os.Stderr, "  removed %d files/dirs: %s\n", len(cleaned), strings.Join(cleaned, ", "))
 	}
 
-	// 3. Reset all workflow sessions
+	// 4. Reset all workflow sessions
 	stateDir := filepath.Join(workDir, ".zcp", "state")
 	sessions, listErr := workflow.ListSessions(stateDir)
 	if listErr == nil {
@@ -118,7 +123,8 @@ func IsProtectedPath(name string) bool {
 }
 
 // cleanWorkDir removes all non-protected files and directories from dir.
-// Returns the list of removed names.
+// Returns the list of removed names. Continues on individual errors,
+// collecting them via errors.Join so one stale entry doesn't block the rest.
 func cleanWorkDir(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -126,18 +132,42 @@ func cleanWorkDir(dir string) ([]string, error) {
 	}
 
 	var removed []string
+	var errs []error
 	for _, entry := range entries {
 		if IsProtectedPath(entry.Name()) {
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
 		if err := os.RemoveAll(path); err != nil {
-			return removed, fmt.Errorf("remove %s: %w", entry.Name(), err)
+			errs = append(errs, fmt.Errorf("remove %s: %w", entry.Name(), err))
+			continue
 		}
 		removed = append(removed, entry.Name())
 	}
 
-	return removed, nil
+	return removed, errors.Join(errs...)
+}
+
+// unmountStaleEntries runs lazy unmount on non-protected directories in dir.
+// This handles stale SSHFS mounts left after service deletion.
+// Errors are ignored — umount on a non-mount is harmless.
+func unmountStaleEntries(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	for _, entry := range entries {
+		if !entry.IsDir() || IsProtectedPath(entry.Name()) {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		// Lazy unmount — harmless on non-mounts, cleans stale SSHFS
+		_ = exec.CommandContext(ctx, "umount", "-l", path).Run()
+	}
 }
 
 // deleteServices deletes a list of services and polls each to completion.

@@ -323,28 +323,24 @@ func TestBuildTaskPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "postgresql@16") {
 		t.Error("prompt missing service type")
 	}
-
-	// Workflow instructions
-	for _, want := range []string{
-		`zerops_workflow action="start" workflow="bootstrap"`,
+	// Must contain HTTP 200 verification
+	if !strings.Contains(prompt, "HTTP 200") {
+		t.Error("prompt missing HTTP 200 verification")
+	}
+	// Must restrict to zerops_* tools
+	if !strings.Contains(prompt, "zerops_*") {
+		t.Error("prompt missing tool restriction")
+	}
+	// Should NOT contain verbose workflow instructions (MCP server handles that)
+	for _, unwanted := range []string{
+		`zerops_workflow action="start"`,
 		`action="complete"`,
 		`action="strategy"`,
-		`action="iterate"`,
+		"EXACT hostnames",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("prompt missing workflow instruction %q", want)
+		if strings.Contains(prompt, unwanted) {
+			t.Errorf("prompt should not contain verbose workflow instruction %q", unwanted)
 		}
-	}
-
-	// Hostname mapping section
-	if !strings.Contains(prompt, "EXACT hostnames") {
-		t.Error("prompt missing hostname mapping section")
-	}
-	if !strings.Contains(prompt, "evgo1a2b3c") && !strings.Contains(prompt, "go@1") {
-		t.Error("prompt missing runtime hostname mapping")
-	}
-	if !strings.Contains(prompt, "evgo4d5e6f") && !strings.Contains(prompt, "db") {
-		t.Error("prompt missing db hostname mapping")
 	}
 }
 
