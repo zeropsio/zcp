@@ -92,7 +92,7 @@ func CleanupProject(ctx context.Context, client platform.Client, projectID, work
 	}
 
 	// 2. Unmount stale SSHFS entries before removing files
-	unmountStaleEntries(workDir)
+	unmountStaleEntries(ctx, workDir)
 
 	// 3. Clean generated files in workDir
 	cleaned, cleanErr := cleanWorkDir(workDir)
@@ -151,13 +151,13 @@ func cleanWorkDir(dir string) ([]string, error) {
 // unmountStaleEntries runs lazy unmount on non-protected directories in dir.
 // This handles stale SSHFS mounts left after service deletion.
 // Errors are ignored — umount on a non-mount is harmless.
-func unmountStaleEntries(dir string) {
+func unmountStaleEntries(ctx context.Context, dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	for _, entry := range entries {
