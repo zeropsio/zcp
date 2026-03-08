@@ -5,12 +5,21 @@ import (
 	"time"
 )
 
+// RemediationStep provides actionable guidance for resolving a gate failure.
+type RemediationStep struct {
+	Action      string `json:"action"`
+	Tool        string `json:"tool"`
+	Params      string `json:"params"`
+	Explanation string `json:"explanation"`
+}
+
 // GateResult holds the result of a gate check.
 type GateResult struct {
-	Passed   bool     `json:"passed"`
-	Gate     string   `json:"gate"`               // "G0", "G1", etc. Empty if no gate applies.
-	Missing  []string `json:"missing"`            // missing evidence types
-	Failures []string `json:"failures,omitempty"` // content/session/freshness failures
+	Passed      bool              `json:"passed"`
+	Gate        string            `json:"gate"`                  // "G0", "G1", etc. Empty if no gate applies.
+	Missing     []string          `json:"missing"`               // missing evidence types
+	Failures    []string          `json:"failures,omitempty"`    // content/session/freshness failures
+	Remediation []RemediationStep `json:"remediation,omitempty"` // actionable steps to resolve failures
 }
 
 // gateDefinition maps a gate to its required evidence types.
@@ -105,11 +114,20 @@ func CheckGate(from, to Phase, evidenceDir, sessionID string) (*GateResult, erro
 		}
 	}
 
+	passed := len(missing) == 0 && len(failures) == 0
+	var remediation []RemediationStep
+	if !passed {
+		for _, m := range missing {
+			remediation = append(remediation, remediationForEvidence(m))
+		}
+	}
+
 	return &GateResult{
-		Passed:   len(missing) == 0 && len(failures) == 0,
-		Gate:     gate.name,
-		Missing:  missing,
-		Failures: failures,
+		Passed:      passed,
+		Gate:        gate.name,
+		Missing:     missing,
+		Failures:    failures,
+		Remediation: remediation,
 	}, nil
 }
 
@@ -143,6 +161,54 @@ func validateServiceResults(ev *Evidence) []string {
 		}
 	}
 	return errs
+}
+
+// remediationForEvidence returns a remediation step for a missing evidence type.
+func remediationForEvidence(evidenceType string) RemediationStep {
+	switch evidenceType {
+	case "recipe_review":
+		return RemediationStep{
+			Action:      "record_evidence",
+			Tool:        "zerops_workflow",
+			Params:      `action="evidence" type="recipe_review"`,
+			Explanation: "Review relevant recipes via zerops_knowledge, then record evidence",
+		}
+	case "discovery":
+		return RemediationStep{
+			Action:      "run_discovery",
+			Tool:        "zerops_discover",
+			Params:      `includeEnvs=true`,
+			Explanation: "Discover project services and environment variables",
+		}
+	case "dev_verify":
+		return RemediationStep{
+			Action:      "verify_dev",
+			Tool:        "zerops_verify",
+			Params:      `service="{hostname}"`,
+			Explanation: "Verify dev service is healthy and responding",
+		}
+	case "deploy_evidence":
+		return RemediationStep{
+			Action:      "deploy_services",
+			Tool:        "zerops_deploy",
+			Params:      `targetService="{hostname}"`,
+			Explanation: "Deploy services to stage environment",
+		}
+	case "stage_verify":
+		return RemediationStep{
+			Action:      "verify_stage",
+			Tool:        "zerops_verify",
+			Params:      `service="{hostname}"`,
+			Explanation: "Verify stage service is healthy and responding",
+		}
+	default:
+		return RemediationStep{
+			Action:      "record_evidence",
+			Tool:        "zerops_workflow",
+			Params:      fmt.Sprintf(`action="evidence" type="%s"`, evidenceType),
+			Explanation: fmt.Sprintf("Record %s evidence", evidenceType),
+		}
+	}
 }
 
 // isDiscoveryFresh checks if discovery.json exists and was created within 24h.

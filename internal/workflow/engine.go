@@ -50,37 +50,31 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 }
 
 // Transition moves the workflow to the next phase.
-func (e *Engine) Transition(phase Phase) (*WorkflowState, error) {
+// Returns (state, nil, nil) on success, (nil, gateResult, nil) on gate failure,
+// or (nil, nil, err) on other errors.
+func (e *Engine) Transition(phase Phase) (*WorkflowState, *GateResult, error) {
 	state, err := e.loadState()
 	if err != nil {
-		return nil, fmt.Errorf("transition: %w", err)
+		return nil, nil, fmt.Errorf("transition: %w", err)
 	}
-
 	if !IsValidTransition(state.Phase, phase) {
-		return nil, fmt.Errorf("transition: invalid %s → %s", state.Phase, phase)
+		return nil, nil, fmt.Errorf("transition: invalid %s → %s", state.Phase, phase)
 	}
-
 	result, err := CheckGate(state.Phase, phase, e.evidenceDir, state.SessionID)
 	if err != nil {
-		return nil, fmt.Errorf("transition gate check: %w", err)
+		return nil, nil, fmt.Errorf("transition gate check: %w", err)
 	}
 	if !result.Passed {
-		return nil, fmt.Errorf("transition: gate %s failed, missing evidence: %v", result.Gate, result.Missing)
+		return nil, result, nil
 	}
-
 	now := time.Now().UTC().Format(time.RFC3339)
-	state.History = append(state.History, PhaseTransition{
-		From: state.Phase,
-		To:   phase,
-		At:   now,
-	})
+	state.History = append(state.History, PhaseTransition{From: state.Phase, To: phase, At: now})
 	state.Phase = phase
 	state.UpdatedAt = now
-
 	if err := saveStateAndUpdateRegistry(e.stateDir, e.sessionID, state, phase); err != nil {
-		return nil, fmt.Errorf("transition: %w", err)
+		return nil, nil, fmt.Errorf("transition: %w", err)
 	}
-	return state, nil
+	return state, nil, nil
 }
 
 // RecordEvidence saves evidence for the current session.
@@ -149,7 +143,7 @@ func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, e
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap start save: %w", err)
 	}
-	return bs.BuildResponse(state.SessionID, intent), nil
+	return bs.BuildResponse(state.SessionID, intent, state.Iteration), nil
 }
 
 // BootstrapComplete completes the current step and advances to the next.
@@ -168,7 +162,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 			return nil, fmt.Errorf("step check: %w", checkErr)
 		}
 		if result != nil && !result.Passed {
-			resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent)
+			resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration)
 			resp.CheckResult = result
 			resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", stepName, result.Summary)
 			return resp, nil
@@ -200,7 +194,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete save: %w", err)
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration), nil
 }
 
 // BootstrapCompletePlan validates a structured plan, completes the "plan" step, and stores it.
@@ -264,7 +258,7 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 	// Write incremental service metas with planned status.
 	e.writeServiceMetas(state, MetaStatusPlanned)
 
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration), nil
 }
 
 // BootstrapSkip skips the current step and returns the next.
@@ -289,7 +283,7 @@ func (e *Engine) BootstrapSkip(stepName, reason string) (*BootstrapResponse, err
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap skip save: %w", err)
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration), nil
 }
 
 // StoreDiscoveredEnvVars saves discovered env var names for a service hostname.
@@ -319,7 +313,7 @@ func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 	if state.Bootstrap == nil {
 		return nil, fmt.Errorf("bootstrap status: no bootstrap state")
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration), nil
 }
 
 // Resume takes over an abandoned session (dead PID) by updating PID to current process.

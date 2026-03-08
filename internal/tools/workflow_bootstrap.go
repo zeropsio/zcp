@@ -5,13 +5,29 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// stackSteps are the steps where the stack catalog is useful.
+var stackSteps = map[string]bool{
+	workflow.StepDiscover: true,
+	workflow.StepGenerate: true,
+}
+
+// needsStacks returns true if stacks should be populated for the response.
+func needsStacks(resp *workflow.BootstrapResponse) bool {
+	if resp == nil || resp.Current == nil {
+		return true // inactive bootstrap or completed — include for safety
+	}
+	return stackSteps[resp.Current.Name]
+}
 
 func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
@@ -30,7 +46,9 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 				fmt.Sprintf("Plan validation failed: %v", err),
 				"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars.")), nil, nil
 		}
-		populateStacks(ctx, resp, client, cache)
+		if needsStacks(resp) {
+			populateStacks(ctx, resp, client, cache)
+		}
 		return jsonResult(resp), nil, nil
 	}
 
@@ -55,7 +73,9 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			fmt.Sprintf("Complete step failed: %v", err),
 			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
 	}
-	populateStacks(ctx, resp, client, cache)
+	if needsStacks(resp) {
+		populateStacks(ctx, resp, client, cache)
+	}
 	return jsonResult(resp), nil, nil
 }
 
@@ -79,7 +99,9 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 			fmt.Sprintf("Skip step failed: %v", err),
 			"Only skippable steps (generate, deploy) can be skipped")), nil, nil
 	}
-	populateStacks(ctx, resp, client, cache)
+	if needsStacks(resp) {
+		populateStacks(ctx, resp, client, cache)
+	}
 	return jsonResult(resp), nil, nil
 }
 
@@ -91,6 +113,38 @@ func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client 
 			fmt.Sprintf("Bootstrap status failed: %v", err),
 			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
 	}
-	populateStacks(ctx, resp, client, cache)
+	if needsStacks(resp) {
+		populateStacks(ctx, resp, client, cache)
+	}
 	return jsonResult(resp), nil, nil
+}
+
+// populateStacks injects live stack catalog into a bootstrap response.
+func populateStacks(ctx context.Context, resp *workflow.BootstrapResponse, client platform.Client, cache *ops.StackTypeCache) {
+	if resp == nil || client == nil || cache == nil {
+		return
+	}
+	if types := cache.Get(ctx, client); len(types) > 0 {
+		resp.AvailableStacks = knowledge.FormatStackList(types)
+	}
+}
+
+// injectStacks inserts the stack list section into workflow content.
+// Replaces content between STACKS markers if present, otherwise inserts before "## Part 1".
+func injectStacks(content, stackList string) string {
+	const beginMarker = "<!-- STACKS:BEGIN -->"
+	const endMarker = "<!-- STACKS:END -->"
+
+	if beginIdx := strings.Index(content, beginMarker); beginIdx >= 0 {
+		if endIdx := strings.Index(content, endMarker); endIdx > beginIdx {
+			return content[:beginIdx] + stackList + content[endIdx+len(endMarker):]
+		}
+	}
+
+	const anchor = "## Part 1"
+	if idx := strings.Index(content, anchor); idx > 0 {
+		return content[:idx] + stackList + "\n---\n\n" + content[idx:]
+	}
+
+	return content
 }

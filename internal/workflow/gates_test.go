@@ -406,6 +406,83 @@ func TestCheckGate_FreshEvidence_Passes(t *testing.T) {
 	}
 }
 
+// --- Item 24: Remediation steps on gate failure ---
+
+func TestCheckGate_Remediation_MissingEvidence(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-remediation"
+
+	tests := []struct {
+		name          string
+		from          Phase
+		to            Phase
+		wantAction    string
+		wantTool      string
+		wantParamsSub string
+	}{
+		{"recipe_review", PhaseInit, PhaseDiscover, "record_evidence", "zerops_workflow", "recipe_review"},
+		{"discovery", PhaseDiscover, PhaseDevelop, "run_discovery", "zerops_discover", "includeEnvs"},
+		{"dev_verify", PhaseDevelop, PhaseDeploy, "verify_dev", "zerops_verify", ""},
+		{"deploy_evidence", PhaseDeploy, PhaseVerify, "deploy_services", "zerops_deploy", ""},
+		{"stage_verify", PhaseVerify, PhaseDone, "verify_stage", "zerops_verify", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result, err := CheckGate(tt.from, tt.to, dir, sessionID)
+			if err != nil {
+				t.Fatalf("CheckGate: %v", err)
+			}
+			if result.Passed {
+				t.Fatal("expected gate to fail")
+			}
+			if len(result.Remediation) == 0 {
+				t.Fatal("expected non-empty Remediation")
+			}
+			r := result.Remediation[0]
+			if r.Action != tt.wantAction {
+				t.Errorf("Action: want %q, got %q", tt.wantAction, r.Action)
+			}
+			if r.Tool != tt.wantTool {
+				t.Errorf("Tool: want %q, got %q", tt.wantTool, r.Tool)
+			}
+			if tt.wantParamsSub != "" && !strings.Contains(r.Params, tt.wantParamsSub) {
+				t.Errorf("Params should contain %q, got %q", tt.wantParamsSub, r.Params)
+			}
+			if r.Explanation == "" {
+				t.Error("Explanation should not be empty")
+			}
+		})
+	}
+}
+
+func TestCheckGate_Remediation_PassingGate_Empty(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-rem-pass"
+
+	ev := &Evidence{
+		SessionID: sessionID, Type: "recipe_review", VerificationType: "attestation",
+		Timestamp: time.Now().Format(time.RFC3339), Attestation: "reviewed",
+		Passed: 1,
+	}
+	if err := SaveEvidence(dir, sessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	result, err := CheckGate(PhaseInit, PhaseDiscover, dir, sessionID)
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if !result.Passed {
+		t.Fatal("expected gate to pass")
+	}
+	if len(result.Remediation) > 0 {
+		t.Error("expected empty Remediation for passing gate")
+	}
+}
+
 func TestGateName_Coverage(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

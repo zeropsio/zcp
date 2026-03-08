@@ -191,7 +191,8 @@ func (b *BootstrapState) SkipStep(name, reason string) error {
 }
 
 // BuildResponse constructs a BootstrapResponse from the current state.
-func (b *BootstrapState) BuildResponse(sessionID, intent string) *BootstrapResponse {
+// iteration is the parent workflow iteration counter for guide delivery gating.
+func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int) *BootstrapResponse {
 	completed := 0
 	summaries := make([]BootstrapStepSummary, len(b.Steps))
 	for i, s := range b.Steps {
@@ -214,22 +215,65 @@ func (b *BootstrapState) BuildResponse(sessionID, intent string) *BootstrapRespo
 	if b.CurrentStep < len(b.Steps) {
 		detail := lookupDetail(b.Steps[b.CurrentStep].Name)
 		resp.Current = &BootstrapStepInfo{
-			Name:          detail.Name,
-			Index:         b.CurrentStep,
-			Category:      string(detail.Category),
-			Guidance:      detail.Guidance,
-			Tools:         detail.Tools,
-			Verification:  detail.Verification,
-			DetailedGuide: ResolveGuidance(detail.Name),
-			PriorContext:  b.buildPriorContext(),
-			PlanMode:      b.planMode(),
+			Name:         detail.Name,
+			Index:        b.CurrentStep,
+			Category:     string(detail.Category),
+			Guidance:     detail.Guidance,
+			Tools:        detail.Tools,
+			Verification: detail.Verification,
+			PriorContext: b.buildPriorContext(),
+			PlanMode:     b.planMode(),
 		}
+		resp.Current.DetailedGuide = b.resolveGuideWithGating(detail.Name, iteration)
 		resp.Message = fmt.Sprintf("Step %d/%d: %s", b.CurrentStep+1, len(b.Steps), detail.Name)
 	} else {
 		resp.Message = "Bootstrap complete. All steps finished."
 	}
 
 	return resp
+}
+
+// resolveGuideWithGating handles guide delivery gating and iteration delta.
+func (b *BootstrapState) resolveGuideWithGating(stepName string, iteration int) string {
+	// Item 29: iteration delta overrides guide for deploy step.
+	if iteration > 0 {
+		lastAtt := b.lastAttestation()
+		delta := BuildIterationDelta(stepName, iteration, b.Plan, lastAtt)
+		if delta != "" {
+			return delta
+		}
+	}
+
+	// Item 27: guide delivery gating.
+	if b.Context != nil && b.Context.GuideSentFor != nil {
+		sentIter, sent := b.Context.GuideSentFor[stepName]
+		if sent && sentIter >= iteration {
+			// Already delivered this iteration — return stub.
+			detail := lookupDetail(stepName)
+			return fmt.Sprintf("[Guide for %s already delivered. Tools: %v. Verification: %s]",
+				stepName, detail.Tools, detail.Verification)
+		}
+	}
+
+	// Full guide delivery.
+	guide := ResolveGuidance(stepName)
+	if b.Context != nil {
+		if b.Context.GuideSentFor == nil {
+			b.Context.GuideSentFor = make(map[string]int)
+		}
+		b.Context.GuideSentFor[stepName] = iteration
+	}
+	return guide
+}
+
+// lastAttestation returns the attestation from the most recently completed step.
+func (b *BootstrapState) lastAttestation() string {
+	for i := b.CurrentStep - 1; i >= 0; i-- {
+		if b.Steps[i].Attestation != "" {
+			return b.Steps[i].Attestation
+		}
+	}
+	return ""
 }
 
 // buildPriorContext collects attestations from completed prior steps and the plan.

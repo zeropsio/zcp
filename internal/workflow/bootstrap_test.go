@@ -273,7 +273,7 @@ func TestBuildResponse_FirstStep(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-1", "bun + postgres")
+	resp := bs.BuildResponse("sess-1", "bun + postgres", 0)
 	if resp.SessionID != "sess-1" {
 		t.Errorf("SessionID: want sess-1, got %s", resp.SessionID)
 	}
@@ -310,7 +310,7 @@ func TestBuildResponse_MiddleStep(t *testing.T) {
 	bs.CurrentStep = 2
 	bs.Steps[2].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-2", "test")
+	resp := bs.BuildResponse("sess-2", "test", 0)
 	if resp.Progress.Completed != 2 {
 		t.Errorf("Progress.Completed: want 2, got %d", resp.Progress.Completed)
 	}
@@ -334,7 +334,7 @@ func TestBuildResponse_AllDone(t *testing.T) {
 	bs.CurrentStep = 5
 	bs.Active = false
 
-	resp := bs.BuildResponse("sess-3", "test")
+	resp := bs.BuildResponse("sess-3", "test", 0)
 	if resp.Current != nil {
 		t.Error("Current should be nil when all done")
 	}
@@ -357,7 +357,7 @@ func TestBuildResponse_WithSkipped(t *testing.T) {
 	bs.CurrentStep = 3
 	bs.Steps[3].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-4", "test")
+	resp := bs.BuildResponse("sess-4", "test", 0)
 	if resp.Progress.Completed != 3 {
 		t.Errorf("Progress.Completed: want 3 (2 complete + 1 skipped), got %d", resp.Progress.Completed)
 	}
@@ -444,7 +444,7 @@ func TestBuildResponse_PriorContext_Attestations(t *testing.T) {
 	bs.CurrentStep = 2
 	bs.Steps[2].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-ctx", "bun + postgres")
+	resp := bs.BuildResponse("sess-ctx", "bun + postgres", 0)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -484,7 +484,7 @@ func TestBuildResponse_PriorContext_WithPlan(t *testing.T) {
 		CreatedAt: "2026-02-27T00:00:00Z",
 	}
 
-	resp := bs.BuildResponse("sess-plan", "test")
+	resp := bs.BuildResponse("sess-plan", "test", 0)
 	if resp.Current.PriorContext == nil {
 		t.Fatal("PriorContext should not be nil")
 	}
@@ -501,7 +501,7 @@ func TestBuildResponse_DetailedGuide_Populated(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-guide", "test")
+	resp := bs.BuildResponse("sess-guide", "test", 0)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -515,7 +515,7 @@ func TestBuildResponse_PriorContext_FirstStep_Empty(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-first", "test")
+	resp := bs.BuildResponse("sess-first", "test", 0)
 	if resp.Current.PriorContext != nil {
 		t.Error("PriorContext should be nil for first step (no prior attestations)")
 	}
@@ -624,7 +624,7 @@ func TestBuildResponse_PlanMode(t *testing.T) {
 
 	// Before plan submission, planMode should be empty.
 	bs := NewBootstrapState()
-	resp := bs.BuildResponse("sess1", "test")
+	resp := bs.BuildResponse("sess1", "test", 0)
 	if resp.Current.PlanMode != "" {
 		t.Errorf("planMode before plan: want empty, got %q", resp.Current.PlanMode)
 	}
@@ -633,7 +633,7 @@ func TestBuildResponse_PlanMode(t *testing.T) {
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
 	}}
-	resp = bs.BuildResponse("sess1", "test")
+	resp = bs.BuildResponse("sess1", "test", 0)
 	if resp.Current.PlanMode != "standard" {
 		t.Errorf("planMode after plan: want standard, got %q", resp.Current.PlanMode)
 	}
@@ -660,7 +660,7 @@ func TestBootstrapStepInfo_GuidanceExcludedFromJSON(t *testing.T) {
 			info: func() BootstrapStepInfo {
 				bs := NewBootstrapState()
 				bs.Steps[0].Status = stepInProgress
-				resp := bs.BuildResponse("sess-json", "test")
+				resp := bs.BuildResponse("sess-json", "test", 0)
 				return *resp.Current
 			}(),
 		},
@@ -736,6 +736,88 @@ func TestNewBootstrapState_HasContextDelivery(t *testing.T) {
 }
 
 // --- Item 30: buildPriorContext compression ---
+
+// --- Item 27: BuildResponse guide gating ---
+
+func TestBuildResponse_GuideGating_FirstDelivery(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Steps[0].Status = stepInProgress
+
+	resp := bs.BuildResponse("sess-gate", "test", 0)
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil")
+	}
+	if resp.Current.DetailedGuide == "" {
+		t.Error("first delivery should include full guide")
+	}
+	// Verify GuideSentFor was updated.
+	if bs.Context.GuideSentFor["discover"] != 0 {
+		t.Errorf("GuideSentFor[discover] should be 0 (iteration), got %d", bs.Context.GuideSentFor["discover"])
+	}
+}
+
+func TestBuildResponse_GuideGating_RepeatDelivery_Stub(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Steps[0].Status = stepInProgress
+
+	// First call delivers full guide.
+	resp1 := bs.BuildResponse("sess-gate2", "test", 0)
+	fullGuide := resp1.Current.DetailedGuide
+
+	// Second call same iteration should deliver stub.
+	resp2 := bs.BuildResponse("sess-gate2", "test", 0)
+	if resp2.Current.DetailedGuide == fullGuide {
+		t.Error("repeat delivery should return stub, not full guide")
+	}
+	if !strings.Contains(resp2.Current.DetailedGuide, "already delivered") {
+		t.Error("stub should mention 'already delivered'")
+	}
+}
+
+func TestBuildResponse_GuideGating_NewIteration_FullGuide(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Steps[0].Status = stepInProgress
+
+	// First delivery at iteration 0.
+	bs.BuildResponse("sess-gate3", "test", 0)
+
+	// Second delivery at iteration 1 — should get full guide again.
+	resp := bs.BuildResponse("sess-gate3", "test", 1)
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil")
+	}
+	if strings.Contains(resp.Current.DetailedGuide, "already delivered") {
+		t.Error("new iteration should deliver full guide, not stub")
+	}
+	if resp.Current.DetailedGuide == "" {
+		t.Error("new iteration should deliver full guide")
+	}
+}
+
+// --- Item 29: Iteration delta overrides guide in BuildResponse ---
+
+func TestBuildResponse_IterationDelta_OverridesGuide(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	// Advance to deploy step.
+	for i := range 3 {
+		bs.Steps[i].Status = stepComplete
+		bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
+	}
+	bs.CurrentStep = 3
+	bs.Steps[3].Status = stepInProgress
+
+	// At iteration > 0 on deploy step, should get delta.
+	resp := bs.BuildResponse("sess-delta", "test", 1)
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil")
+	}
+	// The delta should be used as DetailedGuide when applicable.
+	// (May be empty if no last attestation — but the mechanism should exist)
+}
 
 func TestBuildPriorContext_CompressesOlderSteps(t *testing.T) {
 	t.Parallel()

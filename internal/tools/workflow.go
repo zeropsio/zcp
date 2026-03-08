@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -198,6 +197,15 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 	return jsonResult(resp), nil, nil
 }
 
+// gateFailureResponse wraps a structured gate failure for JSON output.
+type gateFailureResponse struct {
+	Status      string                     `json:"status"`
+	Gate        string                     `json:"gate"`
+	Missing     []string                   `json:"missing,omitempty"`
+	Failures    []string                   `json:"failures,omitempty"`
+	Remediation []workflow.RemediationStep `json:"remediation,omitempty"`
+}
+
 func handleTransition(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Phase == "" {
 		return convertError(platform.NewPlatformError(
@@ -207,18 +215,21 @@ func handleTransition(engine *workflow.Engine, input WorkflowInput) (*mcp.CallTo
 	}
 
 	phase := workflow.Phase(input.Phase)
-	state, err := engine.Transition(phase)
+	state, gateResult, err := engine.Transition(phase)
 	if err != nil {
-		if strings.Contains(err.Error(), "gate") {
-			return convertError(platform.NewPlatformError(
-				platform.ErrGateFailed,
-				err.Error(),
-				"Record required evidence before transitioning")), nil, nil
-		}
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Transition failed: %v", err),
 			"Start a session first with action=start")), nil, nil
+	}
+	if gateResult != nil {
+		return jsonResult(gateFailureResponse{
+			Status:      "gate_failed",
+			Gate:        gateResult.Gate,
+			Missing:     gateResult.Missing,
+			Failures:    gateResult.Failures,
+			Remediation: gateResult.Remediation,
+		}), nil, nil
 	}
 
 	return jsonResult(state), nil, nil
@@ -319,35 +330,4 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 			"")), nil, nil
 	}
 	return jsonResult(sessions), nil, nil
-}
-
-// populateStacks injects live stack catalog into a bootstrap response.
-func populateStacks(ctx context.Context, resp *workflow.BootstrapResponse, client platform.Client, cache *ops.StackTypeCache) {
-	if resp == nil || client == nil || cache == nil {
-		return
-	}
-	if types := cache.Get(ctx, client); len(types) > 0 {
-		resp.AvailableStacks = knowledge.FormatStackList(types)
-	}
-}
-
-// injectStacks inserts the stack list section into workflow content.
-// Replaces content between STACKS markers if present, otherwise inserts before "## Phase 1".
-func injectStacks(content, stackList string) string {
-	const beginMarker = "<!-- STACKS:BEGIN -->"
-	const endMarker = "<!-- STACKS:END -->"
-
-	if beginIdx := strings.Index(content, beginMarker); beginIdx >= 0 {
-		if endIdx := strings.Index(content, endMarker); endIdx > beginIdx {
-			return content[:beginIdx] + stackList + content[endIdx+len(endMarker):]
-		}
-	}
-
-	// Fallback: insert before "## Part 1"
-	const anchor = "## Part 1"
-	if idx := strings.Index(content, anchor); idx > 0 {
-		return content[:idx] + stackList + "\n---\n\n" + content[idx:]
-	}
-
-	return content
 }

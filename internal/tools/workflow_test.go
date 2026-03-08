@@ -374,16 +374,16 @@ func TestWorkflowTool_Action_TransitionWithGate(t *testing.T) {
 		"workflow": "deploy",
 	})
 
-	// Try transition without evidence — should fail.
+	// Try transition without evidence — should return structured gate failure.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "transition", "phase": "DISCOVER",
 	})
-	if !result.IsError {
-		t.Error("expected gate failure without evidence")
-	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "GATE_FAILED") {
-		t.Errorf("expected GATE_FAILED code, got: %s", text)
+	if !strings.Contains(text, "gate_failed") {
+		t.Errorf("expected gate_failed status, got: %s", text)
+	}
+	if !strings.Contains(text, "recipe_review") {
+		t.Errorf("expected missing evidence type, got: %s", text)
 	}
 
 	// Record evidence.
@@ -743,7 +743,7 @@ func TestWorkflow_BootstrapStart_NoCache_OmitsStacks(t *testing.T) {
 	}
 }
 
-func TestWorkflow_BootstrapComplete_IncludesStacks(t *testing.T) {
+func TestWorkflow_BootstrapComplete_IncludesStacks_OnDiscoverStep(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServiceStackTypes([]platform.ServiceStackType{
 		{
@@ -759,18 +759,10 @@ func TestWorkflow_BootstrapComplete_IncludesStacks(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil, "")
 
-	// Start bootstrap.
-	callTool(t, srv, "zerops_workflow", map[string]any{
+	// Start bootstrap — current step is discover, should include stacks.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "start", "workflow": "bootstrap",
 	})
-
-	// Complete discover step.
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":      "complete",
-		"step":        "discover",
-		"attestation": "FRESH project, no existing services",
-	})
-
 	if result.IsError {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))
 	}
@@ -780,10 +772,28 @@ func TestWorkflow_BootstrapComplete_IncludesStacks(t *testing.T) {
 		t.Fatalf("failed to parse response: %v", err)
 	}
 	if resp.AvailableStacks == "" {
-		t.Error("expected availableStacks in complete response")
+		t.Error("expected availableStacks at discover step")
 	}
 	if !strings.Contains(resp.AvailableStacks, "bun@1.2") {
 		t.Errorf("availableStacks missing bun@1.2: %s", resp.AvailableStacks)
+	}
+
+	// Complete discover — moves to provision, which should NOT include stacks.
+	result = callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":      "complete",
+		"step":        "discover",
+		"attestation": "FRESH project, no existing services",
+	})
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text = getTextContent(t, result)
+	var resp2 workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp2); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp2.AvailableStacks != "" {
+		t.Errorf("expected empty availableStacks at provision step, got: %s", resp2.AvailableStacks)
 	}
 }
 
@@ -880,6 +890,80 @@ func TestWorkflowTool_Action_Resume_MissingSessionID(t *testing.T) {
 	})
 	if !result.IsError {
 		t.Error("expected error for resume without sessionId")
+	}
+}
+
+// --- Item 24: Structured gate failure response ---
+
+func TestWorkflowTool_Action_Transition_GateFailure_Structured(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
+
+	// Start session.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "deploy",
+	})
+
+	// Try transition without evidence — should return structured gate failure (not IsError).
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "transition", "phase": "DISCOVER",
+	})
+
+	text := getTextContent(t, result)
+
+	// Should contain remediation info.
+	if !strings.Contains(text, "remediation") {
+		t.Errorf("expected structured response with remediation, got: %s", text)
+	}
+	if !strings.Contains(text, "recipe_review") {
+		t.Errorf("expected missing evidence type in response, got: %s", text)
+	}
+}
+
+// --- Item 26: populateStacks gated to discover+generate ---
+
+func TestWorkflowTool_BootstrapStatus_NoStacks_DeployStep(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServiceStackTypes([]platform.ServiceStackType{
+		{
+			Name:     "Node.js",
+			Category: "USER",
+			Versions: []platform.ServiceStackTypeVersion{
+				{Name: "nodejs@22", Status: statusActive},
+			},
+		},
+	})
+	cache := ops.NewStackTypeCache(1 * time.Hour)
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil, "")
+
+	// Start bootstrap and advance to deploy step.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap",
+	})
+	for _, step := range []string{"discover", "provision", "generate"} {
+		callTool(t, srv, "zerops_workflow", map[string]any{
+			"action": "complete", "step": step,
+			"attestation": "Attestation for " + step + " completed ok",
+		})
+	}
+
+	// At deploy step, status should NOT include stacks.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "status"})
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.AvailableStacks != "" {
+		t.Errorf("expected empty availableStacks at deploy step, got: %s", resp.AvailableStacks)
 	}
 }
 

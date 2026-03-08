@@ -148,9 +148,12 @@ func TestEngine_StartAndTransition(t *testing.T) {
 	}
 
 	// Transition to DISCOVER.
-	state, err = eng.Transition(PhaseDiscover)
+	state, gateResult, err := eng.Transition(PhaseDiscover)
 	if err != nil {
 		t.Fatalf("Transition to DISCOVER: %v", err)
+	}
+	if gateResult != nil {
+		t.Fatalf("Transition gate failed: %v", gateResult.Missing)
 	}
 	if state.Phase != PhaseDiscover {
 		t.Errorf("Phase: want DISCOVER, got %s", state.Phase)
@@ -170,7 +173,7 @@ func TestEngine_Transition_InvalidPhase(t *testing.T) {
 	}
 
 	// Skip a phase — should fail.
-	_, err := eng.Transition(PhaseDeploy)
+	_, _, err := eng.Transition(PhaseDeploy)
 	if err == nil {
 		t.Fatal("expected error for invalid transition INIT → DEPLOY")
 	}
@@ -186,9 +189,15 @@ func TestEngine_Transition_GateFails(t *testing.T) {
 	}
 
 	// Try to transition without evidence — gate should block.
-	_, err := eng.Transition(PhaseDiscover)
-	if err == nil {
-		t.Fatal("expected error when gate check fails (no recipe_review evidence)")
+	_, gateResult, err := eng.Transition(PhaseDiscover)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gateResult == nil {
+		t.Fatal("expected gate failure (no recipe_review evidence)")
+	}
+	if gateResult.Passed {
+		t.Fatal("expected gate to fail")
 	}
 }
 
@@ -460,7 +469,7 @@ func TestEngine_Transition_UpdatesRegistry(t *testing.T) {
 		t.Fatalf("RecordEvidence: %v", err)
 	}
 
-	if _, err := eng.Transition(PhaseDiscover); err != nil {
+	if _, gr, err := eng.Transition(PhaseDiscover); err != nil || gr != nil {
 		t.Fatalf("Transition: %v", err)
 	}
 
