@@ -81,7 +81,7 @@ func CancelProcess(ctx context.Context, client platform.Client, processID string
 			fmt.Sprintf("Process '%s' not found", processID), "Check the process ID")
 	}
 
-	if isTerminal(p.Status) {
+	if !isProcessInProgress(p.Status) {
 		return nil, platform.NewPlatformError(platform.ErrProcessAlreadyTerminal,
 			fmt.Sprintf("Process '%s' is already %s", processID, p.Status),
 			"Only PENDING or RUNNING processes can be canceled")
@@ -103,6 +103,13 @@ func CancelProcess(ctx context.Context, client platform.Client, processID string
 	}, nil
 }
 
-func isTerminal(status string) bool {
-	return status == statusFinished || status == statusFailed || status == statusCanceled
+// isProcessInProgress returns true only for known in-progress process states.
+// Unknown statuses are treated as terminal (fail-safe: stop polling immediately).
+func isProcessInProgress(status string) bool {
+	switch status {
+	case "PENDING", "RUNNING":
+		return true
+	default:
+		return false
+	}
 }

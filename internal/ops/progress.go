@@ -99,8 +99,15 @@ func pollBuild(
 			)
 		}
 
-		if latest != nil && isBuildTerminal(latest.Status) {
-			return latest, nil
+		if latest != nil {
+			// Layer 2: PipelineFailed timestamp is a hard signal — stop regardless of status string.
+			if latest.Build != nil && latest.Build.PipelineFailed != nil {
+				return latest, nil
+			}
+			// Layer 1: Inverted check — whitelist in-progress states, treat everything else as terminal.
+			if !isBuildInProgress(latest.Status) {
+				return latest, nil
+			}
 		}
 
 		if elapsed > cfg.timeout {
@@ -123,8 +130,15 @@ func pollBuild(
 	}
 }
 
-func isBuildTerminal(status string) bool {
-	return status == statusActive || status == statusBuildFailed
+// isBuildInProgress returns true only for known in-progress build states.
+// Unknown statuses are treated as terminal (fail-safe: stop polling immediately).
+func isBuildInProgress(status string) bool {
+	switch status {
+	case "BUILDING", "DEPLOYING":
+		return true
+	default:
+		return false
+	}
 }
 
 func pollProcess(
@@ -155,7 +169,7 @@ func pollProcess(
 			)
 		}
 
-		if isTerminal(proc.Status) {
+		if !isProcessInProgress(proc.Status) {
 			return proc, nil
 		}
 

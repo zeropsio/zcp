@@ -525,6 +525,120 @@ func errorAs(err error, target any) bool {
 	return false
 }
 
+// --- Defensive polling tests ---
+
+func TestPollBuild_UnknownStatus_TerminatesImmediately(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{"PREPARING_RUNTIME_FAILED", "PREPARING_RUNTIME_FAILED"},
+		{"WEIRD_STATUS", "WEIRD_STATUS"},
+		{"CANCELED", "CANCELED"},
+		{"UNKNOWN_FUTURE_STATUS", "UNKNOWN_FUTURE_STATUS"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			seq := newBuildSequencer(tt.status)
+			ctx := context.Background()
+
+			event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if event.Status != tt.status {
+				t.Errorf("status = %s, want %s", event.Status, tt.status)
+			}
+		})
+	}
+}
+
+func TestPollProcess_UnknownStatus_TerminatesImmediately(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{"SOME_NEW_STATUS", "SOME_NEW_STATUS"},
+		{"WEIRD_STATUS", "WEIRD_STATUS"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			seq := newSequencer(tt.status)
+			ctx := context.Background()
+
+			proc, err := pollProcess(ctx, seq, "proc-1", nil, testConfig())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if proc.Status != tt.status {
+				t.Errorf("status = %s, want %s", proc.Status, tt.status)
+			}
+		})
+	}
+}
+
+func TestPollBuild_PipelineFailedTimestamp_Terminates(t *testing.T) {
+	t.Parallel()
+
+	// Status is still BUILDING but PipelineFailed is set — should terminate immediately.
+	failed := "2025-01-01T00:01:00Z"
+	seq := &appVersionSequencer{
+		Mock: platform.NewMock(),
+		sequence: [][]platform.AppVersionEvent{
+			{
+				{
+					ID:             "av-1",
+					ProjectID:      "proj-1",
+					ServiceStackID: "svc-1",
+					Status:         statusBuilding,
+					Sequence:       1,
+					Created:        "2025-01-01T00:00:00Z",
+					LastUpdate:     "2025-01-01T00:01:00Z",
+					Build: &platform.BuildInfo{
+						PipelineFailed: &failed,
+					},
+				},
+			},
+		},
+	}
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != statusBuilding {
+		t.Errorf("status = %s, want BUILDING (PipelineFailed overrides)", event.Status)
+	}
+	if event.Build == nil || event.Build.PipelineFailed == nil {
+		t.Error("expected PipelineFailed to be set")
+	}
+}
+
+func TestPollBuild_ImmediatePreparingRuntimeFailed(t *testing.T) {
+	t.Parallel()
+
+	// The original bug: PREPARING_RUNTIME_FAILED should terminate immediately.
+	seq := newBuildSequencer("PREPARING_RUNTIME_FAILED")
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != "PREPARING_RUNTIME_FAILED" {
+		t.Errorf("status = %s, want PREPARING_RUNTIME_FAILED", event.Status)
+	}
+}
+
 // TestPollProcess_PublicFunction verifies the public PollProcess uses defaults.
 func TestPollProcess_PublicFunction(t *testing.T) {
 	t.Parallel()

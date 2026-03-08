@@ -493,6 +493,115 @@ func TestDeployTool_Error(t *testing.T) {
 	}
 }
 
+func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
+	t.Parallel()
+
+	buildSvcID := "build-svc-99"
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-1",
+				ProjectID:      "proj-1",
+				ServiceStackID: "svc-1",
+				Status:         "PREPARING_RUNTIME_FAILED",
+				Sequence:       1,
+				Build: &platform.BuildInfo{
+					ServiceStackID: &buildSvcID,
+				},
+			},
+		}).
+		WithLogAccess(&platform.LogAccess{
+			AccessToken: "tok", URL: "https://log.example.com/logs",
+		})
+	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+		{Message: "prepare command failed"},
+	})
+	ssh := &stubSSH{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, testEngine(t), logFetcher)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "app",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError — failed deploy is a valid response: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed.Status != "PREPARING_RUNTIME_FAILED" {
+		t.Errorf("status = %s, want PREPARING_RUNTIME_FAILED", parsed.Status)
+	}
+	if parsed.BuildStatus != "PREPARING_RUNTIME_FAILED" {
+		t.Errorf("buildStatus = %s, want PREPARING_RUNTIME_FAILED", parsed.BuildStatus)
+	}
+	if len(parsed.BuildLogs) == 0 {
+		t.Error("expected buildLogs to be populated for PREPARING_RUNTIME_FAILED")
+	}
+	if parsed.BuildLogsSource != "build_container" {
+		t.Errorf("buildLogsSource = %q, want %q", parsed.BuildLogsSource, "build_container")
+	}
+	if parsed.Suggestion == "" {
+		t.Error("expected non-empty suggestion")
+	}
+	if !strings.Contains(parsed.Suggestion, "PREPARING_RUNTIME_FAILED") {
+		t.Errorf("suggestion should mention the status, got: %s", parsed.Suggestion)
+	}
+}
+
+func TestDeployTool_UnknownBuildStatus_TreatedAsFailure(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-1",
+				ProjectID:      "proj-1",
+				ServiceStackID: "svc-1",
+				Status:         "SOME_FUTURE_STATUS",
+				Sequence:       1,
+			},
+		})
+	ssh := &stubSSH{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, testEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "app",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError — unknown build status is a valid response: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed.Status != "SOME_FUTURE_STATUS" {
+		t.Errorf("status = %s, want SOME_FUTURE_STATUS", parsed.Status)
+	}
+	if parsed.Suggestion == "" {
+		t.Error("expected non-empty suggestion for unknown status")
+	}
+	if !strings.Contains(parsed.Suggestion, "SOME_FUTURE_STATUS") {
+		t.Errorf("suggestion should mention the status, got: %s", parsed.Suggestion)
+	}
+}
+
 func TestDeployTool_NoWorkflowSession_Blocked(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()

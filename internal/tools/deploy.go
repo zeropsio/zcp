@@ -78,8 +78,7 @@ func pollDeployBuild(
 	result.BuildStatus = event.Status
 	result.BuildDuration = calcBuildDuration(event)
 
-	switch event.Status {
-	case statusActive:
+	if event.Status == statusActive {
 		result.Status = statusDeployed
 		result.MonitorHint = ""
 		isSelfDeploy := result.SourceService == result.TargetService
@@ -97,8 +96,9 @@ func pollDeployBuild(
 				result.SSHReady = true
 			}
 		}
-	case statusBuildFailed:
-		result.Status = statusBuildFailed
+	} else {
+		// Any non-ACTIVE status is a failure — preserve actual API status.
+		result.Status = event.Status
 		if logFetcher != nil {
 			result.BuildLogs = ops.FetchBuildLogs(ctx, client, logFetcher, projectID, event, 50)
 			if len(result.BuildLogs) > 0 {
@@ -106,9 +106,9 @@ func pollDeployBuild(
 			}
 		}
 		if len(result.BuildLogs) > 0 {
-			result.Suggestion = "Build failed — see buildLogs field for build pipeline output. Fix the issue and redeploy."
+			result.Suggestion = fmt.Sprintf("Build ended with status %s — see buildLogs field for pipeline output. Fix the issue and redeploy.", event.Status)
 		} else {
-			result.Suggestion = "Build failed — build logs unavailable. Check zerops.yml buildCommands syntax and package manifests."
+			result.Suggestion = fmt.Sprintf("Build ended with status %s — build logs unavailable. Check zerops.yml buildCommands syntax and package manifests.", event.Status)
 		}
 		result.NextActions = nextActionDeployBuildFail
 	}

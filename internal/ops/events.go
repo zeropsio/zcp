@@ -63,10 +63,12 @@ var processHintMap = map[string]string{
 
 // appVersionHintMap maps app version statuses to interpretation hints.
 var appVersionHintMap = map[string]string{
-	statusActive:      "DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.",
-	statusBuilding:    "IN_PROGRESS: Build is running. Continue polling.",
-	statusBuildFailed: "FAILED: Build failed. Run zerops_deploy — response includes buildLogs with pipeline output.",
-	"DEPLOYING":       "IN_PROGRESS: Deploy is running. Continue polling.",
+	statusActive:               "DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.",
+	statusBuilding:             "IN_PROGRESS: Build is running. Continue polling.",
+	statusBuildFailed:          "FAILED: Build failed. Run zerops_deploy — response includes buildLogs with pipeline output.",
+	"DEPLOYING":                "IN_PROGRESS: Deploy is running. Continue polling.",
+	"PREPARING_RUNTIME_FAILED": "FAILED: Runtime prepare commands failed. Check prepareCommands in zerops.yml.",
+	statusCanceled:             "CANCELED: Build was canceled.",
 }
 
 // statusHint returns an interpretation hint for the given status and hint map.
