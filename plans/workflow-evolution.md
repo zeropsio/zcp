@@ -10,6 +10,30 @@ Analysis of current workflow system, context delivery, and validated designs for
 
 ---
 
+## Quick Reference
+
+| Section | Focus | Key Decision |
+|---------|-------|-------------|
+| 1 | Current architecture | Package map, data structures, runtime detection |
+| 2 | Context flow MCP→LLM | 7 delivery channels, how knowledge reaches LLM |
+| 3 | Problems | 12 identified issues (bugs, waste, missing features) |
+| 4 | Router design | Pure function, routing table, stale meta handling |
+| 5 | Deploy strategies | 3 strategies, 6th bootstrap step, structured capture |
+| 6 | CI/CD pipelines | DEFERRED — needs MCP tool, not Go helper |
+| 7 | Local VPN | DEFERRED — blockers identified, reference architecture preserved |
+| 8 | Context optimization | 12 improvements: progressive delivery, tracking, compression (§14 behavioral model, §15 channels) |
+| 9 | Bugs to fix | 11 independent bugs with fixes (§10 assigns to waves) |
+| 10 | Implementation waves | 5 waves, 38 items, dependency graph (references §8 items + §9 bugs) |
+| 11 | Behavioral changes | What changes vs what stays the same |
+| 12-13 | Reusable code + Tool catalog | Existing functions to reuse (§17 extended), complete MCP tool reference |
+| 14 | LLM behavioral model | 8 hypotheses on knowledge delivery effectiveness (drives §8 designs) |
+| 15 | Delivery channel map | 7 channels with per-step token delivery (quantifies §2 channels) |
+| 16 | Token budget | Before/after comparison across waves (validates §8.12 estimates) |
+| 17 | Extended code reference | All reusable functions with file locations (extends §12) |
+| 18 | Robustness decisions | 6 critical design decisions validated (validates §8.9, §9.10, §9.3) |
+
+---
+
 ## 1. Current Architecture Overview
 
 ### 1.1 Core Package Map
@@ -629,24 +653,69 @@ Preserved from original analysis for when blockers are resolved:
 
 **Before implementing**: Reverse-engineer zcli archive format, resolve DevHostname semantics, design .env file generation with .gitignore safety, add VPN connectivity pre-flight check.
 
+### 7.4 Bootstrap Adaptation (Container vs Local VPN per step)
+
+| Step | Container | Local VPN |
+|------|-----------|-----------|
+| discover | unchanged | unchanged |
+| provision | dev+stage + mount + env discovery | stage only + managed + .env generation, NO mount |
+| generate | write to SSHFS mount | write to local filesystem, zerops.yml for stage only |
+| deploy | SSH self-deploy | API archive upload (zerops-go SDK: PostServiceStackAppVersion → PutAppVersionUpload → PutAppVersionDeploy) |
+| verify | verify dev+stage | verify stage only |
+| strategy | all 3 options | ci-cd or manual only (no push-dev without dev service) |
+
+### 7.5 API Deployer Architecture
+
+```go
+// internal/platform/api_deployer.go
+type APIDeployer struct { client *Client }
+func (d *APIDeployer) Deploy(ctx context.Context, serviceID, sourceDir string) (*DeployResult, error)
+// 1. Archive sourceDir as tar.gz (respect .gitignore, .zeropsignore)
+// 2. PostServiceStackAppVersion → appVersionId + uploadUrl
+// 3. PutAppVersionUpload → upload archive
+// 4. PutAppVersionDeploy → trigger build pipeline, return Process
+// 5. Poll build status via existing PollBuild mechanism
+```
+
+### 7.6 Extension Points to Prepare Now
+
+1. `runtime.Info.Mode` field — add now, defaults derived from InContainer, no behavior change
+2. `Deployer` interface in `internal/ops/deploy.go` — extract from current SSH impl
+3. `DevMode` field on `WorkflowState` — `omitempty`, unused until implemented
+4. `RouterInput.Mode` — router already accepts it, local VPN adds new routing rules later
+
+### 7.7 NOT Implemented Now
+
+- VPN connectivity verification
+- API archive deployer
+- .env file generation (`GenerateEnvFile()`)
+- Bootstrap step adaptations for local mode
+- Local-dev guidance sections in workflow markdown
+
+### 7.8 Risk: Archive Format Compatibility
+
+Zerops build pipeline may expect zcli-specific tar.gz format (with `.deploy.zerops` metadata). Need to verify against zerops-go SDK or zcli source. Highest risk item for API deployer.
+
 ---
 
 ## 8. Context Delivery Optimization — Validated Changes (EXPANDED)
 
 ### 8.0 4-Layer Progressive Delivery Architecture (NEW)
 
-Knowledge should be organized into four layers delivered just-in-time:
+L0-L3 ensure the LLM receives knowledge at the moment it needs it, not before. This prevents context rot (H6 — §14.1) and recency bias displacement (H1 — §14.1). Each layer targets a different knowledge lifecycle:
 
-| Layer | Content | Delivery | Tokens |
-|-------|---------|----------|--------|
-| **L0: Routing** | System prompt + step name + tools + verification criteria | Always pushed | ~200/step |
-| **L1: Procedural** | Compact step guidance (current `Guidance` field) | Pushed per step | ~150/step |
-| **L2: Detailed** | Mode-filtered sections from bootstrap.md | Pushed on first delivery, stub on repeat | ~1000-3500/step |
-| **L3: Reference** | Scope, briefings, recipes | Pull-based (LLM-initiated) | Variable |
+| Layer | Content | Delivery | Why This Layer |
+|-------|---------|----------|----------------|
+| **L0: Routing** | System prompt + step name + tools + verification criteria | Always pushed | Minimal context that orients the LLM to the current step — never stale, always needed |
+| **L1: Procedural** | Compact step guidance (current `Guidance` field) | Pushed per step | One-line directives that fit in working memory without displacing recent context |
+| **L2: Detailed** | Mode-filtered sections from bootstrap.md | Pushed on first delivery, stub on repeat | Full guidance delivered once, then tracked (§8.6) to avoid re-delivery |
+| **L3: Reference** | Scope, briefings, recipes | Pull-based (LLM-initiated) | Reference material the LLM requests when needed — pushing it would waste context |
 
-**Key Principle**: "Deliver once, track delivery, compress history"
+**Key Principle**: "Deliver once, track delivery, compress history" — token reduction is a side effect of this principle, not the goal.
 
 ### 8.1 Remove Dual Delivery (IMPLEMENT)
+
+Eliminates ambiguity — a single authoritative source per step prevents the LLM from choosing the wrong channel (H3 — §14.1). Currently, both `guidance` (inline) and `detailedGuide` (from bootstrap.md) deliver overlapping knowledge, forcing the LLM to reconcile two versions.
 
 Stop serializing `guidance` field to `BootstrapStepInfo` JSON responses. Keep `detailedGuide` as sole authoritative channel. The `StepDetail.Guidance` field stays in the Go struct for documentation/fallback, just not sent to LLM.
 
@@ -662,6 +731,8 @@ Stop serializing `guidance` field to `BootstrapStepInfo` JSON responses. Keep `d
 **Savings**: ~607 tokens total (modest, but eliminates LLM confusion).
 
 ### 8.2 Conditional Deploy Section by PlanMode (IMPLEMENT)
+
+Simple projects shouldn't receive complex-project guidance. Mode filtering prevents cognitive overload (H4 — §14.1) and keeps deploy guidance under the ~3,500 token effectiveness threshold (H2 — §14.1). A single-service static site deploy doesn't need agent orchestration instructions.
 
 The deploy section in bootstrap.md is ~6,901 tokens — 59% of total guidance. Split into subsections loadable by planMode AND plan context:
 
@@ -752,6 +823,8 @@ Rename deploy.md's "Phase 1" / "Phase 2" to "Part 1: Configuration Check" / "Par
 
 ### 8.6 Delivery Tracking via ContextDelivery (NEW — IMPLEMENT)
 
+Without tracking, the system has no memory of what the LLM already knows. Same knowledge re-delivered blindly on every status call. Tracking enables "deliver once, reference thereafter" — the fundamental principle of §8.0. Related: §9.6 (two-write inconsistency), Wave 4 items 22-23 (§10).
+
 **Problem**: No mechanism tracks what knowledge was delivered to the LLM. `KnowledgeTracker` is in-memory only, lost on restart, not visible to gates.
 
 **Solution**: Add persistent `ContextDelivery` struct to `BootstrapState`:
@@ -785,6 +858,8 @@ This resolves the contradiction between stub delivery and delta template — del
 
 ### 8.7 PriorContext Compression (NEW — IMPLEMENT)
 
+Attestations from step 0 are historical artifacts by step 4. Carrying them verbatim violates recency bias (H1 — §14.1) — recent steps drowned in old context. Compression keeps the plan and latest attestation intact while shrinking stale history. Related: §17 `buildPriorContext()` reuse entry.
+
 Replace `buildPriorContext()` with sliding-window version:
 
 ```go
@@ -809,6 +884,8 @@ func (b *BootstrapState) buildPriorContext() *StepContext {
 **Savings**: ~510 tokens at step 5, compounds across iterations.
 
 ### 8.8 Iteration Delta Guidance (NEW — IMPLEMENT)
+
+Iteration means the previous attempt failed. The LLM needs "what went wrong + what to try", not "here's everything from scratch." Delta guidance focuses attention on the failure, preventing the LLM from re-reading known-good context and missing the actual problem (H5 — §14.1). Related: §9.8 (max iteration limit), Wave 4 item 29 (§10).
 
 When `WorkflowState.Iteration > 0`, replace full DetailedGuide with ~300-token focused template:
 
@@ -838,6 +915,8 @@ RECOVERY: use forceGuide=true to re-fetch full guidance if stuck.
 **Savings**: ~6,600 tokens per iteration. Over 2 iterations: ~13,200 tokens.
 
 ### 8.9 Knowledge-Aware Gates (NEW — IMPLEMENT)
+
+Current gates verify evidence exists but not that the LLM had the knowledge to produce correct evidence. A gate that passes without knowledge loading is a false positive — it validates form without substance. Related: §18.1 (managed-only bypass), §18.5 (TOCTOU fix), §9.3 (TOCTOU bug), Wave 4 items 24-25 (§10).
 
 **8.9.1 Rich Gate Failure Responses**
 
@@ -907,6 +986,8 @@ Changes:
 | Scope sub-sectioning (split core.md) | High risk, requires restructuring core.md with section tags + new Provider interface method. Savings achievable more simply via briefing dedup. Defer to future. |
 
 ### 8.12 Corrected Token Savings Estimate (COMPREHENSIVE)
+
+Token reduction is a side effect of better design, not the goal. The tables below quantify the impact of changes §8.1-§8.10. Discrepancies with §16 reflect different measurement passes — §16 includes robustness-validated measurements.
 
 **First-run bootstrap (standard mode, 1 service pair)**:
 | Change | Current | Proposed | Savings |
@@ -1280,7 +1361,7 @@ internal/content/workflows/
 
 ## 16. Comprehensive Token Budget — Before vs After (ROBUST)
 
-Revised by robustness analysis with validated token measurements.
+Token reduction is a side effect of better design, not the goal. The improvements in §8 are justified by architectural principles (single-source delivery, context tracking, progressive disclosure, failure-focused iteration). The tables below quantify the impact. Where numbers differ from §8.12, this section's robustness-validated measurements take precedence.
 
 ### 16.1 First-Run Bootstrap (standard, 1 service pair, with managed services)
 
