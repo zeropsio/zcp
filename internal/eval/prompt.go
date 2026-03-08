@@ -258,6 +258,22 @@ Requirements:
 - Status endpoint should show service connectivity where applicable
 - Enable subdomain access on the runtime service
 
+Workflow:
+1. Start bootstrap: zerops_workflow action="start" workflow="bootstrap"
+2. Follow the step-by-step flow returned by the workflow system
+3. Complete each step with: zerops_workflow action="complete" step="{name}" attestation="{what you did}"
+4. If verification fails, iterate: zerops_workflow action="iterate"
+5. After all steps pass, set deploy strategies: zerops_workflow action="strategy" strategies={"hostname": "push-dev"}
+
+Use these EXACT hostnames in your bootstrap plan:
+`)
+
+	fmt.Fprintf(&b, "- %s as the runtime (%s)\n", hostnames["runtime"], meta.Runtime)
+	for _, svc := range meta.Services {
+		fmt.Fprintf(&b, "- %s as %s (%s)\n", hostnames[svc.Role], svc.Role, svc.Type)
+	}
+
+	b.WriteString(`
 Use the Zerops MCP tools (zerops_workflow, zerops_knowledge, etc.) to complete this task.
 Do NOT use tools outside of zerops_* MCP tools.`)
 
@@ -285,6 +301,13 @@ Start your report with "## EVAL REPORT" and follow this EXACT structure:
 
 ### Deployment outcome
 State: SUCCESS / PARTIAL (what worked, what didn't) / FAILURE (at which step)
+
+### Workflow execution
+- Steps completed: [list of step names completed successfully]
+- Steps skipped: [list of steps skipped and why]
+- Iterations: [number of iterate cycles needed]
+- Gate failures: [list of gate failures encountered]
+- Strategy chosen: [strategy per service, or "none" if step was skipped]
 
 ### Failure chains
 For EACH problem you encountered, trace the full cause chain:

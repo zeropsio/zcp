@@ -37,8 +37,11 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	// --- Step 1: zerops_workflow bootstrap ---
 	step++
 	logStep(t, step, "zerops_workflow bootstrap")
+	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
 	bootstrapText := s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
 		"workflow": "bootstrap",
+		"intent":   "e2e lifecycle test — nodejs + postgresql",
 	})
 	if len(bootstrapText) < 50 {
 		t.Errorf("bootstrap content too short (%d chars)", len(bootstrapText))

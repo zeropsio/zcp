@@ -323,9 +323,28 @@ func TestBuildTaskPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "postgresql@16") {
 		t.Error("prompt missing service type")
 	}
-	// Must NOT mention recipe name directly (agent should discover it)
-	if strings.Contains(prompt, "recipe") {
-		t.Error("prompt should not mention 'recipe' — agent should discover it via knowledge")
+
+	// Workflow instructions
+	for _, want := range []string{
+		`zerops_workflow action="start" workflow="bootstrap"`,
+		`action="complete"`,
+		`action="strategy"`,
+		`action="iterate"`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing workflow instruction %q", want)
+		}
+	}
+
+	// Hostname mapping section
+	if !strings.Contains(prompt, "EXACT hostnames") {
+		t.Error("prompt missing hostname mapping section")
+	}
+	if !strings.Contains(prompt, "evgo1a2b3c") && !strings.Contains(prompt, "go@1") {
+		t.Error("prompt missing runtime hostname mapping")
+	}
+	if !strings.Contains(prompt, "evgo4d5e6f") && !strings.Contains(prompt, "db") {
+		t.Error("prompt missing db hostname mapping")
 	}
 }
 
@@ -352,6 +371,7 @@ func TestBuildFullPrompt(t *testing.T) {
 	// Must contain assessment categories
 	for _, section := range []string{
 		"Deployment outcome",
+		"Workflow execution",
 		"Failure chains",
 		"Information gaps",
 		"Wasted steps",
