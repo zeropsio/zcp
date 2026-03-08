@@ -30,7 +30,7 @@ Through ZCP tools, the LLM can:
 
 ```
 cmd/zcp/main.go → internal/server  → MCP tools  → internal/ops      → internal/platform → Zerops API
-                                                 → internal/workflow  (orchestration)
+                                                 → internal/workflow  (orchestration + routing)
                                                  → internal/knowledge (BM25 search)
                                                  → internal/auth      (token resolution)
 ```
@@ -41,7 +41,7 @@ cmd/zcp/main.go → internal/server  → MCP tools  → internal/ops      → in
 | `internal/server` | MCP server setup, tool registration, system prompt |
 | `internal/tools` | MCP tool handlers (15 tools) |
 | `internal/ops` | Business logic — deploy, verify, import, scale |
-| `internal/workflow` | Bootstrap orchestration, session state, evidence |
+| `internal/workflow` | Bootstrap conductor, session state, router, service metas |
 | `internal/platform` | Zerops API client, types, error codes |
 | `internal/auth` | Token resolution (env var / zcli), project discovery |
 | `internal/knowledge` | BM25 search engine, embedded docs + recipes |
@@ -49,18 +49,65 @@ cmd/zcp/main.go → internal/server  → MCP tools  → internal/ops      → in
 
 ---
 
-## Bootstrap workflow
+## Flow routing
 
-Bootstrap is the core flow. It takes a user request ("deploy a Go API with Postgres") and guides the LLM through **5 sequential steps** with hard checks, evidence gates, and an iteration loop.
+Every conversation starts with ZCP injecting a system prompt built from four layers:
 
-### The 5 steps
+1. **Base instructions** — workflow-first rules (always start a session before writing config)
+2. **Workflow hint** — active sessions from registry (resume prompts)
+3. **Runtime context** — container vs local detection
+4. **Project summary + Router offerings** — ranked workflow suggestions
+
+### Router
+
+The router is a pure function that takes project state, service metas, active sessions, and live API hostnames, and returns ranked workflow offerings:
 
 ```
-┌─────────┐    ┌───────────┐    ┌──────────┐    ┌────────┐    ┌────────┐
-│ DISCOVER │───→│ PROVISION │───→│ GENERATE │───→│ DEPLOY │───→│ VERIFY │
-└─────────┘    └───────────┘    └──────────┘    └────────┘    └────────┘
-   fixed          fixed          creative*       branching*      fixed
-                                 (skippable)     (skippable)
+Route(RouterInput) → []FlowOffering{Workflow, Priority, Reason, Hint}
+```
+
+| Project state | Primary offering | Secondary |
+|---------------|-----------------|-----------|
+| **FRESH** | bootstrap (p1) | — |
+| **CONFORMANT** | strategy-based deploy (p1) | bootstrap (p2) |
+| **NON_CONFORMANT** | strategy-based or debug (p1-2) | bootstrap (p2) |
+
+Strategy-based routing reads `ServiceMeta.Decisions["deploy_strategy"]` persisted from prior bootstraps:
+
+| Strategy | Offering |
+|----------|----------|
+| `push-dev` | deploy workflow |
+| `ci-cd` | "push to git" hint |
+| `manual` | "deploy manually" hint |
+
+Utility workflows (debug, scale, configure) are always appended at priority 5. Stale metas (hostnames deleted from API) are filtered out automatically.
+
+---
+
+## Workflow types
+
+### Immediate (stateless)
+
+**debug**, **scale**, **configure** — return guidance markdown, no session tracking.
+
+### Orchestrated (session-tracked)
+
+**bootstrap** and **deploy** — create a session with state persistence, evidence gates, and iteration support.
+
+---
+
+## Bootstrap workflow
+
+Bootstrap is the core flow. It takes a user request ("deploy a Go API with Postgres") and guides the LLM through **6 sequential steps** with hard checks, evidence gates, and an iteration loop.
+
+### The 6 steps
+
+```
+┌──────────┐   ┌───────────┐   ┌──────────┐   ┌────────┐   ┌────────┐   ┌──────────┐
+│ DISCOVER │──▶│ PROVISION │──▶│ GENERATE │──▶│ DEPLOY │──▶│ VERIFY │──▶│ STRATEGY │
+│  (fixed) │   │  (fixed)  │   │(creative)│   │(branch)│   │ (fixed)│   │  (fixed) │
+└──────────┘   └───────────┘   └──────────┘   └────────┘   └────────┘   └──────────┘
+                                (skippable)    (skippable)                (skippable)
 ```
 
 | Step | What happens | Hard check |
@@ -70,8 +117,9 @@ Bootstrap is the core flow. It takes a user request ("deploy a Go API with Postg
 | **generate** | Write zerops.yml + app code to mounted dev filesystem using real env vars from provision | — |
 | **deploy** | Deploy dev and stage services, enable subdomains, iteration loop (fix → redeploy, max 3) | All runtimes RUNNING; subdomain access enabled |
 | **verify** | Independent health verification of all plan targets, present final report with URLs | All plan targets healthy (via `ops.VerifyAll`) |
+| **strategy** | Ask user to choose deployment strategy per runtime service (push-dev / ci-cd / manual), saved to ServiceMeta for future routing | Strategy recorded for all runtime services |
 
-**generate** and **deploy** are skippable — but only for managed-only projects (no runtime services). The engine enforces this via conditional skip validation.
+**generate**, **deploy**, and **strategy** are skippable — but only for managed-only projects (no runtime services). The engine enforces this via conditional skip validation.
 
 ### Step categories
 
@@ -146,7 +194,14 @@ deploy → verify → FAIL → fix code on mount → redeploy → re-verify
 
 Each iteration archives the previous evidence and resets the workflow phase to DEVELOP.
 
-### Guidance system
+### Context delivery
+
+The guidance system optimizes LLM context usage across the bootstrap flow:
+
+- **Guide gating** — each step's detailed guide is delivered once per iteration. Repeat calls return a stub (`[Guide already delivered. Tools: ...]`) to avoid wasting context.
+- **Prior context compression** — step N-1 attestation is passed in full; older attestations are compressed to 80 chars with a status bracket.
+- **Iteration delta** — on retry iterations (iteration > 0), the deploy step receives a focused delta (what failed, what to fix) instead of the full guide.
+- **Plan mode** — `standard` vs `simple` affects generate step guidance based on plan targets.
 
 Each step includes embedded guidance from `bootstrap.md`, served via `<section>` tags:
 
@@ -157,21 +212,19 @@ Each step includes embedded guidance from `bootstrap.md`, served via `<section>`
 </section>
 ```
 
-The `DetailedGuide` field in the step response gives the LLM step-specific instructions, while `PriorContext` carries the plan and attestations from earlier steps.
-
 ---
 
-## Project state routing
+## Post-bootstrap: ServiceMeta persistence
 
-At startup, ZCP calls the API to list services and classifies project state:
+Bootstrap writes per-service metadata incrementally:
 
-| State | Condition | Action |
-|-------|-----------|--------|
-| **FRESH** | No runtime services | Route to bootstrap |
-| **CONFORMANT** | Dev+stage pairs detected | Route to deploy (if stack matches) |
-| **NON_CONFORMANT** | Services exist without dev/stage pattern | Ask user before changes |
+| When | Meta status |
+|------|-------------|
+| After plan submission | `planned` |
+| After provision | `provisioned` |
+| After strategy step | `decisions.deploy_strategy` set |
 
-This classification is injected into the MCP system prompt so the LLM knows what to do before its first tool call.
+Stored at `{stateDir}/services/{hostname}.json`. These metas persist across conversations and feed the router — so the next time the user opens a conversation, ZCP knows which workflow to suggest based on the strategy they chose.
 
 ---
 
@@ -203,12 +256,11 @@ All workflow state persists locally:
 
 | File | Purpose |
 |------|---------|
-| `zcp_state.json` | Current session: phase, bootstrap steps, plan, env vars |
+| `sessions/{id}.json` | Session state: phase, bootstrap steps, plan, env vars, context delivery |
 | `evidence/{sessionID}/{type}.json` | Phase gate evidence (attestations) |
-| `services/{hostname}.json` | Per-service metadata (historical record) |
-| `CLAUDE.md` reflog | Append-only bootstrap history (`<!-- ZEROPS:REFLOG -->` markers) |
+| `services/{hostname}.json` | Per-service metadata (strategy, status, decisions) |
 
-Sessions survive process restarts. The MCP system prompt shows the active session state so the LLM can resume where it left off.
+Sessions survive process restarts. The MCP system prompt shows the active session state so the LLM can resume where it left off. Dead sessions (stale PID) can be taken over via `zerops_workflow action="resume"`.
 
 ---
 
