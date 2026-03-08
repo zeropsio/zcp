@@ -103,7 +103,7 @@ func TestAutoCompleteBootstrap_OutputErrorsNonFatal(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)

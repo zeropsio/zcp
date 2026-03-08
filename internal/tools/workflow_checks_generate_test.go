@@ -170,7 +170,7 @@ func TestCheckGenerate_NoPorts_Fails(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 		}},
 	}
 
@@ -208,7 +208,7 @@ func TestCheckGenerate_NoDeployFiles_Fails(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 		}},
 	}
 
@@ -250,7 +250,7 @@ func TestCheckGenerate_AllPass(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 			},
@@ -296,7 +296,7 @@ func TestCheckGenerate_ImplicitWebServer_SkipsPorts(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4", BootstrapMode: "simple"},
 		}},
 	}
 
@@ -333,7 +333,7 @@ func TestCheckGenerate_ValidEnvRef_Passes(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 				{Hostname: "cache", Type: "valkey@7.2", Resolution: "CREATE"},

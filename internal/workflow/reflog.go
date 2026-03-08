@@ -14,7 +14,7 @@ func AppendReflogEntry(claudeMDPath string, intent string, targets []BootstrapTa
 	b.WriteString(fmt.Sprintf("### %s — Bootstrap: %s\n\n", date, intent))
 
 	for _, target := range targets {
-		b.WriteString(fmt.Sprintf("- **Runtime:** %s (%s)\n", target.Runtime.DevHostname, target.Runtime.Type))
+		b.WriteString(fmt.Sprintf("- **Runtime:** %s (%s, %s)\n", target.Runtime.DevHostname, target.Runtime.Type, target.Runtime.EffectiveMode()))
 		if len(target.Dependencies) > 0 {
 			deps := make([]string, 0, len(target.Dependencies))
 			for _, dep := range target.Dependencies {

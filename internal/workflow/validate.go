@@ -21,6 +21,11 @@ const (
 	ResolutionShared = "SHARED"
 )
 
+// validBootstrapModes is the set of valid BootstrapMode values (including empty for default).
+var validBootstrapModes = map[string]bool{
+	"": true, PlanModeStandard: true, PlanModeDev: true, PlanModeSimple: true,
+}
+
 // BootstrapTarget represents one runtime service and its dependencies in the bootstrap plan.
 type BootstrapTarget struct {
 	Runtime      RuntimeTarget `json:"runtime"`
@@ -29,16 +34,24 @@ type BootstrapTarget struct {
 
 // RuntimeTarget describes a runtime service to bootstrap.
 type RuntimeTarget struct {
-	DevHostname string `json:"devHostname"`
-	Type        string `json:"type"`
-	IsExisting  bool   `json:"isExisting,omitempty"`
-	Simple      bool   `json:"simple,omitempty"`
+	DevHostname   string `json:"devHostname"`
+	Type          string `json:"type"`
+	IsExisting    bool   `json:"isExisting,omitempty"`
+	BootstrapMode string `json:"bootstrapMode,omitempty"` // standard, dev, or simple
+}
+
+// EffectiveMode returns the bootstrap mode, defaulting to standard if empty.
+func (r RuntimeTarget) EffectiveMode() string {
+	if r.BootstrapMode == "" {
+		return PlanModeStandard
+	}
+	return r.BootstrapMode
 }
 
 // StageHostname derives the stage hostname from the dev hostname.
-// Returns empty for Simple mode or when the hostname doesn't end in "dev".
+// Returns empty for dev/simple modes or when the hostname doesn't end in "dev".
 func (r RuntimeTarget) StageHostname() string {
-	if r.Simple {
+	if r.EffectiveMode() != PlanModeStandard {
 		return ""
 	}
 	if base, ok := strings.CutSuffix(r.DevHostname, "dev"); ok {
@@ -119,6 +132,12 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 			continue
 		}
 
+		// Validate bootstrap mode.
+		if !validBootstrapModes[rt.BootstrapMode] {
+			errs = append(errs, fmt.Sprintf("target %q: invalid bootstrapMode %q (must be standard, dev, or simple)", rt.DevHostname, rt.BootstrapMode))
+			continue
+		}
+
 		// Validate runtime type against live catalog.
 		if rt.Type == "" {
 			errs = append(errs, fmt.Sprintf("target %q has empty type", rt.DevHostname))
@@ -130,10 +149,10 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 		}
 
 		// H7: validate derived stage hostname length for standard mode.
-		if !rt.Simple {
+		if rt.EffectiveMode() == PlanModeStandard {
 			stageHostname := rt.StageHostname()
 			if stageHostname == "" {
-				errs = append(errs, fmt.Sprintf("target %q: dev hostname must end in 'dev' for standard mode (or set simple=true)", rt.DevHostname))
+				errs = append(errs, fmt.Sprintf("target %q: dev hostname must end in 'dev' for standard mode (or set bootstrapMode)", rt.DevHostname))
 				continue
 			}
 			if err := ValidatePlanHostname(stageHostname); err != nil {

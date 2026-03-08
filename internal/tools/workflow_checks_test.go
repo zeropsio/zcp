@@ -141,7 +141,7 @@ func TestCheckProvision_SharedStorage_SkipEnvCheck(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "files", Type: "shared-storage@1", Resolution: "CREATE"},
 			},
@@ -170,7 +170,7 @@ func TestCheckProvision_ObjectStorage_SkipEnvCheck(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "storage", Type: "object-storage@1", Resolution: "CREATE"},
 			},
@@ -221,7 +221,7 @@ func TestCheckDeploy_BuildFailed_Fail(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 		}},
 	}
 
@@ -243,7 +243,7 @@ func TestCheckDeploy_SubdomainNotEnabled_Fail(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 		}},
 	}
 
@@ -272,7 +272,7 @@ func TestCheckVerify_AllHealthy_Pass(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 		}},
 	}
 
@@ -310,7 +310,7 @@ func TestCheckVerify_PreExistingUnhealthy_Ignored(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 		}},
 	}
 
@@ -343,7 +343,7 @@ func TestCheckVerify_TargetUnhealthy_Fail(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", Simple: true},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 		}},
 	}
 

@@ -58,10 +58,83 @@ func TestStageHostname_Standard(t *testing.T) {
 
 func TestStageHostname_Simple(t *testing.T) {
 	t.Parallel()
-	rt := RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22", Simple: true}
+	rt := RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22", BootstrapMode: "simple"}
 	got := rt.StageHostname()
 	if got != "" {
-		t.Errorf("StageHostname for Simple: want empty, got %q", got)
+		t.Errorf("StageHostname for simple mode: want empty, got %q", got)
+	}
+}
+
+func TestStageHostname_Dev(t *testing.T) {
+	t.Parallel()
+	rt := RuntimeTarget{DevHostname: "myappdev", Type: "nodejs@22", BootstrapMode: "dev"}
+	got := rt.StageHostname()
+	if got != "" {
+		t.Errorf("StageHostname for dev mode: want empty, got %q", got)
+	}
+}
+
+func TestEffectiveMode(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		mode string
+		want string
+	}{
+		{"empty_defaults_to_standard", "", "standard"},
+		{"explicit_standard", "standard", "standard"},
+		{"dev_mode", "dev", "dev"},
+		{"simple_mode", "simple", "simple"},
+		{"invalid_mode_passes_through", "foobar", "foobar"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := RuntimeTarget{DevHostname: "app", Type: "nodejs@22", BootstrapMode: tt.mode}
+			if got := rt.EffectiveMode(); got != tt.want {
+				t.Errorf("EffectiveMode: want %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestValidateBootstrapTargets_InvalidBootstrapMode(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		mode    string
+		wantErr bool
+	}{
+		{"valid_empty", "", false},
+		{"valid_standard", "standard", false},
+		{"valid_dev", "dev", false},
+		{"valid_simple", "simple", false},
+		{"invalid_foobar", "foobar", true},
+		{"invalid_STANDARD_uppercase", "STANDARD", true},
+		{"invalid_mixed_case", "Dev", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			hostname := "appdev"
+			if tt.mode == "simple" || tt.mode == "dev" {
+				hostname = "myapp"
+			}
+			targets := []BootstrapTarget{
+				{Runtime: RuntimeTarget{DevHostname: hostname, Type: "nodejs@22", BootstrapMode: tt.mode}},
+			}
+			_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for mode %q, got nil", tt.mode)
+				}
+				if !strings.Contains(err.Error(), "invalid bootstrapMode") {
+					t.Errorf("error %q should contain 'invalid bootstrapMode'", err.Error())
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error for mode %q: %v", tt.mode, err)
+			}
+		})
 	}
 }
 
@@ -151,8 +224,8 @@ func TestValidateBootstrapTargets_StageHostnameOverflow_Error(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for stage hostname overflow")
 	}
-	if !strings.Contains(err.Error(), "stage hostname") {
-		t.Errorf("error %q should mention 'stage hostname'", err.Error())
+	if !strings.Contains(err.Error(), "stage hostname") && !strings.Contains(err.Error(), "dev hostname must end") {
+		t.Errorf("error %q should mention 'stage hostname' or dev requirement", err.Error())
 	}
 }
 
@@ -262,12 +335,37 @@ func TestValidateBootstrapTargets_SimpleMode_NoStage(t *testing.T) {
 	t.Parallel()
 	targets := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22", Simple: true},
+			Runtime: RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22", BootstrapMode: "simple"},
 		},
 	}
 	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
 	if err != nil {
 		t.Fatalf("unexpected error for simple mode: %v", err)
+	}
+}
+
+func TestValidateBootstrapTargets_DevMode_NoStage(t *testing.T) {
+	t.Parallel()
+	targets := []BootstrapTarget{
+		{
+			Runtime: RuntimeTarget{DevHostname: "myappdev", Type: "nodejs@22", BootstrapMode: "dev"},
+		},
+	}
+	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	if err != nil {
+		t.Fatalf("unexpected error for dev mode: %v", err)
+	}
+}
+
+func TestValidateBootstrapTargets_MixedModes_Valid(t *testing.T) {
+	t.Parallel()
+	targets := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},                          // standard (default)
+		{Runtime: RuntimeTarget{DevHostname: "frontend", Type: "bun@1.2", BootstrapMode: "simple"}}, // simple
+	}
+	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	if err != nil {
+		t.Fatalf("unexpected error for mixed modes: %v", err)
 	}
 }
 

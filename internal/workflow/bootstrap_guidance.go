@@ -17,28 +17,9 @@ func ResolveGuidance(step string) string {
 	return extractSection(md, step)
 }
 
-// implicitWebserverTypes are runtime types that auto-start without manual server startup.
-var implicitWebserverTypes = map[string]bool{
-	"php-nginx": true, "php-apache": true, "nginx": true, "static": true,
-}
-
-// hasNonImplicitWebserverRuntime checks if any plan target has a runtime type
-// that is NOT an implicit webserver (php-nginx, php-apache, nginx, static).
-func hasNonImplicitWebserverRuntime(plan *ServicePlan) bool {
-	if plan == nil {
-		return false
-	}
-	for _, t := range plan.Targets {
-		base, _, _ := strings.Cut(t.Runtime.Type, "@")
-		if !implicitWebserverTypes[base] {
-			return true
-		}
-	}
-	return false
-}
-
 // ResolveProgressiveGuidance returns mode-filtered deploy sub-sections for the deploy step,
 // or falls back to ResolveGuidance for non-deploy steps.
+// Each deploy section is included at most once based on the distinct modes across all targets.
 func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int) string {
 	if step != StepDeploy {
 		return ResolveGuidance(step)
@@ -52,11 +33,22 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 	var sections []string
 	sections = append(sections, extractSection(md, "deploy-overview"))
 
-	if hasNonImplicitWebserverRuntime(plan) {
+	// Collect distinct modes across all targets.
+	modes := distinctModes(plan)
+
+	// Include deploy sections for each distinct mode present.
+	if modes[PlanModeStandard] {
 		sections = append(sections, extractSection(md, "deploy-standard"))
-		sections = append(sections, extractSection(md, "deploy-iteration"))
-	} else {
+	}
+	if modes[PlanModeDev] {
+		sections = append(sections, extractSection(md, "deploy-dev"))
+	}
+	if modes[PlanModeSimple] {
 		sections = append(sections, extractSection(md, "deploy-simple"))
+	}
+	// Iteration guidance applies to standard and dev modes (not simple).
+	if modes[PlanModeStandard] || modes[PlanModeDev] {
+		sections = append(sections, extractSection(md, "deploy-iteration"))
 	}
 
 	if plan != nil && len(plan.Targets) >= 3 {
@@ -78,6 +70,19 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 		return ResolveGuidance(step)
 	}
 	return strings.Join(parts, "\n\n---\n\n")
+}
+
+// distinctModes returns the set of effective bootstrap modes across all plan targets.
+// Uses EffectiveMode() so that empty BootstrapMode fields default to "standard".
+func distinctModes(plan *ServicePlan) map[string]bool {
+	if plan == nil {
+		return nil
+	}
+	modes := make(map[string]bool)
+	for _, t := range plan.Targets {
+		modes[t.Runtime.EffectiveMode()] = true
+	}
+	return modes
 }
 
 const maxBootstrapIterations = 5

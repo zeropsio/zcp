@@ -8,6 +8,7 @@ import (
 // Plan mode constants.
 const (
 	PlanModeStandard = "standard"
+	PlanModeDev      = "dev"
 	PlanModeSimple   = "simple"
 )
 
@@ -224,7 +225,7 @@ func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int) 
 			Tools:        detail.Tools,
 			Verification: detail.Verification,
 			PriorContext: b.buildPriorContext(),
-			PlanMode:     b.planMode(),
+			PlanMode:     b.PlanMode(),
 		}
 		resp.Current.DetailedGuide = b.resolveGuideWithGating(detail.Name, iteration)
 		resp.Message = fmt.Sprintf("Step %d/%d: %s", b.CurrentStep+1, len(b.Steps), detail.Name)
@@ -309,18 +310,27 @@ func (b *BootstrapState) buildPriorContext() *StepContext {
 	}
 }
 
-// planMode returns "standard" or "simple" based on the plan targets.
+// PlanMode returns the aggregate plan mode for gate decisions.
+// Returns "standard" if ANY target uses standard mode (G4 required).
+// Returns "dev", "simple", or "mixed" otherwise (G4 skipped).
 // Returns empty if no plan has been submitted yet.
-func (b *BootstrapState) planMode() string {
+func (b *BootstrapState) PlanMode() string {
 	if b.Plan == nil || len(b.Plan.Targets) == 0 {
 		return ""
 	}
+	modes := make(map[string]bool)
 	for _, t := range b.Plan.Targets {
-		if t.Runtime.Simple {
-			return PlanModeSimple
+		modes[t.Runtime.EffectiveMode()] = true
+	}
+	if modes[PlanModeStandard] {
+		return PlanModeStandard
+	}
+	if len(modes) == 1 {
+		for m := range modes {
+			return m
 		}
 	}
-	return PlanModeStandard
+	return "mixed"
 }
 
 // validateConditionalSkip prevents skipping steps that are required based on the plan.

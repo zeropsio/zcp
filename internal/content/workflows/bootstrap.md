@@ -796,6 +796,20 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-8) only after dev is healthy
 8. **Present both URLs** to user
 </section>
 
+<section name="deploy-dev">
+### Dev-only mode — deploy flow
+
+**Prerequisites**: import done, dev service mounted, env vars discovered, code written to mount path.
+
+Dev-only mode has no stage pair — all verification happens on the dev service directly.
+
+1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHFS mount auto-reconnects after deploy.
+2. **Start dev** (deploy restarted the container — no server runs): start server via SSH immediately (kill-then-start pattern from Dev iteration), verify startup log. **Implicit-webserver runtimes: skip this step.**
+3. **Verify dev**: `zerops_subdomain serviceHostname="{devHostname}" action="enable"` then `zerops_verify serviceHostname="{devHostname}"` — must return status=healthy
+4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop (max 3 iterations)
+5. **Present URL** to user — no stage deploy needed in dev-only mode
+</section>
+
 <section name="deploy-iteration">
 ### Dev iteration: manual start cycle
 

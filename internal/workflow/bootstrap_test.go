@@ -595,17 +595,32 @@ func TestPlanMode(t *testing.T) {
 		{
 			"simple_mode",
 			&ServicePlan{Targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", Simple: true}},
+				{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "simple"}},
 			}},
 			"simple",
 		},
 		{
-			"mixed_prefers_simple",
+			"dev_mode",
+			&ServicePlan{Targets: []BootstrapTarget{
+				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "dev"}},
+			}},
+			"dev",
+		},
+		{
+			"mixed_with_standard_returns_standard",
 			&ServicePlan{Targets: []BootstrapTarget{
 				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
-				{Runtime: RuntimeTarget{DevHostname: "api", Type: "go@1", Simple: true}},
+				{Runtime: RuntimeTarget{DevHostname: "api", Type: "go@1", BootstrapMode: "simple"}},
 			}},
-			"simple",
+			"standard",
+		},
+		{
+			"mixed_dev_simple_returns_mixed",
+			&ServicePlan{Targets: []BootstrapTarget{
+				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "dev"}},
+				{Runtime: RuntimeTarget{DevHostname: "api", Type: "go@1", BootstrapMode: "simple"}},
+			}},
+			"mixed",
 		},
 	}
 	for _, tt := range tests {
@@ -613,7 +628,7 @@ func TestPlanMode(t *testing.T) {
 			t.Parallel()
 			bs := NewBootstrapState()
 			bs.Plan = tt.plan
-			if got := bs.planMode(); got != tt.want {
+			if got := bs.PlanMode(); got != tt.want {
 				t.Errorf("planMode: want %q, got %q", tt.want, got)
 			}
 		})
@@ -623,20 +638,20 @@ func TestPlanMode(t *testing.T) {
 func TestBuildResponse_PlanMode(t *testing.T) {
 	t.Parallel()
 
-	// Before plan submission, planMode should be empty.
+	// Before plan submission, PlanMode should be empty.
 	bs := NewBootstrapState()
 	resp := bs.BuildResponse("sess1", "test", 0)
 	if resp.Current.PlanMode != "" {
-		t.Errorf("planMode before plan: want empty, got %q", resp.Current.PlanMode)
+		t.Errorf("PlanMode before plan: want empty, got %q", resp.Current.PlanMode)
 	}
 
-	// After plan submission, planMode should reflect the plan.
+	// After plan submission, PlanMode should reflect the plan.
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
 	}}
 	resp = bs.BuildResponse("sess1", "test", 0)
 	if resp.Current.PlanMode != "standard" {
-		t.Errorf("planMode after plan: want standard, got %q", resp.Current.PlanMode)
+		t.Errorf("PlanMode after plan: want standard, got %q", resp.Current.PlanMode)
 	}
 }
 

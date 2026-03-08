@@ -60,7 +60,11 @@ func (e *Engine) Transition(phase Phase) (*WorkflowState, *GateResult, error) {
 	if !IsValidTransition(state.Phase, phase) {
 		return nil, nil, fmt.Errorf("transition: invalid %s → %s", state.Phase, phase)
 	}
-	result, err := CheckGate(state.Phase, phase, e.evidenceDir, state.SessionID)
+	mode := ""
+	if state.Bootstrap != nil {
+		mode = state.Bootstrap.PlanMode()
+	}
+	result, err := CheckGate(state.Phase, phase, e.evidenceDir, state.SessionID, mode)
 	if err != nil {
 		return nil, nil, fmt.Errorf("transition gate check: %w", err)
 	}

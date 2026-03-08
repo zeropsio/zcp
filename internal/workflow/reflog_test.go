@@ -42,6 +42,9 @@ func TestAppendReflogEntry_NewFile(t *testing.T) {
 	if !strings.Contains(content, "nodejs@22") {
 		t.Error("missing type")
 	}
+	if !strings.Contains(content, "standard") {
+		t.Error("missing bootstrap mode")
+	}
 	if !strings.Contains(content, "db (postgresql@16)") {
 		t.Error("missing dependency")
 	}
@@ -107,6 +110,34 @@ func TestAppendReflogEntry_MultipleEntries(t *testing.T) {
 	}
 	if !strings.Contains(content, "Second bootstrap") {
 		t.Error("missing second entry")
+	}
+}
+
+func TestAppendReflogEntry_DevMode(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+
+	targets := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "myapp", Type: "bun@1.2", BootstrapMode: "dev"}},
+	}
+
+	err := AppendReflogEntry(path, "Dev mode app", targets, "sess-dev", "2026-03-08")
+	if err != nil {
+		t.Fatalf("AppendReflogEntry: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "dev") {
+		t.Error("reflog entry should contain 'dev' mode")
+	}
+	if strings.Contains(content, "standard") {
+		t.Error("reflog entry should not contain 'standard' for dev mode target")
 	}
 }
 

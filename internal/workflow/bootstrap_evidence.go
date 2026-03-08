@@ -20,6 +20,7 @@ var bootstrapEvidenceMap = map[string][]string{
 // autoCompleteBootstrap records evidence and transitions through all phases to DONE.
 func (e *Engine) autoCompleteBootstrap(state *WorkflowState) error {
 	now := time.Now().UTC().Format(time.RFC3339)
+	mode := state.Bootstrap.PlanMode()
 
 	// Collect attestations and step statuses for evidence generation.
 	attestations := make(map[string]string)
@@ -32,6 +33,11 @@ func (e *Engine) autoCompleteBootstrap(state *WorkflowState) error {
 	}
 
 	for evType, steps := range bootstrapEvidenceMap {
+		// Skip stage_verify evidence for non-standard modes (no stage services).
+		if evType == "stage_verify" && mode != "" && mode != PlanModeStandard {
+			continue
+		}
+
 		var parts []string
 		passed := 0
 		for _, s := range steps {
@@ -63,7 +69,7 @@ func (e *Engine) autoCompleteBootstrap(state *WorkflowState) error {
 	// Transition through all phases, checking gates at each step.
 	seq := PhaseSequence()
 	for i := 1; i < len(seq); i++ {
-		result, err := CheckGate(seq[i-1], seq[i], e.evidenceDir, state.SessionID)
+		result, err := CheckGate(seq[i-1], seq[i], e.evidenceDir, state.SessionID, mode)
 		if err != nil {
 			return fmt.Errorf("auto-complete gate %s→%s: %w", seq[i-1], seq[i], err)
 		}
@@ -135,11 +141,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			BootstrapSession: state.SessionID,
 			BootstrappedAt:   now,
 		}
-		if target.Runtime.Simple {
-			meta.Mode = PlanModeSimple
-		} else {
-			meta.Mode = PlanModeStandard
-		}
+		meta.Mode = target.Runtime.EffectiveMode()
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", target.Runtime.DevHostname, err)
 		}

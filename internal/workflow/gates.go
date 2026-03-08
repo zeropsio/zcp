@@ -53,7 +53,9 @@ func GateName(from, to Phase) string {
 }
 
 // CheckGate checks whether a phase transition is allowed based on evidence.
-func CheckGate(from, to Phase, evidenceDir, sessionID string) (*GateResult, error) {
+// mode is the aggregate plan mode (empty or "standard" = all gates apply;
+// "dev", "simple", or "mixed" = G4 skipped since no stage services exist).
+func CheckGate(from, to Phase, evidenceDir, sessionID, mode string) (*GateResult, error) {
 	// Validate the transition is valid.
 	if !IsValidTransition(from, to) {
 		return nil, fmt.Errorf("check gate: invalid transition %s → %s", from, to)
@@ -71,6 +73,12 @@ func CheckGate(from, to Phase, evidenceDir, sessionID string) (*GateResult, erro
 	// No gate defined for this transition — pass.
 	if gate == nil {
 		return &GateResult{Passed: true}, nil
+	}
+
+	// G4 skip for non-standard modes: dev/simple/mixed have no stage services.
+	// Positive allowlist — unknown/corrupt mode strings fall through to evidence check.
+	if gate.name == "G4" && (mode == PlanModeDev || mode == PlanModeSimple || mode == "mixed") {
+		return &GateResult{Passed: true, Gate: "G4"}, nil
 	}
 
 	// G0 special case: skip if discovery.json exists and is fresh (<24h).

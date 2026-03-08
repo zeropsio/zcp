@@ -40,7 +40,7 @@ func TestCheckGate_AllGatesPass(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result, err := CheckGate(tt.from, tt.to, dir, sessionID)
+			result, err := CheckGate(tt.from, tt.to, dir, sessionID, "")
 			if err != nil {
 				t.Fatalf("CheckGate: %v", err)
 			}
@@ -92,7 +92,7 @@ func TestCheckGate_MissingEvidence(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result, err := CheckGate(tt.from, tt.to, dir, sessionID)
+			result, err := CheckGate(tt.from, tt.to, dir, sessionID, "")
 			if err != nil {
 				t.Fatalf("CheckGate: %v", err)
 			}
@@ -129,7 +129,7 @@ func TestCheckGate_G0ConditionalSkip(t *testing.T) {
 	}
 
 	// G0 should pass without recipe_review when discovery is fresh.
-	result, err := CheckGate(PhaseInit, PhaseDiscover, dir, sessionID)
+	result, err := CheckGate(PhaseInit, PhaseDiscover, dir, sessionID, "")
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestCheckGate_G0StaleDiscovery(t *testing.T) {
 	}
 
 	// G0 should fail — discovery is stale and no recipe_review.
-	result, err := CheckGate(PhaseInit, PhaseDiscover, dir, sessionID)
+	result, err := CheckGate(PhaseInit, PhaseDiscover, dir, sessionID, "")
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestCheckGate_InvalidTransition(t *testing.T) {
 	dir := t.TempDir()
 
 	// Skip a phase — invalid transition.
-	_, err := CheckGate(PhaseInit, PhaseDeploy, dir, "sess-x")
+	_, err := CheckGate(PhaseInit, PhaseDeploy, dir, "sess-x", "")
 	if err == nil {
 		t.Fatal("expected error for invalid transition")
 	}
@@ -231,7 +231,7 @@ func TestCheckGate_EvidenceWithFailures_Blocked(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID)
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID, "")
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestCheckGate_SessionMismatch_Blocked(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID)
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID, "")
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestCheckGate_MultiService_FailedService_Blocked(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseDevelop, PhaseDeploy, dir, sessionID)
+	result, err := CheckGate(PhaseDevelop, PhaseDeploy, dir, sessionID, "")
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestCheckGate_MultiService_AllPassed_Passes(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseVerify, PhaseDone, dir, sessionID)
+	result, err := CheckGate(PhaseVerify, PhaseDone, dir, sessionID, "")
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestCheckGate_MultiService_EmptyResults_Passes(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseDevelop, PhaseDeploy, dir, sessionID)
+	result, err := CheckGate(PhaseDevelop, PhaseDeploy, dir, sessionID, "")
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestCheckGate_StaleEvidence_Blocked(t *testing.T) {
 	}
 
 	// G1 (DISCOVER→DEVELOP) should fail because discovery evidence is stale.
-	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID)
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID, "")
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestCheckGate_FreshEvidence_Passes(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID)
+	result, err := CheckGate(PhaseDiscover, PhaseDevelop, dir, sessionID, "")
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestCheckGate_Remediation_MissingEvidence(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			result, err := CheckGate(tt.from, tt.to, dir, sessionID)
+			result, err := CheckGate(tt.from, tt.to, dir, sessionID, "")
 			if err != nil {
 				t.Fatalf("CheckGate: %v", err)
 			}
@@ -471,7 +471,7 @@ func TestCheckGate_Remediation_PassingGate_Empty(t *testing.T) {
 		t.Fatalf("SaveEvidence: %v", err)
 	}
 
-	result, err := CheckGate(PhaseInit, PhaseDiscover, dir, sessionID)
+	result, err := CheckGate(PhaseInit, PhaseDiscover, dir, sessionID, "")
 	if err != nil {
 		t.Fatalf("CheckGate: %v", err)
 	}
@@ -480,6 +480,102 @@ func TestCheckGate_Remediation_PassingGate_Empty(t *testing.T) {
 	}
 	if len(result.Remediation) > 0 {
 		t.Error("expected empty Remediation for passing gate")
+	}
+}
+
+// --- G4 mode-aware skip tests ---
+
+func TestCheckGate_G4_DevMode_Skipped(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-dev-mode"
+
+	// No stage_verify evidence — G4 should still pass for dev mode.
+	result, err := CheckGate(PhaseVerify, PhaseDone, dir, sessionID, "dev")
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if !result.Passed {
+		t.Error("G4 should be skipped for dev mode")
+	}
+	if result.Gate != "G4" {
+		t.Errorf("gate: want G4, got %q", result.Gate)
+	}
+}
+
+func TestCheckGate_G4_SimpleMode_Skipped(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-simple-mode"
+
+	result, err := CheckGate(PhaseVerify, PhaseDone, dir, sessionID, "simple")
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if !result.Passed {
+		t.Error("G4 should be skipped for simple mode")
+	}
+}
+
+func TestCheckGate_G4_MixedMode_Skipped(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-mixed-mode"
+
+	result, err := CheckGate(PhaseVerify, PhaseDone, dir, sessionID, "mixed")
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if !result.Passed {
+		t.Error("G4 should be skipped for mixed mode (no standard targets)")
+	}
+}
+
+func TestCheckGate_G4_StandardMode_Required(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-standard-mode"
+
+	// Standard mode should still require stage_verify.
+	result, err := CheckGate(PhaseVerify, PhaseDone, dir, sessionID, "standard")
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if result.Passed {
+		t.Error("G4 should NOT be skipped for standard mode")
+	}
+}
+
+func TestCheckGate_G4_InvalidMode_Required(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-invalid-mode"
+
+	// Invalid/corrupt mode string should NOT bypass G4.
+	result, err := CheckGate(PhaseVerify, PhaseDone, dir, sessionID, "foobar")
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if result.Passed {
+		t.Error("G4 should NOT be skipped for invalid mode string")
+	}
+	if result.Gate != "G4" {
+		t.Errorf("gate: want G4, got %q", result.Gate)
+	}
+}
+
+func TestCheckGate_G4_EmptyMode_Required(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-empty-mode"
+
+	// Empty mode (default) should require stage_verify.
+	result, err := CheckGate(PhaseVerify, PhaseDone, dir, sessionID, "")
+	if err != nil {
+		t.Fatalf("CheckGate: %v", err)
+	}
+	if result.Passed {
+		t.Error("G4 should NOT be skipped for empty mode (defaults to standard)")
 	}
 }
 

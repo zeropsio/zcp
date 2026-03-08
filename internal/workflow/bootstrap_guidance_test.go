@@ -202,7 +202,7 @@ func TestResolveProgressiveGuidance_DeployStandard(t *testing.T) {
 func TestResolveProgressiveGuidance_DeploySimple(t *testing.T) {
 	t.Parallel()
 	plan := &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "app", Type: "nginx@1", Simple: true}},
+		{Runtime: RuntimeTarget{DevHostname: "app", Type: "nginx@1", BootstrapMode: "simple"}},
 	}}
 	guide := ResolveProgressiveGuidance("deploy", plan, 0)
 	if guide == "" {
@@ -224,43 +224,115 @@ func TestResolveProgressiveGuidance_DeployWithRecovery(t *testing.T) {
 	}
 }
 
-func TestHasNonImplicitWebserverRuntime(t *testing.T) {
+func TestDistinctModes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
 		plan *ServicePlan
-		want bool
+		want map[string]bool
 	}{
-		{"nil_plan", nil, false},
-		{"empty_targets", &ServicePlan{}, false},
-		{"implicit_nginx", &ServicePlan{Targets: []BootstrapTarget{
-			{Runtime: RuntimeTarget{Type: "nginx@1"}},
-		}}, false},
-		{"implicit_phpnginx", &ServicePlan{Targets: []BootstrapTarget{
-			{Runtime: RuntimeTarget{Type: "php-nginx@8"}},
-		}}, false},
-		{"implicit_static", &ServicePlan{Targets: []BootstrapTarget{
-			{Runtime: RuntimeTarget{Type: "static@1"}},
-		}}, false},
-		{"implicit_phpapache", &ServicePlan{Targets: []BootstrapTarget{
-			{Runtime: RuntimeTarget{Type: "php-apache@8"}},
-		}}, false},
-		{"standard_bun", &ServicePlan{Targets: []BootstrapTarget{
-			{Runtime: RuntimeTarget{Type: "bun@1.2"}},
-		}}, true},
-		{"mixed_one_standard", &ServicePlan{Targets: []BootstrapTarget{
-			{Runtime: RuntimeTarget{Type: "nginx@1"}},
-			{Runtime: RuntimeTarget{Type: "go@1"}},
-		}}, true},
+		{"nil_plan", nil, nil},
+		{"empty_targets", &ServicePlan{}, map[string]bool{}},
+		{"default_mode_is_standard", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+		}}, map[string]bool{"standard": true}},
+		{"explicit_dev", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "dev"}},
+		}}, map[string]bool{"dev": true}},
+		{"explicit_simple", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "app", Type: "nginx@1", BootstrapMode: "simple"}},
+		}}, map[string]bool{"simple": true}},
+		{"mixed_standard_and_simple", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+			{Runtime: RuntimeTarget{DevHostname: "frontend", Type: "nginx@1", BootstrapMode: "simple"}},
+		}}, map[string]bool{"standard": true, "simple": true}},
+		{"mixed_all_three", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+			{Runtime: RuntimeTarget{DevHostname: "worker", Type: "bun@1.2", BootstrapMode: "dev"}},
+			{Runtime: RuntimeTarget{DevHostname: "static", Type: "nginx@1", BootstrapMode: "simple"}},
+		}}, map[string]bool{"standard": true, "dev": true, "simple": true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := hasNonImplicitWebserverRuntime(tt.plan)
-			if got != tt.want {
-				t.Errorf("hasNonImplicitWebserverRuntime: want %v, got %v", tt.want, got)
+			got := distinctModes(tt.plan)
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("distinctModes: want nil, got %v", got)
+				}
+				return
+			}
+			if len(got) != len(tt.want) {
+				t.Errorf("distinctModes: want %v, got %v", tt.want, got)
+				return
+			}
+			for k := range tt.want {
+				if !got[k] {
+					t.Errorf("distinctModes: missing mode %q in %v", k, got)
+				}
 			}
 		})
+	}
+}
+
+func TestResolveProgressiveGuidance_DevMode(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "dev"}},
+	}}
+	guide := ResolveProgressiveGuidance("deploy", plan, 0)
+	if guide == "" {
+		t.Fatal("expected non-empty guidance for deploy step in dev mode")
+	}
+	// Should contain dev-only specific content.
+	if !strings.Contains(guide, "Dev-only mode") {
+		t.Error("dev mode guidance should contain 'Dev-only mode' from deploy-dev section")
+	}
+	// Should NOT include deploy-standard section content.
+	if strings.Contains(guide, "Standard mode (dev+stage)") {
+		t.Error("dev mode guidance should not contain deploy-standard section")
+	}
+}
+
+func TestResolveProgressiveGuidance_DevMode_HasDeployDevContent(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "dev"}},
+	}}
+	guide := ResolveProgressiveGuidance("deploy", plan, 0)
+	if guide == "" {
+		t.Fatal("expected non-empty guidance for deploy step in dev mode")
+	}
+	// deploy-dev section must contain actionable content.
+	if !strings.Contains(guide, "no stage pair") {
+		t.Error("deploy-dev section should mention 'no stage pair'")
+	}
+	if !strings.Contains(guide, "zerops_deploy") {
+		t.Error("deploy-dev section should reference zerops_deploy")
+	}
+}
+
+func TestResolveProgressiveGuidance_MixedStandardDev(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+		{Runtime: RuntimeTarget{DevHostname: "worker", Type: "bun@1.2", BootstrapMode: "dev"}},
+	}}
+	guide := ResolveProgressiveGuidance("deploy", plan, 0)
+	if guide == "" {
+		t.Fatal("expected non-empty guidance for mixed mode deploy")
+	}
+	// Both standard and dev sections should be present.
+	standardOnly := ResolveProgressiveGuidance("deploy", &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+	}}, 0)
+	if len(guide) <= len(standardOnly) {
+		t.Error("mixed mode guidance should be longer than standard-only guidance")
+	}
+	// deploy-iteration heading should appear exactly once (no duplication).
+	iterCount := strings.Count(guide, "### Dev iteration: manual start cycle")
+	if iterCount != 1 {
+		t.Errorf("deploy-iteration section should appear exactly once, got %d", iterCount)
 	}
 }
 
