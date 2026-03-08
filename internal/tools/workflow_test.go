@@ -291,7 +291,7 @@ func TestWorkflowTool_Action_Start_AutoResetDone(t *testing.T) {
 		"action": "start", "workflow": "bootstrap",
 		"intent": "first bootstrap",
 	})
-	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
 	for _, step := range steps {
 		callTool(t, srv, "zerops_workflow", map[string]any{
 			"action":      "complete",
@@ -470,8 +470,8 @@ func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Progress.Total != 5 {
-		t.Errorf("Total: want 5, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 6 {
+		t.Errorf("Total: want 6, got %d", resp.Progress.Total)
 	}
 	if resp.Current == nil || resp.Current.Name != "discover" {
 		t.Error("expected current step to be 'discover'")
@@ -596,8 +596,8 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Progress.Total != 5 {
-		t.Errorf("Total: want 5, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 6 {
+		t.Errorf("Total: want 6, got %d", resp.Progress.Total)
 	}
 }
 
@@ -861,7 +861,7 @@ func TestWorkflowTool_Action_Resume(t *testing.T) {
 	sessionID := resp.SessionID
 
 	// Reset the engine (simulating process death — session still exists in registry).
-	engine.Reset()
+	_ = engine.Reset()
 
 	// Resume the session.
 	result = callTool(t, srv, "zerops_workflow", map[string]any{

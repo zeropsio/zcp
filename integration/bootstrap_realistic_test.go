@@ -300,16 +300,19 @@ func agentVerify(t *testing.T, session *mcp.ClientSession) {
 	// Final summary discover.
 	callAndGetText(t, session, "zerops_discover", nil)
 
-	verifyText := completeStep(t, session, "verify",
+	completeStep(t, session, "verify",
 		"Independent verification: bundev, bunstage, db all RUNNING. 3/3 healthy. Report presented.")
 
+	strategyText := completeStep(t, session, "strategy",
+		"User chose push-dev strategy for bundev. Strategy recorded.")
+
 	var finalResp workflow.BootstrapResponse
-	mustUnmarshal(t, verifyText, &finalResp)
+	mustUnmarshal(t, strategyText, &finalResp)
 	if finalResp.Current != nil {
 		t.Errorf("expected nil current after completion, got: %s", finalResp.Current.Name)
 	}
-	if finalResp.Progress.Completed != 5 {
-		t.Errorf("completed: want 5, got %d", finalResp.Progress.Completed)
+	if finalResp.Progress.Completed != 6 {
+		t.Errorf("completed: want 6, got %d", finalResp.Progress.Completed)
 	}
 	if !strings.Contains(strings.ToLower(finalResp.Message), "complete") {
 		t.Errorf("final message should contain 'complete', got: %q", finalResp.Message)
@@ -415,12 +418,17 @@ func managedOnlySkipAndVerify(t *testing.T, session *mcp.ClientSession) {
 		t.Errorf("verify db: expected RUNNING, got: %+v", vDR.Services)
 	}
 
-	finalText := completeStep(t, session, "verify",
+	completeStep(t, session, "verify",
 		"db RUNNING. 1/1 managed service healthy. Managed-only project complete.")
+
+	// Skip strategy (managed-only, no runtime services).
+	finalText := callAndGetText(t, session, "zerops_workflow", map[string]any{
+		"action": "skip", "step": "strategy", "reason": "managed-only project, no strategy needed",
+	})
 	var finalResp workflow.BootstrapResponse
 	mustUnmarshal(t, finalText, &finalResp)
-	if finalResp.Progress.Completed != 5 {
-		t.Errorf("completed: want 5, got %d", finalResp.Progress.Completed)
+	if finalResp.Progress.Completed != 6 {
+		t.Errorf("completed: want 6, got %d", finalResp.Progress.Completed)
 	}
 
 	skipped, completed := 0, 0
@@ -432,8 +440,8 @@ func managedOnlySkipAndVerify(t *testing.T, session *mcp.ClientSession) {
 			completed++
 		}
 	}
-	if skipped != 2 {
-		t.Errorf("skipped: want 2, got %d", skipped)
+	if skipped != 3 {
+		t.Errorf("skipped: want 3, got %d", skipped)
 	}
 	if completed != 3 {
 		t.Errorf("completed: want 3, got %d", completed)

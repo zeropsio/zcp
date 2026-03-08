@@ -30,7 +30,7 @@ func TestAutoCompleteBootstrap_WritesServiceMeta(t *testing.T) {
 	}
 
 	// Complete remaining steps to trigger autoComplete.
-	for _, step := range []string{"provision", "generate", "deploy", "verify"} {
+	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -68,7 +68,7 @@ func TestAutoCompleteBootstrap_AppendsReflog(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "verify"} {
+	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
 		_, err = eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil)
 		if err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -120,7 +120,7 @@ func TestAutoCompleteBootstrap_OutputErrorsNonFatal(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(servicesDir, 0o755) })
 
 	// Bootstrap completion should still succeed despite output errors.
-	for _, step := range []string{"provision", "generate", "deploy", "verify"} {
+	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s) should not fail due to output errors: %v", step, err)
 		}
@@ -181,7 +181,7 @@ func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
 				t.Fatalf("BootstrapCompletePlan: %v", err)
 			}
 
-			for _, step := range []string{"provision", "generate", "deploy", "verify"} {
+			for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
 				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 					t.Fatalf("BootstrapComplete(%s): %v", step, err)
 				}
@@ -238,7 +238,7 @@ func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
 			t.Fatalf("BootstrapCompletePlan: %v", err)
 		}
 
-		for _, step := range []string{"provision", "generate", "deploy", "verify"} {
+		for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
 			if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 				t.Fatalf("BootstrapComplete(%s): %v", step, err)
 			}
@@ -297,7 +297,7 @@ func TestWriteBootstrapOutputs_SetsBootstrappedStatus(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "verify"} {
+	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}

@@ -46,7 +46,7 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 	}
 
 	// Section D: Project summary (dynamic).
-	if summary := buildProjectSummary(ctx, client, projectID); summary != "" {
+	if summary := buildProjectSummary(ctx, client, projectID, stateDir); summary != "" {
 		b.WriteString("\n\n")
 		b.WriteString(summary)
 	}
@@ -85,9 +85,10 @@ func buildWorkflowHint(stateDir string) string {
 	return strings.Join(hints, "\n")
 }
 
-// buildProjectSummary calls the API to list services and detect project state.
+// buildProjectSummary calls the API to list services and detect project state,
+// then uses the router for workflow offerings.
 // Returns empty string on failure or nil client (graceful fallback).
-func buildProjectSummary(ctx context.Context, client platform.Client, projectID string) string {
+func buildProjectSummary(ctx context.Context, client platform.Client, projectID, stateDir string) string {
 	if client == nil || projectID == "" {
 		return ""
 	}
@@ -97,39 +98,73 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID 
 		return ""
 	}
 
-	if len(services) == 0 {
-		return "Project is empty — no services configured yet.\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\""
-	}
-
 	var b strings.Builder
-	b.WriteString("Current services:\n")
-	for _, svc := range services {
-		if svc.IsSystem() {
-			continue
+
+	// List services.
+	if len(services) > 0 {
+		b.WriteString("Current services:\n")
+		for _, svc := range services {
+			if svc.IsSystem() {
+				continue
+			}
+			fmt.Fprintf(&b, "- %s (%s) — %s\n",
+				svc.Name,
+				svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+				svc.Status)
 		}
-		fmt.Fprintf(&b, "- %s (%s) — %s\n",
-			svc.Name,
-			svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-			svc.Status)
 	}
 
+	if len(services) == 0 {
+		b.WriteString("Project is empty — no services configured yet.")
+	}
+
+	// Detect project state and route.
 	projState, err := workflow.DetectProjectState(ctx, client, projectID)
-	if err == nil {
-		fmt.Fprintf(&b, "\nProject state: %s", projState)
-		switch projState {
-		case workflow.StateFresh:
-			b.WriteString("\nREQUIRED: zerops_workflow action=\"start\" workflow=\"bootstrap\"")
-		case workflow.StateConformant:
-			b.WriteString("\nDev+stage service pairs detected.")
-			b.WriteString("\nIf the request matches existing services, use: zerops_workflow action=\"start\" workflow=\"deploy\"")
-			b.WriteString("\nTo ADD new services (different runtime type), use: zerops_workflow action=\"start\" workflow=\"bootstrap\"")
-			b.WriteString("\nIf the user wants a DIFFERENT stack, ASK how to proceed before making any changes.")
-			b.WriteString("\nDo NOT delete existing services without explicit user approval.")
-		case workflow.StateNonConformant:
-			b.WriteString("\nExisting services do not follow dev+stage naming.")
-			b.WriteString("\nRecommended: zerops_workflow action=\"start\" workflow=\"bootstrap\" to add NEW services alongside existing ones.")
-			b.WriteString("\nDo NOT delete existing services without explicit user approval.")
+	if err != nil {
+		projState = workflow.StateUnknown
+	}
+	fmt.Fprintf(&b, "\nProject state: %s", projState)
+
+	// State-specific warnings.
+	switch projState {
+	case workflow.StateFresh:
+		// No warning needed for fresh projects.
+	case workflow.StateUnknown:
+		// No warning needed for unknown state.
+	case workflow.StateConformant:
+		b.WriteString("\nDo NOT delete existing services without explicit user approval.")
+	case workflow.StateNonConformant:
+		b.WriteString("\nDo NOT delete existing services without explicit user approval.")
+	}
+
+	// Build router input.
+	var liveHostnames []string
+	for _, svc := range services {
+		if !svc.IsSystem() {
+			liveHostnames = append(liveHostnames, svc.Name)
 		}
+	}
+
+	var metas []*workflow.ServiceMeta
+	if stateDir != "" {
+		metas, _ = workflow.ListServiceMetas(stateDir) // best-effort
+	}
+
+	var activeSessions []workflow.SessionEntry
+	if stateDir != "" {
+		activeSessions, _ = workflow.ListSessions(stateDir) // best-effort
+	}
+
+	routerInput := workflow.RouterInput{
+		ProjectState:   projState,
+		ServiceMetas:   metas,
+		ActiveSessions: activeSessions,
+		LiveServices:   liveHostnames,
+	}
+	offerings := workflow.Route(routerInput)
+	if formatted := workflow.FormatOfferings(offerings); formatted != "" {
+		b.WriteString("\n")
+		b.WriteString(formatted)
 	}
 
 	return b.String()

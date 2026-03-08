@@ -13,6 +13,9 @@ import (
 
 const defaultMaxIterations = 10
 
+// WorkflowBootstrap is the workflow name for bootstrap sessions.
+const WorkflowBootstrap = "bootstrap"
+
 func maxIterations() int {
 	if v := os.Getenv("ZCP_MAX_ITERATIONS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -175,7 +178,7 @@ func cleanupLegacyState(stateDir string) {
 
 // InitSessionAtomic creates a new workflow session atomically within a single
 // registry lock scope. It prunes dead sessions, checks bootstrap exclusivity
-// (if workflowName == "bootstrap"), creates the session state file, and
+// (if workflowName == WorkflowBootstrap), creates the session state file, and
 // appends the registry entry — all in one lock acquisition.
 func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*WorkflowState, error) {
 	cleanupLegacyState(stateDir)
@@ -205,9 +208,9 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 		reg.Sessions = pruneDeadSessions(reg.Sessions)
 
 		// Check bootstrap exclusivity.
-		if workflowName == "bootstrap" {
+		if workflowName == WorkflowBootstrap {
 			for _, s := range reg.Sessions {
-				if s.Workflow == "bootstrap" {
+				if s.Workflow == WorkflowBootstrap {
 					return reg, fmt.Errorf("init session atomic: bootstrap already active (session %s, PID %d)", s.SessionID, s.PID)
 				}
 			}

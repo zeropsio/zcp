@@ -529,8 +529,8 @@ func TestEngine_BootstrapStart_Success(t *testing.T) {
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
 	}
-	if resp.Progress.Total != 5 {
-		t.Errorf("Total: want 5, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 6 {
+		t.Errorf("Total: want 6, got %d", resp.Progress.Total)
 	}
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
@@ -600,7 +600,7 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
 	var resp *BootstrapResponse
 	for _, step := range steps {
 		var err error
@@ -614,8 +614,8 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 	if resp.Current != nil {
 		t.Error("Current should be nil after all steps")
 	}
-	if resp.Progress.Completed != 5 {
-		t.Errorf("Completed: want 5, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 6 {
+		t.Errorf("Completed: want 6, got %d", resp.Progress.Completed)
 	}
 
 	// Session should be unregistered (DONE sessions are immediately cleaned up).
@@ -637,7 +637,7 @@ func TestEngine_BootstrapComplete_AutoEvidence(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
 	for _, step := range steps {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -668,7 +668,7 @@ func TestEngine_BootstrapComplete_AutoTransition(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
 	for _, step := range steps {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -781,8 +781,8 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 		t.Fatalf("BootstrapStatus: %v", err)
 	}
 
-	if len(resp.Progress.Steps) != 5 {
-		t.Fatalf("Steps count: want 5, got %d", len(resp.Progress.Steps))
+	if len(resp.Progress.Steps) != 6 {
+		t.Fatalf("Steps count: want 6, got %d", len(resp.Progress.Steps))
 	}
 	if resp.Progress.Steps[0].Status != "complete" {
 		t.Errorf("step[0].Status: want complete, got %s", resp.Progress.Steps[0].Status)
@@ -798,7 +798,7 @@ func TestBootstrapComplete_AutoComplete_GatesChecked(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
 	for _, step := range steps {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -823,8 +823,8 @@ func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Complete steps 0-3 normally.
-	preSteps := []string{"discover", "provision", "generate", "deploy"}
+	// Complete steps 0-4 normally.
+	preSteps := []string{"discover", "provision", "generate", "deploy", "verify"}
 	for _, step := range preSteps {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -843,9 +843,9 @@ func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
 	}
 
 	// Complete the last step — auto-complete will overwrite the evidence.
-	_, err := eng.BootstrapComplete(context.Background(), "verify", "Final verification complete", nil)
+	_, err := eng.BootstrapComplete(context.Background(), "strategy", "Strategy selection complete", nil)
 	if err != nil {
-		t.Fatalf("BootstrapComplete(verify): %v", err)
+		t.Fatalf("BootstrapComplete(strategy): %v", err)
 	}
 
 	state, err := eng.GetState()
@@ -869,7 +869,7 @@ func TestEngine_BootstrapComplete_AutoEvidence_PassedCount(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
 	for _, step := range steps {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -921,7 +921,7 @@ func TestEngine_BootstrapComplete_AutoEvidence_ServiceResults(t *testing.T) {
 	}
 
 	// Complete remaining steps.
-	remaining := []string{"provision", "generate", "deploy", "verify"}
+	remaining := []string{"provision", "generate", "deploy", "verify", "strategy"}
 	for _, step := range remaining {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -1347,10 +1347,8 @@ func TestInitSessionAtomic_BootstrapExclusivity(t *testing.T) {
 				if !contains(err.Error(), tt.errContains) {
 					t.Errorf("error %q should contain %q", err.Error(), tt.errContains)
 				}
-			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
 		})
 	}

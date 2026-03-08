@@ -10,7 +10,7 @@ import (
 
 func TestStepDetails_AllStepsCovered(t *testing.T) {
 	t.Parallel()
-	expectedNames := []string{"discover", "provision", "generate", "deploy", "verify"}
+	expectedNames := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
 	for _, name := range expectedNames {
 		detail := lookupDetail(name)
 		if detail.Name == "" {
@@ -88,7 +88,7 @@ func TestStepDetails_Categories(t *testing.T) {
 	}
 }
 
-func TestNewBootstrapState_5Steps(t *testing.T) {
+func TestNewBootstrapState_6Steps(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 
@@ -98,11 +98,11 @@ func TestNewBootstrapState_5Steps(t *testing.T) {
 	if bs.CurrentStep != 0 {
 		t.Errorf("CurrentStep: want 0, got %d", bs.CurrentStep)
 	}
-	if len(bs.Steps) != 5 {
-		t.Fatalf("Steps count: want 5, got %d", len(bs.Steps))
+	if len(bs.Steps) != 6 {
+		t.Fatalf("Steps count: want 6, got %d", len(bs.Steps))
 	}
 
-	expectedNames := []string{"discover", "provision", "generate", "deploy", "verify"}
+	expectedNames := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
 	for i, name := range expectedNames {
 		if bs.Steps[i].Name != name {
 			t.Errorf("step[%d].Name: want %s, got %s", i, name, bs.Steps[i].Name)
@@ -182,7 +182,7 @@ func TestCompleteStep_AllDone(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 
-	stepNames := []string{"discover", "provision", "generate", "deploy", "verify"}
+	stepNames := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
 	for _, name := range stepNames {
 		bs.Steps[bs.CurrentStep].Status = "in_progress"
 		err := bs.CompleteStep(name, "Attestation for "+name+" step completed successfully")
@@ -194,8 +194,8 @@ func TestCompleteStep_AllDone(t *testing.T) {
 	if bs.Active {
 		t.Error("expected Active=false after all steps complete")
 	}
-	if bs.CurrentStep != 5 {
-		t.Errorf("CurrentStep: want 5, got %d", bs.CurrentStep)
+	if bs.CurrentStep != 6 {
+		t.Errorf("CurrentStep: want 6, got %d", bs.CurrentStep)
 	}
 }
 
@@ -280,8 +280,8 @@ func TestBuildResponse_FirstStep(t *testing.T) {
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
 	}
-	if resp.Progress.Total != 5 {
-		t.Errorf("Progress.Total: want 5, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 6 {
+		t.Errorf("Progress.Total: want 6, got %d", resp.Progress.Total)
 	}
 	if resp.Progress.Completed != 0 {
 		t.Errorf("Progress.Completed: want 0, got %d", resp.Progress.Completed)
@@ -331,15 +331,15 @@ func TestBuildResponse_AllDone(t *testing.T) {
 	for i := range bs.Steps {
 		bs.Steps[i].Status = "complete"
 	}
-	bs.CurrentStep = 5
+	bs.CurrentStep = 6
 	bs.Active = false
 
 	resp := bs.BuildResponse("sess-3", "test", 0)
 	if resp.Current != nil {
 		t.Error("Current should be nil when all done")
 	}
-	if resp.Progress.Completed != 5 {
-		t.Errorf("Progress.Completed: want 5, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 6 {
+		t.Errorf("Progress.Completed: want 6, got %d", resp.Progress.Completed)
 	}
 	if !strings.Contains(strings.ToLower(resp.Message), "complete") {
 		t.Errorf("Message should contain 'complete', got: %s", resp.Message)
@@ -542,7 +542,7 @@ func TestBootstrapState_DiscoveredEnvVars(t *testing.T) {
 	}
 }
 
-func TestBootstrapState_CurrentStepName_5Steps(t *testing.T) {
+func TestBootstrapState_CurrentStepName_6Steps(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
@@ -552,8 +552,9 @@ func TestBootstrapState_CurrentStepName_5Steps(t *testing.T) {
 		{"first", 0, "discover"},
 		{"middle", 2, "generate"},
 		{"deploy", 3, "deploy"},
-		{"last", 4, "verify"},
-		{"out_of_bounds", 5, ""},
+		{"verify", 4, "verify"},
+		{"last", 5, "strategy"},
+		{"out_of_bounds", 6, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -681,7 +682,7 @@ func TestBootstrapStepInfo_GuidanceExcludedFromJSON(t *testing.T) {
 				t.Fatalf("json.Marshal: %v", err)
 			}
 
-			var m map[string]interface{}
+			var m map[string]any
 			if err := json.Unmarshal(data, &m); err != nil {
 				t.Fatalf("json.Unmarshal: %v", err)
 			}

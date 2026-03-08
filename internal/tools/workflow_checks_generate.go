@@ -21,15 +21,17 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 		// Derive project root from stateDir ({projectRoot}/.zcp/state/).
 		projectRoot := filepath.Dir(filepath.Dir(stateDir))
 
-		doc, err := ops.ParseZeropsYml(projectRoot)
-		if err != nil {
-			return &workflow.StepCheckResult{
+		doc, parseErr := ops.ParseZeropsYml(projectRoot)
+		if parseErr != nil {
+			// Parse failure is a check result (not a function error).
+			failResult := &workflow.StepCheckResult{
 				Passed:  false,
 				Summary: "zerops.yml missing or invalid",
 				Checks: []workflow.StepCheck{{
-					Name: "zerops_yml_exists", Status: statusFail, Detail: err.Error(),
+					Name: "zerops_yml_exists", Status: statusFail, Detail: parseErr.Error(),
 				}},
-			}, nil
+			}
+			return failResult, nil //nolint:nilerr // parse failure is a check result, not function error
 		}
 
 		var checks []workflow.StepCheck

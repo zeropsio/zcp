@@ -124,6 +124,11 @@ func (e *Engine) SessionID() string {
 	return e.sessionID
 }
 
+// StateDir returns the engine's state directory path.
+func (e *Engine) StateDir() string {
+	return e.stateDir
+}
+
 // ListActiveSessions returns all active sessions from the registry.
 func (e *Engine) ListActiveSessions() ([]SessionEntry, error) {
 	return ListSessions(e.stateDir)
@@ -131,7 +136,7 @@ func (e *Engine) ListActiveSessions() ([]SessionEntry, error) {
 
 // BootstrapStart creates a new session with bootstrap state and returns the first step.
 func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, error) {
-	state, err := e.Start(projectID, "bootstrap", intent)
+	state, err := e.Start(projectID, WorkflowBootstrap, intent)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap start: %w", err)
 	}

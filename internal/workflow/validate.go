@@ -14,6 +14,13 @@ const (
 	ModeNonHA = "NON_HA"
 )
 
+// Dependency resolution constants.
+const (
+	ResolutionCreate = "CREATE"
+	ResolutionExists = "EXISTS"
+	ResolutionShared = "SHARED"
+)
+
 // BootstrapTarget represents one runtime service and its dependencies in the bootstrap plan.
 type BootstrapTarget struct {
 	Runtime      RuntimeTarget `json:"runtime"`
@@ -94,7 +101,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 	createHostnames := make(map[string]bool)
 	for _, target := range targets {
 		for _, dep := range target.Dependencies {
-			if dep.Resolution == "CREATE" {
+			if dep.Resolution == ResolutionCreate {
 				createHostnames[dep.Hostname] = true
 			}
 		}
@@ -163,17 +170,17 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 
 			// Resolution validation.
 			switch dep.Resolution {
-			case "CREATE":
+			case ResolutionCreate:
 				if liveServices != nil && liveServiceNames[dep.Hostname] {
 					errs = append(errs, fmt.Sprintf("target %q dependency %q: CREATE but service already exists", rt.DevHostname, dep.Hostname))
 					continue
 				}
-			case "EXISTS":
+			case ResolutionExists:
 				if liveServices != nil && !liveServiceNames[dep.Hostname] {
 					errs = append(errs, fmt.Sprintf("target %q dependency %q: EXISTS but service not found in project", rt.DevHostname, dep.Hostname))
 					continue
 				}
-			case "SHARED":
+			case ResolutionShared:
 				if !createHostnames[dep.Hostname] {
 					errs = append(errs, fmt.Sprintf("target %q dependency %q: SHARED resolution requires another target to CREATE it", rt.DevHostname, dep.Hostname))
 					continue

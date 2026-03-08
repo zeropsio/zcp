@@ -89,10 +89,7 @@ func BuildIterationDelta(step string, iteration int, plan *ServicePlan, lastAtte
 		return ""
 	}
 
-	remaining := maxBootstrapIterations - iteration
-	if remaining < 0 {
-		remaining = 0
-	}
+	remaining := max(maxBootstrapIterations-iteration, 0)
 
 	return fmt.Sprintf(`ITERATION %d for step %s
 

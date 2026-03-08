@@ -316,8 +316,8 @@ func TestBuildInstructions_WorkflowHint_ActiveBootstrap(t *testing.T) {
 	if !strings.Contains(inst, "bootstrap") {
 		t.Error("hint should mention bootstrap workflow")
 	}
-	if !strings.Contains(inst, "step 3/5") {
-		t.Errorf("hint should mention step 3/5, got: %s", inst)
+	if !strings.Contains(inst, "step 3/6") {
+		t.Errorf("hint should mention step 3/6, got: %s", inst)
 	}
 }
 
@@ -342,7 +342,7 @@ func TestBuildInstructions_WorkflowHint_PhaseDone_NoHint(t *testing.T) {
 	}
 	steps := []string{
 		"discover", "provision", "generate",
-		"deploy", "verify",
+		"deploy", "verify", "strategy",
 	}
 	for _, step := range steps {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" ok", nil); err != nil {

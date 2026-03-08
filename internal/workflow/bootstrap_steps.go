@@ -7,10 +7,11 @@ const (
 	StepGenerate  = "generate"
 	StepDeploy    = "deploy"
 	StepVerify    = "verify"
+	StepStrategy  = "strategy"
 )
 
-// stepDetails defines the 5 consolidated bootstrap steps in order.
-// Skippable: generate, deploy (managed-only fast path).
+// stepDetails defines the 6 consolidated bootstrap steps in order.
+// Skippable: generate, deploy, strategy (managed-only fast path).
 var stepDetails = []StepDetail{
 	{
 		Name:     StepDiscover,
@@ -92,7 +93,18 @@ Skip if no runtime services exist.`,
 4. Group by: runtime dev, runtime stage, managed
 5. Include subdomain URLs and actionable next steps`,
 		Tools:        []string{"zerops_discover", "zerops_verify"},
-		Verification: "SUCCESS WHEN: zerops_verify batch confirms all plan targets healthy AND /status endpoints return connectivity proof AND final report presented with URLs. NEXT: bootstrap complete.",
+		Verification: "SUCCESS WHEN: zerops_verify batch confirms all plan targets healthy AND /status endpoints return connectivity proof AND final report presented with URLs. NEXT: proceed to strategy step.",
 		Skippable:    false,
+	},
+	{
+		Name:     StepStrategy,
+		Category: CategoryFixed,
+		Guidance: `Ask user to choose deployment strategy for each runtime service.
+Options: push-dev (SSH push, dev-first), ci-cd (Git pipeline), manual (monitoring only).
+Present options with trade-offs. Record choice via zerops_workflow action="complete" step="strategy".
+Auto-skipped for managed-only projects (no runtime services).`,
+		Tools:        []string{"zerops_workflow"},
+		Verification: "SUCCESS WHEN: strategy recorded for all runtime services via action=complete step=strategy with strategies param. NEXT: bootstrap complete.",
+		Skippable:    true,
 	},
 }

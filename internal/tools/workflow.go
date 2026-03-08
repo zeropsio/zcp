@@ -36,6 +36,7 @@ type WorkflowInput struct {
 	Failed         *int                       `json:"failed,omitempty"         jsonschema:"Number of failed verifications (evidence action). Defaults to 0."`
 	ServiceResults []workflow.ServiceResult   `json:"serviceResults,omitempty" jsonschema:"Per-service verification results (evidence action)."`
 	SessionID      string                     `json:"sessionId,omitempty"      jsonschema:"Session ID for resume action."`
+	Strategies     map[string]string          `json:"strategies,omitempty"     jsonschema:"Per-service strategy map for strategy step completion (e.g. {\"appdev\":\"ci-cd\"})."`
 }
 
 // startResponse wraps WorkflowState with workflow guidance for non-bootstrap orchestrated start.
@@ -126,11 +127,15 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleResume(engine, input)
 	case "list":
 		return handleListSessions(engine)
+	case "route":
+		return handleRoute(ctx, engine, client, projectID, stateDir)
+	case "strategy":
+		return handleStrategy(engine, input, stateDir)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, skip, status, transition, evidence, reset, iterate, resume, list")), nil, nil
+			"Valid actions: start, complete, skip, status, transition, evidence, reset, iterate, resume, list, route, strategy")), nil, nil
 	}
 }
 

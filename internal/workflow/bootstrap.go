@@ -47,6 +47,7 @@ type BootstrapState struct {
 	Plan              *ServicePlan        `json:"plan,omitempty"`
 	DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"`
 	Context           *ContextDelivery    `json:"context,omitempty"`
+	Strategies        map[string]string   `json:"strategies,omitempty"` // hostname -> strategy (push-dev, ci-cd, manual)
 }
 
 // BootstrapResponse is returned from conductor actions.
@@ -92,7 +93,7 @@ type BootstrapStepInfo struct {
 	PlanMode      string       `json:"planMode,omitempty"` // "standard" or "simple", set after plan submission
 }
 
-// NewBootstrapState creates a new bootstrap state with all 5 steps pending.
+// NewBootstrapState creates a new bootstrap state with all 6 steps pending.
 func NewBootstrapState() *BootstrapState {
 	steps := make([]BootstrapStep, len(stepDetails))
 	for i, d := range stepDetails {
@@ -103,6 +104,7 @@ func NewBootstrapState() *BootstrapState {
 		CurrentStep: 0,
 		Steps:       steps,
 		Context:     &ContextDelivery{GuideSentFor: make(map[string]int)},
+		Strategies:  make(map[string]string),
 	}
 }
 

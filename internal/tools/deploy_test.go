@@ -228,8 +228,8 @@ func TestDeployTool_BuildFailed_WithBuildLogs(t *testing.T) {
 	if parsed.BuildLogs[0] != "npm error code ERESOLVE" {
 		t.Errorf("buildLogs[0] = %q, want %q", parsed.BuildLogs[0], "npm error code ERESOLVE")
 	}
-	if parsed.BuildLogsSource != "build_container" {
-		t.Errorf("buildLogsSource = %q, want %q", parsed.BuildLogsSource, "build_container")
+	if parsed.BuildLogsSource != buildContainerSource {
+		t.Errorf("buildLogsSource = %q, want %q", parsed.BuildLogsSource, buildContainerSource)
 	}
 	if !strings.Contains(parsed.Suggestion, "buildLogs") {
 		t.Errorf("suggestion should mention buildLogs, got: %s", parsed.Suggestion)
@@ -546,8 +546,8 @@ func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
 	if len(parsed.BuildLogs) == 0 {
 		t.Error("expected buildLogs to be populated for PREPARING_RUNTIME_FAILED")
 	}
-	if parsed.BuildLogsSource != "build_container" {
-		t.Errorf("buildLogsSource = %q, want %q", parsed.BuildLogsSource, "build_container")
+	if parsed.BuildLogsSource != buildContainerSource {
+		t.Errorf("buildLogsSource = %q, want %q", parsed.BuildLogsSource, buildContainerSource)
 	}
 	if parsed.Suggestion == "" {
 		t.Error("expected non-empty suggestion")

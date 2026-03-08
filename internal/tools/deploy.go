@@ -12,6 +12,8 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+const buildContainerSource = "build_container"
+
 // DeployInput is the input type for zerops_deploy.
 type DeployInput struct {
 	SourceService string `json:"sourceService,omitempty" jsonschema:"Hostname to deploy FROM. Omit for self-deploy (auto-inferred from targetService). Set for cross-deploy (e.g. dev→stage)."`
@@ -102,7 +104,7 @@ func pollDeployBuild(
 		if logFetcher != nil {
 			result.BuildLogs = ops.FetchBuildLogs(ctx, client, logFetcher, projectID, event, 50)
 			if len(result.BuildLogs) > 0 {
-				result.BuildLogsSource = "build_container"
+				result.BuildLogsSource = buildContainerSource
 			}
 		}
 		if len(result.BuildLogs) > 0 {

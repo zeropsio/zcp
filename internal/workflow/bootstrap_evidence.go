@@ -109,7 +109,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			depHostnames = append(depHostnames, dep.Hostname)
 
 			// Skip meta overwrite for pre-existing or shared dependencies.
-			if dep.Resolution == "EXISTS" || dep.Resolution == "SHARED" {
+			if dep.Resolution == ResolutionExists || dep.Resolution == ResolutionShared {
 				continue
 			}
 
@@ -175,7 +175,7 @@ func (e *Engine) writeServiceMetas(state *WorkflowState, status string) {
 		}
 
 		for _, dep := range target.Dependencies {
-			if dep.Resolution == "EXISTS" || dep.Resolution == "SHARED" {
+			if dep.Resolution == ResolutionExists || dep.Resolution == ResolutionShared {
 				continue
 			}
 			depMeta := &ServiceMeta{

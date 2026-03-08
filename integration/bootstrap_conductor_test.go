@@ -80,8 +80,8 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 	if err := json.Unmarshal([]byte(startText), &startResp); err != nil {
 		t.Fatalf("parse start response: %v", err)
 	}
-	if startResp.Progress.Total != 5 {
-		t.Fatalf("total steps: want 5, got %d", startResp.Progress.Total)
+	if startResp.Progress.Total != 6 {
+		t.Fatalf("total steps: want 6, got %d", startResp.Progress.Total)
 	}
 	if startResp.Current == nil || startResp.Current.Name != "discover" {
 		t.Fatal("expected first step to be 'discover'")
@@ -101,7 +101,7 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 		t.Error("expected non-empty tools list for discover step")
 	}
 
-	// Step 2: Complete all 5 steps sequentially.
+	// Step 2: Complete all 6 steps sequentially.
 	steps := []struct {
 		name        string
 		attestation string
@@ -111,6 +111,7 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 		{"generate", "zerops.yml and app code written to /var/www/bundev/ with correct env var mappings and /status endpoint."},
 		{"deploy", "Deployed bundev: /status returns 200 with SELECT 1 proof. Deployed bunstage: /status 200. Both subdomains enabled."},
 		{"verify", "Independent verification: bundev RUNNING + HTTP 200, bunstage RUNNING + HTTP 200, db RUNNING. 3/3 healthy. Report presented."},
+		{"strategy", "User chose push-dev strategy for bundev. Strategy recorded via zerops_workflow action=complete step=strategy."},
 	}
 
 	var lastResp workflow.BootstrapResponse
@@ -144,7 +145,7 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 		}
 	}
 
-	// After all 5 steps: bootstrap complete.
+	// After all 6 steps: bootstrap complete.
 	// Use a fresh variable — json.Unmarshal doesn't zero omitted pointer fields.
 	var finalResp workflow.BootstrapResponse
 	finalRaw := callAndGetText(t, session, "zerops_workflow", map[string]any{
@@ -156,8 +157,8 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 	if finalResp.Current != nil {
 		t.Errorf("current should be nil after all steps complete, got: name=%q", finalResp.Current.Name)
 	}
-	if finalResp.Progress.Completed != 5 {
-		t.Errorf("final completed: want 5, got %d", finalResp.Progress.Completed)
+	if finalResp.Progress.Completed != 6 {
+		t.Errorf("final completed: want 6, got %d", finalResp.Progress.Completed)
 	}
 	if !strings.Contains(strings.ToLower(finalResp.Message), "complete") {
 		t.Errorf("final message should contain 'complete', got: %q", finalResp.Message)
@@ -208,9 +209,14 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 	}
 
 	// Complete verify.
-	finalText := callAndGetText(t, session, "zerops_workflow", map[string]any{
+	callAndGetText(t, session, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "verify",
 		"attestation": "All managed services verified RUNNING: db, cache. Report presented to user.",
+	})
+
+	// Skip strategy (managed-only, no runtime services).
+	finalText := callAndGetText(t, session, "zerops_workflow", map[string]any{
+		"action": "skip", "step": "strategy", "reason": "managed-only project, no strategy needed",
 	})
 
 	var finalResp workflow.BootstrapResponse
@@ -218,9 +224,9 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 		t.Fatalf("parse final response: %v", err)
 	}
 
-	// 3 completed + 2 skipped = 5 total.
-	if finalResp.Progress.Completed != 5 {
-		t.Errorf("completed: want 5, got %d", finalResp.Progress.Completed)
+	// 3 completed + 3 skipped = 6 total.
+	if finalResp.Progress.Completed != 6 {
+		t.Errorf("completed: want 6, got %d", finalResp.Progress.Completed)
 	}
 	if finalResp.Current != nil {
 		t.Error("current should be nil after completion")
@@ -237,8 +243,8 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 			completedCount++
 		}
 	}
-	if skippedCount != 2 {
-		t.Errorf("skipped count: want 2, got %d", skippedCount)
+	if skippedCount != 3 {
+		t.Errorf("skipped count: want 3, got %d", skippedCount)
 	}
 	if completedCount != 3 {
 		t.Errorf("completed count: want 3, got %d", completedCount)
@@ -443,9 +449,10 @@ func TestIntegration_BootstrapConductor_StepGuidanceQuality(t *testing.T) {
 		"generate":  "zerops_knowledge",
 		"deploy":    "zerops_deploy",
 		"verify":    "zerops_discover",
+		"strategy":  "zerops_workflow",
 	}
 
-	steps := []string{"discover", "provision", "generate", "deploy", "verify"}
+	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
 
 	// Check first step guidance from start response.
 	statusText := callAndGetText(t, session, "zerops_workflow", map[string]any{

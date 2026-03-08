@@ -83,10 +83,12 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 					fmt.Sprintf("Failed to load core reference: %v", err),
 					"Check that core knowledge files are embedded")), nil, nil
 			}
-			// Prepend platform universals to scope response
+			// Prepend platform universals unless scope was already loaded in this session.
 			result := core
-			if universals, uErr := store.GetUniversals(); uErr == nil {
-				result = universals + "\n\n---\n\n" + core
+			if !isScopeLoaded(engine) {
+				if universals, uErr := store.GetUniversals(); uErr == nil {
+					result = universals + "\n\n---\n\n" + core
+				}
 			}
 			if tracker != nil {
 				tracker.RecordScope()
@@ -107,6 +109,13 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 
 		// Mode 3: Contextual briefing
 		if hasBriefing {
+			briefingKey := buildBriefingKey(input.Runtime, input.Services)
+
+			// Dedup: if same briefing was already loaded, return stub.
+			if currentBriefing := getBriefingFor(engine); currentBriefing == briefingKey {
+				return textResult(fmt.Sprintf("[Briefing for %s already loaded. Use query mode for specific topics.]", briefingKey)), nil, nil
+			}
+
 			var liveTypes []platform.ServiceStackType
 			if client != nil && cache != nil {
 				liveTypes = cache.Get(ctx, client)
@@ -123,14 +132,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			}
 			if engine != nil && engine.HasActiveSession() {
 				_ = engine.UpdateContextDelivery(func(cd *workflow.ContextDelivery) {
-					var parts []string
-					if input.Runtime != "" {
-						parts = append(parts, input.Runtime)
-					}
-					for _, s := range input.Services {
-						parts = append(parts, s)
-					}
-					cd.BriefingFor = strings.Join(parts, "+")
+					cd.BriefingFor = briefingKey
 				})
 			}
 			return textResult(briefing), nil, nil
@@ -152,4 +154,38 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidUsage, "Invalid mode routing", "")), nil, nil
 	})
+}
+
+// isScopeLoaded checks if scope was already delivered in the current session.
+func isScopeLoaded(engine *workflow.Engine) bool {
+	if engine == nil || !engine.HasActiveSession() {
+		return false
+	}
+	state, err := engine.GetState()
+	if err != nil || state.Bootstrap == nil || state.Bootstrap.Context == nil {
+		return false
+	}
+	return state.Bootstrap.Context.ScopeLoaded
+}
+
+// getBriefingFor returns the current BriefingFor key from session state.
+func getBriefingFor(engine *workflow.Engine) string {
+	if engine == nil || !engine.HasActiveSession() {
+		return ""
+	}
+	state, err := engine.GetState()
+	if err != nil || state.Bootstrap == nil || state.Bootstrap.Context == nil {
+		return ""
+	}
+	return state.Bootstrap.Context.BriefingFor
+}
+
+// buildBriefingKey constructs the dedup key from runtime and services.
+func buildBriefingKey(runtime string, services []string) string {
+	var parts []string
+	if runtime != "" {
+		parts = append(parts, runtime)
+	}
+	parts = append(parts, services...)
+	return strings.Join(parts, "+")
 }
