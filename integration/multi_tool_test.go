@@ -337,36 +337,22 @@ func TestIntegration_DiscoverProjectEnvs(t *testing.T) {
 	}
 }
 
-func TestIntegration_DeleteWithConfirmGate(t *testing.T) {
+func TestIntegration_Delete(t *testing.T) {
 	t.Parallel()
 
 	mock := defaultMock()
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())
 	defer cleanup()
 
-	// Step 1: Delete with mismatched confirmHostname — must return error.
-	noConfirmResult := callAndGetResult(t, session, "zerops_delete", map[string]any{
+	// Delete a service — must succeed.
+	result := callAndGetResult(t, session, "zerops_delete", map[string]any{
 		"serviceHostname": "app",
-		"confirmHostname": "wrong",
 	})
-	if !noConfirmResult.IsError {
-		t.Fatal("expected IsError when confirmHostname mismatches")
-	}
-	errText := getTextContent(t, noConfirmResult)
-	if !strings.Contains(errText, "CONFIRM_REQUIRED") {
-		t.Errorf("error should contain CONFIRM_REQUIRED, got: %s", errText)
+	if result.IsError {
+		t.Fatalf("delete returned error: %s", getTextContent(t, result))
 	}
 
-	// Step 2: Delete with matching confirmHostname — must succeed.
-	confirmResult := callAndGetResult(t, session, "zerops_delete", map[string]any{
-		"serviceHostname": "app",
-		"confirmHostname": "app",
-	})
-	if confirmResult.IsError {
-		t.Fatalf("delete with confirm returned error: %s", getTextContent(t, confirmResult))
-	}
-
-	deleteText := getTextContent(t, confirmResult)
+	deleteText := getTextContent(t, result)
 	var proc platform.Process
 	if err := json.Unmarshal([]byte(deleteText), &proc); err != nil {
 		t.Fatalf("parse delete result: %v", err)

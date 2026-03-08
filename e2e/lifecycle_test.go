@@ -246,28 +246,12 @@ func TestE2E_FullLifecycle(t *testing.T) {
 		t.Error("expected non-empty knowledge response")
 	}
 
-	// --- Step 15: zerops_delete without confirm (safety gate) ---
-	step++
-	logStep(t, step, "zerops_delete without confirm")
-	noConfirmResult := s.callTool("zerops_delete", map[string]any{
-		"serviceHostname": rtHostname,
-		"confirm":         false,
-	})
-	if !noConfirmResult.IsError {
-		t.Fatal("expected error when confirm=false")
-	}
-	errText := getE2ETextContent(t, noConfirmResult)
-	if !strings.Contains(errText, "CONFIRM_REQUIRED") {
-		t.Errorf("expected CONFIRM_REQUIRED in error: %s", errText)
-	}
-
-	// --- Step 16: zerops_delete runtime service ---
+	// --- Step 15: zerops_delete runtime service ---
 	// Delete now blocks until process completes — no manual polling needed.
 	step++
-	logStep(t, step, "zerops_delete %s (confirmed)", rtHostname)
+	logStep(t, step, "zerops_delete %s", rtHostname)
 	deleteRtText := s.mustCallSuccess("zerops_delete", map[string]any{
 		"serviceHostname": rtHostname,
-		"confirm":         true,
 	})
 	var deleteRtProc struct {
 		ID     string `json:"id"`
@@ -281,12 +265,11 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	}
 	t.Logf("  Delete process %s completed: %s", deleteRtProc.ID, deleteRtProc.Status)
 
-	// --- Step 17: zerops_delete database service ---
+	// --- Step 16: zerops_delete database service ---
 	step++
-	logStep(t, step, "zerops_delete %s (confirmed)", dbHostname)
+	logStep(t, step, "zerops_delete %s", dbHostname)
 	deleteDbText := s.mustCallSuccess("zerops_delete", map[string]any{
 		"serviceHostname": dbHostname,
-		"confirm":         true,
 	})
 	var deleteDbProc struct {
 		ID     string `json:"id"`
@@ -300,7 +283,7 @@ func TestE2E_FullLifecycle(t *testing.T) {
 	}
 	t.Logf("  Delete process %s completed: %s", deleteDbProc.ID, deleteDbProc.Status)
 
-	// --- Step 18: zerops_discover (verify services deleted) ---
+	// --- Step 17: zerops_discover (verify services deleted) ---
 	step++
 	logStep(t, step, "zerops_discover after deletion")
 	// Allow time for deletion to propagate.

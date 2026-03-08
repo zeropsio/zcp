@@ -220,7 +220,6 @@ http.createServer((req, res) => res.end("ok")).listen(3000);
 	logStep(t, step, "cleaning up %s", appHostname)
 	deleteText := s.mustCallSuccess("zerops_delete", map[string]any{
 		"serviceHostname": appHostname,
-		"confirmHostname": appHostname,
 	})
 	deleteProcID := extractProcessID(t, deleteText)
 	waitForProcess(s, deleteProcID)

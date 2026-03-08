@@ -16,7 +16,6 @@ const (
 	ErrTokenMultiProject      = "TOKEN_MULTI_PROJECT"
 	ErrServiceNotFound        = "SERVICE_NOT_FOUND"
 	ErrServiceRequired        = "SERVICE_REQUIRED"
-	ErrConfirmRequired        = "CONFIRM_REQUIRED"
 	ErrFileNotFound           = "FILE_NOT_FOUND"
 	ErrZeropsYmlNotFound      = "ZEROPS_YML_NOT_FOUND"
 	ErrInvalidZeropsYml       = "INVALID_ZEROPS_YML"

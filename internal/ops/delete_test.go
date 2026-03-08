@@ -17,45 +17,27 @@ func TestDelete(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		mock            *platform.Mock
-		hostname        string
-		confirmHostname string
-		wantErr         string
+		name     string
+		mock     *platform.Mock
+		hostname string
+		wantErr  string
 	}{
 		{
-			name:            "Success",
-			mock:            platform.NewMock().WithServices(services),
-			hostname:        "api",
-			confirmHostname: "api",
+			name:     "Success",
+			mock:     platform.NewMock().WithServices(services),
+			hostname: "api",
 		},
 		{
-			name:            "NoConfirm",
-			mock:            platform.NewMock().WithServices(services),
-			hostname:        "api",
-			confirmHostname: "",
-			wantErr:         platform.ErrConfirmRequired,
+			name:     "ServiceNotFound",
+			mock:     platform.NewMock().WithServices(services),
+			hostname: "missing",
+			wantErr:  platform.ErrServiceNotFound,
 		},
 		{
-			name:            "ConfirmMismatch",
-			mock:            platform.NewMock().WithServices(services),
-			hostname:        "api",
-			confirmHostname: "db",
-			wantErr:         platform.ErrConfirmRequired,
-		},
-		{
-			name:            "ServiceNotFound",
-			mock:            platform.NewMock().WithServices(services),
-			hostname:        "missing",
-			confirmHostname: "missing",
-			wantErr:         platform.ErrServiceNotFound,
-		},
-		{
-			name:            "EmptyHostname",
-			mock:            platform.NewMock().WithServices(services),
-			hostname:        "",
-			confirmHostname: "",
-			wantErr:         platform.ErrServiceRequired,
+			name:     "EmptyHostname",
+			mock:     platform.NewMock().WithServices(services),
+			hostname: "",
+			wantErr:  platform.ErrServiceRequired,
 		},
 		{
 			name: "APIError",
@@ -64,9 +46,8 @@ func TestDelete(t *testing.T) {
 					Code:    platform.ErrAPIError,
 					Message: "delete failed",
 				}),
-			hostname:        "api",
-			confirmHostname: "api",
-			wantErr:         platform.ErrAPIError,
+			hostname: "api",
+			wantErr:  platform.ErrAPIError,
 		},
 	}
 
@@ -74,7 +55,7 @@ func TestDelete(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result, err := Delete(context.Background(), tt.mock, "proj-1", tt.hostname, tt.confirmHostname)
+			result, err := Delete(context.Background(), tt.mock, "proj-1", tt.hostname)
 
 			if tt.wantErr != "" {
 				if err == nil {

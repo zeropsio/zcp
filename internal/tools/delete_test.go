@@ -23,7 +23,7 @@ func TestDeleteTool_Confirmed(t *testing.T) {
 	RegisterDelete(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
-		"serviceHostname": "api", "confirmHostname": "api",
+		"serviceHostname": "api",
 	})
 
 	if result.IsError {
@@ -41,22 +41,6 @@ func TestDeleteTool_Confirmed(t *testing.T) {
 	}
 }
 
-func TestDeleteTool_NotConfirmed(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock()
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "")
-
-	result := callTool(t, srv, "zerops_delete", map[string]any{
-		"serviceHostname": "api", "confirmHostname": "wrong",
-	})
-
-	if !result.IsError {
-		t.Error("expected IsError when confirm=false")
-	}
-}
-
 func TestDeleteTool_EmptyHostname(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
@@ -65,7 +49,7 @@ func TestDeleteTool_EmptyHostname(t *testing.T) {
 	RegisterDelete(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
-		"serviceHostname": "", "confirmHostname": "",
+		"serviceHostname": "",
 	})
 
 	if !result.IsError {
@@ -102,7 +86,7 @@ func TestDeleteTool_CleansUpServiceMeta(t *testing.T) {
 	RegisterDelete(srv, mock, "proj-1", stateDir)
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
-		"serviceHostname": "api", "confirmHostname": "api",
+		"serviceHostname": "api",
 	})
 
 	if result.IsError {
@@ -126,7 +110,7 @@ func TestDeleteTool_NoStateDir_StillSucceeds(t *testing.T) {
 	RegisterDelete(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
-		"serviceHostname": "api", "confirmHostname": "api",
+		"serviceHostname": "api",
 	})
 
 	if result.IsError {
