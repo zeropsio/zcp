@@ -91,7 +91,7 @@ func (s *Server) registerTools() {
 	// Read-only tools
 	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine, s.logFetcher, stateDir)
 	tools.RegisterDiscover(s.server, s.client, projectID)
-	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache, knowledgeTracker)
+	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache, knowledgeTracker, wfEngine)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, projectID)
 	tools.RegisterProcess(s.server, s.client)

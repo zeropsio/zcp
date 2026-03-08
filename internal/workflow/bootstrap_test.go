@@ -454,8 +454,14 @@ func TestBuildResponse_PriorContext_Attestations(t *testing.T) {
 	if len(resp.Current.PriorContext.Attestations) != 2 {
 		t.Errorf("PriorContext.Attestations: want 2 entries, got %d", len(resp.Current.PriorContext.Attestations))
 	}
-	if resp.Current.PriorContext.Attestations["discover"] != attestations["discover"] {
-		t.Errorf("PriorContext.Attestations[discover] mismatch")
+	// N-1 (provision) should have full attestation.
+	if resp.Current.PriorContext.Attestations["provision"] != attestations["provision"] {
+		t.Errorf("PriorContext.Attestations[provision] (N-1) should be full, got: %s", resp.Current.PriorContext.Attestations["provision"])
+	}
+	// N-2 (discover) should be compressed with status bracket.
+	discAtt := resp.Current.PriorContext.Attestations["discover"]
+	if !strings.HasPrefix(discAtt, "[complete:") {
+		t.Errorf("PriorContext.Attestations[discover] (N-2) should be compressed, got: %s", discAtt)
 	}
 }
 
@@ -698,6 +704,144 @@ func TestStepDetails_VerificationHasSuccessCriteria(t *testing.T) {
 			}
 			if !strings.Contains(step.Verification, "NEXT:") {
 				t.Errorf("step %q Verification missing NEXT: directive", step.Name)
+			}
+		})
+	}
+}
+
+// --- Item 22: NewBootstrapState has ContextDelivery ---
+
+func TestNewBootstrapState_HasContextDelivery(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+
+	if bs.Context == nil {
+		t.Fatal("Context should not be nil in new bootstrap state")
+	}
+	if bs.Context.GuideSentFor == nil {
+		t.Fatal("Context.GuideSentFor map should be initialized")
+	}
+	if len(bs.Context.GuideSentFor) != 0 {
+		t.Errorf("Context.GuideSentFor should be empty, got %d entries", len(bs.Context.GuideSentFor))
+	}
+	if bs.Context.ScopeLoaded {
+		t.Error("Context.ScopeLoaded should be false initially")
+	}
+	if bs.Context.BriefingFor != "" {
+		t.Errorf("Context.BriefingFor should be empty, got %q", bs.Context.BriefingFor)
+	}
+	if bs.Context.StacksSentAt != "" {
+		t.Errorf("Context.StacksSentAt should be empty, got %q", bs.Context.StacksSentAt)
+	}
+}
+
+// --- Item 30: buildPriorContext compression ---
+
+func TestBuildPriorContext_CompressesOlderSteps(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	// Complete 3 steps with long attestations.
+	longAttestation := strings.Repeat("a", 100)
+	for i, name := range []string{"discover", "provision", "generate"} {
+		bs.Steps[i].Status = stepComplete
+		bs.Steps[i].Attestation = longAttestation + " " + name
+	}
+	bs.CurrentStep = 3
+	bs.Steps[3].Status = stepInProgress
+
+	ctx := bs.buildPriorContext()
+	if ctx == nil {
+		t.Fatal("buildPriorContext should not be nil with prior attestations")
+	}
+
+	// N-1 (generate, index 2) should be full.
+	genAtt := ctx.Attestations["generate"]
+	if genAtt != longAttestation+" generate" {
+		t.Errorf("N-1 step should have full attestation, got length %d", len(genAtt))
+	}
+
+	// N-2 (discover, index 0) should be truncated with status prefix.
+	discAtt := ctx.Attestations["discover"]
+	if !strings.HasPrefix(discAtt, "[complete:") {
+		t.Errorf("older step should have [status: ...] prefix, got: %s", discAtt)
+	}
+	if len(discAtt) > 100 {
+		t.Errorf("older step should be compressed, got length %d", len(discAtt))
+	}
+	if !strings.HasSuffix(discAtt, "...]") {
+		t.Errorf("truncated attestation should end with ...], got: %s", discAtt)
+	}
+
+	// N-2 (provision, index 1) should also be truncated.
+	provAtt := ctx.Attestations["provision"]
+	if !strings.HasPrefix(provAtt, "[complete:") {
+		t.Errorf("older step should have [status: ...] prefix, got: %s", provAtt)
+	}
+}
+
+func TestBuildPriorContext_ShortAttestationNotTruncated(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	shortAtt := "Short attestation"
+	for i, name := range []string{"discover", "provision", "generate"} {
+		bs.Steps[i].Status = stepComplete
+		bs.Steps[i].Attestation = shortAtt + " " + name
+	}
+	bs.CurrentStep = 3
+	bs.Steps[3].Status = stepInProgress
+
+	ctx := bs.buildPriorContext()
+	if ctx == nil {
+		t.Fatal("buildPriorContext should not be nil")
+	}
+
+	// N-2 steps with short attestations should still be wrapped in status brackets
+	// but NOT truncated with "...".
+	discAtt := ctx.Attestations["discover"]
+	if !strings.HasPrefix(discAtt, "[complete:") {
+		t.Errorf("older step should have [status: ...] prefix, got: %s", discAtt)
+	}
+	if strings.Contains(discAtt, "...") {
+		t.Errorf("short attestation should not be truncated, got: %s", discAtt)
+	}
+}
+
+func TestBuildPriorContext_PlanAlwaysIncluded(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		attestations int // number of completed steps with attestations
+	}{
+		{"with_attestations", 2},
+		{"no_attestations", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			bs := NewBootstrapState()
+			bs.Plan = &ServicePlan{
+				Targets: []BootstrapTarget{
+					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+				},
+			}
+			for i := 0; i < tt.attestations; i++ {
+				bs.Steps[i].Status = stepComplete
+				bs.Steps[i].Attestation = "completed step successfully here"
+			}
+			bs.CurrentStep = tt.attestations
+			if bs.CurrentStep < len(bs.Steps) {
+				bs.Steps[bs.CurrentStep].Status = stepInProgress
+			}
+
+			ctx := bs.buildPriorContext()
+			if ctx == nil {
+				t.Fatal("buildPriorContext should not be nil when plan exists")
+			}
+			if ctx.Plan == nil {
+				t.Fatal("Plan should always be included in PriorContext")
+			}
+			if len(ctx.Plan.Targets) != 1 {
+				t.Errorf("Plan.Targets: want 1, got %d", len(ctx.Plan.Targets))
 			}
 		})
 	}

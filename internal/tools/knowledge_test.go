@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 func testKnowledgeStore(t *testing.T) *knowledge.Store {
@@ -61,7 +62,7 @@ func TestKnowledgeTool_Basic(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{"query": "postgresql"})
 
@@ -83,7 +84,7 @@ func TestKnowledgeTool_WithLimit(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{"query": "zerops", "limit": 1})
 
@@ -105,7 +106,7 @@ func TestKnowledgeTool_EmptyQuery(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{"query": ""})
 
@@ -120,7 +121,7 @@ func TestKnowledgeTool_BriefingMode(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{
 		"runtime":  "php-nginx@8.4",
@@ -148,7 +149,7 @@ func TestKnowledgeTool_RecipeMode(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{"recipe": "ghost"})
 
@@ -166,7 +167,7 @@ func TestKnowledgeTool_ModeMixError(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{
 		"query":   "test",
@@ -182,7 +183,7 @@ func TestKnowledgeTool_NoModeError(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{})
 
@@ -197,7 +198,7 @@ func TestKnowledgeTool_ScopeInfrastructure_ReturnsCore(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{
 		"scope": "infrastructure",
@@ -220,7 +221,7 @@ func TestKnowledgeTool_ScopeInfrastructure_PrependsUniversals(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{
 		"scope": "infrastructure",
@@ -246,7 +247,7 @@ func TestKnowledgeTool_RecipeMode_PrependsUniversals(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{"recipe": "ghost"})
 
@@ -267,7 +268,7 @@ func TestKnowledgeTool_ScopeInvalid_Error(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{
 		"scope": "unknown",
@@ -286,7 +287,7 @@ func TestKnowledgeTool_ScopePlusBriefing_Error(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterKnowledge(srv, store, nil, nil, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{
 		"scope":   "infrastructure",
@@ -296,4 +297,73 @@ func TestKnowledgeTool_ScopePlusBriefing_Error(t *testing.T) {
 	if !result.IsError {
 		t.Error("expected error for mixed scope + briefing modes")
 	}
+}
+
+// --- Item 23: Knowledge tool persistence tests ---
+
+func TestKnowledgeTool_PersistsScope(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+
+	engine := testBootstrapEngine(t)
+	RegisterKnowledge(srv, store, nil, nil, nil, engine)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"scope": "infrastructure",
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	// Verify scope was persisted to session state.
+	state, err := engine.GetState()
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	if state.Bootstrap == nil || state.Bootstrap.Context == nil {
+		t.Fatal("bootstrap context should exist after scope call")
+	}
+	if !state.Bootstrap.Context.ScopeLoaded {
+		t.Error("ScopeLoaded should be true after scope call")
+	}
+}
+
+func TestKnowledgeTool_PersistsBriefing(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+
+	engine := testBootstrapEngine(t)
+	RegisterKnowledge(srv, store, nil, nil, nil, engine)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"runtime":  "php-nginx@8.4",
+		"services": []string{"postgresql@16"},
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	// Verify briefing was persisted to session state.
+	state, err := engine.GetState()
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	if state.Bootstrap == nil || state.Bootstrap.Context == nil {
+		t.Fatal("bootstrap context should exist after briefing call")
+	}
+	if state.Bootstrap.Context.BriefingFor != "php-nginx@8.4+postgresql@16" {
+		t.Errorf("BriefingFor: want %q, got %q", "php-nginx@8.4+postgresql@16", state.Bootstrap.Context.BriefingFor)
+	}
+}
+
+// testBootstrapEngine creates a workflow engine with an active bootstrap session.
+func testBootstrapEngine(t *testing.T) *workflow.Engine {
+	t.Helper()
+	engine := workflow.NewEngine(t.TempDir())
+	if _, err := engine.BootstrapStart("proj-1", "test intent"); err != nil {
+		t.Fatalf("bootstrap start: %v", err)
+	}
+	return engine
 }

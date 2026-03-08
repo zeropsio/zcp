@@ -74,6 +74,14 @@ func IsValidTransition(from, to Phase) bool {
 	return slices.Contains(ValidNextPhase(from), to)
 }
 
+// ContextDelivery tracks what knowledge has been delivered to the LLM.
+type ContextDelivery struct {
+	GuideSentFor map[string]int `json:"guideSentFor,omitempty"`
+	StacksSentAt string         `json:"stacksSentAt,omitempty"`
+	ScopeLoaded  bool           `json:"scopeLoaded,omitempty"`
+	BriefingFor  string         `json:"briefingFor,omitempty"`
+}
+
 // immediateWorkflows are stateless — no session, no phases, just guidance.
 var immediateWorkflows = map[string]bool{
 	"debug": true, "scale": true, "configure": true,

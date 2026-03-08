@@ -46,6 +46,7 @@ type BootstrapState struct {
 	Steps             []BootstrapStep     `json:"steps"`
 	Plan              *ServicePlan        `json:"plan,omitempty"`
 	DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"`
+	Context           *ContextDelivery    `json:"context,omitempty"`
 }
 
 // BootstrapResponse is returned from conductor actions.
@@ -101,6 +102,7 @@ func NewBootstrapState() *BootstrapState {
 		Active:      true,
 		CurrentStep: 0,
 		Steps:       steps,
+		Context:     &ContextDelivery{GuideSentFor: make(map[string]int)},
 	}
 }
 
@@ -231,12 +233,23 @@ func (b *BootstrapState) BuildResponse(sessionID, intent string) *BootstrapRespo
 }
 
 // buildPriorContext collects attestations from completed prior steps and the plan.
+// The most recent prior step (N-1) keeps its full attestation. Older steps are
+// compressed to max 80 chars and wrapped in a status bracket.
 // Returns nil if there is no prior context (first step, no attestations).
 func (b *BootstrapState) buildPriorContext() *StepContext {
 	attestations := make(map[string]string)
 	for i := 0; i < b.CurrentStep && i < len(b.Steps); i++ {
-		if b.Steps[i].Attestation != "" {
+		if b.Steps[i].Attestation == "" {
+			continue
+		}
+		if i == b.CurrentStep-1 {
 			attestations[b.Steps[i].Name] = b.Steps[i].Attestation
+		} else {
+			att := b.Steps[i].Attestation
+			if len(att) > 80 {
+				att = att[:77] + "..."
+			}
+			attestations[b.Steps[i].Name] = fmt.Sprintf("[%s: %s]", b.Steps[i].Status, att)
 		}
 	}
 
