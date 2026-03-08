@@ -110,7 +110,7 @@ If the project has dev+stage service pairs (e.g., `appdev` + `appstage`), follow
 5. **Deploy to stage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes source from dev container, zerops runs the `setup: appstage` build pipeline for production output
 6. **Verify stage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
 
-This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation.
+This is the default flow for projects bootstrapped with the standard dev+stage pattern. Dev is for iterating and fixing. Stage is for final validation. For first-time bootstrap, the stage entry is generated after dev is verified — see bootstrap workflow.
 
 **Health checks apply to stage only.** The stage zerops.yml entry should include `run.healthCheck` (continuous liveness monitoring) and optionally `deploy.readinessCheck` (deployment-time traffic gating). Dev entries must NOT have health checks — dev uses `start: zsc noop --silent` and the agent starts/stops the server manually via SSH. A healthCheck on dev would cause Zerops to restart the container whenever the agent stops the server for iteration. Exception: implicit-webserver runtimes (php-nginx, php-apache, nginx, static) CAN use healthCheck on dev — the web server auto-starts, no manual lifecycle needed.
 

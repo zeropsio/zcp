@@ -49,16 +49,15 @@ NON_CONFORMANT: ASK user before any changes.`,
 		Category: CategoryCreative,
 		Guidance: `Write zerops.yml and application code to mounted dev filesystem.
 PREREQUISITES: dev services mounted, env vars discovered from provision step.
-1. Write zerops.yml with setup entries for BOTH dev and stage hostnames
+1. Write zerops.yml with dev setup entry (stage entry comes after dev is verified)
 2. Dev: deployFiles: [.], start: zsc noop --silent (or omit for implicit webserver)
-3. Stage: real build commands, compiled start command
-4. envVariables: ONLY use variables discovered in provision step
-5. Write application code with GET /, GET /health, GET /status endpoints
-6. Quick-test via SSH before proceeding to deploy
+3. envVariables: ONLY use variables discovered in provision step
+4. Write application code with GET /, GET /health, GET /status endpoints
+5. Quick-test via SSH before proceeding to deploy
 
 Skip if no runtime services exist (managed-only project).`,
 		Tools:        []string{"zerops_knowledge"},
-		Verification: "SUCCESS WHEN: zerops.yml exists with setup entries for all planned hostnames AND env var references match discovered variables AND app code exposes /health and /status endpoints. NEXT: proceed to deploy step.",
+		Verification: "SUCCESS WHEN: zerops.yml exists with dev setup entry AND env var references match discovered variables AND app code exposes /health and /status endpoints. NEXT: proceed to deploy step.",
 		Skippable:    true,
 	},
 	{
@@ -73,9 +72,10 @@ For EACH runtime service pair (dev + stage):
 1. Deploy dev: zerops_deploy targetService="{devHostname}"
 2. Start dev server via SSH (deploy killed it — kill-then-start pattern)
 3. Verify dev: zerops_subdomain action="enable", zerops_verify
-4. Deploy stage: zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"
-5. Enable subdomain for stage, zerops_verify
-6. Connect shared-storage if applicable
+4. Generate stage entry in zerops.yml (now you know what works from dev)
+5. Deploy stage: zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"
+6. Enable subdomain for stage, zerops_verify
+7. Connect shared-storage if applicable
 
 Iteration loop (max 3 per service): fail -> fix -> redeploy -> start server -> re-verify.
 Skip if no runtime services exist.`,
