@@ -24,7 +24,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name for static guidance: bootstrap, deploy, debug, scale, or configure."`
 
 	// Multi-action fields.
-	Action         string                     `json:"action,omitempty"         jsonschema:"Orchestration action: start, complete, skip, status, transition, evidence, reset, or iterate."`
+	Action         string                     `json:"action,omitempty"         jsonschema:"Orchestration action: start, complete, skip, status, transition, evidence, reset, iterate, or resume."`
 	Phase          string                     `json:"phase,omitempty"          jsonschema:"Target phase for transition action: DISCOVER, DEVELOP, DEPLOY, VERIFY, or DONE."`
 	Intent         string                     `json:"intent,omitempty"         jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Type           string                     `json:"type,omitempty"           jsonschema:"Evidence type for evidence action: recipe_review, discovery, dev_verify, deploy_evidence, or stage_verify."`
@@ -36,6 +36,7 @@ type WorkflowInput struct {
 	Passed         *int                       `json:"passed,omitempty"         jsonschema:"Number of passed verifications (evidence action). Defaults to 1."`
 	Failed         *int                       `json:"failed,omitempty"         jsonschema:"Number of failed verifications (evidence action). Defaults to 0."`
 	ServiceResults []workflow.ServiceResult   `json:"serviceResults,omitempty" jsonschema:"Per-service verification results (evidence action)."`
+	SessionID      string                     `json:"sessionId,omitempty"      jsonschema:"Session ID for resume action."`
 }
 
 // startResponse wraps WorkflowState with workflow guidance for non-bootstrap orchestrated start.
@@ -53,10 +54,10 @@ type immediateResponse struct {
 }
 
 // RegisterWorkflow registers the zerops_workflow tool.
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, logFetcher platform.LogFetcher) {
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"transition|evidence|reset|iterate|list\" (phase management).",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"transition|evidence|reset|iterate|resume|list\" (phase management).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -66,7 +67,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, cache, logFetcher, input)
+			return handleWorkflowAction(ctx, projectID, engine, client, cache, logFetcher, input, stateDir)
 		}
 
 		// Legacy: static workflow guidance.
@@ -93,7 +94,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, logFetcher platform.LogFetcher, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir string) (*mcp.CallToolResult, any, error) {
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -117,18 +118,20 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if cache != nil && client != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
-		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID)
+		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir)
 	case "skip":
 		return handleBootstrapSkip(ctx, engine, client, cache, input)
 	case "status":
 		return handleBootstrapStatus(ctx, engine, client, cache)
+	case "resume":
+		return handleResume(engine, input)
 	case "list":
 		return handleListSessions(engine)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, skip, status, transition, evidence, reset, iterate, list")), nil, nil
+			"Valid actions: start, complete, skip, status, transition, evidence, reset, iterate, resume, list")), nil, nil
 	}
 }
 
@@ -286,6 +289,23 @@ func handleIterate(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Iterate failed: %v", err),
 			"Start a session first")), nil, nil
+	}
+	return jsonResult(state), nil, nil
+}
+
+func handleResume(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	if input.SessionID == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"sessionId is required for resume action",
+			"Specify the session ID to resume")), nil, nil
+	}
+	state, err := engine.Resume(input.SessionID)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrSessionNotFound,
+			fmt.Sprintf("Resume failed: %v", err),
+			"Session may not exist or may still be active")), nil, nil
 	}
 	return jsonResult(state), nil, nil
 }

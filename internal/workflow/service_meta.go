@@ -17,12 +17,21 @@ const (
 	DecisionDeployStrategy = "deployStrategy"
 )
 
+// MetaStatus constants track service lifecycle during bootstrap.
+const (
+	MetaStatusPlanned      = "planned"
+	MetaStatusProvisioned  = "provisioned"
+	MetaStatusDeployed     = "deployed"
+	MetaStatusBootstrapped = "bootstrapped"
+)
+
 // ServiceMeta records decisions made during bootstrap for a service.
 // These are historical records, NOT state — the API is the source of truth.
 type ServiceMeta struct {
 	Hostname         string            `json:"hostname"`
 	Type             string            `json:"type"`
 	Mode             string            `json:"mode,omitempty"`
+	Status           string            `json:"status,omitempty"`
 	StageHostname    string            `json:"stageHostname,omitempty"`
 	Dependencies     []string          `json:"dependencies,omitempty"`
 	BootstrapSession string            `json:"bootstrapSession"`
@@ -69,6 +78,10 @@ func ReadServiceMeta(baseDir, hostname string) (*ServiceMeta, error) {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, fmt.Errorf("unmarshal service meta: %w", err)
 	}
+	// Backward compat: empty status means bootstrapped (pre-existing file).
+	if meta.Status == "" {
+		meta.Status = MetaStatusBootstrapped
+	}
 	return &meta, nil
 }
 
@@ -96,6 +109,10 @@ func ListServiceMetas(baseDir string) ([]*ServiceMeta, error) {
 		var meta ServiceMeta
 		if unmarshalErr := json.Unmarshal(data, &meta); unmarshalErr != nil {
 			return nil, fmt.Errorf("unmarshal service meta %s: %w", entry.Name(), unmarshalErr)
+		}
+		// Backward compat: empty status means bootstrapped (pre-existing file).
+		if meta.Status == "" {
+			meta.Status = MetaStatusBootstrapped
 		}
 		metas = append(metas, &meta)
 	}

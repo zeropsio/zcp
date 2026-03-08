@@ -38,7 +38,7 @@ func setupWorkflowServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession,
 	stateDir := t.TempDir()
 	engine := workflow.NewEngine(stateDir)
 
-	tools.RegisterWorkflow(mcpSrv, mock, "proj-1", nil, engine, nil)
+	tools.RegisterWorkflow(mcpSrv, mock, "proj-1", nil, engine, nil, "")
 	tools.RegisterDiscover(mcpSrv, mock, "proj-1")
 	tools.RegisterKnowledge(mcpSrv, store, mock, nil, nil)
 

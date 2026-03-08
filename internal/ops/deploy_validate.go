@@ -15,15 +15,9 @@ import (
 func ValidateZeropsYml(workingDir, targetHostname string) []string {
 	var warnings []string
 
-	ymlPath := filepath.Join(workingDir, "zerops.yml")
-	data, err := os.ReadFile(ymlPath)
+	doc, err := ParseZeropsYml(workingDir)
 	if err != nil {
-		return []string{fmt.Sprintf("zerops.yml not found at %s", ymlPath)}
-	}
-
-	var doc zeropsYmlDoc
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return []string{fmt.Sprintf("zerops.yml invalid YAML: %v", err)}
+		return []string{err.Error()}
 	}
 
 	if len(doc.Zerops) == 0 {
@@ -31,13 +25,7 @@ func ValidateZeropsYml(workingDir, targetHostname string) []string {
 	}
 
 	// Find matching setup entry.
-	var entry *zeropsYmlEntry
-	for i := range doc.Zerops {
-		if doc.Zerops[i].Setup == targetHostname {
-			entry = &doc.Zerops[i]
-			break
-		}
-	}
+	entry := doc.FindEntry(targetHostname)
 	if entry == nil {
 		warnings = append(warnings, fmt.Sprintf("no setup entry for hostname %q in zerops.yml", targetHostname))
 		return warnings
@@ -85,16 +73,53 @@ func ValidateZeropsYml(workingDir, targetHostname string) []string {
 	return warnings
 }
 
-// zeropsYmlDoc is the top-level zerops.yml structure (minimal for validation).
-type zeropsYmlDoc struct {
-	Zerops []zeropsYmlEntry `yaml:"zerops"`
+// ZeropsYmlDoc is the top-level zerops.yml structure (minimal for validation).
+type ZeropsYmlDoc struct {
+	Zerops []ZeropsYmlEntry `yaml:"zerops"`
 }
 
-type zeropsYmlEntry struct {
-	Setup  string          `yaml:"setup"`
-	Build  zeropsYmlBuild  `yaml:"build"`
-	Deploy zeropsYmlDeploy `yaml:"deploy"`
-	Run    zeropsYmlRun    `yaml:"run"`
+// ZeropsYmlEntry represents a single setup entry in zerops.yml.
+type ZeropsYmlEntry struct {
+	Setup        string            `yaml:"setup"`
+	Build        zeropsYmlBuild    `yaml:"build"`
+	Deploy       zeropsYmlDeploy   `yaml:"deploy"`
+	Run          zeropsYmlRun      `yaml:"run"`
+	EnvVariables map[string]string `yaml:"envVariables"`
+}
+
+// HasPorts returns true if the entry has at least one run.ports entry.
+func (e ZeropsYmlEntry) HasPorts() bool {
+	return len(e.Run.Ports) > 0 || hasImplicitWebServer(e.Run.Base, e.Build.baseStrings())
+}
+
+// HasDeployFiles returns true if the entry has non-empty build.deployFiles.
+func (e ZeropsYmlEntry) HasDeployFiles() bool {
+	return len(e.Build.deployFilesList()) > 0
+}
+
+// ParseZeropsYml reads and parses zerops.yml from workingDir.
+// Returns the parsed document or an error if the file is missing or invalid.
+func ParseZeropsYml(workingDir string) (*ZeropsYmlDoc, error) {
+	ymlPath := filepath.Join(workingDir, "zerops.yml")
+	data, err := os.ReadFile(ymlPath)
+	if err != nil {
+		return nil, fmt.Errorf("zerops.yml not found at %s", ymlPath)
+	}
+	var doc ZeropsYmlDoc
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("zerops.yml invalid YAML: %w", err)
+	}
+	return &doc, nil
+}
+
+// FindEntry returns the entry matching hostname, or nil if not found.
+func (d *ZeropsYmlDoc) FindEntry(hostname string) *ZeropsYmlEntry {
+	for i := range d.Zerops {
+		if d.Zerops[i].Setup == hostname {
+			return &d.Zerops[i]
+		}
+	}
+	return nil
 }
 
 type zeropsYmlDeploy struct {

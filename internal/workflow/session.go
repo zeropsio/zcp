@@ -173,6 +173,92 @@ func cleanupLegacyState(stateDir string) {
 	_ = os.Remove(path)
 }
 
+// InitSessionAtomic creates a new workflow session atomically within a single
+// registry lock scope. It prunes dead sessions, checks bootstrap exclusivity
+// (if workflowName == "bootstrap"), creates the session state file, and
+// appends the registry entry — all in one lock acquisition.
+func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*WorkflowState, error) {
+	cleanupLegacyState(stateDir)
+
+	sessionID, err := generateSessionID()
+	if err != nil {
+		return nil, fmt.Errorf("init session atomic: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	state := &WorkflowState{
+		Version:   stateVersion,
+		SessionID: sessionID,
+		PID:       os.Getpid(),
+		ProjectID: projectID,
+		Workflow:  workflowName,
+		Phase:     PhaseInit,
+		Iteration: 0,
+		Intent:    intent,
+		CreatedAt: now,
+		UpdatedAt: now,
+		History:   []PhaseTransition{},
+	}
+
+	err = withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
+		// Prune dead sessions.
+		reg.Sessions = pruneDeadSessions(reg.Sessions)
+
+		// Check bootstrap exclusivity.
+		if workflowName == "bootstrap" {
+			for _, s := range reg.Sessions {
+				if s.Workflow == "bootstrap" {
+					return reg, fmt.Errorf("init session atomic: bootstrap already active (session %s, PID %d)", s.SessionID, s.PID)
+				}
+			}
+		}
+
+		// Write state file while holding the lock.
+		if err := saveSessionState(stateDir, sessionID, state); err != nil {
+			return reg, err
+		}
+
+		// Append to registry directly (no separate RegisterSession call).
+		reg.Sessions = append(reg.Sessions, SessionEntry{
+			SessionID: sessionID,
+			PID:       os.Getpid(),
+			Workflow:  workflowName,
+			ProjectID: projectID,
+			Phase:     PhaseInit,
+			Intent:    intent,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+
+		return reg, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return state, nil
+}
+
+// saveStateAndUpdateRegistry atomically writes the session state file and
+// updates the registry entry phase within a single lock scope.
+func saveStateAndUpdateRegistry(stateDir, sessionID string, state *WorkflowState, phase Phase) error {
+	return withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
+		if err := saveSessionState(stateDir, sessionID, state); err != nil {
+			return reg, err
+		}
+
+		now := time.Now().UTC().Format(time.RFC3339)
+		for i := range reg.Sessions {
+			if reg.Sessions[i].SessionID == sessionID {
+				reg.Sessions[i].Phase = phase
+				reg.Sessions[i].UpdatedAt = now
+				break
+			}
+		}
+		return reg, nil
+	})
+}
+
 // generateSessionID creates a random session ID.
 func generateSessionID() (string, error) {
 	b := make([]byte, 8)

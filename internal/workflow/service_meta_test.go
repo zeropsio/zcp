@@ -342,3 +342,149 @@ func TestDeleteServiceMeta_NoServicesDir_NoError(t *testing.T) {
 		t.Fatalf("DeleteServiceMeta should be idempotent, got: %v", err)
 	}
 }
+
+func TestMetaStatusConstants(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		constant string
+		want     string
+	}{
+		{"MetaStatusPlanned", MetaStatusPlanned, "planned"},
+		{"MetaStatusProvisioned", MetaStatusProvisioned, "provisioned"},
+		{"MetaStatusDeployed", MetaStatusDeployed, "deployed"},
+		{"MetaStatusBootstrapped", MetaStatusBootstrapped, "bootstrapped"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.constant != tt.want {
+				t.Errorf("%s: want %q, got %q", tt.name, tt.want, tt.constant)
+			}
+		})
+	}
+}
+
+func TestReadServiceMeta_BackwardCompat_EmptyStatus(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Write a meta WITHOUT a Status field (simulating pre-existing file).
+	meta := &ServiceMeta{
+		Hostname:         "appdev",
+		Type:             "nodejs@22",
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	got, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil meta")
+	}
+	if got.Status != MetaStatusBootstrapped {
+		t.Errorf("Status: want %q for backward compat, got %q", MetaStatusBootstrapped, got.Status)
+	}
+}
+
+func TestReadServiceMeta_WithStatus_Preserved(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{"planned", MetaStatusPlanned},
+		{"provisioned", MetaStatusProvisioned},
+		{"deployed", MetaStatusDeployed},
+		{"bootstrapped", MetaStatusBootstrapped},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+
+			meta := &ServiceMeta{
+				Hostname:         "svc",
+				Type:             "nodejs@22",
+				Status:           tt.status,
+				BootstrapSession: "sess1",
+				BootstrappedAt:   "2026-03-04T12:00:00Z",
+			}
+			if err := WriteServiceMeta(dir, meta); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+
+			got, err := ReadServiceMeta(dir, "svc")
+			if err != nil {
+				t.Fatalf("ReadServiceMeta: %v", err)
+			}
+			if got.Status != tt.status {
+				t.Errorf("Status: want %q, got %q", tt.status, got.Status)
+			}
+		})
+	}
+}
+
+func TestListServiceMetas_BackwardCompat_EmptyStatus(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Write a meta without Status (pre-existing).
+	meta := &ServiceMeta{
+		Hostname:         "oldservice",
+		Type:             "go@1",
+		BootstrapSession: "old-sess",
+		BootstrappedAt:   "2026-01-01",
+	}
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	got, err := ListServiceMetas(dir)
+	if err != nil {
+		t.Fatalf("ListServiceMetas: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 meta, got %d", len(got))
+	}
+	if got[0].Status != MetaStatusBootstrapped {
+		t.Errorf("Status: want %q for backward compat, got %q", MetaStatusBootstrapped, got[0].Status)
+	}
+}
+
+func TestServiceMeta_StatusInJSON(t *testing.T) {
+	t.Parallel()
+
+	meta := &ServiceMeta{
+		Hostname:         "appdev",
+		Type:             "nodejs@22",
+		Status:           MetaStatusPlanned,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	data, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	status, ok := raw["status"]
+	if !ok {
+		t.Fatal("status field should be present in JSON when set")
+	}
+	if status != MetaStatusPlanned {
+		t.Errorf("status: want %q, got %v", MetaStatusPlanned, status)
+	}
+}

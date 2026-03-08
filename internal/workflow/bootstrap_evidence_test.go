@@ -276,3 +276,183 @@ func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
 		}
 	})
 }
+
+func TestWriteBootstrapOutputs_SetsBootstrappedStatus(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	_, err := eng.BootstrapStart("proj-1", "app + db")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Dependencies: []Dependency{
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	for _, step := range []string{"provision", "generate", "deploy", "verify"} {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
+
+	// After full bootstrap, both metas should have Status=bootstrapped.
+	appMeta, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(appdev): %v", err)
+	}
+	if appMeta == nil {
+		t.Fatal("expected appdev meta")
+	}
+	if appMeta.Status != MetaStatusBootstrapped {
+		t.Errorf("appdev Status: want %q, got %q", MetaStatusBootstrapped, appMeta.Status)
+	}
+
+	dbMeta, err := ReadServiceMeta(dir, "db")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(db): %v", err)
+	}
+	if dbMeta == nil {
+		t.Fatal("expected db meta")
+	}
+	if dbMeta.Status != MetaStatusBootstrapped {
+		t.Errorf("db Status: want %q, got %q", MetaStatusBootstrapped, dbMeta.Status)
+	}
+}
+
+func TestWriteServiceMetas_PlannedStatus(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	_, err := eng.BootstrapStart("proj-1", "app + db")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Dependencies: []Dependency{
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	// After plan completion, metas should exist with Status=planned.
+	appMeta, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(appdev): %v", err)
+	}
+	if appMeta == nil {
+		t.Fatal("expected appdev meta after plan")
+	}
+	if appMeta.Status != MetaStatusPlanned {
+		t.Errorf("appdev Status: want %q, got %q", MetaStatusPlanned, appMeta.Status)
+	}
+
+	dbMeta, err := ReadServiceMeta(dir, "db")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(db): %v", err)
+	}
+	if dbMeta == nil {
+		t.Fatal("expected db meta after plan")
+	}
+	if dbMeta.Status != MetaStatusPlanned {
+		t.Errorf("db Status: want %q, got %q", MetaStatusPlanned, dbMeta.Status)
+	}
+}
+
+func TestWriteServiceMetas_ProvisionedStatus(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	_, err := eng.BootstrapStart("proj-1", "app + db")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Dependencies: []Dependency{
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	// Complete provision step.
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Provisioned ok", nil); err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
+	}
+
+	// After provision, metas should have Status=provisioned.
+	appMeta, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(appdev): %v", err)
+	}
+	if appMeta == nil {
+		t.Fatal("expected appdev meta after provision")
+	}
+	if appMeta.Status != MetaStatusProvisioned {
+		t.Errorf("appdev Status: want %q, got %q", MetaStatusProvisioned, appMeta.Status)
+	}
+}
+
+func TestWriteServiceMetas_SkipsExistingDeps(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	// Pre-write a meta for an existing dependency.
+	existingMeta := &ServiceMeta{
+		Hostname:         "db",
+		Type:             "postgresql@16",
+		Status:           MetaStatusBootstrapped,
+		BootstrapSession: "old-session",
+		BootstrappedAt:   "2026-01-01",
+	}
+	if err := WriteServiceMeta(dir, existingMeta); err != nil {
+		t.Fatalf("pre-write meta: %v", err)
+	}
+
+	_, err := eng.BootstrapStart("proj-1", "app + existing db")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Dependencies: []Dependency{
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "EXISTS"},
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	// The EXISTS dep should NOT be overwritten.
+	dbMeta, err := ReadServiceMeta(dir, "db")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(db): %v", err)
+	}
+	if dbMeta == nil {
+		t.Fatal("expected db meta to exist")
+	}
+	if dbMeta.BootstrapSession != "old-session" {
+		t.Errorf("EXISTS dep should preserve original session, got %q", dbMeta.BootstrapSession)
+	}
+	if dbMeta.Status != MetaStatusBootstrapped {
+		t.Errorf("EXISTS dep should preserve original status, got %q", dbMeta.Status)
+	}
+}

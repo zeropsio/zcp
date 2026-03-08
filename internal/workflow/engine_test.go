@@ -4,6 +4,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -1123,7 +1124,7 @@ func TestEngine_BootstrapComplete_WithChecker_Pass(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	checker := func(_ context.Context, _ *ServicePlan) (*StepCheckResult, error) {
+	checker := func(_ context.Context, _ *ServicePlan, _ *BootstrapState) (*StepCheckResult, error) {
 		return &StepCheckResult{
 			Passed:  true,
 			Summary: "all good",
@@ -1152,7 +1153,7 @@ func TestEngine_BootstrapComplete_WithChecker_Fail(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	checker := func(_ context.Context, _ *ServicePlan) (*StepCheckResult, error) {
+	checker := func(_ context.Context, _ *ServicePlan, _ *BootstrapState) (*StepCheckResult, error) {
 		return &StepCheckResult{
 			Passed:  false,
 			Summary: "service missing",
@@ -1280,7 +1281,7 @@ func TestEngine_BootstrapComplete_CheckerError(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	checker := func(_ context.Context, _ *ServicePlan) (*StepCheckResult, error) {
+	checker := func(_ context.Context, _ *ServicePlan, _ *BootstrapState) (*StepCheckResult, error) {
 		return nil, fmt.Errorf("API unreachable")
 	}
 
@@ -1288,4 +1289,218 @@ func TestEngine_BootstrapComplete_CheckerError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from checker")
 	}
+}
+
+// --- Item 16: TOCTOU fix via InitSessionAtomic ---
+
+func TestInitSessionAtomic_BootstrapExclusivity(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		firstWf     string
+		secondWf    string
+		expectErr   bool
+		errContains string
+	}{
+		{
+			"second_bootstrap_blocked",
+			"bootstrap", "bootstrap",
+			true, "bootstrap already active",
+		},
+		{
+			"deploy_after_bootstrap_ok",
+			"bootstrap", "deploy",
+			false, "",
+		},
+		{
+			"two_deploys_ok",
+			"deploy", "deploy",
+			false, "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+
+			// First session via InitSessionAtomic.
+			_, err := InitSessionAtomic(dir, "proj-1", tt.firstWf, "first")
+			if err != nil {
+				t.Fatalf("first InitSessionAtomic: %v", err)
+			}
+
+			// Second session.
+			_, err = InitSessionAtomic(dir, "proj-1", tt.secondWf, "second")
+			if tt.expectErr {
+				if err == nil {
+					t.Fatal("expected error for second session")
+				}
+				if !contains(err.Error(), tt.errContains) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// --- Item 17: Two-write consistency via saveStateAndUpdateRegistry ---
+
+func TestSaveStateAndUpdateRegistry_Atomic(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		phase Phase
+	}{
+		{"to_discover", PhaseDiscover},
+		{"to_develop", PhaseDevelop},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+
+			state, err := InitSessionAtomic(dir, "proj-1", "deploy", "test")
+			if err != nil {
+				t.Fatalf("InitSessionAtomic: %v", err)
+			}
+			state.Phase = tt.phase
+
+			if err := saveStateAndUpdateRegistry(dir, state.SessionID, state, tt.phase); err != nil {
+				t.Fatalf("saveStateAndUpdateRegistry: %v", err)
+			}
+
+			// Verify state file has correct phase.
+			loaded, err := LoadSessionByID(dir, state.SessionID)
+			if err != nil {
+				t.Fatalf("LoadSessionByID: %v", err)
+			}
+			if loaded.Phase != tt.phase {
+				t.Errorf("state phase: want %s, got %s", tt.phase, loaded.Phase)
+			}
+
+			// Verify registry has correct phase.
+			sessions, err := ListSessions(dir)
+			if err != nil {
+				t.Fatalf("ListSessions: %v", err)
+			}
+			found := false
+			for _, s := range sessions {
+				if s.SessionID == state.SessionID {
+					found = true
+					if s.Phase != tt.phase {
+						t.Errorf("registry phase: want %s, got %s", tt.phase, s.Phase)
+					}
+				}
+			}
+			if !found {
+				t.Error("session not found in registry")
+			}
+		})
+	}
+}
+
+// --- Item 18: Session Resume ---
+
+func TestEngine_Resume_DeadSession(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Create a session with a dead PID by writing state directly.
+	sessionID := "dead-session-001"
+	state := &WorkflowState{
+		Version:   stateVersion,
+		SessionID: sessionID,
+		PID:       9999999, // Dead PID.
+		ProjectID: "proj-1",
+		Workflow:  "deploy",
+		Phase:     PhaseDevelop,
+		Iteration: 2,
+		Intent:    "deploy app",
+		CreatedAt: "2026-03-01T00:00:00Z",
+		UpdatedAt: "2026-03-01T01:00:00Z",
+		History:   []PhaseTransition{},
+	}
+	if err := saveSessionState(dir, sessionID, state); err != nil {
+		t.Fatalf("saveSessionState: %v", err)
+	}
+	entry := SessionEntry{
+		SessionID: sessionID,
+		PID:       9999999,
+		Workflow:  "deploy",
+		ProjectID: "proj-1",
+		Phase:     PhaseDevelop,
+		CreatedAt: "2026-03-01T00:00:00Z",
+		UpdatedAt: "2026-03-01T01:00:00Z",
+	}
+	if err := RegisterSession(dir, entry); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	eng := NewEngine(dir)
+	resumed, err := eng.Resume(sessionID)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if resumed.SessionID != sessionID {
+		t.Errorf("SessionID: want %s, got %s", sessionID, resumed.SessionID)
+	}
+	if resumed.Phase != PhaseDevelop {
+		t.Errorf("Phase: want DEVELOP, got %s", resumed.Phase)
+	}
+	if resumed.Iteration != 2 {
+		t.Errorf("Iteration: want 2, got %d", resumed.Iteration)
+	}
+	if eng.SessionID() != sessionID {
+		t.Errorf("engine SessionID: want %s, got %s", sessionID, eng.SessionID())
+	}
+	// PID should be updated to current process.
+	reloaded, err := LoadSessionByID(dir, sessionID)
+	if err != nil {
+		t.Fatalf("LoadSessionByID: %v", err)
+	}
+	if reloaded.PID != currentPID() {
+		t.Errorf("PID: want %d, got %d", currentPID(), reloaded.PID)
+	}
+}
+
+func TestEngine_Resume_AliveSession(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng1 := NewEngine(dir)
+
+	// Create an active session (current PID = alive).
+	state, err := eng1.Start("proj-1", "deploy", "test")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Try to resume from another engine — should fail because PID is alive.
+	eng2 := NewEngine(dir)
+	_, err = eng2.Resume(state.SessionID)
+	if err == nil {
+		t.Fatal("expected error resuming alive session")
+	}
+	if !contains(err.Error(), "still active") {
+		t.Errorf("error should mention 'still active', got: %s", err.Error())
+	}
+}
+
+func TestEngine_Resume_NotFound(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	_, err := eng.Resume("nonexistent-session")
+	if err == nil {
+		t.Fatal("expected error resuming non-existent session")
+	}
+}
+
+// currentPID is a test helper.
+func currentPID() int {
+	return os.Getpid()
 }

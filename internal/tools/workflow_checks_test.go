@@ -27,7 +27,7 @@ func TestCheckProvision_AllServicesExist_Pass(t *testing.T) {
 	}
 
 	checker := checkProvision(mock, "proj-1", nil)
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestCheckProvision_ActiveStatus_Pass(t *testing.T) {
 	}
 
 	checker := checkProvision(mock, "proj-1", nil)
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestCheckProvision_MissingService_Fail(t *testing.T) {
 	}
 
 	checker := checkProvision(mock, "proj-1", nil)
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestCheckProvision_NoEnvVars_Fail(t *testing.T) {
 	}
 
 	checker := checkProvision(mock, "proj-1", nil)
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestCheckProvision_SharedStorage_SkipEnvCheck(t *testing.T) {
 	}
 
 	checker := checkProvision(mock, "proj-1", nil)
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -178,20 +178,12 @@ func TestCheckProvision_ObjectStorage_SkipEnvCheck(t *testing.T) {
 	}
 
 	checker := checkProvision(mock, "proj-1", nil)
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
 	if !result.Passed {
 		t.Errorf("expected pass (object-storage should skip env check): %s", result.Summary)
-	}
-}
-
-func TestCheckGenerate_ReturnsNil(t *testing.T) {
-	t.Parallel()
-	checker := checkGenerate()
-	if checker != nil {
-		t.Error("checkGenerate should return nil (skip)")
 	}
 }
 
@@ -209,7 +201,7 @@ func TestCheckDeploy_AllActive_Pass(t *testing.T) {
 	}
 
 	checker := checkDeploy(mock, "proj-1")
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -234,7 +226,7 @@ func TestCheckDeploy_BuildFailed_Fail(t *testing.T) {
 	}
 
 	checker := checkDeploy(mock, "proj-1")
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -256,7 +248,7 @@ func TestCheckDeploy_SubdomainNotEnabled_Fail(t *testing.T) {
 	}
 
 	checker := checkDeploy(mock, "proj-1")
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -285,7 +277,7 @@ func TestCheckVerify_AllHealthy_Pass(t *testing.T) {
 	}
 
 	checker := checkVerify(mock, logFetcher, "proj-1", nil)
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -323,7 +315,7 @@ func TestCheckVerify_PreExistingUnhealthy_Ignored(t *testing.T) {
 	}
 
 	checker := checkVerify(mock, logFetcher, "proj-1", nil)
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -356,7 +348,7 @@ func TestCheckVerify_TargetUnhealthy_Fail(t *testing.T) {
 	}
 
 	checker := checkVerify(mock, logFetcher, "proj-1", nil)
-	result, err := checker(context.Background(), plan)
+	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
@@ -369,7 +361,7 @@ func TestCheckProvision_NilPlan_ReturnsNil(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
 	checker := checkProvision(mock, "proj-1", nil)
-	result, err := checker(context.Background(), nil)
+	result, err := checker(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -387,7 +379,7 @@ func TestCheckProvision_APIError_ReturnsError(t *testing.T) {
 		}},
 	}
 	checker := checkProvision(mock, "proj-1", nil)
-	_, err := checker(context.Background(), plan)
+	_, err := checker(context.Background(), plan, nil)
 	if err == nil {
 		t.Fatal("expected error from API failure")
 	}
@@ -395,7 +387,7 @@ func TestCheckProvision_APIError_ReturnsError(t *testing.T) {
 
 func TestBuildStepChecker_UnknownStep_ReturnsNil(t *testing.T) {
 	t.Parallel()
-	checker := buildStepChecker("discover", nil, nil, "", nil, nil)
+	checker := buildStepChecker("discover", nil, nil, "", nil, nil, "")
 	if checker != nil {
 		t.Error("expected nil checker for unknown step 'discover'")
 	}
@@ -408,7 +400,7 @@ func TestBuildStepChecker_KnownSteps(t *testing.T) {
 		wantNil bool
 	}{
 		{"provision", false},
-		{"generate", true},
+		{"generate", false},
 		{"deploy", false},
 		{"verify", false},
 		{"discover", true},
@@ -418,7 +410,7 @@ func TestBuildStepChecker_KnownSteps(t *testing.T) {
 		t.Run(tt.step, func(t *testing.T) {
 			t.Parallel()
 			mock := platform.NewMock()
-			checker := buildStepChecker(tt.step, mock, nil, "proj-1", nil, nil)
+			checker := buildStepChecker(tt.step, mock, nil, "proj-1", nil, nil, t.TempDir())
 			if tt.wantNil && checker != nil {
 				t.Errorf("expected nil checker for step %q", tt.step)
 			}
@@ -467,7 +459,7 @@ func TestCheckProvision_StoresDiscoveredEnvVars(t *testing.T) {
 	}
 
 	checker := checkProvision(mock, "proj-1", eng)
-	result, err := checker(context.Background(), state.Bootstrap.Plan)
+	result, err := checker(context.Background(), state.Bootstrap.Plan, state.Bootstrap)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}

@@ -19,7 +19,7 @@ import (
 func TestWorkflowTool_NoParams_ReturnsError(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "", nil, nil, nil)
+	RegisterWorkflow(srv, nil, "", nil, nil, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", nil)
 
@@ -35,7 +35,7 @@ func TestWorkflowTool_NoParams_ReturnsError(t *testing.T) {
 func TestWorkflowTool_Specific(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "", nil, nil, nil)
+	RegisterWorkflow(srv, nil, "", nil, nil, nil, "")
 
 	// "bootstrap" is one of the known workflows.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "bootstrap"})
@@ -52,7 +52,7 @@ func TestWorkflowTool_Specific(t *testing.T) {
 func TestWorkflowTool_NotFound(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "", nil, nil, nil)
+	RegisterWorkflow(srv, nil, "", nil, nil, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "nonexistent_workflow"})
 
@@ -82,7 +82,7 @@ func TestWorkflowTool_Bootstrap_IncludesStacks(t *testing.T) {
 	cache := ops.NewStackTypeCache(1 * time.Hour)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, "proj1", cache, nil, nil)
+	RegisterWorkflow(srv, mock, "proj1", cache, nil, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "bootstrap"})
 
@@ -98,7 +98,7 @@ func TestWorkflowTool_Bootstrap_IncludesStacks(t *testing.T) {
 func TestWorkflowTool_Bootstrap_NoCache(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "", nil, nil, nil)
+	RegisterWorkflow(srv, nil, "", nil, nil, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "bootstrap"})
 
@@ -126,7 +126,7 @@ func TestWorkflowTool_Scale_NoStacks(t *testing.T) {
 	cache := ops.NewStackTypeCache(1 * time.Hour)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, "proj1", cache, nil, nil)
+	RegisterWorkflow(srv, mock, "proj1", cache, nil, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "scale"})
 
@@ -144,7 +144,7 @@ func TestWorkflowTool_Scale_NoStacks(t *testing.T) {
 func TestWorkflowTool_Action_NoEngine(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "", nil, nil, nil)
+	RegisterWorkflow(srv, nil, "", nil, nil, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "start"})
 
@@ -157,7 +157,7 @@ func TestWorkflowTool_Action_UnknownAction(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "invalid"})
 
@@ -170,7 +170,7 @@ func TestWorkflowTool_Action_Start_Orchestrated(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -198,7 +198,7 @@ func TestWorkflowTool_Action_Start_Deploy_ReturnsGuidance(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -234,7 +234,7 @@ func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 			t.Parallel()
 			engine := workflow.NewEngine(t.TempDir())
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+			RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 			result := callTool(t, srv, "zerops_workflow", map[string]any{
 				"action":   "start",
@@ -263,7 +263,7 @@ func TestWorkflowTool_Action_Start_ImmediateNoSession(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start an immediate workflow — should NOT create a session.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
@@ -284,7 +284,7 @@ func TestWorkflowTool_Action_Start_AutoResetDone(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start and complete a bootstrap to get to DONE.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -315,7 +315,7 @@ func TestWorkflowTool_Action_Evidence(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start session first.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -343,7 +343,7 @@ func TestWorkflowTool_Action_Evidence_MissingFields(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Missing type.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
@@ -366,7 +366,7 @@ func TestWorkflowTool_Action_TransitionWithGate(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start session.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -404,7 +404,7 @@ func TestWorkflowTool_Action_Reset(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start and reset.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -426,7 +426,7 @@ func TestWorkflowTool_Action_Transition_MissingPhase(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "transition"})
 
@@ -439,7 +439,7 @@ func TestWorkflowTool_Action_ShowRemoved(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "show"})
 
@@ -454,7 +454,7 @@ func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -482,7 +482,7 @@ func TestWorkflowTool_Action_BootstrapComplete(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -513,7 +513,7 @@ func TestWorkflowTool_Action_BootstrapComplete_MissingFields(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Missing step.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
@@ -540,7 +540,7 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start and advance to generate.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -578,7 +578,7 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -605,7 +605,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_Structured(t *testin
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -643,7 +643,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_InvalidPlan(t *testi
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -691,7 +691,7 @@ func TestWorkflow_BootstrapStart_IncludesStacks(t *testing.T) {
 	cache := ops.NewStackTypeCache(1 * time.Hour)
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil)
+	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -722,7 +722,7 @@ func TestWorkflow_BootstrapStart_NoCache_OmitsStacks(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -757,7 +757,7 @@ func TestWorkflow_BootstrapComplete_IncludesStacks(t *testing.T) {
 	cache := ops.NewStackTypeCache(1 * time.Hour)
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil)
+	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil, "")
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -801,7 +801,7 @@ func TestWorkflow_BootstrapStatus_IncludesStacks(t *testing.T) {
 	cache := ops.NewStackTypeCache(1 * time.Hour)
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil)
+	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil, "")
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -827,11 +827,67 @@ func TestWorkflow_BootstrapStatus_IncludesStacks(t *testing.T) {
 	}
 }
 
+func TestWorkflowTool_Action_Resume(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
+
+	// Start a deploy session and get its ID.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "deploy",
+		"intent":   "deploy app",
+	})
+	if result.IsError {
+		t.Fatalf("start failed: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp startResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	sessionID := resp.SessionID
+
+	// Reset the engine (simulating process death — session still exists in registry).
+	engine.Reset()
+
+	// Resume the session.
+	result = callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":    "resume",
+		"sessionId": sessionID,
+	})
+	// The session was owned by current PID and reset clears the registry entry,
+	// so this won't find a session to resume. Test the error path.
+	if !result.IsError {
+		// If it succeeds, that's also fine — verify the response.
+		text = getTextContent(t, result)
+		if !strings.Contains(text, sessionID) {
+			t.Errorf("expected session ID in response, got: %s", text)
+		}
+	}
+}
+
+func TestWorkflowTool_Action_Resume_MissingSessionID(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "resume",
+	})
+	if !result.IsError {
+		t.Error("expected error for resume without sessionId")
+	}
+}
+
 func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_FallbackAttestation(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{

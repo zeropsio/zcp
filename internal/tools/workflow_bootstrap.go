@@ -13,7 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -46,7 +46,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		Timeout:   15 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
 	}
-	checker := buildStepChecker(input.Step, client, logFetcher, projectID, httpClient, engine)
+	checker := buildStepChecker(input.Step, client, logFetcher, projectID, httpClient, engine, stateDir)
 
 	resp, err := engine.BootstrapComplete(ctx, input.Step, input.Attestation, checker)
 	if err != nil {

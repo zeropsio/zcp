@@ -117,6 +117,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 				Hostname:         dep.Hostname,
 				Type:             dep.Type,
 				Mode:             dep.Mode,
+				Status:           MetaStatusBootstrapped,
 				BootstrapSession: state.SessionID,
 				BootstrappedAt:   now,
 			}
@@ -128,6 +129,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 		meta := &ServiceMeta{
 			Hostname:         target.Runtime.DevHostname,
 			Type:             target.Runtime.Type,
+			Status:           MetaStatusBootstrapped,
 			StageHostname:    target.Runtime.StageHostname(),
 			Dependencies:     depHostnames,
 			BootstrapSession: state.SessionID,
@@ -149,5 +151,43 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 
 	if err := AppendReflogEntry(claudeMDPath, state.Intent, plan.Targets, state.SessionID, now); err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: append reflog: %v\n", err)
+	}
+}
+
+// writeServiceMetas writes ServiceMeta files for all plan targets with the given status.
+// EXISTS/SHARED dependencies are skipped to avoid overwriting pre-existing metas.
+// Errors are logged but do not fail the operation.
+func (e *Engine) writeServiceMetas(state *WorkflowState, status string) {
+	if state.Bootstrap == nil || state.Bootstrap.Plan == nil {
+		return
+	}
+
+	for _, target := range state.Bootstrap.Plan.Targets {
+		meta := &ServiceMeta{
+			Hostname:         target.Runtime.DevHostname,
+			Type:             target.Runtime.Type,
+			Status:           status,
+			StageHostname:    target.Runtime.StageHostname(),
+			BootstrapSession: state.SessionID,
+		}
+		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", target.Runtime.DevHostname, err)
+		}
+
+		for _, dep := range target.Dependencies {
+			if dep.Resolution == "EXISTS" || dep.Resolution == "SHARED" {
+				continue
+			}
+			depMeta := &ServiceMeta{
+				Hostname:         dep.Hostname,
+				Type:             dep.Type,
+				Mode:             dep.Mode,
+				Status:           status,
+				BootstrapSession: state.SessionID,
+			}
+			if err := WriteServiceMeta(e.stateDir, depMeta); err != nil {
+				fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", dep.Hostname, err)
+			}
+		}
 	}
 }

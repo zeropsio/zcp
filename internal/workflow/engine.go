@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,7 +19,6 @@ type Engine struct {
 }
 
 // NewEngine creates a new workflow engine rooted at baseDir.
-// State: baseDir/sessions/{id}.json, Evidence: baseDir/evidence/
 func NewEngine(baseDir string) *Engine {
 	return &Engine{
 		stateDir:    baseDir,
@@ -26,11 +26,8 @@ func NewEngine(baseDir string) *Engine {
 	}
 }
 
-// Start creates a new workflow session.
-// Auto-resets any DONE session owned by this engine, checks bootstrap exclusivity,
-// refreshes the registry, and initializes a new session.
+// Start creates a new workflow session with auto-reset, exclusivity, and registry refresh.
 func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, error) {
-	// Auto-reset this engine's DONE session.
 	if e.sessionID != "" {
 		if existing, err := LoadSessionByID(e.stateDir, e.sessionID); err == nil {
 			if existing.Phase == PhaseDone {
@@ -44,25 +41,7 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 		}
 	}
 
-	// Refresh registry to prune dead sessions.
-	if err := RefreshRegistry(e.stateDir); err != nil {
-		return nil, fmt.Errorf("start refresh: %w", err)
-	}
-
-	// Bootstrap exclusivity: only one active bootstrap at a time.
-	if workflowName == "bootstrap" {
-		sessions, err := ListSessions(e.stateDir)
-		if err != nil {
-			return nil, fmt.Errorf("start list: %w", err)
-		}
-		for _, s := range sessions {
-			if s.Workflow == "bootstrap" {
-				return nil, fmt.Errorf("start: bootstrap already active (session %s, PID %d)", s.SessionID, s.PID)
-			}
-		}
-	}
-
-	state, err := InitSession(e.stateDir, projectID, workflowName, intent)
+	state, err := InitSessionAtomic(e.stateDir, projectID, workflowName, intent)
 	if err != nil {
 		return nil, fmt.Errorf("start: %w", err)
 	}
@@ -70,7 +49,7 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 	return state, nil
 }
 
-// Transition moves the workflow to the next phase, checking gates.
+// Transition moves the workflow to the next phase.
 func (e *Engine) Transition(phase Phase) (*WorkflowState, error) {
 	state, err := e.loadState()
 	if err != nil {
@@ -98,11 +77,8 @@ func (e *Engine) Transition(phase Phase) (*WorkflowState, error) {
 	state.Phase = phase
 	state.UpdatedAt = now
 
-	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
-		return nil, err
-	}
-	if err := UpdateRegistryEntry(e.stateDir, e.sessionID, phase); err != nil {
-		return nil, fmt.Errorf("transition registry update: %w", err)
+	if err := saveStateAndUpdateRegistry(e.stateDir, e.sessionID, state, phase); err != nil {
+		return nil, fmt.Errorf("transition: %w", err)
 	}
 	return state, nil
 }
@@ -176,7 +152,7 @@ func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, e
 	return bs.BuildResponse(state.SessionID, intent), nil
 }
 
-// BootstrapComplete completes the current step and returns the next.
+// BootstrapComplete completes the current step and advances to the next.
 func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attestation string, checker StepChecker) (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
@@ -187,7 +163,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 	}
 
 	if checker != nil {
-		result, checkErr := checker(ctx, state.Bootstrap.Plan)
+		result, checkErr := checker(ctx, state.Bootstrap.Plan, state.Bootstrap)
 		if checkErr != nil {
 			return nil, fmt.Errorf("step check: %w", checkErr)
 		}
@@ -207,8 +183,12 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 		state.Bootstrap.Steps[state.Bootstrap.CurrentStep].Status = stepInProgress
 	}
 
-	// Capture sessionID before auto-complete (which may clear e.sessionID).
-	sessionID := e.sessionID
+	// Write incremental service metas after provision step.
+	if stepName == StepProvision {
+		e.writeServiceMetas(state, MetaStatusProvisioned)
+	}
+
+	sessionID := e.sessionID // capture before auto-complete may clear it
 
 	if !state.Bootstrap.Active {
 		if err := e.autoCompleteBootstrap(state); err != nil {
@@ -223,7 +203,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
 }
 
-// BootstrapCompletePlan validates a structured plan, completes the "plan" step, and stores the plan.
+// BootstrapCompletePlan validates a structured plan, completes the "plan" step, and stores it.
 func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []platform.ServiceStackType, liveServices []platform.ServiceStack) (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
@@ -280,6 +260,10 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan save: %w", err)
 	}
+
+	// Write incremental service metas with planned status.
+	e.writeServiceMetas(state, MetaStatusPlanned)
+
 	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
 }
 
@@ -308,7 +292,7 @@ func (e *Engine) BootstrapSkip(stepName, reason string) (*BootstrapResponse, err
 	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
 }
 
-// StoreDiscoveredEnvVars saves discovered environment variable names for a service hostname.
+// StoreDiscoveredEnvVars saves discovered env var names for a service hostname.
 func (e *Engine) StoreDiscoveredEnvVars(hostname string, vars []string) error {
 	state, err := e.loadState()
 	if err != nil {
@@ -326,7 +310,7 @@ func (e *Engine) StoreDiscoveredEnvVars(hostname string, vars []string) error {
 	return saveSessionState(e.stateDir, e.sessionID, state)
 }
 
-// BootstrapStatus returns the current bootstrap progress (read-only).
+// BootstrapStatus returns the current bootstrap progress.
 func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
@@ -336,6 +320,25 @@ func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 		return nil, fmt.Errorf("bootstrap status: no bootstrap state")
 	}
 	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent), nil
+}
+
+// Resume takes over an abandoned session (dead PID) by updating PID to current process.
+func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
+	state, err := LoadSessionByID(e.stateDir, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
+	if isProcessAlive(state.PID) {
+		return nil, fmt.Errorf("resume: session %s still active (PID %d)", sessionID, state.PID)
+	}
+
+	state.PID = os.Getpid()
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveStateAndUpdateRegistry(e.stateDir, sessionID, state, state.Phase); err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
+	e.sessionID = sessionID
+	return state, nil
 }
 
 // loadState loads state for the current session.

@@ -115,7 +115,7 @@ func setupRealisticServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession
 	engine := workflow.NewEngine(t.TempDir())
 	logFetcher := defaultLogFetcher()
 
-	tools.RegisterWorkflow(mcpSrv, mock, projectID, nil, engine, nil)
+	tools.RegisterWorkflow(mcpSrv, mock, projectID, nil, engine, nil, "")
 	tools.RegisterDiscover(mcpSrv, mock, projectID)
 	tools.RegisterKnowledge(mcpSrv, store, mock, nil, nil)
 	tools.RegisterImport(mcpSrv, mock, projectID, nil, engine)

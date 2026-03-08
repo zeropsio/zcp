@@ -20,12 +20,12 @@ const (
 	statusPass    = "pass"
 )
 
-func buildStepChecker(step string, client platform.Client, fetcher platform.LogFetcher, projectID string, httpClient ops.HTTPDoer, engine *workflow.Engine) workflow.StepChecker {
+func buildStepChecker(step string, client platform.Client, fetcher platform.LogFetcher, projectID string, httpClient ops.HTTPDoer, engine *workflow.Engine, stateDir string) workflow.StepChecker {
 	switch step {
 	case stepProvision:
 		return checkProvision(client, projectID, engine)
 	case stepGenerate:
-		return checkGenerate()
+		return checkGenerate(stateDir)
 	case stepDeploy:
 		return checkDeploy(client, projectID)
 	case stepVerify:
@@ -35,7 +35,7 @@ func buildStepChecker(step string, client platform.Client, fetcher platform.LogF
 }
 
 func checkProvision(client platform.Client, projectID string, engine *workflow.Engine) workflow.StepChecker {
-	return func(ctx context.Context, plan *workflow.ServicePlan) (*workflow.StepCheckResult, error) {
+	return func(ctx context.Context, plan *workflow.ServicePlan, _ *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
 		}
@@ -124,15 +124,8 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 	}
 }
 
-// checkGenerate returns nil — the generate step is creative (LLM writes code).
-// The MCP server is STDIO with no filesystem access, so it cannot validate
-// zerops.yml structure or env var references. Validation happens at deploy time.
-func checkGenerate() workflow.StepChecker {
-	return nil
-}
-
 func checkDeploy(client platform.Client, projectID string) workflow.StepChecker {
-	return func(ctx context.Context, plan *workflow.ServicePlan) (*workflow.StepCheckResult, error) {
+	return func(ctx context.Context, plan *workflow.ServicePlan, _ *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
 		}
@@ -197,7 +190,7 @@ func checkDeploy(client platform.Client, projectID string) workflow.StepChecker 
 }
 
 func checkVerify(client platform.Client, fetcher platform.LogFetcher, projectID string, httpClient ops.HTTPDoer) workflow.StepChecker {
-	return func(ctx context.Context, plan *workflow.ServicePlan) (*workflow.StepCheckResult, error) {
+	return func(ctx context.Context, plan *workflow.ServicePlan, _ *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
 		}
