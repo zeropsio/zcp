@@ -2,6 +2,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -629,5 +630,75 @@ func TestBuildResponse_PlanMode(t *testing.T) {
 	resp = bs.BuildResponse("sess1", "test")
 	if resp.Current.PlanMode != "standard" {
 		t.Errorf("planMode after plan: want standard, got %q", resp.Current.PlanMode)
+	}
+}
+
+func TestBootstrapStepInfo_GuidanceExcludedFromJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		info BootstrapStepInfo
+	}{
+		{
+			name: "guidance populated in Go but excluded from JSON",
+			info: BootstrapStepInfo{
+				Name:     "discover",
+				Category: "fixed",
+				Guidance: "Run zerops_discover to inspect the project state.",
+				Tools:    []string{"zerops_discover"},
+			},
+		},
+		{
+			name: "full response via BuildResponse",
+			info: func() BootstrapStepInfo {
+				bs := NewBootstrapState()
+				bs.Steps[0].Status = stepInProgress
+				resp := bs.BuildResponse("sess-json", "test")
+				return *resp.Current
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Guidance must be populated in Go struct.
+			if tt.info.Guidance == "" {
+				t.Fatal("precondition: Guidance should be non-empty in Go struct")
+			}
+
+			// Marshal to JSON and verify Guidance is absent.
+			data, err := json.Marshal(tt.info)
+			if err != nil {
+				t.Fatalf("json.Marshal: %v", err)
+			}
+
+			var m map[string]interface{}
+			if err := json.Unmarshal(data, &m); err != nil {
+				t.Fatalf("json.Unmarshal: %v", err)
+			}
+
+			if _, exists := m["guidance"]; exists {
+				t.Errorf("guidance field should not appear in JSON output, got: %s", string(data))
+			}
+		})
+	}
+}
+
+func TestStepDetails_VerificationHasSuccessCriteria(t *testing.T) {
+	t.Parallel()
+
+	for _, step := range stepDetails {
+		t.Run(step.Name, func(t *testing.T) {
+			t.Parallel()
+			if !strings.Contains(step.Verification, "SUCCESS WHEN:") {
+				t.Errorf("step %q Verification missing SUCCESS WHEN: criteria", step.Name)
+			}
+			if !strings.Contains(step.Verification, "NEXT:") {
+				t.Errorf("step %q Verification missing NEXT: directive", step.Name)
+			}
+		})
 	}
 }

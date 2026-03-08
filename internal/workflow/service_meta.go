@@ -9,6 +9,14 @@ import (
 	"path/filepath"
 )
 
+// Strategy constants for deploy decisions.
+const (
+	StrategyPushDev        = "push-dev"
+	StrategyCICD           = "ci-cd"
+	StrategyManual         = "manual"
+	DecisionDeployStrategy = "deployStrategy"
+)
+
 // ServiceMeta records decisions made during bootstrap for a service.
 // These are historical records, NOT state — the API is the source of truth.
 type ServiceMeta struct {
@@ -16,7 +24,6 @@ type ServiceMeta struct {
 	Type             string            `json:"type"`
 	Mode             string            `json:"mode,omitempty"`
 	StageHostname    string            `json:"stageHostname,omitempty"`
-	DeployFlow       string            `json:"deployFlow,omitempty"`
 	Dependencies     []string          `json:"dependencies,omitempty"`
 	BootstrapSession string            `json:"bootstrapSession"`
 	BootstrappedAt   string            `json:"bootstrappedAt"`
@@ -63,4 +70,44 @@ func ReadServiceMeta(baseDir, hostname string) (*ServiceMeta, error) {
 		return nil, fmt.Errorf("unmarshal service meta: %w", err)
 	}
 	return &meta, nil
+}
+
+// ListServiceMetas reads all service metadata files from baseDir/services/.
+// Returns an empty slice if the directory does not exist or is empty.
+func ListServiceMetas(baseDir string) ([]*ServiceMeta, error) {
+	dir := filepath.Join(baseDir, "services")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list services dir: %w", err)
+	}
+
+	var metas []*ServiceMeta
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, readErr := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if readErr != nil {
+			return nil, fmt.Errorf("read service meta %s: %w", entry.Name(), readErr)
+		}
+		var meta ServiceMeta
+		if unmarshalErr := json.Unmarshal(data, &meta); unmarshalErr != nil {
+			return nil, fmt.Errorf("unmarshal service meta %s: %w", entry.Name(), unmarshalErr)
+		}
+		metas = append(metas, &meta)
+	}
+	return metas, nil
+}
+
+// DeleteServiceMeta removes the service metadata file for the given hostname.
+// Returns nil if the file does not exist (idempotent).
+func DeleteServiceMeta(baseDir, hostname string) error {
+	path := filepath.Join(baseDir, "services", hostname+".json")
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("delete service meta: %w", err)
+	}
+	return nil
 }

@@ -323,8 +323,8 @@ func injectStacks(content, stackList string) string {
 		}
 	}
 
-	// Fallback: insert before "## Phase 1"
-	const anchor = "## Phase 1"
+	// Fallback: insert before "## Part 1"
+	const anchor = "## Part 1"
 	if idx := strings.Index(content, anchor); idx > 0 {
 		return content[:idx] + stackList + "\n---\n\n" + content[idx:]
 	}

@@ -6,6 +6,8 @@
 
 # Zerops Core Reference
 
+> Prerequisite: Zerops Platform Universals (delivered separately). This reference extends those fundamentals with detailed schemas, rules, and examples.
+
 ## TL;DR
 Complete reference for Zerops YAML generation: platform model, schemas, and rules. Everything needed to produce correct import.yml and zerops.yml for any stack.
 
@@ -43,8 +45,6 @@ Upgrading from Lightweight to Serious costs $10 one-time, is irreversible, and c
 These are separate concerns. `import.yml` creates infrastructure. `zerops.yml` defines what happens when code is pushed. A service can exist (imported) without any code deployed yet.
 
 ## Build/Deploy Lifecycle
-
-Build and Run are **SEPARATE containers** with **separate base images**.
 
 ```
 Source Code
@@ -86,8 +86,6 @@ Internet -> L7 Load Balancer (SSL termination) -> container VXLAN IP:port -> app
 ```
 
 - **L7 LB terminates SSL/TLS** -- all internal traffic is plain HTTP
-- Apps **MUST bind `0.0.0.0`** -- binding localhost/127.0.0.1 -> 502 Bad Gateway (LB routes to VXLAN IP)
-- Internal service-to-service: always `http://hostname:port` -- NEVER `https://`
 - Valid port range: **10-65435** (80/443 reserved by Zerops for SSL termination; exception: PHP uses port 80)
 - Cloudflare SSL must be **Full (strict)** -- "Flexible" causes infinite redirect loops
 
@@ -232,15 +230,11 @@ zerops[]:
 ## Rules & Pitfalls
 
 ### Networking
-- **ALWAYS** bind `0.0.0.0` (all interfaces). REASON: L7 LB routes to VXLAN IP, not localhost. Binding 127.0.0.1 -> 502 Bad Gateway
-- **ALWAYS** use `http://` for internal service-to-service communication. REASON: SSL terminates at the LB; internal traffic is plain HTTP over VXLAN
 - **NEVER** listen on port 443 or 80 (exception: PHP uses 80). REASON: Zerops reserves 80/443 for SSL termination. Use 3000, 8080, etc.
 - **ALWAYS** use port range 10-65435. REASON: ports outside this range are reserved by the platform
-- **NEVER** use `https://` for internal service URLs. REASON: no TLS certificates exist on internal network; connection will fail
 - **ALWAYS** set Cloudflare SSL to "Full (strict)" when using Cloudflare proxy. REASON: "Flexible" causes infinite redirect loops
 
 ### Build & Deploy
-- **ALWAYS** specify `deployFiles` in zerops.yml. REASON: nothing auto-deploys; build artifacts don't transfer to run container without explicit specification
 - **ALWAYS** include `node_modules` in `deployFiles` for Node.js apps (unless bundled). REASON: runtime container doesn't run `npm install`
 - **ALWAYS** deploy fat/uber JARs for Java. REASON: build and run are separate containers; thin JARs lose their dependencies
 - **ALWAYS** use Maven/Gradle wrapper (`./mvnw`, `./gradlew`) or install build tools via `prepareCommands`. REASON: build container has JDK only -- Maven, Gradle are NOT pre-installed

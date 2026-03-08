@@ -105,6 +105,22 @@ func TestIsImmediateWorkflow(t *testing.T) {
 	}
 }
 
+func TestStateUnknown_IsValidProjectState(t *testing.T) {
+	t.Parallel()
+	if StateUnknown != ProjectState("UNKNOWN") {
+		t.Errorf("StateUnknown: want UNKNOWN, got %s", StateUnknown)
+	}
+	// Verify it's distinct from the other states.
+	states := []ProjectState{StateFresh, StateConformant, StateNonConformant, StateUnknown}
+	seen := make(map[ProjectState]bool, len(states))
+	for _, s := range states {
+		if seen[s] {
+			t.Errorf("duplicate ProjectState: %s", s)
+		}
+		seen[s] = true
+	}
+}
+
 // assertPhaseSlice compares two phase slices for equality.
 func assertPhaseSlice(t *testing.T, want, got []Phase) {
 	t.Helper()

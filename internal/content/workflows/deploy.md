@@ -11,7 +11,7 @@ Two concerns: ensure zerops.yml is correct for the runtime (hard), then deploy a
 
 ---
 
-## Phase 1: Configuration Check
+## Part 1: Configuration Check
 
 ### Step 1 — Discover target service
 
@@ -24,17 +24,17 @@ Note the service type (nodejs@22, go@1, etc.) and status.
 - **READY_TO_DEPLOY** → first deploy. zerops.yml may need creation.
 
 **Route based on result:**
-- **RUNNING + zerops.yml exists + no changes** → Skip to Phase 2 (re-deploy)
+- **RUNNING + zerops.yml exists + no changes** → Skip to Part 2 (re-deploy)
 - **RUNNING + no zerops.yml or needs changes** → Continue to Step 3
 - **READY_TO_DEPLOY** → First deploy, continue to Step 2
 - **Service not found** → Wrong hostname or not created. Use bootstrap workflow.
-- **Dev+stage pair detected** → Follow dev-first flow in Phase 2
+- **Dev+stage pair detected** → Follow dev-first flow in Part 2
 
 ### Step 2 — Check zerops.yml
 
 Does a `zerops.yml` exist in the user's project with a `setup: {hostname}` entry?
 
-- **YES and user is re-deploying** → skip to Phase 2.
+- **YES and user is re-deploying** → skip to Part 2.
 - **NO or user wants to create/fix it** → continue to Step 3.
 
 ### Step 3 — Load contextual knowledge for the runtime
@@ -92,7 +92,7 @@ Before deploying, ensure these requirements are met:
 
 ---
 
-## Phase 2: Deploy and Monitor
+## Part 2: Deploy and Monitor
 
 ### zerops_deploy blocks until completion
 
@@ -212,3 +212,31 @@ with last 50 lines of build pipeline output. Check for wrong buildCommands, miss
 
 Report: status (pass/fail) + which checks passed/failed + subdomain URL (from enable response).
 ```
+
+<section name="deploy-push-dev">
+### Push-Dev Deploy Strategy
+
+For services bootstrapped with dev+stage pattern using SSH push deployment.
+Follow the dev+stage pattern in Part 2 above.
+Key commands: zerops_deploy targetService="{devHostname}" (self-deploy),
+zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" (cross-deploy).
+</section>
+
+<section name="deploy-ci-cd">
+### CI/CD Deploy Strategy
+
+For services connected to a Git repository with automated deployments.
+After connecting the repository via Zerops dashboard:
+1. Push code to the connected branch
+2. Zerops automatically triggers build pipeline
+3. Monitor via zerops_process or zerops_events
+4. Verify via zerops_verify after deploy completes
+</section>
+
+<section name="deploy-manual">
+### Manual Deploy Strategy
+
+For services managed via manual zerops_deploy calls without dev+stage pattern.
+Direct deploy: zerops_deploy targetService="{hostname}"
+Suitable for services where the user manages their own deployment workflow.
+</section>

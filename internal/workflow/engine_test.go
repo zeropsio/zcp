@@ -1200,6 +1200,77 @@ func TestEngine_BootstrapComplete_NilChecker(t *testing.T) {
 	}
 }
 
+func TestEngine_Iterate_MaxLimit(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Iterate 10 times (default max) — all should succeed.
+	for i := range 10 {
+		state, err := eng.Iterate()
+		if err != nil {
+			t.Fatalf("Iterate %d: %v", i+1, err)
+		}
+		if state.Iteration != i+1 {
+			t.Errorf("Iteration %d: want %d, got %d", i+1, i+1, state.Iteration)
+		}
+	}
+
+	// 11th iteration should fail with "max iterations" error.
+	_, err := eng.Iterate()
+	if err == nil {
+		t.Fatal("expected error on 11th iteration")
+	}
+	if got := err.Error(); !contains(got, "max iterations") {
+		t.Errorf("error should mention 'max iterations', got: %s", got)
+	}
+}
+
+func TestEngine_Iterate_EnvOverride(t *testing.T) {
+	t.Setenv("ZCP_MAX_ITERATIONS", "2")
+
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Iterate twice — should succeed.
+	for i := range 2 {
+		if _, err := eng.Iterate(); err != nil {
+			t.Fatalf("Iterate %d: %v", i+1, err)
+		}
+	}
+
+	// Third iteration should fail.
+	_, err := eng.Iterate()
+	if err == nil {
+		t.Fatal("expected error on 3rd iteration with max=2")
+	}
+	if got := err.Error(); !contains(got, "max iterations") {
+		t.Errorf("error should mention 'max iterations', got: %s", got)
+	}
+}
+
+// contains is a test helper for substring matching.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchSubstring(s, substr)
+}
+
+func searchSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 func TestEngine_BootstrapComplete_CheckerError(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

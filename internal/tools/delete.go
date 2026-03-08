@@ -2,10 +2,13 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // DeleteInput is the input type for zerops_delete.
@@ -15,7 +18,8 @@ type DeleteInput struct {
 }
 
 // RegisterDelete registers the zerops_delete tool.
-func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string) {
+// stateDir is the workflow state directory; empty string disables service meta cleanup.
+func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_delete",
 		Description: "Delete a service. Requires confirm=true. This is destructive and permanent. " +
@@ -33,6 +37,14 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string) {
 		}
 		onProgress := buildProgressCallback(ctx, req)
 		finalProc, _ := pollManageProcess(ctx, client, proc, onProgress)
+
+		// Best-effort: clean up service meta after successful delete+poll.
+		if stateDir != "" && finalProc.Status == "FINISHED" {
+			if delErr := workflow.DeleteServiceMeta(stateDir, input.ServiceHostname); delErr != nil {
+				fmt.Fprintf(os.Stderr, "zcp: delete service meta %s: %v\n", input.ServiceHostname, delErr)
+			}
+		}
+
 		return jsonResult(finalProc), nil, nil
 	})
 }

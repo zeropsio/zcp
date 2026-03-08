@@ -23,6 +23,7 @@ const (
 	StateFresh         ProjectState = "FRESH"
 	StateNonConformant ProjectState = "NON_CONFORMANT"
 	StateConformant    ProjectState = "CONFORMANT"
+	StateUnknown       ProjectState = "UNKNOWN"
 )
 
 // WorkflowState is the persistent state stored at .zcp/state/sessions/{sessionID}.json.

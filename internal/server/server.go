@@ -76,9 +76,12 @@ func (s *Server) registerTools() {
 	stackCache := ops.NewStackTypeCache(ops.DefaultStackTypeCacheTTL)
 
 	// Workflow engine: state at .zcp/state/ relative to working directory.
-	var wfEngine *workflow.Engine
+	var (
+		wfEngine *workflow.Engine
+		stateDir string
+	)
 	if cwd, err := os.Getwd(); err == nil {
-		stateDir := filepath.Join(cwd, ".zcp", "state")
+		stateDir = filepath.Join(cwd, ".zcp", "state")
 		wfEngine = workflow.NewEngine(stateDir)
 	}
 
@@ -102,7 +105,7 @@ func (s *Server) registerTools() {
 	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID)
 	tools.RegisterImport(s.server, s.client, projectID, stackCache, wfEngine)
-	tools.RegisterDelete(s.server, s.client, projectID)
+	tools.RegisterDelete(s.server, s.client, projectID, stateDir)
 	tools.RegisterSubdomain(s.server, s.client, projectID)
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter)
 }

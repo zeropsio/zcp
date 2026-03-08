@@ -177,7 +177,7 @@ envVariables:
   DATABASE_URL: ${db_connectionString}
   REDIS_HOST: ${cache_host}
   REDIS_PORT: ${cache_port}
-  # Do NOT add variables that don't exist (e.g., cache_password for Valkey)
+  # Map ONLY variables listed in the discovery response
 ```
 
 **ONLY use variables that were actually discovered.** Guessing variable names causes runtime failures. If a variable doesn't appear in discovery, it doesn't exist.
@@ -257,7 +257,7 @@ The top-level `"status": "ok"` is ALWAYS required — with or without connection
 - **Shared Storage**: Check mount path exists and is writable
 - **No managed services**: Return `{"service": "{hostname}", "status": "ok"}`
 
-**Do NOT generate hello-world apps that skip service connectivity.** The whole point of bootstrap is proving the infrastructure works end-to-end.
+Generate apps with a `/status` endpoint that proves real managed service connectivity. The whole point of bootstrap is proving the infrastructure works end-to-end.
 
 #### Env var injection — how variables reach your app
 
@@ -273,7 +273,7 @@ envVariables:
   DATABASE_URL: ${db_connectionString}
   REDIS_HOST: ${cache_host}
   REDIS_PORT: ${cache_port}
-  # Do NOT add variables that don't exist
+  # Map ONLY variables listed in the discovery response
 ```
 
 **MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
@@ -288,7 +288,7 @@ envVariables:
 
 Since you're writing to an SSHFS mount, every file you create or modify is immediately present on the running dev container — no deploy is needed for that. You can verify or test changes right away. The deploy step exists to test the build pipeline and to ensure persistence (dev containers are volatile — only `deployFiles` content survives a deploy).
 
-> **After formal `zerops_deploy` to dev:** Deploy restarts the container with `zsc noop --silent` — no server runs. You must start it manually via SSH again before `zerops_verify` can succeed. See the deploy step for the full SSH start cycle. Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): no manual start needed — web server restarts automatically.
+> **After formal `zerops_deploy` to dev:** Deploy restarts the container — no server runs. You must start it manually via SSH again before `zerops_verify` can succeed. See the deploy step for the full SSH start cycle. Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): no manual start needed — web server restarts automatically.
 
 > Consider committing the generated code before proceeding to deploy. This preserves your work if the deploy cycle requires iteration.
 </section>
@@ -302,7 +302,7 @@ Since you're writing to an SSHFS mount, every file you create or modify is immed
 
 **Core principle: Dev is for iterating and fixing. Stage is for final validation. Fix errors on dev before deploying to stage.**
 
-**Mandatory dev lifecycle** — `start: zsc noop --silent` means no server auto-starts. The agent MUST:
+**Mandatory dev lifecycle** — dev uses an idle start command so no server auto-starts. The agent MUST:
 1. Write zerops.yml + app code to SSHFS mount
 2. Start server manually via SSH, test endpoints (/health, /status) — fix until working
 3. `zerops_deploy` to dev (build pipeline, persist files) — **this restarts the container, server stops**
@@ -317,7 +317,6 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 
 > Bootstrap deploys: `zerops_deploy targetService="{devHostname}"` for self-deploy.
 > Cross-deploy to stage: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`.
-> Self-deploying services MUST use `deployFiles: [.]` — source files and zerops.yml must survive the deploy for continued iteration.
 
 `zerops_deploy` blocks until the build pipeline completes. It returns the final status (`DEPLOYED` or `BUILD_FAILED`) along with build duration. No manual polling needed.
 `zerops_import` blocks until all import processes complete. It returns final statuses (`FINISHED` or `FAILED`) for each process.
@@ -327,7 +326,7 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 **Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path (steps 4-7).
 
 1. **Deploy to appdev**: `zerops_deploy targetService="appdev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. SSHFS mount auto-reconnects after deploy — no remount needed. Deploy tests the build pipeline and ensures deployFiles artifacts persist.
-2. **Start appdev** (deploy restarted container with `zsc noop`): `zerops_deploy` blocks until SSH is ready (sshReady=true in response) — start server via SSH immediately (same kill-then-start pattern from Dev iteration below), verify startup log. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically after deploy.
+2. **Start appdev** (deploy restarted the container — no server runs): `zerops_deploy` blocks until SSH is ready (sshReady=true in response) — start server via SSH immediately (same kill-then-start pattern from Dev iteration below), verify startup log. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically after deploy.
 3. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
 4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
 5. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING. Stage is never a deploy source — no `.git` needed on target.
@@ -395,7 +394,7 @@ Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy
 
 #### Simple mode zerops.yml
 
-Simple mode services self-deploy — `deployFiles: [.]` is mandatory (same rule as dev services).
+Simple mode services self-deploy (same rules as dev services).
 Unlike dev, simple mode uses a real `start` command and `healthCheck` since there is no manual SSH iteration.
 
 ```yaml
@@ -422,8 +421,7 @@ zerops:
 
 **Key differences from dev+stage template:**
 - Single `setup:` entry (not two)
-- `deployFiles: [.]` always — self-deploying service
-- `start:` uses real command (not `zsc noop --silent`)
+- `start:` uses real command (not idle start)
 - `healthCheck` included — app auto-starts after deploy
 - If recipe uses tilde syntax in `deployFiles` (e.g., `.output/~`), adjust `start` to include the directory prefix (e.g., `node .output/server/index.mjs` instead of `node server/index.mjs`)
 
@@ -590,11 +588,11 @@ The top-level `"status": "ok"` is ALWAYS required — with or without connection
 - Valkey/KeyDB: execute `PING`
 - No managed services: return `{"service": "{devHostname}", "status": "ok"}`
 
-Do NOT generate hello-world apps. The /status endpoint must PROVE real connectivity.
+Generate apps with a /status endpoint that proves real managed service connectivity.
 
 ## Tasks
 
-**CRITICAL**: `zerops_deploy` to dev restarts the container with `zsc noop --silent` — your server DIES.
+**CRITICAL**: `zerops_deploy` to dev restarts the container — your server DIES.
 After every deploy to dev, you MUST start the server via SSH before `zerops_verify` can pass.
 This applies EVERY time — not just the first deploy. Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): server auto-starts, skip manual start.
 
@@ -619,7 +617,7 @@ Tasks 7→8→9 are gated: subdomain activation (8) and verify (9) WILL FAIL if 
 
 ## Quick-test before deploy (mandatory)
 
-Dev uses `start: zsc noop --silent` — no server runs automatically. You MUST start it manually and verify before formal deploy.
+Dev uses an idle start command — no server runs automatically. You MUST start it manually and verify before formal deploy.
 
 **Source-mode start commands:** `go run .` (Go), `bun run index.ts` (Bun), `node index.js` (Node.js), `python3 app.py` (Python), `cargo run` (Rust), `dotnet run` (C#), `deno run --allow-net --allow-env --allow-read main.ts` (Deno), `javac Server.java && java Server` (Java), `bundle exec ruby app.rb` (Ruby), `gleam run` (Gleam).
 
@@ -669,7 +667,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 
 ## Platform Rules
 
-- All deploys use SSH — `zerops_deploy targetService="{hostname}"` for self-deploy (sourceService auto-inferred, includeGit auto-forced), `sourceService="{dev}" targetService="{stage}"` for cross-deploy. Self-deploying services MUST use `deployFiles: [.]` — after deploy, only deployFiles content survives in /var/www. Using specific paths (e.g. `[dist]`, `[bin]`) in a self-deploying service destroys source files and zerops.yml, making further iteration impossible. Cross-deploy targets (e.g. stage) can use specific deployFiles for compiled output.
+- All deploys use SSH — `zerops_deploy targetService="{hostname}"` for self-deploy (sourceService auto-inferred, includeGit auto-forced), `sourceService="{dev}" targetService="{stage}"` for cross-deploy.
 - NEVER write lock files (go.sum, bun.lock, package-lock.json). Write manifests only (go.mod, package.json). Let build commands generate locks.
 - NEVER write dependency dirs (node_modules/, vendor/).
 - zerops_deploy blocks until build completes — returns DEPLOYED or BUILD_FAILED with build duration.
@@ -753,6 +751,109 @@ When any verification check fails, enter the iteration loop instead of giving up
 | HTTP 502 | Subdomain not activated | Call `zerops_subdomain action="enable"` |
 | curl returns empty | App not listening on 0.0.0.0 | Add HOST=0.0.0.0 to envVariables |
 | HTTP 500 | App error | Check `zerops_logs` + framework log files on mount path — log tells exact cause. Do NOT start alternative servers. |
+</section>
+
+<section name="deploy-overview">
+### Deploy overview
+
+**Core principle: Dev is for iterating and fixing. Stage is for final validation. Fix errors on dev before deploying to stage.**
+
+**Mandatory dev lifecycle** — dev uses an idle start command so no server auto-starts. The agent MUST:
+1. Write zerops.yml + app code to SSHFS mount
+2. Start server manually via SSH, test endpoints (/health, /status) — fix until working
+3. `zerops_deploy` to dev (build pipeline, persist files) — **this restarts the container, server stops**
+4. Start server again via SSH (same kill-then-start as step 2)
+5. `zerops_verify` dev — now endpoints respond
+6. `zerops_deploy` to stage (stage has real `start:` command — server auto-starts there)
+7. `zerops_verify` stage
+
+Steps 3-5 repeat on every iteration. Stage (steps 6-7) only after dev is healthy.
+
+> **Files are already on the dev container** via SSHFS mount — deploy does not "send" files there. Deploy runs the build pipeline (buildCommands, deployFiles) and restarts the process. It also ensures persistence — dev containers are volatile, only `deployFiles` content survives.
+
+> Bootstrap deploys: `zerops_deploy targetService="{devHostname}"` for self-deploy.
+> Cross-deploy to stage: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`.
+
+`zerops_deploy` blocks until the build pipeline completes. It returns the final status (`DEPLOYED` or `BUILD_FAILED`) along with build duration. No manual polling needed.
+`zerops_import` blocks until all import processes complete. It returns final statuses (`FINISHED` or `FAILED`) for each process.
+</section>
+
+<section name="deploy-standard">
+### Standard mode (dev+stage) — deploy flow
+
+**Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path.
+
+1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHFS mount auto-reconnects after deploy.
+2. **Start dev** (deploy restarted the container — no server runs): start server via SSH immediately (kill-then-start pattern from Dev iteration), verify startup log. **Implicit-webserver runtimes: skip this step.**
+3. **Verify dev**: `zerops_subdomain serviceHostname="{devHostname}" action="enable"` then `zerops_verify serviceHostname="{devHostname}"` — must return status=healthy
+4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop (max 3 iterations)
+5. **Deploy to stage from dev**: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`
+5b. **Connect shared storage to stage** (if applicable): `zerops_manage action="connect-storage" serviceHostname="{stageHostname}" storageHostname="{storageHostname}"`
+6. **Verify stage**: `zerops_subdomain serviceHostname="{stageHostname}" action="enable"` then `zerops_verify serviceHostname="{stageHostname}"` — must return status=healthy
+7. **Present both URLs** to user
+</section>
+
+<section name="deploy-iteration">
+### Dev iteration: manual start cycle
+
+Since dev uses `start: zsc noop --silent`, the container runs but no server process listens. After every `zerops_deploy` to dev, the container restarts — the agent must start the server again via SSH.
+
+**The cycle:**
+1. **Edit code** on the mount path — changes appear instantly in the container at `/var/www/`.
+2. **Kill any previous process**: `ssh {devHostname} "pkill -f '{binary}' 2>/dev/null; fuser -k {port}/tcp 2>/dev/null; true"`
+3. **Start server** — Bash tool with `run_in_background=true`: `ssh {devHostname} "cd /var/www && {start_command}"`
+4. **Check startup** — wait 3-5s, then `TaskOutput task_id=... block=false`
+5. **Test** endpoints: `ssh {devHostname} "curl -s localhost:{port}/health"` | jq .
+6. **If broken**: fix code on the mount, `TaskStop`, go back to step 2.
+7. **When working**: proceed to formal `zerops_deploy`.
+
+**When to use manual cycle vs. full deploy:**
+- Code logic changes, adding endpoints, fixing bugs -> manual start cycle
+- Changing zerops.yml (build config, env vars, ports) -> full `zerops_deploy`
+- Before deploying to stage -> always full `zerops_deploy`
+</section>
+
+<section name="deploy-simple">
+### Simple mode — deploy flow
+
+1. **Import services** with `startWithoutCode: true`
+2. **Mount and discover**: `zerops_mount` + `zerops_discover includeEnvs=true`
+3. **Write code** to mount path
+4. **Deploy**: `zerops_deploy targetService="{hostname}"`
+5. **Verify**: `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{hostname}"`
+6. If verification fails, iterate (diagnose -> fix -> redeploy).
+</section>
+
+<section name="deploy-agents">
+### For 2+ runtime service pairs — agent orchestration
+
+**Parent agent steps:**
+1. `zerops_import content="<import.yml>"` — create all services
+2. `zerops_discover` — verify dev services reached RUNNING
+3. Mount all dev services
+4. Discover ALL env vars: `zerops_discover includeEnvs=true`
+5. Spawn Service Bootstrap Agents (in parallel) for each runtime service pair
+6. Spawn Verify-Managed Agents (in parallel) for each managed service
+7. After ALL agents complete: `zerops_discover` — final verification
+
+See the main deploy section for the full Service Bootstrap Agent Prompt and Verify-Managed Agent Prompt templates.
+</section>
+
+<section name="deploy-recovery">
+### Recovery and iteration
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| Build FAILED: "command not found" | Wrong buildCommands for runtime | Check recipe, fix build pipeline |
+| Build FAILED: "module not found" | Missing dependency init | Add install step to buildCommands |
+| App crashes: "EADDRINUSE" | Port conflict | Ensure app listens on correct port from zerops.yml |
+| App crashes: "connection refused" | Wrong DB/cache host | Check envVariables mapping matches discovered vars |
+| /status: "db: error" | Missing or wrong env var | Compare zerops.yml envVariables with discovered var names |
+| HTTP 502 | Subdomain not activated | Call `zerops_subdomain action="enable"` |
+| curl returns empty | App not listening on 0.0.0.0 | Add HOST=0.0.0.0 to envVariables |
+| HTTP 500 | App error | Check `zerops_logs` + framework log files on mount path |
+
+Max 3 iterations per service. After that, report failure with diagnosis to user.
 </section>
 
 <section name="verify">

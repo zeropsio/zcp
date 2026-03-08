@@ -129,6 +129,13 @@ func (e *Engine) Reset() error {
 
 // Iterate archives evidence and resets to DEVELOP.
 func (e *Engine) Iterate() (*WorkflowState, error) {
+	state, err := e.loadState()
+	if err != nil {
+		return nil, fmt.Errorf("iterate: %w", err)
+	}
+	if state.Iteration >= maxIterations() {
+		return nil, fmt.Errorf("iterate: max iterations reached (%d), reset session to continue", maxIterations())
+	}
 	return IterateSession(e.stateDir, e.evidenceDir, e.sessionID)
 }
 

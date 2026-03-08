@@ -83,7 +83,7 @@ type BootstrapStepInfo struct {
 	Name          string       `json:"name"`
 	Index         int          `json:"index"`
 	Category      string       `json:"category"`
-	Guidance      string       `json:"guidance"`
+	Guidance      string       `json:"-"`
 	Tools         []string     `json:"tools"`
 	Verification  string       `json:"verification"`
 	DetailedGuide string       `json:"detailedGuide,omitempty"`

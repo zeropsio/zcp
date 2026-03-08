@@ -26,7 +26,7 @@ var stepDetails = []StepDetail{
 CONFORMANT projects with matching stack: route to deploy workflow instead.
 NON_CONFORMANT: ASK user before any changes.`,
 		Tools:        []string{"zerops_discover", "zerops_knowledge", "zerops_workflow"},
-		Verification: "Project classified, plan submitted and validated",
+		Verification: "SUCCESS WHEN: project state classified (FRESH/CONFORMANT/NON_CONFORMANT), stack components identified, plan submitted via zerops_workflow action=complete step=discover with valid targets. NEXT: proceed to provision step.",
 		Skippable:    false,
 	},
 	{
@@ -40,7 +40,7 @@ NON_CONFORMANT: ASK user before any changes.`,
 5. zerops_discover includeEnvs=true for each managed service
 6. Record discovered env var names for use in generate step`,
 		Tools:        []string{"zerops_import", "zerops_process", "zerops_discover", "zerops_mount"},
-		Verification: "All services created, dev mounted, env vars discovered",
+		Verification: "SUCCESS WHEN: all plan services exist in API with ACTIVE/RUNNING status AND dev filesystems mounted AND env vars recorded in session state. NEXT: proceed to generate step.",
 		Skippable:    false,
 	},
 	{
@@ -57,7 +57,7 @@ PREREQUISITES: dev services mounted, env vars discovered from provision step.
 
 Skip if no runtime services exist (managed-only project).`,
 		Tools:        []string{"zerops_knowledge"},
-		Verification: "zerops.yml and app code written with correct env mappings",
+		Verification: "SUCCESS WHEN: zerops.yml exists with setup entries for all planned hostnames AND env var references match discovered variables AND app code exposes /health and /status endpoints. NEXT: proceed to deploy step.",
 		Skippable:    true,
 	},
 	{
@@ -79,7 +79,7 @@ For EACH runtime service pair (dev + stage):
 Iteration loop (max 3 per service): fail -> fix -> redeploy -> start server -> re-verify.
 Skip if no runtime services exist.`,
 		Tools:        []string{"zerops_deploy", "zerops_discover", "zerops_subdomain", "zerops_logs", "zerops_mount", "zerops_verify", "zerops_manage"},
-		Verification: "All services deployed with subdomains enabled",
+		Verification: "SUCCESS WHEN: all runtime services deployed (RUNNING status) AND subdomains enabled AND zerops_verify returns healthy for each service. NEXT: proceed to verify step.",
 		Skippable:    true,
 	},
 	{
@@ -92,7 +92,7 @@ Skip if no runtime services exist.`,
 4. Group by: runtime dev, runtime stage, managed
 5. Include subdomain URLs and actionable next steps`,
 		Tools:        []string{"zerops_discover", "zerops_verify"},
-		Verification: "All services verified, final report presented",
+		Verification: "SUCCESS WHEN: zerops_verify batch confirms all plan targets healthy AND /status endpoints return connectivity proof AND final report presented with URLs. NEXT: bootstrap complete.",
 		Skippable:    false,
 	},
 }

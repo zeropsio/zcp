@@ -91,10 +91,18 @@ func ListSessions(stateDir string) ([]SessionEntry, error) {
 	return result, err
 }
 
-// RefreshRegistry prunes dead PIDs and stale entries from the registry.
+// RefreshRegistry prunes dead PIDs and stale entries from the registry,
+// then cleans orphaned session files and evidence directories.
 func RefreshRegistry(stateDir string) error {
 	return withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
 		reg.Sessions = pruneDeadSessions(reg.Sessions)
+
+		liveIDs := make(map[string]bool, len(reg.Sessions))
+		for _, s := range reg.Sessions {
+			liveIDs[s.SessionID] = true
+		}
+		cleanOrphanedFiles(stateDir, liveIDs)
+
 		return reg, nil
 	})
 }
@@ -177,6 +185,36 @@ func writeRegistry(stateDir string, reg *Registry) error {
 		return fmt.Errorf("registry rename: %w", err)
 	}
 	return nil
+}
+
+// cleanOrphanedFiles removes session files and evidence directories
+// that are not associated with any live session. Errors are best-effort.
+func cleanOrphanedFiles(stateDir string, liveIDs map[string]bool) {
+	// Clean orphaned session files.
+	sessDir := filepath.Join(stateDir, sessionsDirName)
+	entries, err := os.ReadDir(sessDir)
+	if err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if !e.IsDir() && len(name) > 5 && name[len(name)-5:] == ".json" {
+				id := name[:len(name)-5]
+				if !liveIDs[id] {
+					_ = os.Remove(filepath.Join(sessDir, name))
+				}
+			}
+		}
+	}
+
+	// Clean orphaned evidence directories.
+	evidDir := filepath.Join(stateDir, "evidence")
+	entries, err = os.ReadDir(evidDir)
+	if err == nil {
+		for _, e := range entries {
+			if e.IsDir() && !liveIDs[e.Name()] {
+				_ = os.RemoveAll(filepath.Join(evidDir, e.Name()))
+			}
+		}
+	}
 }
 
 // pruneDeadSessions removes entries with dead PIDs or entries older than 24h.

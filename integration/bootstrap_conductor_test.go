@@ -93,9 +93,9 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 		t.Errorf("intent: want 'bun + postgres app', got %q", startResp.Intent)
 	}
 
-	// Verify guidance is rich (not empty placeholder).
-	if len(startResp.Current.Guidance) < 50 {
-		t.Errorf("guidance too short (%d chars), expected rich instructions", len(startResp.Current.Guidance))
+	// Verify detailedGuide is rich (Guidance is excluded from JSON via json:"-").
+	if len(startResp.Current.DetailedGuide) < 50 {
+		t.Errorf("detailedGuide too short (%d chars), expected rich instructions", len(startResp.Current.DetailedGuide))
 	}
 	if len(startResp.Current.Tools) == 0 {
 		t.Error("expected non-empty tools list for discover step")
@@ -137,9 +137,9 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 			if lastResp.Current.Name != steps[i+1].name {
 				t.Errorf("step %d (%s): next step want %q, got %q", i, step.name, steps[i+1].name, lastResp.Current.Name)
 			}
-			// Each step should have guidance and tools.
-			if lastResp.Current.Guidance == "" {
-				t.Errorf("step %d: next step %q has empty guidance", i, lastResp.Current.Name)
+			// Each step should have detailedGuide and tools (Guidance excluded from JSON).
+			if lastResp.Current.DetailedGuide == "" {
+				t.Errorf("step %d: next step %q has empty detailedGuide", i, lastResp.Current.Name)
 			}
 		}
 	}
@@ -464,9 +464,9 @@ func TestIntegration_BootstrapConductor_StepGuidanceQuality(t *testing.T) {
 			t.Fatalf("step %d: want %q, got %q", i, step, resp.Current.Name)
 		}
 
-		// Check guidance has real content (not placeholder).
-		if len(resp.Current.Guidance) < 30 {
-			t.Errorf("step %q: guidance too short (%d chars)", step, len(resp.Current.Guidance))
+		// Check detailedGuide has real content (Guidance is excluded from JSON via json:"-").
+		if len(resp.Current.DetailedGuide) < 30 {
+			t.Errorf("step %q: detailedGuide too short (%d chars)", step, len(resp.Current.DetailedGuide))
 		}
 
 		// Check tools include expected tool.

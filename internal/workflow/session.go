@@ -7,8 +7,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
+
+const defaultMaxIterations = 10
+
+func maxIterations() int {
+	if v := os.Getenv("ZCP_MAX_ITERATIONS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxIterations
+}
 
 const (
 	sessionsDirName = "sessions"

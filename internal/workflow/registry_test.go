@@ -294,6 +294,95 @@ func TestRefreshRegistry_NoRegistryFile(t *testing.T) {
 	}
 }
 
+func TestRefreshRegistry_CleansOrphanedSessionFiles(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Create a session file without a registry entry.
+	sessDir := filepath.Join(dir, "sessions")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	orphanPath := filepath.Join(sessDir, "orphan123.json")
+	if err := os.WriteFile(orphanPath, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := RefreshRegistry(dir); err != nil {
+		t.Fatalf("RefreshRegistry: %v", err)
+	}
+
+	if _, err := os.Stat(orphanPath); !os.IsNotExist(err) {
+		t.Errorf("orphaned session file should be removed, but still exists")
+	}
+}
+
+func TestRefreshRegistry_CleansOrphanedEvidenceDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Create an evidence directory without a registry entry.
+	evidenceDir := filepath.Join(dir, "evidence", "orphan456")
+	if err := os.MkdirAll(evidenceDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// Put a file inside so we verify recursive removal.
+	if err := os.WriteFile(filepath.Join(evidenceDir, "data.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := RefreshRegistry(dir); err != nil {
+		t.Fatalf("RefreshRegistry: %v", err)
+	}
+
+	if _, err := os.Stat(evidenceDir); !os.IsNotExist(err) {
+		t.Errorf("orphaned evidence dir should be removed, but still exists")
+	}
+}
+
+func TestRefreshRegistry_KeepsLiveSessionFiles(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Register a live session.
+	entry := SessionEntry{
+		SessionID: "live-sess",
+		PID:       os.Getpid(),
+		Workflow:  "deploy",
+		ProjectID: "proj-1",
+		Phase:     PhaseInit,
+	}
+	if err := RegisterSession(dir, entry); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	// Create matching session file and evidence dir.
+	sessDir := filepath.Join(dir, "sessions")
+	if err := os.MkdirAll(sessDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sessFile := filepath.Join(sessDir, "live-sess.json")
+	if err := os.WriteFile(sessFile, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	evidenceDir := filepath.Join(dir, "evidence", "live-sess")
+	if err := os.MkdirAll(evidenceDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	if err := RefreshRegistry(dir); err != nil {
+		t.Fatalf("RefreshRegistry: %v", err)
+	}
+
+	// Both should still exist.
+	if _, err := os.Stat(sessFile); err != nil {
+		t.Errorf("live session file should survive: %v", err)
+	}
+	if _, err := os.Stat(evidenceDir); err != nil {
+		t.Errorf("live evidence dir should survive: %v", err)
+	}
+}
+
 func TestRegistryFile_CreatedOnFirstRegister(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
