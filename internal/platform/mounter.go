@@ -7,12 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 )
-
-var safeHostname = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,62}$`)
 
 // Command timeout constants.
 const (
@@ -73,8 +70,8 @@ func isSshfsMount(path string) (bool, error) {
 
 // Mount creates an SSHFS mount via zsc systemd unit.
 func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) error {
-	if !safeHostname.MatchString(hostname) {
-		return fmt.Errorf("unsafe hostname: %s", hostname)
+	if err := ValidateHostname(hostname); err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(localPath, 0o755); err != nil {
@@ -97,8 +94,8 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 // Order: fusermount -u → fallback fusermount -uz → zsc unit remove.
 // This prevents partial failures where the unit is removed but FUSE remains.
 func (m *SystemMounter) Unmount(ctx context.Context, hostname, path string) error {
-	if !safeHostname.MatchString(hostname) {
-		return fmt.Errorf("unsafe hostname: %s", hostname)
+	if err := ValidateHostname(hostname); err != nil {
+		return err
 	}
 
 	// Unmount FUSE first; fallback to lazy unmount on failure.
@@ -120,7 +117,7 @@ func (m *SystemMounter) Unmount(ctx context.Context, hostname, path string) erro
 // Used for stale mounts where the transport endpoint is disconnected.
 func (m *SystemMounter) ForceUnmount(ctx context.Context, hostname, path string) error {
 	// Best-effort: remove zsc unit if it exists (ignore errors — unit may not exist for orphan mounts).
-	if safeHostname.MatchString(hostname) {
+	if ValidateHostname(hostname) == nil {
 		unitName := "sshfs-" + hostname
 		_ = execWithTimeout(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", unitName)
 	}
@@ -162,8 +159,8 @@ func (m *SystemMounter) ListMountDirs(_ context.Context, basePath string) ([]str
 // HasUnit checks if a systemd unit exists for the given hostname.
 // Uses "systemctl cat" which does not require sudo.
 func (m *SystemMounter) HasUnit(ctx context.Context, hostname string) (bool, error) {
-	if !safeHostname.MatchString(hostname) {
-		return false, fmt.Errorf("unsafe hostname: %s", hostname)
+	if err := ValidateHostname(hostname); err != nil {
+		return false, err
 	}
 	unitName := "zerops@sshfs-" + hostname + ".service"
 	err := execWithTimeout(ctx, mountCheckTimeout, "systemctl", "cat", unitName)
@@ -173,8 +170,8 @@ func (m *SystemMounter) HasUnit(ctx context.Context, hostname string) (bool, err
 // CleanupUnit removes the zsc systemd unit without touching the FUSE mount.
 // Used to clean up orphan units where no FUSE mount was established.
 func (m *SystemMounter) CleanupUnit(ctx context.Context, hostname string) error {
-	if !safeHostname.MatchString(hostname) {
-		return fmt.Errorf("unsafe hostname: %s", hostname)
+	if err := ValidateHostname(hostname); err != nil {
+		return err
 	}
 	return execWithTimeout(ctx, unmountTimeout, "sudo", "-E", "zsc", "unit", "remove", "sshfs-"+hostname)
 }

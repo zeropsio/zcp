@@ -153,6 +153,64 @@ func TestArchiveEvidence_MovesFiles(t *testing.T) {
 	}
 }
 
+func TestArchiveEvidence_PartialRetry(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sessionID := "sess-partial"
+
+	// Save two evidence files.
+	ev1 := &Evidence{
+		SessionID: sessionID, Type: "discovery", VerificationType: "attestation",
+		Attestation: "discovered",
+	}
+	ev2 := &Evidence{
+		SessionID: sessionID, Type: "dev_verify", VerificationType: "attestation",
+		Attestation: "verified",
+	}
+	if err := SaveEvidence(dir, sessionID, ev1); err != nil {
+		t.Fatalf("SaveEvidence(discovery): %v", err)
+	}
+	if err := SaveEvidence(dir, sessionID, ev2); err != nil {
+		t.Fatalf("SaveEvidence(dev_verify): %v", err)
+	}
+
+	// Simulate partial completion: manually create archive dir and copy one file there.
+	archiveDir := filepath.Join(dir, sessionID, "iterations", "1")
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll archive: %v", err)
+	}
+	srcPath := filepath.Join(dir, sessionID, "discovery.json")
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	dstPath := filepath.Join(archiveDir, "discovery.json")
+	if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Call ArchiveEvidence (retry scenario).
+	if err := ArchiveEvidence(dir, sessionID, 1); err != nil {
+		t.Fatalf("ArchiveEvidence: %v", err)
+	}
+
+	// Both files should be in archive dir.
+	for _, name := range []string{"discovery.json", "dev_verify.json"} {
+		p := filepath.Join(archiveDir, name)
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected archived file %s: %v", name, err)
+		}
+	}
+
+	// Neither file should remain in session dir.
+	for _, name := range []string{"discovery.json", "dev_verify.json"} {
+		p := filepath.Join(dir, sessionID, name)
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be removed from session dir", name)
+		}
+	}
+}
+
 func TestArchiveEvidence_EmptySession(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

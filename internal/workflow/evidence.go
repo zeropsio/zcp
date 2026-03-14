@@ -22,7 +22,7 @@ type Evidence struct {
 	VerificationType string          `json:"verificationType"` // always "attestation"
 	Service          string          `json:"service,omitempty"`
 	Attestation      string          `json:"attestation"`
-	Type             string          `json:"type"` // recipe_review, discovery, dev_verify, deploy_evidence, stage_verify
+	Type             string          `json:"type"` // see Evidence* constants in gates.go
 	Passed           int             `json:"passed"`
 	Failed           int             `json:"failed"`
 	ServiceResults   []ServiceResult `json:"serviceResults,omitempty"`
@@ -136,6 +136,11 @@ func ArchiveEvidence(dir, sessionID string, iteration int) error {
 	for _, name := range files {
 		src := filepath.Join(sessDir, name)
 		dst := filepath.Join(archiveDir, name)
+		// Skip files already archived (partial retry).
+		if _, err := os.Stat(dst); err == nil {
+			os.Remove(src) // clean up duplicate
+			continue
+		}
 		if err := os.Rename(src, dst); err != nil {
 			return fmt.Errorf("archive evidence move %s: %w", name, err)
 		}

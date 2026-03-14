@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+// Evidence type constants used in gate definitions and evidence files.
+const (
+	EvidenceRecipeReview   = "recipe_review"
+	EvidenceDiscovery      = "discovery"
+	EvidenceDevVerify      = "dev_verify"
+	EvidenceDeployEvidence = "deploy_evidence"
+	EvidenceStageVerify    = "stage_verify"
+)
+
 // RemediationStep provides actionable guidance for resolving a gate failure.
 type RemediationStep struct {
 	Action      string `json:"action"`
@@ -33,11 +42,11 @@ type gateDefinition struct {
 
 // gates defines the gate requirements for each phase transition.
 var gates = []gateDefinition{
-	{"G0", PhaseInit, PhaseDiscover, []string{"recipe_review"}, 0},
-	{"G1", PhaseDiscover, PhaseDevelop, []string{"discovery"}, 24 * time.Hour},
-	{"G2", PhaseDevelop, PhaseDeploy, []string{"dev_verify"}, 24 * time.Hour},
-	{"G3", PhaseDeploy, PhaseVerify, []string{"deploy_evidence"}, 24 * time.Hour},
-	{"G4", PhaseVerify, PhaseDone, []string{"stage_verify"}, 24 * time.Hour},
+	{"G0", PhaseInit, PhaseDiscover, []string{EvidenceRecipeReview}, 0},
+	{"G1", PhaseDiscover, PhaseDevelop, []string{EvidenceDiscovery}, 24 * time.Hour},
+	{"G2", PhaseDevelop, PhaseDeploy, []string{EvidenceDevVerify}, 24 * time.Hour},
+	{"G3", PhaseDeploy, PhaseVerify, []string{EvidenceDeployEvidence}, 24 * time.Hour},
+	{"G4", PhaseVerify, PhaseDone, []string{EvidenceStageVerify}, 24 * time.Hour},
 }
 
 const discoveryFreshDuration = 24 * time.Hour
@@ -174,35 +183,35 @@ func validateServiceResults(ev *Evidence) []string {
 // remediationForEvidence returns a remediation step for a missing evidence type.
 func remediationForEvidence(evidenceType string) RemediationStep {
 	switch evidenceType {
-	case "recipe_review":
+	case EvidenceRecipeReview:
 		return RemediationStep{
 			Action:      "record_evidence",
 			Tool:        "zerops_workflow",
 			Params:      `action="evidence" type="recipe_review"`,
 			Explanation: "Review relevant recipes via zerops_knowledge, then record evidence",
 		}
-	case "discovery":
+	case EvidenceDiscovery:
 		return RemediationStep{
 			Action:      "run_discovery",
 			Tool:        "zerops_discover",
 			Params:      `includeEnvs=true`,
 			Explanation: "Discover project services and environment variables",
 		}
-	case "dev_verify":
+	case EvidenceDevVerify:
 		return RemediationStep{
 			Action:      "verify_dev",
 			Tool:        "zerops_verify",
 			Params:      `service="{hostname}"`,
 			Explanation: "Verify dev service is healthy and responding",
 		}
-	case "deploy_evidence":
+	case EvidenceDeployEvidence:
 		return RemediationStep{
 			Action:      "deploy_services",
 			Tool:        "zerops_deploy",
 			Params:      `targetService="{hostname}"`,
 			Explanation: "Deploy services to stage environment",
 		}
-	case "stage_verify":
+	case EvidenceStageVerify:
 		return RemediationStep{
 			Action:      "verify_stage",
 			Tool:        "zerops_verify",
@@ -221,7 +230,7 @@ func remediationForEvidence(evidenceType string) RemediationStep {
 
 // isDiscoveryFresh checks if discovery.json exists and was created within 24h.
 func isDiscoveryFresh(evidenceDir, sessionID string) bool {
-	ev, err := LoadEvidence(evidenceDir, sessionID, "discovery")
+	ev, err := LoadEvidence(evidenceDir, sessionID, EvidenceDiscovery)
 	if err != nil {
 		return false
 	}

@@ -213,6 +213,89 @@ func TestEvents_DefaultLimit(t *testing.T) {
 	}
 }
 
+func TestEvents_FilterByService_SummaryCounts(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api"},
+		{ID: "svc-2", Name: "db"},
+	}
+
+	processes := []platform.ProcessEvent{
+		{
+			ID:            "p1",
+			ActionName:    "serviceStackStart",
+			Status:        statusFinished,
+			Created:       "2024-01-01T00:01:00Z",
+			ServiceStacks: []platform.ServiceStackRef{{ID: "svc-1", Name: "api"}},
+		},
+		{
+			ID:            "p2",
+			ActionName:    "serviceStackRestart",
+			Status:        statusFinished,
+			Created:       "2024-01-01T00:02:00Z",
+			ServiceStacks: []platform.ServiceStackRef{{ID: "svc-2", Name: "db"}},
+		},
+	}
+
+	appVersions := []platform.AppVersionEvent{
+		{
+			ID:             "av1",
+			ServiceStackID: "svc-1",
+			Status:         "active",
+			Created:        "2024-01-01T00:03:00Z",
+		},
+		{
+			ID:             "av2",
+			ServiceStackID: "svc-2",
+			Status:         "active",
+			Created:        "2024-01-01T00:04:00Z",
+		},
+	}
+
+	mock := platform.NewMock().
+		WithServices(services).
+		WithProcessEvents(processes).
+		WithAppVersionEvents(appVersions)
+
+	tests := []struct {
+		name          string
+		service       string
+		wantTotal     int
+		wantProcesses int
+		wantDeploys   int
+	}{
+		{
+			name:          "filter by api returns only api counts",
+			service:       "api",
+			wantTotal:     2,
+			wantProcesses: 1,
+			wantDeploys:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := Events(context.Background(), mock, "proj-1", tt.service, 50)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Summary.Total != tt.wantTotal {
+				t.Errorf("Summary.Total = %d, want %d", result.Summary.Total, tt.wantTotal)
+			}
+			if result.Summary.Processes != tt.wantProcesses {
+				t.Errorf("Summary.Processes = %d, want %d", result.Summary.Processes, tt.wantProcesses)
+			}
+			if result.Summary.Deploys != tt.wantDeploys {
+				t.Errorf("Summary.Deploys = %d, want %d", result.Summary.Deploys, tt.wantDeploys)
+			}
+		})
+	}
+}
+
 func TestEvents_ParallelFetchError(t *testing.T) {
 	t.Parallel()
 

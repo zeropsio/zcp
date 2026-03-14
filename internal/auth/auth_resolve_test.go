@@ -254,6 +254,242 @@ func TestResolve_EnvVar_CustomAPIHost(t *testing.T) {
 	}
 }
 
+func TestResolveCredentials_CliData_ValidToken(t *testing.T) {
+	tests := []struct {
+		name        string
+		token       string
+		region      string
+		address     string
+		wantToken   string
+		wantRegion  string
+		wantAPIHost string
+	}{
+		{
+			name:        "valid cli.data with custom region",
+			token:       "fallback-token",
+			region:      "fra1",
+			address:     "api.custom.io",
+			wantToken:   "fallback-token",
+			wantRegion:  "fra1",
+			wantAPIHost: "api.custom.io",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ZCP_API_KEY", "")
+			t.Setenv("ZCP_API_HOST", "")
+			t.Setenv("ZCP_REGION", "")
+
+			dir := writeCliData(t, cliData{
+				Token: tt.token,
+				RegionData: cliRegion{
+					Name:    tt.region,
+					Address: tt.address,
+				},
+			})
+			t.Setenv("ZCP_ZCLI_DATA_DIR", dir)
+
+			creds, err := ResolveCredentials()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if creds.Token != tt.wantToken {
+				t.Errorf("Token = %q, want %q", creds.Token, tt.wantToken)
+			}
+			if creds.APIHost != tt.wantAPIHost {
+				t.Errorf("APIHost = %q, want %q", creds.APIHost, tt.wantAPIHost)
+			}
+			if creds.Region != tt.wantRegion {
+				t.Errorf("Region = %q, want %q", creds.Region, tt.wantRegion)
+			}
+		})
+	}
+}
+
+func TestResolveCredentials_CliData_EmptyToken(t *testing.T) {
+	tests := []struct {
+		name     string
+		wantCode string
+	}{
+		{
+			name:     "empty token returns AUTH_REQUIRED",
+			wantCode: platform.ErrAuthRequired,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ZCP_API_KEY", "")
+
+			dir := writeCliData(t, cliData{Token: ""})
+			t.Setenv("ZCP_ZCLI_DATA_DIR", dir)
+
+			_, err := ResolveCredentials()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) {
+				t.Fatalf("expected PlatformError, got %T: %v", err, err)
+			}
+			if pe.Code != tt.wantCode {
+				t.Errorf("error code = %q, want %q", pe.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestResolveCredentials_CliData_MissingFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		wantCode string
+	}{
+		{
+			name:     "missing cli.data returns AUTH_REQUIRED",
+			wantCode: platform.ErrAuthRequired,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ZCP_API_KEY", "")
+			t.Setenv("ZCP_ZCLI_DATA_DIR", t.TempDir())
+
+			_, err := ResolveCredentials()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) {
+				t.Fatalf("expected PlatformError, got %T: %v", err, err)
+			}
+			if pe.Code != tt.wantCode {
+				t.Errorf("error code = %q, want %q", pe.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestResolveCredentials_CliData_MalformedJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		wantCode string
+	}{
+		{
+			name:     "malformed JSON returns AUTH_REQUIRED",
+			wantCode: platform.ErrAuthRequired,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ZCP_API_KEY", "")
+
+			dir := t.TempDir()
+			zeropsDir := filepath.Join(dir, "zerops")
+			if err := os.MkdirAll(zeropsDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(zeropsDir, "cli.data"), []byte("{not valid json"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("ZCP_ZCLI_DATA_DIR", dir)
+
+			_, err := ResolveCredentials()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var pe *platform.PlatformError
+			if !errors.As(err, &pe) {
+				t.Fatalf("expected PlatformError, got %T: %v", err, err)
+			}
+			if pe.Code != tt.wantCode {
+				t.Errorf("error code = %q, want %q", pe.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestResolveCredentials_CliData_ScopeProjectID(t *testing.T) {
+	tests := []struct {
+		name          string
+		scopeProject  string
+		wantProjectID string
+	}{
+		{
+			name:          "scoped project ID from cli.data",
+			scopeProject:  "scoped-proj-789",
+			wantProjectID: "scoped-proj-789",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ZCP_API_KEY", "")
+			t.Setenv("ZCP_API_HOST", "")
+			t.Setenv("ZCP_REGION", "")
+
+			scopeID := tt.scopeProject
+			dir := writeCliData(t, cliData{
+				Token:          "scope-token",
+				RegionData:     cliRegion{Name: "prg1", Address: "api.app-prg1.zerops.io"},
+				ScopeProjectID: &scopeID,
+			})
+			t.Setenv("ZCP_ZCLI_DATA_DIR", dir)
+
+			mock := platform.NewMock().
+				WithUserInfo(testUserInfo()).
+				WithProject(&platform.Project{
+					ID:     tt.wantProjectID,
+					Name:   "scoped-project",
+					Status: "ACTIVE",
+				})
+
+			info, err := Resolve(context.Background(), mock)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if info.ProjectID != tt.wantProjectID {
+				t.Errorf("ProjectID = %q, want %q", info.ProjectID, tt.wantProjectID)
+			}
+		})
+	}
+}
+
+func TestResolveCredentials_CliData_DefaultRegion(t *testing.T) {
+	tests := []struct {
+		name        string
+		wantAPIHost string
+		wantRegion  string
+	}{
+		{
+			name:        "empty region data falls back to defaults",
+			wantAPIHost: "api.app-prg1.zerops.io",
+			wantRegion:  "prg1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ZCP_API_KEY", "")
+			t.Setenv("ZCP_API_HOST", "")
+			t.Setenv("ZCP_REGION", "")
+
+			dir := writeCliData(t, cliData{
+				Token:      "default-region-token",
+				RegionData: cliRegion{},
+			})
+			t.Setenv("ZCP_ZCLI_DATA_DIR", dir)
+
+			creds, err := ResolveCredentials()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if creds.APIHost != tt.wantAPIHost {
+				t.Errorf("APIHost = %q, want %q", creds.APIHost, tt.wantAPIHost)
+			}
+			if creds.Region != tt.wantRegion {
+				t.Errorf("Region = %q, want %q", creds.Region, tt.wantRegion)
+			}
+		})
+	}
+}
+
 func TestResolve_EnvVar_CustomRegion(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -40,6 +40,13 @@ type TimelineEvent struct {
 	Hint        string `json:"hint,omitempty"`
 }
 
+// Event type constants.
+const (
+	eventTypeProcess = "process"
+	eventTypeDeploy  = "deploy"
+	eventTypeBuild   = "build"
+)
+
 // actionNameMap normalizes Zerops action names to human-readable forms.
 var actionNameMap = map[string]string{
 	"serviceStackStart":                  "start",
@@ -137,8 +144,6 @@ func Events(
 	}
 
 	var events []TimelineEvent
-	processCount := 0
-	deployCount := 0
 
 	// Map process events.
 	for _, p := range processes {
@@ -158,7 +163,7 @@ func Events(
 
 		events = append(events, TimelineEvent{
 			Timestamp: p.Created,
-			Type:      "process",
+			Type:      eventTypeProcess,
 			Action:    action,
 			Status:    p.Status,
 			Service:   svcName,
@@ -167,15 +172,14 @@ func Events(
 			ProcessID: p.ID,
 			Hint:      statusHint(p.Status, processHintMap),
 		})
-		processCount++
 	}
 
 	// Map app version events.
 	for _, av := range appVersions {
 		svcName := svcMap[av.ServiceStackID]
-		eventType := "deploy"
+		eventType := eventTypeDeploy
 		if av.Build != nil && av.Build.PipelineStart != nil {
-			eventType = "build"
+			eventType = eventTypeBuild
 		}
 
 		events = append(events, TimelineEvent{
@@ -186,7 +190,6 @@ func Events(
 			Service:   svcName,
 			Hint:      statusHint(av.Status, appVersionHintMap),
 		})
-		deployCount++
 	}
 
 	// Filter by service if specified.
@@ -208,6 +211,18 @@ func Events(
 	// Trim to limit.
 	if len(events) > limit {
 		events = events[:limit]
+	}
+
+	// Compute counts from filtered+trimmed events.
+	processCount := 0
+	deployCount := 0
+	for _, e := range events {
+		switch e.Type {
+		case eventTypeProcess:
+			processCount++
+		case eventTypeDeploy, eventTypeBuild:
+			deployCount++
+		}
 	}
 
 	return &EventsResult{

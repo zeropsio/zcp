@@ -57,7 +57,7 @@ func InitSession(stateDir, projectID, workflowName, intent string) (*WorkflowSta
 	}
 
 	if err := saveSessionState(stateDir, sessionID, state); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("init session: %w", err)
 	}
 
 	entry := SessionEntry{
@@ -125,7 +125,7 @@ func IterateSession(stateDir, evidenceDir, sessionID string) (*WorkflowState, er
 	})
 
 	if err := saveSessionState(stateDir, sessionID, state); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("iterate session: %w", err)
 	}
 	return state, nil
 }
