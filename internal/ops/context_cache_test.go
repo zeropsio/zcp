@@ -183,14 +183,12 @@ func TestStackTypeCache_NoBlockDuringFetch(t *testing.T) {
 			start := time.Now()
 			var wg sync.WaitGroup
 			for range tt.goroutines {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					got := cache.Get(context.Background(), mock)
 					if len(got) != 1 {
 						t.Errorf("Get() returned %d types, want 1", len(got))
 					}
-				}()
+				})
 			}
 			wg.Wait()
 			elapsed := time.Since(start)
@@ -212,14 +210,12 @@ func TestStackTypeCache_ConcurrentAccess(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 20 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			got := cache.Get(context.Background(), mock)
 			if len(got) != 1 {
 				t.Errorf("concurrent Get() returned %d types, want 1", len(got))
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

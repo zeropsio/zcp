@@ -165,11 +165,9 @@ func TestIdleWaiter_Middleware_ConcurrentRequests(t *testing.T) {
 	// Start n concurrent requests.
 	var wg sync.WaitGroup
 	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = handler(i)(context.Background(), "test", nil)
-		}()
+		})
 	}
 
 	// Give goroutines time to enter handlers.

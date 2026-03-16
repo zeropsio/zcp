@@ -125,9 +125,7 @@ func Verify(
 	// Group A: log checks (single API call).
 	needLogs := rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeWorker
 	if needLogs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			logAccess, logErr := client.GetProjectLog(ctx, projectID)
 			checks := batchLogChecks(ctx, fetcher, logAccess, logErr, svc.ID)
 			if rc == RuntimeDynamic {
@@ -136,15 +134,13 @@ func Verify(
 			mu.Lock()
 			logChecks = checks
 			mu.Unlock()
-		}()
+		})
 	}
 
 	// Group B: HTTP checks.
 	needHTTP := rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeStatic
 	if needHTTP {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			subdomainURL := resolveSubdomainURL(ctx, client, projectID, svc)
 			var checks []CheckResult
 			if subdomainURL == "" {
@@ -165,7 +161,7 @@ func Verify(
 			mu.Lock()
 			httpChecks = checks
 			mu.Unlock()
-		}()
+		})
 	}
 
 	wg.Wait()
