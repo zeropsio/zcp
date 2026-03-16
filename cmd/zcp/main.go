@@ -24,7 +24,7 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "init":
-			if err := zcpinit.Run("."); err != nil {
+			if err := zcpinit.Run(".", runtime.Detect()); err != nil {
 				log.Fatalf("init: %v", err)
 			}
 			return

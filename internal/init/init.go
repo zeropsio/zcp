@@ -10,6 +10,12 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/runtime"
+)
+
+const (
+	markerBegin = "# ZCP:BEGIN"
+	markerEnd   = "# ZCP:END"
 )
 
 // Run executes the init subcommand, generating configuration files in baseDir.
@@ -17,11 +23,11 @@ import (
 //  1. Generate CLAUDE.md in baseDir
 //  2. Configure MCP server in baseDir/.mcp.json (Claude Code project-scoped config)
 //  3. Configure permissions in baseDir/.claude/settings.local.json
-//  4. Configure SSH in $HOME/.ssh/config (user home, not baseDir)
+//  4. Configure SSH in $HOME/.ssh/config (container only, managed section)
 //  5. Install shell aliases in $HOME/.config/zerops/aliases + source from .bashrc
 //
 // All steps are idempotent — re-running resets to defaults.
-func Run(baseDir string) error {
+func Run(baseDir string, rt runtime.Info) error {
 	steps := []struct {
 		name string
 		fn   func(string) error
@@ -29,7 +35,7 @@ func Run(baseDir string) error {
 		{"CLAUDE.md", generateCLAUDEMD},
 		{"MCP config", generateMCPConfig},
 		{"Permissions", generateSettingsLocal},
-		{"SSH config", generateSSHConfig},
+		{"SSH config", func(_ string) error { return generateSSHConfig(rt) }},
 		{"Shell aliases", generateAliases},
 	}
 
@@ -72,17 +78,90 @@ func generateSettingsLocal(baseDir string) error {
 	return os.WriteFile(filepath.Join(dir, "settings.local.json"), []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
 }
 
-func generateSSHConfig(_ string) error {
+func generateSSHConfig(rt runtime.Info) error {
+	if !rt.InContainer {
+		fmt.Fprintln(os.Stderr, "    (skipped — not in container, SSH config left unchanged)")
+		return nil
+	}
+
 	tmpl, err := content.GetTemplate("ssh-config")
 	if err != nil {
 		return err
 	}
+
 	home := resolveHome()
 	dir := filepath.Join(home, ".ssh")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "config"), []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
+
+	path := filepath.Join(dir, "config")
+	block := markerBegin + "\n" + strings.TrimRight(tmpl, "\n") + "\n" + markerEnd + "\n"
+	return upsertManagedSection(path, block)
+}
+
+// upsertManagedSection reads the file at path, finds the ZCP managed block
+// (between markerBegin and markerEnd lines), replaces it with content, and
+// writes back atomically. If no markers exist, the block is appended.
+// If the file doesn't exist, it is created with just the block.
+func upsertManagedSection(path, block string) error {
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+
+	var result string
+	text := string(existing)
+
+	beginIdx := strings.Index(text, markerBegin)
+	endIdx := strings.Index(text, markerEnd)
+
+	if beginIdx >= 0 && endIdx >= 0 {
+		// Replace existing managed section (include the markerEnd line).
+		endLineEnd := endIdx + len(markerEnd)
+		if endLineEnd < len(text) && text[endLineEnd] == '\n' {
+			endLineEnd++
+		}
+		result = text[:beginIdx] + block + text[endLineEnd:]
+	} else {
+		// Append managed section.
+		if len(text) > 0 && !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		if len(text) > 0 {
+			text += "\n"
+		}
+		result = text + block
+	}
+
+	// Atomic write: temp file + rename.
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".ssh-config-*")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.WriteString(result); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("write temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
 }
 
 const bashrcSourceLine = `# Zerops shell aliases

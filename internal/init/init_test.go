@@ -8,13 +8,14 @@ import (
 	"testing"
 
 	zcpinit "github.com/zeropsio/zcp/internal/init"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 func TestRun_GeneratesCLAUDEMD(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	err := zcpinit.Run(dir)
+	err := zcpinit.Run(dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
@@ -34,7 +35,7 @@ func TestRun_GeneratesMCPConfig(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	err := zcpinit.Run(dir)
+	err := zcpinit.Run(dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
@@ -56,7 +57,7 @@ func TestRun_GeneratesSSHConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	err := zcpinit.Run(dir)
+	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
@@ -76,7 +77,7 @@ func TestRun_GeneratesSettingsLocal(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	err := zcpinit.Run(dir)
+	err := zcpinit.Run(dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
@@ -97,10 +98,10 @@ func TestRun_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 
 	// Run twice.
-	if err := zcpinit.Run(dir); err != nil {
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
 		t.Fatalf("first Run() error: %v", err)
 	}
-	if err := zcpinit.Run(dir); err != nil {
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
 		t.Fatalf("second Run() error: %v", err)
 	}
 
@@ -120,7 +121,7 @@ func TestRun_GeneratesAliases(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	err := zcpinit.Run(dir)
+	err := zcpinit.Run(dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
@@ -145,7 +146,7 @@ func TestRun_AliasesBashrcSourceLine(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	err := zcpinit.Run(dir)
+	err := zcpinit.Run(dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
@@ -168,10 +169,10 @@ func TestRun_AliasesBashrcIdempotent(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	// Run twice.
-	if err := zcpinit.Run(dir); err != nil {
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
 		t.Fatalf("first Run() error: %v", err)
 	}
-	if err := zcpinit.Run(dir); err != nil {
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
 		t.Fatalf("second Run() error: %v", err)
 	}
 
@@ -193,7 +194,7 @@ func TestRun_ReportsSteps(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	err := zcpinit.Run(dir)
+	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
@@ -210,5 +211,119 @@ func TestRun_ReportsSteps(t *testing.T) {
 		if _, err := os.Stat(f); os.IsNotExist(err) {
 			t.Errorf("expected file %s to exist", f)
 		}
+	}
+}
+
+func TestSSHConfig_Container_ManagedSection(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(homeDir, ".ssh", "config"))
+	if err != nil {
+		t.Fatalf("read ssh config: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "# ZCP:BEGIN") {
+		t.Error("ssh config should contain ZCP:BEGIN marker")
+	}
+	if !strings.Contains(content, "# ZCP:END") {
+		t.Error("ssh config should contain ZCP:END marker")
+	}
+	if !strings.Contains(content, "User zerops") {
+		t.Error("ssh config should contain 'User zerops' directive")
+	}
+}
+
+func TestSSHConfig_Container_PreservesExisting(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	// Write pre-existing SSH config.
+	sshDir := filepath.Join(homeDir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	existing := "Host github.com\n    IdentityFile ~/.ssh/id_github\n"
+	if err := os.WriteFile(filepath.Join(sshDir, "config"), []byte(existing), 0644); err != nil {
+		t.Fatalf("write existing config: %v", err)
+	}
+
+	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(sshDir, "config"))
+	if err != nil {
+		t.Fatalf("read ssh config: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "Host github.com") {
+		t.Error("ssh config should preserve existing 'Host github.com' entry")
+	}
+	if !strings.Contains(content, "IdentityFile ~/.ssh/id_github") {
+		t.Error("ssh config should preserve existing IdentityFile directive")
+	}
+	if !strings.Contains(content, "# ZCP:BEGIN") {
+		t.Error("ssh config should contain ZCP managed section")
+	}
+}
+
+func TestSSHConfig_Container_Idempotent(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	rt := runtime.Info{InContainer: true}
+
+	if err := zcpinit.Run(dir, rt); err != nil {
+		t.Fatalf("first Run() error: %v", err)
+	}
+	if err := zcpinit.Run(dir, rt); err != nil {
+		t.Fatalf("second Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(homeDir, ".ssh", "config"))
+	if err != nil {
+		t.Fatalf("read ssh config: %v", err)
+	}
+
+	content := string(data)
+	beginCount := strings.Count(content, "# ZCP:BEGIN")
+	if beginCount != 1 {
+		t.Errorf("ZCP:BEGIN should appear exactly once after two runs, got %d", beginCount)
+	}
+	endCount := strings.Count(content, "# ZCP:END")
+	if endCount != 1 {
+		t.Errorf("ZCP:END should appear exactly once after two runs, got %d", endCount)
+	}
+}
+
+func TestSSHConfig_Local_Skipped(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	err := zcpinit.Run(dir, runtime.Info{InContainer: false})
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	sshConfig := filepath.Join(homeDir, ".ssh", "config")
+	if _, err := os.Stat(sshConfig); !os.IsNotExist(err) {
+		t.Error("ssh config should not be created in local mode")
 	}
 }
