@@ -18,7 +18,7 @@ type DiscoverInput struct {
 func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_discover",
-		Description: "Discover project and service information. Optionally filter by service hostname and include environment variables. This is the primary tool for reading env vars — use includeEnvs=true.",
+		Description: "Discover project and service information. Filter by service hostname or list all. Use includeEnvs=true to read env vars — one call returns all services.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Discover project and services",
 			ReadOnlyHint:   true,

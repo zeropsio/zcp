@@ -27,7 +27,7 @@ type KnowledgeInput struct {
 func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
-		Description: "Load Zerops platform knowledge. Four modes: (1) briefing — stack-specific rules. Use `runtime` and/or `services` params. Returns: binding rules, ports, env vars, wiring patterns, version validation. (2) scope — platform reference. Use scope=\"infrastructure\" for complete Zerops knowledge: import.yml/zerops.yml schemas, env var system (cross-service references, envSecrets), build/deploy lifecycle, rules & pitfalls. Required before generating YAML. (3) query — BM25 search for specific topics. (4) recipe — pre-built configs for frameworks. NOTE: This is a reference tool, not a substitute for zerops_workflow. To create or modify services, start a workflow session first.",
+		Description: "Load Zerops platform knowledge. Four modes: (1) briefing — stack-specific rules via runtime/services params. (2) scope=infrastructure — complete platform reference, required before generating YAML. (3) query — BM25 search. (4) recipe — pre-built framework configs.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Zerops knowledge access",
 			ReadOnlyHint:   true,

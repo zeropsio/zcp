@@ -26,7 +26,7 @@ type ManageInput struct {
 func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_manage",
-		Description: "Manage service lifecycle: start, stop, restart, reload, connect-storage, disconnect-storage. Use reload after env var changes (~4s, faster than restart ~14s). Use connect-storage/disconnect-storage to attach/detach a shared-storage volume to a runtime service (mounts at /mnt/{storageHostname}). Requires storageHostname parameter.",
+		Description: "Manage service lifecycle: start, stop, restart, reload, connect-storage, disconnect-storage. Use reload after env var changes (~4s, faster than restart ~14s). connect-storage/disconnect-storage attach/detach shared-storage (mounts at /mnt/{storageHostname}).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage service lifecycle",
 			IdempotentHint:  true,

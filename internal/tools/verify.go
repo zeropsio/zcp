@@ -27,7 +27,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_verify",
-		Description: "Run health verification checks on a service. Returns structured check results: service status, error logs, startup detection, HTTP root, and /status endpoint connectivity. Checks vary by runtime class: dynamic (5), implicit webserver (4), static (2), worker (2), managed (1). Check statuses: pass, fail, skip, info (advisory — error log checks use info since SSH deploy logs often appear as errors). Omit serviceHostname to verify all services at once.",
+		Description: "Run health checks on a service. Returns structured results: service status, error logs, startup detection, HTTP connectivity. Check statuses: pass, fail, skip, info (advisory, not failure). Omit serviceHostname to verify all services.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Verify service health",
 			ReadOnlyHint:   true,

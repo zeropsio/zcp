@@ -34,7 +34,7 @@ func RegisterDeploy(
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
-		Description: "REQUIRES active workflow session — call zerops_workflow action=\"start\" first. Deploy code to a Zerops service via SSH. Blocks until build pipeline completes — returns final status (DEPLOYED or BUILD_FAILED) with build duration. Automatically handles git initialization — git is initialized if no .git directory exists. Self-deploy: set targetService only (sourceService auto-inferred, includeGit auto-forced). Cross-deploy (dev→stage): set sourceService + targetService. Requires zerops.yml in workingDir (/var/www default). After deploy, /var/www only contains deployFiles artifacts. Self-deploying services MUST use deployFiles: [.] — otherwise source files and zerops.yml are destroyed, breaking further iteration. Cross-deploy targets (e.g. stage) can use specific deployFiles for compiled output.",
+		Description: "REQUIRES active workflow session. Deploy code via SSH — blocks until build completes. Self-deploy: set targetService only. Cross-deploy: set sourceService + targetService. Requires zerops.yml in workingDir. Self-deploying services MUST use deployFiles: [.] — otherwise source files are destroyed.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),

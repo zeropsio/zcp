@@ -167,6 +167,124 @@ func ptrStr(p *bool) string {
 	return "false"
 }
 
+func TestAnnotations_DescriptionWordCount(t *testing.T) {
+	t.Parallel()
+
+	toolMap := listAllTools(t)
+
+	const maxWords = 60
+
+	// Tools subject to the 60-word cap (excludes workflow, delete, logs, events, mount, scale
+	// which were not part of the trim plan).
+	trimmedTools := []string{
+		"zerops_discover",
+		"zerops_deploy",
+		"zerops_import",
+		"zerops_manage",
+		"zerops_env",
+		"zerops_subdomain",
+		"zerops_knowledge",
+		"zerops_verify",
+		"zerops_process",
+	}
+
+	for _, name := range trimmedTools {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tool, ok := toolMap[name]
+			if !ok {
+				t.Fatalf("tool %s not found", name)
+			}
+			words := strings.Fields(tool.Description)
+			if len(words) > maxWords {
+				t.Errorf("tool %s: description has %d words (max %d):\n%s",
+					name, len(words), maxWords, tool.Description)
+			}
+		})
+	}
+}
+
+func TestAnnotations_DescriptionKeywords(t *testing.T) {
+	t.Parallel()
+
+	toolMap := listAllTools(t)
+
+	tests := []struct {
+		name     string
+		keywords []string
+	}{
+		{name: "zerops_discover", keywords: []string{"env var", "includeEnvs"}},
+		{name: "zerops_deploy", keywords: []string{"workflow", "SSH", "zerops.yml", "deployFiles"}},
+		{name: "zerops_import", keywords: []string{"workflow", "YAML"}},
+		{name: "zerops_manage", keywords: []string{"reload", "restart", "connect-storage", "/mnt/"}},
+		{name: "zerops_env", keywords: []string{"set", "delete", "reload"}},
+		{name: "zerops_subdomain", keywords: []string{"enable", "disable", "subdomain"}},
+		{name: "zerops_knowledge", keywords: []string{"briefing", "scope", "query", "recipe"}},
+		{name: "zerops_verify", keywords: []string{"health", "pass", "fail", "info"}},
+		{name: "zerops_process", keywords: []string{"cancel", "status"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tool, ok := toolMap[tt.name]
+			if !ok {
+				t.Fatalf("tool %s not found", tt.name)
+			}
+			desc := strings.ToLower(tool.Description)
+			for _, kw := range tt.keywords {
+				if !strings.Contains(desc, strings.ToLower(kw)) {
+					t.Errorf("tool %s: description missing keyword %q:\n%s",
+						tt.name, kw, tool.Description)
+				}
+			}
+		})
+	}
+}
+
+// listAllTools creates a test MCP server and returns all registered tools by name.
+func listAllTools(t *testing.T) map[string]*mcp.Tool {
+	t.Helper()
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test"}).
+		WithServices(nil)
+	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("knowledge store: %v", err)
+	}
+	logFetcher := platform.NewMockLogFetcher()
+
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, nil, runtime.Info{})
+
+	ctx := context.Background()
+	st, ct := mcp.NewInMemoryTransports()
+
+	_, err = srv.MCPServer().Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	session, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { session.Close() })
+
+	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+
+	toolMap := make(map[string]*mcp.Tool)
+	for _, tool := range result.Tools {
+		toolMap[tool.Name] = tool
+	}
+	return toolMap
+}
+
 func TestAnnotations_DeleteToolRequiresExplicitApproval(t *testing.T) {
 	t.Parallel()
 
