@@ -39,6 +39,7 @@ func (m *Mock) GetProject(_ context.Context, _ string) (*Project, error) {
 }
 
 func (m *Mock) ListServices(_ context.Context, _ string) ([]ServiceStack, error) {
+	m.trackCall("ListServices")
 	if err := m.getError("ListServices"); err != nil {
 		return nil, err
 	}

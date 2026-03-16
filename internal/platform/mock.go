@@ -33,6 +33,9 @@ type Mock struct {
 	// CapturedImportYAML stores the YAML content passed to ImportServices.
 	CapturedImportYAML string
 
+	// CallCounts tracks how many times each method was called.
+	CallCounts map[string]int
+
 	// Error overrides: method name -> error
 	errors map[string]error
 }
@@ -40,10 +43,18 @@ type Mock struct {
 // NewMock creates a new configurable mock.
 func NewMock() *Mock {
 	return &Mock{
-		processes: make(map[string]*Process),
-		envVars:   make(map[string][]EnvVar),
-		errors:    make(map[string]error),
+		processes:  make(map[string]*Process),
+		envVars:    make(map[string][]EnvVar),
+		CallCounts: make(map[string]int),
+		errors:     make(map[string]error),
 	}
+}
+
+// trackCall increments the call count for a method.
+func (m *Mock) trackCall(method string) {
+	m.mu.Lock()
+	m.CallCounts[method]++
+	m.mu.Unlock()
 }
 
 // WithUserInfo sets the user info returned by GetUserInfo.

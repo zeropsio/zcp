@@ -69,11 +69,15 @@ func Reload(ctx context.Context, client platform.Client, projectID, hostname str
 
 // ConnectStorage connects a shared-storage volume to a runtime service.
 func ConnectStorage(ctx context.Context, client platform.Client, projectID, hostname, storageHostname string) (*platform.Process, error) {
-	svc, err := resolveService(ctx, client, projectID, hostname)
+	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
-	storage, err := resolveService(ctx, client, projectID, storageHostname)
+	svc, err := resolveServiceID(services, hostname)
+	if err != nil {
+		return nil, err
+	}
+	storage, err := resolveServiceID(services, storageHostname)
 	if err != nil {
 		return nil, err
 	}
@@ -82,11 +86,15 @@ func ConnectStorage(ctx context.Context, client platform.Client, projectID, host
 
 // DisconnectStorage disconnects a shared-storage volume from a runtime service.
 func DisconnectStorage(ctx context.Context, client platform.Client, projectID, hostname, storageHostname string) (*platform.Process, error) {
-	svc, err := resolveService(ctx, client, projectID, hostname)
+	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
-	storage, err := resolveService(ctx, client, projectID, storageHostname)
+	svc, err := resolveServiceID(services, hostname)
+	if err != nil {
+		return nil, err
+	}
+	storage, err := resolveServiceID(services, storageHostname)
 	if err != nil {
 		return nil, err
 	}

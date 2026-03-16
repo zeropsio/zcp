@@ -326,6 +326,46 @@ func TestBuildAutoscalingParams_StartCPU(t *testing.T) {
 	}
 }
 
+func TestConnectStorage_SingleListServicesCall(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "RUNNING"},
+			{ID: "svc-2", Name: "storage", ProjectID: "proj-1", Status: "RUNNING"},
+		})
+
+	_, err := ConnectStorage(context.Background(), mock, "proj-1", "appdev", "storage")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	calls := mock.CallCounts["ListServices"]
+	if calls != 1 {
+		t.Errorf("ListServices called %d times, want 1", calls)
+	}
+}
+
+func TestDisconnectStorage_SingleListServicesCall(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appdev", ProjectID: "proj-1", Status: "RUNNING"},
+			{ID: "svc-2", Name: "storage", ProjectID: "proj-1", Status: "RUNNING"},
+		})
+
+	_, err := DisconnectStorage(context.Background(), mock, "proj-1", "appdev", "storage")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	calls := mock.CallCounts["ListServices"]
+	if calls != 1 {
+		t.Errorf("ListServices called %d times, want 1", calls)
+	}
+}
+
 func TestScale_InvalidCPUMode(t *testing.T) {
 	t.Parallel()
 

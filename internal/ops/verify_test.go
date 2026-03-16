@@ -1013,6 +1013,42 @@ func TestVerifyAll_EmptyProject(t *testing.T) {
 	}
 }
 
+func TestVerifyAll_SingleListServicesCall(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app1", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}},
+			{ID: "svc-2", Name: "app2", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 8080}}},
+			{ID: "svc-3", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
+			{ID: "svc-4", Name: "cache", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@8", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
+			{ID: "svc-5", Name: "worker", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "python@3.12", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
+		}).
+		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
+
+	fetcher := &callbackLogFetcher{fn: func(params platform.LogFetchParams) ([]platform.LogEntry, error) {
+		if params.Search != "" {
+			return []platform.LogEntry{{Message: "listening"}}, nil
+		}
+		return nil, nil
+	}}
+
+	result, err := VerifyAll(context.Background(), mock, fetcher, http.DefaultClient, "proj-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Services) != 5 {
+		t.Errorf("Services count = %d, want 5", len(result.Services))
+	}
+
+	// VerifyAll should call ListServices exactly once, not 1+N times.
+	calls := mock.CallCounts["ListServices"]
+	if calls != 1 {
+		t.Errorf("ListServices called %d times, want 1 (was %d before fix)", calls, 1+len(result.Services))
+	}
+}
+
 // findCheck finds a check by name and asserts its status.
 func findCheck(t *testing.T, result *VerifyResult, name, wantStatus string) CheckResult {
 	t.Helper()

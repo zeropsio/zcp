@@ -80,11 +80,23 @@ func Verify(
 	if err != nil {
 		return nil, err
 	}
+	return verifyService(ctx, client, fetcher, httpClient, projectID, svc)
+}
 
+// verifyService runs health verification checks for a pre-resolved service.
+// Used by Verify (after resolution) and VerifyAll (with pre-fetched list).
+func verifyService(
+	ctx context.Context,
+	client platform.Client,
+	fetcher platform.LogFetcher,
+	httpClient HTTPDoer,
+	projectID string,
+	svc *platform.ServiceStack,
+) (*VerifyResult, error) {
 	managed := isManagedCategory(svc.ServiceStackTypeInfo.ServiceStackTypeCategoryName)
 
 	result := &VerifyResult{
-		Hostname: hostname,
+		Hostname: svc.Name,
 		Type:     "runtime",
 	}
 	if managed {
@@ -244,22 +256,23 @@ func VerifyAll(
 		}, nil
 	}
 
-	// Run Verify per service with bounded concurrency.
+	// Run verifyService per service with bounded concurrency.
+	// Uses pre-fetched service data — no additional ListServices calls.
 	results := make([]VerifyResult, len(targets))
 	sem := make(chan struct{}, 5) // max 5 concurrent
 	var wg sync.WaitGroup
 
-	for i, svc := range targets {
+	for i := range targets {
 		wg.Add(1)
-		go func(idx int, hostname string) {
+		go func(idx int) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			r, verifyErr := Verify(ctx, client, fetcher, httpClient, projectID, hostname)
+			r, verifyErr := verifyService(ctx, client, fetcher, httpClient, projectID, &targets[idx])
 			if verifyErr != nil {
 				results[idx] = VerifyResult{
-					Hostname: hostname,
+					Hostname: targets[idx].Name,
 					Type:     "unknown",
 					Status:   StatusUnhealthy,
 					Checks: []CheckResult{
@@ -269,7 +282,7 @@ func VerifyAll(
 				return
 			}
 			results[idx] = *r
-		}(i, svc.Name)
+		}(i)
 	}
 	wg.Wait()
 
