@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
@@ -46,7 +47,10 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
-		&mcp.ServerOptions{Instructions: BuildInstructions(ctx, client, authInfo.ProjectID, rtInfo, stateDir)},
+		&mcp.ServerOptions{
+			Instructions: BuildInstructions(ctx, client, authInfo.ProjectID, rtInfo, stateDir),
+			KeepAlive:    30 * time.Second,
+		},
 	)
 
 	// Register idle tracking middleware for graceful update restart.
