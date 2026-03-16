@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -50,6 +51,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		&mcp.ServerOptions{
 			Instructions: BuildInstructions(ctx, client, authInfo.ProjectID, rtInfo, stateDir),
 			KeepAlive:    30 * time.Second,
+			Logger:       slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		},
 	)
 
