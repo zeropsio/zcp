@@ -387,12 +387,12 @@ After `zerops_deploy` to dev, env vars from zerops.yml are available as OS env v
    zerops_discover includeEnvs=true
    ```
 
-3. **Write code** to mount path `/var/www/{hostname}/`
+3. **Write code** to mount path `/var/www/{hostname}/`. Use `${hostname_varName}` references in zerops.yml envVariables — NEVER hardcode credentials. Env vars activate after deploy.
 
 #### Simple mode zerops.yml
 
 Simple mode services self-deploy (same rules as dev services).
-Unlike dev, simple mode uses a real `start` command and `healthCheck` since there is no manual SSH iteration.
+Unlike dev, simple mode uses a real `start` command and `healthCheck` — server auto-starts after deploy with env vars injected.
 
 ```yaml
 zerops:
@@ -789,8 +789,8 @@ After `zerops_deploy` to dev, env vars from zerops.yml are available as OS env v
 
 1. **Import services** with `startWithoutCode: true`
 2. **Mount and discover**: `zerops_mount` + `zerops_discover includeEnvs=true`
-3. **Write code** to mount path
-4. **Deploy**: `zerops_deploy targetService="{hostname}"`
+3. **Write code** to mount path — use `${hostname_varName}` references, NEVER hardcode credentials
+4. **Deploy**: `zerops_deploy targetService="{hostname}"` — activates envVariables, server auto-starts
 5. **Verify**: `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{hostname}"`
 6. If verification fails, iterate (diagnose -> fix -> redeploy).
 </section>
