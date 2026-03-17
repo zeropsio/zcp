@@ -336,6 +336,36 @@ func TestResolveProgressiveGuidance_MixedStandardDev(t *testing.T) {
 	}
 }
 
+func TestBuildIterationDelta_RemainingUsesMaxIterations(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+	}}
+	result := BuildIterationDelta("deploy", 1, plan, "some failure")
+	// maxIterations() defaults to 10, so remaining should be 9 at iteration 1.
+	if !strings.Contains(result, "9") {
+		t.Errorf("expected remaining=9 (maxIterations()-1), got: %s", result)
+	}
+	// Must NOT show 4 (which would be old maxBootstrapIterations=5 minus 1).
+	if strings.Contains(result, "REMAINING: 4") {
+		t.Error("remaining should use maxIterations() (default 10), not old constant 5")
+	}
+}
+
+func TestBuildIterationDelta_NoForceGuide(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+	}}
+	result := BuildIterationDelta("deploy", 1, plan, "some failure")
+	if strings.Contains(result, "forceGuide") {
+		t.Error("output should not contain 'forceGuide'")
+	}
+	if !strings.Contains(result, `action="iterate"`) {
+		t.Errorf("output should contain action=\"iterate\", got: %s", result)
+	}
+}
+
 // --- Item 29: BuildIterationDelta ---
 
 func TestBuildIterationDelta_ZeroIteration(t *testing.T) {

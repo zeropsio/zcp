@@ -116,6 +116,9 @@ func IterateSession(stateDir, evidenceDir, sessionID string) (*WorkflowState, er
 
 	prevPhase := state.Phase
 	state.Phase = PhaseDevelop
+	if state.Bootstrap != nil {
+		state.Bootstrap.ResetForIteration()
+	}
 	state.Iteration = nextIter
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	state.History = append(state.History, PhaseTransition{

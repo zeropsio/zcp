@@ -6,9 +6,16 @@ import (
 	"strings"
 )
 
+// sanitizeReflogIntent strips characters that could inject markdown structure.
+func sanitizeReflogIntent(s string) string {
+	r := strings.NewReplacer("\n", " ", "\r", " ")
+	return strings.TrimSpace(r.Replace(s))
+}
+
 // AppendReflogEntry appends a bootstrap history entry to a CLAUDE.md file.
 // Each entry is wrapped in ZEROPS:REFLOG markers. Entries are append-only.
 func AppendReflogEntry(claudeMDPath string, intent string, targets []BootstrapTarget, sessionID string, date string) error {
+	intent = sanitizeReflogIntent(intent)
 	var b strings.Builder
 	b.WriteString("\n<!-- ZEROPS:REFLOG -->\n")
 	b.WriteString(fmt.Sprintf("### %s — Bootstrap: %s\n\n", date, intent))

@@ -201,7 +201,7 @@ func remediationForEvidence(evidenceType string) RemediationStep {
 		return RemediationStep{
 			Action:      "verify_dev",
 			Tool:        "zerops_verify",
-			Params:      `service="{hostname}"`,
+			Params:      `serviceHostname="{hostname}"`,
 			Explanation: "Verify dev service is healthy and responding",
 		}
 	case EvidenceDeployEvidence:
@@ -215,7 +215,7 @@ func remediationForEvidence(evidenceType string) RemediationStep {
 		return RemediationStep{
 			Action:      "verify_stage",
 			Tool:        "zerops_verify",
-			Params:      `service="{hostname}"`,
+			Params:      `serviceHostname="{hostname}"`,
 			Explanation: "Verify stage service is healthy and responding",
 		}
 	default:

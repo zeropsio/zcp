@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -371,6 +372,92 @@ func TestCheckGenerate_ValidEnvRef_Passes(t *testing.T) {
 	}
 	if !hasEnvRefPass {
 		t.Error("expected appdev_env_refs pass check")
+	}
+}
+
+func TestCheckGenerate_StandardMode_OnlyChecksDev(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	// zerops.yml with only appdev entry — no appstage.
+	writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    envVariables:
+      DATABASE_URL: ${db_connectionString}
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+`)
+
+	// Standard mode (BootstrapMode="" defaults to standard via EffectiveMode).
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	state := &workflow.BootstrapState{
+		Active: true,
+		Plan:   plan,
+		DiscoveredEnvVars: map[string][]string{
+			"db": {"connectionString", "host", "port"},
+		},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, state)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass with only dev hostname in zerops.yml, got fail: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
+func TestCheckGenerate_StandardMode_NoStageChecks(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	// zerops.yml with only appdev entry — no appstage.
+	writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+`)
+
+	// Standard mode (BootstrapMode="" defaults to standard via EffectiveMode).
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// No check should reference "appstage".
+	for _, c := range result.Checks {
+		if strings.Contains(c.Name, "appstage") {
+			t.Errorf("unexpected stage check: %s (status=%s)", c.Name, c.Status)
+		}
 	}
 }
 

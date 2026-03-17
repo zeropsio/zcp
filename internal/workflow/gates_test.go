@@ -579,6 +579,29 @@ func TestCheckGate_G4_EmptyMode_Required(t *testing.T) {
 	}
 }
 
+func TestRemediationForEvidence_UsesServiceHostname(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		evidenceType string
+	}{
+		{"dev_verify", EvidenceDevVerify},
+		{"stage_verify", EvidenceStageVerify},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := remediationForEvidence(tt.evidenceType)
+			if strings.Contains(r.Params, "service=") && !strings.Contains(r.Params, "serviceHostname=") {
+				t.Errorf("Params should not contain bare 'service=', got %q", r.Params)
+			}
+			if !strings.Contains(r.Params, "serviceHostname=") {
+				t.Errorf("Params should contain 'serviceHostname=', got %q", r.Params)
+			}
+		})
+	}
+}
+
 func TestGateName_Coverage(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -904,6 +904,207 @@ func TestBuildPriorContext_ShortAttestationNotTruncated(t *testing.T) {
 	}
 }
 
+// --- C-02: Progressive guidance wiring ---
+
+func TestBuildResponse_DeployStep_UsesProgressiveGuidance(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+	}}
+	// Complete steps 0-2 to reach deploy.
+	for i := range 3 {
+		bs.Steps[i].Status = stepComplete
+		bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
+	}
+	bs.CurrentStep = 3
+	bs.Steps[3].Status = stepInProgress
+
+	resp := bs.BuildResponse("sess-prog", "test", 0)
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil")
+	}
+	// Progressive guidance filters to mode-specific sections (~5k chars);
+	// monolithic deploy section is ~30k chars.
+	monolithic := ResolveGuidance("deploy")
+	if len(resp.Current.DetailedGuide) >= len(monolithic)/2 {
+		t.Errorf("DetailedGuide too long (%d chars vs monolithic %d), expected progressive guidance to be significantly shorter",
+			len(resp.Current.DetailedGuide), len(monolithic))
+	}
+	if resp.Current.DetailedGuide == "" {
+		t.Error("DetailedGuide should not be empty for deploy step")
+	}
+}
+
+func TestBuildResponse_DeployStep_SimpleMode_ShorterGuidance(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "simple"}},
+	}}
+	for i := range 3 {
+		bs.Steps[i].Status = stepComplete
+		bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
+	}
+	bs.CurrentStep = 3
+	bs.Steps[3].Status = stepInProgress
+
+	resp := bs.BuildResponse("sess-simple", "test", 0)
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil")
+	}
+	if strings.Contains(resp.Current.DetailedGuide, "Standard mode") {
+		t.Error("simple mode deploy guide should not contain 'Standard mode'")
+	}
+	if strings.Contains(resp.Current.DetailedGuide, "dev+stage") {
+		t.Error("simple mode deploy guide should not contain 'dev+stage'")
+	}
+}
+
+func TestBuildResponse_NonDeployStep_GuidanceUnchanged(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		stepIdx int
+	}{
+		{"discover", 0},
+		{"provision", 1},
+		{"generate", 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// Fresh BootstrapState each sub-test to avoid guide gating.
+			bs := NewBootstrapState()
+			for i := 0; i < tt.stepIdx; i++ {
+				bs.Steps[i].Status = stepComplete
+				bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
+			}
+			bs.CurrentStep = tt.stepIdx
+			bs.Steps[tt.stepIdx].Status = stepInProgress
+
+			resp := bs.BuildResponse("sess-nondeloy-"+tt.name, "test", 0)
+			if resp.Current == nil {
+				t.Fatal("Current should not be nil")
+			}
+
+			expected := ResolveGuidance(tt.name)
+			if resp.Current.DetailedGuide != expected {
+				t.Errorf("non-deploy step %q: DetailedGuide should match ResolveGuidance exactly\ngot length %d, want length %d",
+					tt.name, len(resp.Current.DetailedGuide), len(expected))
+			}
+		})
+	}
+}
+
+// --- C-03: ResetForIteration ---
+
+func TestResetForIteration_ResetsGenerateDeployVerify(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+
+	// Complete all 6 steps.
+	for i, name := range []string{"discover", "provision", "generate", "deploy", "verify", "strategy"} {
+		bs.Steps[i].Status = stepInProgress
+		if err := bs.CompleteStep(name, "Attestation for "+name+" step completed ok"); err != nil {
+			t.Fatalf("CompleteStep(%s): %v", name, err)
+		}
+	}
+	// Preconditions: all done.
+	if bs.Active {
+		t.Fatal("precondition: Active should be false")
+	}
+	if bs.CurrentStep != 6 {
+		t.Fatalf("precondition: CurrentStep should be 6, got %d", bs.CurrentStep)
+	}
+
+	bs.ResetForIteration()
+
+	if !bs.Active {
+		t.Error("Active should be true after reset")
+	}
+	if bs.CurrentStep != 2 {
+		t.Errorf("CurrentStep: want 2, got %d", bs.CurrentStep)
+	}
+	// Steps 0-1 should remain complete.
+	for i := 0; i <= 1; i++ {
+		if bs.Steps[i].Status != stepComplete {
+			t.Errorf("Steps[%d].Status: want %s, got %s", i, stepComplete, bs.Steps[i].Status)
+		}
+		if bs.Steps[i].Attestation == "" {
+			t.Errorf("Steps[%d].Attestation should be preserved", i)
+		}
+	}
+	// Steps 2-4 should be reset (step 2 in_progress, 3-4 pending).
+	if bs.Steps[2].Status != stepInProgress {
+		t.Errorf("Steps[2].Status: want %s, got %s", stepInProgress, bs.Steps[2].Status)
+	}
+	for i := 3; i <= 4; i++ {
+		if bs.Steps[i].Status != stepPending {
+			t.Errorf("Steps[%d].Status: want %s, got %s", i, stepPending, bs.Steps[i].Status)
+		}
+	}
+	// Step 5 (strategy) should remain complete.
+	if bs.Steps[5].Status != stepComplete {
+		t.Errorf("Steps[5].Status: want %s, got %s", stepComplete, bs.Steps[5].Status)
+	}
+}
+
+func TestResetForIteration_ClearsGuideSentFor(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Context = &ContextDelivery{
+		GuideSentFor: map[string]int{
+			StepDiscover:  0,
+			StepProvision: 0,
+			StepGenerate:  0,
+			StepDeploy:    0,
+			StepVerify:    0,
+			StepStrategy:  0,
+		},
+	}
+
+	bs.ResetForIteration()
+
+	// generate, deploy, verify should be cleared.
+	for _, step := range []string{StepGenerate, StepDeploy, StepVerify} {
+		if _, exists := bs.Context.GuideSentFor[step]; exists {
+			t.Errorf("GuideSentFor[%s] should be cleared after reset", step)
+		}
+	}
+	// discover, provision, strategy should be preserved.
+	for _, step := range []string{StepDiscover, StepProvision, StepStrategy} {
+		if _, exists := bs.Context.GuideSentFor[step]; !exists {
+			t.Errorf("GuideSentFor[%s] should be preserved after reset", step)
+		}
+	}
+}
+
+func TestResetForIteration_SetsCurrentStepInProgress(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	// Complete all steps so CurrentStep=6, Active=false.
+	for i, name := range []string{"discover", "provision", "generate", "deploy", "verify", "strategy"} {
+		bs.Steps[i].Status = stepInProgress
+		if err := bs.CompleteStep(name, "Attestation for "+name+" step completed ok"); err != nil {
+			t.Fatalf("CompleteStep(%s): %v", name, err)
+		}
+	}
+
+	bs.ResetForIteration()
+
+	if bs.Steps[2].Status != stepInProgress {
+		t.Errorf("Steps[2].Status: want %s, got %s", stepInProgress, bs.Steps[2].Status)
+	}
+}
+
+func TestResetForIteration_NilBootstrap_NoOp(t *testing.T) {
+	t.Parallel()
+	var b *BootstrapState
+	// Should not panic.
+	b.ResetForIteration()
+}
+
 func TestBuildPriorContext_PlanAlwaysIncluded(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

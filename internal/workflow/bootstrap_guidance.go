@@ -85,8 +85,6 @@ func distinctModes(plan *ServicePlan) map[string]bool {
 	return modes
 }
 
-const maxBootstrapIterations = 5
-
 // BuildIterationDelta returns a focused ~300-token template for deploy iterations.
 // Returns empty for non-deploy steps or iteration == 0.
 func BuildIterationDelta(step string, iteration int, plan *ServicePlan, lastAttestation string) string {
@@ -94,7 +92,7 @@ func BuildIterationDelta(step string, iteration int, plan *ServicePlan, lastAtte
 		return ""
 	}
 
-	remaining := max(maxBootstrapIterations-iteration, 0)
+	remaining := max(maxIterations()-iteration, 0)
 
 	return fmt.Sprintf(`ITERATION %d for step %s
 
@@ -111,7 +109,7 @@ RECOVERY PATTERNS:
 | permission denied    | check deployFiles paths          | redeploy          |
 
 MAX ITERATIONS REMAINING: %d
-RECOVERY: Use forceGuide=true to re-fetch full guidance if stuck.`,
+RECOVERY: Use action="iterate" to re-fetch full guidance if stuck.`,
 		iteration, step, lastAttestation, remaining)
 }
 

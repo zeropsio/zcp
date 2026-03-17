@@ -284,6 +284,97 @@ func TestIterateSession_NoExistingState(t *testing.T) {
 	}
 }
 
+// --- C-03: IterateSession resets bootstrap steps ---
+
+func TestIterateSession_ResetsBootstrapSteps(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	evidenceDir := filepath.Join(dir, "evidence")
+
+	state, err := InitSession(dir, "proj-c03", "bootstrap", "iterate bootstrap test")
+	if err != nil {
+		t.Fatalf("InitSession: %v", err)
+	}
+
+	// Set up a completed bootstrap state.
+	bs := NewBootstrapState()
+	for i, name := range []string{"discover", "provision", "generate", "deploy", "verify", "strategy"} {
+		bs.Steps[i].Status = stepInProgress
+		if err := bs.CompleteStep(name, "Attestation for "+name+" step completed ok"); err != nil {
+			t.Fatalf("CompleteStep(%s): %v", name, err)
+		}
+	}
+	state.Bootstrap = bs
+	if err := saveSessionState(dir, state.SessionID, state); err != nil {
+		t.Fatalf("saveSessionState: %v", err)
+	}
+
+	// Save evidence so iterate doesn't fail.
+	ev := &Evidence{
+		SessionID: state.SessionID, Type: "dev_verify", VerificationType: "attestation",
+	}
+	if err := SaveEvidence(evidenceDir, state.SessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	iterated, err := IterateSession(dir, evidenceDir, state.SessionID)
+	if err != nil {
+		t.Fatalf("IterateSession: %v", err)
+	}
+
+	if iterated.Bootstrap == nil {
+		t.Fatal("Bootstrap should not be nil after iterate")
+	}
+	if !iterated.Bootstrap.Active {
+		t.Error("Bootstrap.Active should be true after iterate")
+	}
+	if iterated.Bootstrap.CurrentStep != 2 {
+		t.Errorf("Bootstrap.CurrentStep: want 2, got %d", iterated.Bootstrap.CurrentStep)
+	}
+
+	// Reload from disk to verify persistence.
+	reloaded, err := LoadSessionByID(dir, state.SessionID)
+	if err != nil {
+		t.Fatalf("LoadSessionByID: %v", err)
+	}
+	if !reloaded.Bootstrap.Active {
+		t.Error("reloaded Bootstrap.Active should be true")
+	}
+	if reloaded.Bootstrap.CurrentStep != 2 {
+		t.Errorf("reloaded Bootstrap.CurrentStep: want 2, got %d", reloaded.Bootstrap.CurrentStep)
+	}
+}
+
+func TestIterateSession_WithoutBootstrap_StillWorks(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	evidenceDir := filepath.Join(dir, "evidence")
+
+	state, err := InitSession(dir, "proj-c03b", "deploy", "no bootstrap test")
+	if err != nil {
+		t.Fatalf("InitSession: %v", err)
+	}
+
+	// Save evidence so iterate doesn't fail.
+	ev := &Evidence{
+		SessionID: state.SessionID, Type: "dev_verify", VerificationType: "attestation",
+	}
+	if err := SaveEvidence(evidenceDir, state.SessionID, ev); err != nil {
+		t.Fatalf("SaveEvidence: %v", err)
+	}
+
+	iterated, err := IterateSession(dir, evidenceDir, state.SessionID)
+	if err != nil {
+		t.Fatalf("IterateSession: %v", err)
+	}
+	if iterated.Bootstrap != nil {
+		t.Error("Bootstrap should remain nil when not set")
+	}
+	if iterated.Iteration != 1 {
+		t.Errorf("Iteration: want 1, got %d", iterated.Iteration)
+	}
+}
+
 func TestInitSession_CleansUpLegacyState(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

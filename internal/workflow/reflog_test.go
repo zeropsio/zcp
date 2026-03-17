@@ -141,6 +141,68 @@ func TestAppendReflogEntry_DevMode(t *testing.T) {
 	}
 }
 
+func TestAppendReflogEntry_SanitizesNewlinesAndHeaders(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+
+	targets := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}
+
+	maliciousIntent := "Normal intent\n# Injected\nmalicious content"
+	err := AppendReflogEntry(path, maliciousIntent, targets, "sess-sanitize", "2026-03-17")
+	if err != nil {
+		t.Fatalf("AppendReflogEntry: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	content := string(data)
+
+	// No line should start with "# Injected" (markdown heading injection).
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.TrimSpace(line) == "# Injected" {
+			t.Error("reflog entry contains injected markdown heading '# Injected'")
+		}
+	}
+	// The intent should still contain the sanitized words (just not as a heading).
+	if !strings.Contains(content, "Injected") {
+		t.Error("sanitized intent should still contain the word 'Injected' (without #)")
+	}
+	// No raw newlines in the intent line.
+	if strings.Contains(content, "Normal intent\n# Injected") {
+		t.Error("raw newlines should be stripped from intent")
+	}
+}
+
+func TestAppendReflogEntry_PreservesHashInIntent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "CLAUDE.md")
+
+	targets := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "dotnet@9"}},
+	}
+
+	err := AppendReflogEntry(path, "Add C# service", targets, "sess-hash", "2026-03-17")
+	if err != nil {
+		t.Fatalf("AppendReflogEntry: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "C# service") {
+		t.Error("hash in 'C#' should be preserved in intent")
+	}
+}
+
 func TestAppendReflogEntry_MultiTarget(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

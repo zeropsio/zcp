@@ -41,7 +41,7 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 
 		// Collect all plan hostnames and check each.
 		for _, target := range plan.Targets {
-			for _, hostname := range targetHostnames(target) {
+			for _, hostname := range []string{target.Runtime.DevHostname} {
 				checks = append(checks, checkGenerateEntry(doc, hostname, state)...)
 			}
 		}

@@ -109,6 +109,30 @@ func NewBootstrapState() *BootstrapState {
 	}
 }
 
+// ResetForIteration resets generate/deploy/verify steps for a new iteration cycle.
+// Preserves: discover(0) attestation, provision(1) attestation+envVars, Plan, ServiceMetas, strategy(5) if set.
+func (b *BootstrapState) ResetForIteration() {
+	if b == nil {
+		return
+	}
+	// Reset generate(2), deploy(3), verify(4) to pending.
+	for i := 2; i <= 4 && i < len(b.Steps); i++ {
+		b.Steps[i] = BootstrapStep{Name: b.Steps[i].Name, Status: stepPending}
+	}
+	// Set CurrentStep to generate, mark in_progress.
+	b.CurrentStep = 2
+	if b.CurrentStep < len(b.Steps) {
+		b.Steps[b.CurrentStep].Status = stepInProgress
+	}
+	b.Active = true
+	// Clear guide gating for reset steps so guidance re-delivers.
+	if b.Context != nil && b.Context.GuideSentFor != nil {
+		delete(b.Context.GuideSentFor, StepGenerate)
+		delete(b.Context.GuideSentFor, StepDeploy)
+		delete(b.Context.GuideSentFor, StepVerify)
+	}
+}
+
 // CurrentStepName returns the name of the current step, or empty if done.
 func (b *BootstrapState) CurrentStepName() string {
 	if b.CurrentStep >= len(b.Steps) {
@@ -259,7 +283,7 @@ func (b *BootstrapState) resolveGuideWithGating(stepName string, iteration int) 
 	}
 
 	// Full guide delivery.
-	guide := ResolveGuidance(stepName)
+	guide := ResolveProgressiveGuidance(stepName, b.Plan, iteration)
 	if b.Context != nil {
 		if b.Context.GuideSentFor == nil {
 			b.Context.GuideSentFor = make(map[string]int)

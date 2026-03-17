@@ -102,7 +102,7 @@ Skip if no runtime services exist.`,
 		Guidance: `Ask user to choose deployment strategy for each runtime service.
 Options: push-dev (SSH push, dev-first), ci-cd (Git pipeline), manual (monitoring only).
 Present options with trade-offs. Record choice via zerops_workflow action="complete" step="strategy".
-Auto-skipped for managed-only projects (no runtime services).`,
+Skip this step for managed-only projects (no runtime services).`,
 		Tools:        []string{"zerops_workflow"},
 		Verification: "SUCCESS WHEN: strategy recorded for all runtime services via action=complete step=strategy with strategies param. NEXT: bootstrap complete.",
 		Skippable:    true,
