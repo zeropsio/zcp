@@ -461,6 +461,65 @@ func TestCheckGenerate_StandardMode_NoStageChecks(t *testing.T) {
 	}
 }
 
+func TestCheckGenerate_ExistsAndCreateDeps_EnvRefs_Pass(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    envVariables:
+      DATABASE_URL: ${db_connectionString}
+      CACHE_PORT: ${cache_port}
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 3000
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true, BootstrapMode: "simple"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
+				{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	state := &workflow.BootstrapState{
+		Active: true,
+		Plan:   plan,
+		DiscoveredEnvVars: map[string][]string{
+			"db":    {"connectionString", "host", "port"},
+			"cache": {"connectionString", "port"},
+		},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, state)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass for mixed EXISTS+CREATE deps with valid env refs: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+	hasEnvRefPass := false
+	for _, c := range result.Checks {
+		if c.Name == "appdev_env_refs" && c.Status == "pass" {
+			hasEnvRefPass = true
+		}
+	}
+	if !hasEnvRefPass {
+		t.Error("expected appdev_env_refs pass check")
+	}
+}
+
 // writeZeropsYml is a test helper that writes zerops.yml to the given directory.
 func writeZeropsYml(t *testing.T, dir, content string) {
 	t.Helper()

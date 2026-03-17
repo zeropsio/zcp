@@ -56,17 +56,23 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 			// Check dev runtime exists and is RUNNING.
 			checks = append(checks, checkServiceRunning(svcMap, target.Runtime.DevHostname)...)
 
-			// Check stage runtime exists (NEW or READY_TO_DEPLOY).
+			// Check stage runtime status.
+			// Existing runtimes (incremental bootstrap) may have stage already RUNNING/ACTIVE.
+			// New runtimes expect stage to be NEW or READY_TO_DEPLOY (freshly imported).
 			if stage := target.Runtime.StageHostname(); stage != "" {
-				checks = append(checks, checkServiceStatusAny(svcMap, stage, "NEW", "READY_TO_DEPLOY")...)
+				if target.Runtime.IsExisting {
+					checks = append(checks, checkServiceRunning(svcMap, stage)...)
+				} else {
+					checks = append(checks, checkServiceStatusAny(svcMap, stage, "NEW", "READY_TO_DEPLOY")...)
+				}
 			}
 
 			// Check dependencies.
 			for _, dep := range target.Dependencies {
 				checks = append(checks, checkServiceRunning(svcMap, dep.Hostname)...)
 
-				// Managed (non-storage) dependencies with resolution=CREATE must have env vars.
-				if dep.Resolution == "CREATE" && isManagedNonStorage(dep.Type) {
+				// Managed (non-storage) dependencies with resolution CREATE or EXISTS must have env vars.
+				if (dep.Resolution == "CREATE" || dep.Resolution == "EXISTS") && isManagedNonStorage(dep.Type) {
 					svc, exists := svcMap[dep.Hostname]
 					if !exists {
 						continue

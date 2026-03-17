@@ -481,6 +481,359 @@ func TestCheckProvision_StoresDiscoveredEnvVars(t *testing.T) {
 	}
 }
 
+func TestCheckProvision_ExistingRuntime_StageActive_Pass(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING"},
+		{ID: "s2", Name: "appstage", Status: "ACTIVE"},
+		{ID: "s3", Name: "cache", Status: "RUNNING"},
+	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "port", Content: "6379"}})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "python@3.12", IsExisting: true},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	checker := checkProvision(mock, "proj-1", nil)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass for existing runtime with ACTIVE stage, got fail: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
+func TestCheckProvision_ExistingRuntime_StageRunning_Pass(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "ACTIVE"},
+		{ID: "s2", Name: "appstage", Status: "RUNNING"},
+		{ID: "s3", Name: "queue", Status: "RUNNING"},
+	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "connectionString", Content: "nats://..."}})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "python@3.12", IsExisting: true},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "queue", Type: "nats@2.10", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	checker := checkProvision(mock, "proj-1", nil)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass for existing runtime with RUNNING stage, got fail: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
+func TestCheckProvision_NewRuntime_StageActive_Fail(t *testing.T) {
+	t.Parallel()
+	// New runtime (IsExisting=false) should still require stage to be NEW/READY_TO_DEPLOY.
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING"},
+		{ID: "s2", Name: "appstage", Status: "ACTIVE"},
+	})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: false},
+		}},
+	}
+
+	checker := checkProvision(mock, "proj-1", nil)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected fail for new runtime with ACTIVE stage — should require NEW or READY_TO_DEPLOY")
+	}
+}
+
+func TestCheckProvision_ExistsDep_StoresEnvVars(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := workflow.NewEngine(dir)
+
+	_, err := eng.BootstrapStart("proj-1", "exists dep env var test")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	_, err = eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
+		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
+		Dependencies: []workflow.Dependency{
+			{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING"},
+		{ID: "s2", Name: "appstage", Status: "RUNNING"},
+		{ID: "s3", Name: "db", Status: "RUNNING"},
+	}).WithServiceEnv("s3", []platform.EnvVar{
+		{Key: "connectionString", Content: "pg://..."},
+		{Key: "port", Content: "5432"},
+		{Key: "user", Content: "zerops"},
+	})
+
+	state, err := eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+
+	checker := checkProvision(mock, "proj-1", eng)
+	result, err := checker(context.Background(), state.Bootstrap.Plan, state.Bootstrap)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+
+	state, err = eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState after check: %v", err)
+	}
+	if state.Bootstrap.DiscoveredEnvVars == nil {
+		t.Fatal("DiscoveredEnvVars should not be nil after provision check")
+	}
+	dbVars := state.Bootstrap.DiscoveredEnvVars["db"]
+	if len(dbVars) != 3 {
+		t.Errorf("db env vars: want 3, got %d", len(dbVars))
+	}
+}
+
+func TestCheckProvision_ExistsDep_NoEnvVars_Fail(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING"},
+		{ID: "s2", Name: "db", Status: "RUNNING"},
+	})
+	// db has no env vars — EXISTS dep should still require them.
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true, BootstrapMode: "simple"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
+			},
+		}},
+	}
+
+	checker := checkProvision(mock, "proj-1", nil)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected fail for missing env vars on EXISTS dep")
+	}
+	hasEnvFail := false
+	for _, c := range result.Checks {
+		if c.Name == "db_env_vars" && c.Status == statusFail {
+			hasEnvFail = true
+		}
+	}
+	if !hasEnvFail {
+		t.Error("expected db_env_vars fail check")
+	}
+}
+
+func TestCheckProvision_MixedResolution_StoresBoth(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := workflow.NewEngine(dir)
+
+	_, err := eng.BootstrapStart("proj-1", "mixed resolution test")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	_, err = eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
+		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
+		Dependencies: []workflow.Dependency{
+			{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
+			{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA", Resolution: "CREATE"},
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING"},
+		{ID: "s2", Name: "appstage", Status: "RUNNING"},
+		{ID: "s3", Name: "db", Status: "RUNNING"},
+		{ID: "s4", Name: "cache", Status: "RUNNING"},
+	}).WithServiceEnv("s3", []platform.EnvVar{
+		{Key: "connectionString", Content: "pg://..."},
+		{Key: "port", Content: "5432"},
+	}).WithServiceEnv("s4", []platform.EnvVar{
+		{Key: "connectionString", Content: "redis://..."},
+		{Key: "port", Content: "6379"},
+	})
+
+	state, err := eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+
+	checker := checkProvision(mock, "proj-1", eng)
+	result, err := checker(context.Background(), state.Bootstrap.Plan, state.Bootstrap)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+
+	state, err = eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState after check: %v", err)
+	}
+	if state.Bootstrap.DiscoveredEnvVars == nil {
+		t.Fatal("DiscoveredEnvVars should not be nil")
+	}
+	if len(state.Bootstrap.DiscoveredEnvVars["db"]) != 2 {
+		t.Errorf("db env vars: want 2, got %d", len(state.Bootstrap.DiscoveredEnvVars["db"]))
+	}
+	if len(state.Bootstrap.DiscoveredEnvVars["cache"]) != 2 {
+		t.Errorf("cache env vars: want 2, got %d", len(state.Bootstrap.DiscoveredEnvVars["cache"]))
+	}
+}
+
+func TestCheckProvision_SimpleMode_NoStage_Pass(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING"},
+		{ID: "s2", Name: "db", Status: "RUNNING"},
+	}).WithServiceEnv("s2", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4", BootstrapMode: "simple"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	checker := checkProvision(mock, "proj-1", nil)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass for simple mode (no stage): %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
+func TestCheckProvision_DevMode_NoStage_Pass(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING"},
+		{ID: "s2", Name: "db", Status: "RUNNING"},
+	}).WithServiceEnv("s2", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "python@3.12", BootstrapMode: "dev"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	checker := checkProvision(mock, "proj-1", nil)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass for dev mode (no stage): %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
+func TestCheckDeploy_SimpleMode_NoStage_Pass(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING", Ports: []platform.Port{{Port: 8080}}, SubdomainAccess: true},
+	})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4", BootstrapMode: "simple"},
+		}},
+	}
+
+	checker := checkDeploy(mock, "proj-1")
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass for simple mode deploy (no stage): %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
+func TestCheckDeploy_ExistingRuntime_StageRunning_Pass(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
+		{ID: "s2", Name: "appstage", Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
+	})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
+		}},
+	}
+
+	checker := checkDeploy(mock, "proj-1")
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass for existing runtime deploy with stage RUNNING: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
 func TestIsManagedNonStorage(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
