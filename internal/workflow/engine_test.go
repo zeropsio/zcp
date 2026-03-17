@@ -1145,8 +1145,17 @@ func TestEngine_BootstrapComplete_WithChecker_Pass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BootstrapComplete: %v", err)
 	}
-	if resp.CheckResult != nil {
-		t.Error("CheckResult should be nil on pass")
+	if resp.CheckResult == nil {
+		t.Fatal("CheckResult should be populated on pass")
+	}
+	if !resp.CheckResult.Passed {
+		t.Error("CheckResult.Passed should be true")
+	}
+	if resp.CheckResult.Summary != "all good" {
+		t.Errorf("CheckResult.Summary: want 'all good', got %q", resp.CheckResult.Summary)
+	}
+	if len(resp.CheckResult.Checks) != 1 || resp.CheckResult.Checks[0].Name != "test_check" {
+		t.Errorf("expected 1 check named 'test_check', got %v", resp.CheckResult.Checks)
 	}
 	if resp.Current == nil || resp.Current.Name != "provision" {
 		t.Errorf("expected next step 'provision', got %v", resp.Current)

@@ -8,7 +8,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +21,84 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
 )
+
+// testServicePrefixes lists all hostname prefixes used by e2e tests.
+var testServicePrefixes = []string{
+	"bs", "in", "inc",                           // bootstrap_workflow_test.go
+	"b2", "b3", "b4", "b5", "b9",                // bootstrap_modes_test.go
+	"b6", "b8", "ba", "bb", "bad",               // bootstrap_advanced_test.go
+	"zcprt", "zcpdb",                             // lifecycle_test.go, verify_test.go
+	"zcppf", "zcpdpl",                            // deploy tests
+	"zcpvrt", "zcpvdb",                           // verify_test.go
+	"zcpsub", "zcpbl",                            // subdomain, build_logs
+	"zcpmnt", "zcpapp",                           // mount_test.go
+	"zcpsd",                                      // discover_subdomain_test.go
+	"bn",                                         // bootstrap_negative_test.go
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	cleanupOrphanedTestServices()
+	os.Exit(code)
+}
+
+// cleanupOrphanedTestServices deletes any services whose hostname matches a test prefix.
+func cleanupOrphanedTestServices() {
+	token := os.Getenv("ZCP_API_KEY")
+	if token == "" {
+		return
+	}
+	apiHost := os.Getenv("ZCP_API_HOST")
+	if apiHost == "" {
+		apiHost = "api.app-prg1.zerops.io"
+	}
+
+	client, err := platform.NewZeropsClient(token, apiHost)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "orphan cleanup: create client: %v\n", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	authInfo, err := auth.Resolve(ctx, client)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "orphan cleanup: auth resolve: %v\n", err)
+		return
+	}
+
+	services, err := client.ListServices(ctx, authInfo.ProjectID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "orphan cleanup: list services: %v\n", err)
+		return
+	}
+
+	for _, svc := range services {
+		if !hasTestPrefix(svc.Name) {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "orphan cleanup: deleting %s (id=%s)\n", svc.Name, svc.ID)
+		proc, err := client.DeleteService(ctx, svc.ID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "orphan cleanup: delete %s: %v\n", svc.Name, err)
+			continue
+		}
+		if proc != nil {
+			waitForProcessDirect(ctx, client, proc.ID)
+		}
+	}
+}
+
+// hasTestPrefix checks if a hostname starts with any known test prefix.
+func hasTestPrefix(hostname string) bool {
+	for _, prefix := range testServicePrefixes {
+		if strings.HasPrefix(hostname, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // e2eHarness provides a real Zerops API client and MCP server for E2E tests.
 type e2eHarness struct {
@@ -146,17 +226,22 @@ func randomSuffix() string {
 	return hex.EncodeToString(b)
 }
 
-// cleanupServices deletes services by hostname (best-effort, ignores errors).
+// cleanupServices deletes services by hostname (best-effort, logs errors).
 func cleanupServices(ctx context.Context, client platform.Client, projectID string, hostnames ...string) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "cleanup: list services: %v\n", err)
 		return
 	}
 	for _, hostname := range hostnames {
 		for _, svc := range services {
 			if svc.Name == hostname {
 				proc, err := client.DeleteService(ctx, svc.ID)
-				if err != nil || proc == nil {
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "cleanup: delete %s: %v\n", hostname, err)
+					continue
+				}
+				if proc == nil {
 					continue
 				}
 				waitForProcessDirect(ctx, client, proc.ID)

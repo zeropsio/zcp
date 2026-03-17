@@ -178,14 +178,9 @@ func TestE2E_BootstrapFresh_FullFlow(t *testing.T) {
 		t.Fatalf("parse provision complete: %v", err)
 	}
 
-	// Check if provision passed or failed with check result.
-	if provResp.CheckResult != nil && !provResp.CheckResult.Passed {
-		t.Errorf("provision check failed: %s", provResp.CheckResult.Summary)
-		for _, c := range provResp.CheckResult.Checks {
-			t.Logf("  check %s: %s %s", c.Name, c.Status, c.Detail)
-		}
-		t.Fatal("provision step check must pass for fresh bootstrap")
-	}
+	// Verify provision check result is populated and passed.
+	assertProvisionPassed(t, provResp)
+	assertHasStageCheck(t, provResp, stageHostname)
 
 	if provResp.Progress.Completed != 2 {
 		t.Errorf("expected 2 completed steps after provision, got %d", provResp.Progress.Completed)
@@ -369,15 +364,8 @@ func TestE2E_BootstrapIncremental_ExistingRuntime(t *testing.T) {
 		t.Fatalf("parse provision: %v", err)
 	}
 
-	// THIS IS THE CRITICAL ASSERTION — provision must pass for incremental bootstrap.
-	if provResp.CheckResult != nil && !provResp.CheckResult.Passed {
-		t.Errorf("PROVISION CHECK FAILED for incremental bootstrap (IsExisting=true):")
-		t.Errorf("  Summary: %s", provResp.CheckResult.Summary)
-		for _, c := range provResp.CheckResult.Checks {
-			t.Errorf("  check %s: %s %s", c.Name, c.Status, c.Detail)
-		}
-		t.Fatal("Bug: provision checker does not accept ACTIVE stage for existing runtimes")
-	}
+	// Provision must pass for incremental bootstrap.
+	assertProvisionPassed(t, provResp)
 
 	if provResp.Progress.Completed < 2 {
 		t.Fatalf("expected at least 2 completed steps, got %d (provision may not have advanced)",
@@ -389,26 +377,8 @@ func TestE2E_BootstrapIncremental_ExistingRuntime(t *testing.T) {
 	t.Log("  Provision completed — incremental bootstrap with existing ACTIVE stage PASSED")
 
 	// Verify env vars were discovered for BOTH EXISTS (db) and CREATE (cache) deps.
-	if provResp.CheckResult != nil {
-		dbEnvFound := false
-		cacheEnvFound := false
-		for _, c := range provResp.CheckResult.Checks {
-			if c.Name == dbHostname+"_env_vars" && c.Status == "pass" {
-				dbEnvFound = true
-				t.Logf("  EXISTS dep %s env vars: %s", dbHostname, c.Detail)
-			}
-			if c.Name == cacheHostname+"_env_vars" && c.Status == "pass" {
-				cacheEnvFound = true
-				t.Logf("  CREATE dep %s env vars: %s", cacheHostname, c.Detail)
-			}
-		}
-		if !dbEnvFound {
-			t.Errorf("expected %s_env_vars pass check for EXISTS dep — env var discovery broken for pre-existing services", dbHostname)
-		}
-		if !cacheEnvFound {
-			t.Errorf("expected %s_env_vars pass check for CREATE dep", cacheHostname)
-		}
-	}
+	assertEnvVarCheck(t, provResp, dbHostname)
+	assertEnvVarCheck(t, provResp, cacheHostname)
 	t.Log("  This validates: EXISTS deps get env vars discovered alongside CREATE deps")
 }
 

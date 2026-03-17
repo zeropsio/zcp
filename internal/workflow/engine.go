@@ -165,6 +165,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 		return nil, fmt.Errorf("bootstrap complete: bootstrap not active")
 	}
 
+	var checkResult *StepCheckResult
 	if checker != nil {
 		result, checkErr := checker(ctx, state.Bootstrap.Plan, state.Bootstrap)
 		if checkErr != nil {
@@ -176,6 +177,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 			resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", stepName, result.Summary)
 			return resp, nil
 		}
+		checkResult = result
 	}
 
 	if err := state.Bootstrap.CompleteStep(stepName, attestation); err != nil {
@@ -203,7 +205,9 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete save: %w", err)
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration), nil
+	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration)
+	resp.CheckResult = checkResult
+	return resp, nil
 }
 
 // BootstrapCompletePlan validates a structured plan, completes the "plan" step, and stores it.
