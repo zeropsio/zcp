@@ -90,6 +90,8 @@ Before deploying, ensure these requirements are met:
 
 3. **Environment variables must be resolved.** Run `zerops_discover service="{hostname}" includeEnvs=true` and verify cross-referenced variables have real values (not `${...}` literals). If unresolved, restart the service and re-check.
 
+4. **NEVER hardcode credential values.** Always use `${hostname_varName}` references in zerops.yml envVariables. If env vars are missing after deploy, check zerops.yml envVariables mapping against discovered vars (`zerops_discover includeEnvs=true`).
+
 ---
 
 ## Part 2: Deploy and Monitor

@@ -51,10 +51,11 @@ NON_CONFORMANT: ASK user before any changes.`,
 PREREQUISITES: dev services mounted, env vars discovered from provision step.
 1. Write zerops.yml with dev setup entry (stage entry comes after dev is verified)
 2. Dev: deployFiles: [.], start: zsc noop --silent (or omit for implicit webserver)
-3. envVariables: ONLY use variables discovered in provision step
+3. envVariables: map discovered vars using ${hostname_varName} references
 4. Write application code with GET /, GET /health, GET /status endpoints
-5. Quick-test via SSH before proceeding to deploy
+5. App reads env vars from runtime's native env var API
 
+Env vars activate after deploy. Write code, deploy, then start and test.
 Skip if no runtime services exist (managed-only project).`,
 		Tools:        []string{"zerops_knowledge"},
 		Verification: "SUCCESS WHEN: zerops.yml exists with dev setup entry AND env var references match discovered variables AND app code exposes /health and /status endpoints. NEXT: proceed to deploy step.",
