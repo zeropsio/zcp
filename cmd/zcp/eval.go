@@ -209,6 +209,11 @@ func evalMCPConfig() string {
 	if cfg := os.Getenv("ZCP_EVAL_MCP_CONFIG"); cfg != "" {
 		return cfg
 	}
+	// Check work dir first (Zerops container layout: /var/www/.mcp.json)
+	workMCP := filepath.Join(evalWorkDir(), ".mcp.json")
+	if _, err := os.Stat(workMCP); err == nil {
+		return workMCP
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".mcp.json")
 }
