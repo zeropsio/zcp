@@ -166,7 +166,7 @@ func TestWorkflowTool_Action_UnknownAction(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Action_Start_Orchestrated(t *testing.T) {
+func TestWorkflowTool_Action_Start_Deploy_Immediate(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -182,40 +182,19 @@ func TestWorkflowTool_Action_Start_Orchestrated(t *testing.T) {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))
 	}
 	text := getTextContent(t, result)
-	var resp startResponse
+	var resp immediateResponse
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("failed to parse startResponse: %v", err)
+		t.Fatalf("failed to parse immediateResponse: %v", err)
 	}
-	if resp.Phase != "INIT" {
-		t.Errorf("phase = %q, want INIT", resp.Phase)
-	}
-	if resp.SessionID == "" {
-		t.Error("expected non-empty sessionId")
-	}
-}
-
-func TestWorkflowTool_Action_Start_Deploy_ReturnsGuidance(t *testing.T) {
-	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
-
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "deploy",
-		"intent":   "Deploy to production",
-	})
-
-	if result.IsError {
-		t.Errorf("unexpected error: %s", getTextContent(t, result))
-	}
-	text := getTextContent(t, result)
-	var resp startResponse
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("failed to parse startResponse: %v", err)
+	if resp.Workflow != "deploy" {
+		t.Errorf("workflow = %q, want deploy", resp.Workflow)
 	}
 	if resp.Guidance == "" {
 		t.Error("expected non-empty guidance for deploy workflow")
+	}
+	// Deploy is immediate — should NOT create a session.
+	if engine.HasActiveSession() {
+		t.Error("deploy (immediate) should not create a session")
 	}
 }
 
@@ -228,6 +207,7 @@ func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 		{"debug", "debug"},
 		{"scale", "scale"},
 		{"configure", "configure"},
+		{"deploy", "deploy"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -300,103 +280,14 @@ func TestWorkflowTool_Action_Start_AutoResetDone(t *testing.T) {
 		})
 	}
 
-	// Now start a new deploy — should auto-reset the DONE session.
+	// Now start a new bootstrap — should auto-reset the completed session.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
-		"workflow": "deploy",
-		"intent":   "second deploy",
+		"workflow": "bootstrap",
+		"intent":   "second bootstrap",
 	})
 	if result.IsError {
-		t.Errorf("expected auto-reset of DONE session, got error: %s", getTextContent(t, result))
-	}
-}
-
-func TestWorkflowTool_Action_Evidence(t *testing.T) {
-	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
-
-	// Start session first.
-	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "deploy",
-	})
-
-	// Record evidence.
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":      "evidence",
-		"type":        "recipe_review",
-		"attestation": "loaded bun+pg knowledge",
-	})
-
-	if result.IsError {
-		t.Errorf("unexpected error: %s", getTextContent(t, result))
-	}
-	text := getTextContent(t, result)
-	if !strings.Contains(text, "recorded") {
-		t.Errorf("expected recorded status, got: %s", text)
-	}
-}
-
-func TestWorkflowTool_Action_Evidence_MissingFields(t *testing.T) {
-	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
-
-	// Missing type.
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "evidence", "attestation": "test",
-	})
-	if !result.IsError {
-		t.Error("expected IsError for missing type")
-	}
-
-	// Missing attestation.
-	result = callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "evidence", "type": "recipe_review",
-	})
-	if !result.IsError {
-		t.Error("expected IsError for missing attestation")
-	}
-}
-
-func TestWorkflowTool_Action_TransitionWithGate(t *testing.T) {
-	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
-
-	// Start session.
-	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "deploy",
-	})
-
-	// Try transition without evidence — should return structured gate failure.
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "transition", "phase": "DISCOVER",
-	})
-	text := getTextContent(t, result)
-	if !strings.Contains(text, "gate_failed") {
-		t.Errorf("expected gate_failed status, got: %s", text)
-	}
-	if !strings.Contains(text, "recipe_review") {
-		t.Errorf("expected missing evidence type, got: %s", text)
-	}
-
-	// Record evidence.
-	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "evidence", "type": "recipe_review", "attestation": "ok",
-	})
-
-	// Transition should now succeed.
-	result = callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "transition", "phase": "DISCOVER",
-	})
-	if result.IsError {
-		t.Errorf("unexpected error after evidence: %s", getTextContent(t, result))
+		t.Errorf("expected auto-reset of completed session, got error: %s", getTextContent(t, result))
 	}
 }
 
@@ -406,10 +297,10 @@ func TestWorkflowTool_Action_Reset(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
-	// Start and reset.
+	// Start bootstrap and reset.
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
-		"workflow": "deploy",
+		"workflow": "bootstrap",
 	})
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "reset"})
 
@@ -419,19 +310,6 @@ func TestWorkflowTool_Action_Reset(t *testing.T) {
 	text := getTextContent(t, result)
 	if !strings.Contains(text, "reset") {
 		t.Errorf("expected reset confirmation, got: %s", text)
-	}
-}
-
-func TestWorkflowTool_Action_Transition_MissingPhase(t *testing.T) {
-	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
-
-	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "transition"})
-
-	if !result.IsError {
-		t.Error("expected IsError for missing phase")
 	}
 }
 
@@ -837,48 +715,6 @@ func TestWorkflow_BootstrapStatus_IncludesStacks(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Action_Resume(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	engine := workflow.NewEngine(dir)
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
-
-	// Start a deploy session and get its ID.
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "deploy",
-		"intent":   "deploy app",
-	})
-	if result.IsError {
-		t.Fatalf("start failed: %s", getTextContent(t, result))
-	}
-	text := getTextContent(t, result)
-	var resp startResponse
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("failed to parse: %v", err)
-	}
-	sessionID := resp.SessionID
-
-	// Reset the engine (simulating process death — session still exists in registry).
-	_ = engine.Reset()
-
-	// Resume the session.
-	result = callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":    "resume",
-		"sessionId": sessionID,
-	})
-	// The session was owned by current PID and reset clears the registry entry,
-	// so this won't find a session to resume. Test the error path.
-	if !result.IsError {
-		// If it succeeds, that's also fine — verify the response.
-		text = getTextContent(t, result)
-		if !strings.Contains(text, sessionID) {
-			t.Errorf("expected session ID in response, got: %s", text)
-		}
-	}
-}
-
 func TestWorkflowTool_Action_Resume_MissingSessionID(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir())
@@ -890,36 +726,6 @@ func TestWorkflowTool_Action_Resume_MissingSessionID(t *testing.T) {
 	})
 	if !result.IsError {
 		t.Error("expected error for resume without sessionId")
-	}
-}
-
-// --- Item 24: Structured gate failure response ---
-
-func TestWorkflowTool_Action_Transition_GateFailure_Structured(t *testing.T) {
-	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
-
-	// Start session.
-	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "deploy",
-	})
-
-	// Try transition without evidence — should return structured gate failure (not IsError).
-	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "transition", "phase": "DISCOVER",
-	})
-
-	text := getTextContent(t, result)
-
-	// Should contain remediation info.
-	if !strings.Contains(text, "remediation") {
-		t.Errorf("expected structured response with remediation, got: %s", text)
-	}
-	if !strings.Contains(text, "recipe_review") {
-		t.Errorf("expected missing evidence type in response, got: %s", text)
 	}
 }
 

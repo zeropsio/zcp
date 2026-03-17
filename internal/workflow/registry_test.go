@@ -17,7 +17,6 @@ func TestRegisterSession_Success(t *testing.T) {
 		PID:       os.Getpid(),
 		Workflow:  "bootstrap",
 		ProjectID: "proj-1",
-		Phase:     PhaseInit,
 		Intent:    "deploy my app",
 	}
 
@@ -50,7 +49,6 @@ func TestRegisterSession_Multiple(t *testing.T) {
 			PID:       os.Getpid(),
 			Workflow:  "deploy",
 			ProjectID: "proj-1",
-			Phase:     PhaseInit,
 		}
 		if err := RegisterSession(dir, entry); err != nil {
 			t.Fatalf("RegisterSession(%s): %v", id, err)
@@ -75,7 +73,6 @@ func TestUnregisterSession_Success(t *testing.T) {
 		PID:       os.Getpid(),
 		Workflow:  "deploy",
 		ProjectID: "proj-1",
-		Phase:     PhaseInit,
 	}
 	if err := RegisterSession(dir, entry); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
@@ -114,7 +111,6 @@ func TestRefreshRegistry_PrunesDeadPIDs(t *testing.T) {
 		PID:       9999999,
 		Workflow:  "deploy",
 		ProjectID: "proj-1",
-		Phase:     PhaseInit,
 	}
 	if err := RegisterSession(dir, entry); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
@@ -142,7 +138,6 @@ func TestRefreshRegistry_KeepsLivePIDs(t *testing.T) {
 		PID:       os.Getpid(),
 		Workflow:  "deploy",
 		ProjectID: "proj-1",
-		Phase:     PhaseInit,
 	}
 	if err := RegisterSession(dir, entry); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
@@ -158,34 +153,6 @@ func TestRefreshRegistry_KeepsLivePIDs(t *testing.T) {
 	}
 	if len(sessions) != 1 {
 		t.Errorf("want 1 session (live PID), got %d", len(sessions))
-	}
-}
-
-func TestUpdateRegistryEntry_Success(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	entry := SessionEntry{
-		SessionID: "sess-1",
-		PID:       os.Getpid(),
-		Workflow:  "deploy",
-		ProjectID: "proj-1",
-		Phase:     PhaseInit,
-	}
-	if err := RegisterSession(dir, entry); err != nil {
-		t.Fatalf("RegisterSession: %v", err)
-	}
-
-	if err := UpdateRegistryEntry(dir, "sess-1", PhaseDiscover); err != nil {
-		t.Fatalf("UpdateRegistryEntry: %v", err)
-	}
-
-	sessions, err := ListSessions(dir)
-	if err != nil {
-		t.Fatalf("ListSessions: %v", err)
-	}
-	if sessions[0].Phase != PhaseDiscover {
-		t.Errorf("Phase: want DISCOVER, got %s", sessions[0].Phase)
 	}
 }
 
@@ -212,7 +179,6 @@ func TestListSessions_AutoRefreshes(t *testing.T) {
 		PID:       9999999,
 		Workflow:  "deploy",
 		ProjectID: "proj-1",
-		Phase:     PhaseInit,
 		CreatedAt: "2026-01-01T00:00:00Z",
 		UpdatedAt: "2026-01-01T00:00:00Z",
 	}
@@ -245,7 +211,6 @@ func TestWithRegistryLock_ConcurrentAccess(t *testing.T) {
 				PID:       os.Getpid(),
 				Workflow:  "deploy",
 				ProjectID: "proj-1",
-				Phase:     PhaseInit,
 			}
 			if err := RegisterSession(dir, entry); err != nil {
 				t.Errorf("RegisterSession(sess-%d): %v", idx, err)
@@ -317,29 +282,6 @@ func TestRefreshRegistry_CleansOrphanedSessionFiles(t *testing.T) {
 	}
 }
 
-func TestRefreshRegistry_CleansOrphanedEvidenceDir(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	// Create an evidence directory without a registry entry.
-	evidenceDir := filepath.Join(dir, "evidence", "orphan456")
-	if err := os.MkdirAll(evidenceDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	// Put a file inside so we verify recursive removal.
-	if err := os.WriteFile(filepath.Join(evidenceDir, "data.json"), []byte(`{}`), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	if err := RefreshRegistry(dir); err != nil {
-		t.Fatalf("RefreshRegistry: %v", err)
-	}
-
-	if _, err := os.Stat(evidenceDir); !os.IsNotExist(err) {
-		t.Errorf("orphaned evidence dir should be removed, but still exists")
-	}
-}
-
 func TestRefreshRegistry_KeepsLiveSessionFiles(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -350,13 +292,12 @@ func TestRefreshRegistry_KeepsLiveSessionFiles(t *testing.T) {
 		PID:       os.Getpid(),
 		Workflow:  "deploy",
 		ProjectID: "proj-1",
-		Phase:     PhaseInit,
 	}
 	if err := RegisterSession(dir, entry); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
 	}
 
-	// Create matching session file and evidence dir.
+	// Create matching session file.
 	sessDir := filepath.Join(dir, "sessions")
 	if err := os.MkdirAll(sessDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -365,21 +306,14 @@ func TestRefreshRegistry_KeepsLiveSessionFiles(t *testing.T) {
 	if err := os.WriteFile(sessFile, []byte(`{}`), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	evidenceDir := filepath.Join(dir, "evidence", "live-sess")
-	if err := os.MkdirAll(evidenceDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
 
 	if err := RefreshRegistry(dir); err != nil {
 		t.Fatalf("RefreshRegistry: %v", err)
 	}
 
-	// Both should still exist.
+	// Session file should still exist.
 	if _, err := os.Stat(sessFile); err != nil {
 		t.Errorf("live session file should survive: %v", err)
-	}
-	if _, err := os.Stat(evidenceDir); err != nil {
-		t.Errorf("live evidence dir should survive: %v", err)
 	}
 }
 
@@ -392,7 +326,6 @@ func TestRegistryFile_CreatedOnFirstRegister(t *testing.T) {
 		PID:       os.Getpid(),
 		Workflow:  "deploy",
 		ProjectID: "proj-1",
-		Phase:     PhaseInit,
 	}
 	if err := RegisterSession(dir, entry); err != nil {
 		t.Fatalf("RegisterSession: %v", err)

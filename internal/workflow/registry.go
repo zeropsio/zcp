@@ -26,7 +26,6 @@ type SessionEntry struct {
 	PID       int    `json:"pid"`
 	Workflow  string `json:"workflow"`
 	ProjectID string `json:"projectId"`
-	Phase     Phase  `json:"phase"`
 	Intent    string `json:"intent"`
 	CreatedAt string `json:"createdAt"`
 	UpdatedAt string `json:"updatedAt"`
@@ -63,21 +62,6 @@ func UnregisterSession(stateDir, sessionID string) error {
 	})
 }
 
-// UpdateRegistryEntry updates the phase of a session in the registry.
-func UpdateRegistryEntry(stateDir, sessionID string, phase Phase) error {
-	return withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
-		now := time.Now().UTC().Format(time.RFC3339)
-		for i := range reg.Sessions {
-			if reg.Sessions[i].SessionID == sessionID {
-				reg.Sessions[i].Phase = phase
-				reg.Sessions[i].UpdatedAt = now
-				return reg, nil
-			}
-		}
-		return reg, nil
-	})
-}
-
 // ListSessions returns all active sessions, auto-pruning dead PIDs.
 func ListSessions(stateDir string) ([]SessionEntry, error) {
 	var result []SessionEntry
@@ -92,7 +76,7 @@ func ListSessions(stateDir string) ([]SessionEntry, error) {
 }
 
 // RefreshRegistry prunes dead PIDs and stale entries from the registry,
-// then cleans orphaned session files and evidence directories.
+// then cleans orphaned session files.
 func RefreshRegistry(stateDir string) error {
 	return withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
 		reg.Sessions = pruneDeadSessions(reg.Sessions)
@@ -187,10 +171,8 @@ func writeRegistry(stateDir string, reg *Registry) error {
 	return nil
 }
 
-// cleanOrphanedFiles removes session files and evidence directories
-// that are not associated with any live session. Errors are best-effort.
+// cleanOrphanedFiles removes session files that are not associated with any live session.
 func cleanOrphanedFiles(stateDir string, liveIDs map[string]bool) {
-	// Clean orphaned session files.
 	sessDir := filepath.Join(stateDir, sessionsDirName)
 	entries, err := os.ReadDir(sessDir)
 	if err == nil {
@@ -201,17 +183,6 @@ func cleanOrphanedFiles(stateDir string, liveIDs map[string]bool) {
 				if !liveIDs[id] {
 					_ = os.Remove(filepath.Join(sessDir, name))
 				}
-			}
-		}
-	}
-
-	// Clean orphaned evidence directories.
-	evidDir := filepath.Join(stateDir, "evidence")
-	entries, err = os.ReadDir(evidDir)
-	if err == nil {
-		for _, e := range entries {
-			if e.IsDir() && !liveIDs[e.Name()] {
-				_ = os.RemoveAll(filepath.Join(evidDir, e.Name()))
 			}
 		}
 	}

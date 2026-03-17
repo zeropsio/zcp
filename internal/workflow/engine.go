@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,16 +12,14 @@ import (
 
 // Engine orchestrates the workflow lifecycle.
 type Engine struct {
-	stateDir    string
-	evidenceDir string
-	sessionID   string
+	stateDir  string
+	sessionID string
 }
 
 // NewEngine creates a new workflow engine rooted at baseDir.
 func NewEngine(baseDir string) *Engine {
 	return &Engine{
-		stateDir:    baseDir,
-		evidenceDir: filepath.Join(baseDir, "evidence"),
+		stateDir: baseDir,
 	}
 }
 
@@ -30,13 +27,13 @@ func NewEngine(baseDir string) *Engine {
 func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, error) {
 	if e.sessionID != "" {
 		if existing, err := LoadSessionByID(e.stateDir, e.sessionID); err == nil {
-			if existing.Phase == PhaseDone {
+			if existing.Bootstrap != nil && !existing.Bootstrap.Active {
 				if err := ResetSessionByID(e.stateDir, e.sessionID); err != nil {
 					return nil, fmt.Errorf("start auto-reset: %w", err)
 				}
 				e.sessionID = ""
 			} else {
-				return nil, fmt.Errorf("start: active session %s in phase %s, reset first", e.sessionID, existing.Phase)
+				return nil, fmt.Errorf("start: active session %s, reset first", e.sessionID)
 			}
 		}
 	}
@@ -49,48 +46,6 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 	return state, nil
 }
 
-// Transition moves the workflow to the next phase.
-// Returns (state, nil, nil) on success, (nil, gateResult, nil) on gate failure,
-// or (nil, nil, err) on other errors.
-func (e *Engine) Transition(phase Phase) (*WorkflowState, *GateResult, error) {
-	state, err := e.loadState()
-	if err != nil {
-		return nil, nil, fmt.Errorf("transition: %w", err)
-	}
-	if !IsValidTransition(state.Phase, phase) {
-		return nil, nil, fmt.Errorf("transition: invalid %s → %s", state.Phase, phase)
-	}
-	mode := ""
-	if state.Bootstrap != nil {
-		mode = state.Bootstrap.PlanMode()
-	}
-	result, err := CheckGate(state.Phase, phase, e.evidenceDir, state.SessionID, mode)
-	if err != nil {
-		return nil, nil, fmt.Errorf("transition gate check: %w", err)
-	}
-	if !result.Passed {
-		return nil, result, nil
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	state.History = append(state.History, PhaseTransition{From: state.Phase, To: phase, At: now})
-	state.Phase = phase
-	state.UpdatedAt = now
-	if err := saveStateAndUpdateRegistry(e.stateDir, e.sessionID, state, phase); err != nil {
-		return nil, nil, fmt.Errorf("transition: %w", err)
-	}
-	return state, nil, nil
-}
-
-// RecordEvidence saves evidence for the current session.
-func (e *Engine) RecordEvidence(ev *Evidence) error {
-	state, err := e.loadState()
-	if err != nil {
-		return fmt.Errorf("record evidence: %w", err)
-	}
-	ev.SessionID = state.SessionID
-	return SaveEvidence(e.evidenceDir, state.SessionID, ev)
-}
-
 // Reset clears the current session.
 func (e *Engine) Reset() error {
 	if e.sessionID == "" {
@@ -98,10 +53,13 @@ func (e *Engine) Reset() error {
 	}
 	err := ResetSessionByID(e.stateDir, e.sessionID)
 	e.sessionID = ""
-	return err
+	if err != nil {
+		return fmt.Errorf("reset session: %w", err)
+	}
+	return nil
 }
 
-// Iterate archives evidence and resets to DEVELOP.
+// Iterate resets bootstrap steps and increments the counter.
 func (e *Engine) Iterate() (*WorkflowState, error) {
 	state, err := e.loadState()
 	if err != nil {
@@ -110,7 +68,7 @@ func (e *Engine) Iterate() (*WorkflowState, error) {
 	if state.Iteration >= maxIterations() {
 		return nil, fmt.Errorf("iterate: max iterations reached (%d), reset session to continue", maxIterations())
 	}
-	return IterateSession(e.stateDir, e.evidenceDir, e.sessionID)
+	return IterateSession(e.stateDir, e.sessionID)
 }
 
 // HasActiveSession returns true if this engine has an active session.
@@ -193,11 +151,12 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 		e.writeServiceMetas(state, MetaStatusProvisioned)
 	}
 
-	sessionID := e.sessionID // capture before auto-complete may clear it
+	sessionID := e.sessionID // capture before outputs may reference it
 
 	if !state.Bootstrap.Active {
-		if err := e.autoCompleteBootstrap(state); err != nil {
-			return nil, fmt.Errorf("bootstrap auto-complete: %w", err)
+		e.writeBootstrapOutputs(state)
+		if err := UnregisterSession(e.stateDir, state.SessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: unregister completed session: %v\n", err)
 		}
 	}
 
@@ -341,7 +300,7 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 
 	state.PID = os.Getpid()
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := saveStateAndUpdateRegistry(e.stateDir, sessionID, state, state.Phase); err != nil {
+	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("resume: %w", err)
 	}
 	e.sessionID = sessionID

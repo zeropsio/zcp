@@ -9,7 +9,6 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -530,17 +529,17 @@ func TestIntegration_BootstrapConductor_DevMode_G4Skipped(t *testing.T) {
 		}
 	}
 
-	// Verify auto-complete succeeded (G4 skipped because dev mode).
+	// Verify bootstrap completed (Active=false).
 	state, err := engine.GetState()
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
 	}
-	if state.Phase != workflow.PhaseDone {
-		t.Errorf("Phase: want DONE, got %s", state.Phase)
+	if state.Bootstrap == nil || state.Bootstrap.Active {
+		t.Error("Bootstrap should be completed (Active=false)")
 	}
 }
 
-func TestIntegration_BootstrapConductor_SimpleMode_G4Skipped(t *testing.T) {
+func TestIntegration_BootstrapConductor_SimpleMode_Completes(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
@@ -568,8 +567,8 @@ func TestIntegration_BootstrapConductor_SimpleMode_G4Skipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
 	}
-	if state.Phase != workflow.PhaseDone {
-		t.Errorf("Phase: want DONE, got %s", state.Phase)
+	if state.Bootstrap == nil || state.Bootstrap.Active {
+		t.Error("Bootstrap should be completed (Active=false)")
 	}
 }
 
@@ -584,7 +583,7 @@ func TestIntegration_BootstrapConductor_MixedModes_StandardRequired(t *testing.T
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Mixed: standard + simple. PlanMode should be "standard" (G4 required).
+	// Mixed: standard + simple. PlanMode should be "standard".
 	resp, err := engine.BootstrapCompletePlan([]workflow.BootstrapTarget{
 		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
 		{Runtime: workflow.RuntimeTarget{DevHostname: "frontend", Type: "bun@1.2", BootstrapMode: "simple"}},
@@ -593,10 +592,10 @@ func TestIntegration_BootstrapConductor_MixedModes_StandardRequired(t *testing.T
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 	if resp.Current.PlanMode != "standard" {
-		t.Errorf("PlanMode: want 'standard' (any standard target requires G4), got %q", resp.Current.PlanMode)
+		t.Errorf("PlanMode: want 'standard', got %q", resp.Current.PlanMode)
 	}
 
-	// Complete all steps — auto-complete generates stage_verify evidence for standard mode.
+	// Complete all steps.
 	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
 		if _, err := engine.BootstrapComplete(context.Background(), step, "Completed "+step+" for mixed mode", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -607,18 +606,7 @@ func TestIntegration_BootstrapConductor_MixedModes_StandardRequired(t *testing.T
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
 	}
-	if state.Phase != workflow.PhaseDone {
-		t.Errorf("Phase: want DONE, got %s", state.Phase)
-	}
-
-	// G4 requires stage_verify evidence for standard mode — verify it was generated.
-	ev, err := workflow.LoadEvidence(
-		filepath.Join(stateDir, "evidence"), state.SessionID, "stage_verify",
-	)
-	if err != nil {
-		t.Fatalf("stage_verify evidence should exist for mixed mode with standard target: %v", err)
-	}
-	if ev.Attestation == "" {
-		t.Error("stage_verify evidence should have non-empty attestation")
+	if state.Bootstrap == nil || state.Bootstrap.Active {
+		t.Error("Bootstrap should be completed (Active=false)")
 	}
 }

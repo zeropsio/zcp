@@ -67,7 +67,7 @@ func buildWorkflowHint(stateDir string) string {
 
 	var hints []string
 	for _, s := range sessions {
-		hint := fmt.Sprintf("Active workflow: %s phase=%s", s.Workflow, s.Phase)
+		hint := fmt.Sprintf("Active workflow: %s", s.Workflow)
 
 		// For bootstrap sessions, try to load full state for step detail.
 		if s.Workflow == "bootstrap" {

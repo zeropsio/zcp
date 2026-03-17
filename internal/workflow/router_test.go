@@ -27,7 +27,7 @@ func TestRoute_FreshProject_NoSessions_ReturnsBootstrap(t *testing.T) {
 			name: "fresh project, active bootstrap",
 			input: RouterInput{
 				ProjectState:   StateFresh,
-				ActiveSessions: []SessionEntry{{Workflow: "bootstrap", Phase: PhaseInit}},
+				ActiveSessions: []SessionEntry{{Workflow: "bootstrap"}},
 			},
 			wantTop:     "bootstrap",
 			wantTopPrio: 1,
@@ -271,7 +271,7 @@ func TestRoute_ActiveBootstrapSession_ResumeHint(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{
 		ProjectState:   StateFresh,
-		ActiveSessions: []SessionEntry{{Workflow: "bootstrap", Phase: PhaseDiscover, SessionID: "abc123"}},
+		ActiveSessions: []SessionEntry{{Workflow: "bootstrap", SessionID: "abc123"}},
 	}
 	offerings := Route(input)
 	if len(offerings) == 0 {

@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -23,28 +22,14 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name for static guidance: bootstrap, deploy, debug, scale, or configure."`
 
 	// Multi-action fields.
-	Action         string                     `json:"action,omitempty"         jsonschema:"Orchestration action: start, complete, skip, status, transition, evidence, reset, iterate, or resume."`
-	Phase          string                     `json:"phase,omitempty"          jsonschema:"Target phase for transition action: DISCOVER, DEVELOP, DEPLOY, VERIFY, or DONE."`
-	Intent         string                     `json:"intent,omitempty"         jsonschema:"User intent description for start action (what you want to accomplish)."`
-	Type           string                     `json:"type,omitempty"           jsonschema:"Evidence type for evidence action: recipe_review, discovery, dev_verify, deploy_evidence, or stage_verify."`
-	Service        string                     `json:"service,omitempty"        jsonschema:"Service hostname to associate with evidence."`
-	Attestation    string                     `json:"attestation,omitempty"    jsonschema:"Description of what was verified or accomplished (required for evidence and complete actions)."`
-	Step           string                     `json:"step,omitempty"           jsonschema:"Bootstrap step name for complete/skip actions (e.g. discover, provision, generate, deploy, verify)."`
-	Plan           []workflow.BootstrapTarget `json:"plan,omitempty"           jsonschema:"Structured service plan: array of {runtime: {devHostname, type}, dependencies: [{hostname, type, mode?, resolution?}]}."`
-	Reason         string                     `json:"reason,omitempty"         jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
-	Passed         *int                       `json:"passed,omitempty"         jsonschema:"Number of passed verifications (evidence action). Defaults to 1."`
-	Failed         *int                       `json:"failed,omitempty"         jsonschema:"Number of failed verifications (evidence action). Defaults to 0."`
-	ServiceResults []workflow.ServiceResult   `json:"serviceResults,omitempty" jsonschema:"Per-service verification results (evidence action)."`
-	SessionID      string                     `json:"sessionId,omitempty"      jsonschema:"Session ID for resume action."`
-	Strategies     map[string]string          `json:"strategies,omitempty"     jsonschema:"Per-service strategy map for strategy step completion (e.g. {\"appdev\":\"ci-cd\"})."`
-}
-
-// startResponse wraps WorkflowState with workflow guidance for non-bootstrap orchestrated start.
-type startResponse struct {
-	SessionID string `json:"sessionId"`
-	Intent    string `json:"intent"`
-	Phase     string `json:"phase"`
-	Guidance  string `json:"guidance,omitempty"`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, or strategy."`
+	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
+	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
+	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (e.g. discover, provision, generate, deploy, verify)."`
+	Plan        []workflow.BootstrapTarget `json:"plan,omitempty"        jsonschema:"Structured service plan: array of {runtime: {devHostname, type}, dependencies: [{hostname, type, mode?, resolution?}]}."`
+	Reason      string                     `json:"reason,omitempty"      jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
+	SessionID   string                     `json:"sessionId,omitempty"   jsonschema:"Session ID for resume action."`
+	Strategies  map[string]string          `json:"strategies,omitempty"  jsonschema:"Per-service strategy map for strategy step completion (e.g. {\"appdev\":\"ci-cd\"})."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -57,7 +42,7 @@ type immediateResponse struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"transition|evidence|reset|iterate|resume|list\" (phase management).",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"reset|iterate|resume|list|route|strategy\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -105,10 +90,6 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	switch input.Action {
 	case "start":
 		return handleStart(ctx, projectID, engine, client, cache, input)
-	case "transition":
-		return handleTransition(engine, input)
-	case "evidence":
-		return handleEvidence(engine, input)
 	case "reset":
 		return handleReset(engine)
 	case "iterate":
@@ -135,7 +116,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, skip, status, transition, evidence, reset, iterate, resume, list, route, strategy")), nil, nil
+			"Valid actions: start, complete, skip, status, reset, iterate, resume, list, route, strategy")), nil, nil
 	}
 }
 
@@ -155,8 +136,6 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		}), nil, nil
 	}
 
-	// Orchestrated workflows: bootstrap and deploy.
-
 	// Bootstrap conductor: use BootstrapStart for bootstrap workflow.
 	if input.Workflow == workflowBootstrap {
 		resp, err := engine.BootstrapStart(projectID, input.Intent)
@@ -170,122 +149,11 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return jsonResult(resp), nil, nil
 	}
 
-	// Generic orchestrated start (deploy or other).
-	wfName := input.Workflow
-	if wfName == "" {
-		wfName = "workflow"
-	}
-	state, err := engine.Start(projectID, wfName, input.Intent)
-	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrWorkflowActive,
-			fmt.Sprintf("Start failed: %v", err),
-			"Reset existing session first with action=reset")), nil, nil
-	}
-
-	resp := startResponse{
-		SessionID: state.SessionID,
-		Intent:    state.Intent,
-		Phase:     string(state.Phase),
-	}
-	if input.Workflow != "" {
-		if guidance, err := ops.GetWorkflow(input.Workflow); err == nil {
-			if (input.Workflow == workflowBootstrap || input.Workflow == workflowDeploy) && client != nil && cache != nil {
-				if types := cache.Get(ctx, client); len(types) > 0 {
-					guidance = injectStacks(guidance, knowledge.FormatStackList(types))
-				}
-			}
-			resp.Guidance = guidance
-		}
-	}
-
-	return jsonResult(resp), nil, nil
-}
-
-// gateFailureResponse wraps a structured gate failure for JSON output.
-type gateFailureResponse struct {
-	Status      string                     `json:"status"`
-	Gate        string                     `json:"gate"`
-	Missing     []string                   `json:"missing,omitempty"`
-	Failures    []string                   `json:"failures,omitempty"`
-	Remediation []workflow.RemediationStep `json:"remediation,omitempty"`
-}
-
-func handleTransition(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	if input.Phase == "" {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"Phase is required for transition action",
-			"Specify phase: DISCOVER, DEVELOP, DEPLOY, VERIFY, or DONE")), nil, nil
-	}
-
-	phase := workflow.Phase(input.Phase)
-	state, gateResult, err := engine.Transition(phase)
-	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrSessionNotFound,
-			fmt.Sprintf("Transition failed: %v", err),
-			"Start a session first with action=start")), nil, nil
-	}
-	if gateResult != nil {
-		return jsonResult(gateFailureResponse{
-			Status:      "gate_failed",
-			Gate:        gateResult.Gate,
-			Missing:     gateResult.Missing,
-			Failures:    gateResult.Failures,
-			Remediation: gateResult.Remediation,
-		}), nil, nil
-	}
-
-	return jsonResult(state), nil, nil
-}
-
-func handleEvidence(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	if input.Type == "" {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"Type is required for evidence action",
-			"Specify type: recipe_review, discovery, dev_verify, deploy_evidence, or stage_verify")), nil, nil
-	}
-	if input.Attestation == "" {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"Attestation is required for evidence action",
-			"Describe what was verified")), nil, nil
-	}
-
-	passed := 1
-	if input.Passed != nil {
-		passed = *input.Passed
-	}
-	failed := 0
-	if input.Failed != nil {
-		failed = *input.Failed
-	}
-
-	ev := &workflow.Evidence{
-		Timestamp:        time.Now().UTC().Format(time.RFC3339),
-		VerificationType: "attestation",
-		Service:          input.Service,
-		Attestation:      input.Attestation,
-		Type:             input.Type,
-		Passed:           passed,
-		Failed:           failed,
-		ServiceResults:   input.ServiceResults,
-	}
-
-	if err := engine.RecordEvidence(ev); err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrEvidenceMissing,
-			fmt.Sprintf("Record evidence failed: %v", err),
-			"Start a session first with action=start")), nil, nil
-	}
-
-	result := map[string]string{
-		"status": "recorded",
-		"type":   input.Type,
-	}
-	return jsonResult(result), nil, nil
+	// Unknown workflow — return error.
+	return convertError(platform.NewPlatformError(
+		platform.ErrInvalidParameter,
+		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
+		"Valid workflows: bootstrap, deploy, debug, scale, configure")), nil, nil
 }
 
 func handleReset(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {

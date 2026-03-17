@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestAutoCompleteBootstrap_WritesServiceMeta(t *testing.T) {
+func TestBootstrapComplete_WritesServiceMeta(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir)
@@ -48,7 +48,7 @@ func TestAutoCompleteBootstrap_WritesServiceMeta(t *testing.T) {
 	}
 }
 
-func TestAutoCompleteBootstrap_AppendsReflog(t *testing.T) {
+func TestBootstrapComplete_AppendsReflog(t *testing.T) {
 	t.Parallel()
 	// Create project root with CLAUDE.md.
 	projectRoot := t.TempDir()
@@ -90,7 +90,7 @@ func TestAutoCompleteBootstrap_AppendsReflog(t *testing.T) {
 	}
 }
 
-func TestAutoCompleteBootstrap_OutputErrorsNonFatal(t *testing.T) {
+func TestBootstrapComplete_OutputErrorsNonFatal(t *testing.T) {
 	t.Parallel()
 	// Use a stateDir that doesn't have the expected .zcp/state structure,
 	// so reflog path derivation points to a read-only location.
@@ -126,13 +126,13 @@ func TestAutoCompleteBootstrap_OutputErrorsNonFatal(t *testing.T) {
 		}
 	}
 
-	// Verify bootstrap actually completed.
+	// Verify bootstrap actually completed (bootstrap.Active should be false).
 	state, err := eng.GetState()
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
 	}
-	if state.Phase != PhaseDone {
-		t.Errorf("Phase: want DONE, got %s", state.Phase)
+	if state.Bootstrap == nil || state.Bootstrap.Active {
+		t.Error("Bootstrap should be completed (Active=false)")
 	}
 }
 

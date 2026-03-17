@@ -9,7 +9,6 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 const buildContainerSource = "build_container"
@@ -29,20 +28,16 @@ func RegisterDeploy(
 	projectID string,
 	sshDeployer ops.SSHDeployer,
 	authInfo *auth.Info,
-	engine *workflow.Engine,
 	logFetcher platform.LogFetcher,
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
-		Description: "REQUIRES active workflow session. Deploy code via SSH — blocks until build completes. Self-deploy: set targetService only. Cross-deploy: set sourceService + targetService. Requires zerops.yml in workingDir. Self-deploying services MUST use deployFiles: [.] — otherwise source files are destroyed.",
+		Description: "Deploy code via SSH — blocks until build completes. Self-deploy: set targetService only. Cross-deploy: set sourceService + targetService. Requires zerops.yml in workingDir. Self-deploying services MUST use deployFiles: [.] — otherwise source files are destroyed.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployInput) (*mcp.CallToolResult, any, error) {
-		if blocked := requireWorkflow(engine); blocked != nil {
-			return blocked, nil, nil
-		}
 		result, err := ops.Deploy(ctx, client, projectID, sshDeployer, *authInfo,
 			input.SourceService, input.TargetService, input.WorkingDir, input.IncludeGit)
 		if err != nil {

@@ -48,12 +48,10 @@ func InitSession(stateDir, projectID, workflowName, intent string) (*WorkflowSta
 		PID:       os.Getpid(),
 		ProjectID: projectID,
 		Workflow:  workflowName,
-		Phase:     PhaseInit,
 		Iteration: 0,
 		Intent:    intent,
 		CreatedAt: now,
 		UpdatedAt: now,
-		History:   []PhaseTransition{},
 	}
 
 	if err := saveSessionState(stateDir, sessionID, state); err != nil {
@@ -65,7 +63,6 @@ func InitSession(stateDir, projectID, workflowName, intent string) (*WorkflowSta
 		PID:       os.Getpid(),
 		Workflow:  workflowName,
 		ProjectID: projectID,
-		Phase:     PhaseInit,
 		Intent:    intent,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -101,31 +98,18 @@ func ResetSessionByID(stateDir, sessionID string) error {
 	return UnregisterSession(stateDir, sessionID)
 }
 
-// IterateSession archives evidence, resets phase to DEVELOP, and increments the counter.
-func IterateSession(stateDir, evidenceDir, sessionID string) (*WorkflowState, error) {
+// IterateSession resets bootstrap steps and increments the counter.
+func IterateSession(stateDir, sessionID string) (*WorkflowState, error) {
 	state, err := LoadSessionByID(stateDir, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("iterate session: %w", err)
 	}
 
-	nextIter := state.Iteration + 1
-
-	if err := ArchiveEvidence(evidenceDir, state.SessionID, nextIter); err != nil {
-		return nil, fmt.Errorf("iterate session archive: %w", err)
-	}
-
-	prevPhase := state.Phase
-	state.Phase = PhaseDevelop
+	state.Iteration++
 	if state.Bootstrap != nil {
 		state.Bootstrap.ResetForIteration()
 	}
-	state.Iteration = nextIter
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	state.History = append(state.History, PhaseTransition{
-		From: prevPhase,
-		To:   PhaseDevelop,
-		At:   state.UpdatedAt,
-	})
 
 	if err := saveSessionState(stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("iterate session: %w", err)
@@ -198,12 +182,10 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 		PID:       os.Getpid(),
 		ProjectID: projectID,
 		Workflow:  workflowName,
-		Phase:     PhaseInit,
 		Iteration: 0,
 		Intent:    intent,
 		CreatedAt: now,
 		UpdatedAt: now,
-		History:   []PhaseTransition{},
 	}
 
 	err = withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
@@ -230,7 +212,6 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 			PID:       os.Getpid(),
 			Workflow:  workflowName,
 			ProjectID: projectID,
-			Phase:     PhaseInit,
 			Intent:    intent,
 			CreatedAt: now,
 			UpdatedAt: now,
@@ -243,26 +224,6 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 	}
 
 	return state, nil
-}
-
-// saveStateAndUpdateRegistry atomically writes the session state file and
-// updates the registry entry phase within a single lock scope.
-func saveStateAndUpdateRegistry(stateDir, sessionID string, state *WorkflowState, phase Phase) error {
-	return withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
-		if err := saveSessionState(stateDir, sessionID, state); err != nil {
-			return reg, err
-		}
-
-		now := time.Now().UTC().Format(time.RFC3339)
-		for i := range reg.Sessions {
-			if reg.Sessions[i].SessionID == sessionID {
-				reg.Sessions[i].Phase = phase
-				reg.Sessions[i].UpdatedAt = now
-				break
-			}
-		}
-		return reg, nil
-	})
 }
 
 // generateSessionID creates a random session ID.

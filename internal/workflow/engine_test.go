@@ -1,4 +1,4 @@
-// Tests for: workflow engine — orchestration, project state detection, transitions.
+// Tests for: workflow engine — orchestration, project state detection.
 package workflow
 
 import (
@@ -125,82 +125,6 @@ func TestDetectProjectState_NonConformant(t *testing.T) {
 	}
 }
 
-func TestEngine_StartAndTransition(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	state, err := eng.Start("proj-1", "deploy", "full workflow")
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	if state.Phase != PhaseInit {
-		t.Errorf("Phase: want INIT, got %s", state.Phase)
-	}
-
-	// Record recipe_review evidence so G0 passes.
-	ev := &Evidence{
-		SessionID: state.SessionID, Type: "recipe_review", VerificationType: "attestation",
-		Attestation: "recipe reviewed", Passed: 1,
-	}
-	if err := eng.RecordEvidence(ev); err != nil {
-		t.Fatalf("RecordEvidence: %v", err)
-	}
-
-	// Transition to DISCOVER.
-	state, gateResult, err := eng.Transition(PhaseDiscover)
-	if err != nil {
-		t.Fatalf("Transition to DISCOVER: %v", err)
-	}
-	if gateResult != nil {
-		t.Fatalf("Transition gate failed: %v", gateResult.Missing)
-	}
-	if state.Phase != PhaseDiscover {
-		t.Errorf("Phase: want DISCOVER, got %s", state.Phase)
-	}
-	if len(state.History) != 1 {
-		t.Errorf("History length: want 1, got %d", len(state.History))
-	}
-}
-
-func TestEngine_Transition_InvalidPhase(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-
-	// Skip a phase — should fail.
-	_, _, err := eng.Transition(PhaseDeploy)
-	if err == nil {
-		t.Fatal("expected error for invalid transition INIT → DEPLOY")
-	}
-}
-
-func TestEngine_Transition_GateFails(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-
-	// Try to transition without evidence — gate should block.
-	_, gateResult, err := eng.Transition(PhaseDiscover)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if gateResult == nil {
-		t.Fatal("expected gate failure (no recipe_review evidence)")
-	}
-	if gateResult.Passed {
-		t.Fatal("expected gate to fail")
-	}
-}
-
 func TestEngine_Reset(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -274,9 +198,6 @@ func TestEngine_Iterate(t *testing.T) {
 	if state.Iteration != 1 {
 		t.Errorf("Iteration: want 1, got %d", state.Iteration)
 	}
-	if state.Phase != PhaseDevelop {
-		t.Errorf("Phase: want DEVELOP, got %s", state.Phase)
-	}
 }
 
 func TestEngine_GetState(t *testing.T) {
@@ -333,31 +254,28 @@ func TestEngine_Start_RegistersInRegistry(t *testing.T) {
 	}
 }
 
-// --- Auto-reset DONE session tests ---
+// --- Auto-reset completed session tests ---
 
 func TestEngine_Start_AutoResetDoneSession(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir)
 
-	// Create and manually transition to DONE.
+	// Create and manually mark bootstrap as completed (inactive).
 	state, err := eng.Start("proj-1", "deploy", "first")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	// Manually set phase to DONE (simulating completed workflow).
-	state.Phase = PhaseDone
+	// Simulate completed workflow: bootstrap present but not active.
+	state.Bootstrap = &BootstrapState{Active: false}
 	if err := saveSessionState(dir, eng.SessionID(), state); err != nil {
 		t.Fatalf("saveSessionState: %v", err)
 	}
 
-	// Start again — should auto-reset the DONE session.
+	// Start again — should auto-reset the completed session.
 	state2, err := eng.Start("proj-1", "deploy", "second")
 	if err != nil {
-		t.Fatalf("Start after DONE: %v", err)
-	}
-	if state2.Phase != PhaseInit {
-		t.Errorf("Phase: want INIT, got %s", state2.Phase)
+		t.Fatalf("Start after completed: %v", err)
 	}
 	if state2.Intent != "second" {
 		t.Errorf("Intent: want 'second', got %s", state2.Intent)
@@ -376,7 +294,7 @@ func TestEngine_Start_ActiveSessionBlocks(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Start with active (non-DONE) session should fail.
+	// Start with active (non-completed) session should fail.
 	_, err := eng.Start("proj-1", "deploy", "second")
 	if err == nil {
 		t.Fatal("expected error for second Start with active session")
@@ -412,7 +330,6 @@ func TestEngine_BootstrapExclusivity_DeadPID(t *testing.T) {
 		PID:       9999999,
 		Workflow:  "bootstrap",
 		ProjectID: "proj-1",
-		Phase:     PhaseInit,
 	}
 	if err := RegisterSession(dir, entry); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
@@ -451,40 +368,6 @@ func TestEngine_MultipleEngines_Coexist(t *testing.T) {
 	}
 }
 
-func TestEngine_Transition_UpdatesRegistry(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	state, err := eng.Start("proj-1", "deploy", "test")
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-
-	ev := &Evidence{
-		SessionID: state.SessionID, Type: "recipe_review", VerificationType: "attestation",
-		Attestation: "recipe reviewed", Passed: 1,
-	}
-	if err := eng.RecordEvidence(ev); err != nil {
-		t.Fatalf("RecordEvidence: %v", err)
-	}
-
-	if _, gr, err := eng.Transition(PhaseDiscover); err != nil || gr != nil {
-		t.Fatalf("Transition: %v", err)
-	}
-
-	sessions, err := eng.ListActiveSessions()
-	if err != nil {
-		t.Fatalf("ListActiveSessions: %v", err)
-	}
-	if len(sessions) != 1 {
-		t.Fatalf("want 1 session, got %d", len(sessions))
-	}
-	if sessions[0].Phase != PhaseDiscover {
-		t.Errorf("registry phase: want DISCOVER, got %s", sessions[0].Phase)
-	}
-}
-
 func TestEngine_SameEngine_ActiveSessionBlocks(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -496,7 +379,7 @@ func TestEngine_SameEngine_ActiveSessionBlocks(t *testing.T) {
 	}
 	sessionID := state.SessionID
 
-	// Second start on same engine should fail (active non-DONE session).
+	// Second start on same engine should fail (active non-completed session).
 	_, err = eng.Start("proj-1", "deploy", "retry")
 	if err == nil {
 		t.Fatal("expected error: active session should block")
@@ -618,73 +501,13 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 		t.Errorf("Completed: want 6, got %d", resp.Progress.Completed)
 	}
 
-	// Session should be unregistered (DONE sessions are immediately cleaned up).
+	// Session should be unregistered (completed sessions are immediately cleaned up).
 	sessions, err := ListSessions(dir)
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
 	if len(sessions) != 0 {
 		t.Errorf("want 0 sessions after bootstrap done, got %d", len(sessions))
-	}
-}
-
-func TestEngine_BootstrapComplete_AutoEvidence(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-
-	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
-	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
-	}
-
-	// Verify evidence files exist for all 5 types.
-	state, _ := eng.GetState()
-	evidenceTypes := []string{"recipe_review", "discovery", "dev_verify", "deploy_evidence", "stage_verify"}
-	for _, et := range evidenceTypes {
-		ev, err := LoadEvidence(eng.evidenceDir, state.SessionID, et)
-		if err != nil {
-			t.Errorf("missing evidence %q: %v", et, err)
-			continue
-		}
-		if ev.Attestation == "" {
-			t.Errorf("evidence %q has empty attestation", et)
-		}
-	}
-}
-
-func TestEngine_BootstrapComplete_AutoTransition(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-
-	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
-	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
-	}
-
-	state, err := eng.GetState()
-	if err != nil {
-		t.Fatalf("GetState: %v", err)
-	}
-	if state.Phase != PhaseDone {
-		t.Errorf("Phase: want DONE, got %s", state.Phase)
-	}
-	// Full: INIT→DISCOVER→DEVELOP→DEPLOY→VERIFY→DONE = 5 transitions.
-	if len(state.History) != 5 {
-		t.Errorf("History length: want 5, got %d", len(state.History))
 	}
 }
 
@@ -786,166 +609,6 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 	}
 	if resp.Progress.Steps[0].Status != "complete" {
 		t.Errorf("step[0].Status: want complete, got %s", resp.Progress.Steps[0].Status)
-	}
-}
-
-func TestBootstrapComplete_AutoComplete_GatesChecked(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-
-	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
-	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
-	}
-
-	state, err := eng.GetState()
-	if err != nil {
-		t.Fatalf("GetState: %v", err)
-	}
-	if state.Phase != PhaseDone {
-		t.Errorf("Phase: want DONE, got %s", state.Phase)
-	}
-}
-
-func TestBootstrapComplete_AutoComplete_FailedEvidence_Blocked(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-
-	// Complete steps 0-4 normally.
-	preSteps := []string{"discover", "provision", "generate", "deploy", "verify"}
-	for _, step := range preSteps {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
-	}
-
-	// Overwrite stage_verify evidence with Failed: 1.
-	sessionID := eng.SessionID()
-	badEv := &Evidence{
-		SessionID: sessionID, Type: "stage_verify", VerificationType: "attestation",
-		Timestamp: "2026-02-23T12:00:00Z", Attestation: "stage failed",
-		Passed: 1, Failed: 1,
-	}
-	if err := SaveEvidence(eng.evidenceDir, sessionID, badEv); err != nil {
-		t.Fatalf("SaveEvidence: %v", err)
-	}
-
-	// Complete the last step — auto-complete will overwrite the evidence.
-	_, err := eng.BootstrapComplete(context.Background(), "strategy", "Strategy selection complete", nil)
-	if err != nil {
-		t.Fatalf("BootstrapComplete(strategy): %v", err)
-	}
-
-	state, err := eng.GetState()
-	if err != nil {
-		t.Fatalf("GetState: %v", err)
-	}
-	if state.Phase != PhaseDone {
-		t.Errorf("Phase: want DONE, got %s", state.Phase)
-	}
-	if len(state.History) != 5 {
-		t.Errorf("History length: want 5, got %d", len(state.History))
-	}
-}
-
-func TestEngine_BootstrapComplete_AutoEvidence_PassedCount(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-
-	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
-	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
-	}
-
-	state, _ := eng.GetState()
-	sessionID := state.SessionID
-
-	// recipe_review maps to step: discover — 1 step completed.
-	ev, err := LoadEvidence(eng.evidenceDir, sessionID, "recipe_review")
-	if err != nil {
-		t.Fatalf("load recipe_review: %v", err)
-	}
-	if ev.Passed < 1 {
-		t.Errorf("recipe_review.Passed: want >=1, got %d", ev.Passed)
-	}
-
-	// dev_verify maps to steps: generate, deploy, verify — all 3 completed.
-	ev, err = LoadEvidence(eng.evidenceDir, sessionID, "dev_verify")
-	if err != nil {
-		t.Fatalf("load dev_verify: %v", err)
-	}
-	if ev.Passed < 3 {
-		t.Errorf("dev_verify.Passed: want >=3, got %d", ev.Passed)
-	}
-}
-
-func TestEngine_BootstrapComplete_AutoEvidence_ServiceResults(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-
-	// Complete discover with structured plan.
-	plan := []BootstrapTarget{
-		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"},
-			Dependencies: []Dependency{
-				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
-			},
-		},
-	}
-	if _, err := eng.BootstrapCompletePlan(plan, nil, nil); err != nil {
-		t.Fatalf("BootstrapCompletePlan: %v", err)
-	}
-
-	// Complete remaining steps.
-	remaining := []string{"provision", "generate", "deploy", "verify", "strategy"}
-	for _, step := range remaining {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
-	}
-
-	state, _ := eng.GetState()
-
-	// deploy_evidence should NOT have fabricated ServiceResults.
-	ev, err := LoadEvidence(eng.evidenceDir, state.SessionID, "deploy_evidence")
-	if err != nil {
-		t.Fatalf("load deploy_evidence: %v", err)
-	}
-	if len(ev.ServiceResults) != 0 {
-		t.Errorf("deploy_evidence.ServiceResults should be empty, got %d", len(ev.ServiceResults))
-	}
-
-	// stage_verify should also have empty ServiceResults.
-	ev, err = LoadEvidence(eng.evidenceDir, state.SessionID, "stage_verify")
-	if err != nil {
-		t.Fatalf("load stage_verify: %v", err)
-	}
-	if len(ev.ServiceResults) != 0 {
-		t.Errorf("stage_verify.ServiceResults should be empty, got %d", len(ev.ServiceResults))
 	}
 }
 
@@ -1363,62 +1026,6 @@ func TestInitSessionAtomic_BootstrapExclusivity(t *testing.T) {
 	}
 }
 
-// --- Item 17: Two-write consistency via saveStateAndUpdateRegistry ---
-
-func TestSaveStateAndUpdateRegistry_Atomic(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name  string
-		phase Phase
-	}{
-		{"to_discover", PhaseDiscover},
-		{"to_develop", PhaseDevelop},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-
-			state, err := InitSessionAtomic(dir, "proj-1", "deploy", "test")
-			if err != nil {
-				t.Fatalf("InitSessionAtomic: %v", err)
-			}
-			state.Phase = tt.phase
-
-			if err := saveStateAndUpdateRegistry(dir, state.SessionID, state, tt.phase); err != nil {
-				t.Fatalf("saveStateAndUpdateRegistry: %v", err)
-			}
-
-			// Verify state file has correct phase.
-			loaded, err := LoadSessionByID(dir, state.SessionID)
-			if err != nil {
-				t.Fatalf("LoadSessionByID: %v", err)
-			}
-			if loaded.Phase != tt.phase {
-				t.Errorf("state phase: want %s, got %s", tt.phase, loaded.Phase)
-			}
-
-			// Verify registry has correct phase.
-			sessions, err := ListSessions(dir)
-			if err != nil {
-				t.Fatalf("ListSessions: %v", err)
-			}
-			found := false
-			for _, s := range sessions {
-				if s.SessionID == state.SessionID {
-					found = true
-					if s.Phase != tt.phase {
-						t.Errorf("registry phase: want %s, got %s", tt.phase, s.Phase)
-					}
-				}
-			}
-			if !found {
-				t.Error("session not found in registry")
-			}
-		})
-	}
-}
-
 // --- Item 18: Session Resume ---
 
 func TestEngine_Resume_DeadSession(t *testing.T) {
@@ -1433,12 +1040,10 @@ func TestEngine_Resume_DeadSession(t *testing.T) {
 		PID:       9999999, // Dead PID.
 		ProjectID: "proj-1",
 		Workflow:  "deploy",
-		Phase:     PhaseDevelop,
 		Iteration: 2,
 		Intent:    "deploy app",
 		CreatedAt: "2026-03-01T00:00:00Z",
 		UpdatedAt: "2026-03-01T01:00:00Z",
-		History:   []PhaseTransition{},
 	}
 	if err := saveSessionState(dir, sessionID, state); err != nil {
 		t.Fatalf("saveSessionState: %v", err)
@@ -1448,7 +1053,6 @@ func TestEngine_Resume_DeadSession(t *testing.T) {
 		PID:       9999999,
 		Workflow:  "deploy",
 		ProjectID: "proj-1",
-		Phase:     PhaseDevelop,
 		CreatedAt: "2026-03-01T00:00:00Z",
 		UpdatedAt: "2026-03-01T01:00:00Z",
 	}
@@ -1463,9 +1067,6 @@ func TestEngine_Resume_DeadSession(t *testing.T) {
 	}
 	if resumed.SessionID != sessionID {
 		t.Errorf("SessionID: want %s, got %s", sessionID, resumed.SessionID)
-	}
-	if resumed.Phase != PhaseDevelop {
-		t.Errorf("Phase: want DEVELOP, got %s", resumed.Phase)
 	}
 	if resumed.Iteration != 2 {
 		t.Errorf("Iteration: want 2, got %d", resumed.Iteration)

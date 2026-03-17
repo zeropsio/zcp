@@ -18,9 +18,6 @@ func TestInitSession_CreatesState(t *testing.T) {
 	if state.ProjectID != "proj-1" {
 		t.Errorf("ProjectID: want proj-1, got %s", state.ProjectID)
 	}
-	if state.Phase != PhaseInit {
-		t.Errorf("Phase: want INIT, got %s", state.Phase)
-	}
 	if state.Intent != "deploy my app" {
 		t.Errorf("Intent: want 'deploy my app', got %s", state.Intent)
 	}
@@ -176,109 +173,26 @@ func TestResetSessionByID_NotFound(t *testing.T) {
 func TestIterateSession_IncrementsCounter(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	evidenceDir := filepath.Join(dir, "evidence")
 
 	state, err := InitSession(dir, "proj-4", "bootstrap", "iterate test")
 	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 
-	// Save some evidence.
-	ev := &Evidence{
-		SessionID: state.SessionID, Type: "dev_verify", VerificationType: "attestation",
-	}
-	if err := SaveEvidence(evidenceDir, state.SessionID, ev); err != nil {
-		t.Fatalf("SaveEvidence: %v", err)
-	}
-
-	iterated, err := IterateSession(dir, evidenceDir, state.SessionID)
+	iterated, err := IterateSession(dir, state.SessionID)
 	if err != nil {
 		t.Fatalf("IterateSession: %v", err)
 	}
 	if iterated.Iteration != 1 {
 		t.Errorf("Iteration: want 1, got %d", iterated.Iteration)
 	}
-	if iterated.Phase != PhaseDevelop {
-		t.Errorf("Phase: want DEVELOP, got %s", iterated.Phase)
-	}
-}
-
-func TestIterateSession_ArchivesEvidence(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	evidenceDir := filepath.Join(dir, "evidence")
-
-	state, err := InitSession(dir, "proj-5", "bootstrap", "archive test")
-	if err != nil {
-		t.Fatalf("InitSession: %v", err)
-	}
-
-	ev := &Evidence{
-		SessionID: state.SessionID, Type: "discovery", VerificationType: "attestation",
-	}
-	if err := SaveEvidence(evidenceDir, state.SessionID, ev); err != nil {
-		t.Fatalf("SaveEvidence: %v", err)
-	}
-
-	if _, err := IterateSession(dir, evidenceDir, state.SessionID); err != nil {
-		t.Fatalf("IterateSession: %v", err)
-	}
-
-	// Evidence should be archived under iterations/1/.
-	archivePath := filepath.Join(evidenceDir, state.SessionID, "iterations", "1", "discovery.json")
-	if _, err := os.Stat(archivePath); err != nil {
-		t.Fatalf("expected archived evidence at %s: %v", archivePath, err)
-	}
-}
-
-func TestIterateSession_HistoryRecordsCorrectSourcePhase(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	evidenceDir := filepath.Join(dir, "evidence")
-
-	state, err := InitSession(dir, "proj-6", "bootstrap", "history test")
-	if err != nil {
-		t.Fatalf("InitSession: %v", err)
-	}
-
-	// Manually set the phase to VERIFY (simulating a session that advanced).
-	state.Phase = PhaseVerify
-	if err := saveSessionState(dir, state.SessionID, state); err != nil {
-		t.Fatalf("saveSessionState: %v", err)
-	}
-
-	// Save evidence so iterate doesn't fail.
-	ev := &Evidence{
-		SessionID: state.SessionID, Type: "stage_verify", VerificationType: "attestation",
-	}
-	if err := SaveEvidence(evidenceDir, state.SessionID, ev); err != nil {
-		t.Fatalf("SaveEvidence: %v", err)
-	}
-
-	iterated, err := IterateSession(dir, evidenceDir, state.SessionID)
-	if err != nil {
-		t.Fatalf("IterateSession: %v", err)
-	}
-
-	// The history entry should record From=VERIFY (the phase before iterate), not DEVELOP.
-	if len(iterated.History) == 0 {
-		t.Fatal("expected at least one history entry")
-	}
-	lastEntry := iterated.History[len(iterated.History)-1]
-	if lastEntry.From != PhaseVerify {
-		t.Errorf("History.From = %s, want VERIFY", lastEntry.From)
-	}
-	if lastEntry.To != PhaseDevelop {
-		t.Errorf("History.To = %s, want DEVELOP", lastEntry.To)
-	}
 }
 
 func TestIterateSession_NoExistingState(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	evidenceDir := filepath.Join(dir, "evidence")
 
-	_, err := IterateSession(dir, evidenceDir, "nonexistent")
+	_, err := IterateSession(dir, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error iterating non-existent session")
 	}
@@ -289,7 +203,6 @@ func TestIterateSession_NoExistingState(t *testing.T) {
 func TestIterateSession_ResetsBootstrapSteps(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	evidenceDir := filepath.Join(dir, "evidence")
 
 	state, err := InitSession(dir, "proj-c03", "bootstrap", "iterate bootstrap test")
 	if err != nil {
@@ -309,15 +222,7 @@ func TestIterateSession_ResetsBootstrapSteps(t *testing.T) {
 		t.Fatalf("saveSessionState: %v", err)
 	}
 
-	// Save evidence so iterate doesn't fail.
-	ev := &Evidence{
-		SessionID: state.SessionID, Type: "dev_verify", VerificationType: "attestation",
-	}
-	if err := SaveEvidence(evidenceDir, state.SessionID, ev); err != nil {
-		t.Fatalf("SaveEvidence: %v", err)
-	}
-
-	iterated, err := IterateSession(dir, evidenceDir, state.SessionID)
+	iterated, err := IterateSession(dir, state.SessionID)
 	if err != nil {
 		t.Fatalf("IterateSession: %v", err)
 	}
@@ -348,22 +253,13 @@ func TestIterateSession_ResetsBootstrapSteps(t *testing.T) {
 func TestIterateSession_WithoutBootstrap_StillWorks(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	evidenceDir := filepath.Join(dir, "evidence")
 
 	state, err := InitSession(dir, "proj-c03b", "deploy", "no bootstrap test")
 	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
 
-	// Save evidence so iterate doesn't fail.
-	ev := &Evidence{
-		SessionID: state.SessionID, Type: "dev_verify", VerificationType: "attestation",
-	}
-	if err := SaveEvidence(evidenceDir, state.SessionID, ev); err != nil {
-		t.Fatalf("SaveEvidence: %v", err)
-	}
-
-	iterated, err := IterateSession(dir, evidenceDir, state.SessionID)
+	iterated, err := IterateSession(dir, state.SessionID)
 	if err != nil {
 		t.Fatalf("IterateSession: %v", err)
 	}
