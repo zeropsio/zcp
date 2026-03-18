@@ -358,6 +358,45 @@ func TestKnowledgeTool_PersistsBriefing(t *testing.T) {
 	}
 }
 
+func TestKnowledgeTool_BriefingRuntime_EmptyServices(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
+
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{
+			name: "empty_services_array",
+			args: map[string]any{
+				"runtime":  "nodejs@22",
+				"services": []string{},
+			},
+		},
+		{
+			name: "omitted_services",
+			args: map[string]any{
+				"runtime": "nodejs@22",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := callTool(t, srv, "zerops_knowledge", tt.args)
+			if result.IsError {
+				t.Errorf("should not error with runtime set: %s", getTextContent(t, result))
+			}
+			text := getTextContent(t, result)
+			if !strings.Contains(text, "Node.js") {
+				t.Error("briefing should contain Node.js runtime content")
+			}
+		})
+	}
+}
+
 // testBootstrapEngine creates a workflow engine with an active bootstrap session.
 func testBootstrapEngine(t *testing.T) *workflow.Engine {
 	t.Helper()
