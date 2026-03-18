@@ -834,6 +834,51 @@ func TestCheckDeploy_ExistingRuntime_StageRunning_Pass(t *testing.T) {
 	}
 }
 
+func TestCheckProvision_StoreEnvVarsError_Fail(t *testing.T) {
+	t.Parallel()
+	// Engine without bootstrap session — StoreDiscoveredEnvVars will fail.
+	eng := workflow.NewEngine(t.TempDir())
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "RUNNING"},
+		{ID: "s2", Name: "appstage", Status: "NEW"},
+		{ID: "s3", Name: "db", Status: "RUNNING"},
+	}).WithServiceEnv("s3", []platform.EnvVar{
+		{Key: "connectionString", Content: "pg://..."},
+	})
+
+	checker := checkProvision(mock, "proj-1", eng)
+	result, err := checker(context.Background(), plan, &workflow.BootstrapState{})
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected fail when StoreDiscoveredEnvVars errors")
+	}
+	// Verify the env_store check is present.
+	found := false
+	for _, c := range result.Checks {
+		if c.Name == "db_env_store" && c.Status == statusFail {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected db_env_store fail check in results")
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
 func TestIsManagedNonStorage(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

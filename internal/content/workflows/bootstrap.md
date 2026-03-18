@@ -70,7 +70,7 @@ Examples:
 - `zerops_knowledge runtime="bun@1.2" services=["postgresql@16"]`
 - `zerops_knowledge runtime="nodejs@22" services=["postgresql@16", "valkey@7.2"]`
 - `zerops_knowledge runtime="php-nginx@8.4" services=["mariadb@11"]`
-- `zerops_knowledge runtime="go@1" services=[]` (runtime only, no managed services)
+- `zerops_knowledge runtime="go@1"` (runtime only — omit services param when no managed services)
 
 **What you get back:**
 - **Runtime exceptions**: binding rules (0.0.0.0!), deploy patterns, framework-specific gotchas

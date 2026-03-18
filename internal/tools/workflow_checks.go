@@ -104,7 +104,14 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 							for vi, v := range envVars {
 								varNames[vi] = v.Key
 							}
-							_ = engine.StoreDiscoveredEnvVars(dep.Hostname, varNames)
+							if storeErr := engine.StoreDiscoveredEnvVars(dep.Hostname, varNames); storeErr != nil {
+								checks = append(checks, workflow.StepCheck{
+									Name:   dep.Hostname + "_env_store",
+									Status: statusFail,
+									Detail: fmt.Sprintf("failed to store env vars: %v", storeErr),
+								})
+								allPassed = false
+							}
 						}
 					}
 				}
