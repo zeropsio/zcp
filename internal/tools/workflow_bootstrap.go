@@ -106,12 +106,18 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 }
 
 func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
+	return bootstrapStatusResult(ctx, engine, client, cache)
+}
+
+// bootstrapStatusResult returns the current bootstrap status as a BootstrapResponse.
+// Shared by handleBootstrapStatus, handleResume, and handleIterate.
+func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
 	resp, err := engine.BootstrapStatus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrBootstrapNotActive,
 			fmt.Sprintf("Bootstrap status failed: %v", err),
-			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
+			"")), nil, nil
 	}
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, client, cache)

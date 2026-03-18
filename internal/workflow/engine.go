@@ -305,6 +305,16 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 
 	state.PID = os.Getpid()
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
+	// Clear guide gating for current step so BootstrapStatus delivers fresh guidance.
+	if state.Bootstrap != nil && state.Bootstrap.Active {
+		if step := state.Bootstrap.CurrentStepName(); step != "" {
+			if state.Bootstrap.Context != nil && state.Bootstrap.Context.GuideSentFor != nil {
+				delete(state.Bootstrap.Context.GuideSentFor, step)
+			}
+		}
+	}
+
 	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("resume: %w", err)
 	}

@@ -117,6 +117,12 @@ func IterateSession(stateDir, sessionID string) (*WorkflowState, error) {
 	return state, nil
 }
 
+// SaveSessionState atomically writes state to sessions/{sessionID}.json.
+// Exported for cross-package test access; internal callers use saveSessionState.
+func SaveSessionState(stateDir, sessionID string, state *WorkflowState) error {
+	return saveSessionState(stateDir, sessionID, state)
+}
+
 // saveSessionState atomically writes state to sessions/{sessionID}.json.
 func saveSessionState(stateDir, sessionID string, state *WorkflowState) error {
 	sessDir := filepath.Join(stateDir, sessionsDirName)

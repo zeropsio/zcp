@@ -1149,6 +1149,53 @@ func TestEngine_Resume_NotFound(t *testing.T) {
 	}
 }
 
+func TestEngine_Resume_ClearsGuideGating(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	resp, err := eng.BootstrapStart("proj-1", "test")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	sessionID := resp.SessionID
+
+	// Manually set GuideSentFor to simulate prior guide delivery persisted to disk.
+	state, err := LoadSessionByID(dir, sessionID)
+	if err != nil {
+		t.Fatalf("LoadSessionByID: %v", err)
+	}
+	if state.Bootstrap.Context == nil {
+		state.Bootstrap.Context = &ContextDelivery{}
+	}
+	if state.Bootstrap.Context.GuideSentFor == nil {
+		state.Bootstrap.Context.GuideSentFor = make(map[string]int)
+	}
+	state.Bootstrap.Context.GuideSentFor[StepDiscover] = 0
+	// Overwrite session with dead PID and guide gating set.
+	state.PID = 9999999
+	if err := saveSessionState(dir, sessionID, state); err != nil {
+		t.Fatalf("saveSessionState: %v", err)
+	}
+
+	// Resume with new engine.
+	eng2 := NewEngine(dir)
+	if _, err := eng2.Resume(sessionID); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	// Load state and verify GuideSentFor["discover"] is cleared.
+	state2, err := LoadSessionByID(dir, sessionID)
+	if err != nil {
+		t.Fatalf("LoadSessionByID after resume: %v", err)
+	}
+	if state2.Bootstrap.Context != nil && state2.Bootstrap.Context.GuideSentFor != nil {
+		if _, ok := state2.Bootstrap.Context.GuideSentFor[StepDiscover]; ok {
+			t.Error("expected GuideSentFor[discover] to be cleared after resume")
+		}
+	}
+}
+
 // currentPID is a test helper.
 func currentPID() int {
 	return os.Getpid()

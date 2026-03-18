@@ -93,7 +93,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "reset":
 		return handleReset(engine)
 	case "iterate":
-		return handleIterate(engine)
+		return handleIterate(ctx, engine, client, cache)
 	case "complete":
 		var liveTypes []platform.ServiceStackType
 		if cache != nil && client != nil {
@@ -105,7 +105,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "status":
 		return handleBootstrapStatus(ctx, engine, client, cache)
 	case "resume":
-		return handleResume(engine, input)
+		return handleResume(ctx, engine, client, cache, input)
 	case "list":
 		return handleListSessions(engine)
 	case "route":
@@ -166,32 +166,30 @@ func handleReset(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
 	return textResult("Session reset successfully."), nil, nil
 }
 
-func handleIterate(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
-	state, err := engine.Iterate()
-	if err != nil {
+func handleIterate(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
+	if _, err := engine.Iterate(); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Iterate failed: %v", err),
 			"Start a session first")), nil, nil
 	}
-	return jsonResult(state), nil, nil
+	return bootstrapStatusResult(ctx, engine, client, cache)
 }
 
-func handleResume(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleResume(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.SessionID == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"sessionId is required for resume action",
 			"Specify the session ID to resume")), nil, nil
 	}
-	state, err := engine.Resume(input.SessionID)
-	if err != nil {
+	if _, err := engine.Resume(input.SessionID); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Resume failed: %v", err),
 			"Session may not exist or may still be active")), nil, nil
 	}
-	return jsonResult(state), nil, nil
+	return bootstrapStatusResult(ctx, engine, client, cache)
 }
 
 func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {

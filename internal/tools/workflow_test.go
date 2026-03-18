@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -793,5 +794,100 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_FallbackAttestation(
 
 	if result.IsError {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+}
+
+func TestWorkflowTool_Resume_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir)
+
+	// Start bootstrap and advance to provision.
+	resp, err := engine.BootstrapStart("proj1", "bun + postgres")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	sessionID := resp.SessionID
+
+	// Complete discover to advance to provision.
+	if _, err := engine.BootstrapComplete(context.Background(), "discover", "FRESH project, plan submitted", nil); err != nil {
+		t.Fatalf("BootstrapComplete: %v", err)
+	}
+
+	// Overwrite session PID to a dead value.
+	state, err := workflow.LoadSessionByID(dir, sessionID)
+	if err != nil {
+		t.Fatalf("LoadSessionByID: %v", err)
+	}
+	state.PID = 9999999
+	if err := workflow.SaveSessionState(dir, sessionID, state); err != nil {
+		t.Fatalf("SaveSessionState: %v", err)
+	}
+
+	// Create new engine (fresh PID) and resume.
+	engine2 := workflow.NewEngine(dir)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine2, nil, "")
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":    "resume",
+		"sessionId": sessionID,
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var bootstrapResp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &bootstrapResp); err != nil {
+		t.Fatalf("failed to parse BootstrapResponse: %v", err)
+	}
+	if bootstrapResp.Current == nil {
+		t.Fatal("expected non-nil current step")
+	}
+	if bootstrapResp.Progress.Total != 6 {
+		t.Errorf("Progress.Total: want 6, got %d", bootstrapResp.Progress.Total)
+	}
+	if bootstrapResp.Current.DetailedGuide == "" {
+		t.Error("expected non-empty detailedGuide in resume response")
+	}
+}
+
+func TestWorkflowTool_Iterate_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir())
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
+
+	// Start bootstrap and complete all steps through verify (reach iteration zone).
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "intent": "test",
+	})
+	for _, step := range []string{"discover", "provision", "generate", "deploy", "verify"} {
+		callTool(t, srv, "zerops_workflow", map[string]any{
+			"action": "complete", "step": step,
+			"attestation": "Attestation for " + step + " completed ok",
+		})
+	}
+
+	// Iterate — should reset to generate step and return BootstrapResponse.
+	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "iterate"})
+
+	if result.IsError {
+		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var bootstrapResp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(text), &bootstrapResp); err != nil {
+		t.Fatalf("failed to parse BootstrapResponse: %v", err)
+	}
+	if bootstrapResp.Current == nil {
+		t.Fatal("expected non-nil current step after iterate")
+	}
+	if bootstrapResp.Current.Name != "generate" {
+		t.Errorf("Current.Name: want generate, got %s", bootstrapResp.Current.Name)
+	}
+	if bootstrapResp.Progress.Total != 6 {
+		t.Errorf("Progress.Total: want 6, got %d", bootstrapResp.Progress.Total)
 	}
 }
