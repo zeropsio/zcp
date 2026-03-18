@@ -8,7 +8,7 @@ import (
 
 // NextActions constants provide actionable follow-up instructions for LLMs.
 const (
-	nextActionDeploySuccess    = "Enable subdomain: zerops_subdomain action=enable. Check logs: zerops_logs severity=ERROR since=5m."
+	nextActionDeploySuccess    = "Check logs: zerops_logs severity=ERROR since=5m."
 	nextActionDeployBuildFail  = "Build failed — check buildLogs in response for build output. Fix and redeploy."
 	nextActionImportSuccess    = "Verify services: zerops_discover. Continue workflow: mount dev, discover env vars, write code, then deploy."
 	nextActionImportPartial    = "Check failed processes: zerops_events. Fix and re-import via zerops_workflow."
@@ -33,7 +33,7 @@ func deploySuccessNextActions(result *ops.DeployResult) string {
 			"CRITICAL: Deploy restarted the container — dev server is NOT running. "+
 				"Start it via SSH immediately (Bash run_in_background=true): "+
 				"ssh %s \"cd /var/www && {start_command}\". "+
-				"Check TaskOutput after 3-5s. Then: zerops_subdomain action=enable, zerops_verify.",
+				"Check TaskOutput after 3-5s. Then: zerops_verify.",
 			result.TargetService,
 		)
 	}

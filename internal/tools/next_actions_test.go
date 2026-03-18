@@ -15,7 +15,6 @@ func TestNextActions_ContainToolNames(t *testing.T) {
 		action   string
 		wantTool string
 	}{
-		{"deploy_success_subdomain", nextActionDeploySuccess, "zerops_subdomain"},
 		{"deploy_success_logs", nextActionDeploySuccess, "zerops_logs"},
 		{"deploy_build_fail", nextActionDeployBuildFail, "buildLogs"},
 		{"import_success_discover", nextActionImportSuccess, "zerops_discover"},
@@ -68,7 +67,7 @@ func TestDeploySuccessNextActions(t *testing.T) {
 				TargetService:     "appdev",
 				TargetServiceType: "php-nginx@8.4",
 			},
-			wantContains: "zerops_subdomain",
+			wantContains: "zerops_logs",
 			wantAbsent:   "NOT running",
 		},
 		{
@@ -78,7 +77,7 @@ func TestDeploySuccessNextActions(t *testing.T) {
 				TargetService:     "appstage",
 				TargetServiceType: "nodejs@22",
 			},
-			wantContains: "zerops_subdomain",
+			wantContains: "zerops_logs",
 			wantAbsent:   "NOT running",
 		},
 		{
@@ -88,7 +87,7 @@ func TestDeploySuccessNextActions(t *testing.T) {
 				TargetService:     "webdev",
 				TargetServiceType: "static",
 			},
-			wantContains: "zerops_subdomain",
+			wantContains: "zerops_logs",
 			wantAbsent:   "NOT running",
 		},
 	}

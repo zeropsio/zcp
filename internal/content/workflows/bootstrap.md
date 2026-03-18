@@ -331,13 +331,15 @@ Steps 2-4 repeat on every iteration. Stage (steps 5-7) only after dev is healthy
 
 1. **Deploy to appdev**: `zerops_deploy targetService="appdev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. SSHFS mount auto-reconnects after deploy — no remount needed. Deploy tests the build pipeline and ensures deployFiles artifacts persist.
 2. **Start appdev** (deploy activated envVariables — no server runs): start server via SSH (Bash tool `run_in_background=true`). Env vars are now OS env vars. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically after deploy.
-3. **Verify appdev**: `zerops_subdomain serviceHostname="appdev" action="enable"` then `zerops_verify serviceHostname="appdev"` — must return status=healthy
-4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
-5. **Generate stage entry** in zerops.yml — dev is proven, now write the `setup: appstage` entry. See "Dev → Stage: What to know" below.
-6. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING. Stage is never a deploy source — no `.git` needed on target.
-6b. **Connect shared storage to stage** (if shared-storage is in the stack): `zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"` — stage was READY_TO_DEPLOY during import, so the import `mount:` did not apply.
-7. **Verify appstage**: `zerops_subdomain serviceHostname="appstage" action="enable"` then `zerops_verify serviceHostname="appstage"` — must return status=healthy
-8. **Present both URLs** to user:
+3. **Enable dev subdomain**: `zerops_subdomain serviceHostname="appdev" action="enable"` — returns `subdomainUrls`
+4. **Verify appdev**: `zerops_verify serviceHostname="appdev"` — must return status=healthy
+5. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
+6. **Generate stage entry** in zerops.yml — dev is proven, now write the `setup: appstage` entry. See "Dev → Stage: What to know" below.
+7. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING. Stage is never a deploy source — no `.git` needed on target.
+7b. **Connect shared storage to stage** (if shared-storage is in the stack): `zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"` — stage was READY_TO_DEPLOY during import, so the import `mount:` did not apply.
+8. **Enable stage subdomain**: `zerops_subdomain serviceHostname="appstage" action="enable"` — returns `subdomainUrls`
+9. **Verify appstage**: `zerops_verify serviceHostname="appstage"` — must return status=healthy
+10. **Present both URLs** to user:
     ```
     Dev:   {subdomainUrl from enable}
     Stage: {subdomainUrl from enable}
@@ -427,13 +429,11 @@ zerops:
    zerops_deploy targetService="{hostname}"
    ```
 
-5. **Verify:**
-   ```
-   zerops_subdomain serviceHostname="{hostname}" action="enable"
-   zerops_verify serviceHostname="{hostname}"
-   ```
+5. **Enable subdomain**: `zerops_subdomain serviceHostname="{hostname}" action="enable"` — returns `subdomainUrls`
 
-6. If verification fails, iterate (diagnose -> fix -> redeploy).
+6. **Verify**: `zerops_verify serviceHostname="{hostname}"` — must return status=healthy
+
+7. If verification fails, iterate (diagnose -> fix -> redeploy).
 
 ### For 2+ runtime service pairs — agent orchestration
 
@@ -743,13 +743,15 @@ Steps 2-4 repeat on every iteration. Stage (steps 5-7) only after dev is healthy
 
 1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHFS mount auto-reconnects after deploy.
 2. **Start dev** (deploy activated envVariables — no server runs): start server via SSH (Bash tool `run_in_background=true`). Env vars are now OS env vars. **Implicit-webserver runtimes: skip this step.**
-3. **Verify dev**: `zerops_subdomain serviceHostname="{devHostname}" action="enable"` then `zerops_verify serviceHostname="{devHostname}"` — must return status=healthy
-4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop (max 3 iterations)
-5. **Generate stage entry** in zerops.yml — dev is proven, now write the `setup: {stageHostname}` entry. Apply what you learned from dev: working deps install → `buildCommands`, working start command → `start:`, add `healthCheck`. Use runtime knowledge Prod deploy pattern as reference.
-6. **Deploy to stage from dev**: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`
-6b. **Connect shared storage to stage** (if applicable): `zerops_manage action="connect-storage" serviceHostname="{stageHostname}" storageHostname="{storageHostname}"`
-7. **Verify stage**: `zerops_subdomain serviceHostname="{stageHostname}" action="enable"` then `zerops_verify serviceHostname="{stageHostname}"` — must return status=healthy
-8. **Present both URLs** to user
+3. **Enable dev subdomain**: `zerops_subdomain serviceHostname="{devHostname}" action="enable"` — returns `subdomainUrls`
+4. **Verify dev**: `zerops_verify serviceHostname="{devHostname}"` — must return status=healthy
+5. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop (max 3 iterations)
+6. **Generate stage entry** in zerops.yml — dev is proven, now write the `setup: {stageHostname}` entry. Apply what you learned from dev: working deps install → `buildCommands`, working start command → `start:`, add `healthCheck`. Use runtime knowledge Prod deploy pattern as reference.
+7. **Deploy to stage from dev**: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`
+7b. **Connect shared storage to stage** (if applicable): `zerops_manage action="connect-storage" serviceHostname="{stageHostname}" storageHostname="{storageHostname}"`
+8. **Enable stage subdomain**: `zerops_subdomain serviceHostname="{stageHostname}" action="enable"` — returns `subdomainUrls`
+9. **Verify stage**: `zerops_verify serviceHostname="{stageHostname}"` — must return status=healthy
+10. **Present both URLs** to user
 </section>
 
 <section name="deploy-dev">
@@ -761,9 +763,10 @@ Dev-only mode has no stage pair — all verification happens on the dev service 
 
 1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHFS mount auto-reconnects after deploy.
 2. **Start dev** (deploy activated envVariables — no server runs): start server via SSH (Bash tool `run_in_background=true`). Env vars are now OS env vars. **Implicit-webserver runtimes: skip this step.**
-3. **Verify dev**: `zerops_subdomain serviceHostname="{devHostname}" action="enable"` then `zerops_verify serviceHostname="{devHostname}"` — must return status=healthy
-4. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop (max 3 iterations)
-5. **Present URL** to user — no stage deploy needed in dev-only mode
+3. **Enable subdomain**: `zerops_subdomain serviceHostname="{devHostname}" action="enable"` — returns `subdomainUrls`
+4. **Verify dev**: `zerops_verify serviceHostname="{devHostname}"` — must return status=healthy
+5. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop (max 3 iterations)
+6. **Present URL** to user — no stage deploy needed in dev-only mode
 </section>
 
 <section name="deploy-iteration">
