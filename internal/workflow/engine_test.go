@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -609,6 +610,37 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 	}
 	if resp.Progress.Steps[0].Status != "complete" {
 		t.Errorf("step[0].Status: want complete, got %s", resp.Progress.Steps[0].Status)
+	}
+}
+
+func TestBootstrapStatus_ReturnsFullGuide_AfterPriorDelivery(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir)
+
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	// First: complete discover to advance to provision.
+	if _, err := eng.BootstrapComplete(context.Background(), "discover", "FRESH project, plan submitted", nil); err != nil {
+		t.Fatalf("BootstrapComplete(discover): %v", err)
+	}
+
+	// BuildResponse already delivered guide for provision (via BootstrapComplete).
+	// Now BootstrapStatus must still return full guide (context recovery).
+	resp, err := eng.BootstrapStatus()
+	if err != nil {
+		t.Fatalf("BootstrapStatus: %v", err)
+	}
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil")
+	}
+	if resp.Current.DetailedGuide == "" {
+		t.Error("BootstrapStatus must return full guide for context recovery")
+	}
+	if strings.Contains(resp.Current.DetailedGuide, "already delivered") {
+		t.Error("BootstrapStatus must not return gating stub — it should always deliver full guide")
 	}
 }
 

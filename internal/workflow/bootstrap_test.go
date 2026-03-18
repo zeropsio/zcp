@@ -1105,6 +1105,76 @@ func TestResetForIteration_NilBootstrap_NoOp(t *testing.T) {
 	b.ResetForIteration()
 }
 
+// --- Context recovery: resolveGuideFresh ---
+
+func TestResolveGuideFresh_AlwaysReturnsFullGuide(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Steps[0].Status = stepInProgress
+
+	// Deliver guide once via BuildResponse to mark it as sent.
+	bs.BuildResponse("sess-fresh", "test", 0)
+	if _, ok := bs.Context.GuideSentFor["discover"]; !ok {
+		t.Fatal("precondition: guide should be marked as sent")
+	}
+
+	// resolveGuideFresh must return full guide despite gating.
+	guide := bs.resolveGuideFresh("discover", 0)
+	if guide == "" {
+		t.Error("resolveGuideFresh should return non-empty guide")
+	}
+	if strings.Contains(guide, "already delivered") {
+		t.Error("resolveGuideFresh must not return gating stub")
+	}
+
+	// Should match ResolveGuidance (non-deploy steps use full section).
+	expected := ResolveGuidance("discover")
+	if guide != expected {
+		t.Errorf("resolveGuideFresh should match ResolveGuidance\ngot length %d, want length %d", len(guide), len(expected))
+	}
+}
+
+func TestResolveGuideFresh_DoesNotUpdateGating(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Steps[0].Status = stepInProgress
+
+	// GuideSentFor should be empty initially.
+	if len(bs.Context.GuideSentFor) != 0 {
+		t.Fatal("precondition: GuideSentFor should be empty")
+	}
+
+	// Call resolveGuideFresh — it must not modify gating state.
+	bs.resolveGuideFresh("discover", 0)
+	if len(bs.Context.GuideSentFor) != 0 {
+		t.Error("resolveGuideFresh must not modify GuideSentFor")
+	}
+}
+
+func TestResolveGuideFresh_IterationDelta(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	// Advance to deploy step.
+	for i := range 3 {
+		bs.Steps[i].Status = stepComplete
+		bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
+	}
+	bs.CurrentStep = 3
+	bs.Steps[3].Status = stepInProgress
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+	}}
+
+	// At iteration > 0 on deploy step, should return iteration delta.
+	guide := bs.resolveGuideFresh("deploy", 1)
+	if guide == "" {
+		t.Error("resolveGuideFresh should return non-empty guide for deploy iteration")
+	}
+	if !strings.Contains(guide, "ITERATION") {
+		t.Error("expected iteration delta content")
+	}
+}
+
 func TestBuildPriorContext_PlanAlwaysIncluded(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

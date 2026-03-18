@@ -62,17 +62,47 @@ func UnregisterSession(stateDir, sessionID string) error {
 	})
 }
 
-// ListSessions returns all active sessions, auto-pruning dead PIDs.
+// ListSessions returns all sessions from the registry (read-only, no pruning).
 func ListSessions(stateDir string) ([]SessionEntry, error) {
-	var result []SessionEntry
-	err := withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
-		pruned := pruneDeadSessions(reg.Sessions)
-		reg.Sessions = pruned
-		result = make([]SessionEntry, len(pruned))
-		copy(result, pruned)
-		return reg, nil
-	})
-	return result, err
+	reg, err := readRegistryShared(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]SessionEntry, len(reg.Sessions))
+	copy(result, reg.Sessions)
+	return result, nil
+}
+
+// ClassifySessions splits sessions into alive (PID running) and dead (PID not running).
+func ClassifySessions(sessions []SessionEntry) (alive, dead []SessionEntry) {
+	for _, s := range sessions {
+		if isProcessAlive(s.PID) {
+			alive = append(alive, s)
+		} else {
+			dead = append(dead, s)
+		}
+	}
+	return alive, dead
+}
+
+// readRegistryShared reads the registry under a shared (read-only) file lock.
+func readRegistryShared(stateDir string) (*Registry, error) {
+	lockPath := filepath.Join(stateDir, lockFileName)
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &Registry{Version: registryVersion}, nil
+		}
+		return nil, fmt.Errorf("registry lock open: %w", err)
+	}
+	defer lockFile.Close()
+
+	if err := lockFileShared(lockFile); err != nil {
+		return nil, fmt.Errorf("registry shared flock: %w", err)
+	}
+	defer unlockFile(lockFile)
+
+	return readRegistry(stateDir)
 }
 
 // RefreshRegistry prunes dead PIDs and stale entries from the registry,

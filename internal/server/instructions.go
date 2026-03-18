@@ -21,6 +21,7 @@ Workflow commands:
 - Debug issues: zerops_workflow action="start" workflow="debug"
 - Scale: zerops_workflow action="start" workflow="scale"
 - Configure: zerops_workflow action="start" workflow="configure"
+- Check workflow state: zerops_workflow action="status" (use after context loss or to resume work)
 - Monitor: zerops_discover
 - Search docs: zerops_knowledge query="..."`
 
@@ -54,8 +55,8 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 	return b.String()
 }
 
-// buildWorkflowHint reads the registry and returns hints for all active sessions.
-// Returns empty string on any error (graceful fallback).
+// buildWorkflowHint reads the registry and returns hints for all sessions.
+// Dead-PID sessions show as resumable with instructions. Returns empty on error.
 func buildWorkflowHint(stateDir string) string {
 	if stateDir == "" {
 		return ""
@@ -65,11 +66,11 @@ func buildWorkflowHint(stateDir string) string {
 		return ""
 	}
 
-	var hints []string
-	for _, s := range sessions {
-		hint := fmt.Sprintf("Active workflow: %s", s.Workflow)
+	alive, dead := workflow.ClassifySessions(sessions)
 
-		// For bootstrap sessions, try to load full state for step detail.
+	var hints []string
+	for _, s := range alive {
+		hint := fmt.Sprintf("Active workflow: %s", s.Workflow)
 		if s.Workflow == "bootstrap" {
 			if state, loadErr := workflow.LoadSessionByID(stateDir, s.SessionID); loadErr == nil {
 				if state.Bootstrap != nil && state.Bootstrap.Active {
@@ -81,6 +82,11 @@ func buildWorkflowHint(stateDir string) string {
 			}
 		}
 		hints = append(hints, hint)
+	}
+	for _, s := range dead {
+		hints = append(hints, fmt.Sprintf(
+			"Resumable workflow: %s | intent: %q | session: %s\n  → Call zerops_workflow action=\"resume\" sessionId=\"%s\" to continue.",
+			s.Workflow, s.Intent, s.SessionID, s.SessionID))
 	}
 	return strings.Join(hints, "\n")
 }

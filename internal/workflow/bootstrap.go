@@ -293,6 +293,19 @@ func (b *BootstrapState) resolveGuideWithGating(stepName string, iteration int) 
 	return guide
 }
 
+// resolveGuideFresh returns the full guide without gating checks or side effects.
+// Used by BootstrapStatus to always deliver complete guidance for context recovery.
+func (b *BootstrapState) resolveGuideFresh(stepName string, iteration int) string {
+	if iteration > 0 {
+		lastAtt := b.lastAttestation()
+		delta := BuildIterationDelta(stepName, iteration, b.Plan, lastAtt)
+		if delta != "" {
+			return delta
+		}
+	}
+	return ResolveProgressiveGuidance(stepName, b.Plan, iteration)
+}
+
 // lastAttestation returns the attestation from the most recently completed step.
 func (b *BootstrapState) lastAttestation() string {
 	for i := b.CurrentStep - 1; i >= 0; i-- {

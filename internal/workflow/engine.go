@@ -276,7 +276,7 @@ func (e *Engine) StoreDiscoveredEnvVars(hostname string, vars []string) error {
 	return saveSessionState(e.stateDir, e.sessionID, state)
 }
 
-// BootstrapStatus returns the current bootstrap progress.
+// BootstrapStatus returns the current bootstrap progress with full guidance for context recovery.
 func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
@@ -285,7 +285,12 @@ func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 	if state.Bootstrap == nil {
 		return nil, fmt.Errorf("bootstrap status: no bootstrap state")
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration), nil
+	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration)
+	// Override with fresh guide — status must always deliver full guidance for context recovery.
+	if resp.Current != nil {
+		resp.Current.DetailedGuide = state.Bootstrap.resolveGuideFresh(resp.Current.Name, state.Iteration)
+	}
+	return resp, nil
 }
 
 // Resume takes over an abandoned session (dead PID) by updating PID to current process.

@@ -16,6 +16,22 @@ var (
 
 const lockfileExclusiveLock = 0x00000002
 
+// lockFileShared acquires a shared (read-only) lock via LockFileEx.
+func lockFileShared(f *os.File) error {
+	var ol syscall.Overlapped
+	r1, _, err := procLockFileEx.Call(
+		f.Fd(),
+		0, // 0 = shared (no LOCKFILE_EXCLUSIVE_LOCK)
+		0,
+		1, 0,
+		uintptr(unsafe.Pointer(&ol)),
+	)
+	if r1 == 0 {
+		return err
+	}
+	return nil
+}
+
 // lockFileExclusive acquires an exclusive lock via LockFileEx.
 func lockFileExclusive(f *os.File) error {
 	var ol syscall.Overlapped

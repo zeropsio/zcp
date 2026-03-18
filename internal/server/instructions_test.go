@@ -136,6 +136,82 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 	}
 }
 
+// --- buildWorkflowHint tests ---
+
+func TestBuildWorkflowHint_DeadPID_ShowsResumable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Register a dead PID session.
+	entry := workflow.SessionEntry{
+		SessionID: "dead-session-abc",
+		PID:       9999999,
+		Workflow:  "bootstrap",
+		ProjectID: "proj-1",
+		Intent:    "deploy my app",
+	}
+	if err := workflow.RegisterSession(dir, entry); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	hint := buildWorkflowHint(dir)
+	if hint == "" {
+		t.Fatal("expected non-empty hint for dead PID session")
+	}
+	if !strings.Contains(hint, "Resumable") {
+		t.Errorf("hint should contain 'Resumable', got: %s", hint)
+	}
+	if !strings.Contains(hint, "dead-session-abc") {
+		t.Errorf("hint should contain session ID, got: %s", hint)
+	}
+	if !strings.Contains(hint, `action="resume"`) {
+		t.Errorf("hint should contain resume action, got: %s", hint)
+	}
+}
+
+func TestBuildWorkflowHint_AlivePID_ShowsActive(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Register an alive PID session.
+	entry := workflow.SessionEntry{
+		SessionID: "alive-session-xyz",
+		PID:       os.Getpid(),
+		Workflow:  "deploy",
+		ProjectID: "proj-1",
+		Intent:    "deploy code",
+	}
+	if err := workflow.RegisterSession(dir, entry); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	hint := buildWorkflowHint(dir)
+	if hint == "" {
+		t.Fatal("expected non-empty hint for alive PID session")
+	}
+	if !strings.Contains(hint, "Active workflow") {
+		t.Errorf("hint should contain 'Active workflow', got: %s", hint)
+	}
+	if strings.Contains(hint, "Resumable") {
+		t.Errorf("alive session should not be marked as Resumable, got: %s", hint)
+	}
+}
+
+func TestBuildWorkflowHint_EmptyStateDir_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	if hint := buildWorkflowHint(""); hint != "" {
+		t.Errorf("expected empty hint for empty stateDir, got: %s", hint)
+	}
+}
+
+func TestBuildWorkflowHint_NoSessions_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if hint := buildWorkflowHint(dir); hint != "" {
+		t.Errorf("expected empty hint for no sessions, got: %s", hint)
+	}
+}
+
 func TestBuildProjectSummary_NilClient(t *testing.T) {
 	t.Parallel()
 	summary := buildProjectSummary(context.Background(), nil, "proj-1", t.TempDir())

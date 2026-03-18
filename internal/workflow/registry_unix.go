@@ -12,6 +12,11 @@ func lockFileExclusive(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
 }
 
+// lockFileShared acquires a shared (read-only) flock on the file.
+func lockFileShared(f *os.File) error {
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_SH)
+}
+
 // unlockFile releases the flock.
 func unlockFile(f *os.File) {
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

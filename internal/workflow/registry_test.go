@@ -169,33 +169,6 @@ func TestListSessions_EmptyRegistry(t *testing.T) {
 	}
 }
 
-func TestListSessions_AutoRefreshes(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	// Register a dead PID session directly via withRegistryLock.
-	entry := SessionEntry{
-		SessionID: "dead-sess",
-		PID:       9999999,
-		Workflow:  "deploy",
-		ProjectID: "proj-1",
-		CreatedAt: "2026-01-01T00:00:00Z",
-		UpdatedAt: "2026-01-01T00:00:00Z",
-	}
-	if err := RegisterSession(dir, entry); err != nil {
-		t.Fatalf("RegisterSession: %v", err)
-	}
-
-	// ListSessions should auto-refresh and prune dead PID.
-	sessions, err := ListSessions(dir)
-	if err != nil {
-		t.Fatalf("ListSessions: %v", err)
-	}
-	if len(sessions) != 0 {
-		t.Errorf("want 0 sessions after auto-refresh, got %d", len(sessions))
-	}
-}
-
 func TestWithRegistryLock_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -314,6 +287,105 @@ func TestRefreshRegistry_KeepsLiveSessionFiles(t *testing.T) {
 	// Session file should still exist.
 	if _, err := os.Stat(sessFile); err != nil {
 		t.Errorf("live session file should survive: %v", err)
+	}
+}
+
+func TestListSessions_ReadOnly_NoSideEffects(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Register a dead PID session directly.
+	entry := SessionEntry{
+		SessionID: "dead-sess",
+		PID:       9999999,
+		Workflow:  "deploy",
+		ProjectID: "proj-1",
+		CreatedAt: "2026-01-01T00:00:00Z",
+		UpdatedAt: "2026-01-01T00:00:00Z",
+	}
+	if err := RegisterSession(dir, entry); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	// ListSessions should return the dead session (no pruning).
+	sessions, err := ListSessions(dir)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("want 1 session (read-only, no pruning), got %d", len(sessions))
+	}
+	if sessions[0].SessionID != "dead-sess" {
+		t.Errorf("SessionID: want dead-sess, got %s", sessions[0].SessionID)
+	}
+
+	// Registry file should still contain the dead session (no write-back).
+	sessions2, err := ListSessions(dir)
+	if err != nil {
+		t.Fatalf("ListSessions second call: %v", err)
+	}
+	if len(sessions2) != 1 {
+		t.Errorf("dead session should persist across calls (no pruning), got %d", len(sessions2))
+	}
+}
+
+func TestClassifySessions_AliveAndDead(t *testing.T) {
+	t.Parallel()
+	sessions := []SessionEntry{
+		{SessionID: "alive-1", PID: os.Getpid()},
+		{SessionID: "dead-1", PID: 9999999},
+		{SessionID: "alive-2", PID: os.Getpid()},
+	}
+	alive, dead := ClassifySessions(sessions)
+	if len(alive) != 2 {
+		t.Errorf("alive: want 2, got %d", len(alive))
+	}
+	if len(dead) != 1 {
+		t.Errorf("dead: want 1, got %d", len(dead))
+	}
+	if dead[0].SessionID != "dead-1" {
+		t.Errorf("dead[0].SessionID: want dead-1, got %s", dead[0].SessionID)
+	}
+}
+
+func TestClassifySessions_AllAlive(t *testing.T) {
+	t.Parallel()
+	sessions := []SessionEntry{
+		{SessionID: "a", PID: os.Getpid()},
+		{SessionID: "b", PID: os.Getpid()},
+	}
+	alive, dead := ClassifySessions(sessions)
+	if len(alive) != 2 {
+		t.Errorf("alive: want 2, got %d", len(alive))
+	}
+	if len(dead) != 0 {
+		t.Errorf("dead: want 0, got %d", len(dead))
+	}
+}
+
+func TestClassifySessions_AllDead(t *testing.T) {
+	t.Parallel()
+	sessions := []SessionEntry{
+		{SessionID: "x", PID: 9999999},
+		{SessionID: "y", PID: 9999998},
+	}
+	alive, dead := ClassifySessions(sessions)
+	if len(alive) != 0 {
+		t.Errorf("alive: want 0, got %d", len(alive))
+	}
+	if len(dead) != 2 {
+		t.Errorf("dead: want 2, got %d", len(dead))
+	}
+}
+
+func TestClassifySessions_Empty(t *testing.T) {
+	t.Parallel()
+	alive, dead := ClassifySessions(nil)
+	if len(alive) != 0 {
+		t.Errorf("alive: want 0, got %d", len(alive))
+	}
+	if len(dead) != 0 {
+		t.Errorf("dead: want 0, got %d", len(dead))
 	}
 }
 
