@@ -145,7 +145,7 @@ services[]:                            # REQUIRED
   dotEnvSecrets: string                # .env format, auto-creates secrets
   # NOTE: envVariables does NOT exist at service level — only at project level
   # For non-secret env vars on a service, use zerops_env after import or zerops.yml run.envVariables
-  buildFromGit: url                    # one-time build from repo
+  buildFromGit: url                    # one-time build from repo — use ONLY with verified URLs (utility recipes like mailpit). Do NOT guess URLs.
   objectStorageSize: 1-100             # GB, object-storage only (changeable in GUI later)
   objectStoragePolicy: private | public-read | public-objects-read | public-write | public-read-write
   objectStorageRawPolicy: string       # custom IAM Policy JSON (alternative to objectStoragePolicy)
@@ -295,7 +295,7 @@ zerops[]:
 - **ALWAYS** create dev/stage service pairs for runtime services. Naming: `{prefix}dev` and `{prefix}stage` — the prefix is descriptive, not fixed. Use `app`, `api`, `web`, `admin`, etc. based on what the service does (e.g., `appdev`/`appstage`, `apidev`/`apistage`, `webdev`/`webstage`). REASON: workflow engine detects conformant projects by this pattern; single services have no isolation
 - **ALWAYS** set `startWithoutCode: true` ONLY on dev services (not stage) in dev/stage pairs. REASON: dev starts immediately for SSHFS iteration; stage stays in READY_TO_DEPLOY until proven code is deployed from dev. Without `startWithoutCode` OR `buildFromGit`, a service stays stuck in READY_TO_DEPLOY
 - **ALWAYS** set `maxContainers: 1` for dev services in dev/stage pairs. REASON: dev uses SSHFS; multiple containers cause file conflicts and waste resources
-- **ALWAYS** set `buildFromGit: <url>` OR `startWithoutCode: true` on every runtime service that needs to start immediately. REASON: runtime services without either have no code source -- they stay in READY_TO_DEPLOY. For stage services in dev/stage pairs, omit both -- first deploy from dev transitions them to RUNNING
+- **ALWAYS** set `startWithoutCode: true` on every runtime service that needs to start immediately (unless using `buildFromGit` with a verified URL). REASON: runtime services without either have no code source -- they stay in READY_TO_DEPLOY. For stage services in dev/stage pairs, omit both -- first deploy from dev transitions them to RUNNING. `buildFromGit` is for utility services (mailpit, adminer) with known URLs — never guess repository URLs
 - **ONLY** set `zeropsSetup` when using `buildFromGit` and the zerops.yml setup name differs from the hostname. REASON: zeropsSetup defaults to hostname. With `startWithoutCode`, omit it -- when code is later pushed via `zcli push`, the zerops.yml `setup:` must match the hostname (or use `zcli push --setup <name>`)
 - **ALWAYS** set `verticalAutoscaling.minRam: 1.0` (GB) for runtime services. REASON: 0.5 GB causes OOM during compilation (especially Go, Java). 1.0 is the safe minimum
 - **ALWAYS** use managed service hostname conventions: `db` (postgresql/mariadb), `cache` (valkey), `queue` (nats/kafka), `search` (elasticsearch), `storage` (object-storage/minio). REASON: standardizes cross-service references and discovery
