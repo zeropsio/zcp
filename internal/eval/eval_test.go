@@ -327,10 +327,6 @@ func TestBuildTaskPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "HTTP 200") {
 		t.Error("prompt missing HTTP 200 verification")
 	}
-	// Must restrict to zerops_* tools
-	if !strings.Contains(prompt, "zerops_*") {
-		t.Error("prompt missing tool restriction")
-	}
 	// Should NOT contain verbose workflow instructions (MCP server handles that)
 	for _, unwanted := range []string{
 		`zerops_workflow action="start"`,

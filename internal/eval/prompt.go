@@ -250,7 +250,6 @@ func BuildTaskPrompt(meta *RecipeMetadata, hostnames map[string]string) string {
 	}
 
 	b.WriteString("\nVerify the runtime is working — the app should respond with HTTP 200.\n")
-	b.WriteString("Do NOT use tools outside of zerops_* MCP tools.")
 
 	return b.String()
 }
