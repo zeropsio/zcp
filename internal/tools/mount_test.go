@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // stubMounter is a minimal Mounter for tool-layer tests.
@@ -71,7 +72,7 @@ func (s *stubMounter) CleanupUnit(_ context.Context, _ string) error {
 
 func mountServer(mock platform.Client, mounter ops.Mounter) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterMount(srv, mock, "proj-1", mounter)
+	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{})
 	return srv
 }
 

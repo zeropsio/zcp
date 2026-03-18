@@ -18,6 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -120,8 +121,8 @@ func setupRealisticServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession
 	tools.RegisterKnowledge(mcpSrv, store, mock, nil, nil, nil)
 	tools.RegisterImport(mcpSrv, mock, projectID, nil, engine)
 	tools.RegisterProcess(mcpSrv, mock)
-	tools.RegisterMount(mcpSrv, mock, projectID, &nopMounter{})
-	tools.RegisterDeploy(mcpSrv, mock, projectID, &nopSSH{}, authInfo, logFetcher)
+	tools.RegisterMount(mcpSrv, mock, projectID, &nopMounter{}, runtime.Info{})
+	tools.RegisterDeploy(mcpSrv, mock, projectID, &nopSSH{}, authInfo, logFetcher, runtime.Info{})
 	tools.RegisterSubdomain(mcpSrv, mock, projectID)
 	tools.RegisterLogs(mcpSrv, mock, logFetcher, projectID)
 	tools.RegisterEvents(mcpSrv, mock, projectID)

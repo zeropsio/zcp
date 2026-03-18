@@ -6,6 +6,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // MountInput is the input type for zerops_mount.
@@ -15,7 +16,7 @@ type MountInput struct {
 }
 
 // RegisterMount registers the zerops_mount tool.
-func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mounter ops.Mounter) {
+func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mounter ops.Mounter, _ runtime.Info) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_mount",
 		Description: "Mount/unmount service filesystems via SSHFS. Actions: mount, unmount, status.",

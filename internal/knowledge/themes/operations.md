@@ -217,7 +217,7 @@ The agent has two execution contexts: the **MCP server** (ZCP) and **runtime con
 |--------|------------|---------------|
 | Purpose | Debug, iterate, fix errors | Final validation before production |
 | Server start | Manual via SSH | Auto-starts on deploy (`run.start` in zerops.yml) |
-| Code placement | Source in SSHFS `/var/www/{dev}/` | Built artifact deployed via `zcli push` (from dev container) |
+| Code placement | Source on SSHFS mount (local) | Built artifact deployed via `zcli push` (from dev container) |
 | Fix errors | HERE — do not deploy broken code | Never — go back to dev, fix, redeploy |
 | Logs | `TaskOutput task_id=... block=false` (from background SSH task) | `zerops_logs` MCP tool |
 | Deployment | N/A (code runs directly) | `ssh appdev "cd /var/www && zcli push <stage_id>"` |

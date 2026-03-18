@@ -13,6 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 type stubSSH struct {
@@ -45,7 +46,7 @@ func TestDeployTool_SSHMode(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "builder",
@@ -97,7 +98,7 @@ func TestDeployTool_SelfDeploy_TargetOnly(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -145,7 +146,7 @@ func TestDeployTool_BuildFailed(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -204,7 +205,7 @@ func TestDeployTool_BuildFailed_WithBuildLogs(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, logFetcher)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -272,7 +273,7 @@ func TestDeployTool_SSHReadinessTimeout(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -327,7 +328,7 @@ func TestDeployTool_SelfDeploy_DevAwareResponse(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "appdev",
@@ -379,7 +380,7 @@ func TestDeployTool_CrossDeploy_StandardResponse(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "appdev",
@@ -410,7 +411,7 @@ func TestDeployTool_NoParams(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{})
 
 	// targetService is required — SDK validates and returns error for missing field.
 	err := callToolMayError(t, srv, "zerops_deploy", map[string]any{})
@@ -445,7 +446,7 @@ func TestDeployTool_SSHMode_Exit255PollsSuccessfully(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "builder",
@@ -480,7 +481,7 @@ func TestDeployTool_Error(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "builder",
@@ -522,7 +523,7 @@ func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, logFetcher)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -576,7 +577,7 @@ func TestDeployTool_UnknownBuildStatus_TreatedAsFailure(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil)
+	RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -598,5 +599,75 @@ func TestDeployTool_UnknownBuildStatus_TreatedAsFailure(t *testing.T) {
 	}
 	if !strings.Contains(parsed.Suggestion, "SOME_FUTURE_STATUS") {
 		t.Errorf("suggestion should mention the status, got: %s", parsed.Suggestion)
+	}
+}
+
+func TestDeployTool_DescriptionByEnvironment(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		rtInfo       runtime.Info
+		wantContains string
+		wantAbsent   string
+	}{
+		{
+			name:         "container_omit_workingDir",
+			rtInfo:       runtime.Info{InContainer: true, ServiceName: "zcpx"},
+			wantContains: "Omit workingDir",
+		},
+		{
+			name:         "local_defaults",
+			rtInfo:       runtime.Info{},
+			wantContains: "defaults to",
+			wantAbsent:   "Omit workingDir",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mock := platform.NewMock()
+			ssh := &stubSSH{}
+			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterDeploy(srv, mock, "proj-1", ssh, authInfo, nil, tt.rtInfo)
+
+			ctx := context.Background()
+			st, ct := mcp.NewInMemoryTransports()
+			ss, err := srv.Connect(ctx, st, nil)
+			if err != nil {
+				t.Fatalf("server connect: %v", err)
+			}
+			defer ss.Close()
+
+			client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.1"}, nil)
+			session, err := client.Connect(ctx, ct, nil)
+			if err != nil {
+				t.Fatalf("client connect: %v", err)
+			}
+			defer session.Close()
+
+			result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+			if err != nil {
+				t.Fatalf("list tools: %v", err)
+			}
+
+			var desc string
+			for _, tool := range result.Tools {
+				if tool.Name == "zerops_deploy" {
+					desc = tool.Description
+					break
+				}
+			}
+			if desc == "" {
+				t.Fatal("zerops_deploy not found in tool list")
+			}
+			if tt.wantContains != "" && !strings.Contains(desc, tt.wantContains) {
+				t.Errorf("description = %q, want to contain %q", desc, tt.wantContains)
+			}
+			if tt.wantAbsent != "" && strings.Contains(desc, tt.wantAbsent) {
+				t.Errorf("description = %q, should NOT contain %q", desc, tt.wantAbsent)
+			}
+		})
 	}
 }

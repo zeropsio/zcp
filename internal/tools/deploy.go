@@ -9,6 +9,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 const buildContainerSource = "build_container"
@@ -17,7 +18,7 @@ const buildContainerSource = "build_container"
 type DeployInput struct {
 	SourceService string `json:"sourceService,omitempty" jsonschema:"Hostname to deploy FROM. Omit for self-deploy (auto-inferred from targetService). Set for cross-deploy (e.g. dev→stage)."`
 	TargetService string `json:"targetService"           jsonschema:"Hostname of the service to deploy to."`
-	WorkingDir    string `json:"workingDir,omitempty"    jsonschema:"Directory containing the code to deploy. Default: /var/www."`
+	WorkingDir    string `json:"workingDir,omitempty"    jsonschema:"Container path for deploy. Default: /var/www. In container mode: omit entirely (always correct)."`
 	IncludeGit    bool   `json:"includeGit,omitempty"    jsonschema:"Include .git directory in the push (-g flag). Auto-forced for self-deploy."`
 }
 
@@ -29,10 +30,20 @@ func RegisterDeploy(
 	sshDeployer ops.SSHDeployer,
 	authInfo *auth.Info,
 	logFetcher platform.LogFetcher,
+	rtInfo runtime.Info,
 ) {
+	desc := "Deploy code via SSH — blocks until build completes. "
+	if rtInfo.InContainer {
+		desc += "Omit workingDir — container path is always /var/www. "
+	} else {
+		desc += "workingDir defaults to /var/www. "
+	}
+	desc += "Requires zerops.yml. Self-deploy: set targetService only. Cross-deploy: set sourceService + targetService. " +
+		"Self-deploying services MUST use deployFiles: [.] — otherwise source files are destroyed."
+
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
-		Description: "Deploy code via SSH — blocks until build completes. Self-deploy: set targetService only. Cross-deploy: set sourceService + targetService. Requires zerops.yml in workingDir. Self-deploying services MUST use deployFiles: [.] — otherwise source files are destroyed.",
+		Description: desc,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),

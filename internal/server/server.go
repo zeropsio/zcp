@@ -105,7 +105,7 @@ func (s *Server) registerTools() {
 
 	// Mutating tools
 	if s.sshDeployer != nil {
-		tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.authInfo, s.logFetcher)
+		tools.RegisterDeploy(s.server, s.client, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo)
 	}
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)
@@ -113,7 +113,7 @@ func (s *Server) registerTools() {
 	tools.RegisterImport(s.server, s.client, projectID, stackCache, wfEngine)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir)
 	tools.RegisterSubdomain(s.server, s.client, projectID)
-	tools.RegisterMount(s.server, s.client, projectID, s.mounter)
+	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo)
 }
 
 // Run starts the MCP server on stdio transport.
