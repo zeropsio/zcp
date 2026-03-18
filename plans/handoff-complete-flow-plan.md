@@ -72,12 +72,13 @@ If each step guide includes the knowledge relevant to that step, assembled fresh
 - Process crash → resume → fresh guide with knowledge → **non-issue**
 - Follow-up in same conversation → knowledge tools work without dedup → **non-issue**
 
-### The Five Changes
-1. **Knowledge injection into guides** — guide builder assembles from bootstrap.md + knowledge store + session state
+### The Six Changes
+1. **Knowledge injection into guides** — guide builder assembles from bootstrap.md + knowledge store + session state. All knowledge retrieval is **best-effort** — if `kp.Get()` or `kp.GetBriefing()` fails, skip that section silently. Never fail guide assembly due to knowledge store error.
 2. **Remove ContextDelivery entirely** — no tracking, no dedup, no gating. Every guide is always fresh.
-3. **Stateful deploy workflow** — 3 steps (prepare → deploy → verify), mode-aware, knowledge-injected
-4. **Post-bootstrap decision point + CI/CD setup flow** — new workflow for git-based deployment setup
-5. **Local flow architecture** — environment-aware everything, preflight checks, zcli push deploy
+3. **Mode validation gate** — enforce environment×mode compatibility at plan submission (not just guidance). Prevent invalid combinations upstream so downstream deploy never encounters impossible states.
+4. **Stateful deploy workflow** — 3 steps (prepare → deploy → verify), mode-aware, knowledge-injected
+5. **Post-bootstrap decision point + CI/CD setup flow** — new workflow for git-based deployment setup
+6. **Local flow architecture** — environment-aware everything, preflight checks, zcli push deploy
 
 ---
 
@@ -194,7 +195,7 @@ Always from local machine via `zcli push [hostname]`. Never cross-deploy between
 In local standard mode, dev service on Zerops gets REAL start command (not `zsc noop`) because user won't SSH in to manually start it. Dev is a "test deployment target", not an interactive environment.
 
 ### D6: Mode Selection
-LLM MUST present plan to user and get confirmation before submitting. Smart defaults based on environment (container → standard, local → simple). Guidance instructs LLM to ask.
+LLM MUST present plan to user and get confirmation before submitting. Smart defaults based on environment (container → standard, local → simple). Guidance instructs LLM to ask. **Enforced via validation gate:** `handleBootstrapComplete()` validates environment×mode compatibility — rejects invalid combinations (e.g., local + standard without proper target setup) with actionable guidance.
 
 ### D7: Post-Bootstrap Decision Point
 After bootstrap, explicit decision: (A) continue same way → deploy workflow, or (B) want CI/CD → NEW ci/cd setup workflow with assisted configuration, test push, and verification.
@@ -544,12 +545,11 @@ func (b *BootstrapState) assembleKnowledge(step string, env Environment, kp know
 
     switch step {
     case StepProvision:
+        // "import.yml Schema" H2 section already contains "Preprocessor Functions" as H3 subsection
         if doc, err := kp.Get("zerops://themes/core"); err == nil {
             sections := doc.H2Sections()
-            for _, name := range []string{"import.yml Schema", "Preprocessor Functions"} {
-                if s, ok := sections[name]; ok && s != "" {
-                    parts = append(parts, s)
-                }
+            if s, ok := sections["import.yml Schema"]; ok && s != "" {
+                parts = append(parts, s)
             }
         }
 
@@ -673,6 +673,11 @@ Each passes `e.environment, e.knowledge`.
 
 ### 7E. Escalating Recovery
 
+**Add** `maxIterations()` helper (if not already present):
+```go
+func maxIterations() int { return 10 }
+```
+
 Rewrite `BuildIterationDelta()` in `bootstrap_guidance.go`:
 
 ```go
@@ -747,9 +752,35 @@ func buildTransitionMessage(state *WorkflowState) string {
 }
 ```
 
-Wire into `handleBootstrapComplete()` — when bootstrap becomes inactive (all steps done), append transition message to response.
+**Wiring:** In `tools/workflow_bootstrap.go` `handleBootstrapComplete()`:
+- After `BootstrapComplete()` sets `Active = false` (all steps done)
+- Call `buildTransitionMessage(state)` and append result to `response.Message`
+- This is the post-bootstrap decision point that guides user to `action="route"` for next workflow
 
-### 7G. Guidance Content Updates
+### 7G. Mode Validation Gate
+
+**Add to `handleBootstrapComplete()` in `tools/workflow_bootstrap.go`** — validate environment×mode compatibility when plan is submitted:
+
+```go
+// In handleBootstrapComplete(), before engine.BootstrapCompletePlan():
+if input.Step == StepDiscover && input.Plan != nil {
+    env := engine.Environment()
+    for _, target := range input.Plan {
+        mode := target.Runtime.EffectiveMode()
+        if env == EnvLocal && mode == PlanModeStandard {
+            // Local standard requires both dev+stage targets on Zerops
+            // Validate dev service is a deploy target, not interactive env
+            if target.Runtime.DevHostname == "" {
+                return errorResult("local standard mode requires devHostname for deploy target")
+            }
+        }
+    }
+}
+```
+
+This solves problem P6 upstream: invalid environment×mode combinations are rejected at plan submission, preventing impossible deploy states downstream.
+
+### 7H. Guidance Content Updates
 
 **bootstrap_steps.go — discover step:**
 Change line 24 from:
@@ -769,21 +800,53 @@ For specific frameworks: zerops_knowledge recipe="{name}"
 **bootstrap_steps.go — generate step:**
 Add to guidance: `"Platform rules, runtime knowledge, and discovered env vars are included below."`
 
-### 7H. Summary of Wave 1 Changes
+### 7I. File Size Split
+
+**bootstrap.go will exceed 350-line limit** after Wave 1 changes (396 base + 80 added - 60 removed = ~416). Split when reaching ~380 lines:
+
+**Create `bootstrap_guide_assembly.go`** (~150 lines):
+- `buildGuide()` method on BootstrapState
+- `assembleKnowledge()` method on BootstrapState
+- `formatEnvVarsForGuide()` helper
+- `buildTransitionMessage()` helper
+
+**Keep in `bootstrap.go`** (~250 lines):
+- `BootstrapState` struct + lifecycle methods
+- `BuildResponse()` (calls `buildGuide()` from the new file — same package, no export needed)
+- `NewBootstrapState()`, `CompleteStep()`, `ResetForIteration()`
+
+### 7J. Env Var Reference Validation
+
+**Add validation helper** to `bootstrap_checks.go` (or similar) — called during generate step completion:
+
+```go
+func ValidateEnvVarReferences(zeropsYml string, discoveredEnvVars map[string][]string) []string {
+    // Extract all ${hostname_varName} references from zerops.yml envVariables
+    // Validate each against discovered env vars
+    // Return list of warnings (not errors — don't block, just warn)
+    // Invalid refs silently become literal strings at runtime (Zerops platform behavior)
+}
+```
+
+This solves the env var validation gap upstream: invalid references are caught at generate time, not discovered after deploy when container has wrong config.
+
+### 7K. Summary of Wave 1 Changes
 
 | File | Action | Net lines |
 |---|---|---|
 | `state.go` | Remove ContextDelivery | -6 |
-| `bootstrap.go` | Remove gating+fresh, add buildGuide+assembleKnowledge+transition, update BuildResponse | +80, -60 |
-| `bootstrap_guidance.go` | Rewrite BuildIterationDelta, add formatEnvVarsForGuide | +50, -20 |
+| `bootstrap.go` | Remove gating+fresh, update BuildResponse sig | -60 |
+| `bootstrap_guide_assembly.go` | **NEW**: buildGuide, assembleKnowledge, formatEnvVars, transitionMessage | +150 |
+| `bootstrap_guidance.go` | Rewrite BuildIterationDelta, add maxIterations() | +50, -20 |
 | `bootstrap_context.go` | DELETE ENTIRE FILE | -25 |
 | `engine.go` | Add env+knowledge fields, simplify Status/Resume, update all callers | +15, -25 |
 | `validate.go` | Add RuntimeBase, DependencyTypes | +20 |
 | `bootstrap_steps.go` | Update guidance text | ~10 |
 | `tools/knowledge.go` | Remove all dedup code | -40 |
+| `tools/workflow_bootstrap.go` | Add mode validation gate, wire transition message | +25 |
 | `server/server.go` | Pass env+knowledge to NewEngine | +5 |
 | Tests | Remove dedup tests, add knowledge injection tests | +120, -80 |
-| **Total** | | **+300, -256 = net +44** |
+| **Total** | | **~+395, -256 = net +139** |
 
 ---
 
@@ -800,16 +863,44 @@ Add to guidance: `"Platform rules, runtime knowledge, and discovered env vars ar
 ```go
 type DeployState struct {
     Active    bool           `json:"active"`
-    Mode      string         `json:"mode"`
-    Step      string         `json:"step"`      // prepare, deploy, verify
+    Mode      string         `json:"mode"`      // standard, dev, simple
+    Step      string         `json:"step"`       // prepare, deploy, verify
     Targets   []DeployTarget `json:"targets"`
     Iteration int            `json:"iteration"`
 }
 
 type DeployTarget struct {
+    Hostname        string `json:"hostname"`
+    Role            string `json:"role"`              // dev, stage, simple
+    Status          string `json:"status"`            // pending, deployed, verified, failed, skipped
+    Error           string `json:"error,omitempty"`
+    LastAttestation string `json:"lastAttestation,omitempty"`
+}
+
+type DeployResponse struct {
+    SessionID string          `json:"sessionId"`
+    Message   string          `json:"message"`
+    Progress  DeployProgress  `json:"progress"`
+    Current   *DeployStepInfo `json:"current,omitempty"`
+    Iteration int             `json:"iteration"`
+}
+
+type DeployProgress struct {
+    Total     int                  `json:"total"`
+    Completed int                  `json:"completed"`
+    Targets   []DeployTargetStatus `json:"targets"`
+}
+
+type DeployTargetStatus struct {
     Hostname string `json:"hostname"`
-    Role     string `json:"role"`     // dev, stage, simple
-    Status   string `json:"status"`   // pending, deployed, verified, failed
+    Role     string `json:"role"`
+    Status   string `json:"status"`
+}
+
+type DeployStepInfo struct {
+    Name          string `json:"name"`
+    DetailedGuide string `json:"detailedGuide"`
+    Tools         []string `json:"tools,omitempty"`
 }
 ```
 
@@ -817,19 +908,47 @@ type DeployTarget struct {
 - `WorkflowState.Deploy *DeployState` — new field alongside Bootstrap
 - Remove `"deploy"` from `immediateWorkflows` map
 
-**Guide assembly:** Same pattern as bootstrap — `buildGuide()` with knowledge injection from deploy.md sections + runtime/service knowledge from store.
+**Mode population:** At `DeployStart()`, read mode from `ServiceMeta.Mode` (written during bootstrap). If no service meta exists, infer from target count: 2+ targets with dev+stage roles = "standard", single dev = "dev", single non-dev = "simple". Fallback: "standard".
 
-**deploy.md restructure:** Add `<section>` tags for step extraction:
-- `<section name="deploy-prepare">`
-- `<section name="deploy-execute">` (with mode subsections)
-- `<section name="deploy-verify">`
+**Target ordering:** Deterministic, committed to session state at `DeployStart()`:
+- Standard: `[{dev, "dev"}, {stage, "stage"}]` — dev ALWAYS first
+- Dev: `[{dev, "dev"}]`
+- Simple: `[{service, "simple"}]`
+
+**Dev fails → stage does NOT proceed.** User must either fix dev, skip dev (`DeploySkip`), or abort workflow.
+
+**Guide assembly:** Same pattern as bootstrap — `buildGuide()` with knowledge injection from deploy.md sections + runtime/service knowledge from store. All knowledge retrieval is best-effort (graceful degradation).
+
+**deploy.md restructure:** Add `<section>` tags for step extraction (wrap existing content):
+- `<section name="deploy-prepare">` — Part 1 (Configuration Check + Prerequisites, lines 14-95)
+- `<section name="deploy-execute-standard">` — dev+stage ordering pattern
+- `<section name="deploy-execute-dev">` — dev-only
+- `<section name="deploy-execute-simple">` — single service
+- `<section name="deploy-verify">` — verification iteration loop + recovery patterns
+- Keep existing strategy sections (`deploy-push-dev`, `deploy-ci-cd`, `deploy-manual`)
+
+`extractSection()` is already in same `workflow` package (`bootstrap_guidance.go`) — no export needed, deploy_guidance.go calls it directly.
 
 **Engine methods:**
-- `DeployStart(projectID, intent string) (*DeployResponse, error)`
-- `DeployComplete(step, attestation string) (*DeployResponse, error)`
-- `DeployStatus() (*DeployResponse, error)`
+```go
+// Creates deploy session, orders targets by mode, returns prepare step guidance
+func (e *Engine) DeployStart(projectID, intent string) (*DeployResponse, error)
 
-**Mode detection:** Read from service metas (written during bootstrap) or infer from project state.
+// Advances step state machine: prepare→deploy→verify
+// For deploy step: updates DeployTarget.Status per attestation
+// Advances to next target or next step
+func (e *Engine) DeployComplete(step, attestation string) (*DeployResponse, error)
+
+// Returns current state + fresh guidance (supports context recovery)
+func (e *Engine) DeployStatus() (*DeployResponse, error)
+
+// Resets current target to pending, increments iteration counter
+// Max iterations per target: maxIterations() (same as bootstrap = 10)
+func (e *Engine) DeployIterate() (*DeployResponse, error)
+
+// Skips current target (status="skipped"), advances to next
+func (e *Engine) DeploySkip(step, reason string) (*DeployResponse, error)
+```
 
 **Environment-aware deploy:**
 - Container: SSH-based deploy (existing mechanism)
@@ -870,13 +989,24 @@ type CICDState struct {
 }
 ```
 
-**Content:** New `content/workflows/cicd.md` with setup guides per provider.
+**Content:** New `content/workflows/cicd.md` with setup guides per provider, using `<section>` tags:
+- `<section name="cicd-choose">` — provider selection criteria
+- `<section name="cicd-configure-github">` — GitHub Actions token+workflow setup
+- `<section name="cicd-configure-gitlab">` — GitLab CI env var injection setup
+- `<section name="cicd-configure-webhook">` — Zerops webhook endpoint config
+- `<section name="cicd-configure-generic">` — Generic zcli push from CI
+- `<section name="cicd-verify">` — test push verification
 
-**Knowledge:** CI/CD guide from `knowledge/guides/ci-cd.md` (93 lines today — needs expansion).
+**Knowledge prerequisite:** Expand `knowledge/guides/ci-cd.md` from 93 to 250+ lines BEFORE implementing CI/CD workflow. Add:
+- Provider selection flow (when to use webhook vs Actions vs CLI)
+- Service ID lookup instructions (how to find in Zerops dashboard)
+- Step-by-step per provider with token management + security best practices
+- Troubleshooting section (common failures + fixes)
+- Reference `operations.md` §CI/CD for architectural patterns
 
 ### Router Update
 
-Add CI/CD workflow to offerings when strategy is "ci-cd" or when user requests it.
+Router already prepared — `strategyOfferings()` in `router.go` reads `DecisionDeployStrategy` from ServiceMeta and returns ci-cd offerings. No router code changes needed. CI/CD workflow just needs to exist and be routable.
 
 ### Implementation
 
@@ -951,8 +1081,8 @@ All 3 local modes fully functional:
 | Step | Knowledge injected | Source |
 |---|---|---|
 | **discover** | Available stacks (live) | API via StackTypeCache |
-| **provision** | import.yml Schema, Preprocessor Functions | `themes/core.md` H2 sections |
-| **generate** | Runtime guide, service cards + wiring, discovered env vars, zerops.yml schema + rules | `runtimes/*.md`, `themes/services.md`, session state, `themes/core.md` |
+| **provision** | import.yml Schema (includes Preprocessor Functions as H3 subsection) | `themes/core.md` H2 section "import.yml Schema" |
+| **generate** | Runtime guide, service cards + wiring + decision hints, discovered env vars, zerops.yml schema + rules | `runtimes/*.md`, `themes/services.md`, `themes/operations.md` (via GetBriefing), session state, `themes/core.md` |
 | **deploy** | Schema Rules (deployFiles/tilde), discovered env vars | `themes/core.md`, session state |
 | **verify** | (none — self-sufficient) | — |
 | **strategy** | (none — self-sufficient) | — |
@@ -980,42 +1110,150 @@ All 3 local modes fully functional:
 
 ## 13. Test Strategy
 
+### Test Architecture: Three Layers
+
+Knowledge delivery correctness depends on three test layers that must ALL pass:
+
+1. **Content contract tests** — verify embedded markdown structure matches code expectations (section names, H2/H3 hierarchy). These catch renames, deletions, and content drift.
+2. **Knowledge injection tests** — verify `buildGuide()` actually calls `assembleKnowledge()` and the result contains expected content. These catch wiring bugs.
+3. **Dedup regression tests** — verify dedup is truly removed and can't be silently re-introduced.
+
+Without all three layers, knowledge injection can silently fail (guides degrade to base-only, LLM doesn't know knowledge is missing).
+
 ### Wave 1 Tests
 
-**Delete:**
-- `bootstrap_context_test.go` (entire file)
-- Dedup test cases in `knowledge_test.go` (BriefingFor, ScopeLoaded assertions)
-- GuideSentFor assertions in `bootstrap_test.go`
-- ContextDelivery serialization tests in `state_test.go`
+**Delete (exhaustive list):**
 
-**Add:**
+Files to delete entirely:
+- `internal/workflow/bootstrap_context_test.go` — 3 tests: `TestUpdateContextDelivery_ScopeLoaded`, `TestUpdateContextDelivery_BriefingFor`, `TestUpdateContextDelivery_NoBootstrap`
+- `internal/tools/knowledge_dedup_test.go` — 6 tests: `TestKnowledgeTool_ScopeDedup_SkipsUniversals`, `TestKnowledgeTool_ScopeDedup_NoEngine_IncludesUniversals`, `TestKnowledgeTool_BriefingDedup_ReturnStub`, `TestKnowledgeTool_BriefingDedup_DifferentKey_FullBriefing`, `TestKnowledgeTool_BriefingDedup_NoEngine_NoStub`, `TestKnowledgeTool_GuideSentFor_Tracking`
+
+Test functions to delete from existing files:
+- `internal/workflow/bootstrap_test.go`: `TestBuildResponse_GuideGating_FirstDelivery`, `TestBuildResponse_GuideGating_RepeatDelivery_Stub`, `TestBuildResponse_GuideGating_NewIteration_FullGuide`, `TestResetForIteration_ClearsGuideSentFor`
+- `internal/workflow/state_test.go`: `TestContextDelivery_Serialization`, `TestContextDelivery_GuideSentFor`
+
+Verification: `grep -rn "ScopeLoaded\|BriefingFor\|GuideSentFor\|ContextDelivery" internal/workflow/*_test.go internal/tools/*_test.go` should return zero results after cleanup.
+
+**Add — Layer 1: Content Contract Tests (knowledge/store_content_test.go):**
+
+These verify that embedded markdown files have the structure code expects. If someone renames an H2 section, these fail immediately.
+
 ```go
-// bootstrap_guidance_test.go
-TestBuildGuide_NilKnowledge_ReturnBaseGuide
-TestBuildGuide_Provision_ContainsImportSchema
-TestBuildGuide_Generate_ContainsRuntimeGuide
-TestBuildGuide_Generate_ContainsEnvVars
-TestBuildGuide_Deploy_ContainsSchemaRules
-TestBuildIterationDelta_Escalation_Iter1
-TestBuildIterationDelta_Escalation_Iter3
-TestBuildIterationDelta_Escalation_Iter5
+// Verify core.md H2 sections match what assembleKnowledge() looks up
+TestCore_H2Sections_ContainsImportYmlSchema         // "import.yml Schema" exists as H2
+TestCore_H2Sections_ContainsZeropsYmlSchema          // "zerops.yml Schema" exists as H2
+TestCore_H2Sections_ContainsRulesAndPitfalls          // "Rules & Pitfalls" exists as H2
+TestCore_H2Sections_ContainsSchemaRules               // "Schema Rules" exists as H2
+TestCore_ImportYmlSchema_ContainsPreprocessorFunctions // "Preprocessor Functions" exists as H3 INSIDE "import.yml Schema"
+TestCore_SchemaRules_ContainsDeployFilesAndTilde       // Schema Rules has deployFiles + tilde content
 
-// validate_test.go
-TestRuntimeBase
-TestDependencyTypes
+// Verify every runtime in runtimeNormalizer has an actual embedded file
+TestRuntimeNormalizer_AllMapped_FilesExist   // for each runtimeNormalizer entry, zerops://runtimes/{slug} exists and has >50 bytes
 
-// engine_test.go (or integration)
-TestBootstrapStatus_ReturnsFreshGuideWithKnowledge
-TestResume_ReturnsFreshGuideWithKnowledge
+// Verify services.md has expected H2 sections for service card lookup
+TestServices_H2Sections_ContainsWiringPatterns   // "Wiring Patterns" (or "Wiring Syntax") exists — verify EXACT name matches code
+TestServices_H2Sections_ContainsAllNormalizedServices  // for each serviceNormalizer entry, H2 section exists
+
+// Verify operations.md decision sections
+// NOTE: "Choose Database" etc. are H3 under "Service Selection Decisions" H2
+// getRelevantDecisions() must be fixed to handle H3 or these must be promoted to H2
+TestOperations_DecisionSections_Accessible  // verify decision hints are extractable
+```
+
+**KNOWN BUG to fix before Wave 1:** `getRelevantDecisions()` in `sections.go` looks up "Choose Database", "Choose Cache" etc. as H2 keys, but they are H3 subsections under "Service Selection Decisions" H2. Decision hints never make it into briefings. Fix: either parse H3 inside H2 content, or restructure operations.md.
+
+**Add — Layer 2: Knowledge Injection Tests (workflow/bootstrap_guidance_test.go):**
+
+These verify `buildGuide()` actually injects knowledge from the store into guides. Use real embedded store, not mocks — mocks hide structural mismatches.
+
+```go
+// Guide assembly with real knowledge store
+TestBuildGuide_NilKnowledge_ReturnBaseGuide          // kp=nil → base guidance only, no panic
+TestBuildGuide_Provision_ContainsImportSchema         // guide contains "import.yml Schema" content from core.md
+TestBuildGuide_Provision_ContainsPreprocessorFunctions // guide contains Preprocessor Functions (H3 inside import schema)
+TestBuildGuide_Generate_ContainsRuntimeGuide          // guide for nodejs plan contains Node.js runtime content
+TestBuildGuide_Generate_ContainsEnvVars               // guide includes discovered env vars from session state
+TestBuildGuide_Generate_ContainsZeropsYmlSchema       // guide contains zerops.yml Schema from core.md
+TestBuildGuide_Deploy_ContainsSchemaRules             // guide contains deployFiles + tilde rules
+TestBuildGuide_Deploy_ContainsEnvVars                 // guide includes env vars reminder
+
+// Graceful degradation
+TestBuildGuide_KnowledgeStoreError_GracefulDegradation // broken store → base guide returned, no error
+TestBuildGuide_MissingRuntimeGuide_StillHasBaseGuide   // unknown runtime → base guide + whatever else loads
+
+// Escalating recovery
+TestBuildIterationDelta_Escalation_Iter1   // iteration 1-2: basic diagnose + fix
+TestBuildIterationDelta_Escalation_Iter3   // iteration 3-4: systematic checklist
+TestBuildIterationDelta_Escalation_Iter5   // iteration 5+: stop and ask user
+```
+
+**Critical assertion pattern** — tests MUST assert content presence, not just non-empty:
+```go
+// WRONG (passes even if knowledge injection is silently broken):
+if len(guide) > 100 { /* pass */ }
+
+// RIGHT (fails if knowledge injection is broken):
+if !strings.Contains(guide, "import.yml Schema") {
+    t.Error("provision guide missing import.yml Schema — knowledge injection failed")
+}
+```
+
+**Add — Layer 3: Dedup Regression Tests (tools/knowledge_test.go):**
+
+These prevent accidental re-introduction of dedup logic.
+
+```go
+// After dedup removal, both calls must return full content (not stubs)
+TestKnowledgeTool_Scope_CallTwice_BothReturnFull      // 2nd scope call returns full core, not "already loaded"
+TestKnowledgeTool_Briefing_CallTwice_SameKey_BothReturnFull  // 2nd briefing call returns full briefing, not stub
+```
+
+**Add — Layer 2b: BuildResponse Wiring Tests (workflow/bootstrap_test.go):**
+
+These catch the mutation where `buildGuide()` call is silently removed from `BuildResponse()`.
+
+```go
+// Verify BuildResponse actually uses buildGuide (not just base guidance)
+TestBuildResponse_Provision_GuideContainsKnowledge   // BuildResponse for provision step contains import.yml Schema
+TestBuildResponse_Generate_GuideContainsRuntimeGuide // BuildResponse for generate step contains runtime content
+```
+
+**Add — Other Wave 1 Tests:**
+
+```go
+// validate_test.go — new helpers
+TestRuntimeBase                  // ServicePlan.RuntimeBase() extracts base from "nodejs@22" → "nodejs"
+TestDependencyTypes              // ServicePlan.DependencyTypes() collects unique dependency types
+
+// environment_test.go — new type
+TestDetectEnvironment_Container  // InContainer=true → EnvContainer
+TestDetectEnvironment_Local      // InContainer=false → EnvLocal
+
+// Size budget test (knowledge/store_briefing_test.go)
+TestGetBriefing_RealisticStack_SizeReasonable  // PHP + PostgreSQL + Valkey + shared-storage → 5KB-200KB (not unbounded)
 ```
 
 ### Wave 2 Tests
 ```go
+// workflow/deploy_test.go
 TestDeployStart_CreatesSession
-TestDeployComplete_AdvancesStep
+TestDeployStart_StandardMode_OrdersDevFirst
+TestDeployStart_SimpleMode_SingleTarget
+TestDeployComplete_AdvancesStep_PrepareToDeploy
+TestDeployComplete_AdvancesStep_DeployToVerify
+TestDeployComplete_DevFails_StageNotProceeded
 TestDeployStatus_ReturnsFreshGuide
+TestDeployIterate_ResetsCurrentTarget
+TestDeployIterate_MaxIterations_ReturnsError
+TestDeploySkip_AdvancesToNextTarget
 TestDeploy_ModeAwareOrdering_StandardDevFirst
 TestDeploy_Iteration_Escalating
+
+// tools/workflow_deploy_test.go
+TestDeployHandler_Start_CreatesSession
+TestDeployHandler_Complete_AdvancesStep
+TestDeployHandler_Iterate_IncrementsCounter
+TestDeployHandler_Skip_SetsSkippedStatus
 ```
 
 ### Wave 3 Tests
@@ -1031,7 +1269,41 @@ TestFullBootstrap_Standard_Container
 TestFullBootstrap_Dev_Container
 TestFullBootstrap_Simple_Container
 TestBootstrap_Then_Deploy_Handoff
+
+// Status recovery must verify knowledge is present in recovered guide
 TestBootstrap_StatusRecovery_WithKnowledge
+// Required assertions:
+//   1. guide contains "import.yml Schema" (knowledge injected, not just base guidance)
+//   2. guide does NOT contain "already delivered" (no dedup stubs)
+//   3. calling status twice returns full knowledge both times
+```
+
+### TDD Execution Order
+
+Content contract tests FIRST — they validate the assumptions all other tests depend on:
+
+```
+Step 1: Add content contract tests (Layer 1)
+  → Run: verify they PASS against current embedded docs
+  → These establish the structural baseline
+
+Step 2: Write buildGuide/assembleKnowledge test stubs (Layer 2) — RED
+  → Run: tests fail (functions don't exist yet)
+
+Step 3: Implement buildGuide/assembleKnowledge — GREEN
+  → Run: Layer 2 tests pass
+
+Step 4: Write dedup regression tests (Layer 3) — RED
+  → Run: tests fail (dedup still exists)
+
+Step 5: Remove dedup code + delete dedup tests — GREEN
+  → Run: Layer 3 passes, deleted tests gone
+
+Step 6: Wire BuildResponse → buildGuide, update engine — GREEN
+  → Run: Layer 2b (wiring) tests pass
+
+Step 7: Full suite
+  → go test ./... -count=1 -short
 ```
 
 ---
@@ -1043,34 +1315,39 @@ TestBootstrap_StatusRecovery_WithKnowledge
 | File | Wave | Changes |
 |---|---|---|
 | `internal/workflow/state.go` | 1,2,3 | Remove ContextDelivery, add Deploy/CICD state, update immediateWorkflows |
-| `internal/workflow/engine.go` | 1,2,3 | Add env+knowledge, deploy/cicd methods, simplify status/resume |
-| `internal/workflow/bootstrap.go` | 1 | Remove gating, add buildGuide+assembleKnowledge, update BuildResponse |
-| `internal/workflow/bootstrap_guidance.go` | 1 | Rewrite BuildIterationDelta, add formatEnvVarsForGuide |
-| `internal/workflow/bootstrap_steps.go` | 1 | Update guidance text |
-| `internal/workflow/validate.go` | 1 | Add RuntimeBase, DependencyTypes |
+| `internal/workflow/engine.go` | 1,2,3 | Add env+knowledge fields, deploy/cicd methods, simplify status/resume |
+| `internal/workflow/bootstrap.go` | 1 | Remove gating methods, update BuildResponse to call buildGuide() from guide_assembly |
+| `internal/workflow/bootstrap_guidance.go` | 1 | Rewrite BuildIterationDelta, add maxIterations() |
+| `internal/workflow/bootstrap_steps.go` | 1 | Update guidance text (user confirmation, knowledge note) |
+| `internal/workflow/validate.go` | 1 | Add RuntimeBase(), DependencyTypes() helpers |
 | `internal/workflow/router.go` | 3 | Add cicd offering |
-| `internal/tools/knowledge.go` | 1 | Remove all dedup code |
-| `internal/tools/workflow.go` | 2,3 | Handle deploy/cicd actions |
+| `internal/tools/knowledge.go` | 1 | Remove all dedup code (isScopeLoaded, getBriefingFor, buildBriefingKey, conditionals) |
+| `internal/tools/workflow.go` | 2,3 | Handle deploy/cicd actions in dispatcher |
+| `internal/tools/workflow_bootstrap.go` | 1 | Add mode validation gate, wire transition message |
 | `internal/server/server.go` | 1 | Pass env+knowledge to NewEngine |
 | `internal/content/workflows/bootstrap.md` | 1,4 | Guidance updates, local sections |
-| `internal/content/workflows/deploy.md` | 2 | Restructure with section tags |
+| `internal/content/workflows/deploy.md` | 2 | Restructure with `<section>` tags for step extraction |
+| `internal/knowledge/guides/ci-cd.md` | 3 | Expand from 93 to 250+ lines with per-provider step-by-step guides |
 
 ### Files to CREATE
 
 | File | Wave | Purpose |
 |---|---|---|
-| `internal/workflow/environment.go` | 1 | Environment type + detection (~15 lines) |
-| `internal/workflow/deploy.go` | 2 | DeployState + step logic (~150 lines) |
-| `internal/workflow/deploy_guidance.go` | 2 | Deploy guide assembly (~80 lines) |
-| `internal/tools/workflow_deploy.go` | 2 | Deploy action handlers (~100 lines) |
+| `internal/workflow/environment.go` | 1 | Environment type + DetectEnvironment() (~15 lines) |
+| `internal/workflow/bootstrap_guide_assembly.go` | 1 | buildGuide, assembleKnowledge, formatEnvVarsForGuide, buildTransitionMessage (~150 lines) |
+| `internal/workflow/deploy.go` | 2 | DeployState, DeployTarget, DeployResponse types + step logic (~200 lines) |
+| `internal/workflow/deploy_guidance.go` | 2 | Deploy guide assembly + iteration delta (~100 lines) |
+| `internal/tools/workflow_deploy.go` | 2 | Deploy action handlers (start/complete/status/iterate/skip) (~120 lines) |
 | `internal/workflow/cicd.go` | 3 | CICDState + step logic (~100 lines) |
-| `internal/content/workflows/cicd.md` | 3 | CI/CD setup guidance (~200 lines) |
+| `internal/content/workflows/cicd.md` | 3 | CI/CD setup guidance per provider (~200 lines) |
 
 ### Files to DELETE
 
 | File | Wave | Reason |
 |---|---|---|
 | `internal/workflow/bootstrap_context.go` | 1 | UpdateContextDelivery — no longer needed |
+| `internal/workflow/bootstrap_context_test.go` | 1 | Tests for deleted ContextDelivery functionality |
+| `internal/tools/knowledge_dedup_test.go` | 1 | Tests for deleted dedup functionality |
 
 ### zcli Reference (for Wave 4-5)
 
@@ -1118,7 +1395,7 @@ Wave 6 (polish) ← needs everything
 From `CLAUDE.md`:
 - TDD mandatory: RED → GREEN → REFACTOR
 - Table-driven tests, `testing.Short()` for long tests
-- Max 350 lines per .go file
+- Max 350 lines per .go file — **monitor during Wave 1; split bootstrap.go at 380 lines**
 - English everywhere
 - `go.sum` committed, no vendor/
 - No `interface{}`/`any`, no `panic()`, always wrap errors
@@ -1126,6 +1403,14 @@ From `CLAUDE.md`:
 
 From `CLAUDE.local.md`:
 - Never add "Co-Authored-By" to commits
-- Never use zcli (for ZCP development — NOT for the product)
+- Never use zcli for ZCP development — but zcli IS the correct deploy mechanism for product flows (local deploy, CI/CD setup)
 - Never mount service filesystem (for ZCP development)
 - SSH access via `ssh [service_name]` for debugging
+
+### Architectural Invariants (from analysis)
+
+- **Knowledge injection is best-effort.** If `kp.Get()` or `kp.GetBriefing()` returns error, skip that section silently. Never fail guide assembly due to knowledge store error. Guide without optional knowledge > no guide.
+- **Session exclusivity via registry lock.** Wave 2-3 workflows (Deploy, CICD) must use same `InitSessionAtomic()` / `withRegistryLock()` pattern as Bootstrap for session exclusivity enforcement.
+- **Separate sessions per workflow.** Bootstrap completes (session unregistered), then Deploy/CICD creates a new session. NOT same sessionID transitioning between workflows.
+- **`extractSection()` is package-scoped.** Both `bootstrap_guidance.go` and `deploy_guidance.go` are in package `workflow` — no export needed.
+- **"Preprocessor Functions" is H3 inside "import.yml Schema" H2.** Content is already included when extracting "import.yml Schema" via `H2Sections()`. Do not look up "Preprocessor Functions" as separate H2 key.
