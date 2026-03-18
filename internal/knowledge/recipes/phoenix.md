@@ -14,7 +14,7 @@ Phoenix with Elixir build and Alpine runtime -- `PHX_HOST`, `PHX_SERVER=true`, a
 zerops:
   - setup: app
     build:
-      base: elixir@1.17
+      base: elixir@1.16
       envVariables:
         MIX_ENV: prod
         DATABASE_URL: ${db_connectionString}/${db_dbName}
@@ -62,7 +62,7 @@ zerops:
 #yamlPreprocessor=on
 services:
   - hostname: app
-    type: elixir@1.17
+    type: elixir@1.16
     enableSubdomainAccess: true
     envSecrets:
       SECRET_KEY_BASE: <@generateRandomString(<64>)>

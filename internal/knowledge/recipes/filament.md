@@ -12,7 +12,7 @@ Filament (Laravel) admin panel with PHP-Nginx, PostgreSQL, Valkey, and S3 -- hea
 zerops:
   - setup: app
     build:
-      base: php@8.4
+      base: php@8.3
       os: alpine
       buildCommands:
         - composer install --ignore-platform-reqs

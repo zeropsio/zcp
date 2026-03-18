@@ -37,6 +37,9 @@ func main() {
 		case "eval":
 			runEval(os.Args[2:])
 			return
+		case "catalog":
+			runCatalog(os.Args[2:])
+			return
 		}
 	}
 

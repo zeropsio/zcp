@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build all clean release release-patch
+.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build all clean release release-patch catalog-sync
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -45,7 +45,10 @@ lint: ## Run linter for all target platforms
 lint-fast: ## Fast lint (native platform, fast linters only, ~3s)
 	$(LINT) run ./... --fast-only
 
-lint-local: ## Full lint (native platform only)
+catalog-sync: build ## Refresh platform version catalog from API
+	./bin/zcp catalog sync
+
+lint-local: catalog-sync ## Full lint (native platform only)
 	$(LINT) run ./...
 
 vet: ## Run go vet

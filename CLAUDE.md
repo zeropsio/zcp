@@ -37,6 +37,7 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/workflow` | Workflow orchestration, bootstrap conductor, session state | `session.go` |
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 | `internal/eval` | LLM recipe eval via Claude CLI headless mode | `runner.go`, `prompt.go` |
+| `internal/catalog` | API-driven version catalog sync for test validation | `sync.go` |
 
 Error codes: see `internal/platform/errors.go` for all codes (AUTH_REQUIRED, SERVICE_NOT_FOUND, etc.)
 

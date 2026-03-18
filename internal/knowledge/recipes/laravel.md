@@ -13,7 +13,7 @@ zerops:
   - setup: app
     build:
       base:
-        - php@8.4
+        - php@8.3
         - nodejs@22  # remove nodejs line if no npm/Vite assets
       os: ubuntu
       buildCommands:
