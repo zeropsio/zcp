@@ -1,487 +1,463 @@
 # ZCP Workflow System — Complete Flow Architecture
 
-How the entire workflow system operates from first contact to ongoing development. Container environment only (local flow planned for Wave 4-5).
+Container environment only. Local flow planned (Wave 4-5), architecture prepared but not implemented.
 
 ---
 
-## 1. Project Lifecycle
+## 1. System Overview
 
 ```mermaid
-flowchart TD
-    USER([User arrives with intent]) --> ROUTE{Router:<br/>project state + metas<br/>+ intent keywords}
-
-    ROUTE -- "FRESH / no services" --> BOOT
-    ROUTE -- "CONFORMANT / has metas" --> DEPLOY
-    ROUTE -- "'it's broken'" --> DEBUG
-    ROUTE -- "'too slow'" --> SCALE
-    ROUTE -- "'change config'" --> CONFIG
-    ROUTE -- "'set up CI/CD'" --> CICD
-
-    subgraph BOOT["BOOTSTRAP (stateful, 6 steps)"]
-        B1[discover] --> B2[provision] --> B3[generate]
-        B3 --> B4[deploy] --> B5[verify] --> B6[strategy]
+flowchart LR
+    subgraph STATEFUL["Stateful workflows (session + steps)"]
+        BOOT["bootstrap\n6 steps"]
+        DEP["deploy\n3 steps"]
+        CICD["cicd\n3 steps"]
     end
 
-    B6 --> METAS[(Service metas written:<br/>hostname, type, mode,<br/>stageHostname, dependencies,<br/>strategy)]
-
-    METAS --> LOOP
-
-    subgraph LOOP["DEVELOPMENT LOOP"]
-        direction TB
-        L1["User: 'add dashboard'<br/>'fix the login'<br/>'update the API'"]
-        L1 --> DEPLOY
+    subgraph STATELESS["Stateless workflows (guidance only)"]
+        DBG["debug"]
+        SCL["scale"]
+        CFG["configure"]
     end
 
-    subgraph DEPLOY["DEPLOY (stateful, 3 steps)"]
-        DP1["prepare: load context + knowledge,<br/>write/modify code"]
-        DP1 --> DP2["deploy: mode-aware push<br/>standard: dev→stage<br/>dev: dev only<br/>simple: direct"]
-        DP2 --> DP3["verify: health check + iterate"]
-    end
+    USER([User]) --> ROUTER{Router}
+    ROUTER --> BOOT
+    ROUTER --> DEP
+    ROUTER --> CICD
+    ROUTER --> DBG
+    ROUTER --> SCL
+    ROUTER --> CFG
 
-    DEPLOY --> |done| LOOP
+    BOOT -->|"writes service metas\nhostname, type, mode,\nstage, deps, strategy"| METAS[(metas)]
+    METAS -->|"reads at start"| DEP
+    METAS -->|"reads at start"| CICD
+    METAS -->|"reads at start"| DBG
+    METAS -->|"reads at start"| SCL
+    METAS -->|"reads at start"| CFG
 
-    subgraph DEBUG["DEBUG (stateless)"]
-        DB1["Service context injected<br/>+ diagnostic guidance"]
-        DB1 --> DB2["Agent diagnoses: logs, events, verify"]
-        DB2 --> DB3{"Fix requires code?"}
-        DB3 -- Yes --> DEPLOY
-        DB3 -- No --> DB4["Config/scale fix"]
-    end
-
-    subgraph SCALE["SCALE (stateless)"]
-        SC1["Service context injected<br/>+ scaling guidance"]
-    end
-
-    subgraph CONFIG["CONFIGURE (stateless)"]
-        CF1["Service context injected<br/>+ config guidance"]
-    end
-
-    subgraph CICD["CI/CD SETUP (stateful, 3 steps)"]
-        CI1[choose provider] --> CI2[configure] --> CI3[verify]
-    end
+    KNOW[(Knowledge store\nembedded in binary)] -->|"injected into\nstep guides"| BOOT
+    KNOW -->|"injected into\nstep guides"| DEP
+    KNOW -->|"zerops_knowledge\ntool"| USER
 ```
 
-**Key principle:** Bootstrap runs once. After that, deploy is the primary loop. Debug/scale/configure are side operations that may feed back into deploy.
+**Bootstrap** creates infrastructure and writes service metas. All other workflows read metas for context. Knowledge is embedded and injected into guides automatically.
 
 ---
 
-## 2. Router — How Workflows Are Selected
+## 2. Project Lifecycle
 
 ```mermaid
 flowchart TD
-    INPUT["RouterInput:<br/>ProjectState + ServiceMetas<br/>+ ActiveSessions + Intent"] --> STATE{Project State}
+    FRESH["Fresh project\nno runtime services"] -->|"action=start\nworkflow=bootstrap"| BOOT
 
-    STATE -- FRESH --> FRESH["bootstrap (p1)"]
-    STATE -- CONFORMANT --> CONF
-    STATE -- NON_CONFORMANT --> NONCONF
-    STATE -- UNKNOWN --> ALL["all workflows (p3)"]
+    BOOT["BOOTSTRAP\ndiscover - provision - generate\ndeploy - verify - strategy"] -->|"metas written\nstrategy chosen"| READY
 
-    CONF --> STRAT{Strategy from metas}
-    STRAT -- "push-dev" --> PDEP["deploy (p1)"]
-    STRAT -- "ci-cd" --> PCI["cicd (p1) + deploy (p2)"]
-    STRAT -- "manual" --> PMAN["manual-deploy (p1)"]
-    STRAT -- "none" --> PDEP2["deploy (p1)"]
+    READY["Project ready\nservices running\nstrategy recorded"] -->|"user wants changes"| DEV_LOOP
 
-    NONCONF --> NONC2["bootstrap (p1) + strategy offerings (p2)"]
+    DEV_LOOP["DEPLOY WORKFLOW\nprepare - deploy - verify"] -->|"done"| READY
 
-    FRESH --> UTIL
-    CONF --> UTIL
-    NONCONF --> UTIL
-    ALL --> UTIL
+    READY -->|"set up CI/CD"| CICD_FLOW["CICD WORKFLOW\nchoose - configure - verify"]
+    CICD_FLOW --> READY
 
-    UTIL["+ utilities: debug, scale, configure (p5)"]
+    READY -->|"something broken"| DEBUG_OP["DEBUG\ndiagnose with service context"]
+    DEBUG_OP -->|"needs code fix"| DEV_LOOP
+    DEBUG_OP -->|"config fix"| CFG_OP
 
-    UTIL --> INTENT{Intent keywords?}
-    INTENT -- "'broken' 'error'" --> BOOST_DBG["debug priority boosted"]
-    INTENT -- "'deploy' 'push'" --> BOOST_DEP["deploy priority boosted"]
-    INTENT -- "'add service'" --> BOOST_BOOT["bootstrap priority boosted"]
-    INTENT -- "'scale' 'slow'" --> BOOST_SCALE["scale priority boosted"]
-    INTENT -- "none" --> SORT["Sort by priority, return"]
-    BOOST_DBG --> SORT
-    BOOST_DEP --> SORT
-    BOOST_BOOT --> SORT
-    BOOST_SCALE --> SORT
+    READY -->|"performance issue"| SCALE_OP["SCALE\nwith service context"]
+    READY -->|"change env/ports"| CFG_OP["CONFIGURE\nwith service context"]
 ```
+
+Bootstrap runs once. Deploy is the primary loop. Debug/scale/configure are side operations.
 
 ---
 
-## 3. Bootstrap Flow — Creating Infrastructure
+## 3. Router
 
-**Container-only.** All guidance assumes SSHFS mounts, SSH deploy, SSH server start. Local flow (Wave 4-5) is not implemented — the `Environment` parameter exists in code but is unused.
-
-**Mode-aware.** Generate and deploy steps deliver different guidance per mode (standard/dev/simple) via `ResolveProgressiveGuidance`. Provision uses inline callouts for mode differences.
-
-6 steps. Plan is the pivot — before plan exists (discover), knowledge is manual. After plan (provision+), knowledge is injected automatically. Each step has an **automated checker** that validates against the live API before allowing advancement.
+Determines which workflow to suggest based on project state, service metas, and user intent.
 
 ```mermaid
 flowchart TD
-    START([action=start workflow=bootstrap]) --> DISC
+    IN["RouterInput"] --> PS{Project state?}
 
-    subgraph DISC["DISCOVER — plan submission + validation"]
-        D1["zerops_discover → classify project"]
-        D1 --> D2["Identify services, choose mode"]
-        D2 --> D3["Present plan to user, confirm"]
-        D3 --> D4["action=complete step=discover plan=..."]
-        D4 --> D5{"ValidateBootstrapTargets()<br/>hostnames, types, modes,<br/>stage derivation, resolutions"}
-        D5 -- fail --> D4
-    end
+    PS -->|FRESH| F["bootstrap p1"]
+    PS -->|CONFORMANT| C{Dominant strategy?}
+    PS -->|NON_CONFORMANT| NC["bootstrap p1\n+ deploy p2"]
+    PS -->|UNKNOWN| U["all workflows p3"]
 
-    D5 -- pass --> |"Plan stored. Metas: PLANNED"| PROV
+    C -->|push-dev| CP["deploy p1"]
+    C -->|ci-cd| CC["cicd p1\ndeploy p2"]
+    C -->|manual| CM["manual-deploy p1"]
+    C -->|none set| CN["deploy p1"]
 
-    subgraph PROV["PROVISION — create infra + discover env vars"]
-        P1["Guide + import.yml Schema knowledge"]
-        P1 --> P2["Write import.yml → zerops_import"]
-        P2 --> P3["zerops_mount + zerops_discover includeEnvs"]
-        P3 --> P4["action=complete step=provision"]
-        P4 --> P5{"checkProvision()<br/>all services RUNNING?<br/>env vars discovered?"}
-        P5 -- fail --> P3
-    end
+    F --> UTIL["Append utilities:\ndebug p5, scale p5, configure p5"]
+    CP --> UTIL
+    CC --> UTIL
+    CM --> UTIL
+    CN --> UTIL
+    NC --> UTIL
+    U --> UTIL
 
-    P5 -- pass --> |"Env vars stored. Metas: PROVISIONED"| GEN
-
-    subgraph GEN["GENERATE — write zerops.yml + app code"]
-        G1["Guide: generate-common + generate-mode<br/>Knowledge: runtime + services + env vars + schema"]
-        G1 --> G2["Write zerops.yml + app code"]
-        G2 --> G3["action=complete step=generate"]
-        G3 --> G4{"checkGenerate()<br/>zerops.yml exists? setup entry?<br/>env refs valid? ports? deployFiles?"}
-        G4 -- fail --> G2
-    end
-
-    G4 -- pass --> DEP
-
-    subgraph DEP["DEPLOY — mode-aware push"]
-        D_G["Guide: deploy-overview + deploy-mode<br/>Knowledge: Schema Rules + env vars"]
-        D_G --> D_E["Deploy per mode:<br/>standard: dev→stage<br/>dev: dev only<br/>simple: direct"]
-        D_E --> D_C["action=complete step=deploy"]
-        D_C --> D_V{"checkDeploy()<br/>all RUNNING?<br/>subdomains enabled?"}
-        D_V -- fail --> D_E
-    end
-
-    D_V -- pass --> VER
-
-    subgraph VER["VERIFY — independent health check"]
-        V1["zerops_verify all plan targets"]
-        V1 --> V2["action=complete step=verify"]
-        V2 --> V3{"checkVerify()<br/>VerifyAll() → all healthy?"}
-        V3 -- "fail: step stays in_progress<br/>CheckResult returned" --> V4{"Agent decides"}
-        V4 -- "fix + retry complete" --> V2
-        V4 -- "action=iterate" --> ITER["iteration++<br/>reset steps 2-4<br/>escalate tier"]
-        V4 -- "action=reset" --> RESET(["Session deleted"])
-    end
-
-    ITER --> GEN
-
-    V3 -- pass --> STR["STRATEGY → user chooses:<br/>push-dev / ci-cd / manual"]
-    STR --> DONE(["Bootstrap complete<br/>Metas: BOOTSTRAPPED<br/>Transition: deploy / cicd / scale / debug"])
+    UTIL --> IB{Intent keywords\nin user message?}
+    IB -->|"broken, error, crash"| BD["boost debug -2"]
+    IB -->|"deploy, push, ship"| BDP["boost deploy -2"]
+    IB -->|"add, create, new service"| BB["boost bootstrap -2"]
+    IB -->|"slow, cpu, memory, scale"| BS["boost scale -2"]
+    IB -->|none| DONE["Sort by priority\nreturn offerings"]
+    BD --> DONE
+    BDP --> DONE
+    BB --> DONE
+    BS --> DONE
 ```
 
-### Step checkers — what gets validated
+Priority: p1 = primary, p2 = secondary, p3 = unknown, p5 = utility. Intent boost reduces priority by 2.
 
-| Step | Checker | What it validates | On failure |
-|------|---------|-------------------|------------|
-| **discover** | `ValidateBootstrapTargets()` | Hostnames (a-z0-9, ≤25), types vs live catalog, modes, stage derivation, resolution consistency, HA mode defaults | Validation error returned, agent fixes plan |
-| **provision** | `checkProvision()` | All plan services RUNNING/ACTIVE, env vars discoverable for managed deps (side effect: stores env vars on session) | `CheckResult.Passed=false`, step stays `in_progress` |
-| **generate** | `checkGenerate()` | zerops.yml exists and parses, setup entry for each dev hostname, env var references valid against discovered vars, ports defined, deployFiles defined | Same — agent sees failed checks, fixes |
-| **deploy** | `checkDeploy()` | All runtime services RUNNING, subdomain access enabled for services with ports | Same |
-| **verify** | `checkVerify()` | `VerifyAll()` — HTTP health endpoints for all plan target hostnames | Same — agent can iterate or escalate |
-| **strategy** | None | User choice, no automated validation | N/A |
+---
 
-### How checkers interact with step advancement
+## 4. Bootstrap Flow
+
+Container-only. Mode-aware (standard/dev/simple). 6 steps with automated checkers.
+
+### 4.1 Step sequence
+
+```mermaid
+flowchart TD
+    START(["start bootstrap"]) --> D
+
+    D["DISCOVER\nclassify project\nidentify services\nchoose mode\npresent plan to user"]
+    D -->|"action=complete plan=..."| DV{Plan validation\nhostnames, types,\nmodes, resolutions}
+    DV -->|fail| D
+    DV -->|"pass: plan stored\nmetas PLANNED"| P
+
+    P["PROVISION\nGuide + import.yml Schema knowledge\nwrite import.yml\nzerops_import\nzerops_mount\nzerops_discover includeEnvs"]
+    P -->|"action=complete"| PV{Provision checker\nservices RUNNING?\nenv vars found?}
+    PV -->|fail| P
+    PV -->|"pass: env vars stored\nmetas PROVISIONED"| G
+
+    G["GENERATE\nGuide: generate-common + generate-mode\nKnowledge: runtime + services +\nenv vars + yml schema + rules\nwrite zerops.yml + app code"]
+    G -->|"action=complete"| GV{Generate checker\nzerops.yml valid?\nenv refs OK? ports? deployFiles?}
+    GV -->|fail| G
+    GV -->|pass| DP
+
+    DP["DEPLOY\nGuide: deploy-overview + deploy-mode\nKnowledge: Schema Rules + env vars\ndeploy per mode"]
+    DP -->|"action=complete"| DPV{Deploy checker\nall RUNNING?\nsubdomains enabled?}
+    DPV -->|fail| DP
+    DPV -->|pass| V
+
+    V["VERIFY\nzerops_verify all targets"]
+    V -->|"action=complete"| VV{Verify checker\nall healthy?}
+    VV -->|"pass"| S["STRATEGY\nuser chooses:\npush-dev / ci-cd / manual"]
+    VV -->|"fail"| VDEC{Agent decides}
+    VDEC -->|"retry: fix and\ncomplete again"| V
+    VDEC -->|"iterate: reset\nsteps 2-4"| ITER
+
+    ITER["iteration++\nescalation tier advances\ngenerate+deploy+verify reset"] --> G
+
+    S --> FIN(["Bootstrap complete\nmetas BOOTSTRAPPED\ntransition message"])
+```
+
+### 4.2 Checker mechanics
 
 ```
-Agent: action="complete" step="X" attestation="..."
+action="complete" step="X" attestation="..."
   │
-  ├─ Checker runs BEFORE CompleteStep()
+  ├─ Checker runs BEFORE step advances
   │
-  ├─ IF checker.Passed == false:
-  │    → Response includes CheckResult with failed checks
-  │    → Step stays in_progress (CompleteStep NOT called)
-  │    → Agent sees what failed, can fix and retry action="complete" again
+  ├─ IF Passed == false:
+  │    Step stays in_progress
+  │    Response includes CheckResult.checks array
+  │    Agent can fix + retry action="complete"
   │
-  └─ IF checker.Passed == true:
-       → CompleteStep() marks step as complete
-       → CurrentStep advances to next step
-       → Next step becomes in_progress
+  └─ IF Passed == true:
+       CompleteStep() → step marked complete
+       Next step becomes in_progress
 ```
 
-**This means:**
-- An agent can retry the same step's `complete` action multiple times until the checker passes
-- The checker runs fresh each time (re-queries API)
-- No step advancement happens until the checker passes
-- `action="iterate"` is a DIFFERENT escape hatch — it resets steps 2-4 entirely and goes back to generate
+| Step | Checker | Validates | Side effects |
+|------|---------|-----------|-------------|
+| discover | `ValidateBootstrapTargets` | Hostnames a-z0-9 max 25, types vs live catalog, modes, stage derivation, resolutions, HA defaults | None |
+| provision | `checkProvision` | All services RUNNING, env vars discoverable for managed deps | Stores env var names on session |
+| generate | `checkGenerate` | zerops.yml parses, setup entry per dev hostname, env refs valid, ports defined, deployFiles defined | None |
+| deploy | `checkDeploy` | All runtimes RUNNING, subdomain enabled for services with ports | None |
+| verify | `checkVerify` | VerifyAll HTTP health for plan targets | None |
+| strategy | None | User choice | None |
 
-**When to use iterate vs. retry:**
-- **Retry** (`action="complete"` again): fix was small (e.g., enable subdomain, restart service)
-- **Iterate** (`action="iterate"`): need to rewrite code or zerops.yml from scratch
+### 4.3 Iteration escalation
 
-**Provision checker side effect:** Besides validation, it calls `GetServiceEnv()` for each managed dependency and stores discovered env var names on the session via `StoreDiscoveredEnvVars()`. This data powers the generate step's env var knowledge injection.
+When verify fails and agent calls `action="iterate"`:
 
-### What each step gets (knowledge injection)
+| Iteration | Tier | Guidance |
+|-----------|------|----------|
+| 1-2 | Diagnose | Check zerops_logs for specific error, fix, redeploy |
+| 3-4 | Systematic | 6-point checklist: env vars, 0.0.0.0, deployFiles, ports, start cmd, zerops.yml |
+| 5+ | Escalate | STOP. Present history to user. Ask before continuing. |
+| >10 | Max | Session must be reset |
 
-| Step | Base guidance | Injected knowledge |
-|------|--------------|-------------------|
-| **discover** | Project classification, mode selection, plan submission | None (plan doesn't exist yet) |
-| **provision** | import.yml patterns, hostname rules, env var discovery | import.yml Schema (+ Preprocessor Functions) |
-| **generate** | generate-common + generate-{mode} (zerops.yml rules per mode) | Runtime guide + service cards + wiring + env vars + zerops.yml Schema + Rules & Pitfalls |
-| **deploy** | deploy-overview + deploy-{mode} + conditionals | Schema Rules + env vars |
-| **verify** | Verification protocol | None |
-| **strategy** | Strategy options | None |
+### 4.4 Knowledge injection per step
+
+```mermaid
+flowchart LR
+    subgraph DISC["discover"]
+        DA["No injection\nplan does not exist yet"]
+    end
+
+    subgraph PROV["provision"]
+        PA["import.yml Schema\nPreprocessor Functions"]
+    end
+
+    subgraph GEN["generate"]
+        GA["Runtime guide\nService cards + wiring\nDiscovered env vars\nzerops.yml Schema\nRules and Pitfalls"]
+    end
+
+    subgraph DEP["deploy"]
+        DPA["Schema Rules\nDiscovered env vars"]
+    end
+
+    subgraph VER["verify + strategy"]
+        VA["No injection"]
+    end
+
+    CORE[(core.md)] --> PROV
+    CORE --> GEN
+    CORE --> DEP
+    RUNTIMES[(runtimes/*.md)] --> GEN
+    SERVICES[(services.md)] --> GEN
+    SESSION[(session state\nenv vars)] --> GEN
+    SESSION --> DEP
+```
+
+### 4.5 Mode differences
+
+| | Standard | Dev | Simple |
+|---|---|---|---|
+| Services | dev + stage + managed | dev + managed | 1 runtime + managed |
+| zerops.yml | dev entry only, stage later | dev entry only | single entry |
+| start cmd | zsc noop --silent | zsc noop --silent | real command |
+| healthCheck | none in dev | none | required |
+| server start | SSH manual | SSH manual | auto after deploy |
+| deploy | dev then cross-deploy stage | dev only | direct |
+| iteration | edit on mount, SSH restart | same | edit on mount, redeploy |
+| generate section | generate-standard | generate-dev | generate-simple |
+| deploy section | deploy-standard | deploy-dev | deploy-simple |
 
 ---
 
-## 4. Deploy Flow — The Development Cycle
+## 5. Deploy Flow
 
-3 steps. This is the primary post-bootstrap workflow. Agent loads context, writes code, deploys, verifies.
-
-```mermaid
-flowchart TD
-    START([action=start workflow=deploy]) --> LOAD
-
-    LOAD["Load service metas from disk<br/>→ Build targets (dev→stage ordering)<br/>→ Build ServiceContext (runtime type, deps)"]
-    LOAD --> PREP
-
-    subgraph PREP["PREPARE"]
-        direction TB
-        PR_GUIDE["Guide: deploy-prepare (config check, prerequisites)"]
-        PR_KNOW["Knowledge: runtime briefing + service wiring<br/>+ zerops.yml Schema + Rules & Pitfalls"]
-        PR_GUIDE --- PR_KNOW
-        PR_KNOW --> PR1["Agent understands the setup"]
-        PR1 --> PR2["Write/modify code if needed"]
-        PR2 --> PR3["Verify zerops.yml is correct"]
-    end
-
-    PR3 --> DEP
-
-    subgraph DEP["DEPLOY (mode-aware)"]
-        direction TB
-        DEP_GUIDE["Guide: deploy-execute-{mode}"]
-        DEP_KNOW["Knowledge: Schema Rules + env vars"]
-        DEP_GUIDE --- DEP_KNOW
-    end
-
-    DEP --> |standard| STD["1. zerops_deploy dev<br/>2. SSH start<br/>3. Verify dev<br/>4. zerops_deploy stage<br/>5. Verify stage"]
-    DEP --> |dev| DDEV["1. zerops_deploy dev<br/>2. SSH start<br/>3. Verify"]
-    DEP --> |simple| DSIM["1. zerops_deploy<br/>2. Auto-start<br/>3. Verify"]
-
-    STD --> VER
-    DDEV --> VER
-    DSIM --> VER
-
-    subgraph VER["VERIFY"]
-        V1["zerops_verify → healthy?"]
-        V1 -- Yes --> DONE([Deploy complete])
-        V1 -- No --> DIAG["Diagnose from checks array"]
-        DIAG --> FIX["Fix code/config"]
-        FIX --> |"action=iterate"| DEP
-    end
-```
-
-### Deploy ServiceContext
-
-At `DeployStart`, service metas are read and converted to `DeployServiceContext`:
-
-```
-ServiceMeta files → BuildDeployTargets() → DeployServiceContext {
-    RuntimeType:     "nodejs@22"       // from first runtime meta
-    DependencyTypes: ["postgresql@16"] // from dep metas
-    DiscoveredEnvVars: (if available)
-}
-```
-
-This enables `assembleDeployKnowledge` to inject **runtime-specific** and **dependency-specific** knowledge — same quality as bootstrap generate step.
-
----
-
-## 5. Stateless Workflows — Operations with Context
-
-Debug, scale, configure are stateless (no session, no steps). But they now receive **service context** — a summary of the project's services from metas.
+Primary post-bootstrap workflow. 3 steps. Mode-aware. Reads service metas for context.
 
 ```mermaid
 flowchart TD
-    START([action=start workflow=debug/scale/configure]) --> LOAD
+    START(["start deploy"]) --> LOAD
 
-    LOAD["Load service metas from disk"] --> BUILD["BuildServiceContextSummary()"]
-    BUILD --> INJECT["Prepend to workflow guidance"]
+    LOAD["Load service metas\nBuild targets: dev before stage\nBuild ServiceContext:\nruntimeType, dependencyTypes"] --> PREP
 
-    INJECT --> GUIDE["Agent receives:<br/><br/>## Your Project Services<br/>Runtime: appdev (nodejs@22) [standard] → stage: appstage<br/>Managed: db (postgresql@16)<br/>---<br/>(original workflow guidance)"]
+    PREP["PREPARE\nGuide: deploy-prepare\nKnowledge: runtime briefing +\nservice wiring + yml schema + rules\n\nAgent checks config,\nwrites/modifies code if needed"]
+    PREP -->|"action=complete\nstep=prepare"| DEP
+
+    DEP["DEPLOY\nGuide: deploy-execute + mode section\nKnowledge: Schema Rules + env vars"]
+
+    DEP -->|"standard mode"| STD["1 zerops_deploy dev\n2 SSH start dev\n3 zerops_verify dev\n4 zerops_deploy stage from dev\n5 zerops_verify stage"]
+    DEP -->|"dev mode"| DONLY["1 zerops_deploy dev\n2 SSH start dev\n3 zerops_verify dev"]
+    DEP -->|"simple mode"| SIMP["1 zerops_deploy\n2 auto-start\n3 zerops_verify"]
+
+    STD -->|"action=complete\nstep=deploy"| VER
+    DONLY -->|"action=complete\nstep=deploy"| VER
+    SIMP -->|"action=complete\nstep=deploy"| VER
+
+    VER["VERIFY\nGuide: deploy-verify\nzerops_verify all targets"]
+    VER -->|healthy| FIN(["Deploy complete"])
+    VER -->|unhealthy| FIX["Diagnose from checks array\nFix code or config"]
+    FIX -->|"action=complete retry"| VER
+    FIX -->|"action=iterate\nreset deploy+verify"| DEP
 ```
 
-The agent knows WHAT exists before starting to diagnose, scale, or configure. No blind `zerops_discover` needed to understand the setup.
-
-### Cross-workflow transitions
-
-Each stateless workflow ends with transition hints:
-
-- **After debug:** → deploy (if code fix needed), scale, configure
-- **After scale:** → debug (if still slow), deploy, configure
-- **After configure:** → deploy (to apply changes), debug, scale
+**ServiceContext** populated at start from metas:
+- `RuntimeType` — e.g. nodejs@22 (from first runtime meta)
+- `DependencyTypes` — e.g. postgresql@16, valkey@7.2 (from dep metas)
+- Enables runtime-specific and dependency-specific knowledge injection
 
 ---
 
 ## 6. CI/CD Setup Flow
 
-3 steps. Stateful, provider-specific guidance.
+3 steps. Provider-specific guidance.
 
 ```mermaid
 flowchart TD
-    START([action=start workflow=cicd]) --> CHOOSE
+    START(["start cicd"]) --> CH
 
-    subgraph CHOOSE["CHOOSE"]
-        C1["Present providers: GitHub Actions, GitLab CI,<br/>Zerops webhook, generic zcli"]
-        C1 --> C2["User picks provider"]
-        C2 --> C3["action=complete step=choose attestation='Provider: github'"]
-    end
+    CH["CHOOSE\nPresent providers:\nGitHub Actions, GitLab CI,\nZerops webhook, generic zcli\n\nUser picks one"]
+    CH -->|"action=complete\nstep=choose"| CONF
 
-    C3 --> CONF
+    CONF{"Provider?"}
+    CONF -->|github| GH["Create Zerops token\nAdd GitHub secret\nCreate workflow file\nCommit and push"]
+    CONF -->|gitlab| GL["Create Zerops token\nAdd CI variable\nCreate pipeline file\nCommit and push"]
+    CONF -->|webhook| WH["Connect repo in\nZerops dashboard\nSet trigger branch"]
+    CONF -->|generic| GN["Install zcli in CI\nSet ZEROPS_TOKEN\nAdd push step"]
 
-    subgraph CONF["CONFIGURE"]
-        CF1{"Provider?"}
-        CF1 -- github --> GH["Guide: create token, add secret,<br/>create .github/workflows/deploy.yml"]
-        CF1 -- gitlab --> GL["Guide: create token, add CI var,<br/>create .gitlab-ci.yml"]
-        CF1 -- webhook --> WH["Guide: connect repo in Zerops dashboard"]
-        CF1 -- generic --> GN["Guide: install zcli, add to CI pipeline"]
-    end
+    GH -->|"action=complete\nstep=configure"| VER
+    GL -->|"action=complete\nstep=configure"| VER
+    WH -->|"action=complete\nstep=configure"| VER
+    GN -->|"action=complete\nstep=configure"| VER
 
-    CONF --> VER["VERIFY → test push, monitor build, zerops_verify"]
-    VER --> DONE([CI/CD setup complete])
+    VER["VERIFY\nPush test commit\nMonitor build\nzerops_verify"]
+    VER --> FIN(["CI/CD setup complete"])
 ```
 
 ---
 
-## 7. Mode × Environment Matrix
+## 7. Stateless Workflows
 
-### What's implemented now
+Debug, scale, configure. No session. Service context from metas prepended to guidance.
 
-**All flows are container-only.** The table shows what actually works:
+```mermaid
+flowchart TD
+    START(["start debug/scale/configure"]) --> META
 
-| | Standard (container) | Dev (container) | Simple (container) |
-|---|---|---|---|
-| **Services** | dev + stage + managed | dev + managed | 1 runtime + managed |
-| **zerops.yml** | Dev entry (noop), stage later | Dev entry (noop) | Single entry (real start) |
-| **`healthCheck`** | None in dev | None | Required |
-| **Deploy mechanism** | SSH self-deploy + cross-deploy | SSH self-deploy | SSH self-deploy |
-| **Server startup** | Agent via SSH | Agent via SSH | Auto (real start cmd) |
-| **Deploy order** | dev → verify → gen stage → cross-deploy → verify stage | dev → verify | deploy → verify |
-| **Iteration** | Edit on SSHFS → SSH restart → test | Same | Edit on SSHFS → redeploy → test |
-| **File access** | SSHFS mount at `/var/www/{hostname}/` | Same | Same |
+    META["Read service metas from disk"] --> CTX
 
-### What local flow would need (Wave 4-5, NOT implemented)
+    CTX["BuildServiceContextSummary\n\nRuntime services:\n  appdev nodejs@22 standard, stage: appstage\nManaged services:\n  db postgresql@16"]
 
-| Aspect | Container (now) | Local (future) |
-|--------|----------------|----------------|
-| **File access** | SSHFS mount `/var/www/{hostname}/` | Local filesystem |
-| **Deploy** | SSH into container, `git init` + `zcli push` | `zcli push` from local working dir |
-| **Server start** | SSH `run_in_background` | Local process or auto-start after deploy |
-| **Dev zerops.yml** | `start: zsc noop --silent` (SSH iteration) | `start: <real command>` (no SSH available) |
-| **Prerequisites** | Container exists (auto) | zcli installed + logged in + VPN active |
-| **Iteration** | Edit on mount → SSH kill+start | Edit locally → `zcli push` → verify |
-| **Env vars** | OS env vars after deploy | `.env.local` generation or VPN access |
+    CTX --> GUIDE["Prepend context to\nworkflow guidance markdown"]
 
-**What needs to change for local:**
-1. `assembleKnowledge` / `buildGuide` must check `env` and select local-specific sections
-2. bootstrap.md needs `generate-standard-local`, `deploy-standard-local` etc. sections (or environment prefixed variants)
-3. `zerops_deploy` tool needs local mode (`zcli push` instead of SSH)
-4. Preflight checks at workflow start (zcli installed? VPN active?)
-5. `bootstrap_steps.go` deploy guidance must not mention SSH/SSHFS for local
+    GUIDE --> AGENT["Agent has full picture:\nwhat services exist,\ntheir types, modes,\nstrategies, dependencies\n+ operational guidance"]
 
-**Architecture is ready:** `Environment` type, `DetectEnvironment()`, and parameter plumbing exist. The guidance content and tool implementation are missing.
+    AGENT -->|"after debug"| TRANS["Transition hints:\ndeploy, scale, configure"]
+    AGENT -->|"after scale"| TRANS
+    AGENT -->|"after configure"| TRANS
+```
 
 ---
 
-## 8. Knowledge Injection — How It Works
+## 8. Knowledge Injection Pipeline
 
-### Guide assembly pipeline (shared by bootstrap + deploy)
+Shared by bootstrap and deploy. Assembles fresh guide every time from embedded sources.
 
+```mermaid
+flowchart TD
+    BR["BuildResponse called"] --> BG["buildGuide\nstep, iteration, kp"]
+
+    BG --> IT{Iteration > 0\nand deploy step?}
+    IT -->|yes| ESC["BuildIterationDelta\n3-tier escalation\nreplaces entire guide"]
+    IT -->|no| RPG
+
+    RPG["ResolveProgressiveGuidance\nstep, plan, failureCount"]
+    RPG --> ST{Step type?}
+
+    ST -->|"discover, provision,\nverify, strategy"| SINGLE["Single section\nfrom bootstrap.md"]
+    ST -->|generate| GMODE["generate-common\n+ generate-standard/dev/simple"]
+    ST -->|deploy| DMODE["deploy-overview\n+ deploy-standard/dev/simple\n+ iteration/agents/recovery"]
+
+    SINGLE --> AK["assembleKnowledge\nstep, kp"]
+    GMODE --> AK
+    DMODE --> AK
+
+    AK --> KP{Knowledge provider\navailable?}
+    KP -->|nil or no plan| BASE(["Return base guide only"])
+    KP -->|available| INJ["Inject step-specific\nknowledge from embedded store"]
+    INJ --> FULL(["Return base guide\n+ separator\n+ knowledge sections"])
 ```
-BuildResponse()
-  └─ buildGuide(step, iteration, env, kp)
-       ├─ iteration > 0 on deploy? → BuildIterationDelta (3-tier escalation)
-       ├─ ResolveProgressiveGuidance(step, plan, iteration)
-       │    ├─ generate → generate-common + generate-{mode}
-       │    ├─ deploy → deploy-overview + deploy-{mode} + conditionals
-       │    └─ other → single <section> from markdown
-       └─ assembleKnowledge(step, kp)
-            └─ step-specific content from embedded knowledge store
-```
-
-### Bootstrap iteration escalation
-
-| Iterations | Tier | Action |
-|------------|------|--------|
-| 1–2 | Diagnose | `zerops_logs severity="error"`, fix specific error |
-| 3–4 | Systematic | 6-point checklist (env vars, 0.0.0.0, deployFiles, ports...) |
-| 5+ | Escalate | STOP, show user what was tried, ask before continuing |
-| >10 | Max | Session must be reset |
 
 ### Context recovery
 
-```
-Context lost (compaction / crash / new session)
-  → action="status"
-  → Engine loads session from disk
-  → buildGuide assembles fresh guide from:
-      bootstrap.md / deploy.md (embedded)
-      + knowledge store (embedded)
-      + session state (disk: plan, env vars, step progress)
-  → Agent receives identical guide — no state to lose
-```
+All guide sources are always available:
+- `bootstrap.md` / `deploy.md` — embedded in binary
+- Knowledge store — embedded in binary
+- Session state (plan, env vars, step progress) — on disk
+
+`action="status"` rebuilds the identical guide. No tracking state to lose.
 
 ---
 
-## 9. Data Flow — What Gets Persisted Where
+## 9. Data Persistence
 
-```
-.zcp/state/
-  registry.json              ← active session index
-  sessions/{sessionID}.json  ← per-session state:
-    WorkflowState {
-      Bootstrap *BootstrapState  (plan, env vars, steps, strategies)
-      Deploy    *DeployState     (targets, service context, steps)
-      CICD      *CICDState       (provider, hostnames, steps)
-    }
-  services/{hostname}.json   ← service metas (survive session deletion):
-    ServiceMeta {
-      hostname, type, mode, stageHostname,
-      dependencies, strategy, status
-    }
+```mermaid
+flowchart LR
+    subgraph DISK[".zcp/state/"]
+        REG["registry.json\nactive session index\nflock-protected"]
+        SESS["sessions/id.json\nWorkflowState:\n  Bootstrap or Deploy or CICD\n  iteration, intent, PID"]
+        META["services/hostname.json\nServiceMeta:\n  type, mode, stage,\n  deps, strategy, status"]
+    end
+
+    BOOT["Bootstrap"] -->|"writes at plan/provision/complete"| META
+    BOOT -->|"session lifecycle"| SESS
+    BOOT -->|"register/unregister"| REG
+
+    DEP["Deploy"] -->|"reads at start"| META
+    DEP -->|"session lifecycle"| SESS
+    CICD_W["CI/CD"] -->|"reads at start"| META
+    CICD_W -->|"session lifecycle"| SESS
+
+    DBG["Debug/Scale/Configure"] -->|"reads for context"| META
 ```
 
-**Service metas are the bridge between workflows.** Bootstrap writes them, deploy/debug/scale/configure read them. They carry the decisions forward: what runtime, what mode, what dependencies, what strategy.
+Metas survive session deletion. They carry decisions forward across workflows.
 
 ---
 
-## 10. File Map
+## 10. Mode x Environment Matrix
+
+### Implemented (container only)
+
+| | Standard | Dev | Simple |
+|---|---|---|---|
+| Services | dev + stage + managed | dev + managed | 1 runtime + managed |
+| zerops.yml | dev noop, stage later | dev noop | single real start |
+| healthCheck | none in dev | none | required |
+| Deploy | SSH self + cross-deploy | SSH self | SSH self |
+| Start | SSH manual | SSH manual | auto |
+| Iteration | SSHFS edit, SSH restart | same | SSHFS edit, redeploy |
+| File access | SSHFS /var/www/hostname/ | same | same |
+
+### Not implemented (local, Wave 4-5)
+
+| Aspect | Container now | Local future |
+|--------|--------------|-------------|
+| Files | SSHFS mount | Local filesystem |
+| Deploy | SSH git+zcli push | zcli push from local |
+| Dev start | zsc noop + SSH | Real start always |
+| Prereqs | Container auto | zcli + VPN + auth |
+| Iteration | Mount edit, SSH restart | Local edit, zcli push |
+
+Architecture ready: Environment type + DetectEnvironment exist. Content and tooling missing.
+
+---
+
+## 11. File Map
 
 | File | Role |
 |------|------|
 | **Bootstrap** | |
 | `workflow/bootstrap.go` | BootstrapState, BuildResponse, step state machine |
-| `workflow/bootstrap_guide_assembly.go` | `buildGuide`, `assembleKnowledge`, `formatEnvVarsForGuide` |
-| `workflow/bootstrap_guidance.go` | `ResolveProgressiveGuidance`, `BuildIterationDelta`, `extractSection` |
-| `workflow/bootstrap_steps.go` | Step definitions (name, category, tools, verification) |
-| `content/workflows/bootstrap.md` | Section content: discover, provision, generate-{common,standard,dev,simple}, deploy-{overview,standard,dev,simple,iteration,agents} |
+| `workflow/bootstrap_guide_assembly.go` | buildGuide, assembleKnowledge, formatEnvVarsForGuide |
+| `workflow/bootstrap_guidance.go` | ResolveProgressiveGuidance, BuildIterationDelta, extractSection |
+| `workflow/bootstrap_steps.go` | Step definitions: name, category, tools, verification |
+| `content/workflows/bootstrap.md` | Sections: discover, provision, generate-common/standard/dev/simple, deploy-overview/standard/dev/simple/iteration/agents |
 | **Deploy** | |
-| `workflow/deploy.go` | DeployState, DeployServiceContext, `BuildDeployTargets`, `assembleDeployKnowledge` |
-| `workflow/deploy_guidance.go` | `resolveDeployStepGuidance`, `ResolveDeployGuidance` (strategy-based) |
-| `content/workflows/deploy.md` | Section content: deploy-prepare, deploy-execute-{overview,standard,dev,simple}, deploy-verify |
+| `workflow/deploy.go` | DeployState, DeployServiceContext, BuildDeployTargets, assembleDeployKnowledge |
+| `workflow/deploy_guidance.go` | resolveDeployStepGuidance, ResolveDeployGuidance |
+| `content/workflows/deploy.md` | Sections: deploy-prepare, deploy-execute-overview/standard/dev/simple, deploy-verify |
 | **CI/CD** | |
 | `workflow/cicd.go` | CICDState, provider constants, step logic |
-| `workflow/cicd_guidance.go` | `resolveCICDGuidance` (provider-specific sections) |
-| `content/workflows/cicd.md` | Section content: cicd-choose, cicd-configure-{github,gitlab,webhook,generic}, cicd-verify |
-| **Shared** | |
-| `workflow/engine.go` | Engine with env + knowledge, all Start/Complete/Status/Skip methods |
-| `workflow/state.go` | WorkflowState (Bootstrap + Deploy + CICD), `IsImmediateWorkflow` |
-| `workflow/environment.go` | Environment type (container/local) |
-| `workflow/service_meta.go` | ServiceMeta CRUD, ListServiceMetas |
-| `workflow/service_context.go` | `BuildServiceContextSummary` for stateless workflows |
-| `workflow/router.go` | Route(), intent detection, strategy offerings |
+| `workflow/cicd_guidance.go` | resolveCICDGuidance |
+| `content/workflows/cicd.md` | Sections: cicd-choose, cicd-configure-github/gitlab/webhook/generic, cicd-verify |
+| **Engine** | |
+| `workflow/engine.go` | All Start/Complete/Status/Skip/Iterate methods |
+| `workflow/state.go` | WorkflowState with Bootstrap + Deploy + CICD fields |
 | `workflow/session.go` | Session management, iteration, max iterations |
+| `workflow/environment.go` | Environment type, DetectEnvironment |
+| `workflow/validate.go` | Plan validation, RuntimeBase, DependencyTypes |
+| `workflow/service_meta.go` | ServiceMeta CRUD |
+| `workflow/service_context.go` | BuildServiceContextSummary for stateless workflows |
+| `workflow/router.go` | Route, intent detection, strategy offerings |
 | **Tools** | |
-| `tools/workflow.go` | Action dispatcher, `handleStart`, `detectActiveWorkflow` |
-| `tools/workflow_bootstrap.go` | Bootstrap-specific handlers |
-| `tools/workflow_deploy.go` | Deploy-specific handlers |
-| `tools/workflow_cicd.go` | CI/CD-specific handlers |
+| `tools/workflow.go` | Action dispatcher, handleStart, detectActiveWorkflow |
+| `tools/workflow_bootstrap.go` | Bootstrap handlers, step checkers |
+| `tools/workflow_checks.go` | checkProvision, checkDeploy, checkVerify |
+| `tools/workflow_checks_generate.go` | checkGenerate, zerops.yml validation |
+| `tools/workflow_deploy.go` | Deploy handlers |
+| `tools/workflow_cicd.go` | CI/CD handlers |
 | **Knowledge** | |
-| `tools/knowledge.go` | `zerops_knowledge` MCP tool (scope, briefing, query, recipe) |
+| `tools/knowledge.go` | zerops_knowledge MCP tool: scope, briefing, query, recipe |
 | `knowledge/engine.go` | Provider interface, GetEmbeddedStore, GetBriefing, GetCore |
-| `knowledge/sections.go` | H2/H3 section parsing, runtime/service normalizers |
+| `knowledge/sections.go` | H2/H3 parsing, runtime/service normalizers |
