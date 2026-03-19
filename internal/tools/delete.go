@@ -18,7 +18,8 @@ type DeleteInput struct {
 
 // RegisterDelete registers the zerops_delete tool.
 // stateDir is the workflow state directory; empty string disables service meta cleanup.
-func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, stateDir string) {
+// mounter, when non-nil, enables best-effort SSHFS unmount of the deleted service.
+func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, stateDir string, mounter ops.Mounter) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_delete",
 		Description: "Delete a service. This is destructive and permanent. " +
@@ -40,6 +41,15 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 		if stateDir != "" && finalProc.Status == "FINISHED" {
 			if delErr := workflow.DeleteServiceMeta(stateDir, input.ServiceHostname); delErr != nil {
 				fmt.Fprintf(os.Stderr, "zcp: delete service meta %s: %v\n", input.ServiceHostname, delErr)
+			}
+		}
+
+		// Best-effort: unmount SSHFS mount for deleted service (in-container only).
+		if mounter != nil && finalProc.Status == "FINISHED" {
+			if res, umErr := ops.UnmountService(ctx, client, projectID, mounter, input.ServiceHostname); umErr != nil {
+				fmt.Fprintf(os.Stderr, "zcp: auto-unmount %s: %v\n", input.ServiceHostname, umErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "zcp: auto-unmount %s: %s\n", input.ServiceHostname, res.Status)
 			}
 		}
 

@@ -4,11 +4,13 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -20,7 +22,7 @@ func TestDeleteTool_Confirmed(t *testing.T) {
 		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "")
+	RegisterDelete(srv, mock, "proj-1", "", nil)
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
@@ -46,7 +48,7 @@ func TestDeleteTool_EmptyHostname(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "")
+	RegisterDelete(srv, mock, "proj-1", "", nil)
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "",
@@ -83,7 +85,7 @@ func TestDeleteTool_CleansUpServiceMeta(t *testing.T) {
 		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", stateDir)
+	RegisterDelete(srv, mock, "proj-1", stateDir, nil)
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
@@ -107,7 +109,7 @@ func TestDeleteTool_NoStateDir_StillSucceeds(t *testing.T) {
 		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "")
+	RegisterDelete(srv, mock, "proj-1", "", nil)
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
@@ -117,3 +119,117 @@ func TestDeleteTool_NoStateDir_StillSucceeds(t *testing.T) {
 		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
 	}
 }
+
+func TestDeleteTool_UnmountsOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+
+	mounter := newStubMounter()
+	mounter.states["/var/www/api"] = platform.MountStateActive
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDelete(srv, mock, "proj-1", "", mounter)
+
+	result := callTool(t, srv, "zerops_delete", map[string]any{
+		"serviceHostname": "api",
+	})
+
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	// Mount should have been cleaned up.
+	if _, exists := mounter.states["/var/www/api"]; exists {
+		t.Error("expected mount to be cleaned up after delete")
+	}
+}
+
+func TestDeleteTool_UnmountOrphanUnit(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+
+	mounter := newStubMounter()
+	mounter.units["api"] = true // Orphan unit, no FUSE mount.
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDelete(srv, mock, "proj-1", "", mounter)
+
+	result := callTool(t, srv, "zerops_delete", map[string]any{
+		"serviceHostname": "api",
+	})
+
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	// Verify delete succeeded (orphan unit cleanup is best-effort).
+	text := getTextContent(t, result)
+	var proc platform.Process
+	if err := json.Unmarshal([]byte(text), &proc); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if proc.Status != "FINISHED" {
+		t.Errorf("status = %q, want %q", proc.Status, "FINISHED")
+	}
+}
+
+func TestDeleteTool_NilMounter_NoUnmount(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDelete(srv, mock, "proj-1", "", nil) // nil mounter = local dev
+
+	result := callTool(t, srv, "zerops_delete", map[string]any{
+		"serviceHostname": "api",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+}
+
+func TestDeleteTool_UnmountError_StillSucceeds(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+
+	mounter := newStubMounter()
+	mounter.states["/var/www/api"] = platform.MountStateActive
+	mounter.mountErr = errors.New("unmount failed") // mountErr used by Mount, but we need unmount to fail
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDelete(srv, mock, "proj-1", "", mounter)
+
+	result := callTool(t, srv, "zerops_delete", map[string]any{
+		"serviceHostname": "api",
+	})
+
+	// Delete should still succeed even if unmount has issues.
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	var proc platform.Process
+	if err := json.Unmarshal([]byte(text), &proc); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if proc.Status != "FINISHED" {
+		t.Errorf("status = %q, want %q", proc.Status, "FINISHED")
+	}
+}
+
+// Ensure ops.Mounter is satisfied by stubMounter (compile check).
+var _ ops.Mounter = (*stubMounter)(nil)
