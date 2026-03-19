@@ -4,6 +4,7 @@ import (
 	"embed"
 	"io/fs"
 	"strings"
+	"sync"
 )
 
 //go:embed themes/*.md recipes/*.md guides/*.md decisions/*.md runtimes/*.md
@@ -14,21 +15,24 @@ var knowledgeDirs = []string{"themes", "recipes", "guides", "decisions", "runtim
 
 // Document represents a parsed knowledge document.
 type Document struct {
-	Path        string            // themes/core.md, recipes/laravel.md
-	URI         string            // zerops://themes/core, zerops://recipes/laravel
-	Title       string            // Zerops Core Reference
-	Keywords    []string          // [zerops, core, principles, ...]
-	TLDR        string            // One-sentence summary
-	Content     string            // Full markdown content
-	Description string            // TL;DR or first paragraph
-	sections    map[string]string // cached H2 sections (lazily populated)
+	Path        string   // themes/core.md, recipes/laravel.md
+	URI         string   // zerops://themes/core, zerops://recipes/laravel
+	Title       string   // Zerops Core Reference
+	Keywords    []string // [zerops, core, principles, ...]
+	TLDR        string   // One-sentence summary
+	Content     string   // Full markdown content
+	Description string   // TL;DR or first paragraph
+
+	sectionsOnce sync.Once
+	sections     map[string]string // cached H2 sections (lazily populated, thread-safe)
 }
 
 // H2Sections returns the parsed H2 sections, caching the result.
+// Safe for concurrent use.
 func (d *Document) H2Sections() map[string]string {
-	if d.sections == nil {
+	d.sectionsOnce.Do(func() {
 		d.sections = parseH2Sections(d.Content)
-	}
+	})
 	return d.sections
 }
 
