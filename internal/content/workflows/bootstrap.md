@@ -152,7 +152,9 @@ envVariables:
 <section name="generate-common">
 ### Generate zerops.yml and application code
 
-**Prerequisites**: Services mounted, env vars discovered. Write files to the mounted service filesystem at `/var/www/{hostname}/`.
+**Prerequisites**: Services mounted, env vars discovered.
+
+> **WHERE TO WRITE FILES**: Write ALL files (zerops.yml, app code, configs) to the SSHFS mount path `/var/www/{hostname}/` — this is the path returned by `zerops_mount` in the provision step. `/var/www/` without the hostname suffix is the zcpx orchestrator's own filesystem — writing there has NO effect on the target service. Every file must go under `/var/www/{hostname}/`.
 
 **SSHFS mount is for source code only** — small file reads/writes (editing .go, .ts, .yml files). Commands that generate many files (npm install, pip install, go mod download, composer install, bundle install, cargo build) MUST run via SSH on the container: `ssh {hostname} "cd /var/www && {install_command}"`. Running them locally through the SSHFS network mount is orders of magnitude slower.
 
@@ -226,6 +228,7 @@ Since you're writing to an SSHFS mount, every file you create or modify is immed
 ### Standard mode (dev+stage) — zerops.yml rules
 
 **Write dev entry ONLY now. Stage entry comes after dev is verified (deploy step).**
+All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 
 **Dev setup rules:**
 - `deployFiles: [.]` — ALWAYS, no exceptions.
@@ -256,6 +259,7 @@ Since you're writing to an SSHFS mount, every file you create or modify is immed
 ### Dev-only mode — zerops.yml rules
 
 **Write a single dev entry. No stage service exists in this mode.**
+All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 
 **Dev setup rules** (identical to standard dev):
 - `deployFiles: [.]` — ALWAYS, no exceptions.
@@ -276,6 +280,7 @@ Since you're writing to an SSHFS mount, every file you create or modify is immed
 ### Simple mode — zerops.yml rules
 
 **Write a single entry with a REAL start command.** Unlike dev/standard, simple mode services auto-start after deploy — no manual SSH start needed.
+All files go to `/var/www/{hostname}/` (the SSHFS mount path from provision).
 
 **Simple setup rules:**
 - `deployFiles: [.]` — ALWAYS (self-deploy, source must survive).
