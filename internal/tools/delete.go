@@ -30,6 +30,15 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeleteInput) (*mcp.CallToolResult, any, error) {
+		// Best-effort: unmount SSHFS before delete so the service still exists for clean unmount.
+		if mounter != nil {
+			if res, umErr := ops.UnmountService(ctx, client, projectID, mounter, input.ServiceHostname); umErr != nil {
+				fmt.Fprintf(os.Stderr, "zcp: pre-delete unmount %s: %v\n", input.ServiceHostname, umErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "zcp: pre-delete unmount %s: %s\n", input.ServiceHostname, res.Status)
+			}
+		}
+
 		proc, err := ops.Delete(ctx, client, projectID, input.ServiceHostname)
 		if err != nil {
 			return convertError(err), nil, nil
@@ -41,15 +50,6 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 		if stateDir != "" && finalProc.Status == "FINISHED" {
 			if delErr := workflow.DeleteServiceMeta(stateDir, input.ServiceHostname); delErr != nil {
 				fmt.Fprintf(os.Stderr, "zcp: delete service meta %s: %v\n", input.ServiceHostname, delErr)
-			}
-		}
-
-		// Best-effort: unmount SSHFS mount for deleted service (in-container only).
-		if mounter != nil && finalProc.Status == "FINISHED" {
-			if res, umErr := ops.UnmountService(ctx, client, projectID, mounter, input.ServiceHostname); umErr != nil {
-				fmt.Fprintf(os.Stderr, "zcp: auto-unmount %s: %v\n", input.ServiceHostname, umErr)
-			} else {
-				fmt.Fprintf(os.Stderr, "zcp: auto-unmount %s: %s\n", input.ServiceHostname, res.Status)
 			}
 		}
 
