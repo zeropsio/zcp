@@ -8,16 +8,16 @@ Bootstrap vytvoří infrastrukturu a zapíše service metas (typ, mode, stage, d
 flowchart TD
     FRESH(["Nový projekt"]) --> BOOT
 
-    BOOT["BOOTSTRAP — 6 kroků\n1 discover: klasifikace + plán\n2 provision: import.yml + create services\n3 generate: zerops.yml + app kód\n4 deploy: mode-aware push\n5 verify: health check\n6 strategy: push-dev / ci-cd / manual"]
+    BOOT["BOOTSTRAP — 6 kroků<br/>1 discover: klasifikace + plán<br/>2 provision: import.yml + create services<br/>3 generate: zerops.yml + app kód<br/>4 deploy: mode-aware push<br/>5 verify: health check<br/>6 strategy: push-dev / ci-cd / manual"]
     BOOT -->|"zapíše metas"| READY(["Projekt ready"])
 
     READY -->|"přidej feature / fixni bug"| DEPLOY
-    DEPLOY["DEPLOY — 3 kroky\n1 prepare: načti kontext, uprav kód\n2 deploy: push per mode\n3 verify: health check"] -->|done| READY
+    DEPLOY["DEPLOY — 3 kroky<br/>1 prepare: načti kontext, uprav kód<br/>2 deploy: push per mode<br/>3 verify: health check"] -->|done| READY
 
-    READY -->|"nastav CI/CD"| CICD["CICD — 3 kroky\nchoose → configure → verify"]
+    READY -->|"nastav CI/CD"| CICD["CICD — 3 kroky<br/>choose → configure → verify"]
     CICD --> READY
 
-    READY -->|"něco je rozbitý"| DEBUG["DEBUG — stateless\nservice context + diagnostic guidance"]
+    READY -->|"něco je rozbitý"| DEBUG["DEBUG — stateless<br/>service context + diagnostic guidance"]
     READY -->|"je to pomalý"| SCALE["SCALE — stateless"]
     READY -->|"změň config"| CONFIG["CONFIGURE — stateless"]
 
@@ -32,32 +32,32 @@ Každý krok má **checker** — automatickou validaci proti live API. Checker b
 
 ```mermaid
 flowchart TD
-    D["1 DISCOVER\nklasifikace + identifikace služeb + volba modu\nagent prezentuje plán uživateli"]
-    D -->|"complete s plan=[...]"| DV{"ValidateBootstrapTargets\nhostnames, types, modes, resolutions"}
+    D["1 DISCOVER<br/>klasifikace + identifikace služeb + volba modu<br/>agent prezentuje plán uživateli"]
+    D -->|"complete s plan=[...]"| DV{"ValidateBootstrapTargets<br/>hostnames, types, modes, resolutions"}
     DV -->|fail| D
     DV -->|pass| P
 
-    P["2 PROVISION + import.yml Schema knowledge\nwrite import.yml → zerops_import\nzerops_mount → zerops_discover includeEnvs"]
-    P -->|complete| PV{"checkProvision\nservices RUNNING? env vars?"}
+    P["2 PROVISION + import.yml Schema knowledge<br/>write import.yml → zerops_import<br/>zerops_mount → zerops_discover includeEnvs"]
+    P -->|complete| PV{"checkProvision<br/>services RUNNING? env vars?"}
     PV -->|fail| P
     PV -->|"pass (uloží env vars)"| G
 
-    G["3 GENERATE + runtime guide + service cards + env vars + yml schema\nGuide filtrován podle modu: standard/dev/simple\nwrite zerops.yml + app code"]
-    G -->|complete| GV{"checkGenerate\nyml valid? env refs? ports? deployFiles?"}
+    G["3 GENERATE + runtime guide + service cards + env vars + yml schema<br/>Guide filtrován podle modu: standard/dev/simple<br/>write zerops.yml + app code"]
+    G -->|complete| GV{"checkGenerate<br/>yml valid? env refs? ports? deployFiles?"}
     GV -->|fail| G
     GV -->|pass| DEP
 
-    DEP["4 DEPLOY + Schema Rules + env vars\nGuide filtrován podle modu\nstandard: dev→stage | dev: dev only | simple: direct"]
-    DEP -->|complete| DEPV{"checkDeploy\nall RUNNING? subdomains?"}
+    DEP["4 DEPLOY + Schema Rules + env vars<br/>Guide filtrován podle modu<br/>standard: dev→stage | dev: dev only | simple: direct"]
+    DEP -->|complete| DEPV{"checkDeploy<br/>all RUNNING? subdomains?"}
     DEPV -->|fail| DEP
     DEPV -->|pass| V
 
-    V["5 VERIFY\nzerops_verify all targets"]
-    V -->|complete| VV{"checkVerify\nall healthy?"}
-    VV -->|pass| S["6 STRATEGY\npush-dev / ci-cd / manual"]
-    VV -->|fail| CHOICE{"opravit a retry\nnebo iterate?"}
+    V["5 VERIFY<br/>zerops_verify all targets"]
+    V -->|complete| VV{"checkVerify<br/>all healthy?"}
+    VV -->|pass| S["6 STRATEGY<br/>push-dev / ci-cd / manual"]
+    VV -->|fail| CHOICE{"opravit a retry<br/>nebo iterate?"}
     CHOICE -->|retry| V
-    CHOICE -->|"iterate: reset 2-4\nescalace: diagnose→systematic→stop"| G
+    CHOICE -->|"iterate: reset 2-4<br/>escalace: diagnose→systematic→stop"| G
 
     S --> DONE(["Bootstrap hotový, metas zapsány"])
 ```
@@ -84,11 +84,11 @@ Primární post-bootstrap workflow. Při startu načte service metas → sestav�
 flowchart TD
     START(["start deploy"]) --> LOAD["Načti metas → targets + ServiceContext"]
 
-    LOAD --> PREP["1 PREPARE\n+ runtime briefing + service wiring + yml schema\nzkontroluj config, uprav kód"]
+    LOAD --> PREP["1 PREPARE<br/>+ runtime briefing + service wiring + yml schema<br/>zkontroluj config, uprav kód"]
     PREP -->|complete| DEP
 
     DEP{"2 DEPLOY podle modu"}
-    DEP -->|standard| STD["deploy dev → SSH start → verify\ncross-deploy stage → verify"]
+    DEP -->|standard| STD["deploy dev → SSH start → verify<br/>cross-deploy stage → verify"]
     DEP -->|dev| DONLY["deploy dev → SSH start → verify"]
     DEP -->|simple| SIMP["deploy → auto-start → verify"]
     STD --> VER
