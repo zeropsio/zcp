@@ -107,58 +107,110 @@ flowchart TD
 
 ## 3. Bootstrap Flow — Creating Infrastructure
 
-6 steps. Plan is the pivot — before plan exists (discover), knowledge is manual. After plan (provision+), knowledge is injected automatically.
+6 steps. Plan is the pivot — before plan exists (discover), knowledge is manual. After plan (provision+), knowledge is injected automatically. Each step has an **automated checker** that validates against the live API before allowing advancement.
 
 ```mermaid
 flowchart TD
     START([action=start workflow=bootstrap]) --> DISC
 
-    subgraph DISC["DISCOVER"]
-        D1["zerops_discover → classify: FRESH / CONFORMANT / NON_CONFORMANT"]
-        D1 --> D2["Identify runtime + services from user intent"]
-        D2 --> D3["Optional: zerops_knowledge recipe=... for framework specifics"]
-        D3 --> D4["Present plan to user, confirm mode (standard/dev/simple)"]
-        D4 --> D5["action=complete step=discover plan=[targets]"]
+    subgraph DISC["DISCOVER — plan submission + validation"]
+        D1["zerops_discover → classify project"]
+        D1 --> D2["Identify services, choose mode"]
+        D2 --> D3["Present plan to user, confirm"]
+        D3 --> D4["action=complete step=discover plan=..."]
+        D4 --> D5{"ValidateBootstrapTargets()<br/>hostnames, types, modes,<br/>stage derivation, resolutions"}
+        D5 -- fail --> D4
     end
 
-    D5 --> |"Plan validated + stored.<br/>Service metas: PLANNED"| PROV
+    D5 -- pass --> |"Plan stored. Metas: PLANNED"| PROV
 
-    subgraph PROV["PROVISION"]
-        direction TB
-        P_GUIDE["Guide: provision section"]
-        P_KNOW["Knowledge: import.yml Schema + Preprocessor Functions"]
-        P_GUIDE --- P_KNOW
-        P_KNOW --> P1["Write import.yml → zerops_import"]
-        P1 --> P2["zerops_discover includeEnvs=true → env vars stored"]
-        P2 --> P3["zerops_mount dev services"]
+    subgraph PROV["PROVISION — create infra + discover env vars"]
+        P1["Guide + import.yml Schema knowledge"]
+        P1 --> P2["Write import.yml → zerops_import"]
+        P2 --> P3["zerops_mount + zerops_discover includeEnvs"]
+        P3 --> P4["action=complete step=provision"]
+        P4 --> P5{"checkProvision()<br/>all services RUNNING?<br/>env vars discovered?"}
+        P5 -- fail --> P3
     end
 
-    P3 --> |"Metas: PROVISIONED"| GEN
+    P5 -- pass --> |"Env vars stored. Metas: PROVISIONED"| GEN
 
-    subgraph GEN["GENERATE (mode-filtered)"]
-        direction TB
-        G_GUIDE["Guide: generate-common + generate-{mode}"]
-        G_KNOW["Knowledge: runtime guide + service cards<br/>+ env vars + zerops.yml Schema + Rules"]
-        G_GUIDE --- G_KNOW
-        G_KNOW --> G1["Write zerops.yml + app code"]
+    subgraph GEN["GENERATE — write zerops.yml + app code"]
+        G1["Guide: generate-common + generate-mode<br/>Knowledge: runtime + services + env vars + schema"]
+        G1 --> G2["Write zerops.yml + app code"]
+        G2 --> G3["action=complete step=generate"]
+        G3 --> G4{"checkGenerate()<br/>zerops.yml exists? setup entry?<br/>env refs valid? ports? deployFiles?"}
+        G4 -- fail --> G2
     end
 
-    G1 --> DEP
+    G4 -- pass --> DEP
 
-    subgraph DEP["DEPLOY (mode-filtered)"]
-        direction TB
-        DEP_GUIDE["Guide: deploy-overview + deploy-{mode}"]
-        DEP_KNOW["Knowledge: Schema Rules + env vars"]
-        DEP_GUIDE --- DEP_KNOW
-        DEP_KNOW --> DEP1["Deploy per mode"]
+    subgraph DEP["DEPLOY — mode-aware push"]
+        D_G["Guide: deploy-overview + deploy-mode<br/>Knowledge: Schema Rules + env vars"]
+        D_G --> D_E["Deploy per mode:<br/>standard: dev→stage<br/>dev: dev only<br/>simple: direct"]
+        D_E --> D_C["action=complete step=deploy"]
+        D_C --> D_V{"checkDeploy()<br/>all RUNNING?<br/>subdomains enabled?"}
+        D_V -- fail --> D_E
     end
 
-    DEP1 --> VER["VERIFY → zerops_verify all targets"]
-    VER --> |"healthy"| STR["STRATEGY → user chooses: push-dev / ci-cd / manual"]
-    VER --> |"unhealthy"| ITER["ITERATE → reset steps 2-4, escalate"]
+    D_V -- pass --> VER
+
+    subgraph VER["VERIFY — independent health check"]
+        V1["zerops_verify all plan targets"]
+        V1 --> V2["action=complete step=verify"]
+        V2 --> V3{"checkVerify()<br/>VerifyAll() → all healthy?"}
+        V3 -- "fail: step stays in_progress<br/>CheckResult returned" --> V4{"Agent decides"}
+        V4 -- "fix + retry complete" --> V2
+        V4 -- "action=iterate" --> ITER["iteration++<br/>reset steps 2-4<br/>escalate tier"]
+        V4 -- "action=reset" --> RESET(["Session deleted"])
+    end
+
     ITER --> GEN
-    STR --> DONE(["Bootstrap complete<br/>Metas: BOOTSTRAPPED<br/>Transition message: deploy / cicd / scale / debug"])
+
+    V3 -- pass --> STR["STRATEGY → user chooses:<br/>push-dev / ci-cd / manual"]
+    STR --> DONE(["Bootstrap complete<br/>Metas: BOOTSTRAPPED<br/>Transition: deploy / cicd / scale / debug"])
 ```
+
+### Step checkers — what gets validated
+
+| Step | Checker | What it validates | On failure |
+|------|---------|-------------------|------------|
+| **discover** | `ValidateBootstrapTargets()` | Hostnames (a-z0-9, ≤25), types vs live catalog, modes, stage derivation, resolution consistency, HA mode defaults | Validation error returned, agent fixes plan |
+| **provision** | `checkProvision()` | All plan services RUNNING/ACTIVE, env vars discoverable for managed deps (side effect: stores env vars on session) | `CheckResult.Passed=false`, step stays `in_progress` |
+| **generate** | `checkGenerate()` | zerops.yml exists and parses, setup entry for each dev hostname, env var references valid against discovered vars, ports defined, deployFiles defined | Same — agent sees failed checks, fixes |
+| **deploy** | `checkDeploy()` | All runtime services RUNNING, subdomain access enabled for services with ports | Same |
+| **verify** | `checkVerify()` | `VerifyAll()` — HTTP health endpoints for all plan target hostnames | Same — agent can iterate or escalate |
+| **strategy** | None | User choice, no automated validation | N/A |
+
+### How checkers interact with step advancement
+
+```
+Agent: action="complete" step="X" attestation="..."
+  │
+  ├─ Checker runs BEFORE CompleteStep()
+  │
+  ├─ IF checker.Passed == false:
+  │    → Response includes CheckResult with failed checks
+  │    → Step stays in_progress (CompleteStep NOT called)
+  │    → Agent sees what failed, can fix and retry action="complete" again
+  │
+  └─ IF checker.Passed == true:
+       → CompleteStep() marks step as complete
+       → CurrentStep advances to next step
+       → Next step becomes in_progress
+```
+
+**This means:**
+- An agent can retry the same step's `complete` action multiple times until the checker passes
+- The checker runs fresh each time (re-queries API)
+- No step advancement happens until the checker passes
+- `action="iterate"` is a DIFFERENT escape hatch — it resets steps 2-4 entirely and goes back to generate
+
+**When to use iterate vs. retry:**
+- **Retry** (`action="complete"` again): fix was small (e.g., enable subdomain, restart service)
+- **Iterate** (`action="iterate"`): need to rewrite code or zerops.yml from scratch
+
+**Provision checker side effect:** Besides validation, it calls `GetServiceEnv()` for each managed dependency and stores discovered env var names on the session via `StoreDiscoveredEnvVars()`. This data powers the generate step's env var knowledge injection.
 
 ### What each step gets (knowledge injection)
 
