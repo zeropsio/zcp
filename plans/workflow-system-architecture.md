@@ -118,61 +118,61 @@ flowchart TD
     START([action=start workflow=bootstrap]) --> DISC
 
     subgraph DISC["DISCOVER — plan submission + validation"]
-        D1["zerops_discover → classify project"]
+        D1["zerops_discover — classify project"]
         D1 --> D2["Identify services, choose mode"]
         D2 --> D3["Present plan to user, confirm"]
-        D3 --> D4["action=complete step=discover plan=..."]
-        D4 --> D5{"ValidateBootstrapTargets()<br/>hostnames, types, modes,<br/>stage derivation, resolutions"}
+        D3 --> D4["action=complete step=discover"]
+        D4 --> D5{ValidateBootstrapTargets}
         D5 -- fail --> D4
     end
 
-    D5 -- pass --> |"Plan stored. Metas: PLANNED"| PROV
+    D5 -- "pass — plan stored" --> PROV
 
     subgraph PROV["PROVISION — create infra + discover env vars"]
-        P1["Guide + import.yml Schema knowledge"]
-        P1 --> P2["Write import.yml → zerops_import"]
-        P2 --> P3["zerops_mount + zerops_discover includeEnvs"]
+        P1["Guide + import.yml Schema"]
+        P1 --> P2["Write import.yml, zerops_import"]
+        P2 --> P3["zerops_mount + zerops_discover"]
         P3 --> P4["action=complete step=provision"]
-        P4 --> P5{"checkProvision()<br/>all services RUNNING?<br/>env vars discovered?"}
+        P4 --> P5{checkProvision}
         P5 -- fail --> P3
     end
 
-    P5 -- pass --> |"Env vars stored. Metas: PROVISIONED"| GEN
+    P5 -- "pass — env vars stored" --> GEN
 
     subgraph GEN["GENERATE — write zerops.yml + app code"]
-        G1["Guide: generate-common + generate-mode<br/>Knowledge: runtime + services + env vars + schema"]
+        G1["Guide: generate-common + generate-mode"]
         G1 --> G2["Write zerops.yml + app code"]
         G2 --> G3["action=complete step=generate"]
-        G3 --> G4{"checkGenerate()<br/>zerops.yml exists? setup entry?<br/>env refs valid? ports? deployFiles?"}
+        G3 --> G4{checkGenerate}
         G4 -- fail --> G2
     end
 
     G4 -- pass --> DEP
 
     subgraph DEP["DEPLOY — mode-aware push"]
-        D_G["Guide: deploy-overview + deploy-mode<br/>Knowledge: Schema Rules + env vars"]
-        D_G --> D_E["Deploy per mode:<br/>standard: dev→stage<br/>dev: dev only<br/>simple: direct"]
-        D_E --> D_C["action=complete step=deploy"]
-        D_C --> D_V{"checkDeploy()<br/>all RUNNING?<br/>subdomains enabled?"}
-        D_V -- fail --> D_E
+        DE1["Guide: deploy-overview + deploy-mode"]
+        DE1 --> DE2["Deploy per mode"]
+        DE2 --> DE3["action=complete step=deploy"]
+        DE3 --> DE4{checkDeploy}
+        DE4 -- fail --> DE2
     end
 
-    D_V -- pass --> VER
+    DE4 -- pass --> VER
 
     subgraph VER["VERIFY — independent health check"]
         V1["zerops_verify all plan targets"]
         V1 --> V2["action=complete step=verify"]
-        V2 --> V3{"checkVerify()<br/>VerifyAll() → all healthy?"}
-        V3 -- "fail: step stays in_progress<br/>CheckResult returned" --> V4{"Agent decides"}
-        V4 -- "fix + retry complete" --> V2
-        V4 -- "action=iterate" --> ITER["iteration++<br/>reset steps 2-4<br/>escalate tier"]
+        V2 --> V3{checkVerify}
+        V3 -- "fail — step stays in_progress" --> V4{Agent decides}
+        V4 -- "fix + retry" --> V2
+        V4 -- "action=iterate" --> ITER["iteration++, reset steps 2-4"]
         V4 -- "action=reset" --> RESET(["Session deleted"])
     end
 
     ITER --> GEN
 
-    V3 -- pass --> STR["STRATEGY → user chooses:<br/>push-dev / ci-cd / manual"]
-    STR --> DONE(["Bootstrap complete<br/>Metas: BOOTSTRAPPED<br/>Transition: deploy / cicd / scale / debug"])
+    V3 -- pass --> STR["STRATEGY — user chooses strategy"]
+    STR --> DONE(["Bootstrap complete"])
 ```
 
 ### Step checkers — what gets validated
