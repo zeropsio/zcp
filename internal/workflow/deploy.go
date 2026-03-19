@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -128,6 +129,82 @@ func NewDeployState(targets []DeployTarget, mode string) *DeployState {
 		Steps:       steps,
 		Targets:     targets,
 		Mode:        mode,
+	}
+}
+
+// BuildDeployTargets constructs ordered targets and service context from service metas.
+// Returns targets, detected mode, and service context for knowledge injection.
+func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, *DeployServiceContext) {
+	if len(metas) == 0 {
+		return nil, "", nil
+	}
+
+	var targets []DeployTarget
+	mode := ""
+	svcCtx := &DeployServiceContext{}
+
+	// Collect all dependency hostnames to resolve their types.
+	allMetas := make(map[string]*ServiceMeta, len(metas))
+	for _, m := range metas {
+		allMetas[m.Hostname] = m
+	}
+
+	depTypeSeen := make(map[string]bool)
+
+	for _, m := range metas {
+		metaMode := m.Mode
+		if metaMode == "" {
+			metaMode = PlanModeStandard
+		}
+		if mode == "" {
+			mode = metaMode
+		}
+
+		// Use first runtime's type.
+		if svcCtx.RuntimeType == "" && m.Type != "" {
+			svcCtx.RuntimeType = m.Type
+		}
+
+		targets = append(targets, DeployTarget{
+			Hostname: m.Hostname,
+			Role:     deployRoleFromMode(metaMode, m.Hostname, m.StageHostname),
+			Status:   deployTargetPending,
+		})
+
+		// Standard mode: add stage target after dev.
+		if metaMode == PlanModeStandard && m.StageHostname != "" {
+			targets = append(targets, DeployTarget{
+				Hostname: m.StageHostname,
+				Role:     DeployRoleStage,
+				Status:   deployTargetPending,
+			})
+		}
+
+		// Collect dependency types from dep metas.
+		for _, depHostname := range m.Dependencies {
+			if depMeta, ok := allMetas[depHostname]; ok && depMeta.Type != "" {
+				if !depTypeSeen[depMeta.Type] {
+					depTypeSeen[depMeta.Type] = true
+					svcCtx.DependencyTypes = append(svcCtx.DependencyTypes, depMeta.Type)
+				}
+			}
+		}
+	}
+
+	return targets, mode, svcCtx
+}
+
+func deployRoleFromMode(mode, _, stageHostname string) string {
+	switch mode {
+	case PlanModeSimple:
+		return DeployRoleSimple
+	case PlanModeDev:
+		return DeployRoleDev
+	default:
+		if stageHostname != "" {
+			return DeployRoleDev
+		}
+		return DeployRoleSimple
 	}
 }
 
@@ -283,4 +360,70 @@ func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env
 	}
 
 	return resp
+}
+
+// buildGuide assembles a deploy step guide with knowledge injection.
+func (d *DeployState) buildGuide(step string, _ int, _ Environment, kp knowledge.Provider) string {
+	guide := resolveDeployStepGuidance(step, d.Mode)
+
+	if extra := d.assembleDeployKnowledge(step, kp); extra != "" {
+		guide += "\n\n---\n\n" + extra
+	}
+
+	return guide
+}
+
+// assembleDeployKnowledge injects relevant knowledge for deploy steps.
+// Uses service context from metas for runtime/dependency-specific knowledge.
+func (d *DeployState) assembleDeployKnowledge(step string, kp knowledge.Provider) string {
+	if kp == nil || len(d.Targets) == 0 {
+		return ""
+	}
+
+	var parts []string
+
+	switch step {
+	case DeployStepPrepare:
+		// Runtime briefing for the target service.
+		if d.Service != nil && d.Service.RuntimeType != "" {
+			base, _, _ := strings.Cut(d.Service.RuntimeType, "@")
+			if briefing, err := kp.GetBriefing(base, nil, nil); err == nil && briefing != "" {
+				parts = append(parts, briefing)
+			}
+		}
+		// Service wiring for dependencies.
+		if d.Service != nil && len(d.Service.DependencyTypes) > 0 {
+			if briefing, err := kp.GetBriefing("", d.Service.DependencyTypes, nil); err == nil && briefing != "" {
+				parts = append(parts, briefing)
+			}
+		}
+		// zerops.yml schema for config checking.
+		if doc, err := kp.Get("zerops://themes/core"); err == nil {
+			sections := doc.H2Sections()
+			if s, ok := sections["zerops.yml Schema"]; ok && s != "" {
+				parts = append(parts, "## zerops.yml Schema\n\n"+s)
+			}
+			if s, ok := sections["Rules & Pitfalls"]; ok && s != "" {
+				parts = append(parts, "## Rules & Pitfalls\n\n"+s)
+			}
+		}
+
+	case DeployStepDeploy:
+		// Schema rules for deploy constraints.
+		if doc, err := kp.Get("zerops://themes/core"); err == nil {
+			sections := doc.H2Sections()
+			if s, ok := sections["Schema Rules"]; ok && s != "" {
+				parts = append(parts, "## Deploy Rules\n\n"+s)
+			}
+		}
+		// Env vars reminder if available.
+		if d.Service != nil && len(d.Service.DiscoveredEnvVars) > 0 {
+			parts = append(parts, formatEnvVarsForGuide(d.Service.DiscoveredEnvVars))
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n\n---\n\n")
 }
