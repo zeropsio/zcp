@@ -107,6 +107,10 @@ flowchart TD
 
 ## 3. Bootstrap Flow — Creating Infrastructure
 
+**Container-only.** All guidance assumes SSHFS mounts, SSH deploy, SSH server start. Local flow (Wave 4-5) is not implemented — the `Environment` parameter exists in code but is unused.
+
+**Mode-aware.** Generate and deploy steps deliver different guidance per mode (standard/dev/simple) via `ResolveProgressiveGuidance`. Provision uses inline callouts for mode differences.
+
 6 steps. Plan is the pivot — before plan exists (discover), knowledge is manual. After plan (provision+), knowledge is injected automatically. Each step has an **automated checker** that validates against the live API before allowing advancement.
 
 ```mermaid
@@ -344,20 +348,43 @@ flowchart TD
 
 ---
 
-## 7. Mode Differences — Complete Matrix
+## 7. Mode × Environment Matrix
 
-### Modes affect generate, deploy, and iteration
+### What's implemented now
 
-| | Standard | Dev | Simple |
+**All flows are container-only.** The table shows what actually works:
+
+| | Standard (container) | Dev (container) | Simple (container) |
 |---|---|---|---|
-| **Services created** | dev + stage + managed | dev + managed | 1 runtime + managed |
-| **zerops.yml entries** | Dev only (stage later) | Dev only | Single entry |
-| **`start:`** | `zsc noop --silent` | `zsc noop --silent` | Real command |
-| **`healthCheck:`** | None in dev | None | Required |
-| **Server startup** | Agent via SSH | Agent via SSH | Auto after deploy |
-| **Deploy order** | dev → verify → stage → verify | dev → verify | deploy → verify |
-| **Stage entry** | Generated after dev verified | N/A | N/A |
-| **Iteration** | Edit → SSH restart → test | Edit → SSH restart → test | Edit → redeploy → test |
+| **Services** | dev + stage + managed | dev + managed | 1 runtime + managed |
+| **zerops.yml** | Dev entry (noop), stage later | Dev entry (noop) | Single entry (real start) |
+| **`healthCheck`** | None in dev | None | Required |
+| **Deploy mechanism** | SSH self-deploy + cross-deploy | SSH self-deploy | SSH self-deploy |
+| **Server startup** | Agent via SSH | Agent via SSH | Auto (real start cmd) |
+| **Deploy order** | dev → verify → gen stage → cross-deploy → verify stage | dev → verify | deploy → verify |
+| **Iteration** | Edit on SSHFS → SSH restart → test | Same | Edit on SSHFS → redeploy → test |
+| **File access** | SSHFS mount at `/var/www/{hostname}/` | Same | Same |
+
+### What local flow would need (Wave 4-5, NOT implemented)
+
+| Aspect | Container (now) | Local (future) |
+|--------|----------------|----------------|
+| **File access** | SSHFS mount `/var/www/{hostname}/` | Local filesystem |
+| **Deploy** | SSH into container, `git init` + `zcli push` | `zcli push` from local working dir |
+| **Server start** | SSH `run_in_background` | Local process or auto-start after deploy |
+| **Dev zerops.yml** | `start: zsc noop --silent` (SSH iteration) | `start: <real command>` (no SSH available) |
+| **Prerequisites** | Container exists (auto) | zcli installed + logged in + VPN active |
+| **Iteration** | Edit on mount → SSH kill+start | Edit locally → `zcli push` → verify |
+| **Env vars** | OS env vars after deploy | `.env.local` generation or VPN access |
+
+**What needs to change for local:**
+1. `assembleKnowledge` / `buildGuide` must check `env` and select local-specific sections
+2. bootstrap.md needs `generate-standard-local`, `deploy-standard-local` etc. sections (or environment prefixed variants)
+3. `zerops_deploy` tool needs local mode (`zcli push` instead of SSH)
+4. Preflight checks at workflow start (zcli installed? VPN active?)
+5. `bootstrap_steps.go` deploy guidance must not mention SSH/SSHFS for local
+
+**Architecture is ready:** `Environment` type, `DetectEnvironment()`, and parameter plumbing exist. The guidance content and tool implementation are missing.
 
 ---
 
