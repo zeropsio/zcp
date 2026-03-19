@@ -49,8 +49,8 @@ func TestCheckGenerate_NoZeropsYml_Fails(t *testing.T) {
 	if result.Passed {
 		t.Error("expected fail for missing zerops.yml")
 	}
-	if result.Summary != "zerops.yml missing or invalid" {
-		t.Errorf("Summary = %q, want 'zerops.yml missing or invalid'", result.Summary)
+	if result.Summary != "generate checks failed" {
+		t.Errorf("Summary = %q, want 'generate checks failed'", result.Summary)
 	}
 	hasFailCheck := false
 	for _, c := range result.Checks {
@@ -517,6 +517,46 @@ func TestCheckGenerate_ExistsAndCreateDeps_EnvRefs_Pass(t *testing.T) {
 	}
 	if !hasEnvRefPass {
 		t.Error("expected appdev_env_refs pass check")
+	}
+}
+
+func TestCheckGenerate_MountPath_FindsYml(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	// Write zerops.yml to mount path /var/www/{hostname}/ (simulated as dir/{hostname}/).
+	mountDir := filepath.Join(dir, "appdev")
+	if err := os.MkdirAll(mountDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeZeropsYml(t, mountDir, `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+`)
+	// No zerops.yml at project root — only in mount path.
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass when zerops.yml is in mount path, got fail: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
 	}
 }
 

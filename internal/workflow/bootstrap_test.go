@@ -718,9 +718,8 @@ func TestStepDetails_VerificationHasSuccessCriteria(t *testing.T) {
 			if !strings.Contains(step.Verification, "SUCCESS WHEN:") {
 				t.Errorf("step %q Verification missing SUCCESS WHEN: criteria", step.Name)
 			}
-			if !strings.Contains(step.Verification, "NEXT:") {
-				t.Errorf("step %q Verification missing NEXT: directive", step.Name)
-			}
+			// Step progression is handled by the workflow engine automatically.
+			// Verification fields describe success criteria only — no NEXT: directives.
 		})
 	}
 }

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -21,29 +22,32 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 		// Derive project root from stateDir ({projectRoot}/.zcp/state/).
 		projectRoot := filepath.Dir(filepath.Dir(stateDir))
 
-		doc, parseErr := ops.ParseZeropsYml(projectRoot)
-		if parseErr != nil {
-			// Parse failure is a check result (not a function error).
-			failResult := &workflow.StepCheckResult{
-				Passed:  false,
-				Summary: "zerops.yml missing or invalid",
-				Checks: []workflow.StepCheck{{
-					Name: "zerops_yml_exists", Status: statusFail, Detail: parseErr.Error(),
-				}},
-			}
-			return failResult, nil //nolint:nilerr // parse failure is a check result, not function error
-		}
-
 		var checks []workflow.StepCheck
-		checks = append(checks, workflow.StepCheck{
-			Name: "zerops_yml_exists", Status: statusPass,
-		})
 
-		// Collect all plan hostnames and check each.
+		// Check each target's zerops.yml. Agent writes to SSHFS mount at
+		// /var/www/{hostname}/, so look there first. Fall back to project root
+		// for local/test environments where files are written directly.
 		for _, target := range plan.Targets {
-			for _, hostname := range []string{target.Runtime.DevHostname} {
-				checks = append(checks, checkGenerateEntry(doc, hostname, state)...)
+			hostname := target.Runtime.DevHostname
+			mountPath := filepath.Join(projectRoot, hostname)
+
+			ymlDir := projectRoot
+			if info, statErr := os.Stat(mountPath); statErr == nil && info.IsDir() {
+				ymlDir = mountPath
 			}
+
+			doc, parseErr := ops.ParseZeropsYml(ymlDir)
+			if parseErr != nil {
+				checks = append(checks, workflow.StepCheck{
+					Name: "zerops_yml_exists", Status: statusFail,
+					Detail: fmt.Sprintf("zerops.yml not found at %s or %s: %v", mountPath, projectRoot, parseErr),
+				})
+				continue
+			}
+			checks = append(checks, workflow.StepCheck{
+				Name: "zerops_yml_exists", Status: statusPass,
+			})
+			checks = append(checks, checkGenerateEntry(doc, hostname, state)...)
 		}
 
 		allPassed := true
