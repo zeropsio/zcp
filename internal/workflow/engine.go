@@ -155,10 +155,6 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 		return nil, fmt.Errorf("bootstrap complete: %w", err)
 	}
 
-	if state.Bootstrap.CurrentStep < len(state.Bootstrap.Steps) {
-		state.Bootstrap.Steps[state.Bootstrap.CurrentStep].Status = stepInProgress
-	}
-
 	// Write incremental service metas after provision step.
 	if stepName == StepProvision {
 		e.writeServiceMetas(state, MetaStatusProvisioned)
@@ -231,10 +227,6 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	if state.Bootstrap.CurrentStep < len(state.Bootstrap.Steps) {
-		state.Bootstrap.Steps[state.Bootstrap.CurrentStep].Status = stepInProgress
-	}
-
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan save: %w", err)
@@ -258,10 +250,6 @@ func (e *Engine) BootstrapSkip(stepName, reason string) (*BootstrapResponse, err
 
 	if err := state.Bootstrap.SkipStep(stepName, reason); err != nil {
 		return nil, fmt.Errorf("bootstrap skip: %w", err)
-	}
-
-	if state.Bootstrap.CurrentStep < len(state.Bootstrap.Steps) {
-		state.Bootstrap.Steps[state.Bootstrap.CurrentStep].Status = stepInProgress
 	}
 
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)

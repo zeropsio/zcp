@@ -28,11 +28,8 @@ func TestEnvTool_GetAction_ReturnsError(t *testing.T) {
 		t.Fatal("expected IsError for get action")
 	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "zerops_discover") {
-		t.Errorf("error should mention zerops_discover, got: %s", text)
-	}
-	if !strings.Contains(text, "includeEnvs") {
-		t.Errorf("error should mention includeEnvs, got: %s", text)
+	if !strings.Contains(text, "set or delete") {
+		t.Errorf("error should suggest 'set or delete', got: %s", text)
 	}
 }
 

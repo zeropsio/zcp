@@ -11,14 +11,6 @@ import (
 	"time"
 )
 
-// Recipe holds metadata extracted from a knowledge base recipe document.
-type Recipe struct {
-	Name     string   `json:"name"`     // e.g., "laravel"
-	Title    string   `json:"title"`    // e.g., "Laravel on Zerops"
-	Runtime  string   `json:"runtime"`  // e.g., "php-nginx@8.4"
-	Services []string `json:"services"` // e.g., ["postgresql@16", "valkey@7.2"]
-}
-
 // RecipeMetadata holds parsed recipe data used for prompt generation.
 type RecipeMetadata struct {
 	Name     string       `json:"name"`

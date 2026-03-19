@@ -148,7 +148,6 @@ type LogAccess struct {
 	AccessToken string `json:"accessToken"`
 	Expiration  string `json:"expiration"`
 	URL         string `json:"url"`
-	URLPlain    string `json:"urlPlain"`
 }
 
 // LogFetchParams contains parameters for fetching logs from the backend.

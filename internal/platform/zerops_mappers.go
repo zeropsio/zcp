@@ -7,6 +7,9 @@ import (
 	"github.com/zeropsio/zerops-go/types/enum"
 )
 
+// statusCancelled is the API status string for cancelled operations.
+const statusCancelled = "CANCELLED"
+
 // ---------------------------------------------------------------------------
 // Mapping helpers
 // ---------------------------------------------------------------------------

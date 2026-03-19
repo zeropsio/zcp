@@ -172,7 +172,9 @@ func (b *BootstrapState) CompleteStep(name, attestation string) error {
 	b.Steps[b.CurrentStep].CompletedAt = time.Now().UTC().Format(time.RFC3339)
 	b.CurrentStep++
 
-	if b.CurrentStep >= len(b.Steps) {
+	if b.CurrentStep < len(b.Steps) {
+		b.Steps[b.CurrentStep].Status = stepInProgress
+	} else {
 		b.Active = false
 	}
 	return nil
@@ -205,7 +207,9 @@ func (b *BootstrapState) SkipStep(name, reason string) error {
 	b.Steps[b.CurrentStep].CompletedAt = time.Now().UTC().Format(time.RFC3339)
 	b.CurrentStep++
 
-	if b.CurrentStep >= len(b.Steps) {
+	if b.CurrentStep < len(b.Steps) {
+		b.Steps[b.CurrentStep].Status = stepInProgress
+	} else {
 		b.Active = false
 	}
 	return nil

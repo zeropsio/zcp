@@ -231,7 +231,7 @@ func TestSearch_TopResultHasFullContent(t *testing.T) {
 
 // --- Query Expansion Tests ---
 
-func TestExpandQuery(t *testing.T) {
+func Test_expandQuery(t *testing.T) {
 	tests := []struct {
 		input    string
 		contains []string
@@ -245,10 +245,10 @@ func TestExpandQuery(t *testing.T) {
 		{"postgres node ssl", []string{"postgresql", "nodejs", "tls"}},
 	}
 	for _, tt := range tests {
-		expanded := ExpandQuery(tt.input)
+		expanded := expandQuery(tt.input)
 		for _, want := range tt.contains {
 			if !strings.Contains(expanded, want) {
-				t.Errorf("ExpandQuery(%q) = %q, missing %q", tt.input, expanded, want)
+				t.Errorf("expandQuery(%q) = %q, missing %q", tt.input, expanded, want)
 			}
 		}
 	}

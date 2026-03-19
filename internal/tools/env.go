@@ -29,11 +29,6 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 		onProgress := buildProgressCallback(ctx, req)
 
 		switch input.Action {
-		case "get":
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				"Action 'get' is removed — use zerops_discover with includeEnvs=true",
-				"zerops_discover returns both service and project env vars")), nil, nil
 		case "set":
 			result, err := ops.EnvSet(ctx, client, projectID, input.ServiceHostname, input.Project, input.Variables)
 			if err != nil {

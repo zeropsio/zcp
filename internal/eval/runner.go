@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -211,23 +212,14 @@ func isSuccessfulAssessment(assessment string) bool {
 
 // findAfter returns the position of needle after the first occurrence of after.
 func findAfter(text, after, needle string) int {
-	afterIdx := indexOf(text, after)
+	afterIdx := strings.Index(text, after)
 	if afterIdx < 0 {
 		return -1
 	}
 	rest := text[afterIdx:]
-	idx := indexOf(rest, needle)
+	idx := strings.Index(rest, needle)
 	if idx < 0 {
 		return -1
 	}
 	return afterIdx + idx
-}
-
-func indexOf(text, substr string) int {
-	for i := 0; i <= len(text)-len(substr); i++ {
-		if text[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }

@@ -105,11 +105,6 @@ func expandQuery(query string) string {
 	return strings.Join(expanded, " ")
 }
 
-// ExpandQuery is exported for testing.
-func ExpandQuery(query string) string {
-	return expandQuery(query)
-}
-
 // Search performs a simple text-matching search with field boosts and query expansion.
 func (s *Store) Search(query string, limit int) []SearchResult {
 	if limit <= 0 {

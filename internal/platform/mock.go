@@ -5,8 +5,6 @@ import (
 	"sync"
 )
 
-const statusCancelled = "CANCELLED"
-
 // Compile-time interface checks.
 var _ Client = (*Mock)(nil)
 var _ LogFetcher = (*MockLogFetcher)(nil)
