@@ -12,6 +12,32 @@ import (
 	"time"
 )
 
+// mapSeverityToNumeric converts severity label to syslog numeric value.
+// The log backend uses syslog severity: 0=Emergency .. 7=Debug.
+// minimumSeverity=N means "show messages with severity <= N".
+func mapSeverityToNumeric(severity string) string {
+	switch strings.ToLower(severity) {
+	case "emergency":
+		return "0"
+	case "alert":
+		return "1"
+	case "critical":
+		return "2"
+	case "error":
+		return "3"
+	case "warning":
+		return "4"
+	case "notice":
+		return "5"
+	case "info", "informational":
+		return "6"
+	case "debug":
+		return "7"
+	default:
+		return "6" // default to informational
+	}
+}
+
 const (
 	maxLogResponseBytes   = 50 << 20 // 50 MB
 	maxErrorResponseBytes = 1 << 20  // 1 MB
@@ -26,7 +52,7 @@ type ZeropsLogFetcher struct {
 func NewLogFetcher() *ZeropsLogFetcher {
 	return &ZeropsLogFetcher{
 		httpClient: &http.Client{
-			Timeout: LogFetchTimeout,
+			Timeout: DefaultAPITimeout,
 		},
 	}
 }
@@ -56,15 +82,13 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 		q.Set("serviceStackId", params.ServiceID)
 	}
 	if params.Limit > 0 {
-		q.Set("tail", fmt.Sprintf("%d", params.Limit))
+		q.Set("limit", fmt.Sprintf("%d", params.Limit))
 	} else {
-		q.Set("tail", "100")
+		q.Set("limit", "100")
 	}
-	if !params.Since.IsZero() {
-		q.Set("since", params.Since.Format(time.RFC3339))
-	}
+	q.Set("desc", "1")
 	if params.Severity != "" && params.Severity != "all" {
-		q.Set("severity", params.Severity)
+		q.Set("minimumSeverity", mapSeverityToNumeric(params.Severity))
 	}
 	if params.Search != "" {
 		q.Set("search", params.Search)
@@ -75,8 +99,7 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 	if err != nil {
 		return nil, NewPlatformError(ErrAPIError, fmt.Sprintf("failed to create log request: %v", err), "")
 	}
-	req.Header.Set("Authorization", "Bearer "+access.AccessToken)
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
@@ -107,6 +130,18 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Timestamp < entries[j].Timestamp
 	})
+
+	// Client-side since filtering (backend does not support time range queries).
+	if !params.Since.IsZero() {
+		sinceStr := params.Since.Format(time.RFC3339)
+		filtered := entries[:0]
+		for _, e := range entries {
+			if e.Timestamp >= sinceStr {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
 
 	if params.Limit > 0 && len(entries) > params.Limit {
 		entries = entries[len(entries)-params.Limit:]
