@@ -306,6 +306,86 @@ func TestFormatOfferings_Compact(t *testing.T) {
 	}
 }
 
+func TestRoute_IntentBoost_PromotesMatchingWorkflow(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		input   RouterInput
+		wantTop string
+	}{
+		{
+			name: "deploy intent promotes deploy over bootstrap",
+			input: RouterInput{
+				ProjectState: StateNonConformant,
+				ServiceMetas: []*ServiceMeta{{
+					Hostname:  "appdev",
+					Decisions: map[string]string{DecisionDeployStrategy: StrategyPushDev},
+				}},
+				LiveServices: []string{"appdev"},
+				Intent:       "I want to deploy my code",
+			},
+			wantTop: "deploy",
+		},
+		{
+			name: "debug intent boosts debug priority",
+			input: RouterInput{
+				ProjectState: StateUnknown,
+				Intent:       "my app is broken and not working",
+			},
+			wantTop: "debug",
+		},
+		{
+			name: "scale intent boosts scale priority",
+			input: RouterInput{
+				ProjectState: StateUnknown,
+				Intent:       "app is slow, need more cpu",
+			},
+			wantTop: "scale",
+		},
+		{
+			name: "cicd intent promotes cicd",
+			input: RouterInput{
+				ProjectState: StateConformant,
+				ServiceMetas: []*ServiceMeta{{
+					Hostname:  "appdev",
+					Decisions: map[string]string{DecisionDeployStrategy: StrategyCICD},
+				}},
+				LiveServices: []string{"appdev"},
+				Intent:       "set up github actions pipeline",
+			},
+			wantTop: "cicd",
+		},
+		{
+			name: "no intent keeps default order",
+			input: RouterInput{
+				ProjectState: StateFresh,
+				Intent:       "",
+			},
+			wantTop: "bootstrap",
+		},
+		{
+			name: "case insensitive matching",
+			input: RouterInput{
+				ProjectState: StateUnknown,
+				Intent:       "DEPLOY my app NOW",
+			},
+			wantTop: "deploy",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			offerings := Route(tt.input)
+			if len(offerings) == 0 {
+				t.Fatal("expected at least one offering")
+			}
+			if offerings[0].Workflow != tt.wantTop {
+				t.Errorf("top offering = %q, want %q", offerings[0].Workflow, tt.wantTop)
+			}
+		})
+	}
+}
+
 func TestFormatOfferings_Empty(t *testing.T) {
 	t.Parallel()
 	result := FormatOfferings(nil)
