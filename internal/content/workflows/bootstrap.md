@@ -890,3 +890,22 @@ If the user asks for changes after initial bootstrap:
 3. Deploy to dev first, verify (with iteration loop if needed), then stage. Same dev-first pattern.
 4. For config-only changes (env vars, scaling), use configure/scale workflows directly.
 </section>
+
+<section name="strategy">
+### Choose Deployment Strategy
+
+Select a deployment strategy for each runtime service. Present the options and their trade-offs to the user.
+
+| Strategy | How it works | Best for |
+|----------|-------------|----------|
+| `push-dev` | Push code via SSH directly to the running container. Fast iterations, no CI setup required. | Local development, rapid prototyping |
+| `ci-cd` | Automated pipeline triggered by Git push. Requires CI/CD configuration (GitHub Actions, GitLab CI, etc.). | Teams, production services |
+| `manual` | No automated deployment. Service is monitored but deployments are handled outside ZCP. | Existing pipelines, legacy systems |
+
+**Record the strategy:** complete this step using `zerops_workflow action="complete" step="strategy"` with the `strategies` parameter:
+```json
+{"strategies": {"<hostname>": "push-dev|ci-cd|manual"}}
+```
+
+**Skip this step** for managed-only projects (no runtime services) — use `action="skip" step="strategy"`.
+</section>

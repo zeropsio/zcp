@@ -1153,3 +1153,108 @@ func TestEngine_Resume_NotFound(t *testing.T) {
 func currentPID() int {
 	return os.Getpid()
 }
+
+// --- C4: Session file cleanup on completion ---
+
+func TestEngine_BootstrapComplete_DeletesSessionFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, nil)
+
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	sessionID := eng.SessionID()
+
+	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
+	for _, step := range steps {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "step completed successfully", nil); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
+
+	// Session file must be deleted.
+	path := sessionFilePath(dir, sessionID)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("session file should be deleted after bootstrap completion, stat err: %v", err)
+	}
+	// Engine session ID must be cleared.
+	if eng.SessionID() != "" {
+		t.Errorf("engine SessionID should be empty after bootstrap completion, got %q", eng.SessionID())
+	}
+}
+
+func TestEngine_DeployComplete_DeletesSessionFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, nil)
+
+	targets := []DeployTarget{{Hostname: "appdev", Role: "local"}}
+	if _, err := eng.DeployStart("proj-1", "test", targets, "local", nil); err != nil {
+		t.Fatalf("DeployStart: %v", err)
+	}
+	sessionID := eng.SessionID()
+
+	steps := []string{DeployStepPrepare, DeployStepDeploy, DeployStepVerify}
+	for _, step := range steps {
+		if _, err := eng.DeployComplete(step, "step completed successfully"); err != nil {
+			t.Fatalf("DeployComplete(%s): %v", step, err)
+		}
+	}
+
+	path := sessionFilePath(dir, sessionID)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("session file should be deleted after deploy completion, stat err: %v", err)
+	}
+	if eng.SessionID() != "" {
+		t.Errorf("engine SessionID should be empty after deploy completion, got %q", eng.SessionID())
+	}
+}
+
+func TestEngine_CICDComplete_DeletesSessionFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, nil)
+
+	if _, err := eng.CICDStart("proj-1", "test", []string{"appdev"}); err != nil {
+		t.Fatalf("CICDStart: %v", err)
+	}
+	sessionID := eng.SessionID()
+
+	steps := []string{CICDStepChoose, CICDStepConfigure, CICDStepVerify}
+	for _, step := range steps {
+		if _, err := eng.CICDComplete(step, "step completed successfully", ""); err != nil {
+			t.Fatalf("CICDComplete(%s): %v", step, err)
+		}
+	}
+
+	path := sessionFilePath(dir, sessionID)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("session file should be deleted after cicd completion, stat err: %v", err)
+	}
+	if eng.SessionID() != "" {
+		t.Errorf("engine SessionID should be empty after cicd completion, got %q", eng.SessionID())
+	}
+}
+
+func TestEngine_BootstrapComplete_Partial_KeepsSessionFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, nil)
+
+	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	sessionID := eng.SessionID()
+
+	// Complete only the first step.
+	if _, err := eng.BootstrapComplete(context.Background(), "discover", "step completed successfully", nil); err != nil {
+		t.Fatalf("BootstrapComplete(discover): %v", err)
+	}
+
+	// Session file must still exist (workflow not complete).
+	path := sessionFilePath(dir, sessionID)
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("session file should still exist after partial completion, stat err: %v", err)
+	}
+}

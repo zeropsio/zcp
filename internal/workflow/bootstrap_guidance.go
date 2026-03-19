@@ -129,7 +129,7 @@ Fix what's wrong, redeploy, verify.`
 Do NOT attempt another fix without user input.`
 	}
 
-	return fmt.Sprintf("ITERATION %d (remaining: %d)\n\nPREVIOUS: %s\n\n%s",
+	return fmt.Sprintf("ITERATION %d (session remaining: %d)\n\nPREVIOUS: %s\n\n%s",
 		iteration, remaining, lastAttestation, guidance)
 }
 

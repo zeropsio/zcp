@@ -47,7 +47,7 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 			checks = append(checks, workflow.StepCheck{
 				Name: "zerops_yml_exists", Status: statusPass,
 			})
-			checks = append(checks, checkGenerateEntry(doc, hostname, state)...)
+			checks = append(checks, checkGenerateEntry(doc, hostname, target, state)...)
 		}
 
 		allPassed := true
@@ -68,7 +68,7 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 }
 
 // checkGenerateEntry validates a single hostname's zerops.yml entry.
-func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, state *workflow.BootstrapState) []workflow.StepCheck {
+func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.BootstrapTarget, state *workflow.BootstrapState) []workflow.StepCheck {
 	entry := doc.FindEntry(hostname)
 	if entry == nil {
 		return []workflow.StepCheck{{
@@ -124,6 +124,21 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, state *workflow.
 			Name: hostname + "_deploy_files", Status: statusFail,
 			Detail: "build.deployFiles is empty — nothing will be deployed",
 		})
+	}
+
+	// HealthCheck required for simple mode (unless implicit web server).
+	if target.Runtime.EffectiveMode() == workflow.PlanModeSimple && !entry.HasImplicitWebServer() {
+		if entry.Run.HealthCheck != nil {
+			checks = append(checks, workflow.StepCheck{
+				Name: hostname + "_health_check", Status: statusPass,
+			})
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name:   hostname + "_health_check",
+				Status: statusFail,
+				Detail: "simple mode requires run.healthCheck — add httpGet or exec health check so Zerops can verify the service is ready",
+			})
+		}
 	}
 
 	return checks

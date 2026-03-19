@@ -114,7 +114,7 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 		{"strategy", "User chose push-dev strategy for bundev. Strategy recorded via zerops_workflow action=complete step=strategy."},
 	}
 
-	var lastResp workflow.BootstrapResponse
+	var lastResp *workflow.BootstrapResponse
 	for i, step := range steps {
 		text := callAndGetText(t, session, "zerops_workflow", map[string]any{
 			"action":      "complete",
@@ -122,46 +122,42 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 			"attestation": step.attestation,
 		})
 
-		if err := json.Unmarshal([]byte(text), &lastResp); err != nil {
+		// Use a fresh struct per iteration — json.Unmarshal doesn't zero absent pointer fields.
+		stepResp := &workflow.BootstrapResponse{}
+		if err := json.Unmarshal([]byte(text), stepResp); err != nil {
 			t.Fatalf("step %d (%s) parse: %v", i, step.name, err)
 		}
+		lastResp = stepResp
 
-		if lastResp.Progress.Completed != i+1 {
-			t.Errorf("step %d (%s): completed want %d, got %d", i, step.name, i+1, lastResp.Progress.Completed)
+		if stepResp.Progress.Completed != i+1 {
+			t.Errorf("step %d (%s): completed want %d, got %d", i, step.name, i+1, stepResp.Progress.Completed)
 		}
 
 		if i < len(steps)-1 {
 			// Not last step — current should be next step.
-			if lastResp.Current == nil {
+			if stepResp.Current == nil {
 				t.Fatalf("step %d (%s): current should not be nil", i, step.name)
 			}
-			if lastResp.Current.Name != steps[i+1].name {
-				t.Errorf("step %d (%s): next step want %q, got %q", i, step.name, steps[i+1].name, lastResp.Current.Name)
+			if stepResp.Current.Name != steps[i+1].name {
+				t.Errorf("step %d (%s): next step want %q, got %q", i, step.name, steps[i+1].name, stepResp.Current.Name)
 			}
 			// Each step should have detailedGuide and tools (Guidance excluded from JSON).
-			if lastResp.Current.DetailedGuide == "" {
-				t.Errorf("step %d: next step %q has empty detailedGuide", i, lastResp.Current.Name)
+			if stepResp.Current.DetailedGuide == "" {
+				t.Errorf("step %d: next step %q has empty detailedGuide", i, stepResp.Current.Name)
 			}
 		}
 	}
 
-	// After all 6 steps: bootstrap complete.
-	// Use a fresh variable — json.Unmarshal doesn't zero omitted pointer fields.
-	var finalResp workflow.BootstrapResponse
-	finalRaw := callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "status",
-	})
-	if err := json.Unmarshal([]byte(finalRaw), &finalResp); err != nil {
-		t.Fatalf("parse final status: %v", err)
+	// After all 6 steps: verify completion from the last BootstrapComplete response.
+	// Session is deleted on completion (C4 cleanup), so action=status is no longer available.
+	if lastResp.Current != nil {
+		t.Errorf("current should be nil after all steps complete, got: name=%q", lastResp.Current.Name)
 	}
-	if finalResp.Current != nil {
-		t.Errorf("current should be nil after all steps complete, got: name=%q", finalResp.Current.Name)
+	if lastResp.Progress.Completed != 6 {
+		t.Errorf("final completed: want 6, got %d", lastResp.Progress.Completed)
 	}
-	if finalResp.Progress.Completed != 6 {
-		t.Errorf("final completed: want 6, got %d", finalResp.Progress.Completed)
-	}
-	if !strings.Contains(strings.ToLower(finalResp.Message), "complete") {
-		t.Errorf("final message should contain 'complete', got: %q", finalResp.Message)
+	if !strings.Contains(strings.ToLower(lastResp.Message), "complete") {
+		t.Errorf("final message should contain 'complete', got: %q", lastResp.Message)
 	}
 }
 
@@ -523,19 +519,18 @@ func TestIntegration_BootstrapConductor_DevMode_G4Skipped(t *testing.T) {
 	}
 
 	// Complete remaining steps.
+	var lastDevResp *workflow.BootstrapResponse
 	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
-		if _, err := engine.BootstrapComplete(context.Background(), step, "Completed "+step+" for dev mode", nil); err != nil {
+		resp, err := engine.BootstrapComplete(context.Background(), step, "Completed "+step+" for dev mode", nil)
+		if err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
+		lastDevResp = resp
 	}
 
-	// Verify bootstrap completed (Active=false).
-	state, err := engine.GetState()
-	if err != nil {
-		t.Fatalf("GetState: %v", err)
-	}
-	if state.Bootstrap == nil || state.Bootstrap.Active {
-		t.Error("Bootstrap should be completed (Active=false)")
+	// Verify bootstrap completed via last response (session cleaned up on completion).
+	if lastDevResp == nil || lastDevResp.Current != nil {
+		t.Error("Bootstrap should be completed (no current step in final response)")
 	}
 }
 
@@ -557,18 +552,18 @@ func TestIntegration_BootstrapConductor_SimpleMode_Completes(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
+	var lastSimpleResp *workflow.BootstrapResponse
 	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
-		if _, err := engine.BootstrapComplete(context.Background(), step, "Completed "+step+" for simple mode", nil); err != nil {
+		resp, err := engine.BootstrapComplete(context.Background(), step, "Completed "+step+" for simple mode", nil)
+		if err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
+		lastSimpleResp = resp
 	}
 
-	state, err := engine.GetState()
-	if err != nil {
-		t.Fatalf("GetState: %v", err)
-	}
-	if state.Bootstrap == nil || state.Bootstrap.Active {
-		t.Error("Bootstrap should be completed (Active=false)")
+	// Verify bootstrap completed via last response (session cleaned up on completion).
+	if lastSimpleResp == nil || lastSimpleResp.Current != nil {
+		t.Error("Bootstrap should be completed (no current step in final response)")
 	}
 }
 
@@ -596,17 +591,17 @@ func TestIntegration_BootstrapConductor_MixedModes_StandardRequired(t *testing.T
 	}
 
 	// Complete all steps.
+	var lastMixedResp *workflow.BootstrapResponse
 	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
-		if _, err := engine.BootstrapComplete(context.Background(), step, "Completed "+step+" for mixed mode", nil); err != nil {
+		resp, err := engine.BootstrapComplete(context.Background(), step, "Completed "+step+" for mixed mode", nil)
+		if err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
+		lastMixedResp = resp
 	}
 
-	state, err := engine.GetState()
-	if err != nil {
-		t.Fatalf("GetState: %v", err)
-	}
-	if state.Bootstrap == nil || state.Bootstrap.Active {
-		t.Error("Bootstrap should be completed (Active=false)")
+	// Verify bootstrap completed via last response (session cleaned up on completion).
+	if lastMixedResp == nil || lastMixedResp.Current != nil {
+		t.Error("Bootstrap should be completed (no current step in final response)")
 	}
 }

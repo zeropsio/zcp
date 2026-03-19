@@ -247,6 +247,10 @@ func TestCheckGenerate_AllPass(t *testing.T) {
       start: node index.js
       ports:
         - port: 8080
+      healthCheck:
+        httpGet:
+          path: /health
+          port: 8080
 `)
 
 	plan := &workflow.ServicePlan{
@@ -330,6 +334,10 @@ func TestCheckGenerate_ValidEnvRef_Passes(t *testing.T) {
       start: node index.js
       ports:
         - port: 3000
+      healthCheck:
+        httpGet:
+          path: /health
+          port: 3000
 `)
 
 	plan := &workflow.ServicePlan{
@@ -477,6 +485,10 @@ func TestCheckGenerate_ExistsAndCreateDeps_EnvRefs_Pass(t *testing.T) {
       start: node index.js
       ports:
         - port: 3000
+      healthCheck:
+        httpGet:
+          path: /health
+          port: 3000
 `)
 
 	plan := &workflow.ServicePlan{
@@ -538,6 +550,10 @@ func TestCheckGenerate_MountPath_FindsYml(t *testing.T) {
       start: node index.js
       ports:
         - port: 8080
+      healthCheck:
+        httpGet:
+          path: /health
+          port: 8080
 `)
 	// No zerops.yml at project root — only in mount path.
 
@@ -557,6 +573,142 @@ func TestCheckGenerate_MountPath_FindsYml(t *testing.T) {
 		for _, c := range result.Checks {
 			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
 		}
+	}
+}
+
+func TestCheckGenerate_HealthCheck(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		yml           string
+		bootstrapMode string
+		wantPassed    bool
+		wantCheckName string
+		wantStatus    string
+	}{
+		{
+			name: "simple mode with healthCheck passes",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+      healthCheck:
+        httpGet:
+          path: /health
+          port: 8080
+`,
+			bootstrapMode: "simple",
+			wantPassed:    true,
+			wantCheckName: "appdev_health_check",
+			wantStatus:    "pass",
+		},
+		{
+			name: "simple mode without healthCheck fails",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+`,
+			bootstrapMode: "simple",
+			wantPassed:    false,
+			wantCheckName: "appdev_health_check",
+			wantStatus:    "fail",
+		},
+		{
+			name: "standard mode without healthCheck passes (not required)",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+`,
+			bootstrapMode: "",
+			wantPassed:    true,
+			wantCheckName: "",
+		},
+		{
+			name: "dev mode without healthCheck passes (not required)",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+`,
+			bootstrapMode: "dev",
+			wantPassed:    true,
+			wantCheckName: "",
+		},
+		{
+			name: "simple mode with implicit web server and no healthCheck passes (exempt)",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      base: php-nginx@8.4
+`,
+			bootstrapMode: "simple",
+			wantPassed:    true,
+			wantCheckName: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			stateDir := filepath.Join(dir, ".zcp", "state")
+			writeZeropsYml(t, dir, tt.yml)
+
+			plan := &workflow.ServicePlan{
+				Targets: []workflow.BootstrapTarget{{
+					Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: tt.bootstrapMode},
+				}},
+			}
+
+			checker := checkGenerate(stateDir)
+			result, err := checker(context.Background(), plan, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if result.Passed != tt.wantPassed {
+				t.Errorf("Passed = %v, want %v; summary: %s", result.Passed, tt.wantPassed, result.Summary)
+				for _, c := range result.Checks {
+					t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+				}
+			}
+			if tt.wantCheckName != "" {
+				found := false
+				for _, c := range result.Checks {
+					if c.Name == tt.wantCheckName && c.Status == tt.wantStatus {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("expected check %q with status %q", tt.wantCheckName, tt.wantStatus)
+					for _, c := range result.Checks {
+						t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+					}
+				}
+			}
+		})
 	}
 }
 

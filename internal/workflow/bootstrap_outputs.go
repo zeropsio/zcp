@@ -41,18 +41,30 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			}
 		}
 
+		hostname := target.Runtime.DevHostname
+		mode := target.Runtime.EffectiveMode()
+
+		// Resolve deploy strategy: explicit > auto-assign for non-standard > none.
+		strategy := state.Bootstrap.Strategies[hostname]
+		if strategy == "" && (mode == PlanModeDev || mode == PlanModeSimple) {
+			strategy = StrategyPushDev
+		}
+
 		meta := &ServiceMeta{
-			Hostname:         target.Runtime.DevHostname,
+			Hostname:         hostname,
 			Type:             target.Runtime.Type,
+			Mode:             mode,
 			Status:           MetaStatusBootstrapped,
 			StageHostname:    target.Runtime.StageHostname(),
 			Dependencies:     depHostnames,
 			BootstrapSession: state.SessionID,
 			BootstrappedAt:   now,
 		}
-		meta.Mode = target.Runtime.EffectiveMode()
+		if strategy != "" {
+			meta.Decisions = map[string]string{DecisionDeployStrategy: strategy}
+		}
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
-			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", target.Runtime.DevHostname, err)
+			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", hostname, err)
 		}
 	}
 
@@ -77,6 +89,7 @@ func (e *Engine) writeServiceMetas(state *WorkflowState, status string) {
 		meta := &ServiceMeta{
 			Hostname:         target.Runtime.DevHostname,
 			Type:             target.Runtime.Type,
+			Mode:             target.Runtime.EffectiveMode(),
 			Status:           status,
 			StageHostname:    target.Runtime.StageHostname(),
 			BootstrapSession: state.SessionID,

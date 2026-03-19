@@ -60,6 +60,16 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			"Describe what was accomplished in this step")), nil, nil
 	}
 
+	// Persist strategies before completing the strategy step.
+	if input.Step == workflow.StepStrategy && len(input.Strategies) > 0 {
+		if err := engine.BootstrapStoreStrategies(input.Strategies); err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrBootstrapNotActive,
+				fmt.Sprintf("Store strategies failed: %v", err),
+				"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
+		}
+	}
+
 	httpClient := &http.Client{
 		Timeout:   15 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},

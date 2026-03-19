@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 	"time"
@@ -13,10 +14,11 @@ import (
 
 // Engine orchestrates the workflow lifecycle.
 type Engine struct {
-	stateDir    string
-	sessionID   string
-	environment Environment
-	knowledge   knowledge.Provider
+	stateDir       string
+	sessionID      string
+	completedState *WorkflowState // holds final state after session file is cleaned up
+	environment    Environment
+	knowledge      knowledge.Provider
 }
 
 // NewEngine creates a new workflow engine rooted at baseDir.
@@ -56,11 +58,13 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 		return nil, fmt.Errorf("start: %w", err)
 	}
 	e.sessionID = state.SessionID
+	e.completedState = nil
 	return state, nil
 }
 
 // Reset clears the current session.
 func (e *Engine) Reset() error {
+	e.completedState = nil
 	if e.sessionID == "" {
 		return nil
 	}
@@ -162,15 +166,15 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 
 	sessionID := e.sessionID // capture before outputs may reference it
 
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if !state.Bootstrap.Active {
 		e.writeBootstrapOutputs(state)
-		if err := UnregisterSession(e.stateDir, state.SessionID); err != nil {
-			fmt.Fprintf(os.Stderr, "zcp: unregister completed session: %v\n", err)
+		if err := ResetSessionByID(e.stateDir, state.SessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: cleanup completed session: %v\n", err)
 		}
-	}
-
-	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
+		e.completedState = state
+		e.sessionID = ""
+	} else if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete save: %w", err)
 	}
 	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
@@ -259,6 +263,23 @@ func (e *Engine) BootstrapSkip(stepName, reason string) (*BootstrapResponse, err
 	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
 }
 
+// BootstrapStoreStrategies saves per-hostname deploy strategies to the active bootstrap state.
+func (e *Engine) BootstrapStoreStrategies(strategies map[string]string) error {
+	state, err := e.loadState()
+	if err != nil {
+		return fmt.Errorf("store strategies: %w", err)
+	}
+	if state.Bootstrap == nil {
+		return fmt.Errorf("store strategies: no bootstrap state")
+	}
+	if state.Bootstrap.Strategies == nil {
+		state.Bootstrap.Strategies = make(map[string]string, len(strategies))
+	}
+	maps.Copy(state.Bootstrap.Strategies, strategies)
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return saveSessionState(e.stateDir, e.sessionID, state)
+}
+
 // StoreDiscoveredEnvVars saves discovered env var names for a service hostname.
 func (e *Engine) StoreDiscoveredEnvVars(hostname string, vars []string) error {
 	state, err := e.loadState()
@@ -342,14 +363,14 @@ func (e *Engine) DeployComplete(step, attestation string) (*DeployResponse, erro
 		return nil, fmt.Errorf("deploy complete: %w", err)
 	}
 
-	if !state.Deploy.Active {
-		if err := UnregisterSession(e.stateDir, state.SessionID); err != nil {
-			fmt.Fprintf(os.Stderr, "zcp: unregister completed deploy session: %v\n", err)
-		}
-	}
-
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+	if !state.Deploy.Active {
+		if err := ResetSessionByID(e.stateDir, state.SessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: cleanup completed deploy session: %v\n", err)
+		}
+		e.completedState = state
+		e.sessionID = ""
+	} else if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("deploy complete save: %w", err)
 	}
 	return state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
@@ -427,14 +448,14 @@ func (e *Engine) CICDComplete(step, attestation, provider string) (*CICDResponse
 		return nil, fmt.Errorf("cicd complete: %w", err)
 	}
 
-	if !state.CICD.Active {
-		if err := UnregisterSession(e.stateDir, state.SessionID); err != nil {
-			fmt.Fprintf(os.Stderr, "zcp: unregister completed cicd session: %v\n", err)
-		}
-	}
-
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+	if !state.CICD.Active {
+		if err := ResetSessionByID(e.stateDir, state.SessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: cleanup completed cicd session: %v\n", err)
+		}
+		e.completedState = state
+		e.sessionID = ""
+	} else if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("cicd complete save: %w", err)
 	}
 	return state.CICD.BuildResponse(state.SessionID, state.Intent, e.environment, e.knowledge), nil
@@ -455,6 +476,9 @@ func (e *Engine) CICDStatus() (*CICDResponse, error) {
 // loadState loads state for the current session.
 func (e *Engine) loadState() (*WorkflowState, error) {
 	if e.sessionID == "" {
+		if e.completedState != nil {
+			return e.completedState, nil
+		}
 		return nil, fmt.Errorf("no active session")
 	}
 	return LoadSessionByID(e.stateDir, e.sessionID)

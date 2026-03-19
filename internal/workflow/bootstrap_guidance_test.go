@@ -411,8 +411,8 @@ func TestBuildIterationDelta_RemainingUsesMaxIterations(t *testing.T) {
 	}}
 	result := BuildIterationDelta("deploy", 1, plan, "some failure")
 	// maxIterations() defaults to 10, so remaining should be 9 at iteration 1.
-	if !strings.Contains(result, "remaining: 9") {
-		t.Errorf("expected remaining=9 (maxIterations()-1), got: %s", result)
+	if !strings.Contains(result, "session remaining: 9") {
+		t.Errorf("expected session remaining=9 (maxIterations()-1), got: %s", result)
 	}
 }
 

@@ -97,6 +97,12 @@ func (e ZeropsYmlEntry) HasDeployFiles() bool {
 	return len(e.Build.deployFilesList()) > 0
 }
 
+// HasImplicitWebServer returns true if the entry's runtime has a built-in web
+// server that starts automatically (no run.start or run.ports needed).
+func (e ZeropsYmlEntry) HasImplicitWebServer() bool {
+	return hasImplicitWebServer(e.Run.Base, e.Build.baseStrings())
+}
+
 // ParseZeropsYml reads and parses zerops.yml from workingDir.
 // Returns the parsed document or an error if the file is missing or invalid.
 func ParseZeropsYml(workingDir string) (*ZeropsYmlDoc, error) {

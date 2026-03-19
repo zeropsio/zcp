@@ -83,7 +83,7 @@ For EACH runtime service pair (dev + stage):
 6. Enable subdomain for stage, zerops_verify
 7. Connect shared-storage if applicable
 
-Iteration loop (max 3 per service): fail -> fix -> redeploy -> start server -> re-verify.
+If deploy+verify fails: diagnose, fix, redeploy, re-verify. Use zerops_workflow action=iterate for a full session reset.
 Skip if no runtime services exist.`,
 		Tools:        []string{"zerops_deploy", "zerops_discover", "zerops_subdomain", "zerops_logs", "zerops_mount", "zerops_verify", "zerops_manage"},
 		Verification: "SUCCESS WHEN: all runtime services deployed (RUNNING status) AND subdomains enabled AND zerops_verify returns healthy for each service.",
