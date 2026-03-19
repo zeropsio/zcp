@@ -273,7 +273,7 @@ func TestBuildResponse_FirstStep(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-1", "bun + postgres", 0)
+	resp := bs.BuildResponse("sess-1", "bun + postgres", 0, EnvLocal, nil)
 	if resp.SessionID != "sess-1" {
 		t.Errorf("SessionID: want sess-1, got %s", resp.SessionID)
 	}
@@ -310,7 +310,7 @@ func TestBuildResponse_MiddleStep(t *testing.T) {
 	bs.CurrentStep = 2
 	bs.Steps[2].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-2", "test", 0)
+	resp := bs.BuildResponse("sess-2", "test", 0, EnvLocal, nil)
 	if resp.Progress.Completed != 2 {
 		t.Errorf("Progress.Completed: want 2, got %d", resp.Progress.Completed)
 	}
@@ -334,7 +334,7 @@ func TestBuildResponse_AllDone(t *testing.T) {
 	bs.CurrentStep = 6
 	bs.Active = false
 
-	resp := bs.BuildResponse("sess-3", "test", 0)
+	resp := bs.BuildResponse("sess-3", "test", 0, EnvLocal, nil)
 	if resp.Current != nil {
 		t.Error("Current should be nil when all done")
 	}
@@ -357,7 +357,7 @@ func TestBuildResponse_WithSkipped(t *testing.T) {
 	bs.CurrentStep = 3
 	bs.Steps[3].Status = "in_progress"
 
-	resp := bs.BuildResponse("sess-4", "test", 0)
+	resp := bs.BuildResponse("sess-4", "test", 0, EnvLocal, nil)
 	if resp.Progress.Completed != 3 {
 		t.Errorf("Progress.Completed: want 3 (2 complete + 1 skipped), got %d", resp.Progress.Completed)
 	}
@@ -444,7 +444,7 @@ func TestBuildResponse_PriorContext_Attestations(t *testing.T) {
 	bs.CurrentStep = 2
 	bs.Steps[2].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-ctx", "bun + postgres", 0)
+	resp := bs.BuildResponse("sess-ctx", "bun + postgres", 0, EnvLocal, nil)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -484,7 +484,7 @@ func TestBuildResponse_PriorContext_WithPlan(t *testing.T) {
 		CreatedAt: "2026-02-27T00:00:00Z",
 	}
 
-	resp := bs.BuildResponse("sess-plan", "test", 0)
+	resp := bs.BuildResponse("sess-plan", "test", 0, EnvLocal, nil)
 	if resp.Current.PriorContext == nil {
 		t.Fatal("PriorContext should not be nil")
 	}
@@ -501,7 +501,7 @@ func TestBuildResponse_DetailedGuide_Populated(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-guide", "test", 0)
+	resp := bs.BuildResponse("sess-guide", "test", 0, EnvLocal, nil)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -515,7 +515,7 @@ func TestBuildResponse_PriorContext_FirstStep_Empty(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-first", "test", 0)
+	resp := bs.BuildResponse("sess-first", "test", 0, EnvLocal, nil)
 	if resp.Current.PriorContext != nil {
 		t.Error("PriorContext should be nil for first step (no prior attestations)")
 	}
@@ -640,7 +640,7 @@ func TestBuildResponse_PlanMode(t *testing.T) {
 
 	// Before plan submission, PlanMode should be empty.
 	bs := NewBootstrapState()
-	resp := bs.BuildResponse("sess1", "test", 0)
+	resp := bs.BuildResponse("sess1", "test", 0, EnvLocal, nil)
 	if resp.Current.PlanMode != "" {
 		t.Errorf("PlanMode before plan: want empty, got %q", resp.Current.PlanMode)
 	}
@@ -649,7 +649,7 @@ func TestBuildResponse_PlanMode(t *testing.T) {
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
 	}}
-	resp = bs.BuildResponse("sess1", "test", 0)
+	resp = bs.BuildResponse("sess1", "test", 0, EnvLocal, nil)
 	if resp.Current.PlanMode != "standard" {
 		t.Errorf("PlanMode after plan: want standard, got %q", resp.Current.PlanMode)
 	}
@@ -676,7 +676,7 @@ func TestBootstrapStepInfo_GuidanceExcludedFromJSON(t *testing.T) {
 			info: func() BootstrapStepInfo {
 				bs := NewBootstrapState()
 				bs.Steps[0].Status = stepInProgress
-				resp := bs.BuildResponse("sess-json", "test", 0)
+				resp := bs.BuildResponse("sess-json", "test", 0, EnvLocal, nil)
 				return *resp.Current
 			}(),
 		},
@@ -725,95 +725,30 @@ func TestStepDetails_VerificationHasSuccessCriteria(t *testing.T) {
 	}
 }
 
-// --- Item 22: NewBootstrapState has ContextDelivery ---
+// --- BuildResponse guide always fresh (no gating) ---
 
-func TestNewBootstrapState_HasContextDelivery(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-
-	if bs.Context == nil {
-		t.Fatal("Context should not be nil in new bootstrap state")
-	}
-	if bs.Context.GuideSentFor == nil {
-		t.Fatal("Context.GuideSentFor map should be initialized")
-	}
-	if len(bs.Context.GuideSentFor) != 0 {
-		t.Errorf("Context.GuideSentFor should be empty, got %d entries", len(bs.Context.GuideSentFor))
-	}
-	if bs.Context.ScopeLoaded {
-		t.Error("Context.ScopeLoaded should be false initially")
-	}
-	if bs.Context.BriefingFor != "" {
-		t.Errorf("Context.BriefingFor should be empty, got %q", bs.Context.BriefingFor)
-	}
-	if bs.Context.StacksSentAt != "" {
-		t.Errorf("Context.StacksSentAt should be empty, got %q", bs.Context.StacksSentAt)
-	}
-}
-
-// --- Item 30: buildPriorContext compression ---
-
-// --- Item 27: BuildResponse guide gating ---
-
-func TestBuildResponse_GuideGating_FirstDelivery(t *testing.T) {
+func TestBuildResponse_GuideAlwaysFresh(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-gate", "test", 0)
-	if resp.Current == nil {
+	resp1 := bs.BuildResponse("sess-fresh", "test", 0, EnvLocal, nil)
+	if resp1.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	if resp.Current.DetailedGuide == "" {
+	guide1 := resp1.Current.DetailedGuide
+	if guide1 == "" {
 		t.Error("first delivery should include full guide")
 	}
-	// Verify GuideSentFor was updated.
-	if bs.Context.GuideSentFor["discover"] != 0 {
-		t.Errorf("GuideSentFor[discover] should be 0 (iteration), got %d", bs.Context.GuideSentFor["discover"])
+
+	// Second call should also return full guide (no gating).
+	resp2 := bs.BuildResponse("sess-fresh", "test", 0, EnvLocal, nil)
+	if resp2.Current.DetailedGuide != guide1 {
+		t.Error("repeat delivery should return same full guide (no gating)")
 	}
 }
 
-func TestBuildResponse_GuideGating_RepeatDelivery_Stub(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	bs.Steps[0].Status = stepInProgress
-
-	// First call delivers full guide.
-	resp1 := bs.BuildResponse("sess-gate2", "test", 0)
-	fullGuide := resp1.Current.DetailedGuide
-
-	// Second call same iteration should deliver stub.
-	resp2 := bs.BuildResponse("sess-gate2", "test", 0)
-	if resp2.Current.DetailedGuide == fullGuide {
-		t.Error("repeat delivery should return stub, not full guide")
-	}
-	if !strings.Contains(resp2.Current.DetailedGuide, "already delivered") {
-		t.Error("stub should mention 'already delivered'")
-	}
-}
-
-func TestBuildResponse_GuideGating_NewIteration_FullGuide(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	bs.Steps[0].Status = stepInProgress
-
-	// First delivery at iteration 0.
-	bs.BuildResponse("sess-gate3", "test", 0)
-
-	// Second delivery at iteration 1 — should get full guide again.
-	resp := bs.BuildResponse("sess-gate3", "test", 1)
-	if resp.Current == nil {
-		t.Fatal("Current should not be nil")
-	}
-	if strings.Contains(resp.Current.DetailedGuide, "already delivered") {
-		t.Error("new iteration should deliver full guide, not stub")
-	}
-	if resp.Current.DetailedGuide == "" {
-		t.Error("new iteration should deliver full guide")
-	}
-}
-
-// --- Item 29: Iteration delta overrides guide in BuildResponse ---
+// --- Iteration delta overrides guide in BuildResponse ---
 
 func TestBuildResponse_IterationDelta_OverridesGuide(t *testing.T) {
 	t.Parallel()
@@ -827,7 +762,7 @@ func TestBuildResponse_IterationDelta_OverridesGuide(t *testing.T) {
 	bs.Steps[3].Status = stepInProgress
 
 	// At iteration > 0 on deploy step, should get delta.
-	resp := bs.BuildResponse("sess-delta", "test", 1)
+	resp := bs.BuildResponse("sess-delta", "test", 1, EnvLocal, nil)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -920,7 +855,7 @@ func TestBuildResponse_DeployStep_UsesProgressiveGuidance(t *testing.T) {
 	bs.CurrentStep = 3
 	bs.Steps[3].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-prog", "test", 0)
+	resp := bs.BuildResponse("sess-prog", "test", 0, EnvLocal, nil)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -949,7 +884,7 @@ func TestBuildResponse_DeployStep_SimpleMode_ShorterGuidance(t *testing.T) {
 	bs.CurrentStep = 3
 	bs.Steps[3].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-simple", "test", 0)
+	resp := bs.BuildResponse("sess-simple", "test", 0, EnvLocal, nil)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
@@ -961,20 +896,20 @@ func TestBuildResponse_DeployStep_SimpleMode_ShorterGuidance(t *testing.T) {
 	}
 }
 
-func TestBuildResponse_NonDeployStep_GuidanceUnchanged(t *testing.T) {
+func TestBuildResponse_NonProgressiveStep_GuidanceUnchanged(t *testing.T) {
 	t.Parallel()
+	// discover and provision use ResolveGuidance directly (not progressive).
+	// generate and deploy are progressive (mode-filtered).
 	tests := []struct {
 		name    string
 		stepIdx int
 	}{
 		{"discover", 0},
 		{"provision", 1},
-		{"generate", 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			// Fresh BootstrapState each sub-test to avoid guide gating.
 			bs := NewBootstrapState()
 			for i := 0; i < tt.stepIdx; i++ {
 				bs.Steps[i].Status = stepComplete
@@ -983,15 +918,63 @@ func TestBuildResponse_NonDeployStep_GuidanceUnchanged(t *testing.T) {
 			bs.CurrentStep = tt.stepIdx
 			bs.Steps[tt.stepIdx].Status = stepInProgress
 
-			resp := bs.BuildResponse("sess-nondeloy-"+tt.name, "test", 0)
+			resp := bs.BuildResponse("sess-nonprog-"+tt.name, "test", 0, EnvLocal, nil)
 			if resp.Current == nil {
 				t.Fatal("Current should not be nil")
 			}
 
 			expected := ResolveGuidance(tt.name)
 			if resp.Current.DetailedGuide != expected {
-				t.Errorf("non-deploy step %q: DetailedGuide should match ResolveGuidance exactly\ngot length %d, want length %d",
+				t.Errorf("step %q: DetailedGuide should match ResolveGuidance exactly\ngot length %d, want length %d",
 					tt.name, len(resp.Current.DetailedGuide), len(expected))
+			}
+		})
+	}
+}
+
+func TestBuildResponse_GenerateStep_UsesProgressiveGuidance(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		mode        string
+		wantContain string
+		wantExclude string
+	}{
+		{"standard", "", "zsc noop --silent", ""},
+		{"dev", "dev", "zsc noop --silent", ""},
+		{"simple", "simple", "REAL start command", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			bs := NewBootstrapState()
+			hostname := "appdev"
+			if tt.mode == "simple" {
+				hostname = "app"
+			}
+			bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+				{Runtime: RuntimeTarget{DevHostname: hostname, Type: "bun@1.2", BootstrapMode: tt.mode}},
+			}}
+			for i := range 2 {
+				bs.Steps[i].Status = stepComplete
+				bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
+			}
+			bs.CurrentStep = 2
+			bs.Steps[2].Status = stepInProgress
+
+			resp := bs.BuildResponse("sess-gen-"+tt.name, "test", 0, EnvLocal, nil)
+			if resp.Current == nil {
+				t.Fatal("Current should not be nil")
+			}
+			if !strings.Contains(resp.Current.DetailedGuide, tt.wantContain) {
+				t.Errorf("generate guide for %s mode should contain %q", tt.name, tt.wantContain)
+			}
+			if tt.wantExclude != "" && strings.Contains(resp.Current.DetailedGuide, tt.wantExclude) {
+				t.Errorf("generate guide for %s mode should NOT contain %q", tt.name, tt.wantExclude)
+			}
+			// All modes should include common content.
+			if !strings.Contains(resp.Current.DetailedGuide, "Application code requirements") {
+				t.Errorf("generate guide for %s mode missing common content", tt.name)
 			}
 		})
 	}
@@ -1050,36 +1033,6 @@ func TestResetForIteration_ResetsGenerateDeployVerify(t *testing.T) {
 	}
 }
 
-func TestResetForIteration_ClearsGuideSentFor(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	bs.Context = &ContextDelivery{
-		GuideSentFor: map[string]int{
-			StepDiscover:  0,
-			StepProvision: 0,
-			StepGenerate:  0,
-			StepDeploy:    0,
-			StepVerify:    0,
-			StepStrategy:  0,
-		},
-	}
-
-	bs.ResetForIteration()
-
-	// generate, deploy, verify should be cleared.
-	for _, step := range []string{StepGenerate, StepDeploy, StepVerify} {
-		if _, exists := bs.Context.GuideSentFor[step]; exists {
-			t.Errorf("GuideSentFor[%s] should be cleared after reset", step)
-		}
-	}
-	// discover, provision, strategy should be preserved.
-	for _, step := range []string{StepDiscover, StepProvision, StepStrategy} {
-		if _, exists := bs.Context.GuideSentFor[step]; !exists {
-			t.Errorf("GuideSentFor[%s] should be preserved after reset", step)
-		}
-	}
-}
-
 func TestResetForIteration_SetsCurrentStepInProgress(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
@@ -1105,73 +1058,49 @@ func TestResetForIteration_NilBootstrap_NoOp(t *testing.T) {
 	b.ResetForIteration()
 }
 
-// --- Context recovery: resolveGuideFresh ---
+// --- BuildResponse knowledge injection ---
 
-func TestResolveGuideFresh_AlwaysReturnsFullGuide(t *testing.T) {
+func TestBuildResponse_Provision_GuideContainsKnowledge(t *testing.T) {
 	t.Parallel()
+	store := testKnowledgeProvider(t)
 	bs := NewBootstrapState()
-	bs.Steps[0].Status = stepInProgress
+	bs.Steps[0].Status = stepComplete
+	bs.Steps[0].Attestation = "FRESH project detected"
+	bs.CurrentStep = 1
+	bs.Steps[1].Status = stepInProgress
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
 
-	// Deliver guide once via BuildResponse to mark it as sent.
-	bs.BuildResponse("sess-fresh", "test", 0)
-	if _, ok := bs.Context.GuideSentFor["discover"]; !ok {
-		t.Fatal("precondition: guide should be marked as sent")
+	resp := bs.BuildResponse("sess-kn", "test", 0, EnvContainer, store)
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil")
 	}
-
-	// resolveGuideFresh must return full guide despite gating.
-	guide := bs.resolveGuideFresh("discover", 0)
-	if guide == "" {
-		t.Error("resolveGuideFresh should return non-empty guide")
-	}
-	if strings.Contains(guide, "already delivered") {
-		t.Error("resolveGuideFresh must not return gating stub")
-	}
-
-	// Should match ResolveGuidance (non-deploy steps use full section).
-	expected := ResolveGuidance("discover")
-	if guide != expected {
-		t.Errorf("resolveGuideFresh should match ResolveGuidance\ngot length %d, want length %d", len(guide), len(expected))
+	if !strings.Contains(resp.Current.DetailedGuide, "import.yml Schema") {
+		t.Error("provision guide should contain 'import.yml Schema' from knowledge injection")
 	}
 }
 
-func TestResolveGuideFresh_DoesNotUpdateGating(t *testing.T) {
+func TestBuildResponse_Generate_GuideContainsRuntimeGuide(t *testing.T) {
 	t.Parallel()
+	store := testKnowledgeProvider(t)
 	bs := NewBootstrapState()
-	bs.Steps[0].Status = stepInProgress
-
-	// GuideSentFor should be empty initially.
-	if len(bs.Context.GuideSentFor) != 0 {
-		t.Fatal("precondition: GuideSentFor should be empty")
-	}
-
-	// Call resolveGuideFresh — it must not modify gating state.
-	bs.resolveGuideFresh("discover", 0)
-	if len(bs.Context.GuideSentFor) != 0 {
-		t.Error("resolveGuideFresh must not modify GuideSentFor")
-	}
-}
-
-func TestResolveGuideFresh_IterationDelta(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	// Advance to deploy step.
-	for i := range 3 {
+	for i := range 2 {
 		bs.Steps[i].Status = stepComplete
 		bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
 	}
-	bs.CurrentStep = 3
-	bs.Steps[3].Status = stepInProgress
+	bs.CurrentStep = 2
+	bs.Steps[2].Status = stepInProgress
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
 	}}
 
-	// At iteration > 0 on deploy step, should return iteration delta.
-	guide := bs.resolveGuideFresh("deploy", 1)
-	if guide == "" {
-		t.Error("resolveGuideFresh should return non-empty guide for deploy iteration")
+	resp := bs.BuildResponse("sess-kn2", "test", 0, EnvContainer, store)
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil")
 	}
-	if !strings.Contains(guide, "ITERATION") {
-		t.Error("expected iteration delta content")
+	if !strings.Contains(resp.Current.DetailedGuide, "Node.js") {
+		t.Error("generate guide should contain Node.js runtime guide from knowledge injection")
 	}
 }
 

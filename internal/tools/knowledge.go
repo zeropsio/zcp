@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -24,7 +23,7 @@ type KnowledgeInput struct {
 }
 
 // RegisterKnowledge registers the zerops_knowledge tool.
-func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
+func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, _ *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
 		Description: "Load Zerops platform knowledge. Four modes: (1) briefing — stack-specific rules via runtime/services params. (2) scope=infrastructure — complete platform reference, required before generating YAML. (3) query — BM25 search. (4) recipe — pre-built framework configs.",
@@ -68,7 +67,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 				"Use only one mode per call")), nil, nil
 		}
 
-		// Mode 1: Scope (platform reference)
+		// Mode 1: Scope (platform reference) — always returns full content.
 		if hasScope {
 			if input.Scope != "infrastructure" {
 				return convertError(platform.NewPlatformError(
@@ -83,20 +82,12 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 					fmt.Sprintf("Failed to load core reference: %v", err),
 					"Check that core knowledge files are embedded")), nil, nil
 			}
-			// Prepend platform universals unless scope was already loaded in this session.
 			result := core
-			if !isScopeLoaded(engine) {
-				if universals, uErr := store.GetUniversals(); uErr == nil {
-					result = universals + "\n\n---\n\n" + core
-				}
+			if universals, uErr := store.GetUniversals(); uErr == nil {
+				result = universals + "\n\n---\n\n" + core
 			}
 			if tracker != nil {
 				tracker.RecordScope()
-			}
-			if engine != nil && engine.HasActiveSession() {
-				_ = engine.UpdateContextDelivery(func(cd *workflow.ContextDelivery) {
-					cd.ScopeLoaded = true
-				})
 			}
 			return textResult(result), nil, nil
 		}
@@ -107,15 +98,8 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			return jsonResult(results), nil, nil
 		}
 
-		// Mode 3: Contextual briefing
+		// Mode 3: Contextual briefing — always returns full content.
 		if hasBriefing {
-			briefingKey := buildBriefingKey(input.Runtime, input.Services)
-
-			// Dedup: if same briefing was already loaded, return stub.
-			if currentBriefing := getBriefingFor(engine); currentBriefing == briefingKey {
-				return textResult(fmt.Sprintf("[Briefing for %s already loaded. Use query mode for specific topics.]", briefingKey)), nil, nil
-			}
-
 			var liveTypes []platform.ServiceStackType
 			if client != nil && cache != nil {
 				liveTypes = cache.Get(ctx, client)
@@ -129,11 +113,6 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			}
 			if tracker != nil {
 				tracker.RecordBriefing(input.Runtime, input.Services)
-			}
-			if engine != nil && engine.HasActiveSession() {
-				_ = engine.UpdateContextDelivery(func(cd *workflow.ContextDelivery) {
-					cd.BriefingFor = briefingKey
-				})
 			}
 			return textResult(briefing), nil, nil
 		}
@@ -154,38 +133,4 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidUsage, "Invalid mode routing", "")), nil, nil
 	})
-}
-
-// isScopeLoaded checks if scope was already delivered in the current session.
-func isScopeLoaded(engine *workflow.Engine) bool {
-	if engine == nil || !engine.HasActiveSession() {
-		return false
-	}
-	state, err := engine.GetState()
-	if err != nil || state.Bootstrap == nil || state.Bootstrap.Context == nil {
-		return false
-	}
-	return state.Bootstrap.Context.ScopeLoaded
-}
-
-// getBriefingFor returns the current BriefingFor key from session state.
-func getBriefingFor(engine *workflow.Engine) string {
-	if engine == nil || !engine.HasActiveSession() {
-		return ""
-	}
-	state, err := engine.GetState()
-	if err != nil || state.Bootstrap == nil || state.Bootstrap.Context == nil {
-		return ""
-	}
-	return state.Bootstrap.Context.BriefingFor
-}
-
-// buildBriefingKey constructs the dedup key from runtime and services.
-func buildBriefingKey(runtime string, services []string) string {
-	var parts []string
-	if runtime != "" {
-		parts = append(parts, runtime)
-	}
-	parts = append(parts, services...)
-	return strings.Join(parts, "+")
 }

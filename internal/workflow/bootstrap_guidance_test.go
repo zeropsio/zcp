@@ -4,6 +4,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/knowledge"
 )
 
 func TestResolveGuidance(t *testing.T) {
@@ -33,21 +35,21 @@ func TestResolveGuidance(t *testing.T) {
 			true,
 		},
 		{
-			"generate_returns_content",
-			"generate",
-			"zerops.yml",
+			"generate_common_section_exists",
+			"generate-common",
+			"Application code requirements",
 			true,
 		},
 		{
-			"generate_has_commit_recommendation",
-			"generate",
-			"committing",
-			true,
-		},
-		{
-			"generate_has_noop_start",
-			"generate",
+			"generate_standard_has_noop",
+			"generate-standard",
 			"zsc noop --silent",
+			true,
+		},
+		{
+			"generate_simple_has_real_start",
+			"generate-simple",
+			"REAL start command",
 			true,
 		},
 		{
@@ -104,11 +106,11 @@ func TestResolveGuidance(t *testing.T) {
 	}
 }
 
-func TestResolveGuidance_NoDevStartCommand(t *testing.T) {
+func TestResolveGuidance_GenerateStandard_NoDevStartCommand(t *testing.T) {
 	t.Parallel()
-	guide := ResolveGuidance("generate")
+	guide := ResolveGuidance("generate-standard")
 	if strings.Contains(guide, "devStartCommand") {
-		t.Error("generate guidance still contains 'devStartCommand' — should use 'zsc noop --silent' instead")
+		t.Error("generate-standard guidance still contains 'devStartCommand' — should use 'zsc noop --silent' instead")
 	}
 }
 
@@ -169,18 +171,84 @@ Content of bar section.
 	}
 }
 
-// --- Item 28: ResolveProgressiveGuidance ---
+// --- ResolveProgressiveGuidance ---
 
-func TestResolveProgressiveGuidance_NonDeployStep(t *testing.T) {
+func TestResolveProgressiveGuidance_NonProgressiveStep(t *testing.T) {
 	t.Parallel()
-	// Non-deploy steps should return same as ResolveGuidance.
+	// Non-deploy/non-generate steps should return same as ResolveGuidance.
 	guide := ResolveProgressiveGuidance("discover", nil, 0)
 	if guide == "" {
 		t.Error("expected non-empty guidance for discover step")
 	}
 	expected := ResolveGuidance("discover")
 	if guide != expected {
-		t.Error("non-deploy step should return same as ResolveGuidance")
+		t.Error("non-progressive step should return same as ResolveGuidance")
+	}
+}
+
+func TestResolveProgressiveGuidance_GenerateStandard(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+	}}
+	guide := ResolveProgressiveGuidance("generate", plan, 0)
+	if guide == "" {
+		t.Fatal("expected non-empty guidance for generate step")
+	}
+	// Should include common + standard sections.
+	if !strings.Contains(guide, "Application code requirements") {
+		t.Error("generate-common section missing")
+	}
+	if !strings.Contains(guide, "zsc noop --silent") {
+		t.Error("generate-standard should mention noop start")
+	}
+	// Should NOT include simple mode guidance.
+	if strings.Contains(guide, "REAL start command") {
+		t.Error("standard mode should not include simple mode guidance")
+	}
+}
+
+func TestResolveProgressiveGuidance_GenerateSimple(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "simple"}},
+	}}
+	guide := ResolveProgressiveGuidance("generate", plan, 0)
+	if guide == "" {
+		t.Fatal("expected non-empty guidance for generate step in simple mode")
+	}
+	// Should include common + simple sections.
+	if !strings.Contains(guide, "Application code requirements") {
+		t.Error("generate-common section missing")
+	}
+	if !strings.Contains(guide, "REAL start command") {
+		t.Error("generate-simple should mention real start command")
+	}
+	if !strings.Contains(guide, "healthCheck") {
+		t.Error("generate-simple should mention healthCheck")
+	}
+	// Should NOT include standard/dev mode zerops.yml rules.
+	if strings.Contains(guide, "Dev setup rules") {
+		t.Error("simple mode should not include standard/dev 'Dev setup rules' section")
+	}
+}
+
+func TestResolveProgressiveGuidance_GenerateMixed(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+		{Runtime: RuntimeTarget{DevHostname: "frontend", Type: "nginx@1", BootstrapMode: "simple"}},
+	}}
+	guide := ResolveProgressiveGuidance("generate", plan, 0)
+	if guide == "" {
+		t.Fatal("expected non-empty guidance for mixed mode generate")
+	}
+	// Both standard and simple sections should be present.
+	if !strings.Contains(guide, "zsc noop --silent") {
+		t.Error("mixed mode should include standard noop guidance")
+	}
+	if !strings.Contains(guide, "REAL start command") {
+		t.Error("mixed mode should include simple start guidance")
 	}
 }
 
@@ -343,12 +411,8 @@ func TestBuildIterationDelta_RemainingUsesMaxIterations(t *testing.T) {
 	}}
 	result := BuildIterationDelta("deploy", 1, plan, "some failure")
 	// maxIterations() defaults to 10, so remaining should be 9 at iteration 1.
-	if !strings.Contains(result, "9") {
+	if !strings.Contains(result, "remaining: 9") {
 		t.Errorf("expected remaining=9 (maxIterations()-1), got: %s", result)
-	}
-	// Must NOT show 4 (which would be old maxBootstrapIterations=5 minus 1).
-	if strings.Contains(result, "REMAINING: 4") {
-		t.Error("remaining should use maxIterations() (default 10), not old constant 5")
 	}
 }
 
@@ -360,9 +424,6 @@ func TestBuildIterationDelta_NoForceGuide(t *testing.T) {
 	result := BuildIterationDelta("deploy", 1, plan, "some failure")
 	if strings.Contains(result, "forceGuide") {
 		t.Error("output should not contain 'forceGuide'")
-	}
-	if !strings.Contains(result, `action="iterate"`) {
-		t.Errorf("output should contain action=\"iterate\", got: %s", result)
 	}
 }
 
@@ -399,11 +460,209 @@ func TestBuildIterationDelta_DeployWithIteration(t *testing.T) {
 	if !strings.Contains(result, "timeout on /status") {
 		t.Error("delta should contain last attestation")
 	}
-	if !strings.Contains(result, "RECOVERY PATTERNS") {
-		t.Error("delta should contain recovery patterns table")
+	if !strings.Contains(result, "DIAGNOSE") {
+		t.Error("delta should contain DIAGNOSE guidance for iteration 1")
 	}
-	if !strings.Contains(result, "MAX ITERATIONS REMAINING") {
-		t.Error("delta should contain max iterations remaining")
+}
+
+func TestBuildIterationDelta_Escalation_Tier1(t *testing.T) {
+	t.Parallel()
+	for _, iter := range []int{1, 2} {
+		result := BuildIterationDelta("deploy", iter, nil, "some failure")
+		if !strings.Contains(result, "DIAGNOSE") {
+			t.Errorf("iteration %d should contain DIAGNOSE (tier 1)", iter)
+		}
+	}
+}
+
+func TestBuildIterationDelta_Escalation_Tier2(t *testing.T) {
+	t.Parallel()
+	for _, iter := range []int{3, 4} {
+		result := BuildIterationDelta("deploy", iter, nil, "some failure")
+		if !strings.Contains(result, "Systematic check") {
+			t.Errorf("iteration %d should contain 'Systematic check' (tier 2)", iter)
+		}
+		if !strings.Contains(result, "0.0.0.0") {
+			t.Errorf("iteration %d should reference 0.0.0.0 binding check", iter)
+		}
+	}
+}
+
+func TestBuildIterationDelta_Escalation_Tier3(t *testing.T) {
+	t.Parallel()
+	for _, iter := range []int{5, 8} {
+		result := BuildIterationDelta("deploy", iter, nil, "some failure")
+		if !strings.Contains(result, "STOP") {
+			t.Errorf("iteration %d should contain STOP (tier 3)", iter)
+		}
+		if !strings.Contains(result, "user") {
+			t.Errorf("iteration %d should mention user involvement", iter)
+		}
+	}
+}
+
+// --- buildGuide tests ---
+
+func testKnowledgeProvider(t *testing.T) *knowledge.Store {
+	t.Helper()
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+	return store
+}
+
+func TestBuildGuide_NilKnowledge_ReturnBaseGuide(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	if guide == "" {
+		t.Error("should return base guide even without knowledge provider")
+	}
+	expected := ResolveGuidance(StepProvision)
+	if guide != expected {
+		t.Errorf("without knowledge, guide should equal base guidance\ngot length %d, want length %d", len(guide), len(expected))
+	}
+}
+
+func TestBuildGuide_Provision_ContainsImportSchema(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeProvider(t)
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, store)
+	if !strings.Contains(guide, "import.yml Schema") {
+		t.Error("provision guide should contain 'import.yml Schema'")
+	}
+}
+
+func TestBuildGuide_Provision_ContainsPreprocessorFunctions(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeProvider(t)
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, store)
+	if !strings.Contains(guide, "Preprocessor Functions") {
+		t.Error("provision guide should contain 'Preprocessor Functions' (H3 inside import.yml Schema)")
+	}
+}
+
+func TestBuildGuide_Generate_ContainsRuntimeGuide(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeProvider(t)
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, store)
+	if !strings.Contains(guide, "Node.js") {
+		t.Error("generate guide should contain Node.js runtime guide")
+	}
+}
+
+func TestBuildGuide_Generate_ContainsEnvVars(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeProvider(t)
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"}}},
+	}}
+	bs.DiscoveredEnvVars = map[string][]string{
+		"db": {"connectionString", "port"},
+	}
+	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, store)
+	if !strings.Contains(guide, "Discovered Environment Variables") {
+		t.Error("generate guide should contain discovered env vars section")
+	}
+	if !strings.Contains(guide, "${db_connectionString}") {
+		t.Error("generate guide should contain env var references")
+	}
+}
+
+func TestBuildGuide_Generate_ContainsZeropsYmlSchema(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeProvider(t)
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, store)
+	if !strings.Contains(guide, "zerops.yml Schema") {
+		t.Error("generate guide should contain 'zerops.yml Schema'")
+	}
+}
+
+func TestBuildGuide_Deploy_ContainsSchemaRules(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeProvider(t)
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	guide := bs.buildGuide(StepDeploy, 0, EnvContainer, store)
+	if !strings.Contains(guide, "Deploy Rules") {
+		t.Error("deploy guide should contain 'Deploy Rules'")
+	}
+}
+
+func TestBuildGuide_Deploy_ContainsEnvVars(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeProvider(t)
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	bs.DiscoveredEnvVars = map[string][]string{
+		"cache": {"connectionString"},
+	}
+	guide := bs.buildGuide(StepDeploy, 0, EnvContainer, store)
+	if !strings.Contains(guide, "${cache_connectionString}") {
+		t.Error("deploy guide should contain env var references")
+	}
+}
+
+func TestBuildGuide_KnowledgeStoreError_GracefulDegradation(t *testing.T) {
+	t.Parallel()
+	// Use an empty store — all Get() calls will fail.
+	emptyStore, _ := knowledge.NewStore(map[string]*knowledge.Document{})
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, emptyStore)
+	if guide == "" {
+		t.Error("should still return base guide when knowledge store has errors")
+	}
+	// Should be just the base guide without knowledge sections.
+	expected := ResolveGuidance(StepProvision)
+	if guide != expected {
+		t.Errorf("with empty store, guide should equal base guidance\ngot length %d, want length %d", len(guide), len(expected))
+	}
+}
+
+func TestBuildGuide_MissingRuntimeGuide_StillHasBaseGuide(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeProvider(t)
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "unknown@1.0"}},
+	}}
+	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, store)
+	if guide == "" {
+		t.Error("should return non-empty guide even with unknown runtime")
+	}
+	// Base guide should still be present.
+	base := ResolveGuidance(StepGenerate)
+	if !strings.HasPrefix(guide, base) {
+		t.Error("guide should start with base guidance even when runtime guide is missing")
 	}
 }
 

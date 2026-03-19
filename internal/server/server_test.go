@@ -297,7 +297,7 @@ func TestBuildInstructions_NilClient(t *testing.T) {
 func TestBuildInstructions_WorkflowHint_ActiveBootstrap(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := workflow.NewEngine(dir)
+	eng := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
 	// Start bootstrap and complete 2 steps.
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
@@ -334,7 +334,7 @@ func TestBuildInstructions_WorkflowHint_NoState(t *testing.T) {
 func TestBuildInstructions_WorkflowHint_PhaseDone_NoHint(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := workflow.NewEngine(dir)
+	eng := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
 	// Complete full bootstrap — DONE sessions are immediately unregistered.
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {

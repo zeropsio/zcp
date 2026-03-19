@@ -424,7 +424,7 @@ func TestBuildStepChecker_KnownSteps(t *testing.T) {
 func TestCheckProvision_StoresDiscoveredEnvVars(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := workflow.NewEngine(dir)
+	eng := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
 	// Start a bootstrap session.
 	_, err := eng.BootstrapStart("proj-1", "test intent")
@@ -568,7 +568,7 @@ func TestCheckProvision_NewRuntime_StageActive_Fail(t *testing.T) {
 func TestCheckProvision_ExistsDep_StoresEnvVars(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := workflow.NewEngine(dir)
+	eng := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "exists dep env var test")
 	if err != nil {
@@ -663,7 +663,7 @@ func TestCheckProvision_ExistsDep_NoEnvVars_Fail(t *testing.T) {
 func TestCheckProvision_MixedResolution_StoresBoth(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := workflow.NewEngine(dir)
+	eng := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "mixed resolution test")
 	if err != nil {
@@ -837,7 +837,7 @@ func TestCheckDeploy_ExistingRuntime_StageRunning_Pass(t *testing.T) {
 func TestCheckProvision_StoreEnvVarsError_Fail(t *testing.T) {
 	t.Parallel()
 	// Engine without bootstrap session — StoreDiscoveredEnvVars will fail.
-	eng := workflow.NewEngine(t.TempDir())
+	eng := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{

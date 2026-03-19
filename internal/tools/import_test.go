@@ -172,7 +172,7 @@ func TestImportTool_PollPartialFailure(t *testing.T) {
 func TestImportTool_NoWorkflowSession_Blocked(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterImport(srv, mock, "proj-1", nil, engine)
@@ -202,7 +202,7 @@ func TestImportTool_WithWorkflowSession_Succeeds(t *testing.T) {
 		WithProcess(&platform.Process{ID: "p-1", Status: statusFinished})
 
 	dir := t.TempDir()
-	engine := workflow.NewEngine(dir)
+	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 	if _, err := engine.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("start session: %v", err)
 	}

@@ -42,7 +42,7 @@ func testStoreWithCore(t *testing.T) *Store {
 		"zerops://themes/operations": {
 			URI:     "zerops://themes/operations",
 			Title:   "Zerops Operations & Decisions",
-			Content: "# Zerops Operations & Decisions\n\n## Choose Database\n\nUse PostgreSQL for everything unless you have a specific reason not to.\n\n## Choose Cache\n\nUse Valkey (default) — KeyDB is deprecated.\n\n## Choose Runtime Base\n\nGo, Rust, .NET build natively — use alpine base for smaller images.",
+			Content: "# Zerops Operations & Decisions\n\n## Service Selection Decisions\n\n### Choose Database\n\nUse PostgreSQL for everything unless you have a specific reason not to.\n\n### Choose Cache\n\nUse Valkey (default) — KeyDB is deprecated.\n\n### Choose Runtime Base\n\nGo, Rust, .NET build natively — use alpine base for smaller images.",
 		},
 		"zerops://recipes/ghost": {
 			URI:     "zerops://recipes/ghost",

@@ -147,6 +147,78 @@ func TestStageHostname_NoDevSuffix(t *testing.T) {
 	}
 }
 
+func TestRuntimeBase(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		plan *ServicePlan
+		want string
+	}{
+		{"nil_plan", nil, ""},
+		{"empty_targets", &ServicePlan{}, ""},
+		{"nodejs_version", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+		}}, "nodejs"},
+		{"bun_no_version", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun"}},
+		}}, "bun"},
+		{"first_target_wins", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "go@1"}},
+			{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "nodejs@22"}},
+		}}, "go"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.plan.RuntimeBase(); got != tt.want {
+				t.Errorf("RuntimeBase() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDependencyTypes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		plan *ServicePlan
+		want []string
+	}{
+		{"nil_plan", nil, nil},
+		{"no_deps", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "go@1"}},
+		}}, nil},
+		{"single_dep", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "go@1"}, Dependencies: []Dependency{
+				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
+			}},
+		}}, []string{"postgresql@16"}},
+		{"deduplicates", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "go@1"}, Dependencies: []Dependency{
+				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
+			}},
+			{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2"}, Dependencies: []Dependency{
+				{Hostname: "db", Type: "postgresql@16", Resolution: "SHARED"},
+				{Hostname: "cache", Type: "valkey@7.2", Resolution: "CREATE"},
+			}},
+		}}, []string{"postgresql@16", "valkey@7.2"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := tt.plan.DependencyTypes()
+			if len(got) != len(tt.want) {
+				t.Fatalf("DependencyTypes() = %v, want %v", got, tt.want)
+			}
+			for i, v := range got {
+				if v != tt.want[i] {
+					t.Errorf("DependencyTypes()[%d] = %q, want %q", i, v, tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 var testLiveTypes = []platform.ServiceStackType{
 	{Name: "Node.js", Category: "USER", Versions: []platform.ServiceStackTypeVersion{
 		{Name: "nodejs@22", Status: "ACTIVE"},

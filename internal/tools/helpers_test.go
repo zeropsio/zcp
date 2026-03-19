@@ -62,7 +62,7 @@ func callToolMayError(t *testing.T, srv *mcp.Server, name string, args map[strin
 // testEngine creates a workflow engine with an active session for tests.
 func testEngine(t *testing.T) *workflow.Engine {
 	t.Helper()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	if _, err := engine.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("start test session: %v", err)
 	}

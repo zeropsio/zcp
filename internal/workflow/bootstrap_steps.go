@@ -21,8 +21,11 @@ var stepDetails = []StepDetail{
 2. Classify: FRESH (no runtime services), CONFORMANT (dev+stage pattern), NON_CONFORMANT
 3. Identify runtime + managed services from user intent
 4. Validate types against availableStacks
-5. Load knowledge: zerops_knowledge runtime="{type}" services=[...] AND scope="infrastructure"
-6. Submit plan via zerops_workflow action="complete" step="discover" plan=[...]
+5. PRESENT the plan to user for confirmation before submitting:
+   "I'll set up: [services]. Mode: [standard/dev/simple]. OK?"
+6. Submit confirmed plan via zerops_workflow action="complete" step="discover" plan=[...]
+NOTE: Platform knowledge is delivered with each step guide automatically.
+For specific frameworks: zerops_knowledge recipe="{name}"
 
 CONFORMANT projects with matching stack: route to deploy workflow instead.
 NON_CONFORMANT: ASK user before any changes.`,
@@ -48,6 +51,7 @@ NON_CONFORMANT: ASK user before any changes.`,
 		Name:     StepGenerate,
 		Category: CategoryCreative,
 		Guidance: `Write zerops.yml and application code to mounted dev filesystem.
+Platform rules, runtime knowledge, and discovered env vars are included below.
 PREREQUISITES: dev services mounted, env vars discovered from provision step.
 1. Write zerops.yml with dev setup entry (stage entry comes after dev is verified)
 2. Dev: deployFiles: [.], start: zsc noop --silent (or omit for implicit webserver)

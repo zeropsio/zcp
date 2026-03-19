@@ -196,13 +196,59 @@ var decisionSectionMap = map[string]string{
 	"typesense":     "Choose Search",
 }
 
+// parseH3Sections splits content by H3 headers (### ), respecting fenced code blocks.
+// Returns map[sectionName]sectionContent.
+func parseH3Sections(content string) map[string]string {
+	sections := make(map[string]string)
+	var currentSection string
+	var currentContent strings.Builder
+	inCodeBlock := false
+
+	for line := range strings.SplitSeq(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "```") {
+			inCodeBlock = !inCodeBlock
+			if currentSection != "" {
+				currentContent.WriteString(line + "\n")
+			}
+			continue
+		}
+
+		if !inCodeBlock && strings.HasPrefix(trimmed, "### ") {
+			if currentSection != "" {
+				sections[currentSection] = strings.TrimSpace(currentContent.String())
+			}
+			currentSection = strings.TrimPrefix(trimmed, "### ")
+			currentContent.Reset()
+			continue
+		}
+
+		if currentSection != "" {
+			currentContent.WriteString(line + "\n")
+		}
+	}
+
+	if currentSection != "" {
+		sections[currentSection] = strings.TrimSpace(currentContent.String())
+	}
+
+	return sections
+}
+
 // getRelevantDecisions returns compact decision hints based on the runtime and services.
+// Decision sections are H3 subsections inside the "Service Selection Decisions" H2 of operations.md.
 func (s *Store) getRelevantDecisions(runtime string, services []string) string {
 	doc, err := s.Get("zerops://themes/operations")
 	if err != nil {
 		return ""
 	}
-	sections := doc.H2Sections()
+	h2Sections := doc.H2Sections()
+	decisionBlock, ok := h2Sections["Service Selection Decisions"]
+	if !ok || decisionBlock == "" {
+		return ""
+	}
+	sections := parseH3Sections(decisionBlock)
 
 	var hints []string
 

@@ -113,7 +113,7 @@ func setupRealisticServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession
 	}
 
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "zcp-realistic-test", Version: "0.1"}, nil)
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	logFetcher := defaultLogFetcher()
 
 	tools.RegisterWorkflow(mcpSrv, mock, projectID, nil, engine, nil, "")

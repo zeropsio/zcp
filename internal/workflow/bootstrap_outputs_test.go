@@ -11,7 +11,7 @@ import (
 func TestBootstrapComplete_WritesServiceMeta(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "bun + postgres")
 	if err != nil {
@@ -54,7 +54,7 @@ func TestBootstrapComplete_AppendsReflog(t *testing.T) {
 	projectRoot := t.TempDir()
 	stateDir := filepath.Join(projectRoot, ".zcp", "state")
 
-	eng := NewEngine(stateDir)
+	eng := NewEngine(stateDir, EnvLocal, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "deploy app")
 	if err != nil {
@@ -95,7 +95,7 @@ func TestBootstrapComplete_OutputErrorsNonFatal(t *testing.T) {
 	// Use a stateDir that doesn't have the expected .zcp/state structure,
 	// so reflog path derivation points to a read-only location.
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "test")
 	if err != nil {
@@ -152,7 +152,7 @@ func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			eng := NewEngine(dir)
+			eng := NewEngine(dir, EnvLocal, nil)
 
 			// Pre-write a ServiceMeta for "db" with a distinct session ID.
 			originalMeta := &ServiceMeta{
@@ -212,7 +212,7 @@ func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
 	t.Run("SHARED dep does not double-write meta", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		eng := NewEngine(dir)
+		eng := NewEngine(dir, EnvLocal, nil)
 
 		_, err := eng.BootstrapStart("proj-1", "two apps + shared db")
 		if err != nil {
@@ -280,7 +280,7 @@ func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
 func TestWriteBootstrapOutputs_SetsBootstrappedStatus(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "app + db")
 	if err != nil {
@@ -330,7 +330,7 @@ func TestWriteBootstrapOutputs_SetsBootstrappedStatus(t *testing.T) {
 func TestWriteServiceMetas_PlannedStatus(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "app + db")
 	if err != nil {
@@ -374,7 +374,7 @@ func TestWriteServiceMetas_PlannedStatus(t *testing.T) {
 func TestWriteServiceMetas_ProvisionedStatus(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "app + db")
 	if err != nil {
@@ -412,7 +412,7 @@ func TestWriteServiceMetas_ProvisionedStatus(t *testing.T) {
 func TestWriteServiceMetas_SkipsExistingDeps(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	// Pre-write a meta for an existing dependency.
 	existingMeta := &ServiceMeta{

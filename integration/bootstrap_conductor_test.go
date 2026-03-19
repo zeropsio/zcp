@@ -36,7 +36,7 @@ func setupWorkflowServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession,
 	)
 
 	stateDir := t.TempDir()
-	engine := workflow.NewEngine(stateDir)
+	engine := workflow.NewEngine(stateDir, workflow.EnvLocal, nil)
 
 	tools.RegisterWorkflow(mcpSrv, mock, "proj-1", nil, engine, nil, "")
 	tools.RegisterDiscover(mcpSrv, mock, "proj-1")
@@ -507,7 +507,7 @@ func TestIntegration_BootstrapConductor_DevMode_G4Skipped(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	engine := workflow.NewEngine(stateDir)
+	engine := workflow.NewEngine(stateDir, workflow.EnvLocal, nil)
 
 	_, err := engine.BootstrapStart("proj-1", "dev mode test")
 	if err != nil {
@@ -543,7 +543,7 @@ func TestIntegration_BootstrapConductor_SimpleMode_Completes(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	engine := workflow.NewEngine(stateDir)
+	engine := workflow.NewEngine(stateDir, workflow.EnvLocal, nil)
 
 	_, err := engine.BootstrapStart("proj-1", "simple mode test")
 	if err != nil {
@@ -576,7 +576,7 @@ func TestIntegration_BootstrapConductor_MixedModes_StandardRequired(t *testing.T
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	engine := workflow.NewEngine(stateDir)
+	engine := workflow.NewEngine(stateDir, workflow.EnvLocal, nil)
 
 	_, err := engine.BootstrapStart("proj-1", "mixed mode test")
 	if err != nil {

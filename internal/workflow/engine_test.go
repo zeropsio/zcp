@@ -129,7 +129,7 @@ func TestDetectProjectState_NonConformant(t *testing.T) {
 func TestEngine_Reset(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -145,7 +145,7 @@ func TestEngine_Reset(t *testing.T) {
 func TestEngine_Reset_ClearsSessionID(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -165,7 +165,7 @@ func TestEngine_Reset_ClearsSessionID(t *testing.T) {
 func TestEngine_Reset_Unregisters(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -186,7 +186,7 @@ func TestEngine_Reset_Unregisters(t *testing.T) {
 func TestEngine_Iterate(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -204,7 +204,7 @@ func TestEngine_Iterate(t *testing.T) {
 func TestEngine_GetState(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -222,7 +222,7 @@ func TestEngine_GetState(t *testing.T) {
 func TestEngine_Start_StoresSessionID(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	state, err := eng.Start("proj-1", "deploy", "test")
 	if err != nil {
@@ -236,7 +236,7 @@ func TestEngine_Start_StoresSessionID(t *testing.T) {
 func TestEngine_Start_RegistersInRegistry(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	state, err := eng.Start("proj-1", "deploy", "test")
 	if err != nil {
@@ -260,7 +260,7 @@ func TestEngine_Start_RegistersInRegistry(t *testing.T) {
 func TestEngine_Start_AutoResetDoneSession(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	// Create and manually mark bootstrap as completed (inactive).
 	state, err := eng.Start("proj-1", "deploy", "first")
@@ -289,7 +289,7 @@ func TestEngine_Start_AutoResetDoneSession(t *testing.T) {
 func TestEngine_Start_ActiveSessionBlocks(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.Start("proj-1", "deploy", "first"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -307,8 +307,8 @@ func TestEngine_Start_ActiveSessionBlocks(t *testing.T) {
 func TestEngine_BootstrapExclusivity(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng1 := NewEngine(dir)
-	eng2 := NewEngine(dir)
+	eng1 := NewEngine(dir, EnvLocal, nil)
+	eng2 := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng1.BootstrapStart("proj-1", "first bootstrap"); err != nil {
 		t.Fatalf("first BootstrapStart: %v", err)
@@ -337,7 +337,7 @@ func TestEngine_BootstrapExclusivity_DeadPID(t *testing.T) {
 	}
 
 	// New bootstrap should succeed because the dead PID will be pruned.
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 	_, err := eng.BootstrapStart("proj-1", "test")
 	if err != nil {
 		t.Fatalf("BootstrapStart should succeed after dead PID pruned: %v", err)
@@ -349,8 +349,8 @@ func TestEngine_BootstrapExclusivity_DeadPID(t *testing.T) {
 func TestEngine_MultipleEngines_Coexist(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng1 := NewEngine(dir)
-	eng2 := NewEngine(dir)
+	eng1 := NewEngine(dir, EnvLocal, nil)
+	eng2 := NewEngine(dir, EnvLocal, nil)
 
 	// Both can start deploy sessions (different from bootstrap exclusivity).
 	if _, err := eng1.Start("proj-1", "deploy", "first"); err != nil {
@@ -372,7 +372,7 @@ func TestEngine_MultipleEngines_Coexist(t *testing.T) {
 func TestEngine_SameEngine_ActiveSessionBlocks(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	state, err := eng.Start("proj-1", "deploy", "original")
 	if err != nil {
@@ -401,7 +401,7 @@ func TestEngine_SameEngine_ActiveSessionBlocks(t *testing.T) {
 func TestEngine_BootstrapStart_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	resp, err := eng.BootstrapStart("proj-1", "bun + postgres")
 	if err != nil {
@@ -439,7 +439,7 @@ func TestEngine_BootstrapStart_Success(t *testing.T) {
 func TestEngine_BootstrapStart_ExistingSession(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "first"); err != nil {
 		t.Fatalf("first BootstrapStart: %v", err)
@@ -454,7 +454,7 @@ func TestEngine_BootstrapStart_ExistingSession(t *testing.T) {
 func TestEngine_BootstrapComplete_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -478,7 +478,7 @@ func TestEngine_BootstrapComplete_Success(t *testing.T) {
 func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -515,7 +515,7 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 func TestEngine_BootstrapSkip_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -545,7 +545,7 @@ func TestEngine_BootstrapSkip_Success(t *testing.T) {
 func TestEngine_BootstrapSkip_Mandatory(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -561,7 +561,7 @@ func TestEngine_BootstrapSkip_Mandatory(t *testing.T) {
 func TestEngine_BootstrapStatus_Active(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -590,7 +590,7 @@ func TestEngine_BootstrapStatus_Active(t *testing.T) {
 func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -616,7 +616,7 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 func TestBootstrapStatus_ReturnsFullGuide_AfterPriorDelivery(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -647,7 +647,7 @@ func TestBootstrapStatus_ReturnsFullGuide_AfterPriorDelivery(t *testing.T) {
 func TestEngine_BootstrapStatus_NoSession(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	_, err := eng.BootstrapStatus()
 	if err == nil {
@@ -660,7 +660,7 @@ func TestEngine_BootstrapStatus_NoSession(t *testing.T) {
 func TestEngine_BootstrapCompletePlan_Valid(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -697,7 +697,7 @@ func TestEngine_BootstrapCompletePlan_Valid(t *testing.T) {
 func TestEngine_BootstrapCompletePlan_InvalidHostname(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -715,7 +715,7 @@ func TestEngine_BootstrapCompletePlan_InvalidHostname(t *testing.T) {
 func TestEngine_BootstrapCompletePlan_WrongStep(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -736,7 +736,7 @@ func TestEngine_BootstrapCompletePlan_WrongStep(t *testing.T) {
 func TestEngine_StoreDiscoveredEnvVars(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -770,7 +770,7 @@ func TestEngine_StoreDiscoveredEnvVars(t *testing.T) {
 func TestEngine_StoreDiscoveredEnvVars_NoBootstrap(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -785,7 +785,7 @@ func TestEngine_StoreDiscoveredEnvVars_NoBootstrap(t *testing.T) {
 func TestEngine_StoreDiscoveredEnvVars_MultipleServices(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -822,7 +822,7 @@ func TestEngine_StoreDiscoveredEnvVars_MultipleServices(t *testing.T) {
 func TestEngine_BootstrapComplete_WithChecker_Pass(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -860,7 +860,7 @@ func TestEngine_BootstrapComplete_WithChecker_Pass(t *testing.T) {
 func TestEngine_BootstrapComplete_WithChecker_Fail(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -899,7 +899,7 @@ func TestEngine_BootstrapComplete_WithChecker_Fail(t *testing.T) {
 func TestEngine_BootstrapComplete_NilChecker(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -917,7 +917,7 @@ func TestEngine_BootstrapComplete_NilChecker(t *testing.T) {
 func TestEngine_Iterate_MaxLimit(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -948,7 +948,7 @@ func TestEngine_Iterate_EnvOverride(t *testing.T) {
 	t.Setenv("ZCP_MAX_ITERATIONS", "2")
 
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -988,7 +988,7 @@ func searchSubstring(s, substr string) bool {
 func TestEngine_BootstrapComplete_CheckerError(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
@@ -1092,7 +1092,7 @@ func TestEngine_Resume_DeadSession(t *testing.T) {
 		t.Fatalf("RegisterSession: %v", err)
 	}
 
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 	resumed, err := eng.Resume(sessionID)
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
@@ -1119,7 +1119,7 @@ func TestEngine_Resume_DeadSession(t *testing.T) {
 func TestEngine_Resume_AliveSession(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng1 := NewEngine(dir)
+	eng1 := NewEngine(dir, EnvLocal, nil)
 
 	// Create an active session (current PID = alive).
 	state, err := eng1.Start("proj-1", "deploy", "test")
@@ -1128,7 +1128,7 @@ func TestEngine_Resume_AliveSession(t *testing.T) {
 	}
 
 	// Try to resume from another engine — should fail because PID is alive.
-	eng2 := NewEngine(dir)
+	eng2 := NewEngine(dir, EnvLocal, nil)
 	_, err = eng2.Resume(state.SessionID)
 	if err == nil {
 		t.Fatal("expected error resuming alive session")
@@ -1141,58 +1141,11 @@ func TestEngine_Resume_AliveSession(t *testing.T) {
 func TestEngine_Resume_NotFound(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir)
+	eng := NewEngine(dir, EnvLocal, nil)
 
 	_, err := eng.Resume("nonexistent-session")
 	if err == nil {
 		t.Fatal("expected error resuming non-existent session")
-	}
-}
-
-func TestEngine_Resume_ClearsGuideGating(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir)
-
-	resp, err := eng.BootstrapStart("proj-1", "test")
-	if err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-	sessionID := resp.SessionID
-
-	// Manually set GuideSentFor to simulate prior guide delivery persisted to disk.
-	state, err := LoadSessionByID(dir, sessionID)
-	if err != nil {
-		t.Fatalf("LoadSessionByID: %v", err)
-	}
-	if state.Bootstrap.Context == nil {
-		state.Bootstrap.Context = &ContextDelivery{}
-	}
-	if state.Bootstrap.Context.GuideSentFor == nil {
-		state.Bootstrap.Context.GuideSentFor = make(map[string]int)
-	}
-	state.Bootstrap.Context.GuideSentFor[StepDiscover] = 0
-	// Overwrite session with dead PID and guide gating set.
-	state.PID = 9999999
-	if err := saveSessionState(dir, sessionID, state); err != nil {
-		t.Fatalf("saveSessionState: %v", err)
-	}
-
-	// Resume with new engine.
-	eng2 := NewEngine(dir)
-	if _, err := eng2.Resume(sessionID); err != nil {
-		t.Fatalf("Resume: %v", err)
-	}
-
-	// Load state and verify GuideSentFor["discover"] is cleared.
-	state2, err := LoadSessionByID(dir, sessionID)
-	if err != nil {
-		t.Fatalf("LoadSessionByID after resume: %v", err)
-	}
-	if state2.Bootstrap.Context != nil && state2.Bootstrap.Context.GuideSentFor != nil {
-		if _, ok := state2.Bootstrap.Context.GuideSentFor[StepDiscover]; ok {
-			t.Error("expected GuideSentFor[discover] to be cleared after resume")
-		}
 	}
 }
 

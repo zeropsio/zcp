@@ -348,6 +348,104 @@ func TestAutoPromoteRuntime(t *testing.T) {
 	}
 }
 
+// --- H3 Section Parser Tests ---
+
+func TestParseH3Sections_Basic(t *testing.T) {
+	t.Parallel()
+	content := `Some intro text
+
+### Section A
+Content A.
+### Section B
+Content B.`
+	sections := parseH3Sections(content)
+	if len(sections) != 2 {
+		t.Errorf("expected 2 sections, got %d", len(sections))
+	}
+	if sections["Section A"] != "Content A." {
+		t.Errorf("Section A = %q, want %q", sections["Section A"], "Content A.")
+	}
+	if sections["Section B"] != "Content B." {
+		t.Errorf("Section B = %q, want %q", sections["Section B"], "Content B.")
+	}
+}
+
+// --- getRelevantDecisions with real embedded store ---
+
+func TestGetRelevantDecisions_WithRealOpsDoc(t *testing.T) {
+	t.Parallel()
+	store, err := GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		runtime      string
+		services     []string
+		wantContains []string
+		wantEmpty    bool
+	}{
+		{
+			name:         "postgres triggers Choose Database",
+			runtime:      "nodejs@22",
+			services:     []string{"postgresql@16"},
+			wantContains: []string{"Choose Database"},
+		},
+		{
+			name:         "valkey triggers Choose Cache",
+			runtime:      "nodejs@22",
+			services:     []string{"valkey@7.2"},
+			wantContains: []string{"Choose Cache"},
+		},
+		{
+			name:         "go triggers Choose Runtime Base",
+			runtime:      "go@1",
+			services:     nil,
+			wantContains: []string{"Choose Runtime Base"},
+		},
+		{
+			name:         "elasticsearch triggers Choose Search",
+			runtime:      "nodejs@22",
+			services:     []string{"elasticsearch@8"},
+			wantContains: []string{"Choose Search"},
+		},
+		{
+			name:         "kafka triggers Choose Queue",
+			runtime:      "nodejs@22",
+			services:     []string{"kafka@3"},
+			wantContains: []string{"Choose Queue"},
+		},
+		{
+			name:      "no matching services returns empty",
+			runtime:   "nodejs@22",
+			services:  []string{"shared-storage"},
+			wantEmpty: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := store.getRelevantDecisions(tt.runtime, tt.services)
+			if tt.wantEmpty {
+				if result != "" {
+					t.Errorf("expected empty, got: %s", result)
+				}
+				return
+			}
+			if result == "" {
+				t.Fatal("expected non-empty decision hints")
+			}
+			for _, want := range tt.wantContains {
+				if !strings.Contains(result, want) {
+					t.Errorf("result missing %q, got: %s", want, result)
+				}
+			}
+		})
+	}
+}
+
 // --- Service Normalizer Tests ---
 
 func TestNormalizeServiceName(t *testing.T) {

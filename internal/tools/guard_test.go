@@ -25,7 +25,7 @@ func TestRequireWorkflow_NilEngine_Blocks(t *testing.T) {
 
 func TestRequireWorkflow_NoSession_Blocks(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	result := requireWorkflow(engine)
 	if result == nil {
 		t.Fatal("expected non-nil result when no session exists")
@@ -42,7 +42,7 @@ func TestRequireWorkflow_NoSession_Blocks(t *testing.T) {
 func TestRequireWorkflow_ActiveSession_Passes(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	engine := workflow.NewEngine(dir)
+	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 	if _, err := engine.Start("proj-1", "deploy", "test"); err != nil {
 		t.Fatalf("start session: %v", err)
 	}

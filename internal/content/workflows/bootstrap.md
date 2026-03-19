@@ -185,41 +185,16 @@ envVariables:
 **How these reach your app**: All variables mapped in zerops.yml `envVariables` are injected as standard OS environment variables at container start. Your app reads them with the runtime's native env var API. No `.env` files or dotenv libraries needed.
 </section>
 
-<section name="generate">
-### Step 7 — Generate zerops.yml and application code
+<section name="generate-common">
+### Generate zerops.yml and application code
 
-**Prerequisites**: Dev services mounted (step 5), env vars discovered (step 6). Write files to the mounted dev service filesystem at `/var/www/{devHostname}/`.
+**Prerequisites**: Services mounted, env vars discovered. Write files to the mounted service filesystem at `/var/www/{hostname}/`.
 
-**SSHFS mount is for source code only** — small file reads/writes (editing .go, .ts, .yml files). Commands that generate many files (npm install, pip install, go mod download, composer install, bundle install, cargo build) MUST run via SSH on the container: `ssh {devHostname} "cd /var/www && {install_command}"`. Running them locally through the SSHFS network mount is orders of magnitude slower.
-
-**Dev setup — write this now. Stage entry comes after dev is verified (deploy step, task 10).**
-
-**Dev setup rules:**
-- `deployFiles: [.]` — ALWAYS, no exceptions. Anything else destroys source files after deploy.
-- `start: zsc noop --silent` — container stays alive but idle. No server auto-starts. The agent starts the server manually via SSH, giving full control over the process (see Dev iteration below). **Does NOT apply to PHP runtimes** (php-nginx, php-apache) — they have a built-in web server, omit `start:` entirely.
-- `buildCommands:` — dependency installation only (no compilation step). Source runs directly from `/var/www/`.
-- **NO healthCheck** — agent controls lifecycle manually. A healthCheck would cause unwanted restarts when the agent stops the server for iteration.
-
-**Dev vs Prod reference** (for later — stage entry uses prod rules after dev is proven):
-
-| Property | Dev setup | Prod setup |
-|----------|-----------|------------|
-| Purpose | Iterate, debug, test | Final validation, production-like |
-| deployFiles | `[.]` (entire source directory) | Runtime-specific build output |
-| start command | Source-mode start | Binary/compiled start |
-| healthCheck | **None** — agent controls lifecycle manually | `httpGet` on app port |
-| readinessCheck | **None** | Optional, for apps with initCommands |
-
-**Prod/stage setup rules apply when you generate the stage entry in the deploy step (task 10):**
-- `deployFiles:` — only the compiled output or production artifacts.
-- `start:` — runs the compiled artifact directly.
-- `buildCommands:` — full build pipeline: install deps, compile, produce artifacts.
-- `healthCheck:` in `run:` section — Zerops monitors the container and restarts on failure.
-- `readinessCheck:` in `deploy:` section — optional, prevents traffic before the app is ready.
-
-**PHP runtimes (php-nginx, php-apache) are different:** The web server is built into the runtime and serves files automatically. There is no `start:` command — both dev and prod just need correct `deployFiles`.
+**SSHFS mount is for source code only** — small file reads/writes (editing .go, .ts, .yml files). Commands that generate many files (npm install, pip install, go mod download, composer install, bundle install, cargo build) MUST run via SSH on the container: `ssh {hostname} "cd /var/www && {install_command}"`. Running them locally through the SSHFS network mount is orders of magnitude slower.
 
 > **CRITICAL — self-deploying services MUST use `deployFiles: [.]`:** Containers are volatile. After deploy, ONLY `deployFiles` content survives. If a self-deploying service uses `[dist]`, `[app]`, or any build output path, all source files + zerops.yml are DESTROYED. Further iteration becomes impossible. Any service that deploys to itself (dev services, simple mode services) MUST ALWAYS use `deployFiles: [.]`. No exceptions. Cross-deploy targets (stage) can use specific paths for compiled output because their source lives on the dev service.
+
+**PHP runtimes (php-nginx, php-apache) are different:** The web server is built into the runtime and serves files automatically. There is no `start:` command — both dev and prod just need correct `deployFiles`.
 
 #### Application code requirements
 
@@ -256,8 +231,6 @@ The top-level `"status": "ok"` is ALWAYS required — with or without connection
 - **Shared Storage**: Check mount path exists and is writable
 - **No managed services**: Return `{"service": "{hostname}", "status": "ok"}`
 
-Generate apps with a `/status` endpoint that proves real managed service connectivity. The whole point of bootstrap is proving the infrastructure works end-to-end.
-
 #### How envVariables reach your app
 
 zerops.yml `envVariables` are activated by deploy. After `zerops_deploy`:
@@ -278,19 +251,109 @@ envVariables:
   # Map ONLY variables listed in the discovery response
 ```
 
+#### Files are already on the container
+
+Since you're writing to an SSHFS mount, every file you create or modify is immediately present on the running container. The deploy step runs the build pipeline and activates zerops.yml config (envVariables, ports). Containers are volatile — only `deployFiles` content survives a deploy.
+
+> Consider committing the generated code before proceeding to deploy. This preserves your work if the deploy cycle requires iteration.
+</section>
+
+<section name="generate-standard">
+### Standard mode (dev+stage) — zerops.yml rules
+
+**Write dev entry ONLY now. Stage entry comes after dev is verified (deploy step).**
+
+**Dev setup rules:**
+- `deployFiles: [.]` — ALWAYS, no exceptions.
+- `start: zsc noop --silent` — container stays alive but idle. No server auto-starts. The agent starts the server manually via SSH, giving full control over the iteration cycle. **Does NOT apply to PHP runtimes** (php-nginx, php-apache) — they have a built-in web server, omit `start:` entirely.
+- `buildCommands:` — dependency installation only (no compilation step). Source runs directly from `/var/www/`.
+- **NO healthCheck** — agent controls lifecycle manually. A healthCheck would cause unwanted restarts when the agent stops the server for iteration.
+
+**Dev vs Prod reference** (for later — stage entry uses prod rules after dev is proven):
+
+| Property | Dev setup | Prod/Stage setup |
+|----------|-----------|------------------|
+| Purpose | Iterate, debug, test | Final validation, production-like |
+| deployFiles | `[.]` (entire source) | Runtime-specific build output |
+| start command | `zsc noop --silent` | Real binary/compiled start |
+| healthCheck | **None** | `httpGet` on app port |
+| readinessCheck | **None** | Optional |
+
 **MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
-- [ ] zerops.yml has `setup:` entry for dev hostname
+- [ ] zerops.yml has `setup:` entry for dev hostname ONLY (no stage entry yet)
 - [ ] Dev setup uses `deployFiles: [.]` — NO EXCEPTIONS
-- [ ] `run.start` is the RUN command (not a build tool like `go build`) — implicit-webserver runtimes (php-nginx, php-apache, nginx, static): omit start entirely
+- [ ] Dev `run.start` is `zsc noop --silent` (not real start cmd) — implicit-webserver runtimes: omit start entirely
 - [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
 - [ ] `envVariables` ONLY uses variables discovered in provision step
 - [ ] App binds to `0.0.0.0:{port}`, NOT localhost
+</section>
 
-#### Files are already on dev
+<section name="generate-dev">
+### Dev-only mode — zerops.yml rules
 
-Since you're writing to an SSHFS mount, every file you create or modify is immediately present on the running dev container. The deploy step runs the build pipeline and activates zerops.yml config (envVariables, ports). Dev containers are volatile — only `deployFiles` content survives a deploy.
+**Write a single dev entry. No stage service exists in this mode.**
 
-> Consider committing the generated code before proceeding to deploy. This preserves your work if the deploy cycle requires iteration.
+**Dev setup rules** (identical to standard dev):
+- `deployFiles: [.]` — ALWAYS, no exceptions.
+- `start: zsc noop --silent` — container stays alive but idle. The agent starts the server manually via SSH. **Does NOT apply to PHP runtimes** (php-nginx, php-apache) — omit `start:` entirely.
+- `buildCommands:` — dependency installation only (no compilation).
+- **NO healthCheck** — agent controls lifecycle manually.
+
+**MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
+- [ ] zerops.yml has `setup:` entry for dev hostname
+- [ ] Dev setup uses `deployFiles: [.]` — NO EXCEPTIONS
+- [ ] `run.start` is `zsc noop --silent` — implicit-webserver runtimes: omit start entirely
+- [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
+- [ ] `envVariables` ONLY uses variables discovered in provision step
+- [ ] App binds to `0.0.0.0:{port}`, NOT localhost
+</section>
+
+<section name="generate-simple">
+### Simple mode — zerops.yml rules
+
+**Write a single entry with a REAL start command.** Unlike dev/standard, simple mode services auto-start after deploy — no manual SSH start needed.
+
+**Simple setup rules:**
+- `deployFiles: [.]` — ALWAYS (self-deploy, source must survive).
+- `start:` — **real start command** (`node index.js`, `bun run src/index.ts`, `./app`, etc.). NOT `zsc noop`.
+- `buildCommands:` — dependency installation (compilation for Go/Rust/Java if needed).
+- `healthCheck:` — **YES, required.** Zerops monitors the container and restarts on failure.
+
+```yaml
+zerops:
+  - setup: {hostname}
+    build:
+      base: {runtimeVersion}
+      buildCommands: [<from runtime knowledge>]
+      deployFiles: [.]   # CRITICAL: self-deploy — MUST be [.]
+      cache: [<runtime-specific cache dirs>]
+    run:
+      base: {runtimeBase}   # Omit for compiled langs or use same as build
+      ports:
+        - port: {port}
+          httpSupport: true
+      envVariables:
+        # Map discovered variables to app-expected names
+      start: {startCommand}   # REAL start: node index.js, bun run src/index.ts, ./app, etc.
+      healthCheck:
+        httpGet:
+          port: {port}
+          path: /health
+```
+
+**Key differences from dev/standard mode:**
+- `start:` is the real run command (NOT `zsc noop --silent`)
+- `healthCheck` included — app auto-starts and auto-restarts after deploy
+- Single `setup:` entry (no dev/stage split)
+
+**MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
+- [ ] zerops.yml has `setup:` entry for the service hostname
+- [ ] Uses `deployFiles: [.]` — NO EXCEPTIONS
+- [ ] `run.start` is the REAL start command (NOT `zsc noop`)
+- [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
+- [ ] `healthCheck` configured with correct port and path
+- [ ] `envVariables` ONLY uses variables discovered in provision step
+- [ ] App binds to `0.0.0.0:{port}`, NOT localhost
 </section>
 
 ---

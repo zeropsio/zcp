@@ -3,6 +3,8 @@ package workflow
 import (
 	"fmt"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/knowledge"
 )
 
 // Plan mode constants.
@@ -47,7 +49,6 @@ type BootstrapState struct {
 	Steps             []BootstrapStep     `json:"steps"`
 	Plan              *ServicePlan        `json:"plan,omitempty"`
 	DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"`
-	Context           *ContextDelivery    `json:"context,omitempty"`
 	Strategies        map[string]string   `json:"strategies,omitempty"` // hostname -> strategy (push-dev, ci-cd, manual)
 }
 
@@ -104,7 +105,6 @@ func NewBootstrapState() *BootstrapState {
 		Active:      true,
 		CurrentStep: 0,
 		Steps:       steps,
-		Context:     &ContextDelivery{GuideSentFor: make(map[string]int)},
 		Strategies:  make(map[string]string),
 	}
 }
@@ -125,12 +125,6 @@ func (b *BootstrapState) ResetForIteration() {
 		b.Steps[b.CurrentStep].Status = stepInProgress
 	}
 	b.Active = true
-	// Clear guide gating for reset steps so guidance re-delivers.
-	if b.Context != nil && b.Context.GuideSentFor != nil {
-		delete(b.Context.GuideSentFor, StepGenerate)
-		delete(b.Context.GuideSentFor, StepDeploy)
-		delete(b.Context.GuideSentFor, StepVerify)
-	}
 }
 
 // CurrentStepName returns the name of the current step, or empty if done.
@@ -218,8 +212,8 @@ func (b *BootstrapState) SkipStep(name, reason string) error {
 }
 
 // BuildResponse constructs a BootstrapResponse from the current state.
-// iteration is the parent workflow iteration counter for guide delivery gating.
-func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int) *BootstrapResponse {
+// iteration is the parent workflow iteration counter. env and kp enable knowledge injection.
+func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int, env Environment, kp knowledge.Provider) *BootstrapResponse {
 	completed := 0
 	summaries := make([]BootstrapStepSummary, len(b.Steps))
 	for i, s := range b.Steps {
@@ -251,59 +245,13 @@ func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int) 
 			PriorContext: b.buildPriorContext(),
 			PlanMode:     b.PlanMode(),
 		}
-		resp.Current.DetailedGuide = b.resolveGuideWithGating(detail.Name, iteration)
+		resp.Current.DetailedGuide = b.buildGuide(detail.Name, iteration, env, kp)
 		resp.Message = fmt.Sprintf("Step %d/%d: %s", b.CurrentStep+1, len(b.Steps), detail.Name)
 	} else {
 		resp.Message = "Bootstrap complete. All steps finished."
 	}
 
 	return resp
-}
-
-// resolveGuideWithGating handles guide delivery gating and iteration delta.
-func (b *BootstrapState) resolveGuideWithGating(stepName string, iteration int) string {
-	// Item 29: iteration delta overrides guide for deploy step.
-	if iteration > 0 {
-		lastAtt := b.lastAttestation()
-		delta := BuildIterationDelta(stepName, iteration, b.Plan, lastAtt)
-		if delta != "" {
-			return delta
-		}
-	}
-
-	// Item 27: guide delivery gating.
-	if b.Context != nil && b.Context.GuideSentFor != nil {
-		sentIter, sent := b.Context.GuideSentFor[stepName]
-		if sent && sentIter >= iteration {
-			// Already delivered this iteration — return stub.
-			detail := lookupDetail(stepName)
-			return fmt.Sprintf("[Guide for %s already delivered. Tools: %v. Verification: %s]",
-				stepName, detail.Tools, detail.Verification)
-		}
-	}
-
-	// Full guide delivery.
-	guide := ResolveProgressiveGuidance(stepName, b.Plan, iteration)
-	if b.Context != nil {
-		if b.Context.GuideSentFor == nil {
-			b.Context.GuideSentFor = make(map[string]int)
-		}
-		b.Context.GuideSentFor[stepName] = iteration
-	}
-	return guide
-}
-
-// resolveGuideFresh returns the full guide without gating checks or side effects.
-// Used by BootstrapStatus to always deliver complete guidance for context recovery.
-func (b *BootstrapState) resolveGuideFresh(stepName string, iteration int) string {
-	if iteration > 0 {
-		lastAtt := b.lastAttestation()
-		delta := BuildIterationDelta(stepName, iteration, b.Plan, lastAtt)
-		if delta != "" {
-			return delta
-		}
-	}
-	return ResolveProgressiveGuidance(stepName, b.Plan, iteration)
 }
 
 // lastAttestation returns the attestation from the most recently completed step.

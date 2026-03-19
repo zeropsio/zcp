@@ -88,7 +88,8 @@ func (s *Server) registerTools() {
 	)
 	if cwd, err := os.Getwd(); err == nil {
 		stateDir = filepath.Join(cwd, ".zcp", "state")
-		wfEngine = workflow.NewEngine(stateDir)
+		env := workflow.DetectEnvironment(s.rtInfo)
+		wfEngine = workflow.NewEngine(stateDir, env, s.store)
 	}
 
 	// Knowledge tracker shared between knowledge and workflow tools.

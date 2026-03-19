@@ -39,6 +39,20 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 
 	// Structured plan routing for "discover" step.
 	if input.Step == "discover" && len(input.Plan) > 0 {
+		// Mode validation gate: check environment×mode compatibility.
+		env := engine.Environment()
+		for _, target := range input.Plan {
+			mode := target.Runtime.EffectiveMode()
+			if env == workflow.EnvLocal && mode == workflow.PlanModeStandard {
+				if target.Runtime.DevHostname == "" {
+					return convertError(platform.NewPlatformError(
+						platform.ErrInvalidParameter,
+						"Local standard mode requires devHostname for deploy target",
+						"Set devHostname for each runtime target")), nil, nil
+				}
+			}
+		}
+
 		resp, err := engine.BootstrapCompletePlan(input.Plan, liveTypes, nil)
 		if err != nil {
 			return convertError(platform.NewPlatformError(
@@ -72,6 +86,13 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			platform.ErrBootstrapNotActive,
 			fmt.Sprintf("Complete step failed: %v", err),
 			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
+	}
+	// Append transition message when bootstrap completes (all steps done).
+	if resp.Current == nil {
+		state, stateErr := engine.GetState()
+		if stateErr == nil {
+			resp.Message = workflow.BuildTransitionMessage(state)
+		}
 	}
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, client, cache)

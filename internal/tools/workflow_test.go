@@ -156,7 +156,7 @@ func TestWorkflowTool_Action_NoEngine(t *testing.T) {
 
 func TestWorkflowTool_Action_UnknownAction(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -169,7 +169,7 @@ func TestWorkflowTool_Action_UnknownAction(t *testing.T) {
 
 func TestWorkflowTool_Action_Start_Deploy_Immediate(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -213,7 +213,7 @@ func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			engine := workflow.NewEngine(t.TempDir())
+			engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -242,7 +242,7 @@ func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 
 func TestWorkflowTool_Action_Start_ImmediateNoSession(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -263,7 +263,7 @@ func TestWorkflowTool_Action_Start_ImmediateNoSession(t *testing.T) {
 
 func TestWorkflowTool_Action_Start_AutoResetDone(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -294,7 +294,7 @@ func TestWorkflowTool_Action_Start_AutoResetDone(t *testing.T) {
 
 func TestWorkflowTool_Action_Reset(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -316,7 +316,7 @@ func TestWorkflowTool_Action_Reset(t *testing.T) {
 
 func TestWorkflowTool_Action_ShowRemoved(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -331,7 +331,7 @@ func TestWorkflowTool_Action_ShowRemoved(t *testing.T) {
 
 func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -359,7 +359,7 @@ func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 
 func TestWorkflowTool_Action_BootstrapComplete(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -390,7 +390,7 @@ func TestWorkflowTool_Action_BootstrapComplete(t *testing.T) {
 
 func TestWorkflowTool_Action_BootstrapComplete_MissingFields(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -417,7 +417,7 @@ func TestWorkflowTool_Action_BootstrapComplete_MissingFields(t *testing.T) {
 
 func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -455,7 +455,7 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 
 func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -482,7 +482,7 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 
 func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_Structured(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -520,7 +520,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_Structured(t *testin
 
 func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_InvalidPlan(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -568,7 +568,7 @@ func TestWorkflow_BootstrapStart_IncludesStacks(t *testing.T) {
 		},
 	})
 	cache := ops.NewStackTypeCache(1 * time.Hour)
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil, "")
 
@@ -599,7 +599,7 @@ func TestWorkflow_BootstrapStart_IncludesStacks(t *testing.T) {
 
 func TestWorkflow_BootstrapStart_NoCache_OmitsStacks(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -634,7 +634,7 @@ func TestWorkflow_BootstrapComplete_IncludesStacks_OnDiscoverStep(t *testing.T) 
 		},
 	})
 	cache := ops.NewStackTypeCache(1 * time.Hour)
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil, "")
 
@@ -688,7 +688,7 @@ func TestWorkflow_BootstrapStatus_IncludesStacks(t *testing.T) {
 		},
 	})
 	cache := ops.NewStackTypeCache(1 * time.Hour)
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil, "")
 
@@ -718,7 +718,7 @@ func TestWorkflow_BootstrapStatus_IncludesStacks(t *testing.T) {
 
 func TestWorkflowTool_Action_Resume_MissingSessionID(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -744,7 +744,7 @@ func TestWorkflowTool_BootstrapStatus_NoStacks_DeployStep(t *testing.T) {
 		},
 	})
 	cache := ops.NewStackTypeCache(1 * time.Hour)
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, mock, "proj1", cache, engine, nil, "")
 
@@ -776,7 +776,7 @@ func TestWorkflowTool_BootstrapStatus_NoStacks_DeployStep(t *testing.T) {
 
 func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_FallbackAttestation(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
@@ -800,7 +800,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_FallbackAttestation(
 func TestWorkflowTool_Resume_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	engine := workflow.NewEngine(dir)
+	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
 	// Start bootstrap and advance to provision.
 	resp, err := engine.BootstrapStart("proj1", "bun + postgres")
@@ -825,7 +825,7 @@ func TestWorkflowTool_Resume_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
 	}
 
 	// Create new engine (fresh PID) and resume.
-	engine2 := workflow.NewEngine(dir)
+	engine2 := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine2, nil, "")
 
@@ -855,7 +855,7 @@ func TestWorkflowTool_Resume_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
 
 func TestWorkflowTool_Iterate_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 

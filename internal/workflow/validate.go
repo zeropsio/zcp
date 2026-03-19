@@ -74,6 +74,33 @@ type ServicePlan struct {
 	CreatedAt string            `json:"createdAt"`
 }
 
+// RuntimeBase returns the base runtime name (before @) of the first target.
+func (p *ServicePlan) RuntimeBase() string {
+	if p == nil || len(p.Targets) == 0 {
+		return ""
+	}
+	base, _, _ := strings.Cut(p.Targets[0].Runtime.Type, "@")
+	return base
+}
+
+// DependencyTypes returns unique dependency types across all targets.
+func (p *ServicePlan) DependencyTypes() []string {
+	if p == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var types []string
+	for _, t := range p.Targets {
+		for _, d := range t.Dependencies {
+			if !seen[d.Type] {
+				seen[d.Type] = true
+				types = append(types, d.Type)
+			}
+		}
+	}
+	return types
+}
+
 // ValidatePlanHostname checks that a hostname matches Zerops constraints.
 // Delegates to platform.ValidateHostname for canonical validation rules.
 func ValidatePlanHostname(hostname string) error {

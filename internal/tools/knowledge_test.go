@@ -299,62 +299,66 @@ func TestKnowledgeTool_ScopePlusBriefing_Error(t *testing.T) {
 	}
 }
 
-// --- Item 23: Knowledge tool persistence tests ---
+// --- No-dedup tests: every call returns full content ---
 
-func TestKnowledgeTool_PersistsScope(t *testing.T) {
+func TestKnowledgeTool_Scope_CallTwice_BothReturnFull(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-
 	engine := testBootstrapEngine(t)
 	RegisterKnowledge(srv, store, nil, nil, nil, engine)
 
-	result := callTool(t, srv, "zerops_knowledge", map[string]any{
-		"scope": "infrastructure",
-	})
-	if result.IsError {
-		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	result1 := callTool(t, srv, "zerops_knowledge", map[string]any{"scope": "infrastructure"})
+	if result1.IsError {
+		t.Fatalf("first call error: %s", getTextContent(t, result1))
 	}
+	text1 := getTextContent(t, result1)
 
-	// Verify scope was persisted to session state.
-	state, err := engine.GetState()
-	if err != nil {
-		t.Fatalf("get state: %v", err)
+	result2 := callTool(t, srv, "zerops_knowledge", map[string]any{"scope": "infrastructure"})
+	if result2.IsError {
+		t.Fatalf("second call error: %s", getTextContent(t, result2))
 	}
-	if state.Bootstrap == nil || state.Bootstrap.Context == nil {
-		t.Fatal("bootstrap context should exist after scope call")
+	text2 := getTextContent(t, result2)
+
+	// Both calls should return identical full content (no dedup).
+	if text1 != text2 {
+		t.Error("second scope call should return same full content as first (no dedup)")
 	}
-	if !state.Bootstrap.Context.ScopeLoaded {
-		t.Error("ScopeLoaded should be true after scope call")
+	if !strings.Contains(text1, "Platform Universals") {
+		t.Error("scope call should always include universals")
 	}
 }
 
-func TestKnowledgeTool_PersistsBriefing(t *testing.T) {
+func TestKnowledgeTool_Briefing_CallTwice_SameKey_BothReturnFull(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-
 	engine := testBootstrapEngine(t)
 	RegisterKnowledge(srv, store, nil, nil, nil, engine)
 
-	result := callTool(t, srv, "zerops_knowledge", map[string]any{
-		"runtime":  "php-nginx@8.4",
-		"services": []string{"postgresql@16"},
-	})
-	if result.IsError {
-		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	args := map[string]any{"runtime": "php-nginx@8.4", "services": []string{"postgresql@16"}}
+
+	result1 := callTool(t, srv, "zerops_knowledge", args)
+	if result1.IsError {
+		t.Fatalf("first call error: %s", getTextContent(t, result1))
+	}
+	text1 := getTextContent(t, result1)
+	if !strings.Contains(text1, "PHP") {
+		t.Error("first briefing should include PHP content")
 	}
 
-	// Verify briefing was persisted to session state.
-	state, err := engine.GetState()
-	if err != nil {
-		t.Fatalf("get state: %v", err)
+	result2 := callTool(t, srv, "zerops_knowledge", args)
+	if result2.IsError {
+		t.Fatalf("second call error: %s", getTextContent(t, result2))
 	}
-	if state.Bootstrap == nil || state.Bootstrap.Context == nil {
-		t.Fatal("bootstrap context should exist after briefing call")
+	text2 := getTextContent(t, result2)
+
+	// Both calls should return identical full content (no dedup stub).
+	if text1 != text2 {
+		t.Error("second briefing call should return same full content as first (no dedup)")
 	}
-	if state.Bootstrap.Context.BriefingFor != "php-nginx@8.4+postgresql@16" {
-		t.Errorf("BriefingFor: want %q, got %q", "php-nginx@8.4+postgresql@16", state.Bootstrap.Context.BriefingFor)
+	if strings.Contains(text2, "already loaded") {
+		t.Error("no dedup stub should ever be returned")
 	}
 }
 
@@ -400,7 +404,7 @@ func TestKnowledgeTool_BriefingRuntime_EmptyServices(t *testing.T) {
 // testBootstrapEngine creates a workflow engine with an active bootstrap session.
 func testBootstrapEngine(t *testing.T) *workflow.Engine {
 	t.Helper()
-	engine := workflow.NewEngine(t.TempDir())
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	if _, err := engine.BootstrapStart("proj-1", "test intent"); err != nil {
 		t.Fatalf("bootstrap start: %v", err)
 	}

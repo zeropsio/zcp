@@ -17,11 +17,11 @@ func ResolveGuidance(step string) string {
 	return extractSection(md, step)
 }
 
-// ResolveProgressiveGuidance returns mode-filtered deploy sub-sections for the deploy step,
-// or falls back to ResolveGuidance for non-deploy steps.
-// Each deploy section is included at most once based on the distinct modes across all targets.
+// ResolveProgressiveGuidance returns mode-filtered sub-sections for generate and deploy steps,
+// or falls back to ResolveGuidance for other steps.
+// Each mode-specific section is included at most once based on the distinct modes across all targets.
 func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int) string {
-	if step != StepDeploy {
+	if step != StepDeploy && step != StepGenerate {
 		return ResolveGuidance(step)
 	}
 
@@ -30,33 +30,44 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 		return ""
 	}
 
-	var sections []string
-	sections = append(sections, extractSection(md, "deploy-overview"))
-
-	// Collect distinct modes across all targets.
 	modes := distinctModes(plan)
 
-	// Include deploy sections for each distinct mode present.
-	if modes[PlanModeStandard] {
-		sections = append(sections, extractSection(md, "deploy-standard"))
-	}
-	if modes[PlanModeDev] {
-		sections = append(sections, extractSection(md, "deploy-dev"))
-	}
-	if modes[PlanModeSimple] {
-		sections = append(sections, extractSection(md, "deploy-simple"))
-	}
-	// Iteration guidance applies to standard and dev modes (not simple).
-	if modes[PlanModeStandard] || modes[PlanModeDev] {
-		sections = append(sections, extractSection(md, "deploy-iteration"))
-	}
+	var sections []string
 
-	if plan != nil && len(plan.Targets) >= 3 {
-		sections = append(sections, extractSection(md, "deploy-agents"))
-	}
+	switch step {
+	case StepGenerate:
+		sections = append(sections, extractSection(md, "generate-common"))
+		if modes[PlanModeStandard] {
+			sections = append(sections, extractSection(md, "generate-standard"))
+		}
+		if modes[PlanModeDev] {
+			sections = append(sections, extractSection(md, "generate-dev"))
+		}
+		if modes[PlanModeSimple] {
+			sections = append(sections, extractSection(md, "generate-simple"))
+		}
 
-	if failureCount > 0 {
-		sections = append(sections, extractSection(md, "deploy-recovery"))
+	case StepDeploy:
+		sections = append(sections, extractSection(md, "deploy-overview"))
+		if modes[PlanModeStandard] {
+			sections = append(sections, extractSection(md, "deploy-standard"))
+		}
+		if modes[PlanModeDev] {
+			sections = append(sections, extractSection(md, "deploy-dev"))
+		}
+		if modes[PlanModeSimple] {
+			sections = append(sections, extractSection(md, "deploy-simple"))
+		}
+		// Iteration guidance applies to standard and dev modes (not simple).
+		if modes[PlanModeStandard] || modes[PlanModeDev] {
+			sections = append(sections, extractSection(md, "deploy-iteration"))
+		}
+		if plan != nil && len(plan.Targets) >= 3 {
+			sections = append(sections, extractSection(md, "deploy-agents"))
+		}
+		if failureCount > 0 {
+			sections = append(sections, extractSection(md, "deploy-recovery"))
+		}
 	}
 
 	// Filter empty sections and join.
@@ -85,32 +96,41 @@ func distinctModes(plan *ServicePlan) map[string]bool {
 	return modes
 }
 
-// BuildIterationDelta returns a focused ~300-token template for deploy iterations.
+// BuildIterationDelta returns a focused escalating recovery template for deploy iterations.
 // Returns empty for non-deploy steps or iteration == 0.
-func BuildIterationDelta(step string, iteration int, plan *ServicePlan, lastAttestation string) string {
+// Escalation tiers: 1-2 = diagnose, 3-4 = systematic check, 5+ = stop and ask user.
+func BuildIterationDelta(step string, iteration int, _ *ServicePlan, lastAttestation string) string {
 	if step != StepDeploy || iteration == 0 {
 		return ""
 	}
-
 	remaining := max(maxIterations()-iteration, 0)
 
-	return fmt.Sprintf(`ITERATION %d for step %s
+	var guidance string
+	switch {
+	case iteration <= 2:
+		guidance = `DIAGNOSE: zerops_logs severity="error" since="5m"
+FIX the specific error, then redeploy + verify.`
 
-PREVIOUS ATTEMPT:
-%s
+	case iteration <= 4:
+		guidance = `PREVIOUS FIXES FAILED. Systematic check:
+1. zerops_discover includeEnvs=true — are all env vars present and correct?
+2. Does zerops.yml envVariables ONLY use discovered variable names?
+3. Does the app bind 0.0.0.0 (not localhost/127.0.0.1)?
+4. Is deployFiles correct? (dev MUST be [.], stage = build output)
+5. Is run.ports.port matching what the app actually listens on?
+6. Is run.start the RUN command (not a build command)?
+Fix what's wrong, redeploy, verify.`
 
-RECOVERY PATTERNS:
-| Error Pattern        | Fix                              | Then              |
-|----------------------|----------------------------------|-------------------|
-| port already in use  | check initCommands binding       | redeploy          |
-| module not found     | verify build.base in zerops.yml  | redeploy          |
-| connection refused   | check ${hostname_port} env ref   | redeploy          |
-| timeout on /status   | verify 0.0.0.0 binding + port    | redeploy          |
-| permission denied    | check deployFiles paths          | redeploy          |
+	default:
+		guidance = `STOP. Multiple fixes failed. Present to user:
+1. What you tried in each iteration
+2. Current error (from zerops_logs + zerops_verify)
+3. Ask: "Should I continue, or would you like to debug manually?"
+Do NOT attempt another fix without user input.`
+	}
 
-MAX ITERATIONS REMAINING: %d
-RECOVERY: Use action="iterate" to re-fetch full guidance if stuck.`,
-		iteration, step, lastAttestation, remaining)
+	return fmt.Sprintf("ITERATION %d (remaining: %d)\n\nPREVIOUS: %s\n\n%s",
+		iteration, remaining, lastAttestation, guidance)
 }
 
 // extractSection finds a <section name="{name}">...</section> block and returns its content.

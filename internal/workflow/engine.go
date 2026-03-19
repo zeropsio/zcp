@@ -7,20 +7,30 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // Engine orchestrates the workflow lifecycle.
 type Engine struct {
-	stateDir  string
-	sessionID string
+	stateDir    string
+	sessionID   string
+	environment Environment
+	knowledge   knowledge.Provider
 }
 
 // NewEngine creates a new workflow engine rooted at baseDir.
-func NewEngine(baseDir string) *Engine {
+func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 	return &Engine{
-		stateDir: baseDir,
+		stateDir:    baseDir,
+		environment: env,
+		knowledge:   kp,
 	}
+}
+
+// Environment returns the detected execution environment.
+func (e *Engine) Environment() Environment {
+	return e.environment
 }
 
 // Start creates a new workflow session with auto-reset, exclusivity, and registry refresh.
@@ -110,7 +120,7 @@ func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, e
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap start save: %w", err)
 	}
-	return bs.BuildResponse(state.SessionID, intent, state.Iteration), nil
+	return bs.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.knowledge), nil
 }
 
 // BootstrapComplete completes the current step and advances to the next.
@@ -130,7 +140,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 			return nil, fmt.Errorf("step check: %w", checkErr)
 		}
 		if result != nil && !result.Passed {
-			resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration)
+			resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
 			resp.CheckResult = result
 			resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", stepName, result.Summary)
 			return resp, nil
@@ -164,7 +174,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete save: %w", err)
 	}
-	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration)
+	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
 	resp.CheckResult = checkResult
 	return resp, nil
 }
@@ -230,7 +240,7 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 	// Write incremental service metas with planned status.
 	e.writeServiceMetas(state, MetaStatusPlanned)
 
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
 }
 
 // BootstrapSkip skips the current step and returns the next.
@@ -255,7 +265,7 @@ func (e *Engine) BootstrapSkip(stepName, reason string) (*BootstrapResponse, err
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap skip save: %w", err)
 	}
-	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration), nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
 }
 
 // StoreDiscoveredEnvVars saves discovered env var names for a service hostname.
@@ -285,12 +295,7 @@ func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 	if state.Bootstrap == nil {
 		return nil, fmt.Errorf("bootstrap status: no bootstrap state")
 	}
-	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration)
-	// Override with fresh guide — status must always deliver full guidance for context recovery.
-	if resp.Current != nil {
-		resp.Current.DetailedGuide = state.Bootstrap.resolveGuideFresh(resp.Current.Name, state.Iteration)
-	}
-	return resp, nil
+	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
 }
 
 // Resume takes over an abandoned session (dead PID) by updating PID to current process.
@@ -305,15 +310,6 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 
 	state.PID = os.Getpid()
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-
-	// Clear guide gating for current step so BootstrapStatus delivers fresh guidance.
-	if state.Bootstrap != nil && state.Bootstrap.Active {
-		if step := state.Bootstrap.CurrentStepName(); step != "" {
-			if state.Bootstrap.Context != nil && state.Bootstrap.Context.GuideSentFor != nil {
-				delete(state.Bootstrap.Context.GuideSentFor, step)
-			}
-		}
-	}
 
 	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("resume: %w", err)
