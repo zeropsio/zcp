@@ -159,3 +159,11 @@ zerops_logs serviceHostname="{hostname}" severity="error" since="5m"
 ```
 
 A restart without understanding the root cause means the problem will likely recur.
+
+---
+
+## After Debugging
+
+- **Issue fixed in code?** → `zerops_workflow action="start" workflow="deploy"` to redeploy
+- **Need to scale?** → `zerops_workflow action="start" workflow="scale"`
+- **Need to change config?** → `zerops_workflow action="start" workflow="configure"`

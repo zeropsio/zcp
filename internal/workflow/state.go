@@ -24,11 +24,13 @@ type WorkflowState struct {
 	CreatedAt string          `json:"createdAt"`
 	UpdatedAt string          `json:"updatedAt"`
 	Bootstrap *BootstrapState `json:"bootstrap,omitempty"`
+	Deploy    *DeployState    `json:"deploy,omitempty"`
+	CICD      *CICDState      `json:"cicd,omitempty"`
 }
 
 // immediateWorkflows are stateless — no session, just guidance.
 var immediateWorkflows = map[string]bool{
-	"debug": true, "scale": true, "configure": true, "deploy": true,
+	"debug": true, "scale": true, "configure": true,
 }
 
 // IsImmediateWorkflow returns true if the workflow is stateless (no session).

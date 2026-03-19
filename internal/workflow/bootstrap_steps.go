@@ -50,11 +50,12 @@ NON_CONFORMANT: ASK user before any changes.`,
 	{
 		Name:     StepGenerate,
 		Category: CategoryCreative,
-		Guidance: `Write zerops.yml and application code to mounted dev filesystem.
+		Guidance: `Write zerops.yml and application code to mounted filesystem.
 Platform rules, runtime knowledge, and discovered env vars are included below.
-PREREQUISITES: dev services mounted, env vars discovered from provision step.
-1. Write zerops.yml with dev setup entry (stage entry comes after dev is verified)
-2. Dev: deployFiles: [.], start: zsc noop --silent (or omit for implicit webserver)
+Mode-specific zerops.yml rules (standard/dev/simple) are included in the detailed guide.
+PREREQUISITES: services mounted, env vars discovered from provision step.
+1. Write zerops.yml entry per the mode rules below (standard/dev = noop start, simple = real start)
+2. deployFiles: [.] — ALWAYS for self-deploying services
 3. envVariables: map discovered vars using ${hostname_varName} references
 4. Write application code with GET /, GET /health, GET /status endpoints
 5. App reads env vars from runtime's native env var API

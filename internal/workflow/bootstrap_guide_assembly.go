@@ -9,7 +9,7 @@ import (
 
 // buildGuide assembles a step guide with injected knowledge from the knowledge store.
 // Falls back to base guidance if knowledge is unavailable.
-func (b *BootstrapState) buildGuide(step string, iteration int, env Environment, kp knowledge.Provider) string {
+func (b *BootstrapState) buildGuide(step string, iteration int, _ Environment, kp knowledge.Provider) string {
 	// Iteration delta (escalating) for deploy retries.
 	if iteration > 0 {
 		if delta := BuildIterationDelta(step, iteration, b.Plan, b.lastAttestation()); delta != "" {
@@ -21,7 +21,7 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 	guide := ResolveProgressiveGuidance(step, b.Plan, iteration)
 
 	// Append step-specific knowledge.
-	if extra := b.assembleKnowledge(step, env, kp); extra != "" {
+	if extra := b.assembleKnowledge(step, kp); extra != "" {
 		guide += "\n\n---\n\n" + extra
 	}
 
@@ -30,7 +30,7 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 
 // assembleKnowledge gathers step-relevant knowledge from the knowledge store.
 // All knowledge retrieval is best-effort — errors are silently skipped.
-func (b *BootstrapState) assembleKnowledge(step string, _ Environment, kp knowledge.Provider) string {
+func (b *BootstrapState) assembleKnowledge(step string, kp knowledge.Provider) string {
 	if b.Plan == nil || kp == nil {
 		return ""
 	}

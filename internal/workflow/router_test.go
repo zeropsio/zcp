@@ -72,9 +72,9 @@ func TestRoute_ConformantProject_StrategyBased(t *testing.T) {
 				}},
 				LiveServices: []string{"appdev"},
 			},
-			wantTop:     "ci-cd",
+			wantTop:     "cicd",
 			wantTopPrio: 1,
-			wantHint:    "git",
+			wantHint:    "cicd",
 		},
 		{
 			name: "push-dev strategy",
@@ -262,8 +262,8 @@ func TestRoute_StaleMetaFiltering(t *testing.T) {
 	}
 	offerings := Route(input)
 	// Should route based on appdev's ci-cd strategy, not staleservice's push-dev.
-	if offerings[0].Workflow != "ci-cd" {
-		t.Errorf("top offering = %q, want ci-cd (stale meta should be filtered)", offerings[0].Workflow)
+	if offerings[0].Workflow != "cicd" {
+		t.Errorf("top offering = %q, want cicd (stale meta should be filtered)", offerings[0].Workflow)
 	}
 }
 

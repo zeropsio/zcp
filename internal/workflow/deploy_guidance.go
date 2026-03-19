@@ -1,6 +1,10 @@
 package workflow
 
-import "github.com/zeropsio/zcp/internal/content"
+import (
+	"strings"
+
+	"github.com/zeropsio/zcp/internal/content"
+)
 
 // strategyToSection maps deploy strategy constants to deploy.md section names.
 var strategyToSection = map[string]string{
@@ -35,4 +39,44 @@ func ResolveDeployGuidance(stateDir, hostname string) string {
 	}
 
 	return extractSection(md, sectionName)
+}
+
+// resolveDeployStepGuidance returns guidance for a deploy workflow step.
+// Mode-specific sections are assembled for the deploy step.
+func resolveDeployStepGuidance(step, mode string) string {
+	md, err := content.GetWorkflow("deploy")
+	if err != nil {
+		return ""
+	}
+
+	switch step {
+	case DeployStepPrepare:
+		return extractSection(md, "deploy-prepare")
+	case DeployStepDeploy:
+		var sections []string
+		sections = append(sections, extractSection(md, "deploy-execute-overview"))
+		switch mode {
+		case PlanModeStandard:
+			sections = append(sections, extractSection(md, "deploy-execute-standard"))
+		case PlanModeDev:
+			sections = append(sections, extractSection(md, "deploy-execute-dev"))
+		case PlanModeSimple:
+			sections = append(sections, extractSection(md, "deploy-execute-simple"))
+		default:
+			sections = append(sections, extractSection(md, "deploy-execute-standard"))
+		}
+		var parts []string
+		for _, s := range sections {
+			if s != "" {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) == 0 {
+			return ""
+		}
+		return strings.Join(parts, "\n\n---\n\n")
+	case DeployStepVerify:
+		return extractSection(md, "deploy-verify")
+	}
+	return ""
 }

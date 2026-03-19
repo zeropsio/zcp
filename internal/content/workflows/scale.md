@@ -112,3 +112,11 @@ zerops_scale serviceHostname="worker" cpuMode="SHARED" minCpu=1 maxCpu=8 minRam=
   zerops_knowledge services=["postgresql@16"]
   ```
   This returns the service card with HA behavior, mode requirements, and scaling constraints.
+
+---
+
+## After Scaling
+
+- **Performance still bad?** → `zerops_workflow action="start" workflow="debug"` to diagnose
+- **Need to deploy changes?** → `zerops_workflow action="start" workflow="deploy"`
+- **Need to change env vars?** → `zerops_workflow action="start" workflow="configure"`

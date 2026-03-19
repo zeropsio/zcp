@@ -16,13 +16,13 @@ Two phases: generate correct configuration (the hard part), then deploy and veri
 ## Phase 1: Configuration
 
 <section name="discover">
-### Step 0 — Detect project state and route
+### Detect project state, plan services, confirm with user
 
 Call `zerops_discover` to see what exists. Then classify:
 
 | Discover result | State | Action |
 |----------------|-------|--------|
-| No runtime services | FRESH | Full bootstrap (Steps 1-7 then Phase 2) |
+| No runtime services | FRESH | Full bootstrap |
 | All requested services exist as dev+stage pairs | CONFORMANT | If stack matches request, route to deploy. If different stack requested, ASK user how to proceed. NEVER auto-delete. |
 | Services exist but not as dev+stage pairs | NON_CONFORMANT | ASK user how to proceed. Options: (a) add new services with different hostnames alongside existing, (b) user explicitly approves deletion of specific named services, (c) work with existing. NEVER auto-delete. |
 
@@ -30,10 +30,10 @@ Call `zerops_discover` to see what exists. Then classify:
 
 Route:
 - FRESH: proceed normally through all steps
-- CONFORMANT: if stack matches, skip bootstrap — route to deploy workflow (`zerops_workflow action="start" workflow="deploy"`). If user wants a different stack, ASK before making any changes. Do NOT delete existing services without explicit user approval.
+- CONFORMANT: if stack matches, skip bootstrap — route to deploy workflow (`zerops_workflow action="start" workflow="deploy"`). If user wants a different stack, ASK before making any changes.
 - NON_CONFORMANT: STOP. Present existing services to user with types and status. Ask how to proceed. NEVER delete without explicit user approval naming each service.
 
-### Step 1 — Identify stack components + environment mode
+#### Identify stack components
 
 > **mode defaults to NON_HA for managed services** — databases, caches, object-storage, shared-storage.
 > Set `HA` explicitly for production.
@@ -46,77 +46,41 @@ From the user's request, identify:
 
 If the user hasn't specified, ask. Don't guess frameworks — the build config depends on it.
 
-**Environment mode** (ask if not specified):
-- **Standard** (default): Creates `{name}dev` + `{name}stage` + shared managed services. NON_HA mode.
-- **Simple**: Creates single `{name}` + managed services. Only if user explicitly requests it.
+#### Choose bootstrap mode
 
-Default = standard (dev+stage). If the user says "just one service" or "simple setup", use simple mode.
+- **Standard** (default): Creates `{name}dev` + `{name}stage` + shared managed services. Dev for iteration, stage for validation.
+- **Dev**: Creates `{name}dev` + managed services only. No stage pair. When user says "just get it running" or "prototype."
+- **Simple**: Creates single `{name}` + managed services. Real start command, auto-starts after deploy. Only if user explicitly requests simplest setup.
+
+Default = standard (dev+stage). Ask user to confirm the mode before proceeding.
 
 Multi-runtime naming: use role or runtime as prefix — `phpdev`/`phpstage` + `bundev`/`bunstage` (or `apidev`/`webdev` by role). Managed services are shared, no dev/stage suffixes: `db`, `cache`, `storage`.
 
-**Workflow scope** (infer from context, do not ask unless ambiguous):
-- **Full** (default): Configure -> validate -> deploy dev -> verify -> deploy stage -> verify.
-- **Dev-only**: Configure -> deploy to dev only, skip stage. When user says "just get it running" or "prototype."
-- **Quick**: Skip config, deploy with existing zerops.yml. Only when user says "just deploy" and config already exists -> redirect to deploy workflow.
+#### Load framework-specific knowledge (optional)
 
-### Step 2 — Load stack-specific knowledge
-
-**Mandatory.** Call `zerops_knowledge` with the identified runtime and services:
-```
-zerops_knowledge runtime="{runtime-type}" services=["{service1}", "{service2}", ...]
-```
-
-Examples:
-- `zerops_knowledge runtime="bun@1.2" services=["postgresql@16"]`
-- `zerops_knowledge runtime="nodejs@22" services=["postgresql@16", "valkey@7.2"]`
-- `zerops_knowledge runtime="php-nginx@8.4" services=["mariadb@11"]`
-- `zerops_knowledge runtime="go@1"` (runtime only — omit services param when no managed services)
-
-**What you get back:**
-- **Runtime exceptions**: binding rules (0.0.0.0!), deploy patterns, framework-specific gotchas
-- **Matching recipes**: pre-built configurations for common stacks (load with `zerops_knowledge recipe="name"`)
-- **Service cards**: ports, auto-injected env vars, connection string templates, HA behavior
-- **Wiring patterns**: ${hostname_var} system, envSecrets vs envVariables, connection examples
-- **Version validation**: checks requested versions against available stacks
-
-**For complex recipes** (multi-base builds, unusual patterns), also check:
+For known frameworks, load a recipe for pre-built configuration:
 ```
 zerops_knowledge recipe="{recipe-name}"
 ```
-Examples: `bun`, `bun-hono`, `laravel`, `ghost`, `django`, `phoenix`
+Examples: `bun`, `bun-hono`, `laravel`, `ghost`, `django`, `phoenix`, `nextjs`
 
-### Step 3 — Load infrastructure knowledge
+This is optional — platform knowledge (YAML schemas, runtime guides, service cards) is delivered automatically with each step guide. Recipes add framework-specific patterns on top.
 
-**Mandatory before generating YAML.** Call:
+#### Confirm and submit plan
+
+**PRESENT the plan to user for confirmation before submitting:**
+"I'll set up: [list services with types]. Mode: [standard/dev/simple]. OK?"
+
+After user confirms, submit:
 ```
-zerops_knowledge scope="infrastructure"
+zerops_workflow action="complete" step="discover" plan=[{runtime: {devHostname, type, bootstrapMode}, dependencies: [{hostname, type, resolution}]}]
 ```
-
-**What you get back:**
-- **Zerops platform model**: projects, services, containers, routing
-- **import.yml schema**: structure, fields, rules, priorities, modes
-- **zerops.yml schema**: build/run pipeline, deployFiles, ports, prepareCommands
-- **Env var system**: cross-service references (`${hostname_var}`), envSecrets vs envVariables
-- **Build/deploy lifecycle**: build and run are SEPARATE containers, cache rules
-- **Rules & pitfalls**: common mistakes, validation rules, port ranges
-
-Steps 2 and 3 together provide everything needed for YAML generation — stack-specific knowledge (Step 2) plus platform rules (Step 3).
-
-**After receiving both, verify these before generating YAML:**
-
-1. **Binding**: Briefing specifies 0.0.0.0 — plan HOST/BIND env vars accordingly
-2. **Deploy files**: Note the exact deployFiles pattern — wrong path is the #1 error
-3. **Build vs run base**: Different bases needed? (PHP: php-nginx, Python: addToRunPrepare, Static: run.base=static)
-4. **Cache paths**: Note package manager cache dirs — missing cache = slow rebuilds
-5. **Connection strings**: Use the exact pattern from service cards, not generic URLs
-
-If the briefing doesn't cover your stack, call `zerops_knowledge recipe="{name}"` before generating YAML.
 </section>
 
 <section name="provision">
-### Step 4 — Generate import.yml
+### Generate import.yml, provision services, discover env vars
 
-Using the loaded knowledge from Steps 2+3, generate import.yml ONLY. Do NOT write zerops.yml or application code — that happens in the generate step AFTER env var discovery.
+Generate import.yml ONLY. Do NOT write zerops.yml or application code — that happens in the generate step AFTER env var discovery. The import.yml schema rules are included below.
 
 > **mode defaults to NON_HA for managed services** — databases, caches, object-storage, shared-storage.
 > Set `HA` explicitly for production.

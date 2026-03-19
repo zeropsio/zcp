@@ -122,3 +122,11 @@ Defines services to create. Service type validation runs automatically before th
 - Service-level env vars override project-level vars with the same key.
 - Cross-service references use underscores: `${service_hostname}`, never dashes.
 - Use `zerops_discover` with `includeEnvs=true` to see all env vars — this is the only way to read env vars.
+
+---
+
+## After Configuration
+
+- **Need to deploy with new config?** → `zerops_workflow action="start" workflow="deploy"`
+- **Something broken?** → `zerops_workflow action="start" workflow="debug"`
+- **Need to scale?** → `zerops_workflow action="start" workflow="scale"`

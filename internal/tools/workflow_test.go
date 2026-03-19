@@ -167,11 +167,25 @@ func TestWorkflowTool_Action_UnknownAction(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Action_Start_Deploy_Immediate(t *testing.T) {
+func TestWorkflowTool_Action_Start_Deploy_Stateful(t *testing.T) {
 	t.Parallel()
-	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
+
+	// Write a service meta so deploy start finds targets.
+	meta := &workflow.ServiceMeta{
+		Hostname:      "appdev",
+		Type:          "nodejs@22",
+		Mode:          "standard",
+		StageHostname: "appstage",
+		Status:        "bootstrapped",
+	}
+	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, dir)
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -180,22 +194,28 @@ func TestWorkflowTool_Action_Start_Deploy_Immediate(t *testing.T) {
 	})
 
 	if result.IsError {
-		t.Errorf("unexpected error: %s", getTextContent(t, result))
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
 	}
-	text := getTextContent(t, result)
-	var resp immediateResponse
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("failed to parse immediateResponse: %v", err)
+	// Deploy is stateful — should create a session.
+	if !engine.HasActiveSession() {
+		t.Error("deploy should create a session")
 	}
-	if resp.Workflow != "deploy" {
-		t.Errorf("workflow = %q, want deploy", resp.Workflow)
-	}
-	if resp.Guidance == "" {
-		t.Error("expected non-empty guidance for deploy workflow")
-	}
-	// Deploy is immediate — should NOT create a session.
-	if engine.HasActiveSession() {
-		t.Error("deploy (immediate) should not create a session")
+}
+
+func TestWorkflowTool_Action_Start_Deploy_NoMetas(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "deploy",
+		"intent":   "Deploy app",
+	})
+
+	if !result.IsError {
+		t.Error("expected error when no service metas exist")
 	}
 }
 
@@ -208,7 +228,6 @@ func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 		{"debug", "debug"},
 		{"scale", "scale"},
 		{"configure", "configure"},
-		{"deploy", "deploy"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

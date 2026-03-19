@@ -14,6 +14,7 @@ import (
 const (
 	workflowBootstrap = "bootstrap"
 	workflowDeploy    = "deploy"
+	workflowCICD      = "cicd"
 )
 
 // WorkflowInput is the input type for zerops_workflow.
@@ -95,14 +96,30 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "iterate":
 		return handleIterate(ctx, engine, client, cache)
 	case "complete":
+		// Route to the active workflow type.
+		switch detectActiveWorkflow(engine) {
+		case workflowDeploy:
+			return handleDeployComplete(ctx, engine, input)
+		case workflowCICD:
+			return handleCICDComplete(ctx, engine, input)
+		}
 		var liveTypes []platform.ServiceStackType
 		if cache != nil && client != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
 		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir)
 	case "skip":
+		if detectActiveWorkflow(engine) == workflowDeploy {
+			return handleDeploySkip(ctx, engine, input)
+		}
 		return handleBootstrapSkip(ctx, engine, client, cache, input)
 	case "status":
+		switch detectActiveWorkflow(engine) {
+		case workflowDeploy:
+			return handleDeployStatus(ctx, engine)
+		case workflowCICD:
+			return handleCICDStatus(ctx, engine)
+		}
 		return handleBootstrapStatus(ctx, engine, client, cache)
 	case "resume":
 		return handleResume(ctx, engine, client, cache, input)
@@ -136,7 +153,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		}), nil, nil
 	}
 
-	// Bootstrap conductor: use BootstrapStart for bootstrap workflow.
+	// Bootstrap conductor.
 	if input.Workflow == workflowBootstrap {
 		resp, err := engine.BootstrapStart(projectID, input.Intent)
 		if err != nil {
@@ -149,11 +166,114 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return jsonResult(resp), nil, nil
 	}
 
+	// Deploy workflow.
+	if input.Workflow == workflowDeploy {
+		return handleDeployStart(ctx, engine, projectID, input)
+	}
+
+	// CI/CD workflow.
+	if input.Workflow == workflowCICD {
+		return handleCICDStart(ctx, engine, projectID, input)
+	}
+
 	// Unknown workflow — return error.
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
 		"Valid workflows: bootstrap, deploy, debug, scale, configure")), nil, nil
+}
+
+// handleDeployStart reads service metas and creates a deploy session.
+func handleDeployStart(_ context.Context, engine *workflow.Engine, projectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	metas, err := workflow.ListServiceMetas(engine.StateDir())
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Failed to read service metas: %v", err),
+			"Run bootstrap first to create services")), nil, nil
+	}
+
+	if len(metas) == 0 {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"No bootstrapped services found",
+			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
+	}
+
+	// Filter to runtime services only (those with a type that has a mode).
+	var runtimeMetas []*workflow.ServiceMeta
+	for _, m := range metas {
+		if m.Mode != "" || m.StageHostname != "" {
+			runtimeMetas = append(runtimeMetas, m)
+		}
+	}
+	if len(runtimeMetas) == 0 {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"No runtime services found in service metas",
+			"Only managed services exist — nothing to deploy")), nil, nil
+	}
+
+	targets, mode := workflow.BuildDeployTargets(runtimeMetas)
+	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrWorkflowActive,
+			fmt.Sprintf("Deploy start failed: %v", err),
+			"Reset existing session first with action=reset")), nil, nil
+	}
+	return jsonResult(resp), nil, nil
+}
+
+// handleCICDStart reads service metas and creates a CI/CD session.
+func handleCICDStart(_ context.Context, engine *workflow.Engine, projectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	metas, err := workflow.ListServiceMetas(engine.StateDir())
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Failed to read service metas: %v", err),
+			"Run bootstrap first to create services")), nil, nil
+	}
+
+	var hostnames []string
+	for _, m := range metas {
+		if m.Mode != "" || m.StageHostname != "" {
+			hostnames = append(hostnames, m.Hostname)
+		}
+	}
+	if len(hostnames) == 0 {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"No runtime services found",
+			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
+	}
+
+	resp, err := engine.CICDStart(projectID, input.Intent, hostnames)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrWorkflowActive,
+			fmt.Sprintf("CI/CD start failed: %v", err),
+			"Reset existing session first with action=reset")), nil, nil
+	}
+	return jsonResult(resp), nil, nil
+}
+
+// detectActiveWorkflow returns the active workflow type from engine state.
+func detectActiveWorkflow(engine *workflow.Engine) string {
+	if !engine.HasActiveSession() {
+		return ""
+	}
+	state, err := engine.GetState()
+	if err != nil {
+		return ""
+	}
+	if state.Deploy != nil && state.Deploy.Active {
+		return workflowDeploy
+	}
+	if state.CICD != nil && state.CICD.Active {
+		return workflowCICD
+	}
+	return workflowBootstrap
 }
 
 func handleReset(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
@@ -173,6 +293,13 @@ func handleIterate(ctx context.Context, engine *workflow.Engine, client platform
 			fmt.Sprintf("Iterate failed: %v", err),
 			"Start a session first")), nil, nil
 	}
+	// Route to the right status handler after iteration.
+	switch detectActiveWorkflow(engine) {
+	case workflowDeploy:
+		return handleDeployStatus(ctx, engine)
+	case workflowCICD:
+		return handleCICDStatus(ctx, engine)
+	}
 	return bootstrapStatusResult(ctx, engine, client, cache)
 }
 
@@ -188,6 +315,12 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Resume failed: %v", err),
 			"Session may not exist or may still be active")), nil, nil
+	}
+	switch detectActiveWorkflow(engine) {
+	case workflowDeploy:
+		return handleDeployStatus(ctx, engine)
+	case workflowCICD:
+		return handleCICDStatus(ctx, engine)
 	}
 	return bootstrapStatusResult(ctx, engine, client, cache)
 }

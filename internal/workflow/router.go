@@ -181,12 +181,20 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 
 	switch dominant {
 	case StrategyCICD:
-		return []FlowOffering{{
-			Workflow: "ci-cd",
-			Priority: 1,
-			Reason:   "CI/CD strategy configured",
-			Hint:     "Push to git for CI/CD deployment",
-		}}
+		return []FlowOffering{
+			{
+				Workflow: "cicd",
+				Priority: 1,
+				Reason:   "CI/CD strategy configured — set up automated pipeline",
+				Hint:     `zerops_workflow action="start" workflow="cicd"`,
+			},
+			{
+				Workflow: "deploy",
+				Priority: 2,
+				Reason:   "Manual deploy also available",
+				Hint:     `zerops_workflow action="start" workflow="deploy"`,
+			},
+		}
 	case StrategyPushDev:
 		return []FlowOffering{{
 			Workflow: "deploy",

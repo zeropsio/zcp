@@ -37,7 +37,10 @@ func (e *Engine) Environment() Environment {
 func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, error) {
 	if e.sessionID != "" {
 		if existing, err := LoadSessionByID(e.stateDir, e.sessionID); err == nil {
-			if existing.Bootstrap != nil && !existing.Bootstrap.Active {
+			bootstrapDone := existing.Bootstrap != nil && !existing.Bootstrap.Active
+			deployDone := existing.Deploy != nil && !existing.Deploy.Active
+			cicdDone := existing.CICD != nil && !existing.CICD.Active
+			if bootstrapDone || deployDone || cicdDone {
 				if err := ResetSessionByID(e.stateDir, e.sessionID); err != nil {
 					return nil, fmt.Errorf("start auto-reset: %w", err)
 				}
@@ -316,6 +319,148 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 	}
 	e.sessionID = sessionID
 	return state, nil
+}
+
+// --- Deploy workflow engine methods ---
+
+// DeployStart creates a new deploy session with targets ordered by mode.
+func (e *Engine) DeployStart(projectID, intent string, targets []DeployTarget, mode string) (*DeployResponse, error) {
+	state, err := e.Start(projectID, WorkflowDeploy, intent)
+	if err != nil {
+		return nil, fmt.Errorf("deploy start: %w", err)
+	}
+
+	ds := NewDeployState(targets, mode)
+	ds.Steps[0].Status = stepInProgress
+	state.Deploy = ds
+
+	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+		return nil, fmt.Errorf("deploy start save: %w", err)
+	}
+	return ds.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.knowledge), nil
+}
+
+// DeployComplete completes the current deploy step.
+func (e *Engine) DeployComplete(step, attestation string) (*DeployResponse, error) {
+	state, err := e.loadState()
+	if err != nil {
+		return nil, fmt.Errorf("deploy complete: %w", err)
+	}
+	if state.Deploy == nil || !state.Deploy.Active {
+		return nil, fmt.Errorf("deploy complete: not active")
+	}
+	if err := state.Deploy.CompleteStep(step, attestation); err != nil {
+		return nil, fmt.Errorf("deploy complete: %w", err)
+	}
+
+	if !state.Deploy.Active {
+		if err := UnregisterSession(e.stateDir, state.SessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: unregister completed deploy session: %v\n", err)
+		}
+	}
+
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+		return nil, fmt.Errorf("deploy complete save: %w", err)
+	}
+	return state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
+}
+
+// DeploySkip skips the current deploy step.
+func (e *Engine) DeploySkip(step, reason string) (*DeployResponse, error) {
+	state, err := e.loadState()
+	if err != nil {
+		return nil, fmt.Errorf("deploy skip: %w", err)
+	}
+	if state.Deploy == nil || !state.Deploy.Active {
+		return nil, fmt.Errorf("deploy skip: not active")
+	}
+	if err := state.Deploy.SkipStep(step, reason); err != nil {
+		return nil, fmt.Errorf("deploy skip: %w", err)
+	}
+
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+		return nil, fmt.Errorf("deploy skip save: %w", err)
+	}
+	return state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
+}
+
+// DeployStatus returns the current deploy progress with fresh guidance.
+func (e *Engine) DeployStatus() (*DeployResponse, error) {
+	state, err := e.loadState()
+	if err != nil {
+		return nil, fmt.Errorf("deploy status: %w", err)
+	}
+	if state.Deploy == nil {
+		return nil, fmt.Errorf("deploy status: no deploy state")
+	}
+	return state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
+}
+
+// --- CI/CD workflow engine methods ---
+
+// CICDStart creates a new CI/CD setup session.
+func (e *Engine) CICDStart(projectID, intent string, hostnames []string) (*CICDResponse, error) {
+	state, err := e.Start(projectID, WorkflowCICD, intent)
+	if err != nil {
+		return nil, fmt.Errorf("cicd start: %w", err)
+	}
+
+	cs := NewCICDState(hostnames)
+	cs.Steps[0].Status = stepInProgress
+	state.CICD = cs
+
+	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+		return nil, fmt.Errorf("cicd start save: %w", err)
+	}
+	return cs.BuildResponse(state.SessionID, intent, e.environment, e.knowledge), nil
+}
+
+// CICDComplete completes the current CI/CD step.
+func (e *Engine) CICDComplete(step, attestation, provider string) (*CICDResponse, error) {
+	state, err := e.loadState()
+	if err != nil {
+		return nil, fmt.Errorf("cicd complete: %w", err)
+	}
+	if state.CICD == nil || !state.CICD.Active {
+		return nil, fmt.Errorf("cicd complete: not active")
+	}
+
+	// Set provider on choose step completion.
+	if step == CICDStepChoose && provider != "" {
+		if err := state.CICD.SetProvider(provider); err != nil {
+			return nil, fmt.Errorf("cicd complete: %w", err)
+		}
+	}
+
+	if err := state.CICD.CompleteStep(step, attestation); err != nil {
+		return nil, fmt.Errorf("cicd complete: %w", err)
+	}
+
+	if !state.CICD.Active {
+		if err := UnregisterSession(e.stateDir, state.SessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: unregister completed cicd session: %v\n", err)
+		}
+	}
+
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+		return nil, fmt.Errorf("cicd complete save: %w", err)
+	}
+	return state.CICD.BuildResponse(state.SessionID, state.Intent, e.environment, e.knowledge), nil
+}
+
+// CICDStatus returns the current CI/CD progress with fresh guidance.
+func (e *Engine) CICDStatus() (*CICDResponse, error) {
+	state, err := e.loadState()
+	if err != nil {
+		return nil, fmt.Errorf("cicd status: %w", err)
+	}
+	if state.CICD == nil {
+		return nil, fmt.Errorf("cicd status: no cicd state")
+	}
+	return state.CICD.BuildResponse(state.SessionID, state.Intent, e.environment, e.knowledge), nil
 }
 
 // loadState loads state for the current session.

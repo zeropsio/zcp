@@ -95,7 +95,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 				{Hostname: "appdev", Decisions: map[string]string{workflow.DecisionDeployStrategy: workflow.StrategyCICD}},
 			},
 			wantContains: []string{
-				"ci-cd",
+				"cicd",
 				"appdev",
 			},
 		},
