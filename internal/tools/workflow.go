@@ -138,7 +138,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 }
 
 func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	// Immediate workflows: stateless, return guidance only.
+	// Immediate workflows: stateless, return guidance with service context.
 	if workflow.IsImmediateWorkflow(input.Workflow) {
 		content, err := ops.GetWorkflow(input.Workflow)
 		if err != nil {
@@ -146,6 +146,14 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Workflow %q not found: %v", input.Workflow, err),
 				"Valid workflows: bootstrap, deploy, debug, scale, configure")), nil, nil
+		}
+		// Inject service context if service metas exist.
+		if engine != nil {
+			if metas, metaErr := workflow.ListServiceMetas(engine.StateDir()); metaErr == nil && len(metas) > 0 {
+				if summary := workflow.BuildServiceContextSummary(metas); summary != "" {
+					content = summary + "---\n\n" + content
+				}
+			}
 		}
 		return jsonResult(immediateResponse{
 			Workflow: input.Workflow,
@@ -214,8 +222,18 @@ func handleDeployStart(_ context.Context, engine *workflow.Engine, projectID str
 			"Only managed services exist — nothing to deploy")), nil, nil
 	}
 
-	targets, mode := workflow.BuildDeployTargets(runtimeMetas)
-	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode)
+	// Also load all metas (including deps) for service context.
+	targets, mode, svcCtx := workflow.BuildDeployTargets(runtimeMetas)
+	// Enrich context with dep types from all metas (deps are separate meta files).
+	if svcCtx != nil && len(svcCtx.DependencyTypes) == 0 {
+		for _, m := range metas {
+			if m.Mode == "" && m.StageHostname == "" && m.Type != "" {
+				// Managed service (no mode, no stage) — a dependency.
+				svcCtx.DependencyTypes = append(svcCtx.DependencyTypes, m.Type)
+			}
+		}
+	}
+	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode, svcCtx)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrWorkflowActive,

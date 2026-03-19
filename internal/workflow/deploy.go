@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -33,13 +34,22 @@ const (
 	deployTargetSkipped  = "skipped"
 )
 
+// DeployServiceContext stores service metadata needed for knowledge injection.
+// Populated at DeployStart from ServiceMeta files.
+type DeployServiceContext struct {
+	RuntimeType       string              `json:"runtimeType,omitempty"`
+	DependencyTypes   []string            `json:"dependencyTypes,omitempty"`
+	DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"`
+}
+
 // DeployState tracks progress through the deploy workflow.
 type DeployState struct {
-	Active      bool           `json:"active"`
-	CurrentStep int            `json:"currentStep"`
-	Steps       []DeployStep   `json:"steps"`
-	Targets     []DeployTarget `json:"targets"`
-	Mode        string         `json:"mode"`
+	Active      bool                  `json:"active"`
+	CurrentStep int                   `json:"currentStep"`
+	Steps       []DeployStep          `json:"steps"`
+	Targets     []DeployTarget        `json:"targets"`
+	Mode        string                `json:"mode"`
+	Service     *DeployServiceContext `json:"service,omitempty"`
 }
 
 // DeployStep represents a step in the deploy workflow.
@@ -122,15 +132,24 @@ func NewDeployState(targets []DeployTarget, mode string) *DeployState {
 	}
 }
 
-// BuildDeployTargets constructs ordered targets from service metas.
-// Returns targets and detected mode. Standard mode orders dev before stage.
-func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string) {
+// BuildDeployTargets constructs ordered targets and service context from service metas.
+// Returns targets, detected mode, and service context for knowledge injection.
+func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, *DeployServiceContext) {
 	if len(metas) == 0 {
-		return nil, ""
+		return nil, "", nil
 	}
 
 	var targets []DeployTarget
 	mode := ""
+	svcCtx := &DeployServiceContext{}
+
+	// Collect all dependency hostnames to resolve their types.
+	allMetas := make(map[string]*ServiceMeta, len(metas))
+	for _, m := range metas {
+		allMetas[m.Hostname] = m
+	}
+
+	depTypeSeen := make(map[string]bool)
 
 	for _, m := range metas {
 		metaMode := m.Mode
@@ -139,6 +158,11 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string) {
 		}
 		if mode == "" {
 			mode = metaMode
+		}
+
+		// Use first runtime's type.
+		if svcCtx.RuntimeType == "" && m.Type != "" {
+			svcCtx.RuntimeType = m.Type
 		}
 
 		targets = append(targets, DeployTarget{
@@ -155,9 +179,19 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string) {
 				Status:   deployTargetPending,
 			})
 		}
+
+		// Collect dependency types from dep metas.
+		for _, depHostname := range m.Dependencies {
+			if depMeta, ok := allMetas[depHostname]; ok && depMeta.Type != "" {
+				if !depTypeSeen[depMeta.Type] {
+					depTypeSeen[depMeta.Type] = true
+					svcCtx.DependencyTypes = append(svcCtx.DependencyTypes, depMeta.Type)
+				}
+			}
+		}
 	}
 
-	return targets, mode
+	return targets, mode, svcCtx
 }
 
 func deployRoleFromMode(mode, _, stageHostname string) string {
@@ -340,28 +374,56 @@ func (d *DeployState) buildGuide(step string, _ int, _ Environment, kp knowledge
 }
 
 // assembleDeployKnowledge injects relevant knowledge for deploy steps.
+// Uses service context from metas for runtime/dependency-specific knowledge.
 func (d *DeployState) assembleDeployKnowledge(step string, kp knowledge.Provider) string {
 	if kp == nil || len(d.Targets) == 0 {
 		return ""
 	}
 
+	var parts []string
+
 	switch step {
 	case DeployStepPrepare:
-		// Inject zerops.yml schema for config checking.
+		// Runtime briefing for the target service.
+		if d.Service != nil && d.Service.RuntimeType != "" {
+			base, _, _ := strings.Cut(d.Service.RuntimeType, "@")
+			if briefing, err := kp.GetBriefing(base, nil, nil); err == nil && briefing != "" {
+				parts = append(parts, briefing)
+			}
+		}
+		// Service wiring for dependencies.
+		if d.Service != nil && len(d.Service.DependencyTypes) > 0 {
+			if briefing, err := kp.GetBriefing("", d.Service.DependencyTypes, nil); err == nil && briefing != "" {
+				parts = append(parts, briefing)
+			}
+		}
+		// zerops.yml schema for config checking.
 		if doc, err := kp.Get("zerops://themes/core"); err == nil {
 			sections := doc.H2Sections()
 			if s, ok := sections["zerops.yml Schema"]; ok && s != "" {
-				return "## zerops.yml Schema\n\n" + s
+				parts = append(parts, "## zerops.yml Schema\n\n"+s)
+			}
+			if s, ok := sections["Rules & Pitfalls"]; ok && s != "" {
+				parts = append(parts, "## Rules & Pitfalls\n\n"+s)
 			}
 		}
+
 	case DeployStepDeploy:
-		// Inject schema rules for deploy constraints.
+		// Schema rules for deploy constraints.
 		if doc, err := kp.Get("zerops://themes/core"); err == nil {
 			sections := doc.H2Sections()
 			if s, ok := sections["Schema Rules"]; ok && s != "" {
-				return "## Deploy Rules\n\n" + s
+				parts = append(parts, "## Deploy Rules\n\n"+s)
 			}
 		}
+		// Env vars reminder if available.
+		if d.Service != nil && len(d.Service.DiscoveredEnvVars) > 0 {
+			parts = append(parts, formatEnvVarsForGuide(d.Service.DiscoveredEnvVars))
+		}
 	}
-	return ""
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n\n---\n\n")
 }

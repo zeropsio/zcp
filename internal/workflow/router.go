@@ -20,6 +20,7 @@ type RouterInput struct {
 	ServiceMetas   []*ServiceMeta
 	ActiveSessions []SessionEntry
 	LiveServices   []string
+	Intent         string // optional: user intent for smarter routing
 }
 
 // Route takes environmental signals and returns ranked workflow offerings.
@@ -46,10 +47,42 @@ func Route(input RouterInput) []FlowOffering {
 	// Always append utility workflows if not already present.
 	offerings = appendUtilities(offerings)
 
+	// Intent-based priority boost: if user intent matches a workflow, promote it.
+	if input.Intent != "" {
+		offerings = boostByIntent(offerings, input.Intent)
+	}
+
 	sort.Slice(offerings, func(i, j int) bool {
 		return offerings[i].Priority < offerings[j].Priority
 	})
 
+	return offerings
+}
+
+// intentPatterns maps keywords to workflows they suggest.
+var intentPatterns = map[string][]string{
+	"bootstrap": {"add service", "add new", "create service", "new service", "set up", "setup"},
+	"deploy":    {"deploy", "push", "ship", "release", "update code", "redeploy"},
+	"debug":     {"broken", "fix", "error", "crash", "debug", "diagnose", "not working", "failing", "issue", "bug"},
+	"scale":     {"scale", "slow", "performance", "resources", "cpu", "memory", "ram", "container"},
+	"configure": {"config", "env var", "environment", "subdomain", "port", "setting"},
+	"cicd":      {"ci/cd", "cicd", "pipeline", "github action", "gitlab ci", "webhook", "automat"},
+}
+
+// boostByIntent promotes offerings whose workflow matches intent keywords.
+func boostByIntent(offerings []FlowOffering, intent string) []FlowOffering {
+	lower := strings.ToLower(intent)
+	for i, o := range offerings {
+		if patterns, ok := intentPatterns[o.Workflow]; ok {
+			for _, p := range patterns {
+				if strings.Contains(lower, p) {
+					offerings[i].Priority = max(offerings[i].Priority-2, 0)
+					offerings[i].Reason += " (matches intent)"
+					break
+				}
+			}
+		}
+	}
 	return offerings
 }
 
