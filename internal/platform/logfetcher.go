@@ -26,7 +26,7 @@ type ZeropsLogFetcher struct {
 func NewLogFetcher() *ZeropsLogFetcher {
 	return &ZeropsLogFetcher{
 		httpClient: &http.Client{
-			Timeout: DefaultAPITimeout,
+			Timeout: LogFetchTimeout,
 		},
 	}
 }

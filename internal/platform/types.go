@@ -5,6 +5,10 @@ import "time"
 // DefaultAPITimeout is the global timeout for each API call.
 const DefaultAPITimeout = 30 * time.Second
 
+// LogFetchTimeout is the timeout for log backend requests.
+// Search queries do full-text scans and need more time than standard API calls.
+const LogFetchTimeout = 120 * time.Second
+
 // UserInfo contains user details from auth/info endpoint.
 type UserInfo struct {
 	ID       string `json:"id"`
