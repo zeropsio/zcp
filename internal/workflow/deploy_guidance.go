@@ -65,6 +65,10 @@ func resolveDeployStepGuidance(step, mode string) string {
 		default:
 			sections = append(sections, extractSection(md, "deploy-execute-standard"))
 		}
+		// Iteration guidance for standard and dev modes (not simple — auto-starts).
+		if mode != PlanModeSimple {
+			sections = append(sections, extractSection(md, "deploy-iteration"))
+		}
 		var parts []string
 		for _, s := range sections {
 			if s != "" {
