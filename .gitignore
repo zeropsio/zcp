@@ -16,6 +16,9 @@ CLAUDE.local.md
 .claude/compact-state.md
 .claude/last-test-result
 .claude/worktrees/
+.claude/agent-memory/
+.claude/teams/
+.claude/tasks/
 
 # Workflow state (created by tests and runtime)
 **/.zcp/
