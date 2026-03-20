@@ -879,6 +879,139 @@ func TestCheckProvision_StoreEnvVarsError_Fail(t *testing.T) {
 	}
 }
 
+func TestCheckProvision_TypeMismatch_Fail(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		planType    string
+		apiType     string
+		isRuntime   bool // true = runtime mismatch, false = dependency mismatch
+		depHostname string
+		depType     string
+		apiDepType  string
+	}{
+		{
+			name:      "runtime_type_mismatch",
+			planType:  "nodejs@22",
+			apiType:   "postgresql@16",
+			isRuntime: true,
+		},
+		{
+			name:        "dependency_type_mismatch",
+			planType:    "nodejs@22",
+			apiType:     "nodejs@22",
+			isRuntime:   false,
+			depHostname: "db",
+			depType:     "postgresql@16",
+			apiDepType:  "mariadb@10.11",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			services := []platform.ServiceStack{
+				{
+					ID: "s1", Name: "appdev", Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName: tt.apiType,
+					},
+				},
+			}
+			var deps []workflow.Dependency
+			if !tt.isRuntime {
+				services = append(services, platform.ServiceStack{
+					ID: "s2", Name: tt.depHostname, Status: "RUNNING",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName: tt.apiDepType,
+					},
+				})
+				deps = append(deps, workflow.Dependency{
+					Hostname:   tt.depHostname,
+					Type:       tt.depType,
+					Resolution: "SHARED",
+				})
+			}
+			mock := platform.NewMock().WithServices(services)
+			if !tt.isRuntime {
+				mock = mock.WithServiceEnv("s2", []platform.EnvVar{{Key: "port", Content: "5432"}})
+			}
+
+			plan := &workflow.ServicePlan{
+				Targets: []workflow.BootstrapTarget{{
+					Runtime:      workflow.RuntimeTarget{DevHostname: "appdev", Type: tt.planType, BootstrapMode: "simple"},
+					Dependencies: deps,
+				}},
+			}
+
+			checker := checkProvision(mock, "proj-1", nil)
+			result, err := checker(context.Background(), plan, nil)
+			if err != nil {
+				t.Fatalf("checker error: %v", err)
+			}
+			if result.Passed {
+				t.Error("expected fail for type mismatch")
+			}
+			hasTypeFail := false
+			for _, c := range result.Checks {
+				if c.Status == statusFail && (c.Name == "appdev_type" || c.Name == tt.depHostname+"_type") {
+					hasTypeFail = true
+				}
+			}
+			if !hasTypeFail {
+				t.Error("expected a _type fail check")
+				for _, c := range result.Checks {
+					t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckProvision_TypeMatch_Pass(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{
+			ID: "s1", Name: "appdev", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeVersionName: "nodejs@22",
+			},
+		},
+		{
+			ID: "s2", Name: "appstage", Status: "NEW",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeVersionName: "nodejs@22",
+			},
+		},
+		{
+			ID: "s3", Name: "db", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeVersionName: "postgresql@16",
+			},
+		},
+	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	checker := checkProvision(mock, "proj-1", nil)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("checker error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass when types match, got fail: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+}
+
 func TestIsManagedNonStorage(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

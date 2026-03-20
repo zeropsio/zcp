@@ -30,6 +30,8 @@ func buildStepChecker(step string, client platform.Client, fetcher platform.LogF
 		return checkDeploy(client, projectID)
 	case stepVerify:
 		return checkVerify(client, fetcher, projectID, httpClient)
+	case "strategy":
+		return checkStrategy()
 	}
 	return nil
 }
@@ -56,6 +58,9 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 			// Check dev runtime exists and is RUNNING.
 			checks = append(checks, checkServiceRunning(svcMap, target.Runtime.DevHostname)...)
 
+			// Cross-check runtime type matches plan.
+			checks = append(checks, checkServiceType(svcMap, target.Runtime.DevHostname, target.Runtime.Type)...)
+
 			// Check stage runtime status.
 			// Existing runtimes (incremental bootstrap) may have stage already RUNNING/ACTIVE.
 			// New runtimes expect stage to be NEW or READY_TO_DEPLOY (freshly imported).
@@ -70,6 +75,9 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 			// Check dependencies.
 			for _, dep := range target.Dependencies {
 				checks = append(checks, checkServiceRunning(svcMap, dep.Hostname)...)
+
+				// Cross-check dependency type matches plan.
+				checks = append(checks, checkServiceType(svcMap, dep.Hostname, dep.Type)...)
 
 				// Managed (non-storage) dependencies with resolution CREATE or EXISTS must have env vars.
 				if (dep.Resolution == "CREATE" || dep.Resolution == "EXISTS") && isManagedNonStorage(dep.Type) {
@@ -281,6 +289,23 @@ func checkServiceStatusAny(svcMap map[string]platform.ServiceStack, hostname str
 		Name:   hostname + "_status",
 		Status: statusFail,
 		Detail: fmt.Sprintf("expected one of [%s], got %s", strings.Join(statuses, ", "), svc.Status),
+	}}
+}
+
+// checkServiceType verifies a service's API type matches the plan type.
+func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expectedType string) []workflow.StepCheck {
+	svc, exists := svcMap[hostname]
+	if !exists {
+		return nil // missing service is caught by checkServiceRunning
+	}
+	actual := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	if actual == "" || actual == expectedType {
+		return nil
+	}
+	return []workflow.StepCheck{{
+		Name:   hostname + "_type",
+		Status: statusFail,
+		Detail: fmt.Sprintf("expected %s, got %s", expectedType, actual),
 	}}
 }
 

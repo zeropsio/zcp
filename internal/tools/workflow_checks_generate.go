@@ -11,6 +11,12 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// buildCommandPrefixes are command prefixes that belong in build, not run.start.
+var buildCommandPrefixes = []string{
+	"npm install", "pip install", "go build", "cargo build",
+	"mvn package", "gradle build",
+}
+
 // checkGenerate validates the generate step by checking zerops.yml quality.
 // It verifies: existence, hostname match, env ref validity, port presence, and deployFiles.
 func checkGenerate(stateDir string) workflow.StepChecker {
@@ -141,7 +147,67 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 		}
 	}
 
+	// run.start required for dynamic runtimes (no implicit web server).
+	if !entry.HasImplicitWebServer() {
+		if entry.Run.Start == "" {
+			checks = append(checks, workflow.StepCheck{
+				Name:   hostname + "_run_start",
+				Status: statusFail,
+				Detail: "run.start is empty — app will not start after deploy (required for this runtime)",
+			})
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name: hostname + "_run_start", Status: statusPass,
+			})
+		}
+	}
+
+	// run.start must not be a build command.
+	if entry.Run.Start != "" {
+		startLower := strings.ToLower(entry.Run.Start)
+		for _, prefix := range buildCommandPrefixes {
+			if strings.HasPrefix(startLower, prefix) {
+				checks = append(checks, workflow.StepCheck{
+					Name:   hostname + "_run_start_build_cmd",
+					Status: statusFail,
+					Detail: fmt.Sprintf("run.start %q looks like a build command — move it to build.buildCommands", entry.Run.Start),
+				})
+				break
+			}
+		}
+	}
+
+	// Dev services need deployFiles: [.] for full source iteration.
+	if strings.Contains(hostname, "dev") && target.Runtime.EffectiveMode() != workflow.PlanModeSimple {
+		if deployFilesContainsDot(entry.Build.DeployFiles) {
+			checks = append(checks, workflow.StepCheck{
+				Name: hostname + "_dev_deploy_files", Status: statusPass,
+			})
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name:   hostname + "_dev_deploy_files",
+				Status: statusFail,
+				Detail: "dev service should use deployFiles: [.] — ensures source files persist across deploys for iteration",
+			})
+		}
+	}
+
 	return checks
+}
+
+// deployFilesContainsDot checks if deployFiles includes "." or "./".
+func deployFilesContainsDot(deployFiles any) bool {
+	switch v := deployFiles.(type) {
+	case string:
+		return v == "." || v == "./"
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok && (s == "." || s == "./") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // collectPlanHostnames extracts all hostnames from the bootstrap plan.

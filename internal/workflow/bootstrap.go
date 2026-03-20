@@ -150,6 +150,8 @@ const (
 const minAttestationLen = 10
 
 // CompleteStep validates and completes the current step with an attestation.
+// Attestation is audit trail (iteration context + prior step history), not validation.
+// Real enforcement is in StepChecker — see engine.BootstrapComplete.
 func (b *BootstrapState) CompleteStep(name, attestation string) error {
 	if !b.Active {
 		return fmt.Errorf("complete step: bootstrap not active")

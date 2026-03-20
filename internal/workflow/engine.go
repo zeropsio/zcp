@@ -131,6 +131,9 @@ func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, e
 }
 
 // BootstrapComplete completes the current step and advances to the next.
+// Step advancement depends on checker results, not attestation content.
+// If checker is nil or passes, step advances. If checker fails, step stays
+// and the agent receives the failure details to fix and retry.
 func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attestation string, checker StepChecker) (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {

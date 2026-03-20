@@ -712,6 +712,235 @@ func TestCheckGenerate_HealthCheck(t *testing.T) {
 	}
 }
 
+func TestCheckGenerate_MissingRunStart_DynamicRuntime_Fail(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      ports:
+        - port: 8080
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected fail for missing run.start on dynamic runtime")
+	}
+	hasRunStartFail := false
+	for _, c := range result.Checks {
+		if c.Name == "appdev_run_start" && c.Status == "fail" {
+			hasRunStartFail = true
+		}
+	}
+	if !hasRunStartFail {
+		t.Error("expected appdev_run_start fail check")
+	}
+}
+
+func TestCheckGenerate_MissingRunStart_ImplicitWebServer_Pass(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      base: php-nginx@8.4
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4", BootstrapMode: "simple"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, c := range result.Checks {
+		if c.Name == "appdev_run_start" && c.Status == "fail" {
+			t.Error("implicit web server should not fail run_start check")
+		}
+	}
+}
+
+func TestCheckGenerate_DevDeployFilesNotDot_Fail(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [app]
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "dev"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected fail for dev service without deployFiles: [.]")
+	}
+	hasDevDeployFail := false
+	for _, c := range result.Checks {
+		if c.Name == "appdev_dev_deploy_files" && c.Status == "fail" {
+			hasDevDeployFail = true
+		}
+	}
+	if !hasDevDeployFail {
+		t.Error("expected appdev_dev_deploy_files fail check")
+	}
+}
+
+func TestCheckGenerate_DevDeployFilesDot_Pass(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "dev"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, c := range result.Checks {
+		if c.Name == "appdev_dev_deploy_files" && c.Status == "fail" {
+			t.Error("dev service with deployFiles: [.] should not fail dev_deploy_files check")
+		}
+	}
+}
+
+func TestCheckGenerate_RunStartBuildCommand_Fail(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		runStart string
+	}{
+		{"npm_install", "npm install"},
+		{"pip_install", "pip install -r requirements.txt"},
+		{"go_build", "go build -o app ."},
+		{"cargo_build", "cargo build --release"},
+		{"mvn_package", "mvn package"},
+		{"gradle_build", "gradle build"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			stateDir := filepath.Join(dir, ".zcp", "state")
+
+			writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: `+tt.runStart+`
+      ports:
+        - port: 8080
+`)
+
+			plan := &workflow.ServicePlan{
+				Targets: []workflow.BootstrapTarget{{
+					Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+				}},
+			}
+
+			checker := checkGenerate(stateDir)
+			result, err := checker(context.Background(), plan, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			hasBuildCmdFail := false
+			for _, c := range result.Checks {
+				if c.Name == "appdev_run_start_build_cmd" && c.Status == "fail" {
+					hasBuildCmdFail = true
+				}
+			}
+			if !hasBuildCmdFail {
+				t.Errorf("expected appdev_run_start_build_cmd fail for run.start=%q", tt.runStart)
+			}
+		})
+	}
+}
+
+func TestCheckGenerate_RunStartValidCommand_NoBuildCmdFail(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, c := range result.Checks {
+		if c.Name == "appdev_run_start_build_cmd" && c.Status == "fail" {
+			t.Error("valid run.start should not trigger build command check")
+		}
+	}
+}
+
 // writeZeropsYml is a test helper that writes zerops.yml to the given directory.
 func writeZeropsYml(t *testing.T, dir, content string) {
 	t.Helper()
