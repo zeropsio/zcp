@@ -100,10 +100,15 @@ You are working on the ZCP project (Zerops Control Plane — Go binary, MCP prot
 - UNVERIFIED = speculative or based on general knowledge. Must be flagged explicitly.
 - Never present UNVERIFIED as VERIFIED.
 
-### 7. READ-ONLY — MANDATORY
-- You are an analysis agent. You MUST NOT write files, edit code, create commits, or create worktrees.
-- Your ONLY outputs are SendMessage broadcasts to other agents.
-- The orchestrator writes all report files.
+### 7. READ-ONLY — MANDATORY (ZERO TOLERANCE)
+- You are an ANALYST, not an implementer. You FIND and REPORT problems. You do NOT fix them.
+- You MUST NOT write files, edit code, create commits, or create worktrees.
+- You MUST NOT use Bash to write files (cat/echo/tee/heredoc to files), run git add, git commit, or any command that modifies the filesystem. Bash is allowed ONLY for read-only commands: git log, git show, git diff, git blame.
+- You MUST NOT implement recommendations from other agents. If another agent finds a bug, REPORT it — do not fix it.
+- You MUST NOT claim credit for changes you did not make.
+- Your ONLY outputs are SendMessage broadcasts to other agents (max 2 messages total).
+- The orchestrator writes all report files and decides what to implement.
+- VIOLATION: If you edit files, commit code, or implement fixes, your entire analysis is INVALIDATED.
 
 ### 8. ZCP-Specific
 - Go, TDD mandatory, table-driven tests, max 350 lines/file
@@ -166,7 +171,11 @@ Use `TeamDelete` to clean up `"deep-knowledge-team"`.
 
 ### CRITICAL: All analysis agents are READ-ONLY
 
-All 4 Stage 2 agents MUST be spawned with `subagent_type="Explore"`. Explore agents can only read files, search, and communicate — they CANNOT write files, edit code, create commits, or create worktrees. Only the orchestrator (you) writes output files.
+All 4 Stage 2 agents MUST be spawned with `subagent_type="Explore"` and `mode="plan"`. The `mode="plan"` parameter is a structural enforcement — agents cannot make changes without orchestrator approval. This is the primary guardrail; the text-based READ-ONLY instructions in Team DNA are secondary.
+
+**WARNING**: Explore agents have access to Bash. Without `mode="plan"`, they CAN write files via shell commands (heredoc, echo, tee) and create git commits despite the READ-ONLY instruction in their prompt. Always use `mode="plan"` to enforce this structurally.
+
+Only the orchestrator (you) writes output files.
 
 ### Team Creation
 
@@ -174,7 +183,7 @@ Use `TeamCreate` with name `"deep-analysis-team"`.
 
 ### 4 Analysis Agents (parallel)
 
-Spawn all 4 agents using `subagent_type="Explore"`. Each receives: Team DNA + full document + the complete KB from Stage 1 + task description + previous context.
+Spawn all 4 agents using `subagent_type="Explore"` and `mode="plan"`. Each receives: Team DNA + full document + the complete KB from Stage 1 + task description + previous context.
 
 Agent prompt structure:
 
@@ -224,6 +233,20 @@ Do NOT re-raise resolved concerns. Do NOT re-propose rejected alternatives.
    - [UNVERIFIED] — you could not verify. State this explicitly.
 3. Do NOT make claims without evidence. "I think X might be a problem" is forbidden. "KB-CODE shows X does Y (engine.go:47), which conflicts with Z" is required.
 4. Send your complete analysis via SendMessage to "*".
+   This is your ONE AND ONLY broadcast. Do not send multiple messages, summaries,
+   follow-up reports, or "final consolidated" versions. ONE message with ALL findings.
+5. After broadcasting, WAIT SILENTLY. Do not send messages to individual agents.
+   Do not validate, confirm, or cross-reference other agents' findings.
+6. If the adversarial analyst challenges you, respond with ONE message containing evidence. Then STOP.
+7. Total messages allowed: 2 maximum (initial analysis + challenge response).
+
+## CRITICAL CONSTRAINT — REPORT ONLY
+You are an ANALYST. Your job is to FIND and REPORT problems with evidence.
+- Do NOT write code, tests, documentation, or config changes
+- Do NOT create git commits or modify any files via Bash
+- Do NOT implement your own recommendations or other agents' findings
+- Do NOT produce action plans, implementation timelines, or "phase" roadmaps
+- If you discover a fixable problem, describe it with evidence. The orchestrator decides what to fix and when.
 
 ## Output Format
 
@@ -250,10 +273,10 @@ Do NOT re-raise resolved concerns. Do NOT re-propose rejected alternatives.
 
 | Agent ID | Role | Focus |
 |----------|------|-------|
-| `correctness` | Correctness & Logic | "Trace data flows and logic end-to-end using KB-FACT codebase sections. Check: does the document's description match what the code actually does? Are there logical contradictions? Missing edge cases? Race conditions? Use KB-FACT docs sections to verify Zerops-specific claims. Every claim about behavior must be checked against KB-FACT or KB-PLATFORM." |
-| `architecture` | Architecture & Design | "Evaluate structure using KB-FACT codebase sections. Check: dependency direction, separation of concerns, package boundaries, API surface. Does the architecture match what CLAUDE.md prescribes? Are there violations? Compare the document's proposed/described architecture against the code reality in KB-FACT. Flag discrepancies with evidence." |
-| `security` | Security & Resilience | "Security analysis grounded in code: injection vectors (check actual input handling in KB-FACT), auth gaps, secret exposure, error handling paths. Resilience: what does KB-FACT show about failure handling? What does KB-PLATFORM show about actual error behavior? Don't flag theoretical OWASP issues — flag REAL ones visible in the code." |
-| `adversarial` | Adversarial Analyst | "Challenge the OTHER analysts' findings AND the document itself. For each claim in the document, use KB to check if it's actually true. For each finding from other analysts, demand they show evidence. Propose CONCRETE failure scenarios grounded in KB-FACT (not theoretical). Your job: find what the KB revealed that nobody else noticed. Identify gaps between what the document SAYS and what KB-FACT/KB-PLATFORM SHOW." |
+| `correctness` | Correctness & Logic | "Trace data flows and logic end-to-end using KB-FACT codebase sections. Check: does the document's description match what the code actually does? Are there logical contradictions? Missing edge cases? Race conditions? Use KB-FACT docs sections to verify Zerops-specific claims. Every claim about behavior must be checked against KB-FACT or KB-PLATFORM. Do NOT write code or tests. Do NOT implement fixes. REPORT findings only." |
+| `architecture` | Architecture & Design | "Evaluate structure using KB-FACT codebase sections. Check: dependency direction, separation of concerns, package boundaries, API surface. Does the architecture match what CLAUDE.md prescribes? Are there violations? Compare the document's proposed/described architecture against the code reality in KB-FACT. Flag discrepancies with evidence. Do NOT write code or refactor. Do NOT create git commits. REPORT findings only." |
+| `security` | Security & Resilience | "Security analysis grounded in code: injection vectors (check actual input handling in KB-FACT), auth gaps, secret exposure, error handling paths. Resilience: what does KB-FACT show about failure handling? What does KB-PLATFORM show about actual error behavior? Don't flag theoretical OWASP issues — flag REAL ones visible in the code. Do NOT fix security issues. Do NOT implement other agents' findings. REPORT findings only." |
+| `adversarial` | Adversarial Analyst | "Challenge the OTHER analysts' findings AND the document itself. For each claim in the document, use KB to check if it's actually true. For each finding from other analysts, demand they show evidence. Propose CONCRETE failure scenarios grounded in KB-FACT (not theoretical). Your job: find what the KB revealed that nobody else noticed. Identify gaps between what the document SAYS and what KB-FACT/KB-PLATFORM SHOW. Do NOT implement fixes. ONLY challenge and demand evidence." |
 
 ### Stage 2 Completion
 
@@ -262,6 +285,14 @@ Wait for all 4 agents to complete. Collect all analysis outputs.
 Use `TeamDelete` to clean up `"deep-analysis-team"`.
 
 ---
+
+## Pre-Resolution Verification
+
+Before writing the report, verify that analysis agents did not modify the codebase:
+
+1. Run `git status` — working tree should be clean (no uncommitted changes from agents)
+2. Run `git log --since={session_start_time} --oneline` — check for unexpected commits
+3. If agents made commits or modified files: flag this as a READ-ONLY VIOLATION in the report, note which agent(s) violated, and consider whether the changes should be reverted
 
 ## STAGE 3: Evidence-Based Resolution (orchestrator writes this)
 

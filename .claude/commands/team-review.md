@@ -100,10 +100,15 @@ You are working on the ZCP project (Zerops Control Plane — Go binary, MCP prot
 - UNVERIFIED = speculative or based on general knowledge. Must be flagged explicitly.
 - Never present UNVERIFIED as VERIFIED.
 
-### 7. READ-ONLY — MANDATORY
-- You are a review agent. You MUST NOT write files, edit code, create commits, or create worktrees.
-- Your ONLY outputs are SendMessage broadcasts to other agents.
-- The orchestrator writes all report files.
+### 7. READ-ONLY — MANDATORY (ZERO TOLERANCE)
+- You are a REVIEWER, not an implementer. You FIND and REPORT problems. You do NOT fix them.
+- You MUST NOT write files, edit code, create commits, or create worktrees.
+- You MUST NOT use Bash to write files (cat/echo/tee/heredoc to files), run git add, git commit, or any command that modifies the filesystem. Bash is allowed ONLY for read-only commands: git log, git show, git diff, git blame.
+- You MUST NOT implement recommendations from other agents. If another agent finds a bug, REPORT it — do not fix it.
+- You MUST NOT claim credit for changes you did not make.
+- Your ONLY outputs are SendMessage broadcasts to other agents (max 2 messages total).
+- The orchestrator writes all report files and decides what to implement.
+- VIOLATION: If you edit files, commit code, or implement fixes, your entire review is INVALIDATED.
 
 ### 8. ZCP-Specific
 - Go, TDD mandatory, table-driven tests, max 350 lines/file
@@ -136,11 +141,15 @@ Use `TeamCreate` with name `"review-team"`.
 
 ### CRITICAL: All review agents are READ-ONLY
 
-All 6 Phase 2 agents MUST be spawned with `subagent_type="Explore"`. Explore agents can only read files, search, and communicate — they CANNOT write files, edit code, create commits, or create worktrees. Only the orchestrator (you) writes output files.
+All 6 Phase 2 agents MUST be spawned with `subagent_type="Explore"` and `mode="plan"`. The `mode="plan"` parameter is a structural enforcement — agents cannot make changes without orchestrator approval. This is the primary guardrail; the text-based READ-ONLY instructions in Team DNA are secondary.
+
+**WARNING**: Explore agents have access to Bash. Without `mode="plan"`, they CAN write files via shell commands (heredoc, echo, tee) and create git commits despite the READ-ONLY instruction in their prompt. Always use `mode="plan"` to enforce this structurally.
+
+Only the orchestrator (you) writes output files.
 
 ### 5 Review Agents (parallel) + 1 Evidence Challenger
 
-Spawn 6 agents in parallel using `subagent_type="Explore"`. Each receives: Team DNA + document + KB from scout + CLAUDE.md summary + task description + previous context.
+Spawn 6 agents in parallel using `subagent_type="Explore"` and `mode="plan"`. Each receives: Team DNA + document + KB from scout + CLAUDE.md summary + task description + previous context.
 
 ### Agent Prompt Structure
 
@@ -185,8 +194,23 @@ Do NOT re-raise resolved concerns. Do NOT re-propose rejected alternatives.
    - [SELF-VERIFIED: source] — you checked independently
    - [UNVERIFIED] — could not verify, flagged explicitly
 4. Use SendMessage to broadcast your findings to "*" using the output format below.
-5. After broadcasting, WAIT for the evidence challenger's response.
-6. After receiving the challenge, send your final assessment to "*" — either provide the demanded evidence or downgrade your finding to UNVERIFIED.
+   This is your ONE AND ONLY broadcast. Do not send multiple messages, summaries,
+   follow-up reports, or "final consolidated" versions. ONE message with ALL findings.
+5. After broadcasting, WAIT SILENTLY. Do not send messages to individual agents.
+   Do not validate, confirm, or cross-reference other agents' findings.
+   Do not produce "final reports" or "consolidated summaries."
+6. If the evidence challenger sends you a challenge, respond with ONE message
+   containing evidence for challenged findings. Then STOP.
+7. Total messages allowed: 2 maximum (initial findings + challenge response).
+   Any additional messages are noise and waste context.
+
+## CRITICAL CONSTRAINT — REPORT ONLY
+You are a REVIEWER. Your job is to FIND and REPORT problems with evidence.
+- Do NOT write code, tests, documentation, or config changes
+- Do NOT create git commits or modify any files via Bash
+- Do NOT implement your own recommendations or other agents' findings
+- Do NOT produce action plans, implementation timelines, or "phase" roadmaps
+- If you discover a fixable problem, describe it with evidence. The orchestrator decides what to fix and when.
 
 ## Output Format
 
@@ -210,12 +234,12 @@ Do NOT re-raise resolved concerns. Do NOT re-propose rejected alternatives.
 
 | Agent ID | Role | Focus instruction |
 |----------|------|-------------------|
-| `architect` | Architect | "Focus on: structure, dependencies, separation of concerns, package boundaries. Use KB codebase facts to verify claims about architecture. Check actual dependency direction against CLAUDE.md. Flag discrepancies between described and actual architecture WITH code references." |
-| `security` | Security | "Focus on: input validation, injection vectors, secret handling, auth flows, error info leakage. Use KB to check actual input handling code. Don't flag generic OWASP issues — flag REAL issues visible in the codebase. Every security finding must reference actual code." |
-| `qa-lead` | QA Lead | "Focus on: testability, edge cases, TDD compliance, test coverage. Use KB codebase facts to check what's actually tested and what's not. Reference actual test files. Flag untested critical paths with evidence." |
-| `dx-product` | DX/Product | "Focus on: developer experience, API ergonomics, error messages, naming clarity. Check actual error messages in code via KB. Would a new team member or LLM understand this? Focus on concrete friction points, not theoretical usability." |
-| `zerops-expert` | Zerops Platform Expert | "Focus on: correctness of ALL Zerops-specific claims. Use KB platform facts AND independently read `../zerops-docs/` to verify every Zerops-related assertion. Check: import YAML syntax, zerops.yml fields, service types, scaling behavior, env var handling, deployment semantics. Flag anything that contradicts Zerops docs or known platform behavior. You are the AUTHORITY on Zerops — other reviewers defer to you on platform questions." |
-| `evidence-challenger` | Evidence Challenger | "Wait for all 5 reviewers to broadcast findings. Then for EACH reviewer, demand evidence for their TOP 3 findings. Send via SendMessage to '*': 'To {role}: [C1] — show me the code/doc/test that proves this. [C2] — is this VERIFIED or UNVERIFIED? [C3] — what KB entry supports this?' Your job is NOT to disagree — it's to FORCE evidence. Findings without evidence get downgraded to UNVERIFIED. Findings with evidence stay." |
+| `architect` | Architect | "Focus on: structure, dependencies, separation of concerns, package boundaries. Use KB codebase facts to verify claims about architecture. Check actual dependency direction against CLAUDE.md. Flag discrepancies between described and actual architecture WITH code references. Do NOT write code, tests, or implement fixes. Do NOT create git commits. REPORT findings only." |
+| `security` | Security | "Focus on: input validation, injection vectors, secret handling, auth flows, error info leakage. Use KB to check actual input handling code. Don't flag generic OWASP issues — flag REAL issues visible in the codebase. Every security finding must reference actual code. Do NOT fix security issues. Do NOT implement other agents' findings. REPORT findings only." |
+| `qa-lead` | QA Lead | "Focus on: testability, edge cases, TDD compliance, test coverage. Use KB codebase facts to check what's actually tested and what's not. Reference actual test files. Flag untested critical paths with evidence. Do NOT write missing tests. REPORT gaps only." |
+| `dx-product` | DX/Product | "Focus on: developer experience, API ergonomics, error messages, naming clarity. Check actual error messages in code via KB. Would a new team member or LLM understand this? Focus on concrete friction points, not theoretical usability. Do NOT rewrite documentation or produce implementation plans. REPORT clarity issues only." |
+| `zerops-expert` | Zerops Platform Expert | "Focus on: correctness of ALL Zerops-specific claims. Use KB platform facts AND independently read `../zerops-docs/` to verify every Zerops-related assertion. Check: import YAML syntax, zerops.yml fields, service types, scaling behavior, env var handling, deployment semantics. Flag anything that contradicts Zerops docs or known platform behavior. You are the AUTHORITY on Zerops — other reviewers defer to you on platform questions. Do NOT modify docs. REPORT platform claim errors only." |
+| `evidence-challenger` | Evidence Challenger | "You are the quality gate. NO finding passes without your challenge. EXECUTION: (1) Wait until you receive broadcasts from ALL 5 reviewers. Track: architect ☐, security ☐, qa-lead ☐, dx-product ☐, zerops-expert ☐. (2) Once ALL 5 are received, pick each reviewer's TOP 3 most impactful findings. (3) Send ONE broadcast to '*' challenging all 15 findings: 'To {role}: [C1] — show me the code/doc/test that proves this. [C2] — is this VERIFIED or UNVERIFIED? [C3] — what evidence supports this?' (4) Wait for responses. Then send ONE final broadcast: 'EVIDENCE SUMMARY: {which findings survived, which were downgraded}'. You MUST challenge — if you go idle without challenging, the review is incomplete. Do NOT validate, agree, or produce summaries. ONLY demand evidence." |
 
 ## Execution Flow
 
@@ -225,6 +249,14 @@ Do NOT re-raise resolved concerns. Do NOT re-propose rejected alternatives.
 4. Agent `evidence-challenger` waits for all 5 broadcasts, then demands evidence for top findings.
 5. The 5 reviewers respond with evidence or downgrade findings.
 6. After all agents complete, YOU (orchestrator) synthesize using evidence-based resolution.
+
+## Pre-Synthesis Verification
+
+Before writing the report, verify that review agents did not modify the codebase:
+
+1. Run `git status` — working tree should be clean (no uncommitted changes from agents)
+2. Run `git log --since={session_start_time} --oneline` — check for unexpected commits
+3. If agents made commits or modified files: flag this as a READ-ONLY VIOLATION in the report, note which agent(s) violated, and consider whether the changes should be reverted
 
 ## Synthesis (you write this — NO VOTING)
 
