@@ -162,7 +162,7 @@ func TestStore_GetRecipe_Success(t *testing.T) {
 			t.Parallel()
 			store := testStoreWithCore(t)
 
-			recipe, err := store.GetRecipe(tt.recipeName)
+			recipe, err := store.GetRecipe(tt.recipeName, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -178,7 +178,7 @@ func TestStore_GetRecipe_PrependsUniversals(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	recipe, err := store.GetRecipe("ghost")
+	recipe, err := store.GetRecipe("ghost", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestStore_GetRecipe_WithoutUniversals(t *testing.T) {
 	}
 	store, _ := NewStore(docs)
 
-	recipe, err := store.GetRecipe("ghost")
+	recipe, err := store.GetRecipe("ghost", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestStore_GetRecipe_NotFound(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	_, err := store.GetRecipe("nonexistent")
+	_, err := store.GetRecipe("nonexistent", "")
 	if err == nil {
 		t.Error("expected error for nonexistent recipe")
 	}
@@ -353,7 +353,7 @@ func TestStore_GetRecipe_FuzzyMatch(t *testing.T) {
 				t.Fatalf("NewStore: %v", err)
 			}
 
-			result, err := store.GetRecipe(tt.query)
+			result, err := store.GetRecipe(tt.query, "")
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -459,7 +459,7 @@ func TestStore_GetRecipe_PrependsRuntimeGuide(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	recipe, err := store.GetRecipe("laravel")
+	recipe, err := store.GetRecipe("laravel", "")
 	if err != nil {
 		t.Fatal(err)
 	}

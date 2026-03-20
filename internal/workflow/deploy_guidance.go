@@ -38,7 +38,7 @@ func ResolveDeployGuidance(stateDir, hostname string) string {
 		return ""
 	}
 
-	return extractSection(md, sectionName)
+	return ExtractSection(md, sectionName)
 }
 
 // resolveDeployStepGuidance returns guidance for a deploy workflow step.
@@ -51,23 +51,23 @@ func resolveDeployStepGuidance(step, mode string) string {
 
 	switch step {
 	case DeployStepPrepare:
-		return extractSection(md, "deploy-prepare")
+		return ExtractSection(md, "deploy-prepare")
 	case DeployStepDeploy:
 		var sections []string
-		sections = append(sections, extractSection(md, "deploy-execute-overview"))
+		sections = append(sections, ExtractSection(md, "deploy-execute-overview"))
 		switch mode {
 		case PlanModeStandard:
-			sections = append(sections, extractSection(md, "deploy-execute-standard"))
+			sections = append(sections, ExtractSection(md, "deploy-execute-standard"))
 		case PlanModeDev:
-			sections = append(sections, extractSection(md, "deploy-execute-dev"))
+			sections = append(sections, ExtractSection(md, "deploy-execute-dev"))
 		case PlanModeSimple:
-			sections = append(sections, extractSection(md, "deploy-execute-simple"))
+			sections = append(sections, ExtractSection(md, "deploy-execute-simple"))
 		default:
-			sections = append(sections, extractSection(md, "deploy-execute-standard"))
+			sections = append(sections, ExtractSection(md, "deploy-execute-standard"))
 		}
 		// Iteration guidance for standard and dev modes (not simple — auto-starts).
 		if mode != PlanModeSimple {
-			sections = append(sections, extractSection(md, "deploy-iteration"))
+			sections = append(sections, ExtractSection(md, "deploy-iteration"))
 		}
 		var parts []string
 		for _, s := range sections {
@@ -80,7 +80,7 @@ func resolveDeployStepGuidance(step, mode string) string {
 		}
 		return strings.Join(parts, "\n\n---\n\n")
 	case DeployStepVerify:
-		return extractSection(md, "deploy-verify")
+		return ExtractSection(md, "deploy-verify")
 	}
 	return ""
 }

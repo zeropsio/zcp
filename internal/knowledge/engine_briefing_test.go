@@ -9,7 +9,7 @@ import (
 
 func TestStore_GetBriefing_RealDocs(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("php-nginx@8.4", []string{"postgresql@16"}, nil)
+	briefing, err := store.GetBriefing("php-nginx@8.4", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestGetBriefing_IncludesVersionCheck(t *testing.T) {
 	store := newTestStore(t)
 	types := testStackTypes()
 
-	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16"}, types)
+	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16"}, "", types)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestGetBriefing_VersionWarning(t *testing.T) {
 	store := newTestStore(t)
 	types := testStackTypes()
 
-	briefing, err := store.GetBriefing("bun@1", []string{"postgresql@16"}, types)
+	briefing, err := store.GetBriefing("bun@1", []string{"postgresql@16"}, "", types)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestGetBriefing_VersionWarning(t *testing.T) {
 func TestGetBriefing_NilTypes_NoVersionSection(t *testing.T) {
 	store := newTestStore(t)
 
-	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16"}, nil)
+	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestGetBriefing_NilTypes_NoVersionSection(t *testing.T) {
 
 func TestGetBriefing_BunRuntime_ContainsBindingRule(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, nil)
+	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestGetBriefing_BunRuntime_ContainsBindingRule(t *testing.T) {
 
 func TestStore_GetRecipe_BunHono(t *testing.T) {
 	store := newTestStore(t)
-	content, err := store.GetRecipe("bun-hono")
+	content, err := store.GetRecipe("bun-hono", "")
 	if err != nil {
 		t.Fatalf("GetRecipe(bun-hono): %v", err)
 	}
@@ -103,7 +103,7 @@ func TestStore_GetRecipe_BunHono(t *testing.T) {
 
 func TestStore_GetBriefing_SurfacesMatchingRecipes(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("bun@1.2", nil, nil)
+	briefing, err := store.GetBriefing("bun@1.2", nil, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestStore_GetBriefing_SurfacesMatchingRecipes(t *testing.T) {
 
 func TestStore_GetBriefing_NuxtRecipeForNodejs(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("nodejs@22", nil, nil)
+	briefing, err := store.GetBriefing("nodejs@22", nil, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestStore_GetBriefing_NuxtRecipeForNodejs(t *testing.T) {
 
 func TestStore_GetBriefing_StaticRecipes(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("static", nil, nil)
+	briefing, err := store.GetBriefing("static", nil, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestStore_GetBriefing_StaticRecipes(t *testing.T) {
 
 func TestStore_GetBriefing_RustNoRecipes(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("rust@1", nil, nil)
+	briefing, err := store.GetBriefing("rust@1", nil, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestStore_GetBriefing_AutoPromotesRuntimeFromServices(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			briefing, err := store.GetBriefing("", tt.services, nil)
+			briefing, err := store.GetBriefing("", tt.services, "", nil)
 			if err != nil {
 				t.Fatalf("GetBriefing: %v", err)
 			}
@@ -223,7 +223,7 @@ func TestStore_GetBriefing_AutoPromotesRuntimeFromServices(t *testing.T) {
 
 func TestBriefing_PostgreSQLNoDuplicateWiring(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("", []string{"postgresql@16"}, nil)
+	briefing, err := store.GetBriefing("", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestBriefing_PostgreSQLNoDuplicateWiring(t *testing.T) {
 
 func TestBriefing_NginxRuntime(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("nginx@1.26", nil, nil)
+	briefing, err := store.GetBriefing("nginx@1.26", nil, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestBriefing_NginxRuntime(t *testing.T) {
 
 func TestBriefing_ValkeyNoCredentials(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("nodejs@22", []string{"valkey@7.2"}, nil)
+	briefing, err := store.GetBriefing("nodejs@22", []string{"valkey@7.2"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestStore_GetBriefing_NoPromotionWhenRuntimeSet(t *testing.T) {
 	store := newTestStore(t)
 
 	// When runtime is already set, services should stay as services even if they're runtime names
-	briefing, err := store.GetBriefing("php-nginx@8.4", []string{"nodejs@22", "postgresql@16"}, nil)
+	briefing, err := store.GetBriefing("php-nginx@8.4", []string{"nodejs@22", "postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestStore_GetBriefing_NoPromotionWhenRuntimeSet(t *testing.T) {
 
 func TestStore_GetBriefing_LayerOrderRealDocs(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, nil)
+	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestGetBriefing_NoStaticVersionLines(t *testing.T) {
 
 	for _, rt := range runtimes {
 		t.Run(rt, func(t *testing.T) {
-			briefing, err := store.GetBriefing(rt, nil, nil)
+			briefing, err := store.GetBriefing(rt, nil, "", nil)
 			if err != nil {
 				t.Fatalf("GetBriefing(%s): %v", rt, err)
 			}
@@ -339,7 +339,7 @@ func TestGetBriefing_NoStaticVersionLines(t *testing.T) {
 
 func TestGetBriefing_PHPBriefingMentionsTuning(t *testing.T) {
 	store := newTestStore(t)
-	briefing, err := store.GetBriefing("php-nginx@8.4", nil, nil)
+	briefing, err := store.GetBriefing("php-nginx@8.4", nil, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
@@ -366,11 +366,91 @@ func TestGetBriefing_NoStaticServiceTypeVersions(t *testing.T) {
 		"elasticsearch@8.16", "kafka@3.8", "nats@2.12",
 	}
 
-	briefing, err := store.GetBriefing("", services, nil)
+	briefing, err := store.GetBriefing("", services, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
 	if typeWithVersion.MatchString(briefing) {
 		t.Errorf("briefing contains **Type**: lines with hardcoded versions — should use base name only")
+	}
+}
+
+// --- Mode-filtered Deploy Patterns tests ---
+
+func TestGetBriefing_ModeDevFiltersDeployPatterns(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("bun@1.2", nil, "dev", nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if !strings.Contains(briefing, "**Dev deploy**:") {
+		t.Error("dev mode briefing should contain Dev deploy pattern")
+	}
+	if strings.Contains(briefing, "**Prod deploy**:") {
+		t.Error("dev mode briefing should NOT contain Prod deploy pattern")
+	}
+}
+
+func TestGetBriefing_ModeStageFiltersDeployPatterns(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("bun@1.2", nil, "stage", nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if !strings.Contains(briefing, "**Prod deploy**:") {
+		t.Error("stage mode briefing should contain Prod deploy pattern")
+	}
+	if strings.Contains(briefing, "**Dev deploy**:") {
+		t.Error("stage mode briefing should NOT contain Dev deploy pattern")
+	}
+}
+
+func TestGetBriefing_EmptyModeShowsAllPatterns(t *testing.T) {
+	store := newTestStore(t)
+	briefing, err := store.GetBriefing("bun@1.2", nil, "", nil)
+	if err != nil {
+		t.Fatalf("GetBriefing: %v", err)
+	}
+	if !strings.Contains(briefing, "**Dev deploy**:") {
+		t.Error("empty mode briefing should contain Dev deploy pattern")
+	}
+	if !strings.Contains(briefing, "**Prod deploy**:") {
+		t.Error("empty mode briefing should contain Prod deploy pattern")
+	}
+}
+
+func TestGetRecipe_ModeDevAddsAdaptation(t *testing.T) {
+	store := newTestStore(t)
+	recipe, err := store.GetRecipe("bun-hono", "dev")
+	if err != nil {
+		t.Fatalf("GetRecipe: %v", err)
+	}
+	if !strings.Contains(recipe, "**Mode: dev**") {
+		t.Error("dev mode recipe should contain mode adaptation header")
+	}
+	if !strings.Contains(recipe, "deployFiles: [.]") {
+		t.Error("dev mode recipe adaptation should mention deployFiles: [.]")
+	}
+}
+
+func TestGetRecipe_ModeSimpleAddsAdaptation(t *testing.T) {
+	store := newTestStore(t)
+	recipe, err := store.GetRecipe("bun-hono", "simple")
+	if err != nil {
+		t.Fatalf("GetRecipe: %v", err)
+	}
+	if !strings.Contains(recipe, "**Mode: simple**") {
+		t.Error("simple mode recipe should contain mode adaptation header")
+	}
+}
+
+func TestGetRecipe_EmptyModeNoAdaptation(t *testing.T) {
+	store := newTestStore(t)
+	recipe, err := store.GetRecipe("bun-hono", "")
+	if err != nil {
+		t.Fatalf("GetRecipe: %v", err)
+	}
+	if strings.Contains(recipe, "**Mode:") {
+		t.Error("empty mode recipe should NOT contain mode adaptation header")
 	}
 }

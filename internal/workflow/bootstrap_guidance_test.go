@@ -35,8 +35,8 @@ func TestResolveGuidance(t *testing.T) {
 			true,
 		},
 		{
-			"generate_common_section_exists",
-			"generate-common",
+			"generate_section_exists",
+			"generate",
 			"Application code requirements",
 			true,
 		},
@@ -160,12 +160,12 @@ Content of bar section.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := extractSection(md, tt.section)
+			got := ExtractSection(md, tt.section)
 			if tt.wantEmpty && got != "" {
-				t.Errorf("extractSection(%q) = %q, want empty", tt.section, got)
+				t.Errorf("ExtractSection(%q) = %q, want empty", tt.section, got)
 			}
 			if !tt.wantEmpty && !strings.Contains(got, tt.wantSub) {
-				t.Errorf("extractSection(%q) missing %q, got %q", tt.section, tt.wantSub, got)
+				t.Errorf("ExtractSection(%q) missing %q, got %q", tt.section, tt.wantSub, got)
 			}
 		})
 	}
@@ -195,9 +195,9 @@ func TestResolveProgressiveGuidance_GenerateStandard(t *testing.T) {
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for generate step")
 	}
-	// Should include common + standard sections.
+	// Should include base generate + standard mode sections.
 	if !strings.Contains(guide, "Application code requirements") {
-		t.Error("generate-common section missing")
+		t.Error("generate base section missing")
 	}
 	if !strings.Contains(guide, "zsc noop --silent") {
 		t.Error("generate-standard should mention noop start")
@@ -217,9 +217,9 @@ func TestResolveProgressiveGuidance_GenerateSimple(t *testing.T) {
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for generate step in simple mode")
 	}
-	// Should include common + simple sections.
+	// Should include base generate + simple sections.
 	if !strings.Contains(guide, "Application code requirements") {
-		t.Error("generate-common section missing")
+		t.Error("generate base section missing")
 	}
 	if !strings.Contains(guide, "REAL start command") {
 		t.Error("generate-simple should mention real start command")
@@ -352,13 +352,12 @@ func TestResolveProgressiveGuidance_DevMode(t *testing.T) {
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for deploy step in dev mode")
 	}
-	// Should contain dev-only specific content.
+	// Consolidated deploy section contains dev-only mode inline.
 	if !strings.Contains(guide, "Dev-only mode") {
-		t.Error("dev mode guidance should contain 'Dev-only mode' from deploy-dev section")
+		t.Error("deploy guidance should contain 'Dev-only mode' inline note")
 	}
-	// Should NOT include deploy-standard section content.
-	if strings.Contains(guide, "Standard mode (dev+stage)") {
-		t.Error("dev mode guidance should not contain deploy-standard section")
+	if !strings.Contains(guide, "zerops_deploy") {
+		t.Error("deploy guidance should reference zerops_deploy")
 	}
 }
 
@@ -371,12 +370,9 @@ func TestResolveProgressiveGuidance_DevMode_HasDeployDevContent(t *testing.T) {
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for deploy step in dev mode")
 	}
-	// deploy-dev section must contain actionable content.
-	if !strings.Contains(guide, "no stage pair") {
-		t.Error("deploy-dev section should mention 'no stage pair'")
-	}
-	if !strings.Contains(guide, "zerops_deploy") {
-		t.Error("deploy-dev section should reference zerops_deploy")
+	// Consolidated deploy section has dev-only mode note.
+	if !strings.Contains(guide, "no stage") {
+		t.Error("deploy guidance should mention no stage for dev-only")
 	}
 }
 
@@ -390,17 +386,17 @@ func TestResolveProgressiveGuidance_MixedStandardDev(t *testing.T) {
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for mixed mode deploy")
 	}
-	// Both standard and dev sections should be present.
-	standardOnly := ResolveProgressiveGuidance("deploy", &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
-	}}, 0)
-	if len(guide) <= len(standardOnly) {
-		t.Error("mixed mode guidance should be longer than standard-only guidance")
+	// Consolidated deploy section covers all modes.
+	if !strings.Contains(guide, "Standard mode") {
+		t.Error("deploy guidance should contain standard mode content")
 	}
-	// deploy-iteration heading should appear exactly once (no duplication).
+	if !strings.Contains(guide, "Dev-only mode") {
+		t.Error("deploy guidance should contain dev-only mode content")
+	}
+	// Deploy iteration heading should appear exactly once.
 	iterCount := strings.Count(guide, "### Dev iteration: manual start cycle")
 	if iterCount != 1 {
-		t.Errorf("deploy-iteration section should appear exactly once, got %d", iterCount)
+		t.Errorf("deploy-iteration content should appear exactly once, got %d", iterCount)
 	}
 }
 
@@ -613,7 +609,7 @@ func TestBuildGuide_Deploy_ContainsSchemaRules(t *testing.T) {
 	}
 }
 
-func TestBuildGuide_Deploy_ContainsEnvVars(t *testing.T) {
+func TestBuildGuide_Deploy_NoEnvVars(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeProvider(t)
 	bs := NewBootstrapState()
@@ -624,8 +620,9 @@ func TestBuildGuide_Deploy_ContainsEnvVars(t *testing.T) {
 		"cache": {"connectionString"},
 	}
 	guide := bs.buildGuide(StepDeploy, 0, EnvContainer, store)
-	if !strings.Contains(guide, "${cache_connectionString}") {
-		t.Error("deploy guide should contain env var references")
+	// D5: Env vars are injected once at generate, NOT at deploy.
+	if strings.Contains(guide, "${cache_connectionString}") {
+		t.Error("deploy guide should NOT contain env var references (injected at generate only)")
 	}
 }
 
@@ -681,7 +678,7 @@ More text after code block.
 </section>
 trailing`
 
-	got := extractSection(md, "test")
+	got := ExtractSection(md, "test")
 	if !strings.Contains(got, "## This is a heading inside a code block") {
 		t.Error("extractSection lost content with # inside code blocks")
 	}

@@ -32,8 +32,8 @@ type Provider interface {
 	Search(query string, limit int) []SearchResult
 	GetCore() (string, error)
 	GetUniversals() (string, error)
-	GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error)
-	GetRecipe(name string) (string, error)
+	GetBriefing(runtime string, services []string, mode string, liveTypes []platform.ServiceStackType) (string, error)
+	GetRecipe(name, mode string) (string, error)
 }
 
 // Store holds the knowledge base with simple text-matching search.

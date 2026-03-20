@@ -27,15 +27,12 @@ func maxIterations() int {
 
 const (
 	sessionsDirName = "sessions"
-	legacyStateFile = "zcp_state.json"
 	stateVersion    = "1"
 )
 
 // InitSession creates a new workflow session, persists it to sessions/{id}.json,
-// and registers it in the registry. Cleans up legacy zcp_state.json if found.
+// and registers it in the registry.
 func InitSession(stateDir, projectID, workflowName, intent string) (*WorkflowState, error) {
-	cleanupLegacyState(stateDir)
-
 	sessionID, err := generateSessionID()
 	if err != nil {
 		return nil, fmt.Errorf("init session: %w", err)
@@ -166,19 +163,11 @@ func sessionFilePath(stateDir, sessionID string) string {
 	return filepath.Join(stateDir, sessionsDirName, sessionID+".json")
 }
 
-// cleanupLegacyState removes the old singleton zcp_state.json if found.
-func cleanupLegacyState(stateDir string) {
-	path := filepath.Join(stateDir, legacyStateFile)
-	_ = os.Remove(path)
-}
-
 // InitSessionAtomic creates a new workflow session atomically within a single
 // registry lock scope. It prunes dead sessions, checks bootstrap exclusivity
 // (if workflowName == WorkflowBootstrap), creates the session state file, and
 // appends the registry entry — all in one lock acquisition.
 func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*WorkflowState, error) {
-	cleanupLegacyState(stateDir)
-
 	sessionID, err := generateSessionID()
 	if err != nil {
 		return nil, fmt.Errorf("init session atomic: %w", err)

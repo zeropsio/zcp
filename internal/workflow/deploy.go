@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -366,64 +365,25 @@ func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env
 func (d *DeployState) buildGuide(step string, _ int, _ Environment, kp knowledge.Provider) string {
 	guide := resolveDeployStepGuidance(step, d.Mode)
 
-	if extra := d.assembleDeployKnowledge(step, kp); extra != "" {
+	var runtimeType string
+	var depTypes []string
+	var envVars map[string][]string
+	if d.Service != nil {
+		runtimeType = d.Service.RuntimeType
+		depTypes = d.Service.DependencyTypes
+		envVars = d.Service.DiscoveredEnvVars
+	}
+
+	if extra := assembleKnowledge(GuidanceParams{
+		Step:              step,
+		Mode:              d.Mode,
+		RuntimeType:       runtimeType,
+		DependencyTypes:   depTypes,
+		DiscoveredEnvVars: envVars,
+		KP:                kp,
+	}); extra != "" {
 		guide += "\n\n---\n\n" + extra
 	}
 
 	return guide
-}
-
-// assembleDeployKnowledge injects relevant knowledge for deploy steps.
-// Uses service context from metas for runtime/dependency-specific knowledge.
-func (d *DeployState) assembleDeployKnowledge(step string, kp knowledge.Provider) string {
-	if kp == nil || len(d.Targets) == 0 {
-		return ""
-	}
-
-	var parts []string
-
-	switch step {
-	case DeployStepPrepare:
-		// Runtime briefing for the target service.
-		if d.Service != nil && d.Service.RuntimeType != "" {
-			base, _, _ := strings.Cut(d.Service.RuntimeType, "@")
-			if briefing, err := kp.GetBriefing(base, nil, nil); err == nil && briefing != "" {
-				parts = append(parts, briefing)
-			}
-		}
-		// Service wiring for dependencies.
-		if d.Service != nil && len(d.Service.DependencyTypes) > 0 {
-			if briefing, err := kp.GetBriefing("", d.Service.DependencyTypes, nil); err == nil && briefing != "" {
-				parts = append(parts, briefing)
-			}
-		}
-		// zerops.yml schema for config checking.
-		if doc, err := kp.Get("zerops://themes/core"); err == nil {
-			sections := doc.H2Sections()
-			if s, ok := sections["zerops.yml Schema"]; ok && s != "" {
-				parts = append(parts, "## zerops.yml Schema\n\n"+s)
-			}
-			if s, ok := sections["Rules & Pitfalls"]; ok && s != "" {
-				parts = append(parts, "## Rules & Pitfalls\n\n"+s)
-			}
-		}
-
-	case DeployStepDeploy:
-		// Schema rules for deploy constraints.
-		if doc, err := kp.Get("zerops://themes/core"); err == nil {
-			sections := doc.H2Sections()
-			if s, ok := sections["Schema Rules"]; ok && s != "" {
-				parts = append(parts, "## Deploy Rules\n\n"+s)
-			}
-		}
-		// Env vars reminder if available.
-		if d.Service != nil && len(d.Service.DiscoveredEnvVars) > 0 {
-			parts = append(parts, formatEnvVarsForGuide(d.Service.DiscoveredEnvVars))
-		}
-	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, "\n\n---\n\n")
 }

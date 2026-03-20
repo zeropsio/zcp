@@ -149,7 +149,7 @@ envVariables:
 **How these reach your app**: All variables mapped in zerops.yml `envVariables` are injected as standard OS environment variables at container start. Your app reads them with the runtime's native env var API. No `.env` files or dotenv libraries needed.
 </section>
 
-<section name="generate-common">
+<section name="generate">
 ### Generate zerops.yml and application code
 
 **Prerequisites**: Services mounted, env vars discovered.
@@ -404,6 +404,10 @@ After `zerops_deploy` to dev, env vars from zerops.yml are available as OS env v
 **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static) skip manual start.** The web server starts automatically after deploy. Before first deploy, the container runs bare nginx/apache — go straight to deploy.
 
 **Piping rule:** `ssh {dev} "curl -s localhost:{port}/api"` | jq . — pipe OUTSIDE SSH. `jq` is not available inside containers.
+
+### Dev-only mode — deploy flow
+
+Same as standard mode steps 1-5, but no stage pair. All verification happens on the dev service directly. After dev is verified, present the URL to the user — no stage deploy needed.
 
 ### Simple mode — deploy flow
 
@@ -737,97 +741,6 @@ When any verification check fails, enter the iteration loop instead of giving up
 | HTTP 502 | Subdomain not activated | Call `zerops_subdomain action="enable"` |
 | curl returns empty | App not listening on 0.0.0.0 | Add HOST=0.0.0.0 to envVariables |
 | HTTP 500 | App error | Check `zerops_logs` + framework log files on mount path — log tells exact cause. Do NOT start alternative servers. |
-</section>
-
-<section name="deploy-overview">
-### Deploy overview
-
-**Core principle: Deploy first — env vars activate at deploy time. Dev is for iterating and fixing. Stage is for final validation.**
-
-**Mandatory dev lifecycle** — deploy-first. Dev uses an idle start command so no server auto-starts. The agent MUST:
-1. Write zerops.yml (dev entry only) + app code to SSHFS mount
-2. `zerops_deploy` to dev — activates envVariables, runs build pipeline, persists files. Container restarts with `zsc noop`.
-3. Start server via SSH — env vars are now available as OS env vars
-4. `zerops_verify` dev — endpoints respond with real env var values
-5. Generate stage entry in zerops.yml — dev is proven, now write the production config based on what worked
-6. `zerops_deploy` to stage (stage has real `start:` command — server auto-starts there)
-7. `zerops_verify` stage
-
-Steps 2-4 repeat on every iteration. Stage (steps 5-7) only after dev is healthy.
-
-> **Files are already on the dev container** via SSHFS mount — deploy does not "send" files there. Deploy runs the build pipeline (buildCommands, deployFiles), activates envVariables, and restarts the process.
-
-> Bootstrap deploys: `zerops_deploy targetService="{devHostname}"` for self-deploy.
-> Cross-deploy to stage: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`.
-
-`zerops_deploy` blocks until the build pipeline completes. It returns the final status (`DEPLOYED` or `BUILD_FAILED`) along with build duration. No manual polling needed.
-`zerops_import` blocks until all import processes complete. It returns final statuses (`FINISHED` or `FAILED`) for each process.
-</section>
-
-<section name="deploy-standard">
-### Standard mode (dev+stage) — deploy flow
-
-**Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path.
-
-> **Path distinction:** SSHFS mount path `/var/www/{devHostname}/` is LOCAL only.
-> Inside the container, code lives at `/var/www/`. Never use the mount path as
-> `workingDir` in `zerops_deploy` — the default `/var/www` is always correct.
-
-1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHFS mount auto-reconnects after deploy.
-2. **Start dev** (deploy activated envVariables — no server runs): start server via SSH (Bash tool `run_in_background=true`). Env vars are now OS env vars. **Implicit-webserver runtimes: skip this step.**
-3. **Enable dev subdomain**: `zerops_subdomain serviceHostname="{devHostname}" action="enable"` — returns `subdomainUrls`
-4. **Verify dev**: `zerops_verify serviceHostname="{devHostname}"` — must return status=healthy
-5. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop (max 3 iterations)
-6. **Generate stage entry** in zerops.yml — dev is proven, now write the `setup: {stageHostname}` entry. Apply what you learned from dev: working deps install → `buildCommands`, working start command → `start:`, add `healthCheck`. Use runtime knowledge Prod deploy pattern as reference.
-7. **Deploy to stage from dev**: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`
-7b. **Connect shared storage to stage** (if applicable): `zerops_manage action="connect-storage" serviceHostname="{stageHostname}" storageHostname="{storageHostname}"`
-8. **Enable stage subdomain**: `zerops_subdomain serviceHostname="{stageHostname}" action="enable"` — returns `subdomainUrls`
-9. **Verify stage**: `zerops_verify serviceHostname="{stageHostname}"` — must return status=healthy
-10. **Present both URLs** to user
-</section>
-
-<section name="deploy-dev">
-### Dev-only mode — deploy flow
-
-**Prerequisites**: import done, dev service mounted, env vars discovered, code written to mount path.
-
-Dev-only mode has no stage pair — all verification happens on the dev service directly.
-
-1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHFS mount auto-reconnects after deploy.
-2. **Start dev** (deploy activated envVariables — no server runs): start server via SSH (Bash tool `run_in_background=true`). Env vars are now OS env vars. **Implicit-webserver runtimes: skip this step.**
-3. **Enable subdomain**: `zerops_subdomain serviceHostname="{devHostname}" action="enable"` — returns `subdomainUrls`
-4. **Verify dev**: `zerops_verify serviceHostname="{devHostname}"` — must return status=healthy
-5. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop (max 3 iterations)
-6. **Present URL** to user — no stage deploy needed in dev-only mode
-</section>
-
-<section name="deploy-iteration">
-### Dev iteration: manual start cycle
-
-After `zerops_deploy` to dev, env vars from zerops.yml are available as OS env vars. The container runs `zsc noop --silent` — no server process. The agent starts the server via SSH.
-
-**Key facts:**
-1. **After deploy, env vars are OS env vars.** NEVER hardcode values or pass them inline.
-2. **Code on SSHFS mount is live on the container** — watch-mode frameworks reload automatically, others need manual restart.
-3. **Redeploy only when zerops.yml itself changes** (envVariables, ports, buildCommands). Code-only changes just need a server restart.
-
-**The cycle:**
-1. **Edit code** on the mount path — changes appear instantly in the container at `/var/www/`.
-2. **Kill previous server and start new one** via SSH (Bash tool `run_in_background=true`).
-3. **Check startup** — `TaskOutput task_id=... block=false`
-4. **Test** endpoints: `ssh {devHostname} "curl -s localhost:{port}/health"` | jq .
-5. **If broken**: fix code on the mount, stop server task, restart from step 2.
-</section>
-
-<section name="deploy-simple">
-### Simple mode — deploy flow
-
-1. **Import services** with `startWithoutCode: true`
-2. **Mount and discover**: `zerops_mount` + `zerops_discover includeEnvs=true`
-3. **Write code** to mount path — use `${hostname_varName}` references, NEVER hardcode credentials
-4. **Deploy**: `zerops_deploy targetService="{hostname}"` — activates envVariables, server auto-starts
-5. **Verify**: `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{hostname}"`
-6. If verification fails, iterate (diagnose -> fix -> redeploy).
 </section>
 
 <section name="deploy-agents">

@@ -254,7 +254,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 
 			// BriefingLoads: GetBriefing returns non-empty content containing the normalized name.
 			t.Run("BriefingLoads/"+claim.typePattern, func(t *testing.T) {
-				briefing, briefErr := store.GetBriefing("", []string{claim.typePattern}, liveTypes)
+				briefing, briefErr := store.GetBriefing("", []string{claim.typePattern}, "", liveTypes)
 				if briefErr != nil {
 					t.Fatalf("GetBriefing: %v", briefErr)
 				}
@@ -384,7 +384,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 		}
 
 		for _, name := range recipes {
-			content, recipeErr := store.GetRecipe(name)
+			content, recipeErr := store.GetRecipe(name, "")
 			if recipeErr != nil {
 				t.Errorf("get recipe %s: %v", name, recipeErr)
 				continue

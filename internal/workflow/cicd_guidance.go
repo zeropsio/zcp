@@ -12,14 +12,14 @@ func resolveCICDGuidance(step, provider string) string {
 
 	switch step {
 	case CICDStepChoose:
-		return extractSection(md, "cicd-choose")
+		return ExtractSection(md, "cicd-choose")
 	case CICDStepConfigure:
 		if provider != "" {
-			return extractSection(md, "cicd-configure-"+provider)
+			return ExtractSection(md, "cicd-configure-"+provider)
 		}
-		return extractSection(md, "cicd-configure-generic")
+		return ExtractSection(md, "cicd-configure-generic")
 	case CICDStepVerify:
-		return extractSection(md, "cicd-verify")
+		return ExtractSection(md, "cicd-verify")
 	}
 	return ""
 }

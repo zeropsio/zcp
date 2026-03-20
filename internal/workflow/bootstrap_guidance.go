@@ -14,7 +14,7 @@ func ResolveGuidance(step string) string {
 	if err != nil {
 		return ""
 	}
-	return extractSection(md, step)
+	return ExtractSection(md, step)
 }
 
 // ResolveProgressiveGuidance returns mode-filtered sub-sections for generate and deploy steps,
@@ -36,37 +36,29 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 
 	switch step {
 	case StepGenerate:
-		sections = append(sections, extractSection(md, "generate-common"))
+		// Base generate section (always).
+		sections = append(sections, ExtractSection(md, "generate"))
+		// Mode-specific sections.
 		if modes[PlanModeStandard] {
-			sections = append(sections, extractSection(md, "generate-standard"))
+			sections = append(sections, ExtractSection(md, "generate-standard"))
 		}
 		if modes[PlanModeDev] {
-			sections = append(sections, extractSection(md, "generate-dev"))
+			sections = append(sections, ExtractSection(md, "generate-dev"))
 		}
 		if modes[PlanModeSimple] {
-			sections = append(sections, extractSection(md, "generate-simple"))
+			sections = append(sections, ExtractSection(md, "generate-simple"))
 		}
 
 	case StepDeploy:
-		sections = append(sections, extractSection(md, "deploy-overview"))
-		if modes[PlanModeStandard] {
-			sections = append(sections, extractSection(md, "deploy-standard"))
-		}
-		if modes[PlanModeDev] {
-			sections = append(sections, extractSection(md, "deploy-dev"))
-		}
-		if modes[PlanModeSimple] {
-			sections = append(sections, extractSection(md, "deploy-simple"))
-		}
-		// Iteration guidance applies to standard and dev modes (not simple).
-		if modes[PlanModeStandard] || modes[PlanModeDev] {
-			sections = append(sections, extractSection(md, "deploy-iteration"))
-		}
+		// Consolidated deploy section (all mode callouts inline).
+		sections = append(sections, ExtractSection(md, "deploy"))
+		// Conditional: agent orchestration for 3+ services.
 		if plan != nil && len(plan.Targets) >= 3 {
-			sections = append(sections, extractSection(md, "deploy-agents"))
+			sections = append(sections, ExtractSection(md, "deploy-agents"))
 		}
+		// Conditional: recovery patterns on failure.
 		if failureCount > 0 {
-			sections = append(sections, extractSection(md, "deploy-recovery"))
+			sections = append(sections, ExtractSection(md, "deploy-recovery"))
 		}
 	}
 
@@ -133,8 +125,8 @@ Do NOT attempt another fix without user input.`
 		iteration, remaining, lastAttestation, guidance)
 }
 
-// extractSection finds a <section name="{name}">...</section> block and returns its content.
-func extractSection(md, name string) string {
+// ExtractSection finds a <section name="{name}">...</section> block and returns its content.
+func ExtractSection(md, name string) string {
 	openTag := "<section name=\"" + name + "\">"
 	closeTag := "</section>"
 	start := strings.Index(md, openTag)

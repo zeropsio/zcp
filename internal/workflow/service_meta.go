@@ -39,6 +39,13 @@ type ServiceMeta struct {
 	Decisions        map[string]string `json:"decisions,omitempty"`
 }
 
+// normalizeServiceMeta applies backward-compat defaults to a loaded ServiceMeta.
+func normalizeServiceMeta(meta *ServiceMeta) {
+	if meta.Status == "" {
+		meta.Status = MetaStatusBootstrapped
+	}
+}
+
 // WriteServiceMeta writes service metadata to baseDir/services/{hostname}.json.
 func WriteServiceMeta(baseDir string, meta *ServiceMeta) error {
 	dir := filepath.Join(baseDir, "services")
@@ -78,10 +85,7 @@ func ReadServiceMeta(baseDir, hostname string) (*ServiceMeta, error) {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, fmt.Errorf("unmarshal service meta: %w", err)
 	}
-	// Backward compat: empty status means bootstrapped (pre-existing file).
-	if meta.Status == "" {
-		meta.Status = MetaStatusBootstrapped
-	}
+	normalizeServiceMeta(&meta)
 	return &meta, nil
 }
 
@@ -110,10 +114,7 @@ func ListServiceMetas(baseDir string) ([]*ServiceMeta, error) {
 		if unmarshalErr := json.Unmarshal(data, &meta); unmarshalErr != nil {
 			return nil, fmt.Errorf("unmarshal service meta %s: %w", entry.Name(), unmarshalErr)
 		}
-		// Backward compat: empty status means bootstrapped (pre-existing file).
-		if meta.Status == "" {
-			meta.Status = MetaStatusBootstrapped
-		}
+		normalizeServiceMeta(&meta)
 		metas = append(metas, &meta)
 	}
 	return metas, nil

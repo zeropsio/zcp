@@ -199,7 +199,7 @@ func TestGetBriefing_RealisticStack_SizeReasonable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)
 	}
-	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16", "valkey@7.2"}, nil)
+	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16", "valkey@7.2"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}

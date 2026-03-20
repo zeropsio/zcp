@@ -23,11 +23,10 @@ const (
 	CategoryBranching StepCategory = "branching"
 )
 
-// StepDetail defines a bootstrap step's metadata and guidance.
+// StepDetail defines a bootstrap step's metadata.
 type StepDetail struct {
 	Name         string       `json:"name"`
 	Category     StepCategory `json:"category"`
-	Guidance     string       `json:"guidance"`
 	Tools        []string     `json:"tools"`
 	Verification string       `json:"verification"`
 	Skippable    bool         `json:"skippable"`
@@ -87,7 +86,6 @@ type BootstrapStepInfo struct {
 	Name          string       `json:"name"`
 	Index         int          `json:"index"`
 	Category      string       `json:"category"`
-	Guidance      string       `json:"-"`
 	Tools         []string     `json:"tools"`
 	Verification  string       `json:"verification"`
 	DetailedGuide string       `json:"detailedGuide,omitempty"`
@@ -243,7 +241,6 @@ func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int, 
 			Name:         detail.Name,
 			Index:        b.CurrentStep,
 			Category:     string(detail.Category),
-			Guidance:     detail.Guidance,
 			Tools:        detail.Tools,
 			Verification: detail.Verification,
 			PriorContext: b.buildPriorContext(),

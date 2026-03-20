@@ -3,7 +3,6 @@ package workflow
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -45,12 +44,6 @@ func TestInitSession_PerSessionFile(t *testing.T) {
 	statePath := sessionFilePath(dir, state.SessionID)
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("expected session file at %s: %v", statePath, err)
-	}
-
-	// Legacy file should NOT exist.
-	legacyPath := filepath.Join(dir, legacyStateFile)
-	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
-		t.Error("legacy zcp_state.json should not exist")
 	}
 }
 
@@ -268,25 +261,5 @@ func TestIterateSession_WithoutBootstrap_StillWorks(t *testing.T) {
 	}
 	if iterated.Iteration != 1 {
 		t.Errorf("Iteration: want 1, got %d", iterated.Iteration)
-	}
-}
-
-func TestInitSession_CleansUpLegacyState(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	// Create a legacy state file.
-	legacyPath := filepath.Join(dir, legacyStateFile)
-	if err := os.WriteFile(legacyPath, []byte(`{}`), 0o644); err != nil {
-		t.Fatalf("create legacy file: %v", err)
-	}
-
-	if _, err := InitSession(dir, "proj-1", "bootstrap", "test"); err != nil {
-		t.Fatalf("InitSession: %v", err)
-	}
-
-	// Legacy file should be gone.
-	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
-		t.Error("legacy zcp_state.json should be removed")
 	}
 }

@@ -10,85 +10,31 @@ import (
 // buildGuide assembles a step guide with injected knowledge from the knowledge store.
 // Falls back to base guidance if knowledge is unavailable.
 func (b *BootstrapState) buildGuide(step string, iteration int, _ Environment, kp knowledge.Provider) string {
-	// Iteration delta (escalating) for deploy retries.
-	if iteration > 0 {
-		if delta := BuildIterationDelta(step, iteration, b.Plan, b.lastAttestation()); delta != "" {
-			return delta
-		}
+	var runtimeType string
+	var depTypes []string
+	if b.Plan != nil {
+		runtimeType = b.Plan.RuntimeBase()
+		depTypes = b.Plan.DependencyTypes()
 	}
 
-	// Base guidance from bootstrap.md (mode-aware for deploy).
-	guide := ResolveProgressiveGuidance(step, b.Plan, iteration)
-
-	// Append step-specific knowledge.
-	if extra := b.assembleKnowledge(step, kp); extra != "" {
-		guide += "\n\n---\n\n" + extra
+	// D5: Env vars injected once at generate, not at deploy.
+	var envVars map[string][]string
+	if step != StepDeploy {
+		envVars = b.DiscoveredEnvVars
 	}
 
-	return guide
-}
-
-// assembleKnowledge gathers step-relevant knowledge from the knowledge store.
-// All knowledge retrieval is best-effort — errors are silently skipped.
-func (b *BootstrapState) assembleKnowledge(step string, kp knowledge.Provider) string {
-	if b.Plan == nil || kp == nil {
-		return ""
-	}
-	var parts []string
-
-	switch step {
-	case StepProvision:
-		// "import.yml Schema" H2 section (contains "Preprocessor Functions" as H3).
-		if doc, err := kp.Get("zerops://themes/core"); err == nil {
-			sections := doc.H2Sections()
-			if s, ok := sections["import.yml Schema"]; ok && s != "" {
-				parts = append(parts, "## import.yml Schema\n\n"+s)
-			}
-		}
-
-	case StepGenerate:
-		// Runtime guide.
-		if rt := b.Plan.RuntimeBase(); rt != "" {
-			if briefing, err := kp.GetBriefing(rt, nil, nil); err == nil && briefing != "" {
-				parts = append(parts, briefing)
-			}
-		}
-		// Service wiring.
-		if deps := b.Plan.DependencyTypes(); len(deps) > 0 {
-			if briefing, err := kp.GetBriefing("", deps, nil); err == nil && briefing != "" {
-				parts = append(parts, briefing)
-			}
-		}
-		// Discovered env vars.
-		if len(b.DiscoveredEnvVars) > 0 {
-			parts = append(parts, formatEnvVarsForGuide(b.DiscoveredEnvVars))
-		}
-		// zerops.yml schema + rules.
-		if doc, err := kp.Get("zerops://themes/core"); err == nil {
-			sections := doc.H2Sections()
-			for _, name := range []string{"zerops.yml Schema", "Rules & Pitfalls"} {
-				if s, ok := sections[name]; ok && s != "" {
-					parts = append(parts, "## "+name+"\n\n"+s)
-				}
-			}
-		}
-
-	case StepDeploy:
-		if doc, err := kp.Get("zerops://themes/core"); err == nil {
-			sections := doc.H2Sections()
-			if s, ok := sections["Schema Rules"]; ok && s != "" {
-				parts = append(parts, "## Deploy Rules\n\n"+s)
-			}
-		}
-		if len(b.DiscoveredEnvVars) > 0 {
-			parts = append(parts, formatEnvVarsForGuide(b.DiscoveredEnvVars))
-		}
-	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, "\n\n---\n\n")
+	return assembleGuidance(GuidanceParams{
+		Step:              step,
+		Mode:              b.PlanMode(),
+		RuntimeType:       runtimeType,
+		DependencyTypes:   depTypes,
+		DiscoveredEnvVars: envVars,
+		Iteration:         iteration,
+		Plan:              b.Plan,
+		LastAttestation:   b.lastAttestation(),
+		FailureCount:      iteration,
+		KP:                kp,
+	})
 }
 
 // formatEnvVarsForGuide formats discovered env vars as markdown for guide injection.

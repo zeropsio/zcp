@@ -104,7 +104,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			if client != nil && cache != nil {
 				liveTypes = cache.Get(ctx, client)
 			}
-			briefing, err := store.GetBriefing(input.Runtime, input.Services, liveTypes)
+			briefing, err := store.GetBriefing(input.Runtime, input.Services, "", liveTypes)
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrFileNotFound,
@@ -119,7 +119,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 
 		// Mode 4: Recipe retrieval
 		if hasRecipe {
-			recipe, err := store.GetRecipe(input.Recipe)
+			recipe, err := store.GetRecipe(input.Recipe, "")
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,

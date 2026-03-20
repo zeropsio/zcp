@@ -2,7 +2,6 @@
 package workflow
 
 import (
-	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -16,9 +15,6 @@ func TestStepDetails_AllStepsCovered(t *testing.T) {
 		if detail.Name == "" {
 			t.Errorf("missing StepDetail for %q", name)
 			continue
-		}
-		if detail.Guidance == "" {
-			t.Errorf("step %q has empty Guidance", name)
 		}
 		if len(detail.Tools) == 0 {
 			t.Errorf("step %q has no Tools", name)
@@ -46,22 +42,6 @@ func TestStepDetails_ToolLists(t *testing.T) {
 				t.Errorf("step %q Tools %v should contain %q", tt.step, detail.Tools, tt.wantTool)
 			}
 		})
-	}
-}
-
-func TestStepDetails_DiscoverGuidance_ThreeStates(t *testing.T) {
-	t.Parallel()
-	detail := lookupDetail("discover")
-
-	for _, state := range []string{"FRESH", "CONFORMANT", "NON_CONFORMANT"} {
-		if !strings.Contains(detail.Guidance, state) {
-			t.Errorf("discover guidance missing state %q", state)
-		}
-	}
-	for _, dropped := range []string{"PARTIAL", "EXISTING"} {
-		if strings.Contains(detail.Guidance, dropped) {
-			t.Errorf("discover guidance still mentions dropped state %q", dropped)
-		}
 	}
 }
 
@@ -294,9 +274,6 @@ func TestBuildResponse_FirstStep(t *testing.T) {
 	}
 	if resp.Current.Index != 0 {
 		t.Errorf("Current.Index: want 0, got %d", resp.Current.Index)
-	}
-	if resp.Current.Guidance == "" {
-		t.Error("Current.Guidance should not be empty")
 	}
 }
 
@@ -655,60 +632,6 @@ func TestBuildResponse_PlanMode(t *testing.T) {
 	}
 }
 
-func TestBootstrapStepInfo_GuidanceExcludedFromJSON(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		info BootstrapStepInfo
-	}{
-		{
-			name: "guidance populated in Go but excluded from JSON",
-			info: BootstrapStepInfo{
-				Name:     "discover",
-				Category: "fixed",
-				Guidance: "Run zerops_discover to inspect the project state.",
-				Tools:    []string{"zerops_discover"},
-			},
-		},
-		{
-			name: "full response via BuildResponse",
-			info: func() BootstrapStepInfo {
-				bs := NewBootstrapState()
-				bs.Steps[0].Status = stepInProgress
-				resp := bs.BuildResponse("sess-json", "test", 0, EnvLocal, nil)
-				return *resp.Current
-			}(),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			// Guidance must be populated in Go struct.
-			if tt.info.Guidance == "" {
-				t.Fatal("precondition: Guidance should be non-empty in Go struct")
-			}
-
-			// Marshal to JSON and verify Guidance is absent.
-			data, err := json.Marshal(tt.info)
-			if err != nil {
-				t.Fatalf("json.Marshal: %v", err)
-			}
-
-			var m map[string]any
-			if err := json.Unmarshal(data, &m); err != nil {
-				t.Fatalf("json.Unmarshal: %v", err)
-			}
-
-			if _, exists := m["guidance"]; exists {
-				t.Errorf("guidance field should not appear in JSON output, got: %s", string(data))
-			}
-		})
-	}
-}
-
 func TestStepDetails_VerificationHasSuccessCriteria(t *testing.T) {
 	t.Parallel()
 
@@ -840,7 +763,7 @@ func TestBuildPriorContext_ShortAttestationNotTruncated(t *testing.T) {
 
 // --- C-02: Progressive guidance wiring ---
 
-func TestBuildResponse_DeployStep_UsesProgressiveGuidance(t *testing.T) {
+func TestBuildResponse_DeployStep_UsesConsolidatedGuidance(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
@@ -858,19 +781,16 @@ func TestBuildResponse_DeployStep_UsesProgressiveGuidance(t *testing.T) {
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	// Progressive guidance filters to mode-specific sections (~5k chars);
-	// monolithic deploy section is ~30k chars.
-	monolithic := ResolveGuidance("deploy")
-	if len(resp.Current.DetailedGuide) >= len(monolithic)/2 {
-		t.Errorf("DetailedGuide too long (%d chars vs monolithic %d), expected progressive guidance to be significantly shorter",
-			len(resp.Current.DetailedGuide), len(monolithic))
-	}
+	// Consolidated deploy section covers all modes inline.
 	if resp.Current.DetailedGuide == "" {
 		t.Error("DetailedGuide should not be empty for deploy step")
 	}
+	if !strings.Contains(resp.Current.DetailedGuide, "zerops_deploy") {
+		t.Error("deploy guide should reference zerops_deploy")
+	}
 }
 
-func TestBuildResponse_DeployStep_SimpleMode_ShorterGuidance(t *testing.T) {
+func TestBuildResponse_DeployStep_SimpleMode_HasDeployContent(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
@@ -887,11 +807,9 @@ func TestBuildResponse_DeployStep_SimpleMode_ShorterGuidance(t *testing.T) {
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	if strings.Contains(resp.Current.DetailedGuide, "Standard mode") {
-		t.Error("simple mode deploy guide should not contain 'Standard mode'")
-	}
-	if strings.Contains(resp.Current.DetailedGuide, "dev+stage") {
-		t.Error("simple mode deploy guide should not contain 'dev+stage'")
+	// Consolidated deploy section covers all modes.
+	if !strings.Contains(resp.Current.DetailedGuide, "Simple mode") {
+		t.Error("deploy guide should contain 'Simple mode' deploy flow")
 	}
 }
 

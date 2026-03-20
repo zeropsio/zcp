@@ -30,7 +30,7 @@ func TestStore_GetBriefing_RuntimeOnly(t *testing.T) {
 			t.Parallel()
 			store := testStoreWithCore(t)
 
-			briefing, err := store.GetBriefing(tt.runtime, nil, nil)
+			briefing, err := store.GetBriefing(tt.runtime, nil, "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +68,7 @@ func TestStore_GetBriefing_ServicesOnly(t *testing.T) {
 			t.Parallel()
 			store := testStoreWithCore(t)
 
-			briefing, err := store.GetBriefing("", tt.services, nil)
+			briefing, err := store.GetBriefing("", tt.services, "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -86,7 +86,7 @@ func TestStore_GetBriefing_RuntimeAndServices(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16", "valkey@7.2"}, nil)
+	briefing, err := store.GetBriefing("nodejs@22", []string{"postgresql@16", "valkey@7.2"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestStore_GetBriefing_UnknownRuntime(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("unknown@1.0", nil, nil)
+	briefing, err := store.GetBriefing("unknown@1.0", nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestStore_GetBriefing_UnknownService(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("", []string{"unknown-service@1"}, nil)
+	briefing, err := store.GetBriefing("", []string{"unknown-service@1"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestStore_GetBriefing_LayerOrder(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("php-nginx@8.4", []string{"postgresql@16"}, nil)
+	briefing, err := store.GetBriefing("php-nginx@8.4", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestStore_GetBriefing_WiringIncluded(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("", []string{"postgresql@16"}, nil)
+	briefing, err := store.GetBriefing("", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestStore_GetBriefing_NoWiringWithoutServices(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("nodejs@22", nil, nil)
+	briefing, err := store.GetBriefing("nodejs@22", nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestStore_GetBriefing_NoCoreIncluded(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			store := testStoreWithCore(t)
-			briefing, err := store.GetBriefing(tt.runtime, tt.services, nil)
+			briefing, err := store.GetBriefing(tt.runtime, tt.services, "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -241,7 +241,7 @@ func TestStore_GetBriefing_EmptyInputs_EmptyResult(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("", nil, nil)
+	briefing, err := store.GetBriefing("", nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestStore_GetBriefing_DecisionsIncluded(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
-	briefing, err := store.GetBriefing("", []string{"postgresql@16", "valkey@7.2"}, nil)
+	briefing, err := store.GetBriefing("", []string{"postgresql@16", "valkey@7.2"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

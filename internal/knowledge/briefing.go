@@ -15,7 +15,7 @@ import (
 // services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
 // liveTypes: optional live service stack types for version validation and stack listing (nil = skip)
 // Returns assembled markdown content ready for LLM consumption.
-func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platform.ServiceStackType) (string, error) {
+func (s *Store) GetBriefing(runtime string, services []string, mode string, liveTypes []platform.ServiceStackType) (string, error) {
 	// Auto-promote: if runtime is empty but a known runtime name is in services, promote it.
 	// This handles the common agent mistake of passing runtimes in the services array.
 	if runtime == "" && len(services) > 0 {
@@ -37,6 +37,9 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 		slug := normalizeRuntimeName(runtime)
 		if slug != "" {
 			if guide := s.getRuntimeGuide(slug); guide != "" {
+				if mode != "" {
+					guide = filterDeployPatterns(guide, mode)
+				}
 				sb.WriteString(guide)
 				sb.WriteString("\n\n---\n\n")
 			}
@@ -102,11 +105,15 @@ func (s *Store) GetBriefing(runtime string, services []string, liveTypes []platf
 // and an auto-detected runtime guide.
 // name: recipe filename without extension (e.g., "laravel")
 // Resolution chain: exact match → single fuzzy → disambiguation list → error.
-func (s *Store) GetRecipe(name string) (string, error) {
+func (s *Store) GetRecipe(name, mode string) (string, error) {
 	// Try exact match first.
 	uri := "zerops://recipes/" + name
 	if doc, err := s.Get(uri); err == nil {
-		return s.prependRecipeContext(name, doc.Content), nil
+		content := s.prependRecipeContext(name, doc.Content)
+		if mode != "" {
+			content = prependModeAdaptation(mode) + content
+		}
+		return content, nil
 	}
 
 	// Fuzzy fallback: find matching recipes.
@@ -121,7 +128,11 @@ func (s *Store) GetRecipe(name string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("recipe %q not found: %w", matches[0], err)
 		}
-		return s.prependRecipeContext(matches[0], doc.Content), nil
+		content := s.prependRecipeContext(matches[0], doc.Content)
+		if mode != "" {
+			content = prependModeAdaptation(mode) + content
+		}
+		return content, nil
 	default:
 		// Multiple matches — return disambiguation.
 		return s.formatDisambiguation(name, matches), nil
@@ -220,6 +231,70 @@ func (s *Store) prependUniversals(content string) string {
 		return content
 	}
 	return universals + "\n\n---\n\n" + content
+}
+
+// filterDeployPatterns filters the "### Deploy Patterns" section of a runtime guide
+// to show only the pattern relevant to the given mode.
+// mode mapping: "dev"/"standard" → keep **Dev deploy**, "simple" → keep **Dev deploy**,
+// "stage" → keep **Prod deploy**. Empty mode returns the guide unchanged.
+func filterDeployPatterns(guide, mode string) string {
+	const header = "### Deploy Patterns"
+	idx := strings.Index(guide, header)
+	if idx < 0 {
+		return guide
+	}
+
+	// Find the end of the Deploy Patterns section (next ### or end of string).
+	sectionStart := idx + len(header)
+	rest := guide[sectionStart:]
+	sectionEnd := strings.Index(rest, "\n### ")
+	var section string
+	if sectionEnd < 0 {
+		section = rest
+		sectionEnd = len(rest)
+	} else {
+		section = rest[:sectionEnd]
+	}
+
+	var keepPrefix string
+	switch mode {
+	case "dev", "standard", "simple":
+		keepPrefix = "**Dev deploy**:"
+	case "stage":
+		keepPrefix = "**Prod deploy**:"
+	default:
+		return guide
+	}
+
+	// Filter lines within the section.
+	var filtered []string
+	for line := range strings.SplitSeq(section, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Keep empty lines and lines matching our mode prefix.
+		if trimmed == "" || strings.HasPrefix(trimmed, keepPrefix) {
+			filtered = append(filtered, line)
+		}
+		// Drop lines starting with other deploy pattern prefixes.
+	}
+
+	return guide[:idx] + header + strings.Join(filtered, "\n") + rest[sectionEnd:]
+}
+
+// prependModeAdaptation returns a mode-specific adaptation header for recipes.
+func prependModeAdaptation(mode string) string {
+	switch mode {
+	case "dev", "standard":
+		return "> **Mode: dev** — This recipe shows production patterns. For your dev entry:\n" +
+			"> - Use `deployFiles: [.]` (not the production pattern below)\n" +
+			"> - Use `start: zsc noop --silent` (not the production start command)\n" +
+			"> - Omit `healthCheck` (you control the server manually)\n" +
+			"> The build commands and dependencies from this recipe still apply.\n\n"
+	case "simple":
+		return "> **Mode: simple** — Use the production patterns below but keep `deployFiles: [.]`\n" +
+			"> since this is a self-deploying service. The start command and healthCheck apply as-is.\n\n"
+	default:
+		return ""
+	}
 }
 
 // ListRecipes returns names of all available recipes (without extension).
