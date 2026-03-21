@@ -55,14 +55,16 @@ func formatEnvVarsForGuide(envVars map[string][]string) string {
 	return sb.String()
 }
 
+const bootstrapCompleteMsg = "Bootstrap complete."
+
 // BuildTransitionMessage creates a summary message when bootstrap completes.
 // Includes service list, deploy strategy selection, CI/CD gate, and router offerings.
 func BuildTransitionMessage(state *WorkflowState) string {
 	if state == nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil {
-		return "Bootstrap complete."
+		return bootstrapCompleteMsg
 	}
 	var sb strings.Builder
-	sb.WriteString("Bootstrap complete.\n\n## Services\n\n")
+	sb.WriteString(bootstrapCompleteMsg + "\n\n## Services\n\n")
 
 	for _, t := range state.Bootstrap.Plan.Targets {
 		mode := t.Runtime.EffectiveMode()
