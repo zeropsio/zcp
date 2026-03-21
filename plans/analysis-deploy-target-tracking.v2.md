@@ -1,121 +1,122 @@
-# Implementation Plan: Deploy Per-Target Tracking
+# Implementation Plan: Deploy Per-Target Tracking — Cleanup + DevFailed Gate
 
-**Date**: 2026-03-21
+**Date**: 2026-03-21 (updated after refactor)
 **Status**: Ready for implementation
-**Scope**: Wire existing `UpdateTarget()` + `DevFailed()` into production via checker-internal approach
+**Scope**: Delete dead per-target persistence code; add dev->stage gating as pure API check in checkDeploy()
 **Review**: analysis-deploy-target-tracking.review-1.md
 
 ---
 
 ## Design Decision
 
-**Keep per-target tracking. Wire via step checker internals, not new MCP action.**
+**Delete per-target persistence. API is source of truth. Add dev->stage gating as inline checker logic.**
 
-Rationale:
-- Deploy workflow IS the use case: single agent deploys multiple targets sequentially
-- Bootstrap does NOT need it: subagents self-manage per service pair
-- `checkDeploy()` already queries API per-target status -- natural integration point
-- No new `action="target-update"` needed -- avoids API surface growth and naming confusion
-- `DevFailed()` enforces dev->stage gating that currently exists only in guidance text
+Rationale (updated after user feedback + refactor review):
+- `checkDeploy()` now calls `VerifyAll()` — already gives per-target health status from live API
+- Agent already sees per-target results in `checkResult.Checks[]` (e.g. `appdev_health=pass`)
+- Persisting target status to session JSON is pointless — next check queries API again anyway
+- `UpdateTarget()`, `DevFailed()`, `Error`, `LastAttestation` have 0 production callers
+- Dev->stage gating belongs as inline checker logic, not as stored state
 
 ---
 
-## Architecture
+## What Changed in the Refactor
+
+| Before | After | Impact |
+|--------|-------|--------|
+| 6 bootstrap steps (discover→...→verify→strategy) | 5 steps (discover→...→deploy→close) | Verify merged into deploy checker; strategy is post-bootstrap |
+| `checkDeploy()` checked RUNNING status only | `checkDeploy()` calls `VerifyAll()` (HTTP, logs, startup) + subdomain checks | Much richer per-target feedback already flows through StepCheckResult |
+| `checkVerify()` was separate checker | Removed — merged into `checkDeploy()` | One checker does everything |
+| Strategy was bootstrap step 6 | Post-bootstrap via `action="strategy"`, pre-gate in `handleDeployStart()` | Strategy checker deleted |
+| `deploy.go` per-target code unchanged | Still unchanged — all dead code still there | Cleanup still needed |
+
+**Key observation**: `checkDeploy()` at workflow_checks.go:144-225 now does:
+1. `VerifyAll()` → per-target health checks (lines 167-185)
+2. Subdomain access per-target (lines 196-213)
+3. Returns per-target `StepCheck` results that agent sees in `checkResult`
+
+This is exactly the per-target feedback we wanted — it already exists, just not persisted. No persistence needed.
+
+---
+
+## Architecture (after change)
 
 ```
 Agent calls action="complete" step="deploy"
-  -> engine.BootstrapComplete() / engine.DeployComplete()
-    -> checkDeploy() [step checker]
-      -> queries API per target hostname
-      -> calls UpdateTarget() for each target based on API status
-      -> calls DevFailed() for standard mode gating
-      -> returns StepCheckResult with per-target checks
-Agent sees: DeployResponse.Targets[].Status updated (via BuildResponse)
-Agent sees: DeployResponse.Message with error context if DevFailed
+  -> checkDeploy() runs:
+    1. VerifyAll() → per-hostname health: appdev_health=pass/fail
+    2. Subdomain checks → per-hostname: appdev_subdomain=pass/fail
+    3. NEW: Dev->stage gating for standard mode
+       if any dev hostname is unhealthy → add failing check
+       "dev service {hostname} is unhealthy — fix before stage deployment"
+    4. Returns StepCheckResult with all per-target checks
+  -> Agent sees checkResult.Checks[] with per-target status
+  -> If check fails → agent gets detailed per-target errors, iterates
+  -> If check passes → step advances
 ```
 
-No new MCP action. No new WorkflowInput fields. Per-target state populated internally by checker.
+No UpdateTarget(). No persisted target status. API queried fresh each time.
 
 ---
 
 ## Implementation Steps
 
-### Step 0: Hardening (prerequisite, no behavior change)
+### Step 1: Delete dead per-target persistence code
 
-**0a. Add status enum validation to UpdateTarget()**
-```
-Location: internal/workflow/deploy.go:239
-Change: Add validTargetStatuses map check before storing status
-Tests: deploy_test.go — add table-driven cases for invalid status strings
-```
+**Delete from deploy.go:**
+- `UpdateTarget()` method (lines 238-251) — 0 prod callers
+- `DevFailed()` method (lines 274-282) — 0 prod callers
+- `DeployTarget.Error` field (line 58) — only written by dead UpdateTarget
+- `DeployTarget.LastAttestation` field (line 59) — only written by dead UpdateTarget
+- Status constants `deployTargetDeployed`, `deployTargetVerified`, `deployTargetFailed`, `deployTargetSkipped` (lines 30-33) — only used by dead methods
+- `ResetForIteration()` line 265: `d.Targets[i].Error = ""` — clears dead field
 
-**0b. Add attestation length limit to UpdateTarget()**
-```
-Location: internal/workflow/deploy.go:239
-Change: Add maxAttestationLen (10240) check
-Tests: deploy_test.go — add case for oversized attestation
-```
+**Delete from deploy_test.go:**
+- `TestDeployState_UpdateTarget` (lines 97-115) — tests dead method
+- `TestDeployState_DevFailed` (lines 235-250) — tests dead method
 
-**0c. Export target status constants**
-```
-Location: internal/workflow/deploy.go:28-34
-Change: Export constants (DeployTargetPending, etc.) for use in checker
-Tests: No behavior change
-```
-
-### Step 1: Wire UpdateTarget into checkDeploy (RED -> GREEN)
-
-**1a. Write failing test (RED)**
-```
-Location: internal/tools/workflow_checks_deploy_test.go
-Test: TestCheckDeploy_UpdatesTargetStatus
-Scenario: checkDeploy runs, service is RUNNING -> target status updated to "deployed"
-Assert: state.Deploy.Targets[hostname].Status == "deployed" after check
+**Result**: `DeployTarget` becomes a simple transport struct:
+```go
+type DeployTarget struct {
+    Hostname string `json:"hostname"`
+    Role     string `json:"role"`
+    Status   string `json:"status"`
+}
 ```
 
-**1b. Implement (GREEN)**
-```
-Location: internal/tools/workflow_checks.go, checkDeploy()
-Change: After verifying service is RUNNING, call state.Deploy.UpdateTarget(hostname, "deployed", "API status RUNNING")
-Requires: Pass DeployState into checker (currently checkers only get Plan + BootstrapState)
-```
+Status stays initialized to `"pending"` (via `BuildDeployTargets`) and reset to `"pending"` (via `ResetForIteration`). It's display-only — agent sees it in `DeployTargetOut`.
 
-**1c. Checker signature change**
-```
-Current: StepChecker = func(ctx, *ServicePlan, *BootstrapState) (*StepCheckResult, error)
-Needed: Access to DeployState for target updates
-Option A: Add *DeployState to StepChecker signature
-Option B: checkDeploy captures DeployState via closure (already captures client, projectID)
-Preferred: Option B (closure) — no signature change, minimal blast radius
-```
-
-### Step 2: Wire DevFailed into checkDeploy for standard mode (RED -> GREEN)
+### Step 2: Add dev->stage gating to checkDeploy() (RED -> GREEN)
 
 **2a. Write failing test (RED)**
 ```
 Location: internal/tools/workflow_checks_deploy_test.go
-Test: TestCheckDeploy_DevFailedBlocksStage
-Scenario: Dev target exists with status="failed", stage target pending
-Assert: StepCheckResult.Passed == false, check includes "dev target failed" message
+Test: TestCheckDeploy_DevUnhealthyBlocksStage
+Scenario:
+  - Plan has standard-mode target: appdev (dev) + appstage (stage)
+  - VerifyAll returns appdev=unhealthy, appstage=healthy
+  - Assert: StepCheckResult.Passed == false
+  - Assert: check includes message about dev being unhealthy
 ```
 
 **2b. Implement (GREEN)**
 ```
 Location: internal/tools/workflow_checks.go, checkDeploy()
-Change: After all per-target checks, if mode is standard and DevFailed() returns true,
-        add failing check: "dev target failed — fix dev before deploying stage"
+Change: After VerifyAll health loop (line ~185), check for standard mode dev targets:
+  - Identify dev hostnames from plan (EffectiveMode == "standard")
+  - If any dev hostname has a failing health check → add explicit gating check:
+    "{hostname}_dev_gate" status=fail detail="dev service unhealthy — fix before stage deploy"
+  - This is pure logic on the existing check results, no new API calls
 ```
 
-### Step 3: Expose updated target status in responses (no code change needed)
+### Step 3: Verify and clean up (REFACTOR)
 
-`BuildResponse()` at deploy.go:295-302 already copies Status from DeployTarget to DeployTargetOut. Once UpdateTarget() is called by the checker, agents will see updated Status values automatically.
-
-**Do NOT expose Error or LastAttestation in DeployTargetOut.** Error context goes in DeployResponse.Message.
-
-### Step 4: Update ResetForIteration target handling (optional)
-
-Current: ResetForIteration() resets ALL targets to pending (deploy.go:262-266).
-This is correct for now. Per-target iteration (reset only failed target) is a future enhancement, not needed for initial wiring.
+```bash
+go test ./internal/workflow/... -count=1 -v
+go test ./internal/tools/... -count=1 -v
+go test ./... -count=1 -short
+make lint-fast
+```
 
 ---
 
@@ -123,49 +124,46 @@ This is correct for now. Per-target iteration (reset only failed target) is a fu
 
 | File | Change | Lines |
 |------|--------|-------|
-| `internal/workflow/deploy.go` | Export status constants, add validation to UpdateTarget() | ~15 |
-| `internal/tools/workflow_checks.go` | checkDeploy closure captures DeployState, calls UpdateTarget + DevFailed | ~20 |
-| `internal/workflow/deploy_test.go` | Edge cases: invalid status, oversized attestation, failed->error mapping | ~30 |
-| `internal/tools/workflow_checks_deploy_test.go` | Integration: target status updates, DevFailed gate | ~40 |
+| `internal/workflow/deploy.go` | Delete UpdateTarget, DevFailed, Error, LastAttestation, 4 status constants | -35 |
+| `internal/workflow/deploy_test.go` | Delete TestDeployState_UpdateTarget, TestDeployState_DevFailed | -25 |
+| `internal/tools/workflow_checks.go` | Add dev->stage gating logic in checkDeploy() | +15 |
+| `internal/tools/workflow_checks_deploy_test.go` | Add TestCheckDeploy_DevUnhealthyBlocksStage | +25 |
 
-**Total**: ~105 lines changed/added. Zero new files. Zero new MCP actions.
+**Net**: ~20 lines fewer code. Zero new files. Zero new MCP actions.
 
 ---
 
 ## What Does NOT Change
 
-- `DeployTargetOut` stays at 3 fields (no Error/LastAttestation exposure)
-- `WorkflowInput` stays the same (no new action or parameters)
-- `StepChecker` signature stays the same (closure approach)
-- Bootstrap workflow (no per-target tracking needed)
-- `ResetForIteration()` behavior (resets all targets)
+- `DeployTargetOut` stays at 3 fields (Hostname, Role, Status)
+- `DeployTarget.Status` stays (initialized to "pending", display-only)
+- `WorkflowInput` stays the same
+- `StepChecker` signature stays the same
+- `BuildDeployTargets()` stays the same
+- `ResetForIteration()` still resets targets to pending (minus dead Error clear)
+- Bootstrap workflow unaffected
+- `BuildResponse()` still converts DeployTarget -> DeployTargetOut
 
 ---
 
 ## Test Plan (TDD)
 
-### RED phase (write first, must fail)
+### RED phase
 
 | Test | File | Scenario |
 |------|------|----------|
-| `TestUpdateTarget_InvalidStatus` | deploy_test.go | Pass status="broken" -> error |
-| `TestUpdateTarget_OversizedAttestation` | deploy_test.go | 20KB attestation -> error |
-| `TestUpdateTarget_FailedSetsError` | deploy_test.go | status=failed -> Error field populated |
-| `TestDevFailed_MixedRoles` | deploy_test.go | dev=failed + stage=pending -> true |
-| `TestDevFailed_StageFailedOnly` | deploy_test.go | dev=ok + stage=failed -> false |
-| `TestCheckDeploy_UpdatesTargetStatus` | workflow_checks_deploy_test.go | RUNNING -> "deployed" |
-| `TestCheckDeploy_DevFailedBlocksStage` | workflow_checks_deploy_test.go | dev failed -> check fails |
+| `TestCheckDeploy_DevUnhealthyBlocksStage` | workflow_checks_deploy_test.go | Standard mode, dev unhealthy → check fails with gate message |
+| `TestCheckDeploy_DevHealthyAllowsStage` | workflow_checks_deploy_test.go | Standard mode, dev healthy → check passes (no gate) |
+| `TestCheckDeploy_SimpleModeNoGate` | workflow_checks_deploy_test.go | Simple mode → no dev->stage gating logic applied |
 
-### GREEN phase (implement to pass)
+### GREEN phase
 
-Implement Step 0 (hardening) -> Step 1 (wire UpdateTarget) -> Step 2 (wire DevFailed).
+1. Delete dead code (Step 1) — existing tests pass minus removed ones
+2. Implement dev->stage gating (Step 2) — new tests pass
 
 ### Verify phase
 
 ```bash
-go test ./internal/workflow/... -run TestUpdateTarget -v
-go test ./internal/workflow/... -run TestDevFailed -v
-go test ./internal/tools/... -run TestCheckDeploy -v
 go test ./... -count=1 -short
 make lint-fast
 ```
@@ -176,7 +174,6 @@ make lint-fast
 
 | Risk | Mitigation |
 |------|-----------|
-| Checker mutation of DeployState during check | Checker already has side effects (StoreDiscoveredEnvVars in checkProvision). Established pattern. |
-| Target status out of sync with API | Checker queries live API — status reflects real state, not stale data |
-| Error in DeployTarget never surfaced | By design — error context in Message field instead |
-| Future refactor exposes DeployTarget directly | Code comment on DeployTargetOut: "never serialize DeployTarget directly" |
+| DeployTarget.Status always "pending" is confusing | It's display-only context (hostname+role mapping). Real status comes from checkResult.Checks[]. Could remove Status field entirely in a follow-up if needed. |
+| Dev->stage gating logic duplicates VerifyAll results | Logic reads existing check results, doesn't re-query API. No duplication. |
+| Session JSON still has DeployTarget.Status="pending" | Harmless — it's the init value and correctly reflects "not yet checked by API". |

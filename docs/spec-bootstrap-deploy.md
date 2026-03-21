@@ -2,7 +2,7 @@
 
 > **Status**: Authoritative — all code, content, and improvements MUST conform to this document.
 > **Scope**: Container mode only. Local mode shares concepts but has its own specifics (not covered here).
-> **Date**: 2026-03-20
+> **Date**: 2026-03-21
 
 ---
 
@@ -15,10 +15,11 @@
 | **Mode** | One of `standard`, `dev`, `simple`. Determines service topology, zerops.yml shape, deploy behavior, and iteration model. Chosen during discover step. |
 | **Step** | Atomic unit of workflow progress. Has status (pending → in_progress → complete/skipped), attestation (completion proof, min 10 chars), and optional checker. |
 | **Attestation** | Agent's self-report of what was accomplished in a step. Minimum 10 characters. Stored in session state. |
-| **Iteration** | Reset of creative/deploy steps with incremented counter. Preserves discovery/provision context. Max 10 (configurable via `ZCP_MAX_ITERATIONS`). |
-| **Managed-only** | Project with zero runtime services — only databases, caches, storage. Skips generate/deploy/strategy steps. |
+| **Iteration** | Reset of generate+deploy steps with incremented counter. Preserves discovery/provision/close context. Max 10 (configurable via `ZCP_MAX_ITERATIONS`). |
+| **Managed-only** | Project with zero runtime services — only databases, caches, storage. Skips generate/deploy/close steps. |
 | **Immediate workflow** | Stateless workflow (debug, scale, configure) — returns guidance without creating a session. |
 | **Runtime class** | Verification classification: Dynamic (nodejs, go, bun...), Implicit (php-nginx, php-apache), Static (nginx, static), Worker (no ports), Managed (postgresql, valkey...). |
+| **Strategy** | Deployment method per service: `push-dev`, `ci-cd`, or `manual`. Always explicit — never auto-assigned. Set via `action=strategy` after bootstrap. Required before deploy workflow. |
 
 ---
 
@@ -62,10 +63,10 @@ The workflow system is a **step-based state machine** that guides an AI agent th
 - Sets first step (discover) to `in_progress`
 - Returns available stack catalog for type validation
 
-**Progression**: 6 steps, strictly linear. Each step transitions:
+**Progression**: 5 steps, strictly linear. Each step transitions:
 `pending → in_progress → complete | skipped`
 
-**Exit**: All 6 steps complete/skipped → session file deleted, ServiceMeta files written, reflog appended to CLAUDE.md.
+**Exit**: All 5 steps complete/skipped → session file deleted, ServiceMeta files written, reflog appended to CLAUDE.md.
 
 **Exclusivity**: Only one bootstrap session can be active per project. Enforced by `InitSessionAtomic()` with file-based lock on `.zcp/state/.registry.lock`.
 
@@ -74,7 +75,7 @@ flowchart TD
     Start([Agent triggers bootstrap]) --> CreateSession["Create session<br/>Generate 16-hex ID<br/>Register in registry"]
     CreateSession --> Discover
 
-    subgraph Bootstrap ["Bootstrap Flow (6 steps)"]
+    subgraph Bootstrap ["Bootstrap Flow (5 steps)"]
         direction TB
         Discover["1. DISCOVER<br/>─────────────<br/>Detect project state<br/>Identify services<br/>Choose mode<br/>Submit plan"]
 
@@ -82,11 +83,9 @@ flowchart TD
 
         Generate["3. GENERATE<br/>─────────────<br/>Write zerops.yml<br/>Write app code<br/>Mode-specific rules"]
 
-        Deploy["4. DEPLOY<br/>─────────────<br/>Deploy to services<br/>Start servers (SSH)<br/>Enable subdomains<br/>Verify endpoints"]
+        Deploy["4. DEPLOY<br/>─────────────<br/>Deploy to services<br/>Start servers (SSH)<br/>Enable subdomains<br/>Full health verification"]
 
-        Verify["5. VERIFY<br/>─────────────<br/>Batch verify all services<br/>Check /status endpoints<br/>Final report"]
-
-        Strategy["6. STRATEGY<br/>─────────────<br/>Choose deploy strategy<br/>push-dev / ci-cd / manual<br/>Record per-service"]
+        Close["5. CLOSE<br/>─────────────<br/>Write ServiceMetas<br/>Append reflog<br/>Present strategy selection"]
     end
 
     Discover -->|"plan submitted"| Provision
@@ -95,35 +94,30 @@ flowchart TD
     ModeCheck -->|Yes| Generate
     ModeCheck -->|"No (managed-only)"| SkipGen["SKIP generate"]
     SkipGen --> SkipDeploy["SKIP deploy"]
-    SkipDeploy --> Verify
+    SkipDeploy --> SkipClose["SKIP close"]
 
     Generate -->|"code written"| Deploy
-    Deploy -->|"all services healthy"| Verify
+    Deploy -->|"all services healthy"| Close
 
     Deploy -->|"verification failed"| IterCheck{Iteration<br/>< max?}
-    IterCheck -->|Yes| Iterate["ITERATE<br/>Reset steps 2-4<br/>Increment counter"]
+    IterCheck -->|Yes| Iterate["ITERATE<br/>Reset steps 2-3<br/>Increment counter"]
     Iterate --> Generate
     IterCheck -->|"No (max reached)"| FailReport["Report failure<br/>to user"]
-    FailReport --> Verify
+    FailReport --> Close
 
-    Verify -->|"all healthy"| StratCheck{Has runtime<br/>services?}
-    StratCheck -->|Yes| Strategy
-    StratCheck -->|"No (managed-only)"| SkipStrat["SKIP strategy"]
+    SkipClose --> Complete
+    Close --> Complete
 
-    Strategy --> Complete
-    SkipStrat --> Complete
-
-    Complete([Bootstrap Complete]) --> Cleanup["Delete session file<br/>Write ServiceMetas<br/>Append reflog<br/>Present transition message"]
+    Complete([Bootstrap Complete]) --> Cleanup["Delete session file<br/>Write ServiceMetas<br/>Append reflog<br/>Present strategy selection"]
 
     style Discover fill:#e8f4fd,stroke:#2196F3
     style Provision fill:#e8f4fd,stroke:#2196F3
     style Generate fill:#fff3e0,stroke:#FF9800
     style Deploy fill:#fce4ec,stroke:#E91E63
-    style Verify fill:#e8f4fd,stroke:#2196F3
-    style Strategy fill:#e8f4fd,stroke:#2196F3
+    style Close fill:#e8f4fd,stroke:#2196F3
     style SkipGen fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
     style SkipDeploy fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
-    style SkipStrat fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
+    style SkipClose fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
 ```
 
 ### 3.2 Step Specifications
@@ -188,6 +182,7 @@ flowchart TD
   - EXISTS: service MUST exist
   - SHARED: another target must CREATE this hostname
 - Managed mode: auto-defaults to `NON_HA` if omitted
+- Empty targets allowed (managed-only projects)
 
 **Mode-specific behavior**:
 
@@ -197,9 +192,8 @@ flowchart TD
 | Plan targets | devHostname + stage derived | devHostname only | hostname only |
 
 **Managed-only behavior**:
-- Plan with zero runtime targets, only dependencies submitted directly
-- **Current code gap**: `validate.go` requires `len(targets) > 0` — needs fix to allow empty targets with non-empty dependencies
-- Route: discover → provision → SKIP generate → SKIP deploy → verify → SKIP strategy
+- Plan with zero runtime targets (empty `targets` array)
+- Route: discover → provision → SKIP generate → SKIP deploy → SKIP close
 
 **Invariants**:
 - Plan validated against live API types before storage
@@ -254,6 +248,8 @@ flowchart TD
 | Stage exists | Yes (READY_TO_DEPLOY) | No | No | No |
 | Mounts | dev only | dev only | service | None |
 | Env var discovery | All managed services | All managed | All managed | All managed |
+
+**Checker**: Validates all plan services exist in API with correct types, status RUNNING/ACTIVE, and managed env vars discovered.
 
 **Key rules**:
 - `mount:` in import.yml only applies to ACTIVE services. Stage is READY_TO_DEPLOY → mount silently ignored. After first stage deploy, connect via `zerops_manage action="connect-storage"`.
@@ -322,24 +318,9 @@ flowchart TD
 
 6. **Run pre-deploy checklist** (mode-specific, see below).
 
+**Checker**: Validates zerops.yml exists with correct setup entries, env var refs match discovered vars, ports defined.
+
 **Mode-specific zerops.yml rules**:
-
-```mermaid
-flowchart LR
-    subgraph Standard ["Standard Mode"]
-        S1["setup: {name}dev<br/>─────────────<br/>deployFiles: [.]<br/>start: zsc noop --silent<br/>NO healthCheck<br/>envVariables: ${refs}"]
-        S2["setup: {name}stage<br/>(written AFTER dev verified)<br/>─────────────<br/>deployFiles: [build output]<br/>start: real command<br/>healthCheck: required<br/>envVariables: copy from dev"]
-        S1 -.->|"after dev passes"| S2
-    end
-
-    subgraph Dev ["Dev Mode"]
-        D1["setup: {name}dev<br/>─────────────<br/>deployFiles: [.]<br/>start: zsc noop --silent<br/>NO healthCheck<br/>envVariables: ${refs}"]
-    end
-
-    subgraph Simple ["Simple Mode"]
-        P1["setup: {name}<br/>─────────────<br/>deployFiles: [.]<br/>start: REAL command<br/>healthCheck: REQUIRED<br/>envVariables: ${refs}"]
-    end
-```
 
 | Property | Standard (dev entry) | Dev | Simple |
 |----------|---------------------|-----|--------|
@@ -377,80 +358,67 @@ flowchart LR
 - Discovered env vars in session
 
 **Outputs**:
-- All runtime services deployed and verified healthy
+- All runtime services deployed AND verified healthy
 - Subdomains enabled with URLs
 
 **Core principle**: Deploy first — env vars activate at deploy time. Dev is for iterating and fixing. Stage (standard mode) is for final validation.
 
+**Checker**: Runs `ops.VerifyAll()` — full health checks (HTTP, logs, startup detection) filtered to plan targets. Also validates subdomain access for services with ports. Returns per-service breakdown.
+
 **Procedure by mode**:
 
-```mermaid
-flowchart TD
-    subgraph Standard ["Standard Mode Deploy"]
-        direction TB
-        SD1["1. zerops_deploy targetService={devHostname}"]
-        SD2["2. Start server via SSH<br/>(Bash run_in_background=true)"]
-        SD3["3. zerops_subdomain action=enable<br/>for dev"]
-        SD4["4. zerops_verify dev"]
-        SD5{Healthy?}
-        SD6["5. Generate stage entry<br/>in zerops.yml"]
-        SD7["6. zerops_deploy sourceService={dev}<br/>targetService={stage}"]
-        SD7b["7. Connect shared storage<br/>(if applicable)"]
-        SD8["8. zerops_subdomain action=enable<br/>for stage"]
-        SD9["9. zerops_verify stage"]
-        SD10["10. Present both URLs"]
+##### Standard mode
 
-        SD1 --> SD2
-        SD2 --> SD3
-        SD3 --> SD4
-        SD4 --> SD5
-        SD5 -->|Yes| SD6
-        SD5 -->|No| SDFix["Iterate: diagnose→fix→redeploy"]
-        SDFix --> SD1
-        SD6 --> SD7
-        SD7 --> SD7b
-        SD7b --> SD8
-        SD8 --> SD9
-        SD9 --> SD10
-    end
+```
+Phase 1: Deploy Dev
+  1. zerops_deploy targetService={devHostname}
+  2. Start server via SSH (Bash run_in_background=true)
+  3. zerops_subdomain action="enable" serviceHostname={devHostname}
+  4. zerops_verify serviceHostname={devHostname}
 
-    subgraph DevMode ["Dev Mode Deploy"]
-        direction TB
-        DD1["1. zerops_deploy targetService={devHostname}"]
-        DD2["2. Start server via SSH"]
-        DD3["3. zerops_subdomain action=enable"]
-        DD4["4. zerops_verify dev"]
-        DD5{Healthy?}
-        DD6["5. Present URL"]
+Phase 2: Deploy Stage (after dev healthy)
+  5. Generate stage entry in zerops.yml (real start, healthCheck)
+  6. zerops_deploy sourceService={dev} targetService={stage}
+  7. zerops_manage action="connect-storage" (if shared-storage)
+  8. zerops_subdomain action="enable" serviceHostname={stage}
+  9. zerops_verify serviceHostname={stage}
 
-        DD1 --> DD2
-        DD2 --> DD3
-        DD3 --> DD4
-        DD4 --> DD5
-        DD5 -->|Yes| DD6
-        DD5 -->|No| DDFix["Iterate: diagnose→fix→redeploy"]
-        DDFix --> DD1
-    end
+Phase 3: Cross-Verify
+  10. zerops_verify (batch) — all services
 
-    subgraph SimpleMode ["Simple Mode Deploy"]
-        direction TB
-        PD1["1. zerops_deploy targetService={hostname}<br/>(server auto-starts)"]
-        PD2["2. zerops_subdomain action=enable"]
-        PD3["3. zerops_verify"]
-        PD4{Healthy?}
-        PD5["4. Present URL"]
+Complete:
+  action="complete" step="deploy" attestation="All services deployed and verified"
+```
 
-        PD1 --> PD2
-        PD2 --> PD3
-        PD3 --> PD4
-        PD4 -->|Yes| PD5
-        PD4 -->|No| PDFix["Iterate: diagnose→fix→redeploy"]
-        PDFix --> PD1
-    end
+##### Dev mode
 
-    style SDFix fill:#fff3e0,stroke:#FF9800
-    style DDFix fill:#fff3e0,stroke:#FF9800
-    style PDFix fill:#fff3e0,stroke:#FF9800
+```
+Phase 1: Deploy Dev
+  1. zerops_deploy targetService={devHostname}
+  2. Start server via SSH
+  3. zerops_subdomain action="enable"
+  4. zerops_verify serviceHostname={devHostname}
+
+Phase 2: Cross-Verify
+  5. zerops_verify (batch)
+
+Complete:
+  action="complete" step="deploy"
+```
+
+##### Simple mode
+
+```
+Phase 1: Deploy
+  1. zerops_deploy targetService={hostname} (server auto-starts)
+  2. zerops_subdomain action="enable"
+  3. zerops_verify serviceHostname={hostname}
+
+Phase 2: Cross-Verify
+  4. zerops_verify (batch)
+
+Complete:
+  action="complete" step="deploy"
 ```
 
 **Operational details**:
@@ -490,66 +458,37 @@ flowchart TD
 - Subdomain enabled after every deploy (even if set in import)
 - Simple mode: no SSH start needed (real start command + healthCheck auto-starts)
 - Implicit-webserver runtimes: no SSH start needed (auto-starts)
+- Checker runs VerifyAll (HTTP + logs + startup) — not just API status
 
 ---
 
-#### Step 5: VERIFY (fixed, mandatory)
+#### Step 5: CLOSE (fixed, skippable)
 
-**Purpose**: Independent batch verification of all services and final report.
+**Purpose**: Administrative closure of bootstrap. Pure trigger point — completion writes ServiceMetas and presents strategy selection.
 
-**Inputs**: Deployed services (or managed services for managed-only)
+**Skip condition**: No runtime services in plan (managed-only).
 
-**Outputs**: Health status report with URLs
+**Inputs**: Completed deploy step (all services healthy)
 
-**Procedure**:
+**Outputs**:
+- ServiceMeta files written (with `BootstrappedAt` timestamp)
+- Reflog entry appended to CLAUDE.md
+- Strategy selection prompt presented to user
 
-1. **Batch verify**: `zerops_verify` (no hostname = all services)
-2. **Check results per service**:
+**Checker**: Nil. Close doesn't validate infrastructure — it's the administrative trigger point.
 
-   | Runtime class | Checks performed |
-   |--------------|-----------------|
-   | Dynamic (nodejs, go, bun, python, rust, java, deno, dotnet) | service_running, error_logs, startup_detected, http_root (/), http_status (/status) |
-   | Implicit (php-nginx, php-apache) | service_running, error_logs, http_root, http_status |
-   | Static (nginx, static) | service_running, http_root |
-   | Worker (no ports) | service_running, error_logs |
-   | Managed (postgresql, valkey...) | service_running only |
+**Mechanism**: When close step completes, `Active` becomes `false`, which triggers `writeBootstrapOutputs()` in `engine.go`. This:
+1. Writes final ServiceMeta files for each runtime target (strategy stays empty — no auto-assign)
+2. Appends reflog entry to CLAUDE.md
 
-3. **Aggregate status**:
-   - **healthy**: all checks pass (info checks don't count as failure)
-   - **degraded**: service running but some checks fail
-   - **unhealthy**: service not running
+**Transition message**: The close step response includes `BuildTransitionMessage()` which:
+- Lists all bootstrapped services with modes
+- Presents strategy selection with equal explanation of all 3 options
+- Provides `action=strategy` command hint
 
-4. **Present final report**: hostnames, types, status, subdomain URLs, next steps.
+**Strategy is NEVER auto-assigned.** All modes require explicit `action=strategy` after bootstrap before deploying.
 
-**Invariants**:
-- All plan target services must be verified
-- error_logs checks return `info` (advisory), not `fail` — SSH deploy logs often classified as errors
-
----
-
-#### Step 6: STRATEGY (fixed, skippable)
-
-**Purpose**: Record deployment strategy for each runtime service.
-
-**Skip condition**: No runtime services (managed-only).
-
-**Inputs**: Verified services
-
-**Outputs**: Per-hostname strategy stored in session and ServiceMeta
-
-**Procedure**:
-
-1. Present options to user:
-
-   | Strategy | How it works | Best for |
-   |----------|-------------|----------|
-   | `push-dev` | SSH push to running container | Local dev, prototyping |
-   | `ci-cd` | Git pipeline trigger | Teams, production |
-   | `manual` | No automation, monitoring only | Existing pipelines |
-
-2. Record: `zerops_workflow action="complete" step="strategy" strategies={"hostname": "push-dev"}`
-
-**Auto-assignment**: dev and simple modes auto-assign `push-dev` if no explicit choice.
+**Iteration note**: Close is excluded from iteration resets. `ResetForIteration()` resets steps 2-3 (generate + deploy) only. Close at index 4 is not retried.
 
 ---
 
@@ -559,23 +498,22 @@ For projects with only managed services (databases, caches, storage) and no runt
 
 ```mermaid
 flowchart LR
-    D["1. DISCOVER<br/>Plan with deps only"] --> P["2. PROVISION<br/>Import managed services<br/>Discover env vars"]
+    D["1. DISCOVER<br/>Plan with empty targets"] --> P["2. PROVISION<br/>Import managed services<br/>Discover env vars"]
     P --> SG["3. SKIP generate"]
     SG --> SD["4. SKIP deploy"]
-    SD --> V["5. VERIFY<br/>All managed RUNNING"]
-    V --> SS["6. SKIP strategy"]
-    SS --> Done["Complete"]
+    SD --> SC["5. SKIP close"]
+    SC --> Done["Complete"]
 
     style SG fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
     style SD fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
-    style SS fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
+    style SC fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
 ```
 
 **Key differences**:
-- Plan submitted with zero `targets` array, dependencies listed at top level (code gap: currently requires `len(targets) > 0`)
+- Plan submitted with empty `targets` array
 - No SSHFS mounts (no runtime filesystem to mount)
 - Env vars still discovered (available for future runtime additions)
-- ServiceMeta written for managed services without mode/stage fields
+- No ServiceMeta files written (managed services are API-authoritative)
 
 ---
 
@@ -587,19 +525,23 @@ Deploy is a **derived subset** of bootstrap. It operates on services that alread
 
 ```mermaid
 flowchart LR
-    subgraph Bootstrap ["Bootstrap (6 steps)"]
-        B1["discover"] --> B2["provision"] --> B3["generate"] --> B4["deploy"] --> B5["verify"] --> B6["strategy"]
+    subgraph Bootstrap ["Bootstrap (5 steps)"]
+        B1["discover"] --> B2["provision"] --> B3["generate"] --> B4["deploy"] --> B5["close"]
     end
 
     subgraph Deploy ["Deploy (3 steps)"]
         D1["prepare"] --> D2["deploy"] --> D3["verify"]
     end
 
-    B6 -->|"ServiceMeta files<br/>persist on disk"| D1
+    B5 -->|"ServiceMeta files<br/>persist on disk"| StratCheck
+
+    StratCheck{"Strategy set?"}
+    StratCheck -->|Yes| D1
+    StratCheck -->|"No"| StratSelect["Strategy selection<br/>(conversational)"]
+    StratSelect -->|"action=strategy"| StratCheck
 
     B3 -.->|"equivalent to"| D1
     B4 -.->|"equivalent to"| D2
-    B5 -.->|"equivalent to"| D3
 
     style Bootstrap fill:#e3f2fd
     style Deploy fill:#e8f5e9
@@ -609,16 +551,40 @@ flowchart LR
 |--------|--------------------------|-----------------|
 | Context source | Plan + session state | ServiceMeta files from prior bootstrap |
 | Session | Part of bootstrap session | Own separate session |
-| Prerequisites | Provision done, filesystems mounted, code written | Services exist, zerops.yml exists |
+| Prerequisites | Provision done, filesystems mounted, code written | Services exist, zerops.yml exists, **strategy set** |
 | Mode detection | From plan targets | From ServiceMeta.Mode field |
 | Deploy mechanism | Same (SSH) | Same (SSH) |
-| Iteration | Resets bootstrap steps 2-4 | Resets deploy steps 1-2 |
+| Iteration | Resets bootstrap steps 2-3 | Resets deploy steps 1-2 |
+| Strategy required | No (set after bootstrap) | **Yes** — deploy won't start without strategy |
 
-### 4.2 Step Specifications
+### 4.2 Strategy Gate in Deploy Workflow
+
+When `action="start" workflow="deploy"` is called, `handleDeployStart()`:
+
+1. Reads ServiceMeta files
+2. Filters to runtime services (those with Mode or StageHostname)
+3. Checks each runtime meta for `DeployStrategy`
+4. **If any service has empty strategy** → returns conversational strategy selection guidance (NOT an error)
+5. **If all strategies set** → creates deploy session and proceeds
+
+The strategy selection response explains all 3 options equally:
+
+| Strategy | How it works | Good for | Trade-off |
+|----------|-------------|----------|-----------|
+| `push-dev` | SSH push from dev container, you trigger each deploy | Prototyping, quick iterations | Manual process |
+| `ci-cd` | Automatic deploys on git push via webhook | Team dev, production workflows | Requires pipeline setup |
+| `manual` | You manage deployments yourself | Existing CI/CD, custom tooling | ZCP won't guide deploys |
+
+### 4.3 CI/CD Strategy Gate
+
+`handleCICDStart()` is a hard gate — only services with `ci-cd` strategy are included. If no services have `ci-cd`, the workflow returns an error asking the user to set strategy first.
+
+### 4.4 Step Specifications
 
 **Entry**: `zerops_workflow action="start" workflow="deploy"`
 - Reads ServiceMeta files from `.zcp/state/services/`
 - Filters to runtime services (those with Mode or StageHostname)
+- Validates all have strategy set (conversational if not)
 - Builds ordered deploy targets (dev first, then stage for standard mode)
 - Creates deploy session
 
@@ -641,35 +607,7 @@ flowchart LR
 
 #### Deploy Step 2: DEPLOY
 
-**Purpose**: Execute deployments per mode.
-
-**Procedure**: Same as bootstrap deploy step, per mode:
-
-```mermaid
-flowchart TD
-    Start{Mode?} -->|Standard| StdFlow
-    Start -->|Dev| DevFlow
-    Start -->|Simple| SimpleFlow
-
-    subgraph StdFlow ["Standard: dev → stage"]
-        S1["Deploy dev"] --> S2["SSH start"] --> S3["Subdomain enable"] --> S4["Verify dev"]
-        S4 -->|OK| S5["Deploy stage from dev"] --> S6["Subdomain enable"] --> S7["Verify stage"]
-        S4 -->|Fail| S8["Iterate (max 3)"]
-        S8 --> S1
-    end
-
-    subgraph DevFlow ["Dev: dev only"]
-        D1["Deploy dev"] --> D2["SSH start"] --> D3["Subdomain enable"] --> D4["Verify"]
-        D4 -->|Fail| D5["Iterate"]
-        D5 --> D1
-    end
-
-    subgraph SimpleFlow ["Simple: single service"]
-        P1["Deploy (auto-starts)"] --> P2["Subdomain enable"] --> P3["Verify"]
-        P3 -->|Fail| P4["Iterate"]
-        P4 --> P1
-    end
-```
+**Purpose**: Execute deployments per mode. Same procedure as bootstrap deploy step.
 
 Per-target tracking: each target has status (pending/deployed/verified/failed/skipped).
 Dev targets must pass before stage targets are attempted.
@@ -678,7 +616,7 @@ Dev targets must pass before stage targets are attempted.
 
 #### Deploy Step 3: VERIFY
 
-Same protocol as bootstrap verify step. Batch verification of all deploy targets.
+Batch verification of all deploy targets using `ops.VerifyAll()`.
 
 ---
 
@@ -732,15 +670,12 @@ WorkflowState {
 **Structure** (`.zcp/state/services/{hostname}.json`):
 ```
 ServiceMeta {
-  Hostname:         string          // immutable
-  Type:             string          // e.g., "nodejs@22"
-  Mode:             string          // "standard" | "dev" | "simple" (empty for managed)
-  Status:           string          // "planned" → "provisioned" → "bootstrapped"
-  StageHostname:    string          // derived stage (standard mode only)
-  Dependencies:     []string        // dependency hostnames
-  BootstrapSession: string          // session ID that created this
-  BootstrappedAt:   string          // date
-  Decisions:        map[string]string  // {deployStrategy: "push-dev"}
+  Hostname:         string   // immutable
+  Mode:             string   // "standard" | "dev" | "simple" (empty for managed)
+  StageHostname:    string   // derived stage (standard mode only)
+  DeployStrategy:   string   // "push-dev" | "ci-cd" | "manual" (empty until explicitly set)
+  BootstrapSession: string   // session ID that created this
+  BootstrappedAt:   string   // date — empty means bootstrap incomplete
 }
 ```
 
@@ -748,22 +683,26 @@ ServiceMeta {
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Planned: discover step (plan submitted)
-    Planned --> Provisioned: provision step (services created)
-    Provisioned --> Bootstrapped: bootstrap complete (all steps done)
+    [*] --> Provisioned: provision step (partial meta, no BootstrappedAt)
+    Provisioned --> Bootstrapped: close step triggers writeBootstrapOutputs
+    Bootstrapped --> StrategySet: user calls action=strategy
 
     note right of Bootstrapped
-        Persists after session cleanup.
-        Read by deploy workflow,
-        router, future sessions.
+        DeployStrategy empty.
+        Must set before deploy workflow.
+    end note
+
+    note right of StrategySet
+        DeployStrategy = push-dev | ci-cd | manual.
+        Deploy workflow can proceed.
     end note
 ```
 
 **Rules**:
+- Only runtime services get ServiceMeta — managed deps are API-authoritative
 - EXISTS/SHARED dependencies: never overwrite existing ServiceMeta files
-- CREATE dependencies: write new ServiceMeta with managed type, no mode
-- Runtime services: write with mode, stageHostname (standard only), dependencies
-- Auto-assign `push-dev` strategy for dev/simple modes if no explicit choice
+- Strategy is NEVER auto-assigned — always empty until explicit `action=strategy`
+- `IsComplete()` returns true only when `BootstrappedAt` is set
 
 ### 5.3 Discovered Environment Variables
 
@@ -795,19 +734,19 @@ Complete cross-reference of how each mode affects every aspect of the workflow:
 | **zerops.yml deployFiles** | `[.]` (dev) / build output (stage) | `[.]` | `[.]` | N/A |
 | **Server start method** | SSH manual (dev) / auto (stage) | SSH manual | Auto (healthCheck) | N/A |
 | **Subdomain enable** | Both dev + stage | Dev only | Service only | N/A |
-| **Deploy flow** | dev→verify→stage→verify | dev→verify | deploy→verify | N/A |
-| **Iteration resets** | Steps 2-4 (generate/deploy/verify) | Same | Same | N/A |
-| **Strategy auto-assign** | None (user chooses) | `push-dev` | `push-dev` | N/A |
+| **Deploy flow** | dev→verify→stage→verify→cross-verify | dev→verify→cross-verify | deploy→verify→cross-verify | N/A |
+| **Iteration resets** | Steps 2-3 (generate + deploy) | Same | Same | N/A |
+| **Strategy** | Explicit choice required | Explicit choice required | Explicit choice required | N/A |
 | **Skip generate** | No | No | No | Yes |
 | **Skip deploy** | No | No | No | Yes |
-| **Skip strategy** | No | No | No | Yes |
+| **Skip close** | No | No | No | Yes |
 | **PHP runtimes** | Omit `start:` entirely | Same | Same | N/A |
 
 ---
 
 ## 7. Flow Transitions & Resumption
 
-### 7.1 Bootstrap → Deploy Transition
+### 7.1 Bootstrap → Strategy → Deploy Transition
 
 ```mermaid
 sequenceDiagram
@@ -815,16 +754,21 @@ sequenceDiagram
     participant Engine
     participant Disk
 
-    Note over Agent,Engine: Bootstrap completes (all 6 steps)
-    Engine->>Disk: Write ServiceMeta files (status=bootstrapped)
+    Note over Agent,Engine: Bootstrap completes (all 5 steps)
+    Engine->>Disk: Write ServiceMeta files (strategy=empty)
     Engine->>Disk: Delete session file
     Engine->>Disk: Unregister from registry
-    Engine->>Agent: Transition message:<br/>"Bootstrap complete. Next: deploy, ci-cd, scale, debug, configure"
+    Engine->>Agent: Transition message:<br/>"Choose deployment strategy for each service"
+
+    Note over Agent,Engine: User chooses strategy
+    Agent->>Engine: zerops_workflow action="strategy"<br/>strategies={"appdev":"push-dev"}
+    Engine->>Disk: Update ServiceMeta (DeployStrategy=push-dev)
 
     Note over Agent,Engine: User requests deploy
     Agent->>Engine: zerops_workflow action="start" workflow="deploy"
     Engine->>Disk: Read ServiceMeta files
-    Engine->>Engine: Build deploy targets from metas<br/>Detect mode from ServiceMeta.Mode
+    Engine->>Engine: Check strategy set ✓
+    Engine->>Engine: Build deploy targets from metas
     Engine->>Disk: Create deploy session
     Engine->>Agent: DeployResponse with targets + guidance
 ```
@@ -839,7 +783,7 @@ sequenceDiagram
 
     Agent->>Engine: zerops_workflow action="status"
     Engine->>Disk: Read registry → find active sessions
-    Engine->>Agent: Session found: {id}, step 3/6, workflow=bootstrap
+    Engine->>Agent: Session found: {id}, step 3/5, workflow=bootstrap
 
     Agent->>Engine: zerops_workflow action="resume" sessionId="{id}"
     Engine->>Disk: Load session state
@@ -856,9 +800,10 @@ sequenceDiagram
 
 **Bootstrap iteration** (`action="iterate"`):
 - Increments `Iteration` counter
-- Resets steps 2-4 (generate, deploy, verify) to `pending`
+- Resets steps 2-3 (generate, deploy) to `pending`
 - Sets `CurrentStep = 2` (generate), marks `in_progress`
-- **Preserves**: discover attestation, provision attestation + env vars, plan, ServiceMetas, strategy if set
+- **Preserves**: discover attestation, provision attestation + env vars, plan, ServiceMetas, close step
+- Close (step 4) is NOT reset — it's administrative, not retryable
 
 **Deploy iteration** (`action="iterate"`):
 - Increments `Iteration` counter
@@ -883,37 +828,40 @@ sequenceDiagram
 | I1 | Only one bootstrap session active at any time | `InitSessionAtomic()` with registry lock |
 | I2 | Step completion requires attestation ≥ 10 chars | `CompleteStep()` validation |
 | I3 | Steps progress strictly in order | `CompleteStep()` name-matching check |
-| I4 | discover, provision, verify cannot be skipped | `SkipStep()` checks `Skippable` field |
-| I5 | generate and deploy cannot be skipped when runtime targets exist | `validateConditionalSkip()` |
+| I4 | discover and provision cannot be skipped | `SkipStep()` checks `Skippable` field |
+| I5 | generate, deploy, close cannot be skipped when runtime targets exist | `validateConditionalSkip()` |
 | I6 | Session file atomically written (temp + rename) | `SaveSessionState()` |
 | I7 | Completed sessions cleaned up (file deleted, registry entry removed) | `ResetSessionByID()` at completion |
+| I8 | Non-discover steps require plan from discover step | `BootstrapComplete()` Plan!=nil check |
 
 ### State Invariants
 
 | ID | Invariant | Enforced by |
 |----|-----------|-------------|
-| S1 | ServiceMeta written at three lifecycle points: planned, provisioned, bootstrapped | `writeBootstrapOutputs()` |
-| S2 | EXISTS/SHARED dependencies never overwrite existing ServiceMeta | `writeBootstrapOutputs()` skip check |
+| S1 | ServiceMeta written at two lifecycle points: provisioned (partial) and bootstrapped (complete) | `writeProvisionMetas()` and `writeBootstrapOutputs()` |
+| S2 | Only runtime services get ServiceMeta — managed deps are API-authoritative | `writeBootstrapOutputs()` iterates plan.Targets only |
 | S3 | Env var names (not values) stored in session state | `DiscoveredEnvVars` type is `map[string][]string` (names) |
-| S4 | Strategy stored in both session (transient) and ServiceMeta.Decisions (persistent) | `writeBootstrapOutputs()` |
+| S4 | Strategy is never auto-assigned — always empty until explicit `action=strategy` | `writeBootstrapOutputs()` reads Strategies map without fallback |
 
 ### Knowledge Invariants
 
 | ID | Invariant | Enforced by |
 |----|-----------|-------------|
 | K1 | Generate step receives: runtime briefing, dependency wiring, discovered env vars, zerops.yml schema | `assembleKnowledge()` for generate step |
-| K2 | Deploy step receives: schema rules, env vars | `assembleKnowledge()` for deploy step |
+| K2 | Deploy step receives: schema rules | `assembleKnowledge()` for deploy step |
 | K3 | Provision step receives: import.yml schema | `assembleKnowledge()` for provision step |
-| K4 | Iteration > 0 on deploy returns escalating recovery guidance | `resolveIterationGuidance()` |
+| K4 | Iteration > 0 on deploy returns escalating recovery guidance | `BuildIterationDelta()` |
 
 ### Flow Invariants
 
 | ID | Invariant | Enforced by |
 |----|-----------|-------------|
-| F1 | Deploy workflow requires existing ServiceMeta files | `handleDeployStart()` reads + validates metas |
-| F2 | Router uses live API + ServiceMeta to suggest workflows | `Route()` in router.go |
-| F3 | Immediate workflows (debug, scale, configure) are stateless | `IsImmediateWorkflow()` check |
-| F4 | Bootstrap auto-resets completed sessions on new start | `engine.Start()` checks Active=false |
+| F1 | Deploy workflow requires existing ServiceMeta files with strategy set | `handleDeployStart()` reads metas + checks DeployStrategy |
+| F2 | CI/CD workflow requires at least one service with ci-cd strategy | `handleCICDStart()` filters by StrategyCICD |
+| F3 | Router uses live API + ServiceMeta to suggest workflows | `Route()` in router.go |
+| F4 | Immediate workflows (debug, scale, configure) are stateless | `IsImmediateWorkflow()` check |
+| F5 | Bootstrap auto-resets completed sessions on new start | `engine.Start()` checks Active=false |
+| F6 | Deploy strategy selection is conversational (guidance, not error) | `buildStrategySelectionResponse()` |
 
 ### Operational Invariants
 
@@ -957,8 +905,7 @@ sequenceDiagram
 
 | Gap | Impact | Status |
 |-----|--------|--------|
-| Managed-only plan validation (`len(targets) > 0` required) | Cannot bootstrap managed-only projects | Code fix needed in validate.go |
-| Dev mode hostname suffix enforcement (must end in "dev") | Dev mode can use non-standard hostnames | 2-line validation fix in validate.go |
 | Env var reference validation at generate step | Invalid `${hostname_varName}` refs silently kept as literals | No validation against discovered vars |
 | Import error surfacing (per-service API errors) | Partial import failures hard to diagnose | Better error detail needed |
 | Least-privilege discover mode | Discover unnecessarily returns actual secret values | Future: names-only mode option |
+| Router strategy offering | Router should suggest strategy selection when DeployStrategy empty | Not yet implemented |
