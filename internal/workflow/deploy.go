@@ -303,18 +303,17 @@ func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env
 	return resp
 }
 
-// buildGuide assembles a deploy step guide with knowledge injection.
-func (d *DeployState) buildGuide(step string, _ int, _ Environment, kp knowledge.Provider) string {
-	guide := resolveDeployStepGuidance(step, d.Mode, d.Strategy)
-
-	if extra := assembleKnowledge(GuidanceParams{
-		Step:     step,
-		Mode:     d.Mode,
-		Strategy: d.Strategy,
-		KP:       kp,
-	}); extra != "" {
-		guide += "\n\n---\n\n" + extra
+// buildGuide generates personalized deploy step guidance from state.
+// Unlike bootstrap which injects full knowledge, deploy uses compact guidance
+// with knowledge pointers — the agent pulls knowledge on demand.
+func (d *DeployState) buildGuide(step string, iteration int, env Environment, _ knowledge.Provider) string {
+	switch step {
+	case DeployStepPrepare:
+		return buildPrepareGuide(d, env)
+	case DeployStepDeploy:
+		return buildDeployGuide(d, iteration, env)
+	case DeployStepVerify:
+		return buildVerifyGuide()
 	}
-
-	return guide
+	return ""
 }

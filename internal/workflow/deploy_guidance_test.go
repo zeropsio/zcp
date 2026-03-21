@@ -1,81 +1,249 @@
 package workflow
 
 import (
+	"strings"
 	"testing"
 )
 
-// TestResolveDeployStepGuidance_DeployStep_WithStrategy tests that deploy step guidance includes strategy sections.
-func TestResolveDeployStepGuidance_DeployStep_WithStrategy(t *testing.T) {
+func TestBuildPrepareGuide_Personalized(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name     string
-		mode     string
-		strategy string
-		want     string
+		name         string
+		state        *DeployState
+		env          Environment
+		wantContains []string
+		wantAbsent   []string
 	}{
 		{
-			"standard_push_dev",
-			PlanModeStandard,
-			StrategyPushDev,
-			"Push-Dev Deploy Strategy",
+			name: "standard_push_dev",
+			state: &DeployState{
+				Mode:     PlanModeStandard,
+				Strategy: StrategyPushDev,
+				Targets: []DeployTarget{
+					{Hostname: "appdev", Role: DeployRoleDev, Strategy: StrategyPushDev},
+					{Hostname: "appstage", Role: DeployRoleStage, Strategy: StrategyPushDev},
+				},
+			},
+			env: EnvContainer,
+			wantContains: []string{
+				"appdev",                   // personalized hostname
+				"appstage",                 // stage hostname
+				"standard",                 // mode
+				"push-dev",                 // strategy
+				"deployFiles",              // platform fact
+				"${",                       // env var warning
+				"zerops_knowledge",         // knowledge pointer
+				"ci-cd",                    // strategy alternative mentioned
+			},
 		},
 		{
-			"dev_ci_cd",
-			PlanModeDev,
-			StrategyCICD,
-			"CI/CD Deploy Strategy",
+			name: "dev_cicd",
+			state: &DeployState{
+				Mode:     PlanModeDev,
+				Strategy: StrategyCICD,
+				Targets: []DeployTarget{
+					{Hostname: "apidev", Role: DeployRoleDev, Strategy: StrategyCICD},
+				},
+			},
+			env: EnvContainer,
+			wantContains: []string{
+				"apidev",
+				"dev",
+				"ci-cd",
+				"zerops_knowledge",
+			},
 		},
 		{
-			"simple_manual",
-			PlanModeSimple,
-			StrategyManual,
-			"Manual Deploy Strategy",
+			name: "simple_manual",
+			state: &DeployState{
+				Mode:     PlanModeSimple,
+				Strategy: StrategyManual,
+				Targets: []DeployTarget{
+					{Hostname: "web", Role: DeployRoleSimple, Strategy: StrategyManual},
+				},
+			},
+			env: EnvLocal,
+			wantContains: []string{
+				"web",
+				"simple",
+				"manual",
+				"healthCheck", // simple requires healthCheck
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			guidance := resolveDeployStepGuidance(DeployStepDeploy, tt.mode, tt.strategy)
+			guide := buildPrepareGuide(tt.state, tt.env)
 
-			if guidance == "" {
+			if guide == "" {
 				t.Fatal("expected non-empty guidance")
 			}
-			// Should contain both mode-specific and strategy-specific content.
-			if !containsStr(guidance, "deploy-execute") && !containsStr(guidance, "Deploy") {
-				t.Errorf("guidance missing mode content, got: %s", guidance)
+			for _, want := range tt.wantContains {
+				if !strings.Contains(guide, want) {
+					t.Errorf("guide should contain %q\ngot:\n%s", want, guide)
+				}
 			}
-			if !containsStr(guidance, tt.want) {
-				t.Errorf("guidance missing strategy content %q, got: %s", tt.want, guidance)
+			for _, absent := range tt.wantAbsent {
+				if strings.Contains(guide, absent) {
+					t.Errorf("guide should NOT contain %q", absent)
+				}
+			}
+			// Max 55 lines.
+			lines := strings.Count(guide, "\n") + 1
+			if lines > 55 {
+				t.Errorf("guide has %d lines, max 55", lines)
 			}
 		})
 	}
 }
 
-// TestResolveDeployStepGuidance_PrepareStep_IgnoresStrategy tests that prepare step doesn't use strategy.
-func TestResolveDeployStepGuidance_PrepareStep_IgnoresStrategy(t *testing.T) {
+func TestBuildDeployGuide_Personalized(t *testing.T) {
 	t.Parallel()
-	guidance := resolveDeployStepGuidance(DeployStepPrepare, PlanModeStandard, StrategyPushDev)
-
-	if guidance == "" {
-		t.Fatal("expected non-empty guidance")
+	tests := []struct {
+		name         string
+		state        *DeployState
+		iteration    int
+		env          Environment
+		wantContains []string
+	}{
+		{
+			name: "standard_push_dev_iter0",
+			state: &DeployState{
+				Mode:     PlanModeStandard,
+				Strategy: StrategyPushDev,
+				Targets: []DeployTarget{
+					{Hostname: "appdev", Role: DeployRoleDev},
+					{Hostname: "appstage", Role: DeployRoleStage},
+				},
+			},
+			iteration: 0,
+			env:       EnvContainer,
+			wantContains: []string{
+				"appdev",                            // personalized hostname
+				"appstage",                          // stage hostname
+				"zerops_deploy",                     // deploy command
+				"zerops_subdomain",                  // subdomain command
+				"zerops_verify",                     // verify command
+				"DEPLOYED",                          // platform fact
+				"deployFiles",                       // platform fact
+			},
+		},
+		{
+			name: "dev_cicd_iter0",
+			state: &DeployState{
+				Mode:     PlanModeDev,
+				Strategy: StrategyCICD,
+				Targets: []DeployTarget{
+					{Hostname: "apidev", Role: DeployRoleDev},
+				},
+			},
+			iteration: 0,
+			env:       EnvContainer,
+			wantContains: []string{
+				"apidev",
+				"zerops_deploy",
+			},
+		},
+		{
+			name: "simple_manual_iter0",
+			state: &DeployState{
+				Mode:     PlanModeSimple,
+				Strategy: StrategyManual,
+				Targets: []DeployTarget{
+					{Hostname: "web", Role: DeployRoleSimple},
+				},
+			},
+			iteration: 0,
+			env:       EnvLocal,
+			wantContains: []string{
+				"web",
+				"auto-starts",
+			},
+		},
+		{
+			name: "iteration_1_escalation",
+			state: &DeployState{
+				Mode:     PlanModeStandard,
+				Strategy: StrategyPushDev,
+				Targets: []DeployTarget{
+					{Hostname: "appdev", Role: DeployRoleDev},
+				},
+			},
+			iteration: 1,
+			env:       EnvContainer,
+			wantContains: []string{
+				"Iteration 1",
+				"zerops_logs",
+			},
+		},
+		{
+			name: "iteration_3_user_escalation",
+			state: &DeployState{
+				Mode:     PlanModeDev,
+				Strategy: StrategyPushDev,
+				Targets: []DeployTarget{
+					{Hostname: "appdev", Role: DeployRoleDev},
+				},
+			},
+			iteration: 3,
+			env:       EnvContainer,
+			wantContains: []string{
+				"Iteration 3",
+				"user",
+			},
+		},
 	}
-	// Prepare step should not contain strategy-specific content.
-	if containsStr(guidance, "Push-Dev Deploy Strategy") {
-		t.Errorf("prepare step should not contain strategy content, got: %s", guidance)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			guide := buildDeployGuide(tt.state, tt.iteration, tt.env)
+
+			if guide == "" {
+				t.Fatal("expected non-empty guidance")
+			}
+			for _, want := range tt.wantContains {
+				if !strings.Contains(guide, want) {
+					t.Errorf("guide should contain %q\ngot:\n%s", want, guide)
+				}
+			}
+			// Max 55 lines.
+			lines := strings.Count(guide, "\n") + 1
+			if lines > 55 {
+				t.Errorf("guide has %d lines, max 55", lines)
+			}
+		})
 	}
 }
 
-// containsStr is a helper to avoid importing strings in test.
-func containsStr(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsIndex(s, sub))
+func TestBuildVerifyGuide_NonEmpty(t *testing.T) {
+	t.Parallel()
+	guide := buildVerifyGuide()
+	if guide == "" {
+		t.Fatal("expected non-empty verify guidance")
+	}
+	if !strings.Contains(guide, "zerops_verify") {
+		t.Error("verify guide should mention zerops_verify")
+	}
 }
 
-func containsIndex(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
+func TestBuildKnowledgeMap_Pointers(t *testing.T) {
+	t.Parallel()
+	targets := []DeployTarget{
+		{Hostname: "appdev", Role: DeployRoleDev},
+		{Hostname: "appstage", Role: DeployRoleStage},
 	}
-	return false
+	result := buildKnowledgeMap(targets)
+
+	if result == "" {
+		t.Fatal("expected non-empty knowledge map")
+	}
+	if !strings.Contains(result, "zerops_knowledge") {
+		t.Error("should contain zerops_knowledge pointer")
+	}
+	if !strings.Contains(result, "zerops_discover") {
+		t.Error("should contain zerops_discover pointer")
+	}
 }
