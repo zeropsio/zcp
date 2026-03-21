@@ -16,7 +16,6 @@ func TestWriteServiceMeta_Success(t *testing.T) {
 		Hostname:         "appdev",
 		Mode:             "standard",
 		StageHostname:    "appstage",
-		Dependencies:     []string{"db", "cache"},
 		DeployStrategy:   StrategyPushDev,
 		BootstrapSession: "abc123",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
@@ -78,7 +77,6 @@ func TestReadServiceMeta_Success(t *testing.T) {
 		Hostname:         "appdev",
 		Mode:             "standard",
 		StageHostname:    "appstage",
-		Dependencies:     []string{"db"},
 		DeployStrategy:   StrategyPushDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
@@ -123,7 +121,6 @@ func TestServiceMeta_JSONRoundTrip(t *testing.T) {
 				Hostname:         "apidev",
 				Mode:             "standard",
 				StageHostname:    "apistage",
-				Dependencies:     []string{"db", "cache", "storage"},
 				DeployStrategy:   StrategyPushDev,
 				BootstrapSession: "sess123",
 				BootstrappedAt:   "2026-03-04T12:00:00Z",
@@ -389,5 +386,8 @@ func TestServiceMeta_NoStatusFieldInJSON(t *testing.T) {
 	}
 	if _, ok := raw["decisions"]; ok {
 		t.Error("decisions field should NOT exist in JSON — replaced by deployStrategy")
+	}
+	if _, ok := raw["dependencies"]; ok {
+		t.Error("dependencies field should NOT exist in JSON — removed (never read in production)")
 	}
 }

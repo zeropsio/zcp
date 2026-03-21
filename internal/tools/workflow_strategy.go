@@ -18,12 +18,8 @@ var validStrategies = map[string]bool{
 	workflow.StrategyManual:  true,
 }
 
-// strategySectionMap maps strategy values to deploy.md section names.
-var strategySectionMap = map[string]string{
-	workflow.StrategyPushDev: "deploy-push-dev",
-	workflow.StrategyCICD:    "deploy-ci-cd",
-	workflow.StrategyManual:  "deploy-manual",
-}
+// strategySectionMap is the canonical map from workflow package.
+var strategySectionMap = workflow.StrategyToSection
 
 // handleStrategy handles post-bootstrap strategy updates for individual services.
 func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*mcp.CallToolResult, any, error) {

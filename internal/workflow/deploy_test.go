@@ -184,7 +184,7 @@ func TestBuildDeployTargets_Standard(t *testing.T) {
 			StageHostname: "appstage",
 		},
 	}
-	targets, mode, _ := BuildDeployTargets(metas)
+	targets, mode := BuildDeployTargets(metas)
 
 	if mode != PlanModeStandard {
 		t.Errorf("mode: want standard, got %s", mode)
@@ -208,7 +208,7 @@ func TestBuildDeployTargets_Simple(t *testing.T) {
 			Mode:     PlanModeSimple,
 		},
 	}
-	targets, mode, _ := BuildDeployTargets(metas)
+	targets, mode := BuildDeployTargets(metas)
 
 	if mode != PlanModeSimple {
 		t.Errorf("mode: want simple, got %s", mode)
@@ -223,7 +223,7 @@ func TestBuildDeployTargets_Simple(t *testing.T) {
 
 func TestBuildDeployTargets_Empty(t *testing.T) {
 	t.Parallel()
-	targets, mode, _ := BuildDeployTargets(nil)
+	targets, mode := BuildDeployTargets(nil)
 	if targets != nil {
 		t.Error("expected nil targets for nil metas")
 	}

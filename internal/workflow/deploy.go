@@ -33,22 +33,13 @@ const (
 	deployTargetSkipped  = "skipped"
 )
 
-// DeployServiceContext stores service metadata needed for knowledge injection.
-// Populated at DeployStart from ServiceMeta files.
-type DeployServiceContext struct {
-	RuntimeType       string              `json:"runtimeType,omitempty"`
-	DependencyTypes   []string            `json:"dependencyTypes,omitempty"`
-	DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"`
-}
-
 // DeployState tracks progress through the deploy workflow.
 type DeployState struct {
-	Active      bool                  `json:"active"`
-	CurrentStep int                   `json:"currentStep"`
-	Steps       []DeployStep          `json:"steps"`
-	Targets     []DeployTarget        `json:"targets"`
-	Mode        string                `json:"mode"`
-	Service     *DeployServiceContext `json:"service,omitempty"`
+	Active      bool           `json:"active"`
+	CurrentStep int            `json:"currentStep"`
+	Steps       []DeployStep   `json:"steps"`
+	Targets     []DeployTarget `json:"targets"`
+	Mode        string         `json:"mode"`
 }
 
 // DeployStep represents a step in the deploy workflow.
@@ -131,16 +122,15 @@ func NewDeployState(targets []DeployTarget, mode string) *DeployState {
 	}
 }
 
-// BuildDeployTargets constructs ordered targets and service context from service metas.
-// Returns targets, detected mode, and service context for knowledge injection.
-func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, *DeployServiceContext) {
+// BuildDeployTargets constructs ordered targets from service metas.
+// Returns targets and detected mode.
+func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string) {
 	if len(metas) == 0 {
-		return nil, "", nil
+		return nil, ""
 	}
 
 	var targets []DeployTarget
 	mode := ""
-	svcCtx := &DeployServiceContext{}
 
 	for _, m := range metas {
 		metaMode := m.Mode
@@ -167,7 +157,7 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, *DeploySe
 		}
 	}
 
-	return targets, mode, svcCtx
+	return targets, mode
 }
 
 func deployRoleFromMode(mode, _, stageHostname string) string {
@@ -342,22 +332,10 @@ func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env
 func (d *DeployState) buildGuide(step string, _ int, _ Environment, kp knowledge.Provider) string {
 	guide := resolveDeployStepGuidance(step, d.Mode)
 
-	var runtimeType string
-	var depTypes []string
-	var envVars map[string][]string
-	if d.Service != nil {
-		runtimeType = d.Service.RuntimeType
-		depTypes = d.Service.DependencyTypes
-		envVars = d.Service.DiscoveredEnvVars
-	}
-
 	if extra := assembleKnowledge(GuidanceParams{
-		Step:              step,
-		Mode:              d.Mode,
-		RuntimeType:       runtimeType,
-		DependencyTypes:   depTypes,
-		DiscoveredEnvVars: envVars,
-		KP:                kp,
+		Step: step,
+		Mode: d.Mode,
+		KP:   kp,
 	}); extra != "" {
 		guide += "\n\n---\n\n" + extra
 	}

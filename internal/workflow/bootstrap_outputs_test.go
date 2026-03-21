@@ -36,15 +36,15 @@ func TestBootstrapComplete_WritesServiceMeta(t *testing.T) {
 		}
 	}
 
-	// Verify service meta files exist.
+	// Verify runtime service meta exists, managed dep meta does NOT.
 	metaPath := filepath.Join(dir, "services", "appdev.json")
 	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
 		t.Error("expected service meta file for appdev")
 	}
 
 	dbMetaPath := filepath.Join(dir, "services", "db.json")
-	if _, err := os.Stat(dbMetaPath); os.IsNotExist(err) {
-		t.Error("expected service meta file for db")
+	if _, err := os.Stat(dbMetaPath); !os.IsNotExist(err) {
+		t.Error("managed dep meta should NOT be written — API is authoritative for managed services")
 	}
 }
 
@@ -141,16 +141,15 @@ func TestBootstrapComplete_OutputErrorsNonFatal(t *testing.T) {
 	}
 }
 
-func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
+func TestWriteBootstrapOutputs_NeverWritesDepMetas(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		resolution    string
-		wantOverwrite bool
+		name       string
+		resolution string
 	}{
-		{"CREATE dep gets meta written", "CREATE", true},
-		{"EXISTS dep preserves original meta", "EXISTS", false},
+		{"CREATE dep — no meta written", "CREATE"},
+		{"EXISTS dep — no meta written", "EXISTS"},
 	}
 
 	for _, tt := range tests {
@@ -158,17 +157,6 @@ func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			eng := NewEngine(dir, EnvLocal, nil)
-
-			// Pre-write a ServiceMeta for "db" with a distinct session ID.
-			originalMeta := &ServiceMeta{
-				Hostname:         "db",
-				Mode:             "NON_HA",
-				BootstrapSession: "original-session-id",
-				BootstrappedAt:   "2026-01-01",
-			}
-			if err := WriteServiceMeta(dir, originalMeta); err != nil {
-				t.Fatalf("pre-write meta: %v", err)
-			}
 
 			_, err := eng.BootstrapStart("proj-1", "app + db")
 			if err != nil {
@@ -191,94 +179,74 @@ func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
 				}
 			}
 
+			// Managed dep metas are NEVER written — API is authoritative.
 			meta, err := ReadServiceMeta(dir, "db")
 			if err != nil {
 				t.Fatalf("ReadServiceMeta: %v", err)
 			}
-			if meta == nil {
-				t.Fatal("expected db meta to exist")
+			if meta != nil {
+				t.Errorf("managed dep meta should NOT be written for resolution %s", tt.resolution)
 			}
 
-			if tt.wantOverwrite {
-				if meta.BootstrapSession == "original-session-id" {
-					t.Error("CREATE dep should have overwritten meta, but original session ID remains")
-				}
-			} else {
-				if meta.BootstrapSession != "original-session-id" {
-					t.Errorf("dep with resolution %s should preserve original meta, got session %q", tt.resolution, meta.BootstrapSession)
-				}
+			// Runtime meta SHOULD exist.
+			appMeta, err := ReadServiceMeta(dir, "appdev")
+			if err != nil {
+				t.Fatalf("ReadServiceMeta(appdev): %v", err)
+			}
+			if appMeta == nil {
+				t.Error("runtime meta should exist for appdev")
 			}
 		})
 	}
+}
 
-	// Test SHARED separately: in a multi-target plan, the SHARED dep should not
-	// overwrite meta written by the CREATE target in the same bootstrap run.
-	t.Run("SHARED dep does not double-write meta", func(t *testing.T) {
-		t.Parallel()
-		dir := t.TempDir()
-		eng := NewEngine(dir, EnvLocal, nil)
+func TestWriteBootstrapOutputs_PreExistingDepMetaSurvives(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, nil)
 
-		_, err := eng.BootstrapStart("proj-1", "two apps + shared db")
-		if err != nil {
-			t.Fatalf("BootstrapStart: %v", err)
-		}
+	// Pre-write a legacy dep meta on disk.
+	legacyMeta := &ServiceMeta{
+		Hostname:         "db",
+		BootstrapSession: "old-session",
+		BootstrappedAt:   "2026-01-01",
+	}
+	if err := WriteServiceMeta(dir, legacyMeta); err != nil {
+		t.Fatalf("pre-write meta: %v", err)
+	}
 
-		// Target 1 CREATEs db, target 2 SHAREs it.
-		_, err = eng.BootstrapCompletePlan([]BootstrapTarget{
-			{
-				Runtime: RuntimeTarget{DevHostname: "apidev", Type: "go@1"},
-				Dependencies: []Dependency{
-					{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
-				},
-			},
-			{
-				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
-				Dependencies: []Dependency{
-					{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "SHARED"},
-				},
-			},
-		}, nil, nil)
-		if err != nil {
-			t.Fatalf("BootstrapCompletePlan: %v", err)
-		}
+	_, err := eng.BootstrapStart("proj-1", "app + existing db")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
 
-		for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
-			if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
-				t.Fatalf("BootstrapComplete(%s): %v", step, err)
-			}
-		}
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Dependencies: []Dependency{
+			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "EXISTS"},
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
 
-		// db meta should exist (written by CREATE target) with current session.
-		meta, err := ReadServiceMeta(dir, "db")
-		if err != nil {
-			t.Fatalf("ReadServiceMeta: %v", err)
+	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
-		if meta == nil {
-			t.Fatal("expected db meta to exist from CREATE target")
-		}
+	}
 
-		// The key verification: db should appear in both targets' dependency lists,
-		// but meta was only written once (by the CREATE target). We verify by checking
-		// both runtime metas include db in their dependencies.
-		apiMeta, err := ReadServiceMeta(dir, "apidev")
-		if err != nil {
-			t.Fatalf("ReadServiceMeta(apidev): %v", err)
-		}
-		appMeta, err := ReadServiceMeta(dir, "appdev")
-		if err != nil {
-			t.Fatalf("ReadServiceMeta(appdev): %v", err)
-		}
-
-		if apiMeta == nil || appMeta == nil {
-			t.Fatal("expected both runtime metas to exist")
-		}
-		if !strings.Contains(strings.Join(apiMeta.Dependencies, ","), "db") {
-			t.Error("apidev should list db as dependency")
-		}
-		if !strings.Contains(strings.Join(appMeta.Dependencies, ","), "db") {
-			t.Error("appdev should list db as dependency")
-		}
-	})
+	// Pre-existing dep meta must survive untouched (not deleted, not overwritten).
+	dbMeta, err := ReadServiceMeta(dir, "db")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(db): %v", err)
+	}
+	if dbMeta == nil {
+		t.Fatal("pre-existing dep meta should survive bootstrap")
+	}
+	if dbMeta.BootstrapSession != "old-session" {
+		t.Errorf("pre-existing dep meta should be untouched, got session %q", dbMeta.BootstrapSession)
+	}
 }
 
 func TestWriteBootstrapOutputs_SetsBootstrappedAt(t *testing.T) {
@@ -307,7 +275,7 @@ func TestWriteBootstrapOutputs_SetsBootstrappedAt(t *testing.T) {
 		}
 	}
 
-	// After full bootstrap, both metas should be complete (BootstrappedAt set).
+	// After full bootstrap, runtime meta should be complete (BootstrappedAt set).
 	appMeta, err := ReadServiceMeta(dir, "appdev")
 	if err != nil {
 		t.Fatalf("ReadServiceMeta(appdev): %v", err)
@@ -320,17 +288,6 @@ func TestWriteBootstrapOutputs_SetsBootstrappedAt(t *testing.T) {
 	}
 	if appMeta.BootstrappedAt == "" {
 		t.Error("appdev BootstrappedAt should be set")
-	}
-
-	dbMeta, err := ReadServiceMeta(dir, "db")
-	if err != nil {
-		t.Fatalf("ReadServiceMeta(db): %v", err)
-	}
-	if dbMeta == nil {
-		t.Fatal("expected db meta")
-	}
-	if !dbMeta.IsComplete() {
-		t.Error("db should be complete after full bootstrap")
 	}
 }
 
@@ -403,28 +360,23 @@ func TestProvisionMeta_WritesPartialMeta(t *testing.T) {
 	if appMeta.Hostname != "appdev" {
 		t.Errorf("Hostname: want appdev, got %s", appMeta.Hostname)
 	}
-	if appMeta.Hostname != "appdev" {
-		t.Errorf("Hostname: want appdev, got %s", appMeta.Hostname)
-	}
 
+	// Managed dep meta should NOT be written at provision.
 	dbMeta, err := ReadServiceMeta(dir, "db")
 	if err != nil {
 		t.Fatalf("ReadServiceMeta(db): %v", err)
 	}
-	if dbMeta == nil {
-		t.Fatal("expected db meta after provision")
-	}
-	if dbMeta.IsComplete() {
-		t.Error("db meta should NOT be complete after provision")
+	if dbMeta != nil {
+		t.Error("managed dep meta should NOT be written at provision — API is authoritative")
 	}
 }
 
-func TestWriteServiceMetas_SkipsExistingDeps(t *testing.T) {
+func TestProvisionMeta_PreExistingDepMetaSurvives(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	// Pre-write a meta for an existing dependency.
+	// Pre-write a legacy dep meta on disk.
 	existingMeta := &ServiceMeta{
 		Hostname:         "db",
 		BootstrapSession: "old-session",
@@ -449,19 +401,21 @@ func TestWriteServiceMetas_SkipsExistingDeps(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	// The EXISTS dep should NOT be overwritten.
+	// Complete provision — dep meta should NOT be touched.
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Provisioned all services ok", nil); err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
+	}
+
+	// Pre-existing dep meta must survive untouched.
 	dbMeta, err := ReadServiceMeta(dir, "db")
 	if err != nil {
 		t.Fatalf("ReadServiceMeta(db): %v", err)
 	}
 	if dbMeta == nil {
-		t.Fatal("expected db meta to exist")
+		t.Fatal("pre-existing dep meta should survive provision")
 	}
 	if dbMeta.BootstrapSession != "old-session" {
-		t.Errorf("EXISTS dep should preserve original session, got %q", dbMeta.BootstrapSession)
-	}
-	if !dbMeta.IsComplete() {
-		t.Error("EXISTS dep should preserve original complete status")
+		t.Errorf("pre-existing dep meta should be untouched, got session %q", dbMeta.BootstrapSession)
 	}
 }
 

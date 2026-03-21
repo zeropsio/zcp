@@ -20,13 +20,12 @@ const (
 // ZCP's persistent knowledge — the API doesn't track mode, pairing, or strategy.
 // The API is the source of truth for operational state (running, resources, envs).
 type ServiceMeta struct {
-	Hostname         string   `json:"hostname"`
-	Mode             string   `json:"mode,omitempty"`
-	StageHostname    string   `json:"stageHostname,omitempty"`
-	Dependencies     []string `json:"dependencies,omitempty"`
-	DeployStrategy   string   `json:"deployStrategy,omitempty"`
-	BootstrapSession string   `json:"bootstrapSession"`
-	BootstrappedAt   string   `json:"bootstrappedAt"`
+	Hostname         string `json:"hostname"`
+	Mode             string `json:"mode,omitempty"`
+	StageHostname    string `json:"stageHostname,omitempty"`
+	DeployStrategy   string `json:"deployStrategy,omitempty"`
+	BootstrapSession string `json:"bootstrapSession"`
+	BootstrappedAt   string `json:"bootstrappedAt"`
 }
 
 // IsComplete returns true if bootstrap finished for this service.

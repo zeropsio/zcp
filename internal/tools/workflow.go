@@ -138,7 +138,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 }
 
 func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	// Immediate workflows: stateless, return guidance with service context.
+	// Immediate workflows: stateless, return guidance directly.
 	if workflow.IsImmediateWorkflow(input.Workflow) {
 		content, err := ops.GetWorkflow(input.Workflow)
 		if err != nil {
@@ -146,14 +146,6 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Workflow %q not found: %v", input.Workflow, err),
 				"Valid workflows: bootstrap, deploy, debug, scale, configure")), nil, nil
-		}
-		// Inject service context if service metas exist.
-		if engine != nil {
-			if metas, metaErr := workflow.ListServiceMetas(engine.StateDir()); metaErr == nil && len(metas) > 0 {
-				if summary := workflow.BuildServiceContextSummary(metas); summary != "" {
-					content = summary + "---\n\n" + content
-				}
-			}
 		}
 		return jsonResult(immediateResponse{
 			Workflow: input.Workflow,
@@ -232,8 +224,8 @@ func handleDeployStart(_ context.Context, engine *workflow.Engine, projectID str
 			"Only managed services exist — nothing to deploy")), nil, nil
 	}
 
-	targets, mode, svcCtx := workflow.BuildDeployTargets(runtimeMetas)
-	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode, svcCtx)
+	targets, mode := workflow.BuildDeployTargets(runtimeMetas)
+	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrWorkflowActive,

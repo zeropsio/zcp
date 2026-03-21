@@ -18,28 +18,8 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 	plan := state.Bootstrap.Plan
 	now := time.Now().UTC().Format("2006-01-02")
 
-	// Write service meta for each target and its dependencies.
+	// Write service meta for each runtime target (managed deps are API-authoritative).
 	for _, target := range plan.Targets {
-		depHostnames := make([]string, 0, len(target.Dependencies))
-		for _, dep := range target.Dependencies {
-			depHostnames = append(depHostnames, dep.Hostname)
-
-			// Skip meta overwrite for pre-existing or shared dependencies.
-			if dep.Resolution == ResolutionExists || dep.Resolution == ResolutionShared {
-				continue
-			}
-
-			depMeta := &ServiceMeta{
-				Hostname:         dep.Hostname,
-				Mode:             dep.Mode,
-				BootstrapSession: state.SessionID,
-				BootstrappedAt:   now,
-			}
-			if err := WriteServiceMeta(e.stateDir, depMeta); err != nil {
-				fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", dep.Hostname, err)
-			}
-		}
-
 		hostname := target.Runtime.DevHostname
 		mode := target.Runtime.EffectiveMode()
 
@@ -53,7 +33,6 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			Hostname:         hostname,
 			Mode:             mode,
 			StageHostname:    target.Runtime.StageHostname(),
-			Dependencies:     depHostnames,
 			DeployStrategy:   strategy,
 			BootstrapSession: state.SessionID,
 			BootstrappedAt:   now,
@@ -76,7 +55,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 // These metas have no BootstrappedAt (IsComplete() returns false), signaling
 // that bootstrap started but hasn't finished. If bootstrap completes,
 // writeBootstrapOutputs overwrites with full metas.
-// EXISTS/SHARED dependencies are skipped to avoid overwriting pre-existing metas.
+// Only runtime services get metas — managed deps are API-authoritative.
 func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 	if state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return
@@ -91,20 +70,6 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 		}
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", target.Runtime.DevHostname, err)
-		}
-
-		for _, dep := range target.Dependencies {
-			if dep.Resolution == ResolutionExists || dep.Resolution == ResolutionShared {
-				continue
-			}
-			depMeta := &ServiceMeta{
-				Hostname:         dep.Hostname,
-				Mode:             dep.Mode,
-				BootstrapSession: state.SessionID,
-			}
-			if err := WriteServiceMeta(e.stateDir, depMeta); err != nil {
-				fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", dep.Hostname, err)
-			}
 		}
 	}
 }

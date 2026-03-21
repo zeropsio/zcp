@@ -6,8 +6,8 @@ import (
 	"github.com/zeropsio/zcp/internal/content"
 )
 
-// strategyToSection maps deploy strategy constants to deploy.md section names.
-var strategyToSection = map[string]string{
+// StrategyToSection maps deploy strategy constants to deploy.md section names.
+var StrategyToSection = map[string]string{
 	StrategyPushDev: "deploy-push-dev",
 	StrategyCICD:    "deploy-ci-cd",
 	StrategyManual:  "deploy-manual",
@@ -28,7 +28,7 @@ func ResolveDeployGuidance(stateDir, hostname string) string {
 		return ""
 	}
 
-	sectionName, ok := strategyToSection[strategy]
+	sectionName, ok := StrategyToSection[strategy]
 	if !ok {
 		return ""
 	}
