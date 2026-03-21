@@ -6,7 +6,7 @@
 **Philosophy spec**: `docs/spec-guidance-philosophy.md`
 **Workflow spec**: `docs/spec-bootstrap-deploy.md`
 **Prior versions**: `deploy-workflow-production-readiness.md` (v1) → `v2.md` → `v3.md` — consolidated here
-**Deep reviews**: `review-1.md` (R1: 15/15 claims verified), `review-2.md` (R2: 4-agent analysis)
+**Deep reviews**: `review-1.md` (R1: 15/15 claims verified), `review-2.md` (R2: 15/17 confirmed, 0 refuted, all concerns resolved)
 
 ---
 
@@ -397,7 +397,7 @@ Reuse existing `deploy-verify` section from deploy.md (lines 136-172). Already w
 
 ### Phase 1: Dead Code Cleanup + Bug Fixes
 
-**Scope**: Remove dead code, fix error codes, fix DeployTarget.Status. No behavioral changes.
+**Scope**: Remove dead code, fix error codes. No behavioral changes.
 
 | File | Change | Lines |
 |------|--------|-------|
@@ -408,7 +408,7 @@ Reuse existing `deploy-verify` section from deploy.md (lines 136-172). Already w
 | tools/workflow_deploy.go | Replace ErrBootstrapNotActive → ErrDeployNotActive (lines 29, 51, 62) | ~0 |
 | platform/errors.go | Add `ErrDeployNotActive` constant | +1 |
 
-**DeployTarget.Status fix**: Remove `Status` field from `DeployTarget` entirely (dead — always "pending", never read for decisions). `DeployTargetOut` in response already has its own Status field which can be populated from checker results in Phase 3.
+**DeployTarget.Status**: KEEP in Phase 1. `BuildResponse` (deploy.go:309) reads `t.Status` — removing the field breaks compilation. Phase 3 will populate `DeployTargetOut.Status` from checker results; the dead `Status` field on `DeployTarget` can be removed then.
 
 **TDD**: Pure refactor — skip RED, verify GREEN. `go test ./... -count=1 -short` must pass with 6 fewer tests.
 
@@ -447,7 +447,9 @@ func (d *DeployState) buildGuide(step string, iteration int, env Environment, kp
 
 **Key**: Guidance is GENERATED from state, not EXTRACTED from deploy.md. deploy.md sections remain for bootstrap's deploy step and zerops_knowledge queries.
 
-**RuntimeType access**: buildGuide needs RuntimeType for knowledge pointers. Two options: (a) read ServiceMeta at buildGuide time via stateDir, (b) store in DeployTarget during BuildDeployTargets. Option (b) is cleaner — add `RuntimeType string` to DeployTarget, populate from ServiceMeta in BuildDeployTargets.
+**CRITICAL**: Phase 2 must REMOVE the `assembleKnowledge()` call from `buildGuide()` (deploy.go:344-350). Current code injects runtime briefings at DeployStepPrepare via `needsRuntimeKnowledge()` (guidance.go:67). This violates Decision #10 — deploy must use knowledge pointers only, never inject.
+
+**RuntimeType access**: buildGuide needs RuntimeType for knowledge pointers. ServiceMeta does NOT have a RuntimeType field (verified). Fetch from API via `client.ListServices()` at deploy start time — `handleDeployStart` already has access to the API client. Store in DeployTarget or pass as param to buildGuide.
 
 **TDD**:
 - RED: Tests for personalized output (standard+push-dev, dev+ci-cd, simple+manual minimum)
@@ -463,9 +465,9 @@ func (d *DeployState) buildGuide(step string, iteration int, env Environment, kp
 | workflow/deploy.go or workflow/bootstrap_checks.go | Add `DeployStepChecker` type definition | +3 |
 | workflow/engine.go `DeployComplete` | Add `ctx context.Context` + `checker DeployStepChecker` params | +20 |
 | workflow/engine.go `DeployStart` | Add `ctx context.Context` param | +5 |
-| tools/workflow_deploy.go | Wire ctx, build checker via `buildDeployStepChecker()`, pass to engine | +40 |
+| tools/workflow_deploy.go | Wire ctx, build checker via `buildDeployStepChecker()`, pass to engine. Follow wiring pattern from `tools/workflow_checks.go:buildStepChecker` — receives client, projectID, stateDir from handler closure. | +40 |
 | tools/workflow_checks_deploy.go | `buildDeployStepChecker` + `checkDeployPrepare` + `checkDeployResult` + env var re-discovery | +130 |
-| tools/workflow_checks_deploy_test.go | Tests for both checkers, all failure scenarios | +100 |
+| tools/workflow_checks_deploy_workflow_test.go | Tests for deploy workflow checkers (NOTE: existing `workflow_checks_deploy_test.go` tests bootstrap's `checkDeploy` — do NOT mix) | +100 |
 
 **DeployStepChecker type**:
 ```go
@@ -565,7 +567,7 @@ Each deploy = full rebuild + new container.
 
 | File | Change | Lines |
 |------|--------|-------|
-| workflow/bootstrap_outputs.go | Verify `BuildTransitionMessage()` includes strategy prompt + deploy command | ~5 |
+| workflow/bootstrap_guide_assembly.go | Verify `BuildTransitionMessage()` (line 58) includes strategy prompt + deploy command | ~5 |
 | tools/workflow_strategy.go | Add "ready to deploy" to response | +5 |
 
 **Bootstrap complete** → must output:
@@ -580,11 +582,19 @@ Strategies configured. When code is ready to deploy:
 → zerops_workflow action="start" workflow="deploy"
 ```
 
-### Phase 6: Route Verification
+### Phase 6: Route Refactor — Facts Only
 
-**Scope**: Ensure route returns facts only.
+**Scope**: Remove recommendation logic from Route. Return structured facts, let agent decide.
 
-Verify `Route()` implementation (workflow/router.go) returns structured data without recommendations:
+**Current state** (router.go): Route is a recommendation engine — `boostByIntent()` (lines 91-104) promotes workflows based on intent keyword matching, `intentPatterns` map (lines 81-88) hardcodes editorial decisions, `FlowOffering.Reason` contains editorial text like "Fresh project — no runtime services". This violates "dumb data, smart agent."
+
+| File | Change | Lines |
+|------|--------|-------|
+| workflow/router.go | Delete: `boostByIntent()`, `intentPatterns` map. Remove `Reason` from `FlowOffering`. Route returns factual workflow list with availability conditions, not ranked recommendations. | -80, +40 |
+| workflow/router_test.go | Rewrite tests for factual output format | ~rewrite |
+| workflow/bootstrap_guide_assembly.go | Update `BuildTransitionMessage` — remove `routeFromBootstrapState()` editorial Reasons from transition output | ~10 |
+
+**Target route output format** (facts only):
 ```json
 {
   "project": {"state": "ACTIVE"},
@@ -594,11 +604,11 @@ Verify `Route()` implementation (workflow/router.go) returns structured data wit
   ],
   "activeSessions": [],
   "environment": "container",
-  "availableWorkflows": ["bootstrap", "deploy", "debug", "scale", "configure"]
+  "availableWorkflows": ["bootstrap", "deploy", "cicd", "debug", "scale", "configure"]
 }
 ```
 
-No `suggestedAction`, no `recommendation`. Just facts. LLM decides.
+No `suggestedAction`, no `recommendation`, no `Reason`, no intent-matching. Agent decides based on facts + user request.
 
 ---
 
@@ -674,7 +684,7 @@ Facts needed for checker implementation, verified by KB-verifier (2026-03-21):
 
 | File | Phase | Change | Est. Lines |
 |------|-------|--------|-----------|
-| workflow/deploy.go | 1,2 | Delete dead code + rewrite buildGuide + add RuntimeType to DeployTarget | -60, +50 |
+| workflow/deploy.go | 1,2 | Delete dead code (keep Status field) + rewrite buildGuide + remove assembleKnowledge call | -60, +50 |
 | workflow/deploy_test.go | 1,2 | Delete dead tests + personalization tests | -25, +50 |
 | workflow/deploy_guidance.go | 1,2 | Delete ResolveDeployGuidance + personalized builders | -23, +130 |
 | workflow/deploy_guidance_test.go | 1,2 | Delete dead tests + builder tests | -40, +100 |
@@ -683,11 +693,13 @@ Facts needed for checker implementation, verified by KB-verifier (2026-03-21):
 | workflow/engine.go | 3 | ctx on DeployComplete + DeployStart | +25 |
 | tools/workflow_deploy.go | 1,3 | Fix error codes + wire checkers | +40 |
 | tools/workflow_checks_deploy.go | 3 | buildDeployStepChecker + 2 checkers + env re-discovery | +130 |
-| tools/workflow_checks_deploy_test.go | 3 | Checker tests | +100 |
+| tools/workflow_checks_deploy_workflow_test.go | 3 | Deploy workflow checker tests (separate from existing bootstrap tests) | +100 |
 | platform/errors.go | 1 | ErrDeployNotActive | +1 |
 | init content | 4 | Environment concept + state refresh | +35 |
 | tools/workflow_strategy.go | 5 | Transition guidance | +5 |
-| workflow/bootstrap_outputs.go | 5 | Verify transition message | ~5 |
+| workflow/bootstrap_guide_assembly.go | 5 | Verify transition message (line 58) | ~5 |
+| workflow/router.go | 6 | Remove boostByIntent, intentPatterns, Reason — facts only | -80, +40 |
+| workflow/router_test.go | 6 | Rewrite for factual output | ~rewrite |
 
 ---
 
@@ -711,8 +723,8 @@ Facts needed for checker implementation, verified by KB-verifier (2026-03-21):
 | # | Question | Phase | Resolution |
 |---|----------|-------|------------|
 | 1 | Where does `zcp init` put environment concept? | 4 | Read `internal/init/init.go` and current template |
-| 2 | RuntimeType storage: DeployTarget field or ServiceMeta read? | 2 | Add to DeployTarget in BuildDeployTargets (cleaner) |
-| 3 | Events API hint field Go type? | 3 | Check platform/types.go |
+| 2 | RuntimeType storage: DeployTarget field or ServiceMeta read? | 2 | RESOLVED: Fetch from API via `client.ListServices()` at deploy start. ServiceMeta has no RuntimeType field. |
+| 3 | Events API hint field Go type? | 3 | RESOLVED: `TimelineEvent.Hint` at ops/events.go:40. ZCP-generated via processHintMap + appVersionHintMap. |
 | 4 | Deploy.md section simplification after guidance redesign? | Future | Keep for bootstrap + knowledge. Mark consumers. |
 
 ---
@@ -726,12 +738,13 @@ Facts needed for checker implementation, verified by KB-verifier (2026-03-21):
 - [ ] `ResolveDeployGuidance()` deleted
 - [ ] Dead tests deleted (2 in deploy_test, 4 in deploy_guidance_test)
 - [ ] `ErrDeployNotActive` added, 3 occurrences in workflow_deploy.go updated
-- [ ] `DeployTarget.Status` field removed (always-pending dead field)
+- [ ] `DeployTarget.Status` field KEPT (BuildResponse:309 reads it — remove in Phase 3)
 - [ ] `go test ./... -count=1 -short` passes, `make lint-fast` passes
 
 ### Phase 2 (Guidance Redesign)
 - [ ] `buildGuide()` uses named params, not `_ int, _ Environment`
-- [ ] RuntimeType added to DeployTarget, populated in BuildDeployTargets
+- [ ] `assembleKnowledge()` call REMOVED from deploy buildGuide (deploy.go:344-350)
+- [ ] RuntimeType fetched from API via `client.ListServices()`, NOT from ServiceMeta
 - [ ] Personalized guidance generated (actual hostnames, mode steps, strategy commands)
 - [ ] No runtime briefing injected — knowledge pointers only
 - [ ] Platform facts always included
@@ -749,6 +762,9 @@ Facts needed for checker implementation, verified by KB-verifier (2026-03-21):
 - [ ] `checkDeployPrepare`: yml parse + hostname match + env var ref validation via API
 - [ ] `checkDeployResult`: API status + diagnostic feedback
 - [ ] `DeployTargetOut.Status` populated from checker results
+- [ ] `DeployTarget.Status` field removed (was kept in Phase 1)
+- [ ] `DeployTargetOut.Status` populated from checker results
+- [ ] Tests in NEW file `workflow_checks_deploy_workflow_test.go` (existing file tests bootstrap)
 - [ ] Tests: nil state, build failed, crash, unhealthy, success, env var typo
 - [ ] `StepCheckResult` reused (not duplicated)
 
@@ -762,8 +778,13 @@ Facts needed for checker implementation, verified by KB-verifier (2026-03-21):
 - [ ] Bootstrap complete → strategy selection prompt + command
 - [ ] Strategy set → "ready to deploy" + command
 
-### Phase 6 (Route)
-- [ ] Returns facts only, no recommendations
+### Phase 6 (Route Refactor)
+- [ ] `boostByIntent()` deleted from router.go
+- [ ] `intentPatterns` map deleted from router.go
+- [ ] `Reason` field removed from `FlowOffering`
+- [ ] Route returns structured facts: services, sessions, environment, available workflows
+- [ ] `BuildTransitionMessage` updated — no editorial Reasons in transition output
+- [ ] Router tests rewritten for factual output format
 
 ---
 
