@@ -14,22 +14,12 @@ const (
 	PlanModeSimple   = "simple"
 )
 
-// StepCategory classifies bootstrap steps.
-type StepCategory string
-
-const (
-	CategoryFixed     StepCategory = "fixed"
-	CategoryCreative  StepCategory = "creative"
-	CategoryBranching StepCategory = "branching"
-)
-
 // StepDetail defines a bootstrap step's metadata.
 type StepDetail struct {
-	Name         string       `json:"name"`
-	Category     StepCategory `json:"category"`
-	Tools        []string     `json:"tools"`
-	Verification string       `json:"verification"`
-	Skippable    bool         `json:"skippable"`
+	Name         string   `json:"name"`
+	Tools        []string `json:"tools"`
+	Verification string   `json:"verification"`
+	Skippable    bool     `json:"skippable"`
 }
 
 // BootstrapStep represents a single step in the bootstrap subflow.
@@ -85,7 +75,6 @@ type StepContext struct {
 type BootstrapStepInfo struct {
 	Name          string       `json:"name"`
 	Index         int          `json:"index"`
-	Category      string       `json:"category"`
 	Tools         []string     `json:"tools"`
 	Verification  string       `json:"verification"`
 	DetailedGuide string       `json:"detailedGuide,omitempty"`
@@ -242,7 +231,6 @@ func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int, 
 		resp.Current = &BootstrapStepInfo{
 			Name:         detail.Name,
 			Index:        b.CurrentStep,
-			Category:     string(detail.Category),
 			Tools:        detail.Tools,
 			Verification: detail.Verification,
 			PriorContext: b.buildPriorContext(),

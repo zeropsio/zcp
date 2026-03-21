@@ -45,29 +45,6 @@ func TestStepDetails_ToolLists(t *testing.T) {
 	}
 }
 
-func TestStepDetails_Categories(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		category StepCategory
-	}{
-		{"discover", CategoryFixed},
-		{"provision", CategoryFixed},
-		{"generate", CategoryCreative},
-		{"deploy", CategoryBranching},
-		{"verify", CategoryFixed},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			detail := lookupDetail(tt.name)
-			if detail.Category != tt.category {
-				t.Errorf("step %q: want category %q, got %q", tt.name, tt.category, detail.Category)
-			}
-		})
-	}
-}
-
 func TestNewBootstrapState_6Steps(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()

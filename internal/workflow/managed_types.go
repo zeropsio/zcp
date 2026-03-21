@@ -18,8 +18,8 @@ var managedServicePrefixes = []string{
 	"object-storage", "shared-storage",
 }
 
-// isManagedService checks if a service type is a managed (non-runtime) service.
-func isManagedService(serviceType string) bool {
+// IsManagedService checks if a service type is a managed (non-runtime) service.
+func IsManagedService(serviceType string) bool {
 	lower := strings.ToLower(serviceType)
 	for _, prefix := range managedServicePrefixes {
 		if strings.HasPrefix(lower, prefix) {
@@ -39,7 +39,7 @@ func DetectProjectState(ctx context.Context, client platform.Client, projectID s
 	// Filter to runtime services only.
 	var runtimeServices []platform.ServiceStack
 	for _, svc := range services {
-		if !isManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		if !IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
 			runtimeServices = append(runtimeServices, svc)
 		}
 	}

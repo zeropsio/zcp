@@ -117,7 +117,7 @@ func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool
 	if len(liveManaged) > 0 {
 		return liveManaged[base]
 	}
-	return isManagedService(serviceType)
+	return IsManagedService(serviceType)
 }
 
 // ValidateBootstrapTargets validates a list of bootstrap targets against constraints.

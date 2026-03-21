@@ -18,42 +18,36 @@ const (
 var stepDetails = []StepDetail{
 	{
 		Name:         StepDiscover,
-		Category:     CategoryFixed,
 		Tools:        []string{"zerops_discover", "zerops_knowledge", "zerops_workflow"},
 		Verification: "SUCCESS WHEN: plan submitted via zerops_workflow action=complete step=discover with valid targets (hostnames, types, resolution, modes validated against live catalog).",
 		Skippable:    false,
 	},
 	{
 		Name:         StepProvision,
-		Category:     CategoryFixed,
 		Tools:        []string{"zerops_import", "zerops_process", "zerops_discover", "zerops_mount"},
 		Verification: "SUCCESS WHEN: all plan services exist in API with ACTIVE/RUNNING status AND service types match plan AND managed dependency env vars recorded in session state.",
 		Skippable:    false,
 	},
 	{
 		Name:         StepGenerate,
-		Category:     CategoryCreative,
 		Tools:        []string{"zerops_knowledge"},
 		Verification: "SUCCESS WHEN: zerops.yml exists with setup entry for each target AND env var references match discovered variables AND run.start present (dynamic runtimes) AND deployFiles set (dev uses [.]) AND ports defined.",
 		Skippable:    true,
 	},
 	{
 		Name:         StepDeploy,
-		Category:     CategoryBranching,
 		Tools:        []string{"zerops_deploy", "zerops_discover", "zerops_subdomain", "zerops_logs", "zerops_mount", "zerops_verify", "zerops_manage"},
-		Verification: "SUCCESS WHEN: all runtime services deployed (RUNNING status) AND subdomains enabled for services with ports.",
+		Verification: "SUCCESS WHEN: all runtime services deployed and accessible (RUNNING status + subdomains enabled for services with ports) — health validation (HTTP, logs, startup) deferred to verify step.",
 		Skippable:    true,
 	},
 	{
 		Name:         StepVerify,
-		Category:     CategoryFixed,
 		Tools:        []string{"zerops_discover", "zerops_verify"},
 		Verification: "SUCCESS WHEN: zerops_verify confirms all plan targets healthy (individual checks: service_running, error_logs, startup_detected, http_root, http_status).",
 		Skippable:    false,
 	},
 	{
 		Name:         StepStrategy,
-		Category:     CategoryFixed,
 		Tools:        []string{"zerops_workflow"},
 		Verification: "SUCCESS WHEN: valid strategy (push-dev, ci-cd, manual) assigned to every runtime target in plan.",
 		Skippable:    true,

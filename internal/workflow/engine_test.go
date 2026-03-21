@@ -36,8 +36,8 @@ func TestIsManagedService(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := isManagedService(tt.serviceType); got != tt.want {
-				t.Errorf("isManagedService(%q) = %v, want %v", tt.serviceType, got, tt.want)
+			if got := IsManagedService(tt.serviceType); got != tt.want {
+				t.Errorf("IsManagedService(%q) = %v, want %v", tt.serviceType, got, tt.want)
 			}
 		})
 	}

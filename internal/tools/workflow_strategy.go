@@ -18,9 +18,6 @@ var validStrategies = map[string]bool{
 	workflow.StrategyManual:  true,
 }
 
-// strategySectionMap is the canonical map from workflow package.
-var strategySectionMap = workflow.StrategyToSection
-
 // handleStrategy handles post-bootstrap strategy updates for individual services.
 func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*mcp.CallToolResult, any, error) {
 	if len(input.Strategies) == 0 {
@@ -88,33 +85,17 @@ func buildStrategyGuidance(strategies map[string]string) string {
 	seen := make(map[string]bool)
 	var parts []string
 	for _, strategy := range strategies {
-		section, ok := strategySectionMap[strategy]
+		section, ok := workflow.StrategyToSection[strategy]
 		if !ok || seen[section] {
 			continue
 		}
 		seen[section] = true
-		extracted := extractDeploySection(md, section)
+		extracted := workflow.ExtractSection(md, section)
 		if extracted != "" {
 			parts = append(parts, extracted)
 		}
 	}
 	return strings.Join(parts, "\n\n---\n\n")
-}
-
-// extractDeploySection finds a <section name="{name}">...</section> block.
-func extractDeploySection(md, name string) string {
-	openTag := "<section name=\"" + name + "\">"
-	closeTag := "</section>"
-	start := strings.Index(md, openTag)
-	if start < 0 {
-		return ""
-	}
-	start += len(openTag)
-	end := strings.Index(md[start:], closeTag)
-	if end < 0 {
-		return ""
-	}
-	return strings.TrimSpace(md[start : start+end])
 }
 
 // handleRoute gathers router input from live API + local state and returns flow offerings.

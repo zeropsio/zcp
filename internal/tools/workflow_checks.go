@@ -319,20 +319,12 @@ func targetHostnames(target workflow.BootstrapTarget) []string {
 }
 
 // isManagedNonStorage returns true for managed services that are NOT storage types.
+// Delegates to workflow.IsManagedService for the canonical prefix list,
+// then excludes storage types which don't produce env vars.
 func isManagedNonStorage(serviceType string) bool {
 	lower := strings.ToLower(serviceType)
 	if strings.HasPrefix(lower, "shared-storage") || strings.HasPrefix(lower, "object-storage") {
 		return false
 	}
-	managedPrefixes := []string{
-		"postgresql", "mariadb", "valkey",
-		"keydb", "elasticsearch", "meilisearch", "rabbitmq", "kafka",
-		"nats", "clickhouse", "qdrant", "typesense",
-	}
-	for _, prefix := range managedPrefixes {
-		if strings.HasPrefix(lower, prefix) {
-			return true
-		}
-	}
-	return false
+	return workflow.IsManagedService(serviceType)
 }
