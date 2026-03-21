@@ -1,224 +1,351 @@
-# Deploy Workflow Guidance Redesign — Complete Plan
+# Deploy Workflow — Guidance Redesign & Production Readiness
 
 **Date**: 2026-03-21
 **Status**: Ready for implementation
-**Scope**: Deploy workflow guidance model + init instructions + transitions
-**Philosophy**: `docs/spec-guidance-philosophy.md` (authoritative)
-**Workflow spec**: `docs/spec-bootstrap-deploy.md` (authoritative for step mechanics)
+**Scope**: Deploy workflow guidance model, platform validation, init instructions, transitions
+**Philosophy spec**: `docs/spec-guidance-philosophy.md`
+**Workflow spec**: `docs/spec-bootstrap-deploy.md`
+**Prior versions**: `deploy-workflow-production-readiness.md` (v1) → `v2.md` → `v3.md` — consolidated here
+**Deep reviews**: `review-1.md` (R1: 15/15 claims verified), `review-2.md` (R2: 4-agent analysis)
 
 ---
 
-## 1. Problem Statement
+## 1. Context & Evolution
 
-### 1.1 Current State
+### 1.1 How We Got Here
 
-The deploy workflow pushes ~200+ lines of knowledge per step: runtime briefings, zerops.yml schema, env var lists, mode-specific sections, strategy sections. This is a **push model** — ZCP decides what the agent needs and injects it.
+**v1** identified 6 gaps: zero checkers, dead code, no iteration escalation, GuidanceParams underutilized, DeployTarget.Status always pending, no dev→stage gate. Proposed 3 checkers (prepare, execute, verify) and 4 phases.
 
-### 1.2 Why This Is Wrong
+**R1 deep review** verified all 15 claims correct. Added 3 critical findings: (1) StepChecker type is BootstrapState-specific — deploy needs its own, (2) DeployComplete lacks context.Context, (3) buildGuide bypasses assembleGuidance entirely. Led to design decisions: separate DeployStepChecker type, 2 checkers not 3 (verify is informational).
 
-Four scenarios expose the problem:
+**v2** integrated R1 findings. Added "help, don't gatekeep" philosophy from user feedback: checkers validate PLATFORM integration (always objectively correct/incorrect), never APPLICATION correctness (we don't know what user wants).
 
-**Scenario A** ("create an image upload app"): Agent writes code → starts deploy. Doesn't need a Node.js briefing — just needs to know the deploy steps and platform rules.
+**R2 deep review** (4-agent team) found: (1) step naming mismatch — resolveStaticGuidance handles bootstrap steps only, (2) DiscoveredEnvVars not available in deploy, (3) ErrBootstrapNotActive used for deploy errors, (4) strategy gate exists and works (adversarial claim refuted). Led to: keep resolveDeployStepGuidance for static content, re-discover env vars via API.
 
-**Scenario B** ("create Laravel + DB + MQ + storage"): Agent bootstraps → sets strategy → done. When user returns later, agent just needs to deploy, not re-learn the entire zerops.yml schema.
+**Philosophy discussion** fundamentally changed the guidance model. The core insight: deploy workflow PUSHES ~200+ lines of knowledge (runtime briefings, schema, env vars) that the agent may not need. Four scenarios expose the problem:
 
-**Scenario C** (continuing work on existing project): Agent may just edit code, or may need to debug, or add a service, or scale. We don't know — and 200 lines of runtime briefing wastes tokens if the agent is just changing CSS.
+- **A** ("create an image upload app"): Agent writes code → deploys. Doesn't need Node.js briefing — just deploy steps and platform rules.
+- **B** ("create Laravel + DB"): Agent bootstraps → sets strategy. Returns later to deploy — doesn't need to re-learn zerops.yml schema.
+- **C** (existing project, new session): Agent may just edit code, debug, scale — 200 lines of runtime briefing wastes tokens.
+- **D** (unknown): Agent does something unexpected. Push model breaks because we pushed wrong information.
 
-**Scenario D** (unknown): Agent does something ZCP didn't anticipate. The push model breaks because we pushed wrong information.
+**Solution**: Switch from push to pull. Inject only what's ALWAYS relevant (platform mechanics, mode workflow steps — personalized to their setup). Point to everything else (runtime knowledge, recipes, schema — agent pulls when needed). Total guidance: 15-55 lines per step instead of 200+.
 
-### 1.3 What Should Happen
+### 1.2 Key Philosophical Shifts
 
-**Inject MUST-KNOW** (compact, personalized, always relevant):
-- Platform mechanics (container lifecycle, env var behavior)
-- Mode/strategy workflow steps (specific to THEIR setup)
-- Brief strategy alternatives note
-
-**Point to MIGHT-NEED** (on-demand, agent pulls when needed):
-- Runtime knowledge → `zerops_knowledge query="nodejs"`
-- Recipe patterns → `zerops_knowledge recipe="nextjs"`
-- Schema details → `zerops_knowledge query="zerops.yml schema"`
-- Env var discovery → `zerops_discover includeEnvs=true`
-
-Total guidance per step: **15-55 lines** instead of 200+.
+| Before | After | Why |
+|--------|-------|-----|
+| Generic guidance from deploy.md sections | Personalized guidance from DeployState + ServiceMeta | Agent sees THEIR hostnames, modes, exact steps |
+| Runtime briefing injected at prepare step | Knowledge pointer: "zerops_knowledge query='nodejs'" | Agent may not need it. Available on demand. |
+| zerops.yml schema injected | Knowledge pointer: "zerops_knowledge query='zerops.yml'" | Verbose reference. Agent pulls when modifying config. |
+| Env var list injected at deploy step | "zerops_discover includeEnvs=true" pointer | Dynamic data. Agent checks when needed. |
+| Route recommends workflows | Route returns facts only | "Dumb data, smart agent." LLM decides. |
+| No environment concept in init instructions | Container vs local explained upfront | Agent needs to know WHERE code is, HOW mounts work. |
+| Strategy not mentioned after setting | Brief 2-line mention of alternatives | Agent knows it can change without being pushed. |
 
 ---
 
-## 2. What's Already Done (verified, compiles, tests pass)
+## 2. Current Code State (verified, compiles, all tests pass)
 
-### 2.1 Strategy Flow (complete, no changes needed)
+### 2.1 Deploy Workflow Data Model
 
-- `DeployTarget.Strategy` populated from ServiceMeta (workflow/deploy.go:61)
-- `DeployState.Strategy` set from first meta (workflow/deploy.go:43)
-- `BuildDeployTargets()` returns targets, mode, strategy (workflow/deploy.go:130)
-- Strategy gate in `handleDeployStart()`: rejects empty strategy (tools/workflow.go:228-236)
-- Mixed strategy gate: rejects different strategies (tools/workflow.go:241-248)
-- Strategy-specific guidance sections in deploy.md exist and are delivered
+```go
+// workflow/deploy.go
 
-### 2.2 Preflight Gates (complete, no changes needed)
+type DeployState struct {
+    Active      bool           `json:"active"`
+    CurrentStep int            `json:"currentStep"`
+    Steps       []DeployStep   `json:"steps"`      // 3 steps: prepare, deploy, verify
+    Targets     []DeployTarget `json:"targets"`
+    Mode        string         `json:"mode"`        // standard, dev, simple
+    Strategy    string         `json:"strategy"`    // push-dev, ci-cd, manual
+}
 
-`handleDeployStart()` (tools/workflow.go:186-258) has 5 sequential gates:
+type DeployTarget struct {
+    Hostname        string `json:"hostname"`
+    Role            string `json:"role"`           // dev, stage, simple
+    Status          string `json:"status"`          // ALWAYS "pending" — never changes (bug)
+    Error           string `json:"error,omitempty"` // DEAD — only set by dead UpdateTarget
+    LastAttestation string `json:"lastAttestation"` // DEAD — only set by dead UpdateTarget
+    Strategy        string `json:"strategy"`
+}
 
-1. **Metas exist?** (ř. 188-194) — "Run bootstrap first"
-2. **Metas complete?** (ř. 204-211) — `IsComplete()` checks `BootstrappedAt != ""`
-3. **Runtime services?** (ř. 213-225) — filters `Mode != "" || StageHostname != ""`
-4. **Strategy set?** (ř. 227-236) — soft gate: returns strategy selection guidance
-5. **Strategy consistent?** (ř. 241-248) — rejects mixed strategies
+// 3 deploy steps
+var deployStepDetails = []struct{ Name string; Tools []string }{
+    {"prepare", {"zerops_discover", "zerops_knowledge"}},
+    {"deploy",  {"zerops_deploy", "zerops_subdomain", "zerops_logs", "zerops_verify", "zerops_manage"}},
+    {"verify",  {"zerops_verify", "zerops_discover"}},
+}
 
-### 2.3 Session Lifecycle (complete, no changes needed)
+// Status constants — 4 DEAD, 1 LIVE
+const (
+    deployTargetPending  = "pending"   // LIVE — used in BuildDeployTargets:154,164, ResetForIteration:273
+    deployTargetDeployed = "deployed"  // DEAD — only in dead UpdateTarget
+    deployTargetVerified = "verified"  // DEAD — 0 callers anywhere
+    deployTargetFailed   = "failed"    // DEAD — only in dead UpdateTarget + DevFailed
+    deployTargetSkipped  = "skipped"   // DEAD — 0 callers anywhere
+)
+```
 
-- Session creation, step progression, iteration, resume all work
-- `ResetForIteration()` resets deploy+verify, preserves prepare
-- Auto-cleanup on completion (session file deleted)
-- `IterateSession()` increments counter, calls `DeployState.ResetForIteration()`
+### 2.2 Guidance Assembly (the system being redesigned)
 
-### 2.4 Knowledge Injection (exists but needs redesign)
+**Bootstrap** uses unified path:
+```go
+// bootstrap_guide_assembly.go → calls assembleGuidance(GuidanceParams{all 10 fields})
+// guidance.go:27 assembleGuidance() → resolveStaticGuidance() + assembleKnowledge()
+// guidance.go:29 if iteration > 0 → BuildIterationDelta() replaces normal guidance
+```
 
-- `buildGuide()` (workflow/deploy.go:341-354) assembles guidance
-- Calls `resolveDeployStepGuidance()` for static content from deploy.md
-- Calls `assembleKnowledge()` for runtime briefings + schema + env vars
-- **Problem**: injects full runtime briefing + schema = too much. Parameters ignored (`_ int, _ Environment`)
-- **Problem**: 4 of 10 GuidanceParams fields used (Step, Mode, Strategy, KP)
+**Deploy** uses separate path:
+```go
+// deploy.go:341 buildGuide(step string, _ int, _ Environment, kp knowledge.Provider)
+//   → resolveDeployStepGuidance(step, mode, strategy)  // static from deploy.md
+//   → assembleKnowledge(GuidanceParams{Step, Mode, Strategy, KP})  // 4 of 10 fields
+//   Ignores: iteration (always 0 behavior), Environment, RuntimeType, DependencyTypes,
+//            DiscoveredEnvVars, Plan, LastAttestation, FailureCount
+```
 
-### 2.5 Dead Code (verified, 0 production callers)
+**GuidanceParams** (guidance.go:10-22) — all 10 fields:
 
-| Code | Location | Callers |
-|------|----------|---------|
-| `UpdateTarget()` | workflow/deploy.go:248-260 | 0 production |
-| `DevFailed()` | workflow/deploy.go:284-291 | 0 production |
-| `DeployTarget.Error` | workflow/deploy.go:59 | Written by dead UpdateTarget only |
-| `DeployTarget.LastAttestation` | workflow/deploy.go:60 | Written by dead UpdateTarget only |
-| `deployTargetDeployed/Verified/Failed/Skipped` | workflow/deploy.go:30-33 | Used by dead methods only |
-| `ResolveDeployGuidance()` | workflow/deploy_guidance.go:20-42 | 0 production |
-| `ResetForIteration() Error clear` | workflow/deploy.go:274 | Effectively dead (Error never set in prod) |
+| Field | Bootstrap | Deploy (current) | Deploy (planned) |
+|-------|-----------|-------------------|-------------------|
+| Step | ✅ | ✅ | ✅ (in personalized builder) |
+| Mode | ✅ | ✅ | ✅ |
+| Strategy | ✅ | ✅ | ✅ |
+| RuntimeType | ✅ | ❌ (empty) | ✅ (for knowledge pointers) |
+| DependencyTypes | ✅ | ❌ (nil) | ❌ (not needed — pointers instead) |
+| DiscoveredEnvVars | ✅ | ❌ (nil) | ❌ (re-discover via API in checker) |
+| Iteration | ✅ | ❌ (ignored `_`) | ✅ (for escalation) |
+| Plan | ✅ | ❌ (nil) | ❌ (deploy has no plan) |
+| LastAttestation | ✅ | ❌ | ❌ |
+| FailureCount | ✅ | ❌ | ❌ |
+| KP | ✅ | ✅ | ✅ (for knowledge pointers) |
 
-**Live**: `deployTargetPending` (workflow/deploy.go:29) — used in BuildDeployTargets and ResetForIteration. MUST be preserved.
+**Step name compatibility** (critical for Phase 2):
+- `resolveStaticGuidance()` (guidance.go:56) handles: `StepGenerate="generate"`, `StepDeploy="deploy"`, `StepClose="close"` — ALL bootstrap steps
+- `needsRuntimeKnowledge()` (guidance.go:67) handles: `StepGenerate || DeployStepPrepare` — already deploy-aware
+- `StepDeploy == DeployStepDeploy == "deploy"` — shared constant works for iteration escalation
+- `DeployStepPrepare="prepare"`, `DeployStepVerify="verify"` — NOT handled by resolveStaticGuidance → must keep resolveDeployStepGuidance for deploy's static content
 
-### 2.6 Error Code Bug (pre-existing)
+### 2.3 Preflight Gates (handleDeployStart)
 
-`handleDeployComplete`, `handleDeploySkip`, `handleDeployStatus` use `platform.ErrBootstrapNotActive` for deploy errors (tools/workflow_deploy.go:29,51,62). Semantically wrong — should use deploy-specific code.
+`handleDeployStart()` at tools/workflow.go:186-258 — 5 sequential gates, all working correctly:
+
+| # | Gate | Line | Behavior |
+|---|------|------|----------|
+| 1 | Metas exist? | 188-194 | Error: "Run bootstrap first" |
+| 2 | Metas complete? | 204-211 | `IsComplete()` checks `BootstrappedAt != ""`. Error: "bootstrap didn't complete" |
+| 3 | Runtime services? | 213-225 | Filters `Mode != "" \|\| StageHostname != ""`. Error: "nothing to deploy" |
+| 4 | Strategy set? | 227-236 | **Soft gate**: returns conversational strategy selection guidance (not error) |
+| 5 | Strategy consistent? | 241-248 | Error: "mixed strategies not supported" |
+
+### 2.4 Iteration Mechanism
+
+```go
+// session.go:19-26
+func maxIterations() int {
+    if v := os.Getenv("ZCP_MAX_ITERATIONS"); v != "" { ... }
+    return defaultMaxIterations  // 10
+}
+
+// session.go:99-118 — IterateSession
+// 1. state.Iteration++ (0→1→2→...)
+// 2. state.Deploy.ResetForIteration() — resets deploy+verify to pending, preserves prepare
+// 3. Saves state
+
+// engine.go:85 — checks max before iterating
+if state.Iteration >= maxIterations() { return error "max iterations reached" }
+
+// deploy.go:262-281 — ResetForIteration
+// Resets steps 1-2 (deploy, verify) to pending. Step 0 (prepare) preserved.
+// Resets all target statuses to deployTargetPending.
+// Sets CurrentStep=1 (deploy), marks in_progress.
+```
+
+### 2.5 deploy.md Section Structure
+
+10 sections extracted via `<section name="...">` tags:
+
+| Section | Lines | Content | Used by |
+|---------|-------|---------|---------|
+| `deploy-prepare` | 14-51 | Discover targets, check zerops.yml, prerequisites | resolveDeployStepGuidance |
+| `deploy-execute-overview` | 53-65 | zerops_deploy blocks, git handled, path distinction | resolveDeployStepGuidance |
+| `deploy-execute-standard` | 67-89 | Standard mode 10-step flow (dev→stage) | resolveDeployStepGuidance |
+| `deploy-execute-dev` | 91-101 | Dev-only 5-step flow | resolveDeployStepGuidance |
+| `deploy-execute-simple` | 103-112 | Simple mode 4-step flow | resolveDeployStepGuidance |
+| `deploy-iteration` | 114-134 | Dev iteration cycle (edit→restart→test) | resolveDeployStepGuidance |
+| `deploy-verify` | 136-172 | Diagnosis table, fix patterns, common symptoms | resolveDeployStepGuidance |
+| `deploy-push-dev` | 174-181 | Push-dev strategy (3 lines) | resolveDeployStepGuidance |
+| `deploy-ci-cd` | 183-192 | CI/CD strategy (4 lines) | resolveDeployStepGuidance |
+| `deploy-manual` | 194-200 | Manual strategy (3 lines) | resolveDeployStepGuidance |
+
+**After redesign**: deploy.md sections remain for bootstrap's deploy step and zerops_knowledge queries. Deploy WORKFLOW generates personalized guidance programmatically instead of extracting these sections.
+
+### 2.6 Checker Type Comparison (bootstrap vs deploy)
+
+```go
+// Bootstrap (bootstrap_checks.go:24):
+type StepChecker func(ctx context.Context, plan *ServicePlan, state *BootstrapState) (*StepCheckResult, error)
+// Requires: ServicePlan (from discover), BootstrapState (session data)
+// Deploy has NEITHER — needs its own type.
+
+// Proposed DeployStepChecker:
+type DeployStepChecker func(ctx context.Context, state *DeployState) (*StepCheckResult, error)
+// Takes: DeployState only. Reuses StepCheckResult (generic, no bootstrap fields).
+
+// StepCheckResult is generic (bootstrap_checks.go:6-17):
+type StepCheckResult struct {
+    Passed  bool        `json:"passed"`
+    Checks  []StepCheck `json:"checks"`
+    Summary string      `json:"summary"`
+}
+type StepCheck struct {
+    Name   string `json:"name"`
+    Status string `json:"status"` // pass, fail, skip
+    Detail string `json:"detail,omitempty"`
+}
+```
+
+**Bootstrap checker comparison** (what exists vs what deploy needs):
+
+| Step | Bootstrap checker | Deploy equivalent (planned) |
+|------|------------------|----------------------------|
+| Prepare/Generate | `checkGenerate`: zerops.yml parse, hostname match, env var refs, ports | `checkDeployPrepare`: same checks, but env vars re-discovered via API (no BootstrapState) |
+| Deploy | `checkDeploy`: VerifyAll + subdomain + health | `checkDeployResult`: API status + diagnostics (informational, not blocking) |
+| Close/Verify | nil (administrative) | nil (informational step) |
+
+### 2.7 Dead Code (verified, 0 production callers)
+
+| Code | Location | Evidence |
+|------|----------|----------|
+| `UpdateTarget()` | workflow/deploy.go:248-260 | grep: 0 callers outside dead tests |
+| `DevFailed()` | workflow/deploy.go:284-291 | grep: 0 callers outside dead tests |
+| `DeployTarget.Error` | workflow/deploy.go:59 | Only written by dead UpdateTarget |
+| `DeployTarget.LastAttestation` | workflow/deploy.go:60 | Only written by dead UpdateTarget |
+| 4 status constants | workflow/deploy.go:30-33 | Used only by dead methods |
+| `ResolveDeployGuidance()` | workflow/deploy_guidance.go:20-42 | grep: 0 production callers |
+| `ResetForIteration() Error clear` | workflow/deploy.go:274 | Error never set in production |
+| Dead tests | deploy_test.go, deploy_guidance_test.go | TestDeployState_UpdateTarget, TestDeployState_DevFailed, 4 ResolveDeployGuidance tests |
+
+**LIVE — must preserve**: `deployTargetPending` (workflow/deploy.go:29) — used at lines 154, 164, 273.
+
+### 2.8 Pre-existing Bugs
+
+**ErrBootstrapNotActive in deploy handlers**: `handleDeployComplete` (tools/workflow_deploy.go:29), `handleDeploySkip` (:51), `handleDeployStatus` (:62) all return `platform.ErrBootstrapNotActive` for deploy-specific errors. Semantically wrong.
+
+**DeployTarget.Status always "pending"**: BuildDeployTargets sets all targets to `deployTargetPending`. No code path ever updates it. Agent always sees `status: "pending"` in response, suggesting nothing happened.
 
 ---
 
 ## 3. Design Decisions
 
-### 3.1 Confirmed Decisions (from review-1, review-2, philosophy discussion)
+### 3.1 All Decisions
 
-| # | Decision | Rationale |
-|---|----------|-----------|
-| 1 | Separate `DeployStepChecker` type (not reuse bootstrap's `StepChecker`) | Deploy has no ServicePlan/BootstrapState. Only 2 types — no premature abstraction. |
-| 2 | Add `context.Context` to `DeployComplete()` AND `DeployStart()` | Checkers need ctx for API calls. Matches BootstrapComplete pattern. |
-| 3 | Deploy checkers in `internal/tools/workflow_checks_deploy.go` | Follows existing `workflow_checks*.go` pattern. |
-| 4 | Checkers validate PLATFORM, not APPLICATION | "Help, don't gatekeep." We don't know what user wants from their app. |
-| 5 | 2 checkers: `checkDeployPrepare` + `checkDeployResult` | Verify step is informational, not blocking. |
-| 6 | Dev→stage is informational, not a hard gate | User may intentionally deploy broken code to dev. |
-| 7 | Re-discover env vars via API at deploy-prepare | Deploy is standalone (no BootstrapState). API call is cheap. Handles post-bootstrap changes. |
-| 8 | Keep `resolveDeployStepGuidance()` for static content | `resolveStaticGuidance()` handles bootstrap steps only. Deploy has its own step names. |
-| 9 | Use `assembleGuidance()` for knowledge injection + iteration escalation only | Reuses `BuildIterationDelta()`. `StepDeploy == DeployStepDeploy == "deploy"` works. |
-| 10 | Fix `ErrBootstrapNotActive` → `ErrDeployNotActive` | Semantic correctness. |
+| # | Decision | Rationale | Source |
+|---|----------|-----------|--------|
+| 1 | Separate `DeployStepChecker` type | Deploy has no ServicePlan/BootstrapState. Only 2 checker types — no premature abstraction. | R1 finding: StepChecker typed to BootstrapState |
+| 2 | `context.Context` on both `DeployComplete()` AND `DeployStart()` | Checkers need ctx for API calls. engine.go:358 has no ctx; BootstrapComplete at :137 does. | R1 finding + R2 architecture |
+| 3 | Checkers in `internal/tools/workflow_checks_deploy.go` | Follows existing `workflow_checks.go`, `workflow_checks_generate.go` pattern in tools/. | R1 self-verified |
+| 4 | Checkers validate PLATFORM, not APPLICATION | "Help, don't gatekeep." We don't know what user wants from their app. | User philosophy feedback |
+| 5 | 2 checkers: `checkDeployPrepare` + `checkDeployResult` | v1 had 3 (prepare, execute, verify). Reduced to 2: verify is informational, not blocking. Philosophy: don't gate on app health. | User: "we don't know if user wants health checks" |
+| 6 | Dev→stage informational, not hard gate | User may intentionally deploy broken code to dev for debugging. | User: "don't assume app correctness" |
+| 7 | Re-discover env vars via API at prepare step | DiscoveredEnvVars only on BootstrapState. Deploy is standalone. `client.GetServiceEnv()` is cheap, handles post-bootstrap changes. | R2: all 4 agents confirmed gap |
+| 8 | Keep `resolveDeployStepGuidance()` for static content | `resolveStaticGuidance()` (guidance.go:56) handles only bootstrap step names. Deploy uses different names (prepare, verify). | R2 adversarial C1 |
+| 9 | Deploy guidance personalized from state, not generic | Assembled from DeployState + ServiceMeta. Agent sees THEIR hostnames, modes, exact steps. Not template extraction. | Philosophy discussion |
+| 10 | Runtime knowledge NEVER injected in deploy | Bootstrap = creative workflow → inject OK. Deploy = operational → point only. Agent pulls on demand via zerops_knowledge. | Philosophy: "inject rules, point to knowledge" |
+| 11 | Total guidance ≤ 55 lines per step | Compact. 15-55 lines vs current 200+. Agent reads what matters, pulls what it needs. | Philosophy discussion |
+| 12 | Route returns facts, never recommendations | "Dumb data, smart agent." LLM decides what to do. | User: "zcp should be dumb" |
+| 13 | Init instructions explain environment (container vs local) | Agent needs to know WHERE code is, HOW mounts work, WHEN to deploy vs restart. | User: "vysvětlit ten koncept" |
+| 14 | Strategy alternatives mentioned in 2 lines | Agent knows options exist without being pushed toward any. | User: "drobná zmínka jaké jsou varianty" |
+| 15 | zerops_discover = state refresh mechanism | Agent calls whenever it needs current state. Init instructions say this. | User: "to je pokryté v discovery" |
+| 16 | Fix ErrBootstrapNotActive → ErrDeployNotActive | Semantic correctness. 3 occurrences. | R2 adversarial M2 |
+| 17 | Populate DeployTarget.Status from API/checker results | Replaces always-"pending" with actual state. Agent sees what happened. | v1 §3.5, all versions identified |
 
-### 3.2 New Decisions (from philosophy discussion)
+### 3.2 Rejected Alternatives
 
-| # | Decision | Rationale |
-|---|----------|-----------|
-| 11 | Deploy guidance is personalized, not generic | Assembled from DeployState + ServiceMeta. Agent sees THEIR hostnames, modes, steps. |
-| 12 | Runtime knowledge NEVER injected in deploy — always pointed to | Agent may not need it. On-demand via zerops_knowledge. Bootstrap MAY inject (creative workflow). |
-| 13 | Total guidance per step: 15-55 lines, never 200+ | Compact. Agent reads what matters, pulls what it needs. |
-| 14 | Init instructions explain environment concept (container vs local) | Agent needs to know WHERE code is and HOW mounts work. Foundation for all other guidance. |
-| 15 | Route returns facts, never recommendations | "Dumb data, smart agent." LLM decides what to do. |
-| 16 | Strategy alternatives mentioned in 2 lines, never forced | Agent knows options exist without being pushed toward any. |
-| 17 | zerops_discover positioned as "state refresh" mechanism | Agent calls whenever it needs current state. Init instructions must say this. |
-
-### 3.3 Rejected Alternatives
-
-| # | Alternative | Why Rejected |
-|---|------------|--------------|
-| 1 | Generalize StepChecker for both workflows | Only 2 types. Premature abstraction. |
-| 2 | Health check validation in deploy checker | Application-dependent. We don't know if user wants health checks. |
-| 3 | Hard dev→stage gate | User may intentionally deploy broken code. Gatekeeping, not helping. |
-| 4 | Full assembleGuidance() unification (replace resolveDeployStepGuidance) | Step name incompatibility. resolveStaticGuidance handles bootstrap steps only. |
-| 5 | Skip env var validation in deploy | Env vars can change after bootstrap. Deploy should be standalone. |
-| 6 | Inject runtime briefings in deploy (current behavior) | Push model. Agent may not need it. Bootstrap is creative (inject OK), deploy is operational (point only). |
-| 7 | Route recommends workflows | "Dumb data, smart agent." Route returns facts. |
+| # | Alternative | Why Rejected | Source |
+|---|------------|--------------|--------|
+| 1 | Generalize StepChecker for both workflows | Only 2 types. Premature abstraction. | R1 |
+| 2 | Health check validation in deploy checker | Application-dependent. We don't know if user wants health checks. | User philosophy |
+| 3 | Hard dev→stage gate | User may intentionally deploy broken code. Gatekeeping. | User philosophy |
+| 4 | 3 checkers (prepare/execute/verify) | Verify is informational. Execute diagnostics don't block. Simpler with 2. | v1→v2 philosophy shift |
+| 5 | Full assembleGuidance() unification | Step name incompatibility (prepare/verify not in resolveStaticGuidance). | R2 adversarial C1 |
+| 6 | Skip env var validation in deploy | Env vars can change after bootstrap. Deploy should be standalone. | R2 security F1 |
+| 7 | Inject runtime briefings in deploy | Push model. Agent may not need it. | Philosophy discussion |
+| 8 | Route recommends workflows | "Dumb data, smart agent." | User |
+| 9 | Subdomain verification as blocker | Service may not have HTTP endpoint. App-dependent. | User philosophy |
 
 ---
 
 ## 4. Guidance Assembly — Detailed Design
 
-### 4.1 Data Sources for Personalization
-
-Available from `DeployState` + `ServiceMeta` + `Engine`:
+### 4.1 Data Sources
 
 ```go
-type deployGuidanceContext struct {
-    // From DeployState
-    Targets    []DeployTarget  // hostname, role, status, strategy
-    Mode       string          // standard, dev, simple
-    Strategy   string          // push-dev, ci-cd, manual
-    Iteration  int             // 0, 1, 2, ...
+// Available for personalization:
+DeployState.Targets    → hostnames, roles, strategies
+DeployState.Mode       → standard, dev, simple
+DeployState.Strategy   → push-dev, ci-cd, manual
+state.Iteration        → 0, 1, 2, ... (from WorkflowState)
+Engine.Environment()   → container, local
+ServiceMeta (via hostname) → RuntimeType (nodejs@22, go@1, ...)
 
-    // From ServiceMeta (readable via hostname)
-    RuntimeTypes map[string]string  // hostname → "nodejs@22", "go@1", etc.
-
-    // From Engine
-    Environment  Environment  // container, local
-
-    // From API (at checker time)
-    ServiceStatuses map[string]string  // hostname → "ACTIVE", "READY_TO_DEPLOY", etc.
-}
+// Available at checker time (API):
+client.ListServices()  → status: ACTIVE, RUNNING, STOPPED, READY_TO_DEPLOY
+client.GetServiceEnv() → env var names for re-discovery
+zerops_verify          → healthy, degraded, unhealthy + checks array
+zerops_events          → hint field (human-readable status)
+zerops_deploy response → buildLogs array (on BUILD_FAILED)
 ```
 
-### 4.2 Prepare Step Guidance (complete template)
+### 4.2 Prepare Step Guidance
 
 ```markdown
 ## Deploy Preparation
 
 ### Your services
-{hostname} ({runtimeType}, {role}) [→ {stageHostname} (stage)]  // for each target
+{hostname} ({runtimeType}, {role}) [→ {stageHostname} (stage)]
 Mode: {mode} | Strategy: {strategy}
 
 ### Checklist
-1. zerops.yml must exist with `setup:` entries for: {comma-separated hostnames}
+1. zerops.yml must exist with `setup:` entries for: {target hostnames}
 2. Env var references (`${hostname_varName}`) must match real variables
-3. {if standard}: Dev entry must NOT have healthCheck (dev uses zsc noop)
-4. {if simple}: Entry must HAVE healthCheck (server auto-starts)
+3. {if standard}: Dev entry: `start: zsc noop --silent`, NO healthCheck
+4. {if simple}: Entry must HAVE `start:` (real command) and `healthCheck`
 
 ### Platform rules
-- Deploy = new container — local files lost, only deployFiles content survives
-- ${hostname_varName} typo = silent literal string, no error from platform
-- Build container ≠ run container — different environment
-- {if container env}: Files on mount are already on the container — deploy rebuilds, doesn't transfer
+- Deploy = new container — local files lost, only `deployFiles` content survives
+- `${hostname_varName}` typo = silent literal string, no error from platform
+- Build container ≠ run container (different environment, packages)
+- {if container}: Code on SSHFS mount is already on the container — deploy rebuilds, not transfers
 
 ### Strategy
 Currently: {strategy} ({one-line description})
-Other options: {other strategies with one-line descriptions}
+Other options: {alternatives with one-line descriptions}
 Change: zerops_workflow action="strategy" strategies={example}
 
 ### Knowledge on demand
-{for each unique runtime type}:
 - {hostname} ({runtimeType}): zerops_knowledge query="{base runtime}"
-{if framework known from recipe hints}:
-- Recipes: zerops_knowledge recipe="{name}"
-- zerops.yml help: zerops_knowledge query="zerops.yml schema"
-- Env vars: zerops_discover includeEnvs=true
+{if recipe hints}: - Recipe: zerops_knowledge recipe="{name}"
+- zerops.yml schema: zerops_knowledge query="zerops.yml schema"
+- Env var discovery: zerops_discover includeEnvs=true
 
-{IF first deploy — service status READY_TO_DEPLOY}:
+{IF service status READY_TO_DEPLOY}:
 ### First deploy
-This is the first deploy for {hostnames}. zerops.yml likely needs creation.
-Load runtime knowledge before writing config.
+First deploy for {hostnames}. zerops.yml needs creation.
+Load runtime knowledge first: zerops_knowledge query="{runtime}"
 ```
 
-### 4.3 Deploy Step Guidance (complete template)
+### 4.3 Deploy Step Guidance
 
 ```markdown
 ## Deploy — {mode} mode, {strategy}
 
 ### Workflow
-{MODE-SPECIFIC STEPS — personalized with actual hostnames}
-
-{if standard}:
+{STANDARD}:
 1. Deploy to dev: zerops_deploy targetService="{devHostname}"
-2. Start server on dev manually via SSH (dev uses zsc noop)
-   {if implicit-webserver runtime}: Skip — {runtimeType} auto-starts
+2. Start server on dev manually (dev uses zsc noop)
+   {if php-nginx/php-apache/nginx/static}: Skip — auto-starts
 3. Enable subdomain: zerops_subdomain action="enable" serviceHostname="{devHostname}"
 4. Verify dev: zerops_verify serviceHostname="{devHostname}"
 5. Deploy to stage: zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"
@@ -226,173 +353,181 @@ Load runtime knowledge before writing config.
 6. Enable subdomain: zerops_subdomain action="enable" serviceHostname="{stageHostname}"
 7. Verify stage: zerops_verify serviceHostname="{stageHostname}"
 
-{if dev}:
-1. Deploy to dev: zerops_deploy targetService="{devHostname}"
-2. Start server manually via SSH
-   {if implicit-webserver}: Skip — auto-starts
+{DEV}:
+1. Deploy: zerops_deploy targetService="{devHostname}"
+2. Start server via SSH (zsc noop) {or skip if implicit-webserver}
 3. Enable subdomain: zerops_subdomain action="enable" serviceHostname="{devHostname}"
 4. Verify: zerops_verify serviceHostname="{devHostname}"
 
-{if simple}:
-1. Deploy: zerops_deploy targetService="{hostname}" — server auto-starts
+{SIMPLE}:
+1. Deploy: zerops_deploy targetService="{hostname}" — auto-starts
 2. Enable subdomain: zerops_subdomain action="enable" serviceHostname="{hostname}"
 3. Verify: zerops_verify serviceHostname="{hostname}"
 
 ### Key facts
-- zerops_deploy blocks until complete — returns DEPLOYED or BUILD_FAILED
-- After deploy: only deployFiles content exists. Local files lost.
-- {if dev targets}: Dev server: start manually after deploy (zsc noop). Env vars are OS env vars.
-- {if stage targets}: Stage: auto-starts with healthCheck monitoring.
-- subdomain must be enabled after every deploy (idempotent)
+- zerops_deploy blocks until complete — returns DEPLOYED or BUILD_FAILED with buildLogs
+- After deploy: only deployFiles content exists. All other local files lost.
+- {if dev}: Start server manually after deploy. Env vars are OS env vars.
+- {if stage}: Auto-starts with healthCheck. Zerops monitors and restarts.
+- Subdomain must be enabled after every deploy (idempotent)
 
 {IF iteration > 0}:
-### Iteration {iteration} — Diagnostic escalation
-{iteration 1}: Check zerops_logs severity="error". Build failed? → review buildLogs from deploy response. Container crash? → check start command, ports, env vars.
-{iteration 2}: Systematic check: zerops.yml config (ports, start, deployFiles), env var references (typos = literal strings!), runtime version.
-{iteration 3+}: Present diagnostic summary to user: exact error from logs, current config state, env var values. User decides next step.
+### Iteration {n} — Diagnostic escalation
+{1}: Check zerops_logs severity="error". Build failed? → buildLogs in deploy response.
+     Container crash? → check start command, ports, env vars.
+{2}: Systematic: zerops.yml (ports, start, deployFiles), env var refs (typos = literal!),
+     runtime version compatibility.
+{3+}: Present diagnostic summary to user: exact error, current config, env var values.
+      User decides next step. Max {maxIterations} iterations.
 
 ### If something breaks
-- Build failed → zerops_logs, check buildCommands, dependencies, runtime version
-- Container didn't start → check start command, ports, env vars. Deploy = new container.
-- Running but unreachable → zerops_subdomain, check ports in zerops.yml vs app
-- zerops_verify shows unhealthy → check detail field for specific failed check
+- Build failed → zerops_logs, buildCommands, dependencies, runtime version
+- Container didn't start → start command, ports, env vars. Deploy = new container.
+- Running but unreachable → zerops_subdomain, ports in zerops.yml vs app listen port
+- zerops_verify unhealthy → check `detail` field for specific failed check
 ```
 
 ### 4.4 Verify Step Guidance
 
-The existing `deploy-verify` section in deploy.md is already well-structured (diagnostic table, fix patterns). Reuse as-is with minor adjustment: don't inject runtime knowledge, just the diagnostic patterns.
+Reuse existing `deploy-verify` section from deploy.md (lines 136-172). Already well-structured: diagnosis table from checks array, fix patterns table, redeploy commands, common symptom→fix mapping. Only change: don't inject runtime knowledge alongside it.
 
 ---
 
 ## 5. Implementation Plan
 
-### Phase 1: Dead Code Cleanup + Error Code Fix
+### Phase 1: Dead Code Cleanup + Bug Fixes
 
-**Scope**: Remove dead code, fix error codes. No behavioral changes.
-
-**Changes**:
+**Scope**: Remove dead code, fix error codes, fix DeployTarget.Status. No behavioral changes.
 
 | File | Change | Lines |
 |------|--------|-------|
 | workflow/deploy.go | Delete: UpdateTarget, DevFailed, Error field, LastAttestation field, 4 dead status constants, ResetForIteration Error clear | -60 |
 | workflow/deploy_test.go | Delete: TestDeployState_UpdateTarget, TestDeployState_DevFailed | -25 |
-| workflow/deploy_guidance.go | Delete: ResolveDeployGuidance | -23 |
+| workflow/deploy_guidance.go | Delete: ResolveDeployGuidance (lines 20-42) | -23 |
 | workflow/deploy_guidance_test.go | Delete: 4 dead tests for ResolveDeployGuidance | -40 |
-| tools/workflow_deploy.go | Replace ErrBootstrapNotActive → ErrDeployNotActive (3 occurrences) | ~0 |
-| platform/errors.go | Add ErrDeployNotActive constant | +1 |
+| tools/workflow_deploy.go | Replace ErrBootstrapNotActive → ErrDeployNotActive (lines 29, 51, 62) | ~0 |
+| platform/errors.go | Add `ErrDeployNotActive` constant | +1 |
 
-**Tests**: Run full suite after cleanup. Expect 6 fewer tests, 0 failures.
+**DeployTarget.Status fix**: Remove `Status` field from `DeployTarget` entirely (dead — always "pending", never read for decisions). `DeployTargetOut` in response already has its own Status field which can be populated from checker results in Phase 3.
 
-**TDD note**: This is a pure refactor (no behavior change) — skip RED phase, verify GREEN.
+**TDD**: Pure refactor — skip RED, verify GREEN. `go test ./... -count=1 -short` must pass with 6 fewer tests.
 
 ### Phase 2: Guidance Model Redesign
 
-**Scope**: Replace current guidance assembly with personalized, compact model.
-
-**Changes**:
+**Scope**: Replace deploy.md section extraction with personalized guidance generation.
 
 | File | Change | Lines |
 |------|--------|-------|
-| workflow/deploy.go `buildGuide()` | Rewrite: use named params (iteration, env), build personalized guidance from DeployState + ServiceMeta. Replace `resolveDeployStepGuidance + assembleKnowledge` with new assembly logic. | ~60 (rewrite) |
-| workflow/deploy_guidance.go | Rewrite: `buildPersonalizedPrepareGuide()`, `buildPersonalizedDeployGuide()`, `buildPersonalizedVerifyGuide()` — each assembles from state, not from deploy.md sections. Keep `StrategyToSection` map for strategy descriptions. | ~120 (rewrite) |
-| workflow/deploy_guidance_test.go | Rewrite: test personalized output for each mode × strategy combination | ~100 (rewrite) |
-| workflow/guidance.go | Add: deploy-specific knowledge map builder (pointers, not injection) | +30 |
+| workflow/deploy.go `buildGuide()` | Rewrite: named params (`iteration int, env Environment`), call new personalized builders | ~50 (rewrite) |
+| workflow/deploy_guidance.go | Rewrite: `buildPrepareGuide()`, `buildDeployGuide()`, `buildVerifyGuide()` — generate from state. Keep `StrategyToSection` for reference. | ~130 (rewrite) |
+| workflow/deploy_guidance_test.go | Rewrite: table-driven tests for mode×strategy combinations | ~100 (rewrite) |
+| workflow/guidance.go | Add: `buildKnowledgeMap()` — pointers instead of injection | +30 |
 
-**Design detail — `buildPersonalizedDeployGuide()`**:
-
+**buildGuide() new design**:
 ```go
-func buildPersonalizedDeployGuide(state *DeployState, iteration int, env Environment) string {
-    var sb strings.Builder
-
-    // Section 1: Setup summary (from state)
-    sb.WriteString("## Deploy — " + state.Mode + " mode, " + state.Strategy + "\n\n")
-    sb.WriteString("### Workflow\n")
-
-    // Section 2: Mode-specific steps with actual hostnames
-    switch state.Mode {
-    case PlanModeStandard:
-        writeStandardWorkflow(&sb, state.Targets)
-    case PlanModeDev:
-        writeDevWorkflow(&sb, state.Targets)
-    case PlanModeSimple:
-        writeSimpleWorkflow(&sb, state.Targets)
+func (d *DeployState) buildGuide(step string, iteration int, env Environment, kp knowledge.Provider) string {
+    // Iteration escalation replaces normal guidance (reuse existing mechanism)
+    if iteration > 0 && step == DeployStepDeploy {
+        if delta := BuildIterationDelta(step, iteration, nil, ""); delta != "" {
+            return delta
+        }
     }
 
-    // Section 3: Platform facts (always, compact)
-    sb.WriteString("\n### Key facts\n")
-    writePlatformFacts(&sb, state)
-
-    // Section 4: Iteration escalation (conditional)
-    if iteration > 0 {
-        writeIterationEscalation(&sb, iteration)
+    switch step {
+    case DeployStepPrepare:
+        return buildPrepareGuide(d, env, kp)
+    case DeployStepDeploy:
+        return buildDeployGuide(d, iteration, env)
+    case DeployStepVerify:
+        return buildVerifyGuide()
     }
-
-    // Section 5: Diagnostic pointers (always, compact)
-    sb.WriteString("\n### If something breaks\n")
-    writeDiagnosticPointers(&sb)
-
-    return sb.String()
+    return ""
 }
 ```
 
-**Key change**: Guidance is now GENERATED from state, not EXTRACTED from deploy.md sections. deploy.md sections for mode-specific content (deploy-execute-standard, deploy-execute-dev, deploy-execute-simple) become REFERENCE material, not the primary source for deploy workflow guidance.
+**Key**: Guidance is GENERATED from state, not EXTRACTED from deploy.md. deploy.md sections remain for bootstrap's deploy step and zerops_knowledge queries.
 
-**deploy.md role change**: deploy.md continues to exist as reference content for `zerops_knowledge` queries and for bootstrap's deploy step. Deploy WORKFLOW guidance is now built programmatically.
+**RuntimeType access**: buildGuide needs RuntimeType for knowledge pointers. Two options: (a) read ServiceMeta at buildGuide time via stateDir, (b) store in DeployTarget during BuildDeployTargets. Option (b) is cleaner — add `RuntimeType string` to DeployTarget, populate from ServiceMeta in BuildDeployTargets.
 
 **TDD**:
-- RED: Write tests for personalized output (standard+push-dev, dev+ci-cd, simple+manual, etc.)
+- RED: Tests for personalized output (standard+push-dev, dev+ci-cd, simple+manual minimum)
 - GREEN: Implement builders
-- REFACTOR: Ensure <350 lines per file
+- Verify: each output ≤ 55 lines, contains actual hostnames, platform facts, knowledge pointers
 
 ### Phase 3: Platform Validation Checkers
 
-**Scope**: Add checkers to validate platform integration at prepare and deploy steps.
-
-**Changes**:
+**Scope**: Add checkers for platform integration validation.
 
 | File | Change | Lines |
 |------|--------|-------|
-| workflow/engine.go `DeployComplete` + `DeployStart` | Add context.Context params | +15 |
-| tools/workflow_deploy.go | Wire ctx + checker deps, build checker, pass to engine | +35 |
-| tools/workflow_checks_deploy.go | DeployStepChecker type + checkDeployPrepare + checkDeployResult + env var re-discovery | +120 |
-| tools/workflow_checks_deploy_test.go | Tests for both checkers | +80 |
+| workflow/deploy.go or workflow/bootstrap_checks.go | Add `DeployStepChecker` type definition | +3 |
+| workflow/engine.go `DeployComplete` | Add `ctx context.Context` + `checker DeployStepChecker` params | +20 |
+| workflow/engine.go `DeployStart` | Add `ctx context.Context` param | +5 |
+| tools/workflow_deploy.go | Wire ctx, build checker via `buildDeployStepChecker()`, pass to engine | +40 |
+| tools/workflow_checks_deploy.go | `buildDeployStepChecker` + `checkDeployPrepare` + `checkDeployResult` + env var re-discovery | +130 |
+| tools/workflow_checks_deploy_test.go | Tests for both checkers, all failure scenarios | +100 |
+
+**DeployStepChecker type**:
+```go
+type DeployStepChecker func(ctx context.Context, state *DeployState) (*StepCheckResult, error)
+```
 
 **checkDeployPrepare(client, projectID, stateDir)**:
-1. Find zerops.yml (reuse `filepath.Dir(filepath.Dir(stateDir))` pattern from checkGenerate)
+1. Find zerops.yml via `filepath.Dir(filepath.Dir(stateDir))` (same pattern as checkGenerate:29)
 2. Parse YAML — syntax valid?
 3. `setup:` entries match deploy target hostnames?
-4. Env var reference syntax (`${hostname_varName}`) — validated against env vars re-discovered via `client.GetServiceEnv()` for each dependency service
+4. Env var refs (`${hostname_varName}`) — validate against env vars re-discovered via `client.GetServiceEnv()` per dependency service
 5. Return `StepCheckResult{Passed, Checks, Summary}`
 
 **checkDeployResult(client, projectID)**:
-1. Query API: service status for each target
-2. Build diagnostic response based on status:
-   - `BUILD_FAILED` → "check buildLogs, dependencies, runtime version"
-   - `READY_TO_DEPLOY` (still, after deploy) → "container didn't start, check start command, ports, env vars"
-   - `ACTIVE/RUNNING` + zerops_verify unhealthy → "running but issues, check zerops_logs"
-   - `ACTIVE/RUNNING` + healthy → "deployed successfully"
-3. Check subdomain access for services with ports
-4. Consider Events API `hint` field for LLM-friendly status
-5. Return informational `StepCheckResult` (diagnostic, not blocking except for objective failures)
+1. Query API: `client.ListServices()` → service status per target
+2. Diagnostic logic:
+
+| Status | Diagnostic |
+|--------|-----------|
+| `BUILD_FAILED` | "Check buildLogs from deploy response. Common: wrong buildCommands, missing deps, runtime version mismatch." |
+| `READY_TO_DEPLOY` (still) | "Container didn't start. Check: start command, ports, env vars in zerops.yml run section. Deploy = new container, local files lost." |
+| `ACTIVE/RUNNING` + zerops_verify unhealthy | "Service running but issues detected. Check zerops_logs severity=error." |
+| `ACTIVE/RUNNING` + healthy | "Deployed successfully." (informational) |
+
+3. Check `SubdomainAccess` for services with ports
+4. Use Events API `hint` field for LLM-friendly status if available
+5. Return `StepCheckResult` — diagnostic, not hard-blocking (except objective failures like missing service)
+
+**DeployTarget.Status update**: After checker runs, populate `DeployTargetOut.Status` in response from checker results (pass="deployed", fail="failed", etc.) — replaces always-"pending".
+
+**Engine pattern** (mirrors BootstrapComplete at engine.go:137-191):
+```go
+func (e *Engine) DeployComplete(ctx context.Context, step, attestation string, checker DeployStepChecker) (*DeployResponse, error) {
+    // ... load state ...
+    if checker != nil {
+        result, err := checker(ctx, state.Deploy)
+        if !result.Passed {
+            resp := state.Deploy.BuildResponse(...)
+            resp.CheckResult = result
+            resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", step, result.Summary)
+            return resp, nil  // step NOT advanced
+        }
+    }
+    // ... complete step, save state ...
+}
+```
 
 **TDD**:
-- RED: Tests for each failure scenario (build failed, container crash, running+unhealthy, success)
-- GREEN: Implement checkers
-- REFACTOR: Ensure <350 lines per file
+- RED: Tests per failure scenario (build failed, crash, unhealthy, success, env var typo, nil state)
+- GREEN: Implement
+- Verify: `StepCheckResult` reused (not duplicated), ≤350 lines per file
 
-### Phase 4: Init Instructions Update
+### Phase 4: Init Instructions
 
-**Scope**: Add environment concept, code access model, state refresh instructions.
-
-**Changes**:
+**Scope**: Add environment concept, code access, state refresh to init instructions.
 
 | File | Change | Lines |
 |------|--------|-------|
-| Content for `zcp init` output | Add container vs local environment section | +20-30 |
-| Content for `zcp init` output | Add state refresh note (zerops_discover) | +5 |
-| Content for `zcp init` output | Add deploy = rebuild explanation | +5 |
+| Init content (zcp init output) | Container mode: environment section | +25 |
+| Init content (zcp init output) | Local mode: environment section | +10 |
 
-**Container mode additions**:
+**Container mode**:
 ```
 ## Your Environment
 
@@ -400,68 +535,56 @@ You're on the zcpx container inside a Zerops project.
 
 ### Code Access
 Runtime services are SSHFS-mounted:
-  /var/www/{hostname}/ — edit code here, changes appear on the service container
-Mount is read/write, changes immediate.
+  /var/www/{hostname}/ — edit code here, changes appear instantly on the service container
+Mount is read/write. No file transfer needed.
 
 ### Deploy = Rebuild
-Editing files on mount does NOT trigger deploy. Deploy runs the full pipeline
-(build → deployFiles → start). Deploy when zerops.yml changes or you need
-a clean rebuild. Code-only changes on dev: just restart the server via SSH.
+Editing files on mount does NOT trigger deploy. Deploy runs the full build pipeline
+(buildCommands → deployFiles → start). Deploy when: zerops.yml changes, need clean rebuild,
+or promote dev → stage. Code-only changes on dev: just restart the server via SSH.
 
 ### Staying Current
-zerops_discover always returns CURRENT state of all services.
-Call it anytime to refresh your understanding.
+zerops_discover always returns the CURRENT state of all services.
+Call it whenever you need to refresh your understanding of what exists and its status.
 ```
 
-**Local mode additions**:
+**Local mode**:
 ```
 ## Your Environment
 
 You're running locally. Code is in the working directory.
-Deploy pushes code to Zerops via zcli push.
-zerops.yml must be at repository root. Each deploy = full rebuild.
+Deploy pushes code to Zerops via zcli push. zerops.yml at repository root.
+Each deploy = full rebuild + new container.
 ```
 
-**Note**: Exact location of init instructions depends on how `zcp init` generates CLAUDE.md / instructions. This phase defines the CONTENT; integration point needs verification.
+**Integration point**: Needs verification — read `internal/init/init.go` to find where CLAUDE.md template lives.
 
-### Phase 5: Transition Improvements
+### Phase 5: Workflow Transitions
 
-**Scope**: Ensure smooth transitions between bootstrap → strategy → deploy.
-
-**Changes**:
+**Scope**: Smooth transitions between bootstrap → strategy → deploy.
 
 | File | Change | Lines |
 |------|--------|-------|
-| workflow/bootstrap_outputs.go `BuildTransitionMessage()` | Verify includes strategy selection prompt + deploy entry command | ~5 (verify/adjust) |
-| tools/workflow_strategy.go `handleStrategy()` | Add "ready to deploy" guidance to response | +5 |
+| workflow/bootstrap_outputs.go | Verify `BuildTransitionMessage()` includes strategy prompt + deploy command | ~5 |
+| tools/workflow_strategy.go | Add "ready to deploy" to response | +5 |
 
-**Bootstrap → Strategy transition**:
-Bootstrap complete output should include:
-```json
-{
-  "message": "Bootstrap complete. Services ready.",
-  "transition": "Choose deploy strategy for each service",
-  "command": "zerops_workflow action=\"strategy\" strategies={...}"
-}
+**Bootstrap complete** → must output:
+```
+Services ready. Choose deploy strategy for each service:
+→ zerops_workflow action="strategy" strategies={"appdev":"push-dev"}
 ```
 
-**Strategy → Deploy transition**:
-Strategy set output should include:
-```json
-{
-  "status": "updated",
-  "services": "appdev=push-dev",
-  "next": "When code is ready: zerops_workflow action=\"start\" workflow=\"deploy\""
-}
+**Strategy set** → must output:
+```
+Strategies configured. When code is ready to deploy:
+→ zerops_workflow action="start" workflow="deploy"
 ```
 
-### Phase 6: Route Simplification
+### Phase 6: Route Verification
 
-**Scope**: Ensure route returns facts only, no recommendations.
+**Scope**: Ensure route returns facts only.
 
-**Changes**: Verify current `Route()` implementation returns data, not opinions. Adjust if needed.
-
-**Expected route output format**:
+Verify `Route()` implementation (workflow/router.go) returns structured data without recommendations:
 ```json
 {
   "project": {"state": "ACTIVE"},
@@ -475,136 +598,195 @@ Strategy set output should include:
 }
 ```
 
-No "suggestedAction", no "recommendation". Just facts.
+No `suggestedAction`, no `recommendation`. Just facts. LLM decides.
 
 ---
 
-## 6. File Impact Summary
+## 6. End-to-End Flow (after implementation)
 
-| File | Phase | Change Type | Est. Lines |
-|------|-------|-------------|-----------|
-| workflow/deploy.go | 1,2 | Delete dead code + rewrite buildGuide | -60, +60 |
-| workflow/deploy_test.go | 1,2 | Delete dead tests + new personalization tests | -25, +50 |
-| workflow/deploy_guidance.go | 1,2 | Delete ResolveDeployGuidance + rewrite with builders | -23, +120 |
-| workflow/deploy_guidance_test.go | 1,2 | Delete dead tests + new builder tests | -40, +100 |
-| workflow/engine.go | 3 | Add ctx to DeployComplete + DeployStart | +15 |
-| workflow/guidance.go | 2 | Add knowledge map builder | +30 |
-| tools/workflow_deploy.go | 1,3 | Fix error codes + wire checkers | +35 |
-| tools/workflow_checks_deploy.go | 3 | 2 checkers + type + diagnostic builder | +120 |
-| tools/workflow_checks_deploy_test.go | 3 | Checker tests | +80 |
-| platform/errors.go | 1 | Add ErrDeployNotActive | +1 |
-| init content | 4 | Environment concept + state refresh | +30 |
+```
+zerops_workflow action="start" workflow="deploy"
+│
+├─ Gate 1: Metas exist?           → NO: "Run bootstrap first"
+├─ Gate 2: Metas complete?        → NO: "Bootstrap didn't complete"
+├─ Gate 3: Runtime services?      → NO: "Nothing to deploy"
+├─ Gate 4: Strategy set?          → NO: Strategy selection guidance (soft)
+│                                      → action="strategy" → retry
+├─ Gate 5: Strategy consistent?   → NO: "Mixed strategies not supported"
+│
+└─ OK → Create session (prepare → deploy → verify)
+         │
+         ├─ PREPARE (in_progress)
+         │   Guidance: personalized setup summary + platform rules + knowledge pointers
+         │   Agent: discover, check/create zerops.yml
+         │   action="complete" step="prepare"
+         │   → checkDeployPrepare: yml parse, hostname match, env var refs (re-discovered)
+         │     FAIL → feedback with details, agent fixes, retries
+         │     PASS → advance to deploy
+         │
+         ├─ DEPLOY (in_progress)
+         │   Guidance: personalized mode workflow + strategy commands + platform facts
+         │   {iteration > 0}: escalating diagnostics replace normal guidance
+         │   Agent: zerops_deploy, zerops_subdomain, zerops_verify, SSH start
+         │   action="complete" step="deploy"
+         │   → checkDeployResult: API status + diagnostics
+         │     BUILD_FAILED → diagnostic: check buildLogs
+         │     CRASH → diagnostic: check start, ports, env vars
+         │     RUNNING+unhealthy → diagnostic: check zerops_logs
+         │     RUNNING+healthy → pass, advance
+         │     FAIL → agent may action="iterate":
+         │            ResetForIteration → deploy+verify reset, prepare preserved
+         │            Iteration++ → escalating guidance (tier 1→2→3)
+         │            Max iterations: 10 (ZCP_MAX_ITERATIONS env override)
+         │
+         ├─ VERIFY (in_progress)
+         │   Guidance: diagnostic patterns from deploy-verify section
+         │   No checker (informational step)
+         │   action="complete" step="verify"
+         │   → advance, Active=false
+         │
+         └─ DONE → session file deleted, engine cleared
+```
+
+---
+
+## 7. Platform Reference (verified on live Zerops)
+
+Facts needed for checker implementation, verified by KB-verifier (2026-03-21):
+
+| Fact | Value | Source |
+|------|-------|--------|
+| Service status values | `ACTIVE`, `RUNNING`, `STOPPED`, `READY_TO_DEPLOY` | Live API + code (verify_checks.go:52-61) |
+| Build failure detection | `BUILD_FAILED` status + `buildLogs` array in deploy response | E2E test build_logs_test.go |
+| First deploy fail state | Service stays `READY_TO_DEPLOY` | Docs: zerops-complete-knowledge.md:252 |
+| Re-deploy fail state | Previous version stays `ACTIVE` (zero-downtime model) | Docs: line 491 |
+| Env var typo behavior | Silent literal string, no error | Verified live 2026-03-04 |
+| Subdomain queryable | `SubdomainAccess` bool field on ServiceStack | Live API + types.go:31 |
+| Subdomain env var | `zeropsSubdomain` env var with actual URL (platform-injected) | Live zerops_discover |
+| Events hint field | Human-readable status in `hint` field (e.g., "DEPLOYED: App version is deployed") | Live zerops_events |
+| Log availability | Build logs in deploy response. Runtime logs via zerops_logs (depends on backend). | Live API |
+| Non-HTTP error code | `serviceStackIsNotHttp` when enabling subdomain on non-HTTP service | Live zerops_subdomain |
+| Verify output | `healthy`/`degraded`/`unhealthy` with individual check results | Live zerops_verify |
+
+---
+
+## 8. File Impact Summary
+
+| File | Phase | Change | Est. Lines |
+|------|-------|--------|-----------|
+| workflow/deploy.go | 1,2 | Delete dead code + rewrite buildGuide + add RuntimeType to DeployTarget | -60, +50 |
+| workflow/deploy_test.go | 1,2 | Delete dead tests + personalization tests | -25, +50 |
+| workflow/deploy_guidance.go | 1,2 | Delete ResolveDeployGuidance + personalized builders | -23, +130 |
+| workflow/deploy_guidance_test.go | 1,2 | Delete dead tests + builder tests | -40, +100 |
+| workflow/guidance.go | 2 | Knowledge map builder (pointers) | +30 |
+| workflow/bootstrap_checks.go (or new file) | 3 | DeployStepChecker type | +3 |
+| workflow/engine.go | 3 | ctx on DeployComplete + DeployStart | +25 |
+| tools/workflow_deploy.go | 1,3 | Fix error codes + wire checkers | +40 |
+| tools/workflow_checks_deploy.go | 3 | buildDeployStepChecker + 2 checkers + env re-discovery | +130 |
+| tools/workflow_checks_deploy_test.go | 3 | Checker tests | +100 |
+| platform/errors.go | 1 | ErrDeployNotActive | +1 |
+| init content | 4 | Environment concept + state refresh | +35 |
 | tools/workflow_strategy.go | 5 | Transition guidance | +5 |
 | workflow/bootstrap_outputs.go | 5 | Verify transition message | ~5 |
 
 ---
 
-## 7. Risks & Mitigations
+## 9. Risks & Open Questions
+
+### Risks
 
 | Risk | Severity | Mitigation |
 |------|----------|-----------|
-| Personalized guidance builders are more code than template extraction | MEDIUM | Builders are simple string assembly from struct fields. Table-driven tests cover all mode×strategy combos. |
-| deploy.md sections become orphaned from deploy workflow | LOW | deploy.md continues to serve: bootstrap deploy step, zerops_knowledge queries, reference docs. Mark sections with their consumers. |
-| checkDeployPrepare needs zerops.yml path resolution | MEDIUM | checkGenerate's filepath.Dir pattern is generic and reusable (verified). |
-| Env var re-discovery adds API calls at prepare step | LOW | One GetServiceEnv call per dependency. Lightweight. |
-| Phase 2 guidance output differs significantly from current | MEDIUM | Table-driven tests validate output for all mode/strategy combos. Gradual rollout possible. |
-| Init instructions location unclear | LOW | Phase 4 defines content; integration point verified during implementation. |
-| Events API hint field availability | LOW | Diagnostic builder degrades gracefully if hint not available. |
+| Personalized builders = more code than template extraction | MEDIUM | Simple string assembly from struct fields. Table-driven tests cover all mode×strategy combos. |
+| deploy.md sections orphaned from deploy workflow | LOW | Remain for: bootstrap deploy step, zerops_knowledge queries. Mark sections with consumers. |
+| checkDeployPrepare zerops.yml path resolution | MEDIUM | checkGenerate's `filepath.Dir(filepath.Dir(stateDir))` is generic, reusable (verified). |
+| Env var re-discovery adds API calls | LOW | One `GetServiceEnv` per dependency. Lightweight. |
+| Guidance output differs significantly from current | MEDIUM | Table-driven tests. Gradual rollout possible (feature flag). |
+| Init instructions integration point unclear | LOW | Phase 4 defines content; read `internal/init/init.go` during implementation. |
+| Events API hint field availability | LOW | Diagnostic builder degrades gracefully if unavailable. |
+| deploy.go file size after changes | LOW | Phase 1 deletes ~60 lines, Phase 2 rewrites buildGuide. Net should stay ≤350. |
+
+### Open Questions
+
+| # | Question | Phase | Resolution |
+|---|----------|-------|------------|
+| 1 | Where does `zcp init` put environment concept? | 4 | Read `internal/init/init.go` and current template |
+| 2 | RuntimeType storage: DeployTarget field or ServiceMeta read? | 2 | Add to DeployTarget in BuildDeployTargets (cleaner) |
+| 3 | Events API hint field Go type? | 3 | Check platform/types.go |
+| 4 | Deploy.md section simplification after guidance redesign? | Future | Keep for bootstrap + knowledge. Mark consumers. |
 
 ---
 
-## 8. Open Questions (to resolve during implementation)
+## 10. Verification Checklist
 
-| # | Question | Phase | How to Resolve |
-|---|----------|-------|---------------|
-| 1 | Exact init instructions integration point — where does `zcp init` put environment concept? | 4 | Read `internal/init/init.go` and current CLAUDE.md template |
-| 2 | Should personalized guidance include service IDs or only hostnames? | 2 | Hostnames only (consistent with all existing guidance) |
-| 3 | How does buildGuide get RuntimeType? DeployState doesn't store it. | 2 | Read from ServiceMeta at buildGuide time, or store in DeployTarget during BuildDeployTargets |
-| 4 | Events API hint field — what's the Go type/field name? | 3 | Check platform/types.go for event hint field |
-| 5 | Should deploy.md sections be simplified now that deploy workflow generates guidance? | 6 | Keep for bootstrap + knowledge queries. Mark with `<!-- consumer: bootstrap, knowledge -->` |
-| 6 | Strategy transition support — how to update ServiceMeta when user switches strategy mid-lifecycle? | Future | action="strategy" already handles this (tools/workflow_strategy.go) |
-
----
-
-## 9. Verification Checklist (for implementation team)
-
-Before marking each phase complete, verify:
-
-### Phase 1 (Dead Code)
-- [ ] `UpdateTarget()` deleted from workflow/deploy.go
-- [ ] `DevFailed()` deleted from workflow/deploy.go
+### Phase 1 (Dead Code + Bugs)
+- [ ] `UpdateTarget()`, `DevFailed()` deleted
 - [ ] `Error`, `LastAttestation` fields deleted from DeployTarget
-- [ ] 4 dead status constants deleted (deployed, verified, failed, skipped)
-- [ ] `deployTargetPending` PRESERVED (verify grep: should appear in BuildDeployTargets + ResetForIteration)
-- [ ] `ResolveDeployGuidance()` deleted from workflow/deploy_guidance.go
-- [ ] Dead tests deleted from deploy_test.go and deploy_guidance_test.go
-- [ ] `ErrDeployNotActive` added to platform/errors.go
-- [ ] 3 occurrences in tools/workflow_deploy.go updated
-- [ ] `go test ./... -count=1 -short` passes
-- [ ] `make lint-fast` passes
+- [ ] 4 dead status constants deleted; `deployTargetPending` PRESERVED
+- [ ] `ResolveDeployGuidance()` deleted
+- [ ] Dead tests deleted (2 in deploy_test, 4 in deploy_guidance_test)
+- [ ] `ErrDeployNotActive` added, 3 occurrences in workflow_deploy.go updated
+- [ ] `DeployTarget.Status` field removed (always-pending dead field)
+- [ ] `go test ./... -count=1 -short` passes, `make lint-fast` passes
 
 ### Phase 2 (Guidance Redesign)
-- [ ] `buildGuide()` uses named params (iteration, env), not `_ int, _ Environment`
-- [ ] Personalized guidance generated from DeployState (hostnames, mode, strategy)
-- [ ] No runtime briefing injected (only pointers via knowledge map)
-- [ ] Platform facts always included (container lifecycle, env vars, etc.)
-- [ ] Strategy alternatives mentioned in 2 lines
-- [ ] Knowledge map includes pointers for each unique runtime type
-- [ ] First deploy detection (READY_TO_DEPLOY) included as contextual note
-- [ ] Iteration escalation (iteration 1/2/3) included as contextual guidance
-- [ ] Total guidance per step ≤ 55 lines
-- [ ] Tests cover: standard×push-dev, dev×ci-cd, simple×manual (minimum 3 combos)
+- [ ] `buildGuide()` uses named params, not `_ int, _ Environment`
+- [ ] RuntimeType added to DeployTarget, populated in BuildDeployTargets
+- [ ] Personalized guidance generated (actual hostnames, mode steps, strategy commands)
+- [ ] No runtime briefing injected — knowledge pointers only
+- [ ] Platform facts always included
+- [ ] Strategy alternatives in 2 lines
+- [ ] First deploy detection (READY_TO_DEPLOY) as contextual note
+- [ ] Iteration escalation (1/2/3+) as contextual guidance
+- [ ] Each step guidance ≤ 55 lines
+- [ ] Tests: standard×push-dev, dev×ci-cd, simple×manual minimum
 - [ ] All files ≤ 350 lines
 
 ### Phase 3 (Checkers)
-- [ ] `DeployStepChecker` type defined (separate from bootstrap StepChecker)
-- [ ] `context.Context` added to DeployComplete AND DeployStart
+- [ ] `DeployStepChecker` type defined (separate from StepChecker)
+- [ ] `context.Context` on DeployComplete AND DeployStart
 - [ ] `handleDeployComplete` passes ctx + checker to engine
-- [ ] `checkDeployPrepare`: zerops.yml parse + hostname match + env var ref validation
+- [ ] `checkDeployPrepare`: yml parse + hostname match + env var ref validation via API
 - [ ] `checkDeployResult`: API status + diagnostic feedback
-- [ ] Env var re-discovery via `client.GetServiceEnv()` at prepare step
-- [ ] Tests cover: nil plan, build failed, container crash, success, env var typo
+- [ ] `DeployTargetOut.Status` populated from checker results
+- [ ] Tests: nil state, build failed, crash, unhealthy, success, env var typo
 - [ ] `StepCheckResult` reused (not duplicated)
 
 ### Phase 4 (Init Instructions)
 - [ ] Container vs local environment explained
-- [ ] Code access model (mounts vs local files) explained
-- [ ] Deploy = rebuild concept explained
-- [ ] State refresh via zerops_discover mentioned
-- [ ] No workflow recommendations (just "when you need X → tool Y")
+- [ ] Code access (mounts vs local), deploy = rebuild
+- [ ] State refresh via zerops_discover
+- [ ] No workflow recommendations
 
 ### Phase 5 (Transitions)
-- [ ] Bootstrap complete output includes strategy selection prompt
-- [ ] Strategy set output includes "ready to deploy" command
-- [ ] No recommendations — just facts + commands
+- [ ] Bootstrap complete → strategy selection prompt + command
+- [ ] Strategy set → "ready to deploy" + command
 
 ### Phase 6 (Route)
-- [ ] Route returns facts only (services, states, metas)
-- [ ] No "suggestedAction" or "recommendation" fields
-- [ ] Available workflows listed as data, not suggestions
+- [ ] Returns facts only, no recommendations
 
 ---
 
-## 10. Decision Record
-
-All decisions in this plan are traceable to evidence:
+## 11. Decision Record — Evidence Traceability
 
 | Decision | Evidence | Source |
 |----------|----------|--------|
-| Dead code list accurate | grep: 0 production callers for all items | Deep review R1 + R2 (4 agents verified) |
-| deployTargetPending is LIVE | Used at deploy.go:154, 164, 273 | Deep review R1 + R2 |
-| Strategy gate exists and works | tools/workflow.go:227-248 | Deep review R2 (adversarial refuted) |
-| StepCheckResult is generic, reusable | bootstrap_checks.go:6-17, no bootstrap-specific fields | KB-research |
-| checkGenerate path resolution is reusable | workflow_checks_generate.go:29, filepath.Dir generic | KB-research |
-| DiscoveredEnvVars not on DeployState | Only on BootstrapState | All 4 R2 agents + KB-research |
-| Build failure returns buildLogs in deploy response | Live platform verification | KB-verifier claim 2 |
-| Service status fields: ACTIVE, RUNNING, STOPPED, READY_TO_DEPLOY | Live platform verification | KB-verifier claim 1 |
-| Env var typos = silent literal strings | Verified on live Zerops 2026-03-04 | Memory (verified fact) |
-| Events API has hint field | Live API response inspection | KB-verifier claim 7 |
-| ErrBootstrapNotActive used in deploy handlers | tools/workflow_deploy.go:29,51,62 | Deep review R2 adversarial M2 |
-| resolveStaticGuidance handles only bootstrap steps | guidance.go:56 checks StepGenerate, StepDeploy, StepClose | Deep review R2 adversarial C1 |
-| needsRuntimeKnowledge already handles DeployStepPrepare | guidance.go:67 | KB-research |
-| Push model wastes tokens, agent may not need injected knowledge | Philosophy discussion with user | Session 2026-03-21 |
-| Route should return facts, not recommendations | User: "zcp should be dumb" | Session 2026-03-21 |
-| Init instructions must explain container vs local concept | User: "vysvětlit ten koncept toho jak to funguje" | Session 2026-03-21 |
-| zerops_discover is the state refresh mechanism | User: "to si říkám že je pokryté v discovery" | Session 2026-03-21 |
+| Dead code list accurate | grep: 0 production callers for all items | R1 + R2 (6 agents total) |
+| deployTargetPending is LIVE | deploy.go:154, 164, 273 | R1 + R2 |
+| Strategy gate exists and works | tools/workflow.go:227-248 verified | R2 adversarial refuted |
+| StepCheckResult is generic, reusable | bootstrap_checks.go:6-17, no bootstrap fields | R1 KB-research |
+| checkGenerate path resolution reusable | workflow_checks_generate.go:29, filepath.Dir generic | R1 KB-research |
+| DiscoveredEnvVars not on DeployState | Only on BootstrapState, grep confirmed | R2 all 4 agents |
+| Build failure returns buildLogs | Live platform, E2E build_logs_test.go | R2 KB-verifier |
+| Service statuses: ACTIVE/RUNNING/STOPPED/READY_TO_DEPLOY | Live API + code | R2 KB-verifier |
+| Env var typos = silent literal strings | Verified live Zerops 2026-03-04 | Memory |
+| Events API has hint field | Live API inspection | R2 KB-verifier |
+| ErrBootstrapNotActive in deploy handlers | tools/workflow_deploy.go:29,51,62 | R2 adversarial |
+| resolveStaticGuidance bootstrap-only | guidance.go:56 | R2 adversarial C1 |
+| needsRuntimeKnowledge handles DeployStepPrepare | guidance.go:67 | R1 KB-research |
+| v1→v2: 3 checkers → 2 | Verify step informational, philosophy shift | User feedback |
+| Push model wastes tokens | Scenarios A-D analysis | Philosophy discussion |
+| Route = facts only | "ZCP should be dumb" | User directive |
+| Init instructions need environment concept | "Vysvětlit koncept jak to funguje" | User directive |
+| Guidance personalized to setup | "Mělo by být na míru dle toho co víme za setup" | User directive |
+| zerops_discover = state refresh | "To je pokryté v discovery" | User confirmation |
