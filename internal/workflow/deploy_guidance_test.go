@@ -26,14 +26,14 @@ func TestBuildPrepareGuide_Personalized(t *testing.T) {
 			},
 			env: EnvContainer,
 			wantContains: []string{
-				"appdev",                   // personalized hostname
-				"appstage",                 // stage hostname
-				"standard",                 // mode
-				"push-dev",                 // strategy
-				"deployFiles",              // platform fact
-				"${",                       // env var warning
-				"zerops_knowledge",         // knowledge pointer
-				"ci-cd",                    // strategy alternative mentioned
+				"appdev",
+				"appstage",
+				"standard",
+				"push-dev",
+				"deployFiles",
+				"${",
+				"zerops_knowledge",
+				"ci-cd",
 			},
 		},
 		{
@@ -121,13 +121,13 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 			iteration: 0,
 			env:       EnvContainer,
 			wantContains: []string{
-				"appdev",                            // personalized hostname
-				"appstage",                          // stage hostname
-				"zerops_deploy",                     // deploy command
-				"zerops_subdomain",                  // subdomain command
-				"zerops_verify",                     // verify command
-				"DEPLOYED",                          // platform fact
-				"deployFiles",                       // platform fact
+				"appdev",           // personalized hostname
+				"appstage",         // stage hostname
+				"zerops_deploy",    // deploy command
+				"zerops_subdomain", // subdomain command
+				"zerops_verify",    // verify command
+				"DEPLOYED",         // platform fact
+				"deployFiles",      // platform fact
 			},
 		},
 		{

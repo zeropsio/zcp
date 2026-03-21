@@ -322,7 +322,7 @@ func TestWorkflowTool_Action_Start_AutoResetDone(t *testing.T) {
 	// Submit empty plan (managed-only) to satisfy mode gate.
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "discover",
-		"plan":   []map[string]any{},
+		"plan": []map[string]any{},
 	})
 	for _, step := range []string{"provision", "generate", "deploy", "close"} {
 		callTool(t, srv, "zerops_workflow", map[string]any{
@@ -479,7 +479,7 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 	// Submit empty plan (managed-only) so generate can be skipped.
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "discover",
-		"plan":   []map[string]any{},
+		"plan": []map[string]any{},
 	})
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "provision",

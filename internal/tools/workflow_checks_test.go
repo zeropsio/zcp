@@ -257,9 +257,6 @@ func TestCheckDeploy_SubdomainNotEnabled_Fail(t *testing.T) {
 	}
 }
 
-
-
-
 func TestCheckProvision_NilPlan_ReturnsNil(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()

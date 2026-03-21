@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -209,7 +210,7 @@ func validateDeployEnvRefs(ctx context.Context, client platform.Client, projectI
 		}
 		discoveredEnvVars[svc.Name] = names
 		// Include service hostname in live hostnames for validation.
-		if !containsString(liveHostnames, svc.Name) {
+		if !slices.Contains(liveHostnames, svc.Name) {
 			liveHostnames = append(liveHostnames, svc.Name)
 		}
 	}
@@ -228,13 +229,4 @@ func validateDeployEnvRefs(ctx context.Context, client platform.Client, projectI
 	return []workflow.StepCheck{{
 		Name: hostname + "_env_refs", Status: statusPass,
 	}}
-}
-
-func containsString(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

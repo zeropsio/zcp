@@ -108,7 +108,7 @@ type strategySelectionResponse struct {
 
 // buildStrategySelectionResponse creates conversational guidance for strategy selection.
 func buildStrategySelectionResponse(metas []*workflow.ServiceMeta) strategySelectionResponse {
-	var hostnames []string
+	hostnames := make([]string, 0, len(metas))
 	var sb strings.Builder
 
 	sb.WriteString("## How should your services be deployed?\n\n")
@@ -138,7 +138,7 @@ func buildStrategySelectionResponse(metas []*workflow.ServiceMeta) strategySelec
 	sb.WriteString("- **Trade-off**: ZCP won't manage or guide your deploys.\n\n")
 
 	// Build example command.
-	var parts []string
+	parts := make([]string, 0, len(hostnames))
 	for _, h := range hostnames {
 		parts = append(parts, fmt.Sprintf("%q:\"push-dev\"", h))
 	}

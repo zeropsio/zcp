@@ -30,12 +30,12 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 	// Setup summary.
 	sb.WriteString("### Your services\n")
 	writeTargetSummary(&sb, state)
-	sb.WriteString(fmt.Sprintf("Mode: %s | Strategy: %s\n\n", state.Mode, state.Strategy))
+	fmt.Fprintf(&sb, "Mode: %s | Strategy: %s\n\n", state.Mode, state.Strategy)
 
 	// Checklist.
 	sb.WriteString("### Checklist\n")
 	hostnames := targetHostnameList(state.Targets)
-	sb.WriteString(fmt.Sprintf("1. zerops.yml must exist with `setup:` entries for: %s\n", strings.Join(hostnames, ", ")))
+	fmt.Fprintf(&sb, "1. zerops.yml must exist with `setup:` entries for: %s\n", strings.Join(hostnames, ", "))
 	sb.WriteString("2. Env var references (`${hostname_varName}`) must match real variables\n")
 	if state.Mode == PlanModeStandard || state.Mode == PlanModeDev {
 		sb.WriteString("3. Dev entry: `start: zsc noop --silent`, NO healthCheck\n")
@@ -71,7 +71,7 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 func buildDeployGuide(state *DeployState, iteration int, env Environment) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("## Deploy — %s mode, %s\n\n", state.Mode, state.Strategy))
+	fmt.Fprintf(&sb, "## Deploy — %s mode, %s\n\n", state.Mode, state.Strategy)
 
 	// Iteration escalation replaces workflow on retries.
 	if iteration > 0 {
@@ -141,10 +141,9 @@ func buildKnowledgeMap(targets []DeployTarget) string {
 		if t.Role == DeployRoleStage {
 			continue // stage shares runtime with dev
 		}
-		base := t.Hostname // use hostname as identifier
-		if !seen[base] {
-			seen[base] = true
-			sb.WriteString(fmt.Sprintf("- %s: `zerops_knowledge query=\"<runtime>\"` for runtime-specific config\n", t.Hostname))
+		if !seen[t.Hostname] {
+			seen[t.Hostname] = true
+			fmt.Fprintf(&sb, "- %s: `zerops_knowledge query=\"<runtime>\"` for runtime-specific config\n", t.Hostname)
 		}
 	}
 	return sb.String()
@@ -157,22 +156,22 @@ func writeTargetSummary(sb *strings.Builder, state *DeployState) {
 		if t.Role == DeployRoleStage {
 			continue // listed with dev
 		}
-		line := fmt.Sprintf("- %s (%s)", t.Hostname, t.Role)
+		fmt.Fprintf(sb, "- %s (%s)", t.Hostname, t.Role)
 		// Find paired stage.
 		for _, s := range state.Targets {
 			if s.Role == DeployRoleStage {
-				line += fmt.Sprintf(" → %s (stage)", s.Hostname)
+				fmt.Fprintf(sb, " → %s (stage)", s.Hostname)
 				break
 			}
 		}
-		sb.WriteString(line + "\n")
+		sb.WriteString("\n")
 	}
 }
 
 func writeStrategyNote(sb *strings.Builder, current string) {
 	sb.WriteString("### Strategy\n")
 	desc := strategyDescriptions[current]
-	sb.WriteString(fmt.Sprintf("Currently: %s (%s)\n", current, desc))
+	fmt.Fprintf(sb, "Currently: %s (%s)\n", current, desc)
 
 	var alts []string
 	for strategy, d := range strategyDescriptions {
@@ -180,7 +179,7 @@ func writeStrategyNote(sb *strings.Builder, current string) {
 			alts = append(alts, fmt.Sprintf("%s (%s)", strategy, d))
 		}
 	}
-	sb.WriteString(fmt.Sprintf("Other options: %s\n", strings.Join(alts, ", ")))
+	fmt.Fprintf(sb, "Other options: %s\n", strings.Join(alts, ", "))
 	sb.WriteString("Change: `zerops_workflow action=\"strategy\" strategies={...}`\n\n")
 }
 
@@ -201,14 +200,14 @@ func writeStandardWorkflow(sb *strings.Builder, targets []DeployTarget, env Envi
 		stage = "<stage>"
 	}
 
-	sb.WriteString(fmt.Sprintf("1. Deploy to dev: `zerops_deploy targetService=\"%s\"`\n", dev))
+	fmt.Fprintf(sb, "1. Deploy to dev: `zerops_deploy targetService=\"%s\"`\n", dev)
 	sb.WriteString("2. Start server on dev manually via SSH (dev uses zsc noop)\n")
-	sb.WriteString(fmt.Sprintf("3. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", dev))
-	sb.WriteString(fmt.Sprintf("4. Verify dev: `zerops_verify serviceHostname=\"%s\"`\n", dev))
-	sb.WriteString(fmt.Sprintf("5. Deploy to stage: `zerops_deploy sourceService=\"%s\" targetService=\"%s\"`\n", dev, stage))
+	fmt.Fprintf(sb, "3. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", dev)
+	fmt.Fprintf(sb, "4. Verify dev: `zerops_verify serviceHostname=\"%s\"`\n", dev)
+	fmt.Fprintf(sb, "5. Deploy to stage: `zerops_deploy sourceService=\"%s\" targetService=\"%s\"`\n", dev, stage)
 	sb.WriteString("   Stage auto-starts (real start command + healthCheck)\n")
-	sb.WriteString(fmt.Sprintf("6. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", stage))
-	sb.WriteString(fmt.Sprintf("7. Verify stage: `zerops_verify serviceHostname=\"%s\"`\n", stage))
+	fmt.Fprintf(sb, "6. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", stage)
+	fmt.Fprintf(sb, "7. Verify stage: `zerops_verify serviceHostname=\"%s\"`\n", stage)
 	_ = env // available for future container-specific hints
 }
 
@@ -224,10 +223,10 @@ func writeDevWorkflow(sb *strings.Builder, targets []DeployTarget, env Environme
 		dev = "<dev>"
 	}
 
-	sb.WriteString(fmt.Sprintf("1. Deploy: `zerops_deploy targetService=\"%s\"`\n", dev))
+	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"`\n", dev)
 	sb.WriteString("2. Start server manually via SSH (dev uses zsc noop)\n")
-	sb.WriteString(fmt.Sprintf("3. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", dev))
-	sb.WriteString(fmt.Sprintf("4. Verify: `zerops_verify serviceHostname=\"%s\"`\n", dev))
+	fmt.Fprintf(sb, "3. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", dev)
+	fmt.Fprintf(sb, "4. Verify: `zerops_verify serviceHostname=\"%s\"`\n", dev)
 	_ = env
 }
 
@@ -243,18 +242,18 @@ func writeSimpleWorkflow(sb *strings.Builder, targets []DeployTarget) {
 		hostname = "<service>"
 	}
 
-	sb.WriteString(fmt.Sprintf("1. Deploy: `zerops_deploy targetService=\"%s\"` — server auto-starts\n", hostname))
-	sb.WriteString(fmt.Sprintf("2. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", hostname))
-	sb.WriteString(fmt.Sprintf("3. Verify: `zerops_verify serviceHostname=\"%s\"`\n", hostname))
+	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"` — server auto-starts\n", hostname)
+	fmt.Fprintf(sb, "2. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", hostname)
+	fmt.Fprintf(sb, "3. Verify: `zerops_verify serviceHostname=\"%s\"`\n", hostname)
 }
 
 func writeIterationEscalation(sb *strings.Builder, iteration int) {
-	sb.WriteString(fmt.Sprintf("### Iteration %d — Diagnostic escalation\n", iteration))
-	switch {
-	case iteration == 1:
+	fmt.Fprintf(sb, "### Iteration %d — Diagnostic escalation\n", iteration)
+	switch iteration {
+	case 1:
 		sb.WriteString("Check `zerops_logs severity=\"error\"`. Build failed? → review buildLogs from deploy response.\n")
 		sb.WriteString("Container crash? → check start command, ports, env vars.\n")
-	case iteration == 2:
+	case 2:
 		sb.WriteString("Systematic check: zerops.yml config (ports, start, deployFiles),\n")
 		sb.WriteString("env var references (typos = literal strings!), runtime version compatibility.\n")
 	default:

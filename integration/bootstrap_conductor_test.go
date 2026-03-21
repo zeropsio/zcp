@@ -446,8 +446,9 @@ func TestIntegration_BootstrapConductor_StepGuidanceQuality(t *testing.T) {
 	}
 
 	// Check each step's guidance quality as we complete them.
-	responses := []*workflow.BootstrapResponse{startResp, planResp}
 	stepsToCheck := steps[1:] // Skip discover, start with provision
+	responses := make([]*workflow.BootstrapResponse, 0, 2+len(stepsToCheck))
+	responses = append(responses, startResp, planResp)
 
 	for i, step := range stepsToCheck {
 		resp := responses[len(responses)-1]
