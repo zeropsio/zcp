@@ -23,7 +23,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name for static guidance: bootstrap, deploy, debug, scale, or configure."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, or strategy."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, or route."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (e.g. discover, provision, generate, deploy, close)."`
@@ -43,7 +43,7 @@ type immediateResponse struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"reset|iterate|resume|list|route|strategy\".",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"reset|iterate|resume|list|route\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -224,6 +224,17 @@ func handleDeployStart(_ context.Context, engine *workflow.Engine, projectID str
 			"Only managed services exist — nothing to deploy")), nil, nil
 	}
 
+	// Strategy check: if any runtime service has no strategy, present selection guidance.
+	var needStrategy []*workflow.ServiceMeta
+	for _, m := range runtimeMetas {
+		if m.DeployStrategy == "" {
+			needStrategy = append(needStrategy, m)
+		}
+	}
+	if len(needStrategy) > 0 {
+		return jsonResult(buildStrategySelectionResponse(needStrategy)), nil, nil
+	}
+
 	targets, mode := workflow.BuildDeployTargets(runtimeMetas)
 	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode)
 	if err != nil {
@@ -245,20 +256,20 @@ func handleCICDStart(_ context.Context, engine *workflow.Engine, projectID strin
 			"Run bootstrap first to create services")), nil, nil
 	}
 
-	var hostnames []string
+	var cicdHostnames []string
 	for _, m := range metas {
-		if m.Mode != "" || m.StageHostname != "" {
-			hostnames = append(hostnames, m.Hostname)
+		if (m.Mode != "" || m.StageHostname != "") && m.DeployStrategy == workflow.StrategyCICD {
+			cicdHostnames = append(cicdHostnames, m.Hostname)
 		}
 	}
-	if len(hostnames) == 0 {
+	if len(cicdHostnames) == 0 {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			"No runtime services found",
-			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
+			"No services have ci-cd strategy",
+			"Set ci-cd strategy first: zerops_workflow action=\"strategy\" strategies={\"hostname\":\"ci-cd\"}")), nil, nil
 	}
 
-	resp, err := engine.CICDStart(projectID, input.Intent, hostnames)
+	resp, err := engine.CICDStart(projectID, input.Intent, cicdHostnames)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrWorkflowActive,

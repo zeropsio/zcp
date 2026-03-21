@@ -177,6 +177,7 @@ func TestWorkflowTool_Action_Start_Deploy_Stateful(t *testing.T) {
 		Hostname:       "appdev",
 		Mode:           "standard",
 		StageHostname:  "appstage",
+		DeployStrategy: workflow.StrategyPushDev,
 		BootstrappedAt: "2026-03-04T12:00:00Z",
 	}
 	if err := workflow.WriteServiceMeta(dir, meta); err != nil {

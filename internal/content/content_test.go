@@ -45,6 +45,32 @@ func TestGetWorkflow_Unknown(t *testing.T) {
 	}
 }
 
+// Phase 4 tests: verify strategy step removed, close step added
+func TestBootstrapWorkflow_StrategyStepRemoved(t *testing.T) {
+	t.Parallel()
+	content, err := GetWorkflow("bootstrap")
+	if err != nil {
+		t.Fatalf("GetWorkflow(bootstrap): %v", err)
+	}
+	if strings.Contains(content, `<section name="strategy"`) {
+		t.Error("bootstrap.md should NOT contain <section name=\"strategy\">")
+	}
+	if strings.Contains(content, "Choose Deployment Strategy") {
+		t.Error("bootstrap.md should NOT contain old strategy section")
+	}
+}
+
+func TestBootstrapWorkflow_CloseStepPresent(t *testing.T) {
+	t.Parallel()
+	content, err := GetWorkflow("bootstrap")
+	if err != nil {
+		t.Fatalf("GetWorkflow(bootstrap): %v", err)
+	}
+	if !strings.Contains(content, `<section name="close"`) {
+		t.Error("bootstrap.md should contain <section name=\"close\">")
+	}
+}
+
 func TestGetTemplate_AllTemplates(t *testing.T) {
 	t.Parallel()
 

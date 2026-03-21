@@ -23,11 +23,8 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 		hostname := target.Runtime.DevHostname
 		mode := target.Runtime.EffectiveMode()
 
-		// Resolve deploy strategy: explicit > auto-assign for non-standard > none.
+		// Strategy is only written if explicitly set (no auto-assign).
 		strategy := state.Bootstrap.Strategies[hostname]
-		if strategy == "" && (mode == PlanModeDev || mode == PlanModeSimple) {
-			strategy = StrategyPushDev
-		}
 
 		meta := &ServiceMeta{
 			Hostname:         hostname,

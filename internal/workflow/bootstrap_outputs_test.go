@@ -476,6 +476,55 @@ func TestWriteBootstrapOutputs_CopiesStrategiesToDecisions(t *testing.T) {
 	}
 }
 
+func TestWriteBootstrapOutputs_NoAutoAssignStrategy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		bootstrapMode string
+	}{
+		{"dev mode gets no auto-assign", PlanModeDev},
+		{"simple mode gets no auto-assign", PlanModeSimple},
+		{"standard mode gets no auto-assign", PlanModeStandard},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			eng := NewEngine(dir, EnvLocal, nil)
+
+			_, err := eng.BootstrapStart("proj-1", "no auto-assign test")
+			if err != nil {
+				t.Fatalf("BootstrapStart: %v", err)
+			}
+
+			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: tt.bootstrapMode},
+			}}, nil, nil)
+			if err != nil {
+				t.Fatalf("BootstrapCompletePlan: %v", err)
+			}
+
+			// No explicit strategy stored — all modes should get empty strategy.
+			for _, step := range []string{"provision", "generate", "deploy", "close"} {
+				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
+					t.Fatalf("BootstrapComplete(%s): %v", step, err)
+				}
+			}
+
+			meta, err := ReadServiceMeta(dir, "appdev")
+			if err != nil {
+				t.Fatalf("ReadServiceMeta: %v", err)
+			}
+			if meta == nil {
+				t.Fatal("expected appdev meta")
+			}
+			if meta.DeployStrategy != "" {
+				t.Errorf("DeployStrategy: want empty (no auto-assign), got %q", meta.DeployStrategy)
+			}
+		})
+	}
+}
+
 func TestWriteBootstrapOutputs_ExplicitStrategyPreserved(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -562,5 +611,235 @@ func TestProvisionMeta_SetsMode(t *testing.T) {
 				t.Errorf("Mode: want %q, got %q", tt.wantMode, meta.Mode)
 			}
 		})
+	}
+}
+
+// --- BuildTransitionMessage tests (Phase 3) ---
+
+func TestBuildTransitionMessage_NilState_ReturnsSimpleMessage(t *testing.T) {
+	t.Parallel()
+	msg := BuildTransitionMessage(nil)
+	if msg != "Bootstrap complete." {
+		t.Errorf("want simple message for nil state, got: %q", msg)
+	}
+}
+
+func TestBuildTransitionMessage_NilPlan_ReturnsSimpleMessage(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{}
+	msg := BuildTransitionMessage(state)
+	if msg != "Bootstrap complete." {
+		t.Errorf("want simple message for nil plan, got: %q", msg)
+	}
+}
+
+func TestBuildTransitionMessage_WithPlan_IncludesServices(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{
+					{
+						Runtime: RuntimeTarget{
+							DevHostname:   "appdev",
+							Type:          "nodejs@22",
+							BootstrapMode: PlanModeStandard,
+						},
+						Dependencies: []Dependency{
+							{Hostname: "db", Type: "postgresql@16"},
+						},
+					},
+				},
+			},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+	if !strings.Contains(msg, "appdev") {
+		t.Error("message should contain service hostname appdev")
+	}
+	if !strings.Contains(msg, "nodejs@22") {
+		t.Error("message should contain runtime type nodejs@22")
+	}
+	if !strings.Contains(msg, "db") {
+		t.Error("message should contain dependency db")
+	}
+}
+
+func TestBuildTransitionMessage_WithPlan_IncludesStrategySection(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{
+					{
+						Runtime: RuntimeTarget{
+							DevHostname:   "appdev",
+							Type:          "nodejs@22",
+							BootstrapMode: PlanModeStandard,
+						},
+					},
+				},
+			},
+			Strategies: map[string]string{"appdev": StrategyPushDev},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+	// Should mention deploy strategy selection.
+	if !strings.Contains(msg, "Deploy Strategy") && !strings.Contains(msg, "strategy") {
+		t.Error("message should include deploy strategy section")
+	}
+}
+
+func TestBuildTransitionMessage_WithPlan_IncludesCICDGate(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{
+					{
+						Runtime: RuntimeTarget{
+							DevHostname:   "appdev",
+							Type:          "nodejs@22",
+							BootstrapMode: PlanModeStandard,
+						},
+					},
+				},
+			},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+	// Should include CI/CD workflow option.
+	if !strings.Contains(msg, "CI/CD") && !strings.Contains(msg, "cicd") {
+		t.Error("message should include CI/CD workflow option")
+	}
+}
+
+func TestBuildTransitionMessage_WithPlan_IncludesRouterOffering(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{
+					{
+						Runtime: RuntimeTarget{
+							DevHostname:   "appdev",
+							Type:          "nodejs@22",
+							BootstrapMode: PlanModeStandard,
+						},
+					},
+				},
+			},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+	// Should list available workflows with priorities.
+	if !strings.Contains(msg, "deploy") && !strings.Contains(msg, "workflow") {
+		t.Error("message should include available workflows from router")
+	}
+}
+
+func TestBuildTransitionMessage_WithMultipleServices_ListsAll(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{
+					{
+						Runtime: RuntimeTarget{
+							DevHostname:   "appdev",
+							Type:          "nodejs@22",
+							BootstrapMode: PlanModeStandard,
+						},
+					},
+					{
+						Runtime: RuntimeTarget{
+							DevHostname:   "apidev",
+							Type:          "go@1.22",
+							BootstrapMode: PlanModeStandard,
+						},
+					},
+				},
+			},
+			Strategies: map[string]string{
+				"appdev": StrategyPushDev,
+				"apidev": StrategyCICD,
+			},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+	if !strings.Contains(msg, "appdev") {
+		t.Error("message should list appdev")
+	}
+	if !strings.Contains(msg, "apidev") {
+		t.Error("message should list apidev")
+	}
+	if !strings.Contains(msg, StrategyPushDev) {
+		t.Error("message should show push-dev strategy for appdev")
+	}
+	if !strings.Contains(msg, StrategyCICD) {
+		t.Error("message should show ci-cd strategy for apidev")
+	}
+}
+
+func TestBuildTransitionMessage_AllStrategyOptionsListed(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{
+					{
+						Runtime: RuntimeTarget{
+							DevHostname:   "appdev",
+							Type:          "nodejs@22",
+							BootstrapMode: PlanModeStandard,
+						},
+					},
+				},
+			},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+	// Verify all three strategy options are documented.
+	if !strings.Contains(msg, "push-dev") {
+		t.Error("message should document push-dev strategy")
+	}
+	if !strings.Contains(msg, "ci-cd") {
+		t.Error("message should document ci-cd strategy")
+	}
+	if !strings.Contains(msg, "manual") {
+		t.Error("message should document manual strategy")
+	}
+}
+
+func TestBuildTransitionMessage_CICDGateIncluded(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{
+					{
+						Runtime: RuntimeTarget{
+							DevHostname:   "appdev",
+							Type:          "nodejs@22",
+							BootstrapMode: PlanModeStandard,
+						},
+					},
+				},
+			},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+	// Verify CI/CD gate section with requirements.
+	if !strings.Contains(msg, "CI/CD Gate") {
+		t.Error("message should include CI/CD Gate section")
+	}
+	if !strings.Contains(msg, "git repository") {
+		t.Error("message should mention git repository requirement")
+	}
+	if !strings.Contains(msg, ".zcp/") {
+		t.Error("message should mention .zcp/ state directory")
+	}
+	if !strings.Contains(msg, ".gitignore") {
+		t.Error("message should mention .gitignore")
 	}
 }
