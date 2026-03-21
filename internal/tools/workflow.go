@@ -235,8 +235,19 @@ func handleDeployStart(_ context.Context, engine *workflow.Engine, projectID str
 		return jsonResult(buildStrategySelectionResponse(needStrategy)), nil, nil
 	}
 
-	targets, mode := workflow.BuildDeployTargets(runtimeMetas)
-	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode)
+	targets, mode, strategy := workflow.BuildDeployTargets(runtimeMetas)
+
+	// Check for mixed strategies: all runtime services must have the same strategy for now.
+	for i := 1; i < len(targets); i++ {
+		if targets[i].Strategy != targets[0].Strategy {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Mixed strategies not supported: %q vs %q", targets[0].Strategy, targets[i].Strategy),
+				"Deploy one strategy at a time. Create separate deploy sessions per strategy.")), nil, nil
+		}
+	}
+
+	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode, strategy)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrWorkflowActive,

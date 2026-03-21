@@ -42,8 +42,8 @@ func ResolveDeployGuidance(stateDir, hostname string) string {
 }
 
 // resolveDeployStepGuidance returns guidance for a deploy workflow step.
-// Mode-specific sections are assembled for the deploy step.
-func resolveDeployStepGuidance(step, mode string) string {
+// Mode-specific and strategy-specific sections are assembled for the deploy step.
+func resolveDeployStepGuidance(step, mode, strategy string) string {
 	md, err := content.GetWorkflow("deploy")
 	if err != nil {
 		return ""
@@ -64,6 +64,12 @@ func resolveDeployStepGuidance(step, mode string) string {
 			sections = append(sections, ExtractSection(md, "deploy-execute-simple"))
 		default:
 			sections = append(sections, ExtractSection(md, "deploy-execute-standard"))
+		}
+		// Strategy-specific guidance for deploy step.
+		if strategy != "" {
+			if sectionName, ok := StrategyToSection[strategy]; ok {
+				sections = append(sections, ExtractSection(md, sectionName))
+			}
 		}
 		// Iteration guidance for standard and dev modes (not simple — auto-starts).
 		if mode != PlanModeSimple {

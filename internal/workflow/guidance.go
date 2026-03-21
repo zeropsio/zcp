@@ -10,6 +10,7 @@ import (
 type GuidanceParams struct {
 	Step              string
 	Mode              string
+	Strategy          string
 	RuntimeType       string
 	DependencyTypes   []string
 	DiscoveredEnvVars map[string][]string

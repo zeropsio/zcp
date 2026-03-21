@@ -1206,7 +1206,7 @@ func TestEngine_DeployComplete_DeletesSessionFile(t *testing.T) {
 	eng := NewEngine(dir, EnvLocal, nil)
 
 	targets := []DeployTarget{{Hostname: "appdev", Role: "local"}}
-	if _, err := eng.DeployStart("proj-1", "test", targets, "local"); err != nil {
+	if _, err := eng.DeployStart("proj-1", "test", targets, "local", StrategyPushDev); err != nil {
 		t.Fatalf("DeployStart: %v", err)
 	}
 	sessionID := eng.SessionID()

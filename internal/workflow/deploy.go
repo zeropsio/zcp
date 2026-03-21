@@ -40,6 +40,7 @@ type DeployState struct {
 	Steps       []DeployStep   `json:"steps"`
 	Targets     []DeployTarget `json:"targets"`
 	Mode        string         `json:"mode"`
+	Strategy    string         `json:"strategy,omitempty"`
 }
 
 // DeployStep represents a step in the deploy workflow.
@@ -57,6 +58,7 @@ type DeployTarget struct {
 	Status          string `json:"status"`
 	Error           string `json:"error,omitempty"`
 	LastAttestation string `json:"lastAttestation,omitempty"`
+	Strategy        string `json:"strategy,omitempty"`
 }
 
 // DeployResponse is returned from deploy workflow actions.
@@ -108,7 +110,7 @@ var deployStepDetails = []struct {
 }
 
 // NewDeployState creates a deploy state with ordered targets.
-func NewDeployState(targets []DeployTarget, mode string) *DeployState {
+func NewDeployState(targets []DeployTarget, mode, strategy string) *DeployState {
 	steps := make([]DeployStep, len(deployStepDetails))
 	for i, d := range deployStepDetails {
 		steps[i] = DeployStep{Name: d.Name, Status: stepPending}
@@ -119,18 +121,20 @@ func NewDeployState(targets []DeployTarget, mode string) *DeployState {
 		Steps:       steps,
 		Targets:     targets,
 		Mode:        mode,
+		Strategy:    strategy,
 	}
 }
 
 // BuildDeployTargets constructs ordered targets from service metas.
-// Returns targets and detected mode.
-func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string) {
+// Returns targets, detected mode, and detected strategy.
+func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, string) {
 	if len(metas) == 0 {
-		return nil, ""
+		return nil, "", ""
 	}
 
 	var targets []DeployTarget
 	mode := ""
+	strategy := ""
 
 	for _, m := range metas {
 		metaMode := m.Mode
@@ -140,11 +144,15 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string) {
 		if mode == "" {
 			mode = metaMode
 		}
+		if strategy == "" {
+			strategy = m.DeployStrategy
+		}
 
 		targets = append(targets, DeployTarget{
 			Hostname: m.Hostname,
 			Role:     deployRoleFromMode(metaMode, m.Hostname, m.StageHostname),
 			Status:   deployTargetPending,
+			Strategy: m.DeployStrategy,
 		})
 
 		// Standard mode: add stage target after dev.
@@ -153,11 +161,12 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string) {
 				Hostname: m.StageHostname,
 				Role:     DeployRoleStage,
 				Status:   deployTargetPending,
+				Strategy: m.DeployStrategy,
 			})
 		}
 	}
 
-	return targets, mode
+	return targets, mode, strategy
 }
 
 func deployRoleFromMode(mode, _, stageHostname string) string {
@@ -330,12 +339,13 @@ func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env
 
 // buildGuide assembles a deploy step guide with knowledge injection.
 func (d *DeployState) buildGuide(step string, _ int, _ Environment, kp knowledge.Provider) string {
-	guide := resolveDeployStepGuidance(step, d.Mode)
+	guide := resolveDeployStepGuidance(step, d.Mode, d.Strategy)
 
 	if extra := assembleKnowledge(GuidanceParams{
-		Step: step,
-		Mode: d.Mode,
-		KP:   kp,
+		Step:     step,
+		Mode:     d.Mode,
+		Strategy: d.Strategy,
+		KP:       kp,
 	}); extra != "" {
 		guide += "\n\n---\n\n" + extra
 	}

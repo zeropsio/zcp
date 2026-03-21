@@ -338,13 +338,13 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 // --- Deploy workflow engine methods ---
 
 // DeployStart creates a new deploy session with targets ordered by mode.
-func (e *Engine) DeployStart(projectID, intent string, targets []DeployTarget, mode string) (*DeployResponse, error) {
+func (e *Engine) DeployStart(projectID, intent string, targets []DeployTarget, mode, strategy string) (*DeployResponse, error) {
 	state, err := e.Start(projectID, WorkflowDeploy, intent)
 	if err != nil {
 		return nil, fmt.Errorf("deploy start: %w", err)
 	}
 
-	ds := NewDeployState(targets, mode)
+	ds := NewDeployState(targets, mode, strategy)
 	ds.Steps[0].Status = stepInProgress
 	state.Deploy = ds
 
