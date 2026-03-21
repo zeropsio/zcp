@@ -109,21 +109,13 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	sb.WriteString("## What's Next?\n\n")
 	sb.WriteString("Infrastructure is ready and verified. Choose your next workflow:\n\n")
 	offerings := routeFromBootstrapState(state)
-	if len(offerings) > 0 {
-		for i, o := range offerings {
-			num := 'A' + rune(i)
-			sb.WriteString(fmt.Sprintf("**%c) %s** — %s\n", num, titleCase(o.Workflow), o.Reason))
-			if o.Hint != "" {
-				sb.WriteString(fmt.Sprintf("   → `%s`\n", o.Hint))
-			}
-			sb.WriteString("\n")
+	for i, o := range offerings {
+		num := 'A' + rune(i)
+		sb.WriteString(fmt.Sprintf("**%c) %s**\n", num, titleCase(o.Workflow)))
+		if o.Hint != "" {
+			sb.WriteString(fmt.Sprintf("   → `%s`\n", o.Hint))
 		}
-	} else {
-		// Fallback if router doesn't provide offerings
-		sb.WriteString("**A) Continue deploying** — edit code, push, verify.\n")
-		sb.WriteString("   → `zerops_workflow action=\"start\" workflow=\"deploy\"`\n\n")
-		sb.WriteString("**B) Set up CI/CD** — connect git repo for automatic deployments.\n")
-		sb.WriteString("   → `zerops_workflow action=\"start\" workflow=\"cicd\"`\n\n")
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("**Other operations:**\n")
@@ -140,18 +132,15 @@ func routeFromBootstrapState(state *WorkflowState) []FlowOffering {
 	if state == nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return nil
 	}
-	// For bootstrap completion, offer deploy and ci-cd as primary workflows.
 	offerings := []FlowOffering{
 		{
 			Workflow: "deploy",
 			Priority: 1,
-			Reason:   "Deploy code to services",
 			Hint:     `zerops_workflow action="start" workflow="deploy"`,
 		},
 		{
 			Workflow: "cicd",
 			Priority: 2,
-			Reason:   "Set up automated deployments",
 			Hint:     `zerops_workflow action="start" workflow="cicd"`,
 		},
 	}
