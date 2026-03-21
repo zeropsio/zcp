@@ -12,6 +12,24 @@ import (
 
 const baseInstructions = `ZCP manages Zerops PaaS infrastructure.`
 
+const containerEnvironment = `
+
+## Your Environment
+
+You are on a Zerops container. Runtime services are SSHFS-mounted at /var/www/{hostname}/ — edit code there, changes appear instantly on the service container. Mount is read/write, no file transfer needed.
+
+Deploy = rebuild. Editing files on mount does NOT trigger deploy. Deploy runs the full build pipeline (buildCommands → deployFiles → start). Deploy when: zerops.yml changes, need clean rebuild, or promote dev → stage. Code-only changes on dev: just restart the server via SSH.
+
+zerops_discover always returns the CURRENT state of all services. Call it whenever you need to refresh your understanding.`
+
+const localEnvironment = `
+
+## Your Environment
+
+You are running locally. Code is in the working directory. Deploy pushes code to Zerops via zcli push. zerops.yml must be at repository root. Each deploy = full rebuild + new container.
+
+zerops_discover always returns the CURRENT state of all services. Call it whenever you need to refresh your understanding.`
+
 const routingInstructions = `
 IMPORTANT: All Zerops operations are managed through workflow sessions. Before writing ANY configuration (import.yml, zerops.yml) or application code, you MUST start a workflow session. The workflow provides env var discovery, correct file paths, and deploy sequencing. Writing code before starting the workflow leads to incorrect configurations that must be rewritten.
 
@@ -41,9 +59,14 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 		b.WriteString(hint)
 	}
 
-	// Section C: Runtime context.
-	if rt.ServiceName != "" {
-		fmt.Fprintf(&b, "\n\nYou are running inside the Zerops service '%s'. You manage services in the same project.", rt.ServiceName)
+	// Section C: Environment concept — how code access and deploy work.
+	if rt.InContainer {
+		b.WriteString(containerEnvironment)
+		if rt.ServiceName != "" {
+			fmt.Fprintf(&b, "\nYou are running inside the Zerops service '%s'. You manage services in the same project.", rt.ServiceName)
+		}
+	} else {
+		b.WriteString(localEnvironment)
 	}
 
 	// Section D: Project summary (dynamic).
