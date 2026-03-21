@@ -118,6 +118,14 @@
 | 5 | engine.go 489L exceeds 350L convention | MINOR | wc -l output (489 lines) | Architecture F1 |
 | 6 | handleStrategy creates ServiceMeta for non-existent hostnames | MINOR | workflow_strategy.go:50-53 creates empty meta if nil | Security F2 |
 | 7 | Deploy iteration behavior not documented in spec | MINOR | deploy.go:253-272 resets indices 1+ (deploy+verify), preserves prepare; spec §7.3 only documents bootstrap iteration | Adversarial F7 |
+| 8 | DeployComplete has NO checker parameter — zero enforcement gates | MAJOR | engine.go:358 `DeployComplete(step, attestation)` vs engine.go:137 `BootstrapComplete(ctx, step, attestation, checker)` | Architecture cross-verification |
+| 9 | UpdateTarget() and DevFailed() are dead code — zero production callers | MINOR | deploy.go:239-282 defined; grep: no callers in tools/ or engine | Architecture cross-verification |
+| 10 | Deploy buildGuide() ignores iteration counter (`_ int`) — no escalating guidance | MINOR | deploy.go:332 iteration param unused | Architecture cross-verification |
+| 11 | DeployTarget.Status always "pending" — never updated during workflow | MINOR | Targets created as pending, no UpdateTarget calls in production | Architecture cross-verification |
+| 12 | `ResolveDeployGuidance()` is dead code — zero callers | MINOR | deploy_guidance.go:20-42 defined; grep: no callers anywhere | Correctness cross-verification |
+| 13 | Deploy status constants (deployed/verified/failed/skipped) are dead — only `deployTargetPending` is live | MINOR | deploy.go:30-33; only `deployTargetPending` used in NewDeployState | Correctness cross-verification |
+| 14 | `DeployTarget.Error` and `LastAttestation` fields are dead — never read in production | MINOR | deploy.go:59-60; only written in dead UpdateTarget() | Correctness cross-verification |
+| 15 | `StepChecker` type is bootstrap-specific (`*ServicePlan, *BootstrapState`) — cannot be reused for deploy | MINOR | bootstrap_checks.go:24; deploy would need its own checker signature | Adversarial cross-verification |
 
 #### LOGICAL (follows from verified facts)
 
@@ -158,30 +166,42 @@
 
 ### Must Address (VERIFIED Major)
 
-1. **Fix orphaned verify section in bootstrap.md** — Either:
+1. **Deploy workflow has NO checker gates** — DeployComplete accepts only `(step, attestation)` with no checker parameter, unlike BootstrapComplete which accepts `(ctx, step, attestation, checker)`. All 3 deploy steps (prepare, deploy, verify) advance on any attestation text without infrastructure validation. Bootstrap enforces real gates (provision checker validates service status, generate checker validates zerops.yml, deploy checker runs VerifyAll). Deploy workflow has zero enforcement.
+   - Evidence: engine.go:358 `DeployComplete(step, attestation string)` vs engine.go:137 `BootstrapComplete(ctx, stepName, attestation, checker StepChecker)`
+   - Source: Architecture cross-verification
+
+2. **Fix orphaned verify section in bootstrap.md** — Either:
    - (a) Merge verify section content into the deploy section (so agents receive it during deploy step guidance), OR
    - (b) Have `ResolveProgressiveGuidance` also extract the "verify" section when assembling deploy step guidance
    - The 3-check verification protocol table and managed service skip rules are valuable agent guidance currently lost.
 
-2. **Remove or activate monitor.md** — Either:
+3. **Remove or activate monitor.md** — Either:
    - (a) Add `"monitor": true` to immediateWorkflows map in state.go, OR
    - (b) Delete monitor.md and remove from test expectations
 
 ### Should Address (VERIFIED Minor)
 
-3. **Pass liveServices to BootstrapCompletePlan** — Load services list from API (`client.ListServices`) and pass to ValidateBootstrapTargets for CREATE/EXISTS validation at plan submission time, giving agents immediate feedback
+4. **Deploy dead code: UpdateTarget() and DevFailed()** — deploy.go:239-282 defines these methods but no production code calls them. DeployTarget.Status is always "pending" — never updated during the workflow. Either wire them into checker results or remove.
+   - Evidence: grep shows zero callers in tools/ or engine methods
+   - Source: Architecture cross-verification
 
-4. **Remove BootstrapStoreStrategies from engine** — Unused by any tool handler; only tests call it. Strategy is set post-bootstrap via handleStrategy → ServiceMeta files directly. Remove method + update tests to use the production path.
+5. **Deploy buildGuide() ignores iteration counter** — deploy.go:332 has `_ int` for iteration parameter. BuildIterationDelta is available but never called for deploy workflow, meaning deploy iterations get no escalating guidance (unlike bootstrap which escalates at iterations 1-2, 3-4, 5+).
+   - Evidence: deploy.go:332 `func (d *DeployState) buildGuide(step string, _ int, _ Environment, kp knowledge.Provider)`
+   - Source: Architecture cross-verification
 
-5. **Validate hostname existence in handleStrategy** — Before creating ServiceMeta for a hostname, verify the hostname exists in existing metas or live API. Prevents phantom ServiceMeta files.
+6. **Pass liveServices to BootstrapCompletePlan** — Load services list from API (`client.ListServices`) and pass to ValidateBootstrapTargets for CREATE/EXISTS validation at plan submission time, giving agents immediate feedback
 
-6. **Document deploy iteration in spec** — Add deploy iteration behavior to spec §7.3: resets steps 1-2 (deploy+verify), preserves prepare(0), resets all target statuses to pending.
+7. **Remove BootstrapStoreStrategies from engine** — Unused by any tool handler; only tests call it. Strategy is set post-bootstrap via handleStrategy → ServiceMeta files directly. Remove method + update tests to use the production path.
+
+8. **Validate hostname existence in handleStrategy** — Before creating ServiceMeta for a hostname, verify the hostname exists in existing metas or live API. Prevents phantom ServiceMeta files.
+
+9. **Document deploy iteration in spec** — Add deploy iteration behavior to spec §7.3: resets steps 1-2 (deploy+verify), preserves prepare(0), resets all target statuses to pending.
 
 ### Investigate (UNVERIFIED but plausible)
 
-7. **checkGenerate path in container mode** — Verify that `projectRoot/{hostname}/` matches the actual SSHFS mount base when running on zcpx.
+10. **checkGenerate path in container mode** — Verify that `projectRoot/{hostname}/` matches the actual SSHFS mount base when running on zcpx.
 
-8. **Add test for managed-only iterate** — Logic is sound but no test covers managed-only session calling action=iterate.
+11. **Add test for managed-only iterate** — Logic is sound but no test covers managed-only session calling action=iterate.
 
 ---
 
@@ -195,3 +215,11 @@
 | 4 | BootstrapStoreStrategies | Unused in production code paths | grep: only in tests | Adversarial |
 | 5 | handleStrategy hostname check | Missing existence validation | workflow_strategy.go:50-53 | Security |
 | 6 | spec §7.3 deploy iteration | Undocumented behavior | deploy.go:253-272 | Adversarial |
+| 7 | DeployComplete | No checker parameter — asymmetry with Bootstrap | engine.go:358 vs engine.go:137 | Architecture |
+| 8 | UpdateTarget/DevFailed | Dead code — zero production callers | deploy.go:239-282 | Architecture |
+| 9 | Deploy buildGuide iteration | Iteration counter ignored (`_ int`) | deploy.go:332 | Architecture |
+| 10 | DeployTarget.Status | Always "pending" — never updated | deploy.go target construction | Architecture |
+| 11 | ResolveDeployGuidance | Dead code — zero callers | deploy_guidance.go:20-42 | Correctness |
+| 12 | Deploy status constants | 4 of 5 dead (deployed/verified/failed/skipped) | deploy.go:30-33 | Correctness |
+| 13 | DeployTarget fields | Error + LastAttestation dead — never read | deploy.go:59-60 | Correctness |
+| 14 | StepChecker type | Bootstrap-specific signature — deploy needs own type | bootstrap_checks.go:24 | Adversarial |

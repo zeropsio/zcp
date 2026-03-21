@@ -1,0 +1,559 @@
+# ZCP Guidance & Knowledge Delivery Specification
+
+> **Status**: Authoritative — all guidance assembly, knowledge injection, init instructions, and workflow responses MUST conform to this document.
+> **Scope**: All ZCP workflows and tool responses. Both container and local environments.
+> **Date**: 2026-03-21
+
+---
+
+## 1. Purpose
+
+This document defines HOW and WHEN ZCP delivers knowledge and guidance to the AI agent. It is the canonical reference for:
+- What information gets injected into workflow responses
+- What information the agent pulls on demand
+- How init instructions orient the agent
+- How the system adapts to different user scenarios
+- How transitions between workflows work
+
+**Companion documents**:
+- `docs/spec-bootstrap-deploy.md` — workflow step specifications (WHAT happens)
+- This document — guidance delivery philosophy (HOW knowledge flows)
+
+---
+
+## 2. Core Principles
+
+### 2.1 Help, Don't Gatekeep
+
+**We don't know what the user wants from their application.** We don't know how it should work, what state the code is in, whether they want health checks, or what "healthy" means. We DO know:
+
+- Mode of services (standard/dev/simple) — and they may want to change it
+- Strategy (push-dev/ci-cd/manual) — and they may want to switch
+- Zerops platform mechanics — how the deploy pipeline works, what survives deploy, env var behavior, zerops.yml schema
+
+ZCP validates **platform integration** (always objectively correct/incorrect) and provides **contextual guidance** (Zerops-specific knowledge). It never imposes assumptions about application correctness.
+
+### 2.2 Dumb Data, Smart Agent
+
+ZCP provides **correct, structured data** and lets the LLM decide what to do with it. ZCP does NOT:
+- Recommend which workflow to run
+- Suggest what the user should build
+- Decide whether code is ready to deploy
+- Judge whether an application is "working"
+
+ZCP DOES:
+- Return factual state (services, status, env vars, health checks)
+- Validate platform integration (zerops.yml syntax, hostname matching, env var references)
+- Deliver Zerops-specific knowledge the agent cannot infer (container lifecycle, env var behavior, mode-specific workflows)
+- Point to where additional knowledge is available
+
+### 2.3 Reactive, Not Proactive
+
+ZCP responds to what the agent asks for. It does not push information preemptively.
+
+- Agent starts deploy workflow → ZCP returns personalized guidance for THEIR setup
+- Agent encounters error → ZCP provides diagnostic guidance based on WHERE it failed
+- Agent needs runtime knowledge → agent calls `zerops_knowledge`
+- Agent doesn't need Zerops → ZCP stays out of the way
+
+### 2.4 Inject Rules, Point to Knowledge
+
+Two categories of information, two delivery methods:
+
+| Category | Delivery | Rationale |
+|----------|----------|-----------|
+| **Platform mechanics** (container lifecycle, env var behavior, deploy pipeline) | INJECT — always included in workflow responses | Agent cannot infer these. Always relevant. Compact (10-15 lines). |
+| **Mode/strategy workflow** (step sequence, commands) | INJECT — personalized to current setup | Agent MUST follow correct order. Specific to their mode/strategy. |
+| **Runtime knowledge** (Node.js specifics, Go specifics) | POINT — "zerops_knowledge query=..." | Agent may not need it. Verbose. Available on demand. |
+| **Recipe patterns** (Next.js, Laravel) | POINT — "zerops_knowledge recipe=..." | Framework-specific. Agent pulls when relevant. |
+| **Schema details** (zerops.yml full schema) | POINT — "zerops_knowledge query='zerops.yml'" | Verbose reference. Agent pulls when modifying config. |
+| **Environment data** (env vars, service status) | POINT — "zerops_discover" | Dynamic. Agent calls when it needs current state. |
+
+### 2.5 Personalized, Not Generic
+
+Guidance is assembled from the agent's ACTUAL state (DeployState, ServiceMeta, Environment), not from generic templates. The agent sees:
+
+- Their specific hostnames, types, and modes
+- Their specific workflow steps (for standard: dev→verify→stage; for simple: deploy→verify)
+- Their specific strategy commands
+- Pointers to knowledge for THEIR specific runtime types
+
+Never: generic "here's how standard mode works" without context. Always: "YOUR services are appdev (nodejs@22) → appstage. Step 1: deploy to appdev..."
+
+---
+
+## 3. Knowledge Taxonomy
+
+### 3.1 Categories
+
+| Category | Examples | Source | Stability |
+|----------|----------|--------|-----------|
+| **Platform mechanics** | Container lifecycle, env var resolution, build vs run container, deployFiles behavior | Verified against live platform | Stable (changes with Zerops releases) |
+| **Mode workflows** | Standard: dev→stage flow. Dev: dev-only. Simple: auto-start. | Defined in ZCP code | Stable (changes with ZCP releases) |
+| **Strategy procedures** | push-dev: SSH self-deploy. ci-cd: git webhook. manual: user-managed. | Defined in ZCP code | Stable |
+| **Runtime knowledge** | Node.js zerops.yml patterns, Go build config, PHP implicit webserver | Knowledge store (BM25 + recipes) | Updated periodically |
+| **Recipe patterns** | Next.js, Laravel, Django framework-specific configs | Knowledge store (recipes/) | Updated periodically |
+| **Operational data** | Service status, env var values, health check results, logs | Live API (zerops_discover, zerops_verify, zerops_logs) | Dynamic (changes constantly) |
+
+### 3.2 What Agent Cannot Infer
+
+These facts are Zerops-specific and MUST be communicated. The agent has no way to derive them from general knowledge:
+
+1. **Deploy creates a new container.** All local files are lost. Only `deployFiles` content persists. This is NOT a restart — it's container replacement.
+
+2. **`${hostname_varName}` typos become silent literal strings.** No error from the API. No deploy failure. The platform provides zero protection against env var reference mistakes.
+
+3. **Build container ≠ run container.** Different environment. Packages installed during build are NOT available at runtime unless included in `deployFiles`.
+
+4. **Dev mode uses `zsc noop --silent`.** Server doesn't start automatically. Agent must start it manually via SSH after every deploy. Exception: implicit-webserver runtimes (php-nginx, php-apache, nginx, static) auto-start.
+
+5. **Stage mode auto-starts.** Real start command + healthCheck. Server monitored by Zerops, auto-restarts on failure.
+
+6. **Subdomain must be explicitly enabled** per service, after every deploy, even if set in import.yml. `zerops_subdomain action="enable"` is idempotent.
+
+7. **`zerops_deploy` blocks until pipeline completes.** Returns DEPLOYED or BUILD_FAILED with build logs. No manual polling needed.
+
+8. **SSHFS mount path is local to zcpx container.** `/var/www/{hostname}/` is the mount path on the ZCP container. Inside the target container, code lives at `/var/www/`. Never use mount path as `workingDir` in zerops_deploy.
+
+---
+
+## 4. Environment Model
+
+### 4.1 Container Mode (zcpx running on Zerops)
+
+```
+┌─────────────────────────────────────┐
+│  zcpx container (ZCP service)       │
+│                                     │
+│  SSHFS mounts:                      │
+│    /var/www/appdev/  ──────────┐    │
+│    /var/www/apidev/  ──────┐   │    │
+│                            │   │    │
+│  Agent edits code here     │   │    │
+│  Changes appear instantly  │   │    │
+│  on target containers      │   │    │
+└────────────────────────────┼───┼────┘
+                             │   │
+                    ┌────────┘   └────────┐
+                    ▼                     ▼
+           ┌──────────────┐     ┌──────────────┐
+           │  apidev      │     │  appdev      │
+           │  container   │     │  container   │
+           │  /var/www/   │     │  /var/www/   │
+           └──────────────┘     └──────────────┘
+```
+
+**Key facts for agent**:
+- Code is accessible via mount paths on the zcpx container
+- File changes are immediate (no transfer needed)
+- Deploy runs the full build pipeline (not just file sync)
+- Deploy when: zerops.yml changes, need clean rebuild, promote dev→stage
+- Code-only changes on dev: just restart the server via SSH
+
+### 4.2 Local Mode (ZCP running on developer's machine)
+
+```
+┌─────────────────────────────────────┐
+│  Developer's machine                │
+│                                     │
+│  Code in working directory          │
+│  zerops.yml at repository root      │
+│                                     │
+│  Deploy pushes code via zcli push   │
+└─────────────────────────────────────┘
+           │
+           │ zcli push
+           ▼
+    ┌──────────────┐
+    │  Zerops      │
+    │  service     │
+    │  container   │
+    └──────────────┘
+```
+
+**Key facts for agent**:
+- Code is local, no mounts
+- Deploy = `zcli push` (pushes code to Zerops)
+- Each deploy = full rebuild + new container
+- zerops.yml must be at repository root
+
+### 4.3 Environment Detection
+
+ZCP detects the environment at startup (`internal/runtime/runtime.go`). The detected environment affects:
+- How deploy commands work (SSH self-deploy vs zcli push)
+- Whether mount paths are available
+- What init instructions are relevant
+
+---
+
+## 5. Agent Lifecycle Scenarios
+
+### 5.1 Scenario A: Goal-Oriented ("Create an image upload app")
+
+```
+User intent: functional goal, not infrastructure-specific
+
+Agent flow:
+1. Agent recognizes infrastructure is needed (from init instructions)
+2. Plans required services (app server + storage + maybe DB)
+3. Starts bootstrap workflow → ZCP guides infrastructure creation
+4. Bootstrap completes → ServiceMeta written → strategy selection prompted
+5. Agent sets strategy
+6. Agent writes application code (NO ZCP involvement needed)
+7. Agent starts deploy workflow → gets personalized guidance
+8. Agent deploys → iterates if needed → done
+```
+
+**ZCP's role**: Guide infrastructure creation (bootstrap), validate platform integration (deploy checkers), provide personalized workflow steps (deploy guidance). Stay out of the way during code writing.
+
+### 5.2 Scenario B: Infrastructure-Explicit ("Create Laravel + DB + MQ + object storage")
+
+```
+User intent: infrastructure specification, app development later
+
+Agent flow:
+1. Starts bootstrap with specified services
+2. Bootstrap completes → strategy selection
+3. Agent sets strategy → "Infrastructure ready."
+4. ... time passes ...
+5. User returns: "Add feature X"
+6. Agent writes code, starts deploy workflow when ready
+```
+
+**ZCP's role**: Bootstrap only. Deploy workflow available when agent needs it.
+
+### 5.3 Scenario C: Continuing Work (bootstrapped project, new session)
+
+```
+User intent: unknown — could be anything
+
+Agent flow:
+1. Agent has init instructions + CLAUDE.md
+2. User: "Add Redis caching"
+3. Agent checks current state via zerops_discover or zerops_workflow action="route"
+4. Decides: need new service → bootstrap. Or: modify existing code → edit + deploy.
+5. Acts accordingly
+```
+
+**ZCP's role**: Provide factual state when asked. Don't push knowledge preemptively. Agent decides what workflow to use based on what user wants.
+
+### 5.4 Scenario D: Unknown / Edge Cases
+
+```
+User intent: doesn't fit A/B/C patterns
+
+Agent flow:
+1. Agent does whatever user asks
+2. Uses ZCP tools individually when needed (discover, verify, logs, knowledge)
+3. Uses workflows when structured flow is needed
+4. ZCP adapts — returns relevant data for whatever is called
+```
+
+**ZCP's role**: Be a reliable toolkit. Individual tools work independently. Workflows add structure when needed. Nothing breaks if agent doesn't use workflows.
+
+### 5.5 Cross-Scenario Invariants
+
+| Rule | Applies to |
+|------|-----------|
+| ZCP never tells the agent WHAT to build | All scenarios |
+| ZCP never recommends which workflow to start | All scenarios |
+| Route returns facts (services, states, metas), not recommendations | All scenarios |
+| Individual tools work without active workflow | All scenarios |
+| Agent can always refresh state via zerops_discover | All scenarios |
+| Workflow guidance is personalized to current setup | A, B, C when using workflows |
+
+---
+
+## 6. Guidance Assembly Model
+
+### 6.1 Structure
+
+Every workflow step response contains guidance assembled from three layers:
+
+```
+┌─────────────────────────────────────────────┐
+│  Layer 1: MUST-KNOW (injected, compact)     │
+│  Platform mechanics + mode/strategy workflow │
+│  Personalized to current DeployState        │
+│  10-30 lines                                │
+├─────────────────────────────────────────────┤
+│  Layer 2: CONTEXTUAL (injected, conditional)│
+│  First deploy vs redeploy                   │
+│  Iteration escalation (iter 1/2/3)          │
+│  0-15 lines (only when applicable)          │
+├─────────────────────────────────────────────┤
+│  Layer 3: KNOWLEDGE MAP (pointers)          │
+│  Runtime knowledge: zerops_knowledge query  │
+│  Recipes: zerops_knowledge recipe           │
+│  Env vars: zerops_discover includeEnvs      │
+│  5-10 lines                                 │
+└─────────────────────────────────────────────┘
+```
+
+**Total guidance per step**: 15-55 lines. Never 200+.
+
+### 6.2 Layer 1: Must-Know (Always Injected)
+
+Assembled from `DeployState` + `ServiceMeta` + `Environment`:
+
+**Setup summary** (personalized):
+```
+Your services: appdev (nodejs@22, dev) → appstage (stage)
+Mode: standard | Strategy: push-dev
+```
+
+**Workflow steps** (mode + strategy specific):
+```
+1. Deploy to dev: zerops_deploy targetService="appdev"
+2. Start server manually (dev uses zsc noop)
+3. Verify: zerops_verify serviceHostname="appdev"
+4. Promote to stage: zerops_deploy sourceService="appdev" targetService="appstage"
+5. Stage auto-starts (real start command + healthCheck)
+6. Verify stage: zerops_verify serviceHostname="appstage"
+```
+
+**Platform facts** (always):
+```
+- Deploy = new container, local files lost, only deployFiles survives
+- ${hostname_varName} typo = silent literal string, no error
+- Dev: start server manually after deploy (except php-nginx, nginx, static)
+- Stage: auto-starts, Zerops monitors via healthCheck
+- zerops_deploy blocks until pipeline complete — returns DEPLOYED or BUILD_FAILED
+```
+
+**Strategy note** (brief, non-forcing):
+```
+Currently: push-dev (SSH self-deploy from dev container)
+Other options: ci-cd (auto-deploy on git push), manual (you manage)
+Change: zerops_workflow action="strategy" strategies={"appdev":"ci-cd"}
+```
+
+### 6.3 Layer 2: Contextual (Conditional)
+
+Injected only when specific conditions are met:
+
+| Condition | Content |
+|-----------|---------|
+| First deploy (service status READY_TO_DEPLOY) | "This is the first deploy. zerops.yml needs creation. Load runtime knowledge first." |
+| Redeploy (service RUNNING, zerops.yml exists) | "Service already running. If config unchanged, deploy directly." |
+| Iteration 1 (first failure) | "Check zerops_logs severity=error. Build failed? → build log. Container crash? → runtime log, start command, env vars." |
+| Iteration 2 | "Systematic check: zerops.yml (ports, start, deployFiles), env var references, runtime version." |
+| Iteration 3+ | "Present diagnostic summary to user: exact error, current config, env var values. User decides." |
+
+### 6.4 Layer 3: Knowledge Map (Pointers)
+
+Assembled from ServiceMeta runtime types and dependency types:
+
+```
+### Knowledge on demand
+- appdev (nodejs@22): zerops_knowledge query="nodejs"
+- Recipes: zerops_knowledge recipe="nextjs" (if framework known)
+- db (postgresql@16): env vars via zerops_discover includeEnvs=true
+- zerops.yml help: zerops_knowledge query="zerops.yml schema"
+```
+
+The agent decides whether to call these. ZCP never injects the knowledge content itself.
+
+---
+
+## 7. Init Instructions Role
+
+### 7.1 What Init Instructions Cover
+
+Init instructions are loaded once at agent session start. They provide the foundational mental model:
+
+1. **Environment concept**: Container vs local, where code lives, how mounts work
+2. **Available tools**: What ZCP tools exist and when to use each
+3. **State refresh**: "zerops_discover always returns current state"
+4. **Workflow entry points**: "When you need to deploy → zerops_workflow action='start' workflow='deploy'"
+5. **Knowledge access**: "When you need Zerops-specific knowledge → zerops_knowledge query='...'"
+
+### 7.2 What Init Instructions Do NOT Cover
+
+- What the user should build
+- Which workflow to start
+- Runtime-specific knowledge (that's in the knowledge store)
+- Detailed workflow step guidance (that's in workflow responses)
+- Current service state (that's from zerops_discover)
+
+### 7.3 Container Mode Init Instructions (conceptual template)
+
+```
+## Your Environment
+
+You're on the zcpx container inside a Zerops project.
+
+### Code Access
+Runtime services are SSHFS-mounted:
+  /var/www/{hostname}/ — edit code here, changes appear on the service container
+Mount is read/write, changes immediate. No file transfer needed.
+
+### Deploy = Rebuild
+Editing files on mount does NOT trigger deploy. Deploy runs the full pipeline
+(build → deployFiles → start). Deploy when you change zerops.yml, need a clean
+rebuild, or want to promote dev → stage.
+Code-only changes on dev: just restart the server via SSH.
+
+### Tools
+- zerops_discover — current state of all services (call anytime for refresh)
+- zerops_workflow — orchestrated flows (bootstrap, deploy, debug, scale, configure)
+- zerops_knowledge — Zerops-specific knowledge (runtimes, recipes, schemas)
+- zerops_verify — health checks
+- zerops_logs — runtime and build logs
+- zerops_deploy — deploy code to a service
+
+### When to Use What
+- Creating new infrastructure → zerops_workflow action="start" workflow="bootstrap"
+- Deploying code changes → zerops_workflow action="start" workflow="deploy"
+- Debugging issues → zerops_verify, zerops_logs
+- Need Zerops knowledge → zerops_knowledge query="..."
+- Need current state → zerops_discover
+```
+
+### 7.4 Local Mode Init Instructions (conceptual template)
+
+```
+## Your Environment
+
+You're running locally. Code is in the working directory.
+
+### Deploy
+Deploy pushes code from local to Zerops via zcli push.
+zerops.yml must be at repository root.
+Each deploy = full rebuild + new container.
+
+### Tools
+[same as container mode, minus mount-specific details]
+```
+
+---
+
+## 8. Workflow Guidance Specifications
+
+### 8.1 Bootstrap Guidance
+
+Bootstrap is a CREATIVE workflow — the agent is building from scratch. Knowledge injection is appropriate because the agent needs it to create correct configuration.
+
+Bootstrap guidance model (unchanged from current):
+- **Discover**: Stack catalog, mode explanations, plan validation rules
+- **Provision**: import.yml schema, service creation procedure
+- **Generate**: Runtime briefing, dependency wiring, env var names, zerops.yml schema
+- **Deploy**: Mode-specific deploy procedure, operational details
+- **Close**: Strategy selection prompt
+
+This is correct because bootstrap generates NEW configuration. The agent genuinely needs schema knowledge to write zerops.yml for the first time.
+
+### 8.2 Deploy Guidance
+
+Deploy is an OPERATIONAL workflow — services already exist, config may already exist. Knowledge is available on demand, not injected.
+
+Deploy guidance model (redesigned):
+- **Prepare**: Setup summary + platform facts + knowledge pointers (Layer 1 + Layer 3)
+- **Deploy**: Personalized workflow steps + contextual info + diagnostics (Layer 1 + Layer 2)
+- **Verify**: Diagnostic patterns (existing deploy.md verify section)
+
+See Section 6 for detailed layer definitions.
+
+### 8.3 Immediate Workflows
+
+Debug, scale, configure are stateless — return guidance text directly. No session state, no checkers. Guidance content should follow the same principles: inject what's always relevant, point to knowledge on demand.
+
+---
+
+## 9. Transitions Between Workflows
+
+### 9.1 Bootstrap → Strategy → Deploy
+
+```
+Bootstrap complete
+  → output includes: "Services ready. Choose deploy strategy for each service."
+  → provides strategy selection guidance (all 3 options equally presented)
+  → provides command: zerops_workflow action="strategy" strategies={...}
+
+Strategy set
+  → output includes: "Strategies configured. When code is ready to deploy:"
+  → provides command: zerops_workflow action="start" workflow="deploy"
+
+Agent writes code (NO ZCP involvement)
+
+Agent starts deploy
+  → deploy workflow returns personalized guidance
+```
+
+### 9.2 Deploy → Iteration → Deploy
+
+```
+Deploy step fails (checker or agent attestation)
+  → agent calls: zerops_workflow action="iterate"
+  → prepare step preserved, deploy+verify reset
+  → iteration counter incremented
+  → agent gets escalating diagnostic guidance (Layer 2 contextual)
+```
+
+### 9.3 New Session → State Discovery
+
+```
+Agent starts new session on existing project
+  → init instructions tell agent about available tools
+  → agent calls zerops_discover or zerops_workflow action="route" to understand current state
+  → route returns FACTS: services, statuses, metas, active sessions
+  → agent decides what to do based on user request + discovered state
+```
+
+### 9.4 Transition Invariants
+
+| Rule | Enforced by |
+|------|-------------|
+| Bootstrap outputs always include strategy selection prompt | `BuildTransitionMessage()` |
+| Strategy outputs always include deploy entry command | `handleStrategy()` response |
+| Route returns data, never recommendations | `Route()` returns facts only |
+| Deploy workflow requires strategy set (conversational if not) | `handleDeployStart()` strategy gate |
+| Agent can always refresh state via zerops_discover | Tool always available |
+
+---
+
+## 10. State & Refresh Model
+
+### 10.1 State Sources
+
+| Source | What it provides | When to use |
+|--------|-----------------|-------------|
+| ServiceMeta files | Bootstrap decisions (mode, strategy, stage pairing) | Read by deploy workflow on start |
+| Session state | Current workflow progress, iteration count | Read by workflow engine on every action |
+| Live API (zerops_discover) | Current service status, env vars, resources | Agent calls when it needs fresh data |
+| Live API (zerops_verify) | Health check results | Agent calls to check service health |
+| Live API (zerops_logs) | Runtime and build logs | Agent calls to diagnose issues |
+
+### 10.2 State Staleness
+
+During a session, state can become stale:
+- Agent deploys → service status changes (READY_TO_DEPLOY → ACTIVE)
+- Agent scales → resources change
+- External events → services may change independently
+
+**Refresh mechanism**: `zerops_discover` always returns current state. Agent should call it when:
+- Before starting a deploy workflow (to confirm current service state)
+- After a deploy (to verify new state)
+- When diagnosis needs current information
+- Whenever it's uncertain about current state
+
+Init instructions should communicate: "zerops_discover always returns the CURRENT state. Call it whenever you need to refresh your understanding."
+
+---
+
+## 11. Guidance Invariants
+
+| ID | Invariant | Enforced by |
+|----|-----------|-------------|
+| G1 | Deploy guidance is personalized to current setup (hostnames, mode, strategy, runtime) | Guidance assembly reads DeployState + ServiceMeta |
+| G2 | Platform mechanics always injected (container lifecycle, env var behavior) | Layer 1 always included |
+| G3 | Runtime knowledge never injected in deploy — always pointed to | Layer 3 uses pointers only |
+| G4 | Strategy alternatives mentioned briefly, never forced | Layer 1 includes 2-line strategy note |
+| G5 | Route returns facts, never recommendations | Route handler returns structured data |
+| G6 | Init instructions explain environment concept, not workflow details | Init instructions scope |
+| G7 | Bootstrap MAY inject full knowledge (creative workflow) | assembleKnowledge for bootstrap steps |
+| G8 | Deploy MUST NOT inject full knowledge (operational workflow) | assembleKnowledge redesigned for deploy |
+| G9 | Guidance total per step: 15-55 lines, never 200+ | Guidance assembly limits |
+| G10 | Agent can always pull knowledge on demand via zerops_knowledge | Tool always available |
+| G11 | Contextual guidance (first deploy, iteration) injected only when condition met | Layer 2 conditional checks |
+| G12 | State refresh available via zerops_discover at any time | Tool always available |

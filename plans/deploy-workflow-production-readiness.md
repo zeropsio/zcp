@@ -1,393 +1,187 @@
 # Deploy Workflow — Production Readiness Plan
 
-**Date**: 2026-03-21
+**Date**: 2026-03-21 (verified against actual code state)
 **Status**: Analysis complete, ready for implementation
 **Scope**: Standalone deploy workflow (`action="start" workflow="deploy"`)
-**Subsumes**: analysis-deploy-target-tracking (dead code), analysis-deploy-workflow-redesign (checkers)
 
 ---
 
 ## 1. Motivation
 
-The standalone deploy workflow is the **post-bootstrap lifecycle workflow** — the primary way an LLM agent deploys and redeploys services for users. It triggers when users say "deploy my app", "push update to stage", "fix the broken deploy".
-
-Bootstrap was refined to production quality: 5 steps, 3 real checkers with per-target feedback, escalating iteration guidance, mode-specific knowledge injection. The deploy workflow was left as a skeleton: 3 steps, 0 checkers, agent self-attests everything with no validation.
-
-**The core problem**: ServiceMeta stores two axes of information from bootstrap — **mode** (standard/dev/simple = topology) and **strategy** (push-dev/ci-cd/manual = how to deploy). The deploy workflow reads both at start, uses mode for guidance section selection, but **loses strategy entirely**. Strategy-specific guidance content exists in deploy.md but is never delivered to the agent during the deploy workflow.
+The standalone deploy workflow is the **post-bootstrap lifecycle workflow** — the primary way an LLM agent deploys and redeploys services. Bootstrap was refined to production quality (5 steps, 3 checkers, per-target feedback, escalating iteration). Deploy workflow needs to reach the same quality bar.
 
 ---
 
-## 2. Current Architecture
+## 2. What's Already Done (verified — compiles, tests pass)
 
-### ServiceMeta (the evidence from bootstrap)
+Strategy flow is **partially implemented**. Contrary to initial analysis, significant work already exists:
 
-```
-stateDir/services/{hostname}.json:
-{
-  "hostname": "appdev",
-  "mode": "standard",           // topology: standard (dev+stage) | dev (dev-only) | simple
-  "stageHostname": "appstage",  // paired stage service (standard mode only)
-  "deployStrategy": "push-dev", // how to deploy: push-dev | ci-cd | manual
-  "bootstrapSession": "...",
-  "bootstrappedAt": "..."
-}
-```
+### Strategy flows through data model
+- `DeployTarget.Strategy` field exists (deploy.go:61) — populated from ServiceMeta
+- `DeployState.Strategy` field exists (deploy.go:43) — set from first meta
+- `BuildDeployTargets()` returns 3 values: targets, mode, strategy (deploy.go:130)
+- `engine.DeployStart()` accepts strategy (engine.go:341)
+- `handleDeployStart()` unpacks all 3 values (workflow.go:238)
 
-Two axes:
-- **Mode** determines service topology and deploy ordering (dev before stage, dev-only, or single service)
-- **Strategy** determines the deployment mechanism (SSH self-deploy, git webhook, or user-managed)
+### Strategy flows through guidance
+- `resolveDeployStepGuidance(step, mode, strategy)` accepts strategy (deploy_guidance.go:46)
+- At deploy step: mode-specific section + strategy-specific section layered (deploy_guidance.go:69-73)
+- `buildGuide()` passes `d.Strategy` to guidance (deploy.go:342)
+- `GuidanceParams.Strategy` field exists (guidance.go:13)
+- `buildGuide()` passes Strategy in GuidanceParams (deploy.go:347)
 
-### Deploy Workflow Flow (current)
+### Strategy sections in deploy.md exist
+- `deploy-push-dev` — SSH self-deploy guidance
+- `deploy-ci-cd` — git webhook guidance
+- `deploy-manual` — manual deploy guidance
+- These ARE delivered during deploy workflow via resolveDeployStepGuidance lines 69-73
 
-```
-handleDeployStart()                           # workflow.go:187-247
-  1. Read ServiceMetas                         # ✓ mode + strategy available
-  2. Strategy gate: reject if any missing      # ✓ strategy READ here
-  3. BuildDeployTargets(metas)                 # ✓ mode → targets with roles
-     Returns: targets, mode                    # ✗ strategy NOT returned
-  4. engine.DeployStart(targets, mode)         # ✗ strategy NOT passed
-     Creates DeployState{Mode, Targets}        # ✗ strategy NOT stored
-  5. BuildResponse → buildGuide                # ✗ strategy NOT in guidance
-     resolveDeployStepGuidance(step, mode)     # mode-only section selection
-```
-
-**Strategy is checked at step 2, then discarded.** From step 3 onward, only mode flows through.
-
-### What Agent Gets (deploy step)
-
-```
-Mode-specific sections assembled:
-  deploy-execute-overview      (always)
-  deploy-execute-standard      (if mode=standard)
-  deploy-execute-dev           (if mode=dev)
-  deploy-execute-simple        (if mode=simple)
-  deploy-iteration             (if mode!=simple)
-
-Strategy-specific sections NEVER delivered:
-  deploy-push-dev              ← exists in deploy.md, unreachable
-  deploy-ci-cd                 ← exists in deploy.md, unreachable
-  deploy-manual                ← exists in deploy.md, unreachable
-```
-
-### What Agent Does NOT Get
-
-1. **No strategy-specific guidance** — push-dev agent doesn't know to use SSH, ci-cd agent doesn't know about webhooks
-2. **No validation** — every step advances on attestation alone (min 15 chars)
-3. **No per-target feedback** — targets always show `status: "pending"`
-4. **No iteration escalation** — guidance identical on retry 1 vs retry 5
-5. **No runtime/dependency knowledge** — GuidanceParams passes only Mode+Step+KP, missing RuntimeType, DependencyTypes, Plan, Iteration, FailureCount
+### Knowledge injection works
+- `assembleKnowledge()` receives Strategy in GuidanceParams (guidance.go:72)
+- Runtime knowledge at deploy-prepare step (guidance.go:86-98)
+- zerops.yml schema + rules at deploy-prepare (guidance.go:106-112)
+- Env vars at deploy step (guidance.go:120-125)
 
 ---
 
-## 3. Findings
+## 3. What's Still Missing
 
-### 3.1 Strategy Flow Is Broken
+### 3.1 Zero Checkers (CRITICAL)
 
-**Where strategy is written:**
-- `workflow_strategy.go:55` — `handleStrategy()` sets `ServiceMeta.DeployStrategy`
-- `bootstrap_outputs.go:27` — bootstrap close copies `Strategies[hostname]` → meta
+Deploy workflow has **no validation gates**. Every step advances on attestation alone.
 
-**Where strategy is read:**
-- `workflow.go:230` — `handleDeployStart()` checks `DeployStrategy != ""` (gate)
-- `workflow.go:261` — CI/CD start checks `DeployStrategy == "ci-cd"` (filter)
-- `workflow_strategy.go:87` — `buildStrategyGuidance()` maps strategy → deploy.md section
+| Step | Bootstrap equivalent | Deploy equivalent |
+|------|---------------------|-------------------|
+| prepare | checkGenerate: zerops.yml valid, env var refs valid | NONE — agent self-attests |
+| deploy | checkDeploy: VerifyAll + subdomain + health | NONE — agent self-attests |
+| verify | merged into deploy checker | NONE — agent self-attests |
 
-**Where strategy is LOST:**
-- `BuildDeployTargets()` (deploy.go:127) — reads `meta.Mode` but ignores `meta.DeployStrategy`
-- `DeployState` (deploy.go:37) — has `Mode` field but no `Strategy` field
-- `DeployTarget` (deploy.go:54) — has `Role` field but no `Strategy` field
-- `resolveDeployStepGuidance()` (deploy_guidance.go:46) — takes `(step, mode)` but not strategy
-- `GuidanceParams` (guidance.go) — has `Mode` but no `Strategy`
+`handleDeployComplete()` (workflow_deploy.go:12-34) calls `engine.DeployComplete()` which just does `CompleteStep()` — no checker at all.
 
-**Dead code:** `ResolveDeployGuidance()` (deploy_guidance.go:20-42) reads strategy from ServiceMeta and maps to deploy.md section — but this function has **0 callers** anywhere in the codebase.
+### 3.2 Dead Per-Target Code
 
-### 3.2 Deploy Workflow Has Zero Checkers
+Still present with 0 production callers:
 
-Bootstrap step checkers (workflow_checks.go):
-- `checkProvision()` — service exists, RUNNING, type matches, env vars available
-- `checkGenerate()` — zerops.yml exists, YAML valid, setup entries match
-- `checkDeploy()` — VerifyAll (HTTP, logs, startup) + subdomain access
+| Code | Location | Purpose |
+|------|----------|---------|
+| `UpdateTarget()` | deploy.go:238-251 | Set per-target status |
+| `DevFailed()` | deploy.go:274-282 | Gate stage on dev failure |
+| `DeployTarget.Error` | deploy.go:59 | Error field |
+| `DeployTarget.LastAttestation` | deploy.go:60 | Attestation field |
+| Status constants (deployed/verified/failed/skipped) | deploy.go:30-33 | Used by dead methods |
+| `ResolveDeployGuidance()` | deploy_guidance.go:20-42 | Per-hostname strategy lookup — 0 callers |
 
-Deploy workflow checkers: **NONE**.
+### 3.3 No Iteration Escalation
 
-`handleDeployComplete()` (workflow_deploy.go:12-34) calls `engine.DeployComplete()` which calls `state.Deploy.CompleteStep()` — validates attestation length only. No checker runs. No API query. No health check.
-
-### 3.3 Dead Per-Target Tracking Code
-
-Code in deploy.go with 0 production callers:
-
-| Code | Lines | Purpose | Callers |
-|------|-------|---------|---------|
-| `UpdateTarget()` | 238-251 | Set per-target status + attestation | test only |
-| `DevFailed()` | 274-282 | Gate stage on dev failure | test only |
-| `DeployTarget.Error` | 58 | Error message field | written by dead UpdateTarget |
-| `DeployTarget.LastAttestation` | 59 | Attestation field | written by dead UpdateTarget |
-| Status constants (deployed/verified/failed/skipped) | 30-33 | Target states | used by dead methods |
-| `ResetForIteration()` Error clear | 265 | Clears dead field | n/a |
-
-Also dead: `ResolveDeployGuidance()` (deploy_guidance.go:20-42) — strategy guidance resolver with 0 callers.
+`buildGuide()` passes `_ int` for iteration (deploy.go:341) — iteration counter is ignored. No `BuildIterationDelta()` equivalent for deploy. Agent gets identical guidance on every retry.
 
 ### 3.4 GuidanceParams Underutilized
 
-Deploy's `buildGuide()` (deploy.go:332-344) creates GuidanceParams with only:
-- Step ✓
-- Mode ✓
-- KP ✓
-
-Missing (compared to bootstrap):
-- Strategy (doesn't exist in GuidanceParams at all)
-- RuntimeType (runtime briefings unavailable during deploy)
+`buildGuide()` passes only Step, Mode, Strategy, KP (deploy.go:344-348). Missing:
+- RuntimeType (runtime briefings unavailable)
 - DependencyTypes (dependency knowledge unavailable)
-- Plan (target info unavailable)
-- Iteration / FailureCount (no escalating guidance)
-- DiscoveredEnvVars (injected only at deploy step, not prepare)
-- LastAttestation (no iteration context)
+- DiscoveredEnvVars (not passed — though injected at deploy step via separate path)
+- Iteration / FailureCount (no escalation)
+- Plan / LastAttestation (no iteration context)
 
-### 3.5 Guidance Content Exists But Is Disconnected
+### 3.5 DeployTarget.Status Always "pending"
 
-deploy.md has 11 sections across two concerns:
+Targets in response always show `status: "pending"`. Never changes in production. Confusing for agents — suggests nothing happened.
 
-**Mode sections** (delivered during deploy workflow):
-- `deploy-prepare` — prerequisites check
-- `deploy-execute-overview` — how zerops_deploy works
-- `deploy-execute-standard` — dev+stage 10-step flow
-- `deploy-execute-dev` — dev-only 5-step flow
-- `deploy-execute-simple` — single service 4-step flow
-- `deploy-iteration` — dev iteration cycle
-- `deploy-verify` — health check interpretation
+### 3.6 No Dev->Stage Gate
 
-**Strategy sections** (NOT delivered during deploy workflow):
-- `deploy-push-dev` — SSH self-deploy via zcli push
-- `deploy-ci-cd` — git webhook automated deploys
-- `deploy-manual` — user-managed, no ZCP automation
-
-Strategy sections are delivered ONLY during post-bootstrap `action="strategy"` call. Once deploy workflow starts, they are unreachable.
-
-### 3.6 No Iteration Escalation
-
-Bootstrap has `BuildIterationDelta()` with 3 tiers:
-- Tier 1 (iterations 1-2): "Check logs, fix obvious issues"
-- Tier 2 (iterations 3-4): "Systematic diagnosis"
-- Tier 3 (iterations 5+): "Stop and ask user"
-
-Deploy has: identical guidance every iteration. No escalation. No escape hatch.
+Standard mode: dev should be healthy before stage deploys. `DevFailed()` exists but is dead code. No enforcement anywhere.
 
 ---
 
-## 4. Goal State
+## 4. Implementation Plan
 
-After implementation, the deploy workflow should:
+### Phase 1: Dead code cleanup + GuidanceParams enrichment
 
-1. **Carry strategy through the entire flow** — from ServiceMeta through DeployState to guidance assembly
-2. **Deliver strategy-specific guidance** — agent knows HOW to deploy (SSH vs webhook vs manual) at every step
-3. **Validate every step** — checkers query Zerops API, return per-target pass/fail
-4. **Gate dev→stage** — standard mode: dev must be healthy before stage deploys
-5. **Escalate on failure** — iteration guidance intensifies, eventually asks user
-6. **Inject full knowledge** — runtime type, dependency types, env vars at prepare step
-7. **Remove dead code** — UpdateTarget, DevFailed, Error, LastAttestation, dead status constants, dead ResolveDeployGuidance
+**Delete dead code:**
+- `UpdateTarget()`, `DevFailed()`, `Error`, `LastAttestation`, 4 status constants, `ResolveDeployGuidance()`
+- Related tests: `TestDeployState_UpdateTarget`, `TestDeployState_DevFailed`
+- `ResetForIteration()` Error clear line
 
----
+**Enrich buildGuide():**
+- Pass iteration counter (currently ignored `_ int`)
+- Pass RuntimeType from first target (readable from ServiceMeta or infer from mode)
+- Pass Iteration + FailureCount for future escalation
 
-## 5. Design
+| File | Change | Est. |
+|------|--------|------|
+| deploy.go | Delete dead code | -40 |
+| deploy_test.go | Delete 2 dead tests | -25 |
+| deploy_guidance.go | Delete dead ResolveDeployGuidance | -23 |
+| deploy_guidance_test.go | Update tests | -10 |
+| deploy.go buildGuide | Pass iteration, runtimeType to GuidanceParams | +10 |
 
-### 5.1 Data Model Changes
+### Phase 2: Checkers
 
-**DeployTarget** — add Strategy, remove dead fields:
-```go
-type DeployTarget struct {
-    Hostname string `json:"hostname"`
-    Role     string `json:"role"`               // dev | stage | simple
-    Status   string `json:"status"`             // pending (display only)
-    Strategy string `json:"strategy,omitempty"` // NEW: push-dev | ci-cd | manual
-}
-```
+Wire checkers into deploy workflow. `handleDeployComplete()` needs to accept checker dependencies and run them before advancing steps.
 
-**DeployState** — add Strategy:
-```go
-type DeployState struct {
-    Active      bool           `json:"active"`
-    CurrentStep int            `json:"currentStep"`
-    Steps       []DeployStep   `json:"steps"`
-    Targets     []DeployTarget `json:"targets"`
-    Mode        string         `json:"mode"`
-    Strategy    string         `json:"strategy,omitempty"` // NEW: primary strategy
-}
-```
-
-**BuildDeployTargets** — return strategy:
-```go
-func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, string)
-// Returns: targets, mode, strategy
-// Strategy = from first runtime meta's DeployStrategy
-// Each target also carries its own strategy
-```
-
-**GuidanceParams** — add Strategy:
-```go
-type GuidanceParams struct {
-    // existing fields...
-    Strategy string // NEW
-}
-```
-
-### 5.2 Strategy Flow Fix
-
-```
-handleDeployStart():
-  1. Read ServiceMetas
-  2. Strategy gate (unchanged)
-  3. BuildDeployTargets(metas) → targets, mode, strategy  // NEW: returns strategy
-  4. engine.DeployStart(targets, mode, strategy)           // NEW: accepts strategy
-     Creates DeployState{Mode, Strategy, Targets}          // NEW: stores strategy
-  5. BuildResponse → buildGuide(step, mode, strategy)      // NEW: passes strategy
-     resolveDeployStepGuidance(step, mode, strategy)       // NEW: uses strategy
-       → mode sections + strategy section layered together
-```
-
-### 5.3 Guidance Assembly Fix
-
-`resolveDeployStepGuidance(step, mode, strategy string)`:
-
-For **deploy step** (DeployStepDeploy):
-```
-sections = [
-  deploy-execute-overview,           // always
-  deploy-execute-{mode},             // mode-specific topology
-  deploy-{strategy},                 // NEW: strategy-specific HOW
-  deploy-iteration,                  // if mode != simple
-]
-```
-
-For **prepare step**: unchanged (mode-agnostic)
-For **verify step**: unchanged (mode-agnostic)
-
-Agent now gets BOTH axes: "you have dev+stage topology" (mode) AND "you deploy via SSH push" (strategy).
-
-### 5.4 Checkers
-
-Add 3 deploy step checkers, routed from `handleDeployComplete()`:
-
-**checkDeployPrepare(stateDir)**:
-- zerops.yml exists
+**checkDeployPrepare(stateDir):**
+- zerops.yml exists at projectRoot/ or projectRoot/{hostname}/
 - YAML parses correctly
 - setup entries match target hostnames
-- env var references resolvable (if discovered vars available)
+- Env var references resolvable
 
-**checkDeployExecute(client, fetcher, projectID, httpClient)**:
-- `ops.VerifyAll()` — per-target health (HTTP, logs, startup)
+**checkDeployExecute(client, fetcher, projectID, httpClient):**
+- `ops.VerifyAll()` per target — health (HTTP, logs, startup)
 - Subdomain access for services with ports
-- Standard mode: dev healthy → allow stage (inline DevFailed logic, no persistence)
-- Strategy-aware: push-dev checks SSH deploy, ci-cd checks build status
+- Standard mode: dev healthy before stage (inline DevFailed logic, API-only)
 
-**checkDeployVerify(client, fetcher, projectID, httpClient)**:
+**checkDeployVerify(client, fetcher, projectID, httpClient):**
 - Lighter health confirmation
-- Iteration count warning at threshold
+- Iteration count warning
 
-Checkers return `StepCheckResult` with per-target `Checks[]` — agent sees exactly what passed and failed.
+| File | Change | Est. |
+|------|--------|------|
+| workflow_deploy.go | Wire checker deps, call checker before advancing | +40 |
+| workflow_checks.go (or new workflow_checks_deploy.go) | 3 new checkers | +120 |
+| workflow_checks_deploy_test.go | Tests for 3 checkers | +100 |
 
-### 5.5 Iteration Escalation
+### Phase 3: Iteration escalation
 
-Add `BuildDeployIterationDelta()` or extend existing `BuildIterationDelta()`:
-- Tier 1: "Check zerops_logs severity=error; verify zerops.yml env vars"
-- Tier 2: "Systematic: all env var refs, service type, ports, start command"
+Add deploy iteration escalation:
+- Tier 1: "Check zerops_logs severity=error; fix and redeploy"
+- Tier 2: "Systematic: env var refs, service type, ports, start command"
 - Tier 3: "Stop — present diagnostic summary to user"
 
-### 5.6 Knowledge Enrichment
+| File | Change | Est. |
+|------|--------|------|
+| deploy.go or deploy_guidance.go | Build iteration delta for deploy | +25 |
+| deploy.go buildGuide | Use iteration counter | +5 |
 
-Deploy's `buildGuide()` should pass full GuidanceParams:
-- RuntimeType from first target's service type (readable from ServiceMeta or API)
-- DependencyTypes from ServiceMetas
-- DiscoveredEnvVars moved to prepare step (not just deploy)
-- Iteration + FailureCount for escalation
-- Strategy for strategy-aware knowledge injection
+### Phase 4: Polish
 
-### 5.7 Dead Code Removal
-
-Delete from deploy.go:
-- `UpdateTarget()` (lines 238-251)
-- `DevFailed()` (lines 274-282)
-- `DeployTarget.Error` field (line 58)
-- `DeployTarget.LastAttestation` field (line 59)
-- Status constants: `deployTargetDeployed`, `deployTargetVerified`, `deployTargetFailed`, `deployTargetSkipped` (lines 30-33)
-- `ResetForIteration()` Error clear (line 265)
-
-Delete from deploy_test.go:
-- `TestDeployState_UpdateTarget` (lines 97-115)
-- `TestDeployState_DevFailed` (lines 235-250)
-
-Delete from deploy_guidance.go:
-- `ResolveDeployGuidance()` (lines 20-42) — dead function, 0 callers
-
-DevFailed logic reimplemented as inline check in `checkDeployExecute()` — queries API, no persistence.
+- Document deploy iteration in spec
+- Remove orphaned bootstrap.md verify section (from prior review)
+- Consider removing DeployTarget.Status (always "pending") or populating from checker results
 
 ---
 
-## 6. Implementation Phases
+## 5. What Does NOT Need Changing
 
-### Phase 1: Data model + strategy flow (foundation)
+These are **already working correctly**:
 
-| Change | File | Est. |
-|--------|------|------|
-| Delete dead code (UpdateTarget, DevFailed, Error, LastAttestation, dead constants, dead tests, dead ResolveDeployGuidance) | deploy.go, deploy_test.go, deploy_guidance.go | -70 lines |
-| Add Strategy to DeployTarget, DeployState | deploy.go | +5 |
-| Update BuildDeployTargets to return strategy, carry per-target strategy | deploy.go | +15 |
-| Update NewDeployState to accept strategy | deploy.go | +3 |
-| Update engine.DeployStart to accept+store strategy | engine.go | +5 |
-| Update handleDeployStart to extract+pass strategy | workflow.go | +10 |
-| Add Strategy to GuidanceParams | guidance.go | +2 |
-| Update tests for new signatures | deploy_test.go, engine_test.go | +30 |
-
-### Phase 2: Guidance assembly (strategy-aware)
-
-| Change | File | Est. |
-|--------|------|------|
-| Update resolveDeployStepGuidance to accept+use strategy | deploy_guidance.go | +15 |
-| Update buildGuide to pass strategy to guidance | deploy.go | +5 |
-| Update buildGuide to pass richer GuidanceParams (RuntimeType, Iteration, etc.) | deploy.go | +10 |
-| Move env var injection to prepare step | guidance.go | +5 |
-| Tests for strategy-specific guidance assembly | deploy_guidance_test.go | +40 |
-
-### Phase 3: Checkers (validation gates)
-
-| Change | File | Est. |
-|--------|------|------|
-| Add checkDeployPrepare (zerops.yml + env var refs) | workflow_checks.go or new file | +50 |
-| Add checkDeployExecute (VerifyAll + subdomain + dev→stage gate) | workflow_checks.go or new file | +50 |
-| Add checkDeployVerify (health confirmation) | workflow_checks.go or new file | +30 |
-| Wire checkers into handleDeployComplete | workflow_deploy.go | +30 |
-| Tests for all 3 checkers | workflow_checks_deploy_test.go | +100 |
-
-### Phase 4: Iteration + polish
-
-| Change | File | Est. |
-|--------|------|------|
-| Add deploy iteration escalation (BuildDeployIterationDelta) | deploy_guidance.go or guidance.go | +25 |
-| Update deploy.md content for checker-aware guidance | deploy.md | +20 |
-| Document deploy iteration in spec | spec-bootstrap-deploy.md | +15 |
-
-**Total**: ~+350 new lines, -70 deleted = net +280 lines across ~10 files.
+- Strategy flow: ServiceMeta → DeployTarget → DeployState → guidance assembly
+- Mode flow: ServiceMeta → BuildDeployTargets → roles → guidance sections
+- Strategy gate: handleDeployStart rejects if strategy missing
+- Strategy-specific guidance: deploy-push-dev/ci-cd/manual sections delivered at deploy step
+- Mode-specific guidance: deploy-execute-standard/dev/simple sections delivered at deploy step
+- Knowledge injection: runtime briefings, zerops.yml schema, deploy rules
+- Env var injection at deploy step
+- Iteration reset: ResetForIteration resets deploy+verify, preserves prepare
+- Session lifecycle: auto-cleanup on completion
 
 ---
 
-## 7. Key Design Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| Strategy per-target AND per-session | Each target carries its own strategy (future: mixed). Session has primary strategy for guidance routing. |
-| Block mixed strategies for now | Simpler implementation. User deploys per-strategy. Future: separate sessions per strategy group. |
-| Checkers implicit (run on complete) | Consistency with bootstrap. Agent calls `action="complete"`, checker runs automatically. |
-| API as source of truth, no target persistence | Checkers query Zerops API fresh each time. No UpdateTarget, no stored target status. |
-| Keep 3 steps (prepare/deploy/verify) | Verify is a separate checkpoint from deploy. Bootstrap merged them because verify was redundant with deploy checker. Deploy verify serves as final confirmation. |
-| Strategy sections layered with mode sections | Agent gets BOTH: "dev+stage topology" (mode) + "SSH self-deploy" (strategy). Not one or the other. |
-
----
-
-## 8. Risk Assessment
+## 6. Risks
 
 | Risk | Severity | Mitigation |
 |------|----------|-----------|
-| BuildDeployTargets signature change breaks callers | LOW | Only 2 callers: handleDeployStart, deploy_test.go |
-| engine.DeployStart signature change | LOW | Only 2 callers: handleDeployStart, engine_test.go |
 | checkDeployPrepare needs zerops.yml path resolution | MEDIUM | Reuse checkGenerate's path logic |
-| Strategy sections in deploy.md may need expansion | LOW | Existing content is brief but sufficient for MVP |
-| Mixed strategies deferred | LOW | Gate in handleDeployStart with clear error message |
+| Shared checker logic with bootstrap checkDeploy | LOW | Extract helpers or duplicate (small) |
+| handleDeployComplete gets more complex | LOW | Mirror bootstrap's handleBootstrapComplete |
+| Mixed strategies per deploy session | LOW | Gate in handleDeployStart (first meta's strategy used, validated consistent) |
