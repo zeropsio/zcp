@@ -11,7 +11,7 @@ User ←→ Claude Code (terminal in code-server) ←→ ZCP (MCP over STDIO) �
 
 The user opens code-server on the `zcp` service subdomain. Claude Code is preconfigured with ZCP as its MCP server. The user describes what they want, the LLM figures out what to do, calls ZCP tools to make it happen.
 
-ZCP authenticates once at startup (env var or zcli token), discovers which project it's in, and exposes everything as MCP tools. The LLM sees a system prompt with the current project state and a routing table that tells it which workflow to start.
+ZCP authenticates once at startup (env var or zcli token), discovers which project it's in, and exposes everything as MCP tools. The LLM sees a system prompt with the environment concept, current project state, and available workflows — the LLM decides what to do.
 
 ## What the LLM can do
 
@@ -41,7 +41,7 @@ cmd/zcp/main.go → internal/server  → MCP tools  → internal/ops      → in
 | `internal/server` | MCP server setup, tool registration, system prompt |
 | `internal/tools` | MCP tool handlers (15 tools) |
 | `internal/ops` | Business logic — deploy, verify, import, scale |
-| `internal/workflow` | Bootstrap conductor, session state, router, service metas |
+| `internal/workflow` | Bootstrap/deploy conductors, personalized guidance, checkers, session state, router |
 | `internal/platform` | Zerops API client, types, error codes |
 | `internal/auth` | Token resolution (env var / zcli), project discovery |
 | `internal/knowledge` | BM25 search engine, embedded docs + recipes |
@@ -84,7 +84,7 @@ Strategy-based routing reads `ServiceMeta.DeployStrategy` persisted from prior b
 
 ### Orchestrated (session-tracked)
 
-**bootstrap** and **deploy** — create a session with state persistence, evidence gates, and iteration support.
+**bootstrap** and **deploy** — create a session with state persistence, checker-based validation, and iteration support.
 
 ---
 
@@ -126,10 +126,10 @@ The **discover** step produces a **plan** that drives all subsequent steps:
 ServicePlan
   └─ Targets[]
        ├─ Runtime
-       │    ├─ DevHostname    "appdev"
-       │    ├─ Type           "nodejs@22"
-       │    ├─ Simple         false (→ standard mode: dev+stage pairs)
-       │    └─ StageHostname()  → "appstage" (auto-derived)
+       │    ├─ DevHostname      "appdev"
+       │    ├─ Type             "nodejs@22"
+       │    ├─ BootstrapMode    "standard" | "dev" | "simple" (empty → standard)
+       │    └─ StageHostname()  → "appstage" (auto-derived for standard mode)
        └─ Dependencies[]
             ├─ Hostname       "db"
             ├─ Type           "postgresql@16"
@@ -139,7 +139,9 @@ ServicePlan
 
 **Standard mode** (default): every runtime gets a dev+stage pair. Dev uses `deployFiles: [.]` for fast iteration. Stage gets real build output.
 
-**Simple mode**: single service, no pair. Used when the user explicitly wants one service.
+**Dev mode**: single dev service, no stage. For prototyping and quick iterations.
+
+**Simple mode**: single service with real start command + healthCheck. Auto-starts after deploy.
 
 ### Hard checks
 
