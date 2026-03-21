@@ -579,44 +579,84 @@ The strategy selection response explains all 3 options equally:
 
 `handleCICDStart()` is a hard gate — only services with `ci-cd` strategy are included. If no services have `ci-cd`, the workflow returns an error asking the user to set strategy first.
 
-### 4.4 Step Specifications
+### 4.4 Guidance Model
+
+Deploy uses a **personalized guidance model** — different from bootstrap's knowledge injection approach.
+
+| Aspect | Bootstrap | Deploy |
+|--------|-----------|--------|
+| Guidance source | deploy.md sections + injected knowledge | Programmatic from DeployState + ServiceMeta |
+| Runtime knowledge | Injected (agent creating config for first time) | Pointed to (agent pulls on demand) |
+| zerops.yml schema | Injected | Pointed to: `zerops_knowledge query="zerops.yml"` |
+| Env vars | Injected from DiscoveredEnvVars | Pointed to: `zerops_discover includeEnvs=true` |
+| Personalization | Mode-filtered sections | Actual hostnames, commands, steps |
+| Guidance size | 100-200+ lines | 15-55 lines |
+
+**Rationale**: Bootstrap is a creative workflow — the agent needs knowledge to create configuration from scratch. Deploy is operational — services and config likely exist. The agent pulls knowledge when needed, not forced.
+
+See `docs/spec-guidance-philosophy.md` for the full guidance delivery specification.
+
+### 4.5 Preflight Gates
+
+`handleDeployStart()` runs 5 sequential gates before creating a session:
+
+| # | Gate | Check | Behavior |
+|---|------|-------|----------|
+| 1 | Metas exist | `ListServiceMetas()` | Error: "Run bootstrap first" |
+| 2 | Metas complete | `IsComplete()` — `BootstrappedAt != ""` | Error: "bootstrap didn't complete" |
+| 3 | Runtime services | `Mode != "" \|\| StageHostname != ""` | Error: "nothing to deploy" |
+| 4 | Strategy set | `DeployStrategy != ""` | Soft gate: returns strategy selection guidance |
+| 5 | Strategy consistent | All targets same strategy | Error: "mixed strategies not supported" |
+
+### 4.6 Step Specifications
 
 **Entry**: `zerops_workflow action="start" workflow="deploy"`
-- Reads ServiceMeta files from `.zcp/state/services/`
-- Filters to runtime services (those with Mode or StageHostname)
-- Validates all have strategy set (conversational if not)
-- Builds ordered deploy targets (dev first, then stage for standard mode)
-- Creates deploy session
 
 ---
 
 #### Deploy Step 1: PREPARE
 
-**Purpose**: Discover target services, check zerops.yml, load knowledge.
+**Purpose**: Validate platform integration — zerops.yml syntax, hostname match, env var references.
 
-**Procedure**:
-1. `zerops_discover includeEnvs=true` — note each service status
-2. Route based on status:
-   - RUNNING + zerops.yml exists → skip to deploy
-   - RUNNING + no zerops.yml → load knowledge, fix config
-   - READY_TO_DEPLOY → first deploy, generate config
-   - Not found → wrong hostname or not created, use bootstrap
-3. Verify zerops.yml has correct `setup:` entries for all targets
+**Guidance**: Personalized setup summary + platform rules + knowledge pointers (15-30 lines).
+
+**Checker**: `checkDeployPrepare` — validates:
+1. zerops.yml exists and parses
+2. `setup:` entries match deploy target hostnames
+3. Env var references (`${hostname_varName}`) valid — re-discovered from API via `client.GetServiceEnv()`
+
+**Checker type**: `DeployStepChecker func(ctx context.Context, state *DeployState) (*StepCheckResult, error)` — separate from bootstrap's `StepChecker` (deploy has no ServicePlan/BootstrapState).
+
+**On failure**: Step does NOT advance. Agent receives `CheckResult` with specific failures. Fixes and retries.
 
 ---
 
 #### Deploy Step 2: DEPLOY
 
-**Purpose**: Execute deployments per mode. Same procedure as bootstrap deploy step.
+**Purpose**: Execute deployments per mode with personalized workflow steps.
 
-Per-target tracking: each target has status (pending/deployed/verified/failed/skipped).
-Dev targets must pass before stage targets are attempted.
+**Guidance**: Mode-specific workflow with actual hostnames + strategy commands + platform facts (20-45 lines). Iteration escalation on retries.
+
+**Checker**: `checkDeployResult` — diagnostic feedback:
+- `BUILD_FAILED` → "check buildLogs from deploy response"
+- `READY_TO_DEPLOY` (still) → "container didn't start, check start command, ports, env vars"
+- `ACTIVE/RUNNING` + healthy → pass
+- Subdomain access check for services with ports
+
+**Iteration escalation** (when `action="iterate"` resets deploy+verify):
+- Iteration 1: "Check zerops_logs, build failure vs runtime crash"
+- Iteration 2: "Systematic check: zerops.yml, env var refs, runtime version"
+- Iteration 3+: "Present diagnostic summary to user"
 
 ---
 
 #### Deploy Step 3: VERIFY
 
-Batch verification of all deploy targets using `ops.VerifyAll()`.
+**Purpose**: Informational health confirmation. Agent runs `zerops_verify` per target.
+
+**Checker**: nil — verify is informational, not blocking. Agent attests completion.
+
+**Guidance**: Diagnostic patterns (from deploy.md `deploy-verify` section).
 
 ---
 
@@ -812,10 +852,10 @@ sequenceDiagram
 - Sets `CurrentStep = 1` (deploy)
 - **Preserves**: prepare step
 
-**Escalating guidance** (injected at deploy step based on iteration count):
-- **Iterations 1-2**: "DIAGNOSE: check errors, fix, redeploy"
-- **Iterations 3-4**: Systematic checklist (env vars, zerops.yml, binding, ports)
-- **Iterations 5+**: "STOP. Present full diagnosis to user. Ask before continuing."
+**Escalating guidance** (personalized at deploy step based on iteration count):
+- **Iteration 1**: "Check zerops_logs, build failure vs runtime crash"
+- **Iteration 2**: "Systematic check: zerops.yml, env var refs, runtime version"
+- **Iteration 3+**: "Present diagnostic summary to user — user decides next step"
 
 ---
 
@@ -847,10 +887,13 @@ sequenceDiagram
 
 | ID | Invariant | Enforced by |
 |----|-----------|-------------|
-| K1 | Generate step receives: runtime briefing, dependency wiring, discovered env vars, zerops.yml schema | `assembleKnowledge()` for generate step |
-| K2 | Deploy step receives: schema rules | `assembleKnowledge()` for deploy step |
-| K3 | Provision step receives: import.yml schema | `assembleKnowledge()` for provision step |
-| K4 | Iteration > 0 on deploy returns escalating recovery guidance | `BuildIterationDelta()` |
+| K1 | Bootstrap generate step receives: runtime briefing, dependency wiring, discovered env vars, zerops.yml schema | `assembleKnowledge()` for generate step |
+| K2 | Bootstrap deploy step receives: schema rules | `assembleKnowledge()` for deploy step |
+| K3 | Bootstrap provision step receives: import.yml schema | `assembleKnowledge()` for provision step |
+| K4 | Bootstrap iteration > 0 returns escalating recovery guidance | `BuildIterationDelta()` |
+| K5 | Deploy workflow guidance is personalized from state (hostnames, mode, strategy) — NOT extracted from deploy.md | `buildPrepareGuide()`, `buildDeployGuide()` in deploy_guidance.go |
+| K6 | Deploy workflow NEVER injects runtime briefings or schema — uses knowledge pointers only | `buildKnowledgeMap()` returns pointers, not content |
+| K7 | Deploy guidance ≤ 55 lines per step | Personalized builder limits |
 
 ### Flow Invariants
 
@@ -858,10 +901,12 @@ sequenceDiagram
 |----|-----------|-------------|
 | F1 | Deploy workflow requires existing ServiceMeta files with strategy set | `handleDeployStart()` reads metas + checks DeployStrategy |
 | F2 | CI/CD workflow requires at least one service with ci-cd strategy | `handleCICDStart()` filters by StrategyCICD |
-| F3 | Router uses live API + ServiceMeta to suggest workflows | `Route()` in router.go |
+| F3 | Router returns facts only — no recommendations, no intent matching | `Route()` returns FlowOffering without Reason field |
 | F4 | Immediate workflows (debug, scale, configure) are stateless | `IsImmediateWorkflow()` check |
 | F5 | Bootstrap auto-resets completed sessions on new start | `engine.Start()` checks Active=false |
 | F6 | Deploy strategy selection is conversational (guidance, not error) | `buildStrategySelectionResponse()` |
+| F7 | Deploy checkers validate platform integration, not application correctness | `checkDeployPrepare()`, `checkDeployResult()` |
+| F8 | Deploy env var validation re-discovers from API (standalone, no BootstrapState) | `validateDeployEnvRefs()` calls `client.GetServiceEnv()` |
 
 ### Operational Invariants
 
@@ -905,7 +950,9 @@ sequenceDiagram
 
 | Gap | Impact | Status |
 |-----|--------|--------|
-| Env var reference validation at generate step | Invalid `${hostname_varName}` refs silently kept as literals | No validation against discovered vars |
 | Import error surfacing (per-service API errors) | Partial import failures hard to diagnose | Better error detail needed |
 | Least-privilege discover mode | Discover unnecessarily returns actual secret values | Future: names-only mode option |
-| Router strategy offering | Router should suggest strategy selection when DeployStrategy empty | Not yet implemented |
+| ~~Env var reference validation~~ | ~~Invalid refs silently kept as literals~~ | **RESOLVED**: `checkDeployPrepare` re-discovers and validates |
+| ~~Router strategy offering~~ | ~~Router should suggest strategy when empty~~ | **RESOLVED**: Route returns facts; handleDeployStart has strategy gate |
+| ~~Deploy guidance too verbose~~ | ~~200+ lines injected per step~~ | **RESOLVED**: Personalized guidance, 15-55 lines, knowledge pointers |
+| ~~No deploy checkers~~ | ~~Agent self-attests all steps~~ | **RESOLVED**: `checkDeployPrepare` + `checkDeployResult` |
