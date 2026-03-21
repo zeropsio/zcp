@@ -355,7 +355,8 @@ func (e *Engine) DeployStart(projectID, intent string, targets []DeployTarget, m
 }
 
 // DeployComplete completes the current deploy step.
-func (e *Engine) DeployComplete(step, attestation string) (*DeployResponse, error) {
+// If checker is non-nil and fails, the step stays and the agent receives failure details.
+func (e *Engine) DeployComplete(ctx context.Context, step, attestation string, checker DeployStepChecker) (*DeployResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("deploy complete: %w", err)
@@ -363,6 +364,22 @@ func (e *Engine) DeployComplete(step, attestation string) (*DeployResponse, erro
 	if state.Deploy == nil || !state.Deploy.Active {
 		return nil, fmt.Errorf("deploy complete: not active")
 	}
+
+	var checkResult *StepCheckResult
+	if checker != nil {
+		result, checkErr := checker(ctx, state.Deploy)
+		if checkErr != nil {
+			return nil, fmt.Errorf("deploy step check: %w", checkErr)
+		}
+		if result != nil && !result.Passed {
+			resp := state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
+			resp.CheckResult = result
+			resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", step, result.Summary)
+			return resp, nil
+		}
+		checkResult = result
+	}
+
 	if err := state.Deploy.CompleteStep(step, attestation); err != nil {
 		return nil, fmt.Errorf("deploy complete: %w", err)
 	}
@@ -377,7 +394,9 @@ func (e *Engine) DeployComplete(step, attestation string) (*DeployResponse, erro
 	} else if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("deploy complete save: %w", err)
 	}
-	return state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
+	resp := state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
+	resp.CheckResult = checkResult
+	return resp, nil
 }
 
 // DeploySkip skips the current deploy step.

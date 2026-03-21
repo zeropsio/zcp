@@ -55,13 +55,14 @@ type DeployTarget struct {
 
 // DeployResponse is returned from deploy workflow actions.
 type DeployResponse struct {
-	SessionID string            `json:"sessionId"`
-	Intent    string            `json:"intent"`
-	Iteration int               `json:"iteration"`
-	Message   string            `json:"message"`
-	Progress  DeployProgress    `json:"progress"`
-	Current   *DeployStepInfo   `json:"current,omitempty"`
-	Targets   []DeployTargetOut `json:"targets"`
+	SessionID   string            `json:"sessionId"`
+	Intent      string            `json:"intent"`
+	Iteration   int               `json:"iteration"`
+	Message     string            `json:"message"`
+	Progress    DeployProgress    `json:"progress"`
+	Current     *DeployStepInfo   `json:"current,omitempty"`
+	Targets     []DeployTargetOut `json:"targets"`
+	CheckResult *StepCheckResult  `json:"checkResult,omitempty"`
 }
 
 // DeployProgress summarizes overall deploy progress.

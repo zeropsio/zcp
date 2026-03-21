@@ -1213,7 +1213,7 @@ func TestEngine_DeployComplete_DeletesSessionFile(t *testing.T) {
 
 	steps := []string{DeployStepPrepare, DeployStepDeploy, DeployStepVerify}
 	for _, step := range steps {
-		if _, err := eng.DeployComplete(step, "step completed successfully"); err != nil {
+		if _, err := eng.DeployComplete(context.Background(), step, "step completed successfully", nil); err != nil {
 			t.Fatalf("DeployComplete(%s): %v", step, err)
 		}
 	}

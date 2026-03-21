@@ -99,7 +99,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		// Route to the active workflow type.
 		switch detectActiveWorkflow(engine) {
 		case workflowDeploy:
-			return handleDeployComplete(ctx, engine, input)
+			return handleDeployComplete(ctx, engine, client, projectID, stateDir, input)
 		case workflowCICD:
 			return handleCICDComplete(ctx, engine, input)
 		}

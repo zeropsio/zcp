@@ -9,7 +9,7 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-func handleDeployComplete(_ context.Context, engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleDeployComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID, stateDir string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -23,7 +23,9 @@ func handleDeployComplete(_ context.Context, engine *workflow.Engine, input Work
 			"Describe what was accomplished")), nil, nil
 	}
 
-	resp, err := engine.DeployComplete(input.Step, input.Attestation)
+	checker := buildDeployStepChecker(input.Step, client, projectID, stateDir)
+
+	resp, err := engine.DeployComplete(ctx, input.Step, input.Attestation, checker)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrDeployNotActive,
