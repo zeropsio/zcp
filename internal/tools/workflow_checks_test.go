@@ -200,7 +200,7 @@ func TestCheckDeploy_AllActive_Pass(t *testing.T) {
 		}},
 	}
 
-	checker := checkDeploy(mock, "proj-1")
+	checker := checkDeploy(mock, nil, "proj-1", nil)
 	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
@@ -225,7 +225,7 @@ func TestCheckDeploy_BuildFailed_Fail(t *testing.T) {
 		}},
 	}
 
-	checker := checkDeploy(mock, "proj-1")
+	checker := checkDeploy(mock, nil, "proj-1", nil)
 	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
@@ -247,7 +247,7 @@ func TestCheckDeploy_SubdomainNotEnabled_Fail(t *testing.T) {
 		}},
 	}
 
-	checker := checkDeploy(mock, "proj-1")
+	checker := checkDeploy(mock, nil, "proj-1", nil)
 	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
@@ -257,105 +257,8 @@ func TestCheckDeploy_SubdomainNotEnabled_Fail(t *testing.T) {
 	}
 }
 
-func TestCheckVerify_AllHealthy_Pass(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{
-			ID: "s1", Name: "appdev", Status: "RUNNING",
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{
-				ServiceStackTypeVersionName:  "nodejs@22",
-				ServiceStackTypeCategoryName: "USER",
-			},
-		},
-	})
-	logFetcher := platform.NewMockLogFetcher()
 
-	plan := &workflow.ServicePlan{
-		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
-		}},
-	}
 
-	checker := checkVerify(mock, logFetcher, "proj-1", nil)
-	result, err := checker(context.Background(), plan, nil)
-	if err != nil {
-		t.Fatalf("checker error: %v", err)
-	}
-	// Verify we at least get a result. Without httpClient and subdomain, some
-	// checks will be skipped, resulting in degraded status.
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-}
-
-func TestCheckVerify_PreExistingUnhealthy_Ignored(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{
-			ID: "s1", Name: "appdev", Status: "RUNNING",
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{
-				ServiceStackTypeVersionName:  "nodejs@22",
-				ServiceStackTypeCategoryName: "USER",
-			},
-		},
-		{
-			ID: "s2", Name: "oldapp", Status: "STOPPED",
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{
-				ServiceStackTypeVersionName:  "nodejs@20",
-				ServiceStackTypeCategoryName: "USER",
-			},
-		},
-	})
-	logFetcher := platform.NewMockLogFetcher()
-
-	plan := &workflow.ServicePlan{
-		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
-		}},
-	}
-
-	checker := checkVerify(mock, logFetcher, "proj-1", nil)
-	result, err := checker(context.Background(), plan, nil)
-	if err != nil {
-		t.Fatalf("checker error: %v", err)
-	}
-
-	// The pre-existing unhealthy "oldapp" should not cause failure.
-	for _, c := range result.Checks {
-		if c.Name == "oldapp_health" {
-			t.Error("oldapp should not appear in checks (not in plan)")
-		}
-	}
-}
-
-func TestCheckVerify_TargetUnhealthy_Fail(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{
-			ID: "s1", Name: "appdev", Status: "STOPPED",
-			ServiceStackTypeInfo: platform.ServiceTypeInfo{
-				ServiceStackTypeVersionName:  "nodejs@22",
-				ServiceStackTypeCategoryName: "USER",
-			},
-		},
-	})
-	logFetcher := platform.NewMockLogFetcher()
-
-	plan := &workflow.ServicePlan{
-		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
-		}},
-	}
-
-	checker := checkVerify(mock, logFetcher, "proj-1", nil)
-	result, err := checker(context.Background(), plan, nil)
-	if err != nil {
-		t.Fatalf("checker error: %v", err)
-	}
-	if result.Passed {
-		t.Error("expected fail for stopped/unhealthy target service")
-	}
-}
 
 func TestCheckProvision_NilPlan_ReturnsNil(t *testing.T) {
 	t.Parallel()
@@ -402,7 +305,7 @@ func TestBuildStepChecker_KnownSteps(t *testing.T) {
 		{"provision", false},
 		{"generate", false},
 		{"deploy", false},
-		{"verify", false},
+		{"close", true},
 		{"discover", true},
 		{"unknown", true},
 	}
@@ -795,7 +698,7 @@ func TestCheckDeploy_SimpleMode_NoStage_Pass(t *testing.T) {
 		}},
 	}
 
-	checker := checkDeploy(mock, "proj-1")
+	checker := checkDeploy(mock, nil, "proj-1", nil)
 	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
@@ -821,7 +724,7 @@ func TestCheckDeploy_ExistingRuntime_StageRunning_Pass(t *testing.T) {
 		}},
 	}
 
-	checker := checkDeploy(mock, "proj-1")
+	checker := checkDeploy(mock, nil, "proj-1", nil)
 	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("checker error: %v", err)

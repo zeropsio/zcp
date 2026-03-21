@@ -318,8 +318,12 @@ func TestWorkflowTool_Action_Start_AutoResetDone(t *testing.T) {
 		"action": "start", "workflow": "bootstrap",
 		"intent": "first bootstrap",
 	})
-	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
-	for _, step := range steps {
+	// Submit empty plan (managed-only) to satisfy mode gate.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "discover",
+		"plan":   []map[string]any{},
+	})
+	for _, step := range []string{"provision", "generate", "deploy", "close"} {
 		callTool(t, srv, "zerops_workflow", map[string]any{
 			"action":      "complete",
 			"step":        step,
@@ -395,7 +399,7 @@ func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Progress.Total != 6 {
+	if resp.Progress.Total != 5 {
 		t.Errorf("Total: want 6, got %d", resp.Progress.Total)
 	}
 	if resp.Current == nil || resp.Current.Name != "discover" {
@@ -467,19 +471,21 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "")
 
-	// Start and advance to generate.
+	// Start and advance to generate (managed-only plan for skip test).
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "start", "workflow": "bootstrap",
 	})
-	preSteps := []string{"discover", "provision"}
-	for _, step := range preSteps {
-		callTool(t, srv, "zerops_workflow", map[string]any{
-			"action": "complete", "step": step,
-			"attestation": "Attestation for " + step + " completed ok",
-		})
-	}
+	// Submit empty plan (managed-only) so generate can be skipped.
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "discover",
+		"plan":   []map[string]any{},
+	})
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "provision",
+		"attestation": "Attestation for provision completed ok",
+	})
 
-	// Skip generate.
+	// Skip generate (allowed for managed-only plan).
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "skip",
 		"step":   "generate",
@@ -521,7 +527,7 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Progress.Total != 6 {
+	if resp.Progress.Total != 5 {
 		t.Errorf("Total: want 6, got %d", resp.Progress.Total)
 	}
 }
@@ -891,8 +897,8 @@ func TestWorkflowTool_Resume_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
 	if bootstrapResp.Current == nil {
 		t.Fatal("expected non-nil current step")
 	}
-	if bootstrapResp.Progress.Total != 6 {
-		t.Errorf("Progress.Total: want 6, got %d", bootstrapResp.Progress.Total)
+	if bootstrapResp.Progress.Total != 5 {
+		t.Errorf("Progress.Total: want 5, got %d", bootstrapResp.Progress.Total)
 	}
 	if bootstrapResp.Current.DetailedGuide == "" {
 		t.Error("expected non-empty detailedGuide in resume response")
@@ -933,7 +939,7 @@ func TestWorkflowTool_Iterate_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
 	if bootstrapResp.Current.Name != "generate" {
 		t.Errorf("Current.Name: want generate, got %s", bootstrapResp.Current.Name)
 	}
-	if bootstrapResp.Progress.Total != 6 {
-		t.Errorf("Progress.Total: want 6, got %d", bootstrapResp.Progress.Total)
+	if bootstrapResp.Progress.Total != 5 {
+		t.Errorf("Progress.Total: want 5, got %d", bootstrapResp.Progress.Total)
 	}
 }

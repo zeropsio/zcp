@@ -30,7 +30,7 @@ func TestBootstrapComplete_WritesServiceMeta(t *testing.T) {
 	}
 
 	// Complete remaining steps to trigger autoComplete.
-	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
+	for _, step := range []string{"provision", "generate", "deploy", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -68,7 +68,7 @@ func TestBootstrapComplete_AppendsReflog(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
+	for _, step := range []string{"provision", "generate", "deploy", "close"} {
 		_, err = eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil)
 		if err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -121,7 +121,7 @@ func TestBootstrapComplete_OutputErrorsNonFatal(t *testing.T) {
 
 	// Bootstrap completion should still succeed despite output errors.
 	var lastResp *BootstrapResponse
-	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
+	for _, step := range []string{"provision", "generate", "deploy", "close"} {
 		var err error
 		lastResp, err = eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil)
 		if err != nil {
@@ -133,8 +133,8 @@ func TestBootstrapComplete_OutputErrorsNonFatal(t *testing.T) {
 	if lastResp == nil || lastResp.Current != nil {
 		t.Error("Bootstrap should be completed (no current step in final response)")
 	}
-	if lastResp.Progress.Completed != 6 {
-		t.Errorf("Bootstrap progress: want 6 completed, got %d", lastResp.Progress.Completed)
+	if lastResp.Progress.Completed != 5 {
+		t.Errorf("Bootstrap progress: want 5 completed, got %d", lastResp.Progress.Completed)
 	}
 	if eng.SessionID() != "" {
 		t.Errorf("engine SessionID should be empty after bootstrap completion, got %q", eng.SessionID())
@@ -173,7 +173,7 @@ func TestWriteBootstrapOutputs_NeverWritesDepMetas(t *testing.T) {
 				t.Fatalf("BootstrapCompletePlan: %v", err)
 			}
 
-			for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
+			for _, step := range []string{"provision", "generate", "deploy", "close"} {
 				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 					t.Fatalf("BootstrapComplete(%s): %v", step, err)
 				}
@@ -230,7 +230,7 @@ func TestWriteBootstrapOutputs_PreExistingDepMetaSurvives(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
+	for _, step := range []string{"provision", "generate", "deploy", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -269,7 +269,7 @@ func TestWriteBootstrapOutputs_SetsBootstrappedAt(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
+	for _, step := range []string{"provision", "generate", "deploy", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -455,7 +455,7 @@ func TestWriteBootstrapOutputs_CopiesStrategiesToDecisions(t *testing.T) {
 				t.Fatalf("BootstrapStoreStrategies: %v", err)
 			}
 
-			for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
+			for _, step := range []string{"provision", "generate", "deploy", "close"} {
 				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 					t.Fatalf("BootstrapComplete(%s): %v", step, err)
 				}
@@ -476,58 +476,7 @@ func TestWriteBootstrapOutputs_CopiesStrategiesToDecisions(t *testing.T) {
 	}
 }
 
-func TestWriteBootstrapOutputs_AutoAssignsPushDevForDevOnly(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name          string
-		bootstrapMode string
-		wantStrategy  string
-	}{
-		{"dev mode gets push-dev auto-assigned", PlanModeDev, StrategyPushDev},
-		{"simple mode gets push-dev auto-assigned", PlanModeSimple, StrategyPushDev},
-		{"standard mode gets no auto-assign", PlanModeStandard, ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			eng := NewEngine(dir, EnvLocal, nil)
-
-			_, err := eng.BootstrapStart("proj-1", "auto-assign test")
-			if err != nil {
-				t.Fatalf("BootstrapStart: %v", err)
-			}
-
-			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: tt.bootstrapMode},
-			}}, nil, nil)
-			if err != nil {
-				t.Fatalf("BootstrapCompletePlan: %v", err)
-			}
-
-			// No explicit strategy stored — expect auto-assignment for non-standard.
-			for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
-				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
-					t.Fatalf("BootstrapComplete(%s): %v", step, err)
-				}
-			}
-
-			meta, err := ReadServiceMeta(dir, "appdev")
-			if err != nil {
-				t.Fatalf("ReadServiceMeta: %v", err)
-			}
-			if meta == nil {
-				t.Fatal("expected appdev meta")
-			}
-			got := meta.DeployStrategy
-			if got != tt.wantStrategy {
-				t.Errorf("DeployStrategy: want %q, got %q", tt.wantStrategy, got)
-			}
-		})
-	}
-}
-
-func TestWriteBootstrapOutputs_ExplicitStrategyNotOverriddenForDevOnly(t *testing.T) {
+func TestWriteBootstrapOutputs_ExplicitStrategyPreserved(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
@@ -537,7 +486,6 @@ func TestWriteBootstrapOutputs_ExplicitStrategyNotOverriddenForDevOnly(t *testin
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Dev mode target with explicit ci-cd strategy.
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
 		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: PlanModeDev},
 	}}, nil, nil)
@@ -545,12 +493,12 @@ func TestWriteBootstrapOutputs_ExplicitStrategyNotOverriddenForDevOnly(t *testin
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	// Store explicit ci-cd strategy — should NOT be overridden by auto-assign.
+	// Store explicit ci-cd strategy during bootstrap — should persist to meta.
 	if err := eng.BootstrapStoreStrategies(map[string]string{"appdev": StrategyCICD}); err != nil {
 		t.Fatalf("BootstrapStoreStrategies: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "verify", "strategy"} {
+	for _, step := range []string{"provision", "generate", "deploy", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -563,9 +511,8 @@ func TestWriteBootstrapOutputs_ExplicitStrategyNotOverriddenForDevOnly(t *testin
 	if meta == nil {
 		t.Fatal("expected appdev meta")
 	}
-	got := meta.DeployStrategy
-	if got != StrategyCICD {
-		t.Errorf("explicit strategy should not be overridden: want %q, got %q", StrategyCICD, got)
+	if meta.DeployStrategy != StrategyCICD {
+		t.Errorf("explicit strategy should be preserved: want %q, got %q", StrategyCICD, meta.DeployStrategy)
 	}
 }
 

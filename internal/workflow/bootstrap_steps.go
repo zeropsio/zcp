@@ -6,12 +6,11 @@ const (
 	StepProvision = "provision"
 	StepGenerate  = "generate"
 	StepDeploy    = "deploy"
-	StepVerify    = "verify"
-	StepStrategy  = "strategy"
+	StepClose     = "close"
 )
 
-// stepDetails defines the 6 consolidated bootstrap steps in order.
-// Skippable: generate, deploy, strategy (managed-only fast path).
+// stepDetails defines the 5 bootstrap steps in order.
+// Skippable: generate, deploy, close (managed-only fast path).
 //
 // Verification strings describe what the step's StepChecker enforces.
 // Checkers are the real gates — attestations are audit trail only.
@@ -37,19 +36,13 @@ var stepDetails = []StepDetail{
 	{
 		Name:         StepDeploy,
 		Tools:        []string{"zerops_deploy", "zerops_discover", "zerops_subdomain", "zerops_logs", "zerops_mount", "zerops_verify", "zerops_manage"},
-		Verification: "SUCCESS WHEN: all runtime services deployed and accessible (RUNNING status + subdomains enabled for services with ports) — health validation (HTTP, logs, startup) deferred to verify step.",
+		Verification: "SUCCESS WHEN: all runtime services deployed, accessible, AND healthy (VerifyAll: HTTP, logs, startup, subdomains enabled).",
 		Skippable:    true,
 	},
 	{
-		Name:         StepVerify,
-		Tools:        []string{"zerops_discover", "zerops_verify"},
-		Verification: "SUCCESS WHEN: zerops_verify confirms all plan targets healthy (individual checks: service_running, error_logs, startup_detected, http_root, http_status).",
-		Skippable:    false,
-	},
-	{
-		Name:         StepStrategy,
+		Name:         StepClose,
 		Tools:        []string{"zerops_workflow"},
-		Verification: "SUCCESS WHEN: valid strategy (push-dev, ci-cd, manual) assigned to every runtime target in plan.",
+		Verification: "SUCCESS WHEN: bootstrap administratively closed (metas written, transition presented).",
 		Skippable:    true,
 	},
 }

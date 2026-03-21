@@ -82,7 +82,7 @@ type BootstrapStepInfo struct {
 	PlanMode      string       `json:"planMode,omitempty"` // "standard" or "simple", set after plan submission
 }
 
-// NewBootstrapState creates a new bootstrap state with all 6 steps pending.
+// NewBootstrapState creates a new bootstrap state with all 5 steps pending.
 func NewBootstrapState() *BootstrapState {
 	steps := make([]BootstrapStep, len(stepDetails))
 	for i, d := range stepDetails {
@@ -96,14 +96,15 @@ func NewBootstrapState() *BootstrapState {
 	}
 }
 
-// ResetForIteration resets generate/deploy/verify steps for a new iteration cycle.
-// Preserves: discover(0) attestation, provision(1) attestation+envVars, Plan, ServiceMetas, strategy(5) if set.
+// ResetForIteration resets generate+deploy steps for a new iteration cycle.
+// Preserves: discover(0), provision(1), close(4), Plan, ServiceMetas.
+// Close is administrative — not retried on iteration.
 func (b *BootstrapState) ResetForIteration() {
 	if b == nil {
 		return
 	}
-	// Reset generate(2), deploy(3), verify(4) to pending.
-	for i := 2; i <= 4 && i < len(b.Steps); i++ {
+	// Reset generate(2) and deploy(3) to pending. Close(4) is excluded.
+	for i := 2; i <= 3 && i < len(b.Steps); i++ {
 		b.Steps[i] = BootstrapStep{Name: b.Steps[i].Name, Status: stepPending}
 	}
 	// Set CurrentStep to generate, mark in_progress.
@@ -134,6 +135,7 @@ const (
 const (
 	stepGenerate = "generate"
 	stepDeploy   = "deploy"
+	stepClose    = "close"
 )
 
 const minAttestationLen = 10
@@ -316,7 +318,7 @@ func validateConditionalSkip(plan *ServicePlan, stepName string) error {
 	}
 	hasRuntimeServices := len(plan.Targets) > 0
 	switch stepName {
-	case stepGenerate, stepDeploy:
+	case stepGenerate, stepDeploy, stepClose:
 		if hasRuntimeServices {
 			return fmt.Errorf("skip step: cannot skip %q — runtime services in plan require it", stepName)
 		}

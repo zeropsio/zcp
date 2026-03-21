@@ -37,8 +37,8 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			"Specify step name (e.g., step=\"discover\")")), nil, nil
 	}
 
-	// Structured plan routing for "discover" step.
-	if input.Step == "discover" && len(input.Plan) > 0 {
+	// Structured plan routing for "discover" step (empty plan = managed-only).
+	if input.Step == "discover" && input.Plan != nil {
 		resp, err := engine.BootstrapCompletePlan(input.Plan, liveTypes, nil)
 		if err != nil {
 			return convertError(platform.NewPlatformError(
@@ -58,16 +58,6 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			platform.ErrInvalidParameter,
 			"Attestation is required for complete action",
 			"Describe what was accomplished in this step")), nil, nil
-	}
-
-	// Persist strategies before completing the strategy step.
-	if input.Step == workflow.StepStrategy && len(input.Strategies) > 0 {
-		if err := engine.BootstrapStoreStrategies(input.Strategies); err != nil {
-			return convertError(platform.NewPlatformError(
-				platform.ErrBootstrapNotActive,
-				fmt.Sprintf("Store strategies failed: %v", err),
-				"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
-		}
 	}
 
 	httpClient := &http.Client{
@@ -114,7 +104,7 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 		return convertError(platform.NewPlatformError(
 			platform.ErrBootstrapNotActive,
 			fmt.Sprintf("Skip step failed: %v", err),
-			"Only skippable steps (generate, deploy) can be skipped")), nil, nil
+			"Only skippable steps (generate, deploy, close) can be skipped")), nil, nil
 	}
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, client, cache)

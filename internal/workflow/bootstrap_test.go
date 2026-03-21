@@ -9,7 +9,7 @@ import (
 
 func TestStepDetails_AllStepsCovered(t *testing.T) {
 	t.Parallel()
-	expectedNames := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
+	expectedNames := []string{"discover", "provision", "generate", "deploy", "close"}
 	for _, name := range expectedNames {
 		detail := lookupDetail(name)
 		if detail.Name == "" {
@@ -32,7 +32,6 @@ func TestStepDetails_ToolLists(t *testing.T) {
 		wantTool string
 	}{
 		{"deploy", "zerops_verify"},
-		{"verify", "zerops_verify"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.step+"_has_"+tt.wantTool, func(t *testing.T) {
@@ -45,7 +44,7 @@ func TestStepDetails_ToolLists(t *testing.T) {
 	}
 }
 
-func TestNewBootstrapState_6Steps(t *testing.T) {
+func TestNewBootstrapState_5Steps(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 
@@ -55,11 +54,11 @@ func TestNewBootstrapState_6Steps(t *testing.T) {
 	if bs.CurrentStep != 0 {
 		t.Errorf("CurrentStep: want 0, got %d", bs.CurrentStep)
 	}
-	if len(bs.Steps) != 6 {
-		t.Fatalf("Steps count: want 6, got %d", len(bs.Steps))
+	if len(bs.Steps) != 5 {
+		t.Fatalf("Steps count: want 5, got %d", len(bs.Steps))
 	}
 
-	expectedNames := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
+	expectedNames := []string{"discover", "provision", "generate", "deploy", "close"}
 	for i, name := range expectedNames {
 		if bs.Steps[i].Name != name {
 			t.Errorf("step[%d].Name: want %s, got %s", i, name, bs.Steps[i].Name)
@@ -139,7 +138,7 @@ func TestCompleteStep_AllDone(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 
-	stepNames := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
+	stepNames := []string{"discover", "provision", "generate", "deploy", "close"}
 	for _, name := range stepNames {
 		bs.Steps[bs.CurrentStep].Status = "in_progress"
 		err := bs.CompleteStep(name, "Attestation for "+name+" step completed successfully")
@@ -151,8 +150,8 @@ func TestCompleteStep_AllDone(t *testing.T) {
 	if bs.Active {
 		t.Error("expected Active=false after all steps complete")
 	}
-	if bs.CurrentStep != 6 {
-		t.Errorf("CurrentStep: want 6, got %d", bs.CurrentStep)
+	if bs.CurrentStep != 5 {
+		t.Errorf("CurrentStep: want 5, got %d", bs.CurrentStep)
 	}
 }
 
@@ -191,7 +190,7 @@ func TestSkipStep_MandatoryStep(t *testing.T) {
 	}{
 		{"discover", "discover", 0},
 		{"provision", "provision", 1},
-		{"verify", "verify", 4},
+		
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -237,8 +236,8 @@ func TestBuildResponse_FirstStep(t *testing.T) {
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
 	}
-	if resp.Progress.Total != 6 {
-		t.Errorf("Progress.Total: want 6, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 5 {
+		t.Errorf("Progress.Total: want 5, got %d", resp.Progress.Total)
 	}
 	if resp.Progress.Completed != 0 {
 		t.Errorf("Progress.Completed: want 0, got %d", resp.Progress.Completed)
@@ -285,15 +284,15 @@ func TestBuildResponse_AllDone(t *testing.T) {
 	for i := range bs.Steps {
 		bs.Steps[i].Status = "complete"
 	}
-	bs.CurrentStep = 6
+	bs.CurrentStep = 5
 	bs.Active = false
 
 	resp := bs.BuildResponse("sess-3", "test", 0, EnvLocal, nil)
 	if resp.Current != nil {
 		t.Error("Current should be nil when all done")
 	}
-	if resp.Progress.Completed != 6 {
-		t.Errorf("Progress.Completed: want 6, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 5 {
+		t.Errorf("Progress.Completed: want 5, got %d", resp.Progress.Completed)
 	}
 	if !strings.Contains(strings.ToLower(resp.Message), "complete") {
 		t.Errorf("Message should contain 'complete', got: %s", resp.Message)
@@ -496,7 +495,7 @@ func TestBootstrapState_DiscoveredEnvVars(t *testing.T) {
 	}
 }
 
-func TestBootstrapState_CurrentStepName_6Steps(t *testing.T) {
+func TestBootstrapState_CurrentStepName_5Steps(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
@@ -506,9 +505,8 @@ func TestBootstrapState_CurrentStepName_6Steps(t *testing.T) {
 		{"first", 0, "discover"},
 		{"middle", 2, "generate"},
 		{"deploy", 3, "deploy"},
-		{"verify", 4, "verify"},
-		{"last", 5, "strategy"},
-		{"out_of_bounds", 6, ""},
+		{"close", 4, "close"},
+		{"out_of_bounds", 5, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -880,8 +878,8 @@ func TestResetForIteration_ResetsGenerateDeployVerify(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 
-	// Complete all 6 steps.
-	for i, name := range []string{"discover", "provision", "generate", "deploy", "verify", "strategy"} {
+	// Complete all 5 steps (discover, provision, generate, deploy, close).
+	for i, name := range []string{"discover", "provision", "generate", "deploy", "close"} {
 		bs.Steps[i].Status = stepInProgress
 		if err := bs.CompleteStep(name, "Attestation for "+name+" step completed ok"); err != nil {
 			t.Fatalf("CompleteStep(%s): %v", name, err)
@@ -891,8 +889,8 @@ func TestResetForIteration_ResetsGenerateDeployVerify(t *testing.T) {
 	if bs.Active {
 		t.Fatal("precondition: Active should be false")
 	}
-	if bs.CurrentStep != 6 {
-		t.Fatalf("precondition: CurrentStep should be 6, got %d", bs.CurrentStep)
+	if bs.CurrentStep != 5 {
+		t.Fatalf("precondition: CurrentStep should be 5, got %d", bs.CurrentStep)
 	}
 
 	bs.ResetForIteration()
@@ -912,26 +910,24 @@ func TestResetForIteration_ResetsGenerateDeployVerify(t *testing.T) {
 			t.Errorf("Steps[%d].Attestation should be preserved", i)
 		}
 	}
-	// Steps 2-4 should be reset (step 2 in_progress, 3-4 pending).
+	// Step 2 should be in_progress (current), step 3 should be pending.
 	if bs.Steps[2].Status != stepInProgress {
 		t.Errorf("Steps[2].Status: want %s, got %s", stepInProgress, bs.Steps[2].Status)
 	}
-	for i := 3; i <= 4; i++ {
-		if bs.Steps[i].Status != stepPending {
-			t.Errorf("Steps[%d].Status: want %s, got %s", i, stepPending, bs.Steps[i].Status)
-		}
+	if bs.Steps[3].Status != stepPending {
+		t.Errorf("Steps[3].Status: want %s, got %s", stepPending, bs.Steps[3].Status)
 	}
-	// Step 5 (strategy) should remain complete.
-	if bs.Steps[5].Status != stepComplete {
-		t.Errorf("Steps[5].Status: want %s, got %s", stepComplete, bs.Steps[5].Status)
+	// Step 4 (close) should remain complete (not retried).
+	if bs.Steps[4].Status != stepComplete {
+		t.Errorf("Steps[4].Status: want %s, got %s", stepComplete, bs.Steps[4].Status)
 	}
 }
 
 func TestResetForIteration_SetsCurrentStepInProgress(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
-	// Complete all steps so CurrentStep=6, Active=false.
-	for i, name := range []string{"discover", "provision", "generate", "deploy", "verify", "strategy"} {
+	// Complete all steps so CurrentStep=5, Active=false.
+	for i, name := range []string{"discover", "provision", "generate", "deploy", "close"} {
 		bs.Steps[i].Status = stepInProgress
 		if err := bs.CompleteStep(name, "Attestation for "+name+" step completed ok"); err != nil {
 			t.Fatalf("CompleteStep(%s): %v", name, err)
@@ -1036,5 +1032,155 @@ func TestBuildPriorContext_PlanAlwaysIncluded(t *testing.T) {
 				t.Errorf("Plan.Targets: want 1, got %d", len(ctx.Plan.Targets))
 			}
 		})
+	}
+}
+
+// RED phase tests for Phase 1 structural changes (5-step bootstrap redesign)
+
+// TEST 1: StepDetails should have 5 steps (not 6): discover, provision, generate, deploy, close
+func TestStepDetails_5Steps_RemoveVerifyStrategy_AddClose(t *testing.T) {
+	t.Parallel()
+	// After redesign: discover, provision, generate, deploy, close (5 total)
+	expectedNames := []string{"discover", "provision", "generate", "deploy", "close"}
+	if len(stepDetails) != 5 {
+		t.Fatalf("stepDetails count: want 5, got %d", len(stepDetails))
+	}
+	for i, name := range expectedNames {
+		if stepDetails[i].Name != name {
+			t.Errorf("stepDetails[%d].Name: want %q, got %q", i, name, stepDetails[i].Name)
+		}
+	}
+	// Verify that old steps are gone
+	if lookupDetail("verify").Name != "" {
+		t.Error("verify step should not exist in redesigned stepDetails")
+	}
+	if lookupDetail("strategy").Name != "" {
+		t.Error("strategy step should not exist in redesigned stepDetails")
+	}
+}
+
+// TEST 2: close step should be Skippable: true
+func TestStepDetails_CloseSkippable(t *testing.T) {
+	t.Parallel()
+	detail := lookupDetail("close")
+	if detail.Name != "close" {
+		t.Fatalf("close step not found")
+	}
+	if !detail.Skippable {
+		t.Error("close step: Skippable should be true (for managed-only projects)")
+	}
+}
+
+// TEST 4: ResetForIteration should reset indices 2-3 (generate, deploy only)
+func TestResetForIteration_ResetsGenerate_Deploy_NotClose(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+
+	// Complete discover(0), provision(1)
+	for i := range 2 {
+		bs.Steps[i].Status = stepComplete
+		bs.Steps[i].Attestation = "step completed"
+	}
+	// Complete generate(2), deploy(3), close(4)
+	for i := 2; i < 5; i++ {
+		bs.Steps[i].Status = stepComplete
+		bs.Steps[i].Attestation = "step completed"
+	}
+	bs.CurrentStep = 5
+	bs.Active = false
+
+	// Now reset for iteration
+	bs.ResetForIteration()
+
+	// discover(0) and provision(1) should stay completed
+	if bs.Steps[0].Status != stepComplete {
+		t.Errorf("discover (step 0): should stay complete after iteration, got %s", bs.Steps[0].Status)
+	}
+	if bs.Steps[1].Status != stepComplete {
+		t.Errorf("provision (step 1): should stay complete after iteration, got %s", bs.Steps[1].Status)
+	}
+
+	// generate(2) and deploy(3) should reset to pending (except generate which becomes in_progress as current step)
+	if bs.Steps[2].Status != stepInProgress {
+		t.Errorf("generate (step 2): should be in_progress (current), got %s", bs.Steps[2].Status)
+	}
+	if bs.Steps[3].Status != stepPending {
+		t.Errorf("deploy (step 3): should reset to pending, got %s", bs.Steps[3].Status)
+	}
+
+	// close(4) should stay complete (NOT reset)
+	if bs.Steps[4].Status != stepComplete {
+		t.Errorf("close (step 4): should stay complete (not retried), got %s", bs.Steps[4].Status)
+	}
+
+	// CurrentStep should be 2 (generate)
+	if bs.CurrentStep != 2 {
+		t.Errorf("CurrentStep after reset: want 2, got %d", bs.CurrentStep)
+	}
+
+	// Active should be true
+	if !bs.Active {
+		t.Error("Active should be true after reset")
+	}
+}
+
+// TEST 5: validateConditionalSkip should guard close step (can't skip if runtime services exist)
+func TestValidateConditionalSkip_CloseStepGuard(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name               string
+		stepName           string
+		numTargets         int
+		shouldAllowSkip    bool
+	}{
+		// generate and deploy are guarded
+		{"generate_with_runtime_blocked", "generate", 1, false},
+		{"generate_managed_only_allowed", "generate", 0, true},
+		{"deploy_with_runtime_blocked", "deploy", 1, false},
+		{"deploy_managed_only_allowed", "deploy", 0, true},
+		// close should also be guarded
+		{"close_with_runtime_blocked", "close", 1, false},
+		{"close_managed_only_allowed", "close", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			plan := &ServicePlan{
+				Targets: make([]BootstrapTarget, tt.numTargets),
+			}
+			err := validateConditionalSkip(plan, tt.stepName)
+
+			if tt.shouldAllowSkip {
+				if err != nil {
+					t.Errorf("should allow skip, got error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("should block skip of %q with %d runtime services", tt.stepName, tt.numTargets)
+				}
+			}
+		})
+	}
+}
+
+// TEST 6: Completing all 5 steps should deactivate bootstrap
+func TestCompleteStep_5StepsDeactivates(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+
+	stepNames := []string{"discover", "provision", "generate", "deploy", "close"}
+	for _, name := range stepNames {
+		bs.Steps[bs.CurrentStep].Status = stepInProgress
+		err := bs.CompleteStep(name, "Attestation for "+name+" completed successfully")
+		if err != nil {
+			t.Fatalf("CompleteStep(%s): %v", name, err)
+		}
+	}
+
+	if bs.Active {
+		t.Error("expected Active=false after all 5 steps complete")
+	}
+	if bs.CurrentStep != 5 {
+		t.Errorf("CurrentStep: want 5, got %d", bs.CurrentStep)
 	}
 }

@@ -204,7 +204,7 @@ func TestIterateSession_ResetsBootstrapSteps(t *testing.T) {
 
 	// Set up a completed bootstrap state.
 	bs := NewBootstrapState()
-	for i, name := range []string{"discover", "provision", "generate", "deploy", "verify", "strategy"} {
+	for i, name := range []string{"discover", "provision", "generate", "deploy", "close"} {
 		bs.Steps[i].Status = stepInProgress
 		if err := bs.CompleteStep(name, "Attestation for "+name+" step completed ok"); err != nil {
 			t.Fatalf("CompleteStep(%s): %v", name, err)

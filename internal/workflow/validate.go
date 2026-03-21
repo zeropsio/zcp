@@ -125,8 +125,9 @@ func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool
 // liveServices may be nil — CREATE/EXISTS checks are skipped when unavailable.
 // Returns the list of dependency hostnames that had mode auto-defaulted to NON_HA.
 func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.ServiceStackType, liveServices []platform.ServiceStack) ([]string, error) {
+	// Empty targets allowed for managed-only projects (no runtime services).
 	if len(targets) == 0 {
-		return nil, fmt.Errorf("plan must contain at least one target")
+		return nil, nil
 	}
 
 	liveManaged := knowledge.ManagedBaseNames(liveTypes)

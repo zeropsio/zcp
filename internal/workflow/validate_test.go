@@ -260,14 +260,14 @@ func TestValidateBootstrapTargets_SingleTarget_Success(t *testing.T) {
 	}
 }
 
-func TestValidateBootstrapTargets_EmptyTargets_Error(t *testing.T) {
+func TestValidateBootstrapTargets_EmptyTargets_Allowed(t *testing.T) {
 	t.Parallel()
-	_, err := ValidateBootstrapTargets(nil, testLiveTypes, nil)
-	if err == nil {
-		t.Fatal("expected error for empty targets")
+	defaulted, err := ValidateBootstrapTargets(nil, testLiveTypes, nil)
+	if err != nil {
+		t.Fatalf("empty targets should be allowed (managed-only): %v", err)
 	}
-	if !strings.Contains(err.Error(), "at least one target") {
-		t.Errorf("error %q should mention 'at least one target'", err.Error())
+	if len(defaulted) != 0 {
+		t.Errorf("defaulted should be empty for nil targets, got %v", defaulted)
 	}
 }
 
@@ -573,5 +573,20 @@ func TestValidateBootstrapTargets_ManagedModeDefault_NON_HA(t *testing.T) {
 	// Verify mode was set.
 	if targets[0].Dependencies[0].Mode != "NON_HA" {
 		t.Errorf("db mode: want NON_HA, got %q", targets[0].Dependencies[0].Mode)
+	}
+}
+
+// RED phase test: ValidateBootstrapTargets should allow empty targets (managed-only projects)
+func TestValidateBootstrapTargets_ManagedOnlyEmptyTargets(t *testing.T) {
+	t.Parallel()
+	// Managed-only project: zero runtime targets, only managed dependencies
+	targets := []BootstrapTarget{}
+	defaulted, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	
+	if err != nil {
+		t.Fatalf("ValidateBootstrapTargets with empty targets should not error: %v", err)
+	}
+	if len(defaulted) != 0 {
+		t.Errorf("defaulted list should be empty for empty targets, got %d entries", len(defaulted))
 	}
 }

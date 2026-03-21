@@ -15,7 +15,6 @@ const (
 	stepProvision = "provision"
 	stepGenerate  = "generate"
 	stepDeploy    = "deploy"
-	stepVerify    = "verify"
 	statusFail    = "fail"
 	statusPass    = "pass"
 )
@@ -27,18 +26,15 @@ func buildStepChecker(step string, client platform.Client, fetcher platform.LogF
 	case stepGenerate:
 		return checkGenerate(stateDir)
 	case stepDeploy:
-		return checkDeploy(client, projectID)
-	case stepVerify:
-		return checkVerify(client, fetcher, projectID, httpClient)
-	case "strategy":
-		return checkStrategy()
+		return checkDeploy(client, fetcher, projectID, httpClient)
 	}
+	// close step has nil checker (administrative trigger).
 	return nil
 }
 
 func checkProvision(client platform.Client, projectID string, engine *workflow.Engine) workflow.StepChecker {
 	return func(ctx context.Context, plan *workflow.ServicePlan, _ *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
-		if plan == nil {
+		if plan == nil || len(plan.Targets) == 0 {
 			return nil, nil
 		}
 
@@ -145,12 +141,50 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 	}
 }
 
-func checkDeploy(client platform.Client, projectID string) workflow.StepChecker {
+// checkDeploy validates deployment: full health via VerifyAll + subdomain access.
+func checkDeploy(client platform.Client, fetcher platform.LogFetcher, projectID string, httpClient ops.HTTPDoer) workflow.StepChecker {
 	return func(ctx context.Context, plan *workflow.ServicePlan, _ *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
-		if plan == nil {
+		if plan == nil || len(plan.Targets) == 0 {
 			return nil, nil
 		}
 
+		// Build set of plan target hostnames.
+		planHostnames := make(map[string]bool)
+		for _, target := range plan.Targets {
+			planHostnames[target.Runtime.DevHostname] = true
+			if stage := target.Runtime.StageHostname(); stage != "" {
+				planHostnames[stage] = true
+			}
+			for _, dep := range target.Dependencies {
+				planHostnames[dep.Hostname] = true
+			}
+		}
+
+		var checks []workflow.StepCheck
+		allPassed := true
+
+		// 1. Full health verification via VerifyAll (HTTP, logs, startup).
+		result, err := ops.VerifyAll(ctx, client, fetcher, httpClient, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("verify all: %w", err)
+		}
+		for _, svc := range result.Services {
+			if !planHostnames[svc.Hostname] {
+				continue
+			}
+			status := statusPass
+			if svc.Status == ops.StatusUnhealthy {
+				status = statusFail
+				allPassed = false
+			}
+			checks = append(checks, workflow.StepCheck{
+				Name:   svc.Hostname + "_health",
+				Status: status,
+				Detail: svc.Status,
+			})
+		}
+
+		// 2. Subdomain access for runtime services with ports.
 		services, err := client.ListServices(ctx, projectID)
 		if err != nil {
 			return nil, fmt.Errorf("list services: %w", err)
@@ -159,20 +193,7 @@ func checkDeploy(client platform.Client, projectID string) workflow.StepChecker 
 		for _, svc := range services {
 			svcMap[svc.Name] = svc
 		}
-
-		var checks []workflow.StepCheck
-		allPassed := true
-
 		for _, target := range plan.Targets {
-			// Dev service must be RUNNING after deploy.
-			checks = append(checks, checkServiceRunning(svcMap, target.Runtime.DevHostname)...)
-
-			// Stage service must be RUNNING after deploy.
-			if stage := target.Runtime.StageHostname(); stage != "" {
-				checks = append(checks, checkServiceRunning(svcMap, stage)...)
-			}
-
-			// Check SubdomainAccess for services with ports.
 			for _, hostname := range targetHostnames(target) {
 				svc, exists := svcMap[hostname]
 				if exists && len(svc.Ports) > 0 && !svc.SubdomainAccess {
@@ -191,70 +212,9 @@ func checkDeploy(client platform.Client, projectID string) workflow.StepChecker 
 			}
 		}
 
-		for i := range checks {
-			if checks[i].Status == statusFail {
-				allPassed = false
-				break
-			}
-		}
-
-		summary := "all services deployed"
+		summary := "all services deployed and healthy"
 		if !allPassed {
-			summary = "deployment incomplete"
-		}
-		return &workflow.StepCheckResult{
-			Passed:  allPassed,
-			Checks:  checks,
-			Summary: summary,
-		}, nil
-	}
-}
-
-func checkVerify(client platform.Client, fetcher platform.LogFetcher, projectID string, httpClient ops.HTTPDoer) workflow.StepChecker {
-	return func(ctx context.Context, plan *workflow.ServicePlan, _ *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
-		if plan == nil {
-			return nil, nil
-		}
-
-		result, err := ops.VerifyAll(ctx, client, fetcher, httpClient, projectID)
-		if err != nil {
-			return nil, fmt.Errorf("verify all: %w", err)
-		}
-
-		// Build set of plan target hostnames.
-		planHostnames := make(map[string]bool)
-		for _, target := range plan.Targets {
-			planHostnames[target.Runtime.DevHostname] = true
-			if stage := target.Runtime.StageHostname(); stage != "" {
-				planHostnames[stage] = true
-			}
-			for _, dep := range target.Dependencies {
-				planHostnames[dep.Hostname] = true
-			}
-		}
-
-		var checks []workflow.StepCheck
-		allPassed := true
-
-		for _, svc := range result.Services {
-			if !planHostnames[svc.Hostname] {
-				continue // ignore pre-existing services not in plan
-			}
-			status := statusPass
-			if svc.Status == ops.StatusUnhealthy {
-				status = statusFail
-				allPassed = false
-			}
-			checks = append(checks, workflow.StepCheck{
-				Name:   svc.Hostname + "_health",
-				Status: status,
-				Detail: svc.Status,
-			})
-		}
-
-		summary := "all plan targets healthy"
-		if !allPassed {
-			summary = "unhealthy services detected"
+			summary = "deployment or health check incomplete"
 		}
 		return &workflow.StepCheckResult{
 			Passed:  allPassed,

@@ -303,10 +303,17 @@ func TestBuildInstructions_WorkflowHint_ActiveBootstrap(t *testing.T) {
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
-	for _, step := range []string{"discover", "provision"} {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
+
+	// Complete discover with plan.
+	if _, err := eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
+		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil); err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	// Complete provision.
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Attestation for provision ok", nil); err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
 	}
 
 	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, dir)
@@ -316,8 +323,8 @@ func TestBuildInstructions_WorkflowHint_ActiveBootstrap(t *testing.T) {
 	if !strings.Contains(inst, "bootstrap") {
 		t.Error("hint should mention bootstrap workflow")
 	}
-	if !strings.Contains(inst, "step 3/6") {
-		t.Errorf("hint should mention step 3/6, got: %s", inst)
+	if !strings.Contains(inst, "step 3/5") {
+		t.Errorf("hint should mention step 3/5, got: %s", inst)
 	}
 }
 
@@ -340,9 +347,17 @@ func TestBuildInstructions_WorkflowHint_PhaseDone_NoHint(t *testing.T) {
 	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
+
+	// Complete discover with plan.
+	if _, err := eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
+		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil); err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
 	steps := []string{
-		"discover", "provision", "generate",
-		"deploy", "verify", "strategy",
+		"provision", "generate",
+		"deploy", "close",
 	}
 	for _, step := range steps {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" ok", nil); err != nil {

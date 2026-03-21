@@ -143,6 +143,11 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 		return nil, fmt.Errorf("bootstrap complete: bootstrap not active")
 	}
 
+	// Defense-in-depth: non-discover steps require a plan from the discover step.
+	if stepName != StepDiscover && state.Bootstrap.Plan == nil {
+		return nil, fmt.Errorf("bootstrap complete: step %q requires plan from discover step", stepName)
+	}
+
 	var checkResult *StepCheckResult
 	if checker != nil {
 		result, checkErr := checker(ctx, state.Bootstrap.Plan, state.Bootstrap)

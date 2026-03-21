@@ -12,7 +12,7 @@ import (
 func TestCheckDeploy_NilPlan_ReturnsNil(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	checker := checkDeploy(mock, "proj-1")
+	checker := checkDeploy(mock, nil, "proj-1", nil)
 	result, err := checker(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -30,27 +30,24 @@ func TestCheckDeploy_ListServicesError_ReturnsError(t *testing.T) {
 			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
 		}},
 	}
-	checker := checkDeploy(mock, "proj-1")
+	checker := checkDeploy(mock, nil, "proj-1", nil)
 	_, err := checker(context.Background(), plan, nil)
 	if err == nil {
 		t.Fatal("expected error from ListServices failure")
 	}
 }
 
-func TestCheckDeploy_EmptyTargets_ReturnsPass(t *testing.T) {
+func TestCheckDeploy_EmptyTargets_ReturnsNil(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
 	plan := &workflow.ServicePlan{Targets: []workflow.BootstrapTarget{}}
-	checker := checkDeploy(mock, "proj-1")
+	checker := checkDeploy(mock, nil, "proj-1", nil)
 	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result == nil {
-		t.Fatal("expected non-nil result for empty targets plan")
-	}
-	if !result.Passed {
-		t.Errorf("expected pass for empty targets, got fail: %s", result.Summary)
+	if result != nil {
+		t.Error("expected nil result for empty targets (managed-only)")
 	}
 }
 
@@ -64,7 +61,7 @@ func TestCheckDeploy_DevNotRunning_Fails(t *testing.T) {
 			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 		}},
 	}
-	checker := checkDeploy(mock, "proj-1")
+	checker := checkDeploy(mock, nil, "proj-1", nil)
 	result, err := checker(context.Background(), plan, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

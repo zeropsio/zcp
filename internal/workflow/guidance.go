@@ -42,10 +42,21 @@ func assembleGuidance(params GuidanceParams) string {
 	return guide
 }
 
+// closeGuidance is the static guidance for the administrative close step.
+const closeGuidance = `Bootstrap is complete. All services are deployed and healthy.
+
+Complete this step to finalize bootstrap:
+→ zerops_workflow action="complete" step="close" attestation="Bootstrap finalized, services operational"
+
+After closing, choose a deployment strategy for each service before deploying again.`
+
 // resolveStaticGuidance extracts the appropriate static sections for a step.
 func resolveStaticGuidance(step string, plan *ServicePlan, failureCount int) string {
 	if step == StepGenerate || step == StepDeploy {
 		return ResolveProgressiveGuidance(step, plan, failureCount)
+	}
+	if step == StepClose {
+		return closeGuidance
 	}
 	return ResolveGuidance(step)
 }

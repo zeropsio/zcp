@@ -1,0 +1,35 @@
+# Analysis: Complete Workflow Flow Analysis — Gates, Evaluation, Gaps
+
+**Date**: 2026-03-21
+**Task**: Study the complete flow for all workflows (bootstrap, deploy, cicd). For each step, analyze what happens and how the gate/evaluation works. Identify what's extra, unused, broken, or missing. Container mode only.
+
+**Reference files**:
+- `docs/spec-bootstrap-deploy.md` — Specification document (may not match reality in all details)
+- `internal/workflow/engine.go` — Workflow engine (484 lines)
+- `internal/workflow/bootstrap.go` — Bootstrap state + step progression (347 lines)
+- `internal/workflow/bootstrap_steps.go` — Step definitions (61 lines)
+- `internal/workflow/bootstrap_checks.go` — StepChecker type (24 lines)
+- `internal/workflow/bootstrap_guidance.go` — Guidance resolution (142 lines)
+- `internal/workflow/bootstrap_guide_assembly.go` — Knowledge injection (88 lines)
+- `internal/workflow/bootstrap_outputs.go` — Final outputs (75 lines)
+- `internal/workflow/deploy.go` — Deploy state (344 lines)
+- `internal/workflow/deploy_guidance.go` — Deploy guidance (86 lines)
+- `internal/workflow/cicd.go` — CI/CD state (183 lines)
+- `internal/workflow/session.go` — Session persistence (234 lines)
+- `internal/workflow/state.go` — Core types (39 lines)
+- `internal/workflow/router.go` — Workflow routing (320 lines)
+- `internal/workflow/validate.go` — Plan validation (276 lines)
+- `internal/workflow/service_meta.go` — Persistent metas (118 lines)
+- `internal/workflow/guidance.go` — Guidance assembly (133 lines)
+- `internal/workflow/managed_types.go` — Managed type detection (80 lines)
+- `internal/workflow/environment.go` — Env detection (19 lines)
+- `internal/tools/workflow.go` — MCP tool handler (348 lines)
+- `internal/tools/workflow_bootstrap.go` — Bootstrap handlers (174 lines)
+- `internal/tools/workflow_deploy.go` — Deploy handlers (68 lines)
+- `internal/tools/workflow_checks.go` — Step checkers (339 lines)
+- `internal/tools/workflow_checks_generate.go` — Generate checker (230 lines)
+- `internal/tools/workflow_checks_strategy.go` — Strategy checker (73 lines)
+- `internal/tools/workflow_strategy.go` — Strategy handler (145 lines)
+- `internal/content/workflows/bootstrap.md` — Bootstrap content (824 lines)
+- `internal/content/workflows/deploy.md` — Deploy content (200 lines)
+- `internal/content/workflows/cicd.md` — CI/CD content (160 lines)

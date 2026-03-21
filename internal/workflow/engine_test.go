@@ -413,8 +413,8 @@ func TestEngine_BootstrapStart_Success(t *testing.T) {
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
 	}
-	if resp.Progress.Total != 6 {
-		t.Errorf("Total: want 6, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 5 {
+		t.Errorf("Total: want 5, got %d", resp.Progress.Total)
 	}
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
@@ -484,8 +484,15 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
-	var resp *BootstrapResponse
+	// Complete discover with plan
+	resp, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	steps := []string{"provision", "generate", "deploy", "close"}
 	for _, step := range steps {
 		var err error
 		resp, err = eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil)
@@ -498,8 +505,8 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 	if resp.Current != nil {
 		t.Error("Current should be nil after all steps")
 	}
-	if resp.Progress.Completed != 6 {
-		t.Errorf("Completed: want 6, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 5 {
+		t.Errorf("Completed: want 5, got %d", resp.Progress.Completed)
 	}
 
 	// Session should be unregistered (completed sessions are immediately cleaned up).
@@ -521,12 +528,14 @@ func TestEngine_BootstrapSkip_Success(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Complete discover and provision (steps 0-1).
-	preSteps := []string{"discover", "provision"}
-	for _, step := range preSteps {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
+	// Complete discover with empty plan (managed-only, allows skipping generate).
+	if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{}, nil, nil); err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	// Complete provision.
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Attestation for provision completed ok", nil); err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
 	}
 
 	// Skip generate (skippable step).
@@ -605,8 +614,8 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 		t.Fatalf("BootstrapStatus: %v", err)
 	}
 
-	if len(resp.Progress.Steps) != 6 {
-		t.Fatalf("Steps count: want 6, got %d", len(resp.Progress.Steps))
+	if len(resp.Progress.Steps) != 5 {
+		t.Fatalf("Steps count: want 5, got %d", len(resp.Progress.Steps))
 	}
 	if resp.Progress.Steps[0].Status != "complete" {
 		t.Errorf("step[0].Status: want complete, got %s", resp.Progress.Steps[0].Status)
@@ -1166,7 +1175,14 @@ func TestEngine_BootstrapComplete_DeletesSessionFile(t *testing.T) {
 	}
 	sessionID := eng.SessionID()
 
-	steps := []string{"discover", "provision", "generate", "deploy", "verify", "strategy"}
+	// Complete discover with a plan.
+	if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil); err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	steps := []string{"provision", "generate", "deploy", "close"}
 	for _, step := range steps {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "step completed successfully", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -1256,5 +1272,54 @@ func TestEngine_BootstrapComplete_Partial_KeepsSessionFile(t *testing.T) {
 	path := sessionFilePath(dir, sessionID)
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("session file should still exist after partial completion, stat err: %v", err)
+	}
+}
+
+// RED phase test: BootstrapComplete should enforce Plan!=nil for non-discover steps (mode gate)
+func TestBootstrapComplete_PlanNilCheck_NonDiscoverSteps(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	baseDir := t.TempDir()
+
+	// Create engine
+	e := NewEngine(baseDir, EnvLocal, nil)
+
+	// Start bootstrap
+	_, err := e.BootstrapStart("proj1", "test intent")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	// Manually advance to generate step (skip discover+provision)
+	// This simulates a scenario where bootstrap state exists but no plan has been submitted
+	st, err := e.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if st.Bootstrap == nil {
+		t.Fatal("Bootstrap should be initialized")
+	}
+
+	// Manually set CurrentStep to generate (index 2)
+	st.Bootstrap.CurrentStep = 2
+	for i := range 2 {
+		st.Bootstrap.Steps[i].Status = stepComplete
+	}
+	st.Bootstrap.Steps[2].Status = stepInProgress
+	st.Bootstrap.Plan = nil // Explicitly no plan
+
+	if err := saveSessionState(baseDir, st.SessionID, st); err != nil {
+		t.Fatalf("saveSessionState: %v", err)
+	}
+
+	// Try to complete generate without a plan — should fail
+	resp, err := e.BootstrapComplete(ctx, "generate", "Tried to complete generate without plan", nil)
+	
+	// Expect error because Plan is nil for non-discover step
+	if err == nil {
+		t.Error("BootstrapComplete should fail when Plan is nil for non-discover steps")
+	}
+	if resp != nil && strings.Contains(resp.Message, "plan") {
+		// If error message mentions plan, that's good
 	}
 }
