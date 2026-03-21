@@ -172,13 +172,12 @@ func TestWorkflowTool_Action_Start_Deploy_Stateful(t *testing.T) {
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
-	// Write a service meta so deploy start finds targets.
+	// Write a complete service meta so deploy start finds targets.
 	meta := &workflow.ServiceMeta{
-		Hostname:      "appdev",
-		Type:          "nodejs@22",
-		Mode:          "standard",
-		StageHostname: "appstage",
-		Status:        "bootstrapped",
+		Hostname:       "appdev",
+		Mode:           "standard",
+		StageHostname:  "appstage",
+		BootstrappedAt: "2026-03-04T12:00:00Z",
 	}
 	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -216,6 +215,34 @@ func TestWorkflowTool_Action_Start_Deploy_NoMetas(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected error when no service metas exist")
+	}
+}
+
+func TestWorkflowTool_Action_Start_Deploy_IncompleteMetas(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
+
+	// Write an incomplete meta (no BootstrappedAt — bootstrap didn't finish).
+	meta := &workflow.ServiceMeta{
+		Hostname: "appdev",
+		Mode:     "dev",
+	}
+	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, dir)
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "deploy",
+		"intent":   "Deploy app",
+	})
+
+	if !result.IsError {
+		t.Error("expected error when service metas are incomplete (bootstrap not finished)")
 	}
 }
 

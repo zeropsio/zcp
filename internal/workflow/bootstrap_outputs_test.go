@@ -162,7 +162,6 @@ func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
 			// Pre-write a ServiceMeta for "db" with a distinct session ID.
 			originalMeta := &ServiceMeta{
 				Hostname:         "db",
-				Type:             "postgresql@16",
 				Mode:             "NON_HA",
 				BootstrapSession: "original-session-id",
 				BootstrappedAt:   "2026-01-01",
@@ -282,7 +281,7 @@ func TestWriteBootstrapOutputs_SkipsExistingAndSharedDeps(t *testing.T) {
 	})
 }
 
-func TestWriteBootstrapOutputs_SetsBootstrappedStatus(t *testing.T) {
+func TestWriteBootstrapOutputs_SetsBootstrappedAt(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
@@ -308,7 +307,7 @@ func TestWriteBootstrapOutputs_SetsBootstrappedStatus(t *testing.T) {
 		}
 	}
 
-	// After full bootstrap, both metas should have Status=bootstrapped.
+	// After full bootstrap, both metas should be complete (BootstrappedAt set).
 	appMeta, err := ReadServiceMeta(dir, "appdev")
 	if err != nil {
 		t.Fatalf("ReadServiceMeta(appdev): %v", err)
@@ -316,8 +315,11 @@ func TestWriteBootstrapOutputs_SetsBootstrappedStatus(t *testing.T) {
 	if appMeta == nil {
 		t.Fatal("expected appdev meta")
 	}
-	if appMeta.Status != MetaStatusBootstrapped {
-		t.Errorf("appdev Status: want %q, got %q", MetaStatusBootstrapped, appMeta.Status)
+	if !appMeta.IsComplete() {
+		t.Error("appdev should be complete after full bootstrap")
+	}
+	if appMeta.BootstrappedAt == "" {
+		t.Error("appdev BootstrappedAt should be set")
 	}
 
 	dbMeta, err := ReadServiceMeta(dir, "db")
@@ -327,12 +329,12 @@ func TestWriteBootstrapOutputs_SetsBootstrappedStatus(t *testing.T) {
 	if dbMeta == nil {
 		t.Fatal("expected db meta")
 	}
-	if dbMeta.Status != MetaStatusBootstrapped {
-		t.Errorf("db Status: want %q, got %q", MetaStatusBootstrapped, dbMeta.Status)
+	if !dbMeta.IsComplete() {
+		t.Error("db should be complete after full bootstrap")
 	}
 }
 
-func TestWriteServiceMetas_PlannedStatus(t *testing.T) {
+func TestProvisionMeta_NoMetaAfterPlan(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
@@ -352,31 +354,17 @@ func TestWriteServiceMetas_PlannedStatus(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	// After plan completion, metas should exist with Status=planned.
+	// After plan completion, NO metas should exist yet (meta written at provision, not plan).
 	appMeta, err := ReadServiceMeta(dir, "appdev")
 	if err != nil {
 		t.Fatalf("ReadServiceMeta(appdev): %v", err)
 	}
-	if appMeta == nil {
-		t.Fatal("expected appdev meta after plan")
-	}
-	if appMeta.Status != MetaStatusPlanned {
-		t.Errorf("appdev Status: want %q, got %q", MetaStatusPlanned, appMeta.Status)
-	}
-
-	dbMeta, err := ReadServiceMeta(dir, "db")
-	if err != nil {
-		t.Fatalf("ReadServiceMeta(db): %v", err)
-	}
-	if dbMeta == nil {
-		t.Fatal("expected db meta after plan")
-	}
-	if dbMeta.Status != MetaStatusPlanned {
-		t.Errorf("db Status: want %q, got %q", MetaStatusPlanned, dbMeta.Status)
+	if appMeta != nil {
+		t.Error("no meta should exist after plan step — metas are written at provision")
 	}
 }
 
-func TestWriteServiceMetas_ProvisionedStatus(t *testing.T) {
+func TestProvisionMeta_WritesPartialMeta(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
@@ -397,11 +385,11 @@ func TestWriteServiceMetas_ProvisionedStatus(t *testing.T) {
 	}
 
 	// Complete provision step.
-	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Provisioned ok", nil); err != nil {
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Provisioned all services ok", nil); err != nil {
 		t.Fatalf("BootstrapComplete(provision): %v", err)
 	}
 
-	// After provision, metas should have Status=provisioned.
+	// After provision, partial metas should exist but be incomplete (no BootstrappedAt).
 	appMeta, err := ReadServiceMeta(dir, "appdev")
 	if err != nil {
 		t.Fatalf("ReadServiceMeta(appdev): %v", err)
@@ -409,8 +397,25 @@ func TestWriteServiceMetas_ProvisionedStatus(t *testing.T) {
 	if appMeta == nil {
 		t.Fatal("expected appdev meta after provision")
 	}
-	if appMeta.Status != MetaStatusProvisioned {
-		t.Errorf("appdev Status: want %q, got %q", MetaStatusProvisioned, appMeta.Status)
+	if appMeta.IsComplete() {
+		t.Error("meta should NOT be complete after provision (BootstrappedAt should be empty)")
+	}
+	if appMeta.Hostname != "appdev" {
+		t.Errorf("Hostname: want appdev, got %s", appMeta.Hostname)
+	}
+	if appMeta.Hostname != "appdev" {
+		t.Errorf("Hostname: want appdev, got %s", appMeta.Hostname)
+	}
+
+	dbMeta, err := ReadServiceMeta(dir, "db")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(db): %v", err)
+	}
+	if dbMeta == nil {
+		t.Fatal("expected db meta after provision")
+	}
+	if dbMeta.IsComplete() {
+		t.Error("db meta should NOT be complete after provision")
 	}
 }
 
@@ -422,8 +427,6 @@ func TestWriteServiceMetas_SkipsExistingDeps(t *testing.T) {
 	// Pre-write a meta for an existing dependency.
 	existingMeta := &ServiceMeta{
 		Hostname:         "db",
-		Type:             "postgresql@16",
-		Status:           MetaStatusBootstrapped,
 		BootstrapSession: "old-session",
 		BootstrappedAt:   "2026-01-01",
 	}
@@ -457,8 +460,8 @@ func TestWriteServiceMetas_SkipsExistingDeps(t *testing.T) {
 	if dbMeta.BootstrapSession != "old-session" {
 		t.Errorf("EXISTS dep should preserve original session, got %q", dbMeta.BootstrapSession)
 	}
-	if dbMeta.Status != MetaStatusBootstrapped {
-		t.Errorf("EXISTS dep should preserve original status, got %q", dbMeta.Status)
+	if !dbMeta.IsComplete() {
+		t.Error("EXISTS dep should preserve original complete status")
 	}
 }
 
@@ -511,9 +514,9 @@ func TestWriteBootstrapOutputs_CopiesStrategiesToDecisions(t *testing.T) {
 			if meta == nil {
 				t.Fatal("expected appdev meta")
 			}
-			got := meta.Decisions[DecisionDeployStrategy]
+			got := meta.DeployStrategy
 			if got != tt.wantKey {
-				t.Errorf("Decisions[%q]: want %q, got %q", DecisionDeployStrategy, tt.wantKey, got)
+				t.Errorf("DeployStrategy: want %q, got %q", tt.wantKey, got)
 			}
 		})
 	}
@@ -562,9 +565,9 @@ func TestWriteBootstrapOutputs_AutoAssignsPushDevForDevOnly(t *testing.T) {
 			if meta == nil {
 				t.Fatal("expected appdev meta")
 			}
-			got := meta.Decisions[DecisionDeployStrategy]
+			got := meta.DeployStrategy
 			if got != tt.wantStrategy {
-				t.Errorf("Decisions[%q]: want %q, got %q", DecisionDeployStrategy, tt.wantStrategy, got)
+				t.Errorf("DeployStrategy: want %q, got %q", tt.wantStrategy, got)
 			}
 		})
 	}
@@ -606,13 +609,13 @@ func TestWriteBootstrapOutputs_ExplicitStrategyNotOverriddenForDevOnly(t *testin
 	if meta == nil {
 		t.Fatal("expected appdev meta")
 	}
-	got := meta.Decisions[DecisionDeployStrategy]
+	got := meta.DeployStrategy
 	if got != StrategyCICD {
 		t.Errorf("explicit strategy should not be overridden: want %q, got %q", StrategyCICD, got)
 	}
 }
 
-func TestWriteServiceMetas_SetsMode(t *testing.T) {
+func TestProvisionMeta_SetsMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
@@ -641,13 +644,18 @@ func TestWriteServiceMetas_SetsMode(t *testing.T) {
 				t.Fatalf("BootstrapCompletePlan: %v", err)
 			}
 
-			// After plan, check that planned meta has Mode set.
+			// Complete provision step to trigger meta write.
+			if _, err := eng.BootstrapComplete(context.Background(), "provision", "Provisioned all services ok", nil); err != nil {
+				t.Fatalf("BootstrapComplete(provision): %v", err)
+			}
+
+			// After provision, check that partial meta has Mode set.
 			meta, err := ReadServiceMeta(dir, "appdev")
 			if err != nil {
 				t.Fatalf("ReadServiceMeta: %v", err)
 			}
 			if meta == nil {
-				t.Fatal("expected appdev meta after plan")
+				t.Fatal("expected appdev meta after provision")
 			}
 			if meta.Mode != tt.wantMode {
 				t.Errorf("Mode: want %q, got %q", tt.wantMode, meta.Mode)

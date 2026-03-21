@@ -92,7 +92,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 				{ID: "s2", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"}},
 			},
 			metas: []*workflow.ServiceMeta{
-				{Hostname: "appdev", Decisions: map[string]string{workflow.DecisionDeployStrategy: workflow.StrategyCICD}},
+				{Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: workflow.StrategyCICD},
 			},
 			wantContains: []string{
 				"cicd",
@@ -106,7 +106,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 				{ID: "s2", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"}},
 			},
 			metas: []*workflow.ServiceMeta{
-				{Hostname: "deletedservice", Decisions: map[string]string{workflow.DecisionDeployStrategy: workflow.StrategyCICD}},
+				{Hostname: "deletedservice", BootstrappedAt: "2026-01-01", DeployStrategy: workflow.StrategyCICD},
 			},
 			wantContains: []string{
 				"deploy", // Falls back to deploy since ci-cd meta is stale

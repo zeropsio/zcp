@@ -208,6 +208,16 @@ func handleDeployStart(_ context.Context, engine *workflow.Engine, projectID str
 			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
 	}
 
+	// Reject incomplete metas (bootstrap started but didn't finish).
+	for _, m := range metas {
+		if !m.IsComplete() {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Service %q was provisioned but bootstrap didn't complete", m.Hostname),
+				"Run bootstrap first to finish setup: action=\"start\" workflow=\"bootstrap\"")), nil, nil
+		}
+	}
+
 	// Filter to runtime services only (those with a type that has a mode).
 	var runtimeMetas []*workflow.ServiceMeta
 	for _, m := range metas {
@@ -222,17 +232,7 @@ func handleDeployStart(_ context.Context, engine *workflow.Engine, projectID str
 			"Only managed services exist — nothing to deploy")), nil, nil
 	}
 
-	// Also load all metas (including deps) for service context.
 	targets, mode, svcCtx := workflow.BuildDeployTargets(runtimeMetas)
-	// Enrich context with dep types from all metas (deps are separate meta files).
-	if svcCtx != nil && len(svcCtx.DependencyTypes) == 0 {
-		for _, m := range metas {
-			if m.Mode == "" && m.StageHostname == "" && m.Type != "" {
-				// Managed service (no mode, no stage) — a dependency.
-				svcCtx.DependencyTypes = append(svcCtx.DependencyTypes, m.Type)
-			}
-		}
-	}
 	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode, svcCtx)
 	if err != nil {
 		return convertError(platform.NewPlatformError(

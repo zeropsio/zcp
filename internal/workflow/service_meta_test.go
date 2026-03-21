@@ -14,13 +14,12 @@ func TestWriteServiceMeta_Success(t *testing.T) {
 
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
-		Type:             "nodejs@22",
 		Mode:             "standard",
 		StageHostname:    "appstage",
 		Dependencies:     []string{"db", "cache"},
+		DeployStrategy:   StrategyPushDev,
 		BootstrapSession: "abc123",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
-		Decisions:        map[string]string{DecisionDeployStrategy: StrategyPushDev},
 	}
 
 	if err := WriteServiceMeta(dir, meta); err != nil {
@@ -43,8 +42,8 @@ func TestWriteServiceMeta_Success(t *testing.T) {
 	if got.StageHostname != "appstage" {
 		t.Errorf("stageHostname: want appstage, got %s", got.StageHostname)
 	}
-	if got.Decisions[DecisionDeployStrategy] != StrategyPushDev {
-		t.Errorf("decisions[deployStrategy]: want %s, got %s", StrategyPushDev, got.Decisions[DecisionDeployStrategy])
+	if got.DeployStrategy != StrategyPushDev {
+		t.Errorf("deployStrategy: want %s, got %s", StrategyPushDev, got.DeployStrategy)
 	}
 }
 
@@ -54,7 +53,6 @@ func TestWriteServiceMeta_CreatesDirectory(t *testing.T) {
 
 	meta := &ServiceMeta{
 		Hostname:         "db",
-		Type:             "postgresql@16",
 		BootstrapSession: "abc123",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
@@ -78,13 +76,12 @@ func TestReadServiceMeta_Success(t *testing.T) {
 
 	original := &ServiceMeta{
 		Hostname:         "appdev",
-		Type:             "bun@1.2",
 		Mode:             "standard",
 		StageHostname:    "appstage",
 		Dependencies:     []string{"db"},
+		DeployStrategy:   StrategyPushDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
-		Decisions:        map[string]string{"framework": "hono", DecisionDeployStrategy: StrategyPushDev},
 	}
 
 	if err := WriteServiceMeta(dir, original); err != nil {
@@ -95,14 +92,8 @@ func TestReadServiceMeta_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadServiceMeta: %v", err)
 	}
-	if got.Type != "bun@1.2" {
-		t.Errorf("type: want bun@1.2, got %s", got.Type)
-	}
-	if got.Decisions["framework"] != "hono" {
-		t.Errorf("decisions[framework]: want hono, got %s", got.Decisions["framework"])
-	}
-	if got.Decisions[DecisionDeployStrategy] != StrategyPushDev {
-		t.Errorf("decisions[deployStrategy]: want %s, got %s", StrategyPushDev, got.Decisions[DecisionDeployStrategy])
+	if got.DeployStrategy != StrategyPushDev {
+		t.Errorf("deployStrategy: want %s, got %s", StrategyPushDev, got.DeployStrategy)
 	}
 }
 
@@ -130,20 +121,18 @@ func TestServiceMeta_JSONRoundTrip(t *testing.T) {
 			"full",
 			ServiceMeta{
 				Hostname:         "apidev",
-				Type:             "go@1",
 				Mode:             "standard",
 				StageHostname:    "apistage",
 				Dependencies:     []string{"db", "cache", "storage"},
+				DeployStrategy:   StrategyPushDev,
 				BootstrapSession: "sess123",
 				BootstrappedAt:   "2026-03-04T12:00:00Z",
-				Decisions:        map[string]string{"framework": "fiber", "db_driver": "pgx", DecisionDeployStrategy: StrategyPushDev},
 			},
 		},
 		{
 			"minimal",
 			ServiceMeta{
 				Hostname:         "db",
-				Type:             "postgresql@16",
 				BootstrapSession: "sess123",
 				BootstrappedAt:   "2026-03-04T12:00:00Z",
 			},
@@ -164,8 +153,8 @@ func TestServiceMeta_JSONRoundTrip(t *testing.T) {
 			if got.Hostname != tt.meta.Hostname {
 				t.Errorf("hostname: want %s, got %s", tt.meta.Hostname, got.Hostname)
 			}
-			if got.Type != tt.meta.Type {
-				t.Errorf("type: want %s, got %s", tt.meta.Type, got.Type)
+			if got.DeployStrategy != tt.meta.DeployStrategy {
+				t.Errorf("deployStrategy: want %s, got %s", tt.meta.DeployStrategy, got.DeployStrategy)
 			}
 		})
 	}
@@ -177,10 +166,9 @@ func TestServiceMeta_NoDeployFlowField(t *testing.T) {
 	// Verify DeployFlow is not serialized — the field should not exist.
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
-		Type:             "nodejs@22",
+		DeployStrategy:   StrategyPushDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
-		Decisions:        map[string]string{DecisionDeployStrategy: StrategyPushDev},
 	}
 	data, err := json.Marshal(meta)
 	if err != nil {
@@ -207,7 +195,6 @@ func TestStrategyConstants(t *testing.T) {
 		{"StrategyPushDev", StrategyPushDev, "push-dev"},
 		{"StrategyCICD", StrategyCICD, "ci-cd"},
 		{"StrategyManual", StrategyManual, "manual"},
-		{"DecisionDeployStrategy", DecisionDeployStrategy, "deployStrategy"},
 	}
 
 	for _, tt := range tests {
@@ -225,9 +212,9 @@ func TestListServiceMetas_MultipleMetas(t *testing.T) {
 	dir := t.TempDir()
 
 	metas := []*ServiceMeta{
-		{Hostname: "appdev", Type: "nodejs@22", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
-		{Hostname: "db", Type: "postgresql@16", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
-		{Hostname: "cache", Type: "keydb@6", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+		{Hostname: "appdev", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+		{Hostname: "db", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+		{Hostname: "cache", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
 	}
 	for _, m := range metas {
 		if err := WriteServiceMeta(dir, m); err != nil {
@@ -291,7 +278,6 @@ func TestDeleteServiceMeta_Success(t *testing.T) {
 
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
-		Type:             "nodejs@22",
 		BootstrapSession: "s1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
@@ -343,131 +329,46 @@ func TestDeleteServiceMeta_NoServicesDir_NoError(t *testing.T) {
 	}
 }
 
-func TestMetaStatusConstants(t *testing.T) {
+func TestServiceMeta_IsComplete(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
-		constant string
-		want     string
+		meta     ServiceMeta
+		wantDone bool
 	}{
-		{"MetaStatusPlanned", MetaStatusPlanned, "planned"},
-		{"MetaStatusProvisioned", MetaStatusProvisioned, "provisioned"},
-		{"MetaStatusDeployed", MetaStatusDeployed, "deployed"},
-		{"MetaStatusBootstrapped", MetaStatusBootstrapped, "bootstrapped"},
+		{
+			"complete meta with BootstrappedAt",
+			ServiceMeta{Hostname: "appdev", BootstrappedAt: "2026-03-04T12:00:00Z"},
+			true,
+		},
+		{
+			"incomplete meta without BootstrappedAt",
+			ServiceMeta{Hostname: "appdev"},
+			false,
+		},
+		{
+			"empty BootstrappedAt string",
+			ServiceMeta{Hostname: "appdev", BootstrappedAt: ""},
+			false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if tt.constant != tt.want {
-				t.Errorf("%s: want %q, got %q", tt.name, tt.want, tt.constant)
+			if got := tt.meta.IsComplete(); got != tt.wantDone {
+				t.Errorf("IsComplete(): want %v, got %v", tt.wantDone, got)
 			}
 		})
 	}
 }
 
-func TestReadServiceMeta_BackwardCompat_EmptyStatus(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	// Write a meta WITHOUT a Status field (simulating pre-existing file).
-	meta := &ServiceMeta{
-		Hostname:         "appdev",
-		Type:             "nodejs@22",
-		BootstrapSession: "sess1",
-		BootstrappedAt:   "2026-03-04T12:00:00Z",
-	}
-	if err := WriteServiceMeta(dir, meta); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
-
-	got, err := ReadServiceMeta(dir, "appdev")
-	if err != nil {
-		t.Fatalf("ReadServiceMeta: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected non-nil meta")
-	}
-	if got.Status != MetaStatusBootstrapped {
-		t.Errorf("Status: want %q for backward compat, got %q", MetaStatusBootstrapped, got.Status)
-	}
-}
-
-func TestReadServiceMeta_WithStatus_Preserved(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		status string
-	}{
-		{"planned", MetaStatusPlanned},
-		{"provisioned", MetaStatusProvisioned},
-		{"deployed", MetaStatusDeployed},
-		{"bootstrapped", MetaStatusBootstrapped},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-
-			meta := &ServiceMeta{
-				Hostname:         "svc",
-				Type:             "nodejs@22",
-				Status:           tt.status,
-				BootstrapSession: "sess1",
-				BootstrappedAt:   "2026-03-04T12:00:00Z",
-			}
-			if err := WriteServiceMeta(dir, meta); err != nil {
-				t.Fatalf("WriteServiceMeta: %v", err)
-			}
-
-			got, err := ReadServiceMeta(dir, "svc")
-			if err != nil {
-				t.Fatalf("ReadServiceMeta: %v", err)
-			}
-			if got.Status != tt.status {
-				t.Errorf("Status: want %q, got %q", tt.status, got.Status)
-			}
-		})
-	}
-}
-
-func TestListServiceMetas_BackwardCompat_EmptyStatus(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	// Write a meta without Status (pre-existing).
-	meta := &ServiceMeta{
-		Hostname:         "oldservice",
-		Type:             "go@1",
-		BootstrapSession: "old-sess",
-		BootstrappedAt:   "2026-01-01",
-	}
-	if err := WriteServiceMeta(dir, meta); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
-
-	got, err := ListServiceMetas(dir)
-	if err != nil {
-		t.Fatalf("ListServiceMetas: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("want 1 meta, got %d", len(got))
-	}
-	if got[0].Status != MetaStatusBootstrapped {
-		t.Errorf("Status: want %q for backward compat, got %q", MetaStatusBootstrapped, got[0].Status)
-	}
-}
-
-func TestServiceMeta_StatusInJSON(t *testing.T) {
+func TestServiceMeta_NoStatusFieldInJSON(t *testing.T) {
 	t.Parallel()
 
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
-		Type:             "nodejs@22",
-		Status:           MetaStatusPlanned,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
@@ -480,11 +381,13 @@ func TestServiceMeta_StatusInJSON(t *testing.T) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("unmarshal raw: %v", err)
 	}
-	status, ok := raw["status"]
-	if !ok {
-		t.Fatal("status field should be present in JSON when set")
+	if _, ok := raw["status"]; ok {
+		t.Error("status field should NOT exist in JSON — Status was removed")
 	}
-	if status != MetaStatusPlanned {
-		t.Errorf("status: want %q, got %v", MetaStatusPlanned, status)
+	if _, ok := raw["type"]; ok {
+		t.Error("type field should NOT exist in JSON — Type was removed")
+	}
+	if _, ok := raw["decisions"]; ok {
+		t.Error("decisions field should NOT exist in JSON — replaced by deployStrategy")
 	}
 }

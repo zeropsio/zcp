@@ -142,14 +142,6 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, *DeploySe
 	mode := ""
 	svcCtx := &DeployServiceContext{}
 
-	// Collect all dependency hostnames to resolve their types.
-	allMetas := make(map[string]*ServiceMeta, len(metas))
-	for _, m := range metas {
-		allMetas[m.Hostname] = m
-	}
-
-	depTypeSeen := make(map[string]bool)
-
 	for _, m := range metas {
 		metaMode := m.Mode
 		if metaMode == "" {
@@ -157,11 +149,6 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, *DeploySe
 		}
 		if mode == "" {
 			mode = metaMode
-		}
-
-		// Use first runtime's type.
-		if svcCtx.RuntimeType == "" && m.Type != "" {
-			svcCtx.RuntimeType = m.Type
 		}
 
 		targets = append(targets, DeployTarget{
@@ -177,16 +164,6 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, *DeploySe
 				Role:     DeployRoleStage,
 				Status:   deployTargetPending,
 			})
-		}
-
-		// Collect dependency types from dep metas.
-		for _, depHostname := range m.Dependencies {
-			if depMeta, ok := allMetas[depHostname]; ok && depMeta.Type != "" {
-				if !depTypeSeen[depMeta.Type] {
-					depTypeSeen[depMeta.Type] = true
-					svcCtx.DependencyTypes = append(svcCtx.DependencyTypes, depMeta.Type)
-				}
-			}
 		}
 	}
 

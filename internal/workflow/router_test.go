@@ -67,8 +67,9 @@ func TestRoute_ConformantProject_StrategyBased(t *testing.T) {
 			input: RouterInput{
 				ProjectState: StateConformant,
 				ServiceMetas: []*ServiceMeta{{
-					Hostname:  "appdev",
-					Decisions: map[string]string{DecisionDeployStrategy: StrategyCICD},
+					Hostname:       "appdev",
+					BootstrappedAt: "2026-01-01",
+					DeployStrategy: StrategyCICD,
 				}},
 				LiveServices: []string{"appdev"},
 			},
@@ -81,8 +82,9 @@ func TestRoute_ConformantProject_StrategyBased(t *testing.T) {
 			input: RouterInput{
 				ProjectState: StateConformant,
 				ServiceMetas: []*ServiceMeta{{
-					Hostname:  "appdev",
-					Decisions: map[string]string{DecisionDeployStrategy: StrategyPushDev},
+					Hostname:       "appdev",
+					BootstrappedAt: "2026-01-01",
+					DeployStrategy: StrategyPushDev,
 				}},
 				LiveServices: []string{"appdev"},
 			},
@@ -94,8 +96,9 @@ func TestRoute_ConformantProject_StrategyBased(t *testing.T) {
 			input: RouterInput{
 				ProjectState: StateConformant,
 				ServiceMetas: []*ServiceMeta{{
-					Hostname:  "appdev",
-					Decisions: map[string]string{DecisionDeployStrategy: StrategyManual},
+					Hostname:       "appdev",
+					BootstrappedAt: "2026-01-01",
+					DeployStrategy: StrategyManual,
 				}},
 				LiveServices: []string{"appdev"},
 			},
@@ -157,8 +160,9 @@ func TestRoute_NonConformant_MixedCoverage(t *testing.T) {
 			input: RouterInput{
 				ProjectState: StateNonConformant,
 				ServiceMetas: []*ServiceMeta{{
-					Hostname:  "appdev",
-					Decisions: map[string]string{DecisionDeployStrategy: StrategyPushDev},
+					Hostname:       "appdev",
+					BootstrappedAt: "2026-01-01",
+					DeployStrategy: StrategyPushDev,
 				}},
 				LiveServices: []string{"appdev"},
 			},
@@ -250,12 +254,14 @@ func TestRoute_StaleMetaFiltering(t *testing.T) {
 		ProjectState: StateConformant,
 		ServiceMetas: []*ServiceMeta{
 			{
-				Hostname:  "appdev",
-				Decisions: map[string]string{DecisionDeployStrategy: StrategyCICD},
+				Hostname:       "appdev",
+				BootstrappedAt: "2026-01-01",
+				DeployStrategy: StrategyCICD,
 			},
 			{
-				Hostname:  "staleservice",
-				Decisions: map[string]string{DecisionDeployStrategy: StrategyPushDev},
+				Hostname:       "staleservice",
+				BootstrappedAt: "2026-01-01",
+				DeployStrategy: StrategyPushDev,
 			},
 		},
 		LiveServices: []string{"appdev"}, // staleservice is NOT live
@@ -318,8 +324,9 @@ func TestRoute_IntentBoost_PromotesMatchingWorkflow(t *testing.T) {
 			input: RouterInput{
 				ProjectState: StateNonConformant,
 				ServiceMetas: []*ServiceMeta{{
-					Hostname:  "appdev",
-					Decisions: map[string]string{DecisionDeployStrategy: StrategyPushDev},
+					Hostname:       "appdev",
+					BootstrappedAt: "2026-01-01",
+					DeployStrategy: StrategyPushDev,
 				}},
 				LiveServices: []string{"appdev"},
 				Intent:       "I want to deploy my code",
@@ -347,8 +354,9 @@ func TestRoute_IntentBoost_PromotesMatchingWorkflow(t *testing.T) {
 			input: RouterInput{
 				ProjectState: StateConformant,
 				ServiceMetas: []*ServiceMeta{{
-					Hostname:  "appdev",
-					Decisions: map[string]string{DecisionDeployStrategy: StrategyCICD},
+					Hostname:       "appdev",
+					BootstrappedAt: "2026-01-01",
+					DeployStrategy: StrategyCICD,
 				}},
 				LiveServices: []string{"appdev"},
 				Intent:       "set up github actions pipeline",
@@ -368,6 +376,50 @@ func TestRoute_IntentBoost_PromotesMatchingWorkflow(t *testing.T) {
 			input: RouterInput{
 				ProjectState: StateUnknown,
 				Intent:       "DEPLOY my app NOW",
+			},
+			wantTop: "deploy",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			offerings := Route(tt.input)
+			if len(offerings) == 0 {
+				t.Fatal("expected at least one offering")
+			}
+			if offerings[0].Workflow != tt.wantTop {
+				t.Errorf("top offering = %q, want %q", offerings[0].Workflow, tt.wantTop)
+			}
+		})
+	}
+}
+
+func TestRoute_IncompleteMetas_SuggestsBootstrap(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		input   RouterInput
+		wantTop string
+	}{
+		{
+			name: "incomplete meta without BootstrappedAt suggests bootstrap",
+			input: RouterInput{
+				ProjectState: StateNonConformant,
+				ServiceMetas: []*ServiceMeta{
+					{Hostname: "appdev", Mode: PlanModeDev},
+				},
+				LiveServices: []string{"appdev"},
+			},
+			wantTop: "bootstrap",
+		},
+		{
+			name: "complete meta with strategy routes normally",
+			input: RouterInput{
+				ProjectState: StateConformant,
+				ServiceMetas: []*ServiceMeta{
+					{Hostname: "appdev", Mode: PlanModeDev, BootstrappedAt: "2026-03-04", DeployStrategy: StrategyPushDev},
+				},
+				LiveServices: []string{"appdev"},
 			},
 			wantTop: "deploy",
 		},

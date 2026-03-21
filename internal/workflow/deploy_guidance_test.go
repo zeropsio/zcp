@@ -86,14 +86,9 @@ func writeTestMeta(t *testing.T, stateDir, hostname, strategy string) {
 	t.Helper()
 	meta := &ServiceMeta{
 		Hostname:         hostname,
-		Type:             "nodejs@22",
+		DeployStrategy:   strategy,
 		BootstrapSession: "test-session",
 		BootstrappedAt:   "2026-01-01T00:00:00Z",
-	}
-	if strategy != "" {
-		meta.Decisions = map[string]string{
-			DecisionDeployStrategy: strategy,
-		}
 	}
 	if err := os.MkdirAll(filepath.Join(stateDir, "services"), 0o755); err != nil {
 		t.Fatal(err)

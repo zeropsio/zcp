@@ -18,18 +18,15 @@ func BuildServiceContextSummary(metas []*ServiceMeta) string {
 	var runtimes, managed []string
 
 	for _, m := range metas {
-		entry := fmt.Sprintf("- **%s** (%s)", m.Hostname, m.Type)
+		entry := fmt.Sprintf("- **%s**", m.Hostname)
 		if m.Mode != "" {
 			entry += fmt.Sprintf(" [%s mode]", m.Mode)
 		}
 		if m.StageHostname != "" {
 			entry += fmt.Sprintf(" → stage: **%s**", m.StageHostname)
 		}
-		if m.Status != "" {
-			entry += fmt.Sprintf(" — %s", m.Status)
-		}
-		if strategy, ok := m.Decisions[DecisionDeployStrategy]; ok {
-			entry += fmt.Sprintf(" (strategy: %s)", strategy)
+		if m.DeployStrategy != "" {
+			entry += fmt.Sprintf(" (strategy: %s)", m.DeployStrategy)
 		}
 
 		// Classify as runtime vs managed.

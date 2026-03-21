@@ -59,10 +59,7 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 				Hostname: hostname,
 			}
 		}
-		if meta.Decisions == nil {
-			meta.Decisions = make(map[string]string)
-		}
-		meta.Decisions[workflow.DecisionDeployStrategy] = strategy
+		meta.DeployStrategy = strategy
 		if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,

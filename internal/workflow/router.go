@@ -29,6 +29,24 @@ func Route(input RouterInput) []FlowOffering {
 	// Filter stale metas: only keep metas whose hostname is in LiveServices.
 	metas := filterStaleMetas(input.ServiceMetas, input.LiveServices)
 
+	// If any metas are incomplete (provisioned but not bootstrapped), prioritize bootstrap.
+	if hasIncompleteMetas(metas) {
+		offerings := []FlowOffering{{
+			Workflow: "bootstrap",
+			Priority: 1,
+			Reason:   "Incomplete bootstrap detected — services provisioned but not fully set up",
+			Hint:     `zerops_workflow action="start" workflow="bootstrap"`,
+		}}
+		offerings = appendUtilities(offerings)
+		if input.Intent != "" {
+			offerings = boostByIntent(offerings, input.Intent)
+		}
+		sort.Slice(offerings, func(i, j int) bool {
+			return offerings[i].Priority < offerings[j].Priority
+		})
+		return offerings
+	}
+
 	var offerings []FlowOffering
 
 	switch input.ProjectState {
@@ -103,6 +121,17 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 		}
 	}
 	return result
+}
+
+// hasIncompleteMetas returns true if any meta has no BootstrappedAt set,
+// indicating a bootstrap that started but didn't finish.
+func hasIncompleteMetas(metas []*ServiceMeta) bool {
+	for _, m := range metas {
+		if !m.IsComplete() {
+			return true
+		}
+	}
+	return false
 }
 
 func routeFresh(sessions []SessionEntry) []FlowOffering {
@@ -194,8 +223,8 @@ func routeUnknown() []FlowOffering {
 func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 	strategies := make(map[string]int)
 	for _, m := range metas {
-		if s, ok := m.Decisions[DecisionDeployStrategy]; ok {
-			strategies[s]++
+		if m.DeployStrategy != "" {
+			strategies[m.DeployStrategy]++
 		}
 	}
 	if len(strategies) == 0 {

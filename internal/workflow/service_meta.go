@@ -11,39 +11,29 @@ import (
 
 // Strategy constants for deploy decisions.
 const (
-	StrategyPushDev        = "push-dev"
-	StrategyCICD           = "ci-cd"
-	StrategyManual         = "manual"
-	DecisionDeployStrategy = "deployStrategy"
+	StrategyPushDev = "push-dev"
+	StrategyCICD    = "ci-cd"
+	StrategyManual  = "manual"
 )
 
-// MetaStatus constants track service lifecycle during bootstrap.
-const (
-	MetaStatusPlanned      = "planned"
-	MetaStatusProvisioned  = "provisioned"
-	MetaStatusDeployed     = "deployed"
-	MetaStatusBootstrapped = "bootstrapped"
-)
-
-// ServiceMeta records decisions made during bootstrap for a service.
-// These are historical records, NOT state — the API is the source of truth.
+// ServiceMeta records bootstrap decisions for a service.
+// ZCP's persistent knowledge — the API doesn't track mode, pairing, or strategy.
+// The API is the source of truth for operational state (running, resources, envs).
 type ServiceMeta struct {
-	Hostname         string            `json:"hostname"`
-	Type             string            `json:"type"`
-	Mode             string            `json:"mode,omitempty"`
-	Status           string            `json:"status,omitempty"`
-	StageHostname    string            `json:"stageHostname,omitempty"`
-	Dependencies     []string          `json:"dependencies,omitempty"`
-	BootstrapSession string            `json:"bootstrapSession"`
-	BootstrappedAt   string            `json:"bootstrappedAt"`
-	Decisions        map[string]string `json:"decisions,omitempty"`
+	Hostname         string   `json:"hostname"`
+	Mode             string   `json:"mode,omitempty"`
+	StageHostname    string   `json:"stageHostname,omitempty"`
+	Dependencies     []string `json:"dependencies,omitempty"`
+	DeployStrategy   string   `json:"deployStrategy,omitempty"`
+	BootstrapSession string   `json:"bootstrapSession"`
+	BootstrappedAt   string   `json:"bootstrappedAt"`
 }
 
-// normalizeServiceMeta applies backward-compat defaults to a loaded ServiceMeta.
-func normalizeServiceMeta(meta *ServiceMeta) {
-	if meta.Status == "" {
-		meta.Status = MetaStatusBootstrapped
-	}
+// IsComplete returns true if bootstrap finished for this service.
+// BootstrappedAt is set only at bootstrap completion — empty means
+// the service was provisioned but bootstrap didn't finish.
+func (m *ServiceMeta) IsComplete() bool {
+	return m.BootstrappedAt != ""
 }
 
 // WriteServiceMeta writes service metadata to baseDir/services/{hostname}.json.
@@ -85,7 +75,6 @@ func ReadServiceMeta(baseDir, hostname string) (*ServiceMeta, error) {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, fmt.Errorf("unmarshal service meta: %w", err)
 	}
-	normalizeServiceMeta(&meta)
 	return &meta, nil
 }
 
@@ -114,7 +103,6 @@ func ListServiceMetas(baseDir string) ([]*ServiceMeta, error) {
 		if unmarshalErr := json.Unmarshal(data, &meta); unmarshalErr != nil {
 			return nil, fmt.Errorf("unmarshal service meta %s: %w", entry.Name(), unmarshalErr)
 		}
-		normalizeServiceMeta(&meta)
 		metas = append(metas, &meta)
 	}
 	return metas, nil

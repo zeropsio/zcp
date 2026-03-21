@@ -4,7 +4,7 @@
 //
 // Tests 11-13: provision checker should correctly FAIL when requirements are not met.
 //
-// Run: go test ./e2e/ -tags e2e -count=1 -v -run TestE2E_Bootstrap_ProvisionFail -timeout 600s
+// Run: go test ./e2e/ -tags e2e -count=1 -v -run TestE2E_Bootstrap_ProvisionFail -timeout 900s
 
 package e2e_test
 

@@ -162,9 +162,9 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 		return nil, fmt.Errorf("bootstrap complete: %w", err)
 	}
 
-	// Write incremental service metas after provision step.
+	// Write partial metas after provision (no BootstrappedAt = incomplete).
 	if stepName == StepProvision {
-		e.writeServiceMetas(state, MetaStatusProvisioned)
+		e.writeProvisionMetas(state)
 	}
 
 	sessionID := e.sessionID // capture before outputs may reference it
@@ -238,9 +238,6 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan save: %w", err)
 	}
-
-	// Write incremental service metas with planned status.
-	e.writeServiceMetas(state, MetaStatusPlanned)
 
 	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
 }

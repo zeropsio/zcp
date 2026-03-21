@@ -180,7 +180,6 @@ func TestBuildDeployTargets_Standard(t *testing.T) {
 	metas := []*ServiceMeta{
 		{
 			Hostname:      "appdev",
-			Type:          "nodejs@22",
 			Mode:          PlanModeStandard,
 			StageHostname: "appstage",
 		},
@@ -206,7 +205,6 @@ func TestBuildDeployTargets_Simple(t *testing.T) {
 	metas := []*ServiceMeta{
 		{
 			Hostname: "app",
-			Type:     "bun@1.2",
 			Mode:     PlanModeSimple,
 		},
 	}

@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-// writeBootstrapOutputs writes service meta files and appends a reflog entry.
+// writeBootstrapOutputs writes final service meta files and appends a reflog entry.
+// Sets BootstrappedAt to mark services as fully bootstrapped.
 // Both are best-effort — errors are logged to stderr but don't fail bootstrap completion.
 func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 	if state.Bootstrap == nil || state.Bootstrap.Plan == nil {
@@ -30,9 +31,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 
 			depMeta := &ServiceMeta{
 				Hostname:         dep.Hostname,
-				Type:             dep.Type,
 				Mode:             dep.Mode,
-				Status:           MetaStatusBootstrapped,
 				BootstrapSession: state.SessionID,
 				BootstrappedAt:   now,
 			}
@@ -52,16 +51,12 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 
 		meta := &ServiceMeta{
 			Hostname:         hostname,
-			Type:             target.Runtime.Type,
 			Mode:             mode,
-			Status:           MetaStatusBootstrapped,
 			StageHostname:    target.Runtime.StageHostname(),
 			Dependencies:     depHostnames,
+			DeployStrategy:   strategy,
 			BootstrapSession: state.SessionID,
 			BootstrappedAt:   now,
-		}
-		if strategy != "" {
-			meta.Decisions = map[string]string{DecisionDeployStrategy: strategy}
 		}
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", hostname, err)
@@ -77,10 +72,12 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 	}
 }
 
-// writeServiceMetas writes ServiceMeta files for all plan targets with the given status.
+// writeProvisionMetas writes partial ServiceMeta files after the provision step.
+// These metas have no BootstrappedAt (IsComplete() returns false), signaling
+// that bootstrap started but hasn't finished. If bootstrap completes,
+// writeBootstrapOutputs overwrites with full metas.
 // EXISTS/SHARED dependencies are skipped to avoid overwriting pre-existing metas.
-// Errors are logged but do not fail the operation.
-func (e *Engine) writeServiceMetas(state *WorkflowState, status string) {
+func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 	if state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return
 	}
@@ -88,9 +85,7 @@ func (e *Engine) writeServiceMetas(state *WorkflowState, status string) {
 	for _, target := range state.Bootstrap.Plan.Targets {
 		meta := &ServiceMeta{
 			Hostname:         target.Runtime.DevHostname,
-			Type:             target.Runtime.Type,
 			Mode:             target.Runtime.EffectiveMode(),
-			Status:           status,
 			StageHostname:    target.Runtime.StageHostname(),
 			BootstrapSession: state.SessionID,
 		}
@@ -104,9 +99,7 @@ func (e *Engine) writeServiceMetas(state *WorkflowState, status string) {
 			}
 			depMeta := &ServiceMeta{
 				Hostname:         dep.Hostname,
-				Type:             dep.Type,
 				Mode:             dep.Mode,
-				Status:           status,
 				BootstrapSession: state.SessionID,
 			}
 			if err := WriteServiceMeta(e.stateDir, depMeta); err != nil {

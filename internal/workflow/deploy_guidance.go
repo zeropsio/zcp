@@ -23,7 +23,7 @@ func ResolveDeployGuidance(stateDir, hostname string) string {
 		return ""
 	}
 
-	strategy := meta.Decisions[DecisionDeployStrategy]
+	strategy := meta.DeployStrategy
 	if strategy == "" {
 		return ""
 	}

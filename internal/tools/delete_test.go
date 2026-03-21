@@ -66,7 +66,6 @@ func TestDeleteTool_CleansUpServiceMeta(t *testing.T) {
 	// Write a service meta file that should be cleaned up after delete.
 	meta := &workflow.ServiceMeta{
 		Hostname:         "api",
-		Type:             "nodejs@22",
 		BootstrapSession: "s1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
