@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestRegisterSession_Success(t *testing.T) {
@@ -101,58 +102,90 @@ func TestUnregisterSession_NotFound(t *testing.T) {
 	}
 }
 
-func TestRefreshRegistry_PrunesDeadPIDs(t *testing.T) {
+func TestPruneDeadSessions(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
 
-	// Register with a PID that certainly doesn't exist.
-	entry := SessionEntry{
-		SessionID: "dead-sess",
-		PID:       9999999,
-		Workflow:  "deploy",
-		ProjectID: "proj-1",
-	}
-	if err := RegisterSession(dir, entry); err != nil {
-		t.Fatalf("RegisterSession: %v", err)
+	now := time.Now().UTC()
+	fresh := now.Add(-1 * time.Hour).Format(time.RFC3339)
+	borderKeep := now.Add(-23*time.Hour - 59*time.Minute).Format(time.RFC3339)
+	borderPrune := now.Add(-24*time.Hour - 1*time.Minute).Format(time.RFC3339)
+	old := now.Add(-48 * time.Hour).Format(time.RFC3339)
+
+	livePID := os.Getpid()
+	deadPID := 9999999
+
+	tests := []struct {
+		name    string
+		input   []SessionEntry
+		wantIDs []string
+	}{
+		{
+			name:    "dead PID removed regardless of age",
+			input:   []SessionEntry{{SessionID: "a", PID: deadPID, CreatedAt: fresh}},
+			wantIDs: nil,
+		},
+		{
+			name:    "live PID fresh session kept",
+			input:   []SessionEntry{{SessionID: "a", PID: livePID, CreatedAt: fresh}},
+			wantIDs: []string{"a"},
+		},
+		{
+			name:    "live PID at 23h59m kept (TTL boundary)",
+			input:   []SessionEntry{{SessionID: "a", PID: livePID, CreatedAt: borderKeep}},
+			wantIDs: []string{"a"},
+		},
+		{
+			name:    "live PID at 24h01m pruned (TTL boundary)",
+			input:   []SessionEntry{{SessionID: "a", PID: livePID, CreatedAt: borderPrune}},
+			wantIDs: nil,
+		},
+		{
+			name: "mixed: dead PID + old + young",
+			input: []SessionEntry{
+				{SessionID: "dead", PID: deadPID, CreatedAt: fresh},
+				{SessionID: "old", PID: livePID, CreatedAt: old},
+				{SessionID: "young", PID: livePID, CreatedAt: fresh},
+			},
+			wantIDs: []string{"young"},
+		},
+		{
+			name:    "malformed CreatedAt kept (parse error = keep)",
+			input:   []SessionEntry{{SessionID: "a", PID: livePID, CreatedAt: "not-a-date"}},
+			wantIDs: []string{"a"},
+		},
+		{
+			name:    "empty CreatedAt kept",
+			input:   []SessionEntry{{SessionID: "a", PID: livePID, CreatedAt: ""}},
+			wantIDs: []string{"a"},
+		},
+		{
+			name:    "empty input",
+			input:   nil,
+			wantIDs: nil,
+		},
 	}
 
-	if err := RefreshRegistry(dir); err != nil {
-		t.Fatalf("RefreshRegistry: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// Copy input to avoid slice aliasing from alive := sessions[:0].
+			input := make([]SessionEntry, len(tt.input))
+			copy(input, tt.input)
 
-	sessions, err := ListSessions(dir)
-	if err != nil {
-		t.Fatalf("ListSessions: %v", err)
-	}
-	if len(sessions) != 0 {
-		t.Errorf("want 0 sessions after pruning dead PID, got %d", len(sessions))
-	}
-}
-
-func TestRefreshRegistry_KeepsLivePIDs(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	entry := SessionEntry{
-		SessionID: "live-sess",
-		PID:       os.Getpid(),
-		Workflow:  "deploy",
-		ProjectID: "proj-1",
-	}
-	if err := RegisterSession(dir, entry); err != nil {
-		t.Fatalf("RegisterSession: %v", err)
-	}
-
-	if err := RefreshRegistry(dir); err != nil {
-		t.Fatalf("RefreshRegistry: %v", err)
-	}
-
-	sessions, err := ListSessions(dir)
-	if err != nil {
-		t.Fatalf("ListSessions: %v", err)
-	}
-	if len(sessions) != 1 {
-		t.Errorf("want 1 session (live PID), got %d", len(sessions))
+			got := pruneDeadSessions(input)
+			gotIDs := make([]string, 0, len(got))
+			for _, s := range got {
+				gotIDs = append(gotIDs, s.SessionID)
+			}
+			if len(gotIDs) != len(tt.wantIDs) {
+				t.Fatalf("pruneDeadSessions: got %v, want %v", gotIDs, tt.wantIDs)
+			}
+			for i, id := range gotIDs {
+				if id != tt.wantIDs[i] {
+					t.Errorf("pruneDeadSessions[%d]: got %s, want %s", i, id, tt.wantIDs[i])
+				}
+			}
+		})
 	}
 }
 
@@ -219,74 +252,6 @@ func TestIsProcessAlive_ZeroPID(t *testing.T) {
 	t.Parallel()
 	if isProcessAlive(0) {
 		t.Error("PID 0 should not be considered alive")
-	}
-}
-
-func TestRefreshRegistry_NoRegistryFile(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	// RefreshRegistry on empty dir should not error.
-	if err := RefreshRegistry(dir); err != nil {
-		t.Fatalf("RefreshRegistry on empty dir: %v", err)
-	}
-}
-
-func TestRefreshRegistry_CleansOrphanedSessionFiles(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	// Create a session file without a registry entry.
-	sessDir := filepath.Join(dir, "sessions")
-	if err := os.MkdirAll(sessDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	orphanPath := filepath.Join(sessDir, "orphan123.json")
-	if err := os.WriteFile(orphanPath, []byte(`{}`), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	if err := RefreshRegistry(dir); err != nil {
-		t.Fatalf("RefreshRegistry: %v", err)
-	}
-
-	if _, err := os.Stat(orphanPath); !os.IsNotExist(err) {
-		t.Errorf("orphaned session file should be removed, but still exists")
-	}
-}
-
-func TestRefreshRegistry_KeepsLiveSessionFiles(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	// Register a live session.
-	entry := SessionEntry{
-		SessionID: "live-sess",
-		PID:       os.Getpid(),
-		Workflow:  "deploy",
-		ProjectID: "proj-1",
-	}
-	if err := RegisterSession(dir, entry); err != nil {
-		t.Fatalf("RegisterSession: %v", err)
-	}
-
-	// Create matching session file.
-	sessDir := filepath.Join(dir, "sessions")
-	if err := os.MkdirAll(sessDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	sessFile := filepath.Join(sessDir, "live-sess.json")
-	if err := os.WriteFile(sessFile, []byte(`{}`), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	if err := RefreshRegistry(dir); err != nil {
-		t.Fatalf("RefreshRegistry: %v", err)
-	}
-
-	// Session file should still exist.
-	if _, err := os.Stat(sessFile); err != nil {
-		t.Errorf("live session file should survive: %v", err)
 	}
 }
 

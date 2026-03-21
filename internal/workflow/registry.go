@@ -105,22 +105,6 @@ func readRegistryShared(stateDir string) (*Registry, error) {
 	return readRegistry(stateDir)
 }
 
-// RefreshRegistry prunes dead PIDs and stale entries from the registry,
-// then cleans orphaned session files.
-func RefreshRegistry(stateDir string) error {
-	return withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
-		reg.Sessions = pruneDeadSessions(reg.Sessions)
-
-		liveIDs := make(map[string]bool, len(reg.Sessions))
-		for _, s := range reg.Sessions {
-			liveIDs[s.SessionID] = true
-		}
-		cleanOrphanedFiles(stateDir, liveIDs)
-
-		return reg, nil
-	})
-}
-
 // withRegistryLock acquires an exclusive file lock, reads the registry, calls fn, and writes back.
 func withRegistryLock(stateDir string, fn func(*Registry) (*Registry, error)) error {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {

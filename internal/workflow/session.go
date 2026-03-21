@@ -187,8 +187,14 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 	}
 
 	err = withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
-		// Prune dead sessions.
+		// Prune dead sessions and clean orphaned session files.
 		reg.Sessions = pruneDeadSessions(reg.Sessions)
+		liveIDs := make(map[string]bool, len(reg.Sessions)+1)
+		for _, s := range reg.Sessions {
+			liveIDs[s.SessionID] = true
+		}
+		liveIDs[sessionID] = true // about to be created
+		cleanOrphanedFiles(stateDir, liveIDs)
 
 		// Check bootstrap exclusivity.
 		if workflowName == WorkflowBootstrap {

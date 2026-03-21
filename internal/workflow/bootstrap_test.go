@@ -190,7 +190,6 @@ func TestSkipStep_MandatoryStep(t *testing.T) {
 	}{
 		{"discover", "discover", 0},
 		{"provision", "provision", 1},
-		
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1128,10 +1127,10 @@ func TestResetForIteration_ResetsGenerate_Deploy_NotClose(t *testing.T) {
 func TestValidateConditionalSkip_CloseStepGuard(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name               string
-		stepName           string
-		numTargets         int
-		shouldAllowSkip    bool
+		name            string
+		stepName        string
+		numTargets      int
+		shouldAllowSkip bool
 	}{
 		// generate and deploy are guarded
 		{"generate_with_runtime_blocked", "generate", 1, false},

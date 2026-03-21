@@ -582,7 +582,7 @@ func TestValidateBootstrapTargets_ManagedOnlyEmptyTargets(t *testing.T) {
 	// Managed-only project: zero runtime targets, only managed dependencies
 	targets := []BootstrapTarget{}
 	defaulted, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
-	
+
 	if err != nil {
 		t.Fatalf("ValidateBootstrapTargets with empty targets should not error: %v", err)
 	}

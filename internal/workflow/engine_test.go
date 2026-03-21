@@ -1313,13 +1313,10 @@ func TestBootstrapComplete_PlanNilCheck_NonDiscoverSteps(t *testing.T) {
 	}
 
 	// Try to complete generate without a plan — should fail
-	resp, err := e.BootstrapComplete(ctx, "generate", "Tried to complete generate without plan", nil)
-	
+	_, err = e.BootstrapComplete(ctx, "generate", "Tried to complete generate without plan", nil)
+
 	// Expect error because Plan is nil for non-discover step
 	if err == nil {
 		t.Error("BootstrapComplete should fail when Plan is nil for non-discover steps")
-	}
-	if resp != nil && strings.Contains(resp.Message, "plan") {
-		// If error message mentions plan, that's good
 	}
 }
