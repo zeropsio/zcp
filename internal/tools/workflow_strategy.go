@@ -68,6 +68,7 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 	result := map[string]string{
 		"status":   "updated",
 		"services": strings.Join(updated, ", "),
+		"next":     `When code is ready: zerops_workflow action="start" workflow="deploy"`,
 	}
 	if guidance != "" {
 		result["guidance"] = guidance
