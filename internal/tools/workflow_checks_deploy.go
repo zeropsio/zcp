@@ -21,7 +21,7 @@ func buildDeployStepChecker(step string, client platform.Client, projectID, stat
 	case workflow.DeployStepDeploy:
 		return checkDeployResult(client, projectID)
 	}
-	// verify step has nil checker (informational).
+	// deploy verify step has nil checker (informational, not blocking).
 	return nil
 }
 

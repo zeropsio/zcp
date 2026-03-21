@@ -84,8 +84,8 @@ func TestE2E_BootstrapFresh_FullFlow(t *testing.T) {
 	if startResp.SessionID == "" {
 		t.Fatal("expected non-empty sessionId")
 	}
-	if startResp.Progress.Total != 6 {
-		t.Errorf("expected 6 steps, got %d", startResp.Progress.Total)
+	if startResp.Progress.Total != 5 {
+		t.Errorf("expected 5 steps, got %d", startResp.Progress.Total)
 	}
 	if startResp.Current == nil || startResp.Current.Name != "discover" {
 		t.Fatal("expected current step to be 'discover'")
@@ -190,10 +190,7 @@ func TestE2E_BootstrapFresh_FullFlow(t *testing.T) {
 	}
 	t.Logf("  Provision complete, current step: %s", provResp.Current.Name)
 
-	// --- Step 6: Complete generate and deploy steps ---
-	// Cannot skip generate/deploy when runtime services exist in plan.
-	// Fresh bootstrap test validates through provision.
-	// Remaining steps (generate/deploy/verify/strategy) require actual code deployment
+	// Remaining steps (generate/deploy/close) require actual code deployment
 	// which is beyond the scope of this workflow orchestration test.
 	t.Log("  Fresh bootstrap provision validated successfully — workflow orchestration correct")
 }

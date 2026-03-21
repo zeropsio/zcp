@@ -40,7 +40,7 @@ func handleCICDComplete(_ context.Context, engine *workflow.Engine, input Workfl
 	resp, err := engine.CICDComplete(input.Step, input.Attestation, provider)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
-			platform.ErrBootstrapNotActive,
+			platform.ErrWorkflowRequired,
 			fmt.Sprintf("CI/CD complete failed: %v", err),
 			"Start cicd first with action=start workflow=cicd")), nil, nil
 	}
@@ -51,7 +51,7 @@ func handleCICDStatus(_ context.Context, engine *workflow.Engine) (*mcp.CallTool
 	resp, err := engine.CICDStatus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
-			platform.ErrBootstrapNotActive,
+			platform.ErrWorkflowRequired,
 			fmt.Sprintf("CI/CD status failed: %v", err),
 			"")), nil, nil
 	}
