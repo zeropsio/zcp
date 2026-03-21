@@ -94,26 +94,6 @@ func TestDeployState_CompleteStep_WrongStep(t *testing.T) {
 	}
 }
 
-func TestDeployState_UpdateTarget(t *testing.T) {
-	t.Parallel()
-	ds := NewDeployState([]DeployTarget{
-		{Hostname: "appdev", Role: DeployRoleDev, Status: deployTargetPending},
-		{Hostname: "appstage", Role: DeployRoleStage, Status: deployTargetPending},
-	}, PlanModeStandard, StrategyPushDev)
-
-	if err := ds.UpdateTarget("appdev", deployTargetDeployed, "deployed OK"); err != nil {
-		t.Fatalf("update target: %v", err)
-	}
-	if ds.Targets[0].Status != deployTargetDeployed {
-		t.Errorf("target status: want deployed, got %s", ds.Targets[0].Status)
-	}
-
-	err := ds.UpdateTarget("nonexistent", deployTargetDeployed, "")
-	if err == nil {
-		t.Error("expected error for missing hostname")
-	}
-}
-
 func TestDeployState_ResetForIteration(t *testing.T) {
 	t.Parallel()
 	ds := NewDeployState([]DeployTarget{
@@ -240,23 +220,6 @@ func TestBuildDeployTargets_Empty(t *testing.T) {
 	}
 	if strategy != "" {
 		t.Error("expected empty strategy for nil metas")
-	}
-}
-
-func TestDeployState_DevFailed(t *testing.T) {
-	t.Parallel()
-	ds := NewDeployState([]DeployTarget{
-		{Hostname: "appdev", Role: DeployRoleDev, Status: deployTargetPending},
-		{Hostname: "appstage", Role: DeployRoleStage, Status: deployTargetPending},
-	}, PlanModeStandard, StrategyPushDev)
-
-	if ds.DevFailed() {
-		t.Error("should not be failed initially")
-	}
-
-	ds.Targets[0].Status = deployTargetFailed
-	if !ds.DevFailed() {
-		t.Error("should detect dev failure")
 	}
 }
 

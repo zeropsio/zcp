@@ -26,7 +26,7 @@ func handleDeployComplete(_ context.Context, engine *workflow.Engine, input Work
 	resp, err := engine.DeployComplete(input.Step, input.Attestation)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
-			platform.ErrBootstrapNotActive,
+			platform.ErrDeployNotActive,
 			fmt.Sprintf("Deploy complete failed: %v", err),
 			"Start deploy first with action=start workflow=deploy")), nil, nil
 	}
@@ -48,7 +48,7 @@ func handleDeploySkip(_ context.Context, engine *workflow.Engine, input Workflow
 	resp, err := engine.DeploySkip(input.Step, reason)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
-			platform.ErrBootstrapNotActive,
+			platform.ErrDeployNotActive,
 			fmt.Sprintf("Deploy skip failed: %v", err),
 			"")), nil, nil
 	}
@@ -59,7 +59,7 @@ func handleDeployStatus(_ context.Context, engine *workflow.Engine) (*mcp.CallTo
 	resp, err := engine.DeployStatus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
-			platform.ErrBootstrapNotActive,
+			platform.ErrDeployNotActive,
 			fmt.Sprintf("Deploy status failed: %v", err),
 			"")), nil, nil
 	}

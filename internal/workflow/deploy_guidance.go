@@ -13,34 +13,6 @@ var StrategyToSection = map[string]string{
 	StrategyManual:  "deploy-manual",
 }
 
-// ResolveDeployGuidance reads the ServiceMeta for hostname,
-// maps its strategy to the corresponding deploy.md section,
-// and returns the strategy-specific guidance.
-// Falls back to empty string if no strategy is set or meta not found.
-func ResolveDeployGuidance(stateDir, hostname string) string {
-	meta, err := ReadServiceMeta(stateDir, hostname)
-	if err != nil || meta == nil {
-		return ""
-	}
-
-	strategy := meta.DeployStrategy
-	if strategy == "" {
-		return ""
-	}
-
-	sectionName, ok := StrategyToSection[strategy]
-	if !ok {
-		return ""
-	}
-
-	md, err := content.GetWorkflow("deploy")
-	if err != nil {
-		return ""
-	}
-
-	return ExtractSection(md, sectionName)
-}
-
 // resolveDeployStepGuidance returns guidance for a deploy workflow step.
 // Mode-specific and strategy-specific sections are assembled for the deploy step.
 func resolveDeployStepGuidance(step, mode, strategy string) string {

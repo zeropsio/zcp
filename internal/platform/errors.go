@@ -41,6 +41,7 @@ const (
 	ErrSessionNotFound        = "SESSION_NOT_FOUND"
 	ErrBootstrapActive        = "BOOTSTRAP_ACTIVE"
 	ErrBootstrapNotActive     = "BOOTSTRAP_NOT_ACTIVE"
+	ErrDeployNotActive        = "DEPLOY_NOT_ACTIVE"
 	ErrSSHDeployFailed        = "SSH_DEPLOY_FAILED"
 	ErrWorkflowRequired       = "WORKFLOW_REQUIRED"
 )
