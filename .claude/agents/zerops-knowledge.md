@@ -60,6 +60,14 @@ When you verify a new fact, update your memory files so future sessions benefit.
    - Embedded recipes for service-specific knowledge
 4. **Produce structured output** with evidence labels on every fact
 
+### Task-type-specific additions
+
+When the prompt specifies a task type, add these to your standard factual brief:
+
+**flow-tracing**: Trace the data flow through the referenced code. For each function in the chain, document: input types/values, transformations applied, output types/values, side effects (state writes, API calls). Number the steps sequentially.
+
+**refactoring-analysis**: Identify functions/types/variables that are defined but never referenced (verify with grep). Flag duplicate logic across files. Note overly complex abstractions with simpler alternatives.
+
 ### Output Format
 
 ```markdown

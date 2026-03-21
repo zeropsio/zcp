@@ -6,7 +6,11 @@
 
 1. Read the plan file at `<filepath>`.
 2. Extract `<basename>` and `<dir>` from filepath.
-3. Read `<dir>/<basename>.context.md` if it exists — this is the review history with decisions, rejected alternatives, resolved concerns, and confidence map.
+3. Look for supporting context in this priority order:
+   a. `<dir>/<basename>.context.md` — analysis/review context with decisions, rejected alternatives, resolved concerns, and confidence map.
+   b. `<dir>/<basename>.analysis-*.md` — analysis reports (from `/team-analyze`).
+   c. `<dir>/<basename>.review-*.md` — review reports (legacy).
+   Read all that exist. Later files take precedence on conflicting decisions.
 4. Read `/Users/macbook/Documents/Zerops-MCP/zcp/CLAUDE.md`.
 
 ## Team DNA — Include verbatim in EVERY agent prompt
@@ -99,9 +103,17 @@ Present the proposed team to the user in this format:
 | 3 | test-integration | integration/ | 1, 2 | integration | LOW |
 | ... |
 
+### Execution Waves
+```
+Wave 1 (parallel): {agents with no dependencies}
+Wave 2 (depends on wave 1): {agents depending on wave 1}
+Wave 3 (depends on wave 2): {if applicable}
+```
+**Critical path**: {longest dependency chain}
+
 **Total agents**: N
-**Parallel waves**: M (based on dependency graph)
-**Review context available**: Yes/No ({basename}.context.md)
+**Parallel waves**: M
+**Context available**: Yes/No ({basename}.context.md)
 
 Proceed with this team? [Yes / Modify / Cancel]
 ```
