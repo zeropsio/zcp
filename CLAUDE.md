@@ -9,9 +9,14 @@ Single Go binary merging ZAIA CLI + ZAIA-MCP. AI-driven Zerops PaaS management v
 ```
 1. Tests (table-driven, executable)    ← AUTHORITATIVE for behavior
 2. Code (Go types, interfaces)         ← AUTHORITATIVE for implementation
-3. Plans (plans/*.md)                  ← TRANSIENT (roadmap, expires)
-4. CLAUDE.md                           ← OPERATIONAL (workflow, conventions)
+3. Specs (docs/spec-*.md)             ← AUTHORITATIVE for workflow design
+4. Plans (plans/*.md)                  ← TRANSIENT (roadmap, expires)
+5. CLAUDE.md                           ← OPERATIONAL (workflow, conventions)
 ```
+
+Key specs:
+- `docs/spec-bootstrap-deploy.md` — workflow step specs, invariants, state model
+- `docs/spec-guidance-philosophy.md` — guidance delivery model (inject vs point, personalization)
 
 ---
 
@@ -34,7 +39,7 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/knowledge` | BM25 search engine, embedded docs | `engine.go` |
 | `internal/runtime` | Container vs local detection | `runtime.go` |
 | `internal/content` | Embedded templates + workflow catalog | `content.go` |
-| `internal/workflow` | Workflow orchestration, bootstrap conductor, session state | `session.go` |
+| `internal/workflow` | Workflow orchestration, bootstrap/deploy conductors, guidance assembly, session state | `session.go`, `deploy_guidance.go` |
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 | `internal/eval` | LLM recipe eval via Claude CLI headless mode | `runner.go`, `prompt.go` |
 | `internal/catalog` | API-driven version catalog sync for test validation | `sync.go` |

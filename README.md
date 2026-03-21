@@ -55,32 +55,24 @@ Every conversation starts with ZCP injecting a system prompt built from four lay
 
 1. **Base instructions** — workflow-first rules (always start a session before writing config)
 2. **Workflow hint** — active sessions from registry (resume prompts)
-3. **Runtime context** — container vs local detection
-4. **Project summary + Router offerings** — ranked workflow suggestions
+3. **Environment concept** — container vs local: where code lives, how mounts work, deploy = rebuild
+4. **Project summary + Router** — factual state (services, statuses, available workflows)
 
 ### Router
 
-The router is a pure function that takes project state, service metas, active sessions, and live API hostnames, and returns ranked workflow offerings:
+The router is a pure function that returns **factual data** — no recommendations, no intent matching. The LLM decides what to do:
 
 ```
-Route(RouterInput) → []FlowOffering{Workflow, Priority, Reason, Hint}
+Route(RouterInput) → []FlowOffering{Workflow, Priority, Hint}
 ```
 
-| Project state | Primary offering | Secondary |
-|---------------|-----------------|-----------|
+| Project state | Primary | Secondary |
+|---------------|---------|-----------|
 | **FRESH** | bootstrap (p1) | — |
 | **CONFORMANT** | strategy-based deploy (p1) | bootstrap (p2) |
 | **NON_CONFORMANT** | strategy-based or debug (p1-2) | bootstrap (p2) |
 
-Strategy-based routing reads `ServiceMeta.Decisions["deploy_strategy"]` persisted from prior bootstraps:
-
-| Strategy | Offering |
-|----------|----------|
-| `push-dev` | deploy workflow |
-| `ci-cd` | "push to git" hint |
-| `manual` | "deploy manually" hint |
-
-Utility workflows (debug, scale, configure) are always appended at priority 5. Stale metas (hostnames deleted from API) are filtered out automatically.
+Strategy-based routing reads `ServiceMeta.DeployStrategy` persisted from prior bootstraps. Utility workflows (debug, scale, configure) are always appended at priority 5. Stale metas (hostnames deleted from API) are filtered out automatically.
 
 ---
 
@@ -98,28 +90,27 @@ Utility workflows (debug, scale, configure) are always appended at priority 5. S
 
 ## Bootstrap workflow
 
-Bootstrap is the core flow. It takes a user request ("deploy a Go API with Postgres") and guides the LLM through **6 sequential steps** with hard checks, evidence gates, and an iteration loop.
+Bootstrap is the core flow. It takes a user request ("deploy a Go API with Postgres") and guides the LLM through **5 sequential steps** with hard checks and an iteration loop.
 
-### The 6 steps
+### The 5 steps
 
 ```
-┌──────────┐   ┌───────────┐   ┌──────────┐   ┌────────┐   ┌────────┐   ┌──────────┐
-│ DISCOVER │──▶│ PROVISION │──▶│ GENERATE │──▶│ DEPLOY │──▶│ VERIFY │──▶│ STRATEGY │
-│  (fixed) │   │  (fixed)  │   │(creative)│   │(branch)│   │ (fixed)│   │  (fixed) │
-└──────────┘   └───────────┘   └──────────┘   └────────┘   └────────┘   └──────────┘
-                                (skippable)    (skippable)                (skippable)
+┌──────────┐   ┌───────────┐   ┌──────────┐   ┌────────┐   ┌───────┐
+│ DISCOVER │──▶│ PROVISION │──▶│ GENERATE │──▶│ DEPLOY │──▶│ CLOSE │
+│  (fixed) │   │  (fixed)  │   │(creative)│   │(branch)│   │(fixed)│
+└──────────┘   └───────────┘   └──────────┘   └────────┘   └───────┘
+                                (skippable)    (skippable)   (skip.)
 ```
 
 | Step | What happens | Hard check |
 |------|-------------|------------|
-| **discover** | Inspect project state, classify (FRESH / CONFORMANT / NON_CONFORMANT), plan services, validate types against live catalog, load platform knowledge, submit plan | — |
+| **discover** | Inspect project state, classify (FRESH / CONFORMANT / NON_CONFORMANT), plan services, validate types against live catalog, submit plan | — |
 | **provision** | Generate import.yml, create services via API, mount dev filesystems via SSHFS, discover env vars from managed services | All services exist with expected status; managed deps have env vars |
-| **generate** | Write zerops.yml + app code to mounted dev filesystem using real env vars from provision | — |
-| **deploy** | Deploy dev and stage services, enable subdomains, iteration loop (fix → redeploy, max 3) | All runtimes RUNNING; subdomain access enabled |
-| **verify** | Independent health verification of all plan targets, present final report with URLs | All plan targets healthy (via `ops.VerifyAll`) |
-| **strategy** | Ask user to choose deployment strategy per runtime service (push-dev / ci-cd / manual), saved to ServiceMeta for future routing | Strategy recorded for all runtime services |
+| **generate** | Write zerops.yml + app code to mounted dev filesystem using real env vars from provision | zerops.yml valid, hostname match, env var refs valid |
+| **deploy** | Deploy dev and stage services, enable subdomains, verify health, iteration loop (fix → redeploy) | All runtimes RUNNING; subdomain access enabled; health checks pass |
+| **close** | Administrative closure — writes ServiceMeta files, presents strategy selection | — |
 
-**generate**, **deploy**, and **strategy** are skippable — but only for managed-only projects (no runtime services). The engine enforces this via conditional skip validation.
+**generate**, **deploy**, and **close** are skippable — but only for managed-only projects (no runtime services). Strategy selection happens after close via `action="strategy"`.
 
 ### Step categories
 
@@ -169,62 +160,42 @@ LLM calls: zerops_workflow action="complete" step="provision" attestation="..."
 
 This prevents the LLM from advancing past a broken step. The check result is returned in the response so the LLM knows exactly what failed.
 
-### Evidence and phase gates
-
-The bootstrap maps to a 5-phase workflow (INIT → DISCOVER → DEVELOP → DEPLOY → VERIFY → DONE). Phase transitions require **evidence** — attestations stored as JSON files:
-
-| Gate | Evidence required | Built from steps |
-|------|-------------------|------------------|
-| G0: INIT → DISCOVER | `recipe_review` | discover |
-| G1: DISCOVER → DEVELOP | `discovery` | provision |
-| G2: DEVELOP → DEPLOY | `dev_verify` | generate, deploy, verify |
-| G3: DEPLOY → VERIFY | `deploy_evidence` | deploy |
-| G4: VERIFY → DONE | `stage_verify` | verify |
-
-When the final bootstrap step completes, the engine **auto-records evidence** from step attestations and transitions through all phases to DONE. No manual phase management needed during bootstrap.
-
 ### Iteration loop
 
-When deploy or verify fails, the LLM iterates:
+When deploy fails, the LLM iterates:
 
 ```
-deploy → verify → FAIL → fix code on mount → redeploy → re-verify
-                                              (max 3 attempts per service)
+deploy → FAIL → fix code on mount → redeploy → re-verify
+                                     (max 10 attempts, configurable via ZCP_MAX_ITERATIONS)
 ```
 
-Each iteration archives the previous evidence and resets the workflow phase to DEVELOP.
+Each iteration resets generate+deploy steps and increments the counter. Escalating diagnostic guidance is delivered on each retry.
 
-### Context delivery
+### Guidance delivery
 
-The guidance system optimizes LLM context usage across the bootstrap flow:
+Bootstrap and deploy use different guidance models:
 
-- **Guide gating** — each step's detailed guide is delivered once per iteration. Repeat calls return a stub (`[Guide already delivered. Tools: ...]`) to avoid wasting context.
-- **Prior context compression** — step N-1 attestation is passed in full; older attestations are compressed to 80 chars with a status bracket.
-- **Iteration delta** — on retry iterations (iteration > 0), the deploy step receives a focused delta (what failed, what to fix) instead of the full guide.
-- **Plan mode** — `standard` vs `simple` affects generate step guidance based on plan targets.
+- **Bootstrap** = creative workflow — injects full knowledge (runtime briefings, schema, env vars) because the agent is creating configuration from scratch.
+- **Deploy** = operational workflow — injects compact personalized guidance (15-55 lines) with knowledge pointers. Agent pulls knowledge on demand via `zerops_knowledge`.
 
-Each step includes embedded guidance from `bootstrap.md`, served via `<section>` tags:
+Deploy guidance is assembled from `DeployState` + `ServiceMeta` — the agent sees their actual hostnames, mode-specific workflow steps, and strategy commands. Not generic templates.
 
-```markdown
-<section name="provision">
-### Step 1 — Generate import.yml, create services, discover env vars
-...detailed instructions, constraints, examples...
-</section>
-```
+See `docs/spec-guidance-philosophy.md` for the full guidance delivery specification.
 
 ---
 
 ## Post-bootstrap: ServiceMeta persistence
 
-Bootstrap writes per-service metadata incrementally:
+Bootstrap writes per-service metadata at two points:
 
-| When | Meta status |
-|------|-------------|
-| After plan submission | `planned` |
-| After provision | `provisioned` |
-| After strategy step | `decisions.deploy_strategy` set |
+| When | What |
+|------|------|
+| After provision | Partial meta (hostname, mode, stage pairing — no `BootstrappedAt`) |
+| After close step | Complete meta (`BootstrappedAt` set — marks bootstrap as finished) |
 
-Stored at `{stateDir}/services/{hostname}.json`. These metas persist across conversations and feed the router — so the next time the user opens a conversation, ZCP knows which workflow to suggest based on the strategy they chose.
+Strategy is set separately via `action="strategy"` after bootstrap (never auto-assigned).
+
+Stored at `{stateDir}/services/{hostname}.json`. These metas persist across conversations — the deploy workflow reads them on start for mode, strategy, and preflight validation.
 
 ---
 
@@ -252,13 +223,13 @@ This prevents the LLM from guessing Zerops-specific syntax. It reads the rules, 
 
 ## Session persistence
 
-All workflow state persists locally:
+All workflow state persists locally at `.zcp/state/`:
 
 | File | Purpose |
 |------|---------|
-| `sessions/{id}.json` | Session state: phase, bootstrap steps, plan, env vars, context delivery |
-| `evidence/{sessionID}/{type}.json` | Phase gate evidence (attestations) |
-| `services/{hostname}.json` | Per-service metadata (strategy, status, decisions) |
+| `sessions/{id}.json` | Session state: bootstrap/deploy steps, plan, env vars, iteration |
+| `services/{hostname}.json` | Per-service metadata (mode, strategy, stage pairing) |
+| `registry.json` | Active session tracking with PID-based ownership |
 
 Sessions survive process restarts. The MCP system prompt shows the active session state so the LLM can resume where it left off. Dead sessions (stale PID) can be taken over via `zerops_workflow action="resume"`.
 
