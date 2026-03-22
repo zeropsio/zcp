@@ -50,7 +50,7 @@ func (s *Store) GetBriefing(runtime string, services []string, mode string, live
 	if runtimeBase != "" {
 		if recipes := s.matchingRecipes(runtimeBase); len(recipes) > 0 {
 			sb.WriteString("## Matching Recipes\n\n")
-			sb.WriteString("Available recipes for this runtime (use `zerops_knowledge recipe=\"name\"` to load):\n")
+			sb.WriteString("**If you are using any of these frameworks, load the recipe NOW** — it contains required secrets, scaffolding, and gotchas:\n")
 			for _, r := range recipes {
 				sb.WriteString("- `")
 				sb.WriteString(r)
@@ -292,7 +292,7 @@ func filterDeployPatterns(guide, mode string) string {
 // and full runtime prefixes (e.g., "php-nginx").
 func isImplicitWebserverRuntime(runtimeBase string) bool {
 	switch runtimeBase {
-	case "php", "php-nginx", "php-apache", "nginx", "static":
+	case "php", "php-nginx", "php-apache", runtimeNginx, runtimeStatic:
 		return true
 	}
 	return false

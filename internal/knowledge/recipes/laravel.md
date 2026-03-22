@@ -140,6 +140,7 @@ zsc scale ram auto
 - **DB credentials** — auto-injected via `${db_password}` / `${db_user}` cross-service refs
 - **AWS_USE_PATH_STYLE_ENDPOINT: true** — required for Zerops S3-compatible storage
 - **Without Redis**: set `SESSION_DRIVER`, `CACHE_STORE`, `QUEUE_CONNECTION` to `database`; remove AWS_* vars and storage service if no Object Storage
+- **Without any database**: set `SESSION_DRIVER=file`, `CACHE_STORE=file` — default Laravel uses database driver which requires a DB connection. For simple/stateless apps (docs sites, APIs), file drivers work without any managed services
 
 ## Common Failures
 - **S3 driver not found** — add `league/flysystem-aws-s3-v3` to composer.json
@@ -156,4 +157,5 @@ zsc scale ram auto
 - **Multi-base build** `[php, nodejs]` required only if project has npm/Vite assets
 - **league/flysystem-aws-s3-v3** must be in composer.json for S3 filesystem
 - **os: ubuntu** on both build and run for full compatibility
+- **Config cache after env var changes** — run `php artisan config:clear` after setting env vars via API (`zerops_env`). Laravel caches config at deploy time via `initCommands`; API-set vars need a cache clear to take effect
 - Without Redis/Object Storage: 2 services (app + db). Full: 4 services (app + db + redis + storage).

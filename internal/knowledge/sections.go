@@ -4,8 +4,11 @@ import (
 	"strings"
 )
 
-// runtimeStatic is the slug for the static runtime type.
-const runtimeStatic = "static"
+// Runtime slug constants for repeated string literals.
+const (
+	runtimeStatic = "static"
+	runtimeNginx  = "nginx"
+)
 
 // parseH2Sections splits markdown content by H2 headers (## ), respecting fenced code blocks.
 // Returns map[sectionName]sectionContent.
@@ -71,7 +74,7 @@ var runtimeNormalizer = map[string]string{
 	"elixir":     "elixir",
 	"gleam":      "gleam",
 	"ruby":       "ruby",
-	"nginx":      "nginx",
+	"nginx":      runtimeNginx,
 	"static":     runtimeStatic,
 	"docker":     "docker",
 	"alpine":     "alpine",

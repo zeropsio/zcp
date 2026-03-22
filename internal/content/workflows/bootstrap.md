@@ -56,15 +56,21 @@ Default = standard (dev+stage). Ask user to confirm the mode before proceeding.
 
 Multi-runtime naming: use role or runtime as prefix — `phpdev`/`phpstage` + `bundev`/`bunstage` (or `apidev`/`webdev` by role). Managed services are shared, no dev/stage suffixes: `db`, `cache`, `storage`.
 
-#### Load framework-specific knowledge (optional)
+#### Load framework-specific knowledge (MANDATORY for known frameworks)
 
-For known frameworks, load a recipe for pre-built configuration:
+If your stack uses a known framework, you **MUST** load its recipe before proceeding:
 ```
 zerops_knowledge recipe="{recipe-name}"
 ```
-Examples: `bun`, `bun-hono`, `laravel`, `ghost`, `django`, `phoenix`, `nextjs`
+Examples: `laravel`, `django`, `phoenix`, `nextjs`, `ghost`, `symfony`, `rails`
 
-This is optional — platform knowledge (YAML schemas, runtime guides, service cards) is delivered automatically with each step guide. Recipes add framework-specific patterns on top.
+Recipes contain critical patterns that generic runtime guides do not cover:
+- **Required secrets** (APP_KEY, SECRET_KEY_BASE, etc.) — what goes in import.yml `envSecrets`
+- **Scaffolding commands** — correct flags to avoid `.env` shadowing, RAM scaling
+- **Driver/config defaults** — what breaks without a DB, what needs explicit env vars
+- **Common failures** — framework-specific gotchas like "never use artisan serve on php-nginx"
+
+Skip this only if you are certain no recipe exists for your framework. The `## Matching Recipes` section in the generate step guidance lists available recipes for your runtime.
 
 #### Confirm and submit plan
 
@@ -116,6 +122,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 | object-storage | Requires `objectStorageSize` field |
 | Preprocessor | `#yamlPreprocessor=on` if using `<@...>` functions |
 | Mode present | Managed services default to NON_HA if omitted |
+| Framework secrets | If using Laravel/Rails/Django/etc., add `envSecrets` with `<@generateRandomString(...)>` (e.g., `APP_KEY`, `SECRET_KEY_BASE`) |
 
 Present import.yml to the user for review before proceeding.
 
@@ -207,7 +214,7 @@ zerops.yml `envVariables` are activated by deploy. After `zerops_deploy`:
 - Cross-service references (`${db_connectionString}`) resolved to real values
 - Vars persist across server restarts within the same container
 
-Write zerops.yml + app code first, then deploy, then start the server and test. **NEVER hardcode credential values or pass them inline** — always use `${hostname_varName}` references in zerops.yml and read env vars via the runtime's native API. Do NOT create `.env` files — empty values shadow OS env vars. Dotenv libraries in existing projects are harmless (they fall back to OS vars when no .env exists).
+Write zerops.yml + app code first, then deploy, then start the server and test. **NEVER hardcode credential values or pass them inline** — always use `${hostname_varName}` references in zerops.yml and read env vars via the runtime's native API. Do NOT create `.env` files — empty values shadow OS env vars. Tools like `composer create-project` create `.env` files automatically; use `--no-scripts` to prevent this. Check your framework recipe for the correct scaffolding command. Dotenv libraries in existing projects are harmless (they fall back to OS vars when no .env exists).
 
 #### Env var mapping in zerops.yml
 
