@@ -24,6 +24,13 @@ Runtime services are SSHFS-mounted at /var/www/{hostname}/ — edit source files
 ### Commands on Services
 Edit source files (code, config, yml) on the SSHFS mount. Run heavy commands (npm install, go mod download, pip install, cargo build, composer install) via SSH on the target container: ssh {hostname} "cd /var/www && {command}". Running installs over the SSHFS network mount is orders of magnitude slower.
 
+### Persistence Model
+File edits via SSH or SSHFS mount are TEMPORARY:
+- Edits SURVIVE: container restarts, reloads, stop/start, vertical scaling
+- Edits DESTROYED: next deploy (creates new container with only deployFiles content)
+After completing code changes, you MUST deploy to persist them permanently.
+Start a deploy workflow: zerops_workflow action="start" workflow="deploy"
+
 ### Deploy = Rebuild
 Editing files on mount does NOT trigger deploy. Deploy runs the full build pipeline (buildCommands → deployFiles → start) and creates a new container. Deploy when: zerops.yml changes, need clean rebuild, or promote dev → stage. Code-only changes on dev: just restart the server via SSH.
 

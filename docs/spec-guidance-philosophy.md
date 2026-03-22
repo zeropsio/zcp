@@ -366,17 +366,30 @@ The agent can override with explicit `mode` parameter (e.g., `mode="stage"` to s
 
 ## 7. Init Instructions Role
 
-### 7.1 What Init Instructions Cover
+### 7.1 MCP Plugin Model
+
+**ZCP operates as a clean MCP plugin.** All agent instructions are delivered via MCP init instructions (`BuildInstructions` in `server/instructions.go`). ZCP does NOT generate or modify the user's `CLAUDE.md` for instruction delivery.
+
+| File | ZCP's relationship | Rule |
+|------|-------------------|------|
+| `CLAUDE.md` | **Reflog only** — append-only bootstrap history entries (ZEROPS:REFLOG markers). Never instructions. | `zcp init` generates a minimal CLAUDE.md. Reflog entries appended after bootstrap completion. |
+| MCP init instructions | **All agent instructions** — environment model, persistence rules, tool overview, workflow routing, project state | Source of truth for how the agent should behave with ZCP |
+| Workflow responses | **Step-specific guidance** — personalized deploy/bootstrap instructions | Returned per workflow action call |
+
+**Rationale**: MCP init instructions flow into the agent's context identically to CLAUDE.md. Keeping instructions in MCP init means ZCP is a self-contained plugin — users can add/remove ZCP without it polluting their project configuration. CLAUDE.md remains the user's space; ZCP only appends historical records (reflog) that help future sessions understand what was bootstrapped.
+
+### 7.2 What Init Instructions Cover
 
 Init instructions are loaded once at agent session start. They provide the foundational mental model:
 
 1. **Environment concept**: Container vs local, where code lives, how mounts work
-2. **Available tools**: What ZCP tools exist and when to use each
-3. **State refresh**: "zerops_discover always returns current state"
-4. **Workflow entry points**: "When you need to deploy → zerops_workflow action='start' workflow='deploy'"
-5. **Knowledge access**: "When you need Zerops-specific knowledge → zerops_knowledge query='...'"
+2. **Persistence model**: What survives deploy, what doesn't, when deploy is required
+3. **Available tools**: What ZCP tools exist and when to use each
+4. **State refresh**: "zerops_discover always returns current state"
+5. **Workflow entry points**: "When you need to deploy → zerops_workflow action='start' workflow='deploy'"
+6. **Knowledge access**: "When you need Zerops-specific knowledge → zerops_knowledge query='...'"
 
-### 7.2 What Init Instructions Do NOT Cover
+### 7.3 What Init Instructions Do NOT Cover
 
 - What the user should build
 - Which workflow to start
@@ -384,23 +397,37 @@ Init instructions are loaded once at agent session start. They provide the found
 - Detailed workflow step guidance (that's in workflow responses)
 - Current service state (that's from zerops_discover)
 
-### 7.3 Container Mode Init Instructions (conceptual template)
+### 7.4 Container Mode Init Instructions (conceptual template)
 
 ```
-## Your Environment
+## Your Role
 
-You're on the zcpx container inside a Zerops project.
+Orchestrator. This container is the control plane — it does NOT serve user traffic.
+Your job is to create, configure, deploy, and manage OTHER services in the project.
 
 ### Code Access
 Runtime services are SSHFS-mounted:
   /var/www/{hostname}/ — edit code here, changes appear on the service container
 Mount is read/write, changes immediate. No file transfer needed.
+IMPORTANT: /var/www/ (no hostname) is THIS container — writing there has NO effect on any service.
+
+### Persistence Model
+File edits via SSH or SSHFS mount are TEMPORARY:
+- Edits SURVIVE: container restarts, reloads, stop/start, vertical scaling
+- Edits DESTROYED: next deploy (creates new container)
+After completing code changes, you MUST deploy to persist them.
+Start a deploy workflow: zerops_workflow action="start" workflow="deploy"
 
 ### Deploy = Rebuild
-Editing files on mount does NOT trigger deploy. Deploy runs the full pipeline
-(build → deployFiles → start). Deploy when you change zerops.yml, need a clean
-rebuild, or want to promote dev → stage.
+Editing files does NOT trigger deploy. Deploy runs the full pipeline
+(build → deployFiles → start) and creates a NEW container.
+Deploy when: zerops.yml changes, need clean rebuild, or promote dev → stage.
 Code-only changes on dev: just restart the server via SSH.
+
+### Commands on Services
+Edit source files on the SSHFS mount. Run heavy commands via SSH on the target:
+ssh {hostname} "cd /var/www && {command}"
+Running installs over the SSHFS network mount is orders of magnitude slower.
 
 ### Tools
 - zerops_discover — current state of all services (call anytime for refresh)
@@ -418,7 +445,7 @@ Code-only changes on dev: just restart the server via SSH.
 - Need current state → zerops_discover
 ```
 
-### 7.4 Local Mode Init Instructions (conceptual template)
+### 7.5 Local Mode Init Instructions (conceptual template)
 
 ```
 ## Your Environment
@@ -431,7 +458,7 @@ zerops.yml must be at repository root.
 Each deploy = full rebuild + new container.
 
 ### Tools
-[same as container mode, minus mount-specific details]
+[same as container mode, minus mount/SSH-specific details]
 ```
 
 ---
