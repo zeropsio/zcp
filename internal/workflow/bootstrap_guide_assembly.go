@@ -94,7 +94,7 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	}
 
 	sb.WriteString("\nAvailable strategies:\n")
-	sb.WriteString("- **push-dev**: Deploy directly from local machine (dev mode)\n")
+	sb.WriteString("- **push-dev**: SSH self-deploy from dev container\n")
 	sb.WriteString("- **ci-cd**: Automated deployments via CI/CD pipeline (GitHub Actions, GitLab CI, etc.)\n")
 	sb.WriteString("- **manual**: Deploy manually via your preferred method\n\n")
 	sb.WriteString("→ `zerops_workflow action=\"strategy\" strategies={\"<hostname>\":\"push-dev\"}`\n\n")

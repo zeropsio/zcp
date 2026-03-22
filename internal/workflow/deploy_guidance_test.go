@@ -229,17 +229,78 @@ func TestBuildVerifyGuide_NonEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildKnowledgeMap_Pointers(t *testing.T) {
+func TestBuildKnowledgeMap_Personalized(t *testing.T) {
 	t.Parallel()
-	result := buildKnowledgeMap()
+	tests := []struct {
+		name         string
+		targets      []DeployTarget
+		wantContains []string
+		wantAbsent   []string
+	}{
+		{
+			name: "with_runtime_type",
+			targets: []DeployTarget{
+				{Hostname: "appdev", RuntimeType: "nodejs@22", Role: DeployRoleDev},
+				{Hostname: "appstage", RuntimeType: "nodejs@22", Role: DeployRoleStage},
+			},
+			wantContains: []string{
+				"appdev (nodejs@22)",
+				`query="nodejs"`,
+				"zerops_discover",
+			},
+			wantAbsent: []string{
+				"appstage",       // stage targets skipped
+				"<your runtime>", // generic fallback not used
+			},
+		},
+		{
+			name:    "no_runtime_type_fallback",
+			targets: []DeployTarget{{Hostname: "app", Role: DeployRoleSimple}},
+			wantContains: []string{
+				"<your runtime>", // generic fallback
+				"zerops_discover",
+			},
+		},
+		{
+			name:    "empty_targets",
+			targets: nil,
+			wantContains: []string{
+				"<your runtime>",
+				"zerops_discover",
+			},
+		},
+		{
+			name: "multiple_runtimes_deduped",
+			targets: []DeployTarget{
+				{Hostname: "webdev", RuntimeType: "nodejs@22", Role: DeployRoleDev},
+				{Hostname: "apidev", RuntimeType: "go@1", Role: DeployRoleDev},
+			},
+			wantContains: []string{
+				"webdev (nodejs@22)",
+				"apidev (go@1)",
+				`query="nodejs"`,
+				`query="go"`,
+			},
+		},
+	}
 
-	if result == "" {
-		t.Fatal("expected non-empty knowledge map")
-	}
-	if !strings.Contains(result, "zerops_knowledge") {
-		t.Error("should contain zerops_knowledge pointer")
-	}
-	if !strings.Contains(result, "zerops_discover") {
-		t.Error("should contain zerops_discover pointer")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := buildKnowledgeMap(tt.targets)
+			if result == "" {
+				t.Fatal("expected non-empty knowledge map")
+			}
+			for _, want := range tt.wantContains {
+				if !strings.Contains(result, want) {
+					t.Errorf("should contain %q, got:\n%s", want, result)
+				}
+			}
+			for _, absent := range tt.wantAbsent {
+				if strings.Contains(result, absent) {
+					t.Errorf("should NOT contain %q, got:\n%s", absent, result)
+				}
+			}
+		})
 	}
 }

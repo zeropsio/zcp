@@ -169,7 +169,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	// Deploy workflow.
 	if input.Workflow == workflowDeploy {
-		return handleDeployStart(ctx, engine, projectID, input)
+		return handleDeployStart(ctx, engine, client, projectID, input)
 	}
 
 	// CI/CD workflow.

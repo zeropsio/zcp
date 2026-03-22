@@ -854,10 +854,15 @@ sequenceDiagram
 - Sets `CurrentStep = 1` (deploy)
 - **Preserves**: prepare step
 
-**Escalating guidance** (personalized at deploy step based on iteration count):
-- **Iteration 1**: "Check zerops_logs, build failure vs runtime crash"
-- **Iteration 2**: "Systematic check: zerops.yml, env var refs, runtime version"
-- **Iteration 3+**: "Present diagnostic summary to user — user decides next step"
+**Escalating guidance** — iteration tiers differ by workflow:
+
+| Tier | Bootstrap (`BuildIterationDelta`) | Deploy (`writeIterationEscalation`) |
+|------|----------------------------------|-------------------------------------|
+| Diagnose | Iterations 1-2 | Iteration 1 |
+| Systematic check | Iterations 3-4 | Iteration 2 |
+| Stop, ask user | Iterations 5+ | Iteration 3+ |
+
+Bootstrap has wider ranges because it allows up to 10 iterations (configurable via `ZCP_MAX_ITERATIONS`). Deploy tiers escalate faster.
 
 ---
 
@@ -893,7 +898,7 @@ sequenceDiagram
 | K2 | Bootstrap deploy step receives: schema rules | `assembleKnowledge()` for deploy step |
 | K3 | Bootstrap provision step receives: import.yml schema | `assembleKnowledge()` for provision step |
 | K4 | Bootstrap iteration > 0 returns escalating recovery guidance | `BuildIterationDelta()` |
-| K5 | Deploy workflow guidance is personalized from state (hostnames, mode, strategy) — NOT extracted from deploy.md | `buildPrepareGuide()`, `buildDeployGuide()` in deploy_guidance.go |
+| K5 | Deploy workflow prepare and deploy steps are programmatic from state (hostnames, mode, strategy). Verify step uses deploy.md diagnostic patterns (generic, no personalization needed). | `buildPrepareGuide()`, `buildDeployGuide()`, `buildVerifyGuide()` in deploy_guidance.go |
 | K6 | Deploy workflow NEVER injects runtime briefings or schema — uses knowledge pointers only | `buildKnowledgeMap()` returns pointers, not content |
 | K7 | Deploy guidance ≤ 55 lines per step | Personalized builder limits |
 

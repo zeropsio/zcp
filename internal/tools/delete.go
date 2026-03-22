@@ -47,7 +47,7 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 		finalProc, _ := pollManageProcess(ctx, client, proc, onProgress)
 
 		// Best-effort: clean up service meta after successful delete+poll.
-		if stateDir != "" && finalProc.Status == "FINISHED" {
+		if stateDir != "" && finalProc.Status == statusFinished {
 			if delErr := workflow.DeleteServiceMeta(stateDir, input.ServiceHostname); delErr != nil {
 				fmt.Fprintf(os.Stderr, "zcp: delete service meta %s: %v\n", input.ServiceHostname, delErr)
 			}

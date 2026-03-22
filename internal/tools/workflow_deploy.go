@@ -10,7 +10,7 @@ import (
 )
 
 // handleDeployStart reads service metas and creates a deploy session.
-func handleDeployStart(_ context.Context, engine *workflow.Engine, projectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleDeployStart(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	metas, err := workflow.ListServiceMetas(engine.StateDir())
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -62,6 +62,11 @@ func handleDeployStart(_ context.Context, engine *workflow.Engine, projectID str
 	}
 
 	targets, mode, strategy := workflow.BuildDeployTargets(runtimeMetas)
+
+	// Enrich targets with runtime types from live API (best-effort).
+	if client != nil {
+		enrichTargetRuntimeTypes(ctx, client, projectID, targets)
+	}
 
 	// Check for mixed strategies: all runtime services must have the same strategy for now.
 	for i := 1; i < len(targets); i++ {
@@ -129,6 +134,24 @@ func handleDeploySkip(_ context.Context, engine *workflow.Engine, input Workflow
 			"")), nil, nil
 	}
 	return jsonResult(resp), nil, nil
+}
+
+// enrichTargetRuntimeTypes populates RuntimeType on deploy targets from the live API.
+// Best-effort: failures are silently ignored (guidance falls back to generic pointers).
+func enrichTargetRuntimeTypes(ctx context.Context, client platform.Client, projectID string, targets []workflow.DeployTarget) {
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return
+	}
+	typeMap := make(map[string]string, len(services))
+	for _, svc := range services {
+		typeMap[svc.Name] = svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	}
+	for i := range targets {
+		if rt, ok := typeMap[targets[i].Hostname]; ok {
+			targets[i].RuntimeType = rt
+		}
+	}
 }
 
 func handleDeployStatus(_ context.Context, engine *workflow.Engine) (*mcp.CallToolResult, any, error) {

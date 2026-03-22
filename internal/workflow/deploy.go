@@ -45,10 +45,11 @@ type DeployStep struct {
 
 // DeployTarget tracks per-service deploy progress.
 type DeployTarget struct {
-	Hostname string `json:"hostname"`
-	Role     string `json:"role"`
-	Status   string `json:"status"`
-	Strategy string `json:"strategy,omitempty"`
+	Hostname    string `json:"hostname"`
+	RuntimeType string `json:"runtimeType,omitempty"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`
+	Strategy    string `json:"strategy,omitempty"`
 }
 
 // DeployResponse is returned from deploy workflow actions.

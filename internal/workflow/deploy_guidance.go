@@ -62,7 +62,7 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 	writeStrategyNote(&sb, state.Strategy)
 
 	// Knowledge pointers.
-	sb.WriteString(buildKnowledgeMap())
+	sb.WriteString(buildKnowledgeMap(state.Targets))
 
 	return sb.String()
 }
@@ -128,13 +128,31 @@ func buildVerifyGuide() string {
 	return section
 }
 
-// buildKnowledgeMap returns compact knowledge pointers for agent on-demand use.
-func buildKnowledgeMap() string {
-	return `### Knowledge on demand
-- zerops.yml schema: ` + "`zerops_knowledge query=\"zerops.yml schema\"`" + `
-- Runtime docs: ` + "`zerops_knowledge query=\"<your runtime>\"`" + ` (e.g. nodejs, go, php-apache)
-- Env var discovery: ` + "`zerops_discover includeEnvs=true`" + `
-`
+// buildKnowledgeMap returns compact knowledge pointers personalized to target runtime types.
+func buildKnowledgeMap(targets []DeployTarget) string {
+	var sb strings.Builder
+	sb.WriteString("### Knowledge on demand\n")
+	sb.WriteString("- zerops.yml schema: `zerops_knowledge query=\"zerops.yml schema\"`\n")
+
+	// Personalized runtime pointers from targets.
+	seen := make(map[string]bool)
+	for _, t := range targets {
+		if t.RuntimeType == "" || t.Role == DeployRoleStage {
+			continue
+		}
+		base, _, _ := strings.Cut(t.RuntimeType, "@")
+		if seen[base] {
+			continue
+		}
+		seen[base] = true
+		fmt.Fprintf(&sb, "- %s (%s): `zerops_knowledge query=\"%s\"`\n", t.Hostname, t.RuntimeType, base)
+	}
+	if len(seen) == 0 {
+		sb.WriteString("- Runtime docs: `zerops_knowledge query=\"<your runtime>\"` (e.g. nodejs, go, php-apache)\n")
+	}
+
+	sb.WriteString("- Env var discovery: `zerops_discover includeEnvs=true`\n")
+	return sb.String()
 }
 
 // --- helpers ---
