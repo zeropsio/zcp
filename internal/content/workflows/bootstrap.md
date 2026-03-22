@@ -71,6 +71,8 @@ This is optional — platform knowledge (YAML schemas, runtime guides, service c
 **PRESENT the plan to user for confirmation before submitting:**
 "I'll set up: [list services with types]. Mode: [standard/dev/simple]. OK?"
 
+**Managed-only projects**: If the user only needs managed services (databases, caches, storage) with no runtime services, submit an empty plan: `plan=[]`. Steps generate, deploy, and close will be skipped automatically.
+
 After user confirms, submit:
 ```
 zerops_workflow action="complete" step="discover" plan=[{runtime: {devHostname, type, bootstrapMode}, dependencies: [{hostname, type, resolution}]}]

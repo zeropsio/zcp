@@ -326,7 +326,7 @@ func TestBuildResponse_WithSkipped(t *testing.T) {
 	}
 }
 
-func TestValidateConditionalSkip(t *testing.T) {
+func TestValidateSkip_ConditionalCases(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -374,9 +374,9 @@ func TestValidateConditionalSkip(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := validateConditionalSkip(tt.plan, tt.stepName)
+			err := validateSkip(tt.plan, tt.stepName)
 			if (err != nil) != tt.wantError {
-				t.Errorf("validateConditionalSkip(): error=%v, wantError=%v", err, tt.wantError)
+				t.Errorf("validateSkip(): error=%v, wantError=%v", err, tt.wantError)
 			}
 		})
 	}
@@ -1058,15 +1058,47 @@ func TestStepDetails_5Steps_RemoveVerifyStrategy_AddClose(t *testing.T) {
 	}
 }
 
-// TEST 2: close step should be Skippable: true
-func TestStepDetails_CloseSkippable(t *testing.T) {
+// TEST 2: validateSkip covers all steps — mandatory vs skippable
+func TestValidateSkip(t *testing.T) {
 	t.Parallel()
-	detail := lookupDetail("close")
-	if detail.Name != "close" {
-		t.Fatalf("close step not found")
+	tests := []struct {
+		name      string
+		plan      *ServicePlan
+		stepName  string
+		wantError bool
+		wantMsg   string
+	}{
+		// discover/provision: always mandatory
+		{"discover_always_mandatory", nil, "discover", true, "mandatory"},
+		{"provision_always_mandatory", nil, "provision", true, "mandatory"},
+		// generate/deploy/close with runtime targets: blocked
+		{"generate_with_targets_blocked", &ServicePlan{Targets: []BootstrapTarget{{}}}, "generate", true, "runtime services"},
+		{"deploy_with_targets_blocked", &ServicePlan{Targets: []BootstrapTarget{{}}}, "deploy", true, "runtime services"},
+		{"close_with_targets_blocked", &ServicePlan{Targets: []BootstrapTarget{{}}}, "close", true, "runtime services"},
+		// generate/deploy/close with empty targets: allowed
+		{"generate_empty_targets_allowed", &ServicePlan{Targets: []BootstrapTarget{}}, "generate", false, ""},
+		{"deploy_empty_targets_allowed", &ServicePlan{Targets: []BootstrapTarget{}}, "deploy", false, ""},
+		{"close_empty_targets_allowed", &ServicePlan{Targets: []BootstrapTarget{}}, "close", false, ""},
+		// generate/deploy/close with nil plan: allowed (managed-only)
+		{"generate_nil_plan_allowed", nil, "generate", false, ""},
+		{"deploy_nil_plan_allowed", nil, "deploy", false, ""},
+		{"close_nil_plan_allowed", nil, "close", false, ""},
+		// unknown step: error
+		{"unknown_step_error", nil, "bogus", true, "unknown step"},
 	}
-	if !detail.Skippable {
-		t.Error("close step: Skippable should be true (for managed-only projects)")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateSkip(tt.plan, tt.stepName)
+			if (err != nil) != tt.wantError {
+				t.Errorf("validateSkip(%q): error=%v, wantError=%v", tt.stepName, err, tt.wantError)
+			}
+			if tt.wantMsg != "" && err != nil {
+				if !strings.Contains(err.Error(), tt.wantMsg) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.wantMsg)
+				}
+			}
+		})
 	}
 }
 
@@ -1123,8 +1155,8 @@ func TestResetForIteration_ResetsGenerate_Deploy_NotClose(t *testing.T) {
 	}
 }
 
-// TEST 5: validateConditionalSkip should guard close step (can't skip if runtime services exist)
-func TestValidateConditionalSkip_CloseStepGuard(t *testing.T) {
+// TEST 5: validateSkip should guard close step (can't skip if runtime services exist)
+func TestValidateSkip_CloseStepGuard(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name            string
@@ -1147,7 +1179,7 @@ func TestValidateConditionalSkip_CloseStepGuard(t *testing.T) {
 			plan := &ServicePlan{
 				Targets: make([]BootstrapTarget, tt.numTargets),
 			}
-			err := validateConditionalSkip(plan, tt.stepName)
+			err := validateSkip(plan, tt.stepName)
 
 			if tt.shouldAllowSkip {
 				if err != nil {

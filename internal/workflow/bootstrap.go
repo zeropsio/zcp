@@ -19,7 +19,6 @@ type StepDetail struct {
 	Name         string   `json:"name"`
 	Tools        []string `json:"tools"`
 	Verification string   `json:"verification"`
-	Skippable    bool     `json:"skippable"`
 }
 
 // BootstrapStep represents a single step in the bootstrap subflow.
@@ -184,12 +183,7 @@ func (b *BootstrapState) SkipStep(name, reason string) error {
 		return fmt.Errorf("skip step: expected %q (current), got %q", current, name)
 	}
 
-	detail := lookupDetail(name)
-	if !detail.Skippable {
-		return fmt.Errorf("skip step: %q is mandatory and cannot be skipped", name)
-	}
-
-	if err := validateConditionalSkip(b.Plan, name); err != nil {
+	if err := validateSkip(b.Plan, name); err != nil {
 		return err
 	}
 
@@ -311,19 +305,21 @@ func (b *BootstrapState) PlanMode() string {
 	return "mixed"
 }
 
-// validateConditionalSkip prevents skipping steps that are required based on the plan.
-func validateConditionalSkip(plan *ServicePlan, stepName string) error {
-	if plan == nil {
-		return nil
-	}
-	hasRuntimeServices := len(plan.Targets) > 0
-	switch stepName {
+// validateSkip checks whether a step can be skipped given the current plan.
+// discover/provision are always mandatory. generate/deploy/close are skippable
+// only when there are no runtime targets (managed-only fast path).
+func validateSkip(plan *ServicePlan, name string) error {
+	switch name {
+	case StepDiscover, StepProvision:
+		return fmt.Errorf("skip step: %q is mandatory and cannot be skipped", name)
 	case stepGenerate, stepDeploy, stepClose:
-		if hasRuntimeServices {
-			return fmt.Errorf("skip step: cannot skip %q — runtime services in plan require it", stepName)
+		if plan != nil && len(plan.Targets) > 0 {
+			return fmt.Errorf("skip step: cannot skip %q — runtime services in plan require it", name)
 		}
+		return nil
+	default:
+		return fmt.Errorf("skip step: unknown step %q", name)
 	}
-	return nil
 }
 
 // lookupDetail finds the StepDetail for a step name.

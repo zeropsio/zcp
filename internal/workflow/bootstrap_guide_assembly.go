@@ -63,6 +63,16 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	if state == nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return bootstrapCompleteMsg
 	}
+
+	// Managed-only: no runtime targets, just managed services.
+	if len(state.Bootstrap.Plan.Targets) == 0 {
+		return bootstrapCompleteMsg + "\n\nManaged services provisioned. No runtime services to deploy." +
+			"\n\nAvailable operations:\n" +
+			"- Scale: `zerops_workflow action=\"start\" workflow=\"scale\"`\n" +
+			"- Debug: `zerops_workflow action=\"start\" workflow=\"debug\"`\n" +
+			"- Configure: `zerops_workflow action=\"start\" workflow=\"configure\"`"
+	}
+
 	var sb strings.Builder
 	sb.WriteString(bootstrapCompleteMsg + "\n\n## Services\n\n")
 

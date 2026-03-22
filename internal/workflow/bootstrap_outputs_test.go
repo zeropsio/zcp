@@ -811,6 +811,41 @@ func TestBuildTransitionMessage_AllStrategyOptionsListed(t *testing.T) {
 	}
 }
 
+func TestBuildTransitionMessage_EmptyTargets_ManagedOnly(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{},
+			},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+
+	// Should contain completion message.
+	if !strings.Contains(msg, "Bootstrap complete.") {
+		t.Error("message should contain bootstrap complete")
+	}
+	// Should mention managed-only context.
+	if !strings.Contains(msg, "Managed services provisioned") {
+		t.Error("message should mention managed services provisioned")
+	}
+	// Should NOT contain runtime-oriented sections.
+	if strings.Contains(msg, "Deploy Strategy") {
+		t.Error("managed-only message should NOT contain Deploy Strategy section")
+	}
+	if strings.Contains(msg, "CI/CD Gate") {
+		t.Error("managed-only message should NOT contain CI/CD Gate section")
+	}
+	// Should offer utility workflows.
+	if !strings.Contains(msg, "scale") {
+		t.Error("managed-only message should offer scale workflow")
+	}
+	if !strings.Contains(msg, "debug") {
+		t.Error("managed-only message should offer debug workflow")
+	}
+}
+
 func TestBuildTransitionMessage_CICDGateIncluded(t *testing.T) {
 	t.Parallel()
 	state := &WorkflowState{

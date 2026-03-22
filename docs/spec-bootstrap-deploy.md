@@ -263,7 +263,7 @@ flowchart TD
 
 ---
 
-#### Step 3: GENERATE (creative, skippable)
+#### Step 3: GENERATE (creative, managed-only skippable)
 
 **Purpose**: Write zerops.yml and application code to mounted filesystem.
 
@@ -348,7 +348,7 @@ flowchart TD
 
 ---
 
-#### Step 4: DEPLOY (branching, skippable)
+#### Step 4: DEPLOY (branching, managed-only skippable)
 
 **Purpose**: Deploy code to runtime services, start servers, enable subdomains, verify health.
 
@@ -463,7 +463,7 @@ Complete:
 
 ---
 
-#### Step 5: CLOSE (fixed, skippable)
+#### Step 5: CLOSE (fixed, managed-only skippable)
 
 **Purpose**: Administrative closure of bootstrap. Pure trigger point — completion writes ServiceMetas and presents strategy selection.
 
@@ -875,11 +875,10 @@ Bootstrap has wider ranges because it allows up to 10 iterations (configurable v
 | I1 | Only one bootstrap session active at any time | `InitSessionAtomic()` with registry lock |
 | I2 | Step completion requires attestation ≥ 10 chars | `CompleteStep()` validation |
 | I3 | Steps progress strictly in order | `CompleteStep()` name-matching check |
-| I4 | discover and provision cannot be skipped | `SkipStep()` checks `Skippable` field |
-| I5 | generate, deploy, close cannot be skipped when runtime targets exist | `validateConditionalSkip()` |
-| I6 | Session file atomically written (temp + rename) | `SaveSessionState()` |
-| I7 | Completed sessions cleaned up (file deleted, registry entry removed) | `ResetSessionByID()` at completion |
-| I8 | Non-discover steps require plan from discover step | `BootstrapComplete()` Plan!=nil check |
+| I4 | discover/provision always mandatory; generate/deploy/close skippable only for managed-only (no runtime targets) | `validateSkip()` |
+| I5 | Session file atomically written (temp + rename) | `SaveSessionState()` |
+| I6 | Completed sessions cleaned up (file deleted, registry entry removed) | `ResetSessionByID()` at completion |
+| I7 | Non-discover steps require plan from discover step | `BootstrapComplete()` Plan!=nil check |
 
 ### State Invariants
 
