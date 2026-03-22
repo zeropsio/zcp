@@ -94,6 +94,7 @@ Generate import.yml ONLY. Do NOT write zerops.yml or application code — that h
 | `startWithoutCode` | `true` | omit |
 | `maxContainers` | `1` | omit (default) |
 | `enableSubdomainAccess` | `true` | `true` |
+| `verticalAutoscaling.minRam` | `1.0` for compiled runtimes (Go, Rust, Java, .NET, Elixir, Gleam) | omit (default) |
 
 Dev starts immediately with an empty container (RUNNING). Stage stays in READY_TO_DEPLOY until first deploy from dev — no wasted resources running an empty container.
 

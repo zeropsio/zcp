@@ -212,7 +212,7 @@ zerops[]:
   run:
     base: string                       # if different from build base
     os: alpine | ubuntu
-    start: string                      # REQUIRED for runtime services
+    start: string                      # REQUIRED (except implicit-webserver: php-nginx, php-apache, nginx, static)
     ports[]: { port: 10-65435, httpSupport: bool, protocol: tcp|udp }
     initCommands: string[]             # every container start (migrations, seeding)
     prepareCommands: string[]          # runtime image customization
@@ -248,7 +248,7 @@ zerops[]:
 
   | Deploy mode | Who deploys? | deployFiles | start |
   |-------------|-------------|-------------|-------|
-  | Dev (in dev+stage) | Self-deploy | `[.]` | `zsc noop --silent` |
+  | Dev (in dev+stage) | Self-deploy | `[.]` | `zsc noop --silent` (implicit-webserver: omit) |
   | Stage (in dev+stage) | Cross-deploy from dev | Recipe pattern | Compiled/prod start |
   | Simple (single service) | Self-deploy | `[.]` | Real start command |
   | Production (buildFromGit) | Platform from git | Recipe pattern | Compiled/prod start |

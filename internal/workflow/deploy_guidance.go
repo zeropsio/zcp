@@ -54,7 +54,12 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 	sb.WriteString("- `${hostname_varName}` typo = silent literal string, no error from platform\n")
 	sb.WriteString("- Build container ≠ run container — different environment\n")
 	if env == EnvContainer {
-		sb.WriteString("- Code on SSHFS mount is already on the container — deploy rebuilds, not transfers\n")
+		sb.WriteString("- Code on SSHFS mount — deploy rebuilds, not transfers\n")
+		for _, t := range state.Targets {
+			if t.Role != DeployRoleStage {
+				fmt.Fprintf(&sb, "  - %s: `/var/www/%s/`\n", t.Hostname, t.Hostname)
+			}
+		}
 	}
 	sb.WriteString("\n")
 
@@ -104,6 +109,12 @@ func buildDeployGuide(state *DeployState, iteration int) string {
 		sb.WriteString("- Stage: auto-starts with healthCheck. Zerops monitors and restarts.\n")
 	}
 	sb.WriteString("- Subdomain must be enabled after every deploy (idempotent)\n\n")
+
+	// Code-only changes shortcut.
+	sb.WriteString("### Code-only changes (no zerops.yml change)\n")
+	sb.WriteString("- Edit code on mount → restart server via SSH. No redeploy needed.\n")
+	sb.WriteString("- Implicit-webserver runtimes (PHP, nginx, static): changes take effect immediately, no restart needed.\n")
+	sb.WriteString("- Redeploy ONLY when zerops.yml changes (envVariables, ports, buildCommands, deployFiles).\n\n")
 
 	// Diagnostic pointers.
 	sb.WriteString("### If something breaks\n")
