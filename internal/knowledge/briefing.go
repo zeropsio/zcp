@@ -292,7 +292,7 @@ func filterDeployPatterns(guide, mode string) string {
 // and full runtime prefixes (e.g., "php-nginx").
 func isImplicitWebserverRuntime(runtimeBase string) bool {
 	switch runtimeBase {
-	case "php", "php-nginx", "php-apache", runtimeNginx, runtimeStatic:
+	case "php", "php-nginx", runtimePHPApache, runtimeNginx, runtimeStatic:
 		return true
 	}
 	return false

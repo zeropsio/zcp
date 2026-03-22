@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -296,6 +299,96 @@ func TestKnowledgeTool_ScopePlusBriefing_Error(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected error for mixed scope + briefing modes")
+	}
+}
+
+// --- Scope + Live Stacks Tests ---
+
+func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+
+	tests := []struct {
+		name          string
+		client        platform.Client
+		cache         *ops.StackTypeCache
+		wantStacks    bool
+		wantCore      bool
+		wantUniversal bool
+	}{
+		{
+			name:          "with_cache_and_types",
+			client:        platform.NewMock().WithServiceStackTypes(testStackTypes()),
+			cache:         ops.NewStackTypeCache(time.Hour),
+			wantStacks:    true,
+			wantCore:      true,
+			wantUniversal: true,
+		},
+		{
+			name:          "nil_cache_no_stacks",
+			client:        nil,
+			cache:         nil,
+			wantStacks:    false,
+			wantCore:      true,
+			wantUniversal: true,
+		},
+		{
+			name:          "nil_client_no_stacks",
+			client:        nil,
+			cache:         ops.NewStackTypeCache(time.Hour),
+			wantStacks:    false,
+			wantCore:      true,
+			wantUniversal: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			RegisterKnowledge(srv, store, tt.client, tt.cache, nil, nil)
+
+			result := callTool(t, srv, "zerops_knowledge", map[string]any{"scope": "infrastructure"})
+			if result.IsError {
+				t.Fatalf("unexpected error: %s", getTextContent(t, result))
+			}
+			text := getTextContent(t, result)
+
+			if tt.wantStacks {
+				if !strings.Contains(text, "Available Service Stacks (live)") {
+					t.Error("scope with cache should include live stacks header")
+				}
+				if !strings.Contains(text, "nodejs") {
+					t.Error("scope with cache should include nodejs in stacks")
+				}
+				// Stacks should appear before universals/core
+				sIdx := strings.Index(text, "Available Service Stacks")
+				uIdx := strings.Index(text, "Platform Universals")
+				if sIdx >= uIdx {
+					t.Error("stacks should appear before universals")
+				}
+			} else if strings.Contains(text, "Available Service Stacks (live)") {
+				t.Error("scope without cache should NOT include live stacks")
+			}
+			if tt.wantCore && !strings.Contains(text, "Zerops Core Reference") {
+				t.Error("scope should include core reference")
+			}
+			if tt.wantUniversal && !strings.Contains(text, "Platform Universals") {
+				t.Error("scope should include universals")
+			}
+		})
+	}
+}
+
+func testStackTypes() []platform.ServiceStackType {
+	return []platform.ServiceStackType{
+		{
+			Name:     "nodejs",
+			Category: "USER",
+			Versions: []platform.ServiceStackTypeVersion{
+				{Name: "nodejs@22", Status: "ACTIVE"},
+				{Name: "nodejs@24", Status: "ACTIVE"},
+			},
+		},
 	}
 }
 

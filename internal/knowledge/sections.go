@@ -6,8 +6,9 @@ import (
 
 // Runtime slug constants for repeated string literals.
 const (
-	runtimeStatic = "static"
-	runtimeNginx  = "nginx"
+	runtimeStatic    = "static"
+	runtimeNginx     = "nginx"
+	runtimePHPApache = "php-apache"
 )
 
 // parseH2Sections splits markdown content by H2 headers (## ), respecting fenced code blocks.
@@ -60,25 +61,25 @@ func parseH2Sections(content string) map[string]string {
 
 // runtimeNormalizer maps MCP runtime types to runtime guide file slugs.
 var runtimeNormalizer = map[string]string{
-	"php":        "php",
-	"php-nginx":  "php",
-	"php-apache": "php",
-	"nodejs":     "nodejs",
-	"bun":        "bun",
-	"deno":       "deno",
-	"python":     "python",
-	"go":         "go",
-	"java":       "java",
-	"dotnet":     "dotnet",
-	"rust":       "rust",
-	"elixir":     "elixir",
-	"gleam":      "gleam",
-	"ruby":       "ruby",
-	"nginx":      runtimeNginx,
-	"static":     runtimeStatic,
-	"docker":     "docker",
-	"alpine":     "alpine",
-	"ubuntu":     "ubuntu",
+	"php":            "php",
+	"php-nginx":      "php",
+	runtimePHPApache: "php",
+	"nodejs":         "nodejs",
+	"bun":            "bun",
+	"deno":           "deno",
+	"python":         "python",
+	"go":             "go",
+	"java":           "java",
+	"dotnet":         "dotnet",
+	"rust":           "rust",
+	"elixir":         "elixir",
+	"gleam":          "gleam",
+	"ruby":           "ruby",
+	"nginx":          runtimeNginx,
+	"static":         runtimeStatic,
+	"docker":         "docker",
+	"alpine":         "alpine",
+	"ubuntu":         "ubuntu",
 }
 
 // normalizeRuntimeName extracts runtime base name from versioned string and maps to section name.
