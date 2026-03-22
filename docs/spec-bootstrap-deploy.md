@@ -2,7 +2,8 @@
 
 > **Status**: Authoritative — all code, content, and improvements MUST conform to this document.
 > **Scope**: Container mode only. Local mode shares concepts but has its own specifics (not covered here).
-> **Date**: 2026-03-21
+> **Environment**: `Engine.Environment()` returns `container` or `local` — currently only `container` path is implemented. Local mode is deferred.
+> **Date**: 2026-03-22
 
 ---
 

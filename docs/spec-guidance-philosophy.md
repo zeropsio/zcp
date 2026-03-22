@@ -2,7 +2,8 @@
 
 > **Status**: Authoritative — all guidance assembly, knowledge injection, init instructions, and workflow responses MUST conform to this document.
 > **Scope**: All ZCP workflows and tool responses. Both container and local environments.
-> **Date**: 2026-03-21
+> **Environment**: Currently only container mode is implemented. Local mode is deferred; `Engine.Environment()` is the switching point.
+> **Date**: 2026-03-22
 
 ---
 

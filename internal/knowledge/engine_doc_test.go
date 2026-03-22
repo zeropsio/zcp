@@ -7,14 +7,6 @@ import (
 	"testing"
 )
 
-func TestStore_DocumentCount(t *testing.T) {
-	store := newTestStore(t)
-	count := store.DocumentCount()
-	if count < 30 {
-		t.Errorf("DocumentCount = %d, want >= 30", count)
-	}
-}
-
 func TestStore_List(t *testing.T) {
 	store := newTestStore(t)
 	resources := store.List()

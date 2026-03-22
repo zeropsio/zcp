@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -12,9 +13,9 @@ import (
 )
 
 const (
-	workflowBootstrap = "bootstrap"
-	workflowDeploy    = "deploy"
-	workflowCICD      = "cicd"
+	workflowBootstrap = workflow.WorkflowBootstrap
+	workflowDeploy    = workflow.WorkflowDeploy
+	workflowCICD      = workflow.WorkflowCICD
 )
 
 // WorkflowInput is the input type for zerops_workflow.
@@ -63,7 +64,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 				"No workflow specified",
 				"Use workflow=\"bootstrap\", workflow=\"deploy\", or workflow=\"debug\"")), nil, nil
 		}
-		content, err := ops.GetWorkflow(input.Workflow)
+		wfContent, err := content.GetWorkflow(input.Workflow)
 		if err != nil {
 			return convertError(err), nil, nil
 		}
@@ -72,11 +73,11 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 		if (input.Workflow == workflowBootstrap || input.Workflow == workflowDeploy) && client != nil && cache != nil {
 			if types := cache.Get(ctx, client); len(types) > 0 {
 				stackList := knowledge.FormatStackList(types)
-				content = injectStacks(content, stackList)
+				wfContent = injectStacks(wfContent, stackList)
 			}
 		}
 
-		return textResult(content), nil, nil
+		return textResult(wfContent), nil, nil
 	})
 }
 
@@ -140,7 +141,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	// Immediate workflows: stateless, return guidance directly.
 	if workflow.IsImmediateWorkflow(input.Workflow) {
-		content, err := ops.GetWorkflow(input.Workflow)
+		wfContent, err := content.GetWorkflow(input.Workflow)
 		if err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
@@ -149,7 +150,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		}
 		return jsonResult(immediateResponse{
 			Workflow: input.Workflow,
-			Guidance: content,
+			Guidance: wfContent,
 		}), nil, nil
 	}
 
@@ -181,113 +182,6 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
 		"Valid workflows: bootstrap, deploy, debug, scale, configure")), nil, nil
-}
-
-// handleDeployStart reads service metas and creates a deploy session.
-func handleDeployStart(_ context.Context, engine *workflow.Engine, projectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	metas, err := workflow.ListServiceMetas(engine.StateDir())
-	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("Failed to read service metas: %v", err),
-			"Run bootstrap first to create services")), nil, nil
-	}
-
-	if len(metas) == 0 {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"No bootstrapped services found",
-			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
-	}
-
-	// Reject incomplete metas (bootstrap started but didn't finish).
-	for _, m := range metas {
-		if !m.IsComplete() {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Service %q was provisioned but bootstrap didn't complete", m.Hostname),
-				"Run bootstrap first to finish setup: action=\"start\" workflow=\"bootstrap\"")), nil, nil
-		}
-	}
-
-	// Filter to runtime services only (those with a type that has a mode).
-	var runtimeMetas []*workflow.ServiceMeta
-	for _, m := range metas {
-		if m.Mode != "" || m.StageHostname != "" {
-			runtimeMetas = append(runtimeMetas, m)
-		}
-	}
-	if len(runtimeMetas) == 0 {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"No runtime services found in service metas",
-			"Only managed services exist — nothing to deploy")), nil, nil
-	}
-
-	// Strategy check: if any runtime service has no strategy, present selection guidance.
-	var needStrategy []*workflow.ServiceMeta
-	for _, m := range runtimeMetas {
-		if m.DeployStrategy == "" {
-			needStrategy = append(needStrategy, m)
-		}
-	}
-	if len(needStrategy) > 0 {
-		return jsonResult(buildStrategySelectionResponse(needStrategy)), nil, nil
-	}
-
-	targets, mode, strategy := workflow.BuildDeployTargets(runtimeMetas)
-
-	// Check for mixed strategies: all runtime services must have the same strategy for now.
-	for i := 1; i < len(targets); i++ {
-		if targets[i].Strategy != targets[0].Strategy {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Mixed strategies not supported: %q vs %q", targets[0].Strategy, targets[i].Strategy),
-				"Deploy one strategy at a time. Create separate deploy sessions per strategy.")), nil, nil
-		}
-	}
-
-	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode, strategy)
-	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrWorkflowActive,
-			fmt.Sprintf("Deploy start failed: %v", err),
-			"Reset existing session first with action=reset")), nil, nil
-	}
-	return jsonResult(resp), nil, nil
-}
-
-// handleCICDStart reads service metas and creates a CI/CD session.
-func handleCICDStart(_ context.Context, engine *workflow.Engine, projectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	metas, err := workflow.ListServiceMetas(engine.StateDir())
-	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("Failed to read service metas: %v", err),
-			"Run bootstrap first to create services")), nil, nil
-	}
-
-	var cicdHostnames []string
-	for _, m := range metas {
-		if (m.Mode != "" || m.StageHostname != "") && m.DeployStrategy == workflow.StrategyCICD {
-			cicdHostnames = append(cicdHostnames, m.Hostname)
-		}
-	}
-	if len(cicdHostnames) == 0 {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"No services have ci-cd strategy",
-			"Set ci-cd strategy first: zerops_workflow action=\"strategy\" strategies={\"hostname\":\"ci-cd\"}")), nil, nil
-	}
-
-	resp, err := engine.CICDStart(projectID, input.Intent, cicdHostnames)
-	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrWorkflowActive,
-			fmt.Sprintf("CI/CD start failed: %v", err),
-			"Reset existing session first with action=reset")), nil, nil
-	}
-	return jsonResult(resp), nil, nil
 }
 
 // detectActiveWorkflow returns the active workflow type from engine state.

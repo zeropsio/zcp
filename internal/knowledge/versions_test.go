@@ -603,32 +603,3 @@ func TestManagedBaseNames_Empty(t *testing.T) {
 		})
 	}
 }
-
-func TestIsManagedCategory(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		category string
-		want     bool
-	}{
-		{"STANDARD", true},
-		{"SHARED_STORAGE", true},
-		{"OBJECT_STORAGE", true},
-		{"USER", false},
-		{"CORE", false},
-		{"BUILD", false},
-		{"INTERNAL", false},
-		{"PREPARE_RUNTIME", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.category, func(t *testing.T) {
-			t.Parallel()
-			got := IsManagedCategory(tt.category)
-			if got != tt.want {
-				t.Errorf("IsManagedCategory(%q) = %v, want %v", tt.category, got, tt.want)
-			}
-		})
-	}
-}

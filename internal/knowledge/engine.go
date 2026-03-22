@@ -193,11 +193,6 @@ func (s *Store) Get(uri string) (*Document, error) {
 	return doc, nil
 }
 
-// DocumentCount returns the number of indexed documents.
-func (s *Store) DocumentCount() int {
-	return len(s.docs)
-}
-
 // GetCore returns the full themes/core.md content (merged platform + rules + grammar).
 func (s *Store) GetCore() (string, error) {
 	doc, err := s.Get("zerops://themes/core")

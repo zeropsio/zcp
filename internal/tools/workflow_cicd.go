@@ -10,6 +10,39 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// handleCICDStart reads service metas and creates a CI/CD session.
+func handleCICDStart(_ context.Context, engine *workflow.Engine, projectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	metas, err := workflow.ListServiceMetas(engine.StateDir())
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Failed to read service metas: %v", err),
+			"Run bootstrap first to create services")), nil, nil
+	}
+
+	var cicdHostnames []string
+	for _, m := range metas {
+		if (m.Mode != "" || m.StageHostname != "") && m.DeployStrategy == workflow.StrategyCICD {
+			cicdHostnames = append(cicdHostnames, m.Hostname)
+		}
+	}
+	if len(cicdHostnames) == 0 {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"No services have ci-cd strategy",
+			"Set ci-cd strategy first: zerops_workflow action=\"strategy\" strategies={\"hostname\":\"ci-cd\"}")), nil, nil
+	}
+
+	resp, err := engine.CICDStart(projectID, input.Intent, cicdHostnames)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrWorkflowActive,
+			fmt.Sprintf("CI/CD start failed: %v", err),
+			"Reset existing session first with action=reset")), nil, nil
+	}
+	return jsonResult(resp), nil, nil
+}
+
 func handleCICDComplete(_ context.Context, engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
