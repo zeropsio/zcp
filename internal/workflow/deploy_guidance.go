@@ -62,13 +62,13 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 	writeStrategyNote(&sb, state.Strategy)
 
 	// Knowledge pointers.
-	sb.WriteString(buildKnowledgeMap(state.Targets))
+	sb.WriteString(buildKnowledgeMap())
 
 	return sb.String()
 }
 
 // buildDeployGuide generates personalized deploy step guidance from state.
-func buildDeployGuide(state *DeployState, iteration int, env Environment) string {
+func buildDeployGuide(state *DeployState, iteration int) string {
 	var sb strings.Builder
 
 	fmt.Fprintf(&sb, "## Deploy — %s mode, %s\n\n", state.Mode, state.Strategy)
@@ -83,13 +83,13 @@ func buildDeployGuide(state *DeployState, iteration int, env Environment) string
 	sb.WriteString("### Workflow\n")
 	switch state.Mode {
 	case PlanModeStandard:
-		writeStandardWorkflow(&sb, state.Targets, env)
+		writeStandardWorkflow(&sb, state.Targets)
 	case PlanModeDev:
-		writeDevWorkflow(&sb, state.Targets, env)
+		writeDevWorkflow(&sb, state.Targets)
 	case PlanModeSimple:
 		writeSimpleWorkflow(&sb, state.Targets)
 	default:
-		writeStandardWorkflow(&sb, state.Targets, env)
+		writeStandardWorkflow(&sb, state.Targets)
 	}
 	sb.WriteString("\n")
 
@@ -129,24 +129,12 @@ func buildVerifyGuide() string {
 }
 
 // buildKnowledgeMap returns compact knowledge pointers for agent on-demand use.
-func buildKnowledgeMap(targets []DeployTarget) string {
-	var sb strings.Builder
-	sb.WriteString("### Knowledge on demand\n")
-	sb.WriteString("- zerops.yml schema: `zerops_knowledge query=\"zerops.yml schema\"`\n")
-	sb.WriteString("- Env var discovery: `zerops_discover includeEnvs=true`\n")
-
-	// Deduplicate runtime types across targets for unique pointers.
-	seen := make(map[string]bool)
-	for _, t := range targets {
-		if t.Role == DeployRoleStage {
-			continue // stage shares runtime with dev
-		}
-		if !seen[t.Hostname] {
-			seen[t.Hostname] = true
-			fmt.Fprintf(&sb, "- %s: `zerops_knowledge query=\"<runtime>\"` for runtime-specific config\n", t.Hostname)
-		}
-	}
-	return sb.String()
+func buildKnowledgeMap() string {
+	return `### Knowledge on demand
+- zerops.yml schema: ` + "`zerops_knowledge query=\"zerops.yml schema\"`" + `
+- Runtime docs: ` + "`zerops_knowledge query=\"<your runtime>\"`" + ` (e.g. nodejs, go, php-apache)
+- Env var discovery: ` + "`zerops_discover includeEnvs=true`" + `
+`
 }
 
 // --- helpers ---
@@ -183,22 +171,9 @@ func writeStrategyNote(sb *strings.Builder, current string) {
 	sb.WriteString("Change: `zerops_workflow action=\"strategy\" strategies={...}`\n\n")
 }
 
-func writeStandardWorkflow(sb *strings.Builder, targets []DeployTarget, env Environment) {
-	dev, stage := "", ""
-	for _, t := range targets {
-		if t.Role == DeployRoleDev {
-			dev = t.Hostname
-		}
-		if t.Role == DeployRoleStage {
-			stage = t.Hostname
-		}
-	}
-	if dev == "" {
-		dev = "<dev>"
-	}
-	if stage == "" {
-		stage = "<stage>"
-	}
+func writeStandardWorkflow(sb *strings.Builder, targets []DeployTarget) {
+	dev := findHostname(targets, DeployRoleDev)
+	stage := findHostname(targets, DeployRoleStage)
 
 	fmt.Fprintf(sb, "1. Deploy to dev: `zerops_deploy targetService=\"%s\"`\n", dev)
 	sb.WriteString("2. Start server on dev manually via SSH (dev uses zsc noop)\n")
@@ -208,43 +183,32 @@ func writeStandardWorkflow(sb *strings.Builder, targets []DeployTarget, env Envi
 	sb.WriteString("   Stage auto-starts (real start command + healthCheck)\n")
 	fmt.Fprintf(sb, "6. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", stage)
 	fmt.Fprintf(sb, "7. Verify stage: `zerops_verify serviceHostname=\"%s\"`\n", stage)
-	_ = env // available for future container-specific hints
 }
 
-func writeDevWorkflow(sb *strings.Builder, targets []DeployTarget, env Environment) {
-	dev := ""
-	for _, t := range targets {
-		if t.Role == DeployRoleDev {
-			dev = t.Hostname
-			break
-		}
-	}
-	if dev == "" {
-		dev = "<dev>"
-	}
+func writeDevWorkflow(sb *strings.Builder, targets []DeployTarget) {
+	dev := findHostname(targets, DeployRoleDev)
 
 	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"`\n", dev)
 	sb.WriteString("2. Start server manually via SSH (dev uses zsc noop)\n")
 	fmt.Fprintf(sb, "3. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", dev)
 	fmt.Fprintf(sb, "4. Verify: `zerops_verify serviceHostname=\"%s\"`\n", dev)
-	_ = env
 }
 
 func writeSimpleWorkflow(sb *strings.Builder, targets []DeployTarget) {
-	hostname := ""
-	for _, t := range targets {
-		if t.Role == DeployRoleSimple {
-			hostname = t.Hostname
-			break
-		}
-	}
-	if hostname == "" {
-		hostname = "<service>"
-	}
+	hostname := findHostname(targets, DeployRoleSimple)
 
 	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"` — server auto-starts\n", hostname)
 	fmt.Fprintf(sb, "2. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", hostname)
 	fmt.Fprintf(sb, "3. Verify: `zerops_verify serviceHostname=\"%s\"`\n", hostname)
+}
+
+func findHostname(targets []DeployTarget, role string) string {
+	for _, t := range targets {
+		if t.Role == role {
+			return t.Hostname
+		}
+	}
+	return "UNKNOWN"
 }
 
 func writeIterationEscalation(sb *strings.Builder, iteration int) {

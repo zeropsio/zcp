@@ -3,8 +3,6 @@ package workflow
 import (
 	"fmt"
 	"time"
-
-	"github.com/zeropsio/zcp/internal/knowledge"
 )
 
 // WorkflowDeploy is the workflow name for deploy sessions.
@@ -258,7 +256,7 @@ func (d *DeployState) ResetForIteration() {
 }
 
 // BuildResponse constructs a DeployResponse.
-func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env Environment, kp knowledge.Provider) *DeployResponse {
+func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env Environment) *DeployResponse {
 	completed := 0
 	summaries := make([]DeployStepOutSum, len(d.Steps))
 	for i, s := range d.Steps {
@@ -295,7 +293,7 @@ func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env
 			Name:  detail.Name,
 			Tools: detail.Tools,
 		}
-		resp.Current.DetailedGuide = d.buildGuide(detail.Name, iteration, env, kp)
+		resp.Current.DetailedGuide = d.buildGuide(detail.Name, iteration, env)
 		resp.Message = fmt.Sprintf("Deploy step %d/%d: %s", d.CurrentStep+1, len(d.Steps), detail.Name)
 	} else {
 		resp.Message = "Deploy complete. All steps finished."
@@ -305,14 +303,13 @@ func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env
 }
 
 // buildGuide generates personalized deploy step guidance from state.
-// Unlike bootstrap which injects full knowledge, deploy uses compact guidance
-// with knowledge pointers — the agent pulls knowledge on demand.
-func (d *DeployState) buildGuide(step string, iteration int, env Environment, _ knowledge.Provider) string {
+// Deploy uses compact guidance with knowledge pointers — the agent pulls on demand.
+func (d *DeployState) buildGuide(step string, iteration int, env Environment) string {
 	switch step {
 	case DeployStepPrepare:
 		return buildPrepareGuide(d, env)
 	case DeployStepDeploy:
-		return buildDeployGuide(d, iteration, env)
+		return buildDeployGuide(d, iteration)
 	case DeployStepVerify:
 		return buildVerifyGuide()
 	}

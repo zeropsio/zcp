@@ -21,9 +21,8 @@ type GuidanceParams struct {
 	KP                knowledge.Provider
 }
 
-// assembleGuidance builds a complete guidance string for a step by layering
+// assembleGuidance builds a complete guidance string for a bootstrap step by layering
 // static content, runtime knowledge, and session context.
-// Used by both bootstrap and deploy workflows.
 func assembleGuidance(params GuidanceParams) string {
 	// Iteration delta (escalating) for deploy retries — replaces normal guidance.
 	if params.Iteration > 0 {
@@ -62,9 +61,9 @@ func resolveStaticGuidance(step string, plan *ServicePlan, failureCount int) str
 	return ResolveGuidance(step)
 }
 
-// needsRuntimeKnowledge returns true for steps where runtime/dependency knowledge is relevant.
+// needsRuntimeKnowledge returns true for bootstrap steps where runtime/dependency knowledge is relevant.
 func needsRuntimeKnowledge(step string) bool {
-	return step == StepGenerate || step == DeployStepPrepare
+	return step == StepGenerate
 }
 
 // assembleKnowledge gathers step-relevant knowledge from the knowledge store.
@@ -82,7 +81,7 @@ func assembleKnowledge(params GuidanceParams) string {
 		}
 	}
 
-	// Runtime + dependency knowledge at generate and deploy-prepare.
+	// Runtime + dependency knowledge at generate step.
 	if needsRuntimeKnowledge(params.Step) {
 		if params.RuntimeType != "" {
 			base, _, _ := strings.Cut(params.RuntimeType, "@")
@@ -97,12 +96,12 @@ func assembleKnowledge(params GuidanceParams) string {
 		}
 	}
 
-	// Env vars: at generate (bootstrap) or deploy-execute (deploy workflow).
+	// Env vars at generate step.
 	if params.Step == StepGenerate && len(params.DiscoveredEnvVars) > 0 {
 		parts = append(parts, formatEnvVarsForGuide(params.DiscoveredEnvVars))
 	}
 
-	// zerops.yml schema + rules at generate and deploy-prepare.
+	// zerops.yml schema + rules at generate step.
 	if needsRuntimeKnowledge(params.Step) {
 		for _, name := range []string{"zerops.yml Schema", "Rules & Pitfalls"} {
 			if s := getCoreSection(params.KP, name); s != "" {
@@ -111,17 +110,10 @@ func assembleKnowledge(params GuidanceParams) string {
 		}
 	}
 
-	// Deploy rules at bootstrap deploy and deploy-workflow deploy step.
-	// Note: StepDeploy == DeployStepDeploy == "deploy".
+	// Schema rules at bootstrap deploy step.
 	if params.Step == StepDeploy {
 		if s := getCoreSection(params.KP, "Schema Rules"); s != "" {
 			parts = append(parts, "## Deploy Rules\n\n"+s)
-		}
-		// Deploy workflow injects env vars here (no generate step).
-		// Bootstrap does NOT — env vars were already at generate.
-		// Distinguish via DiscoveredEnvVars: bootstrap sets them empty for deploy.
-		if len(params.DiscoveredEnvVars) > 0 {
-			parts = append(parts, formatEnvVarsForGuide(params.DiscoveredEnvVars))
 		}
 	}
 

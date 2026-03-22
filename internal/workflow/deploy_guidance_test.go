@@ -199,7 +199,7 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			guide := buildDeployGuide(tt.state, tt.iteration, tt.env)
+			guide := buildDeployGuide(tt.state, tt.iteration)
 
 			if guide == "" {
 				t.Fatal("expected non-empty guidance")
@@ -231,11 +231,7 @@ func TestBuildVerifyGuide_NonEmpty(t *testing.T) {
 
 func TestBuildKnowledgeMap_Pointers(t *testing.T) {
 	t.Parallel()
-	targets := []DeployTarget{
-		{Hostname: "appdev", Role: DeployRoleDev},
-		{Hostname: "appstage", Role: DeployRoleStage},
-	}
-	result := buildKnowledgeMap(targets)
+	result := buildKnowledgeMap()
 
 	if result == "" {
 		t.Fatal("expected non-empty knowledge map")

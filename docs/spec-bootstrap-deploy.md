@@ -637,10 +637,10 @@ See `docs/spec-guidance-philosophy.md` for the full guidance delivery specificat
 
 **Guidance**: Mode-specific workflow with actual hostnames + strategy commands + platform facts (20-45 lines). Iteration escalation on retries.
 
-**Checker**: `checkDeployResult` — diagnostic feedback:
-- `BUILD_FAILED` → "check buildLogs from deploy response"
+**Checker**: `checkDeployResult` — diagnostic feedback based on service status:
+- `RUNNING`/`ACTIVE` → pass
 - `READY_TO_DEPLOY` (still) → "container didn't start, check start command, ports, env vars"
-- `ACTIVE/RUNNING` + healthy → pass
+- Other status → "check zerops_logs severity=error, review build output"
 - Subdomain access check for services with ports
 
 **Iteration escalation** (when `action="iterate"` resets deploy+verify):
@@ -697,6 +697,7 @@ WorkflowState {
   UpdatedAt:  RFC3339
   Bootstrap:  *BootstrapState  (if bootstrap)
   Deploy:     *DeployState     (if deploy)
+  CICD:       *CICDState       (if cicd)
 }
 ```
 

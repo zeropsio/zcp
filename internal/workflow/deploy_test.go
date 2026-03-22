@@ -137,7 +137,7 @@ func TestDeployState_BuildResponse(t *testing.T) {
 	}, PlanModeStandard, StrategyPushDev)
 	ds.Steps[0].Status = stepInProgress
 
-	resp := ds.BuildResponse("sess-1", "deploy app", 0, EnvContainer, nil)
+	resp := ds.BuildResponse("sess-1", "deploy app", 0, EnvContainer)
 	if resp.SessionID != "sess-1" {
 		t.Errorf("SessionID: want sess-1, got %s", resp.SessionID)
 	}
