@@ -44,7 +44,7 @@ cmd/zcp/main.go → internal/server  → MCP tools  → internal/ops      → in
 | `internal/workflow` | Bootstrap/deploy conductors, personalized guidance, checkers, session state, router |
 | `internal/platform` | Zerops API client, types, error codes |
 | `internal/auth` | Token resolution (env var / zcli), project discovery |
-| `internal/knowledge` | BM25 search engine, embedded docs + recipes |
+| `internal/knowledge` | BM25 search, embedded docs + recipes, session-aware briefings |
 | `internal/content` | Embedded workflow guides (bootstrap.md, deploy.md) |
 
 ---
@@ -179,6 +179,7 @@ Bootstrap and deploy use different guidance models:
 
 - **Bootstrap** = creative workflow — injects full knowledge (runtime briefings, schema, env vars) because the agent is creating configuration from scratch.
 - **Deploy** = operational workflow — injects compact personalized guidance (15-55 lines) with knowledge pointers. Agent pulls knowledge on demand via `zerops_knowledge`.
+- **On-demand knowledge** = session-aware. `zerops_knowledge` auto-detects the active workflow mode and filters runtime guides (Dev/Prod patterns) and recipes (mode-adapted headers) accordingly. Agent can override with explicit `mode` parameter.
 
 Deploy guidance is assembled from `DeployState` + `ServiceMeta` — the agent sees their actual hostnames, mode-specific workflow steps, and strategy commands. Not generic templates.
 

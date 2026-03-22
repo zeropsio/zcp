@@ -901,6 +901,9 @@ Bootstrap has wider ranges because it allows up to 10 iterations (configurable v
 | K5 | Deploy workflow prepare and deploy steps are programmatic from state (hostnames, mode, strategy). Verify step uses deploy.md diagnostic patterns (generic, no personalization needed). | `buildPrepareGuide()`, `buildDeployGuide()`, `buildVerifyGuide()` in deploy_guidance.go |
 | K6 | Deploy workflow NEVER injects runtime briefings or schema — uses knowledge pointers only | `buildKnowledgeMap()` returns pointers, not content |
 | K7 | Deploy guidance ≤ 55 lines per step | Personalized builder limits |
+| K8 | On-demand knowledge (zerops_knowledge) auto-filters by active session mode; agent can override with explicit `mode` param | `resolveKnowledgeMode()` reads Engine state |
+| K9 | Recipe mode adaptation is runtime-aware: implicit-webserver runtimes (PHP, nginx, static) get "omit start" instead of "use zsc noop" | `isImplicitWebserverRuntime()` + `prependModeAdaptation(mode, runtime)` |
+| K10 | Simple mode shows both Dev and Prod deploy patterns in runtime guides (hybrid: deployFiles from dev, start from prod) | `filterDeployPatterns()` returns unfiltered for simple |
 
 ### Flow Invariants
 

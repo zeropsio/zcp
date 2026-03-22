@@ -65,8 +65,8 @@ Two categories of information, two delivery methods:
 |----------|----------|-----------|
 | **Platform mechanics** (container lifecycle, env var behavior, deploy pipeline) | INJECT — always included in workflow responses | Agent cannot infer these. Always relevant. Compact (10-15 lines). |
 | **Mode/strategy workflow** (step sequence, commands) | INJECT — personalized to current setup | Agent MUST follow correct order. Specific to their mode/strategy. |
-| **Runtime knowledge** (Node.js specifics, Go specifics) | POINT — "zerops_knowledge query=..." | Agent may not need it. Verbose. Available on demand. |
-| **Recipe patterns** (Next.js, Laravel) | POINT — "zerops_knowledge recipe=..." | Framework-specific. Agent pulls when relevant. |
+| **Runtime knowledge** (Node.js specifics, Go specifics) | POINT — "zerops_knowledge query=..." (session-aware: auto-filters by mode) | Agent may not need it. Verbose. Available on demand. |
+| **Recipe patterns** (Next.js, Laravel) | POINT — "zerops_knowledge recipe=..." (session-aware: mode-adapted headers) | Framework-specific. Agent pulls when relevant. |
 | **Schema details** (zerops.yml full schema) | POINT — "zerops_knowledge query='zerops.yml'" | Verbose reference. Agent pulls when modifying config. |
 | **Environment data** (env vars, service status) | POINT — "zerops_discover" | Dynamic. Agent calls when it needs current state. |
 
@@ -355,6 +355,13 @@ Assembled from ServiceMeta runtime types and dependency types:
 
 The agent decides whether to call these. ZCP never injects the knowledge content itself.
 
+**Routing-aware on-demand knowledge**: When the agent calls `zerops_knowledge` during an active workflow session, the tool auto-detects the session mode (standard/dev/simple) and filters knowledge accordingly:
+- **Runtime guides**: Deploy Patterns filtered to Dev (standard/dev mode), both (simple mode), or Prod (stage override)
+- **Recipes**: Mode adaptation header prepended — runtime-aware (PHP: "omit start", others: "use zsc noop")
+- **No session**: Full unfiltered content (agent exploring, needs complete reference)
+
+The agent can override with explicit `mode` parameter (e.g., `mode="stage"` to see prod patterns during dev workflow). Auto-routing covers 95% of cases; explicit override for the rest.
+
 ---
 
 ## 7. Init Instructions Role
@@ -558,3 +565,5 @@ Init instructions should communicate: "zerops_discover always returns the CURREN
 | G10 | Agent can always pull knowledge on demand via zerops_knowledge | Tool always available |
 | G11 | Contextual guidance (first deploy, iteration) injected only when condition met | Layer 2 conditional checks |
 | G12 | State refresh available via zerops_discover at any time | Tool always available |
+| G13 | On-demand knowledge (zerops_knowledge) is session-aware — auto-filters by mode when active session exists, unfiltered otherwise | `resolveKnowledgeMode()` in knowledge.go reads Engine state |
+| G14 | Agent can override auto-detected mode with explicit `mode` parameter on zerops_knowledge | `input.Mode` takes priority over session mode |
