@@ -58,9 +58,12 @@ func TestDiscover_SingleService_Found(t *testing.T) {
 		Ports:                []platform.Port{{Port: 3000, Protocol: "TCP", Public: true}},
 		CurrentAutoscaling: &platform.CustomAutoscaling{
 			CPUMode: "DEDICATED", MinCPU: 1, MaxCPU: 8,
-			MinRAM: 0.125, MaxRAM: 48,
+			StartCPUCoreCount: 2,
+			MinRAM:            0.125, MaxRAM: 48,
 			MinDisk: 1, MaxDisk: 250,
 			HorizontalMinCount: 1, HorizontalMaxCount: 10,
+			MinFreeCPUCores: 0.5, MinFreeCPUPercent: 20,
+			MinFreeRAMGB: 0.25, MinFreeRAMPercent: 15,
 		},
 	}
 
@@ -95,6 +98,21 @@ func TestDiscover_SingleService_Found(t *testing.T) {
 	}
 	if svc.Resources["minRam"] != 0.125 {
 		t.Errorf("expected minRam=0.125, got %v", svc.Resources["minRam"])
+	}
+	if svc.Resources["startCpuCoreCount"] != int32(2) {
+		t.Errorf("expected startCpuCoreCount=2, got %v", svc.Resources["startCpuCoreCount"])
+	}
+	if svc.Resources["minFreeCpuCores"] != 0.5 {
+		t.Errorf("expected minFreeCpuCores=0.5, got %v", svc.Resources["minFreeCpuCores"])
+	}
+	if svc.Resources["minFreeCpuPercent"] != float64(20) {
+		t.Errorf("expected minFreeCpuPercent=20, got %v", svc.Resources["minFreeCpuPercent"])
+	}
+	if svc.Resources["minFreeRamGB"] != 0.25 {
+		t.Errorf("expected minFreeRamGB=0.25, got %v", svc.Resources["minFreeRamGB"])
+	}
+	if svc.Resources["minFreeRamPercent"] != float64(15) {
+		t.Errorf("expected minFreeRamPercent=15, got %v", svc.Resources["minFreeRamPercent"])
 	}
 	if svc.Containers == nil {
 		t.Fatal("expected containers, got nil")

@@ -366,6 +366,153 @@ func TestDisconnectStorage_SingleListServicesCall(t *testing.T) {
 	}
 }
 
+func TestScale_MinFreeRamParams_Success(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		params ScaleParams
+	}{
+		{
+			"both RAM thresholds",
+			ScaleParams{
+				MinFreeRAMGB:      scaleFloatPtr(0.5),
+				MinFreeRAMPercent: scaleFloatPtr(20),
+			},
+		},
+		{
+			"only minFreeRamGB",
+			ScaleParams{MinFreeRAMGB: scaleFloatPtr(0.5)},
+		},
+		{
+			"only minFreeRamPercent",
+			ScaleParams{MinFreeRAMPercent: scaleFloatPtr(20)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING"},
+				})
+
+			result, err := Scale(context.Background(), mock, "proj-1", "api", tt.params)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if result.Hostname != "api" {
+				t.Errorf("expected hostname=api, got %s", result.Hostname)
+			}
+		})
+	}
+}
+
+func TestScale_MinFreeCpuParams_Success(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		params ScaleParams
+	}{
+		{
+			"both CPU thresholds",
+			ScaleParams{
+				MinFreeCPUCores:   scaleFloatPtr(0.2),
+				MinFreeCPUPercent: scaleFloatPtr(10),
+			},
+		},
+		{
+			"only minFreeCpuCores",
+			ScaleParams{MinFreeCPUCores: scaleFloatPtr(0.2)},
+		},
+		{
+			"only minFreeCpuPercent",
+			ScaleParams{MinFreeCPUPercent: scaleFloatPtr(10)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{
+					{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING"},
+				})
+
+			result, err := Scale(context.Background(), mock, "proj-1", "api", tt.params)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if result.Hostname != "api" {
+				t.Errorf("expected hostname=api, got %s", result.Hostname)
+			}
+		})
+	}
+}
+
+func TestScale_ThresholdOnly_HasParam(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		params ScaleParams
+	}{
+		{"minFreeRamGB only", ScaleParams{MinFreeRAMGB: scaleFloatPtr(0.5)}},
+		{"minFreeRamPercent only", ScaleParams{MinFreeRAMPercent: scaleFloatPtr(20)}},
+		{"minFreeCpuCores only", ScaleParams{MinFreeCPUCores: scaleFloatPtr(0.2)}},
+		{"minFreeCpuPercent only", ScaleParams{MinFreeCPUPercent: scaleFloatPtr(10)}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if !hasAnyScaleParam(tt.params) {
+				t.Error("hasAnyScaleParam should return true for threshold-only params")
+			}
+		})
+	}
+}
+
+func TestBuildAutoscalingParams_MinFreeResource(t *testing.T) {
+	t.Parallel()
+
+	ramGB := 0.5
+	ramPct := 20.0
+	cpuCores := 0.2
+	cpuPct := 10.0
+
+	params := buildAutoscalingParams(ScaleParams{
+		MinFreeRAMGB:      &ramGB,
+		MinFreeRAMPercent: &ramPct,
+		MinFreeCPUCores:   &cpuCores,
+		MinFreeCPUPercent: &cpuPct,
+	})
+
+	if params.VerticalMinFreeRAMGB == nil || *params.VerticalMinFreeRAMGB != 0.5 {
+		t.Errorf("VerticalMinFreeRAMGB = %v, want 0.5", params.VerticalMinFreeRAMGB)
+	}
+	if params.VerticalMinFreeRAMPct == nil || *params.VerticalMinFreeRAMPct != 20.0 {
+		t.Errorf("VerticalMinFreeRAMPct = %v, want 20.0", params.VerticalMinFreeRAMPct)
+	}
+	if params.VerticalMinFreeCPUCores == nil || *params.VerticalMinFreeCPUCores != 0.2 {
+		t.Errorf("VerticalMinFreeCPUCores = %v, want 0.2", params.VerticalMinFreeCPUCores)
+	}
+	if params.VerticalMinFreeCPUPct == nil || *params.VerticalMinFreeCPUPct != 10.0 {
+		t.Errorf("VerticalMinFreeCPUPct = %v, want 10.0", params.VerticalMinFreeCPUPct)
+	}
+}
+
 func TestScale_InvalidCPUMode(t *testing.T) {
 	t.Parallel()
 

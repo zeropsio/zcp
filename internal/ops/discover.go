@@ -163,6 +163,21 @@ func buildResourcesMap(a *platform.CustomAutoscaling) map[string]any {
 	if a.MaxDisk != 0 {
 		m["maxDisk"] = a.MaxDisk
 	}
+	if a.StartCPUCoreCount != 0 {
+		m["startCpuCoreCount"] = a.StartCPUCoreCount
+	}
+	if a.MinFreeCPUCores != 0 {
+		m["minFreeCpuCores"] = a.MinFreeCPUCores
+	}
+	if a.MinFreeCPUPercent != 0 {
+		m["minFreeCpuPercent"] = a.MinFreeCPUPercent
+	}
+	if a.MinFreeRAMGB != 0 {
+		m["minFreeRamGB"] = a.MinFreeRAMGB
+	}
+	if a.MinFreeRAMPercent != 0 {
+		m["minFreeRamPercent"] = a.MinFreeRAMPercent
+	}
 	if len(m) == 0 {
 		return nil
 	}

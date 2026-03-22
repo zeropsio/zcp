@@ -75,22 +75,31 @@ type CustomAutoscaling struct {
 	MaxRAM             float64 `json:"maxRam"`
 	MinDisk            float64 `json:"minDisk"`
 	MaxDisk            float64 `json:"maxDisk"`
+	MinFreeCPUCores    float64 `json:"minFreeCpuCores"`
+	MinFreeCPUPercent  float64 `json:"minFreeCpuPercent"`
+	MinFreeRAMGB       float64 `json:"minFreeRamGB"` //nolint:tagliatelle // matches Zerops import.yml naming
+	MinFreeRAMPercent  float64 `json:"minFreeRamPercent"`
+	SwapEnabled        bool    `json:"swapEnabled"`
 }
 
 // AutoscalingParams maps MCP tool params to API request.
 type AutoscalingParams struct {
-	ServiceMode         string // Current HA/NON_HA mode — must be set to avoid API "mode update forbidden"
-	HorizontalMinCount  *int32
-	HorizontalMaxCount  *int32
-	VerticalCPUMode     *string
-	VerticalStartCPU    *int32
-	VerticalMinCPU      *int32
-	VerticalMaxCPU      *int32
-	VerticalMinRAM      *float64
-	VerticalMaxRAM      *float64
-	VerticalMinDisk     *float64
-	VerticalMaxDisk     *float64
-	VerticalSwapEnabled *bool
+	ServiceMode             string // Current HA/NON_HA mode — must be set to avoid API "mode update forbidden"
+	HorizontalMinCount      *int32
+	HorizontalMaxCount      *int32
+	VerticalCPUMode         *string
+	VerticalStartCPU        *int32
+	VerticalMinCPU          *int32
+	VerticalMaxCPU          *int32
+	VerticalMinRAM          *float64
+	VerticalMaxRAM          *float64
+	VerticalMinDisk         *float64
+	VerticalMaxDisk         *float64
+	VerticalSwapEnabled     *bool
+	VerticalMinFreeRAMGB    *float64
+	VerticalMinFreeRAMPct   *float64
+	VerticalMinFreeCPUCores *float64
+	VerticalMinFreeCPUPct   *float64
 }
 
 // Process represents an async operation tracked by Zerops.

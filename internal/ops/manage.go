@@ -20,6 +20,11 @@ type ScaleParams struct {
 	MaxDisk       *float64 // max disk in GB
 	MinContainers *int     // min container count
 	MaxContainers *int     // max container count
+
+	MinFreeRAMGB      *float64 // min free RAM in GB before scale-up
+	MinFreeRAMPercent *float64 // min free RAM as % of granted
+	MinFreeCPUCores   *float64 // min free CPU fraction (0.0-1.0) before scale-up
+	MinFreeCPUPercent *float64 // min free CPU % across all cores
 }
 
 // ScaleResult contains the result of a scale operation.
@@ -176,7 +181,9 @@ func validateScaleParams(p ScaleParams) error {
 func hasAnyScaleParam(p ScaleParams) bool {
 	return p.CPUMode != nil || p.MinCPU != nil || p.MaxCPU != nil || p.StartCPU != nil ||
 		p.MinRAM != nil || p.MaxRAM != nil || p.MinDisk != nil || p.MaxDisk != nil ||
-		p.MinContainers != nil || p.MaxContainers != nil
+		p.MinContainers != nil || p.MaxContainers != nil ||
+		p.MinFreeRAMGB != nil || p.MinFreeRAMPercent != nil ||
+		p.MinFreeCPUCores != nil || p.MinFreeCPUPercent != nil
 }
 
 func buildAutoscalingParams(p ScaleParams) platform.AutoscalingParams {
@@ -216,6 +223,19 @@ func buildAutoscalingParams(p ScaleParams) platform.AutoscalingParams {
 	if p.MaxContainers != nil {
 		v := int32(*p.MaxContainers)
 		params.HorizontalMaxCount = &v
+	}
+
+	if p.MinFreeRAMGB != nil {
+		params.VerticalMinFreeRAMGB = p.MinFreeRAMGB
+	}
+	if p.MinFreeRAMPercent != nil {
+		params.VerticalMinFreeRAMPct = p.MinFreeRAMPercent
+	}
+	if p.MinFreeCPUCores != nil {
+		params.VerticalMinFreeCPUCores = p.MinFreeCPUCores
+	}
+	if p.MinFreeCPUPercent != nil {
+		params.VerticalMinFreeCPUPct = p.MinFreeCPUPercent
 	}
 
 	return params

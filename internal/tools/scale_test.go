@@ -98,6 +98,63 @@ func TestScaleTool_WithDisk(t *testing.T) {
 	}
 }
 
+func TestScaleTool_WithThresholds(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterScale(srv, mock, "proj-1")
+
+	result := callTool(t, srv, "zerops_scale", map[string]any{
+		"serviceHostname":   "api",
+		"minCpu":            1,
+		"maxCpu":            4,
+		"minFreeRamGB":      0.125,
+		"minFreeRamPercent": 5.0,
+		"minFreeCpuCores":   0.2,
+		"minFreeCpuPercent": 10.0,
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed["serviceHostname"] != "api" {
+		t.Errorf("serviceHostname = %q, want %q", parsed["serviceHostname"], "api")
+	}
+}
+
+func TestScaleTool_ThresholdOnly(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterScale(srv, mock, "proj-1")
+
+	result := callTool(t, srv, "zerops_scale", map[string]any{
+		"serviceHostname": "api",
+		"minFreeRamGB":    0.125,
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed["serviceHostname"] != "api" {
+		t.Errorf("serviceHostname = %q, want %q", parsed["serviceHostname"], "api")
+	}
+}
+
 func TestScaleTool_MissingService(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()

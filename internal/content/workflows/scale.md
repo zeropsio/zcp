@@ -56,6 +56,28 @@ Parameters:
 - `minContainers` — Minimum container count (always running).
 - `maxContainers` — Maximum container count (autoscale ceiling).
 
+#### Scaling Thresholds (fine-tuning)
+
+Fine-tune when autoscaling triggers by adjusting free-resource thresholds:
+
+```
+zerops_scale serviceHostname="api" minFreeRamGB=0.5 minFreeRamPercent=20
+```
+
+Parameters:
+- `minFreeRamGB` — Absolute free RAM threshold in GB. Scale-up triggers when free RAM drops below this. Default: 0.0625 (64 MB). Prevents OOM and preserves kernel disk cache.
+- `minFreeRamPercent` — Free RAM threshold as percentage of granted RAM (0-100). Scales proportionally with granted RAM. Default: 0 (disabled).
+- `minFreeCpuCores` — Free CPU threshold as fraction of one core (0.0-1.0). DEDICATED CPU mode only. Default: 0.1 (10%).
+- `minFreeCpuPercent` — Free CPU threshold as percentage of total capacity across all cores (0-100). DEDICATED CPU mode only. Default: 0 (disabled).
+
+Whichever RAM threshold (absolute or percentage) provides **more free memory** wins.
+
+**Production hardening** — combine resource bounds with thresholds:
+
+```
+zerops_scale serviceHostname="api" cpuMode="DEDICATED" minCpu=2 maxCpu=8 minRam=2 maxRam=16 minFreeRamGB=0.5 minFreeRamPercent=5 minFreeCpuCores=0.2 minContainers=2 maxContainers=6
+```
+
 ### Step 3 — Verify New Values
 
 `zerops_scale` blocks until the process completes — returns final status (FINISHED/FAILED). If FAILED, check the error message — common causes:

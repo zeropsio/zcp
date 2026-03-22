@@ -195,6 +195,23 @@ func mapOutputCustomAutoscaling(ca *output.CustomAutoscaling) *CustomAutoscaling
 		if val, ok := v.StartCpuCoreCount.Get(); ok {
 			result.StartCPUCoreCount = int32(val)
 		}
+		if val, ok := v.SwapEnabled.Get(); ok {
+			result.SwapEnabled = bool(val)
+		}
+		if v.MinFreeResource != nil {
+			if val, ok := v.MinFreeResource.CpuCoreCount.Get(); ok {
+				result.MinFreeCPUCores = float64(val)
+			}
+			if val, ok := v.MinFreeResource.CpuCorePercent.Get(); ok {
+				result.MinFreeCPUPercent = float64(val)
+			}
+			if val, ok := v.MinFreeResource.MemoryGBytes.Get(); ok {
+				result.MinFreeRAMGB = float64(val)
+			}
+			if val, ok := v.MinFreeResource.MemoryPercent.Get(); ok {
+				result.MinFreeRAMPercent = float64(val)
+			}
+		}
 	}
 	if h := ca.HorizontalAutoscaling; h != nil {
 		if val, ok := h.MinContainerCount.Get(); ok {
@@ -222,7 +239,10 @@ func buildAutoscalingBody(params AutoscalingParams) body.Autoscaling {
 	needsVert := params.VerticalCPUMode != nil || params.VerticalMinCPU != nil ||
 		params.VerticalMaxCPU != nil || params.VerticalMinRAM != nil ||
 		params.VerticalMaxRAM != nil || params.VerticalMinDisk != nil ||
-		params.VerticalMaxDisk != nil || params.VerticalStartCPU != nil
+		params.VerticalMaxDisk != nil || params.VerticalStartCPU != nil ||
+		params.VerticalSwapEnabled != nil ||
+		params.VerticalMinFreeRAMGB != nil || params.VerticalMinFreeRAMPct != nil ||
+		params.VerticalMinFreeCPUCores != nil || params.VerticalMinFreeCPUPct != nil
 
 	if needsVert {
 		vert = &body.VerticalAutoscalingNullable{}
@@ -264,6 +284,28 @@ func buildAutoscalingBody(params AutoscalingParams) body.Autoscaling {
 		}
 		if hasMaxRes {
 			vert.MaxResource = maxRes
+		}
+
+		minFreeRes := &body.ScalingMinFreeResourceNullable{}
+		hasMinFreeRes := false
+		if params.VerticalMinFreeCPUCores != nil {
+			minFreeRes.CpuCoreCount = types.NewFloatNull(*params.VerticalMinFreeCPUCores)
+			hasMinFreeRes = true
+		}
+		if params.VerticalMinFreeCPUPct != nil {
+			minFreeRes.CpuCorePercent = types.NewFloatNull(*params.VerticalMinFreeCPUPct)
+			hasMinFreeRes = true
+		}
+		if params.VerticalMinFreeRAMGB != nil {
+			minFreeRes.MemoryGBytes = types.NewFloatNull(*params.VerticalMinFreeRAMGB)
+			hasMinFreeRes = true
+		}
+		if params.VerticalMinFreeRAMPct != nil {
+			minFreeRes.MemoryPercent = types.NewFloatNull(*params.VerticalMinFreeRAMPct)
+			hasMinFreeRes = true
+		}
+		if hasMinFreeRes {
+			vert.MinFreeResource = minFreeRes
 		}
 
 		if params.VerticalStartCPU != nil {

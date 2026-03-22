@@ -32,8 +32,8 @@ Zerops autoscales vertically (CPU/RAM/disk) and horizontally (container count). 
 
 ### CPU Scaling Thresholds (DEDICATED mode only)
 
-- **Min free CPU cores (%)**: scale-up triggers when free capacity on a single core drops below this fraction (default: 10%)
-- **Dynamic min free total core %**: scale-up triggers when total free capacity across all cores drops below this percentage (default: 0%, disabled)
+- **Min free CPU cores** (`minFreeCpuCores`): scale-up triggers when free capacity on a single core drops below this fraction, range 0.0-1.0 (default: 0.1 = 10%)
+- **Min free CPU percent** (`minFreeCpuPercent`): scale-up triggers when total free capacity across all cores drops below this percentage, range 0-100 (default: 0, disabled)
 
 ### RAM Dual-Threshold System
 
@@ -44,7 +44,9 @@ RAM is monitored every **10 seconds**. Two independent thresholds control scale-
 | **Absolute** | `minFreeRamGB` | 0.0625 GB (64 MB) | Scale up when free RAM drops below this fixed amount |
 | **Percentage** | `minFreeRamPercent` | 0% (disabled) | Scale up when free RAM drops below this % of granted RAM |
 
-Both thresholds prevent OOM errors and preserve space for kernel disk caching. Swap is enabled as a safety net but does not replace proper threshold configuration.
+Both thresholds serve dual purpose: prevent OOM crashes and preserve space for kernel disk caching. Swap is enabled as a safety net but does not replace proper threshold configuration.
+
+**Higher wins example**: with 12 GB granted RAM, `minFreeRamGB=0.5` (500 MB buffer) and `minFreeRamPercent=5` (600 MB buffer) — the 600 MB threshold applies. As granted RAM grows, the percentage threshold automatically provides a larger buffer.
 
 ### Disk
 - **Grows only -- never shrinks** (no scale-down). Set `minDisk = maxDisk` to disable.
@@ -103,6 +105,16 @@ HA recovery: failed container is disconnected, new one created on different hard
 
 PostgreSQL HA exposes read replica port **5433** for distributing SELECT queries.
 
+## Configuring Thresholds via zerops_scale
+
+Threshold parameters can be set via the `zerops_scale` MCP tool, not just import.yml:
+
+```
+zerops_scale serviceHostname="api" minFreeRamGB=0.5 minFreeRamPercent=5 minFreeCpuCores=0.2
+```
+
+All four threshold parameters (`minFreeRamGB`, `minFreeRamPercent`, `minFreeCpuCores`, `minFreeCpuPercent`) are optional and can be combined with any other scaling parameters in a single call.
+
 ## Docker Services
 - Run in **VMs**, not containers. **No autoscaling** -- resources fixed at creation
 - Changing resources or VM count triggers **VM restart** (downtime). Disk can only increase
@@ -151,7 +163,7 @@ services:
 
 **DO NOT** use `DEDICATED` CPU for low-traffic or dev services -- wastes resources. Use `SHARED` and switch to `DEDICATED` only when consistent performance matters.
 
-**DO NOT** set `minFreeRamGB: 0` and `minFreeRamPercent: 0` simultaneously -- removes OOM protection. Always keep at least the default absolute threshold (0.0625 GB).
+**DO NOT** set `minFreeRamGB: 0` and `minFreeRamPercent: 0` simultaneously -- the API rejects this with "Invalid custom autoscaling value". Always keep at least the default absolute threshold (0.0625 GB).
 
 **DO NOT** forget that disk **never shrinks** -- setting a high `minDisk` is permanent for that container's lifetime.
 
