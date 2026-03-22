@@ -31,7 +31,7 @@ Core platform constraints every Zerops app must satisfy: bind 0.0.0.0, use deplo
 
 ## Environment Variables
 
-- Zerops injects env vars as OS environment variables at container start. No `.env` files. No dotenv loading libraries.
+- Zerops injects env vars as OS environment variables at container start. Do NOT create `.env` files — empty values shadow OS vars. Dotenv libraries are harmless if present (they fall back to OS vars when no .env exists).
 - Cross-service reference syntax: `${hostname_varname}` — resolved by Zerops before injection. Example: `${db_connectionString}`.
 - `import.yml` service-level secrets use `envSecrets` (NOT `envVariables`). `envSecrets` are write-once and not visible in plaintext after creation.
 - If `import.yml` uses `<@generateRandomString(...)>` or other preprocessor functions, the file MUST have `#yamlPreprocessor=on` as the first line.

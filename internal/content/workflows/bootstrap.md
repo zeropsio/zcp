@@ -205,7 +205,7 @@ zerops.yml `envVariables` are activated by deploy. After `zerops_deploy`:
 - Cross-service references (`${db_connectionString}`) resolved to real values
 - Vars persist across server restarts within the same container
 
-Write zerops.yml + app code first, then deploy, then start the server and test. **NEVER hardcode credential values or pass them inline** — always use `${hostname_varName}` references in zerops.yml and read env vars via the runtime's native API. No `.env` files. No dotenv libraries.
+Write zerops.yml + app code first, then deploy, then start the server and test. **NEVER hardcode credential values or pass them inline** — always use `${hostname_varName}` references in zerops.yml and read env vars via the runtime's native API. Do NOT create `.env` files — empty values shadow OS env vars. Dotenv libraries in existing projects are harmless (they fall back to OS vars when no .env exists).
 
 #### Env var mapping in zerops.yml
 
@@ -659,7 +659,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 ## Platform Rules
 
 - All deploys use SSH — `zerops_deploy targetService="{hostname}"` for self-deploy (sourceService auto-inferred, includeGit auto-forced), `sourceService="{dev}" targetService="{stage}"` for cross-deploy.
-- NEVER write lock files (go.sum, bun.lock, package-lock.json). Write manifests only (go.mod, package.json). Let build commands generate locks.
+- For new projects: write manifests only (package.json, go.mod, Gemfile). Do NOT write lock files (go.sum, bun.lock, package-lock.json) — let build commands generate them. For existing projects: preserve committed lock files.
 - NEVER write dependency dirs (node_modules/, vendor/).
 - zerops_deploy blocks until build completes — returns DEPLOYED or BUILD_FAILED with build duration.
 - zerops_subdomain MUST be called after deploy (even if enableSubdomainAccess was in import). The enable response contains `subdomainUrls` — the only source for subdomain URLs.

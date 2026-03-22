@@ -20,10 +20,34 @@ type KnowledgeInput struct {
 	Services []string `json:"services,omitempty" jsonschema:"Service types for stack briefing (e.g. [postgresql@16, valkey@7.2]). Use with or without runtime (briefing mode)."`
 	Recipe   string   `json:"recipe,omitempty"   jsonschema:"Recipe name to retrieve pre-built framework config (e.g. laravel, nextjs). Use alone (recipe mode)."`
 	Scope    string   `json:"scope,omitempty"    jsonschema:"Platform reference scope. Use scope=infrastructure for complete Zerops knowledge (YAML schemas, env vars, build/deploy lifecycle). Required before generating YAML. Use alone (scope mode)."`
+	Mode     string   `json:"mode,omitempty"     jsonschema:"Override mode filter (dev, standard, simple, stage). Auto-detected from active workflow session if omitted. Use mode=stage to see prod deploy patterns during dev/standard workflows."`
+}
+
+// resolveKnowledgeMode determines the mode filter for knowledge responses.
+// Explicit inputMode takes priority. Otherwise auto-detects from active/completed session.
+// Returns "" when no context is available (knowledge returned unfiltered).
+func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) string {
+	if inputMode != "" {
+		return inputMode
+	}
+	if engine == nil {
+		return ""
+	}
+	state, err := engine.GetState()
+	if err != nil {
+		return ""
+	}
+	if state.Bootstrap != nil {
+		return state.Bootstrap.PlanMode()
+	}
+	if state.Deploy != nil {
+		return state.Deploy.Mode
+	}
+	return ""
 }
 
 // RegisterKnowledge registers the zerops_knowledge tool.
-func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, _ *workflow.Engine) {
+func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
 		Description: "Load Zerops platform knowledge. Four modes: (1) briefing — stack-specific rules via runtime/services params. (2) scope=infrastructure — complete platform reference, required before generating YAML. (3) query — BM25 search. (4) recipe — pre-built framework configs.",
@@ -98,13 +122,14 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			return jsonResult(results), nil, nil
 		}
 
-		// Mode 3: Contextual briefing — always returns full content.
+		// Mode 3: Contextual briefing — filtered by session mode when available.
 		if hasBriefing {
 			var liveTypes []platform.ServiceStackType
 			if client != nil && cache != nil {
 				liveTypes = cache.Get(ctx, client)
 			}
-			briefing, err := store.GetBriefing(input.Runtime, input.Services, "", liveTypes)
+			mode := resolveKnowledgeMode(engine, input.Mode)
+			briefing, err := store.GetBriefing(input.Runtime, input.Services, mode, liveTypes)
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrFileNotFound,
@@ -117,9 +142,10 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			return textResult(briefing), nil, nil
 		}
 
-		// Mode 4: Recipe retrieval
+		// Mode 4: Recipe retrieval — mode-adapted when session context available.
 		if hasRecipe {
-			recipe, err := store.GetRecipe(input.Recipe, "")
+			mode := resolveKnowledgeMode(engine, input.Mode)
+			recipe, err := store.GetRecipe(input.Recipe, mode)
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,

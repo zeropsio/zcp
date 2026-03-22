@@ -410,3 +410,129 @@ func testBootstrapEngine(t *testing.T) *workflow.Engine {
 	}
 	return engine
 }
+
+func TestResolveKnowledgeMode_Table(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		engine    *workflow.Engine
+		inputMode string
+		want      string
+	}{
+		{
+			name:      "nil_engine_returns_empty",
+			engine:    nil,
+			inputMode: "",
+			want:      "",
+		},
+		{
+			name:      "explicit_override_wins",
+			engine:    nil,
+			inputMode: "stage",
+			want:      "stage",
+		},
+		{
+			name:      "explicit_override_with_engine",
+			engine:    testBootstrapEngine(t),
+			inputMode: "simple",
+			want:      "simple",
+		},
+		{
+			name:      "bootstrap_no_plan_returns_empty",
+			engine:    testBootstrapEngine(t),
+			inputMode: "",
+			want:      "", // discover step — plan not submitted yet, PlanMode() returns ""
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := resolveKnowledgeMode(tt.engine, tt.inputMode)
+			if got != tt.want {
+				t.Errorf("resolveKnowledgeMode() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestKnowledgeTool_BriefingWithModeOverride(t *testing.T) {
+	t.Parallel()
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
+
+	// Without mode: both Dev and Prod deploy patterns visible.
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"runtime": "go@1",
+	})
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "Dev deploy") {
+		t.Error("unfiltered briefing should contain Dev deploy pattern")
+	}
+	if !strings.Contains(text, "Prod deploy") {
+		t.Error("unfiltered briefing should contain Prod deploy pattern")
+	}
+
+	// With mode=standard: only Dev pattern visible.
+	result = callTool(t, srv, "zerops_knowledge", map[string]any{
+		"runtime": "go@1",
+		"mode":    "standard",
+	})
+	text = getTextContent(t, result)
+	if !strings.Contains(text, "Dev deploy") {
+		t.Error("standard mode briefing should contain Dev deploy pattern")
+	}
+	if strings.Contains(text, "Prod deploy") {
+		t.Error("standard mode briefing should NOT contain Prod deploy pattern")
+	}
+
+	// With mode=stage: only Prod pattern visible.
+	result = callTool(t, srv, "zerops_knowledge", map[string]any{
+		"runtime": "go@1",
+		"mode":    "stage",
+	})
+	text = getTextContent(t, result)
+	if strings.Contains(text, "Dev deploy") {
+		t.Error("stage mode briefing should NOT contain Dev deploy pattern")
+	}
+	if !strings.Contains(text, "Prod deploy") {
+		t.Error("stage mode briefing should contain Prod deploy pattern")
+	}
+}
+
+func TestKnowledgeTool_RecipeWithModeOverride(t *testing.T) {
+	t.Parallel()
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("GetEmbeddedStore: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
+
+	// Without mode: no mode adaptation header.
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"recipe": "laravel",
+	})
+	text := getTextContent(t, result)
+	if strings.Contains(text, "Mode: dev") {
+		t.Error("unfiltered recipe should NOT have mode adaptation header")
+	}
+
+	// With mode=standard: mode adaptation header present with PHP-aware "omit start".
+	result = callTool(t, srv, "zerops_knowledge", map[string]any{
+		"recipe": "laravel",
+		"mode":   "standard",
+	})
+	text = getTextContent(t, result)
+	if !strings.Contains(text, "Mode: dev") {
+		t.Error("standard mode recipe should have mode adaptation header")
+	}
+	if !strings.Contains(text, "Omit") {
+		t.Error("PHP recipe in standard mode should say 'Omit start'")
+	}
+}
