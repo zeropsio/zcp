@@ -92,8 +92,8 @@ Internet -> L7 Load Balancer (SSL termination) -> container VXLAN IP:port -> app
 ## Storage
 
 - **Container disk**: per-container, persistent, **grow-only** (auto-scaling only increases, never shrinks; to reduce: recreate service)
-- **Shared storage**: NFS mount at `/mnt/{hostname}`, POSIX-only, max 60 GB, SeaweedFS backend
-- **Object storage**: S3-compatible (MinIO backend), `forcePathStyle: true` REQUIRED, region `us-east-1`, one auto-named bucket per service (immutable name)
+- **Shared storage**: NFS mount at `/mnt/{hostname}`, POSIX-only, max 60 GB, SeaweedFS backend. Do NOT use for user uploads or frequently-written files -- use Object Storage instead. Shared storage is for cases requiring a shared POSIX filesystem (shared config, plugin directories)
+- **Object storage**: S3-compatible (MinIO backend), `forcePathStyle: true` REQUIRED, region `us-east-1`, one auto-named bucket per service (immutable name). Preferred for file uploads, media, and any high-throughput file operations
 
 ## Scaling
 
@@ -164,6 +164,7 @@ services[]:                            # REQUIRED
     minFreeCpuCores: float             # absolute free CPU threshold
     minFreeCpuPercent: float            # percentage free CPU threshold
     minDisk/maxDisk: float              # GB, disk never shrinks
+    swapEnabled: bool                  # enable swap memory (safety net, default varies by service type)
 ```
 
 ### Preprocessor Functions
@@ -213,7 +214,7 @@ zerops[]:
     base: string                       # if different from build base
     os: alpine | ubuntu
     start: string                      # REQUIRED (except implicit-webserver: php-nginx, php-apache, nginx, static)
-    ports[]: { port: 10-65435, httpSupport: bool, protocol: tcp|udp }
+    ports[]: { port: 10-65435, httpSupport: bool, protocol: tcp|udp }  # httpSupport: true = receives HTTP via L7 LB (REQUIRED for web); false = raw TCP/UDP only
     initCommands: string[]             # every container start (migrations, seeding)
     prepareCommands: string[]          # runtime image customization
     documentRoot: string               # webserver runtimes only (PHP/Nginx/Static)
@@ -240,20 +241,6 @@ zerops[]:
 - **ALWAYS** use Maven/Gradle wrapper (`./mvnw`, `./gradlew`) or install build tools via `prepareCommands`. REASON: build container has JDK only -- Maven, Gradle are NOT pre-installed
 - **NEVER** reference `/var/www/` in `run.prepareCommands`. REASON: deploy files arrive AFTER prepareCommands execute; `/var/www` is empty during prepare
 - **ALWAYS** use `addToRunPrepare` + `/home/zerops/` path for files needed in `run.prepareCommands`. REASON: this is the only way to get files from build into the prepare phase
-- **ALWAYS** match `deployFiles` layout to `run.start` path. Two valid patterns for build output directories:
-  - **Directory preserved** (NO tilde): `deployFiles: [dist, package.json]` -> files at `/var/www/dist/` -> `start: bun dist/index.js`
-  - **Contents extracted** (WITH tilde): `deployFiles: dist/~` -> files at `/var/www/` -> `start: bun index.js`
-  REASON: tilde strips the directory prefix. If start command references the subdirectory (e.g., `dist/index.js`), tilde BREAKS it because the file is at `/var/www/index.js`, not `/var/www/dist/index.js`. Use tilde for static sites (no start command) or when start command matches the flattened layout
-- **ALWAYS** choose `deployFiles` based on deploy mode:
-
-  | Deploy mode | Who deploys? | deployFiles | start |
-  |-------------|-------------|-------------|-------|
-  | Dev (in dev+stage) | Self-deploy | `[.]` | `zsc noop --silent` (implicit-webserver: omit) |
-  | Stage (in dev+stage) | Cross-deploy from dev | Recipe pattern | Compiled/prod start |
-  | Simple (single service) | Self-deploy | `[.]` | Real start command |
-  | Production (buildFromGit) | Platform from git | Recipe pattern | Compiled/prod start |
-
-  REASON: self-deploy with specific paths (e.g., `[app]`, `dist/~`) destroys source files + zerops.yml after deploy, making iteration impossible. Only cross-deploy targets and git-based builds can use specific paths safely. Recipes show the production pattern — adapt for self-deploy by switching to `[.]`.
 - **NEVER** use `initCommands` for package installation. REASON: initCommands run on every container restart; use `prepareCommands` for one-time setup
 - **ALWAYS** use `--no-cache-dir` for pip in containers. REASON: prevents wasted disk space on ephemeral containers
 - **ALWAYS** use `--ignore-platform-reqs` for Composer on Alpine. REASON: musl libc may not satisfy platform requirements checks
@@ -268,16 +255,12 @@ zerops[]:
 - **ALWAYS** use `os: ubuntu` for Deno and Gleam. REASON: these runtimes are not available on Alpine
 
 ### Environment Variables
-- **NEVER** re-reference project-level env vars in service vars. REASON: project vars are auto-inherited; creating a service var with the same name shadows the project var
-- **ALWAYS** use `envSecrets` for passwords, tokens, API keys. REASON: blurred in GUI by default, proper security practice
-- **ALWAYS** use cross-service reference syntax `${hostname_varname}` (dashes->underscores). REASON: this is the only way to wire services; direct values break on service recreation
-- **NEVER** rely on GUI password changes updating env vars. REASON: changing DB password in GUI does NOT update connection string env vars (manual sync required)
+- `envSecrets` for secrets (write-only after creation), `run.envVariables` for config (requires redeploy)
+- Cross-service: `${hostname_varname}` (dashes->underscores) -- the only way to wire services
 - import.yml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` (project-level only)
-- zerops.yml: `build.envVariables` and `run.envVariables` exist (visible in GUI)
 - Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) -- do NOT set these in import.yml
-- Cross-phase: build->run `${BUILD_MYVAR}`, run->build `${RUNTIME_MYVAR}`
-- Keys: alphanumeric + `_`, case-sensitive. Values: ASCII only
-- `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`. Use directly for APP_URL / CORS origins. For bare-hostname vars (e.g. PHX_HOST), strip scheme in app code
+- `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`
+- **Full reference**: `zerops_knowledge query="environment variables"` for precedence, isolation, cross-phase prefixes, naming rules
 
 ### Import & Service Creation
 - **ALWAYS** use `valkey@7.2` (not `valkey@8`). REASON: v8 passes dry-run validation but fails actual import
@@ -345,6 +328,17 @@ zerops[]:
   - Recipe uses `./app` + `start: ./app` → with `[.]`: same `start: ./app` (binary at `/var/www/app`)
   - Recipe uses `target/release/~binary` + `start: ./binary` → with `[.]`: `start: ./target/release/binary`
   - Principle: tilde extraction no longer happens, directory structure is preserved as-is. Match `start` to where build output actually lands.
+- **`.deployignore`**: Place at repo root (gitignore syntax) to exclude files/folders from deploy artifact. NOT recursive into subdirectories by default. Recommended to mirror `.gitignore` patterns. Also works with `zcli service deploy`.
+- **Deploy mode determines `deployFiles`**:
+
+  | Deploy mode | Who deploys? | deployFiles | start |
+  |-------------|-------------|-------------|-------|
+  | Dev (in dev+stage) | Self-deploy | `[.]` | `zsc noop --silent` (implicit-webserver: omit) |
+  | Stage (in dev+stage) | Cross-deploy from dev | Recipe pattern | Compiled/prod start |
+  | Simple (single service) | Self-deploy | `[.]` | Real start command |
+  | Production (buildFromGit) | Platform from git | Recipe pattern | Compiled/prod start |
+
+  Self-deploy with specific paths (e.g., `[app]`, `dist/~`) destroys source files + zerops.yml after deploy, making iteration impossible. Only cross-deploy targets and git-based builds can use specific paths safely.
 
 ### Cache Architecture (Two-Layer)
 - **Base layer**: OS + prepareCommands (invalidated only when prepareCommands change)

@@ -12,7 +12,7 @@ Includes Python, `pip`, `git`.
 
 ### Build Procedure (Canonical Pattern)
 
-1. Set `build.base: python@3.12` (or desired version)
+1. Set `build.base: python@3.14` (or desired version)
 2. `build.addToRunPrepare: [requirements.txt]` -- copies to `/home/zerops/`
 3. `run.prepareCommands: [python3 -m pip install --ignore-installed -r /home/zerops/requirements.txt]`
 4. `build.buildCommands`: NO pip install needed (build container is separate)

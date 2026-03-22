@@ -110,6 +110,11 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			if universals, uErr := store.GetUniversals(); uErr == nil {
 				result = universals + "\n\n---\n\n" + core
 			}
+			if client != nil && cache != nil {
+				if types := cache.Get(ctx, client); len(types) > 0 {
+					result = knowledge.FormatStackList(types) + "\n---\n\n" + result
+				}
+			}
 			if tracker != nil {
 				tracker.RecordScope()
 			}

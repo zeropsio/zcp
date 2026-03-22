@@ -159,26 +159,29 @@ zerops:
     run: { envVariables: { NODE_ENV: production } }
 ```
 
+Supports single parent (`extends: base`) or multiple parents (`extends: [base, logging]`) -- later parents override earlier ones:
+
+```yaml
+zerops:
+  - setup: base
+    build: { buildCommands: [npm run build], deployFiles: ./dist }
+  - setup: logging
+    run: { envVariables: { LOG_LEVEL: info } }
+  - setup: prod
+    extends: [base, logging]
+    run: { envVariables: { NODE_ENV: production } }
+```
+
 Configuration is **merged at the section level** -- child values override parent values within each section (build, run, deploy), but unspecified sections inherit from parent. Must reference another `setup` name in the same file.
 
 ## Base Images
 
-| Runtime | Versions | OS support |
-|---------|----------|------------|
-| Node.js | `nodejs@22`(latest), `@20`, `@18` | alpine, ubuntu |
-| Python | `python@3.12`(latest), `@3.11` | alpine, ubuntu |
-| Go | `go@1.22`(latest) | alpine, ubuntu |
-| PHP | build: `php@8.4`/`@8.3`/`@8.1`; run: `php-apache@*`/`php-nginx@*` | alpine, ubuntu |
-| .NET | `dotnet@9`(latest), `@8`, `@7`, `@6` | alpine, ubuntu |
-| Java | `java@21`(latest), `@17` | alpine, ubuntu |
-| Rust | `rust@1.80`(latest), `@1.78`, `@nightly` | alpine, ubuntu |
-| Bun | `bun@1.2`(latest), `@nightly`, `@canary`, `@1.1`(Ubuntu) | alpine, ubuntu |
-| Deno | `deno@2.0.0`(latest), `@1.45.5` | ubuntu only |
-| Elixir/Gleam | `elixir@1.16`, `gleam@1.5` | elixir: both; gleam: ubuntu |
-| nginx/static | `nginx@1.22`, `static@1.0` | alpine, ubuntu |
-| OS images | `alpine@3.20`(latest)`-3.17`; `ubuntu@24.04`, `@22.04` | - |
+Available runtimes and versions are listed in **Service Stacks (live)** -- injected by `zerops_knowledge` and workflow responses. Some key rules:
 
-`@latest` = newest stable. Shorthand aliases: `go@1` = `go@1.22`, `nodejs@latest` = `nodejs@22`.
+- PHP: build `php@X`, run `php-nginx@X` or `php-apache@X` (different bases)
+- Deno, Gleam: REQUIRES `os: ubuntu` (not available on Alpine)
+- Static sites: build `nodejs@latest`, run `static`
+- `@latest` = newest stable version
 
 ---
 
