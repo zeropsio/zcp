@@ -14,19 +14,29 @@ const baseInstructions = `ZCP manages Zerops PaaS infrastructure.`
 
 const containerEnvironment = `
 
-## Your Environment
+## Your Role
 
-You are on a Zerops container. Runtime services are SSHFS-mounted at /var/www/{hostname}/ — edit code there, changes appear instantly on the service container. Mount is read/write, no file transfer needed.
+You are the orchestrator. This container is the control plane — it does NOT serve user traffic, run application code, or host databases. Your job is to create, configure, deploy, and manage OTHER services in the project. All user-facing work happens on those services, never on this container.
 
-Deploy = rebuild. Editing files on mount does NOT trigger deploy. Deploy runs the full build pipeline (buildCommands → deployFiles → start). Deploy when: zerops.yml changes, need clean rebuild, or promote dev → stage. Code-only changes on dev: just restart the server via SSH.
+### Code Access
+Runtime services are SSHFS-mounted at /var/www/{hostname}/ — edit source files there, changes appear instantly on the target service container. Mount is read/write. IMPORTANT: /var/www/ (no hostname) is THIS container's own filesystem — writing there has NO effect on any service.
+
+### Commands on Services
+Edit source files (code, config, yml) on the SSHFS mount. Run heavy commands (npm install, go mod download, pip install, cargo build, composer install) via SSH on the target container: ssh {hostname} "cd /var/www && {command}". Running installs over the SSHFS network mount is orders of magnitude slower.
+
+### Deploy = Rebuild
+Editing files on mount does NOT trigger deploy. Deploy runs the full build pipeline (buildCommands → deployFiles → start) and creates a new container. Deploy when: zerops.yml changes, need clean rebuild, or promote dev → stage. Code-only changes on dev: just restart the server via SSH.
 
 zerops_discover always returns the CURRENT state of all services. Call it whenever you need to refresh your understanding.`
 
 const localEnvironment = `
 
-## Your Environment
+## Your Role
 
-You are running locally. Code is in the working directory. Deploy pushes code to Zerops via zcli push. zerops.yml must be at repository root. Each deploy = full rebuild + new container.
+You are managing a Zerops project from a local machine. Code is in the working directory. All infrastructure (services, databases, storage) lives on Zerops — you create and manage it through workflow sessions.
+
+### Deployment
+Push code to Zerops via zcli push. zerops.yml must be at repository root. Each deploy = full rebuild + new container.
 
 zerops_discover always returns the CURRENT state of all services. Call it whenever you need to refresh your understanding.`
 
@@ -63,14 +73,14 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 	if rt.InContainer {
 		b.WriteString(containerEnvironment)
 		if rt.ServiceName != "" {
-			fmt.Fprintf(&b, "\nYou are running inside the Zerops service '%s'. You manage services in the same project.", rt.ServiceName)
+			fmt.Fprintf(&b, "\nYou are running on the '%s' service. Other services in this project are yours to manage.", rt.ServiceName)
 		}
 	} else {
 		b.WriteString(localEnvironment)
 	}
 
 	// Section D: Project summary (dynamic).
-	if summary := buildProjectSummary(ctx, client, projectID, stateDir); summary != "" {
+	if summary := buildProjectSummary(ctx, client, projectID, stateDir, rt.ServiceName); summary != "" {
 		b.WriteString("\n\n")
 		b.WriteString(summary)
 	}
@@ -117,7 +127,7 @@ func buildWorkflowHint(stateDir string) string {
 // buildProjectSummary calls the API to list services and detect project state,
 // then uses the router for workflow offerings.
 // Returns empty string on failure or nil client (graceful fallback).
-func buildProjectSummary(ctx context.Context, client platform.Client, projectID, stateDir string) string {
+func buildProjectSummary(ctx context.Context, client platform.Client, projectID, stateDir, selfHostname string) string {
 	if client == nil || projectID == "" {
 		return ""
 	}
@@ -129,13 +139,15 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID,
 
 	var b strings.Builder
 
-	// List services.
+	// List services (exclude system services and self).
+	var userServices int
 	if len(services) > 0 {
 		b.WriteString("Current services:\n")
 		for _, svc := range services {
-			if svc.IsSystem() {
+			if svc.IsSystem() || (selfHostname != "" && svc.Name == selfHostname) {
 				continue
 			}
+			userServices++
 			fmt.Fprintf(&b, "- %s (%s) — %s\n",
 				svc.Name,
 				svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
@@ -143,27 +155,29 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID,
 		}
 	}
 
-	if len(services) == 0 {
+	if userServices == 0 {
 		b.WriteString("Project is empty — no services configured yet.")
 	}
 
 	// Detect project state and route.
-	projState, err := workflow.DetectProjectState(ctx, client, projectID)
+	projState, err := workflow.DetectProjectState(ctx, client, projectID, selfHostname)
 	if err != nil {
 		projState = workflow.StateUnknown
 	}
 	fmt.Fprintf(&b, "\nProject state: %s", projState)
 
-	// State-specific warnings.
+	// State-specific guidance — tell the LLM what to do, not just the state name.
 	switch projState {
 	case workflow.StateFresh:
-		// No warning needed for fresh projects.
-	case workflow.StateUnknown:
-		// No warning needed for unknown state.
+		b.WriteString("\nNo user services yet. Start with bootstrap to create your first services.")
 	case workflow.StateConformant:
+		b.WriteString("\nServices are set up. Deploy code changes or add new services via bootstrap.")
 		b.WriteString("\nDo NOT delete existing services without explicit user approval.")
 	case workflow.StateNonConformant:
+		b.WriteString("\nExisting services found but not in standard dev+stage pattern. Ask the user how to proceed.")
 		b.WriteString("\nDo NOT delete existing services without explicit user approval.")
+	case workflow.StateUnknown:
+		// No guidance — state couldn't be determined.
 	}
 
 	// Build router input.

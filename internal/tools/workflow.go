@@ -41,7 +41,8 @@ type immediateResponse struct {
 }
 
 // RegisterWorkflow registers the zerops_workflow tool.
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir string) {
+// selfHostname is the hostname of the service running ZCP (empty when local).
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
 		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, scale, configure. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"reset|iterate|resume|list|route\".",
@@ -54,7 +55,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, cache, logFetcher, input, stateDir)
+			return handleWorkflowAction(ctx, projectID, engine, client, cache, logFetcher, input, stateDir, selfHostname)
 		}
 
 		// Legacy: static workflow guidance.
@@ -81,7 +82,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir string) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string) (*mcp.CallToolResult, any, error) {
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -127,7 +128,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "list":
 		return handleListSessions(engine)
 	case "route":
-		return handleRoute(ctx, engine, client, projectID, stateDir)
+		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname)
 	case "strategy":
 		return handleStrategy(engine, input, stateDir)
 	default:

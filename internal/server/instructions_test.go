@@ -50,7 +50,7 @@ func TestBuildInstructions_ConformantState_HasBootstrapHint(t *testing.T) {
 	}
 
 	// Must list services.
-	summary := buildProjectSummary(context.Background(), mock, "proj-1", stateDir)
+	summary := buildProjectSummary(context.Background(), mock, "proj-1", stateDir, "")
 	if !strings.Contains(summary, "nodedev") {
 		t.Error("expected service name in project summary")
 	}
@@ -126,7 +126,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 				}
 			}
 
-			summary := buildProjectSummary(context.Background(), mock, "proj-1", stateDir)
+			summary := buildProjectSummary(context.Background(), mock, "proj-1", stateDir, "")
 			for _, want := range tt.wantContains {
 				if !strings.Contains(summary, want) {
 					t.Errorf("summary missing %q.\nGot:\n%s", want, summary)
@@ -214,7 +214,7 @@ func TestBuildWorkflowHint_NoSessions_ReturnsEmpty(t *testing.T) {
 
 func TestBuildProjectSummary_NilClient(t *testing.T) {
 	t.Parallel()
-	summary := buildProjectSummary(context.Background(), nil, "proj-1", t.TempDir())
+	summary := buildProjectSummary(context.Background(), nil, "proj-1", t.TempDir(), "")
 	if summary != "" {
 		t.Errorf("expected empty summary with nil client, got %q", summary)
 	}
@@ -224,7 +224,7 @@ func TestBuildProjectSummary_EmptyStateDir(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{})
 	// Empty stateDir should still work (no metas).
-	summary := buildProjectSummary(context.Background(), mock, "proj-1", "")
+	summary := buildProjectSummary(context.Background(), mock, "proj-1", "", "")
 	if !strings.Contains(summary, "bootstrap") {
 		t.Error("expected bootstrap for empty project even without stateDir")
 	}
@@ -242,7 +242,7 @@ func TestBuildProjectSummary_BadMetasDir_Graceful(t *testing.T) {
 	if err := os.WriteFile(badPath, []byte("not a directory"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	summary := buildProjectSummary(context.Background(), mock, "proj-1", stateDir)
+	summary := buildProjectSummary(context.Background(), mock, "proj-1", stateDir, "")
 	// Should still produce summary (just without meta-based routing).
 	if summary == "" {
 		t.Error("expected non-empty summary even with bad metas dir")

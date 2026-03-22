@@ -153,11 +153,11 @@ func buildStrategySelectionResponse(metas []*workflow.ServiceMeta) strategySelec
 }
 
 // handleRoute gathers router input from live API + local state and returns flow offerings.
-func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client, projectID, stateDir string) (*mcp.CallToolResult, any, error) {
+func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client, projectID, stateDir, selfHostname string) (*mcp.CallToolResult, any, error) {
 	projState := workflow.StateUnknown
 	var liveHostnames []string
 	if client != nil && projectID != "" {
-		if ps, err := workflow.DetectProjectState(ctx, client, projectID); err == nil {
+		if ps, err := workflow.DetectProjectState(ctx, client, projectID, selfHostname); err == nil {
 			projState = ps
 		}
 		if svcs, err := client.ListServices(ctx, projectID); err == nil {

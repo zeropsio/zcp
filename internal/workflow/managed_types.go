@@ -30,15 +30,21 @@ func IsManagedService(serviceType string) bool {
 }
 
 // DetectProjectState determines the project state based on service inventory.
-func DetectProjectState(ctx context.Context, client platform.Client, projectID string) (ProjectState, error) {
+// selfHostname is the hostname of the service running ZCP itself (e.g. "zcpx").
+// When non-empty, that service is excluded from runtime service counting so it
+// doesn't interfere with fresh/conformant/non-conformant detection.
+func DetectProjectState(ctx context.Context, client platform.Client, projectID, selfHostname string) (ProjectState, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
 		return "", fmt.Errorf("detect project state: %w", err)
 	}
 
-	// Filter to runtime services only.
+	// Filter to runtime services, excluding managed services and self.
 	var runtimeServices []platform.ServiceStack
 	for _, svc := range services {
+		if selfHostname != "" && svc.Name == selfHostname {
+			continue
+		}
 		if !IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
 			runtimeServices = append(runtimeServices, svc)
 		}
