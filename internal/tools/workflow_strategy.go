@@ -65,10 +65,18 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 	// Build guidance from deploy.md sections.
 	guidance := buildStrategyGuidance(input.Strategies)
 
+	// Build strategy-aware next step hint.
+	nextHint := `When code is ready: zerops_workflow action="start" workflow="deploy"`
+	if allStrategiesAre(input.Strategies, workflow.StrategyManual) {
+		nextHint = `When code is ready: zerops_deploy targetService="..." (manual strategy — deploy directly)`
+	} else if allStrategiesAre(input.Strategies, workflow.StrategyCICD) {
+		nextHint = `Set up CI/CD: zerops_workflow action="start" workflow="cicd"`
+	}
+
 	result := map[string]string{
 		"status":   "updated",
 		"services": strings.Join(updated, ", "),
-		"next":     `When code is ready: zerops_workflow action="start" workflow="deploy"`,
+		"next":     nextHint,
 	}
 	if guidance != "" {
 		result["guidance"] = guidance
@@ -97,6 +105,19 @@ func buildStrategyGuidance(strategies map[string]string) string {
 		}
 	}
 	return strings.Join(parts, "\n\n---\n\n")
+}
+
+// allStrategiesAre returns true if all values in the map equal the given strategy.
+func allStrategiesAre(strategies map[string]string, strategy string) bool {
+	if len(strategies) == 0 {
+		return false
+	}
+	for _, s := range strategies {
+		if s != strategy {
+			return false
+		}
+	}
+	return true
 }
 
 // strategySelectionResponse is returned when deploy is attempted without strategies set.

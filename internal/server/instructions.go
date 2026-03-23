@@ -49,7 +49,7 @@ IMPORTANT: Zerops operations use two approaches depending on complexity:
 
 workflow sessions — for multi-step operations that need orchestration:
 - Create services: zerops_workflow action="start" workflow="bootstrap" (ALWAYS start here for new services)
-- Deploy code: zerops_workflow action="start" workflow="deploy"
+- Deploy code: zerops_workflow action="start" workflow="deploy" (for push-dev strategy; manual strategy uses zerops_deploy directly)
 - Debug issues: zerops_workflow action="start" workflow="debug"
 - Configure (env vars, subdomains): zerops_workflow action="start" workflow="configure"
 - CI/CD setup: zerops_workflow action="start" workflow="cicd"
@@ -57,11 +57,12 @@ workflow sessions — for multi-step operations that need orchestration:
 
 Direct tools — for simple, isolated operations (no workflow needed):
 - Scale a service: zerops_scale serviceHostname="..."
+- Deploy directly (manual strategy): zerops_deploy targetService="..."
 - Manage lifecycle (start/stop/restart/reload): zerops_manage action="..." serviceHostname="..."
 - Search docs: zerops_knowledge query="..."
 - Monitor state: zerops_discover
 
-Before writing ANY configuration (import.yml, zerops.yml) or application code, you MUST start a workflow session. Workflows provide env var discovery, correct file paths, and deploy sequencing. For simple operational tasks (scaling, restarting, checking status), use tools directly.`
+Before writing ANY configuration (import.yml, zerops.yml) or application code, you MUST start a workflow session. Workflows provide env var discovery, correct file paths, and deploy sequencing. For simple operational tasks (scaling, restarting, checking status, manual deploys), use tools directly.`
 
 // BuildInstructions returns the MCP instructions message injected into the system prompt.
 // It includes base + routing (first), workflow hint, runtime context, and project summary.

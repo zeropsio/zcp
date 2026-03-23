@@ -21,7 +21,7 @@
 | **Immediate workflow** | Stateless workflow (debug, configure) — returns guidance without creating a session. |
 | **Direct tool** | Self-contained MCP tool that operates independently without a workflow session. Tool schema + nextActions provide sufficient guidance. Examples: zerops_scale, zerops_manage. |
 | **Runtime class** | Verification classification: Dynamic (nodejs, go, bun...), Implicit (php-nginx, php-apache), Static (nginx, static), Worker (no ports), Managed (postgresql, valkey...). |
-| **Strategy** | Deployment method per service: `push-dev`, `ci-cd`, or `manual`. Always explicit — never auto-assigned. Set via `action=strategy` after bootstrap. Required before deploy workflow. |
+| **Strategy** | Deployment method per service: `push-dev` (deploy workflow), `ci-cd` (cicd workflow), or `manual` (direct zerops_deploy, no workflow). Always explicit — never auto-assigned. Set via `action=strategy` after bootstrap. Each strategy maps to a different interaction model. |
 
 ---
 
@@ -429,7 +429,7 @@ Complete:
 |-----------|----------|
 | `zerops_deploy targetService=X` | SSH self-deploy: auto-infers sourceService, forces includeGit=true, SSHes into container, runs `git init` + `zcli push`. **Blocks** until build completes. Returns DEPLOYED or BUILD_FAILED with build logs. |
 | `zerops_deploy sourceService=X targetService=Y` | Cross-deploy: pushes from source container to target. Target runs its own build pipeline. Stage has real `start:` → server auto-starts. |
-| `zerops_subdomain action="enable"` | **MUST be called after every deploy** even if `enableSubdomainAccess` was in import. Returns `subdomainUrls` — the ONLY source for URLs. Idempotent. |
+| `zerops_subdomain action="enable"` | Call once after first deploy of each new service, even if `enableSubdomainAccess` was in import. Re-deploys do NOT deactivate it. Idempotent. Use `zerops_discover` for current status and URL. |
 | `zerops_verify` | 6 checks for dynamic runtime, fewer for static/implicit/managed. Returns healthy/degraded/unhealthy with `checks` array. |
 | SSH server start | `Bash run_in_background=true`. Kill previous first. NOT needed for PHP/nginx/static (implicit-webserver auto-starts). NOT needed for simple mode (real start command auto-starts). |
 
@@ -485,10 +485,10 @@ Complete:
 
 **Transition message**: The close step response includes `BuildTransitionMessage()` which:
 - Lists all bootstrapped services with modes
-- Presents strategy selection with equal explanation of all 3 options
+- Presents strategy selection with per-strategy next steps (push-dev → deploy workflow, ci-cd → cicd workflow, manual → direct zerops_deploy)
 - Provides `action=strategy` command hint
 
-**Strategy is NEVER auto-assigned.** All modes require explicit `action=strategy` after bootstrap before deploying.
+**Strategy is NEVER auto-assigned.** All modes require explicit `action=strategy` after bootstrap. Each strategy maps to a different interaction model (see §4.2).
 
 **Iteration note**: Close is excluded from iteration resets. `ResetForIteration()` resets steps 2-3 (generate + deploy) only. Close at index 4 is not retried.
 
@@ -911,7 +911,8 @@ Bootstrap has wider ranges because it allows up to 10 iterations (configurable v
 
 | ID | Invariant | Enforced by |
 |----|-----------|-------------|
-| F1 | Deploy workflow requires existing ServiceMeta files with strategy set | `handleDeployStart()` reads metas + checks DeployStrategy |
+| F1 | Deploy workflow requires existing ServiceMeta files with non-manual strategy set | `handleDeployStart()` reads metas + checks DeployStrategy + manual gate |
+| F1b | Manual strategy returns redirect with deploy commands, no session | `allManualStrategy()` + `buildManualDeployResponse()` |
 | F2 | CI/CD workflow requires at least one service with ci-cd strategy | `handleCICDStart()` filters by StrategyCICD |
 | F3 | Router returns facts only — no recommendations, no intent matching | `Route()` returns FlowOffering without Reason field |
 | F4 | Immediate workflows (debug, configure) are stateless | `IsImmediateWorkflow()` check |
@@ -926,7 +927,7 @@ Bootstrap has wider ranges because it allows up to 10 iterations (configurable v
 |----|-----------|-------------|
 | O1 | `zerops_deploy` blocks until build completes | `PollBuild()` in ops/deploy.go |
 | O2 | `zerops_import` blocks until all processes complete | Process polling in ops/import.go |
-| O3 | `zerops_subdomain` must be called after every deploy | Documented in guidance + deploy step |
+| O3 | `zerops_subdomain` must be called once after first deploy of new services (persists across re-deploys) | Documented in guidance; `zerops_discover` shows current status |
 | O4 | `zerops_verify` runtime checks depend on runtime class | `classifyRuntime()` in ops/verify.go |
 | O5 | Server must be started via SSH after every dev deploy | Container restart kills server; guidance enforces |
 
