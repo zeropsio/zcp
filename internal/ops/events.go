@@ -54,6 +54,7 @@ var actionNameMap = map[string]string{
 	"stack.stop":                   "stop",
 	"stack.restart":                "restart",
 	"stack.autoscaling":            "scale",
+	"stack.updateAutoscaling":      "scale",
 	"stack.import":                 "import",
 	"stack.delete":                 "delete",
 	"stack.build":                  "build",
