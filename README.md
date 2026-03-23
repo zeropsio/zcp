@@ -72,7 +72,7 @@ Route(RouterInput) → []FlowOffering{Workflow, Priority, Hint}
 | **CONFORMANT** | strategy-based deploy (p1) | bootstrap (p2) |
 | **NON_CONFORMANT** | strategy-based or debug (p1-2) | bootstrap (p2) |
 
-Strategy-based routing reads `ServiceMeta.DeployStrategy` persisted from prior bootstraps. Utility workflows (debug, scale, configure) are always appended at priority 5. Stale metas (hostnames deleted from API) are filtered out automatically.
+Strategy-based routing reads `ServiceMeta.DeployStrategy` persisted from prior bootstraps. Utility offerings (debug, configure, zerops_scale) are always appended at priority 5. Scale is a direct tool — no workflow needed. Stale metas (hostnames deleted from API) are filtered out automatically.
 
 ---
 

@@ -811,7 +811,7 @@ If the user asks for changes after initial bootstrap:
 1. Reuse discovery data — do not re-discover unless services were added/removed.
 2. Make the code/config change on the mount path.
 3. Deploy to dev first, verify (with iteration loop if needed), then stage. Same dev-first pattern.
-4. For config-only changes (env vars, scaling), use configure/scale workflows directly.
+4. For config-only changes (env vars), use the configure workflow. For scaling, use `zerops_scale` directly.
 </section>
 
 <section name="close">

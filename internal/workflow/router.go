@@ -161,7 +161,6 @@ func routeUnknown() []FlowOffering {
 		{Workflow: "bootstrap", Priority: 3, Hint: `zerops_workflow action="start" workflow="bootstrap"`},
 		{Workflow: "deploy", Priority: 3, Hint: `zerops_workflow action="start" workflow="deploy"`},
 		{Workflow: "debug", Priority: 3, Hint: `zerops_workflow action="start" workflow="debug"`},
-		{Workflow: "scale", Priority: 3, Hint: `zerops_workflow action="start" workflow="scale"`},
 		{Workflow: "configure", Priority: 3, Hint: `zerops_workflow action="start" workflow="configure"`},
 	}
 }
@@ -216,7 +215,7 @@ func appendUtilities(offerings []FlowOffering) []FlowOffering {
 		name, hint string
 	}{
 		{"debug", `zerops_workflow action="start" workflow="debug"`},
-		{"scale", `zerops_workflow action="start" workflow="scale"`},
+		{"scale", `zerops_scale serviceHostname="..." — direct tool, no workflow needed`},
 		{"configure", `zerops_workflow action="start" workflow="configure"`},
 	}
 	for _, u := range utils {

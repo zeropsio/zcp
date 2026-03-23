@@ -113,33 +113,6 @@ func TestWorkflowTool_Bootstrap_NoCache(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Scale_NoStacks(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServiceStackTypes([]platform.ServiceStackType{
-		{
-			Name:     "Node.js",
-			Category: "USER",
-			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "nodejs@22", Status: statusActive},
-			},
-		},
-	})
-	cache := ops.NewStackTypeCache(1 * time.Hour)
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, mock, "proj1", cache, nil, nil, "", "")
-
-	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "scale"})
-
-	if result.IsError {
-		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
-	}
-	text := getTextContent(t, result)
-	if strings.Contains(text, "Available Service Stacks") {
-		t.Error("scale workflow should not contain stacks")
-	}
-}
-
 // --- New Action-Based Workflow Tests ---
 
 func TestWorkflowTool_Action_NoEngine(t *testing.T) {
@@ -254,7 +227,6 @@ func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 		workflow string
 	}{
 		{"debug", "debug"},
-		{"scale", "scale"},
 		{"configure", "configure"},
 	}
 	for _, tt := range tests {

@@ -129,4 +129,4 @@ Defines services to create. Service type validation runs automatically before th
 
 - **Need to deploy with new config?** → `zerops_workflow action="start" workflow="deploy"`
 - **Something broken?** → `zerops_workflow action="start" workflow="debug"`
-- **Need to scale?** → `zerops_workflow action="start" workflow="scale"`
+- **Need to scale?** → `zerops_scale serviceHostname="..."` (use `zerops_knowledge query="scaling"` for guidance)

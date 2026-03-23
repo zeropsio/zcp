@@ -837,9 +837,9 @@ func TestBuildTransitionMessage_EmptyTargets_ManagedOnly(t *testing.T) {
 	if strings.Contains(msg, "CI/CD Gate") {
 		t.Error("managed-only message should NOT contain CI/CD Gate section")
 	}
-	// Should offer utility workflows.
+	// Should offer utility operations.
 	if !strings.Contains(msg, "scale") {
-		t.Error("managed-only message should offer scale workflow")
+		t.Error("managed-only message should offer scale tool")
 	}
 	if !strings.Contains(msg, "debug") {
 		t.Error("managed-only message should offer debug workflow")

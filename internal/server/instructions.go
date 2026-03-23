@@ -48,17 +48,23 @@ Push code to Zerops via zcli push. zerops.yml must be at repository root. Each d
 zerops_discover always returns the CURRENT state of all services. Call it whenever you need to refresh your understanding.`
 
 const routingInstructions = `
-IMPORTANT: All Zerops operations are managed through workflow sessions. Before writing ANY configuration (import.yml, zerops.yml) or application code, you MUST start a workflow session. The workflow provides env var discovery, correct file paths, and deploy sequencing. Writing code before starting the workflow leads to incorrect configurations that must be rewritten.
+IMPORTANT: Zerops operations use two approaches depending on complexity:
 
-Workflow commands:
+workflow sessions — for multi-step operations that need orchestration:
 - Create services: zerops_workflow action="start" workflow="bootstrap" (ALWAYS start here for new services)
 - Deploy code: zerops_workflow action="start" workflow="deploy"
 - Debug issues: zerops_workflow action="start" workflow="debug"
-- Scale: zerops_workflow action="start" workflow="scale"
-- Configure: zerops_workflow action="start" workflow="configure"
+- Configure (env vars, subdomains): zerops_workflow action="start" workflow="configure"
+- CI/CD setup: zerops_workflow action="start" workflow="cicd"
 - Check workflow state: zerops_workflow action="status" (use after context loss or to resume work)
-- Monitor: zerops_discover
-- Search docs: zerops_knowledge query="..."`
+
+Direct tools — for simple, isolated operations (no workflow needed):
+- Scale a service: zerops_scale serviceHostname="..."
+- Manage lifecycle (start/stop/restart/reload): zerops_manage action="..." serviceHostname="..."
+- Search docs: zerops_knowledge query="..."
+- Monitor state: zerops_discover
+
+Before writing ANY configuration (import.yml, zerops.yml) or application code, you MUST start a workflow session. Workflows provide env var discovery, correct file paths, and deploy sequencing. For simple operational tasks (scaling, restarting, checking status), use tools directly.`
 
 // BuildInstructions returns the MCP instructions message injected into the system prompt.
 // It includes base + routing (first), workflow hint, runtime context, and project summary.

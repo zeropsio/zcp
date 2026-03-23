@@ -153,16 +153,17 @@ func TestRoute_NonConformant(t *testing.T) {
 	}
 }
 
-func TestRoute_Unknown_EqualPriority(t *testing.T) {
+func TestRoute_Unknown_WorkflowsEqualPriority(t *testing.T) {
 	t.Parallel()
 	offerings := Route(RouterInput{ProjectState: StateUnknown})
 	if len(offerings) == 0 {
 		t.Fatal("expected offerings")
 	}
-	prio := offerings[0].Priority
+	// Workflows from routeUnknown should have equal priority (3).
+	// Utility offerings (scale tool) may have higher priority number (5).
 	for _, o := range offerings {
-		if o.Priority != prio {
-			t.Errorf("expected equal priorities, got %d and %d", prio, o.Priority)
+		if o.Priority != 3 && o.Priority != 5 {
+			t.Errorf("unexpected priority %d for %q", o.Priority, o.Workflow)
 		}
 	}
 }

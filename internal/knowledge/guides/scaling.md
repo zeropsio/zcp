@@ -6,6 +6,15 @@ scaling, autoscaling, vertical scaling, horizontal scaling, CPU, RAM, disk, cont
 ## TL;DR
 Zerops autoscales vertically (CPU/RAM/disk) and horizontally (container count). Runtimes support both. Managed services (DB, cache, shared-storage) support vertical only with fixed container count (NON_HA=1, HA=3). Object-storage and Docker have no autoscaling. Extends grammar.md section 9 with mechanics, thresholds, YAML syntax, and common mistakes.
 
+## When to Scale Which Way
+
+| Symptom | Scale type | Why |
+|---------|-----------|-----|
+| CPU/memory pressure on existing containers | Vertical (CPU/RAM) | More resources per container |
+| High request volume, stateless service | Horizontal (containers) | Distribute load across more instances |
+| Disk filling up | Vertical (disk) | More storage per container |
+| Latency-sensitive workload on SHARED CPU | CPU mode → DEDICATED | Guaranteed cores, no burstable throttling |
+
 ## Applicability Matrix
 
 | Service type | Vertical autoscaling | Horizontal scaling | Notes |
@@ -153,6 +162,23 @@ services:
       maxRam: 16
       minDisk: 5
       maxDisk: 100
+```
+
+## Strategy Presets
+
+**Development** — SHARED CPU, min resources, 1 container. Cost-effective for dev/staging:
+```
+zerops_scale serviceHostname="api" cpuMode="SHARED" minCpu=1 maxCpu=2 minRam=0.25 maxRam=1 minContainers=1 maxContainers=1
+```
+
+**Production** — DEDICATED CPU, higher minimums, multiple containers for HA:
+```
+zerops_scale serviceHostname="api" cpuMode="DEDICATED" minCpu=2 maxCpu=8 minRam=2 maxRam=8 minContainers=2 maxContainers=6
+```
+
+**Burst workloads** — Wide autoscaling range, SHARED CPU:
+```
+zerops_scale serviceHostname="worker" cpuMode="SHARED" minCpu=1 maxCpu=8 minRam=1 maxRam=16 minContainers=1 maxContainers=10
 ```
 
 ## Common Mistakes

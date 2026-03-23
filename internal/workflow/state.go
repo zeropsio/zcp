@@ -30,7 +30,7 @@ type WorkflowState struct {
 
 // immediateWorkflows are stateless — no session, just guidance.
 var immediateWorkflows = map[string]bool{
-	"debug": true, "scale": true, "configure": true,
+	"debug": true, "configure": true,
 }
 
 // IsImmediateWorkflow returns true if the workflow is stateless (no session).

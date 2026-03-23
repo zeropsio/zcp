@@ -81,6 +81,19 @@ Guidance is assembled from the agent's ACTUAL state (DeployState, ServiceMeta, E
 
 Never: generic "here's how standard mode works" without context. Always: "YOUR services are appdev (nodejs@22) → appstage. Step 1: deploy to appdev..."
 
+### 2.6 Workflows for Orchestration, Tools for Operations
+
+ZCP operations follow a two-tier model:
+
+| Tier | When | Examples | Why |
+|------|------|----------|-----|
+| **Workflow** | Multi-step, needs state/coordination, platform-specific ordering | bootstrap, deploy, debug, configure, cicd | Agents need guidance on step ordering, env var discovery, deploy sequencing, verification loops |
+| **Direct tool** | Single operation, self-contained, tool schema is sufficient | zerops_scale, zerops_manage, zerops_env, zerops_subdomain | The tool's schema describes parameters, nextActions guides follow-up, zerops_knowledge provides domain context on demand |
+
+**Workflow is NOT a gate.** An agent does not need to start a workflow to call `zerops_scale` or `zerops_manage`. These tools work independently. Workflows exist to prevent the specific failure modes of complex operations (writing zerops.yml before discovering env vars, deploying before verifying, etc.).
+
+**The test**: if an operation is a single API call with self-guiding nextActions and all domain knowledge is accessible via `zerops_knowledge`, it belongs in the direct tool tier. If it requires multi-tool coordination, state tracking, or non-obvious ordering, it needs a workflow.
+
 ---
 
 ## 3. Knowledge Taxonomy
@@ -431,7 +444,9 @@ Running installs over the SSHFS network mount is orders of magnitude slower.
 
 ### Tools
 - zerops_discover — current state of all services (call anytime for refresh)
-- zerops_workflow — orchestrated flows (bootstrap, deploy, debug, scale, configure)
+- zerops_workflow — orchestrated flows (bootstrap, deploy, debug, configure, cicd)
+- zerops_scale — scale a service directly (no workflow needed)
+- zerops_manage — lifecycle operations: start, stop, restart, reload, connect/disconnect storage
 - zerops_knowledge — Zerops-specific knowledge (runtimes, recipes, schemas)
 - zerops_verify — health checks
 - zerops_logs — runtime and build logs
@@ -440,7 +455,10 @@ Running installs over the SSHFS network mount is orders of magnitude slower.
 ### When to Use What
 - Creating new infrastructure → zerops_workflow action="start" workflow="bootstrap"
 - Deploying code changes → zerops_workflow action="start" workflow="deploy"
-- Debugging issues → zerops_verify, zerops_logs
+- Debugging issues → zerops_workflow action="start" workflow="debug"
+- Changing env vars/subdomains → zerops_workflow action="start" workflow="configure"
+- Scaling a service → zerops_scale (simple) or zerops_knowledge query="scaling" (need guidance)
+- Restarting/reloading → zerops_manage action="restart" serviceHostname="..."
 - Need Zerops knowledge → zerops_knowledge query="..."
 - Need current state → zerops_discover
 ```

@@ -174,8 +174,8 @@ func TestAnnotations_DescriptionWordCount(t *testing.T) {
 
 	const maxWords = 60
 
-	// Tools subject to the 60-word cap (excludes workflow, delete, logs, events, mount, scale
-	// which were not part of the trim plan).
+	// Tools subject to the 60-word cap (excludes workflow, delete, logs, events, mount,
+	// scale which were not part of the trim plan).
 	trimmedTools := []string{
 		"zerops_discover",
 		"zerops_deploy",

@@ -18,7 +18,8 @@
 | **Attestation** | Agent's self-report of what was accomplished in a step. Minimum 10 characters. Stored in session state. |
 | **Iteration** | Reset of generate+deploy steps with incremented counter. Preserves discovery/provision/close context. Max 10 (configurable via `ZCP_MAX_ITERATIONS`). |
 | **Managed-only** | Project with zero runtime services — only databases, caches, storage. Skips generate/deploy/close steps. |
-| **Immediate workflow** | Stateless workflow (debug, scale, configure) — returns guidance without creating a session. |
+| **Immediate workflow** | Stateless workflow (debug, configure) — returns guidance without creating a session. |
+| **Direct tool** | Self-contained MCP tool that operates independently without a workflow session. Tool schema + nextActions provide sufficient guidance. Examples: zerops_scale, zerops_manage. |
 | **Runtime class** | Verification classification: Dynamic (nodejs, go, bun...), Implicit (php-nginx, php-apache), Static (nginx, static), Worker (no ports), Managed (postgresql, valkey...). |
 | **Strategy** | Deployment method per service: `push-dev`, `ci-cd`, or `manual`. Always explicit — never auto-assigned. Set via `action=strategy` after bootstrap. Required before deploy workflow. |
 
@@ -911,7 +912,7 @@ Bootstrap has wider ranges because it allows up to 10 iterations (configurable v
 | F1 | Deploy workflow requires existing ServiceMeta files with strategy set | `handleDeployStart()` reads metas + checks DeployStrategy |
 | F2 | CI/CD workflow requires at least one service with ci-cd strategy | `handleCICDStart()` filters by StrategyCICD |
 | F3 | Router returns facts only — no recommendations, no intent matching | `Route()` returns FlowOffering without Reason field |
-| F4 | Immediate workflows (debug, scale, configure) are stateless | `IsImmediateWorkflow()` check |
+| F4 | Immediate workflows (debug, configure) are stateless | `IsImmediateWorkflow()` check |
 | F5 | Bootstrap auto-resets completed sessions on new start | `engine.Start()` checks Active=false |
 | F6 | Deploy strategy selection is conversational (guidance, not error) | `buildStrategySelectionResponse()` |
 | F7 | Deploy checkers validate platform integration, not application correctness | `checkDeployPrepare()`, `checkDeployResult()` |

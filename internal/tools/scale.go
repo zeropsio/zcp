@@ -31,7 +31,7 @@ type ScaleInput struct {
 func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_scale",
-		Description: "Scale a service: adjust CPU, RAM, disk, and container autoscaling parameters. Blocks until the scaling process completes — returns final status (FINISHED/FAILED).",
+		Description: "Scale a service: adjust CPU, RAM, disk, and container autoscaling parameters. Blocks until completion (FINISHED/FAILED). Constraints: HA mode immutable after creation; Docker has no autoscaling; CPU mode changeable once/hour; managed services (DB/cache) support vertical only, container count fixed by mode (NON_HA=1, HA=3). Use zerops_knowledge query=\"scaling\" for detailed scaling mechanics and strategy presets.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Scale a service",
 			IdempotentHint:  true,

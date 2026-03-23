@@ -13,7 +13,7 @@ func TestIsImmediateWorkflow(t *testing.T) {
 		want     bool
 	}{
 		{"debug", "debug", true},
-		{"scale", "scale", true},
+		{"scale", "scale", false},
 		{"configure", "configure", true},
 		{"deploy", "deploy", false},
 		{"bootstrap", "bootstrap", false},
