@@ -8,6 +8,7 @@ import (
 const (
 	runtimeStatic    = "static"
 	runtimeNginx     = "nginx"
+	runtimePHPNginx  = "php-nginx"
 	runtimePHPApache = "php-apache"
 )
 
@@ -62,7 +63,7 @@ func parseH2Sections(content string) map[string]string {
 // runtimeNormalizer maps MCP runtime types to runtime guide file slugs.
 var runtimeNormalizer = map[string]string{
 	"php":            "php",
-	"php-nginx":      "php",
+	runtimePHPNginx:  "php",
 	runtimePHPApache: "php",
 	"nodejs":         "nodejs",
 	"bun":            "bun",
