@@ -3,8 +3,10 @@
 package workflow
 
 import (
+	"fmt"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -14,38 +16,43 @@ var (
 	procUnlockFileEx = modkernel32.NewProc("UnlockFileEx")
 )
 
-const lockfileExclusiveLock = 0x00000002
+const (
+	lockfileExclusiveLock    = 0x00000002
+	lockfileFailImmediately  = 0x00000001
+	errLockViolation         = 33
+)
 
-// lockFileShared acquires a shared (read-only) lock via LockFileEx.
-func lockFileShared(f *os.File) error {
-	var ol syscall.Overlapped
-	r1, _, err := procLockFileEx.Call(
-		f.Fd(),
-		0, // 0 = shared (no LOCKFILE_EXCLUSIVE_LOCK)
-		0,
-		1, 0,
-		uintptr(unsafe.Pointer(&ol)),
-	)
-	if r1 == 0 {
-		return err
-	}
-	return nil
+// lockFileExclusive acquires an exclusive lock via LockFileEx with timeout.
+func lockFileExclusive(f *os.File) error {
+	return lockWithRetry(f, lockfileExclusiveLock)
 }
 
-// lockFileExclusive acquires an exclusive lock via LockFileEx.
-func lockFileExclusive(f *os.File) error {
-	var ol syscall.Overlapped
-	r1, _, err := procLockFileEx.Call(
-		f.Fd(),
-		lockfileExclusiveLock,
-		0,
-		1, 0,
-		uintptr(unsafe.Pointer(&ol)),
-	)
-	if r1 == 0 {
-		return err
+// lockFileShared acquires a shared (read-only) lock via LockFileEx with timeout.
+func lockFileShared(f *os.File) error {
+	return lockWithRetry(f, 0)
+}
+
+// lockWithRetry attempts a non-blocking LockFileEx with retries.
+// Returns error after flockRetries * flockInterval (~5s).
+func lockWithRetry(f *os.File, flags uintptr) error {
+	for i := 0; i < flockRetries; i++ {
+		var ol syscall.Overlapped
+		r1, _, err := procLockFileEx.Call(
+			f.Fd(),
+			flags|lockfileFailImmediately,
+			0,
+			1, 0,
+			uintptr(unsafe.Pointer(&ol)),
+		)
+		if r1 != 0 {
+			return nil
+		}
+		if errno, ok := err.(syscall.Errno); !ok || errno != errLockViolation {
+			return err
+		}
+		time.Sleep(flockInterval)
 	}
-	return nil
+	return fmt.Errorf("LockFileEx: timeout after %v waiting for registry lock", time.Duration(flockRetries)*flockInterval)
 }
 
 // unlockFile releases the lock via UnlockFileEx.

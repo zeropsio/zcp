@@ -45,16 +45,22 @@ func (e *Engine) CICDComplete(step, attestation, provider string) (*CICDResponse
 	}
 
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	var cleanupErr error
 	if !state.CICD.Active {
-		if err := ResetSessionByID(e.stateDir, state.SessionID); err != nil {
-			fmt.Fprintf(os.Stderr, "zcp: cleanup completed cicd session: %v\n", err)
+		cleanupErr = ResetSessionByID(e.stateDir, state.SessionID)
+		if cleanupErr != nil {
+			fmt.Fprintf(os.Stderr, "zcp: cleanup completed cicd session: %v\n", cleanupErr)
 		}
 		e.completedState = state
 		e.sessionID = ""
 	} else if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("cicd complete save: %w", err)
 	}
-	return state.CICD.BuildResponse(state.SessionID, state.Intent, e.environment, e.knowledge), nil
+	resp := state.CICD.BuildResponse(state.SessionID, state.Intent, e.environment, e.knowledge)
+	if cleanupErr != nil {
+		resp.Message += "\n\nWarning: session cleanup failed: " + cleanupErr.Error()
+	}
+	return resp, nil
 }
 
 // CICDStatus returns the current CI/CD progress with fresh guidance.

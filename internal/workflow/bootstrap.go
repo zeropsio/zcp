@@ -96,20 +96,24 @@ func NewBootstrapState() *BootstrapState {
 }
 
 // ResetForIteration resets generate+deploy steps for a new iteration cycle.
-// Preserves: discover(0), provision(1), close(4), Plan, ServiceMetas.
+// Preserves: discover, provision, close, Plan, ServiceMetas.
 // Close is administrative — not retried on iteration.
 func (b *BootstrapState) ResetForIteration() {
 	if b == nil {
 		return
 	}
-	// Reset generate(2) and deploy(3) to pending. Close(4) is excluded.
-	for i := 2; i <= 3 && i < len(b.Steps); i++ {
-		b.Steps[i] = BootstrapStep{Name: b.Steps[i].Name, Status: stepPending}
+	firstReset := -1
+	for i := range b.Steps {
+		if b.Steps[i].Name == stepGenerate || b.Steps[i].Name == stepDeploy {
+			b.Steps[i] = BootstrapStep{Name: b.Steps[i].Name, Status: stepPending}
+			if firstReset < 0 {
+				firstReset = i
+			}
+		}
 	}
-	// Set CurrentStep to generate, mark in_progress.
-	b.CurrentStep = 2
-	if b.CurrentStep < len(b.Steps) {
-		b.Steps[b.CurrentStep].Status = stepInProgress
+	if firstReset >= 0 {
+		b.CurrentStep = firstReset
+		b.Steps[firstReset].Status = stepInProgress
 	}
 	b.Active = true
 }

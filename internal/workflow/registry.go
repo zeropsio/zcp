@@ -12,6 +12,10 @@ const (
 	registryFileName = "registry.json"
 	lockFileName     = ".registry.lock"
 	registryVersion  = "1"
+
+	// flockRetries × flockInterval = max wait time for registry lock (~5s).
+	flockRetries  = 50
+	flockInterval = 100 * time.Millisecond
 )
 
 // Registry is the active sessions index persisted to registry.json.

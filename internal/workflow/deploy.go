@@ -241,17 +241,21 @@ func (d *DeployState) ResetForIteration() {
 	if d == nil {
 		return
 	}
-	// Reset steps 1 (deploy) and 2 (verify) to pending.
-	for i := 1; i < len(d.Steps); i++ {
-		d.Steps[i] = DeployStep{Name: d.Steps[i].Name, Status: stepPending}
+	firstReset := -1
+	for i := range d.Steps {
+		if d.Steps[i].Name == DeployStepDeploy || d.Steps[i].Name == DeployStepVerify {
+			d.Steps[i] = DeployStep{Name: d.Steps[i].Name, Status: stepPending}
+			if firstReset < 0 {
+				firstReset = i
+			}
+		}
 	}
-	// Reset all target statuses to pending.
 	for i := range d.Targets {
 		d.Targets[i].Status = deployTargetPending
 	}
-	d.CurrentStep = 1
-	if d.CurrentStep < len(d.Steps) {
-		d.Steps[d.CurrentStep].Status = stepInProgress
+	if firstReset >= 0 {
+		d.CurrentStep = firstReset
+		d.Steps[firstReset].Status = stepInProgress
 	}
 	d.Active = true
 }

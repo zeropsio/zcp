@@ -55,9 +55,11 @@ func (e *Engine) DeployComplete(ctx context.Context, step, attestation string, c
 	}
 
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	var cleanupErr error
 	if !state.Deploy.Active {
-		if err := ResetSessionByID(e.stateDir, state.SessionID); err != nil {
-			fmt.Fprintf(os.Stderr, "zcp: cleanup completed deploy session: %v\n", err)
+		cleanupErr = ResetSessionByID(e.stateDir, state.SessionID)
+		if cleanupErr != nil {
+			fmt.Fprintf(os.Stderr, "zcp: cleanup completed deploy session: %v\n", cleanupErr)
 		}
 		e.completedState = state
 		e.sessionID = ""
@@ -66,6 +68,9 @@ func (e *Engine) DeployComplete(ctx context.Context, step, attestation string, c
 	}
 	resp := state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment)
 	resp.CheckResult = checkResult
+	if cleanupErr != nil {
+		resp.Message += "\n\nWarning: session cleanup failed: " + cleanupErr.Error()
+	}
 	return resp, nil
 }
 

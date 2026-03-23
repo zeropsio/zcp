@@ -373,3 +373,45 @@ func TestRegistryFile_CreatedOnFirstRegister(t *testing.T) {
 		t.Fatalf("expected registry file at %s: %v", registryPath, err)
 	}
 }
+
+func TestLockFileExclusive_Timeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping lock timeout test in short mode")
+	}
+	t.Parallel()
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, ".test.lock")
+
+	// Hold an exclusive lock in a goroutine.
+	holder, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatalf("open lock file: %v", err)
+	}
+	defer holder.Close()
+
+	if err := lockFileExclusive(holder); err != nil {
+		t.Fatalf("initial lock: %v", err)
+	}
+	defer unlockFile(holder)
+
+	// Try to acquire from a second file descriptor — should timeout.
+	contender, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatalf("open contender: %v", err)
+	}
+	defer contender.Close()
+
+	start := time.Now()
+	lockErr := lockFileExclusive(contender)
+	elapsed := time.Since(start)
+
+	if lockErr == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if elapsed < 3*time.Second {
+		t.Errorf("expected timeout after ~5s, returned in %v", elapsed)
+	}
+	if elapsed > 10*time.Second {
+		t.Errorf("timeout took too long: %v", elapsed)
+	}
+}

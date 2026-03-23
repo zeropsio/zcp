@@ -175,10 +175,12 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 	sessionID := e.sessionID // capture before outputs may reference it
 
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	var cleanupErr error
 	if !state.Bootstrap.Active {
 		e.writeBootstrapOutputs(state)
-		if err := ResetSessionByID(e.stateDir, state.SessionID); err != nil {
-			fmt.Fprintf(os.Stderr, "zcp: cleanup completed session: %v\n", err)
+		cleanupErr = ResetSessionByID(e.stateDir, state.SessionID)
+		if cleanupErr != nil {
+			fmt.Fprintf(os.Stderr, "zcp: cleanup completed session: %v\n", cleanupErr)
 		}
 		e.completedState = state
 		e.sessionID = ""
@@ -187,6 +189,9 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 	}
 	resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
 	resp.CheckResult = checkResult
+	if cleanupErr != nil {
+		resp.Message += "\n\nWarning: session cleanup failed: " + cleanupErr.Error()
+	}
 	return resp, nil
 }
 

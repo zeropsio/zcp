@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1391,5 +1392,50 @@ func TestBootstrapComplete_PlanNilCheck_NonDiscoverSteps(t *testing.T) {
 	// Expect error because Plan is nil for non-discover step
 	if err == nil {
 		t.Error("BootstrapComplete should fail when Plan is nil for non-discover steps")
+	}
+}
+
+func TestEngine_BootstrapComplete_CleanupWarningInResponse(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, nil)
+
+	if _, err := eng.BootstrapStart("proj-1", "test cleanup warning"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	// Complete discover with a plan.
+	if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil); err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	// Complete provision, generate, deploy.
+	for _, step := range []string{"provision", "generate", "deploy"} {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "step completed successfully", nil); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
+
+	// Make session dir read-only so ResetSessionByID fails on file removal.
+	sessDir := filepath.Join(dir, sessionsDirName)
+	if err := os.Chmod(sessDir, 0o555); err != nil {
+		t.Fatalf("chmod sessions dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sessDir, 0o755) })
+
+	// Complete close — should succeed but include cleanup warning.
+	resp, err := eng.BootstrapComplete(context.Background(), "close", "bootstrap finalized", nil)
+	if err != nil {
+		t.Fatalf("BootstrapComplete(close): %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+
+	const wantSubstr = "Warning: session cleanup failed"
+	if !strings.Contains(resp.Message, wantSubstr) {
+		t.Errorf("response message should contain %q, got: %s", wantSubstr, resp.Message)
 	}
 }
