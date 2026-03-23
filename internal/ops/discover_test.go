@@ -651,6 +651,161 @@ func TestDiscover_NoNotesWithoutReferences(t *testing.T) {
 	}
 }
 
+func TestDiscover_SubdomainEnabled_Summary(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			SubdomainAccess:      true},
+		{ID: "svc-2", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"},
+			SubdomainAccess:      false},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services)
+
+	result, err := Discover(context.Background(), mock, "proj-1", "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Services) != 2 {
+		t.Fatalf("expected 2 services, got %d", len(result.Services))
+	}
+
+	// api has subdomain enabled.
+	if !result.Services[0].SubdomainEnabled {
+		t.Error("api: expected subdomainEnabled=true")
+	}
+	// db does not.
+	if result.Services[1].SubdomainEnabled {
+		t.Error("db: expected subdomainEnabled=false")
+	}
+	// Summary view should NOT have subdomainUrl (no env fetch).
+	if result.Services[0].SubdomainURL != "" {
+		t.Errorf("summary view should not have subdomainUrl, got %q", result.Services[0].SubdomainURL)
+	}
+}
+
+func TestDiscover_SubdomainURL_DetailedView(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			SubdomainAccess:      true,
+			Ports:                []platform.Port{{Port: 3000, Protocol: "TCP", Public: true}},
+		},
+	}
+
+	detailSvc := &platform.ServiceStack{
+		ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+		SubdomainAccess:      true,
+		Ports:                []platform.Port{{Port: 3000, Protocol: "TCP", Public: true}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithService(detailSvc).
+		WithServiceEnv("svc-1", []platform.EnvVar{
+			{ID: "e1", Key: "zeropsSubdomain", Content: "https://api-1df2-3000.prg1.zerops.app"},
+			{ID: "e2", Key: "hostname", Content: "api"},
+		})
+
+	// Detailed view with includeEnvs=true — URL comes from already-fetched envs.
+	result, err := Discover(context.Background(), mock, "proj-1", "api", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	svc := result.Services[0]
+	if !svc.SubdomainEnabled {
+		t.Error("expected subdomainEnabled=true")
+	}
+	if svc.SubdomainURL != "https://api-1df2-3000.prg1.zerops.app" {
+		t.Errorf("expected subdomainUrl from env var, got %q", svc.SubdomainURL)
+	}
+}
+
+func TestDiscover_SubdomainURL_DetailedNoEnvs(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			SubdomainAccess:      true,
+			Ports:                []platform.Port{{Port: 3000, Protocol: "TCP", Public: true}},
+		},
+	}
+
+	detailSvc := &platform.ServiceStack{
+		ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+		SubdomainAccess:      true,
+		Ports:                []platform.Port{{Port: 3000, Protocol: "TCP", Public: true}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithService(detailSvc).
+		WithServiceEnv("svc-1", []platform.EnvVar{
+			{ID: "e1", Key: "zeropsSubdomain", Content: "https://api-1df2-3000.prg1.zerops.app"},
+		})
+
+	// Detailed view with includeEnvs=false — should still fetch env to get URL.
+	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	svc := result.Services[0]
+	if !svc.SubdomainEnabled {
+		t.Error("expected subdomainEnabled=true")
+	}
+	if svc.SubdomainURL != "https://api-1df2-3000.prg1.zerops.app" {
+		t.Errorf("expected subdomainUrl even without includeEnvs, got %q", svc.SubdomainURL)
+	}
+}
+
+func TestDiscover_SubdomainURL_DisabledNoFetch(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+			SubdomainAccess:      false,
+		},
+	}
+
+	detailSvc := &platform.ServiceStack{
+		ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+		SubdomainAccess:      false,
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithService(detailSvc).
+		WithError("GetServiceEnv", fmt.Errorf("should not be called"))
+
+	// When subdomain is disabled and includeEnvs=false, should NOT call GetServiceEnv.
+	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	svc := result.Services[0]
+	if svc.SubdomainEnabled {
+		t.Error("expected subdomainEnabled=false")
+	}
+	if svc.SubdomainURL != "" {
+		t.Errorf("expected empty subdomainUrl when disabled, got %q", svc.SubdomainURL)
+	}
+}
+
 func TestDiscover_ProjectNotFound(t *testing.T) {
 	t.Parallel()
 

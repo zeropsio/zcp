@@ -123,7 +123,7 @@ These facts are Zerops-specific and MUST be communicated. The agent has no way t
 
 5. **Stage mode auto-starts.** Real start command + healthCheck. Server monitored by Zerops, auto-restarts on failure.
 
-6. **Subdomain must be explicitly enabled** per service, after every deploy, even if set in import.yml. `zerops_subdomain action="enable"` is idempotent.
+6. **Subdomain must be explicitly enabled** once per new service after first deploy, even if set in import.yml. Re-deploys do NOT deactivate it. `zerops_subdomain action="enable"` is idempotent. `zerops_discover` shows current status.
 
 7. **`zerops_deploy` blocks until pipeline completes.** Returns DEPLOYED or BUILD_FAILED with build logs. No manual polling needed.
 

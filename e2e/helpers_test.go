@@ -33,6 +33,7 @@ var testServicePrefixes = []string{
 	"zcpsub", "zcpbl",                            // subdomain, build_logs
 	"zcpmnt", "zcpapp",                           // mount_test.go
 	"zcpsd",                                      // discover_subdomain_test.go
+	"zcpsl",                                      // subdomain_lifecycle_test.go
 	"bn",                                         // bootstrap_negative_test.go
 }
 

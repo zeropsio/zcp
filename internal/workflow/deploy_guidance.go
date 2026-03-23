@@ -108,7 +108,7 @@ func buildDeployGuide(state *DeployState, iteration int) string {
 	if hasRole(state.Targets, DeployRoleStage) {
 		sb.WriteString("- Stage: auto-starts with healthCheck. Zerops monitors and restarts.\n")
 	}
-	sb.WriteString("- Subdomain must be enabled after every deploy (idempotent)\n\n")
+	sb.WriteString("- Subdomain persists across re-deploys. Check `zerops_discover` for status and URL.\n\n")
 
 	// Code-only changes shortcut.
 	sb.WriteString("### Code-only changes (no zerops.yml change)\n")

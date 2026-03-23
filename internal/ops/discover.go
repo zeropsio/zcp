@@ -26,15 +26,17 @@ type ProjectInfo struct {
 
 // ServiceInfo contains service details for the discover response.
 type ServiceInfo struct {
-	Hostname   string           `json:"hostname"`
-	ServiceID  string           `json:"serviceId"`
-	Type       string           `json:"type"`
-	Status     string           `json:"status"`
-	Created    string           `json:"created,omitempty"`
-	Containers map[string]any   `json:"containers,omitempty"`
-	Resources  map[string]any   `json:"resources,omitempty"`
-	Ports      []map[string]any `json:"ports,omitempty"`
-	Envs       []map[string]any `json:"envs,omitempty"`
+	Hostname         string           `json:"hostname"`
+	ServiceID        string           `json:"serviceId"`
+	Type             string           `json:"type"`
+	Status           string           `json:"status"`
+	SubdomainEnabled bool             `json:"subdomainEnabled,omitempty"`
+	SubdomainURL     string           `json:"subdomainUrl,omitempty"`
+	Created          string           `json:"created,omitempty"`
+	Containers       map[string]any   `json:"containers,omitempty"`
+	Resources        map[string]any   `json:"resources,omitempty"`
+	Ports            []map[string]any `json:"ports,omitempty"`
+	Envs             []map[string]any `json:"envs,omitempty"`
 }
 
 // Discover fetches project and service information.
@@ -77,6 +79,9 @@ func Discover(
 		if includeEnvs {
 			attachEnvs(ctx, client, &info, detail.ID, result)
 		}
+		if detail.SubdomainAccess {
+			info.SubdomainURL = extractSubdomainURL(ctx, client, detail.ID, info.Envs)
+		}
 		result.Services = []ServiceInfo{info}
 		addEnvRefNotes(result)
 		return result, nil
@@ -104,10 +109,11 @@ func Discover(
 
 func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 	return ServiceInfo{
-		Hostname:  svc.Name,
-		ServiceID: svc.ID,
-		Type:      svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-		Status:    svc.Status,
+		Hostname:         svc.Name,
+		ServiceID:        svc.ID,
+		Type:             svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+		Status:           svc.Status,
+		SubdomainEnabled: svc.SubdomainAccess,
 	}
 }
 
@@ -231,6 +237,28 @@ func BuildSubdomainURL(hostname, subdomainHost string, port int) string {
 		return fmt.Sprintf("https://%s-%s.%s", hostname, prefix, rest)
 	}
 	return fmt.Sprintf("https://%s-%s-%d.%s", hostname, prefix, port, rest)
+}
+
+// extractSubdomainURL reads the zeropsSubdomain env var for the URL.
+// Checks already-fetched envs first (when includeEnvs=true), falls back to API call.
+func extractSubdomainURL(ctx context.Context, client platform.Client, serviceID string, fetchedEnvs []map[string]any) string {
+	for _, env := range fetchedEnvs {
+		if env["key"] == envKeyZeropsSubdomain {
+			if v, ok := env["value"].(string); ok {
+				return v
+			}
+		}
+	}
+	envs, err := client.GetServiceEnv(ctx, serviceID)
+	if err != nil {
+		return ""
+	}
+	for _, env := range envs {
+		if env.Key == envKeyZeropsSubdomain {
+			return env.Content
+		}
+	}
+	return ""
 }
 
 // addEnvRefNotes appends an explanatory note if any service env contains cross-service references.

@@ -13,14 +13,14 @@ const actionEnable = "enable"
 // SubdomainInput is the input type for zerops_subdomain.
 type SubdomainInput struct {
 	ServiceHostname string `json:"serviceHostname" jsonschema:"Hostname of the service to enable/disable subdomain for."`
-	Action          string `json:"action"          jsonschema:"Action: enable or disable. Must call enable after first deploy to activate routing."`
+	Action          string `json:"action"          jsonschema:"Action: enable or disable. Call once after first deploy of new services."`
 }
 
 // RegisterSubdomain registers the zerops_subdomain tool.
 func RegisterSubdomain(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_subdomain",
-		Description: "Enable or disable zerops.app subdomain. Returns subdomainUrls — the only source for subdomain URLs. Idempotent. After import with enableSubdomainAccess=true, you MUST call action=enable after first deploy to activate routing.",
+		Description: "Enable or disable zerops.app subdomain. Idempotent. New services need one enable call after first deploy to activate the L7 route. Re-deploys do NOT deactivate it. Check zerops_discover for current status and URL.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Enable or disable subdomain",
 			IdempotentHint:  true,

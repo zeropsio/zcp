@@ -123,10 +123,13 @@ func parseEnvPairs(vars []string) ([]envPair, error) {
 // crossRefPattern matches Zerops cross-service env var references like ${db_hostname}.
 var crossRefPattern = regexp.MustCompile(`\$\{[a-zA-Z_][a-zA-Z0-9_]*\}`)
 
+// envKeyZeropsSubdomain is the platform-injected env var containing the full subdomain URL.
+const envKeyZeropsSubdomain = "zeropsSubdomain"
+
 // platformInjectedKeys are env vars injected by the Zerops platform (not user-defined).
 // These are annotated with isPlatformInjected: true in discover output.
 var platformInjectedKeys = map[string]bool{
-	"zeropsSubdomain": true,
+	envKeyZeropsSubdomain: true,
 }
 
 // envVarsToMaps converts platform env vars to a slice of maps for JSON output.

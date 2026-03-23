@@ -131,7 +131,7 @@ func ExtractDomainFromEnv(ctx context.Context, client platform.Client, serviceID
 		return ""
 	}
 	for _, env := range envs {
-		if env.Key == "zeropsSubdomain" {
+		if env.Key == envKeyZeropsSubdomain {
 			return ParseSubdomainDomain(env.Content)
 		}
 	}

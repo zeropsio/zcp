@@ -457,7 +457,7 @@ Complete:
 **Invariants**:
 - Dev deployed and verified BEFORE stage
 - Server started via SSH after every dev deploy (container restarts kill server)
-- Subdomain enabled after every deploy (even if set in import)
+- Subdomain enabled once after first deploy of new services (persists across re-deploys)
 - Simple mode: no SSH start needed (real start command + healthCheck auto-starts)
 - Implicit-webserver runtimes: no SSH start needed (auto-starts)
 - Checker runs VerifyAll (HTTP + logs + startup) — not just API status

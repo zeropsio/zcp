@@ -427,7 +427,7 @@ Same as standard mode steps 1-5, but no stage pair. All verification happens on 
    zerops_discover
    ```
 
-   > **Subdomain activation:** `enableSubdomainAccess: true` in import.yml pre-configures routing, but **does NOT activate it**. You MUST call `zerops_subdomain action="enable"` after deploy to activate the L7 balancer route. The enable response contains `subdomainUrls` — this is the **only** source for subdomain URLs. Without the explicit enable call, the subdomain returns 502. The call is idempotent — safe to call even if already active.
+   > **Subdomain activation:** `enableSubdomainAccess: true` in import.yml pre-configures routing, but **does NOT activate it**. You MUST call `zerops_subdomain action="enable"` after the first deploy of each new service to activate the L7 balancer route. Re-deploys do NOT deactivate it. Without the explicit enable call, the subdomain returns 502. The call is idempotent — safe to call even if already active. Use `zerops_discover` to check current status and URL.
 
 2. **Mount and discover:**
    ```
@@ -671,7 +671,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 - For new projects: write manifests only (package.json, go.mod, Gemfile). Do NOT write lock files (go.sum, bun.lock, package-lock.json) — let build commands generate them. For existing projects: preserve committed lock files.
 - NEVER write dependency dirs (node_modules/, vendor/).
 - zerops_deploy blocks until build completes — returns DEPLOYED or BUILD_FAILED with build duration.
-- zerops_subdomain MUST be called after deploy (even if enableSubdomainAccess was in import). The enable response contains `subdomainUrls` — the only source for subdomain URLs.
+- zerops_subdomain MUST be called once after the first deploy of each new service (even if enableSubdomainAccess was in import). Re-deploys do NOT deactivate it. Use `zerops_discover` to check status and get URL.
 - subdomainUrls from enable response are already full URLs — do NOT prepend https://.
 - Internal connections use http://, never https://.
 - Env var cross-references use underscores: ${service_hostname}.
@@ -800,7 +800,7 @@ For managed services (DB, cache, storage): skip step 2 (no subdomain), just step
 
 **Notes:**
 - Check 1: zerops_deploy blocks until build completes and returns the final status directly. No polling needed.
-- Check 2: **ALWAYS** call `zerops_subdomain action="enable"` after deploy — even if `enableSubdomainAccess` was set in import. The enable response contains `subdomainUrls` — this is the **only** source for subdomain URLs. The call is idempotent (returns `already_enabled` if already active).
+- Check 2: Call `zerops_subdomain action="enable"` once after the first deploy of each new service — even if `enableSubdomainAccess` was set in import. The call is idempotent (returns `already_enabled` if already active). Re-deploys do NOT deactivate it. `zerops_discover` shows current status and URL.
 - Check 3: `zerops_verify` performs 6 checks for runtime services (service_running, no_error_logs, startup_detected, no_recent_errors, http_health, http_status) and 1 check for managed services (service_running only). The response includes a `checks` array — each entry has `name`, `status` (pass/fail/skip/info), and optional `detail`. Status values: `healthy` (all pass/skip/info), `degraded` (running but some checks fail), `unhealthy` (service not running). Error log checks (no_error_logs, no_recent_errors) return `info` instead of `fail` — they are advisory because SSH deploy logs are often classified as errors.
 
 **Do NOT deploy to stage until dev passes ALL checks.** Stage is for final validation, not debugging.
