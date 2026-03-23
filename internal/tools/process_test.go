@@ -16,7 +16,7 @@ func TestProcessTool_Status(t *testing.T) {
 	mock := platform.NewMock().
 		WithProcess(&platform.Process{
 			ID:         "proc-1",
-			ActionName: "serviceStackStart",
+			ActionName: "stack.start",
 			Status:     "RUNNING",
 			Created:    "2025-01-01T00:00:00Z",
 		})
@@ -44,7 +44,7 @@ func TestProcessTool_Cancel(t *testing.T) {
 	mock := platform.NewMock().
 		WithProcess(&platform.Process{
 			ID:         "proc-1",
-			ActionName: "serviceStackStart",
+			ActionName: "stack.start",
 			Status:     "RUNNING",
 			Created:    "2025-01-01T00:00:00Z",
 		})

@@ -1,14 +1,19 @@
-// Tests for: port mapping through mappers.
+// Tests for: port mapping and timestamp formatting through mappers.
 
 package platform
 
 import (
+	"regexp"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zerops-go/dto/output"
 	"github.com/zeropsio/zerops-go/types"
 	"github.com/zeropsio/zerops-go/types/enum"
 )
+
+// rfc3339MapperRe matches RFC3339/RFC3339Nano timestamps.
+var rfc3339MapperRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`)
 
 func TestMapEsServiceStack_PortMapping(t *testing.T) {
 	t.Parallel()
@@ -177,5 +182,80 @@ func TestMapFullServiceStack_PortMapping(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMapProcess_TimestampsRFC3339(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 23, 14, 30, 0, 0, time.UTC)
+	started := now.Add(1 * time.Second)
+	finished := now.Add(5 * time.Second)
+
+	p := output.Process{
+		Created:  types.NewDateTime(now),
+		Started:  types.NewDateTimeNull(started),
+		Finished: types.NewDateTimeNull(finished),
+		Status:   enum.ProcessStatusEnumRunning,
+	}
+	result := mapProcess(p)
+
+	if !rfc3339MapperRe.MatchString(result.Created) {
+		t.Errorf("Created not RFC3339: %q", result.Created)
+	}
+	if result.Created != now.Format(time.RFC3339Nano) {
+		t.Errorf("Created = %q, want %q", result.Created, now.Format(time.RFC3339Nano))
+	}
+	if result.Started == nil {
+		t.Fatal("Started is nil")
+	}
+	if !rfc3339MapperRe.MatchString(*result.Started) {
+		t.Errorf("Started not RFC3339: %q", *result.Started)
+	}
+	if result.Finished == nil {
+		t.Fatal("Finished is nil")
+	}
+	if !rfc3339MapperRe.MatchString(*result.Finished) {
+		t.Errorf("Finished not RFC3339: %q", *result.Finished)
+	}
+}
+
+func TestMapEsServiceStack_TimestampsRFC3339(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 23, 14, 30, 0, 0, time.UTC)
+	later := now.Add(10 * time.Second)
+
+	es := output.EsServiceStack{
+		Created:    types.NewDateTime(now),
+		LastUpdate: types.NewDateTime(later),
+	}
+	result := mapEsServiceStack(es)
+
+	if !rfc3339MapperRe.MatchString(result.Created) {
+		t.Errorf("Created not RFC3339: %q", result.Created)
+	}
+	if !rfc3339MapperRe.MatchString(result.LastUpdate) {
+		t.Errorf("LastUpdate not RFC3339: %q", result.LastUpdate)
+	}
+}
+
+func TestMapFullServiceStack_TimestampsRFC3339(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 23, 14, 30, 0, 0, time.UTC)
+	later := now.Add(10 * time.Second)
+
+	ss := output.ServiceStack{
+		Created:    types.NewDateTime(now),
+		LastUpdate: types.NewDateTime(later),
+	}
+	result := mapFullServiceStack(ss)
+
+	if !rfc3339MapperRe.MatchString(result.Created) {
+		t.Errorf("Created not RFC3339: %q", result.Created)
+	}
+	if !rfc3339MapperRe.MatchString(result.LastUpdate) {
+		t.Errorf("LastUpdate not RFC3339: %q", result.LastUpdate)
 	}
 }

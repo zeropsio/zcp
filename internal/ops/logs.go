@@ -56,20 +56,26 @@ func FetchLogs(
 		return nil, err
 	}
 
+	// Fetch limit+1 to detect if more entries exist beyond the requested limit.
 	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
 		ServiceID: svc.ID,
 		Severity:  severity,
 		Since:     sinceTime,
-		Limit:     limit,
+		Limit:     limit + 1,
 		Search:    search,
 	})
 	if err != nil {
 		return nil, err
 	}
 
+	hasMore := len(entries) > limit
+	if hasMore {
+		entries = entries[:limit]
+	}
+
 	result := &LogsResult{
 		Entries: make([]LogEntryOutput, len(entries)),
-		HasMore: len(entries) >= limit,
+		HasMore: hasMore,
 	}
 	for i, e := range entries {
 		result.Entries[i] = LogEntryOutput{

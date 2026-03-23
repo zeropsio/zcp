@@ -89,7 +89,9 @@ func TestFetchLogs_EmptyResult(t *testing.T) {
 func TestFetchLogs_HasMore(t *testing.T) {
 	t.Parallel()
 
-	entries := make([]platform.LogEntry, 100)
+	// HasMore is true when backend has more entries than requested limit.
+	// FetchLogs requests limit+1 internally, so mock must return >limit entries.
+	entries := make([]platform.LogEntry, 101)
 	for i := range entries {
 		entries[i] = platform.LogEntry{Timestamp: "2024-01-01T00:00:00Z", Severity: "info", Message: "log"}
 	}
@@ -110,7 +112,39 @@ func TestFetchLogs_HasMore(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.HasMore {
-		t.Error("expected hasMore=true when entries.len >= limit")
+		t.Error("expected hasMore=true when backend has more entries than limit")
+	}
+	if len(result.Entries) != 100 {
+		t.Errorf("expected 100 entries (trimmed to limit), got %d", len(result.Entries))
+	}
+}
+
+func TestFetchLogs_HasMore_ExactBoundary(t *testing.T) {
+	t.Parallel()
+
+	// Exactly limit entries should NOT report hasMore (no false positive).
+	entries := make([]platform.LogEntry, 100)
+	for i := range entries {
+		entries[i] = platform.LogEntry{Timestamp: "2024-01-01T00:00:00Z", Severity: "info", Message: "log"}
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
+		}).
+		WithLogAccess(&platform.LogAccess{
+			AccessToken: "token",
+			URL:         "https://logs.example.com",
+		})
+
+	fetcher := platform.NewMockLogFetcher().WithEntries(entries)
+
+	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", 100, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.HasMore {
+		t.Error("expected hasMore=false when entries.len == limit (exact boundary)")
 	}
 }
 

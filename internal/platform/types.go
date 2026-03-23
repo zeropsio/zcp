@@ -187,6 +187,7 @@ type ProcessEvent struct {
 	Created         string            `json:"created"`
 	Started         *string           `json:"started,omitempty"`
 	Finished        *string           `json:"finished,omitempty"`
+	FailReason      *string           `json:"failReason,omitempty"`
 	CreatedByUser   *UserRef          `json:"createdByUser,omitempty"`
 	CreatedBySystem bool              `json:"createdBySystem"`
 }

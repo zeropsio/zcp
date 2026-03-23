@@ -27,17 +27,17 @@ type EventsSummary struct {
 
 // TimelineEvent represents a single event in the activity timeline.
 type TimelineEvent struct {
-	Timestamp   string `json:"timestamp"`
-	Type        string `json:"type"`
-	Action      string `json:"action"`
-	Status      string `json:"status"`
-	Service     string `json:"service"`
-	ServiceType string `json:"serviceType,omitempty"`
-	Detail      string `json:"detail,omitempty"`
-	Duration    string `json:"duration,omitempty"`
-	User        string `json:"user,omitempty"`
-	ProcessID   string `json:"processId,omitempty"`
-	Hint        string `json:"hint,omitempty"`
+	Timestamp  string `json:"timestamp"`
+	Type       string `json:"type"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Service    string `json:"service"`
+	Detail     string `json:"detail,omitempty"`
+	Duration   string `json:"duration,omitempty"`
+	User       string `json:"user,omitempty"`
+	ProcessID  string `json:"processId,omitempty"`
+	FailReason string `json:"failReason,omitempty"`
+	Hint       string `json:"hint,omitempty"`
 }
 
 // Event type constants.
@@ -47,25 +47,43 @@ const (
 	eventTypeBuild   = "build"
 )
 
-// actionNameMap normalizes Zerops action names to human-readable forms.
+// actionNameMap normalizes Zerops API action names to human-readable forms.
+// API returns "stack.*" format (verified 2026-03-23 against live Zerops API).
 var actionNameMap = map[string]string{
-	"serviceStackStart":                  "start",
-	"serviceStackStop":                   "stop",
-	"serviceStackRestart":                "restart",
-	"serviceStackAutoscaling":            "scale",
-	"serviceStackImport":                 "import",
-	"serviceStackDelete":                 "delete",
-	"serviceStackUserDataFile":           "env-update",
-	"serviceStackEnableSubdomainAccess":  "subdomain-enable",
-	"serviceStackDisableSubdomainAccess": "subdomain-disable",
+	"stack.start":                  "start",
+	"stack.stop":                   "stop",
+	"stack.restart":                "restart",
+	"stack.autoscaling":            "scale",
+	"stack.import":                 "import",
+	"stack.delete":                 "delete",
+	"stack.build":                  "build",
+	"stack.userDataFile":           "env-update",
+	"stack.enableSubdomainAccess":  "subdomain-enable",
+	"stack.disableSubdomainAccess": "subdomain-disable",
 }
 
 // processHintMap maps process statuses to interpretation hints.
 var processHintMap = map[string]string{
 	statusFinished: "COMPLETE: Process finished successfully.",
-	"RUNNING":      "IN_PROGRESS: Process still running.",
 	statusFailed:   "FAILED: Process failed.",
+	"RUNNING":      "IN_PROGRESS: Process still running.",
 	"PENDING":      "IN_PROGRESS: Process queued.",
+}
+
+// internalActionPrefixes are action name prefixes for internal platform operations
+// that should be excluded from user-facing timelines.
+var internalActionPrefixes = []string{
+	"zL7Master.",
+}
+
+// isInternalAction returns true for platform-internal actions not relevant to users.
+func isInternalAction(actionName string) bool {
+	for _, prefix := range internalActionPrefixes {
+		if strings.HasPrefix(actionName, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // appVersionHintMap maps app version statuses to interpretation hints.
@@ -145,8 +163,12 @@ func Events(
 
 	var events []TimelineEvent
 
-	// Map process events.
+	// Map process events (skip internal platform actions).
 	for _, p := range processes {
+		if isInternalAction(p.ActionName) {
+			continue
+		}
+
 		svcName := ""
 		if len(p.ServiceStacks) > 0 {
 			svcName = svcMap[p.ServiceStacks[0].ID]
@@ -161,22 +183,31 @@ func Events(
 			user = p.CreatedByUser.FullName
 		}
 
+		failReason := ""
+		if p.FailReason != nil {
+			failReason = *p.FailReason
+		}
+
 		events = append(events, TimelineEvent{
-			Timestamp: p.Created,
-			Type:      eventTypeProcess,
-			Action:    action,
-			Status:    p.Status,
-			Service:   svcName,
-			Duration:  calcDuration(p.Started, p.Finished),
-			User:      user,
-			ProcessID: p.ID,
-			Hint:      statusHint(p.Status, processHintMap),
+			Timestamp:  p.Created,
+			Type:       eventTypeProcess,
+			Action:     action,
+			Status:     p.Status,
+			Service:    svcName,
+			Duration:   calcDuration(p.Started, p.Finished),
+			User:       user,
+			ProcessID:  p.ID,
+			FailReason: failReason,
+			Hint:       statusHint(p.Status, processHintMap),
 		})
 	}
 
 	// Map app version events.
 	for _, av := range appVersions {
 		svcName := svcMap[av.ServiceStackID]
+		if svcName == "" {
+			svcName = av.ServiceStackID
+		}
 		eventType := eventTypeDeploy
 		if av.Build != nil && av.Build.PipelineStart != nil {
 			eventType = eventTypeBuild
@@ -245,15 +276,16 @@ func mapActionName(name string) string {
 }
 
 // calcDuration calculates human-readable duration between two RFC3339 timestamps.
+// Accepts both RFC3339 and RFC3339Nano formats.
 func calcDuration(started, finished *string) string {
 	if started == nil || finished == nil {
 		return ""
 	}
-	s, err := time.Parse(time.RFC3339, *started)
+	s, err := parseTimestamp(*started)
 	if err != nil {
 		return ""
 	}
-	f, err := time.Parse(time.RFC3339, *finished)
+	f, err := parseTimestamp(*finished)
 	if err != nil {
 		return ""
 	}
@@ -262,6 +294,15 @@ func calcDuration(started, finished *string) string {
 		return ""
 	}
 	return formatDuration(d)
+}
+
+// parseTimestamp parses a timestamp in RFC3339 or RFC3339Nano format.
+func parseTimestamp(s string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		t, err = time.Parse(time.RFC3339, s)
+	}
+	return t, err
 }
 
 // formatDuration returns a human-readable duration string.

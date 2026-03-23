@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"time"
+
 	"github.com/zeropsio/zerops-go/dto/input/body"
 	"github.com/zeropsio/zerops-go/dto/output"
 	"github.com/zeropsio/zerops-go/types"
@@ -31,16 +33,16 @@ func mapProcess(p output.Process) Process {
 		})
 	}
 
-	created := p.Created.String()
+	created := p.Created.Format(time.RFC3339Nano)
 
 	var started *string
 	if s, ok := p.Started.Get(); ok {
-		v := s.String()
+		v := s.Format(time.RFC3339Nano)
 		started = &v
 	}
 	var finished *string
 	if f, ok := p.Finished.Get(); ok {
-		v := f.String()
+		v := f.Format(time.RFC3339Nano)
 		finished = &v
 	}
 
@@ -111,8 +113,8 @@ func mapEsServiceStack(s output.EsServiceStack) ServiceStack {
 		SubdomainAccess:   s.SubdomainAccess.Native(),
 		Ports:             mapServicePorts(s.Ports),
 		CustomAutoscaling: autoscaling,
-		Created:           s.Created.String(),
-		LastUpdate:        s.LastUpdate.String(),
+		Created:           s.Created.Format(time.RFC3339Nano),
+		LastUpdate:        s.LastUpdate.Format(time.RFC3339Nano),
 	}
 }
 
@@ -141,8 +143,8 @@ func mapFullServiceStack(s output.ServiceStack) ServiceStack {
 		Ports:              mapServicePorts(s.Ports),
 		CustomAutoscaling:  customAutoscaling,
 		CurrentAutoscaling: currentAutoscaling,
-		Created:            s.Created.String(),
-		LastUpdate:         s.LastUpdate.String(),
+		Created:            s.Created.Format(time.RFC3339Nano),
+		LastUpdate:         s.LastUpdate.Format(time.RFC3339Nano),
 	}
 }
 
