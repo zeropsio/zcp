@@ -61,6 +61,15 @@ func handleDeployStart(ctx context.Context, engine *workflow.Engine, client plat
 		return jsonResult(buildStrategySelectionResponse(needStrategy)), nil, nil
 	}
 
+	// Manual strategy: return deploy commands directly, no session.
+	if allManualStrategy(runtimeMetas) {
+		targets, mode, _ := workflow.BuildDeployTargets(runtimeMetas)
+		if client != nil {
+			enrichTargetRuntimeTypes(ctx, client, projectID, targets)
+		}
+		return jsonResult(buildManualDeployResponse(targets, mode)), nil, nil
+	}
+
 	targets, mode, strategy := workflow.BuildDeployTargets(runtimeMetas)
 
 	// Enrich targets with runtime types from live API (best-effort).
@@ -163,4 +172,76 @@ func handleDeployStatus(_ context.Context, engine *workflow.Engine) (*mcp.CallTo
 			"")), nil, nil
 	}
 	return jsonResult(resp), nil, nil
+}
+
+// --- Manual strategy support ---
+
+// allManualStrategy returns true if all runtime metas have manual deploy strategy.
+func allManualStrategy(metas []*workflow.ServiceMeta) bool {
+	for _, m := range metas {
+		if m.DeployStrategy != workflow.StrategyManual {
+			return false
+		}
+	}
+	return true
+}
+
+// manualDeployResponse is returned when deploy workflow is called with manual strategy.
+type manualDeployResponse struct {
+	Action         string              `json:"action"`
+	Message        string              `json:"message"`
+	Services       []manualServiceInfo `json:"services"`
+	SwitchStrategy string              `json:"switchStrategy"`
+}
+
+type manualServiceInfo struct {
+	Hostname   string `json:"hostname"`
+	Mode       string `json:"mode"`
+	Command    string `json:"command"`
+	PostDeploy string `json:"postDeploy,omitempty"`
+}
+
+// buildManualDeployResponse builds the redirect response for manual strategy.
+func buildManualDeployResponse(targets []workflow.DeployTarget, mode string) manualDeployResponse {
+	resp := manualDeployResponse{
+		Action:         "manual_deploy",
+		Message:        "Deploy strategy is manual. Deploy directly when ready.",
+		SwitchStrategy: `zerops_workflow action="strategy" strategies={...}`,
+	}
+
+	devHostname := ""
+	for _, t := range targets {
+		if t.Role == workflow.DeployRoleDev {
+			devHostname = t.Hostname
+			break
+		}
+	}
+
+	for _, t := range targets {
+		info := manualServiceInfo{
+			Hostname: t.Hostname,
+			Mode:     t.Role,
+		}
+		switch t.Role {
+		case workflow.DeployRoleDev:
+			info.Command = fmt.Sprintf(`zerops_deploy targetService="%s"`, t.Hostname)
+			info.PostDeploy = "New container — start server via SSH. Subdomain persists."
+		case workflow.DeployRoleStage:
+			src := devHostname
+			if src == "" {
+				src = t.Hostname
+			}
+			info.Command = fmt.Sprintf(`zerops_deploy sourceService="%s" targetService="%s"`, src, t.Hostname)
+			info.PostDeploy = "Server auto-starts. Subdomain persists."
+		default: // simple
+			info.Command = fmt.Sprintf(`zerops_deploy targetService="%s"`, t.Hostname)
+			if mode == workflow.PlanModeSimple {
+				info.PostDeploy = "Server auto-starts. Subdomain persists."
+			} else {
+				info.PostDeploy = "Subdomain persists."
+			}
+		}
+		resp.Services = append(resp.Services, info)
+	}
+	return resp
 }

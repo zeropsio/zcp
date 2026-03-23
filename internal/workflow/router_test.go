@@ -75,7 +75,7 @@ func TestRoute_ConformantProject(t *testing.T) {
 			wantTop: "deploy",
 		},
 		{
-			name: "manual strategy",
+			name: "manual strategy — no deploy offering",
 			input: RouterInput{
 				ProjectState: StateConformant,
 				ServiceMetas: []*ServiceMeta{{
@@ -83,7 +83,7 @@ func TestRoute_ConformantProject(t *testing.T) {
 				}},
 				LiveServices: []string{"appdev"},
 			},
-			wantTop: "deploy",
+			wantTop: "bootstrap", // Manual has no deploy offering; bootstrap is the first real workflow after utilities
 		},
 		{
 			name:    "no metas",

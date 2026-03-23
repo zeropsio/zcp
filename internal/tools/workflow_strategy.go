@@ -132,10 +132,10 @@ func buildStrategySelectionResponse(metas []*workflow.ServiceMeta) strategySelec
 	sb.WriteString("- **Trade-off**: Requires initial pipeline setup (I can help with that).\n\n")
 
 	sb.WriteString("### manual\n")
-	sb.WriteString("No automated deployment. You manage the process yourself.\n")
-	sb.WriteString("- **How it works**: Zerops runs your service, but you handle deploys with your own tools.\n")
-	sb.WriteString("- **Good for**: Existing CI/CD pipelines, custom deployment workflows.\n")
-	sb.WriteString("- **Trade-off**: ZCP won't manage or guide your deploys.\n\n")
+	sb.WriteString("You control when and what to deploy. No guided workflow.\n")
+	sb.WriteString("- **How it works**: Edit code, call zerops_deploy when ready.\n")
+	sb.WriteString("- **Good for**: Experienced users, external CI/CD, custom workflows.\n")
+	sb.WriteString("- **Trade-off**: No guided prepare/verify cycle — you manage the deploy process.\n\n")
 
 	// Build example command.
 	parts := make([]string, 0, len(hostnames))

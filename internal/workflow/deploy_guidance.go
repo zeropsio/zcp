@@ -206,12 +206,10 @@ func writeStandardWorkflow(sb *strings.Builder, targets []DeployTarget) {
 
 	fmt.Fprintf(sb, "1. Deploy to dev: `zerops_deploy targetService=\"%s\"`\n", dev)
 	sb.WriteString("2. Start server on dev manually via SSH (dev uses zsc noop)\n")
-	fmt.Fprintf(sb, "3. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", dev)
-	fmt.Fprintf(sb, "4. Verify dev: `zerops_verify serviceHostname=\"%s\"`\n", dev)
-	fmt.Fprintf(sb, "5. Deploy to stage: `zerops_deploy sourceService=\"%s\" targetService=\"%s\"`\n", dev, stage)
+	fmt.Fprintf(sb, "3. Verify dev: `zerops_verify serviceHostname=\"%s\"`\n", dev)
+	fmt.Fprintf(sb, "4. Deploy to stage: `zerops_deploy sourceService=\"%s\" targetService=\"%s\"`\n", dev, stage)
 	sb.WriteString("   Stage auto-starts (real start command + healthCheck)\n")
-	fmt.Fprintf(sb, "6. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", stage)
-	fmt.Fprintf(sb, "7. Verify stage: `zerops_verify serviceHostname=\"%s\"`\n", stage)
+	fmt.Fprintf(sb, "5. Verify stage: `zerops_verify serviceHostname=\"%s\"`\n", stage)
 }
 
 func writeDevWorkflow(sb *strings.Builder, targets []DeployTarget) {
@@ -219,16 +217,14 @@ func writeDevWorkflow(sb *strings.Builder, targets []DeployTarget) {
 
 	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"`\n", dev)
 	sb.WriteString("2. Start server manually via SSH (dev uses zsc noop)\n")
-	fmt.Fprintf(sb, "3. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", dev)
-	fmt.Fprintf(sb, "4. Verify: `zerops_verify serviceHostname=\"%s\"`\n", dev)
+	fmt.Fprintf(sb, "3. Verify: `zerops_verify serviceHostname=\"%s\"`\n", dev)
 }
 
 func writeSimpleWorkflow(sb *strings.Builder, targets []DeployTarget) {
 	hostname := findHostname(targets, DeployRoleSimple)
 
 	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"` — server auto-starts\n", hostname)
-	fmt.Fprintf(sb, "2. Enable subdomain: `zerops_subdomain action=\"enable\" serviceHostname=\"%s\"`\n", hostname)
-	fmt.Fprintf(sb, "3. Verify: `zerops_verify serviceHostname=\"%s\"`\n", hostname)
+	fmt.Fprintf(sb, "2. Verify: `zerops_verify serviceHostname=\"%s\"`\n", hostname)
 }
 
 func findHostname(targets []DeployTarget, role string) string {

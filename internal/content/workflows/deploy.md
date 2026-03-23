@@ -190,7 +190,21 @@ After connecting the repository via Zerops dashboard:
 <section name="deploy-manual">
 ### Manual Deploy Strategy
 
-For services managed via manual zerops_deploy calls without dev+stage pattern.
-Direct deploy: zerops_deploy targetService="{hostname}"
-Suitable for services where the user manages their own deployment workflow.
+You control when and what to deploy. ZCP does not start a guided workflow for manual strategy.
+
+**Deploy directly:**
+- Dev: `zerops_deploy targetService="{devHostname}"`
+- Stage from dev: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`
+- Simple: `zerops_deploy targetService="{hostname}"`
+
+**After deploy:**
+- Verify health: `zerops_verify serviceHostname="..."`
+- Subdomain persists across re-deploys. Check `zerops_discover` for current status and URL.
+
+**Dev services (zsc noop):** Server does not auto-start after deploy. Start manually via SSH.
+**Stage/simple services:** Server auto-starts with healthCheck.
+
+**Code-only changes (no zerops.yml change):** Edit on mount, restart server via SSH. No redeploy needed.
+
+**Switch to guided deploys:** `zerops_workflow action="strategy" strategies={"hostname":"push-dev"}`
 </section>

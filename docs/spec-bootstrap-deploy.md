@@ -567,15 +567,16 @@ When `action="start" workflow="deploy"` is called, `handleDeployStart()`:
 2. Filters to runtime services (those with Mode or StageHostname)
 3. Checks each runtime meta for `DeployStrategy`
 4. **If any service has empty strategy** → returns conversational strategy selection guidance (NOT an error)
-5. **If all strategies set** → creates deploy session and proceeds
+5. **If all strategies are manual** → returns manual deploy redirect with per-service commands (NOT an error, no session created)
+6. **If all strategies set (non-manual)** → creates deploy session and proceeds
 
-The strategy selection response explains all 3 options equally:
+Each strategy maps to a different interaction model:
 
-| Strategy | How it works | Good for | Trade-off |
-|----------|-------------|----------|-----------|
-| `push-dev` | SSH push from dev container, you trigger each deploy | Prototyping, quick iterations | Manual process |
-| `ci-cd` | Automatic deploys on git push via webhook | Team dev, production workflows | Requires pipeline setup |
-| `manual` | You manage deployments yourself | Existing CI/CD, custom tooling | ZCP won't guide deploys |
+| Strategy | How it works | Good for | Interaction model |
+|----------|-------------|----------|-------------------|
+| `push-dev` | SSH push from dev container, you trigger each deploy | Prototyping, quick iterations | Deploy workflow (3-step session) |
+| `ci-cd` | Automatic deploys on git push via webhook | Team dev, production workflows | CI/CD workflow (3-step session) |
+| `manual` | You control when to deploy, call zerops_deploy directly | Experienced users, external CI/CD | Direct tool calls (no session) |
 
 ### 4.3 CI/CD Strategy Gate
 
@@ -608,7 +609,8 @@ See `docs/spec-guidance-philosophy.md` for the full guidance delivery specificat
 | 2 | Metas complete | `IsComplete()` — `BootstrappedAt != ""` | Error: "bootstrap didn't complete" |
 | 3 | Runtime services | `Mode != "" \|\| StageHostname != ""` | Error: "nothing to deploy" |
 | 4 | Strategy set | `DeployStrategy != ""` | Soft gate: returns strategy selection guidance |
-| 5 | Strategy consistent | All targets same strategy | Error: "mixed strategies not supported" |
+| 5 | All manual | `allManualStrategy()` | Soft gate: returns manual redirect with deploy commands (no session) |
+| 6 | Strategy consistent | All targets same strategy | Error: "mixed strategies not supported" |
 
 ### 4.6 Step Specifications
 

@@ -110,7 +110,8 @@ func routeFresh(sessions []SessionEntry) []FlowOffering {
 
 func routeConformant(metas []*ServiceMeta) []FlowOffering {
 	offerings := strategyOfferings(metas)
-	if len(offerings) == 0 {
+	if len(offerings) == 0 && !hasStrategy(metas) {
+		// No strategy set at all — offer deploy as default.
 		offerings = []FlowOffering{{
 			Workflow: "deploy",
 			Priority: 1,
@@ -141,7 +142,7 @@ func routeNonConformant(metas []*ServiceMeta) []FlowOffering {
 		}
 	}
 	offerings := strategyOfferings(metas)
-	if len(offerings) == 0 {
+	if len(offerings) == 0 && !hasStrategy(metas) {
 		offerings = []FlowOffering{{
 			Workflow: "deploy",
 			Priority: 1,
@@ -163,6 +164,16 @@ func routeUnknown() []FlowOffering {
 		{Workflow: "debug", Priority: 3, Hint: `zerops_workflow action="start" workflow="debug"`},
 		{Workflow: "configure", Priority: 3, Hint: `zerops_workflow action="start" workflow="configure"`},
 	}
+}
+
+// hasStrategy returns true if any meta has a deploy strategy set.
+func hasStrategy(metas []*ServiceMeta) bool {
+	for _, m := range metas {
+		if m.DeployStrategy != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // strategyOfferings creates offerings based on the dominant deploy strategy across metas.
@@ -197,9 +208,7 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 			Workflow: "deploy", Priority: 1, Hint: `zerops_workflow action="start" workflow="deploy"`,
 		}}
 	case StrategyManual:
-		return []FlowOffering{{
-			Workflow: "deploy", Priority: 1, Hint: `zerops_workflow action="start" workflow="deploy"`,
-		}}
+		return nil // Manual strategy: no deploy/cicd workflow. User deploys directly via zerops_deploy.
 	default:
 		return nil
 	}

@@ -18,21 +18,18 @@ const containerEnvironment = `
 
 You are the orchestrator. This container is the control plane — it does NOT serve user traffic, run application code, or host databases. Your job is to create, configure, deploy, and manage OTHER services in the project. All user-facing work happens on those services, never on this container.
 
-### Code Access
-Runtime services are SSHFS-mounted at /var/www/{hostname}/ — edit source files there, changes appear instantly on the target service container. Mount is read/write. IMPORTANT: /var/www/ (no hostname) is THIS container's own filesystem — writing there has NO effect on any service.
+### Code Access — Two Mechanisms
 
-### Commands on Services
-Edit source files (code, config, yml) on the SSHFS mount. Run heavy commands (npm install, go mod download, pip install, cargo build, composer install) via SSH on the target container: ssh {hostname} "cd /var/www && {command}". Running installs over the SSHFS network mount is orders of magnitude slower.
+**SSHFS mount** (/var/www/{hostname}/): For reading and writing files only. Changes appear instantly on the service container. Use Read/Write/Edit tools normally.
+IMPORTANT: /var/www/ (no hostname) is THIS container's own filesystem — not a service.
 
-### Persistence Model
-File edits via SSH or SSHFS mount are TEMPORARY:
-- Edits SURVIVE: container restarts, reloads, stop/start, vertical scaling
-- Edits DESTROYED: next deploy (creates new container with only deployFiles content)
-After completing code changes, you MUST deploy to persist them permanently.
-Start a deploy workflow: zerops_workflow action="start" workflow="deploy"
+**SSH** (ssh {hostname} "command"): For ALL commands and processes on services. Package installs, builds, git operations, server management, debugging — everything that isn't file read/write goes through SSH.
+Example: ssh appdev "cd /var/www && npm install"
 
-### Deploy = Rebuild
-Editing files on mount does NOT trigger deploy. Deploy runs the full build pipeline (buildCommands → deployFiles → start) and creates a new container. Deploy when: zerops.yml changes, need clean rebuild, or promote dev → stage. Code-only changes on dev: just restart the server via SSH.
+Rule: If it's a file → mount. If it's a command → SSH. Running commands over the SSHFS network mount is orders of magnitude slower and may fail.
+
+### Persistence
+File edits on mount survive restarts but not deploys (deploy = new container, only deployFiles content persists). Deploy when: zerops.yml changes, clean rebuild needed, or promote dev → stage. Code-only changes on dev: just restart the server via SSH — no redeploy needed.
 
 zerops_discover always returns the CURRENT state of all services. Call it whenever you need to refresh your understanding.`
 
@@ -204,6 +201,13 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID,
 	var metas []*workflow.ServiceMeta
 	if stateDir != "" {
 		metas, _ = workflow.ListServiceMetas(stateDir) // best-effort
+	}
+
+	// If bootstrapped metas exist, generate rich per-service orientation.
+	if orientation := buildPostBootstrapOrientation(metas, services, selfHostname); orientation != "" {
+		b.WriteString("\n")
+		b.WriteString(orientation)
+		return b.String()
 	}
 
 	var activeSessions []workflow.SessionEntry

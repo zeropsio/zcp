@@ -212,6 +212,157 @@ func TestBuildWorkflowHint_NoSessions_ReturnsEmpty(t *testing.T) {
 	}
 }
 
+// --- containerEnvironment principle tests ---
+
+func TestContainerEnvironment_SSHPrinciple(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		contains string
+	}{
+		{"ssh_all_commands", "ALL commands and processes"},
+		{"mount_files_only", "reading and writing files"},
+		{"rule_principle", "file → mount"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if !strings.Contains(containerEnvironment, tt.contains) {
+				t.Errorf("containerEnvironment should contain %q", tt.contains)
+			}
+		})
+	}
+}
+
+func TestContainerEnvironment_NoHardcodedDeployWorkflow(t *testing.T) {
+	t.Parallel()
+	if strings.Contains(containerEnvironment, `action="start" workflow="deploy"`) {
+		t.Error("containerEnvironment should not hardcode deploy workflow command — strategy-specific deploy instructions belong in post-bootstrap orientation")
+	}
+}
+
+// --- Post-bootstrap orientation tests ---
+
+func TestOrientation_DevMode_ManualStrategy(t *testing.T) {
+	t.Parallel()
+	metas := []*workflow.ServiceMeta{{
+		Hostname:       "appdev",
+		Mode:           "dev",
+		DeployStrategy: workflow.StrategyManual,
+		BootstrappedAt: "2026-03-04",
+	}}
+	services := []platform.ServiceStack{{
+		ID: "s1", Name: "appdev", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+	}}
+
+	result := buildPostBootstrapOrientation(metas, services, "zcpx")
+	for _, want := range []string{
+		"appdev",
+		"nodejs@22",
+		"/var/www/appdev/",
+		"ssh appdev",
+		"zerops_deploy",
+		"manual",
+		"zerops_knowledge",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("orientation missing %q.\nGot:\n%s", want, result)
+		}
+	}
+	// Must NOT contain deploy workflow hint.
+	if strings.Contains(result, `workflow="deploy"`) {
+		t.Errorf("manual strategy should not suggest deploy workflow.\nGot:\n%s", result)
+	}
+}
+
+func TestOrientation_StandardMode_DevAndStage(t *testing.T) {
+	t.Parallel()
+	metas := []*workflow.ServiceMeta{{
+		Hostname:       "appdev",
+		Mode:           "standard",
+		StageHostname:  "appstage",
+		DeployStrategy: workflow.StrategyPushDev,
+		BootstrappedAt: "2026-03-04",
+	}}
+	services := []platform.ServiceStack{
+		{ID: "s1", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+		{ID: "s2", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+	}
+
+	result := buildPostBootstrapOrientation(metas, services, "zcpx")
+	for _, want := range []string{"appdev", "appstage", "go@1", "ssh appdev", "auto-starts"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("orientation missing %q.\nGot:\n%s", want, result)
+		}
+	}
+	// Push-dev should mention deploy workflow.
+	if !strings.Contains(result, `workflow="deploy"`) {
+		t.Errorf("push-dev strategy should mention deploy workflow.\nGot:\n%s", result)
+	}
+}
+
+func TestOrientation_SimpleMode(t *testing.T) {
+	t.Parallel()
+	metas := []*workflow.ServiceMeta{{
+		Hostname:       "web",
+		Mode:           "simple",
+		DeployStrategy: workflow.StrategyPushDev,
+		BootstrappedAt: "2026-03-04",
+	}}
+	services := []platform.ServiceStack{
+		{ID: "s1", Name: "web", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4"}},
+	}
+
+	result := buildPostBootstrapOrientation(metas, services, "zcpx")
+	if !strings.Contains(result, "auto-starts") {
+		t.Errorf("simple mode should mention auto-start.\nGot:\n%s", result)
+	}
+	// Simple mode should NOT mention SSH server management.
+	if strings.Contains(result, "zsc noop") {
+		t.Errorf("simple mode should not mention zsc noop.\nGot:\n%s", result)
+	}
+}
+
+func TestOrientation_ManagedOnly(t *testing.T) {
+	t.Parallel()
+	// No metas (managed-only project — metas not written for managed services).
+	result := buildPostBootstrapOrientation(nil, nil, "zcpx")
+	if result != "" {
+		t.Errorf("managed-only should return empty orientation, got:\n%s", result)
+	}
+}
+
+func TestOrientation_NoMetas(t *testing.T) {
+	t.Parallel()
+	services := []platform.ServiceStack{
+		{ID: "s1", Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+	}
+	result := buildPostBootstrapOrientation(nil, services, "zcpx")
+	if result != "" {
+		t.Errorf("no metas should return empty orientation, got:\n%s", result)
+	}
+}
+
+func TestOrientation_PushDevStrategy(t *testing.T) {
+	t.Parallel()
+	metas := []*workflow.ServiceMeta{{
+		Hostname:       "appdev",
+		Mode:           "dev",
+		DeployStrategy: workflow.StrategyPushDev,
+		BootstrappedAt: "2026-03-04",
+	}}
+	services := []platform.ServiceStack{{
+		ID: "s1", Name: "appdev", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"},
+	}}
+
+	result := buildPostBootstrapOrientation(metas, services, "zcpx")
+	if !strings.Contains(result, `workflow="deploy"`) {
+		t.Errorf("push-dev should suggest deploy workflow.\nGot:\n%s", result)
+	}
+}
+
 func TestBuildProjectSummary_NilClient(t *testing.T) {
 	t.Parallel()
 	summary := buildProjectSummary(context.Background(), nil, "proj-1", t.TempDir(), "")

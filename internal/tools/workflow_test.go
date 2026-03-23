@@ -175,6 +175,47 @@ func TestWorkflowTool_Action_Start_Deploy_Stateful(t *testing.T) {
 	}
 }
 
+func TestWorkflowTool_Action_Start_Deploy_ManualStrategy_ReturnsRedirect(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
+
+	meta := &workflow.ServiceMeta{
+		Hostname:       "appdev",
+		Mode:           "dev",
+		DeployStrategy: workflow.StrategyManual,
+		BootstrappedAt: "2026-03-04T12:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, dir, "")
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "deploy",
+		"intent":   "Deploy app",
+	})
+
+	if result.IsError {
+		t.Fatalf("manual strategy should not return error: %s", getTextContent(t, result))
+	}
+	// Manual strategy must NOT create a session.
+	if engine.HasActiveSession() {
+		t.Error("manual strategy should not create a deploy session")
+	}
+	// Response must contain manual_deploy action and zerops_deploy command.
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "manual_deploy") {
+		t.Errorf("response should contain manual_deploy action, got: %s", text)
+	}
+	if !strings.Contains(text, "zerops_deploy") {
+		t.Errorf("response should contain zerops_deploy command, got: %s", text)
+	}
+}
+
 func TestWorkflowTool_Action_Start_Deploy_NoMetas(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
