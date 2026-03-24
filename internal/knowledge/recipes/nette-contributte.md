@@ -1,13 +1,15 @@
 # Nette with Contributte on Zerops
-Nette framework with Contributte packages for Redis sessions, Monolog syslog logging, and Doctrine migrations.
+
+Nette framework using Contributte packages — Redis sessions, Monolog syslog logging, Doctrine migrations. See the base `nette` recipe for stack wiring and common gotchas. This recipe documents the Contributte-specific differences.
 
 ## Keywords
-nette, contributte, php, doctrine, apache, monolog, composer
+nette, contributte, monolog, doctrine, latte, tracy
 
 ## TL;DR
-Nette + Contributte with Redis sessions and Monolog SyslogHandler -- Doctrine migrations via `zsc execOnce`.
+Nette + Contributte on PHP-Apache. Key differences from base Nette: flat DB env vars (not DSN), `SyslogHandler` for Zerops log collection, `addDynamicParameters` required in Bootstrap.php, fixtures init command for dev.
 
 ## zerops.yml
+
 ```yaml
 zerops:
   - setup: app
@@ -30,14 +32,14 @@ zerops:
       os: alpine
       documentRoot: www/
       envVariables:
-        NETTE_DEBUG: "0"
-        NETTE_ENV: production
+        NETTE_DEBUG: "1"
+        NETTE_ENV: development
         DATABASE_HOSTNAME: ${db_hostname}
+        DATABASE_PORT: ${db_port}
         DATABASE_USER: ${db_user}
         DATABASE_PASSWORD: ${db_password}
         DATABASE_NAME: ${db_dbName}
-        DATABASE_PORT: ${db_port}
-        REDIS_URI: tcp://${redis_hostname}:${redis_port}
+        REDIS_URI: tcp://${cache_hostname}:${cache_port}
       initCommands:
         - zsc execOnce ${appVersionId}-migration -- php /var/www/bin/console migrations:migrate --no-interaction --allow-no-migration
         - zsc execOnce ${appVersionId}-fixtures -- php /var/www/bin/console doctrine:fixtures:load --no-interaction
@@ -48,7 +50,48 @@ zerops:
           path: /
 ```
 
+Stage service zerops.yml — use `--no-dev` and remove fixtures initCommand:
+```yaml
+zerops:
+  - setup: appstage
+    build:
+      base: php@8.3
+      os: alpine
+      buildCommands:
+        - composer install --optimize-autoloader --no-dev
+      deployFiles: ./
+      cache:
+        - vendor
+        - composer.lock
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 80
+          path: /
+    run:
+      base: php-apache@8.3
+      os: alpine
+      documentRoot: www/
+      envVariables:
+        NETTE_DEBUG: "0"
+        NETTE_ENV: production
+        DATABASE_HOSTNAME: ${db_hostname}
+        DATABASE_PORT: ${db_port}
+        DATABASE_USER: ${db_user}
+        DATABASE_PASSWORD: ${db_password}
+        DATABASE_NAME: ${db_dbName}
+        REDIS_URI: tcp://${cache_hostname}:${cache_port}
+      initCommands:
+        - zsc execOnce ${appVersionId}-migration -- php /var/www/bin/console migrations:migrate --no-interaction --allow-no-migration
+        - chown -R zerops:zerops /var/www/var/tmp/
+      healthCheck:
+        httpGet:
+          port: 80
+          path: /
+```
+
 ## import.yml
+
 ```yaml
 #yamlPreprocessor=on
 services:
@@ -63,50 +106,42 @@ services:
     mode: NON_HA
     priority: 10
 
-  - hostname: redis
+  - hostname: cache
     type: valkey@7.2
     mode: NON_HA
     priority: 10
 ```
 
-## Configuration
-- **DATABASE_HOSTNAME / DATABASE_USER / DATABASE_PASSWORD / DATABASE_NAME / DATABASE_PORT** -- explicit cross-service refs for granular DB config
-- **REDIS_URI** -- uses `tcp://${redis_hostname}:${redis_port}` for Redis connection
-- **ADMIN_PASSWORD** -- generated via `<@generateRandomString(<24>)>` in import.yml envSecrets
-- **NETTE_DEBUG** -- set in zerops.yml `run.envVariables` (defaults to `0` for production)
-- **NETTE_ENV** -- set in zerops.yml `run.envVariables` (defaults to `production`)
-- **documentRoot: www/** -- Nette-specific web root
-- **No --no-dev flag** on composer install -- dev dependencies are needed for fixtures in dev mode
-- Nette config for Redis sessions:
-  ```neon
-  # env/base.neon
-  contributte.redis:
-      uri: %env.REDIS_URI%
-  ```
-- Nette config for syslog logging:
-  ```neon
-  # ext/contributte.neon
-  monolog:
-      handlers:
-          syslog:
-              class: Monolog\Handler\SyslogHandler
-  ```
-- Bootstrap.php must inject env vars:
-  ```php
-  $configurator->addDynamicParameters(['env' => getenv()]);
-  ```
+## Contributte-Specific Configuration
 
-## Common Failures
-- **Permission denied on var/tmp/** -- `chown -R zerops:zerops /var/www/var/tmp/` in initCommands fixes this
-- **Redis connection error** -- verify `REDIS_URI` format is `tcp://hostname:port`
-- **Fixtures fail** -- `zsc execOnce ${appVersionId}-fixtures` runs once per deploy; remove for production
-- **Logs not appearing in Zerops** -- ensure `contributte/monolog` with `SyslogHandler` is configured
+Nette DI must be told to inject env vars. In `Bootstrap.php`:
+```php
+$configurator->addDynamicParameters(['env' => getenv()]);
+```
+Without this, `%env.DATABASE_HOSTNAME%` references in `.neon` files are undefined.
+
+Redis session config via `contributte/redis`:
+```neon
+# config/ext/contributte.redis.neon
+contributte.redis:
+    uri: %env.REDIS_URI%
+```
+
+Syslog logging via `contributte/monolog` — required for logs to appear in Zerops log viewer:
+```neon
+# config/ext/contributte.monolog.neon
+monolog:
+    handlers:
+        syslog:
+            class: Monolog\Handler\SyslogHandler
+```
 
 ## Gotchas
-- **contributte/redis** required for Redis session storage
-- **contributte/monolog** with `SyslogHandler` required for Zerops log integration
-- **Dynamic env parameters** -- `$configurator->addDynamicParameters(['env' => getenv()])` in Bootstrap.php injects all env vars into Nette DI
-- **Admin login**: admin@admin.cz, password from ADMIN_PASSWORD env var
-- **Dev mode loads fixtures** -- remove fixtures initCommand and add `--no-dev` to composer install for production
-- **zsc execOnce ${appVersionId}-migration** and `${appVersionId}-fixtures` run once per deploy version
-- 3 services: app (PHP-Apache) + db (PostgreSQL) + redis (Valkey)
+
+- **`addDynamicParameters` is required** — without it, env vars are not accessible in Nette DI config files via `%env.*%`.
+- **Flat DB vars, not DSN** — Contributte uses separate `DATABASE_HOSTNAME`, `DATABASE_PORT`, etc., not a single `DATABASE_DSN`. Wire each individually from `${db_*}` refs.
+- **`REDIS_URI: tcp://`** — contributte/redis expects `tcp://hostname:port`, not `redis://`. Use `${cache_hostname}` (var is `hostname`, not `host`).
+- **`SyslogHandler` required for Zerops logs** — without it, application logs do not reach the Zerops log collector. `contributte/monolog` package provides the handler.
+- **Fixtures are dev-only** — remove the `doctrine:fixtures:load` initCommand for stage/production. Also switch to `--no-dev` composer install for stage.
+- **Temp dir is `var/tmp/`** — Contributte convention places temp in `var/tmp/`, not `temp/` (base Nette). The `chown` path must match your actual temp directory.
+- **`zsc execOnce` suffix** — migration and fixtures use separate suffixes (`-migration`, `-fixtures`) so they are tracked independently per deploy version.

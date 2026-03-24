@@ -1,11 +1,12 @@
 # Java Spring Boot on Zerops
+
 Java Spring Boot API with PostgreSQL, Maven Wrapper build, fat JAR deploy.
 
 ## Keywords
-java, spring boot, maven, jar, jvm, gradle
+spring-boot, spring, maven, jar, jvm, gradle, quarkus, micronaut
 
 ## TL;DR
-Java Spring Boot with Maven Wrapper and fat JAR deploy -- `server.address=0.0.0.0` is mandatory, bind to all interfaces.
+Java Spring Boot with Maven Wrapper and fat JAR deploy — `server.address=0.0.0.0` is mandatory, bind to all interfaces. Build and run containers are separate — fat JAR must include all dependencies.
 
 ## zerops.yml
 ```yaml
@@ -23,9 +24,10 @@ zerops:
         - port: 8080
           httpSupport: true
       envVariables:
-        DB_NAME: db
-        DB_HOST: db
-        DB_USER: db
+        DB_HOST: ${db_hostname}
+        DB_PORT: ${db_port}
+        DB_NAME: ${db_dbName}
+        DB_USER: ${db_user}
         DB_PASS: ${db_password}
       start: java -jar target/app.jar
       healthCheck:
@@ -40,6 +42,7 @@ services:
   - hostname: api
     type: java@21
     enableSubdomainAccess: true
+    priority: 5
 
   - hostname: db
     type: postgresql@16
@@ -54,7 +57,7 @@ services:
 server.address=0.0.0.0
 ```
 
-**pom.xml** -- set `<finalName>app</finalName>` in `<build>` so artifact is always `target/app.jar`:
+**pom.xml** — set `<finalName>app</finalName>` in `<build>` so artifact is always `target/app.jar`:
 ```xml
 <build>
   <finalName>app</finalName>
@@ -92,8 +95,8 @@ zerops:
 ```
 
 **Fat JAR plugin REQUIRED** in pom.xml (one of):
-- `maven-shade-plugin` -- creates uber-JAR with all dependencies
-- `maven-assembly-plugin` -- alternative for jar-with-dependencies
+- `maven-shade-plugin` — creates uber-JAR with all dependencies
+- `maven-assembly-plugin` — alternative for jar-with-dependencies
 
 **Binding** for `com.sun.net.httpserver.HttpServer`:
 ```java
@@ -107,9 +110,11 @@ HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
 
 ## Gotchas
 
-- **`server.address=0.0.0.0`** is MANDATORY for Spring Boot -- defaults to localhost, which causes 502
-- **Fat JAR required** -- thin JARs cause `ClassNotFoundException` at runtime
-- **Maven/Gradle NOT pre-installed** -- use Maven Wrapper (`./mvnw`) or install via prepareCommands with `sudo`
-- **`build.os: ubuntu`** required when using `apt-get` -- Alpine default has no apt-get
-- **`<finalName>app</finalName>`** -- normalize artifact name so `deployFiles` and `start` paths are predictable
-- **`.m2` cache** -- Maven downloads are cached between builds to speed up subsequent deploys
+- **`server.address=0.0.0.0`** is MANDATORY for Spring Boot — defaults to localhost, which causes 502
+- **Fat JAR required** — thin JARs cause `ClassNotFoundException` at runtime (run container has no Maven repo)
+- **Maven/Gradle NOT pre-installed** — use Maven Wrapper (`./mvnw`) or install via prepareCommands with `sudo`
+- **`build.os: ubuntu`** required when using `apt-get` — Alpine default has no apt-get
+- **`<finalName>app</finalName>`** — normalize artifact name so `deployFiles` and `start` paths are predictable
+- **`.m2` cache** — Maven downloads are cached between builds to speed up subsequent deploys
+- **`${db_dbName}` not `${db_database}`** — PostgreSQL exposes `dbName`. Wrong name resolves to literal string silently.
+- **Service priorities** — DB priority 10 (starts first), API priority 5 (starts after DB is ready)

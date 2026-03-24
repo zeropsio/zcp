@@ -1,11 +1,12 @@
 # Spring Boot Multi-Service on Zerops
-Spring Boot API with PostgreSQL, S3 Object Storage, static frontend, Adminer, and Mailpit.
+
+Spring Boot API with PostgreSQL and S3 Object Storage.
 
 ## Keywords
-spring boot, java, maven, jar, jvm, gradle
+spring-boot, spring, maven, jar, jvm, gradle, quarkus, micronaut
 
 ## TL;DR
-Spring Boot API with PostgreSQL and S3 -- service priorities ensure DB and storage start before the API, `server.address=0.0.0.0` is mandatory.
+Spring Boot API with PostgreSQL and S3 — service priorities ensure DB and storage start before the API, `server.address=0.0.0.0` is mandatory. Wire managed services via `${hostname_varName}`.
 
 ## zerops.yml
 ```yaml
@@ -28,16 +29,15 @@ zerops:
         - port: 8080
           httpSupport: true
       envVariables:
-        DB_HOST: db
+        DB_HOST: ${db_hostname}
         DB_PORT: ${db_port}
+        DB_NAME: ${db_dbName}
         DB_USER: ${db_user}
         DB_PASSWORD: ${db_password}
         S3_ENDPOINT: ${storage_apiUrl}
         S3_BUCKET: ${storage_bucketName}
         S3_ACCESS_KEY: ${storage_accessKeyId}
         S3_SECRET_KEY: ${storage_secretAccessKey}
-        MAIL_HOST: mailpit
-        MAIL_PORT: "1025"
       start: java -jar target/api.jar
       healthCheck:
         httpGet:
@@ -73,7 +73,7 @@ services:
 server.address=0.0.0.0
 ```
 
-**pom.xml** -- set `<finalName>api</finalName>` so artifact is always `target/api.jar`:
+**pom.xml** — set `<finalName>api</finalName>` so artifact is always `target/api.jar`:
 ```xml
 <build>
   <finalName>api</finalName>
@@ -88,11 +88,10 @@ server.address=0.0.0.0
 
 ## Gotchas
 
-- **`server.address=0.0.0.0`** is MANDATORY for Spring Boot -- defaults to localhost, which causes 502
-- **Service priorities** -- DB/Storage priority 10 (start first), API priority 5 (starts after dependencies)
-- **`S3_ENDPOINT`** from `${storage_apiUrl}` is an internal URL -- use `http://`, never `https://`
+- **`server.address=0.0.0.0`** is MANDATORY for Spring Boot — defaults to localhost, which causes 502
+- **Service priorities** — DB/Storage priority 10 (start first), API priority 5 (starts after dependencies)
+- **`S3_ENDPOINT` is an internal URL** — use `http://`, never `https://` for internal S3 traffic
 - **Maven tests skipped** (`--define maven.test.skip`) during build to save time
-- **Mailpit** is for development only -- replace `MAIL_HOST` and `MAIL_PORT` with production SMTP settings before going live
-- **Adminer** should have public access disabled or be removed entirely in production
-- **File upload demo** uses S3-compatible Object Storage
-- **`.m2` cache** -- Maven downloads are cached between builds to speed up subsequent deploys
+- **`.m2` cache** — Maven downloads are cached between builds to speed up subsequent deploys
+- **Fat JAR required** — the spring-boot-maven-plugin packages all dependencies; thin JARs fail at runtime (run container has no Maven repo)
+- **`${db_dbName}` not `${db_database}`** — PostgreSQL exposes `dbName`. Wrong name resolves to literal string silently.

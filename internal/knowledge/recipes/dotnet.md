@@ -3,7 +3,7 @@
 ASP.NET Core app with PostgreSQL. Build with `dotnet publish`, deploy the published output.
 
 ## Keywords
-dotnet, csharp, aspnet, asp.net core, kestrel, nuget
+dotnet, aspnet, asp.net, kestrel, nuget, blazor, razor
 
 ## TL;DR
 ASP.NET Core with `dotnet publish` and PostgreSQL -- must configure `ASPNETCORE_URLS` to bind `0.0.0.0` and enable `ForwardedHeaders` middleware.
@@ -25,7 +25,7 @@ zerops:
           httpSupport: true
       envVariables:
         ASPNETCORE_URLS: http://0.0.0.0:5000
-        DB_NAME: db
+        DB_NAME: ${db_dbName}
         DB_HOST: ${db_hostname}
         DB_PORT: ${db_port}
         DB_USER: ${db_user}
@@ -77,8 +77,8 @@ var host = Environment.GetEnvironmentVariable("DB_HOST");
 var port = Environment.GetEnvironmentVariable("DB_PORT");
 var user = Environment.GetEnvironmentVariable("DB_USER");
 var pass = Environment.GetEnvironmentVariable("DB_PASS");
-var name = Environment.GetEnvironmentVariable("DB_NAME");
-var connStr = $"Host={host};Port={port};Username={user};Password={pass};Database={name}";
+var dbName = Environment.GetEnvironmentVariable("DB_NAME");
+var connStr = $"Host={host};Port={port};Username={user};Password={pass};Database={dbName}";
 ```
 
 Health check endpoint:

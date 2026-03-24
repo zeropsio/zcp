@@ -1,11 +1,12 @@
 # Echo (Go) on Zerops
-Go Echo web app with PostgreSQL, S3 Object Storage, Valkey cache, Mailpit, and Adminer.
+
+Go Echo web app with PostgreSQL, Valkey cache, and S3 Object Storage.
 
 ## Keywords
-echo, go, golang
+echo, fiber, chi, gin, gorilla
 
 ## TL;DR
-Go Echo API with PostgreSQL, Valkey, and S3 — logger must output to `os.Stdout`, static assets deployed alongside the binary.
+Go runtime — build binary in build container, deploy single binary. Logger must output to `os.Stdout`. Never set `run.base: alpine` (glibc/musl mismatch). Wire managed services via `${hostname_varName}`.
 
 ## zerops.yml
 ```yaml
@@ -16,7 +17,6 @@ zerops:
       buildCommands:
         - go mod tidy && go build -v -o app main.go
       deployFiles:
-        - static/
         - app
       cache:
         - ~/go/pkg/mod
@@ -30,20 +30,19 @@ zerops:
         - port: 8080
           httpSupport: true
       envVariables:
-        DB_HOST: db
+        DB_HOST: ${db_hostname}
         DB_PORT: ${db_port}
+        DB_NAME: ${db_dbName}
         DB_USER: ${db_user}
         DB_PASSWORD: ${db_password}
+        REDIS_HOST: ${cache_hostname}
+        REDIS_PORT: ${cache_port}
         S3_ENDPOINT: ${storage_apiUrl}
         S3_ACCESS_KEY_ID: ${storage_accessKeyId}
         S3_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
         S3_BUCKET: ${storage_bucketName}
-        SMTP_HOST: mailpit
-        SMTP_PORT: "1025"
-        REDIS_HOST: cache
-        REDIS_PORT: ${cache_port}
       initCommands:
-        - zsc execOnce seed -- /var/www/app -seed
+        - zsc execOnce ${appVersionId} -- /var/www/app -migrate
       start: /var/www/app
       healthCheck:
         httpGet:
@@ -77,17 +76,23 @@ services:
 
 ## Configuration
 
-**Go code requirement** -- logger must use `os.Stdout`:
+Logger must write to `os.Stdout` — Zerops log collection reads stdout, not stderr:
 ```go
 log.SetOutput(os.Stdout)
 ```
 
+S3 endpoint from `${storage_apiUrl}` is an HTTPS URL. The Go MinIO client needs the hostname without protocol prefix and `Secure: true`:
+```go
+endpoint := strings.TrimPrefix(os.Getenv("S3_ENDPOINT"), "https://")
+client, _ := minio.New(endpoint, &minio.Options{Secure: true, ...})
+```
+
 ## Gotchas
 
-- **Logger must use `os.Stdout`** for Zerops log collection -- `os.Stderr` logs are not captured
-- **HTTPS termination disabled** in app code -- Zerops SSL proxy handles TLS termination
-- **Sessions stored in Valkey** (Redis-compatible), files in S3 Object Storage
-- **S3 endpoint** -- `${storage_apiUrl}` may return an HTTPS URL. The Go MinIO client needs the hostname without protocol prefix and `Secure: true`
-- **Mailpit** is for development only -- replace with a production SMTP provider before going live
-- **Adminer** should have public access disabled or be removed entirely in production
-- **Database seeding** runs via `zsc execOnce` -- executes exactly once across all containers (HA-safe)
+- **Never set `run.base: alpine`** — Go binaries compiled in the build container link against glibc; Alpine uses musl. Runtime panics at start. Omit `run.base` entirely or use `go@1` (which uses glibc).
+- **Deploy single binary** — `deployFiles: app` (just the binary). Add static assets alongside if needed: `deployFiles: [app, static/]`
+- **`${db_dbName}` not `${db_database}`** — PostgreSQL exposes `dbName`, not `database`. Wrong var name silently resolves to the literal string.
+- **Valkey var is `hostname`** — use `${cache_hostname}`, not `${cache_host}`. `host` does not exist as a Valkey env var.
+- **No TLS in app code** — Zerops L7 balancer terminates TLS. Do not configure TLS in Echo/the Go app.
+- **`zsc execOnce` for migrations** — executes exactly once across all containers per deploy (HA-safe). Use it instead of running migrations in `start`.
+- **S3 endpoint is HTTPS** — strip the protocol prefix before passing to MinIO client, set `Secure: true`.

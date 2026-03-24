@@ -3,10 +3,10 @@
 Plain Elixir with Plug/Cowboy HTTP server and PostgreSQL via Ecto -- build on Elixir, run on Alpine release.
 
 ## Keywords
-elixir, plug, cowboy, ecto, mix, beam, release
+plug, cowboy, ecto, beam, release, mix
 
 ## TL;DR
-Elixir Plug/Cowboy API with PostgreSQL -- mix release on Alpine, `DATABASE_URL` via Ecto, port 4000.
+Elixir Plug/Cowboy API with PostgreSQL -- mix release built on `elixir@1.16`, runs on `alpine@latest`. Deploy release contents with tilde syntax. Port 4000.
 
 ## zerops.yml
 
@@ -17,7 +17,7 @@ zerops:
       base: elixir@1.16
       envVariables:
         MIX_ENV: prod
-        DATABASE_URL: ${db_connectionString}/${db_dbName}
+        DATABASE_URL: ${db_connectionString}
       buildCommands:
         - mix deps.get --only prod
         - mix ecto.create
@@ -34,7 +34,7 @@ zerops:
         - port: 4000
           httpSupport: true
       envVariables:
-        DATABASE_URL: ${db_connectionString}/${db_dbName}
+        DATABASE_URL: ${db_connectionString}
         PORT: "4000"
         POOL_SIZE: "10"
       start: bin/app start
@@ -58,40 +58,11 @@ services:
     priority: 10
 ```
 
-## Configuration
+## Ecto runtime configuration
 
-Elixir application module starts the Plug/Cowboy HTTP server and Ecto repo:
-
-```elixir
-# lib/app/application.ex
-defmodule App.Application do
-  use Application
-
-  def start(_type, _args) do
-    children = [
-      App.Repo,
-      {Plug.Cowboy, scheme: :http, plug: App.Router, options: [port: port()]}
-    ]
-
-    opts = [strategy: :one_for_one, name: App.Supervisor]
-    Supervisor.start_link(children, opts)
-  end
-
-  defp port, do: String.to_integer(System.get_env("PORT") || "4000")
-end
-```
-
-Ecto repo configuration reads DATABASE_URL at runtime:
+`config/runtime.exs` must read `DATABASE_URL` at startup (not compile time):
 
 ```elixir
-# lib/app/repo.ex
-defmodule App.Repo do
-  use Ecto.Repo,
-    otp_app: :app,
-    adapter: Ecto.Adapters.Postgres
-end
-
-# config/runtime.exs
 import Config
 
 if config_env() == :prod do
@@ -101,17 +72,12 @@ if config_env() == :prod do
 end
 ```
 
-## Common Failures
-
-- **502 Bad Gateway** -- the release binary name in `start: bin/app start` must match the app name in `mix.exs`. If `mix.exs` defines `:myapp`, use `bin/myapp start`.
-- **Cannot connect to database during build** -- `mix ecto.create` and `mix ecto.migrate` run during build using `${db_connectionString}`. The `priority: 10` on db ensures it exists first.
-- **Release crash: DATABASE_URL not set** -- ensure `DATABASE_URL` is in both `build.envVariables` and `run.envVariables`.
-
 ## Gotchas
 
 - **Build on Elixir, run on Alpine** -- Elixir releases are self-contained BEAM binaries. The runtime uses `alpine@latest` (no Elixir/Erlang needed at runtime).
-- **Migrations during build** -- unlike Phoenix, this recipe runs `mix ecto.create` and `mix ecto.migrate` during build since there is no release eval command. For runtime migrations, add a release module and use `initCommands` with `zsc execOnce`.
-- **deployFiles trailing tilde** -- `_build/prod/rel/app/~` deploys the contents of the release directory to the root of the runtime container.
-- **DATABASE_URL** uses the `${db_connectionString}/${db_dbName}` pattern which resolves to the full `ecto://user:pass@host:port/dbname` URL.
-- **POOL_SIZE** should match or be less than PostgreSQL max_connections. Default `10` works for NON_HA single-container setups.
-- Replace `app` in the release path and start command with the actual application name from `mix.exs`.
+- **`deployFiles: _build/prod/rel/app/~`** -- the trailing `~` deploys the contents of the release directory to the container root. Replace `app` with the actual app name from `mix.exs`. The `start` command must match: `bin/app start`.
+- **`DATABASE_URL: ${db_connectionString}`** -- the PostgreSQL `connectionString` var already includes the full `postgresql://user:pass@host:port/dbname` URL. Do NOT append `/${db_dbName}` -- that doubles the database name in the path.
+- **Migrations during build** -- `mix ecto.create` and `mix ecto.migrate` run during build because plain Plug apps typically don't define a release migration module. The `priority: 10` on db ensures the database exists before the build runs. For runtime migrations, use `initCommands` with `zsc execOnce` and a release eval command instead.
+- **`DATABASE_URL` in both build and run** -- Ecto needs the URL during build for `ecto.create`/`ecto.migrate` and at runtime for the connection pool. Set it in both `build.envVariables` and `run.envVariables`.
+- **`start: bin/app start`** -- the binary name must match the `:app` name in `mix.exs`. If `mix.exs` defines `:myapp`, use `bin/myapp start`. Mismatch causes 502.
+- **POOL_SIZE** should not exceed PostgreSQL `max_connections`. Default `10` is safe for NON_HA single-container.
