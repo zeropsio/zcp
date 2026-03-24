@@ -31,6 +31,11 @@ Also set `PHX_HOST=${zeropsSubdomain}` (full HTTPS URL -- extract hostname in ru
 
 Cache: `deps`, `_build`.
 
+### Resource Requirements
+
+**Dev** (compilation on container): `minRam: 1` — `mix compile` + release build peak ~0.8 GB.
+**Stage/Prod**: `minRam: 0.25` — BEAM VM lightweight for most apps.
+
 ### Deploy Patterns
 
 **Dev deploy**: `deployFiles: [.]`, `run.prepareCommands: [mix deps.get]`, `start: zsc noop --silent` (idle container -- agent starts `mix run --no-halt` manually via SSH for iteration)

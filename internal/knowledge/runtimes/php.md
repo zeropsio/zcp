@@ -45,6 +45,11 @@ Override php.ini via `PHP_INI_*` env vars, FPM pool config via `PHP_FPM_*`. Both
 
 For full reference: `zerops_knowledge query="PHP tuning"` -- covers all defaults, FPM dynamic/ondemand modes, upload limit 3-layer chain, and gotchas.
 
+### Resource Requirements
+
+**Dev** (install on container): `minRam: 0.5` — `composer install` peak ~0.3 GB.
+**Stage/Prod**: `minRam: 0.25` — PHP-FPM workers are lightweight.
+
 ### Common Mistakes
 
 - Missing `documentRoot` -> Nginx doesn't know where to serve from

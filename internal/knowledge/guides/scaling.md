@@ -89,6 +89,15 @@ Scaling uses exponential growth: small increments initially, larger jumps under 
 - **CPU**: requires 2 consecutive measurements below threshold (~20s window) to avoid spikes
 - **Scale-down is conservative**: 3-5 consecutive measurements above threshold (60-300s depending on resource) — prevents flapping
 
+### Spike Protection via minRam
+
+Autoscaling reacts within 10-20 seconds. Compilation and package installation create RAM spikes faster than scaling can respond. Set `minRam` high enough to absorb the first spike WITHOUT relying on autoscaling:
+
+- **Dev services** (compilation on container via SSH): `minRam` must cover the build tool peak — `npm install`, `go build`, `cargo build` spike within seconds
+- **Stage/prod services** (pre-built artifacts): `minRam` only needs to cover the startup peak (JVM heap allocation, SSR warming)
+
+Thresholds (`minFreeRamGB`, `minFreeRamPercent`) handle gradual load growth. They cannot protect against sub-10s spikes that exceed the total allocated RAM. See runtime guides for per-runtime `minRam` recommendations.
+
 **Disabling autoscaling**: set **minimum = maximum** for any resource to pin it at a fixed value (e.g., `minRam: 2, maxRam: 2`).
 
 ## Horizontal Scaling

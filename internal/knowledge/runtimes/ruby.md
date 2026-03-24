@@ -29,6 +29,11 @@ Cache: `vendor/bundle`.
 - Migrations: `zsc execOnce migrate-${appVersionId} -- bin/rails db:migrate`
 - Assets: `bundle exec rake assets:precompile` in buildCommands
 
+### Resource Requirements
+
+**Dev** (install on container): `minRam: 1` — `bundle install` + asset compilation peak ~0.8 GB.
+**Stage/Prod**: `minRam: 0.5` — Puma workers need baseline allocation.
+
 ### Deploy Patterns
 
 **Dev deploy**: `deployFiles: [.]`, `run.prepareCommands: [bundle install --path vendor/bundle]`, `start: zsc noop --silent` (idle container -- agent starts `bundle exec ruby app.rb` manually via SSH for iteration)

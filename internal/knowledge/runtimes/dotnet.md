@@ -30,6 +30,11 @@ Do NOT rely solely on `ASPNETCORE_URLS` env var.
 
 Cache: `~/.nuget`.
 
+### Resource Requirements
+
+**Dev** (build on container): `minRam: 1` — `dotnet build` peak ~0.8 GB.
+**Stage/Prod**: `minRam: 0.5` — Kestrel + CLR needs baseline allocation.
+
 ### Common Mistakes
 
 - Using RootNamespace as DLL name -> "file not found" (DLL name = .csproj filename, not namespace)

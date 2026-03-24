@@ -40,6 +40,11 @@ Includes Node.js, `npm`, `yarn`, `pnpm`, `git`, `npx`.
 - Nuxt SSR: deploy `.output`, `node_modules`, `package.json`
 - Cache: `node_modules`, `.next/cache`, `.pnpm-store`
 
+### Resource Requirements
+
+**Dev** (install/build on container): `minRam: 1` — `npm install` / `pnpm install` peak ~0.7 GB.
+**Stage/Prod**: `minRam: 0.5` — V8 heap for SSR/API workloads.
+
 ### Common Mistakes
 
 - Missing `node_modules` in `deployFiles` -> "Cannot find module" at runtime

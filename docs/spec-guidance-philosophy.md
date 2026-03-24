@@ -109,7 +109,52 @@ ZCP operations follow a two-tier model:
 | **Recipe patterns** | Next.js, Laravel, Django framework-specific configs | Knowledge store (recipes/) | Updated periodically |
 | **Operational data** | Service status, env var values, health check results, logs | Live API (zerops_discover, zerops_verify, zerops_logs) | Dynamic (changes constantly) |
 
-### 3.2 What Agent Cannot Infer
+### 3.2 Layered Knowledge Composition
+
+The knowledge base uses a layered architecture where each layer adds specificity. Layers compose at delivery time — updating a lower layer automatically improves everything above it.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Layer 4: Recipes (recipes/*.md)                    │  Framework-specific
+│  Laravel, Next.js, Django, Phoenix, ...             │  refinements
+├─────────────────────────────────────────────────────┤
+│  Layer 3: Runtime Guides (runtimes/*.md)            │  General per-runtime
+│  nodejs, php, go, python, elixir, ...              │  knowledge
+├─────────────────────────────────────────────────────┤
+│  Layer 2: Service Cards (themes/services.md)        │  Managed service
+│  PostgreSQL, Valkey, Kafka, Object Storage, ...    │  reference
+├─────────────────────────────────────────────────────┤
+│  Layer 1: Core Reference (themes/core.md)           │  YAML schemas,
+│  import.yml + zerops.yml schemas, rules, pitfalls  │  platform rules
+├─────────────────────────────────────────────────────┤
+│  Layer 0: Universals (themes/universals.md)         │  Platform truths
+│  Bind 0.0.0.0, deployFiles, no .env, zsc execOnce │  for ALL services
+└─────────────────────────────────────────────────────┘
+```
+
+**Design principles:**
+
+1. **General knowledge in runtimes, specific refinements in recipes.** A runtime guide (e.g., `nodejs.md`) contains knowledge valid for ANY Node.js app on Zerops — binding, deploy patterns, common mistakes. A recipe (e.g., `nextjs.md`) adds framework-specific config that builds ON TOP of the runtime knowledge.
+
+2. **Recipes inherit from runtimes.** When `GetRecipe()` delivers a recipe, it automatically prepends the universals and the matching runtime guide (`briefing.go:prependRecipeContext`). The agent sees: universals + runtime guide + recipe content — a complete, layered knowledge package.
+
+3. **Briefings compose dynamically.** When `GetBriefing()` assembles knowledge for a specific stack, it layers: live stacks → runtime guide → recipe hints → service cards → wiring syntax → decision hints → version check. Each layer is optional — a stack with no managed services skips the service card layer.
+
+4. **Recipes MUST NOT contradict their parent runtime.** A recipe refines — it does not override platform truths or runtime conventions. If a runtime says "bind 0.0.0.0:8000", the recipe's zerops.yml must include that binding. Contradictions between layers indicate a bug.
+
+5. **Runtime guides cover dev AND prod patterns.** Each runtime guide includes both deploy patterns (dev: `deployFiles: [.]` + `zsc noop --silent`, prod: optimized build + compiled output). Mode-aware filtering (`filterDeployPatterns` in `briefing.go`) shows only the relevant pattern based on the current session mode.
+
+**Composition flows (code references):**
+
+| Entry point | Composition | Code |
+|-------------|-------------|------|
+| `GetRecipe(name, mode)` | universals + runtime guide + recipe | `briefing.go:108-142` |
+| `GetBriefing(runtime, services, mode, liveTypes)` | stacks → runtime → recipes → cards → wiring → decisions → versions | `briefing.go:18-101` |
+| `GetCore()` | core reference only (platform model + YAML schemas) | `engine.go:197-203` |
+
+**Recipe-to-runtime mapping** (`runtimeRecipeHints` in `engine.go:215-226`): Maps runtime base names to recipe name prefixes. Used for two purposes: (1) suggesting relevant recipes in briefings, and (2) auto-detecting the parent runtime when loading a recipe via `detectRecipeRuntime`.
+
+### 3.3 What Agent Cannot Infer
 
 These facts are Zerops-specific and MUST be communicated. The agent has no way to derive them from general knowledge:
 

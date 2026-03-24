@@ -27,6 +27,11 @@ Includes Python, `pip`, `git`.
 
 uvicorn `--host 0.0.0.0`, gunicorn `--bind 0.0.0.0:8000`
 
+### Resource Requirements
+
+**Dev** (install on container): `minRam: 0.5` — `pip install` moderate peak.
+**Stage/Prod**: `minRam: 0.25` — WSGI/ASGI workers are lightweight.
+
 ### Common Mistakes
 
 - Referencing `/var/www/requirements.txt` in `run.prepareCommands` -> file not found

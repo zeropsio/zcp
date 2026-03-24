@@ -28,6 +28,11 @@ Includes Bun, `npm`, `yarn`, `git`, `npx`.
 
 Use `bunx` instead of `npx`. Cache: `node_modules`.
 
+### Resource Requirements
+
+**Dev** (install on container): `minRam: 0.5` — `bun install` fast, lower peak than npm.
+**Stage/Prod**: `minRam: 0.25` — Bun runtime lightweight.
+
 ### Deploy Patterns
 
 **Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container -- agent starts `bun run index.ts` manually via SSH for iteration)

@@ -41,6 +41,11 @@ Requires `os: ubuntu` + `CGO_ENABLED=1`. When unsure: `CGO_ENABLED=0 go build` f
 Logger MUST output to `os.Stdout`.
 Cache: `~/go` (auto-cached).
 
+### Resource Requirements
+
+**Dev** (compilation on container): `minRam: 1` — `go build` peak ~0.8 GB; autoscaling can't react fast enough for sub-10s spike.
+**Stage/Prod**: `minRam: 0.25` — compiled binary, minimal footprint.
+
 ### Deploy Patterns
 
 **Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container -- agent starts `go run .` manually via SSH for iteration)

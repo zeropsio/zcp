@@ -26,6 +26,11 @@ Gleam REQUIRES `os: ubuntu` in both build AND run. Deploy erlang-shipment. Watch
 
 JavaScript target needs Node.js runtime instead.
 
+### Resource Requirements
+
+**Dev** (compilation on container): `minRam: 1` — `gleam build` + erlang-shipment peak ~0.7 GB.
+**Stage/Prod**: `minRam: 0.25` — BEAM VM lightweight for most apps.
+
 ### Deploy Patterns
 
 **Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container -- agent starts `gleam run` manually via SSH for iteration)

@@ -30,6 +30,11 @@ Name in `Cargo.toml [package]` -> binary at `target/release/{name}` (dashes pres
 Native deps: `apk add --no-cache openssl-dev pkgconfig` in prepareCommands.
 Cache: `target/`, `~/.cargo/registry`.
 
+### Resource Requirements
+
+**Dev** (compilation on container): `minRam: 2` — `cargo build` peak ~1.5 GB (link phase is memory-intensive).
+**Stage/Prod**: `minRam: 0.25` — compiled binary, minimal footprint.
+
 ### Deploy Patterns
 
 **Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container -- agent starts `cargo run` manually via SSH for iteration)

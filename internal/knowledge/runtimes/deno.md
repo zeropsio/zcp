@@ -27,6 +27,11 @@ Includes Deno runtime.
 Run `deno cache main.ts` in buildCommands to pre-download dependencies. Ensures deployments are deterministic.
 Cache: deps in `~/.cache/deno` (auto-cached).
 
+### Resource Requirements
+
+**Dev** (cache/compile on container): `minRam: 0.5` — `deno cache` moderate peak.
+**Stage/Prod**: `minRam: 0.25` — Deno runtime lightweight.
+
 ### Deploy Patterns
 
 **Dev deploy**: `deployFiles: [.]`, `start: zsc noop --silent` (idle container -- agent starts `deno run --allow-net --allow-env main.ts` manually via SSH for iteration)

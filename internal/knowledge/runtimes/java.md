@@ -41,6 +41,11 @@ Cache: `.m2` or `.gradle`.
 - Deploying thin JAR -> ClassNotFoundException at runtime
 - Missing `server.address=0.0.0.0` for Spring Boot -> 502 Bad Gateway
 
+### Resource Requirements
+
+**Dev** (compilation on container): `minRam: 1.5` — Maven/Gradle + javac peak ~1.2 GB.
+**Stage/Prod**: `minRam: 1` — JVM heap requires baseline allocation.
+
 ### JAR Naming
 
 Without `<finalName>` in pom.xml, JAR name includes version: `target/{artifactId}-{version}.jar`. If version changes, deployFiles path breaks. Normalize: add `<build><finalName>app</finalName></build>` to pom.xml, then use `deployFiles: target/app.jar`.
