@@ -35,6 +35,7 @@ var testServicePrefixes = []string{
 	"zcpsd",                                      // discover_subdomain_test.go
 	"zcpsl",                                      // subdomain_lifecycle_test.go
 	"bn",                                         // bootstrap_negative_test.go
+	"lrv",                                        // laravel_recipe_test.go
 }
 
 func TestMain(m *testing.M) {
