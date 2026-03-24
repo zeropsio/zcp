@@ -1,12 +1,12 @@
 # Analog on Zerops
 
-Angular meta-framework — SSR via Nitro on Node.js runtime, or static pre-rendering to static service. SSR mode supports server routes for API endpoints and managed service connections.
+Angular meta-framework — SSR via Nitro on Node.js runtime, or static pre-rendering to static service.
 
 ## Keywords
-analog, angular, nodejs, ssr, static, ssg, vite, nitro, javascript, typescript
+analog, angular, nitro, vite-analog
 
 ## TL;DR
-Analog on Node.js (SSR) or static service. Deploy `dist/~` for SSR, start `node analog/server/index.mjs` (NOT `dist/analog/...` — tilde strips the prefix). Port 3000 default. Wire managed services via `${hostname_varName}` refs in server routes.
+Deploy `dist/~` for SSR — tilde strips prefix so start path is `node analog/server/index.mjs` (NOT `dist/analog/...`). Port 3000, binds 0.0.0.0 by default. Wire managed services via `${hostname_varName}` refs in server routes.
 
 ## SSR (Node.js runtime)
 
@@ -15,7 +15,7 @@ Analog on Node.js (SSR) or static service. Deploy `dist/~` for SSR, start `node 
 zerops:
   - setup: app
     build:
-      base: nodejs@20
+      base: nodejs@22
       buildCommands:
         - pnpm i
         - pnpm build
@@ -23,7 +23,7 @@ zerops:
         - dist/~
       cache: node_modules
     run:
-      base: nodejs@20
+      base: nodejs@22
       ports:
         - port: 3000
           httpSupport: true
@@ -40,13 +40,11 @@ zerops:
 ```yaml
 services:
   - hostname: app
-    type: nodejs@20
+    type: nodejs@22
     enableSubdomainAccess: true
 ```
 
-### Configuration
-
-Analog uses Nitro under the hood. `dist/~` deploys the **contents** of `dist/` to `/var/www/`, so the start path is `analog/server/index.mjs` (not `dist/analog/server/index.mjs`). Nitro binds `0.0.0.0:3000` by default — no HOST override needed.
+Analog uses Nitro under the hood. `dist/~` deploys contents of `dist/` to `/var/www/`, so the start path is `analog/server/index.mjs` (not `dist/analog/server/index.mjs`). Nitro binds `0.0.0.0:3000` by default.
 
 ## Static Pre-rendering
 
@@ -55,7 +53,7 @@ Analog uses Nitro under the hood. `dist/~` deploys the **contents** of `dist/` t
 zerops:
   - setup: app
     build:
-      base: nodejs@20
+      base: nodejs@22
       buildCommands:
         - pnpm i
         - pnpm build
@@ -74,11 +72,11 @@ services:
     enableSubdomainAccess: true
 ```
 
-For static export, set `ssr: false` in the analog plugin options in `vite.config.ts`. Without this, Analog produces an SSR server that cannot run on a static service.
+Set `ssr: false` in the analog plugin options in `vite.config.ts`. Without this, Analog builds an SSR server that cannot run on a static service.
 
 ## Wiring Managed Services (SSR only)
 
-Cross-service pattern: `${hostname_varName}` — resolved at container start. After adding a managed service via import, run `zerops_discover includeEnvs=true` to see exact var names. Map ONLY discovered vars — guessing names causes silent failures.
+Cross-service pattern: `${hostname_varName}` — resolved at container start. After adding a managed service, run `zerops_discover includeEnvs=true` to see exact var names. Map ONLY discovered vars — guessing names causes silent failures (unresolved refs stay as literal strings).
 
 Server routes access env vars via `process.env`:
 ```typescript
@@ -120,7 +118,7 @@ Or individual vars: `DB_HOST: ${db_hostname}`, `DB_PORT: ${db_port}`, `DB_USER: 
         REDIS_URL: redis://${cache_hostname}:${cache_port}
 ```
 
-No auth needed — Valkey on private network. Use `${cache_hostname}`, NOT `${cache_host}` (`host` does not exist as a Valkey env var).
+No auth needed — Valkey runs on private network. Use `${cache_hostname}`, NOT `${cache_host}` (`host` does not exist as a Valkey env var).
 
 ### + File Storage (Object Storage)
 
@@ -144,13 +142,6 @@ No auth needed — Valkey on private network. Use `${cache_hostname}`, NOT `${ca
 
 Requires `forcePathStyle: true` in S3 SDK config (Zerops uses MinIO backend).
 
-### + Search, Message Brokers, etc.
-
-Same pattern for any managed service. After import:
-1. `zerops_discover includeEnvs=true` — find available var names
-2. Map in zerops.yml: `MY_VAR: ${hostname_varName}`
-3. Install the Node.js client package
-
 ## Dev vs Stage
 
 Managed services are **shared** — both dev and stage connect to the same `db`, `cache`, `storage`. Only app-specific config differs:
@@ -171,23 +162,12 @@ Stage zerops.yml additions:
           path: /
 ```
 
-## Scaffolding
-
-```bash
-npm create analog@latest .
-pnpm install
-```
-
-SSR is the default mode. For static pre-rendering, set `ssr: false` in `vite.config.ts` analog plugin options.
-
 ## Gotchas
 - **SSR: start path after tilde deploy** — `dist/~` extracts contents to `/var/www/`, so start is `node analog/server/index.mjs`, NOT `node dist/analog/server/index.mjs`
-- **SSR: port 3000** is the default Nitro port — declare in `ports` with `httpSupport: true`
+- **SSR: port 3000** — Nitro default; declare in `ports` with `httpSupport: true`
 - **SSR: binds 0.0.0.0** by default — no HOST override needed
 - **Static: `ssr: false` required** — without it, Analog builds an SSR server that fails on static service
 - **Static: deploy `dist/analog/public/~`** — tilde extracts contents to webroot
-- **Static: no server routes** — API endpoints and server-side features are not available at runtime
-- **Valkey var is `hostname`** — use `${cache_hostname}`, NOT `${cache_host}`. `host` does not exist
+- **Valkey var is `hostname`** — use `${cache_hostname}`, NOT `${cache_host}`; `host` does not exist
 - **S3: `forcePathStyle: true`** — required in SDK config for Zerops object storage (MinIO backend)
-- **No `.env` files** — all env vars via zerops.yml `envVariables`. `.env` files shadow OS env vars
-- **Build cache** — `cache: node_modules` for faster rebuilds; `pnpm` store can also be cached
+- **No `.env` files** — all env vars via zerops.yml `envVariables`; `.env` files shadow OS env vars

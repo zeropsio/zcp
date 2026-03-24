@@ -3,20 +3,20 @@
 Remix with server-side rendering on Node.js using a custom Express server.
 
 ## Keywords
-remix, nodejs, ssr, react, express, server-side rendering, vite, typescript
+remix, react-router, express, vite-remix
 
 ## TL;DR
-Remix SSR with Express — deploy `build/`, `server.js`, `package.json`, and `node_modules`, port 3000 with httpSupport.
+Deploy `build/`, `server.js`, `package.json`, and `node_modules` — runtime does NOT run `npm install`. Port 3000 with `httpSupport: true`. `pnpm start` runs `node ./server.js` (not the default Remix dev server).
 
 ## zerops.yml
 ```yaml
 zerops:
   - setup: app
     build:
-      base: nodejs@20
+      base: nodejs@22
       buildCommands:
-        - pnpm i
-        - pnpm run build
+        - npm ci
+        - npm run build
       deployFiles:
         - build
         - server.js
@@ -24,11 +24,11 @@ zerops:
         - node_modules
       cache: node_modules
     run:
-      base: nodejs@20
+      base: nodejs@22
       ports:
         - port: 3000
           httpSupport: true
-      start: pnpm start
+      start: node server.js
       healthCheck:
         httpGet:
           port: 3000
@@ -39,14 +39,12 @@ zerops:
 ```yaml
 services:
   - hostname: app
-    type: nodejs@20
+    type: nodejs@22
     enableSubdomainAccess: true
 ```
 
 ## Gotchas
-
-- **Deploy `build/`, `server.js`, `package.json`, and `node_modules`** — Remix SSR needs the Express server file, build output, and runtime dependencies; deploying `./` also works but is less precise
-- **Custom Express server (`server.js`)** — this recipe uses `@remix-run/express` with a custom `server.js`; it must be included in `deployFiles`
-- **Port 3000** is the default in `server.js` (reads `process.env.PORT || 3000`) — must be declared in `ports` with `httpSupport: true` for Zerops L7 routing
-- **`pnpm start` runs `cross-env NODE_ENV=production node ./server.js`** — ensure `cross-env` is in `dependencies` (not just `devDependencies`) or inline the env var
-- **Build cache** should include `node_modules` for faster rebuilds
+- **Deploy `build/`, `server.js`, `package.json`, `node_modules`** — runtime does NOT run `npm install`; `node_modules` must be in `deployFiles`
+- **`server.js` must be in `deployFiles`** — the Express server entry point is not inside `build/`; omitting it causes startup failure
+- **Port 3000** — must be declared in `ports` with `httpSupport: true` for Zerops L7 routing
+- **`cross-env` must be in `dependencies`** — if `server.js` uses `cross-env`, it must not be devDependencies-only, or inline the env var instead

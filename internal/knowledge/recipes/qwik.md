@@ -1,10 +1,12 @@
 # Qwik on Zerops
 
+Qwik City with resumable SSR via Express adapter on Node.js, or static export.
+
 ## Keywords
-qwik, nodejs, ssr, static, ssg, express, resumable, javascript, typescript, vite
+qwik, qwik-city, resumable, qwikcity
 
 ## TL;DR
-Qwik on Zerops -- SSR with Express adapter on Node.js or static export with static adapter.
+SSR requires `npm run qwik add express` before deploying. Deploy `package.json`, `public/`, `server/`, `dist/` — runtime does NOT run `npm install`. Start command is `node server/entry.express.js` (not `npm start`). Trust proxy required.
 
 ## SSR (Node.js runtime)
 
@@ -13,22 +15,23 @@ Qwik on Zerops -- SSR with Express adapter on Node.js or static export with stat
 zerops:
   - setup: app
     build:
-      base: nodejs@20
+      base: nodejs@22
       buildCommands:
-        - pnpm i
-        - pnpm run build
+        - npm ci
+        - npm run build
       deployFiles:
         - package.json
         - public
         - server
         - dist
+        - node_modules
       cache: node_modules
     run:
-      base: nodejs@20
+      base: nodejs@22
       ports:
         - port: 3000
           httpSupport: true
-      start: pnpm serve
+      start: node server/entry.express.js
       healthCheck:
         httpGet:
           port: 3000
@@ -39,19 +42,16 @@ zerops:
 ```yaml
 services:
   - hostname: app
-    type: nodejs@20
+    type: nodejs@22
     enableSubdomainAccess: true
 ```
 
-### Configuration
-
-The Express adapter must be added to the Qwik project before deploying:
-
+The Express adapter must be added before deploying:
 ```bash
 npm run qwik add express
 ```
 
-Enable trust proxy in `src/entry.express.tsx`:
+Add trust proxy in `src/entry.express.tsx`:
 ```typescript
 app.set('trust proxy', true);
 ```
@@ -63,12 +63,11 @@ app.set('trust proxy', true);
 zerops:
   - setup: app
     build:
-      base: nodejs@20
+      base: nodejs@22
       buildCommands:
-        - pnpm i
-        - pnpm build
+        - npm ci
+        - npm run build
       deployFiles:
-        - public
         - dist/~
       cache: node_modules
     run:
@@ -83,16 +82,15 @@ services:
     enableSubdomainAccess: true
 ```
 
-### Configuration
 The static adapter must be added before deploying:
 ```bash
-pnpm qwik add static
+npm run qwik add static
 ```
 
 ## Gotchas
-- **SSR: `npm run qwik add express` MUST be run first** -- without the Express adapter, SSR will not work
-- **SSR: `pnpm serve`** is the start command (not `pnpm start`) -- added by the Express adapter
-- **SSR: deploy four directories** -- `package.json`, `public/`, `server/`, and `dist/` are all required
-- **SSR: trust proxy** -- add `app.set('trust proxy', true)` for correct client IP
-- **Static: `pnpm qwik add static` MUST be run** -- without it, build produces a server bundle
-- **Static: deploy `public` and `dist/~`** -- both static assets and built output are needed
+- **SSR: `npm run qwik add express` MUST be run first** — without the Express adapter, there is no `server/` directory and SSR fails
+- **SSR: deploy `node_modules`** — runtime does NOT run `npm install`; add to `deployFiles`
+- **SSR: deploy four directories** — `package.json`, `public/`, `server/`, `dist/` and `node_modules` are all required
+- **SSR: trust proxy** — add `app.set('trust proxy', true)` in `src/entry.express.tsx` for correct client IP behind Zerops L7 balancer
+- **Static: `npm run qwik add static` MUST be run** — without it, build produces a server bundle instead of static output
+- **Static: deploy `dist/~`** — tilde deploys directory contents to webroot

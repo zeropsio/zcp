@@ -1,79 +1,27 @@
 # React on Zerops
 
 ## Keywords
-react, nodejs, express, ssr, static, ssg, spa, vite, javascript, typescript
+react, vite, create-react-app, spa, cra
 
 ## TL;DR
-React on Zerops -- SSR with Vite + Express on Node.js or static SPA to static service.
+React SPA — build on Node.js, deploy `dist/~` to a static service. For SSR frameworks (Next.js, Remix), use their dedicated recipes.
 
-## SSR (Node.js runtime)
-
-### zerops.yml
+## zerops.yml
 ```yaml
 zerops:
   - setup: app
     build:
       base: nodejs@20
       buildCommands:
-        - pnpm i
-        - pnpm build
-      deployFiles:
-        - public
-        - node_modules
-        - dist
-        - package.json
-        - server.js
-      cache: node_modules
-    run:
-      base: nodejs@20
-      ports:
-        - port: 3000
-          httpSupport: true
-      start: pnpm start
-      healthCheck:
-        httpGet:
-          port: 3000
-          path: /
-```
-
-### import.yml
-```yaml
-services:
-  - hostname: app
-    type: nodejs@20
-    enableSubdomainAccess: true
-```
-
-### Configuration
-
-SSR requires a custom Express server (`server.js`). Enable trust proxy:
-```javascript
-// server.js
-import express from 'express';
-const app = express();
-app.set('trust proxy', true);
-// ... SSR rendering logic ...
-app.listen(3000);
-```
-
-## Static SPA
-
-### zerops.yml
-```yaml
-zerops:
-  - setup: app
-    build:
-      base: nodejs@20
-      buildCommands:
-        - pnpm i
-        - pnpm build
+        - npm i
+        - npm run build
       deployFiles: dist/~
       cache: node_modules
     run:
       base: static
 ```
 
-### import.yml
+## import.yml
 ```yaml
 services:
   - hostname: app
@@ -82,10 +30,8 @@ services:
 ```
 
 ## Gotchas
-- **SSR: custom `server.js` is required** -- not a standard Vite SPA setup
-- **SSR: deploy includes `node_modules/`** -- runtime dependencies needed by Express
-- **SSR: deploy includes `server.js`** -- must be explicitly listed in `deployFiles`
-- **SSR: trust proxy** -- `app.set('trust proxy', true)` for correct client IP
-- **Static: deploy `dist/~`** -- tilde deploys directory contents to webroot
-- **Static: no `ports` or `start` needed** -- `static` base serves on port 80 automatically
-- **For React SSR frameworks** (Next.js, Remix), use dedicated recipes instead
+- **`deployFiles: dist/~`** — tilde deploys directory contents to webroot, not the folder itself; without tilde the app is served from a subdirectory
+- **`base: static` in run** — no `ports` or `start` needed; static service serves on port 80 automatically
+- **SPA routing** — Angular Router / React Router with `PathLocationStrategy` requires a fallback to `index.html` in Zerops static service settings
+- **Runtime environment variables are not supported** — static service has no process; inject config at build time or use a Node.js runtime instead
+- **For SSR** — use the Next.js or Remix recipe; this recipe is for client-side SPA only

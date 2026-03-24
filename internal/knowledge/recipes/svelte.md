@@ -1,10 +1,12 @@
 # SvelteKit on Zerops
 
+SSR with `@sveltejs/adapter-node` on Node.js, or static export with `@sveltejs/adapter-static`.
+
 ## Keywords
-svelte, sveltekit, nodejs, ssr, static, ssg, adapter-node, adapter-static, javascript, typescript, vite
+svelte, sveltekit, adapter-node, adapter-static, kit
 
 ## TL;DR
-SvelteKit on Zerops -- SSR with `@sveltejs/adapter-node` on Node.js or static export with `@sveltejs/adapter-static`.
+SSR requires `@sveltejs/adapter-node` (auto adapter does not produce a Node.js server). Deploy `build/`, `package.json`, and `node_modules` — runtime does NOT run `npm install`. Static: `build/~`.
 
 ## SSR (Node.js runtime)
 
@@ -13,21 +15,21 @@ SvelteKit on Zerops -- SSR with `@sveltejs/adapter-node` on Node.js or static ex
 zerops:
   - setup: app
     build:
-      base: nodejs@20
+      base: nodejs@22
       buildCommands:
-        - pnpm i
-        - pnpm run build
+        - npm ci
+        - npm run build
       deployFiles:
         - build
         - package.json
         - node_modules
       cache: node_modules
     run:
-      base: nodejs@20
+      base: nodejs@22
       ports:
         - port: 3000
           httpSupport: true
-      start: pnpm start
+      start: node build
       healthCheck:
         httpGet:
           port: 3000
@@ -38,26 +40,11 @@ zerops:
 ```yaml
 services:
   - hostname: app
-    type: nodejs@20
+    type: nodejs@22
     enableSubdomainAccess: true
 ```
 
-### Configuration
-
-SvelteKit requires `@sveltejs/adapter-node` for Zerops deployment. The default auto adapter will not work.
-
-```javascript
-// svelte.config.js
-import adapter from '@sveltejs/adapter-node';
-import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-
-export default {
-  preprocess: vitePreprocess(),
-  kit: {
-    adapter: adapter()
-  }
-};
-```
+Requires `@sveltejs/adapter-node` in `svelte.config.js`. The default auto adapter does not produce a standalone Node.js server.
 
 ## Static Export
 
@@ -66,10 +53,10 @@ export default {
 zerops:
   - setup: app
     build:
-      base: nodejs@20
+      base: nodejs@22
       buildCommands:
-        - pnpm i
-        - pnpm build
+        - npm ci
+        - npm run build
       deployFiles: build/~
       cache: node_modules
     run:
@@ -84,34 +71,13 @@ services:
     enableSubdomainAccess: true
 ```
 
-### Configuration
-Two files must be configured for static export:
-
-**svelte.config.js** -- must use adapter-static:
-```javascript
-import adapter from '@sveltejs/adapter-static';
-import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-
-export default {
-  preprocess: vitePreprocess(),
-  kit: {
-    adapter: adapter()
-  }
-};
-```
-
-**src/routes/+layout.ts** -- must enable prerendering:
-```typescript
-export const prerender = true;
-export const ssr = false;
-```
+Requires `@sveltejs/adapter-static` in `svelte.config.js` and `export const prerender = true` in `src/routes/+layout.ts`.
 
 ## Gotchas
-- **SSR: `@sveltejs/adapter-node` is required** -- the default auto adapter does not produce a Node.js server
-- **SSR: `@sveltejs/vite-plugin-svelte` must be installed** -- required for `vitePreprocess()`
-- **SSR: deploy `build/` + `package.json` + `node_modules`** -- all three are required
-- **SSR: port 3000** is the adapter-node default -- declare in `ports` with `httpSupport: true`
-- **SSR: binds 0.0.0.0** by default with adapter-node
-- **Static: prerendering must be explicitly enabled** -- add `export const prerender = true;` in `src/routes/+layout.ts`
-- **Static: adapter-static required** -- install and configure in `svelte.config.js`
-- **Static: deploy `build/~`** -- tilde deploys directory contents to webroot
+- **SSR: `@sveltejs/adapter-node` is required** — the default auto adapter does not produce a Node.js server
+- **SSR: deploy `build/` + `package.json` + `node_modules`** — runtime does NOT run `npm install`; all three required
+- **SSR: start command is `node build`** — not `npm start`; adapter-node output is a directory, not a script
+- **SSR: port 3000** — adapter-node default; declare in `ports` with `httpSupport: true`
+- **Static: `export const prerender = true`** must be in `src/routes/+layout.ts` — prerendering is not automatic
+- **Static: adapter-static required** — configure in `svelte.config.js`
+- **Static: deploy `build/~`** — tilde deploys directory contents to webroot

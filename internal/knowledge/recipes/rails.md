@@ -1,18 +1,99 @@
 # Rails on Zerops
 
-Ruby on Rails with PostgreSQL, Puma web server, and asset pipeline. Requires SECRET_KEY_BASE and proper 0.0.0.0 binding.
+Ruby runtime with Puma web server. PostgreSQL via DATABASE_URL. Build and run are separate containers.
 
 ## Keywords
-rails, ruby, puma, ruby on rails, ror, activerecord, bundler, rake
+rails, ror, puma, activerecord
 
 ## TL;DR
-Rails with Puma bound to `0.0.0.0:3000`, PostgreSQL via DATABASE_URL, migrations via `zsc execOnce`, and `SECRET_KEY_BASE` as envSecret.
+Ruby runtime, Puma bound to `0.0.0.0:3000`. SECRET_KEY_BASE must be project-level. DATABASE_URL wired from `${hostname_varName}` refs. `bundle install --deployment` required so gems are included in deployFiles.
 
-## zerops.yml
+## SECRET_KEY_BASE
 
+Must be **project-level** (shared across dev+stage). Rails uses it for signing encrypted cookies and sessions — dev and stage must share the same value or sessions break across environments.
+
+**Generate**: `ruby -e "require 'securerandom'; puts SecureRandom.hex(64)"` or `rails secret`
+**Set**: `zerops_env project=true variables=["SECRET_KEY_BASE=<generated value>"]`
+
+Do NOT use `envSecrets` in import.yml — generates a different value per service (dev and stage get different keys, breaking session decryption).
+
+## Stack Layers
+
+### Layer 0: Just Rails (no managed services)
+
+Stateless app — APIs. No persistent data.
+
+**import.yml:**
+```yaml
+services:
+  - hostname: appdev
+    type: ruby@3.4
+    startWithoutCode: true
+    maxContainers: 1
+    enableSubdomainAccess: true
+```
+
+**zerops.yml:**
 ```yaml
 zerops:
-  - setup: app
+  - setup: appdev
+    build:
+      base: ruby@3.4
+      buildCommands:
+        - bundle install --deployment
+      deployFiles: ./
+      cache: [vendor/bundle]
+    run:
+      base: ruby@3.4
+      ports:
+        - port: 3000
+          httpSupport: true
+      envVariables:
+        RAILS_ENV: development
+        RAILS_LOG_TO_STDOUT: "1"
+        RAILS_SERVE_STATIC_FILES: "1"
+      start: bundle exec puma -b tcp://0.0.0.0:3000
+```
+
+### Layer 1: + Database (PostgreSQL)
+
+**Add to import.yml:**
+```yaml
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10
+```
+
+**Add/change in zerops.yml envVariables:**
+```yaml
+        DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
+```
+
+`DATABASE_URL` takes precedence over `config/database.yml` in Rails — no additional database config needed.
+
+**Add initCommands:**
+```yaml
+      initCommands:
+        - zsc execOnce migrate-${appVersionId} -- bin/rails db:migrate
+```
+
+## Dev vs Stage zerops.yml
+
+Managed services are **shared** — both dev and stage use the same `db`.
+
+| | Dev | Stage |
+|---|-----|-------|
+| `RAILS_ENV` | `development` | `production` |
+| `initCommands` | migrate only | migrate + assets |
+| `healthCheck` | omit | port 3000 `/` |
+| `readinessCheck` | omit | port 3000 `/` |
+| Service refs | `${db_hostname}`, ... | **same** |
+
+Stage zerops.yml additions:
+```yaml
+zerops:
+  - setup: appstage
     build:
       base: ruby@3.4
       buildCommands:
@@ -32,8 +113,8 @@ zerops:
           httpSupport: true
       envVariables:
         RAILS_ENV: production
-        RAILS_SERVE_STATIC_FILES: "1"
         RAILS_LOG_TO_STDOUT: "1"
+        RAILS_SERVE_STATIC_FILES: "1"
         DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
       initCommands:
         - zsc execOnce migrate-${appVersionId} -- bin/rails db:migrate
@@ -44,63 +125,33 @@ zerops:
           path: /
 ```
 
-## import.yml
+Asset precompilation runs in the build phase (faster, cached). No Nginx in front of Puma — `RAILS_SERVE_STATIC_FILES` required.
 
-```yaml
-#yamlPreprocessor=on
-services:
-  - hostname: app
-    type: ruby@3.4
-    enableSubdomainAccess: true
-    envSecrets:
-      SECRET_KEY_BASE: <@generateRandomString(<64>)>
+## Reverse Proxy Configuration
 
-  - hostname: db
-    type: postgresql@16
-    mode: NON_HA
-    priority: 10
-```
-
-## Configuration
-
-Rails must be configured to accept requests through the Zerops reverse proxy. In `config/environments/production.rb`:
+Required in `config/environments/production.rb` for Zerops:
 
 ```ruby
-# config/environments/production.rb
-
-# Allow all hosts behind Zerops L7 balancer
-# Alternatively, restrict to your domain:
+# Allow traffic through Zerops L7 reverse proxy
+# config.hosts.clear allows all hosts — use for dev/testing only.
+# For production, whitelist your domain:
 #   config.hosts << "yourdomain.com"
+#   config.hosts << /.*\.zerops\.app/
 config.hosts.clear
 
-# Serve static files since there is no separate web server
-config.public_file_server.enabled = ENV["RAILS_SERVE_STATIC_FILES"].present?
-
-# Log to stdout for Zerops log collection
-config.logger = ActiveSupport::Logger.new(STDOUT) if ENV["RAILS_LOG_TO_STDOUT"].present?
-config.log_level = :info
-
-# Trust the Zerops reverse proxy for correct client IP
+# Trust Zerops reverse proxy for correct client IP
 config.action_dispatch.trusted_proxies = ActionDispatch::RemoteIp::TRUSTED_PROXIES
 ```
 
-Database configuration via DATABASE_URL is automatic in Rails. The `DATABASE_URL` env var takes precedence over `config/database.yml` in production.
-
-## Common Failures
-
-- **502 Bad Gateway** -- Puma not binding to `0.0.0.0`. The default `localhost` binding is unreachable from the Zerops load balancer. Use `-b tcp://0.0.0.0:3000`.
-- **Blocked host** -- Rails 6+ has host authorization enabled by default. Either clear `config.hosts` or add the Zerops subdomain explicitly.
-- **Missing SECRET_KEY_BASE** -- Rails refuses to start in production without it. It is set as envSecret in import.yml and injected automatically.
-- **Asset 404 errors** -- `RAILS_SERVE_STATIC_FILES` must be `"1"` since there is no separate Nginx/Apache in front of Puma.
-- **Migration conflict on multi-container** -- Without `zsc execOnce`, migrations run on every container simultaneously. Use the `appVersionId` guard.
+`config.hosts.clear` disables host authorization entirely. For production, restrict to known domains instead. Rails 6+ blocks all hosts by default — without this, all requests return 422.
 
 ## Gotchas
 
-- **SECRET_KEY_BASE** must be set in production -- use `<@generateRandomString(<64>)>` in import.yml envSecrets. Rails will not start without it.
-- **Puma binding** must include `0.0.0.0` -- default `localhost` causes 502 Bad Gateway from the Zerops load balancer.
-- **`--deployment` flag** is required for `bundle install` -- without it, gems install to system location and are not included in deployFiles.
-- **config.hosts** in Rails 6+ blocks requests by default. Clear it or add the Zerops subdomain to allow traffic through the reverse proxy.
-- **RAILS_SERVE_STATIC_FILES=1** is required because Puma is the only server -- there is no Nginx in front to serve static assets.
-- **RAILS_LOG_TO_STDOUT=1** ensures logs are captured by the Zerops logging system instead of being written to files that are lost on deploy.
-- **Migrations** use `zsc execOnce` with `appVersionId` for idempotency across multi-container deploys.
-- **Asset precompilation** runs in the build phase for faster deploys and to benefit from build cache.
+- **SECRET_KEY_BASE must be project-level** — per-service `envSecrets` generates different values for dev and stage, breaking session decryption across environments
+- **Puma must bind to `0.0.0.0:3000`** — default `localhost` is unreachable from the Zerops load balancer. Always use `-b tcp://0.0.0.0:3000`
+- **`--deployment` flag required for `bundle install`** — without it, gems install to system location and are NOT included in `deployFiles`. The run container gets no gems
+- **`config.hosts` blocks all requests by default** (Rails 6+) — clear it or whitelist the Zerops subdomain. Production should whitelist specific domains, not use `config.hosts.clear`
+- **RAILS_SERVE_STATIC_FILES=1** — Puma is the only server, no Nginx in front. Required for static asset serving
+- **RAILS_LOG_TO_STDOUT=1** — logs written to files are lost on deploy (volatile filesystem). Stdout routes to Zerops log collector
+- **No SQLite in production** — container filesystem is replaced on deploy. Always use a database service
+- **Migrations use `zsc execOnce`** — handles multi-container deploys. Do not add ActiveRecord advisory locks or other concurrency flags on top

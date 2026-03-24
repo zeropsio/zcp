@@ -1,11 +1,12 @@
-# Bun + Hono + PostgreSQL + Object Storage on Zerops
-Bun runtime with Hono web framework, PostgreSQL database, and S3-compatible Object Storage.
+# Bun + Hono on Zerops
+
+Bun runtime with Hono web framework, PostgreSQL, and S3-compatible object storage.
 
 ## Keywords
-bun, hono, typescript
+bun, hono, bun-runtime, bun-serve, drizzle
 
 ## TL;DR
-Bun + Hono framework with PostgreSQL and Object Storage -- includes build step, migrations via `zsc execOnce`, and mandatory 0.0.0.0 binding.
+Bun + Hono with PostgreSQL and object storage — `hostname: "0.0.0.0"` mandatory, migrations via `zsc execOnce`, build outputs to `dist/`.
 
 ## zerops.yml
 ```yaml
@@ -24,12 +25,13 @@ zerops:
       cache:
         - node_modules
     run:
+      base: bun@1.2
       ports:
         - port: 3000
           httpSupport: true
       envVariables:
         PORT: "3000"
-        DATABASE_HOST: db
+        DATABASE_HOST: ${db_hostname}
         DATABASE_PORT: ${db_port}
         DATABASE_NAME: ${db_dbName}
         DATABASE_USER: ${db_user}
@@ -70,25 +72,17 @@ services:
 
 ## Configuration
 
-**CRITICAL**: Hono on Bun must bind to `0.0.0.0`. Default causes 502 Bad Gateway.
+Hono on Bun must bind to `0.0.0.0`. Default localhost binding causes 502 Bad Gateway behind the Zerops L7 balancer:
 
-Export-based pattern (recommended for Hono + Bun):
 ```typescript
-import { Hono } from "hono";
-
-const app = new Hono();
-
-app.get("/status", (c) => c.json({ status: "ok" }));
-
+// src/index.ts — export-based pattern
 export default {
   hostname: "0.0.0.0",
   port: Number(process.env.PORT) || 3000,
   fetch: app.fetch,
 };
-```
 
-Or explicit Bun.serve:
-```typescript
+// or explicit Bun.serve
 Bun.serve({
   fetch: app.fetch,
   hostname: "0.0.0.0",
@@ -98,10 +92,9 @@ Bun.serve({
 
 ## Gotchas
 
-- **`hostname: "0.0.0.0"` is mandatory** -- without it, Zerops L7 balancer cannot reach the app (502)
-- **Migration path** -- `src/migrate.ts` must be built into `dist/migrate.js` via `bun build` so it exists at runtime; running `bun run src/migrate.ts` will fail because source files are not deployed
-- **`zsc execOnce ${appVersionId}`** -- uses version-specific key so migrations re-run on each new deploy (not a static key like `migrate`)
-- **`node_modules` in deployFiles** -- required if migration scripts import ORM packages that cannot be fully bundled (e.g., drizzle-kit, native bindings); omit if `bun build` fully resolves all imports
-- **Object Storage uses MinIO** -- `AWS_USE_PATH_STYLE_ENDPOINT: "true"` is required for S3 client compatibility
-- **`S3_ENDPOINT`** from `${storage_apiUrl}` is an internal URL -- use `http://`, never `https://`
-- **For Drizzle ORM** -- use `drizzle-orm/node-postgres` adapter (Bun compatible)
+- **`hostname: "0.0.0.0"` is mandatory** — without it, Zerops L7 balancer cannot reach the app (502 Bad Gateway)
+- **Build migration scripts** — `src/migrate.ts` must be compiled to `dist/migrate.js` via `bun build`; source files are not deployed, so `bun run src/migrate.ts` fails at runtime
+- **`zsc execOnce ${appVersionId}`** — version-specific key means migrations re-run on each new deploy
+- **`node_modules` in deployFiles** — required if migration scripts import packages with native bindings (e.g., drizzle-kit); omit if `bun build` fully bundles all imports
+- **Object Storage uses MinIO** — `AWS_USE_PATH_STYLE_ENDPOINT: "true"` required for S3 client compatibility
+- **Drizzle ORM** — use `drizzle-orm/node-postgres` adapter (Bun-compatible)

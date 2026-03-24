@@ -1,12 +1,12 @@
 # NestJS on Zerops
 
-NestJS API with TypeORM migrations, PostgreSQL, S3 file uploads via multer + aws-sdk.
+NestJS API on Node.js with PostgreSQL and S3 file storage.
 
 ## Keywords
-nestjs, nodejs, typeorm, typescript, express, multer
+nestjs, typeorm, decorator, guard, interceptor, fastify
 
 ## TL;DR
-NestJS API with TypeORM and S3 uploads — migrations via `zsc execOnce` with `${appVersionId}`, trust proxy required.
+NestJS on Node.js 20 with PostgreSQL and object storage — `trust proxy` required behind Zerops L7 balancer, migrations via `zsc execOnce ${appVersionId}`.
 
 ## zerops.yml
 ```yaml
@@ -18,7 +18,7 @@ zerops:
         - npm i
         - npm run build
       deployFiles:
-        - ./dist
+        - dist
         - node_modules
         - package.json
       cache: node_modules
@@ -33,23 +33,18 @@ zerops:
         - port: 3000
           httpSupport: true
       envVariables:
-        DATABASE_HOST: db
-        DATABASE_PORT: "5432"
-        DATABASE_NAME: db
+        DATABASE_HOST: ${db_hostname}
+        DATABASE_PORT: ${db_port}
+        DATABASE_NAME: ${db_dbName}
         DATABASE_USERNAME: ${db_user}
         DATABASE_PASSWORD: ${db_password}
-        SMTP_HOST: mailpit
-        SMTP_PORT: "1025"
-        SMTP_USER: ""
-        SMTP_PASS: ""
-        SMTP_EMAIL_FROM: recipe@zerops.io
         STORAGE_ACCESS_KEY_ID: ${storage_accessKeyId}
         STORAGE_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
         STORAGE_ENDPOINT: ${storage_apiUrl}
         STORAGE_S3_BUCKET_NAME: ${storage_bucketName}
         STORAGE_REGION: us-east-1
       initCommands:
-        - zsc execOnce ${appVersionId} npm run typeorm:migrate
+        - zsc execOnce ${appVersionId} -- npm run typeorm:migrate
       start: npm run start:prod
       healthCheck:
         httpGet:
@@ -74,15 +69,11 @@ services:
     objectStorageSize: 2
     objectStoragePolicy: public-read
     priority: 10
-
-  - hostname: mailpit
-    type: go@1
-    priority: 10
 ```
 
 ## Configuration
 
-NestJS with Express requires trust proxy for correct client IP behind the Zerops load balancer:
+NestJS with Express requires trust proxy for correct IP/protocol behind the Zerops L7 balancer:
 
 ```typescript
 // main.ts
@@ -90,25 +81,10 @@ const app = await NestFactory.create(AppModule);
 app.set('trust proxy', true);
 ```
 
-TypeORM datasource config reads env vars directly:
-
-```typescript
-// db.config.ts
-export const dataSource = new DataSource({
-  type: 'postgres',
-  host: process.env.DATABASE_HOST,
-  port: parseInt(process.env.DATABASE_PORT, 10),
-  username: process.env.DATABASE_USERNAME,
-  password: process.env.DATABASE_PASSWORD,
-  database: process.env.DATABASE_NAME,
-});
-```
-
 ## Gotchas
 
-- **TypeORM migrations** use `zsc execOnce ${appVersionId}` in initCommands so they run exactly once per deploy, not per container
-- **trust proxy** required: `app.set('trust proxy', true)` in main.ts for Express-based NestJS behind Zerops L7 balancer
-- **S3 file uploads** use multer + aws-sdk; `STORAGE_REGION` must be set (use `us-east-1` for Zerops object storage)
-- **DATABASE_HOST** uses hardcoded `db` hostname matching the import.yml service hostname
-- **Mailpit** is a dev-only SMTP mock; replace with production SMTP service and update SMTP env vars for production
-- **Adminer** (DB GUI) omitted from import.yml by default; add `php-apache@8.1` service if needed for development
+- **Trust proxy required** — `app.set('trust proxy', true)` in main.ts; without it, request IP and HTTPS detection are wrong behind the Zerops L7 balancer
+- **TypeORM migrations via `zsc execOnce`** — runs once per deploy per container across all replicas; `${appVersionId}` key ensures re-run on each new deploy
+- **`DATABASE_HOST: ${db_hostname}`** — use the dynamic ref, not the hardcoded service hostname; if the service is named `mydb`, the ref is `${mydb_hostname}`
+- **Object Storage uses MinIO** — `forcePathStyle: true` required in S3 client config; `STORAGE_REGION` must be set (use `us-east-1`)
+- **`AWS_USE_PATH_STYLE_ENDPOINT`** — if using AWS SDK env var auto-detection, set this to `"true"` for Zerops S3 compatibility

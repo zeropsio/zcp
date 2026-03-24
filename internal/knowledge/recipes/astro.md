@@ -1,10 +1,12 @@
 # Astro on Zerops
 
+SSR with `@astrojs/node` adapter on Node.js, or static output (default mode) to static service.
+
 ## Keywords
-astro, nodejs, ssr, static, ssg, adapter-node, typescript, javascript
+astro, adapter-node, island-architecture, content-collections
 
 ## TL;DR
-Astro on Zerops -- SSR with `@astrojs/node` adapter on Node.js or static export (default mode) to static service.
+SSR requires `@astrojs/node` adapter in standalone mode. Deploy `dist`, `package.json`, and `node_modules` separately — runtime does NOT run `npm install`. `HOST: 0.0.0.0` required. Static: deploy `dist/~`.
 
 ## SSR (Node.js runtime)
 
@@ -13,24 +15,24 @@ Astro on Zerops -- SSR with `@astrojs/node` adapter on Node.js or static export 
 zerops:
   - setup: app
     build:
-      base: nodejs@20
+      base: nodejs@22
       buildCommands:
-        - pnpm i
-        - pnpm run build
+        - npm ci
+        - npm run build
       deployFiles:
         - dist
         - package.json
         - node_modules
       cache: node_modules
     run:
-      base: nodejs@20
+      base: nodejs@22
       ports:
         - port: 3000
           httpSupport: true
       envVariables:
-        PORT: 3000
+        PORT: "3000"
         HOST: 0.0.0.0
-      start: pnpm start
+      start: npm start
       healthCheck:
         httpGet:
           port: 3000
@@ -41,21 +43,19 @@ zerops:
 ```yaml
 services:
   - hostname: app
-    type: nodejs@20
+    type: nodejs@22
     enableSubdomainAccess: true
 ```
 
-### Configuration
-The project must use the `@astrojs/node` adapter in standalone mode in `astro.config.mjs`:
+Requires `@astrojs/node` adapter in `astro.config.mjs`:
 ```javascript
 import node from "@astrojs/node";
-
 export default defineConfig({
   output: "server",
   adapter: node({ mode: "standalone" }),
 });
 ```
-Without this adapter, Astro defaults to static output which cannot run on a Node.js service.
+Without this adapter, Astro defaults to static output and fails on a Node.js service.
 
 ## Static Export
 
@@ -64,10 +64,10 @@ Without this adapter, Astro defaults to static output which cannot run on a Node
 zerops:
   - setup: app
     build:
-      base: nodejs@20
+      base: nodejs@22
       buildCommands:
-        - pnpm i
-        - pnpm build
+        - npm ci
+        - npm run build
       deployFiles: dist/~
       cache: node_modules
     run:
@@ -82,11 +82,12 @@ services:
     enableSubdomainAccess: true
 ```
 
+Astro defaults to static output — no adapter or config change needed.
+
 ## Gotchas
-- **SSR: `@astrojs/node` adapter is required** -- install with `pnpm add @astrojs/node` and configure with `mode: "standalone"`
-- **SSR: `output: "server"`** must be set in astro.config.mjs to enable SSR
-- **SSR: deploy `dist`, `package.json`, and `node_modules`** -- SSR needs runtime dependencies
-- **SSR: HOST must be `0.0.0.0`** -- binding to all interfaces required by Zerops
-- **Static: no adapter needed** -- Astro defaults to static output
-- **Static: deploy `dist/~`** -- tilde deploys directory contents to webroot
-- **Static: no server-side features** -- API routes and SSR are not available
+- **SSR: `@astrojs/node` adapter required** — install with `npm add @astrojs/node`, configure `mode: "standalone"` and `output: "server"`
+- **SSR: deploy `dist`, `package.json`, `node_modules` separately** — the runtime does NOT run `npm install`; `node_modules` must be in `deployFiles`
+- **SSR: `HOST: 0.0.0.0`** — binding to all interfaces is required by Zerops; set via `PORT`/`HOST` env vars
+- **SSR: port 3000** — declare in `ports` with `httpSupport: true` for Zerops L7 routing
+- **Static: `dist/~`** — tilde deploys directory contents to webroot
+- **Static: no adapter needed** — Astro defaults to static output without any configuration

@@ -1,12 +1,12 @@
 # Payload CMS on Zerops
 
-Payload CMS 3.x with Next.js frontend, PostgreSQL, and S3 object storage. Requires Ubuntu OS and build-time database migrations.
+Payload CMS 3.x with Next.js frontend, PostgreSQL, and S3 object storage.
 
 ## Keywords
-payload, cms, nextjs, nodejs, ubuntu, headless cms
+payload, payload-cms, rich-text, collections, blocks, access-control
 
 ## TL;DR
-Payload CMS on Node.js 20 (Ubuntu) with PostgreSQL — migrations run during BUILD with `zsc test tcp` to wait for the database.
+Payload CMS on Node.js 20 (Ubuntu, required) — migrations run during BUILD phase using `zsc test tcp` to wait for the database, not in initCommands.
 
 ## zerops.yml
 ```yaml
@@ -43,7 +43,7 @@ zerops:
       base: nodejs@20
       os: ubuntu
       envVariables:
-        DATABASE_URI: ${db_connectionString}/${db_dbName}
+        DATABASE_URI: ${db_connectionString}
         NEXT_PUBLIC_SERVER_URL: ${zeropsSubdomain}
         S3_ENDPOINT: ${storage_apiUrl}
         S3_ACCESS_KEY_ID: ${storage_accessKeyId}
@@ -85,21 +85,19 @@ services:
 ```
 
 ## Configuration
-Build-time env vars use `${RUNTIME_*}` prefix to reference the runtime service's own envSecrets and cross-service vars. This is how Zerops makes runtime secrets available during build:
-- `RUNTIME_PAYLOAD_SECRET` resolves to the `PAYLOAD_SECRET` envSecret set on the `api` service
-- `RUNTIME_DATABASE_URI` resolves to `${db_connectionString}/${db_dbName}` from the runtime config
-- `RUNTIME_S3_*` vars resolve to the corresponding `storage_*` cross-service references
 
-## Common Failures
-- **Build fails at migrate**: Database not ready; `zsc test tcp -6 db:5432 --timeout 30s` must precede migration commands
-- **500 on first load**: Missing `PAYLOAD_SECRET` envSecret; verify `#yamlPreprocessor=on` is the first line of import.yml
-- **Images not uploading**: S3 storage not configured; check `storage_apiUrl`, `storage_accessKeyId`, `storage_secretAccessKey`, `storage_bucketName` references
+Build-time env vars use `${RUNTIME_*}` prefix to access the runtime service's own secrets and cross-service refs during the build phase. Zerops resolves these from the runtime service's environment:
+
+- `${RUNTIME_PAYLOAD_SECRET}` — the `PAYLOAD_SECRET` envSecret set on the `api` service
+- `${RUNTIME_DATABASE_URI}` — resolves to the `DATABASE_URI` from the run envVariables
+- `${RUNTIME_S3_*}` — resolves to the S3 cross-service refs from the run envVariables
 
 ## Gotchas
 
-- **Ubuntu OS required** — both build and run must set `os: ubuntu` (Alpine lacks dependencies Payload needs)
-- **Migrations run during BUILD** (not runtime) — `zsc test tcp` ensures PostgreSQL is ready before `pnpm payload migrate`
-- **Build env vars use RUNTIME_ prefix** to access runtime secrets during build phase
-- Object storage required for media uploads (Payload S3 plugin)
-- `maxContainers: 1` recommended — Payload with Next.js does not reliably handle multiple containers
-- Service priorities ensure DB and storage are ready before the app service builds
+- **Ubuntu OS required on both build and run** — Alpine lacks native dependencies Payload needs; `os: ubuntu` must appear in both `build:` and `run:`
+- **Migrations run during BUILD** — not in initCommands; `zsc test tcp -6 db:5432 --timeout 30s` must precede migration commands to wait for PostgreSQL
+- **`${RUNTIME_*}` prefix** — only way to pass runtime secrets into the build phase; without the prefix, `${PAYLOAD_SECRET}` would not resolve during build
+- **`DATABASE_URI: ${db_connectionString}`** — PostgreSQL `connectionString` already includes the full URL with database name; do not append `/${db_dbName}`
+- **`#yamlPreprocessor=on` required** — `envSecrets` use `<@generateRandomString(...)>` which requires the YAML preprocessor
+- **`maxContainers: 1` recommended** — Payload + Next.js does not reliably handle multiple containers
+- **Object storage `private` policy** — Payload manages media access control; do not use `public-read`

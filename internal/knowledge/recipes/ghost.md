@@ -1,12 +1,12 @@
 # Ghost CMS on Zerops
 
-Ghost blogging platform with MariaDB and S3 storage. Ghost does NOT support horizontal scaling.
+Ghost blogging platform with MariaDB and S3 storage.
 
 ## Keywords
-ghost, nodejs, cms, blog, content management
+ghost, ghost-cli, ghost-storage-adapter-s3, blogging, publishing
 
 ## TL;DR
-Ghost CMS on Node.js 18 with MariaDB and S3 content storage — `maxContainers: 1` is mandatory because Ghost cannot run in multiple containers.
+Ghost CMS on Node.js 18 with MariaDB and S3 content storage — `maxContainers: 1` is mandatory because Ghost uses local file locks and cannot run in multiple containers.
 
 ## zerops.yml
 ```yaml
@@ -39,11 +39,10 @@ zerops:
         AWS_DEFAULT_REGION: us-east-1
         AWS_ACCESS_KEY_ID: ${storage_accessKeyId}
         AWS_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
-        STORAGE_HOSTNAME: storage
         GHOST_STORAGE_ADAPTER_S3_PATH_BUCKET: ${storage_bucketName}
-        GHOST_STORAGE_ADAPTER_S3_ASSET_HOST: ${storage_apiUrl}/${GHOST_STORAGE_ADAPTER_S3_PATH_BUCKET}
+        GHOST_STORAGE_ADAPTER_S3_ASSET_HOST: ${storage_apiUrl}/${storage_bucketName}
         GHOST_STORAGE_ADAPTER_S3_ENDPOINT: ${storage_apiUrl}
-        GHOST_STORAGE_ADAPTER_S3_FORCE_PATH_STYLE: true
+        GHOST_STORAGE_ADAPTER_S3_FORCE_PATH_STYLE: "true"
         database__connection__database: ${db_hostname}
         database__connection__host: ${db_hostname}
         database__connection__password: ${db_password}
@@ -72,7 +71,7 @@ services:
   - hostname: storage
     type: object-storage
     objectStorageSize: 2
-    objectStoragePolicy: public-objects-read
+    objectStoragePolicy: public-read
     priority: 10
 
   - hostname: ghost
@@ -83,16 +82,13 @@ services:
       minRam: 1
 ```
 
-## Common Failures
-- **502 after deploy**: Ghost needs ~30s to boot; the `url` env var must match the actual subdomain URL (use `${zeropsSubdomain}`)
-- **Images broken**: S3 adapter not installed or env vars incorrect; verify `GHOST_STORAGE_ADAPTER_S3_ENDPOINT` points to `${storage_apiUrl}`
-- **DB connection refused**: MariaDB must be created with `priority: 10` so it starts before Ghost
-
 ## Gotchas
 
-- **maxContainers: 1** is MANDATORY — Ghost uses local file locks and cannot run in multiple containers
-- Ghost listens on port **2368** (not 3000 or 8080)
-- The `url` env var controls all generated links; set it to `${zeropsSubdomain}` for development or your domain for production
-- S3 storage adapter requires `ghost-storage-adapter-s3` installed during build and the adapter copied to `content/adapters/storage/s3`
-- For MariaDB HA in production: switch to `mode: HA` and add `SET GLOBAL wsrep_sync_wait=1;` in initCommands for Galera sync
-- Admin interface is at `/ghost` on the subdomain URL
+- **`maxContainers: 1` is MANDATORY** — Ghost uses local file locks and cannot run across multiple containers
+- **Port 2368** — Ghost listens on 2368, not 3000 or 8080; declare in `ports` and all health checks
+- **`url` env var** — controls all generated URLs (links, images, admin redirects); must match the actual domain; use `${zeropsSubdomain}` for dev or your custom domain for production
+- **MariaDB `database__connection__database`** — set to `${db_hostname}`, not a custom name; MariaDB database name equals the service hostname on Zerops
+- **S3 adapter installed during build** — `ghost-storage-adapter-s3` must be added under `./current/` (the Ghost installation directory) and copied to `content/adapters/storage/s3`
+- **`GHOST_STORAGE_ADAPTER_S3_FORCE_PATH_STYLE: "true"`** — required for Zerops S3 (MinIO backend)
+- **Ghost needs ~30s to boot** — `readinessCheck` on deploy path handles this; do not reduce the check timeout
+- **MariaDB HA in production** — switch to `mode: HA` and add `SET GLOBAL wsrep_sync_wait=1;` in initCommands for Galera cluster sync
