@@ -1301,32 +1301,6 @@ func TestEngine_DeployComplete_DeletesSessionFile(t *testing.T) {
 	}
 }
 
-func TestEngine_CICDComplete_DeletesSessionFile(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir, EnvLocal, nil)
-
-	if _, err := eng.CICDStart("proj-1", "test", []string{"appdev"}); err != nil {
-		t.Fatalf("CICDStart: %v", err)
-	}
-	sessionID := eng.SessionID()
-
-	steps := []string{CICDStepChoose, CICDStepConfigure, CICDStepVerify}
-	for _, step := range steps {
-		if _, err := eng.CICDComplete(step, "step completed successfully", ""); err != nil {
-			t.Fatalf("CICDComplete(%s): %v", step, err)
-		}
-	}
-
-	path := sessionFilePath(dir, sessionID)
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Errorf("session file should be deleted after cicd completion, stat err: %v", err)
-	}
-	if eng.SessionID() != "" {
-		t.Errorf("engine SessionID should be empty after cicd completion, got %q", eng.SessionID())
-	}
-}
-
 func TestEngine_BootstrapComplete_Partial_KeepsSessionFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

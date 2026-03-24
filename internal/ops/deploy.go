@@ -186,7 +186,16 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir string, inc
 
 	email := shellQuote(id.Email)
 	name := shellQuote(id.Name)
-	gitInit := fmt.Sprintf("git init -q && git config user.email %s && git config user.name %s && git add -A && git commit -q -m 'deploy'", email, name)
+
+	// Init only if no .git exists. Use -b main for consistent branch name.
+	gitInit := "(test -d .git || git init -q -b main)"
+
+	// Always set identity (internal deploy commits, not user-facing).
+	gitIdentity := fmt.Sprintf("git config user.email %s && git config user.name %s", email, name)
+
+	// Always stage + commit. Skip commit if nothing changed (diff-index quiet).
+	// On fresh init, HEAD doesn't exist -> diff-index fails -> || fires -> commit runs.
+	gitCommit := "git add -A && (git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy')"
 
 	// Push from workingDir with git handling.
 	pushArgs := fmt.Sprintf("zcli push --serviceId %s", targetServiceID)
@@ -194,8 +203,8 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir string, inc
 		pushArgs += " -g"
 	}
 
-	// Git-init guard: init only if no .git exists.
-	pushCmd := fmt.Sprintf("cd %s && (test -d .git || (%s)) && %s", workingDir, gitInit, pushArgs)
+	pushCmd := fmt.Sprintf("cd %s && %s && %s && %s && %s",
+		workingDir, gitInit, gitIdentity, gitCommit, pushArgs)
 	parts = append(parts, pushCmd)
 
 	return strings.Join(parts, " && ")

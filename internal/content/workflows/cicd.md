@@ -1,160 +1,151 @@
 # CI/CD Setup: Connect Git Repository to Zerops
 
-## Overview
+## How CI/CD Works
 
-Set up automated deployments from a git repository. Choose a provider, configure the connection, and verify with a test push.
+Push code to a git remote -> CI/CD deploys to Zerops service(s) automatically.
+Each target service needs its own deploy configuration (GitHub Actions step or GitLab webhook connection).
+
+The CI/CD targets section above (if present) shows your dev -> stage mapping from project configuration.
+If no targets are listed, use `zerops_discover` to identify services or ask the user for target service IDs.
+
+## Choose Your Approach
+
+| Approach | When to use | How it works |
+|----------|------------|--------------|
+| **GitHub Actions** | Repo on GitHub | Workflow file in repo triggers `zeropsio/actions@main` |
+| **GitLab Integration** | Repo on GitLab | Zerops GUI webhook triggers build on push/tag |
 
 ---
 
-<section name="cicd-choose">
-## Choose CI/CD Provider
+## Git Preparation
 
-Select based on your hosting and requirements:
+SSH to the dev container and assess current state:
+  ssh {devHostname} "cd /var/www && git status && git remote -v && git branch"
 
-| Provider | When to use | How it works |
-|----------|------------|--------------|
-| **GitHub Actions** | Repo on GitHub | Workflow file triggers `zcli push` on push to branch |
-| **GitLab CI** | Repo on GitLab | Pipeline job triggers `zcli push` on push to branch |
-| **Zerops Webhook** | Any git host | Zerops listens for webhook, pulls and builds on push |
-| **Generic zcli** | Any CI system | Add `zcli push` step to your existing CI pipeline |
+Fill only what's missing:
 
-**Recommendation:**
-- GitHub/GitLab → use their native CI (Actions/CI) for full control
-- Other git hosts (Bitbucket, Gitea, etc.) → Zerops webhook is simplest
-- Already have CI → generic zcli integration
+**If no .gitignore** -- write one via SSH:
+  Baseline: node_modules/ vendor/ .env .env.* *.log dist/ build/ .cache/
+  Customize for framework: zerops_knowledge query="{runtime} gitignore"
 
-Choose and report: `zerops_workflow action="complete" step="choose" attestation="Provider: github for repo owner/name"`
+**If no remote** (git remote -v shows nothing):
+  ssh {devHostname} "cd /var/www && git remote add origin https://{token}@github.com/{owner}/{repo}.git"
+  Token safety: guide user to create a personal access token. NEVER paste tokens in conversation.
 
-Before completing, set the provider: the attestation should clearly state which provider was chosen.
-</section>
+**If remote already configured** -- use existing. Don't overwrite.
 
-<section name="cicd-configure-github">
-## Configure GitHub Actions
+### Push safety hook
 
-### Prerequisites
-- Zerops Personal Access Token (from Zerops dashboard → Access Token Management)
-- GitHub repository with push access
+Block force push and branch deletion on main/master:
+  ssh {devHostname} 'mkdir -p /var/www/.git/hooks && cat > /var/www/.git/hooks/pre-push << '\''HOOK'\''
+#!/bin/sh
+while read local_ref local_sha remote_ref remote_sha; do
+  branch="${remote_ref#refs/heads/}"
+  case "$branch" in main|master)
+    zero="0000000000000000000000000000000000000000"
+    if [ "$local_sha" = "$zero" ]; then
+      echo "BLOCKED: Deleting $branch denied." >&2; exit 1
+    fi
+    if [ "$remote_sha" != "$zero" ] && ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+      echo "BLOCKED: Force push to $branch denied." >&2; exit 1
+    fi
+  esac
+done
+HOOK
+chmod +x /var/www/.git/hooks/pre-push'
 
-### Steps
+For additional protection, recommend enabling branch protection rules in repository settings.
 
-1. **Create Zerops token** — guide user to Zerops dashboard → Settings → Access Token Management → Generate token
-2. **Add GitHub secret** — Settings → Secrets → Actions → New secret:
-   - Name: `ZEROPS_TOKEN`
-   - Value: the generated token
-3. **Create workflow file** — `.github/workflows/deploy.yml`:
+### Push initial code
+
+  ssh {devHostname} "cd /var/www && git add -A && git commit -m 'initial' && git push -u origin {branch}"
+  Use whatever branch exists (from git branch output above).
+
+---
+
+## GitHub Actions Configuration
+
+### 1. Get stage service ID
+
+  Zerops dashboard -> stage service -> three-dot menu -> **Copy Service ID**
+  Or from URL: https://app.zerops.io/service-stack/<service-id>/dashboard
+
+### 2. Create Zerops access token
+
+  Zerops dashboard -> [Settings -> Access Token Management](https://app.zerops.io/settings/token-management) -> Generate
+
+### 3. Add GitHub secret
+
+  Repository -> Settings -> Secrets and variables -> Actions -> Repository secrets
+  Name: `ZEROPS_TOKEN`, Value: the generated token
+
+### 4. Create workflow file
+
+`.github/workflows/deploy.yml`:
 
 ```yaml
 name: Deploy to Zerops
 on:
   push:
     branches: [main]
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: zeropsio/zcli-action@v1
+      - uses: zeropsio/actions@main
         with:
-          token: ${{ secrets.ZEROPS_TOKEN }}
-          project: "{projectName}"
-          service: "{hostname}"
+          access-token: ${{ secrets.ZEROPS_TOKEN }}
+          service-id: {stageServiceId}
 ```
 
-4. **Commit and push** the workflow file
+For multiple services, add one `zeropsio/actions` step per target service, each with its own `service-id`.
 
-For multiple services, add multiple `zcli-action` steps or use a matrix strategy.
+### 5. Commit and push
 
-Report: `zerops_workflow action="complete" step="configure" attestation="GitHub Actions configured for {hostname}, workflow file committed"`
-</section>
+  ssh {devHostname} "cd /var/www && git add -A && git commit -m 'add CI/CD workflow' && git push"
+  First push to main triggers deploy.
 
-<section name="cicd-configure-gitlab">
-## Configure GitLab CI
+---
 
-### Prerequisites
-- Zerops Personal Access Token
-- GitLab repository with maintainer access
+## GitLab Integration Configuration
 
-### Steps
+GitLab uses Zerops GUI webhook (no CI pipeline file needed).
+Zerops pulls code directly and runs the zerops.yml build pipeline.
 
-1. **Create Zerops token** — Zerops dashboard → Settings → Access Token Management
-2. **Add CI variable** — Settings → CI/CD → Variables:
-   - Key: `ZEROPS_TOKEN`
-   - Value: the generated token
-   - Protected: Yes, Masked: Yes
-3. **Create pipeline file** — `.gitlab-ci.yml`:
+### 1. Connect repository in Zerops
 
-```yaml
-deploy:
-  image: zeropsio/zcli:latest
-  stage: deploy
-  only: [main]
-  script:
-    - zcli login --zeropsToken $ZEROPS_TOKEN
-    - zcli push {hostname} --projectName "{projectName}"
-```
+  Zerops dashboard -> **stage service** -> Build, Deploy, Run Pipeline Settings
+  -> **Connect with a GitLab repository**
+  -> Authorize Zerops access (full repo access required for webhook)
+  -> Select repository
+  -> Set trigger: **Push to branch** -> `main`
+  -> Confirm
 
-4. **Commit and push** the pipeline file
+Zerops creates a webhook. Builds trigger automatically on push.
 
-Report: `zerops_workflow action="complete" step="configure" attestation="GitLab CI configured for {hostname}, pipeline file committed"`
-</section>
+For multiple services, connect each target service separately in the Zerops dashboard.
 
-<section name="cicd-configure-webhook">
-## Configure Zerops Webhook
+### 2. Trigger first build
 
-### Steps
+  ssh {devHostname} "cd /var/www && git add -A && git commit -m 'trigger build' --allow-empty && git push"
 
-1. **Connect repository in Zerops dashboard:**
-   - Service detail → Build, Deploy, Run Pipeline Settings → Connect with GitHub/GitLab
-   - Or use Zerops CLI: configure the build trigger
-2. **Set trigger branch** — typically `main` or `production`
-3. **Verify webhook** — push a commit and check Zerops dashboard for build activity
+---
 
-Webhook is the simplest option — no CI files needed. Zerops pulls code directly and runs the build pipeline defined in zerops.yml.
+## Verification
 
-Report: `zerops_workflow action="complete" step="configure" attestation="Webhook configured for {hostname} on branch main"`
-</section>
-
-<section name="cicd-configure-generic">
-## Configure Generic zcli Push
-
-For any CI system (Jenkins, CircleCI, Travis, etc.):
-
-### Steps
-
-1. **Install zcli** in your CI environment:
-   ```
-   npm i -g @zerops/zcli
-   # or download binary from https://github.com/zeropsio/zcli/releases
-   ```
-2. **Set environment variable** `ZEROPS_TOKEN` with your Zerops Personal Access Token
-3. **Add deploy step** to your CI pipeline:
-   ```
-   zcli login --zeropsToken $ZEROPS_TOKEN
-   zcli push {hostname} --projectName "{projectName}"
-   ```
-4. **Trigger branch** — configure to run on push to main/production
-
-Report: `zerops_workflow action="complete" step="configure" attestation="zcli push configured in CI pipeline for {hostname}"`
-</section>
-
-<section name="cicd-verify">
-## Verify CI/CD Setup
-
-1. **Trigger a deploy** — push a small change (e.g., update a comment) to the configured branch
-2. **Monitor** — `zerops_process` or `zerops_events` to see the build trigger
-3. **Wait for completion** — build should appear and complete
-4. **Verify** — `zerops_verify serviceHostname="{hostname}"` must return healthy
+1. **Check build triggered** -- `zerops_events serviceHostname="{stageHostname}" limit=5`
+2. **Wait for completion** -- monitor events until build FINISHED.
+3. **Verify health** -- `zerops_verify serviceHostname="{stageHostname}"`
 
 **If no build triggers:**
-- Check webhook configuration in Zerops dashboard
-- Verify the branch name matches
-- Check CI logs for authentication errors (invalid token)
-- Verify `zerops.yml` exists with correct `setup:` entry
+- Check commit message doesn't contain `[ci skip]` or `[skip ci]`
+- GitHub: verify workflow file is on main branch, check Actions tab
+- GitLab: verify webhook in Zerops dashboard, check trigger branch
+- Both: verify access token is valid
 
 **If build fails:**
-- Check build logs in Zerops dashboard or via `zerops_logs`
-- Common issues: wrong buildCommands, missing dependencies, incorrect deployFiles
+- `zerops_logs serviceHostname="{stageHostname}" severity=error`
+- Deploy creates NEW container -- local files from dev are NOT carried over
 
-Report: `zerops_workflow action="complete" step="verify" attestation="Test push triggered build, deploy completed, service healthy"`
-</section>
+**Present to user:** stage URL, repo URL, explain: push to {branch} -> automatic deploy.

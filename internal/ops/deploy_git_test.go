@@ -33,22 +33,22 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 		wantAbsent []string
 	}{
 		{
-			name:      "basic command contains git guard with user identity",
+			name:      "basic command with init guard and always-commit",
 			authInfo:  testAuthInfo(),
 			serviceID: "svc-123",
 			workDir:   "/var/www",
 			wantParts: []string{
-				"test -d .git",
-				"git init -q",
+				"test -d .git || git init -q -b main",
 				"git config user.email 'test@example.com'",
 				"git config user.name 'Test User'",
 				"git add -A",
-				"git commit -q -m 'deploy'",
-				"(test -d .git || (git init -q",
+				"git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy'",
 				"zcli push --serviceId svc-123",
 			},
 			wantAbsent: []string{
 				"rm -rf .git",
+				"git remote",
+				".gitignore",
 			},
 		},
 		{
@@ -62,7 +62,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			workDir:   "/var/www",
 			wantParts: []string{
 				"zcli login my-token",
-				"test -d .git",
+				"test -d .git || git init -q -b main",
 				"zcli push --serviceId svc-789",
 			},
 		},
@@ -112,5 +112,71 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildSSHCommand_FreshInit_BranchMain(t *testing.T) {
+	t.Parallel()
+
+	id := GitIdentity{Name: "Test User", Email: "test@example.com"}
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", false, id)
+
+	if !contains(cmd, "git init -q -b main") {
+		t.Errorf("fresh init must use -b main\ngot: %s", cmd)
+	}
+}
+
+func TestBuildSSHCommand_AlwaysCommits(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		id   GitIdentity
+	}{
+		{
+			name: "standard identity",
+			id:   GitIdentity{Name: "Test User", Email: "test@example.com"},
+		},
+		{
+			name: "different identity",
+			id:   GitIdentity{Name: "Deploy Bot", Email: "bot@ci.io"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", false, tt.id)
+
+			if !contains(cmd, "git add -A && (git diff-index") {
+				t.Errorf("command must always stage and commit\ngot: %s", cmd)
+			}
+		})
+	}
+}
+
+func TestBuildSSHCommand_NoChanges_SkipsCommit(t *testing.T) {
+	t.Parallel()
+
+	id := GitIdentity{Name: "Test User", Email: "test@example.com"}
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", false, id)
+
+	if !contains(cmd, "git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy'") {
+		t.Errorf("must use diff-index to skip commit when nothing changed\ngot: %s", cmd)
+	}
+}
+
+func TestBuildSSHCommand_PreservesRemoteAndGitignore(t *testing.T) {
+	t.Parallel()
+
+	id := GitIdentity{Name: "Test User", Email: "test@example.com"}
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", false, id)
+
+	unwanted := []string{"git remote", ".gitignore"}
+	for _, s := range unwanted {
+		if contains(cmd, s) {
+			t.Errorf("command must NOT contain %q\ngot: %s", s, cmd)
+		}
 	}
 }

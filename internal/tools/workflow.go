@@ -15,7 +15,6 @@ import (
 const (
 	workflowBootstrap = workflow.WorkflowBootstrap
 	workflowDeploy    = workflow.WorkflowDeploy
-	workflowCICD      = workflow.WorkflowCICD
 )
 
 // WorkflowInput is the input type for zerops_workflow.
@@ -98,12 +97,8 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "iterate":
 		return handleIterate(ctx, engine, client, cache)
 	case "complete":
-		// Route to the active workflow type.
-		switch detectActiveWorkflow(engine) {
-		case workflowDeploy:
+		if detectActiveWorkflow(engine) == workflowDeploy {
 			return handleDeployComplete(ctx, engine, client, projectID, stateDir, input)
-		case workflowCICD:
-			return handleCICDComplete(ctx, engine, input)
 		}
 		var liveTypes []platform.ServiceStackType
 		if cache != nil && client != nil {
@@ -116,11 +111,8 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		return handleBootstrapSkip(ctx, engine, client, cache, input)
 	case "status":
-		switch detectActiveWorkflow(engine) {
-		case workflowDeploy:
+		if detectActiveWorkflow(engine) == workflowDeploy {
 			return handleDeployStatus(ctx, engine)
-		case workflowCICD:
-			return handleCICDStatus(ctx, engine)
 		}
 		return handleBootstrapStatus(ctx, engine, client, cache)
 	case "resume":
@@ -149,6 +141,14 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 				fmt.Sprintf("Workflow %q not found: %v", input.Workflow, err),
 				"Valid workflows: bootstrap, deploy, debug, configure, cicd")), nil, nil
 		}
+
+		// CI/CD: prepend service context from ServiceMeta (if available).
+		if input.Workflow == "cicd" && engine != nil {
+			if ctx := buildCICDContext(engine.StateDir()); ctx != "" {
+				wfContent = ctx + "\n\n---\n\n" + wfContent
+			}
+		}
+
 		return jsonResult(immediateResponse{
 			Workflow: input.Workflow,
 			Guidance: wfContent,
@@ -173,11 +173,6 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return handleDeployStart(ctx, engine, client, projectID, input)
 	}
 
-	// CI/CD workflow.
-	if input.Workflow == workflowCICD {
-		return handleCICDStart(ctx, engine, projectID, input)
-	}
-
 	// Unknown workflow — return error.
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
@@ -196,9 +191,6 @@ func detectActiveWorkflow(engine *workflow.Engine) string {
 	}
 	if state.Deploy != nil && state.Deploy.Active {
 		return workflowDeploy
-	}
-	if state.CICD != nil && state.CICD.Active {
-		return workflowCICD
 	}
 	return workflowBootstrap
 }
@@ -220,12 +212,8 @@ func handleIterate(ctx context.Context, engine *workflow.Engine, client platform
 			fmt.Sprintf("Iterate failed: %v", err),
 			"Start a session first")), nil, nil
 	}
-	// Route to the right status handler after iteration.
-	switch detectActiveWorkflow(engine) {
-	case workflowDeploy:
+	if detectActiveWorkflow(engine) == workflowDeploy {
 		return handleDeployStatus(ctx, engine)
-	case workflowCICD:
-		return handleCICDStatus(ctx, engine)
 	}
 	return bootstrapStatusResult(ctx, engine, client, cache)
 }
@@ -243,11 +231,8 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 			fmt.Sprintf("Resume failed: %v", err),
 			"Session may not exist or may still be active")), nil, nil
 	}
-	switch detectActiveWorkflow(engine) {
-	case workflowDeploy:
+	if detectActiveWorkflow(engine) == workflowDeploy {
 		return handleDeployStatus(ctx, engine)
-	case workflowCICD:
-		return handleCICDStatus(ctx, engine)
 	}
 	return bootstrapStatusResult(ctx, engine, client, cache)
 }

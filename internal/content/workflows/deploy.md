@@ -179,12 +179,20 @@ zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" (cro
 <section name="deploy-ci-cd">
 ### CI/CD Deploy Strategy
 
-For services connected to a Git repository with automated deployments.
-After connecting the repository via Zerops dashboard:
-1. Push code to the connected branch
-2. Zerops automatically triggers build pipeline
-3. Monitor via zerops_process or zerops_events
-4. Verify via zerops_verify after deploy completes
+CI/CD integration is configured for this service.
+Deployments trigger automatically when you push to the trigger branch.
+
+**To deploy changes:**
+1. Commit and push: `ssh {devHostname} "cd /var/www && git add -A && git commit -m 'update' && git push"`
+   Or if working on an SSHFS mount: commit and push via the mount path.
+2. CI/CD pipeline triggers automatically (GitHub Actions or GitLab webhook)
+3. Monitor: `zerops_events serviceHostname="{stageHostname}"`
+4. Verify: `zerops_verify serviceHostname="{stageHostname}"`
+
+**No `zerops_deploy` needed.** The CI/CD pipeline handles the build and deployment.
+
+**To reconfigure:** `zerops_workflow action="start" workflow="cicd"` for CI/CD setup guidance.
+**To switch strategy:** `zerops_workflow action="strategy" strategies={"hostname":"push-dev"}`
 </section>
 
 <section name="deploy-manual">
