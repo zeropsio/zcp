@@ -59,8 +59,23 @@ services:
     enableSubdomainAccess: true
 ```
 
-**zerops.yml envVariables:**
+**zerops.yml:**
 ```yaml
+zerops:
+  - setup: appdev
+    build:
+      base: php-nginx@8.4
+      os: ubuntu
+      buildCommands:
+        - composer install --ignore-platform-reqs
+      deployFiles:
+        - vendor
+        - .
+    run:
+      base: php-nginx@8.4
+      os: ubuntu
+      documentRoot: public
+      envVariables:
         APP_NAME: MyApp
         APP_ENV: local
         APP_DEBUG: "true"
@@ -211,16 +226,21 @@ Managed services are **shared** — both dev and stage use the same `db`, `cache
 
 Stage zerops.yml additions (on top of dev):
 ```yaml
+zerops:
+  - setup: appstage
     deploy:
       readinessCheck:
         httpGet:
           port: 80
           path: /up
     run:
-      # ... same envVariables, but:
-      #   APP_ENV: production
-      #   APP_DEBUG: "false"
-      #   LOG_LEVEL: info
+      base: php-nginx@8.4
+      os: ubuntu
+      documentRoot: public
+      envVariables:
+        APP_ENV: production
+        APP_DEBUG: "false"
+        LOG_LEVEL: info
       initCommands:
         - sudo -E -u zerops -- zsc execOnce ${appVersionId} -- php artisan migrate --force
         - php artisan optimize
