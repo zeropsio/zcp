@@ -2,7 +2,7 @@
 Java Spring Boot API with PostgreSQL, Maven Wrapper build, fat JAR deploy.
 
 ## Keywords
-java, spring boot, maven, postgresql, jar, jvm, api
+java, spring boot, maven, jar, jvm, gradle
 
 ## TL;DR
 Java Spring Boot with Maven Wrapper and fat JAR deploy -- `server.address=0.0.0.0` is mandatory, bind to all interfaces.

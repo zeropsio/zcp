@@ -2,7 +2,7 @@
 Nette with PostgreSQL, Redis sessions, Doctrine migrations via zsc execOnce.
 
 ## Keywords
-nette, php, postgresql, valkey, redis, doctrine, migrations, apache
+nette, php, doctrine, migrations, apache, composer
 
 ## TL;DR
 Nette with PHP-Apache, PostgreSQL, and Valkey sessions -- Doctrine migrations via `zsc execOnce`.

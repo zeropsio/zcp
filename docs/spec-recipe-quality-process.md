@@ -1,187 +1,176 @@
-# Recipe Quality Improvement Process
+# Recipe Quality Process
 
-How to systematically improve a ZCP recipe. Written from the Laravel recipe overhaul (Mar 2026) as a reusable template for all recipes.
-
----
-
-## Overview
-
-Each recipe in `internal/knowledge/recipes/` is a framework-specific guide that an LLM uses to bootstrap and configure applications on Zerops. Recipes must contain ONLY Zerops-specific knowledge — patterns, gotchas, and wiring that the LLM cannot derive from general training data.
-
-This document describes the process for auditing and improving a recipe, designed to be executed by a fresh agent with no prior context.
+How to audit and improve a ZCP recipe. Designed for a fresh agent with no prior context.
 
 ---
 
-## Phase 1: Audit Current Recipe
+## What a Recipe Is
 
-### 1.1 Read the recipe
-Read `internal/knowledge/recipes/{name}.md` completely.
+A recipe is a framework-specific guide for deploying on Zerops. It's consumed by an LLM during bootstrap/deploy workflows. The LLM already knows the framework — it doesn't need the recipe to explain what Laravel or Django is.
 
-### 1.2 Verify against live platform
-For EVERY claim in the recipe, verify against the real Zerops platform:
-
-**Env var names**: Create the managed services referenced in the recipe via `zerops_import`, then `zerops_discover includeEnvs=true`. Compare discovered service-level env var names against what the recipe uses in `${hostname_varName}` refs.
-
-Known issues found in Laravel audit:
-- Valkey exposes `hostname`, NOT `host` — recipe using `${redis_host}` would fail silently
-- MariaDB sets `user` and `dbName` equal to the service hostname (not static values like PostgreSQL)
-- Object Storage has no `connectionString` — uses individual `accessKeyId`, `secretAccessKey`, etc.
-
-**APP_KEY / secrets**: Check if the recipe puts framework secrets (APP_KEY, SECRET_KEY_BASE, etc.) in import.yml `envSecrets`. This creates per-service secrets — in a dev+stage setup, each service gets a DIFFERENT random value. Secrets that must be shared across services belong at **project level** via `zerops_env project=true`.
-
-Also verify the secret format. Laravel's `<@generateRandomString(<32>)>` generates plaintext, but Laravel requires `base64:` prefix + 32 base64-encoded bytes. Each framework has its own format requirements.
-
-**Static vs dynamic env vars**: Check if any env vars are hardcoded where they should use `${hostname_varName}` refs:
-- `DB_HOST: db` → should be `${db_hostname}`
-- `DB_PORT: 5432` → should be `${db_port}`
-- `REDIS_HOST: redis` → should be `${cache_hostname}`
-
-Rule: ALL values that come from a managed service must use dynamic refs. Even if the value seems obvious (`5432` for PostgreSQL), it decouples the recipe from specific hostnames and makes the pattern consistent.
-
-**initCommands**: Check for:
-- `--isolated` flag on migrations — breaks with `CACHE_STORE=database` (chicken-and-egg: lock needs cache table, migration creates cache table). `zsc execOnce` already handles concurrency.
-- Redundant commands — `php artisan optimize` already includes `config:cache`, `route:cache`, `view:cache`, `event:cache`. Don't list them separately.
-- Commands that should only be in stage, not dev (e.g., `optimize` slows dev iteration).
-
-### 1.3 Cross-reference with Zerops docs
-Read `../zerops-docs/` for the runtime and service types used in the recipe. Check:
-- Correct service type versions (e.g., `mariadb@10.6`, not `mariadb@10.11`)
-- Port numbers and protocols
-- Any platform-specific behavior not covered in the recipe
-
-### 1.4 E2E deployment test
-Actually deploy the framework on Zerops and verify it works:
-
-1. Import services via `zerops_import`
-2. Set project-level secrets via `zerops_env project=true`
-3. SSH into the container, scaffold the project
-4. Write zerops.yml with ALL dynamic refs
-5. Deploy via `zerops_deploy` (from zcpx) or E2E test binary
-6. Hit `/status` endpoint — verify all managed service connections work
-7. Document any issues encountered
-
-This step catches problems that static analysis misses (e.g., wrong APP_KEY format causing HTTP 500, wrong Elasticsearch client version).
+**A recipe should contain ONLY things the LLM cannot derive from general training data.** That means Zerops-platform-specific patterns, gotchas, and configuration. If an LLM with no Zerops knowledge would get it wrong, it belongs in the recipe. If it would get it right, it doesn't.
 
 ---
 
-## Phase 2: Recipe Structure
+## Audit Process
 
-Every recipe should follow this structure:
+### 1. Verify every claim against live platform
 
-### Header
-```markdown
-# {Framework} on Zerops
-{One-line description — what runtime, what it does}
+Don't trust the recipe. Test it.
 
-## Keywords
-{framework-specific terms for BM25 search}
+**Env var verification**: Create the managed services from the recipe via `zerops_import`, then run `zerops_discover includeEnvs=true`. Compare the ACTUAL service-level env var names against what the recipe uses in `${hostname_varName}` refs. Silent failures happen when a ref resolves to a literal string instead of a value — the platform gives no error.
 
-## TL;DR
-{3-line summary: runtime type, key config, critical pattern}
+**Secret format verification**: If the recipe sets framework secrets (via `envSecrets` or `zerops_env`), verify the generated value is in the format the framework actually expects. Deploy and check — format errors often manifest as HTTP 500 at runtime, not at import time.
+
+**Secret scope verification**: If the recipe uses import.yml `envSecrets` on individual services, consider whether dev and stage services need the SAME secret (e.g., encryption keys, signing keys). If yes, the secret must be project-level (via `zerops_env project=true`), not per-service `envSecrets`.
+
+**Deploy and test**: Actually scaffold the framework, deploy it, and hit the endpoints. This catches issues that static review misses — wrong client library versions, missing PHP extensions, incompatible config formats. See "E2E Testing" section below.
+
+### 2. Check what's generic vs Zerops-specific
+
+Read every line in the recipe and ask: "Would an LLM get this wrong without this line?"
+
+**Remove if**: The LLM already knows it (framework docs, common patterns, standard config).
+
+**Keep if**: It's a Zerops platform behavior, a non-obvious gotcha verified on live platform, or a specific env var / config pattern that only works on Zerops.
+
+**Be skeptical of**: "Best practices" that are just general framework advice. "Configuration" sections that restate framework documentation. Keywords that don't help BM25 find THIS recipe specifically.
+
+### 3. Check the wiring pattern
+
+Every recipe that uses managed services should wire them via `${hostname_varName}` — the universal Zerops cross-service reference pattern. Check:
+
+- Are all managed service values wired dynamically? No hardcoded hostnames, ports, or database names.
+- Does the recipe explain that `hostname` in `${hostname_varName}` comes from the import.yml service hostname? An agent who names their DB `mydb` instead of `db` needs to use `${mydb_hostname}`, not `${db_hostname}`.
+- Does the recipe rely on vars that don't actually exist on the service? Verify each ref against `zerops_discover` output.
+
+### 4. Check migration / init commands
+
+- Does the recipe use `zsc execOnce ${appVersionId}` for migrations? This ensures single execution per deploy in multi-container setups.
+- Does the recipe use any framework-level concurrency flags (e.g., Laravel's `--isolated`, Django's migration locks)? These may conflict with `zsc execOnce` or require specific infrastructure (cache store, lock backend) that might not exist yet at init time.
+- Are init commands appropriate for dev vs stage? Heavy caching/optimization commands slow dev iteration.
+
+### 5. Check dev vs stage awareness
+
+- Does the recipe show only production config? If yes, an LLM creating a dev service will copy production settings (wrong debug flags, unnecessary health checks, optimization commands that break hot-reload).
+- Are the differences between dev and stage config clear?
+- Are managed services documented as shared (same DB for dev and stage)?
+
+---
+
+## E2E Testing
+
+The most important part. Every recipe claim should be verified by deploying real code to real Zerops infrastructure.
+
+### Test infrastructure
+
+- E2E tests live in `e2e/` directory with `//go:build e2e` tag
+- Tests use `e2eHarness` (creates MCP server + real API client) and `e2eSession` (MCP tool calls)
+- Services are created via `zerops_import`, deployed via `zerops_deploy` (runs on zcpx via SSH)
+- Cleanup uses hostname prefixes registered in `helpers_test.go` `testServicePrefixes`
+- Run: `go test ./e2e/ -tags e2e -run TestName -count=1 -v -timeout 600s`
+- Cross-compile for zcpx: `GOOS=linux GOARCH=amd64 go test -tags e2e -c ./e2e/ -o /tmp/e2e-test-linux`
+
+### What to test
+
+1. **Service env var discovery**: Import managed services, `zerops_discover includeEnvs=true`, verify expected env var names exist on each service. This catches wrong var names in recipes.
+
+2. **End-to-end deploy**: Scaffold the framework on a container (SSH), write zerops.yml with all dynamic refs, deploy via `zerops_deploy`, verify `/status` endpoint returns OK for all managed service connections.
+
+3. **Specific gotchas**: If the recipe documents a gotcha, write a test that would FAIL without the fix. E.g., wrong APP_KEY format → HTTP 500.
+
+### Reference: `e2e/laravel_recipe_test.go`
+
+The Laravel recipe test demonstrates the pattern:
+- Creates all managed service types in one import
+- Verifies service-level env var names via discover
+- Tests project-level env var inheritance (APP_KEY use case)
+- Logs all discovered vars for documentation
+
+### Reference: `e2e/laravel_deploy_test.go`
+
+The Laravel deploy test demonstrates full deploy verification:
+- Uses `zerops_deploy` from zcpx (SSH-based, needs zcli in PATH)
+- Enables subdomain after deploy
+- Runs `zerops_verify` for health check
+- Checks `zerops_logs` for init command errors
+
+---
+
+## Recipe Structure Guidelines
+
+Not a rigid template — adapt to the framework. Some frameworks need layers (Laravel can work without a DB), others have a fixed minimum stack (Twill always needs DB + Redis + S3). Some are standalone recipes, others are diffs on top of a base (Filament = Laravel + 3 extras).
+
+### What every recipe needs (lint-enforced)
+
+- `## Keywords` — framework-specific terms for BM25 search (>= 3). Not managed service names, not generic terms like "api" or "typescript".
+- `## TL;DR` — what runtime, what's Zerops-specific
+- `## zerops.yml` — at least one valid YAML example with `zerops:` entries
+- `## import.yml` — at least one valid import example (lint checks for content)
+- `## Gotchas` — Zerops-specific gotchas (lint checks section exists)
+
+### Content principles
+
+**Only include what the LLM would get WRONG.** The LLM knows how to configure Django settings, write Express middleware, or set up Spring Boot properties. It does NOT know:
+- Which Zerops env var names exist on which service types
+- That `${hostname_varName}` is the wiring mechanism
+- That Zerops L7 balancer requires specific proxy trust config
+- That container filesystem is volatile across deploys
+- Which PHP extensions are pre-installed vs need `apk add`
+- That `zsc execOnce` is the migration concurrency mechanism
+
+**Framework-specific packages on a "base" recipe**: When a framework (Filament, Twill) is built on another (Laravel), the recipe should reference the base recipe and document ONLY the differences. Don't duplicate the base. The LLM knows the relationship.
+
+**Keywords are for BM25 search disambiguation.** "filament" finds the Filament recipe, not the Laravel one. Don't add terms shared by many recipes (php, nodejs, zerops.yml) — they don't help disambiguation. Add terms a user would search for when they specifically want THIS framework.
+
+---
+
+## Validation
+
+### Automated (lint)
+
+```bash
+go test ./internal/knowledge/ -run TestRecipeLint -v
 ```
 
-### Framework Secrets (if applicable)
-How to generate and where to set framework-specific secrets. Always project-level for dev+stage shared secrets. Include the exact generation command and format.
+Checks: title, keywords (>= 3), TL;DR, zerops.yml validity, import.yml presence, gotchas section, no stale URIs, no preprocessor in zerops.yml, versions against platform catalog.
 
-### Wiring Managed Services
-Reference the universal `${hostname_varName}` pattern. Don't re-document the full service vars table (it's in the runtime guides). Instead, show framework-specific MAPPING examples:
+### Manual review
 
-```
-Framework env var → Zerops cross-ref
-DATABASE_URL     → ${db_connectionString}
-REDIS_HOST       → ${cache_hostname}
-```
+- Every `${hostname_varName}` ref verified against `zerops_discover` output
+- Secret format verified by actual deploy (not just reading docs)
+- Dev vs stage differences documented where applicable
+- No framework knowledge the LLM already has
+- No managed service names in keywords
 
-### Stack Layers
-Build incrementally from minimal to full:
-- **Layer 0**: Framework alone (no managed services) — stateless
-- **Layer 1**: + Database — what changes
-- **Layer 2**: + Cache — what changes
-- **Layer 3**: + Storage — what changes
-- **Layer 4+**: Additional services — reference the pattern
+### E2E
 
-Each layer shows ONLY what to ADD — import.yml block + zerops.yml env vars to add/change. Don't repeat the full config.
-
-### Dev vs Stage
-Table of what differs. Typically:
-- Environment/debug flags
-- initCommands (dev: minimal, stage: optimizations)
-- healthCheck/readinessCheck (dev: omit, stage: enable)
-- buildCommands (dev: minimal, stage: full build pipeline)
-
-Emphasize: managed service refs are SAME for both (shared services).
-
-### Scaffolding
-Framework-specific project setup commands. Note:
-- Which flags prevent .env/.config file creation
-- RAM requirements for package installation
-- What to delete after scaffold
-
-### Configuration
-ONLY Zerops-specific config. Things the LLM would NOT know from general training:
-- Proxy trust configuration (specific to Zerops L7 balancer)
-- Log channel for Zerops collector
-- Runtime-specific document root
-
-### Gotchas
-ONLY things that are:
-1. Zerops-platform-specific (not general framework knowledge)
-2. Non-obvious (would cause a real failure)
-3. Verified (tested on live platform)
-
-Bad gotcha: "Make sure your database credentials are correct" (generic)
-Good gotcha: "Valkey var is `hostname`, not `host` — `${cache_host}` fails silently" (Zerops-specific, non-obvious, verified)
+Deploy the framework, hit endpoints, verify managed service connections. See "E2E Testing" section.
 
 ---
 
-## Phase 3: Validation
+## Common Pitfalls When Writing Recipes
 
-### 3.1 Recipe lint test
-Run `go test ./internal/knowledge/ -run TestRecipeLint -v` to verify structural integrity.
+Things that went wrong in past audits — not rules to blindly apply, but patterns to watch for:
 
-### 3.2 Content checks
-- No `--isolated` in migration commands
-- No `envSecrets: APP_KEY` (or framework equivalent) in import.yml examples
-- All `${hostname_varName}` refs use verified var names
-- Build base version matches run base version
-- `os: ubuntu` on both build and run (unless recipe explicitly documents Alpine)
-
-### 3.3 E2E smoke test
-Deploy and verify all managed service connections work. This is the final gate.
+- **Hardcoded hostnames/ports**: `DB_HOST: db` works only if the service is named `db`. Dynamic refs decouple the recipe from specific naming.
+- **Per-service secrets that should be shared**: Import.yml `envSecrets` generates a DIFFERENT value for each service. Encryption/signing keys shared across dev+stage must be project-level.
+- **Framework-level migration locks + `zsc execOnce`**: Double-locking. The framework lock may require infrastructure (cache table, Redis) that doesn't exist at init time. `zsc execOnce` is sufficient.
+- **Production-only config in recipes**: An LLM creating a dev service copies the recipe. If the recipe only shows production config, the dev service gets wrong debug/optimization settings.
+- **Generic framework advice**: "Configure your database credentials correctly" — the LLM knows this. "Valkey env var is `hostname` not `host`" — the LLM doesn't know this.
+- **Managed service names in keywords**: "postgresql" in a Laravel recipe keyword means searching "postgresql" returns Laravel instead of PostgreSQL docs.
 
 ---
 
-## Known Patterns Across Frameworks
+## Status
 
-These apply to most/all recipes — check each one:
-
-| Pattern | What to check |
-|---------|--------------|
-| **Framework secrets** | Must be project-level, not service envSecrets. Verify format (base64, hex, etc.) |
-| **DB wiring** | All `${db_*}` refs. No static hostnames, ports, or db names |
-| **Cache wiring** | Valkey var is `hostname` NOT `host`. No auth needed (private network) |
-| **S3 wiring** | `AWS_USE_PATH_STYLE_ENDPOINT: "true"` required (MinIO). Region `us-east-1` required but ignored |
-| **Migration concurrency** | Use `zsc execOnce`, never framework-level isolation flags |
-| **Dev vs Stage** | Recipes should show both entries or clearly explain the differences |
-| **initCommands** | Dev: minimal (just migrate). Stage: migrate + optimize/cache commands |
-| **Health checks** | Stage only, never dev |
-| **Build base version** | Must match run base version |
-| **Proxy trust** | Framework-specific config for Zerops L7 balancer (`TRUSTED_PROXIES`, `CSRF_TRUSTED_ORIGINS`, etc.) |
-
----
-
-## Recipes That Need This Process Applied
-
-Priority order (most used first):
-1. ~~laravel.md~~ (DONE — Mar 2026)
-2. filament.md — mirrors Laravel, apply same fixes
-3. twill.md — mirrors Laravel, apply same fixes
-4. django.md
-5. symfony.md
-6. rails.md
-7. nextjs.md
-8. nestjs.md
-9. phoenix.md
-10. All others
-
-For Laravel-derived recipes (filament, twill): apply the same changes as laravel.md — they share the same runtime, same gotchas, same wiring patterns. The only differences are framework-specific packages and init commands.
+| Recipe | Audited | E2E Tested | Date |
+|--------|:---:|:---:|------|
+| laravel | yes | yes (11 service types) | 2026-03-24 |
+| filament | yes (diff on Laravel) | — | 2026-03-24 |
+| twill | yes (diff on Laravel) | — | 2026-03-24 |
+| symfony | yes | — | 2026-03-24 |
+| django | — | — | — |
+| rails | — | — | — |
+| nextjs | — | — | — |
+| All others | — | — | — |

@@ -1,101 +1,90 @@
 # Twill CMS on Zerops
-Laravel Twill CMS with multi-base build, custom nginx, S3 media with Glide.
 
 ## Keywords
-twill, laravel, php, cms, postgresql, valkey, redis, s3, nginx, glide
+twill, cms, glide, media
 
 ## TL;DR
-Twill CMS with multi-base `[php, nodejs]` build -- Alpine build, Ubuntu runtime, Glide S3 media, custom nginx config.
+Twill is a Laravel CMS. Use the Laravel recipe (`zerops_knowledge recipe=laravel`) for base Zerops config (APP_KEY, `${hostname_varName}` wiring, dev/stage, scaffolding, gotchas). This recipe covers Twill-specific requirements.
+
+## Minimum Stack
+
+Twill requires: **app + DB + Valkey + Object Storage**. Unlike base Laravel, these are not optional — Twill needs Redis for cache and S3 for media.
 
 ## zerops.yml
 ```yaml
 zerops:
-  - setup: app
+  - setup: appdev
     build:
       base:
-        - php@8.3
+        - php@8.4
         - nodejs@22
-      os: alpine
+      os: ubuntu
       buildCommands:
         - composer install --optimize-autoloader --no-dev
         - npm install
         - npm run build
       deployFiles: ./
-      cache:
-        - vendor
-        - composer.lock
-        - node_modules
-        - package-lock.json
-    deploy:
-      readinessCheck:
-        httpGet:
-          port: 80
-          path: /up
+      cache: [vendor, composer.lock, node_modules, package-lock.json]
     run:
       base: php-nginx@8.4
       os: ubuntu
       documentRoot: public
       envVariables:
         APP_NAME: MyTwillApp
-        APP_ENV: production
-        APP_DEBUG: "false"
+        APP_ENV: local
+        APP_DEBUG: "true"
         APP_URL: ${zeropsSubdomain}
 
         DB_CONNECTION: pgsql
-        DB_DATABASE: db
-        DB_HOST: db
+        DB_HOST: ${db_hostname}
+        DB_PORT: ${db_port}
+        DB_DATABASE: ${db_dbName}
         DB_USERNAME: ${db_user}
         DB_PASSWORD: ${db_password}
-        DB_PORT: 5432
 
-        LOG_CHANNEL: syslog
-        LOG_LEVEL: info
-
+        REDIS_CLIENT: phpredis
+        REDIS_HOST: ${cache_hostname}
+        REDIS_PORT: ${cache_port}
+        SESSION_DRIVER: redis
         CACHE_STORE: redis
         QUEUE_CONNECTION: redis
-        REDIS_CLIENT: phpredis
-        REDIS_HOST: redis
-        SESSION_DRIVER: redis
 
-        TRUSTED_PROXIES: "127.0.0.1,10.0.0.0/8"
+        FILESYSTEM_DISK: s3
         MEDIA_LIBRARY_ENDPOINT_TYPE: s3
         GLIDE_USE_SOURCE_DISK: s3
-
         AWS_ACCESS_KEY_ID: ${storage_accessKeyId}
-        AWS_DEFAULT_REGION: us-east-1
+        AWS_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
         AWS_BUCKET: ${storage_bucketName}
         AWS_ENDPOINT: ${storage_apiUrl}
-        AWS_SECRET_ACCESS_KEY: ${storage_secretAccessKey}
         AWS_URL: ${storage_apiUrl}/${storage_bucketName}
-        AWS_USE_PATH_STYLE_ENDPOINT: true
+        AWS_USE_PATH_STYLE_ENDPOINT: "true"
+        AWS_DEFAULT_REGION: us-east-1
+
+        LOG_CHANNEL: syslog
+        LOG_LEVEL: debug
+        TRUSTED_PROXIES: "127.0.0.1,10.0.0.0/8"
       initCommands:
         - sudo -E -u zerops -- zsc execOnce initialize -- php artisan twill:install -n
         - sudo -E -u zerops -- zsc execOnce initializeadmin -- php artisan twill:superadmin twill@zerops.io zerops
-        - sudo -E -u zerops -- zsc execOnce ${appVersionId} -- php artisan migrate --isolated --force
+        - sudo -E -u zerops -- zsc execOnce ${appVersionId} -- php artisan migrate --force
         - sudo -E -u zerops -- zsc execOnce initializeSeed -- php artisan db:seed --force
-        - php artisan optimize
-      healthCheck:
-        httpGet:
-          port: 80
-          path: /up
 ```
 
 ## import.yml
 ```yaml
-#yamlPreprocessor=on
 services:
-  - hostname: app
+  - hostname: appdev
     type: php-nginx@8.4
+    startWithoutCode: true
+    maxContainers: 1
     enableSubdomainAccess: true
-    envSecrets:
-      APP_KEY: <@generateRandomString(<32>)>
 
   - hostname: db
     type: postgresql@16
     mode: NON_HA
     priority: 10
 
-  - hostname: redis
+  - hostname: cache
     type: valkey@7.2
     mode: NON_HA
     priority: 10
@@ -107,38 +96,20 @@ services:
     priority: 10
 ```
 
-## Configuration
-- **Trusted proxies** — Laravel 11+ does not auto-read `TRUSTED_PROXIES` from env. Wire it in `bootstrap/app.php`:
-  ```php
-  ->withMiddleware(function (Middleware $middleware) {
-      $middleware->trustProxies(
-          at: explode(',', env('TRUSTED_PROXIES', '127.0.0.1')),
-      );
-  })
-  ```
-- **LOG_CHANNEL: syslog** — routes logs to Zerops log collector
-- **MEDIA_LIBRARY_ENDPOINT_TYPE: s3** -- Twill media library uses S3 backend
-- **GLIDE_USE_SOURCE_DISK: s3** -- Glide image processing reads from S3, caches locally
-- **AWS_USE_PATH_STYLE_ENDPOINT: true** -- required for Zerops S3-compatible storage
-- **APP_KEY** is generated via `<@generateRandomString(<32>)>` in import.yml envSecrets
-- **documentRoot: public** -- serves Laravel from the `public/` directory
-- Default superadmin: twill@zerops.io / zerops (created via `zsc execOnce initializeadmin`)
+## Twill-Specific Notes
 
-## Common Failures
-- **S3 driver not found** -- `area17/twill` bundles `league/flysystem-aws-s3-v3` as a transitive dependency; verify it is resolved in `composer.lock`
-- **Twill install fails** -- `zsc execOnce initialize` runs `twill:install -n` only once; if it fails, reset the key in Zerops GUI
-- **Media images broken** -- verify `GLIDE_USE_SOURCE_DISK: s3` and `objectStoragePolicy: public-read`
-- **OS mismatch errors** -- Alpine build is fine for composer/npm, Ubuntu runtime needed for PHP extensions
-- **HTTP 500 — check logs FIRST** -- read `{mountPath}/storage/logs/laravel.log` and `zerops_logs`. The log tells you the exact error. Do not guess.
-- **Never use `php artisan serve`** -- php-nginx has built-in web server on port 80. `artisan serve` bypasses nginx config, documentRoot, and rewrite rules.
+- **Multi-base build always required** — `[php@8.4, nodejs@22]`. Twill has frontend assets even in dev.
+- **MEDIA_LIBRARY_ENDPOINT_TYPE + GLIDE_USE_SOURCE_DISK** — both `s3`. Without them, media goes to local disk (lost on deploy).
+- **Static execOnce keys** — `initialize`, `initializeadmin`, `initializeSeed` run once ever (not per deploy). `${appVersionId}` runs once per deploy. Order matters: twill:install → migrate → seed.
+- **Default superadmin**: twill@zerops.io / zerops
+- **S3 driver bundled** — `area17/twill` includes `league/flysystem-aws-s3-v3` as transitive dep, no need to add it.
+- **`objectStoragePolicy: public-read`** — required for media to be publicly accessible.
+- **Glide** caches processed images locally — cache lost on deploy, rebuilds automatically.
+- All Laravel gotchas apply (APP_KEY project-level, no .env, no --isolated, Valkey var is `hostname` not `host`).
 
 ## Gotchas
-- **Multi-base build** `[php, nodejs]` required for frontend assets
-- **OS mismatch**: Alpine build (faster) with Ubuntu runtime (compatibility)
-- **zsc execOnce** with static keys (`initialize`, `initializeadmin`, `initializeSeed`) run once ever; `${appVersionId}` runs once per deploy
-- **S3 filesystem** -- `area17/twill` bundles S3 support via `league/flysystem-aws-s3-v3` as a transitive dependency; no need to add it directly to composer.json
-- **AWS_USE_PATH_STYLE_ENDPOINT: true** required for Zerops S3
-- **Glide** uses S3 source disk with local caching for media transformations
-- 4 services: app + db (PostgreSQL) + redis (Valkey) + storage (Object Storage)
-- **No `.env` file** — scaffold with `composer create-project --no-scripts`, then `composer run post-autoload-dump`. Delete `.env.example`. APP_KEY comes from envSecrets. Without `--no-scripts`, `.env` is created with empty `APP_KEY=` which shadows the valid OS env var.
-- **No SQLite** — container filesystem is replaced on deploy. Always use a database service (PostgreSQL or MariaDB). SQLite only for PHPUnit tests.
+- **Multi-base build always required** — `[php@8.4, nodejs@22]` even in dev
+- **No `--isolated` on migrate** — `zsc execOnce` handles concurrency
+- **No `.env` file** — scaffold with `composer create-project --no-scripts`
+- **`objectStoragePolicy: public-read`** — without it, uploaded media returns 403
+- **Never use `php artisan serve`** — php-nginx has built-in web server on port 80

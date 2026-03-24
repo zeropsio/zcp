@@ -3,7 +3,7 @@
 Payload CMS 3.x with Next.js frontend, PostgreSQL, and S3 object storage. Requires Ubuntu OS and build-time database migrations.
 
 ## Keywords
-payload, cms, nextjs, nodejs, postgresql, ubuntu, headless cms, s3, object storage
+payload, cms, nextjs, nodejs, ubuntu, headless cms
 
 ## TL;DR
 Payload CMS on Node.js 20 (Ubuntu) with PostgreSQL — migrations run during BUILD with `zsc test tcp` to wait for the database.

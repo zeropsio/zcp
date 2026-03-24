@@ -2,7 +2,7 @@
 Bun runtime with Hono web framework, PostgreSQL database, and S3-compatible Object Storage.
 
 ## Keywords
-bun, hono, postgresql, postgres, object-storage, s3, api, typescript
+bun, hono, typescript
 
 ## TL;DR
 Bun + Hono framework with PostgreSQL and Object Storage -- includes build step, migrations via `zsc execOnce`, and mandatory 0.0.0.0 binding.

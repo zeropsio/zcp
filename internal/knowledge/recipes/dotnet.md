@@ -3,7 +3,7 @@
 ASP.NET Core app with PostgreSQL. Build with `dotnet publish`, deploy the published output.
 
 ## Keywords
-dotnet, csharp, aspnet, asp.net core, kestrel, web api, postgresql
+dotnet, csharp, aspnet, asp.net core, kestrel, nuget
 
 ## TL;DR
 ASP.NET Core with `dotnet publish` and PostgreSQL -- must configure `ASPNETCORE_URLS` to bind `0.0.0.0` and enable `ForwardedHeaders` middleware.

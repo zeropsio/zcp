@@ -3,7 +3,7 @@
 Plain Elixir with Plug/Cowboy HTTP server and PostgreSQL via Ecto -- build on Elixir, run on Alpine release.
 
 ## Keywords
-elixir, plug, cowboy, postgresql, ecto, mix, beam, release, alpine, api
+elixir, plug, cowboy, ecto, mix, beam, release
 
 ## TL;DR
 Elixir Plug/Cowboy API with PostgreSQL -- mix release on Alpine, `DATABASE_URL` via Ecto, port 4000.

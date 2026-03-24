@@ -3,7 +3,7 @@
 PHP-Nginx runtime with managed services. Build your stack layer by layer — start with just the app, add database, cache, storage as needed.
 
 ## Keywords
-laravel, php, php-nginx, postgresql, mariadb, valkey, redis, s3, object-storage, zerops.yml, documentRoot, artisan, composer
+laravel, artisan, eloquent, blade, inertia, jetstream, livewire
 
 ## TL;DR
 PHP-Nginx, `documentRoot: public`, port 80 fixed. APP_KEY on project level (`base64:` + 32 bytes). Wire services with `${hostname_varName}` refs. Scaffold: `composer create-project --no-scripts`. No `.env` files.

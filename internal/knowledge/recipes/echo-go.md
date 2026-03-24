@@ -2,7 +2,7 @@
 Go Echo web app with PostgreSQL, S3 Object Storage, Valkey cache, Mailpit, and Adminer.
 
 ## Keywords
-echo, go, golang, postgresql, valkey, redis, s3, object-storage, api
+echo, go, golang
 
 ## TL;DR
 Go Echo API with PostgreSQL, Valkey, and S3 — logger must output to `os.Stdout`, static assets deployed alongside the binary.

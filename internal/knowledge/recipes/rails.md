@@ -3,7 +3,7 @@
 Ruby on Rails with PostgreSQL, Puma web server, and asset pipeline. Requires SECRET_KEY_BASE and proper 0.0.0.0 binding.
 
 ## Keywords
-rails, ruby, puma, postgresql, ruby on rails, ror, activerecord, bundler, rake
+rails, ruby, puma, ruby on rails, ror, activerecord, bundler, rake
 
 ## TL;DR
 Rails with Puma bound to `0.0.0.0:3000`, PostgreSQL via DATABASE_URL, migrations via `zsc execOnce`, and `SECRET_KEY_BASE` as envSecret.

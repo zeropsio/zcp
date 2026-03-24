@@ -3,7 +3,7 @@
 Django with PostgreSQL, S3 object storage, and Gunicorn WSGI server. Requires CSRF_TRUSTED_ORIGINS for reverse proxy.
 
 ## Keywords
-django, python, postgresql, s3, gunicorn, wsgi, object-storage, storages
+django, python, gunicorn, wsgi, pip, storages
 
 ## TL;DR
 Django with Gunicorn on port 8000, PostgreSQL, and S3 storage -- requires `CSRF_TRUSTED_ORIGINS` and `django-storages` for Zerops reverse proxy and object storage.

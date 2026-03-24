@@ -3,7 +3,7 @@
 NestJS API with TypeORM migrations, PostgreSQL, S3 file uploads via multer + aws-sdk.
 
 ## Keywords
-nestjs, nodejs, typeorm, postgresql, s3, object-storage, typescript, api, express
+nestjs, nodejs, typeorm, typescript, express, multer
 
 ## TL;DR
 NestJS API with TypeORM and S3 uploads — migrations via `zsc execOnce` with `${appVersionId}`, trust proxy required.

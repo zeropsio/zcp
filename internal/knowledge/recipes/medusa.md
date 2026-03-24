@@ -3,7 +3,7 @@
 Medusa v2 e-commerce backend with PostgreSQL, Valkey (Redis), Meilisearch, and S3 object storage. Uses yarn for package management with `zsc execOnce` for migrations and initial data seeding.
 
 ## Keywords
-medusa, nodejs, ecommerce, headless commerce, postgresql, valkey, redis, meilisearch, s3, object storage, typescript
+medusa, nodejs, ecommerce, headless commerce, typescript, yarn
 
 ## TL;DR
 Medusa v2 on Node.js 22 with PostgreSQL, Valkey, Meilisearch, and S3 storage — migrations and seed scripts via `zsc execOnce` in initCommands, health check on `/health` port 9000.

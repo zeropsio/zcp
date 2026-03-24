@@ -2,7 +2,7 @@
 Spring Boot API with PostgreSQL, S3 Object Storage, static frontend, Adminer, and Mailpit.
 
 ## Keywords
-spring boot, java, postgresql, s3, object-storage, maven, multi-service, api
+spring boot, java, maven, jar, jvm, gradle
 
 ## TL;DR
 Spring Boot API with PostgreSQL and S3 -- service priorities ensure DB and storage start before the API, `server.address=0.0.0.0` is mandatory.

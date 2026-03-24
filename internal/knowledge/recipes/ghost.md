@@ -3,7 +3,7 @@
 Ghost blogging platform with MariaDB and S3 storage. Ghost does NOT support horizontal scaling.
 
 ## Keywords
-ghost, nodejs, mariadb, cms, blog, content management, s3, object storage
+ghost, nodejs, cms, blog, content management
 
 ## TL;DR
 Ghost CMS on Node.js 18 with MariaDB and S3 content storage — `maxContainers: 1` is mandatory because Ghost cannot run in multiple containers.

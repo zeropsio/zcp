@@ -2,7 +2,7 @@
 Nette framework with Contributte packages for Redis sessions, Monolog syslog logging, and Doctrine migrations.
 
 ## Keywords
-nette, contributte, php, postgresql, valkey, redis, doctrine, apache, monolog
+nette, contributte, php, doctrine, apache, monolog, composer
 
 ## TL;DR
 Nette + Contributte with Redis sessions and Monolog SyslogHandler -- Doctrine migrations via `zsc execOnce`.

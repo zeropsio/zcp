@@ -3,7 +3,7 @@
 Elixir Phoenix with release pattern -- build on Elixir, run on Alpine. PostgreSQL via Ecto with DATABASE_URL.
 
 ## Keywords
-phoenix, elixir, erlang, postgresql, ecto, mix, beam, release, alpine
+phoenix, elixir, erlang, ecto, mix, beam, release
 
 ## TL;DR
 Phoenix with Elixir build and Alpine runtime -- `PHX_HOST`, `PHX_SERVER=true`, and `SECRET_KEY_BASE` as envSecret are mandatory.
