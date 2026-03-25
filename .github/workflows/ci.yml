@@ -10,8 +10,6 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-22.04
-    env:
-      CGO_ENABLED: '0'
     steps:
       - uses: actions/checkout@v5
 
@@ -20,12 +18,16 @@ jobs:
           go-version-file: "go.mod"
 
       - name: Build (all platforms)
+        env:
+          CGO_ENABLED: '0'
         run: |
           GOOS=linux GOARCH=amd64 go build -v ./...
           GOOS=darwin GOARCH=arm64 go build -v ./...
           GOOS=windows GOARCH=amd64 go build -v ./...
 
       - name: Test
+        env:
+          CGO_ENABLED: '1'
         run: go test -race ./... -count=1
 
   lint:
