@@ -173,7 +173,6 @@ func TestE2E_Deploy_SelfDeploy(t *testing.T) {
 	logStep(t, step, "zerops_delete %s", appHostname)
 	deleteText := s.mustCallSuccess("zerops_delete", map[string]any{
 		"serviceHostname": appHostname,
-		"confirm":         true,
 	})
 	procID := extractProcessID(t, deleteText)
 	waitForProcess(s, procID)
@@ -284,8 +283,7 @@ func TestE2E_Deploy_CrossService(t *testing.T) {
 	for _, hostname := range []string{devHostname, stageHostname} {
 		deleteText := s.mustCallSuccess("zerops_delete", map[string]any{
 			"serviceHostname": hostname,
-			"confirm":         true,
-		})
+			})
 		procID := extractProcessID(t, deleteText)
 		waitForProcess(s, procID)
 		t.Logf("  Deleted %s", hostname)

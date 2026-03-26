@@ -36,6 +36,7 @@ func TestE2E_BuildLogsOnFailure(t *testing.T) {
 
 	// Register cleanup: delete test service + remote temp dir.
 	t.Cleanup(func() {
+		s.callTool("zerops_workflow", map[string]any{"action": "reset"})
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		cleanupServices(ctx, h.client, h.projectID, appHostname)

@@ -49,6 +49,7 @@ func TestE2E_Deploy_ErrorClassification_SelfDeploy(t *testing.T) {
 	deployDir := "/tmp/deplclassify" + suffix
 
 	t.Cleanup(func() {
+		s.callTool("zerops_workflow", map[string]any{"action": "reset"})
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		cleanupServices(ctx, h.client, h.projectID, appHostname)
