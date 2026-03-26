@@ -3,3 +3,6 @@ Host *
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
     LogLevel ERROR
+    ControlMaster auto
+    ControlPath /tmp/ssh-mux-%r@%h:%p
+    ControlPersist 600

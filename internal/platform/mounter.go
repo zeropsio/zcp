@@ -80,7 +80,7 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 
 	unitName := "sshfs-" + hostname
 	sshfsCmd := fmt.Sprintf(
-		"sshfs -f -o reconnect,StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3 %s:/var/www %s",
+		"sshfs -f -o reconnect,StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3,transform_symlinks,no_check_root %s:/var/www %s",
 		hostname, localPath,
 	)
 

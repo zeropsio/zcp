@@ -296,6 +296,35 @@ func TestSSHConfig_Container_ManagedSection(t *testing.T) {
 	}
 }
 
+func TestSSHConfig_Container_ControlMaster(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(homeDir, ".ssh", "config"))
+	if err != nil {
+		t.Fatalf("read ssh config: %v", err)
+	}
+
+	content := string(data)
+	required := []string{
+		"ControlMaster auto",
+		"ControlPath /tmp/ssh-mux-",
+		"ControlPersist 600",
+	}
+	for _, keyword := range required {
+		if !strings.Contains(content, keyword) {
+			t.Errorf("ssh config should contain %q for SSH connection multiplexing", keyword)
+		}
+	}
+}
+
 func TestSSHConfig_Container_PreservesExisting(t *testing.T) {
 	// Not parallel — mutates HOME env var.
 	dir := t.TempDir()

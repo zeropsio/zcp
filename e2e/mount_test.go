@@ -127,7 +127,7 @@ func TestE2E_Mount(t *testing.T) {
 
 	// Start SSHFS via zsc unit (background service manager on Zerops).
 	mountCmd := fmt.Sprintf(
-		`sudo -E zsc unit create sshfs-%s "sshfs -f -o reconnect,StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3 %s:/var/www /var/www/%s"`,
+		`sudo -E zsc unit create sshfs-%s "sshfs -f -o reconnect,StrictHostKeyChecking=no,ServerAliveInterval=15,ServerAliveCountMax=3,transform_symlinks,no_check_root %s:/var/www /var/www/%s"`,
 		appHostname, appHostname, appHostname,
 	)
 	out, err = sshExec(t, zcpHostname, mountCmd)
