@@ -401,7 +401,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 				continue
 			}
 
-			versions := recipeVersionRefs(content)
+			versions := recipeServiceTypeRefs(content)
 			for _, v := range versions {
 				t.Run("RecipeVersion/"+name+"/"+v, func(t *testing.T) {
 					if !activeVersions[v] {
@@ -484,15 +484,16 @@ func formatPorts(ports []platform.Port) string {
 	return strings.Join(nums, ", ")
 }
 
-// recipeVersionRefs extracts type@version and base@version references from recipe content.
-// Skips "latest" versions (no catalog entry) and special types without versions.
-var recipeVersionRefRe = regexp.MustCompile(`(?:type|base):\s*(\S+@\S+)`)
-var recipeVersionArrayRe = regexp.MustCompile(`(?:type|base):\s*\[([^\]]+)\]`)
+// recipeServiceTypeRefs extracts type@version references from recipe content.
+// Only captures `type:` fields (import.yml service creation) — these MUST be in the
+// service stack catalog. Ignores `base:` fields (zerops.yml build/runtime images)
+// because build bases use a different image catalog than service stack types.
+// E.g., `php@8.4` is a valid build base but not a service stack type (only
+// `php-nginx@8.4` and `php-apache@8.4` exist as service types).
+var recipeTypeRefRe = regexp.MustCompile(`type:\s*(\S+@\S+)`)
+var recipeTypeArrayRe = regexp.MustCompile(`type:\s*\[([^\]]+)\]`)
 
-// skipVersionPatterns lists version suffixes that aren't in the catalog.
-var skipVersionPatterns = []string{"@latest", "@*"}
-
-func recipeVersionRefs(content string) []string {
+func recipeServiceTypeRefs(content string) []string {
 	seen := make(map[string]bool)
 	var refs []string
 
@@ -502,35 +503,30 @@ func recipeVersionRefs(content string) []string {
 		if v == "" || seen[v] || !strings.Contains(v, "@") {
 			return
 		}
-		for _, skip := range skipVersionPatterns {
-			if strings.HasSuffix(v, skip) {
-				return
-			}
+		if strings.HasSuffix(v, "@latest") {
+			return
 		}
-		// Skip types not in the platform service stack catalog.
-		// "static", "object-storage", "shared-storage" have no versioned catalog entries.
-		// "php" (bare, without -nginx/-apache) is a build-only base — runtime catalog
-		// has php-nginx@* and php-apache@* but not bare php@8.4+.
+		// Skip types without versioned platform catalog entries.
 		base, _, _ := strings.Cut(v, "@")
-		if base == "static" || base == "object-storage" || base == "shared-storage" || base == "php" || base == "alpine" {
+		if base == "static" || base == "object-storage" || base == "shared-storage" {
 			return
 		}
 		seen[v] = true
 		refs = append(refs, v)
 	}
 
-	// Array values: base: [php@8.3, nodejs@18]
-	for _, match := range recipeVersionArrayRe.FindAllStringSubmatch(content, -1) {
+	// Array values: type: [nodejs@22, bun@1.2]
+	for _, match := range recipeTypeArrayRe.FindAllStringSubmatch(content, -1) {
 		for _, part := range strings.Split(match[1], ",") {
 			addRef(part)
 		}
 	}
 
-	// Single values: type: nodejs@20, base: php@8.3
-	for _, match := range recipeVersionRefRe.FindAllStringSubmatch(content, -1) {
+	// Single values: type: nodejs@22
+	for _, match := range recipeTypeRefRe.FindAllStringSubmatch(content, -1) {
 		v := match[1]
 		if strings.HasPrefix(v, "[") {
-			continue // Array values handled above
+			continue
 		}
 		addRef(v)
 	}
