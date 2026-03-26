@@ -38,7 +38,7 @@ http://postgres:5432
 - Always **`http://`** — never `https://` for internal traffic
 - Isolated per project — no cross-project private networking
 - Service discovery is automatic — no manual network config
-- VPN uses same hostnames: `http://api:3000` from local machine
+- VPN uses same hostnames: `http://api:3000` from local machine (both `api` and `api.zerops` resolve — VPN sets up DNS search domain)
 
 **Cross-service env vars**: prefix with hostname — e.g., `app_API_TOKEN`. Zerops auto-generates connection vars for managed services.
 

@@ -15,21 +15,23 @@ zcli vpn down                               # Disconnect
 ```
 
 ## Behavior
-- All services accessible via hostname (e.g., `db.zerops`, `api.zerops`)
+- All services accessible via hostname (e.g., `db`, `api`) — `.zerops` suffix optional
 - **One project at a time** — connecting to another disconnects the current
 - Automatic reconnection with daemon
 - **Environment variables NOT available** through VPN — use GUI or API to read them
 
 ## Hostname Resolution
-- Append `.zerops` to hostname: `hostname.zerops`
-- Example: `postgresql://user:pass@db.zerops:5432/mydb`
+- Both plain hostname (`db`) and suffixed (`db.zerops`) work — VPN configures a DNS search domain
+- Plain hostname is resolved via the `.zerops` search domain automatically (e.g., `db` → `db.zerops`)
+- Example: `postgresql://user:pass@db:5432/mydb` or `postgresql://user:pass@db.zerops:5432/mydb`
+- Note: CLI tools like `dig`, `nslookup`, `host` bypass the system resolver and may show false NXDOMAIN — use `dscacheutil -q host -a name db` on macOS to verify, or just test with `nc -zv db 5432`
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
 | Interface already exists | `zcli vpn down` then `zcli vpn up` |
-| Hostname not resolving | Append `.zerops` (e.g., `db.zerops`) |
+| Hostname not resolving | Try `db.zerops` suffix. On Windows, add `zerops` to DNS suffix list. Note: `dig`/`nslookup` bypass system resolver — use `nc -zv db 5432` to test |
 | WSL2 not working | Enable systemd in `/etc/wsl.conf` under `[boot]` |
 | Conflicting VPN | Use `--mtu 1350` |
 | Ubuntu 25.* issues | Install AppArmor utilities |
@@ -37,7 +39,7 @@ zcli vpn down                               # Disconnect
 ## Gotchas
 1. **No env vars via VPN**: Must read env vars from GUI or API — VPN only provides network access
 2. **One project at a time**: Cannot connect to multiple projects simultaneously
-3. **Hostname needs `.zerops` suffix**: Plain hostname may not resolve — always use `hostname.zerops`
+3. **Hostname resolution**: Both `hostname` and `hostname.zerops` work (VPN sets up DNS search domain). Use plain hostname for simplicity. If resolution fails on Windows, add `zerops` to DNS suffix list in Advanced TCP/IP Settings.
 
 ## See Also
 - zerops://guides/networking
