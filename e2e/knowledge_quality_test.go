@@ -490,7 +490,7 @@ var recipeVersionRefRe = regexp.MustCompile(`(?:type|base):\s*(\S+@\S+)`)
 var recipeVersionArrayRe = regexp.MustCompile(`(?:type|base):\s*\[([^\]]+)\]`)
 
 // skipVersionPatterns lists version suffixes that aren't in the catalog.
-var skipVersionPatterns = []string{"@latest"}
+var skipVersionPatterns = []string{"@latest", "@*"}
 
 func recipeVersionRefs(content string) []string {
 	seen := make(map[string]bool)
@@ -498,7 +498,7 @@ func recipeVersionRefs(content string) []string {
 
 	addRef := func(v string) {
 		v = strings.TrimSpace(v)
-		v = strings.TrimRight(v, ",]\"'`")
+		v = strings.TrimRight(v, ",]\"'`*.")
 		if v == "" || seen[v] || !strings.Contains(v, "@") {
 			return
 		}
@@ -507,9 +507,12 @@ func recipeVersionRefs(content string) []string {
 				return
 			}
 		}
-		// Skip special types without platform catalog entries.
+		// Skip types not in the platform service stack catalog.
+		// "static", "object-storage", "shared-storage" have no versioned catalog entries.
+		// "php" (bare, without -nginx/-apache) is a build-only base — runtime catalog
+		// has php-nginx@* and php-apache@* but not bare php@8.4+.
 		base, _, _ := strings.Cut(v, "@")
-		if base == "static" || base == "object-storage" || base == "shared-storage" {
+		if base == "static" || base == "object-storage" || base == "shared-storage" || base == "php" || base == "alpine" {
 			return
 		}
 		seen[v] = true
