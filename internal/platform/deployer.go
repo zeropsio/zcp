@@ -2,7 +2,6 @@ package platform
 
 import (
 	"context"
-	"fmt"
 	"os/exec"
 	"time"
 )
@@ -31,13 +30,15 @@ func sshArgs(hostname, command string) []string {
 }
 
 // ExecSSH runs a command on a remote Zerops container via SSH.
+// On failure, returns *SSHExecError with structured output and exit error
+// separated — this prevents classifiers from matching on progress output.
 func (d *SystemSSHDeployer) ExecSSH(ctx context.Context, hostname, command string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, deployExecTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ssh", sshArgs(hostname, command)...) //nolint:gosec // hostname and command from trusted internal callers
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return output, fmt.Errorf("ssh %s: %w (output: %s)", hostname, err, string(output))
+		return output, &SSHExecError{Hostname: hostname, Output: string(output), Err: err}
 	}
 	return output, nil
 }

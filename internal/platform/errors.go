@@ -2,6 +2,7 @@ package platform
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 )
@@ -52,7 +53,23 @@ type PlatformError struct {
 	Message    string
 	Suggestion string
 	APICode    string // raw API error code, empty if not from API
+	Diagnostic string // raw command output for LLM debugging (SSH output, etc.)
 }
+
+// SSHExecError carries structured SSH execution failure data.
+// Separates OS-level exit error from remote command output so classifiers
+// can distinguish progress messages from actual errors.
+type SSHExecError struct {
+	Hostname string
+	Output   string // combined stdout+stderr from remote command
+	Err      error  // underlying exec error (exit code, signal, etc.)
+}
+
+func (e *SSHExecError) Error() string {
+	return fmt.Sprintf("ssh %s: %s", e.Hostname, e.Err.Error())
+}
+
+func (e *SSHExecError) Unwrap() error { return e.Err }
 
 func (e *PlatformError) Error() string {
 	return e.Message

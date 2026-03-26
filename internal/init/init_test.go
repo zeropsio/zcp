@@ -162,6 +162,60 @@ func TestRun_AliasesBashrcSourceLine(t *testing.T) {
 	}
 }
 
+func TestRun_AliasesZshrcSourceLine(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	// Create .zshrc so the init detects zsh is installed.
+	if err := os.WriteFile(filepath.Join(homeDir, ".zshrc"), []byte("# oh-my-zsh\n"), 0644); err != nil {
+		t.Fatalf("write .zshrc: %v", err)
+	}
+
+	err := zcpinit.Run(dir, runtime.Info{})
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(homeDir, ".zshrc"))
+	if err != nil {
+		t.Fatalf("read .zshrc: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, ".config/zerops/aliases") {
+		t.Error(".zshrc should source the aliases file")
+	}
+	// Original content should be preserved.
+	if !strings.Contains(content, "# oh-my-zsh") {
+		t.Error(".zshrc should preserve original content")
+	}
+}
+
+func TestRun_AliasesSkipsMissingZshrc(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	// Don't create .zshrc — simulates bash-only system.
+	err := zcpinit.Run(dir, runtime.Info{})
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	// .zshrc should NOT exist (we didn't create it, init shouldn't either).
+	if _, err := os.Stat(filepath.Join(homeDir, ".zshrc")); !os.IsNotExist(err) {
+		t.Error(".zshrc should not be created on bash-only systems")
+	}
+
+	// .bashrc should still be created.
+	if _, err := os.Stat(filepath.Join(homeDir, ".bashrc")); os.IsNotExist(err) {
+		t.Error(".bashrc should be created")
+	}
+}
+
 func TestRun_AliasesBashrcIdempotent(t *testing.T) {
 	// Not parallel — mutates HOME env var.
 	dir := t.TempDir()

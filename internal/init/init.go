@@ -164,8 +164,22 @@ func upsertManagedSection(path, block string) error {
 	return nil
 }
 
-const bashrcSourceLine = `# Zerops shell aliases
+const shellAliasSourceLine = `# Zerops shell aliases
 [ -f "$HOME/.config/zerops/aliases" ] && . "$HOME/.config/zerops/aliases"`
+
+// shellRCFile defines a shell RC file to source aliases from.
+type shellRCFile struct {
+	name   string
+	create bool // create if not exists (.bashrc: yes for compat, .zshrc: no)
+}
+
+// shellRCFiles lists shell RC files to patch with alias sourcing.
+// .bashrc: always create (backwards compat).
+// .zshrc: only patch if it exists (don't create on bash-only systems).
+var shellRCFiles = []shellRCFile{
+	{".bashrc", true},
+	{".zshrc", false},
+}
 
 func generateAliases(_ string) error {
 	tmpl, err := content.GetTemplate("aliases")
@@ -183,18 +197,42 @@ func generateAliases(_ string) error {
 		return err
 	}
 
-	// Append source line to .bashrc if not already present.
-	bashrcPath := filepath.Join(home, ".bashrc")
-	existing, err := os.ReadFile(bashrcPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read .bashrc: %w", err)
+	// Append source line to each shell RC file.
+	for _, rc := range shellRCFiles {
+		if err := patchShellRC(home, rc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// patchShellRC appends the alias source line to a shell RC file if not already present.
+func patchShellRC(home string, rc shellRCFile) error {
+	rcPath := filepath.Join(home, rc.name)
+	existing, err := os.ReadFile(rcPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if !rc.create {
+				return nil // shell not installed, skip
+			}
+			// Create the file (backwards compat for .bashrc).
+		} else {
+			return fmt.Errorf("read %s: %w", rc.name, err)
+		}
 	}
 	if strings.Contains(string(existing), ".config/zerops/aliases") {
 		return nil // already sourced
 	}
-	f, err := os.OpenFile(bashrcPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	flags := os.O_APPEND | os.O_WRONLY
+	if rc.create {
+		flags |= os.O_CREATE
+	}
+	f, err := os.OpenFile(rcPath, flags, 0644)
 	if err != nil {
-		return fmt.Errorf("open .bashrc: %w", err)
+		if !rc.create && os.IsNotExist(err) {
+			return nil // race: file deleted between ReadFile and OpenFile
+		}
+		return fmt.Errorf("open %s: %w", rc.name, err)
 	}
 	defer f.Close()
 	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
@@ -202,7 +240,7 @@ func generateAliases(_ string) error {
 			return err
 		}
 	}
-	if _, err := f.WriteString("\n" + bashrcSourceLine + "\n"); err != nil {
+	if _, err := f.WriteString("\n" + shellAliasSourceLine + "\n"); err != nil {
 		return err
 	}
 	return nil

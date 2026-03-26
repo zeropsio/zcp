@@ -185,7 +185,10 @@ func TestDeploy_SSHMode_SignalKilled(t *testing.T) {
 			{ID: "svc-1", Name: "builder"},
 			{ID: "svc-2", Name: "app"},
 		})
-	ssh := &mockSSHDeployer{err: fmt.Errorf("process exited: signal: killed")}
+	ssh := &mockSSHDeployer{
+		output: []byte("building...\nKilled"),
+		err:    &platform.SSHExecError{Hostname: "builder", Output: "building...\nKilled", Err: fmt.Errorf("signal: killed")},
+	}
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, authInfo,
@@ -201,8 +204,8 @@ func TestDeploy_SSHMode_SignalKilled(t *testing.T) {
 	if pe.Code != platform.ErrSSHDeployFailed {
 		t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
 	}
-	if !containsSubstring(pe.Suggestion, "RAM") {
-		t.Errorf("suggestion should mention RAM scaling, got: %s", pe.Suggestion)
+	if !containsSubstring(pe.Message, "OOM") {
+		t.Errorf("message should mention OOM, got: %s", pe.Message)
 	}
 }
 
@@ -214,7 +217,10 @@ func TestDeploy_SSHMode_CommandNotFound(t *testing.T) {
 			{ID: "svc-1", Name: "builder"},
 			{ID: "svc-2", Name: "app"},
 		})
-	ssh := &mockSSHDeployer{err: fmt.Errorf("bash: zcli: command not found")}
+	ssh := &mockSSHDeployer{
+		output: []byte("bash: zcli: command not found"),
+		err:    &platform.SSHExecError{Hostname: "builder", Output: "bash: zcli: command not found", Err: fmt.Errorf("exit status 127")},
+	}
 	authInfo := testAuthInfo()
 
 	_, err := Deploy(context.Background(), mock, "proj-1", ssh, authInfo,
@@ -230,8 +236,9 @@ func TestDeploy_SSHMode_CommandNotFound(t *testing.T) {
 	if pe.Code != platform.ErrSSHDeployFailed {
 		t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
 	}
-	if !containsSubstring(pe.Suggestion, "zcli") {
-		t.Errorf("suggestion should mention zcli, got: %s", pe.Suggestion)
+	// "command not found" should appear in the raw output shown to LLM.
+	if !containsSubstring(pe.Message, "command not found") {
+		t.Errorf("message should contain raw error text, got: %s", pe.Message)
 	}
 }
 
@@ -329,7 +336,7 @@ func TestDeploy_SSHMode_Exit255WithBuildSuccess(t *testing.T) {
 				})
 			ssh := &mockSSHDeployer{
 				output: []byte(tt.output),
-				err:    fmt.Errorf("ssh builder: process exited with status 255"),
+				err:    &platform.SSHExecError{Hostname: "builder", Output: tt.output, Err: fmt.Errorf("process exited with status 255")},
 			}
 			authInfo := testAuthInfo()
 
@@ -383,7 +390,7 @@ func TestDeploy_SSHMode_Exit255RealFailure(t *testing.T) {
 				})
 			ssh := &mockSSHDeployer{
 				output: []byte(tt.output),
-				err:    fmt.Errorf("ssh builder: process exited with status 255"),
+				err:    &platform.SSHExecError{Hostname: "builder", Output: tt.output, Err: fmt.Errorf("process exited with status 255")},
 			}
 			authInfo := testAuthInfo()
 
@@ -404,31 +411,7 @@ func TestDeploy_SSHMode_Exit255RealFailure(t *testing.T) {
 	}
 }
 
-func TestClassifySSHError_ZeropsYmlNotFound(t *testing.T) {
-	t.Parallel()
-
-	err := fmt.Errorf("File zerops.yml not found in /var/www")
-	pe := classifySSHError(err, "builder", "app")
-	if pe.Code != platform.ErrSSHDeployFailed {
-		t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
-	}
-	if !containsSubstring(pe.Suggestion, "deployFiles") {
-		t.Errorf("suggestion should mention deployFiles, got: %s", pe.Suggestion)
-	}
-}
-
-func TestClassifySSHError_ConnectionRefused(t *testing.T) {
-	t.Parallel()
-
-	err := fmt.Errorf("connection refused")
-	pe := classifySSHError(err, "builder", "app")
-	if pe.Code != platform.ErrSSHDeployFailed {
-		t.Errorf("code = %s, want %s", pe.Code, platform.ErrSSHDeployFailed)
-	}
-	if !containsSubstring(pe.Suggestion, "RUNNING") {
-		t.Errorf("suggestion should mention RUNNING, got: %s", pe.Suggestion)
-	}
-}
+// Classification tests moved to deploy_classify_test.go.
 
 func TestIsSSHBuildTriggered(t *testing.T) {
 	t.Parallel()

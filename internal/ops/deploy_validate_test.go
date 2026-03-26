@@ -212,6 +212,21 @@ func TestValidateZeropsYml_DeployFiles(t *testing.T) {
 			wantContains: "dev service should use deployFiles: [.]",
 		},
 		{
+			name:     "deployFiles under run instead of build",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    run:
+      start: node index.js
+      ports:
+        - port: 8080
+      deployFiles:
+        - .
+`,
+			wantWarnings: 2, // "build.deployFiles empty" + "belongs under build:"
+			wantContains: "deployFiles is empty",
+		},
+		{
 			name:     "valid prod config with build output",
 			hostname: "appstage",
 			yml: `zerops:

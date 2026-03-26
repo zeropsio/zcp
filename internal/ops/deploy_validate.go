@@ -46,6 +46,11 @@ func ValidateZeropsYml(workingDir, targetHostname string) []string {
 		warnings = append(warnings, "build.deployFiles is empty — nothing will be deployed to run container")
 	}
 
+	// Detect deployFiles in wrong section (run: instead of build:).
+	if entry.Run.DeployFiles != nil {
+		warnings = append(warnings, "deployFiles is under 'run:' but belongs under 'build:' — move it to build.deployFiles")
+	}
+
 	if strings.Contains(targetHostname, "dev") && len(deployFiles) > 0 {
 		if !slices.Contains(deployFiles, ".") && !slices.Contains(deployFiles, "./") {
 			warnings = append(warnings, "dev service should use deployFiles: [.] — ensures source files persist across deploys for continued iteration")
@@ -164,6 +169,7 @@ type zeropsYmlRun struct {
 	Start       string          `yaml:"start"`
 	Ports       []zeropsYmlPort `yaml:"ports"`
 	HealthCheck any             `yaml:"healthCheck"`
+	DeployFiles any             `yaml:"deployFiles"` // catch misplaced field (belongs under build:)
 }
 
 type zeropsYmlPort struct {

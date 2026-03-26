@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -654,13 +652,12 @@ func TestImport_FailReason_Mapped(t *testing.T) {
 	}
 }
 
-func TestImport_ZeropsYamlNormalization(t *testing.T) {
+func TestImport_ZeropsYamlPassthrough(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		content       string
-		wantStringKey bool // expect zeropsYaml as string in captured YAML
+		name    string
+		content string
 	}{
 		{
 			name: "zeropsYaml as string passes through",
@@ -674,10 +671,9 @@ func TestImport_ZeropsYamlNormalization(t *testing.T) {
           run:
             start: node index.js
 `,
-			wantStringKey: true,
 		},
 		{
-			name: "zeropsYaml as nested map normalized to string",
+			name: "zeropsYaml as nested map passes through",
 			content: `services:
   - hostname: app
     type: nodejs@22
@@ -688,7 +684,6 @@ func TestImport_ZeropsYamlNormalization(t *testing.T) {
           run:
             start: node index.js
 `,
-			wantStringKey: true,
 		},
 		{
 			name: "zeropsYaml as nested map with complex shell commands",
@@ -705,7 +700,6 @@ func TestImport_ZeropsYamlNormalization(t *testing.T) {
           run:
             start: node index.js
 `,
-			wantStringKey: true,
 		},
 	}
 
@@ -717,27 +711,9 @@ func TestImport_ZeropsYamlNormalization(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if tt.wantStringKey {
-				// Parse captured YAML and verify zeropsYaml is a string
-				var doc map[string]any
-				if err := yaml.Unmarshal([]byte(mock.CapturedImportYAML), &doc); err != nil {
-					t.Fatalf("captured YAML parse error: %v", err)
-				}
-				services, ok := doc["services"].([]any)
-				if !ok || len(services) == 0 {
-					t.Fatal("expected services in captured YAML")
-				}
-				svcMap, ok := services[0].(map[string]any)
-				if !ok {
-					t.Fatal("expected service map")
-				}
-				zy, exists := svcMap["zeropsYaml"]
-				if !exists {
-					t.Fatal("expected zeropsYaml in captured YAML")
-				}
-				if _, isString := zy.(string); !isString {
-					t.Errorf("zeropsYaml should be a string after normalization, got %T", zy)
-				}
+			// YAML must be passed through byte-for-byte — no re-serialization.
+			if mock.CapturedImportYAML != tt.content {
+				t.Errorf("YAML was modified during import.\nInput:  %q\nOutput: %q", tt.content, mock.CapturedImportYAML)
 			}
 		})
 	}
