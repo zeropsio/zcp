@@ -34,6 +34,10 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 		// /var/www/{hostname}/, so look there first. Fall back to project root
 		// for local/test environments where files are written directly.
 		for _, target := range plan.Targets {
+			// Skip validation for adopted (pre-existing) services — they keep their own code+config.
+			if target.Runtime.IsExisting {
+				continue
+			}
 			hostname := target.Runtime.DevHostname
 			mountPath := filepath.Join(projectRoot, hostname)
 

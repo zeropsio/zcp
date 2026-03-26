@@ -132,7 +132,7 @@ func routeNonConformant(metas []*ServiceMeta) []FlowOffering {
 			{
 				Workflow: "bootstrap",
 				Priority: 1,
-				Hint:     `zerops_workflow action="start" workflow="bootstrap"`,
+				Hint:     `zerops_workflow action="start" workflow="bootstrap" — existing services detected without ServiceMeta; bootstrap will adopt them (use isExisting=true in plan)`,
 			},
 			{
 				Workflow: "debug",

@@ -30,8 +30,35 @@ Call `zerops_discover` to see what exists. Then classify:
 
 Route:
 - FRESH: proceed normally through all steps
-- CONFORMANT: if stack matches, skip bootstrap — route to deploy workflow (`zerops_workflow action="start" workflow="deploy"`). If user wants a different stack, ASK before making any changes.
-- NON_CONFORMANT: STOP. Present existing services to user with types and status. Ask how to proceed. NEVER delete without explicit user approval naming each service.
+- CONFORMANT: if stack matches, skip bootstrap — route to deploy workflow (`zerops_workflow action="start" workflow="deploy"`). If user wants a different stack, ASK before making any changes. If no ServiceMeta files exist for these services, treat as adoption (see below).
+- NON_CONFORMANT: present existing services to user with types and status. Options: (a) add new services alongside existing, (b) user explicitly approves deletion of specific named services, (c) **adopt existing services** (recommended — see below). NEVER delete without explicit user approval naming each service.
+
+#### Adopting existing services
+
+When runtime services exist but ZCP doesn't know them (no ServiceMeta files), they need to be adopted before workflows (deploy, CI/CD) can manage them. Adoption registers them in ZCP without recreating or modifying them.
+
+**Steps:**
+
+1. List all runtime services from discover result (exclude managed services — databases, caches, storage).
+
+2. For each runtime service, present to user with suggested mode:
+   - If `{name}dev` + `{name}stage` both exist → suggest **standard** mode
+   - If `{name}dev` exists alone → suggest **dev** mode
+   - Otherwise → suggest **simple** mode
+
+3. Ask user to confirm: "These services already exist. I'll register them in ZCP so I can manage deploys, CI/CD, and configuration. I won't recreate or delete anything. OK?"
+
+4. Submit plan with `isExisting: true` on each adopted runtime target:
+   ```
+   zerops_workflow action="complete" step="discover" plan=[{
+     runtime: {devHostname: "api", type: "go@1", isExisting: true, bootstrapMode: "simple"},
+     dependencies: [{hostname: "db", type: "postgresql@16", resolution: "EXISTS"}]
+   }]
+   ```
+
+5. Managed services go as dependencies with `resolution: "EXISTS"` — no special handling needed.
+
+**Mixed plans**: You CAN combine `isExisting: true` (adopt) and `isExisting: false` (create new) targets in one plan. Each target follows its own path through subsequent steps.
 
 #### Identify stack components
 
@@ -87,6 +114,8 @@ zerops_workflow action="complete" step="discover" plan=[{runtime: {devHostname, 
 
 <section name="provision">
 ### Generate import.yml, provision services, discover env vars
+
+**Adopted services (isExisting: true):** Do NOT generate import.yml entries for adopted services — they already exist on the platform. If the plan contains ONLY adopted targets with all dependencies as `EXISTS`, skip import entirely and go straight to env var discovery. If the plan mixes new + adopted targets, generate import.yml for new targets only.
 
 Generate import.yml ONLY. Do NOT write zerops.yml or application code — that happens in the generate step AFTER env var discovery. The import.yml schema rules are included below.
 
@@ -161,6 +190,8 @@ envVariables:
 
 <section name="generate">
 ### Generate zerops.yml and application code
+
+**Adopted services (isExisting: true):** Skip zerops.yml and code generation entirely for adopted targets. These services already have working code and configuration from their previous deploy. The generate checker automatically skips validation for adopted targets. If ALL targets are adopted, complete this step with attestation "All targets are existing services — no code generation needed."
 
 **Prerequisites**: Services mounted, env vars discovered.
 
@@ -341,6 +372,8 @@ zerops:
 
 <section name="deploy">
 ### Deploy overview
+
+**Adopted services (isExisting: true):** Do NOT call `zerops_deploy` for adopted services — they already have deployed code running. Instead, verify they are healthy: `zerops_verify serviceHostname="{hostname}"`. If verification fails, report the issue to the user — they need to fix their existing service. Only deploy adopted services if the user explicitly requests it or if zerops.yml changes need activation.
 
 **Core principle: Deploy first — env vars activate at deploy time. Dev is for iterating and fixing. Stage is for final validation.**
 

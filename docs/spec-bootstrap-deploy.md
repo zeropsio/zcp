@@ -197,10 +197,27 @@ flowchart TD
 - Plan with zero runtime targets (empty `targets` array)
 - Route: discover → provision → SKIP generate → SKIP deploy → SKIP close
 
+**Adoption (NON_CONFORMANT with existing services)**:
+
+When the project has pre-existing runtime services not created by ZCP (no ServiceMeta files):
+
+1. **Discovery**: Agent calls `zerops_discover` → finds runtime services → classifies as NON_CONFORMANT
+2. **User decision**: Agent presents services and suggests adoption — registering them in ZCP without recreating
+3. **Plan construction**:
+   - Runtime targets: `isExisting: true` on adopted runtimes, `isExisting: false` on new ones
+   - Dependencies: `resolution: "EXISTS"` for existing managed services, `"CREATE"` for new ones
+   - Mode: inferred from hostname patterns (dev+stage → standard, dev-only → dev, no suffix → simple)
+4. **Provision behavior**: Skip import for `isExisting` services; mount and discover env vars as normal
+5. **Generate behavior**: Skip zerops.yml + code generation for `isExisting` targets; checker skips validation
+6. **Deploy behavior**: Verify-only for `isExisting` targets (no `zerops_deploy`, just `zerops_verify`)
+7. **Close behavior**: Write ServiceMeta for all targets identically (adopted and new)
+
+The `isExisting` flag is immutable after plan submission and affects per-target behavior in provision, generate, and deploy steps. Mixed plans (some `isExisting: true`, some `false`) are fully supported — each target follows its own path.
+
 **Invariants**:
 - Plan validated against live API types before storage
 - User must confirm plan before submission
-- CONFORMANT projects skip bootstrap entirely → deploy workflow
+- CONFORMANT projects skip bootstrap entirely → deploy workflow (unless no ServiceMeta exists — then adoption path)
 - NON_CONFORMANT projects require explicit user decision
 
 ---

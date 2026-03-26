@@ -493,7 +493,7 @@ func TestCheckGenerate_ExistsAndCreateDeps_EnvRefs_Pass(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true, BootstrapMode: "simple"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
 				{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA", Resolution: "CREATE"},
@@ -937,6 +937,127 @@ func TestCheckGenerate_RunStartValidCommand_NoBuildCmdFail(t *testing.T) {
 	for _, c := range result.Checks {
 		if c.Name == "appdev_run_start_build_cmd" && c.Status == "fail" {
 			t.Error("valid run.start should not trigger build command check")
+		}
+	}
+}
+
+func TestCheckGenerate_IsExisting_SkipsValidation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		isExisting bool
+		hasYml     bool
+		wantPass   bool
+	}{
+		{"existing_no_yml_passes", true, false, true},
+		{"existing_with_yml_passes", true, true, true},
+		{"new_no_yml_fails", false, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			stateDir := filepath.Join(dir, ".zcp", "state")
+
+			if tt.hasYml {
+				writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 3000
+`)
+			}
+
+			plan := &workflow.ServicePlan{
+				Targets: []workflow.BootstrapTarget{{
+					Runtime: workflow.RuntimeTarget{
+						DevHostname:   "appdev",
+						Type:          "nodejs@22",
+						IsExisting:    tt.isExisting,
+						BootstrapMode: "simple",
+					},
+				}},
+			}
+
+			checker := checkGenerate(stateDir)
+			result, err := checker(context.Background(), plan, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result == nil {
+				if tt.wantPass {
+					return // nil result = no checks = pass for existing
+				}
+				t.Fatal("expected non-nil result")
+			}
+			if result.Passed != tt.wantPass {
+				t.Errorf("Passed = %v, want %v; summary: %s", result.Passed, tt.wantPass, result.Summary)
+				for _, c := range result.Checks {
+					t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckGenerate_MixedExistingAndNew(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	// Write zerops.yml only for the NEW target — existing target has no yml.
+	writeZeropsYml(t, dir, `zerops:
+  - setup: webdev
+    build:
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 3000
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{
+			{
+				Runtime: workflow.RuntimeTarget{
+					DevHostname:   "api",
+					Type:          "go@1",
+					IsExisting:    true,
+					BootstrapMode: "simple",
+				},
+			},
+			{
+				Runtime: workflow.RuntimeTarget{
+					DevHostname:   "webdev",
+					Type:          "nodejs@22",
+					IsExisting:    false,
+					BootstrapMode: "dev",
+				},
+			},
+		},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result for mixed plan")
+	}
+	if !result.Passed {
+		t.Errorf("expected pass for mixed plan (existing skipped, new has yml): %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+	// Verify no checks emitted for the existing target.
+	for _, c := range result.Checks {
+		if strings.HasPrefix(c.Name, "api_") {
+			t.Errorf("unexpected check for existing target api: %s %s", c.Name, c.Status)
 		}
 	}
 }
