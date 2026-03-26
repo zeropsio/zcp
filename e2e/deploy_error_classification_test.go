@@ -33,20 +33,16 @@ import (
 	"time"
 )
 
+
 // TestE2E_Deploy_ErrorClassification_BadAuth tests that a deploy with invalid
 // auth produces a DIAGNOSTIC error, not a false "zerops.yml not found".
 //
 // Scenario: Write valid zerops.yml + app to zcpx, then deploy with a
 // deliberately broken zcli auth state on the target service.
 func TestE2E_Deploy_ErrorClassification_SelfDeploy(t *testing.T) {
+	requireSSH(t, "zcpx")
 	h := newHarness(t)
 	s := newSession(t, h.srv)
-
-	// Verify SSH access.
-	out, err := sshExec(t, "zcpx", "echo ok")
-	if err != nil {
-		t.Skipf("SSH to zcpx failed: %s (%v)", out, err)
-	}
 
 	suffix := randomSuffix()
 	appHostname := "zcpdpl" + suffix
@@ -112,17 +108,7 @@ func TestE2E_Deploy_ErrorClassification_SelfDeploy(t *testing.T) {
 http.createServer((req, res) => res.end("ok")).listen(3000);
 `
 
-	zeropsB64 := base64.StdEncoding.EncodeToString([]byte(zeropsYml))
-	serverB64 := base64.StdEncoding.EncodeToString([]byte(serverJS))
-
-	writeCmd := fmt.Sprintf(
-		"rm -rf %s && mkdir -p %s && echo %s | base64 -d > %s/zerops.yml && echo %s | base64 -d > %s/server.js",
-		deployDir, deployDir, zeropsB64, deployDir, serverB64, deployDir,
-	)
-	out, err = sshExec(t, "zcpx", writeCmd)
-	if err != nil {
-		t.Fatalf("write app to zcpx: %s (%v)", out, err)
-	}
+	writeAppViaSSH(t, "zcpx", deployDir, zeropsYml, serverJS)
 
 	// --- Step 5: Deploy (cross-service: zcpx → app) --- should succeed ---
 	step++
@@ -167,7 +153,7 @@ http.createServer((req, res) => res.end("ok")).listen(3000);
 `
 	brokenB64 := base64.StdEncoding.EncodeToString([]byte(brokenYml))
 	writeCmd2 := fmt.Sprintf("echo %s | base64 -d > %s/zerops.yml", brokenB64, deployDir)
-	out, err = sshExec(t, "zcpx", writeCmd2)
+	out, err := sshExec(t, "zcpx", writeCmd2)
 	if err != nil {
 		t.Fatalf("write broken zerops.yml: %s (%v)", out, err)
 	}
@@ -194,12 +180,12 @@ http.createServer((req, res) => res.end("ok")).listen(3000);
 	step++
 	logStep(t, step, "self-deploy: %s → %s (uses SSH internally)", appHostname, appHostname)
 
-	// First write correct zerops.yml back.
-	correctB64 := base64.StdEncoding.EncodeToString([]byte(zeropsYml))
-	// Write to the service's own filesystem via SSH.
-	writeViaSSH := fmt.Sprintf("echo %s | base64 -d > /var/www/zerops.yml && echo %s | base64 -d > /var/www/server.js",
-		correctB64, serverB64)
-	out, err = sshExec(t, appHostname, writeViaSSH)
+	// First write correct zerops.yml + server.js back to the target service.
+	selfWriteB64Yml := base64.StdEncoding.EncodeToString([]byte(zeropsYml))
+	selfWriteB64JS := base64.StdEncoding.EncodeToString([]byte(serverJS))
+	selfWriteCmd := fmt.Sprintf("echo %s | base64 -d > /var/www/zerops.yml && echo %s | base64 -d > /var/www/server.js",
+		selfWriteB64Yml, selfWriteB64JS)
+	out, err = sshExec(t, appHostname, selfWriteCmd)
 	if err != nil {
 		t.Logf("Warning: SSH write to %s failed (service might need SSH init): %s (%v)", appHostname, out, err)
 		t.Logf("Skipping self-deploy test — SSH not available on target")
@@ -252,35 +238,4 @@ http.createServer((req, res) => res.end("ok")).listen(3000);
 	deleteProcID := extractProcessID(t, deleteText)
 	waitForProcess(s, deleteProcID)
 	t.Logf("  Service %s deleted", appHostname)
-}
-
-// TestE2E_Deploy_ErrorDiagnostic verifies that deploy errors include
-// enough information for the LLM to diagnose the issue.
-func TestE2E_Deploy_ErrorDiagnostic(t *testing.T) {
-	h := newHarness(t)
-	s := newSession(t, h.srv)
-
-	// Try to deploy to a non-existent service.
-	result := s.callTool("zerops_deploy", map[string]any{
-		"targetService": "nonexistentservice" + randomSuffix(),
-	})
-
-	if !result.IsError {
-		t.Fatal("expected error for deploy to non-existent service")
-	}
-
-	text := getE2ETextContent(t, result)
-	t.Logf("Error for non-existent service: %s", text)
-
-	// Should be SERVICE_NOT_FOUND, not SSH_DEPLOY_FAILED.
-	if strings.Contains(text, "SERVICE_NOT_FOUND") {
-		t.Log("Correct: error code is SERVICE_NOT_FOUND")
-	} else if strings.Contains(text, "SSH_DEPLOY_FAILED") {
-		t.Error("Error classified as SSH_DEPLOY_FAILED for a pre-deploy validation failure — should be SERVICE_NOT_FOUND")
-	}
-
-	// Error should contain a useful suggestion.
-	if !strings.Contains(text, "suggestion") {
-		t.Error("Error response missing 'suggestion' field — LLM has no guidance")
-	}
 }

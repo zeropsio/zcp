@@ -48,3 +48,13 @@ if [ "$KILLED" = "killed" ]; then
 else
     echo "==> No stale zcp serve processes found"
 fi
+
+# Optionally deploy E2E test binary alongside the ZCP binary.
+if [[ "${1:-}" == "--with-tests" ]]; then
+    echo "==> Building E2E test binary..."
+    (cd "$PROJECT_DIR" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -tags e2e -o builds/e2e-test ./e2e/)
+    echo "==> Deploying E2E test binary..."
+    scp "$PROJECT_DIR/builds/e2e-test" "$REMOTE_HOST:/var/www/e2e-test"
+    ssh "$REMOTE_HOST" "chmod +x /var/www/e2e-test"
+    echo "==> E2E test binary deployed"
+fi

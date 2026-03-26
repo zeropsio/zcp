@@ -42,6 +42,9 @@ type zeropsYamlImportTest struct {
 
 func TestE2E_Import_ZeropsYaml_Identification(t *testing.T) {
 	h := newHarness(t)
+	// Reset any stale workflow session from previous test runs.
+	resetSession := newSession(t, h.srv)
+	resetSession.callTool("zerops_workflow", map[string]any{"action": "reset"})
 
 	suffix := randomSuffix()
 
@@ -50,8 +53,10 @@ func TestE2E_Import_ZeropsYaml_Identification(t *testing.T) {
 	hostNorm := "in" + suffix + "n"
 	hostNone := "in" + suffix + "x"
 
-	// Cleanup all test services.
+	// Cleanup all test services and reset workflow.
 	t.Cleanup(func() {
+		cs := newSession(t, h.srv)
+		cs.callTool("zerops_workflow", map[string]any{"action": "reset"})
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		cleanupServices(ctx, h.client, h.projectID, hostDirect, hostNorm, hostNone)
@@ -83,6 +88,7 @@ func TestE2E_Import_ZeropsYaml_Identification(t *testing.T) {
 `, hostNone)
 
 		s := newSession(t, h.srv)
+		t.Cleanup(func() { s.callTool("zerops_workflow", map[string]any{"action": "reset"}) })
 
 		// Start workflow (required for import).
 		s.callTool("zerops_workflow", map[string]any{"action": "reset"})
@@ -132,6 +138,7 @@ func TestE2E_Import_ZeropsYaml_Identification(t *testing.T) {
 `, hostNorm, hostNorm)
 
 		s := newSession(t, h.srv)
+		t.Cleanup(func() { s.callTool("zerops_workflow", map[string]any{"action": "reset"}) })
 
 		// Start workflow (required for import).
 		s.callTool("zerops_workflow", map[string]any{"action": "reset"})

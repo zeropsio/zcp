@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build all clean release release-patch catalog-sync
+.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build all clean release release-patch catalog-sync e2e-build e2e-deploy e2e-zcpx e2e-zcpx-fast e2e-zcpx-deploy
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -97,6 +97,34 @@ _release:
 	echo "Pushing..."; \
 	git push origin HEAD "$$NEXT"; \
 	echo "Done: $$NEXT pushed. GitHub Actions will build and publish."
+
+########
+# E2E  #
+########
+ZCPX_HOST ?= zcpx
+ZCPX_SSH  := ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=60
+
+e2e-build: ## Cross-compile E2E test binary for zcpx (linux/amd64)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -tags e2e -o builds/e2e-test ./e2e/
+
+e2e-deploy: e2e-build ## Deploy E2E test binary to zcpx
+	@echo "==> Deploying E2E test binary to $(ZCPX_HOST)..."
+	@scp -o StrictHostKeyChecking=no builds/e2e-test $(ZCPX_HOST):/var/www/e2e-test
+	@$(ZCPX_SSH) $(ZCPX_HOST) "chmod +x /var/www/e2e-test"
+	@echo "==> E2E binary deployed"
+
+e2e-zcpx: e2e-deploy ## Run ALL E2E tests on zcpx (includes deploy + subdomain)
+	$(ZCPX_SSH) $(ZCPX_HOST) "/var/www/e2e-test -test.v -test.timeout 3600s"
+
+e2e-zcpx-fast: e2e-deploy ## Run fast E2E tests on zcpx (read-only, ~15s)
+	$(ZCPX_SSH) $(ZCPX_HOST) "/var/www/e2e-test \
+		-test.run 'TestE2E_Events|TestE2E_Process|TestE2E_Scaling|TestE2E_Knowledge|TestE2E_LogSearch' \
+		-test.v -test.timeout 120s"
+
+e2e-zcpx-deploy: e2e-deploy ## Run deploy E2E tests on zcpx (~10 min)
+	$(ZCPX_SSH) $(ZCPX_HOST) "/var/www/e2e-test \
+		-test.run 'TestE2E_Deploy|TestE2E_BuildLogs|TestE2E_DeployPrepare' \
+		-test.v -test.timeout 900s"
 
 #########
 # BUILD #

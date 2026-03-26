@@ -7,9 +7,13 @@ package e2e_test
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +32,7 @@ var testServicePrefixes = []string{
 	"b2", "b3", "b4", "b5", "b9",                // bootstrap_modes_test.go
 	"b6", "b8", "ba", "bb", "bad",               // bootstrap_advanced_test.go
 	"zcprt", "zcpdb",                             // lifecycle_test.go, verify_test.go
-	"zcppf", "zcpdpl",                            // deploy tests
+	"zcppf", "zcpdpl", "zcpddev", "zcpdstg",       // deploy tests
 	"zcpvrt", "zcpvdb",                           // verify_test.go
 	"zcpsub", "zcpbl",                            // subdomain, build_logs
 	"zcpmnt", "zcpapp",                           // mount_test.go
@@ -249,5 +253,125 @@ func cleanupServices(ctx context.Context, client platform.Client, projectID stri
 				waitForProcessDirect(ctx, client, proc.ID)
 			}
 		}
+	}
+}
+
+// zcliLogin logs zcli in with the given token.
+func zcliLogin(t *testing.T, token string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "zcli", "login", token).CombinedOutput()
+	if err != nil {
+		t.Fatalf("zcli login failed: %s (%v)", string(out), err)
+	}
+}
+
+// createMinimalApp creates a temp directory with a minimal Node.js app and zerops.yml.
+// Returns the temp directory path.
+func createMinimalApp(t *testing.T, hostname string) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	zeropsYML := fmt.Sprintf(`zerops:
+  - setup: %s
+    build:
+      base: nodejs@22
+      buildCommands:
+        - echo "build done"
+      deployFiles: ./
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: node server.js
+`, hostname)
+
+	serverJS := `const http = require('http');
+const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.end('ok');
+  } else {
+    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.end('hello from e2e deploy test');
+  }
+});
+server.listen(3000, () => console.log('listening on 3000'));
+`
+
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte(zeropsYML), 0o644); err != nil {
+		t.Fatalf("write zerops.yml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "server.js"), []byte(serverJS), 0o644); err != nil {
+		t.Fatalf("write server.js: %v", err)
+	}
+
+	// zcli push requires a git-initialized directory.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, args := range [][]string{
+		{"init"},
+		{"add", "."},
+		{"commit", "-m", "init"},
+	} {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %s (%v)", args, string(out), err)
+		}
+	}
+
+	return dir
+}
+
+// writeAppViaSSH writes zerops.yml + server.js to a remote service via SSH.
+// Uses base64 encoding to avoid shell escaping issues.
+func writeAppViaSSH(t *testing.T, hostname, targetDir, zeropsYml, serverJS string) {
+	t.Helper()
+	zeropsB64 := base64.StdEncoding.EncodeToString([]byte(zeropsYml))
+	serverB64 := base64.StdEncoding.EncodeToString([]byte(serverJS))
+	cmd := fmt.Sprintf(
+		"mkdir -p %s && echo %s | base64 -d > %s/zerops.yml && echo %s | base64 -d > %s/server.js",
+		targetDir, zeropsB64, targetDir, serverB64, targetDir,
+	)
+	out, err := sshExec(t, hostname, cmd)
+	if err != nil {
+		t.Fatalf("write app to %s:%s: %s (%v)", hostname, targetDir, out, err)
+	}
+}
+
+// deployAndVerifyHTTP enables subdomain on a service and polls for HTTP 200.
+func deployAndVerifyHTTP(t *testing.T, s *e2eSession, hostname string) {
+	t.Helper()
+	enableText := s.mustCallSuccess("zerops_subdomain", map[string]any{
+		"serviceHostname": hostname,
+		"action":          "enable",
+	})
+	var result struct {
+		SubdomainUrls []string `json:"subdomainUrls"`
+	}
+	if err := json.Unmarshal([]byte(enableText), &result); err != nil || len(result.SubdomainUrls) == 0 {
+		t.Fatalf("%s: no subdomain URL from enable response", hostname)
+	}
+	url := result.SubdomainUrls[0]
+	t.Logf("  %s subdomain: %s", hostname, url)
+
+	code, ok := pollHTTPHealth(url+"/health", 5*time.Second, 90*time.Second)
+	if !ok {
+		t.Fatalf("%s: HTTP health check failed (last=%d), want 200", hostname, code)
+	}
+	t.Logf("  %s: HTTP %d OK", hostname, code)
+}
+
+// requireSSH skips the test if SSH to the given hostname is not available.
+func requireSSH(t *testing.T, hostname string) {
+	t.Helper()
+	out, err := sshExec(t, hostname, "echo ok")
+	if err != nil {
+		t.Skipf("SSH to %s failed (VPN not active?): %s (%v)", hostname, out, err)
 	}
 }

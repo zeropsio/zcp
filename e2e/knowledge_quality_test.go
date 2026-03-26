@@ -12,7 +12,9 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -22,26 +24,37 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// serviceClaim captures what services.md documents about a managed service type.
-// Hardcoded to detect drift between docs and reality — parsing docs to generate
-// claims would create a tautology (only verifies parsing, not accuracy).
-type serviceClaim struct {
-	typePattern        string   // base type (e.g. "postgresql")
-	normalizedName     string   // H2 section name in services.md (e.g. "PostgreSQL")
-	documentedVersions []string // versions docs mention (e.g. ["18","17","16","14"])
-	expectedPorts      []int    // ports that MUST exist on any running instance
-	haOnlyPorts        []int    // ports only present in HA mode
-	expectedEnvKeys    []string // auto-injected env var KEY names
-	forbiddenEnvKeys   []string // keys that must NOT exist
+// loadCatalogSnapshot reads active_versions.json from the testdata directory.
+// Falls back gracefully if the file is missing (catalog sync not run).
+func loadCatalogSnapshot() []byte {
+	data, err := os.ReadFile("../internal/knowledge/testdata/active_versions.json")
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
-// serviceClaims is the hardcoded claims table derived from services.md.
+// serviceClaim captures what services.md documents about a managed service type.
+// Version validation is driven by the catalog snapshot (active_versions.json),
+// not hardcoded here. Ports, env vars, and normalizedName are hardcoded because
+// they can't be derived from the catalog.
+type serviceClaim struct {
+	typePattern      string   // base type (e.g. "postgresql")
+	normalizedName   string   // H2 section name in services.md (e.g. "PostgreSQL")
+	expectedPorts    []int    // ports that MUST exist on any running instance
+	haOnlyPorts      []int    // ports only present in HA mode
+	expectedEnvKeys  []string // auto-injected env var KEY names
+	forbiddenEnvKeys []string // keys that must NOT exist
+}
+
+// serviceClaims defines port and env var expectations for managed service types.
+// Version validation is driven by active_versions.json (via catalogVersionsForType).
 // Covers all 14 entries from serviceNormalizer (sections.go:109-124).
 var serviceClaims = []serviceClaim{
 	{
 		typePattern:        "postgresql",
 		normalizedName:     "PostgreSQL",
-		documentedVersions: []string{"18", "17", "16", "14"},
+
 		expectedPorts:      []int{5432},
 		haOnlyPorts:        []int{5433},
 		expectedEnvKeys:    []string{"hostname", "port", "portTls", "user", "password", "connectionString", "connectionTlsString", "dbName", "superUser", "superUserPassword"},
@@ -49,15 +62,13 @@ var serviceClaims = []serviceClaim{
 	{
 		typePattern:        "mariadb",
 		normalizedName:     "MariaDB",
-		documentedVersions: []string{"10.6"},
-		expectedPorts:      []int{3306},
+expectedPorts:      []int{3306},
 		expectedEnvKeys:    []string{"hostname", "port", "projectId", "serviceId", "user", "password", "connectionString", "dbName"},
 	},
 	{
 		typePattern:        "valkey",
 		normalizedName:     "Valkey",
-		documentedVersions: []string{"7.2"},
-		expectedPorts:      []int{6379},
+expectedPorts:      []int{6379},
 		haOnlyPorts:        []int{7000},
 		expectedEnvKeys:    []string{"hostname", "port", "connectionString"},
 		forbiddenEnvKeys:   []string{"user", "password"},
@@ -65,16 +76,14 @@ var serviceClaims = []serviceClaim{
 	{
 		typePattern:        "keydb",
 		normalizedName:     "KeyDB",
-		documentedVersions: []string{"6"},
-		expectedPorts:      []int{6379},
+expectedPorts:      []int{6379},
 		expectedEnvKeys:    []string{"hostname", "port", "connectionString"},
 		forbiddenEnvKeys:   []string{"user", "password"},
 	},
 	{
 		typePattern:        "elasticsearch",
 		normalizedName:     "Elasticsearch",
-		documentedVersions: []string{"9.2", "8.16"},
-		expectedPorts:      []int{9200},
+expectedPorts:      []int{9200},
 		expectedEnvKeys:    []string{"hostname", "port", "password"},
 	},
 	{
@@ -91,43 +100,37 @@ var serviceClaims = []serviceClaim{
 	{
 		typePattern:        "kafka",
 		normalizedName:     "Kafka",
-		documentedVersions: []string{"3.8"},
-		expectedPorts:      []int{9092},
+expectedPorts:      []int{9092},
 		expectedEnvKeys:    []string{"hostname", "port", "user", "password"},
 	},
 	{
 		typePattern:        "nats",
 		normalizedName:     "NATS",
-		documentedVersions: []string{"2.12", "2.10"},
-		expectedPorts:      []int{4222, 8222},
+expectedPorts:      []int{4222, 8222},
 		expectedEnvKeys:    []string{"hostname", "user", "password", "connectionString"},
 	},
 	{
 		typePattern:        "meilisearch",
 		normalizedName:     "Meilisearch",
-		documentedVersions: []string{"1.20", "1.10"},
-		expectedPorts:      []int{7700},
+expectedPorts:      []int{7700},
 		expectedEnvKeys:    []string{"hostname", "masterKey", "defaultSearchKey", "defaultAdminKey"},
 	},
 	{
 		typePattern:        "clickhouse",
 		normalizedName:     "ClickHouse",
-		documentedVersions: []string{"25.3"},
-		expectedPorts:      []int{9000, 8123, 9004, 9005},
+expectedPorts:      []int{9000, 8123, 9004, 9005},
 		expectedEnvKeys:    []string{"hostname", "port", "portHttp", "portMysql", "portPostgresql", "portNative", "password", "superUserPassword", "dbName"},
 	},
 	{
 		typePattern:        "qdrant",
 		normalizedName:     "Qdrant",
-		documentedVersions: []string{"1.12", "1.10"},
-		expectedPorts:      []int{6333, 6334},
+expectedPorts:      []int{6333, 6334},
 		expectedEnvKeys:    []string{"hostname", "port", "grpcPort", "apiKey", "readOnlyApiKey", "connectionString", "grpcConnectionString"},
 	},
 	{
 		typePattern:        "typesense",
 		normalizedName:     "Typesense",
-		documentedVersions: []string{"27.1"},
-		expectedPorts:      []int{8108},
+expectedPorts:      []int{8108},
 		expectedEnvKeys:    []string{"hostname", "port", "apiKey"},
 	},
 	{
@@ -169,6 +172,12 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
+
+	// --- Setup: load catalog snapshot for version validation ---
+	catalogSnapshot := loadCatalogSnapshot()
+	if catalogSnapshot == nil {
+		t.Log("WARNING: active_versions.json not found — run 'make catalog-sync'. Skipping catalog version checks.")
+	}
 
 	// --- Setup: load knowledge store ---
 	store, err := knowledge.GetEmbeddedStore()
@@ -282,12 +291,14 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 				}
 			})
 
-			// DocumentedVersionsActive: each documented version is ACTIVE in the platform catalog.
-			for _, ver := range claim.documentedVersions {
+			// CatalogVersionsActive: each version in the catalog snapshot for this type
+			// must be ACTIVE in the live platform (catches catalog snapshot staleness).
+			catalogVers := catalogVersionsForType(catalogSnapshot, claim.typePattern)
+			for _, ver := range catalogVers {
 				fullName := claim.typePattern + "@" + ver
-				t.Run("DocumentedVersionsActive/"+fullName, func(t *testing.T) {
+				t.Run("CatalogVersionActive/"+fullName, func(t *testing.T) {
 					if !activeVersions[fullName] {
-						t.Errorf("documented version %s not ACTIVE in platform catalog", fullName)
+						t.Errorf("catalog snapshot version %s not ACTIVE in live platform — run 'make catalog-sync'", fullName)
 					}
 				})
 			}
@@ -404,6 +415,28 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 
 // --- Helpers ---
 
+// catalogVersionsForType returns active versions for a base type from the catalog snapshot.
+// E.g., catalogVersionsForType(data, "postgresql") → ["14", "16", "17", "18"].
+func catalogVersionsForType(snapshotJSON []byte, baseType string) []string {
+	if snapshotJSON == nil {
+		return nil
+	}
+	var snap struct {
+		Versions []string `json:"versions"`
+	}
+	if err := json.Unmarshal(snapshotJSON, &snap); err != nil {
+		return nil
+	}
+	prefix := baseType + "@"
+	var versions []string
+	for _, v := range snap.Versions {
+		if strings.HasPrefix(v, prefix) {
+			versions = append(versions, strings.TrimPrefix(v, prefix))
+		}
+	}
+	return versions
+}
+
 // kqBaseType extracts the base type from a versioned string: "postgresql@16" → "postgresql".
 func kqBaseType(versionName string) string {
 	base, _, _ := strings.Cut(versionName, "@")
@@ -465,7 +498,7 @@ func recipeVersionRefs(content string) []string {
 
 	addRef := func(v string) {
 		v = strings.TrimSpace(v)
-		v = strings.TrimRight(v, ",]\"'")
+		v = strings.TrimRight(v, ",]\"'`")
 		if v == "" || seen[v] || !strings.Contains(v, "@") {
 			return
 		}

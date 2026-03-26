@@ -24,7 +24,16 @@ func TestE2E_Verify(t *testing.T) {
 	rtHostname := "zcpvrt" + suffix
 	dbHostname := "zcpvdb" + suffix
 
+	// Start workflow session — zerops_import requires an active session.
+	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"intent":   "e2e verify test",
+	})
+
 	t.Cleanup(func() {
+		s.callTool("zerops_workflow", map[string]any{"action": "reset"})
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		cleanupServices(ctx, h.client, h.projectID, rtHostname, dbHostname)

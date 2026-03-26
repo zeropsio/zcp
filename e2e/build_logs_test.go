@@ -17,7 +17,6 @@ package e2e_test
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -26,16 +25,10 @@ import (
 )
 
 func TestE2E_BuildLogsOnFailure(t *testing.T) {
+	const sourceHost = "zcpx"
+	requireSSH(t, sourceHost)
 	h := newHarness(t)
 	s := newSession(t, h.srv)
-
-	const sourceHost = "zcpx"
-
-	// Verify SSH access to zcpx.
-	out, err := sshExec(t, sourceHost, "echo ok")
-	if err != nil {
-		t.Skipf("SSH to %s failed (VPN not active?): %s (%v)", sourceHost, out, err)
-	}
 
 	suffix := randomSuffix()
 	appHostname := "zcpbl" + suffix
@@ -119,20 +112,10 @@ func TestE2E_BuildLogsOnFailure(t *testing.T) {
 
 	serverJS := `console.log("this should never run");`
 
-	zeropsB64 := base64.StdEncoding.EncodeToString([]byte(brokenZeropsYml))
-	serverB64 := base64.StdEncoding.EncodeToString([]byte(serverJS))
+	writeAppViaSSH(t, sourceHost, deployDir, brokenZeropsYml, serverJS)
 
-	prepareCmd := fmt.Sprintf(
-		"rm -rf %s && mkdir -p %s && echo %s | base64 -d > %s/zerops.yml && echo %s | base64 -d > %s/server.js",
-		deployDir, deployDir, zeropsB64, deployDir, serverB64, deployDir,
-	)
-	out, err = sshExec(t, sourceHost, prepareCmd)
-	if err != nil {
-		t.Fatalf("prepare deploy dir on %s: %s (%v)", sourceHost, out, err)
-	}
-
-	// Verify files written correctly.
-	out, err = sshExec(t, sourceHost, fmt.Sprintf("cat %s/zerops.yml", deployDir))
+	// Verify the broken command is in the written file.
+	out, err := sshExec(t, sourceHost, fmt.Sprintf("cat %s/zerops.yml", deployDir))
 	if err != nil {
 		t.Fatalf("verify zerops.yml: %s (%v)", out, err)
 	}
