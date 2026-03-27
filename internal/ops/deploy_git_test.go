@@ -43,7 +43,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 				"git config user.name 'Test User'",
 				"git add -A",
 				"git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy'",
-				"zcli push --serviceId svc-123",
+				"zcli push --service-id svc-123",
 			},
 			wantAbsent: []string{
 				"rm -rf .git",
@@ -63,7 +63,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			wantParts: []string{
 				"zcli login my-token",
 				"test -d .git || git init -q -b main",
-				"zcli push --serviceId svc-789",
+				"zcli push --service-id svc-789",
 			},
 		},
 		{
@@ -73,7 +73,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			workDir:    "/var/www",
 			includeGit: true,
 			wantParts: []string{
-				"zcli push --serviceId svc-123 -g",
+				"zcli push --service-id svc-123 -g",
 			},
 		},
 		{

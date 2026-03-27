@@ -44,13 +44,9 @@ func OverrideRunnerForTest(r commandRunner) func() {
 
 // DeployLocal deploys code from the user's local machine to a Zerops service via zcli push.
 //
-// Steps:
-//  1. Validate zcli in PATH
-//  2. Resolve targetService hostname → service ID
-//  3. Validate zerops.yml exists at workingDir
-//  4. Run zcli login
-//  5. Run zcli push <hostname> --working-dir <path> [-g]
-//  6. Return BUILD_TRIGGERED on success
+// Uses --service-id and --project-id flags for non-interactive mode (no TTY needed).
+// zcli push blocks until the build pipeline completes. pollDeployBuild (in tool handler)
+// then confirms the final status via API.
 func DeployLocal(
 	ctx context.Context,
 	client platform.Client,
@@ -114,9 +110,18 @@ func DeployLocal(
 		)
 	}
 
-	// 6. Push.
-	args := []string{"push", targetService, "--working-dir", workingDir}
+	// 6. Push with explicit --service-id + --project-id → non-interactive (no TTY needed).
+	// zcli blocks until build+deploy completes, then pollDeployBuild confirms via API.
+	args := []string{
+		"push",
+		"--service-id", target.ID,
+		"--project-id", projectID,
+		"--working-dir", workingDir,
+		"--no-git",
+	}
 	if includeGit {
+		// Replace --no-git with -g.
+		args = args[:len(args)-1]
 		args = append(args, "-g")
 	}
 	_, stderr, err = runner.Run(ctx, "zcli", args...)

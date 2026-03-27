@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/auth"
@@ -116,9 +117,15 @@ func TestDeployLocal_Success(t *testing.T) {
 	if mr.runCalls[0].name != "zcli" || mr.runCalls[0].args[0] != "login" {
 		t.Errorf("call[0] = %s %v, want zcli login ...", mr.runCalls[0].name, mr.runCalls[0].args)
 	}
-	pushArgs := mr.runCalls[1].args
-	if pushArgs[0] != "push" || pushArgs[1] != "appstage" {
-		t.Errorf("push args = %v, want [push appstage ...]", pushArgs)
+	pushArgs := strings.Join(mr.runCalls[1].args, " ")
+	if !strings.Contains(pushArgs, "push") {
+		t.Errorf("push args should contain push, got: %s", pushArgs)
+	}
+	if !strings.Contains(pushArgs, "--service-id") || !strings.Contains(pushArgs, "--project-id") {
+		t.Errorf("push args should contain --service-id and --project-id for non-interactive mode, got: %s", pushArgs)
+	}
+	if !strings.Contains(pushArgs, "--no-git") {
+		t.Errorf("push args should contain --no-git by default, got: %s", pushArgs)
 	}
 }
 

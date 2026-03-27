@@ -172,7 +172,7 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir string, inc
 	gitCommit := "git add -A && (git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy')"
 
 	// Push from workingDir with git handling.
-	pushArgs := fmt.Sprintf("zcli push --serviceId %s", targetServiceID)
+	pushArgs := fmt.Sprintf("zcli push --service-id %s", targetServiceID)
 	if includeGit {
 		pushArgs += " -g"
 	}
