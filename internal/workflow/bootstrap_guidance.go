@@ -20,7 +20,8 @@ func ResolveGuidance(step string) string {
 // ResolveProgressiveGuidance returns mode-filtered sub-sections for generate and deploy steps,
 // or falls back to ResolveGuidance for other steps.
 // Each mode-specific section is included at most once based on the distinct modes across all targets.
-func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int) string {
+// In local mode, environment-specific sections (generate-local, deploy-local) are included.
+func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int, env Environment) string {
 	if step != StepDeploy && step != StepGenerate {
 		return ResolveGuidance(step)
 	}
@@ -48,10 +49,18 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 		if modes[PlanModeSimple] {
 			sections = append(sections, ExtractSection(md, "generate-simple"))
 		}
+		// Environment-specific section.
+		if env == EnvLocal {
+			sections = append(sections, ExtractSection(md, "generate-local"))
+		}
 
 	case StepDeploy:
-		// Consolidated deploy section (all mode callouts inline).
-		sections = append(sections, ExtractSection(md, "deploy"))
+		// Local mode replaces the entire deploy section — SSH content is irrelevant.
+		if env == EnvLocal {
+			sections = append(sections, ExtractSection(md, "deploy-local"))
+		} else {
+			sections = append(sections, ExtractSection(md, "deploy"))
+		}
 		// Conditional: agent orchestration for 3+ services.
 		if plan != nil && len(plan.Targets) >= 3 {
 			sections = append(sections, ExtractSection(md, "deploy-agents"))

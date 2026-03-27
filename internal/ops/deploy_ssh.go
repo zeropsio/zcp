@@ -25,39 +25,13 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// DeployResult contains the outcome of a deploy operation.
-type DeployResult struct {
-	Status            string   `json:"status"`
-	Mode              string   `json:"mode"` // "ssh"
-	SourceService     string   `json:"sourceService,omitempty"`
-	TargetService     string   `json:"targetService"`
-	TargetServiceID   string   `json:"targetServiceId"`
-	TargetServiceType string   `json:"targetServiceType,omitempty"`
-	Message           string   `json:"message"`
-	MonitorHint       string   `json:"monitorHint,omitempty"`
-	BuildStatus       string   `json:"buildStatus,omitempty"`
-	BuildDuration     string   `json:"buildDuration,omitempty"`
-	Suggestion        string   `json:"suggestion,omitempty"`
-	SSHReady          bool     `json:"sshReady,omitempty"`
-	TimedOut          bool     `json:"timedOut,omitempty"`
-	NextActions       string   `json:"nextActions,omitempty"`
-	Warnings          []string `json:"warnings,omitempty"`
-	BuildLogs         []string `json:"buildLogs,omitempty"`       // last N lines of build output
-	BuildLogsSource   string   `json:"buildLogsSource,omitempty"` // "build_container" or empty
-}
-
-// SSHDeployer executes commands on remote Zerops services.
-type SSHDeployer interface {
-	ExecSSH(ctx context.Context, hostname string, command string) ([]byte, error)
-}
-
-// Deploy deploys code to a Zerops service via SSH.
+// DeploySSH deploys code to a Zerops service via SSH.
 //
 // Auto-inference:
 //   - targetService is required
 //   - sourceService == "" → auto-inferred as targetService (self-deploy)
 //   - sourceService == targetService → includeGit forced to true
-func Deploy(
+func DeploySSH(
 	ctx context.Context,
 	client platform.Client,
 	projectID string,

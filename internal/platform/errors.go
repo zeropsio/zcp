@@ -44,6 +44,8 @@ const (
 	ErrBootstrapNotActive     = "BOOTSTRAP_NOT_ACTIVE"
 	ErrDeployNotActive        = "DEPLOY_NOT_ACTIVE"
 	ErrSSHDeployFailed        = "SSH_DEPLOY_FAILED"
+	ErrDeployFailed           = "DEPLOY_FAILED"
+	ErrPrerequisiteMissing    = "PREREQUISITE_MISSING"
 	ErrWorkflowRequired       = "WORKFLOW_REQUIRED"
 )
 

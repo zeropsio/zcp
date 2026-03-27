@@ -10,7 +10,7 @@ import (
 
 // buildGuide assembles a step guide with injected knowledge from the knowledge store.
 // Falls back to base guidance if knowledge is unavailable.
-func (b *BootstrapState) buildGuide(step string, iteration int, _ Environment, kp knowledge.Provider) string {
+func (b *BootstrapState) buildGuide(step string, iteration int, env Environment, kp knowledge.Provider) string {
 	var runtimeType string
 	var depTypes []string
 	if b.Plan != nil {
@@ -27,6 +27,7 @@ func (b *BootstrapState) buildGuide(step string, iteration int, _ Environment, k
 	return assembleGuidance(GuidanceParams{
 		Step:              step,
 		Mode:              b.PlanMode(),
+		Env:               env,
 		RuntimeType:       runtimeType,
 		DependencyTypes:   depTypes,
 		DiscoveredEnvVars: envVars,

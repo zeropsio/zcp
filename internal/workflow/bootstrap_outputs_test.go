@@ -11,7 +11,7 @@ import (
 func TestBootstrapComplete_WritesServiceMeta(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir, EnvLocal, nil)
+	eng := NewEngine(dir, EnvContainer, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "bun + postgres")
 	if err != nil {
@@ -156,7 +156,7 @@ func TestWriteBootstrapOutputs_NeverWritesDepMetas(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			eng := NewEngine(dir, EnvLocal, nil)
+			eng := NewEngine(dir, EnvContainer, nil)
 
 			_, err := eng.BootstrapStart("proj-1", "app + db")
 			if err != nil {
@@ -252,7 +252,7 @@ func TestWriteBootstrapOutputs_PreExistingDepMetaSurvives(t *testing.T) {
 func TestWriteBootstrapOutputs_SetsBootstrappedAt(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir, EnvLocal, nil)
+	eng := NewEngine(dir, EnvContainer, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "app + db")
 	if err != nil {
@@ -324,7 +324,7 @@ func TestProvisionMeta_NoMetaAfterPlan(t *testing.T) {
 func TestProvisionMeta_WritesPartialMeta(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	eng := NewEngine(dir, EnvLocal, nil)
+	eng := NewEngine(dir, EnvContainer, nil)
 
 	_, err := eng.BootstrapStart("proj-1", "app + db")
 	if err != nil {
@@ -436,6 +436,7 @@ func TestWriteBootstrapOutputs_CopiesStrategiesToDecisions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
+			// Use EnvLocal — strategy stored under "appdev" but meta written to "appstage".
 			eng := NewEngine(dir, EnvLocal, nil)
 
 			_, err := eng.BootstrapStart("proj-1", "app with strategy")
@@ -450,7 +451,7 @@ func TestWriteBootstrapOutputs_CopiesStrategiesToDecisions(t *testing.T) {
 				t.Fatalf("BootstrapCompletePlan: %v", err)
 			}
 
-			// Store strategy before completing strategy step.
+			// Store strategy under DevHostname (as the agent does).
 			if err := eng.BootstrapStoreStrategies(map[string]string{"appdev": tt.strategy}); err != nil {
 				t.Fatalf("BootstrapStoreStrategies: %v", err)
 			}
@@ -461,12 +462,13 @@ func TestWriteBootstrapOutputs_CopiesStrategiesToDecisions(t *testing.T) {
 				}
 			}
 
-			meta, err := ReadServiceMeta(dir, "appdev")
+			// Local mode: meta written as appstage (not appdev).
+			meta, err := ReadServiceMeta(dir, "appstage")
 			if err != nil {
 				t.Fatalf("ReadServiceMeta: %v", err)
 			}
 			if meta == nil {
-				t.Fatal("expected appdev meta")
+				t.Fatal("expected appstage meta (local mode writes stage hostname)")
 			}
 			got := meta.DeployStrategy
 			if got != tt.wantKey {
@@ -481,16 +483,17 @@ func TestWriteBootstrapOutputs_NoAutoAssignStrategy(t *testing.T) {
 	tests := []struct {
 		name          string
 		bootstrapMode string
+		env           Environment
 	}{
-		{"dev mode gets no auto-assign", PlanModeDev},
-		{"simple mode gets no auto-assign", PlanModeSimple},
-		{"standard mode gets no auto-assign", PlanModeStandard},
+		{"dev mode gets no auto-assign", PlanModeDev, EnvLocal},
+		{"simple mode gets no auto-assign", PlanModeSimple, EnvLocal},
+		{"standard mode gets no auto-assign", PlanModeStandard, EnvContainer},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			eng := NewEngine(dir, EnvLocal, nil)
+			eng := NewEngine(dir, tt.env, nil)
 
 			_, err := eng.BootstrapStart("proj-1", "no auto-assign test")
 			if err != nil {
@@ -571,16 +574,17 @@ func TestProvisionMeta_SetsMode(t *testing.T) {
 		name          string
 		bootstrapMode string
 		wantMode      string
+		env           Environment
 	}{
-		{"standard mode (default)", "", PlanModeStandard},
-		{"dev mode", PlanModeDev, PlanModeDev},
-		{"simple mode", PlanModeSimple, PlanModeSimple},
+		{"standard mode (default)", "", PlanModeStandard, EnvContainer},
+		{"dev mode", PlanModeDev, PlanModeDev, EnvLocal},
+		{"simple mode", PlanModeSimple, PlanModeSimple, EnvLocal},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			eng := NewEngine(dir, EnvLocal, nil)
+			eng := NewEngine(dir, tt.env, nil)
 
 			_, err := eng.BootstrapStart("proj-1", "mode field test")
 			if err != nil {
@@ -876,5 +880,150 @@ func TestBuildTransitionMessage_CICDGateIncluded(t *testing.T) {
 	}
 	if !strings.Contains(msg, ".gitignore") {
 		t.Error("message should mention .gitignore")
+	}
+}
+
+func TestWriteBootstrapOutputs_EnvironmentField(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		env     Environment
+		wantEnv string
+	}{
+		{
+			name:    "container mode sets environment=container",
+			env:     EnvContainer,
+			wantEnv: "container",
+		},
+		{
+			name:    "local mode sets environment=local",
+			env:     EnvLocal,
+			wantEnv: "local",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			eng := NewEngine(dir, tt.env, nil)
+
+			_, err := eng.BootstrapStart("proj-1", "test")
+			if err != nil {
+				t.Fatalf("BootstrapStart: %v", err)
+			}
+			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			}}, nil, nil)
+			if err != nil {
+				t.Fatalf("BootstrapCompletePlan: %v", err)
+			}
+			for _, step := range []string{"provision", "generate", "deploy", "close"} {
+				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
+					t.Fatalf("BootstrapComplete(%s): %v", step, err)
+				}
+			}
+
+			// In local mode, meta hostname = appstage (stage), not appdev.
+			metaHostname := "appdev"
+			if tt.env == EnvLocal {
+				metaHostname = "appstage"
+			}
+			meta, err := ReadServiceMeta(dir, metaHostname)
+			if err != nil {
+				t.Fatalf("ReadServiceMeta(%s): %v", metaHostname, err)
+			}
+			if meta == nil {
+				t.Fatalf("expected %s meta to exist", metaHostname)
+			}
+			if meta.Environment != tt.wantEnv {
+				t.Errorf("Environment = %q, want %q", meta.Environment, tt.wantEnv)
+			}
+		})
+	}
+}
+
+func TestWriteBootstrapOutputs_LocalMode_HostnameIsStage(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, nil)
+
+	_, err := eng.BootstrapStart("proj-1", "test")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
+
+	// In local mode, meta should be written for appstage (not appdev).
+	meta, err := ReadServiceMeta(dir, "appstage")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(appstage): %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected appstage meta in local mode")
+	}
+	if meta.Hostname != "appstage" {
+		t.Errorf("hostname = %s, want appstage", meta.Hostname)
+	}
+	if meta.StageHostname != "" {
+		t.Errorf("stageHostname = %s, want empty (local mode has no dev/stage pair)", meta.StageHostname)
+	}
+	if meta.Mode != PlanModeStandard {
+		t.Errorf("mode = %s, want standard", meta.Mode)
+	}
+
+	// appdev should NOT have a meta file in local mode.
+	devMeta, _ := ReadServiceMeta(dir, "appdev")
+	if devMeta != nil {
+		t.Error("appdev meta should NOT exist in local mode (dev service not created)")
+	}
+}
+
+func TestWriteBootstrapOutputs_LocalMode_StrategyPreserved(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, nil)
+
+	_, err := eng.BootstrapStart("proj-1", "test")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	// Strategy stored under DevHostname (agent sends strategies by DevHostname).
+	if err := eng.BootstrapStoreStrategies(map[string]string{"appdev": StrategyPushDev}); err != nil {
+		t.Fatalf("BootstrapStoreStrategies: %v", err)
+	}
+
+	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
+
+	// Strategy should survive: stored under "appdev" but written to appstage.json.
+	meta, err := ReadServiceMeta(dir, "appstage")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(appstage): %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected appstage meta")
+	}
+	if meta.DeployStrategy != StrategyPushDev {
+		t.Errorf("DeployStrategy = %q, want %q", meta.DeployStrategy, StrategyPushDev)
 	}
 }

@@ -20,22 +20,31 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 
 	// Write service meta for each runtime target (managed deps are API-authoritative).
 	for _, target := range plan.Targets {
-		hostname := target.Runtime.DevHostname
+		devHostname := target.Runtime.DevHostname
 		mode := target.Runtime.EffectiveMode()
 
-		// Strategy is only written if explicitly set (no auto-assign).
-		strategy := state.Bootstrap.Strategies[hostname]
+		// Strategy lookup ALWAYS by DevHostname — agent stores strategies under DevHostname.
+		strategy := state.Bootstrap.Strategies[devHostname]
+
+		// Meta hostname: local mode writes appstage (dev doesn't exist), container writes appdev.
+		metaHostname := devHostname
+		stageHostname := target.Runtime.StageHostname()
+		if e.environment == EnvLocal && stageHostname != "" {
+			metaHostname = stageHostname
+			stageHostname = ""
+		}
 
 		meta := &ServiceMeta{
-			Hostname:         hostname,
+			Hostname:         metaHostname,
 			Mode:             mode,
-			StageHostname:    target.Runtime.StageHostname(),
+			StageHostname:    stageHostname,
 			DeployStrategy:   strategy,
+			Environment:      string(e.environment),
 			BootstrapSession: state.SessionID,
 			BootstrappedAt:   now,
 		}
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
-			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", hostname, err)
+			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", metaHostname, err)
 		}
 	}
 
@@ -59,14 +68,22 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 	}
 
 	for _, target := range state.Bootstrap.Plan.Targets {
+		metaHostname := target.Runtime.DevHostname
+		stageHostname := target.Runtime.StageHostname()
+		if e.environment == EnvLocal && stageHostname != "" {
+			metaHostname = stageHostname
+			stageHostname = ""
+		}
+
 		meta := &ServiceMeta{
-			Hostname:         target.Runtime.DevHostname,
+			Hostname:         metaHostname,
 			Mode:             target.Runtime.EffectiveMode(),
-			StageHostname:    target.Runtime.StageHostname(),
+			StageHostname:    stageHostname,
+			Environment:      string(e.environment),
 			BootstrapSession: state.SessionID,
 		}
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
-			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", target.Runtime.DevHostname, err)
+			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", metaHostname, err)
 		}
 	}
 }

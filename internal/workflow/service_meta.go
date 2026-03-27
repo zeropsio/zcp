@@ -24,6 +24,7 @@ type ServiceMeta struct {
 	Mode             string `json:"mode,omitempty"`
 	StageHostname    string `json:"stageHostname,omitempty"`
 	DeployStrategy   string `json:"deployStrategy,omitempty"`
+	Environment      string `json:"environment,omitempty"` // "container" or "local"
 	BootstrapSession string `json:"bootstrapSession"`
 	BootstrappedAt   string `json:"bootstrappedAt"`
 }

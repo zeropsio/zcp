@@ -176,7 +176,7 @@ Content of bar section.
 func TestResolveProgressiveGuidance_NonProgressiveStep(t *testing.T) {
 	t.Parallel()
 	// Non-deploy/non-generate steps should return same as ResolveGuidance.
-	guide := ResolveProgressiveGuidance("discover", nil, 0)
+	guide := ResolveProgressiveGuidance("discover", nil, 0, EnvContainer)
 	if guide == "" {
 		t.Error("expected non-empty guidance for discover step")
 	}
@@ -191,7 +191,7 @@ func TestResolveProgressiveGuidance_GenerateStandard(t *testing.T) {
 	plan := &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
 	}}
-	guide := ResolveProgressiveGuidance("generate", plan, 0)
+	guide := ResolveProgressiveGuidance("generate", plan, 0, EnvContainer)
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for generate step")
 	}
@@ -213,7 +213,7 @@ func TestResolveProgressiveGuidance_GenerateSimple(t *testing.T) {
 	plan := &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "simple"}},
 	}}
-	guide := ResolveProgressiveGuidance("generate", plan, 0)
+	guide := ResolveProgressiveGuidance("generate", plan, 0, EnvContainer)
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for generate step in simple mode")
 	}
@@ -239,7 +239,7 @@ func TestResolveProgressiveGuidance_GenerateMixed(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
 		{Runtime: RuntimeTarget{DevHostname: "frontend", Type: "nginx@1", BootstrapMode: "simple"}},
 	}}
-	guide := ResolveProgressiveGuidance("generate", plan, 0)
+	guide := ResolveProgressiveGuidance("generate", plan, 0, EnvContainer)
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for mixed mode generate")
 	}
@@ -257,7 +257,7 @@ func TestResolveProgressiveGuidance_DeployStandard(t *testing.T) {
 	plan := &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
 	}}
-	guide := ResolveProgressiveGuidance("deploy", plan, 0)
+	guide := ResolveProgressiveGuidance("deploy", plan, 0, EnvContainer)
 	if guide == "" {
 		t.Error("expected non-empty guidance for deploy step")
 	}
@@ -272,7 +272,7 @@ func TestResolveProgressiveGuidance_DeploySimple(t *testing.T) {
 	plan := &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "app", Type: "nginx@1", BootstrapMode: "simple"}},
 	}}
-	guide := ResolveProgressiveGuidance("deploy", plan, 0)
+	guide := ResolveProgressiveGuidance("deploy", plan, 0, EnvContainer)
 	if guide == "" {
 		t.Error("expected non-empty guidance for deploy step in simple mode")
 	}
@@ -283,8 +283,8 @@ func TestResolveProgressiveGuidance_DeployWithRecovery(t *testing.T) {
 	plan := &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
 	}}
-	guide := ResolveProgressiveGuidance("deploy", plan, 1)
-	guideNoRecovery := ResolveProgressiveGuidance("deploy", plan, 0)
+	guide := ResolveProgressiveGuidance("deploy", plan, 1, EnvContainer)
+	guideNoRecovery := ResolveProgressiveGuidance("deploy", plan, 0, EnvContainer)
 	// With failureCount > 0, should include recovery content (if section exists).
 	// At minimum, should be >= the no-failure version.
 	if len(guide) < len(guideNoRecovery) {
@@ -348,7 +348,7 @@ func TestResolveProgressiveGuidance_DevMode(t *testing.T) {
 	plan := &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "dev"}},
 	}}
-	guide := ResolveProgressiveGuidance("deploy", plan, 0)
+	guide := ResolveProgressiveGuidance("deploy", plan, 0, EnvContainer)
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for deploy step in dev mode")
 	}
@@ -366,7 +366,7 @@ func TestResolveProgressiveGuidance_DevMode_HasDeployDevContent(t *testing.T) {
 	plan := &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "dev"}},
 	}}
-	guide := ResolveProgressiveGuidance("deploy", plan, 0)
+	guide := ResolveProgressiveGuidance("deploy", plan, 0, EnvContainer)
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for deploy step in dev mode")
 	}
@@ -382,7 +382,7 @@ func TestResolveProgressiveGuidance_MixedStandardDev(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
 		{Runtime: RuntimeTarget{DevHostname: "worker", Type: "bun@1.2", BootstrapMode: "dev"}},
 	}}
-	guide := ResolveProgressiveGuidance("deploy", plan, 0)
+	guide := ResolveProgressiveGuidance("deploy", plan, 0, EnvContainer)
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for mixed mode deploy")
 	}

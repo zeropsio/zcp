@@ -50,11 +50,12 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	// With nil deployers, zerops_deploy should NOT be registered.
-	// Mount tool IS registered even with nil mounter (returns error at call time).
+	// zerops_deploy is always registered: SSH mode when sshDeployer is non-nil,
+	// local mode (zcli push) when sshDeployer is nil.
 	expectedTools := []string{
 		"zerops_workflow", "zerops_discover", "zerops_knowledge",
 		"zerops_logs", "zerops_events", "zerops_process", "zerops_verify",
+		"zerops_deploy",
 		"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
 		"zerops_mount",
 	}
@@ -76,8 +77,8 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 			t.Errorf("missing tool: %s", name)
 		}
 	}
-	if toolMap["zerops_deploy"] {
-		t.Error("zerops_deploy should NOT be registered when deployers are nil")
+	if !toolMap["zerops_deploy"] {
+		t.Error("zerops_deploy should be registered in local mode when sshDeployer is nil")
 	}
 }
 

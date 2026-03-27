@@ -11,6 +11,7 @@ type GuidanceParams struct {
 	Step              string
 	Mode              string
 	Strategy          string
+	Env               Environment
 	RuntimeType       string
 	DependencyTypes   []string
 	DiscoveredEnvVars map[string][]string
@@ -32,7 +33,7 @@ func assembleGuidance(params GuidanceParams) string {
 	}
 
 	// Layer 1: Static guidance from workflow markdown.
-	guide := resolveStaticGuidance(params.Step, params.Plan, params.FailureCount)
+	guide := resolveStaticGuidance(params.Step, params.Plan, params.FailureCount, params.Env)
 
 	// Layers 2-4: Knowledge injection (runtime, schema, env vars).
 	if extra := assembleKnowledge(params); extra != "" {
@@ -51,9 +52,9 @@ Complete this step to finalize bootstrap:
 After closing, choose a deployment strategy for each service before deploying again.`
 
 // resolveStaticGuidance extracts the appropriate static sections for a step.
-func resolveStaticGuidance(step string, plan *ServicePlan, failureCount int) string {
+func resolveStaticGuidance(step string, plan *ServicePlan, failureCount int, env Environment) string {
 	if step == StepGenerate || step == StepDeploy {
-		return ResolveProgressiveGuidance(step, plan, failureCount)
+		return ResolveProgressiveGuidance(step, plan, failureCount, env)
 	}
 	if step == StepClose {
 		return closeGuidance

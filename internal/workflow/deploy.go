@@ -314,7 +314,7 @@ func (d *DeployState) buildGuide(step string, iteration int, env Environment) st
 	case DeployStepPrepare:
 		return buildPrepareGuide(d, env)
 	case DeployStepDeploy:
-		return buildDeployGuide(d, iteration)
+		return buildDeployGuide(d, iteration, env)
 	case DeployStepVerify:
 		return buildVerifyGuide()
 	}

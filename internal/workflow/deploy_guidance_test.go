@@ -199,7 +199,7 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			guide := buildDeployGuide(tt.state, tt.iteration)
+			guide := buildDeployGuide(tt.state, tt.iteration, EnvContainer)
 
 			if guide == "" {
 				t.Fatal("expected non-empty guidance")

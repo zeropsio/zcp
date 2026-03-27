@@ -73,7 +73,7 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 }
 
 // buildDeployGuide generates personalized deploy step guidance from state.
-func buildDeployGuide(state *DeployState, iteration int) string {
+func buildDeployGuide(state *DeployState, iteration int, env Environment) string {
 	var sb strings.Builder
 
 	fmt.Fprintf(&sb, "## Deploy — %s mode, %s\n\n", state.Mode, state.Strategy)
@@ -86,35 +86,50 @@ func buildDeployGuide(state *DeployState, iteration int) string {
 
 	// Mode-specific workflow steps.
 	sb.WriteString("### Workflow\n")
-	switch state.Mode {
-	case PlanModeStandard:
-		writeStandardWorkflow(&sb, state.Targets)
-	case PlanModeDev:
-		writeDevWorkflow(&sb, state.Targets)
-	case PlanModeSimple:
-		writeSimpleWorkflow(&sb, state.Targets)
-	default:
-		writeStandardWorkflow(&sb, state.Targets)
+	if env == EnvLocal {
+		writeLocalWorkflow(&sb, state.Targets)
+	} else {
+		switch state.Mode {
+		case PlanModeStandard:
+			writeStandardWorkflow(&sb, state.Targets)
+		case PlanModeDev:
+			writeDevWorkflow(&sb, state.Targets)
+		case PlanModeSimple:
+			writeSimpleWorkflow(&sb, state.Targets)
+		default:
+			writeStandardWorkflow(&sb, state.Targets)
+		}
 	}
 	sb.WriteString("\n")
 
-	// Key facts.
+	// Key facts — environment-specific.
 	sb.WriteString("### Key facts\n")
 	sb.WriteString("- zerops_deploy blocks until complete — returns DEPLOYED or BUILD_FAILED with buildLogs\n")
-	sb.WriteString("- After deploy: only `deployFiles` content exists. All other local files lost.\n")
-	if hasRole(state.Targets, DeployRoleDev) {
-		sb.WriteString("- Dev server: start manually after deploy (zsc noop). Env vars are OS env vars.\n")
-	}
-	if hasRole(state.Targets, DeployRoleStage) {
-		sb.WriteString("- Stage: auto-starts with healthCheck. Zerops monitors and restarts.\n")
+	if env == EnvLocal {
+		sb.WriteString("- Deploy = new container on Zerops — only `deployFiles` content persists\n")
+		sb.WriteString("- Local code unchanged — edit and re-deploy when ready\n")
+		sb.WriteString("- VPN connections survive deploys — no reconnect needed\n")
+	} else {
+		sb.WriteString("- After deploy: only `deployFiles` content exists. All other local files lost.\n")
+		if hasRole(state.Targets, DeployRoleDev) {
+			sb.WriteString("- Dev server: start manually after deploy (zsc noop). Env vars are OS env vars.\n")
+		}
+		if hasRole(state.Targets, DeployRoleStage) {
+			sb.WriteString("- Stage: auto-starts with healthCheck. Zerops monitors and restarts.\n")
+		}
 	}
 	sb.WriteString("- Subdomain persists across re-deploys. Check `zerops_discover` for status and URL.\n\n")
 
 	// Code-only changes shortcut.
 	sb.WriteString("### Code-only changes (no zerops.yml change)\n")
-	sb.WriteString("- Edit code on mount → restart server via SSH. No redeploy needed.\n")
-	sb.WriteString("- Implicit-webserver runtimes (PHP, nginx, static): changes take effect immediately, no restart needed.\n")
-	sb.WriteString("- Redeploy ONLY when zerops.yml changes (envVariables, ports, buildCommands, deployFiles).\n\n")
+	if env == EnvLocal {
+		sb.WriteString("- Edit code locally with hot reload — no redeploy needed for dev.\n")
+		sb.WriteString("- Redeploy ONLY when zerops.yml changes or you want to update the Zerops service.\n\n")
+	} else {
+		sb.WriteString("- Edit code on mount → restart server via SSH. No redeploy needed.\n")
+		sb.WriteString("- Implicit-webserver runtimes (PHP, nginx, static): changes take effect immediately, no restart needed.\n")
+		sb.WriteString("- Redeploy ONLY when zerops.yml changes (envVariables, ports, buildCommands, deployFiles).\n\n")
+	}
 
 	// Diagnostic pointers.
 	sb.WriteString("### If something breaks\n")
@@ -225,6 +240,15 @@ func writeSimpleWorkflow(sb *strings.Builder, targets []DeployTarget) {
 
 	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"` — server auto-starts\n", hostname)
 	fmt.Fprintf(sb, "2. Verify: `zerops_verify serviceHostname=\"%s\"`\n", hostname)
+}
+
+func writeLocalWorkflow(sb *strings.Builder, targets []DeployTarget) {
+	if len(targets) == 0 {
+		return
+	}
+	hostname := targets[0].Hostname
+	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"` — uploads code, triggers build\n", hostname)
+	fmt.Fprintf(sb, "2. Verify: `zerops_verify serviceHostname=\"%s\"` — check health + subdomain\n", hostname)
 }
 
 func findHostname(targets []DeployTarget, role string) string {
