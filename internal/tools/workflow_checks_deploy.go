@@ -19,7 +19,7 @@ func buildDeployStepChecker(step string, client platform.Client, projectID, stat
 	switch step {
 	case workflow.DeployStepPrepare:
 		return checkDeployPrepare(client, projectID, stateDir)
-	case workflow.DeployStepDeploy:
+	case workflow.DeployStepExecute:
 		return checkDeployResult(client, projectID)
 	}
 	// deploy verify step has nil checker (informational, not blocking).

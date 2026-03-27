@@ -1285,7 +1285,7 @@ func TestEngine_DeployComplete_DeletesSessionFile(t *testing.T) {
 	}
 	sessionID := eng.SessionID()
 
-	steps := []string{DeployStepPrepare, DeployStepDeploy, DeployStepVerify}
+	steps := []string{DeployStepPrepare, DeployStepExecute, DeployStepVerify}
 	for _, step := range steps {
 		if _, err := eng.DeployComplete(context.Background(), step, "step completed successfully", nil); err != nil {
 			t.Fatalf("DeployComplete(%s): %v", step, err)

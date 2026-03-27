@@ -59,16 +59,16 @@ func TestDeployState_CompleteStep_Sequence(t *testing.T) {
 	if err := ds.CompleteStep(DeployStepPrepare, "Config checked, zerops.yml valid"); err != nil {
 		t.Fatalf("complete prepare: %v", err)
 	}
-	if ds.CurrentStepName() != DeployStepDeploy {
-		t.Errorf("after prepare: want deploy, got %s", ds.CurrentStepName())
+	if ds.CurrentStepName() != DeployStepExecute {
+		t.Errorf("after prepare: want execute, got %s", ds.CurrentStepName())
 	}
 
-	// Complete deploy.
-	if err := ds.CompleteStep(DeployStepDeploy, "Deployed successfully to all targets"); err != nil {
-		t.Fatalf("complete deploy: %v", err)
+	// Complete execute.
+	if err := ds.CompleteStep(DeployStepExecute, "Deployed successfully to all targets"); err != nil {
+		t.Fatalf("complete execute: %v", err)
 	}
 	if ds.CurrentStepName() != DeployStepVerify {
-		t.Errorf("after deploy: want verify, got %s", ds.CurrentStepName())
+		t.Errorf("after execute: want verify, got %s", ds.CurrentStepName())
 	}
 
 	// Complete verify.
@@ -85,7 +85,7 @@ func TestDeployState_CompleteStep_WrongStep(t *testing.T) {
 	ds := NewDeployState(nil, PlanModeSimple, StrategyPushDev)
 	ds.Steps[0].Status = stepInProgress
 
-	err := ds.CompleteStep(DeployStepDeploy, "some attestation text here")
+	err := ds.CompleteStep(DeployStepExecute, "some attestation text here")
 	if err == nil {
 		t.Fatal("expected error for wrong step")
 	}
@@ -102,7 +102,7 @@ func TestDeployState_ResetForIteration(t *testing.T) {
 
 	// Complete all steps.
 	ds.Steps[0].Status = stepInProgress
-	for _, name := range []string{DeployStepPrepare, DeployStepDeploy, DeployStepVerify} {
+	for _, name := range []string{DeployStepPrepare, DeployStepExecute, DeployStepVerify} {
 		if err := ds.CompleteStep(name, "Completed "+name+" step successfully here"); err != nil {
 			t.Fatalf("complete %s: %v", name, err)
 		}
@@ -117,13 +117,13 @@ func TestDeployState_ResetForIteration(t *testing.T) {
 		t.Error("should be active after reset")
 	}
 	if ds.CurrentStep != 1 {
-		t.Errorf("CurrentStep: want 1 (deploy), got %d", ds.CurrentStep)
+		t.Errorf("CurrentStep: want 1 (execute), got %d", ds.CurrentStep)
 	}
 	if ds.Steps[0].Status != stepComplete {
 		t.Error("prepare should stay complete")
 	}
 	if ds.Steps[1].Status != stepInProgress {
-		t.Error("deploy should be in_progress")
+		t.Error("execute should be in_progress")
 	}
 	if ds.Targets[0].Status != deployTargetPending {
 		t.Error("targets should be reset to pending")

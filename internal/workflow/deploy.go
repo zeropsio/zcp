@@ -11,7 +11,7 @@ const WorkflowDeploy = "deploy"
 // Deploy step constants.
 const (
 	DeployStepPrepare = "prepare"
-	DeployStepDeploy  = "deploy"
+	DeployStepExecute = "execute"
 	DeployStepVerify  = "verify"
 )
 
@@ -97,7 +97,7 @@ var deployStepDetails = []struct {
 	Tools []string
 }{
 	{DeployStepPrepare, []string{"zerops_discover", "zerops_knowledge"}},
-	{DeployStepDeploy, []string{"zerops_deploy", "zerops_subdomain", "zerops_logs", "zerops_verify", "zerops_manage"}},
+	{DeployStepExecute, []string{"zerops_deploy", "zerops_subdomain", "zerops_logs", "zerops_verify", "zerops_manage"}},
 	{DeployStepVerify, []string{"zerops_verify", "zerops_discover"}},
 }
 
@@ -243,7 +243,7 @@ func (d *DeployState) ResetForIteration() {
 	}
 	firstReset := -1
 	for i := range d.Steps {
-		if d.Steps[i].Name == DeployStepDeploy || d.Steps[i].Name == DeployStepVerify {
+		if d.Steps[i].Name == DeployStepExecute || d.Steps[i].Name == DeployStepVerify {
 			d.Steps[i] = DeployStep{Name: d.Steps[i].Name, Status: stepPending}
 			if firstReset < 0 {
 				firstReset = i
@@ -313,7 +313,7 @@ func (d *DeployState) buildGuide(step string, iteration int, env Environment) st
 	switch step {
 	case DeployStepPrepare:
 		return buildPrepareGuide(d, env)
-	case DeployStepDeploy:
+	case DeployStepExecute:
 		return buildDeployGuide(d, iteration, env)
 	case DeployStepVerify:
 		return buildVerifyGuide()

@@ -76,7 +76,7 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 func buildDeployGuide(state *DeployState, iteration int, env Environment) string {
 	var sb strings.Builder
 
-	fmt.Fprintf(&sb, "## Deploy — %s mode, %s\n\n", state.Mode, state.Strategy)
+	fmt.Fprintf(&sb, "## Execute — %s mode, %s\n\n", state.Mode, state.Strategy)
 
 	// Iteration escalation replaces workflow on retries.
 	if iteration > 0 {

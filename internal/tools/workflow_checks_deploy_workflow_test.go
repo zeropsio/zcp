@@ -166,7 +166,7 @@ func TestBuildDeployStepChecker_Prepare_NonNil(t *testing.T) {
 func TestBuildDeployStepChecker_Deploy_NonNil(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	checker := buildDeployStepChecker(workflow.DeployStepDeploy, mock, "proj-1", t.TempDir())
+	checker := buildDeployStepChecker(workflow.DeployStepExecute, mock, "proj-1", t.TempDir())
 	if checker == nil {
 		t.Error("expected non-nil checker for deploy step")
 	}
