@@ -12,22 +12,18 @@ import (
 // BinaryPath and CacheDir override defaults for testing.
 type OnceOpts struct {
 	CurrentVersion string
-	Waiter         *IdleWaiter
-	Shutdown       func()
 	LogOutput      io.Writer
 	BinaryPath     string // empty = use os.Executable()
 	CacheDir       string // empty = use default cache dir
 }
 
-// Once checks for an update, applies it, waits for idle, then triggers shutdown.
-// Completely transparent — no MCP tool, no notification to LLM.
-// Skips "dev" builds. Errors logged to logOutput, never blocks the caller
-// beyond the idle wait.
-func Once(ctx context.Context, currentVersion string, waiter *IdleWaiter, shutdown func(), logOutput io.Writer) {
+// Once checks for an update and applies it (replaces the binary on disk).
+// The new version takes effect on next natural server restart — the running
+// process is NOT shut down. Completely transparent — no MCP tool, no
+// notification to LLM. Skips "dev" builds. Errors logged to logOutput.
+func Once(ctx context.Context, currentVersion string, logOutput io.Writer) {
 	OnceWithOpts(ctx, OnceOpts{
 		CurrentVersion: currentVersion,
-		Waiter:         waiter,
-		Shutdown:       shutdown,
 		LogOutput:      logOutput,
 	})
 }
@@ -66,11 +62,6 @@ func OnceWithOpts(ctx context.Context, opts OnceOpts) {
 		return
 	}
 
-	fmt.Fprintf(opts.LogOutput, "zcp: updated %s → %s, waiting for idle to restart...\n",
+	fmt.Fprintf(opts.LogOutput, "zcp: updated %s → %s (active on next restart)\n",
 		info.CurrentVersion, info.LatestVersion)
-
-	if err := opts.Waiter.WaitForIdle(ctx); err != nil {
-		return
-	}
-	opts.Shutdown()
 }

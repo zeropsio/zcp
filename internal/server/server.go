@@ -14,7 +14,6 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
-	"github.com/zeropsio/zcp/internal/update"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -34,12 +33,11 @@ type Server struct {
 	logFetcher  platform.LogFetcher
 	sshDeployer ops.SSHDeployer
 	mounter     ops.Mounter
-	idleWaiter  *update.IdleWaiter
 	rtInfo      runtime.Info
 }
 
 // New creates a new ZCP MCP server with all tools registered.
-func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, idleWaiter *update.IdleWaiter, rtInfo runtime.Info) *Server {
+func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info) *Server {
 	// Determine workflow state directory for system prompt hint.
 	var stateDir string
 	if cwd, err := os.Getwd(); err == nil {
@@ -55,11 +53,6 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		},
 	)
 
-	// Register idle tracking middleware for graceful update restart.
-	if idleWaiter != nil {
-		srv.AddReceivingMiddleware(idleWaiter.Middleware())
-	}
-
 	s := &Server{
 		server:      srv,
 		client:      client,
@@ -68,7 +61,6 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		logFetcher:  logFetcher,
 		sshDeployer: sshDeployer,
 		mounter:     mounter,
-		idleWaiter:  idleWaiter,
 		rtInfo:      rtInfo,
 	}
 

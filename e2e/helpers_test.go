@@ -32,7 +32,7 @@ var testServicePrefixes = []string{
 	"b2", "b3", "b4", "b5", "b9",                // bootstrap_modes_test.go
 	"b6", "b8", "ba", "bb", "bad",               // bootstrap_advanced_test.go
 	"zcprt", "zcpdb",                             // lifecycle_test.go, verify_test.go
-	"zcppf", "zcpdpl", "zcpddev", "zcpdstg",       // deploy tests
+	"zcppf", "zcpdpl", "zcpddev", "zcpdstg", "zcpld", // deploy tests (ssh + local)
 	"zcpvrt", "zcpvdb",                           // verify_test.go
 	"zcpsub", "zcpbl",                            // subdomain, build_logs
 	"zcpmnt", "zcpapp",                           // mount_test.go
@@ -156,7 +156,7 @@ func newHarness(t *testing.T) *e2eHarness {
 
 	logFetcher := platform.NewLogFetcher()
 	sshDeployer := platform.NewSystemSSHDeployer()
-	srv := server.New(context.Background(), client, authInfo, store, logFetcher, sshDeployer, nil, nil, runtime.Info{})
+	srv := server.New(context.Background(), client, authInfo, store, logFetcher, sshDeployer, nil, runtime.Info{})
 
 	return &e2eHarness{
 		t:         t,

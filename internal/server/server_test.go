@@ -28,7 +28,7 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	logFetcher := platform.NewMockLogFetcher()
 
 	// Mount tool is now always registered (nil mounter returns error at call time).
-	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, nil, runtime.Info{})
+	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -393,7 +393,7 @@ func TestServer_Connect(t *testing.T) {
 	}
 	logFetcher := platform.NewMockLogFetcher()
 
-	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, nil, runtime.Info{})
+	srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

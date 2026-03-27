@@ -36,7 +36,7 @@ func setupTestServer(t *testing.T, mock *platform.Mock, logFetcher platform.LogF
 		t.Fatalf("knowledge store: %v", err)
 	}
 
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, nil, runtime.Info{})
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

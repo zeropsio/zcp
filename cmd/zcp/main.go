@@ -126,17 +126,14 @@ func run() error {
 		sshDeployer = platform.NewSystemSSHDeployer()
 	}
 
-	// Idle tracker for graceful update restart.
-	idleWaiter := update.NewIdleWaiter()
-
 	// Create and run MCP server on STDIO.
-	srv := server.New(ctx, client, authInfo, store, logFetcher, sshDeployer, mounter, idleWaiter, rtInfo)
+	srv := server.New(ctx, client, authInfo, store, logFetcher, sshDeployer, mounter, rtInfo)
 
 	// Silent background update — completely invisible to LLM.
-	// Checks GitHub (24h cache), downloads if newer, waits for idle, then exits.
-	// Claude Code auto-restarts the MCP server with the new binary.
+	// Checks GitHub (24h cache), downloads if newer. Binary is replaced on disk
+	// but the running server is NOT restarted — new version activates on next start.
 	if os.Getenv("ZCP_AUTO_UPDATE") != "0" {
-		go update.Once(ctx, server.Version, idleWaiter, stop, os.Stderr)
+		go update.Once(ctx, server.Version, os.Stderr)
 	}
 
 	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

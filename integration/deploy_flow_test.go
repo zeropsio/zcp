@@ -48,7 +48,7 @@ func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher pla
 		t.Fatalf("knowledge store: %v", err)
 	}
 
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, sshDeployer, nil, nil, runtime.Info{})
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, sshDeployer, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
