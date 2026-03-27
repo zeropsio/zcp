@@ -663,6 +663,129 @@ func TestBuildGuide_MissingRuntimeGuide_StillHasBaseGuide(t *testing.T) {
 	}
 }
 
+// --- Local mode guidance tests ---
+
+func TestResolveProgressiveGuidance_DiscoverLocal_ContainsAddendum(t *testing.T) {
+	t.Parallel()
+	guide := ResolveProgressiveGuidance("discover", nil, 0, EnvLocal)
+	if guide == "" {
+		t.Fatal("expected non-empty guidance for discover step in local mode")
+	}
+	// Must contain the base discover section.
+	if !strings.Contains(guide, "Detect") {
+		t.Error("local discover should include base discover section")
+	}
+	// Must contain the local addendum.
+	if !strings.Contains(guide, "Local Mode") {
+		t.Error("local discover should contain 'Local Mode' addendum")
+	}
+	if !strings.Contains(guide, "user's local machine") {
+		t.Error("local discover should mention user's local machine")
+	}
+	if !strings.Contains(guide, "Do NOT create a dev service") {
+		t.Error("local discover should instruct not to create dev service")
+	}
+}
+
+func TestResolveProgressiveGuidance_ProvisionLocal_ContainsAddendum(t *testing.T) {
+	t.Parallel()
+	guide := ResolveProgressiveGuidance("provision", nil, 0, EnvLocal)
+	if guide == "" {
+		t.Fatal("expected non-empty guidance for provision step in local mode")
+	}
+	// Must contain the base provision section.
+	if !strings.Contains(guide, "import.yml") {
+		t.Error("local provision should include base provision section")
+	}
+	// Must contain the local addendum.
+	if !strings.Contains(guide, ".env") {
+		t.Error("local provision should mention .env file generation")
+	}
+	if !strings.Contains(guide, "zcli vpn up") {
+		t.Error("local provision should guide VPN setup")
+	}
+	if !strings.Contains(guide, "NO `{name}dev`") {
+		t.Error("local provision should instruct not to create dev service")
+	}
+}
+
+func TestResolveProgressiveGuidance_GenerateLocal_ReplacesContainer(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	guide := ResolveProgressiveGuidance("generate", plan, 0, EnvLocal)
+	if guide == "" {
+		t.Fatal("expected non-empty guidance for generate step in local mode")
+	}
+	// Must contain local-specific content.
+	if !strings.Contains(guide, "Write all files locally") {
+		t.Error("local generate should say 'Write all files locally'")
+	}
+	if !strings.Contains(guide, ".env") {
+		t.Error("local generate should mention .env credential bridge")
+	}
+	if !strings.Contains(guide, "REAL start command") {
+		t.Error("local generate should mention real start command for stage")
+	}
+	// Must NOT contain container-specific instructions (negation mentions like "No SSHFS" are OK).
+	if strings.Contains(guide, "/var/www/") {
+		t.Error("local generate should NOT mention /var/www/ mount path")
+	}
+	if strings.Contains(guide, "start: zsc noop") {
+		t.Error("local generate should NOT instruct to use zsc noop as start command")
+	}
+}
+
+func TestResolveProgressiveGuidance_GenerateLocal_SkipsContainerModes(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+	}}
+	guide := ResolveProgressiveGuidance("generate", plan, 0, EnvLocal)
+	// In local mode, container mode-specific sections (generate-standard, generate-dev,
+	// generate-simple) must NOT be included — generate-local is self-contained.
+	if strings.Contains(guide, "Dev setup rules") {
+		t.Error("local generate should NOT include container 'Dev setup rules'")
+	}
+}
+
+func TestResolveProgressiveGuidance_DeployLocal_ReplacesContainer(t *testing.T) {
+	t.Parallel()
+	plan := &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	guide := ResolveProgressiveGuidance("deploy", plan, 0, EnvLocal)
+	if guide == "" {
+		t.Fatal("expected non-empty guidance for deploy step in local mode")
+	}
+	// Must contain local deploy content.
+	if !strings.Contains(guide, "zcli push") {
+		t.Error("local deploy should mention zcli push")
+	}
+	if !strings.Contains(guide, "VPN connections survive") {
+		t.Error("local deploy should mention VPN survives deploys")
+	}
+	// Must NOT contain container SSH deploy instructions.
+	if strings.Contains(guide, "Start server via SSH") {
+		t.Error("local deploy should NOT instruct to start server via SSH")
+	}
+	if strings.Contains(guide, "SSHFS mount") {
+		t.Error("local deploy should NOT reference SSHFS mounts")
+	}
+	if strings.Contains(guide, "Service Bootstrap Agent Prompt") {
+		t.Error("local deploy should NOT include container agent prompt")
+	}
+}
+
+func TestResolveProgressiveGuidance_ContainerDiscover_NoLocalAddendum(t *testing.T) {
+	t.Parallel()
+	guide := ResolveProgressiveGuidance("discover", nil, 0, EnvContainer)
+	if strings.Contains(guide, "user's local machine") {
+		t.Error("container discover should NOT contain local addendum")
+	}
+}
+
 func TestExtractSection_WithHashesInCodeBlocks(t *testing.T) {
 	t.Parallel()
 	md := `preamble

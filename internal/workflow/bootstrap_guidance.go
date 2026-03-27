@@ -17,18 +17,27 @@ func ResolveGuidance(step string) string {
 	return ExtractSection(md, step)
 }
 
-// ResolveProgressiveGuidance returns mode-filtered sub-sections for generate and deploy steps,
-// or falls back to ResolveGuidance for other steps.
-// Each mode-specific section is included at most once based on the distinct modes across all targets.
-// In local mode, environment-specific sections (generate-local, deploy-local) are included.
+// ResolveProgressiveGuidance returns environment-aware and mode-filtered guidance for all steps.
+// - Discover/provision: base section + optional local addendum (appended).
+// - Generate local: self-contained section replaces base + mode-specific.
+// - Generate container: base + mode-specific sections.
+// - Deploy local: self-contained section replaces SSH deploy.
+// - Deploy container: base + optional agents/recovery.
 func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int, env Environment) string {
-	if step != StepDeploy && step != StepGenerate {
-		return ResolveGuidance(step)
-	}
-
 	md, err := content.GetWorkflow("bootstrap")
 	if err != nil {
 		return ""
+	}
+
+	// Non-generate/deploy steps: base section + optional local addendum.
+	if step != StepDeploy && step != StepGenerate {
+		base := ExtractSection(md, step)
+		if env == EnvLocal {
+			if local := ExtractSection(md, step+"-local"); local != "" {
+				return base + "\n\n---\n\n" + local
+			}
+		}
+		return base
 	}
 
 	modes := distinctModes(plan)
@@ -37,21 +46,22 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 
 	switch step {
 	case StepGenerate:
-		// Base generate section (always).
-		sections = append(sections, ExtractSection(md, "generate"))
-		// Mode-specific sections.
-		if modes[PlanModeStandard] {
-			sections = append(sections, ExtractSection(md, "generate-standard"))
-		}
-		if modes[PlanModeDev] {
-			sections = append(sections, ExtractSection(md, "generate-dev"))
-		}
-		if modes[PlanModeSimple] {
-			sections = append(sections, ExtractSection(md, "generate-simple"))
-		}
-		// Environment-specific section.
 		if env == EnvLocal {
+			// Local mode: self-contained generate guidance (replaces base + mode-specific).
 			sections = append(sections, ExtractSection(md, "generate-local"))
+		} else {
+			// Base generate section (always).
+			sections = append(sections, ExtractSection(md, "generate"))
+			// Mode-specific sections.
+			if modes[PlanModeStandard] {
+				sections = append(sections, ExtractSection(md, "generate-standard"))
+			}
+			if modes[PlanModeDev] {
+				sections = append(sections, ExtractSection(md, "generate-dev"))
+			}
+			if modes[PlanModeSimple] {
+				sections = append(sections, ExtractSection(md, "generate-simple"))
+			}
 		}
 
 	case StepDeploy:
@@ -79,7 +89,7 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 		}
 	}
 	if len(parts) == 0 {
-		return ResolveGuidance(step)
+		return ExtractSection(md, step)
 	}
 	return strings.Join(parts, "\n\n---\n\n")
 }

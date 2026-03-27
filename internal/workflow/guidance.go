@@ -52,14 +52,13 @@ Complete this step to finalize bootstrap:
 After closing, choose a deployment strategy for each service before deploying again.`
 
 // resolveStaticGuidance extracts the appropriate static sections for a step.
+// All steps except close are routed through ResolveProgressiveGuidance for
+// environment-aware guidance (local addenda, mode-specific sections).
 func resolveStaticGuidance(step string, plan *ServicePlan, failureCount int, env Environment) string {
-	if step == StepGenerate || step == StepDeploy {
-		return ResolveProgressiveGuidance(step, plan, failureCount, env)
-	}
 	if step == StepClose {
 		return closeGuidance
 	}
-	return ResolveGuidance(step)
+	return ResolveProgressiveGuidance(step, plan, failureCount, env)
 }
 
 // needsRuntimeKnowledge returns true for bootstrap steps where runtime/dependency knowledge is relevant.

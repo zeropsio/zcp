@@ -777,11 +777,11 @@ func TestBuildResponse_DeployStep_SimpleMode_HasDeployContent(t *testing.T) {
 	bs.CurrentStep = 3
 	bs.Steps[3].Status = stepInProgress
 
-	resp := bs.BuildResponse("sess-simple", "test", 0, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-simple", "test", 0, EnvContainer, nil)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	// Consolidated deploy section covers all modes.
+	// Consolidated deploy section covers all modes (container mode).
 	if !strings.Contains(resp.Current.DetailedGuide, "Simple mode") {
 		t.Error("deploy guide should contain 'Simple mode' deploy flow")
 	}
@@ -789,8 +789,8 @@ func TestBuildResponse_DeployStep_SimpleMode_HasDeployContent(t *testing.T) {
 
 func TestBuildResponse_NonProgressiveStep_GuidanceUnchanged(t *testing.T) {
 	t.Parallel()
-	// discover and provision use ResolveGuidance directly (not progressive).
-	// generate and deploy are progressive (mode-filtered).
+	// discover and provision return base guidance in container mode.
+	// In local mode they include addenda — tested separately in bootstrap_guidance_test.go.
 	tests := []struct {
 		name    string
 		stepIdx int
@@ -809,7 +809,7 @@ func TestBuildResponse_NonProgressiveStep_GuidanceUnchanged(t *testing.T) {
 			bs.CurrentStep = tt.stepIdx
 			bs.Steps[tt.stepIdx].Status = stepInProgress
 
-			resp := bs.BuildResponse("sess-nonprog-"+tt.name, "test", 0, EnvLocal, nil)
+			resp := bs.BuildResponse("sess-nonprog-"+tt.name, "test", 0, EnvContainer, nil)
 			if resp.Current == nil {
 				t.Fatal("Current should not be nil")
 			}
@@ -853,7 +853,7 @@ func TestBuildResponse_GenerateStep_UsesProgressiveGuidance(t *testing.T) {
 			bs.CurrentStep = 2
 			bs.Steps[2].Status = stepInProgress
 
-			resp := bs.BuildResponse("sess-gen-"+tt.name, "test", 0, EnvLocal, nil)
+			resp := bs.BuildResponse("sess-gen-"+tt.name, "test", 0, EnvContainer, nil)
 			if resp.Current == nil {
 				t.Fatal("Current should not be nil")
 			}
