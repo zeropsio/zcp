@@ -39,7 +39,14 @@ func TestOnce_NoUpdate_Returns(t *testing.T) {
 
 	var logBuf syncBuffer
 
-	Once(t.Context(), "0.1.0", &logBuf)
+	// Use OnceWithOpts with isolated CacheDir to prevent stale cache from
+	// other test runs (e.g., v99.0.0 from TestOnce_UpdateAvailable) causing
+	// a false "updated" log.
+	OnceWithOpts(t.Context(), OnceOpts{
+		CurrentVersion: "0.1.0",
+		LogOutput:      &logBuf,
+		CacheDir:       t.TempDir(),
+	})
 
 	if strings.Contains(logBuf.String(), "updated") {
 		t.Error("should NOT log 'updated' when no update available")
