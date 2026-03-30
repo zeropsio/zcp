@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+const sshfsMountBase = "/var/www"
 
 const baseInstructions = `ZCP manages Zerops PaaS infrastructure.`
 
@@ -21,8 +24,9 @@ You are the orchestrator. This container is the control plane — it does NOT se
 
 ### Code Access — Two Mechanisms
 
-**SSHFS mount** (/var/www/{hostname}/): For reading and writing files only. Changes appear instantly on the service container. Use Read/Write/Edit tools normally.
+**SSHFS mount** (/var/www/{hostname}/): Live service filesystems — these are NOT local files. Changes appear instantly on running containers. Use Read/Write/Edit tools normally.
 IMPORTANT: /var/www/ (no hostname) is THIS container's own filesystem — not a service.
+IMPORTANT: Before reading, debugging, auditing, or modifying any file under /var/www/{hostname}/, ALWAYS start a workflow session first (debug, bootstrap, or deploy). The workflow gives you platform context — runtime specifics, env var wiring, framework recipes, deploy constraints. Without it you are operating blind on a live service.
 
 **SSH** (ssh {hostname} "command"): For ALL commands and processes on services. Package installs, builds, git operations, server management, debugging — everything that isn't file read/write goes through SSH.
 Example: ssh appdev "cd /var/www && npm install"
@@ -43,28 +47,30 @@ You are managing a Zerops project from a local machine. Code is in the working d
 ### Deployment
 Push code to Zerops via zcli push. zerops.yml must be at repository root. Each deploy = full rebuild + new container.
 
+IMPORTANT: Before reading, debugging, auditing, or modifying code for any Zerops service, ALWAYS start a workflow session first (debug, bootstrap, or deploy). The workflow gives you platform context — runtime specifics, env var wiring, framework recipes, deploy constraints. Without it you are writing code without knowing how the platform will run it.
+
 zerops_discover always returns the CURRENT state of all services. Call it whenever you need to refresh your understanding.`
 
 const routingInstructions = `
-IMPORTANT: Zerops operations use two approaches depending on complexity:
+IMPORTANT: Zerops operations use two approaches:
 
-workflow sessions — for multi-step operations that need orchestration:
-- Create new services: zerops_workflow action="start" workflow="bootstrap" (ALWAYS start here for new services)
-- Adopt existing services: zerops_workflow action="start" workflow="bootstrap" (for runtime services not yet managed by ZCP — use isExisting=true in plan)
-- Deploy code: zerops_workflow action="start" workflow="deploy" (for push-dev strategy; manual strategy uses zerops_deploy directly)
-- Debug issues: zerops_workflow action="start" workflow="debug"
+workflow sessions — for any work that involves service code (reading, debugging, fixing, writing, deploying):
+- Investigate/fix bugs on a service: zerops_workflow action="start" workflow="debug"
+- Create new services: zerops_workflow action="start" workflow="bootstrap"
+- Adopt existing services into ZCP: zerops_workflow action="start" workflow="bootstrap" (isExisting=true)
+- Deploy code: zerops_workflow action="start" workflow="deploy"
 - Configure (env vars, subdomains): zerops_workflow action="start" workflow="configure"
 - CI/CD setup: zerops_workflow action="start" workflow="cicd"
-- Check workflow state: zerops_workflow action="status" (use after context loss or to resume work)
+- Check workflow state: zerops_workflow action="status"
 
-Direct tools — for simple, isolated operations (no workflow needed):
+Direct tools — for simple operational tasks (no code changes):
 - Scale a service: zerops_scale serviceHostname="..."
 - Deploy directly (manual strategy): zerops_deploy targetService="..."
 - Manage lifecycle (start/stop/restart/reload): zerops_manage action="..." serviceHostname="..."
 - Search docs: zerops_knowledge query="..."
 - Monitor state: zerops_discover
 
-Before writing or modifying ANY code (application code, zerops.yml, import.yml), you MUST start a workflow session. Workflows inject platform knowledge (runtime docs, framework recipes, schemas), discover env vars, and sequence deploys correctly. Without a workflow, you lack the context to write correct configuration and code. For simple operational tasks (scaling, restarting, checking status, manual deploys), use tools directly.`
+Before reading or modifying any file on a service, start a workflow session. Workflows inject platform knowledge (runtime docs, framework recipes, deploy constraints) and discover env vars. This applies to debugging, auditing, and fixing existing code — not just creating new services. For operational tasks that don't touch code (scaling, restarting, checking status), use tools directly.`
 
 // BuildInstructions returns the MCP instructions message injected into the system prompt.
 // It includes base + routing (first), workflow hint, runtime context, and project summary.
@@ -146,6 +152,7 @@ type serviceClassification struct {
 	managed             []platform.ServiceStack // infrastructure services (db, cache, storage)
 	allServices         []platform.ServiceStack // all user services for type/status lookup
 	total               int                     // total user services (excluding system + self)
+	mountPaths          map[string]string       // hostname → mount path (only for actually mounted services)
 	metaMap             map[string]*workflow.ServiceMeta
 	stageOfBootstrapped map[string]bool // stage hostnames of bootstrapped metas
 }
@@ -194,21 +201,39 @@ func classifyServices(services []platform.ServiceStack, metas []*workflow.Servic
 	return cls
 }
 
+// detectMounts checks which services have SSHFS mounts at /var/www/{hostname}.
+// Returns a map of hostname → mount path for services that are actually mounted.
+func detectMounts(services []platform.ServiceStack) map[string]string {
+	mounts := make(map[string]string)
+	for _, svc := range services {
+		path := sshfsMountBase + "/" + svc.Name
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			mounts[svc.Name] = path
+		}
+	}
+	return mounts
+}
+
 // labelFor returns a classification label for the service listing.
 func (c *serviceClassification) labelFor(hostname string) string {
+	mount := ""
+	if path, ok := c.mountPaths[hostname]; ok {
+		mount = fmt.Sprintf(" — mounted at %s/", path)
+	}
+
 	if m, ok := c.metaMap[hostname]; ok && m.IsComplete() {
-		return ""
+		return mount
 	}
 	if c.stageOfBootstrapped[hostname] {
-		return ""
+		return mount
 	}
 	if _, ok := c.metaMap[hostname]; ok {
-		return " — bootstrap incomplete"
+		return " — bootstrap incomplete" + mount
 	}
 	if slices.Contains(c.unmanagedNames, hostname) {
-		return " — not managed by ZCP"
+		return " — needs ZCP adoption" + mount
 	}
-	return "" // managed infrastructure — no label needed
+	return mount
 }
 
 // buildProjectSummary calls the API to list services, classifies them, then
@@ -229,8 +254,9 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID,
 		metas, _ = workflow.ListServiceMetas(stateDir) // best-effort
 	}
 
-	// Classify services.
+	// Classify services and detect actual SSHFS mounts.
 	cls := classifyServices(services, metas, selfHostname)
+	cls.mountPaths = detectMounts(cls.allServices)
 
 	var b strings.Builder
 

@@ -33,6 +33,7 @@ type ServiceInfo struct {
 	Status           string           `json:"status"`
 	ManagedByZCP     bool             `json:"managedByZcp"`
 	IsInfrastructure bool             `json:"isInfrastructure"`
+	MountPath        string           `json:"mountPath,omitempty"`
 	SubdomainEnabled bool             `json:"subdomainEnabled,omitempty"`
 	SubdomainURL     string           `json:"subdomainUrl,omitempty"`
 	Created          string           `json:"created,omitempty"`

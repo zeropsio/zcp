@@ -88,7 +88,7 @@ func TestClassifyServices_LabelFor(t *testing.T) {
 	if l := cls.labelFor("appstage"); l != "" {
 		t.Errorf("stage label = %q, want empty", l)
 	}
-	if l := cls.labelFor("apidev"); !strings.Contains(l, "not managed") {
+	if l := cls.labelFor("apidev"); !strings.Contains(l, "needs ZCP adoption") {
 		t.Errorf("unmanaged label = %q, want 'not managed'", l)
 	}
 	if l := cls.labelFor("db"); l != "" {
@@ -109,8 +109,8 @@ func TestBuildInstructions_UnmanagedRuntimes_HasAdoptionHint(t *testing.T) {
 	result := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, stateDir)
 
 	// Must contain adoption hint for unmanaged services.
-	if !strings.Contains(result, "not managed by ZCP") {
-		t.Error("expected 'not managed by ZCP' label for unbootstrapped runtimes")
+	if !strings.Contains(result, "needs ZCP adoption") {
+		t.Error("expected 'needs ZCP adoption' label for unbootstrapped runtimes")
 	}
 	if !strings.Contains(result, "adopt") {
 		t.Error("expected adoption hint in router offerings")
@@ -151,7 +151,7 @@ func TestBuildInstructions_BootstrappedWithUnmanaged_BothVisible(t *testing.T) {
 		t.Error("expected bootstrapped service detail")
 	}
 	// Adoption hint for unmanaged runtime.
-	if !strings.Contains(result, "not managed by ZCP") {
+	if !strings.Contains(result, "needs ZCP adoption") {
 		t.Error("expected unmanaged label for apidev")
 	}
 	// Router offerings (no short-circuit).
@@ -285,7 +285,7 @@ func TestBuildWorkflowHint_NoSessions_ReturnsEmpty(t *testing.T) {
 
 func TestContainerEnvironment_SSHPrinciple(t *testing.T) {
 	t.Parallel()
-	for _, want := range []string{"ALL commands and processes", "reading and writing files", "file → mount"} {
+	for _, want := range []string{"ALL commands and processes", "Live service filesystems", "file → mount"} {
 		if !strings.Contains(containerEnvironment, want) {
 			t.Errorf("containerEnvironment should contain %q", want)
 		}
@@ -402,7 +402,7 @@ func TestOrientation_UnmanagedOnly(t *testing.T) {
 		},
 	}
 	result := buildPostBootstrapOrientation(cls)
-	if !strings.Contains(result, "Runtime services without ZCP state") {
+	if !strings.Contains(result, "Runtime services needing adoption") {
 		t.Errorf("unmanaged-only should show adoption section, got:\n%s", result)
 	}
 	if !strings.Contains(result, "isExisting=true") {

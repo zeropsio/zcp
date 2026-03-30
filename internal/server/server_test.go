@@ -143,8 +143,8 @@ func TestServer_RoutingInstructions_WorkflowFirst(t *testing.T) {
 	if !strings.Contains(routingInstructions, "workflow sessions") {
 		t.Error("routingInstructions should mention 'workflow sessions'")
 	}
-	if !strings.Contains(routingInstructions, "MUST") {
-		t.Error("routingInstructions should mention 'MUST'")
+	if !strings.Contains(routingInstructions, "start a workflow session") {
+		t.Error("routingInstructions should direct to start a workflow session")
 	}
 	if strings.Contains(routingInstructions, "NEVER") {
 		t.Error("routingInstructions should not use 'NEVER' language")
@@ -191,7 +191,7 @@ func TestBuildInstructions_WithServices(t *testing.T) {
 		t.Error("should contain anti-deletion warning")
 	}
 	// Unmanaged runtimes should show adoption hint.
-	if !strings.Contains(inst, "not managed by ZCP") {
+	if !strings.Contains(inst, "needs ZCP adoption") {
 		t.Error("unmanaged runtime services should be labeled")
 	}
 }
@@ -209,7 +209,7 @@ func TestBuildInstructions_UnmanagedProject(t *testing.T) {
 		t.Error("should contain anti-deletion warning")
 	}
 	// Should show adoption hint for unmanaged runtime.
-	if !strings.Contains(inst, "not managed by ZCP") {
+	if !strings.Contains(inst, "needs ZCP adoption") {
 		t.Error("unmanaged runtime should be labeled")
 	}
 	// Should recommend bootstrap.

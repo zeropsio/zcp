@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -35,8 +36,17 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 	})
 }
 
-// enrichWithMetaStatus sets ManagedByZCP on each service based on ServiceMeta presence.
+// enrichWithMetaStatus sets ManagedByZCP on each service based on ServiceMeta presence,
+// and detects SSHFS mount paths for services mounted locally.
 func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
+	// Detect mounts regardless of stateDir.
+	for i := range result.Services {
+		path := "/var/www/" + result.Services[i].Hostname
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			result.Services[i].MountPath = path
+		}
+	}
+
 	if stateDir == "" {
 		return
 	}
