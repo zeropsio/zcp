@@ -216,48 +216,81 @@ func writeStrategyNote(sb *strings.Builder, current string) {
 }
 
 func writeStandardWorkflow(sb *strings.Builder, targets []DeployTarget) {
-	dev := findHostname(targets, DeployRoleDev)
-	stage := findHostname(targets, DeployRoleStage)
-
-	fmt.Fprintf(sb, "1. Deploy to dev: `zerops_deploy targetService=\"%s\"`\n", dev)
-	sb.WriteString("2. Start server on dev manually via SSH (dev uses zsc noop)\n")
-	fmt.Fprintf(sb, "3. Verify dev: `zerops_verify serviceHostname=\"%s\"`\n", dev)
-	fmt.Fprintf(sb, "4. Deploy to stage: `zerops_deploy sourceService=\"%s\" targetService=\"%s\"`\n", dev, stage)
-	sb.WriteString("   Stage auto-starts (real start command + healthCheck)\n")
-	fmt.Fprintf(sb, "5. Verify stage: `zerops_verify serviceHostname=\"%s\"`\n", stage)
+	pairs := findDevStagePairs(targets)
+	step := 1
+	for _, p := range pairs {
+		fmt.Fprintf(sb, "%d. Deploy to dev: `zerops_deploy targetService=\"%s\"`\n", step, p.dev)
+		step++
+		fmt.Fprintf(sb, "%d. Start server on dev manually via SSH (dev uses zsc noop)\n", step)
+		step++
+		fmt.Fprintf(sb, "%d. Verify dev: `zerops_verify serviceHostname=\"%s\"`\n", step, p.dev)
+		step++
+		fmt.Fprintf(sb, "%d. Deploy to stage: `zerops_deploy sourceService=\"%s\" targetService=\"%s\"`\n", step, p.dev, p.stage)
+		sb.WriteString("   Stage auto-starts (real start command + healthCheck)\n")
+		step++
+		fmt.Fprintf(sb, "%d. Verify stage: `zerops_verify serviceHostname=\"%s\"`\n", step, p.stage)
+		step++
+	}
 }
 
 func writeDevWorkflow(sb *strings.Builder, targets []DeployTarget) {
-	dev := findHostname(targets, DeployRoleDev)
-
-	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"`\n", dev)
-	sb.WriteString("2. Start server manually via SSH (dev uses zsc noop)\n")
-	fmt.Fprintf(sb, "3. Verify: `zerops_verify serviceHostname=\"%s\"`\n", dev)
+	step := 1
+	for _, t := range targets {
+		if t.Role != DeployRoleDev {
+			continue
+		}
+		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\"`\n", step, t.Hostname)
+		step++
+		fmt.Fprintf(sb, "%d. Start server manually via SSH (dev uses zsc noop)\n", step)
+		step++
+		fmt.Fprintf(sb, "%d. Verify: `zerops_verify serviceHostname=\"%s\"`\n", step, t.Hostname)
+		step++
+	}
 }
 
 func writeSimpleWorkflow(sb *strings.Builder, targets []DeployTarget) {
-	hostname := findHostname(targets, DeployRoleSimple)
+	step := 1
+	for _, t := range targets {
+		if t.Role != DeployRoleSimple {
+			continue
+		}
+		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\"` — server auto-starts\n", step, t.Hostname)
+		step++
+		fmt.Fprintf(sb, "%d. Verify: `zerops_verify serviceHostname=\"%s\"`\n", step, t.Hostname)
+		step++
+	}
+}
 
-	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"` — server auto-starts\n", hostname)
-	fmt.Fprintf(sb, "2. Verify: `zerops_verify serviceHostname=\"%s\"`\n", hostname)
+// devStagePair groups a dev hostname with its stage hostname.
+type devStagePair struct{ dev, stage string }
+
+// findDevStagePairs extracts ordered dev→stage pairs from targets.
+func findDevStagePairs(targets []DeployTarget) []devStagePair {
+	var pairs []devStagePair
+	for i, t := range targets {
+		if t.Role != DeployRoleDev {
+			continue
+		}
+		stage := "UNKNOWN"
+		if i+1 < len(targets) && targets[i+1].Role == DeployRoleStage {
+			stage = targets[i+1].Hostname
+		}
+		pairs = append(pairs, devStagePair{dev: t.Hostname, stage: stage})
+	}
+	return pairs
 }
 
 func writeLocalWorkflow(sb *strings.Builder, targets []DeployTarget) {
 	if len(targets) == 0 {
 		return
 	}
-	hostname := targets[0].Hostname
-	fmt.Fprintf(sb, "1. Deploy: `zerops_deploy targetService=\"%s\"` — uploads code, triggers build\n", hostname)
-	fmt.Fprintf(sb, "2. Verify: `zerops_verify serviceHostname=\"%s\"` — check health + subdomain\n", hostname)
-}
-
-func findHostname(targets []DeployTarget, role string) string {
+	step := 1
 	for _, t := range targets {
-		if t.Role == role {
-			return t.Hostname
-		}
+		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\"` — uploads code, triggers build\n", step, t.Hostname)
+		step++
+		fmt.Fprintf(sb, "%d. Verify: `zerops_verify serviceHostname=\"%s\"` — check health + subdomain\n", step, t.Hostname)
+		step++
 	}
-	return "UNKNOWN"
 }
 
 func writeIterationEscalation(sb *strings.Builder, iteration int) {

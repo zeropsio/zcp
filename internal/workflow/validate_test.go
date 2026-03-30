@@ -147,6 +147,34 @@ func TestStageHostname_NoDevSuffix(t *testing.T) {
 	}
 }
 
+func TestStageHostname_ExplicitOverride(t *testing.T) {
+	t.Parallel()
+	rt := RuntimeTarget{DevHostname: "zmon", Type: "go@1", ExplicitStage: "zmonstage"}
+	got := rt.StageHostname()
+	if got != "zmonstage" {
+		t.Errorf("StageHostname with explicit override: want %q, got %q", "zmonstage", got)
+	}
+}
+
+func TestStageHostname_ExplicitOverridesAutoDerive(t *testing.T) {
+	t.Parallel()
+	// Even when dev ends in "dev", explicit takes priority.
+	rt := RuntimeTarget{DevHostname: "apidev", Type: "go@1", ExplicitStage: "apipreview"}
+	got := rt.StageHostname()
+	if got != "apipreview" {
+		t.Errorf("explicit should override auto-derive: want %q, got %q", "apipreview", got)
+	}
+}
+
+func TestStageHostname_ExplicitIgnoredForNonStandard(t *testing.T) {
+	t.Parallel()
+	rt := RuntimeTarget{DevHostname: "app", Type: "go@1", BootstrapMode: "simple", ExplicitStage: "appstage"}
+	got := rt.StageHostname()
+	if got != "" {
+		t.Errorf("explicit stage should be ignored for simple mode: want empty, got %q", got)
+	}
+}
+
 func TestRuntimeBase(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -296,8 +324,47 @@ func TestValidateBootstrapTargets_StageHostnameOverflow_Error(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for stage hostname overflow")
 	}
-	if !strings.Contains(err.Error(), "stage hostname") && !strings.Contains(err.Error(), "dev hostname must end") {
-		t.Errorf("error %q should mention 'stage hostname' or dev requirement", err.Error())
+	if !strings.Contains(err.Error(), "stage hostname") && !strings.Contains(err.Error(), "stageHostname") {
+		t.Errorf("error %q should mention 'stage hostname' or stageHostname", err.Error())
+	}
+}
+
+func TestValidateBootstrapTargets_ExplicitStage_NoDevSuffix(t *testing.T) {
+	t.Parallel()
+	// Hostname "zmon" doesn't end in "dev" but explicit stageHostname is provided.
+	targets := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "zmon", Type: "nodejs@22", ExplicitStage: "zmonstage"}},
+	}
+	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	if err != nil {
+		t.Fatalf("explicit stageHostname should allow non-dev hostnames: %v", err)
+	}
+}
+
+func TestValidateBootstrapTargets_ExplicitStage_InvalidHostname(t *testing.T) {
+	t.Parallel()
+	// Explicit stage with invalid hostname should fail validation.
+	targets := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "zmon", Type: "nodejs@22", ExplicitStage: "INVALID-STAGE"}},
+	}
+	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid explicit stage hostname")
+	}
+}
+
+func TestValidateBootstrapTargets_NoDevSuffix_NoExplicit_Error(t *testing.T) {
+	t.Parallel()
+	// Standard mode without dev suffix AND without explicit stage should fail.
+	targets := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "zmon", Type: "nodejs@22"}},
+	}
+	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
+	if err == nil {
+		t.Fatal("expected error: no dev suffix and no explicit stage")
+	}
+	if !strings.Contains(err.Error(), "stageHostname") {
+		t.Errorf("error should mention stageHostname field: %v", err)
 	}
 }
 

@@ -441,9 +441,9 @@ func TestCheckProvision_ExistingRuntime_StageRunning_Pass(t *testing.T) {
 	}
 }
 
-func TestCheckProvision_NewRuntime_StageActive_Fail(t *testing.T) {
+func TestCheckProvision_NewRuntime_StageActive_Pass(t *testing.T) {
 	t.Parallel()
-	// New runtime (IsExisting=false) should still require stage to be NEW/READY_TO_DEPLOY.
+	// Stage can be ACTIVE even for new runtime (re-bootstrap or mixed adoption).
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
 		{ID: "s1", Name: "appdev", Status: "RUNNING"},
 		{ID: "s2", Name: "appstage", Status: "ACTIVE"},
@@ -460,8 +460,8 @@ func TestCheckProvision_NewRuntime_StageActive_Fail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("checker error: %v", err)
 	}
-	if result.Passed {
-		t.Error("expected fail for new runtime with ACTIVE stage — should require NEW or READY_TO_DEPLOY")
+	if !result.Passed {
+		t.Error("stage ACTIVE should pass — valid for re-bootstrap or mixed adoption")
 	}
 }
 
