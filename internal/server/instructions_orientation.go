@@ -71,7 +71,7 @@ func buildPostBootstrapOrientation(cls serviceClassification) string {
 	writeManagedSection(&b, cls.managed)
 
 	// Unmanaged runtime services — adoption guidance.
-	writeUnmanagedRuntimesSection(&b, cls.unmanaged)
+	writeUnmanagedRuntimesSection(&b, cls.unmanaged, cls.mountPaths)
 
 	// Operations (only when bootstrapped services exist).
 	if len(cls.bootstrapped) > 0 {
@@ -159,17 +159,24 @@ func writeManagedSection(b *strings.Builder, managed []platform.ServiceStack) {
 }
 
 // writeUnmanagedRuntimesSection lists runtime services without ZCP state and
-// provides adoption guidance.
-func writeUnmanagedRuntimesSection(b *strings.Builder, unmanaged []platform.ServiceStack) {
+// provides adoption guidance. mountPaths maps hostname → local mount path.
+func writeUnmanagedRuntimesSection(b *strings.Builder, unmanaged []platform.ServiceStack, mountPaths map[string]string) {
 	if len(unmanaged) == 0 {
 		return
 	}
-	b.WriteString("### Runtime services without ZCP state\n")
+	b.WriteString("### Runtime services needing adoption\n")
 	for _, svc := range unmanaged {
-		fmt.Fprintf(b, "- %s (%s) — %s\n",
-			svc.Name,
-			svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-			svc.Status)
+		if path, ok := mountPaths[svc.Name]; ok {
+			fmt.Fprintf(b, "- %s (%s) — %s — mounted at %s/\n",
+				svc.Name,
+				svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+				svc.Status, path)
+		} else {
+			fmt.Fprintf(b, "- %s (%s) — %s\n",
+				svc.Name,
+				svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+				svc.Status)
+		}
 	}
 	b.WriteString("→ Adopt via: zerops_workflow action=\"start\" workflow=\"bootstrap\" (isExisting=true)\n\n")
 }
