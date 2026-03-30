@@ -84,7 +84,8 @@ User develops locally, pushes to stage service on Zerops.
 | Managed services | Zerops | DB, cache, storage — accessible via VPN |
 
 Plan: `{devHostname: "appdev", type: "nodejs@22"}` (unchanged from container mode).
-Engine: creates **only appstage + managed** (skips appdev creation).
+For non-`dev` hostnames, provide explicit stage: `{devHostname: "zmon", type: "go@1", stageHostname: "zmonstage"}`.
+Engine: creates **only stage + managed** (skips dev creation in local mode).
 ServiceMeta: `{hostname: "appstage", stageHostname: "", environment: "local"}`.
 
 ### Local Simple
