@@ -180,16 +180,13 @@ func (s *Store) findMatchingRecipes(query string) []string {
 			seen[name] = true
 			continue
 		}
-		// Keyword match.
+		// Content match — search title and body for the query term.
 		doc, err := s.Get("zerops://recipes/" + name)
 		if err != nil {
 			continue
 		}
-		for _, kw := range doc.Keywords {
-			if strings.EqualFold(kw, queryLower) {
-				seen[name] = true
-				break
-			}
+		if strings.Contains(strings.ToLower(doc.Content), queryLower) {
+			seen[name] = true
 		}
 	}
 
@@ -209,9 +206,9 @@ func (s *Store) formatDisambiguation(query string, matches []string) string {
 		sb.WriteString("- **")
 		sb.WriteString(name)
 		sb.WriteString("**")
-		if doc, err := s.Get("zerops://recipes/" + name); err == nil && doc.TLDR != "" {
+		if doc, err := s.Get("zerops://recipes/" + name); err == nil && doc.Description != "" {
 			sb.WriteString(" — ")
-			sb.WriteString(doc.TLDR)
+			sb.WriteString(doc.Description)
 		}
 		sb.WriteString("\n")
 	}

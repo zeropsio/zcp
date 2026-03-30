@@ -318,11 +318,11 @@ func TestStore_GetRecipe_FuzzyMatch(t *testing.T) {
 			wantSubstr: "Java Spring recipe",
 		},
 		{
-			name:  "KeywordSingleMatch",
+			name:  "ContentSingleMatch",
 			query: "wsgi",
 			docs: map[string]*Document{
 				"zerops://recipes/ghost":  {URI: "zerops://recipes/ghost", Content: "Ghost recipe"},
-				"zerops://recipes/django": {URI: "zerops://recipes/django", Content: "Django recipe", Keywords: []string{"wsgi", "python"}},
+				"zerops://recipes/django": {URI: "zerops://recipes/django", Content: "Django recipe with wsgi and gunicorn"},
 			},
 			wantSubstr: "Django recipe",
 		},

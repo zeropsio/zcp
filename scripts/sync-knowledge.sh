@@ -103,6 +103,15 @@ pull_runtimes() {
     readme_content=$(fetch_file "${local_dir}/README.md" "${GITHUB_ORG}/${repo}" "README.md")
     [[ -z "$readme_content" ]] && continue
 
+    # Extract intro fragment → becomes frontmatter description
+    local intro
+    # Extract intro fragment, strip markdown links [text](url) → text, collapse to single line
+    intro=$(echo "$readme_content" \
+      | sed -n '/ZEROPS_EXTRACT_START:intro/,/ZEROPS_EXTRACT_END:intro/p' \
+      | grep -v 'ZEROPS_EXTRACT' \
+      | sed 's/\[\([^]]*\)\]([^)]*)/ \1/g' \
+      | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//' || true)
+
     # Extract knowledge-base fragment (may not exist yet — that's OK)
     local kb_content
     kb_content=$(echo "$readme_content" \
@@ -110,11 +119,16 @@ pull_runtimes() {
       | grep -v 'ZEROPS_EXTRACT' || true)
 
     # If no fragment in README, keep existing knowledge-base sections from current file
-    # (everything before ## zerops.yml). This preserves the seed content until the
-    # app repo gets a proper knowledge-base fragment.
+    # (everything before ## zerops.yml, after frontmatter).
     local kb_from_existing=""
     if [[ -z "$kb_content" && -f "$target" ]]; then
-      kb_from_existing=$(awk '/^## zerops\.yml/{exit} {print}' "$target" | sed '1{/^# /d;}')
+      kb_from_existing=$(awk '
+        /^---$/ && NR==1 { in_fm=1; next }
+        in_fm && /^---$/ { in_fm=0; next }
+        in_fm { next }
+        /^## zerops\.yml/ { exit }
+        { print }
+      ' "$target" | sed '1{/^# /d;}')
     fi
 
     # Need at least one source of knowledge-base content
@@ -126,7 +140,8 @@ pull_runtimes() {
     # Determine H1 title
     local h1=""
     if [[ -f "$target" ]]; then
-      h1=$(grep -m1 '^# ' "$target" | head -1)
+      # Look past frontmatter for H1
+      h1=$(awk '/^---$/ && NR==1{in_fm=1;next} in_fm && /^---$/{in_fm=0;next} in_fm{next} /^# /{print;exit}' "$target")
     fi
     [[ -z "$h1" ]] && h1="# ${runtime^} Hello World on Zerops"
 
@@ -143,6 +158,14 @@ pull_runtimes() {
 
     # Build recipe file
     {
+      # Frontmatter with description from intro fragment
+      if [[ -n "$intro" ]]; then
+        echo "---"
+        echo "description: \"${intro}\""
+        echo "---"
+        echo ""
+      fi
+
       echo "$h1"
       echo ""
       if [[ -n "$kb_content" ]]; then
@@ -278,9 +301,15 @@ push_runtimes() {
 
     local readme="${app_dir}/README.md"
 
-    # Extract knowledge-base portion (before ## zerops.yml), demote H2→H3
+    # Extract knowledge-base portion (skip frontmatter, skip H1, before ## zerops.yml), demote H2→H3
     local fragment
-    fragment=$(awk '/^## zerops\.yml/{exit} {print}' "$src" \
+    fragment=$(awk '
+      NR==1 && /^---$/ { in_fm=1; next }
+      in_fm && /^---$/ { in_fm=0; next }
+      in_fm { next }
+      /^## zerops\.yml/ { exit }
+      { print }
+    ' "$src" \
       | sed '/^# /d; s/^## /### /' \
       | awk 'NF{p=1} p' | awk '{lines[NR]=$0} END{while(lines[NR]=="") NR--; for(i=1;i<=NR;i++) print lines[i]}')
 

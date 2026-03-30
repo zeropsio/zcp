@@ -108,15 +108,9 @@ func TestRecipeLint(t *testing.T) {
 				}
 			})
 
-			t.Run("HasKeywords", func(t *testing.T) {
-				if len(doc.Keywords) < 3 {
-					t.Errorf("want >= 3 keywords, got %d: %v", len(doc.Keywords), doc.Keywords)
-				}
-			})
-
-			t.Run("HasTLDR", func(t *testing.T) {
-				if doc.TLDR == "" {
-					t.Error("missing ## TL;DR section")
+			t.Run("HasDescription", func(t *testing.T) {
+				if doc.Description == "" {
+					t.Error("missing description (add frontmatter description:, ## TL;DR, or a first paragraph)")
 				}
 			})
 

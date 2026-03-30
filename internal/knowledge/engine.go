@@ -123,15 +123,11 @@ func (s *Store) Search(query string, limit int) []SearchResult {
 	for uri, doc := range s.docs {
 		score := 0.0
 		titleLower := strings.ToLower(doc.Title)
-		kwLower := strings.ToLower(strings.Join(doc.Keywords, " "))
 		contentLower := strings.ToLower(doc.Content)
 
 		for _, word := range words {
 			if strings.Contains(titleLower, word) {
 				score += 2.0
-			}
-			if strings.Contains(kwLower, word) {
-				score += 1.5
 			}
 			if strings.Contains(contentLower, word) {
 				score += 1.0
