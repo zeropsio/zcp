@@ -14,7 +14,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REMOTE_HOST="${EVAL_REMOTE_HOST:-zcpx}"
-REMOTE_BIN="${EVAL_REMOTE_BIN:-/home/zerops/.local/bin/zcp}"
+# Canonical install location. The user PATH entry (~/.local/bin/zcp) should
+# be a symlink here — never a separate copy. See install.sh for rationale.
+REMOTE_BIN="${EVAL_REMOTE_BIN:-/usr/local/bin/zcp}"
 LOCAL_BIN="$PROJECT_DIR/builds/zcp-linux-amd64"
 
 echo "==> Building ZCP for linux/amd64..."
@@ -25,6 +27,21 @@ echo "==> Deploying to $REMOTE_HOST:$REMOTE_BIN..."
 REMOTE_TMP="${REMOTE_BIN}.tmp.$$"
 scp "$LOCAL_BIN" "$REMOTE_HOST:$REMOTE_TMP"
 ssh "$REMOTE_HOST" "mv -f '$REMOTE_TMP' '$REMOTE_BIN' && chmod +x '$REMOTE_BIN'"
+
+# Ensure ~/.local/bin/zcp is a symlink to the canonical location.
+# This prevents stale copies from shadowing the system binary via PATH.
+ssh "$REMOTE_HOST" "
+  LOCAL_BIN=\"\$HOME/.local/bin/zcp\"
+  if [ -f \"\$LOCAL_BIN\" ] && [ ! -L \"\$LOCAL_BIN\" ]; then
+    rm -f \"\$LOCAL_BIN\"
+    ln -s '$REMOTE_BIN' \"\$LOCAL_BIN\"
+    echo '  Replaced ~/.local/bin/zcp copy with symlink → $REMOTE_BIN'
+  elif [ ! -e \"\$LOCAL_BIN\" ]; then
+    mkdir -p \"\$(dirname \"\$LOCAL_BIN\")\"
+    ln -s '$REMOTE_BIN' \"\$LOCAL_BIN\"
+    echo '  Created ~/.local/bin/zcp symlink → $REMOTE_BIN'
+  fi
+"
 
 # Verify deployment
 echo "==> Verifying..."
