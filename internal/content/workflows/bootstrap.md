@@ -42,6 +42,7 @@ When runtime services exist but ZCP doesn't know them (no ServiceMeta files), th
 2. For each runtime service, present to user with suggested mode:
    - If `{name}dev` + `{name}stage` both exist → suggest **standard** mode
    - If `{name}dev` exists alone → suggest **dev** mode
+   - If a service exists without `dev` suffix and user wants dev+stage → suggest **standard** with explicit `stageHostname`
    - Otherwise → suggest **simple** mode
 
 3. Ask user to confirm: "These services already exist. I'll register them in ZCP so I can manage deploys, CI/CD, and configuration. I won't recreate or delete anything. OK?"
@@ -50,6 +51,14 @@ When runtime services exist but ZCP doesn't know them (no ServiceMeta files), th
    ```
    zerops_workflow action="complete" step="discover" plan=[{
      runtime: {devHostname: "api", type: "go@1", isExisting: true, bootstrapMode: "simple"},
+     dependencies: [{hostname: "db", type: "postgresql@16", resolution: "EXISTS"}]
+   }]
+   ```
+
+   For standard mode with non-`dev` hostnames, provide explicit `stageHostname`:
+   ```
+   zerops_workflow action="complete" step="discover" plan=[{
+     runtime: {devHostname: "zmon", type: "go@1", isExisting: true, bootstrapMode: "standard", stageHostname: "zmonstage"},
      dependencies: [{hostname: "db", type: "postgresql@16", resolution: "EXISTS"}]
    }]
    ```

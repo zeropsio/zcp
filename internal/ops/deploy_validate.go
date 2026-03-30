@@ -10,9 +10,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DeployRole identifies the service role for deploy validation.
+const (
+	DeployRoleDev   = "dev"
+	DeployRoleStage = "stage"
+)
+
 // ValidateZeropsYml checks zerops.yml for common issues before deploy.
+// role is optional ("dev", "stage", or empty). When empty, falls back to hostname substring heuristic.
 // Returns a list of warning strings (empty = no issues found).
-func ValidateZeropsYml(workingDir, targetHostname string) []string {
+func ValidateZeropsYml(workingDir, targetHostname string, roles ...string) []string {
 	var warnings []string
 
 	doc, err := ParseZeropsYml(workingDir)
@@ -51,25 +58,33 @@ func ValidateZeropsYml(workingDir, targetHostname string) []string {
 		warnings = append(warnings, "deployFiles is under 'run:' but belongs under 'build:' — move it to build.deployFiles")
 	}
 
-	if strings.Contains(targetHostname, "dev") && len(deployFiles) > 0 {
+	// Determine effective role: explicit parameter > hostname heuristic.
+	role := ""
+	if len(roles) > 0 {
+		role = roles[0]
+	}
+	isDev := role == DeployRoleDev || (role == "" && strings.Contains(targetHostname, "dev"))
+	isStage := role == DeployRoleStage || (role == "" && strings.Contains(targetHostname, "stage"))
+
+	if isDev && len(deployFiles) > 0 {
 		if !slices.Contains(deployFiles, ".") && !slices.Contains(deployFiles, "./") {
 			warnings = append(warnings, "dev service should use deployFiles: [.] — ensures source files persist across deploys for continued iteration")
 		}
 	}
 
 	// Stage services with "zsc noop" build command are likely misconfigured.
-	if strings.Contains(targetHostname, "stage") && entry.Build.hasZscNoop() {
+	if isStage && entry.Build.hasZscNoop() {
 		warnings = append(warnings, fmt.Sprintf(
 			"setup %q: stage service uses 'zsc noop' build command — stage should have real build commands, 'zsc noop' is for dev services only",
 			entry.Setup))
 	}
 
-	if strings.Contains(targetHostname, "dev") && entry.Run.HealthCheck != nil {
+	if isDev && entry.Run.HealthCheck != nil {
 		warnings = append(warnings, fmt.Sprintf(
 			"setup %q: dev service has run.healthCheck — this causes unwanted container restarts during iteration. Remove healthCheck from dev entries (keep it on stage only).",
 			entry.Setup))
 	}
-	if strings.Contains(targetHostname, "dev") && entry.Deploy.ReadinessCheck != nil {
+	if isDev && entry.Deploy.ReadinessCheck != nil {
 		warnings = append(warnings, fmt.Sprintf(
 			"setup %q: dev service has deploy.readinessCheck — unnecessary for dev (agent verifies manually). Remove readinessCheck from dev entries.",
 			entry.Setup))

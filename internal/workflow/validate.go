@@ -38,6 +38,7 @@ type RuntimeTarget struct {
 	Type          string `json:"type"`
 	IsExisting    bool   `json:"isExisting,omitempty"`
 	BootstrapMode string `json:"bootstrapMode,omitempty"` // standard, dev, or simple
+	ExplicitStage string `json:"stageHostname,omitempty"` // explicit stage hostname override for standard mode
 }
 
 // EffectiveMode returns the bootstrap mode, defaulting to standard if empty.
@@ -48,11 +49,15 @@ func (r RuntimeTarget) EffectiveMode() string {
 	return r.BootstrapMode
 }
 
-// StageHostname derives the stage hostname from the dev hostname.
-// Returns empty for dev/simple modes or when the hostname doesn't end in "dev".
+// StageHostname returns the stage hostname for standard mode.
+// Priority: explicit override > auto-derive from *dev suffix > empty.
+// Returns empty for dev/simple modes.
 func (r RuntimeTarget) StageHostname() string {
 	if r.EffectiveMode() != PlanModeStandard {
 		return ""
+	}
+	if r.ExplicitStage != "" {
+		return r.ExplicitStage
 	}
 	if base, ok := strings.CutSuffix(r.DevHostname, "dev"); ok {
 		return base + "stage"
@@ -180,7 +185,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 		if rt.EffectiveMode() == PlanModeStandard {
 			stageHostname := rt.StageHostname()
 			if stageHostname == "" {
-				errs = append(errs, fmt.Sprintf("target %q: dev hostname must end in 'dev' for standard mode (or set bootstrapMode)", rt.DevHostname))
+				errs = append(errs, fmt.Sprintf("target %q: standard mode requires hostname ending in 'dev' (auto-derives stage) or explicit stageHostname field", rt.DevHostname))
 				continue
 			}
 			if err := ValidatePlanHostname(stageHostname); err != nil {

@@ -1,205 +1,185 @@
 package eval
 
 // InstructionVariant defines an MCP instruction text variant for A/B testing.
+// All variants share the SAME process: zerops_discover first, then workflow.
+// They differ only in HOW this is communicated (framing).
 type InstructionVariant struct {
-	ID          string // short identifier (e.g., "rule", "gap", "process")
+	ID          string // short identifier
 	Name        string // human-readable name
 	Base        string // baseInstructions replacement
 	Container   string // containerEnvironment replacement
 	Local       string // localEnvironment replacement
-	Description string // what this variant tests
+	Description string // what framing this variant tests
 }
 
 // InstructionScenario defines a user prompt to test against.
 type InstructionScenario struct {
 	ID     string // short identifier
 	Prompt string // what the user says
-	Lang   string // "cs" or "en"
 }
 
-// InstructionVariants returns all instruction text variants to evaluate.
-// Each variant fits within the 2KB MCP instructions limit (~700B static + ~1300B dynamic).
+// sharedContainer is the container environment text shared by all variants.
+const sharedContainer = `
+Control plane container — manages OTHER services, does not serve traffic.
+Files: /var/www/{hostname}/ = SSHFS mount to live service (not local). Commands: ssh {hostname} "..."
+Edits on mount survive restarts but not deploys.`
+
+// sharedLocal is the local environment text shared by all variants.
+const sharedLocal = `
+Local machine — code in working directory, infrastructure on Zerops.
+Deploy: zcli push (zerops.yml at repo root, each deploy = new container).`
+
+// InstructionVariants returns instruction text variants to evaluate.
+// All variants encode the same process (discover → workflow → code).
+// They differ in framing: rule, information gap, process, consequence, etc.
+// Each must fit in ~700 bytes (leaving ~1300 for dynamic content within 2KB MCP cap).
 func InstructionVariants() []InstructionVariant {
 	return []InstructionVariant{
 		{
-			ID:          "current",
-			Name:        "Current (v6.32.0)",
-			Description: "Current production text — rule-based directive first",
+			ID:          "rule",
+			Name:        "Rule-based (current)",
+			Description: "Direct rule: before ANY work, start a workflow",
 			Base: `ZCP manages Zerops PaaS infrastructure.
 Before ANY work on service code (reading, debugging, fixing, deploying), start a workflow:
   zerops_workflow action="start" workflow="..."
   deploy — deploy, fix, or investigate services
-  bootstrap — create/adopt services    cicd — CI/CD setup
-Direct tools (no workflow): zerops_scale, zerops_manage, zerops_deploy (manual strategy), zerops_discover, zerops_knowledge`,
-			Container: `
-Control plane container — manages OTHER services, does not serve traffic.
-Files: /var/www/{hostname}/ = SSHFS mount to live service (not local). Commands: ssh {hostname} "..."
-Edits on mount survive restarts but not deploys. zerops_discover refreshes service state.`,
-			Local: `
-Local machine — code in working directory, infrastructure on Zerops.
-Deploy: zcli push (zerops.yml at repo root, each deploy = new container).
-zerops_discover refreshes service state.`,
+  bootstrap — create/adopt services
+  cicd — set up CI/CD pipelines
+Direct tools (no workflow): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_deploy (manual strategy), zerops_discover, zerops_knowledge`,
+			Container: sharedContainer,
+			Local:     sharedLocal,
 		},
 		{
 			ID:          "info-gap",
 			Name:        "Information gap",
-			Description: "Frames workflow as missing information, not a rule to follow",
+			Description: "You're missing platform info not in source files — discover first",
 			Base: `ZCP manages Zerops PaaS infrastructure.
-Service code depends on platform config NOT visible in source files (env vars, runtime settings, deploy constraints, mount state). Call zerops_discover before analyzing any service, then start a workflow for full context:
-  zerops_workflow action="start" workflow="..."
-  deploy — deploy, fix, or investigate services
-  bootstrap — create/adopt services    cicd — CI/CD setup
-Direct tools (no workflow): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_deploy (manual), zerops_discover, zerops_knowledge`,
-			Container: `
-Control plane container — manages OTHER services, does not serve traffic.
-Files: /var/www/{hostname}/ = SSHFS mount to live service (not local). Commands: ssh {hostname} "..."
-Edits on mount survive restarts but not deploys.`,
-			Local: `
-Local machine — code in working directory, infrastructure on Zerops.
-Deploy: zcli push (zerops.yml at repo root, each deploy = new container).`,
+Service code depends on platform config NOT in source files (env vars, runtime settings, deploy constraints). You will produce incorrect analysis without this context.
+  zerops_discover — see services, state, env vars (ALWAYS call first)
+  zerops_workflow action="start" workflow="deploy|bootstrap|cicd" — get full platform context
+  deploy — deploy, fix, or investigate    bootstrap — create/adopt    cicd — CI/CD
+Direct tools (no workflow): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
+			Container: sharedContainer,
+			Local:     sharedLocal,
 		},
 		{
-			ID:          "step-by-step",
-			Name:        "Step-by-step process",
-			Description: "Explicit numbered process — always start with discover",
+			ID:          "process-123",
+			Name:        "Numbered process",
+			Description: "Explicit 1-2-3 steps — discover, workflow, then code",
 			Base: `ZCP manages Zerops PaaS infrastructure.
-For ANY task involving service code, follow this process:
-1. zerops_discover — see services, env vars, mount state
+For ANY task involving services, follow this process:
+1. zerops_discover — see what services exist, their state, env vars
 2. zerops_workflow action="start" workflow="deploy|bootstrap|cicd" — get platform context
-3. Then read/edit code with full understanding of the platform
-Workflows: deploy (deploy/fix/investigate), bootstrap (create/adopt), cicd (CI/CD setup)
-Direct tools (no workflow): zerops_scale, zerops_manage, zerops_discover, zerops_knowledge`,
-			Container: `
-Control plane container — manages OTHER services, does not serve traffic.
-Files: /var/www/{hostname}/ = SSHFS mount to live service (not local). Commands: ssh {hostname} "..."
-Edits on mount survive restarts but not deploys.`,
-			Local: `
-Local machine — code in working directory, infrastructure on Zerops.
-Deploy: zcli push (zerops.yml at repo root, each deploy = new container).`,
+3. Then read/edit code with full understanding
+Workflows: deploy (fix/investigate/deploy), bootstrap (create/adopt), cicd (CI/CD)
+Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
+			Container: sharedContainer,
+			Local:     sharedLocal,
 		},
 		{
 			ID:          "consequence",
 			Name:        "Consequence-based",
-			Description: "Emphasizes what goes wrong without workflow",
+			Description: "Warns about what goes wrong without context",
 			Base: `ZCP manages Zerops PaaS infrastructure.
-Service files are on live Zerops services. Editing without platform context produces incorrect fixes — env vars, runtime config, and deploy constraints are NOT in the source code. Previous attempts to fix code without workflow context introduced bugs.
-ALWAYS start with: zerops_workflow action="start" workflow="deploy|bootstrap|cicd"
-Workflows: deploy (deploy/fix/investigate), bootstrap (create/adopt), cicd (CI/CD setup)
-Direct tools (no workflow): zerops_scale, zerops_manage, zerops_discover, zerops_knowledge`,
-			Container: `
-Control plane container. Files: /var/www/{hostname}/ = SSHFS mount to live service.
-Commands: ssh {hostname} "...". Edits survive restarts but not deploys.`,
-			Local: `
-Local machine — code in working directory, infrastructure on Zerops.
-Deploy: zcli push (zerops.yml at repo root).`,
+Files on services are live — editing without platform context causes incorrect fixes. Env vars, runtime config, and deploy constraints are NOT in source code.
+  zerops_discover — call FIRST (shows services, env vars, state)
+  zerops_workflow action="start" workflow="deploy|bootstrap|cicd" — provides platform docs and constraints
+  deploy — fix, investigate, deploy    bootstrap — create/adopt    cicd — CI/CD
+Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
+			Container: sharedContainer,
+			Local:     sharedLocal,
 		},
 		{
 			ID:          "identity",
-			Name:        "Identity-based",
-			Description: "Frames the LLM as orchestrator whose first action is always discovery",
-			Base: `ZCP manages Zerops PaaS infrastructure. You are the orchestrator.
-Your first action for ANY task is always: zerops_discover (understand what exists), then zerops_workflow action="start" to get platform context before touching code.
-Workflows: deploy (deploy/fix/investigate), bootstrap (create/adopt), cicd (CI/CD setup)
-Direct tools (no workflow): zerops_scale, zerops_manage, zerops_discover, zerops_knowledge`,
-			Container: `
-This container is the control plane — it manages OTHER services.
-Files: /var/www/{hostname}/ = SSHFS mount to live service. Commands: ssh {hostname} "..."
-Edits survive restarts but not deploys.`,
-			Local: `
-Local machine — code in working directory, infrastructure on Zerops.
-Deploy: zcli push (zerops.yml at repo root).`,
+			Name:        "Orchestrator identity",
+			Description: "You are the orchestrator — first action is always discover",
+			Base: `ZCP manages Zerops PaaS infrastructure. You are the orchestrator — you manage services, not code directly.
+Your first action for ANY task: zerops_discover (understand services and state).
+Then: zerops_workflow action="start" workflow="deploy|bootstrap|cicd" for platform context.
+  deploy — fix, investigate, deploy    bootstrap — create/adopt    cicd — CI/CD
+Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
+			Container: sharedContainer,
+			Local:     sharedLocal,
 		},
 		{
-			ID:          "discover-first",
-			Name:        "Discover-first",
-			Description: "Makes zerops_discover the mandatory first step, not workflow",
+			ID:          "discover-gate",
+			Name:        "Discover as gate",
+			Description: "zerops_discover is the mandatory entry point — everything starts there",
 			Base: `ZCP manages Zerops PaaS infrastructure.
-FIRST STEP for any task: call zerops_discover to see services, their state, env vars, and what needs attention. Then start a workflow for context:
-  zerops_workflow action="start" workflow="deploy|bootstrap|cicd"
-Without discover, you don't know the platform state. Without workflow, you don't have runtime docs or deploy constraints.
-Direct tools (no workflow): zerops_scale, zerops_manage, zerops_discover, zerops_knowledge`,
-			Container: `
-Control plane container. /var/www/{hostname}/ = SSHFS mount to live service (not local files).
-Commands: ssh {hostname} "...". Edits survive restarts but not deploys.`,
-			Local: `
-Local machine — code in working directory, infrastructure on Zerops.
-Deploy: zcli push (zerops.yml at repo root).`,
+FIRST STEP (always): zerops_discover — shows services, state, env vars, what needs attention.
+THEN: zerops_workflow action="start" workflow="deploy|bootstrap|cicd" — platform context for code work.
+  deploy — fix, investigate, or deploy code
+  bootstrap — create new or adopt existing services
+  cicd — set up CI/CD pipelines
+Without discover you don't know the platform state. Without workflow you lack runtime docs and constraints.
+Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
+			Container: sharedContainer,
+			Local:     sharedLocal,
 		},
 		{
 			ID:          "question",
-			Name:        "Question-based",
-			Description: "Starts with questions the LLM should ask itself before acting",
+			Name:        "Self-check questions",
+			Description: "LLM asks itself questions before acting",
 			Base: `ZCP manages Zerops PaaS infrastructure.
-Before touching any service code, ask yourself:
-- Do I know what services exist? → zerops_discover
-- Do I have platform context (env vars, runtime config)? → zerops_workflow action="start" workflow="deploy"
-- Am I about to edit a live service mount? → /var/www/{hostname}/ is live, not local
-If any answer is "no", call the tool first.
-Workflows: deploy (deploy/fix/investigate), bootstrap (create/adopt), cicd (CI/CD setup)
-Direct tools: zerops_scale, zerops_manage, zerops_discover, zerops_knowledge`,
-			Container: `
-Control plane container. /var/www/{hostname}/ = SSHFS mount to live service.
-Commands: ssh {hostname} "...". Edits survive restarts but not deploys.`,
-			Local: `
-Local machine — code in working directory, infrastructure on Zerops.
-Deploy: zcli push (zerops.yml at repo root).`,
+Before working on any service, check:
+- Do I know what services exist and their state? → zerops_discover (call first)
+- Do I have platform context for this service? → zerops_workflow action="start" workflow="deploy"
+- Am I editing a live mount (/var/www/{hostname}/)? → these are live services, not local files
+Workflows: deploy (fix/investigate/deploy), bootstrap (create/adopt), cicd (CI/CD)
+Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
+			Container: sharedContainer,
+			Local:     sharedLocal,
 		},
 		{
-			ID:          "checklist",
-			Name:        "Checklist gate",
-			Description: "Pre-flight checklist that must pass before code work",
+			ID:          "blunt",
+			Name:        "Blunt stop",
+			Description: "STOP directive — do not touch files until discover+workflow done",
 			Base: `ZCP manages Zerops PaaS infrastructure.
-Pre-flight checklist (complete before reading or editing service code):
-[ ] zerops_discover called — I know what services exist and their state
-[ ] zerops_workflow started — I have platform context (runtime docs, env vars, constraints)
-Skip only for simple ops: zerops_scale, zerops_manage, zerops_knowledge
-Workflows: deploy (deploy/fix/investigate), bootstrap (create/adopt), cicd (CI/CD setup)`,
-			Container: `
-Control plane container. /var/www/{hostname}/ = live service (SSHFS mount, not local).
-ssh {hostname} "..." for commands. Edits survive restarts but not deploys.`,
-			Local: `
-Local machine — code in working dir, infra on Zerops. Deploy: zcli push.`,
+STOP. Do not Read, Edit, or Grep service files until you have:
+1. Called zerops_discover (shows services, env vars, platform state)
+2. Started zerops_workflow action="start" workflow="deploy" (provides runtime docs and constraints)
+Other workflows: bootstrap (create/adopt services), cicd (CI/CD setup)
+Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
+			Container: sharedContainer,
+			Local:     sharedLocal,
 		},
 		{
 			ID:          "minimal",
-			Name:        "Minimal directive",
-			Description: "Absolute minimum — one sentence directive, maximize dynamic space",
-			Base: `ZCP manages Zerops PaaS. Always call zerops_discover then zerops_workflow before any code work.
-Workflows: deploy, bootstrap, cicd. Direct: zerops_scale, zerops_manage, zerops_env, zerops_knowledge.`,
+			Name:        "Ultra-minimal",
+			Description: "Absolute minimum — one-liner, maximize dynamic content space",
+			Base: `ZCP manages Zerops PaaS. Always: zerops_discover first, then zerops_workflow before any code work.
+Workflows: deploy (fix/investigate/deploy), bootstrap (create/adopt), cicd. Direct: zerops_scale, zerops_manage, zerops_env, zerops_knowledge.`,
 			Container: `
 Control plane. /var/www/{hostname}/ = live SSHFS mount. ssh {hostname} for commands.`,
 			Local: `
 Local dev. Deploy: zcli push. Infra on Zerops.`,
 		},
 		{
-			ID:          "blunt",
-			Name:        "Blunt/direct",
-			Description: "Very direct, no explanation — just the command",
+			ID:          "checklist",
+			Name:        "Pre-flight checklist",
+			Description: "Checkbox-style checklist before code work",
 			Base: `ZCP manages Zerops PaaS infrastructure.
-STOP. Do not Read, Edit, or Grep files under /var/www/ until you have called:
-  1. zerops_discover
-  2. zerops_workflow action="start" workflow="deploy"
-This gives you env vars, runtime config, and platform constraints you cannot see in code.
-Other workflows: bootstrap (new/adopt services), cicd (CI/CD setup).
-Direct tools (no workflow): zerops_scale, zerops_manage, zerops_knowledge.`,
-			Container: `
-Control plane. /var/www/{hostname}/ = SSHFS mount to live service. ssh {hostname} for commands.`,
-			Local: `
-Local machine. Code in working dir, infra on Zerops. Deploy: zcli push.`,
+Pre-flight (complete before ANY service code work):
+[ ] zerops_discover — I know services, state, env vars
+[ ] zerops_workflow started — I have platform context (runtime docs, constraints)
+Workflows: deploy (fix/investigate/deploy), bootstrap (create/adopt), cicd (CI/CD)
+Direct tools (skip checklist): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
+			Container: sharedContainer,
+			Local:     sharedLocal,
 		},
 	}
 }
 
-// InstructionScenarios returns test prompts to evaluate each variant against.
+// InstructionScenarios returns user prompts to test each variant against.
 func InstructionScenarios() []InstructionScenario {
 	return []InstructionScenario{
-		{ID: "audit-cs", Prompt: "udělej audit kódu u kamarádky", Lang: "cs"},
-		{ID: "fix-cs", Prompt: "oprav bug v kamarádce — cyklí se zvuk na mobilu", Lang: "cs"},
-		{ID: "add-feature-cs", Prompt: "přidej autentizaci na websocket v kamarádce", Lang: "cs"},
-		{ID: "audit-en", Prompt: "audit the kamaradka service code", Lang: "en"},
-		{ID: "fix-en", Prompt: "fix the audio echo loop bug in kamaradka", Lang: "en"},
-		{ID: "create-en", Prompt: "create a new nodejs service for an API", Lang: "en"},
-		{ID: "look-cs", Prompt: "podívej se co je v kódu kamarádky", Lang: "cs"},
-		{ID: "deploy-cs", Prompt: "nasaď poslední změny kamarádky", Lang: "cs"},
+		{ID: "audit-cs", Prompt: "udělej audit kódu u kamarádky"},
+		{ID: "fix-cs", Prompt: "oprav bug v kamarádce — cyklí se zvuk na mobilu"},
+		{ID: "add-feature-cs", Prompt: "přidej autentizaci na websocket v kamarádce"},
+		{ID: "look-cs", Prompt: "podívej se co je v kódu kamarádky"},
+		{ID: "audit-en", Prompt: "audit the kamaradka service code"},
+		{ID: "fix-en", Prompt: "fix the audio echo loop bug in kamaradka"},
+		{ID: "create-en", Prompt: "create a new nodejs API service"},
+		{ID: "deploy-cs", Prompt: "nasaď poslední změny kamarádky"},
 	}
 }

@@ -57,15 +57,11 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 			// Cross-check runtime type matches plan.
 			checks = append(checks, checkServiceType(svcMap, target.Runtime.DevHostname, target.Runtime.Type)...)
 
-			// Check stage runtime status.
-			// Existing runtimes (incremental bootstrap) may have stage already RUNNING/ACTIVE.
-			// New runtimes expect stage to be NEW or READY_TO_DEPLOY (freshly imported).
+			// Check stage runtime exists in any alive status.
+			// Stage may be newly imported (NEW/READY_TO_DEPLOY) or already running (RUNNING/ACTIVE).
+			// Mixed cases (existing dev + new stage) are valid for adoption scenarios.
 			if stage := target.Runtime.StageHostname(); stage != "" {
-				if target.Runtime.IsExisting {
-					checks = append(checks, checkServiceRunning(svcMap, stage)...)
-				} else {
-					checks = append(checks, checkServiceStatusAny(svcMap, stage, "NEW", "READY_TO_DEPLOY")...)
-				}
+				checks = append(checks, checkServiceStatusAny(svcMap, stage, "NEW", "READY_TO_DEPLOY", "RUNNING", "ACTIVE")...)
 			}
 
 			// Check dependencies.

@@ -43,8 +43,13 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 	var b strings.Builder
 
 	// Section A: Base + routing instructions (FIRST — most important for tool selection).
-	b.WriteString(baseInstructions)
-	b.WriteString(routingInstructions)
+	// ZCP_INSTRUCTION_BASE env var overrides for eval A/B testing.
+	if override := os.Getenv("ZCP_INSTRUCTION_BASE"); override != "" {
+		b.WriteString(override)
+	} else {
+		b.WriteString(baseInstructions)
+		b.WriteString(routingInstructions)
+	}
 
 	// Section B: Workflow hint (from local state file).
 	if hint := buildWorkflowHint(stateDir); hint != "" {
@@ -54,12 +59,20 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 
 	// Section C: Environment concept — how code access and deploy work.
 	if rt.InContainer {
-		b.WriteString(containerEnvironment)
+		if override := os.Getenv("ZCP_INSTRUCTION_CONTAINER"); override != "" {
+			b.WriteString(override)
+		} else {
+			b.WriteString(containerEnvironment)
+		}
 		if rt.ServiceName != "" {
 			fmt.Fprintf(&b, "\nYou are running on the '%s' service. Other services in this project are yours to manage.", rt.ServiceName)
 		}
 	} else {
-		b.WriteString(localEnvironment)
+		if override := os.Getenv("ZCP_INSTRUCTION_LOCAL"); override != "" {
+			b.WriteString(override)
+		} else {
+			b.WriteString(localEnvironment)
+		}
 	}
 
 	// Section D: Project summary (dynamic).
