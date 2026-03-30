@@ -1,44 +1,68 @@
 #!/usr/bin/env bash
 # Bidirectional sync between ZCP knowledge and canonical external sources.
 #
-# ZCP is a read-only consumer — docs and app READMEs are the sources of truth.
-#   pull: syncs external edits INTO ZCP's internal/knowledge/
-#   push: distributes tested ZCP edits OUT to docs + app READMEs
+# Pull uses local clones when available (fast, offline), falls back to GitHub.
+# Push always writes to local clones (you commit + push to GitHub yourself).
+#
+# Synced files are gitignored — run `pull` before build.
 set -euo pipefail
 
 # ZCP repo root (this script lives in scripts/)
 ZCP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ZCP_KNOWLEDGE="${ZCP_ROOT}/internal/knowledge"
 
-# Sibling repos — override via env vars if needed
-DOCS_GUIDES="${DOCS_GUIDES:-$(dirname "$ZCP_ROOT")/docs/apps/docs/content/guides}"
-RECIPE_APPS="${RECIPE_APPS:-$(dirname "$ZCP_ROOT")/recipe-apps}"
+# GitHub org for recipe apps
+GITHUB_ORG="zerops-recipe-apps"
+GITHUB_BRANCH="main"
+
+# Local sibling repos (optional — pull falls back to GitHub if missing)
+LOCAL_DOCS="${DOCS_GUIDES:-$(dirname "$ZCP_ROOT")/docs/apps/docs/content/guides}"
+LOCAL_RECIPE_APPS="${RECIPE_APPS:-$(dirname "$ZCP_ROOT")/recipe-apps}"
 
 # ============================================================
-# PULL: External → ZCP (before starting work)
+# Helpers
+# ============================================================
+
+# Fetch a file: local path first, then GitHub raw.
+# Usage: fetch_file "local/path" "github-org/repo" "path/in/repo"
+fetch_file() {
+  local local_path="$1" org_repo="$2" repo_path="$3"
+  if [[ -f "$local_path" ]]; then
+    cat "$local_path"
+  else
+    curl -sfL "https://raw.githubusercontent.com/${org_repo}/${GITHUB_BRANCH}/${repo_path}" || true
+  fi
+}
+
+# ============================================================
+# PULL: External → ZCP (before starting work / CI build)
 # ============================================================
 
 pull_guides() {
   echo "=== Pulling docs/guides → ZCP knowledge ==="
   local count=0
 
-  for mdx in "${DOCS_GUIDES}"/*.mdx; do
+  # Only works with local docs clone for now (MDX parsing needs local files)
+  if [[ ! -d "$LOCAL_DOCS" ]]; then
+    echo "  SKIP: no local docs clone at ${LOCAL_DOCS}"
+    echo "  Set DOCS_GUIDES=/path/to/docs/guides or clone docs repo"
+    return
+  fi
+
+  for mdx in "${LOCAL_DOCS}"/*.mdx; do
     [[ -f "$mdx" ]] || continue
     slug=$(basename "$mdx" .mdx)
 
-    # Route choose-* to decisions/, rest to guides/
     if [[ "$slug" == choose-* ]]; then
       target="${ZCP_KNOWLEDGE}/decisions/${slug}.md"
     else
       target="${ZCP_KNOWLEDGE}/guides/${slug}.md"
     fi
 
-    # Strip MDX frontmatter (--- block) and import statements, restore H1 from title
     title=$(sed -n '2s/^title: //p' "$mdx")
     {
       echo "# ${title}"
       echo ""
-      # Skip frontmatter (line 1 = ---, find closing ---), skip imports, trim leading blanks
       awk '
         NR==1 && /^---$/ { in_front=1; next }
         in_front && /^---$/ { in_front=0; skip_blanks=1; next }
@@ -48,7 +72,6 @@ pull_guides() {
         skip_blanks && /^$/ { next }
         skip_blanks { skip_blanks=0 }
         {
-          # Un-escape MDX backtick wrapping around zerops:// URIs with {var}
           while (match($0, /`(zerops:\/\/[^`]+)`/)) {
             inner = substr($0, RSTART+1, RLENGTH-2)
             $0 = substr($0, 1, RSTART-1) inner substr($0, RSTART+RLENGTH)
@@ -66,53 +89,59 @@ pull_guides() {
 }
 
 pull_runtimes() {
-  echo "=== Pulling app README fragments → ZCP recipes (hello-world) ==="
+  echo "=== Pulling hello-world recipes → ZCP recipes ==="
   local runtimes=(bun deno dotnet elixir gleam go java nodejs php python ruby rust)
   local count=0
 
   for runtime in "${runtimes[@]}"; do
-    local app_dir="${RECIPE_APPS}/${runtime}-hello-world-app"
-    local readme="${app_dir}/README.md"
+    local repo="${runtime}-hello-world-app"
+    local local_dir="${LOCAL_RECIPE_APPS}/${repo}"
     local target="${ZCP_KNOWLEDGE}/recipes/${runtime}-hello-world.md"
 
-    [[ -f "$readme" ]] || continue
+    # Fetch README (local or GitHub)
+    local readme_content
+    readme_content=$(fetch_file "${local_dir}/README.md" "${GITHUB_ORG}/${repo}" "README.md")
+    [[ -z "$readme_content" ]] && continue
 
     # Extract knowledge-base fragment
     local kb_content
-    kb_content=$(sed -n '/ZEROPS_EXTRACT_START:knowledge-base/,/ZEROPS_EXTRACT_END:knowledge-base/p' "$readme" \
+    kb_content=$(echo "$readme_content" \
+      | sed -n '/ZEROPS_EXTRACT_START:knowledge-base/,/ZEROPS_EXTRACT_END:knowledge-base/p' \
       | grep -v 'ZEROPS_EXTRACT' || true)
-
     [[ -z "$kb_content" ]] && continue
 
-    # Determine H1 title from existing file or generate
+    # Determine H1 title
     local h1=""
     if [[ -f "$target" ]]; then
       h1=$(grep -m1 '^# ' "$target" | head -1)
     fi
     [[ -z "$h1" ]] && h1="# ${runtime^} Hello World on Zerops"
 
-    # Build the recipe file: knowledge-base (H3→H2) + zerops.yml from app repo
+    # Fetch zerops.yaml (local or GitHub)
+    local yaml_content=""
+    if [[ -f "${local_dir}/zerops.yaml" ]]; then
+      yaml_content=$(cat "${local_dir}/zerops.yaml")
+    elif [[ -f "${local_dir}/zerops.yml" ]]; then
+      yaml_content=$(cat "${local_dir}/zerops.yml")
+    else
+      yaml_content=$(curl -sfL "https://raw.githubusercontent.com/${GITHUB_ORG}/${repo}/${GITHUB_BRANCH}/zerops.yaml" || true)
+      [[ -z "$yaml_content" ]] && yaml_content=$(curl -sfL "https://raw.githubusercontent.com/${GITHUB_ORG}/${repo}/${GITHUB_BRANCH}/zerops.yml" || true)
+    fi
+
+    # Build recipe file
     {
       echo "$h1"
       echo ""
       echo "$kb_content" | sed 's/^### /## /'
       echo ""
 
-      # Append zerops.yaml from the app repo if it exists
-      local yaml_file=""
-      if [[ -f "${app_dir}/zerops.yaml" ]]; then
-        yaml_file="${app_dir}/zerops.yaml"
-      elif [[ -f "${app_dir}/zerops.yml" ]]; then
-        yaml_file="${app_dir}/zerops.yml"
-      fi
-
-      if [[ -n "$yaml_file" ]]; then
+      if [[ -n "$yaml_content" ]]; then
         echo "## zerops.yml"
         echo ""
         echo "> Reference implementation — learn the patterns, adapt to your project."
         echo ""
         echo '```yaml'
-        cat "$yaml_file"
+        echo "$yaml_content"
         echo '```'
       fi
     } > "$target"
@@ -136,12 +165,15 @@ pull_recipes() {
   local count=0
   while IFS='=' read -r slug repo; do
     [[ -z "$slug" || "$slug" == \#* ]] && continue
-    readme="${RECIPE_APPS}/${repo}/README.md"
-    target="${ZCP_KNOWLEDGE}/recipes/${slug}.md"
+    local target="${ZCP_KNOWLEDGE}/recipes/${slug}.md"
 
-    [[ -f "$readme" ]] || continue
+    local readme_content
+    readme_content=$(fetch_file "${LOCAL_RECIPE_APPS}/${repo}/README.md" "${GITHUB_ORG}/${repo}" "README.md")
+    [[ -z "$readme_content" ]] && continue
 
-    content=$(sed -n '/ZEROPS_EXTRACT_START:knowledge-base/,/ZEROPS_EXTRACT_END:knowledge-base/p' "$readme" \
+    local content
+    content=$(echo "$readme_content" \
+      | sed -n '/ZEROPS_EXTRACT_START:knowledge-base/,/ZEROPS_EXTRACT_END:knowledge-base/p' \
       | grep -v 'ZEROPS_EXTRACT' || true)
 
     if [[ -n "$content" ]]; then
@@ -155,21 +187,25 @@ pull_recipes() {
 }
 
 # ============================================================
-# PUSH: ZCP → Distribution targets (after make test passes)
+# PUSH: ZCP → Distribution targets (needs local clones)
 # ============================================================
 
 push_guides() {
   echo "=== Pushing ZCP knowledge → docs/guides ==="
-  mkdir -p "$DOCS_GUIDES"
+
+  if [[ ! -d "$LOCAL_DOCS" ]]; then
+    echo "  SKIP: no local docs clone at ${LOCAL_DOCS}"
+    return
+  fi
+
+  mkdir -p "$LOCAL_DOCS"
   local count=0
 
-  # Guides
-  for md in "${ZCP_KNOWLEDGE}/guides/"*.md; do
+  for md in "${ZCP_KNOWLEDGE}/guides/"*.md "${ZCP_KNOWLEDGE}/decisions/"*.md; do
     [[ -f "$md" ]] || continue
     slug=$(basename "$md" .md)
-    target="${DOCS_GUIDES}/${slug}.mdx"
+    target="${LOCAL_DOCS}/${slug}.mdx"
 
-    # Preserve existing frontmatter if file exists, only generate for new files
     if [[ -f "$target" ]]; then
       existing_frontmatter=$(awk 'NR==1 && /^---$/{found=1; next} found && /^---$/{exit} found{print}' "$target")
     else
@@ -205,66 +241,27 @@ FRONTMATTER
     count=$((count + 1))
   done
 
-  # Decisions
-  for md in "${ZCP_KNOWLEDGE}/decisions/"*.md; do
-    [[ -f "$md" ]] || continue
-    slug=$(basename "$md" .md)
-    target="${DOCS_GUIDES}/${slug}.mdx"
-
-    if [[ -f "$target" ]]; then
-      existing_frontmatter=$(awk 'NR==1 && /^---$/{found=1; next} found && /^---$/{exit} found{print}' "$target")
-    else
-      existing_frontmatter=""
-    fi
-
-    if [[ -n "$existing_frontmatter" ]]; then
-      cat > "$target" <<FRONTMATTER
----
-${existing_frontmatter}
----
-
-FRONTMATTER
-    else
-      title=$(grep -m1 '^# ' "$md" | sed 's/^# //')
-      [[ -z "$title" ]] && title="$slug"
-      description=$(sed -n '/^## TL;DR/,/^##/{/^## TL;DR/d;/^##/d;/^$/d;p;}' "$md" | head -1 | sed 's/"/\\"/g')
-      [[ -z "$description" ]] && description="Decision guide: ${title}"
-      cat > "$target" <<FRONTMATTER
----
-title: ${title}
-description: "${description}"
----
-
-FRONTMATTER
-    fi
-
-    sed '1{/^# /d;}' "$md" \
-      | awk '/^```/{f=!f} !f{gsub(/(zerops:\/\/[^ ]*\{[^}]+\})/, "`&`")} {print}' \
-      >> "$target"
-
-    echo "  guides/${slug}.mdx (decision)"
-    count=$((count + 1))
-  done
-
   echo "Pushed ${count} guide pages"
 }
 
 push_runtimes() {
-  echo "=== Pushing ZCP recipes → app README fragments + zerops.yaml ==="
+  echo "=== Pushing ZCP recipes → app READMEs + zerops.yaml ==="
   local runtimes=(bun deno dotnet elixir gleam go java nodejs php python ruby rust)
   local count=0
 
   for runtime in "${runtimes[@]}"; do
     local src="${ZCP_KNOWLEDGE}/recipes/${runtime}-hello-world.md"
-    local app_dir="${RECIPE_APPS}/${runtime}-hello-world-app"
+    local app_dir="${LOCAL_RECIPE_APPS}/${runtime}-hello-world-app"
 
     [[ -f "$src" ]] || continue
-    [[ -d "$app_dir" ]] || continue
+    if [[ ! -d "$app_dir" ]]; then
+      echo "  SKIP ${runtime}: no local clone at ${app_dir}"
+      continue
+    fi
 
     local readme="${app_dir}/README.md"
 
-    # Extract knowledge-base portion only (everything before ## zerops.yml)
-    # Drop H1, demote H2→H3 for README context
+    # Extract knowledge-base portion (before ## zerops.yml), demote H2→H3
     local fragment
     fragment=$(awk '/^## zerops\.yml/{exit} {print}' "$src" \
       | sed '/^# /d; s/^## /### /' \
@@ -272,12 +269,10 @@ push_runtimes() {
 
     [[ -z "$fragment" ]] && continue
 
-    # Write fragment to temp file for awk to read
     local frag_file
     frag_file=$(mktemp)
     echo "$fragment" > "$frag_file"
 
-    # Replace or append knowledge-base fragment in README
     if grep -q 'ZEROPS_EXTRACT_START:knowledge-base' "$readme" 2>/dev/null; then
       awk -v fragfile="$frag_file" '
         /ZEROPS_EXTRACT_START:knowledge-base/ { print; while ((getline line < fragfile) > 0) print line; skip=1; next }
@@ -295,10 +290,9 @@ push_runtimes() {
       } > "${readme}.tmp"
       mv "${readme}.tmp" "$readme"
     fi
-
     rm -f "$frag_file"
 
-    # Push zerops.yaml back to app repo if ## zerops.yml section exists in recipe
+    # Push zerops.yaml back
     local yaml_content
     yaml_content=$(awk '
       /^## zerops\.yml/ { found=1; next }
@@ -348,16 +342,16 @@ show_changes() {
   case "$1" in
     pull)
       echo "ZCP knowledge changes:"
-      cd "${ZCP_ROOT}" && git diff --stat internal/knowledge/ 2>/dev/null || echo "  (no changes)"
+      cd "${ZCP_ROOT}" && git diff --stat internal/knowledge/ 2>/dev/null && git diff --stat --cached internal/knowledge/ 2>/dev/null || echo "  (no changes or untracked)"
       ;;
     push)
-      if [[ -d "$(dirname "$ZCP_ROOT")/docs" ]]; then
+      if [[ -d "$(dirname "$ZCP_ROOT")/docs/.git" ]]; then
         echo "Docs changes:"
         cd "$(dirname "$ZCP_ROOT")/docs" && git diff --stat apps/docs/content/guides/ 2>/dev/null || echo "  (no changes)"
         echo ""
       fi
       echo "App README changes:"
-      for dir in "${RECIPE_APPS}"/*/; do
+      for dir in "${LOCAL_RECIPE_APPS}"/*/; do
         [[ -d "$dir/.git" ]] || continue
         changes=$(cd "$dir" && git diff --stat README.md zerops.yaml zerops.yml 2>/dev/null)
         [[ -n "$changes" ]] && echo "  $(basename "$dir"): ${changes}"
@@ -394,13 +388,17 @@ case "${1:-}" in
   *)
     echo "Usage: $0 {pull|push} [guides|runtimes|recipes|all]"
     echo ""
-    echo "  pull  — External edits → ZCP knowledge (before starting work)"
-    echo "  push  — Tested ZCP content → docs + app READMEs (after make test passes)"
+    echo "  pull  — Sync from canonical sources into ZCP (local clones or GitHub)"
+    echo "  push  — Push tested ZCP edits to local clones (requires local repos)"
     echo ""
     echo "  guides   — docs/guides/*.mdx ↔ ZCP guides/ + decisions/"
-    echo "  runtimes — app README fragments ↔ ZCP recipes/*-hello-world"
-    echo "  recipes  — app README fragments ↔ ZCP recipes/ (needs recipe-map.txt)"
+    echo "  runtimes — hello-world app READMEs ↔ ZCP recipes/*-hello-world"
+    echo "  recipes  — framework app READMEs ↔ ZCP recipes/ (needs recipe-map.txt)"
     echo "  all      — all of the above (default)"
+    echo ""
+    echo "Environment:"
+    echo "  DOCS_GUIDES=/path/to/docs/guides  — override local docs location"
+    echo "  RECIPE_APPS=/path/to/recipe-apps   — override local recipe apps location"
     exit 1
     ;;
 esac
