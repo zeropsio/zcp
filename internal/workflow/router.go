@@ -174,9 +174,7 @@ func appendUtilities(offerings []FlowOffering) []FlowOffering {
 	utils := []struct {
 		name, hint string
 	}{
-		{"debug", `zerops_workflow action="start" workflow="debug"`},
 		{"scale", `zerops_scale serviceHostname="..." — direct tool, no workflow needed`},
-		{"configure", `zerops_workflow action="start" workflow="configure"`},
 	}
 	for _, u := range utils {
 		if !has[u.name] {

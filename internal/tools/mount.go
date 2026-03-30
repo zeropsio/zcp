@@ -7,6 +7,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // MountInput is the input type for zerops_mount.
@@ -16,10 +17,10 @@ type MountInput struct {
 }
 
 // RegisterMount registers the zerops_mount tool.
-func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mounter ops.Mounter, _ runtime.Info) {
+func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mounter ops.Mounter, _ runtime.Info, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_mount",
-		Description: "Mount/unmount service filesystems via SSHFS. Actions: mount, unmount, status.",
+		Description: "Mount/unmount service filesystems via SSHFS. Actions: mount (REQUIRES active workflow session), unmount, status.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Mount/unmount service filesystems",
 			IdempotentHint:  true,
@@ -41,6 +42,9 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 
 		switch input.Action {
 		case "mount":
+			if blocked := requireWorkflow(engine); blocked != nil {
+				return blocked, nil, nil
+			}
 			result, err := ops.MountService(ctx, client, projectID, mounter, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil

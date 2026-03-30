@@ -70,8 +70,8 @@ func BuildTransitionMessage(state *WorkflowState) string {
 		return bootstrapCompleteMsg + "\n\nManaged services provisioned. No runtime services to deploy." +
 			"\n\nAvailable operations:\n" +
 			"- Scale: `zerops_scale serviceHostname=\"...\"`\n" +
-			"- Debug: `zerops_workflow action=\"start\" workflow=\"debug\"`\n" +
-			"- Configure: `zerops_workflow action=\"start\" workflow=\"configure\"`"
+			"- Env vars: `zerops_env action=\"set|delete\"` (reload after: `zerops_manage action=\"reload\"`)\n" +
+			"- Investigate: `zerops_workflow action=\"start\" workflow=\"deploy\"`"
 	}
 
 	var sb strings.Builder
@@ -136,8 +136,7 @@ func BuildTransitionMessage(state *WorkflowState) string {
 
 	sb.WriteString("**Other operations:**\n")
 	sb.WriteString("- Scale: `zerops_scale serviceHostname=\"...\"`\n")
-	sb.WriteString("- Debug: `zerops_workflow action=\"start\" workflow=\"debug\"`\n")
-	sb.WriteString("- Configure: `zerops_workflow action=\"start\" workflow=\"configure\"`\n")
+	sb.WriteString("- Env vars: `zerops_env action=\"set|delete\"` (reload after: `zerops_manage action=\"reload\"`)\n")
 
 	return sb.String()
 }

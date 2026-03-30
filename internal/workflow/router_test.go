@@ -17,7 +17,7 @@ func TestRoute_EmptyProject(t *testing.T) {
 			name:           "no services, no metas, no sessions",
 			input:          RouterInput{},
 			wantTop:        "bootstrap",
-			wantMinOffered: 4, // bootstrap + debug + scale + configure
+			wantMinOffered: 2, // bootstrap + scale
 		},
 		{
 			name: "active bootstrap session offers resume",
@@ -190,16 +190,17 @@ func TestRoute_AlwaysIncludesUtilities(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			offerings := Route(tt.input)
-			utils := map[string]bool{"debug": false, "scale": false, "configure": false}
+			hasScale := false
 			for _, o := range offerings {
-				if _, ok := utils[o.Workflow]; ok {
-					utils[o.Workflow] = true
+				if o.Workflow == "scale" {
+					hasScale = true
+				}
+				if o.Workflow == "debug" || o.Workflow == "configure" {
+					t.Errorf("removed workflow %q should not appear in offerings", o.Workflow)
 				}
 			}
-			for name, found := range utils {
-				if !found {
-					t.Errorf("missing utility workflow %q", name)
-				}
+			if !hasScale {
+				t.Error("missing utility workflow \"scale\"")
 			}
 		})
 	}
@@ -289,7 +290,7 @@ func TestFormatOfferings_Compact(t *testing.T) {
 	t.Parallel()
 	offerings := []FlowOffering{
 		{Workflow: "bootstrap", Priority: 1, Hint: `zerops_workflow action="start" workflow="bootstrap"`},
-		{Workflow: "debug", Priority: 5, Hint: `zerops_workflow action="start" workflow="debug"`},
+		{Workflow: "scale", Priority: 5, Hint: `zerops_scale serviceHostname="..."`},
 	}
 	result := FormatOfferings(offerings)
 	if result == "" {

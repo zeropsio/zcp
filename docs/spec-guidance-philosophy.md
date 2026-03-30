@@ -499,9 +499,9 @@ Running installs over the SSHFS network mount is orders of magnitude slower.
 
 ### When to Use What
 - Creating new infrastructure → zerops_workflow action="start" workflow="bootstrap"
-- Deploying code changes → zerops_workflow action="start" workflow="deploy"
-- Debugging issues → zerops_workflow action="start" workflow="debug"
-- Changing env vars/subdomains → zerops_workflow action="start" workflow="configure"
+- Deploying, fixing, or investigating → zerops_workflow action="start" workflow="deploy"
+- Setting up CI/CD → zerops_workflow action="start" workflow="cicd"
+- Env vars → zerops_env action="set|delete" (reload after: zerops_manage action="reload")
 - Scaling a service → zerops_scale (simple) or zerops_knowledge query="scaling" (need guidance)
 - Restarting/reloading → zerops_manage action="restart" serviceHostname="..."
 - Need Zerops knowledge → zerops_knowledge query="..."

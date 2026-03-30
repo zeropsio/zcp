@@ -4,12 +4,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // stubMounter is a minimal Mounter for tool-layer tests.
@@ -71,9 +73,23 @@ func (s *stubMounter) CleanupUnit(_ context.Context, _ string) error {
 }
 
 func mountServer(mock platform.Client, mounter ops.Mounter) *mcp.Server {
+	return mountServerWithEngine(mock, mounter, nil)
+}
+
+func mountServerWithEngine(mock platform.Client, mounter ops.Mounter, engine *workflow.Engine) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{})
+	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, engine)
 	return srv
+}
+
+// mountServerWithSession creates a server with an active bootstrap session for mount guard tests.
+func mountServerWithSession(t *testing.T, mock platform.Client, mounter ops.Mounter) *mcp.Server {
+	t.Helper()
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+	if _, err := engine.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("bootstrap start: %v", err)
+	}
+	return mountServerWithEngine(mock, mounter, engine)
 }
 
 func TestMountTool_Mount(t *testing.T) {
@@ -83,7 +99,7 @@ func TestMountTool_Mount(t *testing.T) {
 		{ID: "svc-1", Name: "app"},
 	})
 	mounter := newStubMounter()
-	srv := mountServer(mock, mounter)
+	srv := mountServerWithSession(t, mock, mounter)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
 		"action":          "mount",
@@ -257,7 +273,7 @@ func TestMountTool_ServiceNotFound(t *testing.T) {
 		{ID: "svc-1", Name: "app"},
 	})
 	mounter := newStubMounter()
-	srv := mountServer(mock, mounter)
+	srv := mountServerWithSession(t, mock, mounter)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
 		"action":          "mount",
@@ -295,5 +311,49 @@ func TestMountTool_UnmountOrphanUnit(t *testing.T) {
 	}
 	if parsed.Status != "UNIT_CLEANED" {
 		t.Errorf("status = %s, want UNIT_CLEANED", parsed.Status)
+	}
+}
+
+func TestMountTool_MountBlockedWithoutWorkflow(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "app"},
+	})
+	mounter := newStubMounter()
+	// Engine without active session — mount should be blocked.
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+	srv := mountServerWithEngine(mock, mounter, engine)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action":          "mount",
+		"serviceHostname": "app",
+	})
+
+	if !result.IsError {
+		t.Error("mount action should be blocked without active workflow session")
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "workflow") {
+		t.Errorf("error should mention workflow, got: %s", text)
+	}
+}
+
+func TestMountTool_StatusAllowedWithoutWorkflow(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "app"},
+	})
+	mounter := newStubMounter()
+	// No engine — status should still work.
+	srv := mountServer(mock, mounter)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action": "status",
+	})
+
+	if result.IsError {
+		t.Errorf("status action should work without workflow, got error: %s", getTextContent(t, result))
 	}
 }

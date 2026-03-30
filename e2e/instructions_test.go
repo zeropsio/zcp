@@ -206,9 +206,9 @@ func TestE2E_Instructions_AdoptionWording(t *testing.T) {
 
 	inst := server.BuildInstructions(ctx, h.client, h.projectID, runtime.Info{}, "")
 
-	// Routing instructions should mention adoption and debug.
-	if !strings.Contains(inst, "Investigate/fix bugs") {
-		t.Error("routing should mention debug workflow for investigating bugs")
+	// Routing instructions should mention adoption and deploy (which covers fix/investigate).
+	if !strings.Contains(inst, "deploy") {
+		t.Error("routing should mention deploy workflow")
 	}
 	if !strings.Contains(inst, "Adopt existing") {
 		t.Error("routing should mention adopting existing services")
