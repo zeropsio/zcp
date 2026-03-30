@@ -196,15 +196,6 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 		liveIDs[sessionID] = true // about to be created
 		cleanOrphanedFiles(stateDir, liveIDs)
 
-		// Check bootstrap exclusivity.
-		if workflowName == WorkflowBootstrap {
-			for _, s := range reg.Sessions {
-				if s.Workflow == WorkflowBootstrap {
-					return reg, fmt.Errorf("init session atomic: bootstrap already active (session %s, PID %d)", s.SessionID, s.PID)
-				}
-			}
-		}
-
 		// Write state file while holding the lock.
 		if err := saveSessionState(stateDir, sessionID, state); err != nil {
 			return reg, err

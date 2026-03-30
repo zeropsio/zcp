@@ -26,28 +26,28 @@ func handleDeployStart(ctx context.Context, engine *workflow.Engine, client plat
 			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
 	}
 
-	// Reject incomplete metas (bootstrap started but didn't finish).
+	// Filter to complete runtime services. Incomplete metas (bootstrap in progress)
+	// are skipped — they need bootstrap to finish first.
+	var runtimeMetas []*workflow.ServiceMeta
+	var skippedIncomplete []string
 	for _, m := range metas {
 		if !m.IsComplete() {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Service %q was provisioned but bootstrap didn't complete", m.Hostname),
-				"Run bootstrap first to finish setup: action=\"start\" workflow=\"bootstrap\"")), nil, nil
+			skippedIncomplete = append(skippedIncomplete, m.Hostname)
+			continue
 		}
-	}
-
-	// Filter to runtime services only (those with a type that has a mode).
-	var runtimeMetas []*workflow.ServiceMeta
-	for _, m := range metas {
 		if m.Mode != "" || m.StageHostname != "" {
 			runtimeMetas = append(runtimeMetas, m)
 		}
 	}
 	if len(runtimeMetas) == 0 {
+		msg := "No deployable runtime services found"
+		suggestion := "Run bootstrap first: action=\"start\" workflow=\"bootstrap\""
+		if len(skippedIncomplete) > 0 {
+			msg = fmt.Sprintf("No deployable services — %v still bootstrapping (incomplete)", skippedIncomplete)
+			suggestion = "Finish bootstrap for those services first, then start deploy"
+		}
 		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"No runtime services found in service metas",
-			"Only managed services exist — nothing to deploy")), nil, nil
+			platform.ErrInvalidParameter, msg, suggestion)), nil, nil
 	}
 
 	// Strategy check: if any runtime service has no strategy, present selection guidance.

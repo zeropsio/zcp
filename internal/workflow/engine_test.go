@@ -218,9 +218,9 @@ func TestEngine_Start_ActiveSessionBlocks(t *testing.T) {
 	}
 }
 
-// --- Bootstrap exclusivity tests ---
+// --- Bootstrap per-service scoping tests ---
 
-func TestEngine_BootstrapExclusivity(t *testing.T) {
+func TestEngine_BootstrapParallelAllowed(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng1 := NewEngine(dir, EnvLocal, nil)
@@ -230,10 +230,9 @@ func TestEngine_BootstrapExclusivity(t *testing.T) {
 		t.Fatalf("first BootstrapStart: %v", err)
 	}
 
-	// Second bootstrap on different engine should fail.
-	_, err := eng2.BootstrapStart("proj-1", "second bootstrap")
-	if err == nil {
-		t.Fatal("expected error for second bootstrap (exclusivity)")
+	// Second bootstrap on different engine should succeed (per-service, not global).
+	if _, err := eng2.BootstrapStart("proj-1", "second bootstrap"); err != nil {
+		t.Fatalf("second BootstrapStart should succeed (no global exclusivity): %v", err)
 	}
 }
 
@@ -257,6 +256,73 @@ func TestEngine_BootstrapExclusivity_DeadPID(t *testing.T) {
 	_, err := eng.BootstrapStart("proj-1", "test")
 	if err != nil {
 		t.Fatalf("BootstrapStart should succeed after dead PID pruned: %v", err)
+	}
+}
+
+func TestEngine_HostnameLock_BlocksSameService(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng1 := NewEngine(dir, EnvContainer, nil)
+
+	// Start first bootstrap and submit plan for "appdev".
+	if _, err := eng1.BootstrapStart("proj-1", "first"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	_, err := eng1.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("CompletePlan: %v", err)
+	}
+	// Provision step creates incomplete metas.
+	if _, err := eng1.BootstrapComplete(context.Background(), "provision", "provisioned", nil); err != nil {
+		t.Fatalf("Complete provision: %v", err)
+	}
+
+	// Second engine tries to bootstrap the SAME hostname.
+	eng2 := NewEngine(dir, EnvContainer, nil)
+	if _, err := eng2.BootstrapStart("proj-1", "second"); err != nil {
+		t.Fatalf("second BootstrapStart: %v", err)
+	}
+	_, err = eng2.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil)
+	if err == nil {
+		t.Fatal("expected error: same hostname locked by first session")
+	}
+	if !strings.Contains(err.Error(), "being bootstrapped") {
+		t.Errorf("error should mention hostname lock, got: %v", err)
+	}
+}
+
+func TestEngine_HostnameLock_AllowsDifferentService(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng1 := NewEngine(dir, EnvContainer, nil)
+
+	// Start first bootstrap for "appdev".
+	if _, err := eng1.BootstrapStart("proj-1", "first"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	if _, err := eng1.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil); err != nil {
+		t.Fatalf("CompletePlan: %v", err)
+	}
+	if _, err := eng1.BootstrapComplete(context.Background(), "provision", "provisioned", nil); err != nil {
+		t.Fatalf("Complete provision: %v", err)
+	}
+
+	// Second engine bootstraps DIFFERENT hostname — should succeed.
+	eng2 := NewEngine(dir, EnvContainer, nil)
+	if _, err := eng2.BootstrapStart("proj-1", "second"); err != nil {
+		t.Fatalf("second BootstrapStart: %v", err)
+	}
+	_, err := eng2.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "webdev", Type: "nodejs@22"},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("different hostname should not be blocked: %v", err)
 	}
 }
 
@@ -941,9 +1007,9 @@ func TestInitSessionAtomic_BootstrapExclusivity(t *testing.T) {
 		errContains string
 	}{
 		{
-			"second_bootstrap_blocked",
+			"second_bootstrap_allowed",
 			"bootstrap", "bootstrap",
-			true, "bootstrap already active",
+			false, "",
 		},
 		{
 			"deploy_after_bootstrap_ok",
