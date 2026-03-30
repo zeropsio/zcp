@@ -212,6 +212,13 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
 	}
 
+	// Per-hostname lock: reject if any target hostname has an incomplete meta
+	// from a DIFFERENT session that is still alive. Orphaned metas (dead session)
+	// are safe to overwrite — the new bootstrap takes ownership.
+	if err := e.checkHostnameLocks(targets); err != nil {
+		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
+	}
+
 	defaultedSet := make(map[string]bool, len(defaulted))
 	for _, h := range defaulted {
 		defaultedSet[h] = true
@@ -337,6 +344,44 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 	}
 	e.sessionID = sessionID
 	return state, nil
+}
+
+// checkHostnameLocks verifies that no target hostname is locked by another active session.
+// A hostname is locked when it has an incomplete ServiceMeta from a different session
+// whose process is still alive. Orphaned metas (dead/missing session) are unlocked.
+func (e *Engine) checkHostnameLocks(targets []BootstrapTarget) error {
+	sessions, _ := ListSessions(e.stateDir)
+	sessionPIDs := make(map[string]int, len(sessions))
+	for _, s := range sessions {
+		sessionPIDs[s.SessionID] = s.PID
+	}
+
+	for _, target := range targets {
+		hostnames := []string{target.Runtime.DevHostname}
+		if stage := target.Runtime.StageHostname(); stage != "" {
+			hostnames = append(hostnames, stage)
+		}
+		for _, hostname := range hostnames {
+			meta, err := ReadServiceMeta(e.stateDir, hostname)
+			if err != nil || meta == nil {
+				continue // no meta = no lock
+			}
+			if meta.IsComplete() {
+				continue // completed = not locked
+			}
+			if meta.BootstrapSession == e.sessionID {
+				continue // our own session = not locked
+			}
+			// Incomplete meta from another session — check if alive.
+			pid, inRegistry := sessionPIDs[meta.BootstrapSession]
+			if inRegistry && isProcessAlive(pid) {
+				return fmt.Errorf("service %q is being bootstrapped by session %s (PID %d) — finish or reset that session first",
+					hostname, meta.BootstrapSession, pid)
+			}
+			// Dead/missing session = orphaned meta, safe to overwrite.
+		}
+	}
+	return nil
 }
 
 // loadState loads state for the current session.

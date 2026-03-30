@@ -33,7 +33,7 @@ graph TB
     Tool -->|"start/complete/skip/iterate/resume/status"| Engine["Workflow Engine<br/>(workflow/engine.go)"]
     Engine -->|"read/write"| Session["Session State<br/>(.zcp/state/sessions/{id}.json)"]
     Engine -->|"write on completion"| Meta["Service Metas<br/>(.zcp/state/services/{hostname}.json)"]
-    Engine -->|"exclusive lock"| Registry["Session Registry<br/>(.zcp/state/registry.json)"]
+    Engine -->|"per-service lock"| Registry["Session Registry<br/>(.zcp/state/registry.json)"]
 
     Engine -->|"assemble guidance"| Guidance["Guidance Assembly<br/>(bootstrap_guidance.go)"]
     Guidance -->|"extract sections"| Content["Embedded Content<br/>(bootstrap.md / deploy.md)"]
@@ -61,7 +61,7 @@ The workflow system is a **step-based state machine** that guides an AI agent th
 ### 3.1 Lifecycle Overview
 
 **Entry**: `zerops_workflow action="start" workflow="bootstrap"`
-- Creates exclusive session (only one bootstrap at a time, enforced via registry lock)
+- Creates session (multiple bootstraps can coexist for different services)
 - Sets first step (discover) to `in_progress`
 - Returns available stack catalog for type validation
 
@@ -70,7 +70,7 @@ The workflow system is a **step-based state machine** that guides an AI agent th
 
 **Exit**: All 5 steps complete/skipped → session file deleted, ServiceMeta files written, reflog appended to CLAUDE.md.
 
-**Exclusivity**: Only one bootstrap session can be active per project. Enforced by `InitSessionAtomic()` with file-based lock on `.zcp/state/.registry.lock`.
+**Exclusivity**: Per-service, not global. Multiple bootstrap sessions can coexist for different services. Same-hostname lock enforced by `checkHostnameLocks()` at discover step — blocks if an incomplete ServiceMeta exists from another alive session. Orphaned metas (dead session) auto-unlock.
 
 ```mermaid
 flowchart TD
@@ -623,8 +623,8 @@ See `docs/spec-guidance-philosophy.md` for the full guidance delivery specificat
 | # | Gate | Check | Behavior |
 |---|------|-------|----------|
 | 1 | Metas exist | `ListServiceMetas()` | Error: "Run bootstrap first" |
-| 2 | Metas complete | `IsComplete()` — `BootstrappedAt != ""` | Error: "bootstrap didn't complete" |
-| 3 | Runtime services | `Mode != "" \|\| StageHostname != ""` | Error: "nothing to deploy" |
+| 2 | Incomplete filtered | `IsComplete()` — `BootstrappedAt != ""` | Incomplete metas skipped (warning), only complete metas proceed |
+| 3 | Runtime services | `Mode != "" \|\| StageHostname != ""` (among complete metas) | Error: "nothing to deploy" (lists incomplete services if any) |
 | 4 | Strategy set | `DeployStrategy != ""` | Soft gate: returns strategy selection guidance |
 | 5 | All manual | `allManualStrategy()` | Soft gate: returns manual redirect with deploy commands (no session) |
 | 6 | Strategy consistent | All targets same strategy | Error: "mixed strategies not supported" |
@@ -892,7 +892,7 @@ Bootstrap has wider ranges because it allows up to 10 iterations (configurable v
 
 | ID | Invariant | Enforced by |
 |----|-----------|-------------|
-| I1 | Only one bootstrap session active at any time | `InitSessionAtomic()` with registry lock |
+| I1 | Per-service bootstrap exclusivity — same hostname blocks, different hostnames coexist | `checkHostnameLocks()` at discover step |
 | I2 | Step completion requires attestation ≥ 10 chars | `CompleteStep()` validation |
 | I3 | Steps progress strictly in order | `CompleteStep()` name-matching check |
 | I4 | discover/provision always mandatory; generate/deploy/close skippable only for managed-only (no runtime targets) | `validateSkip()` |

@@ -29,17 +29,30 @@ func Route(input RouterInput) []FlowOffering {
 	// Filter stale metas: only keep metas whose hostname is in LiveServices.
 	metas := filterStaleMetas(input.ServiceMetas, input.LiveServices)
 
-	// 1. Incomplete bootstrap → resume.
-	if hasIncompleteMetas(metas) {
-		offerings := []FlowOffering{{
-			Workflow: "bootstrap",
-			Priority: 1,
-			Hint:     resumeHint(input.ActiveSessions),
-		}}
-		return appendUtilities(offerings)
+	// Separate complete and incomplete metas.
+	var completeMetas []*ServiceMeta
+	var incompleteMetas []*ServiceMeta
+	for _, m := range metas {
+		if m.IsComplete() {
+			completeMetas = append(completeMetas, m)
+		} else {
+			incompleteMetas = append(incompleteMetas, m)
+		}
 	}
 
 	var offerings []FlowOffering
+
+	// 1. Incomplete bootstrap → offer resume alongside other offerings (not exclusive).
+	if len(incompleteMetas) > 0 {
+		offerings = append(offerings, FlowOffering{
+			Workflow: "bootstrap",
+			Priority: 1,
+			Hint:     resumeHint(input.ActiveSessions),
+		})
+	}
+
+	// Use completeMetas for strategy-based offerings below.
+	metas = completeMetas
 
 	// 2. Unmanaged runtimes exist → adoption as priority 1.
 	if len(input.UnmanagedRuntimes) > 0 {
@@ -114,17 +127,6 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 		}
 	}
 	return result
-}
-
-// hasIncompleteMetas returns true if any meta has no BootstrappedAt set,
-// indicating a bootstrap that started but didn't finish.
-func hasIncompleteMetas(metas []*ServiceMeta) bool {
-	for _, m := range metas {
-		if !m.IsComplete() {
-			return true
-		}
-	}
-	return false
 }
 
 // strategyOfferings creates offerings based on the dominant deploy strategy across metas.
