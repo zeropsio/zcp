@@ -281,21 +281,36 @@ func TestBuildWorkflowHint_NoSessions_ReturnsEmpty(t *testing.T) {
 	}
 }
 
-// --- containerEnvironment principle tests ---
+// --- instruction content tests ---
 
-func TestContainerEnvironment_SSHPrinciple(t *testing.T) {
+func TestBaseInstructions_ContainsWorkflowDirective(t *testing.T) {
 	t.Parallel()
-	for _, want := range []string{"ALL commands and processes", "Live service filesystems", "file → mount"} {
+	for _, want := range []string{"Before ANY work", "workflow", "debug", "bootstrap", "deploy"} {
+		if !strings.Contains(baseInstructions, want) {
+			t.Errorf("baseInstructions should contain %q", want)
+		}
+	}
+}
+
+func TestContainerEnvironment_Compact(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{"SSHFS", "ssh", "/var/www/"} {
 		if !strings.Contains(containerEnvironment, want) {
 			t.Errorf("containerEnvironment should contain %q", want)
 		}
 	}
 }
 
-func TestContainerEnvironment_NoHardcodedDeployWorkflow(t *testing.T) {
+func TestInstructions_FitIn2KB(t *testing.T) {
 	t.Parallel()
-	if strings.Contains(containerEnvironment, `action="start" workflow="deploy"`) {
-		t.Error("containerEnvironment should not hardcode deploy workflow command")
+	containerStatic := baseInstructions + routingInstructions + containerEnvironment
+	localStatic := baseInstructions + routingInstructions + localEnvironment
+	const limit = 2048
+	if len(containerStatic) > limit {
+		t.Errorf("container static instructions = %d bytes, must be under %d to leave room for dynamic content", len(containerStatic), limit)
+	}
+	if len(localStatic) > limit {
+		t.Errorf("local static instructions = %d bytes, must be under %d to leave room for dynamic content", len(localStatic), limit)
 	}
 }
 
@@ -458,26 +473,26 @@ func TestBuildProjectSummary_BadMetasDir_Graceful(t *testing.T) {
 	}
 }
 
-// --- Routing instruction tests ---
+// --- Base instruction content tests ---
 
-func TestRoutingInstructions_HasAdoptionLine(t *testing.T) {
+func TestBaseInstructions_HasAdoptionLine(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(routingInstructions, "Adopt existing") {
-		t.Error("routingInstructions should mention adopting existing services")
+	if !strings.Contains(baseInstructions, "adopt") {
+		t.Error("baseInstructions should mention adopting services")
 	}
 }
 
-func TestRoutingInstructions_HasKnowledgeMention(t *testing.T) {
+func TestBaseInstructions_HasDirectTools(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(routingInstructions, "platform knowledge") {
-		t.Error("routingInstructions should mention platform knowledge injection")
+	if !strings.Contains(baseInstructions, "zerops_scale") {
+		t.Error("baseInstructions should list direct tools")
 	}
 }
 
-func TestRoutingInstructions_TrackedModeSyntax(t *testing.T) {
+func TestBaseInstructions_TrackedModeSyntax(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(routingInstructions, `action="start"`) {
-		t.Error("routingInstructions should use tracked mode syntax")
+	if !strings.Contains(baseInstructions, `action="start"`) {
+		t.Error("baseInstructions should use tracked mode syntax")
 	}
 }
 

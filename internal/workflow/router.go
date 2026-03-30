@@ -198,7 +198,7 @@ func FormatOfferings(offerings []FlowOffering) string {
 	var b []byte
 	b = append(b, "Available workflows:"...)
 	for _, o := range offerings {
-		b = append(b, fmt.Sprintf("\n  [p%d] %s — %s", o.Priority, o.Workflow, o.Hint)...)
+		b = append(b, fmt.Sprintf("\n- %s: %s", o.Workflow, o.Hint)...)
 	}
 	return string(b)
 }

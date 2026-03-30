@@ -127,40 +127,26 @@ func TestServer_Instructions(t *testing.T) {
 	}
 }
 
-func TestServer_Instructions_ReasonableLength(t *testing.T) {
+func TestServer_Instructions_FitIn2KB(t *testing.T) {
 	t.Parallel()
-	// baseInstructions is short; routing is in routingInstructions.
-	// Check combined constant length is reasonable.
-	combined := baseInstructions + routingInstructions
-	words := strings.Fields(combined)
-	if len(words) < 20 || len(words) > 220 {
-		t.Errorf("base+routing instructions has %d words, expected 20-220", len(words))
+	// MCP instructions are capped at 2KB by Claude Code v2.1.84+.
+	// Static instructions must leave room for dynamic content (service listing, router).
+	containerStatic := baseInstructions + routingInstructions + containerEnvironment
+	if len(containerStatic) > 800 {
+		t.Errorf("container static instructions = %d bytes, want < 800 to leave room for dynamic content", len(containerStatic))
 	}
 }
 
-func TestServer_RoutingInstructions_WorkflowFirst(t *testing.T) {
+func TestServer_BaseInstructions_WorkflowDirective(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(routingInstructions, "workflow sessions") {
-		t.Error("routingInstructions should mention 'workflow sessions'")
+	if !strings.Contains(baseInstructions, "Before ANY work") {
+		t.Error("baseInstructions should contain workflow directive")
 	}
-	if !strings.Contains(routingInstructions, "start a workflow session") {
-		t.Error("routingInstructions should direct to start a workflow session")
+	if !strings.Contains(baseInstructions, `action="start"`) {
+		t.Error("baseInstructions should use tracked mode syntax")
 	}
-	if strings.Contains(routingInstructions, "NEVER") {
-		t.Error("routingInstructions should not use 'NEVER' language")
-	}
-}
-
-func TestServer_RoutingInstructions_TrackedMode(t *testing.T) {
-	t.Parallel()
-	// All routing entries must use tracked mode syntax (action="start"), not legacy workflow="name".
-	if !strings.Contains(routingInstructions, `action="start"`) {
-		t.Error("routingInstructions should use tracked mode syntax")
-	}
-	// Legacy bare workflow= format should not appear in routing.
-	// We check that there's no "workflow=\"bootstrap\" (REQUIRED" which was the old format.
-	if strings.Contains(routingInstructions, `workflow="bootstrap" (REQUIRED`) {
-		t.Error("routingInstructions should not use legacy workflow= format")
+	if !strings.Contains(baseInstructions, "bootstrap") {
+		t.Error("baseInstructions should mention bootstrap workflow")
 	}
 }
 

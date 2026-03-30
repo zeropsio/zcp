@@ -14,63 +14,26 @@ import (
 
 const sshfsMountBase = "/var/www"
 
-const baseInstructions = `ZCP manages Zerops PaaS infrastructure.`
+const baseInstructions = `ZCP manages Zerops PaaS infrastructure.
+Before ANY work on service code (reading, debugging, fixing, deploying), start a workflow:
+  zerops_workflow action="start" workflow="..."
+  debug — investigate/fix    bootstrap — create/adopt services
+  deploy — push code         configure — env vars, subdomains
+Direct tools (no workflow): zerops_scale, zerops_manage, zerops_deploy (manual strategy), zerops_discover, zerops_knowledge`
 
 const containerEnvironment = `
-
-## Your Role
-
-You are the orchestrator. This container is the control plane — it does NOT serve user traffic, run application code, or host databases. Your job is to create, configure, deploy, and manage OTHER services in the project. All user-facing work happens on those services, never on this container.
-
-### Code Access — Two Mechanisms
-
-**SSHFS mount** (/var/www/{hostname}/): Live service filesystems — these are NOT local files. Changes appear instantly on running containers. Use Read/Write/Edit tools normally.
-IMPORTANT: /var/www/ (no hostname) is THIS container's own filesystem — not a service.
-IMPORTANT: Before reading, debugging, auditing, or modifying any file under /var/www/{hostname}/, ALWAYS start a workflow session first (debug, bootstrap, or deploy). The workflow gives you platform context — runtime specifics, env var wiring, framework recipes, deploy constraints. Without it you are operating blind on a live service.
-
-**SSH** (ssh {hostname} "command"): For ALL commands and processes on services. Package installs, builds, git operations, server management, debugging — everything that isn't file read/write goes through SSH.
-Example: ssh appdev "cd /var/www && npm install"
-
-Rule: If it's a file → mount. If it's a command → SSH. Running commands over the SSHFS network mount is orders of magnitude slower and may fail.
-
-### Persistence
-File edits on mount survive restarts but not deploys (deploy = new container, only deployFiles content persists). Deploy when: zerops.yml changes, clean rebuild needed, or promote dev → stage. Code-only changes on dev: just restart the server via SSH — no redeploy needed.
-
-zerops_discover always returns the CURRENT state of all services. Call it whenever you need to refresh your understanding.`
+Control plane container — manages OTHER services, does not serve traffic.
+Files: /var/www/{hostname}/ = SSHFS mount to live service (not local). Commands: ssh {hostname} "..."
+Edits on mount survive restarts but not deploys. zerops_discover refreshes service state.`
 
 const localEnvironment = `
+Local machine — code in working directory, infrastructure on Zerops.
+Deploy: zcli push (zerops.yml at repo root, each deploy = new container).
+zerops_discover refreshes service state.`
 
-## Your Role
-
-You are managing a Zerops project from a local machine. Code is in the working directory. All infrastructure (services, databases, storage) lives on Zerops — you create and manage it through workflow sessions.
-
-### Deployment
-Push code to Zerops via zcli push. zerops.yml must be at repository root. Each deploy = full rebuild + new container.
-
-IMPORTANT: Before reading, debugging, auditing, or modifying code for any Zerops service, ALWAYS start a workflow session first (debug, bootstrap, or deploy). The workflow gives you platform context — runtime specifics, env var wiring, framework recipes, deploy constraints. Without it you are writing code without knowing how the platform will run it.
-
-zerops_discover always returns the CURRENT state of all services. Call it whenever you need to refresh your understanding.`
-
-const routingInstructions = `
-IMPORTANT: Zerops operations use two approaches:
-
-workflow sessions — for any work that involves service code (reading, debugging, fixing, writing, deploying):
-- Investigate/fix bugs on a service: zerops_workflow action="start" workflow="debug"
-- Create new services: zerops_workflow action="start" workflow="bootstrap"
-- Adopt existing services into ZCP: zerops_workflow action="start" workflow="bootstrap" (isExisting=true)
-- Deploy code: zerops_workflow action="start" workflow="deploy"
-- Configure (env vars, subdomains): zerops_workflow action="start" workflow="configure"
-- CI/CD setup: zerops_workflow action="start" workflow="cicd"
-- Check workflow state: zerops_workflow action="status"
-
-Direct tools — for simple operational tasks (no code changes):
-- Scale a service: zerops_scale serviceHostname="..."
-- Deploy directly (manual strategy): zerops_deploy targetService="..."
-- Manage lifecycle (start/stop/restart/reload): zerops_manage action="..." serviceHostname="..."
-- Search docs: zerops_knowledge query="..."
-- Monitor state: zerops_discover
-
-Before reading or modifying any file on a service, start a workflow session. Workflows inject platform knowledge (runtime docs, framework recipes, deploy constraints) and discover env vars. This applies to debugging, auditing, and fixing existing code — not just creating new services. For operational tasks that don't touch code (scaling, restarting, checking status), use tools directly.`
+// routingInstructions is intentionally empty — routing merged into baseInstructions
+// to fit within the 2KB MCP instructions limit (Claude Code v2.1.84+).
+const routingInstructions = ``
 
 // BuildInstructions returns the MCP instructions message injected into the system prompt.
 // It includes base + routing (first), workflow hint, runtime context, and project summary.
