@@ -103,12 +103,25 @@ pull_runtimes() {
     readme_content=$(fetch_file "${local_dir}/README.md" "${GITHUB_ORG}/${repo}" "README.md")
     [[ -z "$readme_content" ]] && continue
 
-    # Extract knowledge-base fragment
+    # Extract knowledge-base fragment (may not exist yet — that's OK)
     local kb_content
     kb_content=$(echo "$readme_content" \
       | sed -n '/ZEROPS_EXTRACT_START:knowledge-base/,/ZEROPS_EXTRACT_END:knowledge-base/p' \
       | grep -v 'ZEROPS_EXTRACT' || true)
-    [[ -z "$kb_content" ]] && continue
+
+    # If no fragment in README, keep existing knowledge-base sections from current file
+    # (everything before ## zerops.yml). This preserves the seed content until the
+    # app repo gets a proper knowledge-base fragment.
+    local kb_from_existing=""
+    if [[ -z "$kb_content" && -f "$target" ]]; then
+      kb_from_existing=$(awk '/^## zerops\.yml/{exit} {print}' "$target" | sed '1{/^# /d;}')
+    fi
+
+    # Need at least one source of knowledge-base content
+    if [[ -z "$kb_content" && -z "$kb_from_existing" ]]; then
+      echo "  SKIP ${runtime}: no knowledge-base fragment in README and no existing file"
+      continue
+    fi
 
     # Determine H1 title
     local h1=""
@@ -132,7 +145,11 @@ pull_runtimes() {
     {
       echo "$h1"
       echo ""
-      echo "$kb_content" | sed 's/^### /## /'
+      if [[ -n "$kb_content" ]]; then
+        echo "$kb_content" | sed 's/^### /## /'
+      else
+        echo "$kb_from_existing"
+      fi
       echo ""
 
       if [[ -n "$yaml_content" ]]; then

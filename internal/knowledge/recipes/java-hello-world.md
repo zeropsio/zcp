@@ -1,6 +1,7 @@
 # Java Hello World on Zerops
 
 
+
 ## Keywords
 java, jdk, maven, gradle, spring, spring-boot, fat jar, zerops.yml, mvn
 
@@ -55,3 +56,128 @@ Without `<finalName>` in pom.xml, JAR name includes version: `target/{artifactId
 
 **Dev deploy**: `deployFiles: [.]`, install maven in prepareCommands, `start: zsc noop --silent` (idle container -- agent starts `mvn -q compile exec:java` manually via SSH for iteration)
 **Prod deploy**: `buildCommands: [mvn -q clean package -DskipTests]`, `deployFiles: target/app.jar`, `start: java -jar target/app.jar`
+
+## zerops.yml
+
+> Reference implementation — learn the patterns, adapt to your project.
+
+```yaml
+# The 'prod' setup compiles an optimized Spring Boot fat JAR
+# for deployment. The 'dev' setup ships source code alongside
+# the pre-built JAR so developers can SSH in, edit files, and
+# rebuild freely using the pre-installed mvn and java tools.
+zerops:
+  - setup: prod
+    build:
+      base: java@21
+
+      # Compile and package the Spring Boot fat JAR.
+      # '-DskipTests' is intentional — integration tests
+      # belong in CI pipelines, not in the Zerops build
+      # container. Maven 3.9 is pre-installed on java@21.
+      buildCommands:
+        - mvn clean package -DskipTests
+
+      # One file covers both the app and migration entry points.
+      # ZIP layout in pom.xml enables PropertiesLauncher, which
+      # reads -Dloader.main at runtime to switch between them.
+      deployFiles:
+        - target/app.jar
+
+      # Maven resolves dependencies into ~/.m2 (outside the build
+      # directory). 'cache: true' snapshots the build container
+      # image — including ~/.m2 — so subsequent builds skip
+      # downloading the dependency graph from Maven Central.
+      cache: true
+
+    # Zerops runs the readiness check after each new runtime
+    # container starts and before it receives traffic from the
+    # project balancer. Containers that fail are replaced,
+    # not promoted.
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 8080
+          path: /
+
+    run:
+      base: java@21
+
+      # Run the migration exactly once per deployed version.
+      # 'zsc execOnce ${appVersionId}' ensures a single container
+      # executes even when minContainers > 1 — others wait.
+      # In initCommands (not buildCommands) so migration and
+      # new code are always deployed together atomically.
+      #
+      # PropertiesLauncher (ZIP layout) reads -Dloader.main
+      # to invoke Migrate.main() directly — no Spring context
+      # is created, just a plain JDBC connection.
+      initCommands:
+        - zsc execOnce ${appVersionId} -- java -Dloader.main=io.zerops.recipe.Migrate -jar target/app.jar
+
+      ports:
+        - port: 8080
+          httpSupport: true
+
+      # Env vars follow '{hostname}_{credential}' — for the 'db'
+      # service: db_hostname, db_port, db_user, db_password.
+      # DB_NAME matches the database name Zerops creates (same
+      # as the service hostname).
+      envVariables:
+        DB_NAME: db
+        DB_HOST: ${db_hostname}
+        DB_PORT: ${db_port}
+        DB_USER: ${db_user}
+        DB_PASS: ${db_password}
+
+      start: java -jar target/app.jar
+
+  - setup: dev
+    build:
+      base: java@21
+
+      # Build the fat JAR during the build phase so that
+      # target/app.jar is available for the initCommands
+      # migration and for quick test runs after SSH.
+      buildCommands:
+        - mvn clean package -DskipTests
+
+      # Deploy source for editing and the compiled JAR for
+      # running migrations and the app. target/ is excluded
+      # to avoid shipping hundreds of MB of build artifacts —
+      # only app.jar is needed. Developers rebuild with
+      # 'mvn package' or run directly with 'mvn spring-boot:run'.
+      # zerops.yaml is included so 'zcli push' works from SSH.
+      deployFiles:
+        - ./src
+        - ./pom.xml
+        - ./zerops.yaml
+        - target/app.jar
+
+      cache: true
+
+    run:
+      base: java@21
+
+      # Migration runs identically to prod — same JAR,
+      # same zsc execOnce guard.
+      initCommands:
+        - zsc execOnce ${appVersionId} -- java -Dloader.main=io.zerops.recipe.Migrate -jar target/app.jar
+
+      ports:
+        - port: 8080
+          httpSupport: true
+
+      envVariables:
+        DB_NAME: db
+        DB_HOST: ${db_hostname}
+        DB_PORT: ${db_port}
+        DB_USER: ${db_user}
+        DB_PASS: ${db_password}
+
+      # Dev container stays idle. SSH in and use the pre-installed
+      # tools: 'mvn spring-boot:run' for hot-reload development,
+      # or 'java -jar target/app.jar' to run the compiled binary.
+      # Database is already migrated and ready when you connect.
+      start: zsc noop --silent
+```
