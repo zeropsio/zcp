@@ -17,9 +17,10 @@ const sshfsMountBase = "/var/www"
 const baseInstructions = `ZCP manages Zerops PaaS infrastructure.
 Before ANY work on service code (reading, debugging, fixing, deploying), start a workflow:
   zerops_workflow action="start" workflow="..."
-  debug — investigate/fix    bootstrap — create/adopt services
-  deploy — push code         configure — env vars, subdomains
-Direct tools (no workflow): zerops_scale, zerops_manage, zerops_deploy (manual strategy), zerops_discover, zerops_knowledge`
+  deploy — deploy, fix, or investigate services
+  bootstrap — create/adopt services
+  cicd — set up CI/CD pipelines
+Direct tools (no workflow): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_deploy (manual strategy), zerops_discover, zerops_knowledge`
 
 const containerEnvironment = `
 Control plane container — manages OTHER services, does not serve traffic.

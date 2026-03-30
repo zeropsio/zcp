@@ -845,8 +845,8 @@ func TestBuildTransitionMessage_EmptyTargets_ManagedOnly(t *testing.T) {
 	if !strings.Contains(msg, "scale") {
 		t.Error("managed-only message should offer scale tool")
 	}
-	if !strings.Contains(msg, "debug") {
-		t.Error("managed-only message should offer debug workflow")
+	if !strings.Contains(msg, "zerops_env") {
+		t.Error("managed-only message should offer env var management")
 	}
 }
 

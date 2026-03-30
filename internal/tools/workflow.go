@@ -20,7 +20,7 @@ const (
 // WorkflowInput is the input type for zerops_workflow.
 type WorkflowInput struct {
 	// Legacy: workflow name for static guidance (backward compat).
-	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, deploy, debug, configure, or cicd."`
+	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, deploy, or cicd."`
 
 	// Multi-action fields.
 	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, or route."`
@@ -44,7 +44,7 @@ type immediateResponse struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap, deploy, debug, configure, cicd. After start: action=\"complete|skip|status\" (bootstrap steps), action=\"reset|iterate|resume|list|route\".",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt services), deploy (deploy/fix/investigate), cicd (CI/CD setup). After start: action=\"complete|skip|status\" (bootstrap steps), action=\"reset|iterate|resume|list|route\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -62,7 +62,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"No workflow specified",
-				"Use workflow=\"bootstrap\", workflow=\"deploy\", or workflow=\"debug\"")), nil, nil
+				"Use workflow=\"bootstrap\", workflow=\"deploy\", or workflow=\"cicd\"")), nil, nil
 		}
 		wfContent, err := content.GetWorkflow(input.Workflow)
 		if err != nil {
@@ -139,7 +139,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Workflow %q not found: %v", input.Workflow, err),
-				"Valid workflows: bootstrap, deploy, debug, configure, cicd")), nil, nil
+				"Valid workflows: bootstrap, deploy, cicd")), nil, nil
 		}
 
 		// CI/CD: prepend service context from ServiceMeta (if available).
@@ -177,7 +177,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
-		"Valid workflows: bootstrap, deploy, debug, configure, cicd")), nil, nil
+		"Valid workflows: bootstrap, deploy, cicd")), nil, nil
 }
 
 // detectActiveWorkflow returns the active workflow type from engine state.

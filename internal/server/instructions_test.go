@@ -332,8 +332,9 @@ func TestOrientation_DevMode_ManualStrategy(t *testing.T) {
 			t.Errorf("orientation missing %q.\nGot:\n%s", want, result)
 		}
 	}
-	if strings.Contains(result, `workflow="deploy"`) {
-		t.Errorf("manual strategy should not suggest deploy workflow.\nGot:\n%s", result)
+	// Deploy workflow now covers investigation/fixing for all strategies.
+	if !strings.Contains(result, "Deploy/fix/investigate") {
+		t.Errorf("operations should include deploy/fix/investigate.\nGot:\n%s", result)
 	}
 }
 

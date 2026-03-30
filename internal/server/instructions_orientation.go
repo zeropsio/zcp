@@ -27,7 +27,7 @@ func buildPostBootstrapOrientation(cls serviceClassification) string {
 		b.WriteString("ZCP helps you manage this project. Key tools:\n")
 		b.WriteString("- zerops_knowledge query=\"...\" — runtime docs, recipes, schemas\n")
 		b.WriteString("- zerops_discover — current service state and env vars\n")
-		b.WriteString("- zerops_workflow — guided workflows (debug, configure, bootstrap)\n\n")
+		b.WriteString("- zerops_workflow — guided workflows (deploy, bootstrap, cicd)\n\n")
 
 		runtimeSeen := make(map[string]bool)
 		for _, m := range cls.bootstrapped {
@@ -76,8 +76,8 @@ func buildPostBootstrapOrientation(cls serviceClassification) string {
 	// Operations (only when bootstrapped services exist).
 	if len(cls.bootstrapped) > 0 {
 		b.WriteString("### Operations\n")
-		b.WriteString("- Debug: zerops_workflow action=\"start\" workflow=\"debug\"\n")
-		b.WriteString("- Configure: zerops_workflow action=\"start\" workflow=\"configure\"\n")
+		b.WriteString("- Deploy/fix/investigate: zerops_workflow action=\"start\" workflow=\"deploy\"\n")
+		b.WriteString("- Env vars: zerops_env action=\"set|delete\" (reload after: zerops_manage action=\"reload\")\n")
 		b.WriteString("- Scale: zerops_scale serviceHostname=\"...\"\n")
 	}
 

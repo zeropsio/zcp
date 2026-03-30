@@ -267,8 +267,7 @@ func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 		name     string
 		workflow string
 	}{
-		{"debug", "debug"},
-		{"configure", "configure"},
+		{"cicd", "cicd"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -309,7 +308,7 @@ func TestWorkflowTool_Action_Start_ImmediateNoSession(t *testing.T) {
 	// Start an immediate workflow — should NOT create a session.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
-		"workflow": "debug",
+		"workflow": "cicd",
 	})
 	if result.IsError {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))

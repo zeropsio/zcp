@@ -12,9 +12,9 @@ func TestIsImmediateWorkflow(t *testing.T) {
 		workflow string
 		want     bool
 	}{
-		{"debug", "debug", true},
+		{"debug_removed", "debug", false},
 		{"scale", "scale", false},
-		{"configure", "configure", true},
+		{"configure_removed", "configure", false},
 		{"deploy", "deploy", false},
 		{"bootstrap", "bootstrap", false},
 		{"cicd", "cicd", true},
