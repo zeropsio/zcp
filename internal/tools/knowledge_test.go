@@ -600,7 +600,7 @@ func TestKnowledgeTool_RecipeWithModeOverride(t *testing.T) {
 
 	// Without mode: no mode adaptation header.
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{
-		"recipe": "laravel",
+		"recipe": "php-hello-world",
 	})
 	text := getTextContent(t, result)
 	if strings.Contains(text, "Mode: dev") {
@@ -609,7 +609,7 @@ func TestKnowledgeTool_RecipeWithModeOverride(t *testing.T) {
 
 	// With mode=standard: mode adaptation header present with PHP-aware "omit start".
 	result = callTool(t, srv, "zerops_knowledge", map[string]any{
-		"recipe": "laravel",
+		"recipe": "php-hello-world",
 		"mode":   "standard",
 	})
 	text = getTextContent(t, result)

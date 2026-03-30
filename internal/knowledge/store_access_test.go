@@ -434,7 +434,7 @@ func TestStore_DetectRecipeRuntime(t *testing.T) {
 		{"echo-go", "go"},
 		{"dotnet", "dotnet"},
 		{"ghost", "nodejs"},
-		{"bun-hono", "bun"},
+		{"bun-hello-world", "bun"},
 		// Static-only recipes should return "" (static skipped)
 		{"angular", ""},
 		{"vue", ""},

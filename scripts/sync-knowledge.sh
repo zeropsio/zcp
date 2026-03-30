@@ -72,13 +72,12 @@ pull_guides() {
   echo "Pulled ${count} files"
 }
 
-pull_runtimes() {
-  echo "=== Pulling hello-world recipes from API → ZCP recipes ==="
-  local runtimes=(bun deno dotnet elixir gleam go java nodejs php python ruby rust)
+pull_recipes() {
+  echo "=== Pulling ALL recipes from API → ZCP recipes ==="
   local count=0
 
-  # Fetch all hello-world recipes in one API call
-  local api_url="${RECIPE_API}?filters%5BrecipeCategories%5D%5Bslug%5D=hello-world-examples&populate%5BrecipeLanguageFrameworks%5D%5Bpopulate%5D=*&populate%5BrecipeCategories%5D=true&pagination%5BpageSize%5D=100"
+  # Fetch all recipes except service-utility category
+  local api_url="${RECIPE_API}?filters%5BrecipeCategories%5D%5Bslug%5D%5B%24ne%5D=service-utility&populate%5BrecipeCategories%5D=true&populate%5BrecipeLanguageFrameworks%5D%5Bpopulate%5D=*&pagination%5BpageSize%5D=100"
   local api_response
   api_response=$(curl -sfL "$api_url" || true)
 
@@ -87,18 +86,35 @@ pull_runtimes() {
     return 1
   fi
 
-  for runtime in "${runtimes[@]}"; do
-    local slug="${runtime}-hello-world"
+  # Get all recipe slugs dynamically from the API response
+  local slugs
+  slugs=$(echo "$api_response" | jq -r '.data[].slug' 2>/dev/null)
+
+  if [[ -z "$slugs" ]]; then
+    echo "  ERROR: no recipes found in API response"
+    return 1
+  fi
+
+  mkdir -p "${ZCP_KNOWLEDGE}/recipes"
+
+  # Slug remapping for API quirks (e.g., "recipe" → "nodejs-hello-world")
+  remap_slug() {
+    case "$1" in
+      recipe) echo "nodejs-hello-world" ;;
+      *)      echo "$1" ;;
+    esac
+  }
+
+  for api_slug in $slugs; do
+    local slug
+    slug=$(remap_slug "$api_slug")
     local target="${ZCP_KNOWLEDGE}/recipes/${slug}.md"
 
-    # Extract this recipe's data from the API response
     local recipe_json
-    recipe_json=$(echo "$api_response" | jq -r --arg s "$slug" '.data[] | select(.slug == $s)' 2>/dev/null)
+    recipe_json=$(echo "$api_response" | jq -r --arg s "$api_slug" '.data[] | select(.slug == $s)' 2>/dev/null)
 
-    if [[ -z "$recipe_json" || "$recipe_json" == "null" ]]; then
-      echo "  SKIP ${runtime}: not found in API"
-      continue
-    fi
+    local name
+    name=$(echo "$recipe_json" | jq -r '.name // empty' 2>/dev/null)
 
     # Get intro (strip markdown links, collapse to single line)
     local intro
@@ -114,23 +130,6 @@ pull_runtimes() {
       | first // empty
       | .extracts["knowledge-base"]' 2>/dev/null)
 
-    # If no knowledge-base in API, keep existing content from current file
-    local kb_from_existing=""
-    if [[ -z "$kb_content" && -f "$target" ]]; then
-      kb_from_existing=$(awk '
-        /^---$/ && NR==1 { in_fm=1; next }
-        in_fm && /^---$/ { in_fm=0; next }
-        in_fm { next }
-        /^## zerops\.yml/ { exit }
-        { print }
-      ' "$target" | sed '1{/^# /d;}')
-    fi
-
-    if [[ -z "$kb_content" && -z "$kb_from_existing" ]]; then
-      echo "  SKIP ${runtime}: no knowledge-base in API and no existing file"
-      continue
-    fi
-
     # Get zerops.yaml from first service that has it
     local yaml_content
     yaml_content=$(echo "$recipe_json" | jq -r '
@@ -139,12 +138,11 @@ pull_runtimes() {
       | first // empty
       | .zeropsYaml' 2>/dev/null)
 
-    # Determine H1 title from existing file or generate
-    local h1=""
-    if [[ -f "$target" ]]; then
-      h1=$(awk '/^---$/ && NR==1{f=1;next} f && /^---$/{f=0;next} f{next} /^# /{print;exit}' "$target")
+    # Skip recipes with no useful content at all
+    if [[ -z "$kb_content" && -z "$yaml_content" && -z "$intro" ]]; then
+      echo "  SKIP ${slug}: no content in API"
+      continue
     fi
-    [[ -z "$h1" ]] && h1="# ${runtime^} Hello World on Zerops"
 
     # Build recipe file
     {
@@ -155,14 +153,13 @@ pull_runtimes() {
         echo ""
       fi
 
-      echo "$h1"
+      echo "# ${name:-$slug} on Zerops"
       echo ""
+
       if [[ -n "$kb_content" ]]; then
         echo "$kb_content" | sed 's/^### /## /'
-      else
-        echo "$kb_from_existing"
+        echo ""
       fi
-      echo ""
 
       if [[ -n "$yaml_content" ]]; then
         echo "## zerops.yml"
@@ -175,42 +172,9 @@ pull_runtimes() {
       fi
     } > "$target"
 
-    echo "  ${runtime} → recipes/${slug}.md"
+    echo "  ${slug} → recipes/${slug}.md"
     count=$((count + 1))
   done
-
-  echo "Pulled ${count} hello-world recipe files"
-}
-
-pull_recipes() {
-  echo "=== Pulling app README fragments → ZCP recipes ==="
-  local mapfile="${ZCP_ROOT}/scripts/recipe-map.txt"
-
-  if [[ ! -f "$mapfile" ]]; then
-    echo "  SKIP: no recipe-map.txt"
-    return
-  fi
-
-  local count=0
-  while IFS='=' read -r slug repo; do
-    [[ -z "$slug" || "$slug" == \#* ]] && continue
-    local target="${ZCP_KNOWLEDGE}/recipes/${slug}.md"
-
-    local readme_content
-    readme_content=$(fetch_file "${LOCAL_RECIPE_APPS}/${repo}/README.md" "${GITHUB_ORG}/${repo}" "README.md")
-    [[ -z "$readme_content" ]] && continue
-
-    local content
-    content=$(echo "$readme_content" \
-      | sed -n '/ZEROPS_EXTRACT_START:knowledge-base/,/ZEROPS_EXTRACT_END:knowledge-base/p' \
-      | grep -v 'ZEROPS_EXTRACT' || true)
-
-    if [[ -n "$content" ]]; then
-      echo "$content" > "$target"
-      echo "  ${slug}"
-      count=$((count + 1))
-    fi
-  done < "$mapfile"
 
   echo "Pulled ${count} recipe files"
 }
@@ -273,24 +237,31 @@ FRONTMATTER
   echo "Pushed ${count} guide pages"
 }
 
-push_runtimes() {
+push_recipes() {
   echo "=== Pushing ZCP recipes → app READMEs + zerops.yaml ==="
-  local runtimes=(bun deno dotnet elixir gleam go java nodejs php python ruby rust)
   local count=0
 
-  for runtime in "${runtimes[@]}"; do
-    local src="${ZCP_KNOWLEDGE}/recipes/${runtime}-hello-world.md"
-    local app_dir="${LOCAL_RECIPE_APPS}/${runtime}-hello-world-app"
-
+  for src in "${ZCP_KNOWLEDGE}/recipes/"*.md; do
     [[ -f "$src" ]] || continue
-    if [[ ! -d "$app_dir" ]]; then
-      echo "  SKIP ${runtime}: no local clone at ${app_dir}"
-      continue
+    local slug
+    slug=$(basename "$src" .md)
+
+    # Try common app-repo naming conventions
+    local app_dir=""
+    for candidate in "${LOCAL_RECIPE_APPS}/${slug}-app" "${LOCAL_RECIPE_APPS}/${slug}"; do
+      if [[ -d "$candidate" ]]; then
+        app_dir="$candidate"
+        break
+      fi
+    done
+    if [[ -z "$app_dir" ]]; then
+      continue  # no local clone, skip silently
     fi
 
     local readme="${app_dir}/README.md"
+    [[ -f "$readme" ]] || continue
 
-    # Extract knowledge-base portion (skip frontmatter, skip H1, before ## zerops.yml), demote H2→H3
+    # Extract knowledge-base portion (skip frontmatter, skip H1, stop before ## zerops.yml), demote H2→H3
     local fragment
     fragment=$(awk '
       NR==1 && /^---$/ { in_fm=1; next }
@@ -348,23 +319,11 @@ push_runtimes() {
       fi
     fi
 
-    echo "  ${runtime}"
+    echo "  ${slug}"
     count=$((count + 1))
   done
 
-  echo "Pushed ${count} hello-world recipe fragments"
-}
-
-push_recipes() {
-  echo "=== Pushing ZCP recipes → app README fragments ==="
-  local mapfile="${ZCP_ROOT}/scripts/recipe-map.txt"
-
-  if [[ ! -f "$mapfile" ]]; then
-    echo "  SKIP: no recipe-map.txt"
-    return
-  fi
-
-  echo "  TODO: same pattern as push_runtimes, using recipe-map.txt"
+  echo "Pushed ${count} recipe fragments"
 }
 
 # ============================================================
@@ -403,33 +362,30 @@ case "${1:-}" in
   pull)
     shift
     case "${1:-all}" in
-      guides)   pull_guides ;;
-      runtimes) pull_runtimes ;;
-      recipes)  pull_recipes ;;
-      all)      pull_guides; echo ""; pull_runtimes; echo ""; pull_recipes ;;
+      guides)  pull_guides ;;
+      recipes) pull_recipes ;;
+      all)     pull_guides; echo ""; pull_recipes ;;
     esac
     show_changes pull
     ;;
   push)
     shift
     case "${1:-all}" in
-      guides)   push_guides ;;
-      runtimes) push_runtimes ;;
-      recipes)  push_recipes ;;
-      all)      push_guides; echo ""; push_runtimes; echo ""; push_recipes ;;
+      guides)  push_guides ;;
+      recipes) push_recipes ;;
+      all)     push_guides; echo ""; push_recipes ;;
     esac
     show_changes push
     ;;
   *)
-    echo "Usage: $0 {pull|push} [guides|runtimes|recipes|all]"
+    echo "Usage: $0 {pull|push} [guides|recipes|all]"
     echo ""
-    echo "  pull  — Sync from canonical sources into ZCP (local clones or GitHub)"
-    echo "  push  — Push tested ZCP edits to local clones (requires local repos)"
+    echo "  pull  — Sync from canonical sources into ZCP"
+    echo "  push  — Push tested ZCP edits to local app repo clones"
     echo ""
-    echo "  guides   — docs/guides/*.mdx ↔ ZCP guides/ + decisions/"
-    echo "  runtimes — hello-world app READMEs ↔ ZCP recipes/*-hello-world"
-    echo "  recipes  — framework app READMEs ↔ ZCP recipes/ (needs recipe-map.txt)"
-    echo "  all      — all of the above (default)"
+    echo "  guides  — docs/guides/*.mdx ↔ ZCP guides/ + decisions/"
+    echo "  recipes — Recipe API ↔ ZCP recipes/ (all recipes, dynamic)"
+    echo "  all     — all of the above (default)"
     echo ""
     echo "Environment:"
     echo "  DOCS_GUIDES=/path/to/docs/guides  — override local docs location"

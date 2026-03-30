@@ -12,9 +12,9 @@ intro fragment           →     extracts.intro           →   frontmatter desc
 zerops.yaml              →     services[].zeropsYaml    →   ## zerops.yml section
 ```
 
-**Pull** (`scripts/sync-knowledge.sh pull runtimes`): one API call to `api.zerops.io` fetches all recipes with pre-parsed fragments. No raw file fetching or sed extraction — the fragment system handles parsing.
+**Pull** (`scripts/sync-knowledge.sh pull recipes`): one API call to `api.zerops.io` fetches all recipes with pre-parsed fragments. No raw file fetching or sed extraction — the fragment system handles parsing.
 
-**Push** (`scripts/sync-knowledge.sh push runtimes`): writes knowledge-base content back to local app repo clones. You review, commit, push to GitHub, then refresh the Strapi cache.
+**Push** (`scripts/sync-knowledge.sh push recipes`): writes knowledge-base content back to local app repo clones. You review, commit, push to GitHub, then refresh the Strapi cache.
 
 ## Recipe File Format
 
@@ -156,11 +156,12 @@ Add entry with name, slug, icon, categories.
 
 ### 4. Sync to ZCP
 
-Run `scripts/sync-knowledge.sh pull runtimes` to pull the new recipe into ZCP's knowledge.
+Run `scripts/sync-knowledge.sh pull recipes` to pull the new recipe into ZCP's knowledge.
 
 ## Current State
 
-- **10 of 12** runtime hello-worlds pull from API (elixir and nodejs missing from Strapi category)
-- **Bun** is fully converted to the new format (Base Image, Binding, Resource Requirements, Gotchas)
-- **Other 11** have zerops.yml from API + old-format knowledge-base content (needs cleanup per runtime)
-- **Framework recipes** (bun-hono, laravel, etc.) still use the old embedded format in `recipes/`
+- **33 recipes** pulled dynamically from Recipe API (all non-utility recipes)
+- **All recipe .md files are gitignored** — run `scripts/sync-knowledge.sh pull recipes` before build
+- **Infrastructure bases** (alpine, docker, nginx, static, ubuntu) are in `internal/knowledge/bases/` (committed)
+- **Bun** is the only recipe with `knowledge-base` fragment — others have intro + zerops.yml only
+- **elixir** is missing from API; **nodejs** has slug `recipe` (remapped to `nodejs-hello-world` by sync script)

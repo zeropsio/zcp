@@ -7,11 +7,11 @@ import (
 	"sync"
 )
 
-//go:embed themes/*.md recipes/*.md guides/*.md decisions/*.md
+//go:embed themes/*.md bases/*.md guides/*.md decisions/*.md all:recipes
 var contentFS embed.FS
 
 // knowledgeDirs lists the top-level directories in the embedded knowledge filesystem.
-var knowledgeDirs = []string{"themes", "recipes", "guides", "decisions"}
+var knowledgeDirs = []string{"themes", "bases", "recipes", "guides", "decisions"}
 
 // Document represents a parsed knowledge document.
 type Document struct {

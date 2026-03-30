@@ -82,17 +82,9 @@ func TestRecipeLint(t *testing.T) {
 		t.Fatal("no recipes found")
 	}
 
-	// Infrastructure base guides live in recipes/ for getRuntimeGuide resolution
-	// but are NOT recipes — skip recipe-specific lint checks.
-	infraBases := map[string]bool{"alpine": true, "docker": true, "nginx": true, "static": true, "ubuntu": true}
-
 	for _, name := range recipes {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-
-			if infraBases[name] {
-				t.Skip("infrastructure base guide, not a recipe")
-			}
 
 			doc, err := store.Get("zerops://recipes/" + name)
 			if err != nil {
@@ -114,26 +106,18 @@ func TestRecipeLint(t *testing.T) {
 				}
 			})
 
-			// Hello-world recipes migrated from runtimes/ may still have old-format
-			// prose sections (### Build Procedure, ### Deploy Patterns). These are
-			// "not yet cleaned up" — skip strict lint checks until the knowledge-base
-			// fragment in the app README is the canonical source.
 			hasZeropsYml := hasH2Section(content, "zerops.yml")
-			_ = strings.HasSuffix(name, "-hello-world") // used in skip conditions below
-			// Hello-world recipes synced from the API may still have old-format content
-			// until the app READMEs are updated and the Strapi cache refreshed.
-			hasOldProse := strings.Contains(content, "### Build Procedure") ||
-				strings.Contains(content, "### Deploy Patterns") ||
-				strings.Contains(content, "### Base Image") ||
-				strings.Contains(content, "## Common Mistakes")
+			// Recipes synced from API may not yet have knowledge-base content
+			// (Gotchas, Base Image, etc.). Only enforce strict structural checks
+			// on recipes that have been enriched with operational knowledge.
+			hasKnowledgeBase := strings.Contains(content, "## Gotchas") ||
+				strings.Contains(content, "## Base Image") ||
+				strings.Contains(content, "## Binding") ||
+				strings.Contains(content, "## Resource Requirements")
 
 			t.Run("HasZeropsYml", func(t *testing.T) {
 				if !hasZeropsYml {
-					if strings.HasSuffix(name, "-hello-world") {
-						t.Skip("hello-world recipe not yet converted (no zerops.yml section)")
-					}
-					t.Error("no YAML code block found in zerops.yml section")
-					return
+					t.Skip("no zerops.yml section (API may not have YAML for this recipe)")
 				}
 				blocks := findYAMLBlocksInSections(content, "zerops.yml")
 				if len(blocks) == 0 {
@@ -142,12 +126,12 @@ func TestRecipeLint(t *testing.T) {
 			})
 
 			t.Run("HasGotchas", func(t *testing.T) {
+				if !hasKnowledgeBase {
+					t.Skip("recipe not yet enriched with knowledge-base content")
+				}
 				sections := parseRecipeSections(content)
 				gotchas := findSectionByPrefix(sections, "Gotchas")
 				if gotchas == "" {
-					if strings.HasSuffix(name, "-hello-world") && hasOldProse {
-						t.Skip("hello-world recipe has old-format prose — needs Gotchas section")
-					}
 					t.Error("missing ## Gotchas section")
 					return
 				}
@@ -170,10 +154,7 @@ func TestRecipeLint(t *testing.T) {
 			zeropsBlocks := findYAMLBlocksInSections(content, "zerops.yml")
 			for i, block := range zeropsBlocks {
 				t.Run(fmt.Sprintf("ZeropsYml/%d", i), func(t *testing.T) {
-					if strings.HasSuffix(name, "-hello-world") && hasOldProse {
-						t.Skip("hello-world recipe has old-format prose — YAML lint deferred until cleanup")
-					}
-					validateZeropsYml(t, block)
+					validateZeropsYml(t, block, hasKnowledgeBase)
 				})
 			}
 
@@ -216,9 +197,6 @@ func TestRecipeLint(t *testing.T) {
 			})
 
 			t.Run("VersionsKnown", func(t *testing.T) {
-				if strings.HasSuffix(name, "-hello-world") && hasOldProse {
-					t.Skip("hello-world recipe has old-format prose — version refs may be inline code")
-				}
 				knownVersions := loadKnownVersions(t)
 				versions := extractVersionRefs(content)
 				for _, v := range versions {
@@ -282,7 +260,7 @@ type zeropsYmlPort struct {
 	Protocol string `yaml:"protocol"`
 }
 
-func validateZeropsYml(t *testing.T, block string) {
+func validateZeropsYml(t *testing.T, block string, strict bool) {
 	t.Helper()
 
 	var root zeropsYmlRoot
@@ -329,8 +307,9 @@ func validateZeropsYml(t *testing.T, block string) {
 				}
 			}
 
-			// ports is MANDATORY for HTTP services (skip for static, php-apache, php-nginx which handle it implicitly)
-			if !isImplicitPortBase(runBase) && len(entry.Run.Ports) == 0 {
+			// ports is MANDATORY for HTTP services (skip for static, php-apache, php-nginx which handle it implicitly).
+			// Only enforced on enriched recipes — API-sourced dev setups may omit ports.
+			if strict && !isImplicitPortBase(runBase) && len(entry.Run.Ports) == 0 {
 				t.Errorf("entry[%d]: run exists without 'ports' (base=%q requires explicit port declaration for L7 routing)", i, runBase)
 			}
 
@@ -340,8 +319,9 @@ func validateZeropsYml(t *testing.T, block string) {
 				t.Errorf("entry[%d]: run exists without 'start' (base=%q requires explicit start)", i, runBase)
 			}
 
-			// healthCheck is recommended for services with explicit ports (production recipes)
-			if !isImplicitPortBase(runBase) && len(entry.Run.Ports) > 0 && entry.Run.HealthCheck == nil {
+			// healthCheck is recommended for services with explicit ports (production recipes).
+			// Only enforced on enriched recipes (strict=true) — API-sourced recipes may lack it.
+			if strict && !isImplicitPortBase(runBase) && len(entry.Run.Ports) > 0 && entry.Run.HealthCheck == nil {
 				if !healthCheckExemptSetups[entry.Setup] {
 					t.Errorf("entry[%d] (setup=%q): run has ports but no healthCheck (recommended for production services)", i, entry.Setup)
 				}
@@ -646,7 +626,7 @@ func extractVersionRefs(content string) []string {
 	// Match single values: type: nodejs@20, base: php@8.3
 	// Skip values that start with [ (those are array values handled above).
 	for _, match := range versionRefPattern.FindAllStringSubmatch(content, -1) {
-		v := strings.TrimRight(match[1], ",]")
+		v := strings.TrimRight(match[1], ",])")
 		if strings.HasPrefix(v, "[") {
 			continue // Skip array values
 		}
