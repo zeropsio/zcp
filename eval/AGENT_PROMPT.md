@@ -13,7 +13,7 @@ ZCP is an MCP server that helps Claude configure Zerops PaaS infrastructure. Its
 | Item | Value |
 |------|-------|
 | Remote host | `zcpx` (SSH configured) |
-| Remote binary | `/home/zerops/.local/bin/zcp` |
+| Remote binary | `/usr/local/bin/zcp` (`~/.local/bin/zcp` is a symlink) |
 | Remote MCP config | `~/.mcp.json` (server: `zerops`, cmd: `zcp serve`) |
 | Remote Claude | `/home/zerops/.local/bin/claude` |
 | Build command | `make linux-amd` (output: `builds/zcp-linux-amd64`) |

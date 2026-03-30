@@ -53,6 +53,13 @@ func OnceWithOpts(ctx context.Context, opts OnceOpts) {
 		}
 	}
 
+	// Follow symlinks — update the real binary, not the symlink itself.
+	// This ensures ~/.local/bin/zcp (symlink) → /usr/local/bin/zcp (real)
+	// gets the real binary updated, avoiding stale-copy divergence.
+	if resolved, err := filepath.EvalSymlinks(binary); err == nil {
+		binary = resolved
+	}
+
 	if !CanWrite(filepath.Dir(binary)) {
 		return
 	}

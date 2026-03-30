@@ -57,6 +57,19 @@ bin_path="$bin_dir/zcp"
 curl --fail --location --progress-bar --output "$bin_path" "$zcp_uri"
 chmod +x "$bin_path"
 
+# If installed to /usr/local/bin (root) and ~/.local/bin exists, ensure
+# a symlink there so PATH preference doesn't shadow the system binary.
+if [ "$bin_dir" = "/usr/local/bin" ] && [ -n "$HOME" ] && [ "$HOME" != "/" ]; then
+  user_bin="$HOME/.local/bin/zcp"
+  if [ -f "$user_bin" ] && [ ! -L "$user_bin" ]; then
+    rm -f "$user_bin"
+    ln -s "$bin_path" "$user_bin"
+    echo "Replaced $user_bin (stale copy) with symlink → $bin_path"
+  elif [ -d "$HOME/.local/bin" ] && [ ! -e "$user_bin" ]; then
+    ln -s "$bin_path" "$user_bin"
+  fi
+fi
+
 echo
 echo "zcp was installed successfully to '$bin_path'"
 
