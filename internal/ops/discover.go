@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // DiscoverResult contains project and service information.
@@ -30,6 +31,8 @@ type ServiceInfo struct {
 	ServiceID        string           `json:"serviceId"`
 	Type             string           `json:"type"`
 	Status           string           `json:"status"`
+	ManagedByZCP     bool             `json:"managedByZcp"`
+	IsInfrastructure bool             `json:"isInfrastructure"`
 	SubdomainEnabled bool             `json:"subdomainEnabled,omitempty"`
 	SubdomainURL     string           `json:"subdomainUrl,omitempty"`
 	Created          string           `json:"created,omitempty"`
@@ -113,6 +116,7 @@ func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 		ServiceID:        svc.ID,
 		Type:             svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 		Status:           svc.Status,
+		IsInfrastructure: workflow.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName),
 		SubdomainEnabled: svc.SubdomainAccess,
 	}
 }

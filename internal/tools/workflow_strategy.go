@@ -175,26 +175,43 @@ func buildStrategySelectionResponse(metas []*workflow.ServiceMeta) strategySelec
 
 // handleRoute gathers router input from live API + local state and returns flow offerings.
 func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client, projectID, stateDir, selfHostname string) (*mcp.CallToolResult, any, error) {
-	projState := workflow.StateUnknown
 	var liveHostnames []string
-	if client != nil && projectID != "" {
-		if ps, err := workflow.DetectProjectState(ctx, client, projectID, selfHostname); err == nil {
-			projState = ps
+	var unmanagedRuntimes []string
+
+	metas, _ := workflow.ListServiceMetas(stateDir)
+	metaMap := make(map[string]*workflow.ServiceMeta, len(metas))
+	for _, m := range metas {
+		metaMap[m.Hostname] = m
+	}
+	stageOf := make(map[string]bool)
+	for _, m := range metas {
+		if m.IsComplete() && m.StageHostname != "" {
+			stageOf[m.StageHostname] = true
 		}
+	}
+
+	if client != nil && projectID != "" {
 		if svcs, err := client.ListServices(ctx, projectID); err == nil {
 			for _, s := range svcs {
-				if !s.IsSystem() {
-					liveHostnames = append(liveHostnames, s.Name)
+				if s.IsSystem() || (selfHostname != "" && s.Name == selfHostname) {
+					continue
+				}
+				liveHostnames = append(liveHostnames, s.Name)
+				typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
+				if !workflow.IsManagedService(typeName) && !stageOf[s.Name] {
+					if m, ok := metaMap[s.Name]; !ok || !m.IsComplete() {
+						unmanagedRuntimes = append(unmanagedRuntimes, s.Name)
+					}
 				}
 			}
 		}
 	}
-	metas, _ := workflow.ListServiceMetas(stateDir)
+
 	sessions, _ := workflow.ListSessions(stateDir)
 	return jsonResult(workflow.Route(workflow.RouterInput{
-		ProjectState:   projState,
-		ServiceMetas:   metas,
-		ActiveSessions: sessions,
-		LiveServices:   liveHostnames,
+		ServiceMetas:      metas,
+		ActiveSessions:    sessions,
+		LiveServices:      liveHostnames,
+		UnmanagedRuntimes: unmanagedRuntimes,
 	})), nil, nil
 }

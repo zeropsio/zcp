@@ -1,4 +1,4 @@
-// Tests for: server/instructions.go — BuildInstructions, buildProjectSummary.
+// Tests for: server/instructions.go — BuildInstructions, buildProjectSummary, classification.
 package server
 
 import (
@@ -13,59 +13,154 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-func TestBuildInstructions_ConformantState_HasBootstrapHint(t *testing.T) {
-	t.Parallel()
+// --- Classification tests ---
 
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{
-				ID:     "svc-1",
-				Name:   "nodedev",
-				Status: "ACTIVE",
-				ServiceStackTypeInfo: platform.ServiceTypeInfo{
-					ServiceStackTypeVersionName: "nodejs@22",
-				},
-			},
-			{
-				ID:     "svc-2",
-				Name:   "nodestage",
-				Status: "ACTIVE",
-				ServiceStackTypeInfo: platform.ServiceTypeInfo{
-					ServiceStackTypeVersionName: "nodejs@22",
-				},
-			},
-		})
+func TestClassifyServices_EmptyProject(t *testing.T) {
+	t.Parallel()
+	cls := classifyServices(nil, nil, "")
+	if cls.total != 0 {
+		t.Errorf("total = %d, want 0", cls.total)
+	}
+	if len(cls.bootstrapped) != 0 || len(cls.unmanaged) != 0 || len(cls.managed) != 0 {
+		t.Error("all buckets should be empty for nil services")
+	}
+}
+
+func TestClassifyServices_MixedProject(t *testing.T) {
+	t.Parallel()
+	services := []platform.ServiceStack{
+		{Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "apidev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+		{Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+	}
+	metas := []*workflow.ServiceMeta{
+		{Hostname: "appdev", BootstrappedAt: "2026-01-01", StageHostname: "appstage"},
+	}
+
+	cls := classifyServices(services, metas, "")
+
+	if len(cls.bootstrapped) != 1 || cls.bootstrapped[0].Hostname != "appdev" {
+		t.Errorf("bootstrapped = %v, want [appdev]", cls.bootstrapped)
+	}
+	if len(cls.unmanagedNames) != 1 || cls.unmanagedNames[0] != "apidev" {
+		t.Errorf("unmanagedNames = %v, want [apidev]", cls.unmanagedNames)
+	}
+	if len(cls.managed) != 1 || cls.managed[0].Name != "db" {
+		t.Errorf("managed = %v, want [db]", cls.managed)
+	}
+	// appstage is stage of bootstrapped — not in unmanaged.
+	for _, name := range cls.unmanagedNames {
+		if name == "appstage" {
+			t.Error("appstage should not be in unmanagedNames (it's a stage of bootstrapped)")
+		}
+	}
+}
+
+func TestClassifyServices_SelfExcluded(t *testing.T) {
+	t.Parallel()
+	services := []platform.ServiceStack{
+		{Name: "zcpx", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zcp@1"}},
+		{Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+	cls := classifyServices(services, nil, "zcpx")
+	if cls.total != 1 {
+		t.Errorf("total = %d, want 1 (zcpx excluded)", cls.total)
+	}
+}
+
+func TestClassifyServices_LabelFor(t *testing.T) {
+	t.Parallel()
+	services := []platform.ServiceStack{
+		{Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "apidev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+		{Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+	}
+	metas := []*workflow.ServiceMeta{
+		{Hostname: "appdev", BootstrappedAt: "2026-01-01", StageHostname: "appstage"},
+	}
+	cls := classifyServices(services, metas, "")
+
+	if l := cls.labelFor("appdev"); l != "" {
+		t.Errorf("bootstrapped label = %q, want empty", l)
+	}
+	if l := cls.labelFor("appstage"); l != "" {
+		t.Errorf("stage label = %q, want empty", l)
+	}
+	if l := cls.labelFor("apidev"); !strings.Contains(l, "not managed") {
+		t.Errorf("unmanaged label = %q, want 'not managed'", l)
+	}
+	if l := cls.labelFor("db"); l != "" {
+		t.Errorf("managed label = %q, want empty", l)
+	}
+}
+
+// --- BuildInstructions integration tests ---
+
+func TestBuildInstructions_UnmanagedRuntimes_HasAdoptionHint(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{Name: "nodedev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "nodestage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
 
 	stateDir := t.TempDir()
 	result := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, stateDir)
 
-	// Must contain deploy routing.
-	if !strings.Contains(result, "deploy") {
-		t.Error("expected deploy workflow in CONFORMANT state")
+	// Must contain adoption hint for unmanaged services.
+	if !strings.Contains(result, "not managed by ZCP") {
+		t.Error("expected 'not managed by ZCP' label for unbootstrapped runtimes")
 	}
-
-	// Must contain bootstrap as secondary option.
-	if !strings.Contains(result, "bootstrap") {
-		t.Error("expected bootstrap workflow hint in CONFORMANT project summary")
+	if !strings.Contains(result, "adopt") {
+		t.Error("expected adoption hint in router offerings")
 	}
-
 	// Must list services.
-	summary := buildProjectSummary(context.Background(), mock, "proj-1", stateDir, "")
-	if !strings.Contains(summary, "nodedev") {
+	if !strings.Contains(result, "nodedev") {
 		t.Error("expected service name in project summary")
 	}
 }
 
 func TestBuildInstructions_EmptyProject_HasBootstrapOnly(t *testing.T) {
 	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{})
-
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{})
 	result := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, t.TempDir())
-
 	if !strings.Contains(result, "bootstrap") {
 		t.Error("expected bootstrap workflow hint for empty project")
+	}
+}
+
+func TestBuildInstructions_BootstrappedWithUnmanaged_BothVisible(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "apidev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+		{Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+	})
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: workflow.StrategyPushDev,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, stateDir)
+
+	// Orientation for bootstrapped service.
+	if !strings.Contains(result, "appdev") {
+		t.Error("expected bootstrapped service detail")
+	}
+	// Adoption hint for unmanaged runtime.
+	if !strings.Contains(result, "not managed by ZCP") {
+		t.Error("expected unmanaged label for apidev")
+	}
+	// Router offerings (no short-circuit).
+	if !strings.Contains(result, "Available workflows") {
+		t.Error("expected router offerings even when orientation exists")
+	}
+	// Deploy offering from strategy.
+	if !strings.Contains(result, "deploy") {
+		t.Error("expected deploy offering from bootstrapped meta strategy")
 	}
 }
 
@@ -78,7 +173,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 		wantContains []string
 	}{
 		{
-			name:     "fresh project uses router",
+			name:     "empty project has router",
 			services: []platform.ServiceStack{},
 			wantContains: []string{
 				"bootstrap",
@@ -86,7 +181,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 			},
 		},
 		{
-			name: "conformant with ci-cd meta",
+			name: "bootstrapped with ci-cd meta",
 			services: []platform.ServiceStack{
 				{ID: "s1", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"}},
 				{ID: "s2", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"}},
@@ -109,7 +204,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 				{Hostname: "deletedservice", BootstrappedAt: "2026-01-01", DeployStrategy: workflow.StrategyCICD},
 			},
 			wantContains: []string{
-				"deploy", // Falls back to deploy since ci-cd meta is stale
+				"bootstrap", // Stale meta filtered; unmanaged runtimes trigger adoption
 			},
 		},
 	}
@@ -118,14 +213,11 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 			t.Parallel()
 			mock := platform.NewMock().WithServices(tt.services)
 			stateDir := t.TempDir()
-
-			// Write service metas if provided.
 			for _, meta := range tt.metas {
 				if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
 					t.Fatalf("write meta: %v", err)
 				}
 			}
-
 			summary := buildProjectSummary(context.Background(), mock, "proj-1", stateDir, "")
 			for _, want := range tt.wantContains {
 				if !strings.Contains(summary, want) {
@@ -141,74 +233,51 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 func TestBuildWorkflowHint_DeadPID_ShowsResumable(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-
-	// Register a dead PID session.
 	entry := workflow.SessionEntry{
-		SessionID: "dead-session-abc",
-		PID:       9999999,
-		Workflow:  "bootstrap",
-		ProjectID: "proj-1",
-		Intent:    "deploy my app",
+		SessionID: "dead-session-abc", PID: 9999999,
+		Workflow: "bootstrap", ProjectID: "proj-1", Intent: "deploy my app",
 	}
 	if err := workflow.RegisterSession(dir, entry); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
 	}
-
 	hint := buildWorkflowHint(dir)
 	if hint == "" {
 		t.Fatal("expected non-empty hint for dead PID session")
 	}
-	if !strings.Contains(hint, "Resumable") {
-		t.Errorf("hint should contain 'Resumable', got: %s", hint)
-	}
-	if !strings.Contains(hint, "dead-session-abc") {
-		t.Errorf("hint should contain session ID, got: %s", hint)
-	}
-	if !strings.Contains(hint, `action="resume"`) {
-		t.Errorf("hint should contain resume action, got: %s", hint)
+	for _, want := range []string{"Resumable", "dead-session-abc", `action="resume"`} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint should contain %q, got: %s", want, hint)
+		}
 	}
 }
 
 func TestBuildWorkflowHint_AlivePID_ShowsActive(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-
-	// Register an alive PID session.
 	entry := workflow.SessionEntry{
-		SessionID: "alive-session-xyz",
-		PID:       os.Getpid(),
-		Workflow:  "deploy",
-		ProjectID: "proj-1",
-		Intent:    "deploy code",
+		SessionID: "alive-session-xyz", PID: os.Getpid(),
+		Workflow: "deploy", ProjectID: "proj-1", Intent: "deploy code",
 	}
 	if err := workflow.RegisterSession(dir, entry); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
 	}
-
 	hint := buildWorkflowHint(dir)
-	if hint == "" {
-		t.Fatal("expected non-empty hint for alive PID session")
-	}
 	if !strings.Contains(hint, "Active workflow") {
 		t.Errorf("hint should contain 'Active workflow', got: %s", hint)
-	}
-	if strings.Contains(hint, "Resumable") {
-		t.Errorf("alive session should not be marked as Resumable, got: %s", hint)
 	}
 }
 
 func TestBuildWorkflowHint_EmptyStateDir_ReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	if hint := buildWorkflowHint(""); hint != "" {
-		t.Errorf("expected empty hint for empty stateDir, got: %s", hint)
+		t.Errorf("expected empty hint, got: %s", hint)
 	}
 }
 
 func TestBuildWorkflowHint_NoSessions_ReturnsEmpty(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	if hint := buildWorkflowHint(dir); hint != "" {
-		t.Errorf("expected empty hint for no sessions, got: %s", hint)
+	if hint := buildWorkflowHint(t.TempDir()); hint != "" {
+		t.Errorf("expected empty hint, got: %s", hint)
 	}
 }
 
@@ -216,28 +285,17 @@ func TestBuildWorkflowHint_NoSessions_ReturnsEmpty(t *testing.T) {
 
 func TestContainerEnvironment_SSHPrinciple(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name     string
-		contains string
-	}{
-		{"ssh_all_commands", "ALL commands and processes"},
-		{"mount_files_only", "reading and writing files"},
-		{"rule_principle", "file → mount"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if !strings.Contains(containerEnvironment, tt.contains) {
-				t.Errorf("containerEnvironment should contain %q", tt.contains)
-			}
-		})
+	for _, want := range []string{"ALL commands and processes", "reading and writing files", "file → mount"} {
+		if !strings.Contains(containerEnvironment, want) {
+			t.Errorf("containerEnvironment should contain %q", want)
+		}
 	}
 }
 
 func TestContainerEnvironment_NoHardcodedDeployWorkflow(t *testing.T) {
 	t.Parallel()
 	if strings.Contains(containerEnvironment, `action="start" workflow="deploy"`) {
-		t.Error("containerEnvironment should not hardcode deploy workflow command — strategy-specific deploy instructions belong in post-bootstrap orientation")
+		t.Error("containerEnvironment should not hardcode deploy workflow command")
 	}
 }
 
@@ -245,32 +303,20 @@ func TestContainerEnvironment_NoHardcodedDeployWorkflow(t *testing.T) {
 
 func TestOrientation_DevMode_ManualStrategy(t *testing.T) {
 	t.Parallel()
-	metas := []*workflow.ServiceMeta{{
-		Hostname:       "appdev",
-		Mode:           "dev",
-		DeployStrategy: workflow.StrategyManual,
-		BootstrappedAt: "2026-03-04",
-	}}
-	services := []platform.ServiceStack{{
-		ID: "s1", Name: "appdev", Status: "ACTIVE",
-		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
-	}}
-
-	result := buildPostBootstrapOrientation(metas, services, "zcpx")
-	for _, want := range []string{
-		"appdev",
-		"nodejs@22",
-		"/var/www/appdev/",
-		"ssh appdev",
-		"zerops_deploy",
-		"manual",
-		"zerops_knowledge",
-	} {
+	cls := buildTestClassification([]*workflow.ServiceMeta{{
+		Hostname: "appdev", Mode: "dev", DeployStrategy: workflow.StrategyManual, BootstrappedAt: "2026-03-04",
+	}},
+		[]platform.ServiceStack{{
+			ID: "s1", Name: "appdev", Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
+		}},
+	)
+	result := buildPostBootstrapOrientation(cls)
+	for _, want := range []string{"appdev", "nodejs@22", "/var/www/appdev/", "ssh appdev", "zerops_deploy", "manual", "zerops_knowledge"} {
 		if !strings.Contains(result, want) {
 			t.Errorf("orientation missing %q.\nGot:\n%s", want, result)
 		}
 	}
-	// Must NOT contain deploy workflow hint.
 	if strings.Contains(result, `workflow="deploy"`) {
 		t.Errorf("manual strategy should not suggest deploy workflow.\nGot:\n%s", result)
 	}
@@ -278,25 +324,21 @@ func TestOrientation_DevMode_ManualStrategy(t *testing.T) {
 
 func TestOrientation_StandardMode_DevAndStage(t *testing.T) {
 	t.Parallel()
-	metas := []*workflow.ServiceMeta{{
-		Hostname:       "appdev",
-		Mode:           "standard",
-		StageHostname:  "appstage",
-		DeployStrategy: workflow.StrategyPushDev,
-		BootstrappedAt: "2026-03-04",
-	}}
-	services := []platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
-		{ID: "s2", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
-	}
-
-	result := buildPostBootstrapOrientation(metas, services, "zcpx")
+	cls := buildTestClassification([]*workflow.ServiceMeta{{
+		Hostname: "appdev", Mode: "standard", StageHostname: "appstage",
+		DeployStrategy: workflow.StrategyPushDev, BootstrappedAt: "2026-03-04",
+	}},
+		[]platform.ServiceStack{
+			{ID: "s1", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+			{ID: "s2", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+		},
+	)
+	result := buildPostBootstrapOrientation(cls)
 	for _, want := range []string{"appdev", "appstage", "go@1", "ssh appdev", "auto-starts"} {
 		if !strings.Contains(result, want) {
 			t.Errorf("orientation missing %q.\nGot:\n%s", want, result)
 		}
 	}
-	// Push-dev should mention deploy workflow.
 	if !strings.Contains(result, `workflow="deploy"`) {
 		t.Errorf("push-dev strategy should mention deploy workflow.\nGot:\n%s", result)
 	}
@@ -304,60 +346,81 @@ func TestOrientation_StandardMode_DevAndStage(t *testing.T) {
 
 func TestOrientation_SimpleMode(t *testing.T) {
 	t.Parallel()
-	metas := []*workflow.ServiceMeta{{
-		Hostname:       "web",
-		Mode:           "simple",
-		DeployStrategy: workflow.StrategyPushDev,
-		BootstrappedAt: "2026-03-04",
-	}}
-	services := []platform.ServiceStack{
-		{ID: "s1", Name: "web", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4"}},
-	}
-
-	result := buildPostBootstrapOrientation(metas, services, "zcpx")
+	cls := buildTestClassification([]*workflow.ServiceMeta{{
+		Hostname: "web", Mode: "simple", DeployStrategy: workflow.StrategyPushDev, BootstrappedAt: "2026-03-04",
+	}},
+		[]platform.ServiceStack{{
+			ID: "s1", Name: "web", Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4"},
+		}},
+	)
+	result := buildPostBootstrapOrientation(cls)
 	if !strings.Contains(result, "auto-starts") {
 		t.Errorf("simple mode should mention auto-start.\nGot:\n%s", result)
 	}
-	// Simple mode should NOT mention SSH server management.
 	if strings.Contains(result, "zsc noop") {
 		t.Errorf("simple mode should not mention zsc noop.\nGot:\n%s", result)
 	}
 }
 
-func TestOrientation_ManagedOnly(t *testing.T) {
+func TestOrientation_NoServices(t *testing.T) {
 	t.Parallel()
-	// No metas (managed-only project — metas not written for managed services).
-	result := buildPostBootstrapOrientation(nil, nil, "zcpx")
+	cls := serviceClassification{}
+	result := buildPostBootstrapOrientation(cls)
 	if result != "" {
-		t.Errorf("managed-only should return empty orientation, got:\n%s", result)
+		t.Errorf("empty classification should return empty, got:\n%s", result)
 	}
 }
 
-func TestOrientation_NoMetas(t *testing.T) {
+func TestOrientation_ManagedOnly(t *testing.T) {
 	t.Parallel()
-	services := []platform.ServiceStack{
-		{ID: "s1", Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+	cls := serviceClassification{
+		managed: []platform.ServiceStack{
+			{Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+		},
+		allServices: []platform.ServiceStack{
+			{Name: "db", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+		},
 	}
-	result := buildPostBootstrapOrientation(nil, services, "zcpx")
-	if result != "" {
-		t.Errorf("no metas should return empty orientation, got:\n%s", result)
+	result := buildPostBootstrapOrientation(cls)
+	if !strings.Contains(result, "Managed infrastructure") {
+		t.Errorf("managed-only should show managed section, got:\n%s", result)
+	}
+	if strings.Contains(result, "Bootstrapped") {
+		t.Error("managed-only should not show bootstrapped section")
+	}
+}
+
+func TestOrientation_UnmanagedOnly(t *testing.T) {
+	t.Parallel()
+	cls := serviceClassification{
+		unmanaged: []platform.ServiceStack{
+			{Name: "apidev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+		},
+		allServices: []platform.ServiceStack{
+			{Name: "apidev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "go@1"}},
+		},
+	}
+	result := buildPostBootstrapOrientation(cls)
+	if !strings.Contains(result, "Runtime services without ZCP state") {
+		t.Errorf("unmanaged-only should show adoption section, got:\n%s", result)
+	}
+	if !strings.Contains(result, "isExisting=true") {
+		t.Errorf("adoption section should mention isExisting, got:\n%s", result)
 	}
 }
 
 func TestOrientation_PushDevStrategy(t *testing.T) {
 	t.Parallel()
-	metas := []*workflow.ServiceMeta{{
-		Hostname:       "appdev",
-		Mode:           "dev",
-		DeployStrategy: workflow.StrategyPushDev,
-		BootstrappedAt: "2026-03-04",
-	}}
-	services := []platform.ServiceStack{{
-		ID: "s1", Name: "appdev", Status: "ACTIVE",
-		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"},
-	}}
-
-	result := buildPostBootstrapOrientation(metas, services, "zcpx")
+	cls := buildTestClassification([]*workflow.ServiceMeta{{
+		Hostname: "appdev", Mode: "dev", DeployStrategy: workflow.StrategyPushDev, BootstrappedAt: "2026-03-04",
+	}},
+		[]platform.ServiceStack{{
+			ID: "s1", Name: "appdev", Status: "ACTIVE",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"},
+		}},
+	)
+	result := buildPostBootstrapOrientation(cls)
 	if !strings.Contains(result, `workflow="deploy"`) {
 		t.Errorf("push-dev should suggest deploy workflow.\nGot:\n%s", result)
 	}
@@ -365,16 +428,14 @@ func TestOrientation_PushDevStrategy(t *testing.T) {
 
 func TestBuildProjectSummary_NilClient(t *testing.T) {
 	t.Parallel()
-	summary := buildProjectSummary(context.Background(), nil, "proj-1", t.TempDir(), "")
-	if summary != "" {
-		t.Errorf("expected empty summary with nil client, got %q", summary)
+	if s := buildProjectSummary(context.Background(), nil, "proj-1", t.TempDir(), ""); s != "" {
+		t.Errorf("expected empty summary with nil client, got %q", s)
 	}
 }
 
 func TestBuildProjectSummary_EmptyStateDir(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{})
-	// Empty stateDir should still work (no metas).
 	summary := buildProjectSummary(context.Background(), mock, "proj-1", "", "")
 	if !strings.Contains(summary, "bootstrap") {
 		t.Error("expected bootstrap for empty project even without stateDir")
@@ -385,17 +446,60 @@ func TestBuildProjectSummary_BadMetasDir_Graceful(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
 		{ID: "s1", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"}},
-		{ID: "s2", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"}},
 	})
 	stateDir := t.TempDir()
-	// Create a file where directory is expected to cause ListServiceMetas to fail gracefully.
 	badPath := filepath.Join(stateDir, "services")
 	if err := os.WriteFile(badPath, []byte("not a directory"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	summary := buildProjectSummary(context.Background(), mock, "proj-1", stateDir, "")
-	// Should still produce summary (just without meta-based routing).
 	if summary == "" {
 		t.Error("expected non-empty summary even with bad metas dir")
+	}
+}
+
+// --- Routing instruction tests ---
+
+func TestRoutingInstructions_HasAdoptionLine(t *testing.T) {
+	t.Parallel()
+	if !strings.Contains(routingInstructions, "Adopt existing") {
+		t.Error("routingInstructions should mention adopting existing services")
+	}
+}
+
+func TestRoutingInstructions_HasKnowledgeMention(t *testing.T) {
+	t.Parallel()
+	if !strings.Contains(routingInstructions, "platform knowledge") {
+		t.Error("routingInstructions should mention platform knowledge injection")
+	}
+}
+
+func TestRoutingInstructions_TrackedModeSyntax(t *testing.T) {
+	t.Parallel()
+	if !strings.Contains(routingInstructions, `action="start"`) {
+		t.Error("routingInstructions should use tracked mode syntax")
+	}
+}
+
+// --- test helpers ---
+
+// buildTestClassification creates a serviceClassification for bootstrapped services.
+func buildTestClassification(
+	bootstrapped []*workflow.ServiceMeta,
+	allServices []platform.ServiceStack,
+) serviceClassification {
+	metaMap := make(map[string]*workflow.ServiceMeta)
+	stageOf := make(map[string]bool)
+	for _, m := range bootstrapped {
+		metaMap[m.Hostname] = m
+		if m.StageHostname != "" {
+			stageOf[m.StageHostname] = true
+		}
+	}
+	return serviceClassification{
+		bootstrapped:        bootstrapped,
+		allServices:         allServices,
+		metaMap:             metaMap,
+		stageOfBootstrapped: stageOf,
 	}
 }

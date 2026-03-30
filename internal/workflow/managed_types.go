@@ -1,12 +1,6 @@
 package workflow
 
-import (
-	"context"
-	"fmt"
-	"strings"
-
-	"github.com/zeropsio/zcp/internal/platform"
-)
+import "strings"
 
 // managedServicePrefixes is the static fallback for managed service classification.
 // Used when live API types are unavailable. Source of truth: Zerops API categories.
@@ -24,62 +18,6 @@ func IsManagedService(serviceType string) bool {
 	for _, prefix := range managedServicePrefixes {
 		if strings.HasPrefix(lower, prefix) {
 			return true
-		}
-	}
-	return false
-}
-
-// DetectProjectState determines the project state based on service inventory.
-// selfHostname is the hostname of the service running ZCP itself (e.g. "zcpx").
-// When non-empty, that service is excluded from runtime service counting so it
-// doesn't interfere with fresh/conformant/non-conformant detection.
-func DetectProjectState(ctx context.Context, client platform.Client, projectID, selfHostname string) (ProjectState, error) {
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return "", fmt.Errorf("detect project state: %w", err)
-	}
-
-	// Filter to runtime services, excluding managed services and self.
-	var runtimeServices []platform.ServiceStack
-	for _, svc := range services {
-		if selfHostname != "" && svc.Name == selfHostname {
-			continue
-		}
-		if !IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
-			runtimeServices = append(runtimeServices, svc)
-		}
-	}
-
-	if len(runtimeServices) == 0 {
-		return StateFresh, nil
-	}
-
-	// Check for dev/stage naming pattern.
-	if hasDevStagePattern(runtimeServices) {
-		return StateConformant, nil
-	}
-
-	return StateNonConformant, nil
-}
-
-// hasDevStagePattern checks if any service names follow the dev/stage naming convention.
-func hasDevStagePattern(services []platform.ServiceStack) bool {
-	names := make(map[string]bool, len(services))
-	for _, svc := range services {
-		names[svc.Name] = true
-	}
-
-	suffixes := []struct{ dev, stage string }{
-		{"dev", "stage"},
-	}
-
-	for name := range names {
-		for _, sf := range suffixes {
-			if base, ok := strings.CutSuffix(name, sf.dev); ok {
-				if names[base+sf.stage] {
-					return true
-				}
-			}
 		}
 	}
 	return false

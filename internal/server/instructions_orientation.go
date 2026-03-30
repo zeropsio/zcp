@@ -9,91 +9,97 @@ import (
 )
 
 // buildPostBootstrapOrientation generates per-service operational guidance
-// when bootstrapped ServiceMetas exist. Returns empty string if no metas.
-func buildPostBootstrapOrientation(
-	metas []*workflow.ServiceMeta,
-	services []platform.ServiceStack,
-	selfHostname string,
-) string {
-	// Filter to complete metas only.
-	var complete []*workflow.ServiceMeta
-	for _, m := range metas {
-		if m.IsComplete() {
-			complete = append(complete, m)
-		}
-	}
-	if len(complete) == 0 {
+// from classified services. Returns empty string if no services to describe.
+func buildPostBootstrapOrientation(cls serviceClassification) string {
+	if len(cls.bootstrapped) == 0 && len(cls.managed) == 0 && len(cls.unmanaged) == 0 {
 		return ""
 	}
 
-	// Build lookup maps from live API.
-	typeMap := make(map[string]string)
-	statusMap := make(map[string]string)
-	for _, svc := range services {
-		if svc.IsSystem() || svc.Name == selfHostname {
-			continue
-		}
-		typeMap[svc.Name] = svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
-		statusMap[svc.Name] = svc.Status
-	}
+	// Build lookup maps from classification metadata.
+	typeMap := cls.typeMap()
+	statusMap := cls.statusMap()
 
 	var b strings.Builder
-	b.WriteString("## Your Project — Bootstrapped\n\n")
-	b.WriteString("ZCP helps you manage this project. Key tools:\n")
-	b.WriteString("- zerops_knowledge query=\"...\" — runtime docs, recipes, schemas\n")
-	b.WriteString("- zerops_discover — current service state and env vars\n")
-	b.WriteString("- zerops_workflow — guided workflows (debug, configure, bootstrap)\n\n")
 
-	// Per-service blocks.
-	runtimeSeen := make(map[string]bool)
-	for _, m := range complete {
-		svcType := typeMap[m.Hostname]
-		status := statusMap[m.Hostname]
-		if status == "" {
-			status = "UNKNOWN"
-		}
+	// Bootstrapped runtime services — full operational blocks.
+	if len(cls.bootstrapped) > 0 {
+		b.WriteString("## Your Project — Bootstrapped\n\n")
+		b.WriteString("ZCP helps you manage this project. Key tools:\n")
+		b.WriteString("- zerops_knowledge query=\"...\" — runtime docs, recipes, schemas\n")
+		b.WriteString("- zerops_discover — current service state and env vars\n")
+		b.WriteString("- zerops_workflow — guided workflows (debug, configure, bootstrap)\n\n")
 
-		writeServiceBlock(&b, m, svcType, status)
-
-		// Track runtime base for knowledge pointers.
-		if svcType != "" {
-			base, _, _ := strings.Cut(svcType, "@")
-			runtimeSeen[base] = true
-		}
-
-		// Stage service (standard mode).
-		if m.StageHostname != "" {
-			stageType := typeMap[m.StageHostname]
-			stageStatus := statusMap[m.StageHostname]
-			if stageStatus == "" {
-				stageStatus = "UNKNOWN"
+		runtimeSeen := make(map[string]bool)
+		for _, m := range cls.bootstrapped {
+			svcType := typeMap[m.Hostname]
+			status := statusMap[m.Hostname]
+			if status == "" {
+				status = "UNKNOWN"
 			}
-			writeStageBlock(&b, m, stageType, stageStatus)
+			writeServiceBlock(&b, m, svcType, status)
+
+			if svcType != "" {
+				base, _, _ := strings.Cut(svcType, "@")
+				runtimeSeen[base] = true
+			}
+
+			// Stage service (standard mode).
+			if m.StageHostname != "" {
+				stageType := typeMap[m.StageHostname]
+				stageStatus := statusMap[m.StageHostname]
+				if stageStatus == "" {
+					stageStatus = "UNKNOWN"
+				}
+				writeStageBlock(&b, m, stageType, stageStatus)
+			}
 		}
+
+		// Knowledge pointers.
+		if len(runtimeSeen) > 0 {
+			b.WriteString("### Knowledge\n")
+			for base := range runtimeSeen {
+				fmt.Fprintf(&b, "- zerops_knowledge query=\"%s\"\n", base)
+			}
+			b.WriteString("\n")
+		}
+
+		// Strategy section.
+		writeStrategySection(&b, cls.bootstrapped)
 	}
 
-	// Managed services (not in metas but in live API).
-	writeManagedServices(&b, complete, services, selfHostname)
+	// Managed infrastructure (db, cache, storage).
+	writeManagedSection(&b, cls.managed)
 
-	// Strategy section.
-	writeStrategySection(&b, complete)
+	// Unmanaged runtime services — adoption guidance.
+	writeUnmanagedRuntimesSection(&b, cls.unmanaged)
 
-	// Knowledge pointers.
-	if len(runtimeSeen) > 0 {
-		b.WriteString("### Knowledge\n")
-		for base := range runtimeSeen {
-			fmt.Fprintf(&b, "- zerops_knowledge query=\"%s\"\n", base)
-		}
-		b.WriteString("\n")
+	// Operations (only when bootstrapped services exist).
+	if len(cls.bootstrapped) > 0 {
+		b.WriteString("### Operations\n")
+		b.WriteString("- Debug: zerops_workflow action=\"start\" workflow=\"debug\"\n")
+		b.WriteString("- Configure: zerops_workflow action=\"start\" workflow=\"configure\"\n")
+		b.WriteString("- Scale: zerops_scale serviceHostname=\"...\"\n")
 	}
-
-	// Operations.
-	b.WriteString("### Operations\n")
-	b.WriteString("- Debug: zerops_workflow action=\"start\" workflow=\"debug\"\n")
-	b.WriteString("- Configure: zerops_workflow action=\"start\" workflow=\"configure\"\n")
-	b.WriteString("- Scale: zerops_scale serviceHostname=\"...\"\n")
 
 	return b.String()
+}
+
+// typeMap builds hostname→type mapping from all classified services.
+func (c *serviceClassification) typeMap() map[string]string {
+	m := make(map[string]string, len(c.allServices))
+	for _, svc := range c.allServices {
+		m[svc.Name] = svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	}
+	return m
+}
+
+// statusMap builds hostname→status mapping from all classified services.
+func (c *serviceClassification) statusMap() map[string]string {
+	m := make(map[string]string, len(c.allServices))
+	for _, svc := range c.allServices {
+		m[svc.Name] = svc.Status
+	}
+	return m
 }
 
 // writeServiceBlock writes the per-service orientation block for a runtime service.
@@ -137,33 +143,35 @@ func writeStageBlock(b *strings.Builder, m *workflow.ServiceMeta, stageType, sta
 	b.WriteString("Server auto-starts after deploy (healthCheck monitors)\n\n")
 }
 
-// writeManagedServices lists services that are in the live API but not in metas (managed services).
-func writeManagedServices(b *strings.Builder, metas []*workflow.ServiceMeta, services []platform.ServiceStack, selfHostname string) {
-	metaHostnames := make(map[string]bool)
-	for _, m := range metas {
-		metaHostnames[m.Hostname] = true
-		if m.StageHostname != "" {
-			metaHostnames[m.StageHostname] = true
-		}
+// writeManagedSection lists managed infrastructure services (databases, caches, storage).
+func writeManagedSection(b *strings.Builder, managed []platform.ServiceStack) {
+	if len(managed) == 0 {
+		return
 	}
-
-	var managed []platform.ServiceStack
-	for _, svc := range services {
-		if svc.IsSystem() || svc.Name == selfHostname {
-			continue
-		}
-		if !metaHostnames[svc.Name] {
-			managed = append(managed, svc)
-		}
-	}
-
+	b.WriteString("### Managed infrastructure\n")
 	for _, svc := range managed {
-		fmt.Fprintf(b, "### %s (%s) — %s\n",
+		fmt.Fprintf(b, "- %s (%s) — %s\n",
 			svc.Name,
 			svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 			svc.Status)
-		b.WriteString("Env vars: zerops_discover includeEnvs=true\n\n")
 	}
+	b.WriteString("Env vars: zerops_discover includeEnvs=true\n\n")
+}
+
+// writeUnmanagedRuntimesSection lists runtime services without ZCP state and
+// provides adoption guidance.
+func writeUnmanagedRuntimesSection(b *strings.Builder, unmanaged []platform.ServiceStack) {
+	if len(unmanaged) == 0 {
+		return
+	}
+	b.WriteString("### Runtime services without ZCP state\n")
+	for _, svc := range unmanaged {
+		fmt.Fprintf(b, "- %s (%s) — %s\n",
+			svc.Name,
+			svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+			svc.Status)
+	}
+	b.WriteString("→ Adopt via: zerops_workflow action=\"start\" workflow=\"bootstrap\" (isExisting=true)\n\n")
 }
 
 // writeStrategySection writes strategy-specific guidance based on the dominant strategy.

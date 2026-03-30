@@ -3,6 +3,7 @@ package workflow
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // FlowOffering represents a workflow available to the agent.
@@ -13,11 +14,12 @@ type FlowOffering struct {
 }
 
 // RouterInput contains the environmental signals used for routing decisions.
+// Routing is fact-based: no project state classification, just service facts.
 type RouterInput struct {
-	ProjectState   ProjectState
-	ServiceMetas   []*ServiceMeta
-	ActiveSessions []SessionEntry
-	LiveServices   []string
+	ServiceMetas      []*ServiceMeta
+	ActiveSessions    []SessionEntry
+	LiveServices      []string
+	UnmanagedRuntimes []string // runtime hostnames without complete ServiceMeta
 }
 
 // Route takes environmental signals and returns available workflows.
@@ -27,29 +29,48 @@ func Route(input RouterInput) []FlowOffering {
 	// Filter stale metas: only keep metas whose hostname is in LiveServices.
 	metas := filterStaleMetas(input.ServiceMetas, input.LiveServices)
 
-	// If any metas are incomplete (provisioned but not bootstrapped), prioritize bootstrap.
+	// 1. Incomplete bootstrap → resume.
 	if hasIncompleteMetas(metas) {
 		offerings := []FlowOffering{{
 			Workflow: "bootstrap",
 			Priority: 1,
-			Hint:     `zerops_workflow action="start" workflow="bootstrap"`,
+			Hint:     resumeHint(input.ActiveSessions),
 		}}
 		return appendUtilities(offerings)
 	}
 
 	var offerings []FlowOffering
 
-	switch input.ProjectState {
-	case StateFresh:
-		offerings = routeFresh(input.ActiveSessions)
-	case StateConformant:
-		offerings = routeConformant(metas)
-	case StateNonConformant:
-		offerings = routeNonConformant(metas)
-	case StateUnknown:
-		offerings = routeUnknown()
-	default:
-		offerings = routeUnknown()
+	// 2. Unmanaged runtimes exist → adoption as priority 1.
+	if len(input.UnmanagedRuntimes) > 0 {
+		offerings = append(offerings, FlowOffering{
+			Workflow: "bootstrap",
+			Priority: 1,
+			Hint: fmt.Sprintf(`zerops_workflow action="start" workflow="bootstrap" — adopt: %s`,
+				strings.Join(input.UnmanagedRuntimes, ", ")),
+		})
+	}
+
+	// 3. Bootstrapped metas exist → strategy-based deploy.
+	if len(metas) > 0 {
+		offerings = append(offerings, strategyOfferings(metas)...)
+		// Offer adding new services only when nothing needs adoption.
+		if len(input.UnmanagedRuntimes) == 0 {
+			offerings = append(offerings, FlowOffering{
+				Workflow: "bootstrap",
+				Priority: 3,
+				Hint:     `zerops_workflow action="start" workflow="bootstrap"`,
+			})
+		}
+	}
+
+	// 4. Nothing at all → create first services.
+	if len(metas) == 0 && len(input.UnmanagedRuntimes) == 0 {
+		offerings = append(offerings, FlowOffering{
+			Workflow: "bootstrap",
+			Priority: 1,
+			Hint:     bootstrapHint(input.ActiveSessions),
+		})
 	}
 
 	offerings = appendUtilities(offerings)
@@ -59,6 +80,21 @@ func Route(input RouterInput) []FlowOffering {
 	})
 
 	return offerings
+}
+
+// resumeHint returns either a resume hint (if a bootstrap session exists) or a start hint.
+func resumeHint(sessions []SessionEntry) string {
+	for _, s := range sessions {
+		if s.Workflow == WorkflowBootstrap {
+			return fmt.Sprintf(`zerops_workflow action="resume" sessionId="%s"`, s.SessionID)
+		}
+	}
+	return `zerops_workflow action="start" workflow="bootstrap"`
+}
+
+// bootstrapHint returns either a resume hint (if a bootstrap session exists) or a start hint.
+func bootstrapHint(sessions []SessionEntry) string {
+	return resumeHint(sessions)
 }
 
 // filterStaleMetas returns only metas whose Hostname appears in liveServices.
@@ -85,91 +121,6 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 func hasIncompleteMetas(metas []*ServiceMeta) bool {
 	for _, m := range metas {
 		if !m.IsComplete() {
-			return true
-		}
-	}
-	return false
-}
-
-func routeFresh(sessions []SessionEntry) []FlowOffering {
-	for _, s := range sessions {
-		if s.Workflow == WorkflowBootstrap {
-			return []FlowOffering{{
-				Workflow: "bootstrap",
-				Priority: 1,
-				Hint:     fmt.Sprintf(`zerops_workflow action="resume" sessionId="%s"`, s.SessionID),
-			}}
-		}
-	}
-	return []FlowOffering{{
-		Workflow: "bootstrap",
-		Priority: 1,
-		Hint:     `zerops_workflow action="start" workflow="bootstrap"`,
-	}}
-}
-
-func routeConformant(metas []*ServiceMeta) []FlowOffering {
-	offerings := strategyOfferings(metas)
-	if len(offerings) == 0 && !hasStrategy(metas) {
-		// No strategy set at all — offer deploy as default.
-		offerings = []FlowOffering{{
-			Workflow: "deploy",
-			Priority: 1,
-			Hint:     `zerops_workflow action="start" workflow="deploy"`,
-		}}
-	}
-	offerings = append(offerings, FlowOffering{
-		Workflow: "bootstrap",
-		Priority: 2,
-		Hint:     `zerops_workflow action="start" workflow="bootstrap"`,
-	})
-	return offerings
-}
-
-func routeNonConformant(metas []*ServiceMeta) []FlowOffering {
-	if len(metas) == 0 {
-		return []FlowOffering{
-			{
-				Workflow: "bootstrap",
-				Priority: 1,
-				Hint:     `zerops_workflow action="start" workflow="bootstrap" — existing services detected without ServiceMeta; bootstrap will adopt them (use isExisting=true in plan)`,
-			},
-			{
-				Workflow: "debug",
-				Priority: 2,
-				Hint:     `zerops_workflow action="start" workflow="debug"`,
-			},
-		}
-	}
-	offerings := strategyOfferings(metas)
-	if len(offerings) == 0 && !hasStrategy(metas) {
-		offerings = []FlowOffering{{
-			Workflow: "deploy",
-			Priority: 1,
-			Hint:     `zerops_workflow action="start" workflow="deploy"`,
-		}}
-	}
-	offerings = append(offerings, FlowOffering{
-		Workflow: "bootstrap",
-		Priority: 2,
-		Hint:     `zerops_workflow action="start" workflow="bootstrap"`,
-	})
-	return offerings
-}
-
-func routeUnknown() []FlowOffering {
-	return []FlowOffering{
-		{Workflow: "bootstrap", Priority: 3, Hint: `zerops_workflow action="start" workflow="bootstrap"`},
-		{Workflow: "deploy", Priority: 3, Hint: `zerops_workflow action="start" workflow="deploy"`},
-		{Workflow: "debug", Priority: 3, Hint: `zerops_workflow action="start" workflow="debug"`},
-		{Workflow: "configure", Priority: 3, Hint: `zerops_workflow action="start" workflow="configure"`},
-	}
-}
-
-// hasStrategy returns true if any meta has a deploy strategy set.
-func hasStrategy(metas []*ServiceMeta) bool {
-	for _, m := range metas {
-		if m.DeployStrategy != "" {
 			return true
 		}
 	}

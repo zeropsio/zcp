@@ -20,7 +20,7 @@ func TestDiscoverTool_Basic(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDiscover(srv, mock, "proj-1")
+	RegisterDiscover(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_discover", nil)
 
@@ -50,7 +50,7 @@ func TestDiscoverTool_WithService(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDiscover(srv, mock, "proj-1")
+	RegisterDiscover(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_discover", map[string]any{"service": "api"})
 
@@ -80,7 +80,7 @@ func TestDiscoverTool_WithEnvs(t *testing.T) {
 		WithServiceEnv("svc-1", []platform.EnvVar{{Key: "PORT", Content: "3000"}})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDiscover(srv, mock, "proj-1")
+	RegisterDiscover(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_discover", map[string]any{"service": "api", "includeEnvs": true})
 
@@ -104,7 +104,7 @@ func TestDiscoverTool_ServiceNotFound(t *testing.T) {
 		WithServices([]platform.ServiceStack{})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDiscover(srv, mock, "proj-1")
+	RegisterDiscover(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_discover", map[string]any{"service": "nonexistent"})
 
@@ -126,7 +126,7 @@ func TestDiscoverTool_EnvRefAnnotation(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDiscover(srv, mock, "proj-1")
+	RegisterDiscover(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_discover", map[string]any{"service": "api", "includeEnvs": true})
 
@@ -170,7 +170,7 @@ func TestDiscoverTool_Error(t *testing.T) {
 		WithError("GetProject", platform.NewPlatformError(platform.ErrAPIError, "API error", ""))
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDiscover(srv, mock, "proj-1")
+	RegisterDiscover(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_discover", nil)
 

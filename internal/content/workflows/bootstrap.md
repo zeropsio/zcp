@@ -16,22 +16,20 @@ Two phases: generate correct configuration (the hard part), then deploy and veri
 ## Phase 1: Configuration
 
 <section name="discover">
-### Detect project state, plan services, confirm with user
+### Classify services, plan, confirm with user
 
-Call `zerops_discover` to see what exists. Then classify:
+Call `zerops_discover` to see what exists. Each service returns `managedByZCP` (has ServiceMeta) and `isInfrastructure` (database, cache, storage) fields. Classify based on facts:
 
-| Discover result | State | Action |
-|----------------|-------|--------|
-| No runtime services | FRESH | Full bootstrap |
-| All requested services exist as dev+stage pairs | CONFORMANT | If stack matches request, route to deploy. If different stack requested, ASK user how to proceed. NEVER auto-delete. |
-| Services exist but not as dev+stage pairs | NON_CONFORMANT | ASK user how to proceed. Options: (a) add new services with different hostnames alongside existing, (b) user explicitly approves deletion of specific named services, (c) work with existing. NEVER auto-delete. |
-
-**Dev+stage detection:** Look for `{name}dev` + `{name}stage` hostname pairs.
+| Discover result | Category | Action |
+|----------------|----------|--------|
+| No runtime services (empty or infrastructure-only) | Empty project | Full bootstrap |
+| All runtime services have `managedByZCP=true` | All managed | If stack matches request, route to deploy. If different stack requested, ASK user how to proceed. NEVER auto-delete. |
+| Any runtime service has `managedByZCP=false` | Unmanaged runtimes exist | ASK user how to proceed. Options: (a) add new services with different hostnames alongside existing, (b) user explicitly approves deletion of specific named services, (c) work with existing. NEVER auto-delete. |
 
 Route:
-- FRESH: proceed normally through all steps
-- CONFORMANT: if stack matches, skip bootstrap — route to deploy workflow (`zerops_workflow action="start" workflow="deploy"`). If user wants a different stack, ASK before making any changes. If no ServiceMeta files exist for these services, treat as adoption (see below).
-- NON_CONFORMANT: present existing services to user with types and status. Options: (a) add new services alongside existing, (b) user explicitly approves deletion of specific named services, (c) **adopt existing services** (recommended — see below). NEVER delete without explicit user approval naming each service.
+- Empty project: proceed normally through all steps
+- All managed: if stack matches, skip bootstrap — route to deploy workflow (`zerops_workflow action="start" workflow="deploy"`). If user wants a different stack, ASK before making any changes. If no ServiceMeta files exist for these services, treat as adoption (see below).
+- Unmanaged runtimes exist: present existing services to user with types and status. Options: (a) add new services alongside existing, (b) user explicitly approves deletion of specific named services, (c) **adopt existing services** (recommended — see below). NEVER delete without explicit user approval naming each service.
 
 #### Adopting existing services
 
