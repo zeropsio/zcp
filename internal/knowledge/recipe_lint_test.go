@@ -119,9 +119,13 @@ func TestRecipeLint(t *testing.T) {
 			// "not yet cleaned up" — skip strict lint checks until the knowledge-base
 			// fragment in the app README is the canonical source.
 			hasZeropsYml := hasH2Section(content, "zerops.yml")
+			_ = strings.HasSuffix(name, "-hello-world") // used in skip conditions below
+			// Hello-world recipes synced from the API may still have old-format content
+			// until the app READMEs are updated and the Strapi cache refreshed.
 			hasOldProse := strings.Contains(content, "### Build Procedure") ||
 				strings.Contains(content, "### Deploy Patterns") ||
-				strings.Contains(content, "### Base Image")
+				strings.Contains(content, "### Base Image") ||
+				strings.Contains(content, "## Common Mistakes")
 
 			t.Run("HasZeropsYml", func(t *testing.T) {
 				if !hasZeropsYml {

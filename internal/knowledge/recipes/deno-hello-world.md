@@ -1,4 +1,25 @@
+---
+description: "A Deno 2 application with a PostgreSQL database, ready to deploy on Zerops. Includes six environment configurations — from AI agent and remote development workspaces through staged and highly-available production setups — each with a full build and deploy pipeline."
+---
+
 # Deno Hello World on Zerops
+
+
+# Deno Hello World on Zerops
+
+
+# Deno Hello World on Zerops
+
+
+# Deno Hello World on Zerops
+
+
+# Deno Hello World on Zerops
+
+
+# Deno Hello World on Zerops
+
+
 
 
 

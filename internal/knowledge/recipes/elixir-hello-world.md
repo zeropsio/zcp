@@ -1,4 +1,19 @@
+---
+description: "A minimal Elixir web application built with Plug and Cowboy that connects to a PostgreSQL database, runs Ecto migrations on deploy, and exposes a single health check endpoint at `/`. Used within Elixir Hello World recipe for Zerops platform."
+---
+
 # Elixir Hello World on Zerops
+
+
+# Elixir Hello World on Zerops
+
+
+# Elixir Hello World on Zerops
+
+
+# Elixir Hello World on Zerops
+
+
 
 
 

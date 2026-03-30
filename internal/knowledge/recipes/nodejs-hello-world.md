@@ -1,4 +1,19 @@
+---
+description: "A Node.js 22 application built with Express and TypeScript, connected to a PostgreSQL database. Demonstrates idempotent migrations via `zsc execOnce` and a health endpoint at `/` that queries migrated data to confirm both database connectivity and schema integrity. Used within Node.js Hello World recipe for Zerops platform."
+---
+
 # Node.js Hello World on Zerops
+
+
+# Node.js Hello World on Zerops
+
+
+# Node.js Hello World on Zerops
+
+
+# Node.js Hello World on Zerops
+
+
 
 
 

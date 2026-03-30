@@ -1,4 +1,25 @@
+---
+description: "A minimal PHP application paired with PostgreSQL on Zerops, demonstrating database connectivity, idempotent migrations, and six ready-made environment configurations spanning the full development lifecycle."
+---
+
 # PHP Hello World on Zerops
+
+
+# PHP Hello World on Zerops
+
+
+# PHP Hello World on Zerops
+
+
+# PHP Hello World on Zerops
+
+
+# PHP Hello World on Zerops
+
+
+# PHP Hello World on Zerops
+
+
 
 
 

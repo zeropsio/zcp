@@ -1,4 +1,25 @@
+---
+description: "A Gleam web application with a PostgreSQL database, showcasing Gleam's type-safe Erlang/OTP ecosystem on Zerops — from AI agent workspaces through local and remote development to staged and highly-available production deployments."
+---
+
 # Gleam Hello World on Zerops
+
+
+# Gleam Hello World on Zerops
+
+
+# Gleam Hello World on Zerops
+
+
+# Gleam Hello World on Zerops
+
+
+# Gleam Hello World on Zerops
+
+
+# Gleam Hello World on Zerops
+
+
 
 
 

@@ -1,4 +1,25 @@
+---
+description: "A minimal Ruby web application built with Sinatra and Puma, connected to PostgreSQL on Zerops. Includes a database migration demo, a health-check endpoint, and ready-made infrastructure configurations for the entire development lifecycle."
+---
+
 # Ruby Hello World on Zerops
+
+
+# Ruby Hello World on Zerops
+
+
+# Ruby Hello World on Zerops
+
+
+# Ruby Hello World on Zerops
+
+
+# Ruby Hello World on Zerops
+
+
+# Ruby Hello World on Zerops
+
+
 
 
 

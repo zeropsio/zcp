@@ -11,28 +11,12 @@ set -euo pipefail
 ZCP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ZCP_KNOWLEDGE="${ZCP_ROOT}/internal/knowledge"
 
-# GitHub org for recipe apps
-GITHUB_ORG="zerops-recipe-apps"
-GITHUB_BRANCH="main"
+# Recipe API
+RECIPE_API="https://api.zerops.io/api/recipes"
 
-# Local sibling repos (optional — pull falls back to GitHub if missing)
+# Local sibling repos (for push — pull uses the API)
 LOCAL_DOCS="${DOCS_GUIDES:-$(dirname "$ZCP_ROOT")/docs/apps/docs/content/guides}"
 LOCAL_RECIPE_APPS="${RECIPE_APPS:-$(dirname "$ZCP_ROOT")/recipe-apps}"
-
-# ============================================================
-# Helpers
-# ============================================================
-
-# Fetch a file: local path first, then GitHub raw.
-# Usage: fetch_file "local/path" "github-org/repo" "path/in/repo"
-fetch_file() {
-  local local_path="$1" org_repo="$2" repo_path="$3"
-  if [[ -f "$local_path" ]]; then
-    cat "$local_path"
-  else
-    curl -sfL "https://raw.githubusercontent.com/${org_repo}/${GITHUB_BRANCH}/${repo_path}" || true
-  fi
-}
 
 # ============================================================
 # PULL: External → ZCP (before starting work / CI build)
@@ -89,37 +73,48 @@ pull_guides() {
 }
 
 pull_runtimes() {
-  echo "=== Pulling hello-world recipes → ZCP recipes ==="
+  echo "=== Pulling hello-world recipes from API → ZCP recipes ==="
   local runtimes=(bun deno dotnet elixir gleam go java nodejs php python ruby rust)
   local count=0
 
+  # Fetch all hello-world recipes in one API call
+  local api_url="${RECIPE_API}?filters%5BrecipeCategories%5D%5Bslug%5D=hello-world-examples&populate%5BrecipeLanguageFrameworks%5D%5Bpopulate%5D=*&populate%5BrecipeCategories%5D=true&pagination%5BpageSize%5D=100"
+  local api_response
+  api_response=$(curl -sfL "$api_url" || true)
+
+  if [[ -z "$api_response" ]]; then
+    echo "  ERROR: recipe API not reachable"
+    return 1
+  fi
+
   for runtime in "${runtimes[@]}"; do
-    local repo="${runtime}-hello-world-app"
-    local local_dir="${LOCAL_RECIPE_APPS}/${repo}"
-    local target="${ZCP_KNOWLEDGE}/recipes/${runtime}-hello-world.md"
+    local slug="${runtime}-hello-world"
+    local target="${ZCP_KNOWLEDGE}/recipes/${slug}.md"
 
-    # Fetch README (local or GitHub)
-    local readme_content
-    readme_content=$(fetch_file "${local_dir}/README.md" "${GITHUB_ORG}/${repo}" "README.md")
-    [[ -z "$readme_content" ]] && continue
+    # Extract this recipe's data from the API response
+    local recipe_json
+    recipe_json=$(echo "$api_response" | jq -r --arg s "$slug" '.data[] | select(.slug == $s)' 2>/dev/null)
 
-    # Extract intro fragment → becomes frontmatter description
+    if [[ -z "$recipe_json" || "$recipe_json" == "null" ]]; then
+      echo "  SKIP ${runtime}: not found in API"
+      continue
+    fi
+
+    # Get intro (strip markdown links, collapse to single line)
     local intro
-    # Extract intro fragment, strip markdown links [text](url) → text, collapse to single line
-    intro=$(echo "$readme_content" \
-      | sed -n '/ZEROPS_EXTRACT_START:intro/,/ZEROPS_EXTRACT_END:intro/p' \
-      | grep -v 'ZEROPS_EXTRACT' \
+    intro=$(echo "$recipe_json" | jq -r '.sourceData.extracts.intro // empty' \
       | sed 's/\[\([^]]*\)\]([^)]*)/ \1/g' \
-      | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//' || true)
+      | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//')
 
-    # Extract knowledge-base fragment (may not exist yet — that's OK)
+    # Get knowledge-base from first service that has it (promote H3→H2)
     local kb_content
-    kb_content=$(echo "$readme_content" \
-      | sed -n '/ZEROPS_EXTRACT_START:knowledge-base/,/ZEROPS_EXTRACT_END:knowledge-base/p' \
-      | grep -v 'ZEROPS_EXTRACT' || true)
+    kb_content=$(echo "$recipe_json" | jq -r '
+      [.sourceData.environments[0].services[]
+       | select(.extracts["knowledge-base"] != null and .extracts["knowledge-base"] != "")]
+      | first // empty
+      | .extracts["knowledge-base"]' 2>/dev/null)
 
-    # If no fragment in README, keep existing knowledge-base sections from current file
-    # (everything before ## zerops.yml, after frontmatter).
+    # If no knowledge-base in API, keep existing content from current file
     local kb_from_existing=""
     if [[ -z "$kb_content" && -f "$target" ]]; then
       kb_from_existing=$(awk '
@@ -131,34 +126,28 @@ pull_runtimes() {
       ' "$target" | sed '1{/^# /d;}')
     fi
 
-    # Need at least one source of knowledge-base content
     if [[ -z "$kb_content" && -z "$kb_from_existing" ]]; then
-      echo "  SKIP ${runtime}: no knowledge-base fragment in README and no existing file"
+      echo "  SKIP ${runtime}: no knowledge-base in API and no existing file"
       continue
     fi
 
-    # Determine H1 title
+    # Get zerops.yaml from first service that has it
+    local yaml_content
+    yaml_content=$(echo "$recipe_json" | jq -r '
+      [.sourceData.environments[0].services[]
+       | select(.zeropsYaml != null and .zeropsYaml != "")]
+      | first // empty
+      | .zeropsYaml' 2>/dev/null)
+
+    # Determine H1 title from existing file or generate
     local h1=""
     if [[ -f "$target" ]]; then
-      # Look past frontmatter for H1
-      h1=$(awk '/^---$/ && NR==1{in_fm=1;next} in_fm && /^---$/{in_fm=0;next} in_fm{next} /^# /{print;exit}' "$target")
+      h1=$(awk '/^---$/ && NR==1{f=1;next} f && /^---$/{f=0;next} f{next} /^# /{print;exit}' "$target")
     fi
     [[ -z "$h1" ]] && h1="# ${runtime^} Hello World on Zerops"
 
-    # Fetch zerops.yaml (local or GitHub)
-    local yaml_content=""
-    if [[ -f "${local_dir}/zerops.yaml" ]]; then
-      yaml_content=$(cat "${local_dir}/zerops.yaml")
-    elif [[ -f "${local_dir}/zerops.yml" ]]; then
-      yaml_content=$(cat "${local_dir}/zerops.yml")
-    else
-      yaml_content=$(curl -sfL "https://raw.githubusercontent.com/${GITHUB_ORG}/${repo}/${GITHUB_BRANCH}/zerops.yaml" || true)
-      [[ -z "$yaml_content" ]] && yaml_content=$(curl -sfL "https://raw.githubusercontent.com/${GITHUB_ORG}/${repo}/${GITHUB_BRANCH}/zerops.yml" || true)
-    fi
-
     # Build recipe file
     {
-      # Frontmatter with description from intro fragment
       if [[ -n "$intro" ]]; then
         echo "---"
         echo "description: \"${intro}\""
@@ -186,7 +175,7 @@ pull_runtimes() {
       fi
     } > "$target"
 
-    echo "  ${runtime} → recipes/${runtime}-hello-world.md"
+    echo "  ${runtime} → recipes/${slug}.md"
     count=$((count + 1))
   done
 

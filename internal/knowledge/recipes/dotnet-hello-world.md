@@ -1,4 +1,25 @@
+---
+description: ".NET 9 recipe for Zerops demonstrating a minimal web service with automatic PostgreSQL migrations and a health check endpoint that verifies live database connectivity. Includes ready-made configurations for every stage of the development lifecycle — from AI agent environments to highly-available production."
+---
+
 # .NET Hello World on Zerops
+
+
+# .NET Hello World on Zerops
+
+
+# .NET Hello World on Zerops
+
+
+# .NET Hello World on Zerops
+
+
+# .NET Hello World on Zerops
+
+
+# .NET Hello World on Zerops
+
+
 
 
 
