@@ -12,9 +12,11 @@ intro fragment           →     extracts.intro           →   frontmatter desc
 zerops.yaml              →     services[].zeropsYaml    →   ## zerops.yml section
 ```
 
-**Pull** (`scripts/sync-knowledge.sh pull recipes`): one API call to `api.zerops.io` fetches all recipes with pre-parsed fragments. No raw file fetching or sed extraction — the fragment system handles parsing.
+**Pull** (`scripts/sync-knowledge.sh pull recipes`): one API call to `api.zerops.io` fetches all non-utility recipes dynamically. No hardcoded list — new recipes appear automatically.
 
-**Push** (`scripts/sync-knowledge.sh push recipes`): writes knowledge-base content back to local app repo clones. You review, commit, push to GitHub, then refresh the Strapi cache.
+**Push** (`scripts/sync-knowledge.sh push recipes`): writes knowledge-base content back to local app repo clones (tries `{slug}-app/` then `{slug}/`). You review, commit, push to GitHub, then refresh the Strapi cache.
+
+All synced files (`recipes/`, `guides/`, `decisions/`) are **gitignored** — run `scripts/sync-knowledge.sh pull` before build. Infrastructure bases (`bases/`) are committed.
 
 ## Recipe File Format
 
@@ -46,6 +48,8 @@ Real failures on Zerops — platform-specific, not general runtime docs.
 ```
 
 **Every section must be Zerops-specific.** Don't restate general runtime documentation. The knowledge-base answers: "what's different about deploying {runtime} on Zerops vs anywhere else?"
+
+Most recipes currently only have `description` + `## zerops.yml` (from API). The sections above (Base Image through Gotchas) come from the `knowledge-base` fragment in the app README — add it there, refresh Strapi cache, then `pull` to see it in ZCP.
 
 ## Knowledge-Base Content Guidelines
 
@@ -104,10 +108,10 @@ Strapi extracts these and serves them via the API. The sync script reads from th
 
 ### API Endpoints
 
-**List/filter recipes:**
+**List all recipes (excluding service-utility):**
 ```
 GET https://api.zerops.io/api/recipes
-  ?filters[recipeCategories][slug]=hello-world-examples
+  ?filters[recipeCategories][slug][$ne]=service-utility
   &populate[recipeLanguageFrameworks][populate]=*
   &populate[recipeCategories]=true
   &pagination[pageSize]=100
