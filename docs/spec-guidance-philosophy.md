@@ -87,7 +87,7 @@ ZCP operations follow a two-tier model:
 
 | Tier | When | Examples | Why |
 |------|------|----------|-----|
-| **Workflow** | Multi-step, needs state/coordination, platform-specific ordering | bootstrap, deploy, debug, configure, cicd | Agents need guidance on step ordering, env var discovery, deploy sequencing, verification loops |
+| **Workflow** | Multi-step, needs state/coordination, platform-specific ordering | bootstrap, deploy, cicd | Agents need guidance on step ordering, env var discovery, deploy sequencing, verification loops. Deploy covers investigation/fixing. |
 | **Direct tool** | Single operation, self-contained, tool schema is sufficient | zerops_scale, zerops_manage, zerops_env, zerops_subdomain | The tool's schema describes parameters, nextActions guides follow-up, zerops_knowledge provides domain context on demand |
 
 **Workflow is NOT a gate.** An agent does not need to start a workflow to call `zerops_scale` or `zerops_manage`. These tools work independently. Workflows exist to prevent the specific failure modes of complex operations (writing zerops.yml before discovering env vars, deploying before verifying, etc.).
@@ -489,7 +489,7 @@ Running installs over the SSHFS network mount is orders of magnitude slower.
 
 ### Tools
 - zerops_discover — current state of all services (call anytime for refresh)
-- zerops_workflow — orchestrated flows (bootstrap, deploy, debug, configure, cicd)
+- zerops_workflow — orchestrated flows (bootstrap, deploy, cicd)
 - zerops_scale — scale a service directly (no workflow needed)
 - zerops_manage — lifecycle operations: start, stop, restart, reload, connect/disconnect storage
 - zerops_knowledge — Zerops-specific knowledge (runtimes, recipes, schemas)
@@ -554,7 +554,7 @@ See Section 6 for detailed layer definitions.
 
 ### 8.3 Immediate Workflows
 
-Debug, scale, configure are stateless — return guidance text directly. No session state, no checkers. Guidance content should follow the same principles: inject what's always relevant, point to knowledge on demand.
+CI/CD is the only remaining immediate workflow — returns guidance text directly. No session state, no checkers. Debug and configure were consolidated into the deploy workflow (v6.33.0). Scale, env, subdomain, and manage are direct tools.
 
 ---
 
