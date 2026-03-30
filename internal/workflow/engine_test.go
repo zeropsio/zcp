@@ -1,4 +1,4 @@
-// Tests for: workflow engine — orchestration, project state detection.
+// Tests for: workflow engine — orchestration, managed service detection.
 package workflow
 
 import (
@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/zeropsio/zcp/internal/platform"
 )
 
 func TestIsManagedService(t *testing.T) {
@@ -39,162 +37,6 @@ func TestIsManagedService(t *testing.T) {
 			t.Parallel()
 			if got := IsManagedService(tt.serviceType); got != tt.want {
 				t.Errorf("IsManagedService(%q) = %v, want %v", tt.serviceType, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestDetectProjectState_Fresh(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name         string
-		services     []platform.ServiceStack
-		selfHostname string
-		want         ProjectState
-	}{
-		{
-			"no_services",
-			nil,
-			"",
-			StateFresh,
-		},
-		{
-			"only_managed_services",
-			[]platform.ServiceStack{
-				{Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
-				{Name: "cache", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@8"}},
-			},
-			"",
-			StateFresh,
-		},
-		{
-			"only_object_storage",
-			[]platform.ServiceStack{
-				{Name: "storage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "object-storage@1"}},
-			},
-			"",
-			StateFresh,
-		},
-		{
-			"only_shared_storage",
-			[]platform.ServiceStack{
-				{Name: "files", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "shared-storage@1"}},
-			},
-			"",
-			StateFresh,
-		},
-		{
-			"only_self_service",
-			[]platform.ServiceStack{
-				{Name: "zcpx", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zcp@1"}},
-			},
-			"zcpx",
-			StateFresh,
-		},
-		{
-			"self_plus_managed",
-			[]platform.ServiceStack{
-				{Name: "zcpx", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zcp@1"}},
-				{Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
-			},
-			"zcpx",
-			StateFresh,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			client := platform.NewMock().WithServices(tt.services)
-			got, err := DetectProjectState(context.Background(), client, "proj-1", tt.selfHostname)
-			if err != nil {
-				t.Fatalf("DetectProjectState: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("state: want %s, got %s", tt.want, got)
-			}
-		})
-	}
-}
-
-func TestDetectProjectState_Conformant(t *testing.T) {
-	t.Parallel()
-	services := []platform.ServiceStack{
-		{Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-		{Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-		{Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
-	}
-	client := platform.NewMock().WithServices(services)
-	got, err := DetectProjectState(context.Background(), client, "proj-2", "")
-	if err != nil {
-		t.Fatalf("DetectProjectState: %v", err)
-	}
-	if got != StateConformant {
-		t.Errorf("state: want CONFORMANT, got %s", got)
-	}
-}
-
-func TestDetectProjectState_NonConformant(t *testing.T) {
-	t.Parallel()
-	services := []platform.ServiceStack{
-		{Name: "myapp", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-		{Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
-	}
-	client := platform.NewMock().WithServices(services)
-	got, err := DetectProjectState(context.Background(), client, "proj-3", "")
-	if err != nil {
-		t.Fatalf("DetectProjectState: %v", err)
-	}
-	if got != StateNonConformant {
-		t.Errorf("state: want NON_CONFORMANT, got %s", got)
-	}
-}
-
-func TestDetectProjectState_SelfExclusion(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name         string
-		services     []platform.ServiceStack
-		selfHostname string
-		want         ProjectState
-	}{
-		{
-			"self_with_conformant_pair",
-			[]platform.ServiceStack{
-				{Name: "zcpx", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zcp@1"}},
-				{Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-				{Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-			},
-			"zcpx",
-			StateConformant,
-		},
-		{
-			"self_with_nonconformant_service",
-			[]platform.ServiceStack{
-				{Name: "zcpx", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zcp@1"}},
-				{Name: "myapp", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-			},
-			"zcpx",
-			StateNonConformant,
-		},
-		{
-			"no_self_hostname_counts_all",
-			[]platform.ServiceStack{
-				{Name: "zcpx", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "zcp@1"}},
-			},
-			"",
-			StateNonConformant,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			client := platform.NewMock().WithServices(tt.services)
-			got, err := DetectProjectState(context.Background(), client, "proj-4", tt.selfHostname)
-			if err != nil {
-				t.Fatalf("DetectProjectState: %v", err)
-			}
-			if got != tt.want {
-				t.Errorf("state: want %s, got %s", tt.want, got)
 			}
 		})
 	}

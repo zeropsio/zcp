@@ -6,6 +6,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // DiscoverInput is the input type for zerops_discover.
@@ -15,7 +16,7 @@ type DiscoverInput struct {
 }
 
 // RegisterDiscover registers the zerops_discover tool.
-func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID string) {
+func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_discover",
 		Description: "Discover project and service information. Filter by service hostname or list all. Use includeEnvs=true to read env vars — one call returns all services.",
@@ -29,6 +30,29 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID string)
 		if err != nil {
 			return convertError(err), nil, nil
 		}
+		enrichWithMetaStatus(result, stateDir)
 		return jsonResult(result), nil, nil
 	})
+}
+
+// enrichWithMetaStatus sets ManagedByZCP on each service based on ServiceMeta presence.
+func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
+	if stateDir == "" {
+		return
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil || len(metas) == 0 {
+		return
+	}
+	metaMap := make(map[string]bool, len(metas))
+	for _, m := range metas {
+		if m.IsComplete() {
+			metaMap[m.Hostname] = true
+		}
+	}
+	for i := range result.Services {
+		if metaMap[result.Services[i].Hostname] {
+			result.Services[i].ManagedByZCP = true
+		}
+	}
 }

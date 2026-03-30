@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestRoute_FreshProject(t *testing.T) {
+func TestRoute_EmptyProject(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name           string
@@ -14,15 +14,14 @@ func TestRoute_FreshProject(t *testing.T) {
 		wantMinOffered int
 	}{
 		{
-			name:           "no sessions, no metas",
-			input:          RouterInput{ProjectState: StateFresh},
+			name:           "no services, no metas, no sessions",
+			input:          RouterInput{},
 			wantTop:        "bootstrap",
 			wantMinOffered: 4, // bootstrap + debug + scale + configure
 		},
 		{
-			name: "active bootstrap session",
+			name: "active bootstrap session offers resume",
 			input: RouterInput{
-				ProjectState:   StateFresh,
 				ActiveSessions: []SessionEntry{{Workflow: "bootstrap", SessionID: "abc123"}},
 			},
 			wantTop: "bootstrap",
@@ -45,7 +44,7 @@ func TestRoute_FreshProject(t *testing.T) {
 	}
 }
 
-func TestRoute_ConformantProject(t *testing.T) {
+func TestRoute_AllBootstrapped(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -55,7 +54,6 @@ func TestRoute_ConformantProject(t *testing.T) {
 		{
 			name: "ci-cd strategy",
 			input: RouterInput{
-				ProjectState: StateConformant,
 				ServiceMetas: []*ServiceMeta{{
 					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyCICD,
 				}},
@@ -66,7 +64,6 @@ func TestRoute_ConformantProject(t *testing.T) {
 		{
 			name: "push-dev strategy",
 			input: RouterInput{
-				ProjectState: StateConformant,
 				ServiceMetas: []*ServiceMeta{{
 					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev,
 				}},
@@ -75,20 +72,14 @@ func TestRoute_ConformantProject(t *testing.T) {
 			wantTop: "deploy",
 		},
 		{
-			name: "manual strategy — no deploy offering",
+			name: "manual strategy — bootstrap as add-new",
 			input: RouterInput{
-				ProjectState: StateConformant,
 				ServiceMetas: []*ServiceMeta{{
 					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyManual,
 				}},
 				LiveServices: []string{"appdev"},
 			},
-			wantTop: "bootstrap", // Manual has no deploy offering; bootstrap is the first real workflow after utilities
-		},
-		{
-			name:    "no metas",
-			input:   RouterInput{ProjectState: StateConformant},
-			wantTop: "deploy",
+			wantTop: "bootstrap", // Manual has no deploy offering; bootstrap (add new) is first
 		},
 	}
 	for _, tt := range tests {
@@ -101,7 +92,7 @@ func TestRoute_ConformantProject(t *testing.T) {
 			if offerings[0].Workflow != tt.wantTop {
 				t.Errorf("top = %q, want %q", offerings[0].Workflow, tt.wantTop)
 			}
-			// Should always have bootstrap as secondary.
+			// Should always have bootstrap available.
 			hasBootstrap := false
 			for _, o := range offerings {
 				if o.Workflow == "bootstrap" {
@@ -115,7 +106,7 @@ func TestRoute_ConformantProject(t *testing.T) {
 	}
 }
 
-func TestRoute_NonConformant(t *testing.T) {
+func TestRoute_UnmanagedRuntimes(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -123,19 +114,21 @@ func TestRoute_NonConformant(t *testing.T) {
 		wantTop string
 	}{
 		{
-			name: "some metas with strategy",
+			name: "only unmanaged runtimes — adoption",
 			input: RouterInput{
-				ProjectState: StateNonConformant,
-				ServiceMetas: []*ServiceMeta{{
-					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev,
-				}},
-				LiveServices: []string{"appdev"},
+				UnmanagedRuntimes: []string{"appdev", "appstage"},
 			},
-			wantTop: "deploy",
+			wantTop: "bootstrap",
 		},
 		{
-			name:    "no metas",
-			input:   RouterInput{ProjectState: StateNonConformant},
+			name: "mix bootstrapped and unmanaged — adoption first",
+			input: RouterInput{
+				ServiceMetas: []*ServiceMeta{{
+					Hostname: "apidev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev,
+				}},
+				LiveServices:      []string{"apidev", "appdev"},
+				UnmanagedRuntimes: []string{"appdev"},
+			},
 			wantTop: "bootstrap",
 		},
 	}
@@ -149,22 +142,34 @@ func TestRoute_NonConformant(t *testing.T) {
 			if offerings[0].Workflow != tt.wantTop {
 				t.Errorf("top = %q, want %q", offerings[0].Workflow, tt.wantTop)
 			}
+			// Adoption hint should mention the unmanaged hostnames.
+			if !strings.Contains(offerings[0].Hint, "adopt") {
+				t.Errorf("hint = %q, want to contain 'adopt'", offerings[0].Hint)
+			}
 		})
 	}
 }
 
-func TestRoute_Unknown_WorkflowsEqualPriority(t *testing.T) {
+func TestRoute_UnmanagedWithStrategy(t *testing.T) {
 	t.Parallel()
-	offerings := Route(RouterInput{ProjectState: StateUnknown})
-	if len(offerings) == 0 {
-		t.Fatal("expected offerings")
+	// When both unmanaged runtimes and bootstrapped services exist,
+	// adoption is p1 but deploy should also appear.
+	input := RouterInput{
+		ServiceMetas: []*ServiceMeta{{
+			Hostname: "apidev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev,
+		}},
+		LiveServices:      []string{"apidev", "appdev"},
+		UnmanagedRuntimes: []string{"appdev"},
 	}
-	// Workflows from routeUnknown should have equal priority (3).
-	// Utility offerings (scale tool) may have higher priority number (5).
+	offerings := Route(input)
+	hasDeploy := false
 	for _, o := range offerings {
-		if o.Priority != 3 && o.Priority != 5 {
-			t.Errorf("unexpected priority %d for %q", o.Priority, o.Workflow)
+		if o.Workflow == "deploy" {
+			hasDeploy = true
 		}
+	}
+	if !hasDeploy {
+		t.Error("expected deploy offering alongside adoption")
 	}
 }
 
@@ -174,10 +179,12 @@ func TestRoute_AlwaysIncludesUtilities(t *testing.T) {
 		name  string
 		input RouterInput
 	}{
-		{"fresh", RouterInput{ProjectState: StateFresh}},
-		{"conformant", RouterInput{ProjectState: StateConformant}},
-		{"non-conformant", RouterInput{ProjectState: StateNonConformant}},
-		{"unknown", RouterInput{ProjectState: StateUnknown}},
+		{"empty", RouterInput{}},
+		{"bootstrapped", RouterInput{
+			ServiceMetas: []*ServiceMeta{{Hostname: "a", BootstrappedAt: "2026-01-01"}},
+			LiveServices: []string{"a"},
+		}},
+		{"unmanaged", RouterInput{UnmanagedRuntimes: []string{"x"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -201,7 +208,6 @@ func TestRoute_AlwaysIncludesUtilities(t *testing.T) {
 func TestRoute_StaleMetaFiltering(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{
-		ProjectState: StateConformant,
 		ServiceMetas: []*ServiceMeta{
 			{Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyCICD},
 			{Hostname: "staleservice", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev},
@@ -214,10 +220,9 @@ func TestRoute_StaleMetaFiltering(t *testing.T) {
 	}
 }
 
-func TestRoute_ActiveBootstrap_ResumeHint(t *testing.T) {
+func TestRoute_ResumeHint(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{
-		ProjectState:   StateFresh,
 		ActiveSessions: []SessionEntry{{Workflow: "bootstrap", SessionID: "abc123"}},
 	}
 	offerings := Route(input)
@@ -239,7 +244,6 @@ func TestRoute_IncompleteMetas(t *testing.T) {
 		{
 			name: "incomplete meta suggests bootstrap",
 			input: RouterInput{
-				ProjectState: StateNonConformant,
 				ServiceMetas: []*ServiceMeta{
 					{Hostname: "appdev", Mode: PlanModeDev},
 				},
@@ -248,9 +252,8 @@ func TestRoute_IncompleteMetas(t *testing.T) {
 			wantTop: "bootstrap",
 		},
 		{
-			name: "complete meta routes normally",
+			name: "complete meta routes to deploy",
 			input: RouterInput{
-				ProjectState: StateConformant,
 				ServiceMetas: []*ServiceMeta{
 					{Hostname: "appdev", BootstrappedAt: "2026-03-04", DeployStrategy: StrategyPushDev},
 				},
@@ -280,7 +283,6 @@ func TestRoute_NoReasonField(t *testing.T) {
 	_ = offering.Workflow
 	_ = offering.Priority
 	_ = offering.Hint
-	// Compile-time verification: Reason field does not exist.
 }
 
 func TestFormatOfferings_Compact(t *testing.T) {

@@ -79,7 +79,7 @@ flowchart TD
 
     subgraph Bootstrap ["Bootstrap Flow (5 steps)"]
         direction TB
-        Discover["1. DISCOVER<br/>─────────────<br/>Detect project state<br/>Identify services<br/>Choose mode<br/>Submit plan"]
+        Discover["1. DISCOVER<br/>─────────────<br/>Classify services<br/>Identify stack<br/>Choose mode<br/>Submit plan"]
 
         Provision["2. PROVISION<br/>─────────────<br/>Generate import.yml<br/>Create services<br/>Mount dev filesystems<br/>Discover env vars"]
 
@@ -128,7 +128,7 @@ flowchart TD
 
 #### Step 1: DISCOVER (fixed, mandatory)
 
-**Purpose**: Detect project state, identify required services, choose bootstrap mode, submit structured plan.
+**Purpose**: Classify existing services, identify required stack, choose bootstrap mode, submit structured plan.
 
 **Inputs**:
 - Project ID (from auth)
@@ -136,19 +136,19 @@ flowchart TD
 - User intent (what they want to build)
 
 **Outputs**:
-- Project state classification (FRESH / CONFORMANT / NON_CONFORMANT)
+- Service classification (via `managedByZCP` and `isInfrastructure` fields per service)
 - ServicePlan with validated targets
 - Chosen mode (standard / dev / simple)
 
 **Procedure**:
 
-1. **Detect project state** — call `zerops_discover` to see existing services:
+1. **Classify services** — call `zerops_discover` to see existing services. Each service returns `managedByZCP` (has ServiceMeta) and `isInfrastructure` (database, cache, storage) fields:
 
-   | Result | State | Action |
-   |--------|-------|--------|
-   | No runtime services | FRESH | Full bootstrap |
-   | Requested services exist as dev+stage pairs with matching stack | CONFORMANT | Route to deploy workflow (skip bootstrap) |
-   | Services exist but don't match expected pattern | NON_CONFORMANT | STOP. Present to user. NEVER auto-delete. |
+   | Result | Category | Action |
+   |--------|----------|--------|
+   | No runtime services (empty or infrastructure-only) | Empty project | Full bootstrap |
+   | All runtime services have `managedByZCP=true` | All managed | Route to deploy workflow (skip bootstrap) |
+   | Any runtime service has `managedByZCP=false` | Unmanaged runtimes exist | STOP. Present to user. NEVER auto-delete. |
 
 2. **Identify stack components** from user request:
    - **Runtime services**: type + framework (e.g., `nodejs@22` with Next.js)
@@ -197,11 +197,11 @@ flowchart TD
 - Plan with zero runtime targets (empty `targets` array)
 - Route: discover → provision → SKIP generate → SKIP deploy → SKIP close
 
-**Adoption (NON_CONFORMANT with existing services)**:
+**Adoption (unmanaged runtimes exist)**:
 
-When the project has pre-existing runtime services not created by ZCP (no ServiceMeta files):
+When the project has pre-existing runtime services not managed by ZCP (`managedByZCP=false`):
 
-1. **Discovery**: Agent calls `zerops_discover` → finds runtime services → classifies as NON_CONFORMANT
+1. **Discovery**: Agent calls `zerops_discover` → finds runtime services with `managedByZCP=false`
 2. **User decision**: Agent presents services and suggests adoption — registering them in ZCP without recreating
 3. **Plan construction**:
    - Runtime targets: `isExisting: true` on adopted runtimes, `isExisting: false` on new ones
@@ -217,8 +217,8 @@ The `isExisting` flag is immutable after plan submission and affects per-target 
 **Invariants**:
 - Plan validated against live API types before storage
 - User must confirm plan before submission
-- CONFORMANT projects skip bootstrap entirely → deploy workflow (unless no ServiceMeta exists — then adoption path)
-- NON_CONFORMANT projects require explicit user decision
+- All-managed projects skip bootstrap entirely → deploy workflow (unless no ServiceMeta exists — then adoption path)
+- Projects with unmanaged runtimes require explicit user decision
 
 ---
 

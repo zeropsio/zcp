@@ -11,7 +11,7 @@ User ←→ Claude Code (terminal in code-server) ←→ ZCP (MCP over STDIO) �
 
 The user opens code-server on the `zcp` service subdomain. Claude Code is preconfigured with ZCP as its MCP server. The user describes what they want, the LLM figures out what to do, calls ZCP tools to make it happen.
 
-ZCP authenticates once at startup (env var or zcli token), discovers which project it's in, and exposes everything as MCP tools. The LLM sees a system prompt with the environment concept, current project state, and available workflows — the LLM decides what to do.
+ZCP authenticates once at startup (env var or zcli token), discovers which project it's in, and exposes everything as MCP tools. The LLM sees a system prompt with the environment concept, current service classification, and available workflows — the LLM decides what to do.
 
 ## What the LLM can do
 
@@ -66,11 +66,11 @@ The router is a pure function that returns **factual data** — no recommendatio
 Route(RouterInput) → []FlowOffering{Workflow, Priority, Hint}
 ```
 
-| Project state | Primary | Secondary |
-|---------------|---------|-----------|
-| **FRESH** | bootstrap (p1) | — |
-| **CONFORMANT** | strategy-based deploy (p1) | bootstrap (p2) |
-| **NON_CONFORMANT** | strategy-based or debug (p1-2) | bootstrap (p2) |
+| Service classification | Primary | Secondary |
+|----------------------|---------|-----------|
+| **Empty project** (no runtime services) | bootstrap (p1) | — |
+| **All managed** (all runtimes have ZCP state) | strategy-based deploy (p1) | bootstrap (p2) |
+| **Unmanaged runtimes exist** (services without ZCP state) | strategy-based or debug (p1-2) | bootstrap (p2) |
 
 Strategy-based routing reads `ServiceMeta.DeployStrategy` persisted from prior bootstraps. Utility offerings (debug, configure, zerops_scale) are always appended at priority 5. Scale is a direct tool — no workflow needed. Stale metas (hostnames deleted from API) are filtered out automatically.
 
@@ -104,7 +104,7 @@ Bootstrap is the core flow. It takes a user request ("deploy a Go API with Postg
 
 | Step | What happens | Hard check |
 |------|-------------|------------|
-| **discover** | Inspect project state, classify (FRESH / CONFORMANT / NON_CONFORMANT), plan services, validate types against live catalog, submit plan | — |
+| **discover** | Classify services (via `managedByZCP`/`isInfrastructure` fields), plan services, validate types against live catalog, submit plan | — |
 | **provision** | Generate import.yml, create services via API, mount dev filesystems via SSHFS, discover env vars from managed services | All services exist with expected status; managed deps have env vars |
 | **generate** | Write zerops.yml + app code to mounted dev filesystem using real env vars from provision | zerops.yml valid, hostname match, env var refs valid |
 | **deploy** | Deploy dev and stage services, enable subdomains, verify health, iteration loop (fix → redeploy) | All runtimes RUNNING; subdomain access enabled; health checks pass |

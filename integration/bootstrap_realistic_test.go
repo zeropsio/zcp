@@ -117,7 +117,7 @@ func setupRealisticServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession
 	logFetcher := defaultLogFetcher()
 
 	tools.RegisterWorkflow(mcpSrv, mock, projectID, nil, engine, nil, "", "")
-	tools.RegisterDiscover(mcpSrv, mock, projectID)
+	tools.RegisterDiscover(mcpSrv, mock, projectID, "")
 	tools.RegisterKnowledge(mcpSrv, store, mock, nil, nil, nil)
 	tools.RegisterImport(mcpSrv, mock, projectID, nil, engine)
 	tools.RegisterProcess(mcpSrv, mock)
@@ -175,7 +175,7 @@ func agentDiscover(t *testing.T, session *mcp.ClientSession) {
 	mustUnmarshal(t, startText, &resp)
 	assertStep(t, &resp, "discover", 0)
 
-	// Call zerops_discover to detect project state.
+	// Call zerops_discover to inspect services.
 	discoverText := callAndGetText(t, session, "zerops_discover", nil)
 	var dr ops.DiscoverResult
 	mustUnmarshal(t, discoverText, &dr)

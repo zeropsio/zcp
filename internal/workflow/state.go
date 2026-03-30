@@ -2,16 +2,6 @@
 // multi-step Zerops operations with step-based progression and checkers.
 package workflow
 
-// ProjectState represents detected project state.
-type ProjectState string
-
-const (
-	StateFresh         ProjectState = "FRESH"
-	StateNonConformant ProjectState = "NON_CONFORMANT"
-	StateConformant    ProjectState = "CONFORMANT"
-	StateUnknown       ProjectState = "UNKNOWN"
-)
-
 // WorkflowState is the persistent state stored at .zcp/state/sessions/{sessionID}.json.
 type WorkflowState struct {
 	Version   string          `json:"version"`

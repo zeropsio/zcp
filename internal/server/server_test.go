@@ -133,8 +133,8 @@ func TestServer_Instructions_ReasonableLength(t *testing.T) {
 	// Check combined constant length is reasonable.
 	combined := baseInstructions + routingInstructions
 	words := strings.Fields(combined)
-	if len(words) < 20 || len(words) > 170 {
-		t.Errorf("base+routing instructions has %d words, expected 20-170", len(words))
+	if len(words) < 20 || len(words) > 220 {
+		t.Errorf("base+routing instructions has %d words, expected 20-220", len(words))
 	}
 }
 
@@ -174,7 +174,7 @@ func TestBuildInstructions_WithServices(t *testing.T) {
 
 	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
 
-	for _, want := range []string{"appdev", "appstage", "db", "nodejs@22", "postgresql@16", "RUNNING", string(workflow.StateConformant)} {
+	for _, want := range []string{"appdev", "appstage", "db", "nodejs@22", "postgresql@16", "RUNNING"} {
 		if !strings.Contains(inst, want) {
 			t.Errorf("instructions should contain %q", want)
 		}
@@ -182,21 +182,21 @@ func TestBuildInstructions_WithServices(t *testing.T) {
 	if !strings.Contains(inst, "ZCP manages") {
 		t.Error("instructions should contain base instructions")
 	}
-	// Conformant project should recommend deploy with tracked mode syntax.
+	// Should use tracked mode syntax.
 	if !strings.Contains(inst, `action="start"`) {
-		t.Error("conformant project should use tracked mode syntax")
+		t.Error("should use tracked mode syntax")
 	}
-	// Conformant project should contain anti-deletion language.
+	// Should contain anti-deletion language.
 	if !strings.Contains(inst, "Do NOT delete") {
-		t.Error("conformant project should contain anti-deletion warning")
+		t.Error("should contain anti-deletion warning")
 	}
-	// Should NOT have bare REQUIRED directive for conformant state.
-	if strings.Contains(inst, "REQUIRED: zerops_workflow") {
-		t.Error("conformant project should not have bare REQUIRED directive")
+	// Unmanaged runtimes should show adoption hint.
+	if !strings.Contains(inst, "not managed by ZCP") {
+		t.Error("unmanaged runtime services should be labeled")
 	}
 }
 
-func TestBuildInstructions_NonConformantProject(t *testing.T) {
+func TestBuildInstructions_UnmanagedProject(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
 		{Name: "api", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
@@ -204,20 +204,17 @@ func TestBuildInstructions_NonConformantProject(t *testing.T) {
 
 	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
 
-	if !strings.Contains(inst, string(workflow.StateNonConformant)) {
-		t.Errorf("instructions should contain NON_CONFORMANT state")
-	}
-	// Non-conformant project should contain anti-deletion language.
+	// Should contain anti-deletion language.
 	if !strings.Contains(inst, "Do NOT delete") {
-		t.Error("non-conformant project should contain anti-deletion warning")
+		t.Error("should contain anti-deletion warning")
 	}
-	// Non-conformant project should NOT force bootstrap with REQUIRED.
-	if strings.Contains(inst, "REQUIRED: zerops_workflow") {
-		t.Error("non-conformant project should not have bare REQUIRED directive")
+	// Should show adoption hint for unmanaged runtime.
+	if !strings.Contains(inst, "not managed by ZCP") {
+		t.Error("unmanaged runtime should be labeled")
 	}
-	// Should recommend bootstrap for adding new services.
+	// Should recommend bootstrap.
 	if !strings.Contains(inst, "bootstrap") {
-		t.Error("non-conformant project should mention bootstrap option")
+		t.Error("should mention bootstrap for adoption")
 	}
 }
 

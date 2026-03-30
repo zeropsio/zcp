@@ -431,7 +431,7 @@ The agent can override with explicit `mode` parameter (e.g., `mode="stage"` to s
 | File | ZCP's relationship | Rule |
 |------|-------------------|------|
 | `CLAUDE.md` | **Reflog only** — append-only bootstrap history entries (ZEROPS:REFLOG markers). Never instructions. | `zcp init` generates a minimal CLAUDE.md. Reflog entries appended after bootstrap completion. |
-| MCP init instructions | **All agent instructions** — environment model, persistence rules, tool overview, workflow routing, project state | Source of truth for how the agent should behave with ZCP |
+| MCP init instructions | **All agent instructions** — environment model, persistence rules, tool overview, workflow routing, service classification | Source of truth for how the agent should behave with ZCP |
 | Workflow responses | **Step-specific guidance** — personalized deploy/bootstrap instructions | Returned per workflow action call |
 
 **Rationale**: MCP init instructions flow into the agent's context identically to CLAUDE.md. Keeping instructions in MCP init means ZCP is a self-contained plugin — users can add/remove ZCP without it polluting their project configuration. CLAUDE.md remains the user's space; ZCP only appends historical records (reflog) that help future sessions understand what was bootstrapped.

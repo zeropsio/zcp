@@ -19,7 +19,7 @@ func TestResolveGuidance(t *testing.T) {
 		{
 			"discover_returns_content",
 			"discover",
-			"Detect",
+			"Classify",
 			true,
 		},
 		{
@@ -672,7 +672,7 @@ func TestResolveProgressiveGuidance_DiscoverLocal_ContainsAddendum(t *testing.T)
 		t.Fatal("expected non-empty guidance for discover step in local mode")
 	}
 	// Must contain the base discover section.
-	if !strings.Contains(guide, "Detect") {
+	if !strings.Contains(guide, "Classify") {
 		t.Error("local discover should include base discover section")
 	}
 	// Must contain the local addendum.

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -48,7 +49,8 @@ const routingInstructions = `
 IMPORTANT: Zerops operations use two approaches depending on complexity:
 
 workflow sessions — for multi-step operations that need orchestration:
-- Create services: zerops_workflow action="start" workflow="bootstrap" (ALWAYS start here for new services)
+- Create new services: zerops_workflow action="start" workflow="bootstrap" (ALWAYS start here for new services)
+- Adopt existing services: zerops_workflow action="start" workflow="bootstrap" (for runtime services not yet managed by ZCP — use isExisting=true in plan)
 - Deploy code: zerops_workflow action="start" workflow="deploy" (for push-dev strategy; manual strategy uses zerops_deploy directly)
 - Debug issues: zerops_workflow action="start" workflow="debug"
 - Configure (env vars, subdomains): zerops_workflow action="start" workflow="configure"
@@ -62,7 +64,7 @@ Direct tools — for simple, isolated operations (no workflow needed):
 - Search docs: zerops_knowledge query="..."
 - Monitor state: zerops_discover
 
-Before writing ANY configuration (import.yml, zerops.yml) or application code, you MUST start a workflow session. Workflows provide env var discovery, correct file paths, and deploy sequencing. For simple operational tasks (scaling, restarting, checking status, manual deploys), use tools directly.`
+Before writing or modifying ANY code (application code, zerops.yml, import.yml), you MUST start a workflow session. Workflows inject platform knowledge (runtime docs, framework recipes, schemas), discover env vars, and sequence deploys correctly. Without a workflow, you lack the context to write correct configuration and code. For simple operational tasks (scaling, restarting, checking status, manual deploys), use tools directly.`
 
 // BuildInstructions returns the MCP instructions message injected into the system prompt.
 // It includes base + routing (first), workflow hint, runtime context, and project summary.
@@ -135,9 +137,82 @@ func buildWorkflowHint(stateDir string) string {
 	return strings.Join(hints, "\n")
 }
 
-// buildProjectSummary calls the API to list services and detect project state,
-// then uses the router for workflow offerings.
-// Returns empty string on failure or nil client (graceful fallback).
+// serviceClassification categorizes project services into three buckets.
+// This is the single classification point — orientation and router both consume it.
+type serviceClassification struct {
+	bootstrapped        []*workflow.ServiceMeta // runtime services with complete ServiceMeta
+	unmanaged           []platform.ServiceStack // runtime services without complete ServiceMeta
+	unmanagedNames      []string                // hostnames of unmanaged runtime services
+	managed             []platform.ServiceStack // infrastructure services (db, cache, storage)
+	allServices         []platform.ServiceStack // all user services for type/status lookup
+	total               int                     // total user services (excluding system + self)
+	metaMap             map[string]*workflow.ServiceMeta
+	stageOfBootstrapped map[string]bool // stage hostnames of bootstrapped metas
+}
+
+// classifyServices splits live services into bootstrapped runtime, unmanaged runtime,
+// and managed infrastructure. Self and system services are excluded.
+func classifyServices(services []platform.ServiceStack, metas []*workflow.ServiceMeta, selfHostname string) serviceClassification {
+	metaMap := make(map[string]*workflow.ServiceMeta, len(metas))
+	stageOf := make(map[string]bool)
+	for _, m := range metas {
+		metaMap[m.Hostname] = m
+		if m.IsComplete() && m.StageHostname != "" {
+			stageOf[m.StageHostname] = true
+		}
+	}
+
+	cls := serviceClassification{
+		metaMap:             metaMap,
+		stageOfBootstrapped: stageOf,
+	}
+
+	for _, svc := range services {
+		if svc.IsSystem() || (selfHostname != "" && svc.Name == selfHostname) {
+			continue
+		}
+		cls.total++
+		cls.allServices = append(cls.allServices, svc)
+		typeName := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+
+		if workflow.IsManagedService(typeName) {
+			cls.managed = append(cls.managed, svc)
+			continue
+		}
+
+		// Runtime service — check meta.
+		if m, ok := metaMap[svc.Name]; ok && m.IsComplete() {
+			cls.bootstrapped = append(cls.bootstrapped, m)
+		} else if stageOf[svc.Name] {
+			// Stage of a bootstrapped service — not unmanaged.
+			continue
+		} else {
+			cls.unmanagedNames = append(cls.unmanagedNames, svc.Name)
+			cls.unmanaged = append(cls.unmanaged, svc)
+		}
+	}
+	return cls
+}
+
+// labelFor returns a classification label for the service listing.
+func (c *serviceClassification) labelFor(hostname string) string {
+	if m, ok := c.metaMap[hostname]; ok && m.IsComplete() {
+		return ""
+	}
+	if c.stageOfBootstrapped[hostname] {
+		return ""
+	}
+	if _, ok := c.metaMap[hostname]; ok {
+		return " — bootstrap incomplete"
+	}
+	if slices.Contains(c.unmanagedNames, hostname) {
+		return " — not managed by ZCP"
+	}
+	return "" // managed infrastructure — no label needed
+}
+
+// buildProjectSummary calls the API to list services, classifies them, then
+// generates orientation and router offerings. Returns empty string on failure.
 func buildProjectSummary(ctx context.Context, client platform.Client, projectID, stateDir, selfHostname string) string {
 	if client == nil || projectID == "" {
 		return ""
@@ -148,67 +223,47 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID,
 		return ""
 	}
 
-	var b strings.Builder
-
-	// List services (exclude system services and self).
-	var userServices int
-	if len(services) > 0 {
-		b.WriteString("Current services:\n")
-		for _, svc := range services {
-			if svc.IsSystem() || (selfHostname != "" && svc.Name == selfHostname) {
-				continue
-			}
-			userServices++
-			fmt.Fprintf(&b, "- %s (%s) — %s\n",
-				svc.Name,
-				svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-				svc.Status)
-		}
-	}
-
-	if userServices == 0 {
-		b.WriteString("Project is empty — no services configured yet.")
-	}
-
-	// Detect project state and route.
-	projState, err := workflow.DetectProjectState(ctx, client, projectID, selfHostname)
-	if err != nil {
-		projState = workflow.StateUnknown
-	}
-	fmt.Fprintf(&b, "\nProject state: %s", projState)
-
-	// State-specific guidance — tell the LLM what to do, not just the state name.
-	switch projState {
-	case workflow.StateFresh:
-		b.WriteString("\nNo user services yet. Start with bootstrap to create your first services.")
-	case workflow.StateConformant:
-		b.WriteString("\nServices are set up. Deploy code changes or add new services via bootstrap.")
-		b.WriteString("\nDo NOT delete existing services without explicit user approval.")
-	case workflow.StateNonConformant:
-		b.WriteString("\nExisting services found but not in standard dev+stage pattern. Ask the user how to proceed.")
-		b.WriteString("\nDo NOT delete existing services without explicit user approval.")
-	case workflow.StateUnknown:
-		// No guidance — state couldn't be determined.
-	}
-
-	// Build router input.
-	var liveHostnames []string
-	for _, svc := range services {
-		if !svc.IsSystem() {
-			liveHostnames = append(liveHostnames, svc.Name)
-		}
-	}
-
+	// Load metas (best-effort).
 	var metas []*workflow.ServiceMeta
 	if stateDir != "" {
 		metas, _ = workflow.ListServiceMetas(stateDir) // best-effort
 	}
 
-	// If bootstrapped metas exist, generate rich per-service orientation.
-	if orientation := buildPostBootstrapOrientation(metas, services, selfHostname); orientation != "" {
+	// Classify services.
+	cls := classifyServices(services, metas, selfHostname)
+
+	var b strings.Builder
+
+	// Service listing with classification labels.
+	if cls.total == 0 {
+		b.WriteString("Project is empty — no services configured yet.")
+	} else {
+		b.WriteString("Current services:\n")
+		for _, svc := range services {
+			if svc.IsSystem() || (selfHostname != "" && svc.Name == selfHostname) {
+				continue
+			}
+			label := cls.labelFor(svc.Name)
+			fmt.Fprintf(&b, "- %s (%s) — %s%s\n",
+				svc.Name,
+				svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+				svc.Status, label)
+		}
+		b.WriteString("\nDo NOT delete existing services without explicit user approval.")
+	}
+
+	// Orientation (per-service detail for bootstrapped + managed + unmanaged).
+	if orientation := buildPostBootstrapOrientation(cls); orientation != "" {
 		b.WriteString("\n")
 		b.WriteString(orientation)
-		return b.String()
+	}
+
+	// Router ALWAYS runs — no short-circuit.
+	var liveHostnames []string
+	for _, svc := range services {
+		if !svc.IsSystem() {
+			liveHostnames = append(liveHostnames, svc.Name)
+		}
 	}
 
 	var activeSessions []workflow.SessionEntry
@@ -217,10 +272,10 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID,
 	}
 
 	routerInput := workflow.RouterInput{
-		ProjectState:   projState,
-		ServiceMetas:   metas,
-		ActiveSessions: activeSessions,
-		LiveServices:   liveHostnames,
+		ServiceMetas:      metas,
+		ActiveSessions:    activeSessions,
+		LiveServices:      liveHostnames,
+		UnmanagedRuntimes: cls.unmanagedNames,
 	}
 	offerings := workflow.Route(routerInput)
 	if formatted := workflow.FormatOfferings(offerings); formatted != "" {
