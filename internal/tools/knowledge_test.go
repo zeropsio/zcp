@@ -28,15 +28,15 @@ func testKnowledgeStore(t *testing.T) *knowledge.Store {
 			Title:   "Zerops Platform Universals",
 			Content: "# Zerops Platform Universals\n\nBind 0.0.0.0. deployFiles mandatory.",
 		},
-		"zerops://runtimes/php": {
-			URI:     "zerops://runtimes/php",
-			Title:   "PHP on Zerops",
-			Content: "# PHP on Zerops\n\n## Keywords\nphp, php-nginx, zerops.yml\n\n## TL;DR\nPHP-specific rules.\n\n### Details\nPHP-specific rules.",
+		"zerops://recipes/php-hello-world": {
+			URI:     "zerops://recipes/php-hello-world",
+			Title:   "PHP Hello World on Zerops",
+			Content: "# PHP Hello World on Zerops\n\n## Keywords\nphp, php-nginx, zerops.yml\n\n## TL;DR\nPHP-specific rules.\n\n### Details\nPHP-specific rules.",
 		},
-		"zerops://runtimes/nodejs": {
-			URI:     "zerops://runtimes/nodejs",
-			Title:   "Node.js on Zerops",
-			Content: "# Node.js on Zerops\n\n## Keywords\nnodejs, node, npm\n\n## TL;DR\nNode.js-specific rules.\n\n### Details\nNode.js-specific rules.",
+		"zerops://recipes/nodejs-hello-world": {
+			URI:     "zerops://recipes/nodejs-hello-world",
+			Title:   "Node.js Hello World on Zerops",
+			Content: "# Node.js Hello World on Zerops\n\n## Keywords\nnodejs, node, npm\n\n## TL;DR\nNode.js-specific rules.\n\n### Details\nNode.js-specific rules.",
 		},
 		"zerops://themes/services": {
 			URI:     "zerops://themes/services",
@@ -558,42 +558,33 @@ func TestKnowledgeTool_BriefingWithModeOverride(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterKnowledge(srv, store, nil, nil, nil, nil)
 
-	// Without mode: both Dev and Prod deploy patterns visible.
+	// Without mode: runtime guide content visible, no mode adaptation header.
 	result := callTool(t, srv, "zerops_knowledge", map[string]any{
 		"runtime": "go@1",
 	})
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "Dev deploy") {
-		t.Error("unfiltered briefing should contain Dev deploy pattern")
-	}
-	if !strings.Contains(text, "Prod deploy") {
-		t.Error("unfiltered briefing should contain Prod deploy pattern")
+	if !strings.Contains(text, "Go") || !strings.Contains(text, "on Zerops") {
+		t.Errorf("briefing should contain Go runtime guide, got: %s", text[:min(200, len(text))])
 	}
 
-	// With mode=standard: only Dev pattern visible.
+	// With mode=standard: runtime guide visible, mode handled by prependModeAdaptation in recipe path.
 	result = callTool(t, srv, "zerops_knowledge", map[string]any{
 		"runtime": "go@1",
 		"mode":    "standard",
 	})
 	text = getTextContent(t, result)
-	if !strings.Contains(text, "Dev deploy") {
-		t.Error("standard mode briefing should contain Dev deploy pattern")
-	}
-	if strings.Contains(text, "Prod deploy") {
-		t.Error("standard mode briefing should NOT contain Prod deploy pattern")
+	if !strings.Contains(text, "Go") || !strings.Contains(text, "on Zerops") {
+		t.Errorf("standard mode briefing should contain Go runtime guide, got: %s", text[:min(200, len(text))])
 	}
 
-	// With mode=stage: only Prod pattern visible.
+	// With mode=stage: runtime guide visible.
 	result = callTool(t, srv, "zerops_knowledge", map[string]any{
 		"runtime": "go@1",
 		"mode":    "stage",
 	})
 	text = getTextContent(t, result)
-	if strings.Contains(text, "Dev deploy") {
-		t.Error("stage mode briefing should NOT contain Dev deploy pattern")
-	}
-	if !strings.Contains(text, "Prod deploy") {
-		t.Error("stage mode briefing should contain Prod deploy pattern")
+	if !strings.Contains(text, "Go") || !strings.Contains(text, "on Zerops") {
+		t.Errorf("stage mode briefing should contain Go runtime guide, got: %s", text[:min(200, len(text))])
 	}
 }
 

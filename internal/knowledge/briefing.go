@@ -37,9 +37,6 @@ func (s *Store) GetBriefing(runtime string, services []string, mode string, live
 		slug := normalizeRuntimeName(runtime)
 		if slug != "" {
 			if guide := s.getRuntimeGuide(slug); guide != "" {
-				if mode != "" {
-					guide = filterDeployPatterns(guide, mode)
-				}
 				sb.WriteString(guide)
 				sb.WriteString("\n\n---\n\n")
 			}
@@ -158,13 +155,9 @@ func (s *Store) detectRecipeRuntime(recipeName string) string {
 	return ""
 }
 
-// prependRecipeContext prepends universals and an auto-detected runtime guide to recipe content.
+// prependRecipeContext prepends platform universals to recipe content.
+// Runtime guides are NOT prepended — each recipe is standalone with its own knowledge.
 func (s *Store) prependRecipeContext(recipeName, content string) string {
-	if rt := s.detectRecipeRuntime(recipeName); rt != "" {
-		if guide := s.getRuntimeGuide(rt); guide != "" {
-			content = guide + "\n\n---\n\n" + content
-		}
-	}
 	return s.prependUniversals(content)
 }
 
@@ -235,56 +228,6 @@ func (s *Store) prependUniversals(content string) string {
 	return universals + "\n\n---\n\n" + content
 }
 
-// filterDeployPatterns filters the "### Deploy Patterns" section of a runtime guide
-// to show only the pattern relevant to the given mode.
-// mode mapping: "dev"/"standard" → keep **Dev deploy**, "simple" → keep **Dev deploy**,
-// "stage" → keep **Prod deploy**. Empty mode returns the guide unchanged.
-func filterDeployPatterns(guide, mode string) string {
-	const header = "### Deploy Patterns"
-	idx := strings.Index(guide, header)
-	if idx < 0 {
-		return guide
-	}
-
-	// Find the end of the Deploy Patterns section (next ### or end of string).
-	sectionStart := idx + len(header)
-	rest := guide[sectionStart:]
-	sectionEnd := strings.Index(rest, "\n### ")
-	var section string
-	if sectionEnd < 0 {
-		section = rest
-		sectionEnd = len(rest)
-	} else {
-		section = rest[:sectionEnd]
-	}
-
-	var keepPrefix string
-	switch mode {
-	case "dev", "standard":
-		keepPrefix = "**Dev deploy**:"
-	case "simple":
-		// Simple is hybrid: deployFiles from dev + start/healthCheck from prod.
-		// Show both patterns so the agent has full context.
-		return guide
-	case "stage":
-		keepPrefix = "**Prod deploy**:"
-	default:
-		return guide
-	}
-
-	// Filter lines within the section.
-	var filtered []string
-	for line := range strings.SplitSeq(section, "\n") {
-		trimmed := strings.TrimSpace(line)
-		// Keep empty lines and lines matching our mode prefix.
-		if trimmed == "" || strings.HasPrefix(trimmed, keepPrefix) {
-			filtered = append(filtered, line)
-		}
-		// Drop lines starting with other deploy pattern prefixes.
-	}
-
-	return guide[:idx] + header + strings.Join(filtered, "\n") + rest[sectionEnd:]
-}
 
 // isImplicitWebserverRuntime returns true for runtimes with built-in web servers
 // that need no start command or explicit port configuration.

@@ -24,15 +24,15 @@ func testStoreWithCore(t *testing.T) *Store {
 			Title:   "Zerops Platform Universals",
 			Content: "# Zerops Platform Universals\n\nBind 0.0.0.0. deployFiles mandatory. No .env files.",
 		},
-		"zerops://runtimes/php": {
-			URI:     "zerops://runtimes/php",
-			Title:   "PHP on Zerops",
-			Content: "# PHP on Zerops\n\n## Keywords\nphp, php-nginx, zerops.yml\n\n## TL;DR\nBuild php@X, run php-nginx@X. Port 80.\n\n### Build != Run\nBuild php@X, run php-nginx@X. Port 80.",
+		"zerops://recipes/php-hello-world": {
+			URI:     "zerops://recipes/php-hello-world",
+			Title:   "PHP Hello World on Zerops",
+			Content: "# PHP Hello World on Zerops\n\n## Keywords\nphp, php-nginx, zerops.yml\n\n## TL;DR\nBuild php@X, run php-nginx@X. Port 80.\n\n### Build != Run\nBuild php@X, run php-nginx@X. Port 80.",
 		},
-		"zerops://runtimes/nodejs": {
-			URI:     "zerops://runtimes/nodejs",
-			Title:   "Node.js on Zerops",
-			Content: "# Node.js on Zerops\n\n## Keywords\nnodejs, node, npm\n\n## TL;DR\nnode_modules in deployFiles. SSR patterns.\n\n### Build Procedure\nnode_modules in deployFiles. SSR patterns.",
+		"zerops://recipes/nodejs-hello-world": {
+			URI:     "zerops://recipes/nodejs-hello-world",
+			Title:   "Node.js Hello World on Zerops",
+			Content: "# Node.js Hello World on Zerops\n\n## Keywords\nnodejs, node, npm\n\n## TL;DR\nnode_modules in deployFiles. SSR patterns.\n\n### Build Procedure\nnode_modules in deployFiles. SSR patterns.",
 		},
 		"zerops://themes/services": {
 			URI:     "zerops://themes/services",
@@ -245,16 +245,16 @@ func TestStore_ListRecipes_Success(t *testing.T) {
 
 	recipes := store.ListRecipes()
 
-	if len(recipes) != 2 {
-		t.Errorf("expected 2 recipes, got %d", len(recipes))
+	if len(recipes) != 4 {
+		t.Errorf("expected 4 recipes, got %d: %v", len(recipes), recipes)
 	}
 
-	// Should be sorted
-	if recipes[0] != "ghost" {
-		t.Errorf("first recipe should be 'ghost', got %q", recipes[0])
-	}
-	if recipes[1] != "laravel" {
-		t.Errorf("second recipe should be 'laravel', got %q", recipes[1])
+	// Should be sorted alphabetically
+	expected := []string{"ghost", "laravel", "nodejs-hello-world", "php-hello-world"}
+	for i, want := range expected {
+		if i < len(recipes) && recipes[i] != want {
+			t.Errorf("recipe[%d] should be %q, got %q", i, want, recipes[i])
+		}
 	}
 }
 
@@ -385,12 +385,12 @@ func TestStore_GetRuntimeGuide(t *testing.T) {
 		{
 			name: "PHP guide",
 			slug: "php",
-			want: "PHP on Zerops",
+			want: "PHP",
 		},
 		{
 			name: "Node.js guide",
 			slug: "nodejs",
-			want: "Node.js on Zerops",
+			want: "Node.js",
 		},
 		{
 			name: "unknown returns empty",
@@ -455,7 +455,7 @@ func TestStore_DetectRecipeRuntime(t *testing.T) {
 
 // --- GetRecipe auto-prepend Tests ---
 
-func TestStore_GetRecipe_PrependsRuntimeGuide(t *testing.T) {
+func TestStore_GetRecipe_PrependsUniversalsOnly(t *testing.T) {
 	t.Parallel()
 	store := testStoreWithCore(t)
 
@@ -468,22 +468,18 @@ func TestStore_GetRecipe_PrependsRuntimeGuide(t *testing.T) {
 	if !strings.Contains(recipe, "Platform Universals") {
 		t.Error("recipe should be prepended with universals")
 	}
-	// Should contain PHP runtime guide (auto-detected from "laravel" -> "php")
-	if !strings.Contains(recipe, "PHP on Zerops") {
-		t.Error("recipe should be prepended with PHP runtime guide")
+	// Should NOT contain runtime guide — framework recipes are standalone
+	if strings.Contains(recipe, "PHP on Zerops") {
+		t.Error("recipe should NOT be prepended with runtime guide (framework recipes are standalone)")
 	}
 	// Should contain recipe content
 	if !strings.Contains(recipe, "Multi-base build") {
 		t.Error("recipe should contain original content")
 	}
-	// Order: universals -> runtime guide -> recipe
+	// Order: universals -> recipe content
 	uIdx := strings.Index(recipe, "Platform Universals")
-	rIdx := strings.Index(recipe, "PHP on Zerops")
 	cIdx := strings.Index(recipe, "Multi-base build")
-	if uIdx >= rIdx {
-		t.Error("universals should appear before runtime guide")
-	}
-	if rIdx >= cIdx {
-		t.Error("runtime guide should appear before recipe content")
+	if uIdx >= cIdx {
+		t.Error("universals should appear before recipe content")
 	}
 }

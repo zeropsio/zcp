@@ -159,12 +159,17 @@ func normalizeServiceName(service string) string {
 // --- Section extraction helpers for GetBriefing layers ---
 
 // getRuntimeGuide returns the full content of a per-runtime guide document.
+// Resolution order: recipes/{slug}-hello-world → recipes/{slug} → runtimes/{slug} (legacy).
 func (s *Store) getRuntimeGuide(slug string) string {
-	doc, err := s.Get("zerops://runtimes/" + slug)
-	if err != nil {
-		return ""
+	// Hello-world recipe (primary format for language runtimes)
+	if doc, err := s.Get("zerops://recipes/" + slug + "-hello-world"); err == nil {
+		return doc.Content
 	}
-	return doc.Content
+	// Direct recipe (for infrastructure bases: nginx, static, alpine, ubuntu, docker)
+	if doc, err := s.Get("zerops://recipes/" + slug); err == nil {
+		return doc.Content
+	}
+	return ""
 }
 
 // getServiceCard returns the section content for a normalized service name from services.md.

@@ -22,7 +22,7 @@ Only port **587** (STARTTLS) is allowed for outbound email — ports 25 and 465 
 | Office 365 | smtp.office365.com | 587 | user@domain.com | Account password |
 | SendGrid | smtp.sendgrid.net | 587 | `apikey` | API key |
 | Mailgun | smtp.mailgun.org | 587 | postmaster@domain | Password |
-| Amazon SES | email-smtp.{region}.amazonaws.com | 587 | Access key | Secret key |
+| Amazon SES | `email-smtp.{region}.amazonaws.com` | 587 | Access key | Secret key |
 
 ## Configuration Example
 ```yaml

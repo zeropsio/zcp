@@ -125,65 +125,6 @@ func TestPrependModeAdaptation_RuntimeAware(t *testing.T) {
 	}
 }
 
-func TestFilterDeployPatterns_SimpleModeShowsBoth(t *testing.T) {
-	t.Parallel()
-	guide := `# Go on Zerops
-
-### Deploy Patterns
-
-**Dev deploy**: deployFiles: [.], start: zsc noop --silent
-**Prod deploy**: buildCommands: [go build -o app], deployFiles: app, start: ./app
-
-### Common Mistakes
-`
-	tests := []struct {
-		name         string
-		mode         string
-		wantContains []string
-		wantAbsent   []string
-	}{
-		{
-			name:         "dev_keeps_only_dev",
-			mode:         "dev",
-			wantContains: []string{"Dev deploy"},
-			wantAbsent:   []string{"Prod deploy"},
-		},
-		{
-			name:         "standard_keeps_only_dev",
-			mode:         "standard",
-			wantContains: []string{"Dev deploy"},
-			wantAbsent:   []string{"Prod deploy"},
-		},
-		{
-			name:         "simple_shows_both_patterns",
-			mode:         "simple",
-			wantContains: []string{"Dev deploy", "Prod deploy"},
-		},
-		{
-			name:         "stage_keeps_only_prod",
-			mode:         "stage",
-			wantContains: []string{"Prod deploy"},
-			wantAbsent:   []string{"Dev deploy"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result := filterDeployPatterns(guide, tt.mode)
-			for _, want := range tt.wantContains {
-				if !strings.Contains(result, want) {
-					t.Errorf("should contain %q, got:\n%s", want, result)
-				}
-			}
-			for _, absent := range tt.wantAbsent {
-				if strings.Contains(result, absent) {
-					t.Errorf("should NOT contain %q, got:\n%s", absent, result)
-				}
-			}
-		})
-	}
-}
 
 func TestIsImplicitWebserverRuntime(t *testing.T) {
 	t.Parallel()

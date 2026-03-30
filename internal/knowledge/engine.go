@@ -213,15 +213,18 @@ func (s *Store) GetUniversals() (string, error) {
 
 // runtimeRecipeHints maps runtime base names to recipe name prefixes/matches.
 var runtimeRecipeHints = map[string][]string{
-	"bun":    {"bun"},
-	"nodejs": {"nestjs", "nextjs", "svelte", "react", "qwik", "payload", "ghost", "nuxt", "astro", "remix", "solidjs", "analog", "medusa"},
-	"go":     {"echo-go"},
-	"python": {"django"},
-	"elixir": {"phoenix", "elixir"},
-	"php":    {"laravel", "symfony", "nette", "filament", "twill"},
-	"java":   {"java-spring", "spring-boot"},
-	"ruby":   {"rails"},
-	"dotnet": {"dotnet"},
+	"bun":    {"bun-hello-world", "bun"},
+	"nodejs": {"nodejs-hello-world", "nestjs", "nextjs", "svelte", "react", "qwik", "payload", "ghost", "nuxt", "astro", "remix", "solidjs", "analog", "medusa"},
+	"go":     {"go-hello-world", "echo-go"},
+	"python": {"python-hello-world", "django"},
+	"elixir": {"elixir-hello-world", "phoenix", "elixir"},
+	"php":    {"php-hello-world", "laravel", "symfony", "nette", "filament", "twill"},
+	"java":   {"java-hello-world", "java-spring", "spring-boot"},
+	"ruby":   {"ruby-hello-world", "rails"},
+	"rust":   {"rust-hello-world"},
+	"dotnet": {"dotnet-hello-world", "dotnet"},
+	"deno":   {"deno-hello-world"},
+	"gleam":  {"gleam-hello-world"},
 	"static": {"nextjs", "svelte", "qwik", "astro", "angular", "solidjs", "react", "analog", "nuxt"},
 }
 

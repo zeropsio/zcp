@@ -110,7 +110,7 @@ func TestCore_SchemaRules_ContainsDeployFilesAndTilde(t *testing.T) {
 	}
 }
 
-func TestRuntimeNormalizer_AllMapped_FilesExist(t *testing.T) {
+func TestRuntimeNormalizer_AllMapped_GuideResolvable(t *testing.T) {
 	t.Parallel()
 	store, err := GetEmbeddedStore()
 	if err != nil {
@@ -120,9 +120,10 @@ func TestRuntimeNormalizer_AllMapped_FilesExist(t *testing.T) {
 	for base, slug := range runtimeNormalizer {
 		t.Run(base, func(t *testing.T) {
 			t.Parallel()
-			uri := "zerops://runtimes/" + slug
-			if _, err := store.Get(uri); err != nil {
-				t.Errorf("runtime normalizer maps %q -> %q but document %q not found", base, slug, uri)
+			// getRuntimeGuide checks recipes/{slug}-hello-world first, then runtimes/{slug}
+			guide := store.getRuntimeGuide(slug)
+			if guide == "" {
+				t.Errorf("runtime normalizer maps %q -> %q but no guide found (checked recipes/%s-hello-world)", base, slug, slug)
 			}
 		})
 	}

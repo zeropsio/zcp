@@ -17,16 +17,20 @@ func TestRuntimeResources_GuidesDocumentRAM(t *testing.T) {
 		t.Run(slug, func(t *testing.T) {
 			t.Parallel()
 
-			doc, err := store.Get("zerops://runtimes/" + slug)
+			// Look in recipes/{slug}-hello-world (new format) or runtimes/{slug} (legacy)
+			doc, err := store.Get("zerops://recipes/" + slug + "-hello-world")
 			if err != nil {
-				t.Fatalf("runtime guide %s not found: %v", slug, err)
+				doc, err = store.Get("zerops://runtimes/" + slug)
+				if err != nil {
+					t.Fatalf("runtime knowledge for %s not found in recipes/ or runtimes/: %v", slug, err)
+				}
 			}
 
 			content := doc.Content
 
-			// Guide must have a "### Resource Requirements" section with minRam values.
-			if !strings.Contains(content, "### Resource Requirements") {
-				t.Errorf("runtime guide %s missing '### Resource Requirements' section (dev minRam %.2g GB, stage minRam %.2g GB)",
+			// Guide must have a "Resource Requirements" section (H2 or H3) with minRam values.
+			if !strings.Contains(content, "## Resource Requirements") && !strings.Contains(content, "### Resource Requirements") {
+				t.Errorf("runtime guide %s missing 'Resource Requirements' section (dev minRam %.2g GB, stage minRam %.2g GB)",
 					slug, res.DevMinRAM, res.StageMinRAM)
 			}
 		})
