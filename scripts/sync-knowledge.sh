@@ -100,8 +100,9 @@ pull_recipes() {
   # Slug remapping for API quirks (e.g., "recipe" → "nodejs-hello-world")
   remap_slug() {
     case "$1" in
-      recipe) echo "nodejs-hello-world" ;;
-      *)      echo "$1" ;;
+      recipe)               echo "nodejs-hello-world" ;;
+      node-js-hello-world)  echo "nodejs-hello-world" ;;
+      *)                    echo "$1" ;;
     esac
   }
 
