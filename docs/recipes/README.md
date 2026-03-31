@@ -2,6 +2,58 @@
 
 ZCP's `internal/knowledge/recipes/` contains operational knowledge for each Zerops recipe. This knowledge is **synced from canonical external sources** — ZCP is a consumer, not the owner.
 
+## Architecture: Unified Recipe Layer
+
+This branch replaces the **dual-layer knowledge model** (separate `runtimes/*.md` hand-written guides + `recipes/*.md` hand-written recipes) with a **single unified recipe layer** pulled dynamically from the Zerops Recipe API.
+
+### What was abolished
+
+| Old | New | Why |
+|-----|-----|-----|
+| `runtimes/` (12 hand-written guides: bun.md, nodejs.md, go.md, ...) | Deleted — runtime knowledge resolves via recipe fallback chain | Maintaining separate runtime guides duplicated effort; the hello-world recipe for each runtime IS the authoritative runtime guide |
+| `recipes/` (28 hand-written recipes: laravel.md, django.md, ...) | Deleted — all recipes pulled from API, gitignored | Hand-written recipes drifted from the canonical app repos; API is the source of truth |
+| `guides/` and `decisions/` (committed) | Now pulled from docs repo, gitignored | Same drift problem — docs repo is canonical |
+| `filterDeployPatterns()` | Removed entirely | Was mode-aware filtering of `### Deploy Patterns` sections; no longer needed since recipes now ship both dev and prod zerops.yml setups with inline comments |
+| Keyword search scoring (`## Keywords` sections) | Removed — search uses title (2x) + content (1x) only | Keywords required manual maintenance; content-based matching is more robust for API-sourced recipes |
+| Runtime guide prepending in `GetRecipe` | Removed — each recipe is standalone | Framework recipes (laravel) shouldn't have PHP runtime knowledge injected; the recipe's own knowledge-base fragment is the authoritative source |
+| Verbose mode adaptation header (5 lines) | Concise single-line pointer to setup block | Recipes now include both setups with comments — the header was restating what the YAML already teaches |
+
+### What's preserved
+
+- `themes/*.md` (platform universals, services, import YAML docs) — unchanged, committed
+- `bases/*.md` (alpine, docker, nginx, static, ubuntu) — renamed from `runtimes/`, committed
+- `runtimeRecipeHints` map — runtime→recipe matching for briefing hints
+- `runtimeNormalizer` — maps `php-nginx` → `php`, etc.
+- Mode adaptation headers (simplified, not removed)
+- BM25 search engine — scoring simplified but fundamentally the same
+
+### Runtime guide resolution chain
+
+`getRuntimeGuide(slug)` resolves runtime knowledge through a 3-step fallback:
+
+1. `recipes/{slug}-hello-world` — primary (e.g., `bun-hello-world` serves as the Bun runtime guide)
+2. `recipes/{slug}` — direct match
+3. `bases/{slug}` — infrastructure bases (alpine, docker, nginx, static, ubuntu)
+
+This means the **hello-world recipe for each runtime IS the runtime guide**. No separate file to maintain.
+
+### Recipe enrichment path
+
+Most recipes start with only `description` + `## zerops.yml` + `## Service Definitions` from the API. To add operational knowledge:
+
+1. Write `knowledge-base` fragment in the app README (Base Image, Binding, Resource Requirements, Gotchas)
+2. Push to GitHub, refresh Strapi cache
+3. `scripts/sync-knowledge.sh pull recipes` — content appears in ZCP
+4. Lint tests validate the new content (`NoPlatformDuplication`, `ServiceDefinitionsValid`, etc.)
+
+Currently only **Bun** has a `knowledge-base` fragment. The other 32 recipes have description + zerops.yml + service definitions.
+
+### Key design decision: standalone recipes
+
+In the old model, `GetRecipe("laravel")` would prepend the PHP runtime guide to the Laravel recipe content. This was wrong — Laravel has its own PHP configuration needs (Composer, Artisan, queue workers) that differ from a bare PHP hello-world. The runtime guide's generic advice created confusion.
+
+Now each recipe is **standalone**: `GetRecipe` prepends only platform universals (`themes/universals.md`) which are truly universal. Runtime-specific knowledge lives in the recipe's own `knowledge-base` fragment.
+
 ## How It Works
 
 ```
@@ -77,6 +129,8 @@ Each item must be **irreducible to the specific runtime/framework** — not a re
 
 ## Go Consumption Layer
 
+All access goes through the `Provider` interface (`engine.go`). Key methods:
+
 ### GetRecipe (briefing.go)
 
 `GetRecipe(name, mode)` returns the full recipe content with:
@@ -85,6 +139,34 @@ Each item must be **irreducible to the specific runtime/framework** — not a re
    - `dev`/`standard`: "Use the `dev` setup block from the zerops.yml below."
    - `simple`: "Use the `prod` setup block below, but override `deployFiles: [.]`."
    - Recipes now include both `dev` and `prod` zerops.yml setups with inline comments, so the header doesn't need to restate what the YAML teaches.
+
+Resolution chain: exact URI match → fuzzy match (prefix/substring/content) → disambiguation list.
+
+### GetBriefing (briefing.go)
+
+`GetBriefing(runtime, services, mode, liveTypes)` assembles stack-specific knowledge in 7 layers:
+
+1. **Live service stacks** — current deployed services with version checking
+2. **Runtime guide** — resolved via the 3-step fallback chain (see above)
+3. **Matching recipes hint** — links to relevant recipes for the runtime via `runtimeRecipeHints`
+4. **Service cards** — per-service docs from `themes/services.md`
+5. **Wiring patterns** — cross-service connection syntax
+6. **Decision hints** — relevant service selection decisions from `themes/operations.md`
+7. **Version check** — live stack version validation
+
+### Search (engine.go)
+
+Simple text-matching with field boosts and query expansion:
+- **Scoring**: title match = 2.0x, content match = 1.0x per word (keywords removed)
+- **Query aliases**: 23 expansions (e.g., `postgres` → `postgres postgresql`, `redis` → `redis valkey`)
+- **Fuzzy recipe matching** (`findMatchingRecipes`): prefix → substring → content search (replaced old keyword matching)
+
+### Document parsing (documents.go)
+
+- **Frontmatter extraction**: YAML `description:` field parsed from `---` blocks (new)
+- **Description priority**: frontmatter `description:` > `## TL;DR` > first paragraph
+- **Disambiguation**: uses `doc.Description` instead of old `doc.TLDR`
+- **Keywords and TL;DR**: still parsed (legacy) but not used in search scoring
 
 ### GetServiceDefinitions (service_definitions.go)
 
@@ -106,13 +188,18 @@ Each item must be **irreducible to the specific runtime/framework** — not a re
 
 ### extractServiceEntries (service_definitions.go)
 
-`extractServiceEntries(importYAML)` splits an import into runtime and managed service entries, enabling composite stack assembly from multiple recipes.
+`extractServiceEntries(importYAML)` splits an import into runtime and managed service entries, enabling composite stack assembly from multiple recipes. Example: `bun api + nextjs frontend + postgres` — look up each recipe's service definition, extract the runtime block with proven minRam values, merge into one import.yaml.
 
 ### Lint Tests
 
-- `NoPlatformDuplication` — warns when enriched recipes duplicate universals content
+- `NoPlatformDuplication` — warns when enriched recipes duplicate universals content (logged, not errored — content is API-sourced, fix at source)
 - `ServiceDefinitionsValid` — validates structural integrity of extracted definitions
-- Both in `recipe_lint_test.go`
+- `HasDescription` — replaced old `HasKeywords` / `HasTLDR` checks
+- `HasGotchas`, `HasZeropsYml` — skip gracefully when recipe lacks knowledge-base enrichment
+- `validateZeropsYml()` takes a `strict bool` — ports and healthCheck enforcement only on enriched recipes
+- `healthCheckExemptSetups` — `"dev": true` (dev entries use `zsc noop --silent`)
+- `VersionsKnown` — validates version refs against platform catalog snapshot
+- All in `recipe_lint_test.go`, `runtime_lint_test.go`
 
 ## Description Priority
 
@@ -229,6 +316,20 @@ Add entry with name, slug, icon, categories.
 
 Run `scripts/sync-knowledge.sh pull recipes` to pull the new recipe into ZCP's knowledge.
 
+## Embedding and Build
+
+The `go:embed` directive in `documents.go` embeds all knowledge at compile time:
+
+```go
+//go:embed themes/*.md bases/*.md all:recipes all:guides all:decisions
+```
+
+- `themes/*.md` and `bases/*.md` — committed, always available
+- `all:recipes`, `all:guides`, `all:decisions` — gitignored, must be pulled before build (the `all:` prefix includes directories even when empty, preventing build failures)
+- `knowledgeDirs` lists the walk order: `themes`, `bases`, `recipes`, `guides`, `decisions`
+
+**Build prerequisite**: `scripts/sync-knowledge.sh pull` before `go build`.
+
 ## Current State
 
 - **33 recipes** pulled dynamically from Recipe API (all non-utility recipes)
@@ -236,3 +337,4 @@ Run `scripts/sync-knowledge.sh pull recipes` to pull the new recipe into ZCP's k
 - **Infrastructure bases** (alpine, docker, nginx, static, ubuntu) are in `internal/knowledge/bases/` (committed)
 - **Bun** is the only recipe with `knowledge-base` fragment — others have intro + zerops.yml + service definitions only
 - **elixir** is missing from API; **nodejs** has slug `recipe` (remapped to `nodejs-hello-world` by sync script)
+- **Slug remapping**: API slug `"recipe"` → `"nodejs-hello-world"` (handled in sync script)
