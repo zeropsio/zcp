@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/zeropsio/zcp/internal/sync"
 )
 
 func runSync(args []string) {
+	// Load .env if present (never errors on missing file)
+	_ = godotenv.Load()
+
 	if len(args) == 0 {
 		printSyncUsage()
 		os.Exit(1)
@@ -63,6 +67,8 @@ func runSync(args []string) {
 		runSyncPull(cfg, root, category, filter, dryRun)
 	case "push":
 		runSyncPush(cfg, root, category, filter, dryRun)
+	case "cache-clear":
+		runSyncCacheClear(cfg, positional[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown sync action: %s\n", action)
 		printSyncUsage()
@@ -132,6 +138,27 @@ func printPullResults(results []sync.PullResult) {
 	fmt.Fprintf(os.Stderr, "Pulled %d files (%d skipped)\n", created, skipped)
 }
 
+func runSyncCacheClear(cfg *sync.Config, args []string) {
+	fmt.Fprintln(os.Stderr, "=== Clearing Strapi cache ===")
+	results, err := sync.CacheClear(cfg, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	cleared, errors := 0, 0
+	for _, r := range results {
+		if r.Err != nil {
+			fmt.Fprintf(os.Stderr, "  ERROR %s: %v\n", r.Slug, r.Err)
+			errors++
+		} else {
+			fmt.Fprintf(os.Stderr, "  %s → cleared (%d)\n", r.Slug, r.Status)
+			cleared++
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Cleared %d recipes (%d errors)\n", cleared, errors)
+}
+
 func printPushResults(results []sync.PushResult) {
 	created, skipped := 0, 0
 	for _, r := range results {
@@ -154,8 +181,9 @@ func printSyncUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: zcp sync <action> [category] [slug] [flags]
 
 Actions:
-  pull   Pull knowledge from external sources into ZCP
-  push   Push ZCP knowledge changes as GitHub PRs
+  pull          Pull knowledge from external sources into ZCP
+  push          Push ZCP knowledge changes as GitHub PRs
+  cache-clear   Invalidate Strapi cache for recipes (requires STRAPI_API_TOKEN)
 
 Categories:
   recipes   Recipe knowledge (API for pull, app repos for push)
@@ -170,5 +198,7 @@ Examples:
   zcp sync pull recipes
   zcp sync pull recipes bun-hello-world
   zcp sync push recipes bun-hello-world --dry-run
-  zcp sync push guides`)
+  zcp sync push guides
+  zcp sync cache-clear bun-hello-world
+  zcp sync cache-clear`)
 }
