@@ -168,27 +168,69 @@ Simple text-matching with field boosts and query expansion:
 - **Disambiguation**: uses `doc.Description` instead of old `doc.TLDR`
 - **Keywords and TL;DR**: still parsed (legacy) but not used in search scoring
 
-### GetServiceDefinitions (service_definitions.go)
+### Service Definition Library (service_definitions.go)
+
+#### The problem
+
+The bootstrap provision step composes `import.yaml` from scratch using abstract schema from `core.md` — guessing scaling values like `minRam: 1.0` for everything. But the Recipe API provides 6 battle-tested, thoroughly commented `import.yaml` files per recipe (33 recipes × 6 environments = 198 proven configurations). The sync script was ignoring them entirely.
+
+#### The solution
+
+The sync script now extracts full import YAML from env0 (dev/stage) and env4 (small-prod) into a `## Service Definitions` section in each recipe `.md`. The Go layer parses these and makes them available for bootstrap to use proven values instead of guessing.
+
+#### GetServiceDefinitions
 
 `GetServiceDefinitions(name)` returns a `ServiceDefinitions` struct with:
 - `DevStageImport` — full import YAML from env0 (AI Agent: dev+stage pair)
 - `SmallProdImport` — full import YAML from env4 (Small Production: minContainers, minFreeRamGB)
 
-### TransformForBootstrap (service_definitions.go)
+#### TransformForBootstrap
 
-`TransformForBootstrap(importYAML)` adapts recipe imports for bootstrap use:
+`TransformForBootstrap(importYAML)` adapts recipe imports for bootstrap use. Recipe imports use `buildFromGit` + `zeropsSetup` (automated git-based provisioning). Bootstrap uses `startWithoutCode` (interactive SSH-based iteration):
 
-| Recipe import has | Transform |
+| Recipe import has | Bootstrap transform |
 |---|---|
 | `buildFromGit: url` | **Remove** — bootstrap uses SSHFS + `zcli push` |
 | `zeropsSetup: dev/prod` | **Remove** — bootstrap hostnames ARE the setup names |
-| `enableSubdomainAccess` | **Keep** — always needed |
+| (dev services) | **Add** `startWithoutCode: true` — bootstrap dev containers start empty, developer drives via SSH |
+| `enableSubdomainAccess: true` | **Keep** — always needed |
 | `verticalAutoscaling` | **Keep** — proven scaling values |
 | `minContainers`, `minFreeRamGB` | **Keep** — production patterns |
+| `cpuMode: DEDICATED` | **Keep** — HA-prod only |
 
-### extractServiceEntries (service_definitions.go)
+These rules are documented in: `core.md` (`startWithoutCode`, `buildFromGit`), `bootstrap.md` (strategy distinction), `service_meta.go` (`StrategyPushDev` vs `StrategyCICD`).
 
-`extractServiceEntries(importYAML)` splits an import into runtime and managed service entries, enabling composite stack assembly from multiple recipes. Example: `bun api + nextjs frontend + postgres` — look up each recipe's service definition, extract the runtime block with proven minRam values, merge into one import.yaml.
+#### extractServiceEntries
+
+`extractServiceEntries(importYAML)` splits an import into runtime (USER category) and managed (STANDARD category) service entries. This enables composite stack assembly from multiple recipes.
+
+#### Composite stack workflow
+
+When no single recipe matches a request (e.g., `bun api + nextjs frontend + python worker + postgres + valkey`), the provision step can:
+
+1. **Look up bun-hello-world** → extract bun service definition (`minRam: 0.5` dev, `0.25` prod)
+2. **Look up nextjs-ssr-hello-world** → extract nodejs service definition (`minRam: 0.25`, `minFreeRamGB: 0.125`)
+3. **Look up python-hello-world** → extract python service definition (`minRam: 0.5` dev)
+4. **Managed services** (postgres, valkey) → from `core.md` schema + service cards
+5. **Merge** into one `import.yaml`, applying bootstrap transforms (drop `buildFromGit`, add `startWithoutCode` on dev)
+6. **Deduplicate** — all three recipes ship their own `db`, but the composite stack only needs one
+
+**Before**: Agent guesses `minRam: 1.0` for everything (bootstrap.md default for compiled runtimes).
+**After**: bun gets `0.5`, nextjs gets `0.25`, python gets `0.5` — values proven in production.
+
+#### Mode ↔ Environment tier mapping
+
+Bootstrap's 3 modes map to recipe environment tiers:
+
+| Bootstrap mode | What it creates | Closest recipe environment | Env index |
+|---|---|---|---|
+| **standard** (default) | `{name}dev` + `{name}stage` | 0 — AI Agent (dev+stage pair) | 0 |
+| **dev** | `{name}dev` only | 0 — AI Agent (dev service only) | 0 |
+| **simple** | `{name}` (single) | 3 — Stage (single prod-like service) | 3 |
+
+For production tiers (not part of bootstrap, but relevant for scaling guidance):
+- Small prod → environment index 4
+- HA prod → environment index 5
 
 ### Lint Tests
 

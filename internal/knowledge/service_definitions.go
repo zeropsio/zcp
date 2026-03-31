@@ -81,23 +81,69 @@ func (s *Store) GetServiceDefinitions(name string) *ServiceDefinitions {
 
 // TransformForBootstrap adapts a recipe import YAML for bootstrap use.
 // Removes buildFromGit and zeropsSetup (bootstrap uses SSHFS + zcli push),
+// adds startWithoutCode: true for dev services (bootstrap dev containers start empty),
 // keeps enableSubdomainAccess, verticalAutoscaling, minContainers, and other scaling values.
 func TransformForBootstrap(importYAML string) string {
-	var sb strings.Builder
-	for _, line := range strings.Split(importYAML, "\n") {
+	lines := strings.Split(importYAML, "\n")
+
+	// First pass: identify dev services (zeropsSetup: dev) by their entry start line.
+	devEntries := make(map[int]bool) // line index of "- hostname:" for dev entries
+	currentEntryStart := -1
+	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		// Remove buildFromGit lines
+		if strings.HasPrefix(trimmed, "- hostname:") {
+			currentEntryStart = i
+		}
+		if strings.HasPrefix(trimmed, "zeropsSetup:") && currentEntryStart >= 0 {
+			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "zeropsSetup:"))
+			if val == "dev" {
+				devEntries[currentEntryStart] = true
+			}
+		}
+	}
+
+	// Second pass: filter lines and inject startWithoutCode for dev services.
+	var sb strings.Builder
+	currentEntryStart = -1
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- hostname:") {
+			currentEntryStart = sb.Len() // track position, not line index
+		}
 		if strings.HasPrefix(trimmed, "buildFromGit:") {
 			continue
 		}
-		// Remove zeropsSetup lines
 		if strings.HasPrefix(trimmed, "zeropsSetup:") {
 			continue
 		}
 		sb.WriteString(line)
 		sb.WriteByte('\n')
 	}
-	return strings.TrimRight(sb.String(), "\n")
+	result := strings.TrimRight(sb.String(), "\n")
+
+	// Third pass: inject startWithoutCode: true after each dev service's hostname line.
+	// We do this on the filtered output to get clean indentation.
+	if len(devEntries) > 0 {
+		outLines := strings.Split(result, "\n")
+		var final strings.Builder
+		for _, line := range outLines {
+			final.WriteString(line)
+			final.WriteByte('\n')
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "- hostname:") {
+				// Check if this hostname was a dev entry
+				hostname := strings.TrimSpace(strings.TrimPrefix(trimmed, "- hostname:"))
+				if strings.HasSuffix(hostname, "dev") {
+					indent := len(line) - len(strings.TrimLeft(line, " ")) + 2 // align with other fields
+					final.WriteString(strings.Repeat(" ", indent))
+					final.WriteString("startWithoutCode: true\n")
+				}
+			}
+		}
+		result = strings.TrimRight(final.String(), "\n")
+	}
+
+	return result
 }
 
 // extractServiceEntries splits an import YAML into runtime (USER) and managed (STANDARD)

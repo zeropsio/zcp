@@ -157,6 +157,33 @@ services:
 	if !strings.Contains(result, "minRam: 0.5") {
 		t.Error("bootstrap transform should keep scaling values")
 	}
+	// Dev services (hostname ending in "dev") should get startWithoutCode: true
+	// since bootstrap uses SSHFS — the developer drives the server manually.
+	if !strings.Contains(result, "startWithoutCode: true") {
+		t.Error("bootstrap transform should add startWithoutCode: true for dev services")
+	}
+}
+
+func TestTransformForBootstrap_NoProdStartWithoutCode(t *testing.T) {
+	t.Parallel()
+	input := `services:
+  - hostname: app
+    type: bun@1.2
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/bun-hello-world-app
+    minContainers: 2
+    verticalAutoscaling:
+      minRam: 0.25`
+
+	result := TransformForBootstrap(input)
+
+	// Prod-only imports should NOT get startWithoutCode
+	if strings.Contains(result, "startWithoutCode") {
+		t.Error("bootstrap transform should NOT add startWithoutCode to prod services")
+	}
+	if !strings.Contains(result, "minContainers: 2") {
+		t.Error("bootstrap transform should keep minContainers")
+	}
 }
 
 func TestStore_GetServiceDefinitions(t *testing.T) {
