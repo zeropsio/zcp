@@ -173,6 +173,59 @@ func TestRecipeLint(t *testing.T) {
 
 			// --- Content pattern checks ---
 
+			t.Run("NoPlatformDuplication", func(t *testing.T) {
+				if !hasKnowledgeBase {
+					t.Skip("recipe not yet enriched with knowledge-base content")
+				}
+				// Enriched recipes should not restate platform universals.
+				// These patterns are already covered in universals.md and would
+				// cause the agent to see the same information twice via GetRecipe.
+				// Logged as warnings (not errors) because content is API-sourced —
+				// fix at source (app README) then re-pull to clear.
+				platformPatterns := []struct {
+					pattern string
+					reason  string
+				}{
+					{"Tilde in `deployFiles`", "deployFiles tilde behavior is a platform universal"},
+					{"Build and run are separate containers", "build/run separation is a platform universal"},
+					{"Build and Run are separate containers", "build/run separation is a platform universal"},
+					{"L7 balancer routes to the container", "L7 routing is a platform universal (recipe should only show binding syntax)"},
+					{"autoscaling needs ~10s to react", "autoscaling timing is a platform concept (recipe should only show concrete minRam values)"},
+				}
+				dupes := 0
+				for _, pp := range platformPatterns {
+					if strings.Contains(content, pp.pattern) {
+						t.Logf("WARNING: recipe restates platform universal: %s (%s)", pp.pattern, pp.reason)
+						dupes++
+					}
+				}
+				if dupes > 0 {
+					t.Logf("Found %d platform duplications — fix in app README, then re-pull", dupes)
+				}
+			})
+
+			t.Run("ServiceDefinitionsValid", func(t *testing.T) {
+				defs := store.GetServiceDefinitions(name)
+				if defs == nil {
+					t.Skip("no service definitions (recipe may not have import data)")
+				}
+				if defs.DevStageImport != "" {
+					// Dev/stage import should contain services block
+					if !strings.Contains(defs.DevStageImport, "services:") {
+						t.Error("dev/stage import missing 'services:' block")
+					}
+					// Should contain at least one type reference
+					if !strings.Contains(defs.DevStageImport, "type:") {
+						t.Error("dev/stage import has no service type declarations")
+					}
+				}
+				if defs.SmallProdImport != "" {
+					if !strings.Contains(defs.SmallProdImport, "services:") {
+						t.Error("small-prod import missing 'services:' block")
+					}
+				}
+			})
+
 			t.Run("NoStaleURIs", func(t *testing.T) {
 				if strings.Contains(content, "zerops://foundation/") {
 					t.Error("stale zerops://foundation/ URI found (replaced by zerops://themes/)")

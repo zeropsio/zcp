@@ -226,44 +226,15 @@ func (s *Store) prependUniversals(content string) string {
 }
 
 
-// isImplicitWebserverRuntime returns true for runtimes with built-in web servers
-// that need no start command or explicit port configuration.
-// Accepts base names as returned by detectRecipeRuntime (e.g., "php")
-// and full runtime prefixes (e.g., "php-nginx").
-func isImplicitWebserverRuntime(runtimeBase string) bool {
-	switch runtimeBase {
-	case "php", runtimePHPNginx, runtimePHPApache, runtimeNginx, runtimeStatic:
-		return true
-	}
-	return false
-}
-
-// prependModeAdaptation returns a mode-specific adaptation header for recipes.
-// runtime is the base runtime name (e.g., "php", "nodejs") from detectRecipeRuntime.
-// Empty runtime is treated as dynamic (safe default).
-func prependModeAdaptation(mode, runtime string) string {
-	implicit := isImplicitWebserverRuntime(runtime)
+// prependModeAdaptation returns a concise mode-specific pointer for recipes.
+// Recipes now include both dev and prod zerops.yml setups with inline comments,
+// so the header only needs to direct the agent to the right setup block.
+func prependModeAdaptation(mode, _ string) string {
 	switch mode {
 	case "dev", "standard":
-		var startNote string
-		if implicit {
-			startNote = "> - Omit `start:` and `run.ports` entirely (webserver is built-in)\n"
-		} else {
-			startNote = "> - Use `start: zsc noop --silent` (not the production start command)\n"
-		}
-		return "> **Mode: dev** — This recipe shows production patterns. For your dev entry:\n" +
-			"> - Use `deployFiles: [.]` (not the production pattern below)\n" +
-			startNote +
-			"> - Omit `healthCheck` (you control the server manually)\n" +
-			"> The build commands and dependencies from this recipe still apply.\n\n"
+		return "> **Mode: dev** — Use the `dev` setup block from the zerops.yml below.\n\n"
 	case "simple":
-		if implicit {
-			return "> **Mode: simple** — Use the production patterns below but keep `deployFiles: [.]`\n" +
-				"> since this is a self-deploying service. Omit `start:` and `run.ports` (webserver built-in).\n" +
-				"> `healthCheck` applies as-is.\n\n"
-		}
-		return "> **Mode: simple** — Use the production patterns below but keep `deployFiles: [.]`\n" +
-			"> since this is a self-deploying service. The start command and healthCheck apply as-is.\n\n"
+		return "> **Mode: simple** — Use the `prod` setup block below, but override `deployFiles: [.]`.\n\n"
 	default:
 		return ""
 	}

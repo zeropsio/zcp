@@ -607,7 +607,7 @@ func TestKnowledgeTool_RecipeWithModeOverride(t *testing.T) {
 		t.Error("unfiltered recipe should NOT have mode adaptation header")
 	}
 
-	// With mode=standard: mode adaptation header present with PHP-aware "omit start".
+	// With mode=standard: concise mode adaptation header pointing to dev setup block.
 	result = callTool(t, srv, "zerops_knowledge", map[string]any{
 		"recipe": "php-hello-world",
 		"mode":   "standard",
@@ -616,7 +616,7 @@ func TestKnowledgeTool_RecipeWithModeOverride(t *testing.T) {
 	if !strings.Contains(text, "Mode: dev") {
 		t.Error("standard mode recipe should have mode adaptation header")
 	}
-	if !strings.Contains(text, "Omit") {
-		t.Error("PHP recipe in standard mode should say 'Omit start'")
+	if !strings.Contains(text, "`dev`") {
+		t.Error("standard mode recipe should point to dev setup block")
 	}
 }

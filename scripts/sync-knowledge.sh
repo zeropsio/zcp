@@ -116,11 +116,24 @@ pull_recipes() {
     local name
     name=$(echo "$recipe_json" | jq -r '.name // empty' 2>/dev/null)
 
-    # Get intro (strip markdown links, collapse to single line)
+    # Get intro — prefer per-service intro (app-focused) over recipe-level intro (package-focused).
+    # Per-service intro describes what the app does; recipe-level describes the recipe offering.
     local intro
-    intro=$(echo "$recipe_json" | jq -r '.sourceData.extracts.intro // empty' \
+    intro=$(echo "$recipe_json" | jq -r '
+      [.sourceData.environments[0].services[]
+       | select(.isUtility != true and .category != "CORE" and .category != "STANDARD")
+       | select(.extracts.intro != null and .extracts.intro != "")]
+      | first // empty
+      | .extracts.intro' 2>/dev/null \
       | sed 's/\[\([^]]*\)\]([^)]*)/ \1/g' \
       | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//')
+
+    # Fall back to recipe-level intro if no per-service intro found
+    if [[ -z "$intro" ]]; then
+      intro=$(echo "$recipe_json" | jq -r '.sourceData.extracts.intro // empty' \
+        | sed 's/\[\([^]]*\)\]([^)]*)/ \1/g' \
+        | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//')
+    fi
 
     # Get knowledge-base from first service that has it (promote H3→H2)
     local kb_content
@@ -168,6 +181,46 @@ pull_recipes() {
         echo ""
         echo '```yaml'
         echo "$yaml_content"
+        echo '```'
+      fi
+
+      # Extract service definitions from imports (env0=dev/stage, env4=small-prod).
+      # These are battle-tested per-service blocks with proven scaling values.
+      local has_definitions=false
+
+      # Extract runtime (non-utility, non-managed) service blocks from import YAML.
+      # env0 = "AI Agent" (dev+stage pair) — maps to bootstrap standard/dev modes.
+      local env0_import
+      env0_import=$(echo "$recipe_json" | jq -r '.sourceData.environments[0].import // empty' 2>/dev/null)
+
+      # env4 = "Small Production" — production scaling values.
+      local env4_import
+      env4_import=$(echo "$recipe_json" | jq -r '.sourceData.environments[4].import // empty' 2>/dev/null)
+
+      if [[ -n "$env0_import" || -n "$env4_import" ]]; then
+        echo ""
+        echo "## Service Definitions"
+        echo ""
+        echo "> Per-service blocks extracted from battle-tested recipe imports."
+        echo "> Use these proven scaling values when composing import.yaml for new projects."
+        has_definitions=true
+      fi
+
+      if [[ -n "$env0_import" ]]; then
+        echo ""
+        echo "### Dev/Stage (from AI Agent environment)"
+        echo ""
+        echo '```yaml'
+        echo "$env0_import"
+        echo '```'
+      fi
+
+      if [[ -n "$env4_import" ]]; then
+        echo ""
+        echo "### Small Production"
+        echo ""
+        echo '```yaml'
+        echo "$env4_import"
         echo '```'
       fi
     } > "$target"
