@@ -106,7 +106,7 @@ func (s *Store) GetRecipe(name, mode string) (string, error) {
 	// Try exact match first.
 	uri := "zerops://recipes/" + name
 	if doc, err := s.Get(uri); err == nil {
-		content := s.prependRecipeContext(name, doc.Content)
+		content := s.prependRecipeContext(doc.Content)
 		if mode != "" {
 			rt := s.detectRecipeRuntime(name)
 			content = prependModeAdaptation(mode, rt) + content
@@ -126,7 +126,7 @@ func (s *Store) GetRecipe(name, mode string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("recipe %q not found: %w", matches[0], err)
 		}
-		content := s.prependRecipeContext(matches[0], doc.Content)
+		content := s.prependRecipeContext(doc.Content)
 		if mode != "" {
 			rt := s.detectRecipeRuntime(matches[0])
 			content = prependModeAdaptation(mode, rt) + content
@@ -157,7 +157,7 @@ func (s *Store) detectRecipeRuntime(recipeName string) string {
 
 // prependRecipeContext prepends platform universals to recipe content.
 // Runtime guides are NOT prepended — each recipe is standalone with its own knowledge.
-func (s *Store) prependRecipeContext(recipeName, content string) string {
+func (s *Store) prependRecipeContext(content string) string {
 	return s.prependUniversals(content)
 }
 
@@ -224,7 +224,6 @@ func (s *Store) prependUniversals(content string) string {
 	}
 	return universals + "\n\n---\n\n" + content
 }
-
 
 // prependModeAdaptation returns a concise mode-specific pointer for recipes.
 // Recipes now include both dev and prod zerops.yml setups with inline comments,

@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,15 +46,20 @@ type service struct {
 
 type extracts struct {
 	Intro            string `json:"intro"`
-	KnowledgeBase    string `json:"knowledge-base"`
-	IntegrationGuide string `json:"integration-guide"`
+	KnowledgeBase    string `json:"knowledge-base"`    //nolint:tagliatelle
+	IntegrationGuide string `json:"integration-guide"` //nolint:tagliatelle
 }
 
 // PullRecipes fetches recipes from the API and writes them to the output directory.
 func PullRecipes(cfg *Config, root, filter string, dryRun bool) ([]PullResult, error) {
 	apiURL := cfg.APIURL + "?filters%5BrecipeCategories%5D%5Bslug%5D%5B%24ne%5D=service-utility&populate%5BrecipeCategories%5D=true&populate%5BrecipeLanguageFrameworks%5D%5Bpopulate%5D=*&pagination%5BpageSize%5D=100"
 
-	resp, err := http.Get(apiURL)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch recipes: %w", err)
 	}
@@ -112,7 +118,7 @@ func pullOneRecipe(cfg *Config, recipe APIRecipe, slug, outDir string, dryRun bo
 		return PullResult{Slug: slug, Status: DryRun, Diff: md}
 	}
 
-	if err := os.WriteFile(target, []byte(md), 0644); err != nil {
+	if err := os.WriteFile(target, []byte(md), 0600); err != nil {
 		return PullResult{Slug: slug, Status: Error, Reason: fmt.Sprintf("write: %v", err)}
 	}
 
@@ -287,8 +293,8 @@ func findServiceYAML(sd *sourceData) string {
 func promoteHeadings(content string) string {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
-		if strings.HasPrefix(line, "### ") {
-			lines[i] = "## " + strings.TrimPrefix(line, "### ")
+		if after, ok := strings.CutPrefix(line, "### "); ok {
+			lines[i] = "## " + after
 		}
 	}
 	return strings.Join(lines, "\n")

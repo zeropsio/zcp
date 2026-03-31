@@ -376,7 +376,6 @@ func TestGetBriefing_NoStaticServiceTypeVersions(t *testing.T) {
 	}
 }
 
-
 func TestGetRecipe_ModeDevAddsAdaptation(t *testing.T) {
 	store := newTestStore(t)
 	recipe, err := store.GetRecipe("bun-hello-world", "dev")

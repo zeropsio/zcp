@@ -104,11 +104,11 @@ paths:
 // TestLoadConfig_EnvExpansion uses t.Setenv — cannot be parallel.
 func TestLoadConfig_EnvExpansion(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		envKey  string
-		envVal  string
-		want    string
+		name   string
+		input  string
+		envKey string
+		envVal string
+		want   string
 	}{
 		{"simple_var", "${HOME}", "HOME", "/users/test", "/users/test"},
 		{"with_default_unset", "${MISSING_VAR_SYNC_TEST:-/fallback}", "", "", "/fallback"},

@@ -17,8 +17,12 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Pull knowledge (recipes)
-        run: bash scripts/sync-knowledge.sh pull recipes
+      - name: Pull knowledge (recipes + guides)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash scripts/sync-knowledge.sh pull recipes
+          go run ./cmd/zcp sync pull guides
 
       - name: Build (all platforms)
         env:
@@ -43,8 +47,12 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Pull knowledge (recipes)
-        run: bash scripts/sync-knowledge.sh pull recipes
+      - name: Pull knowledge (recipes + guides)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash scripts/sync-knowledge.sh pull recipes
+          go run ./cmd/zcp sync pull guides
 
       - uses: golangci/golangci-lint-action@v7
         with:

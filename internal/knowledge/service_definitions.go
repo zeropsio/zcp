@@ -50,7 +50,7 @@ func extractYAMLFromSection(section string) []string {
 	var current strings.Builder
 	inBlock := false
 
-	for _, line := range strings.Split(section, "\n") {
+	for line := range strings.SplitSeq(section, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if !inBlock && (trimmed == "```yaml" || trimmed == "```yml") {
 			inBlock = true
@@ -104,12 +104,8 @@ func TransformForBootstrap(importYAML string) string {
 
 	// Second pass: filter lines and inject startWithoutCode for dev services.
 	var sb strings.Builder
-	currentEntryStart = -1
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- hostname:") {
-			currentEntryStart = sb.Len() // track position, not line index
-		}
 		if strings.HasPrefix(trimmed, "buildFromGit:") {
 			continue
 		}
@@ -136,9 +132,9 @@ func TransformForBootstrap(importYAML string) string {
 			final.WriteString(line)
 			final.WriteByte('\n')
 			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "- hostname:") {
+			if after, ok := strings.CutPrefix(trimmed, "- hostname:"); ok {
 				// Check if this hostname was a dev entry
-				hostname := strings.TrimSpace(strings.TrimPrefix(trimmed, "- hostname:"))
+				hostname := strings.TrimSpace(after)
 				if strings.HasSuffix(hostname, "dev") {
 					indent := len(line) - len(strings.TrimLeft(line, " ")) + 2 // align with other fields
 					final.WriteString(strings.Repeat(" ", indent))
@@ -193,8 +189,8 @@ func extractServiceEntries(importYAML string) (runtime []string, managed []strin
 			flush()
 			entryIndent = len(line) - len(strings.TrimLeft(line, " "))
 			currentEntry.WriteString(line + "\n")
-			if strings.HasPrefix(trimmed, "- type:") {
-				currentType = strings.TrimSpace(strings.TrimPrefix(trimmed, "- type:"))
+			if after, ok := strings.CutPrefix(trimmed, "- type:"); ok {
+				currentType = strings.TrimSpace(after)
 			}
 			continue
 		}
@@ -205,8 +201,8 @@ func extractServiceEntries(importYAML string) (runtime []string, managed []strin
 			if trimmed == "" || lineIndent > entryIndent {
 				currentEntry.WriteString(line + "\n")
 				// Capture type if on a continuation line
-				if strings.HasPrefix(trimmed, "type:") {
-					currentType = strings.TrimSpace(strings.TrimPrefix(trimmed, "type:"))
+				if after, ok := strings.CutPrefix(trimmed, "type:"); ok {
+					currentType = strings.TrimSpace(after)
 				}
 				continue
 			}

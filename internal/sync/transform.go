@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const frontmatterDelimiter = "---"
+
 // ExtractKnowledgeBase extracts knowledge-base content from a recipe .md file.
 // Skips frontmatter, skips H1, stops at integration-guide boundary, demotes H2→H3.
 // Returns empty string if no knowledge-base content found.
@@ -16,12 +18,12 @@ func ExtractKnowledgeBase(recipeContent string) string {
 	inCodeBlock := false
 
 	for i, line := range lines {
-		if i == 0 && line == "---" {
+		if i == 0 && line == frontmatterDelimiter {
 			inFrontmatter = true
 			continue
 		}
 		if inFrontmatter {
-			if line == "---" {
+			if line == frontmatterDelimiter {
 				inFrontmatter = false
 			}
 			continue
@@ -152,12 +154,12 @@ func ExtractIntegrationGuide(recipeContent string) string {
 	var out []string
 
 	for i, line := range lines {
-		if i == 0 && line == "---" {
+		if i == 0 && line == frontmatterDelimiter {
 			inFrontmatter = true
 			continue
 		}
 		if inFrontmatter {
-			if line == "---" {
+			if line == frontmatterDelimiter {
 				inFrontmatter = false
 			}
 			continue
@@ -226,16 +228,15 @@ func ExtractRepo(recipeContent string) string {
 
 func extractFrontmatterField(content, field string) string {
 	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || lines[0] != "---" {
+	if len(lines) == 0 || lines[0] != frontmatterDelimiter {
 		return ""
 	}
 	prefix := field + ":"
 	for _, line := range lines[1:] {
-		if line == "---" {
+		if line == frontmatterDelimiter {
 			break
 		}
-		if strings.HasPrefix(line, prefix) {
-			val := strings.TrimPrefix(line, prefix)
+		if val, ok := strings.CutPrefix(line, prefix); ok {
 			val = strings.TrimSpace(val)
 			val = strings.Trim(val, `"'`)
 			return val
@@ -270,10 +271,10 @@ func ConvertGuideToMDX(guideContent string, existingMDX string) string {
 			desc = "Guide: " + title
 		}
 		desc = strings.ReplaceAll(desc, `"`, `\"`)
-		sb.WriteString("---\n")
+		sb.WriteString(frontmatterDelimiter + "\n")
 		sb.WriteString("title: " + title + "\n")
 		sb.WriteString(`description: "` + desc + `"` + "\n")
-		sb.WriteString("---\n\n")
+		sb.WriteString(frontmatterDelimiter + "\n\n")
 	}
 
 	// Strip H1 and convert body
@@ -281,7 +282,7 @@ func ConvertGuideToMDX(guideContent string, existingMDX string) string {
 
 	// Wrap zerops:// URIs in backticks (for MDX imports)
 	inCode := false
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		if strings.HasPrefix(line, "```") {
 			inCode = !inCode
 		}
@@ -307,18 +308,18 @@ func ConvertMDXToGuide(mdxContent string) string {
 	var bodyLines []string
 
 	for i, line := range lines {
-		if i == 0 && line == "---" {
+		if i == 0 && line == frontmatterDelimiter {
 			inFM = true
 			continue
 		}
 		if inFM {
-			if line == "---" {
+			if line == frontmatterDelimiter {
 				inFM = false
 				fmDone = true
 				continue
 			}
-			if strings.HasPrefix(line, "title: ") {
-				title = strings.TrimPrefix(line, "title: ")
+			if after, ok := strings.CutPrefix(line, "title: "); ok {
+				title = after
 				title = strings.Trim(title, `"'`)
 			}
 			continue
@@ -365,11 +366,11 @@ func ConvertMDXToGuide(mdxContent string) string {
 // extractFrontmatterBlock returns the full frontmatter block including delimiters.
 func extractFrontmatterBlock(content string) string {
 	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || lines[0] != "---" {
+	if len(lines) == 0 || lines[0] != frontmatterDelimiter {
 		return ""
 	}
 	for i := 1; i < len(lines); i++ {
-		if lines[i] == "---" {
+		if lines[i] == frontmatterDelimiter {
 			return strings.Join(lines[:i+1], "\n")
 		}
 	}
@@ -377,9 +378,10 @@ func extractFrontmatterBlock(content string) string {
 }
 
 func extractH1(content string) string {
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		if strings.HasPrefix(line, "# ") && !strings.HasPrefix(line, "## ") {
-			return strings.TrimPrefix(line, "# ")
+			after, _ := strings.CutPrefix(line, "# ")
+			return after
 		}
 	}
 	return ""

@@ -12,18 +12,18 @@ import (
 
 // Config holds all sync configuration loaded from .sync.yaml.
 type Config struct {
-	APIURL            string            `yaml:"api_url"`
-	SlugRemap         map[string]string `yaml:"slug_remap"`
+	APIURL            string            `yaml:"api_url"`    //nolint:tagliatelle
+	SlugRemap         map[string]string `yaml:"slug_remap"` //nolint:tagliatelle
 	Environments      EnvConfig         `yaml:"environments"`
-	ExcludeCategories []string          `yaml:"exclude_categories"`
+	ExcludeCategories []string          `yaml:"exclude_categories"` //nolint:tagliatelle
 	Push              PushConfig        `yaml:"push"`
 	Paths             PathsConfig       `yaml:"paths"`
 }
 
 // EnvConfig holds environment name patterns for matching API environments.
 type EnvConfig struct {
-	DevStage  string `yaml:"dev_stage"`
-	SmallProd string `yaml:"small_prod"`
+	DevStage  string `yaml:"dev_stage"`  //nolint:tagliatelle
+	SmallProd string `yaml:"small_prod"` //nolint:tagliatelle
 }
 
 // PushConfig holds push target configuration.
@@ -35,23 +35,23 @@ type PushConfig struct {
 // RecipePushConfig holds recipe push target configuration.
 type RecipePushConfig struct {
 	Org          string   `yaml:"org"`
-	RepoPatterns []string `yaml:"repo_patterns"`
-	BranchPrefix string   `yaml:"branch_prefix"`
-	CommitPrefix string   `yaml:"commit_prefix"`
+	RepoPatterns []string `yaml:"repo_patterns"` //nolint:tagliatelle
+	BranchPrefix string   `yaml:"branch_prefix"` //nolint:tagliatelle
+	CommitPrefix string   `yaml:"commit_prefix"` //nolint:tagliatelle
 }
 
 // GuidePushConfig holds guide push target configuration.
 type GuidePushConfig struct {
 	Repo         string `yaml:"repo"`
 	Path         string `yaml:"path"`
-	BranchPrefix string `yaml:"branch_prefix"`
-	CommitPrefix string `yaml:"commit_prefix"`
+	BranchPrefix string `yaml:"branch_prefix"` //nolint:tagliatelle
+	CommitPrefix string `yaml:"commit_prefix"` //nolint:tagliatelle
 }
 
 // PathsConfig holds filesystem path configuration.
 type PathsConfig struct {
 	Output    string `yaml:"output"`
-	DocsLocal string `yaml:"docs_local"`
+	DocsLocal string `yaml:"docs_local"` //nolint:tagliatelle
 }
 
 // DefaultConfig returns the default configuration matching current bash behavior.

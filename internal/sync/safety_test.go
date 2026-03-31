@@ -149,8 +149,8 @@ func TestExtractKnowledgeBase_IgnoresCodeBlockHeadings(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		content string
+		name     string
+		content  string
 		mustHave string
 	}{
 		{

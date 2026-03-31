@@ -79,7 +79,7 @@ func (g *GH) UpdateFile(path, branch, message, content, blobSHA string) error {
 
 // CreatePR opens a pull request and returns the URL.
 func (g *GH) CreatePR(branch, title, body string) (string, error) {
-	cmd := exec.Command("gh", "pr", "create",
+	cmd := exec.Command("gh", "pr", "create", //nolint:gosec,noctx // controlled internal values
 		"--repo", g.Repo,
 		"--head", branch,
 		"--title", title,
@@ -130,7 +130,7 @@ func (g *GH) CreateTree(baseSHA string, files map[string]string) (string, error)
 		Content string `json:"content"`
 	}
 
-	var entries []treeEntry
+	entries := make([]treeEntry, 0, len(files))
 	for path, content := range files {
 		entries = append(entries, treeEntry{
 			Path:    path,
@@ -141,7 +141,7 @@ func (g *GH) CreateTree(baseSHA string, files map[string]string) (string, error)
 	}
 
 	payload := struct {
-		BaseTree string      `json:"base_tree"`
+		BaseTree string      `json:"base_tree"` //nolint:tagliatelle
 		Tree     []treeEntry `json:"tree"`
 	}{
 		BaseTree: baseSHA,
@@ -213,7 +213,7 @@ func (g *GH) UpdateRef(branch, sha string) error {
 
 func (g *GH) api(args ...string) (string, error) {
 	cmdArgs := append([]string{"api"}, args...)
-	cmd := exec.Command("gh", cmdArgs...)
+	cmd := exec.Command("gh", cmdArgs...) //nolint:noctx // short-lived CLI command
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -227,7 +227,7 @@ func (g *GH) api(args ...string) (string, error) {
 }
 
 func (g *GH) apiRaw(endpoint string, body []byte) (string, error) {
-	cmd := exec.Command("gh", "api", endpoint, "--input", "-")
+	cmd := exec.Command("gh", "api", endpoint, "--input", "-") //nolint:noctx // short-lived CLI command
 	cmd.Stdin = bytes.NewReader(body)
 
 	var stdout, stderr bytes.Buffer

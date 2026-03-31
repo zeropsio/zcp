@@ -118,5 +118,3 @@ func TestPrependModeAdaptation_RuntimeAware(t *testing.T) {
 		})
 	}
 }
-
-

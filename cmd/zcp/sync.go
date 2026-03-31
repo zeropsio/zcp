@@ -8,6 +8,8 @@ import (
 	"github.com/zeropsio/zcp/internal/sync"
 )
 
+const categoryAll = "all"
+
 func runSync(args []string) {
 	// Load .env if present (never errors on missing file)
 	_ = godotenv.Load()
@@ -53,7 +55,7 @@ func runSync(args []string) {
 	}
 
 	action := positional[0]
-	category := "all"
+	category := categoryAll
 	if len(positional) > 1 {
 		category = positional[1]
 	}
@@ -77,7 +79,7 @@ func runSync(args []string) {
 }
 
 func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) {
-	if category == "all" || category == "recipes" {
+	if category == categoryAll || category == "recipes" {
 		fmt.Fprintln(os.Stderr, "=== Pulling recipes from API ===")
 		results, err := sync.PullRecipes(cfg, root, filter, dryRun)
 		if err != nil {
@@ -87,7 +89,7 @@ func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) {
 		printPullResults(results)
 	}
 
-	if category == "all" || category == "guides" {
+	if category == categoryAll || category == "guides" {
 		fmt.Fprintln(os.Stderr, "=== Pulling guides ===")
 		results, err := sync.PullGuides(cfg, root, filter, dryRun)
 		if err != nil {
@@ -99,7 +101,7 @@ func runSyncPull(cfg *sync.Config, root, category, filter string, dryRun bool) {
 }
 
 func runSyncPush(cfg *sync.Config, root, category, filter string, dryRun bool) {
-	if category == "all" || category == "recipes" {
+	if category == categoryAll || category == "recipes" {
 		fmt.Fprintln(os.Stderr, "=== Pushing recipes ===")
 		results, err := sync.PushRecipes(cfg, root, filter, dryRun)
 		if err != nil {
@@ -109,7 +111,7 @@ func runSyncPush(cfg *sync.Config, root, category, filter string, dryRun bool) {
 		printPushResults(results)
 	}
 
-	if category == "all" || category == "guides" {
+	if category == categoryAll || category == "guides" {
 		fmt.Fprintln(os.Stderr, "=== Pushing guides ===")
 		results, err := sync.PushGuides(cfg, root, filter, dryRun)
 		if err != nil {
@@ -165,6 +167,9 @@ func printPushResults(results []sync.PushResult) {
 		switch r.Status {
 		case sync.Created:
 			fmt.Fprintf(os.Stderr, "  Created PR: %s → %s\n", r.Slug, r.PRURL)
+			created++
+		case sync.Updated:
+			fmt.Fprintf(os.Stderr, "  Updated PR: %s → %s\n", r.Slug, r.PRURL)
 			created++
 		case sync.Skipped:
 			skipped++

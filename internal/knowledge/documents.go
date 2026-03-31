@@ -63,8 +63,7 @@ func parseDocument(path, content string) *Document {
 
 	// Parse optional YAML frontmatter (--- block at start of file).
 	var frontmatter map[string]string
-	body := content
-	frontmatter, body = extractFrontmatter(content)
+	frontmatter, body := extractFrontmatter(content)
 
 	title := extractTitle(body)
 	keywords := extractKeywords(body) // legacy: still parsed from ## Keywords if present

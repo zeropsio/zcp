@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,7 +48,7 @@ type CacheClearResult struct {
 func clearOne(baseURL, token, slug string) CacheClearResult {
 	url := baseURL + "/recipes/" + slug + "/cache/clear"
 
-	req, err := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, nil)
 	if err != nil {
 		return CacheClearResult{Slug: slug, Err: fmt.Errorf("build request: %w", err)}
 	}
@@ -69,7 +70,12 @@ func clearOne(baseURL, token, slug string) CacheClearResult {
 func fetchAllSlugs(cfg *Config) ([]string, error) {
 	apiURL := cfg.APIURL + "?filters%5BrecipeCategories%5D%5Bslug%5D%5B%24ne%5D=service-utility&pagination%5BpageSize%5D=100&fields%5B0%5D=slug"
 
-	resp, err := http.Get(apiURL)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch recipe slugs: %w", err)
 	}

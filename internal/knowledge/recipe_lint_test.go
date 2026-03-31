@@ -83,7 +83,7 @@ var managedServiceTypes = map[string]bool{
 	"clickhouse": true, "qdrant": true, "typesense": true,
 }
 
-func TestRecipeLint(t *testing.T) {
+func TestRecipeLint(t *testing.T) { //nolint:maintidx
 	t.Parallel()
 
 	store, err := GetEmbeddedStore()

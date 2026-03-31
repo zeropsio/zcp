@@ -82,7 +82,7 @@ func pullOneGuideFromGitHub(gh *GH, basePath, slug, guidesDir, decisionsDir stri
 		return PullResult{Slug: slug, Status: DryRun, Diff: md}
 	}
 
-	if err := os.WriteFile(target, []byte(md), 0644); err != nil {
+	if err := os.WriteFile(target, []byte(md), 0600); err != nil {
 		return PullResult{Slug: slug, Status: Error, Reason: fmt.Sprintf("write: %v", err)}
 	}
 
@@ -145,7 +145,7 @@ func pullOneGuideFromLocal(slug, srcPath, guidesDir, decisionsDir string, dryRun
 		return PullResult{Slug: slug, Status: DryRun, Diff: md}
 	}
 
-	if err := os.WriteFile(target, []byte(md), 0644); err != nil {
+	if err := os.WriteFile(target, []byte(md), 0600); err != nil {
 		return PullResult{Slug: slug, Status: Error, Reason: fmt.Sprintf("write: %v", err)}
 	}
 
@@ -163,7 +163,7 @@ func (g *GH) ListDirectory(path string) ([]string, error) {
 	var names []string
 	if err := json.Unmarshal([]byte("["+quotedLines(out)+"]"), &names); err != nil {
 		// Fallback: plain newline-separated names
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 			if line != "" {
 				names = append(names, line)
 			}

@@ -48,13 +48,13 @@ func TestExtractFragments(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		content    string
-		wantKB     bool
-		wantIG     bool
-		wantIntro  bool
-		wantYAML   bool
-		wantPush   bool
+		name      string
+		content   string
+		wantKB    bool
+		wantIG    bool
+		wantIntro bool
+		wantYAML  bool
+		wantPush  bool
 	}{
 		{
 			"full_recipe",
