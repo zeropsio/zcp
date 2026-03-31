@@ -17,13 +17,8 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Pull knowledge (recipes + guides)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p internal/knowledge/{recipes,guides,decisions}
-          go run ./cmd/zcp sync pull recipes
-          go run ./cmd/zcp sync pull guides
+      - name: Pull knowledge (recipes)
+        run: bash scripts/sync-knowledge.sh pull recipes
 
       - name: Build (all platforms)
         env:
@@ -47,6 +42,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: "go.mod"
+
+      - name: Pull knowledge (recipes)
+        run: bash scripts/sync-knowledge.sh pull recipes
 
       - uses: golangci/golangci-lint-action@v7
         with:
