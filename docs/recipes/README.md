@@ -84,17 +84,19 @@ description: "Per-service intro — what this app does."
 # Bun Hello World on Zerops
 
 ## Base Image
-What Zerops ships in this runtime's base image (and what's missing).
+Includes: Bun, npm, yarn, git, bunx. NOT included: pnpm.
+(Only what Zerops ships — not documented by the runtime itself.)
 
 ## Binding
-Per-framework 0.0.0.0 binding syntax (one-liner, not re-explaining L7).
-
-## Resource Requirements
-Concrete minRam values for dev and prod (not re-explaining autoscaling concepts).
+`Bun.serve({hostname: "0.0.0.0"})` — default is localhost = 502
+- Elysia: `hostname: "0.0.0.0"` in constructor
+- Hono: `Bun.serve({fetch: app.fetch, hostname: "0.0.0.0"})`
+(Per-framework one-liners only. WHY 0.0.0.0 matters is in universals.md.)
 
 ## Gotchas
-Runtime-specific gotchas only (BUN_INSTALL, bunx vs npx).
-Do NOT restate platform universals — they are prepended automatically.
+- `BUN_INSTALL: ./.bun` for build caching — default ~/.bun is outside the project tree
+- Use `bunx` instead of `npx` — npx may not resolve correctly in Bun runtime
+(Runtime-specific only. Tilde behavior, build/run separation, autoscaling timing → universals.md)
 
 ## zerops.yml
 > Reference implementation — learn the patterns, adapt to your project.
@@ -111,9 +113,11 @@ Do NOT restate platform universals — they are prepended automatically.
 (full import YAML from environment 4 — production scaling)
 ```
 
-**Every section must be Zerops-specific.** Don't restate platform universals (tilde behavior, build/run separation, L7 routing concepts, autoscaling timing) — those are in `themes/universals.md` and prepended automatically via `GetRecipe`. The `NoPlatformDuplication` lint test flags violations.
+Platform knowledge that applies to ALL runtimes lives in `themes/universals.md` and is prepended automatically via `GetRecipe`. Recipes must contain only what's **irreducible to the specific runtime/framework**. The `NoPlatformDuplication` lint test flags violations.
 
-Most recipes currently only have `description` + `## zerops.yml` + `## Service Definitions` (from API). The sections above (Base Image through Gotchas) come from the `knowledge-base` fragment in the app README — add it there, refresh Strapi cache, then `pull` to see it in ZCP.
+Note: the current bun knowledge-base still has platform duplications (L7 routing explanation, autoscaling timing, tilde, build/run separation) — the lint warns about these. The format above shows the target state after cleanup at the source (app README).
+
+Most recipes currently only have `description` + `## zerops.yml` + `## Service Definitions` (from API). Knowledge-base sections (Base Image, Binding, Gotchas) come from the app README `knowledge-base` fragment — add it there, refresh Strapi cache, then `pull` to see it in ZCP.
 
 ## Knowledge-Base Content Guidelines
 
@@ -121,11 +125,10 @@ Each item must be **irreducible to the specific runtime/framework** — not a re
 
 - **What's in the Zerops base image** — not documented by the runtime itself
 - **Per-framework binding syntax** — one-liner `Bun.serve({hostname: "0.0.0.0"})`, not re-explaining L7
-- **Concrete minRam values** — `minRam: 0.5` for dev, `minRam: 0.25` for prod, not re-explaining autoscaling
 - **Runtime-specific cache/env workarounds** — BUN_INSTALL path, bunx vs npx
 - **Real support ticket / agent failure patterns** — things that actually break
 
-**Do NOT include**: tilde behavior, build/run container separation, L7 routing concepts, autoscaling timing — these are platform universals and are prepended automatically.
+**Do NOT include**: tilde behavior, build/run container separation, L7 routing concepts, autoscaling timing, concrete minRam values (now in Service Definitions from recipe imports) — these are either platform universals (prepended automatically) or structured data (in import YAML).
 
 ## Go Consumption Layer
 
