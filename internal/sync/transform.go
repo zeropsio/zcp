@@ -62,22 +62,33 @@ func InjectFragment(readme, fragmentName, fragment string) string {
 	endMarker := "<!-- #ZEROPS_EXTRACT_END:" + fragmentName + "# -->"
 
 	if strings.Contains(readme, startMarker) {
-		// Replace between markers
+		// Replace between markers, preserving leading/trailing blank lines
 		lines := strings.Split(readme, "\n")
 		var out []string
 		skip := false
+		var leadingBlanks []string // blank lines between start marker and old content
+		capturing := false
 		for _, line := range lines {
 			if strings.Contains(line, "ZEROPS_EXTRACT_START:"+fragmentName) {
 				out = append(out, line)
-				out = append(out, fragment)
 				skip = true
+				capturing = true
+				leadingBlanks = nil
 				continue
 			}
 			if strings.Contains(line, "ZEROPS_EXTRACT_END:"+fragmentName) {
+				// Emit: same leading blanks + new fragment
+				out = append(out, leadingBlanks...)
+				out = append(out, fragment)
 				skip = false
 				out = append(out, line)
 				continue
 			}
+			if capturing && skip && line == "" {
+				leadingBlanks = append(leadingBlanks, line)
+				continue
+			}
+			capturing = false
 			if !skip {
 				out = append(out, line)
 			}
