@@ -17,8 +17,13 @@ jobs:
         with:
           go-version-file: "go.mod"
 
-      - name: Ensure knowledge directories
-        run: mkdir -p internal/knowledge/{recipes,guides,decisions}
+      - name: Pull knowledge (recipes + guides)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p internal/knowledge/{recipes,guides,decisions}
+          go run ./cmd/zcp sync pull recipes
+          go run ./cmd/zcp sync pull guides
 
       - name: Build (all platforms)
         env:
