@@ -73,10 +73,10 @@ import.yaml (env0,env4)  →     environments[].import    →   ## Service Defin
 
 | Fragment | Push target | README marker |
 |---|---|---|
-| frontmatter `description:` | README.md | `ZEROPS_EXTRACT:intro` |
 | knowledge-base sections (## Base Image, ## Gotchas, etc.) | README.md | `ZEROPS_EXTRACT:knowledge-base` (H2→H3 demoted) |
-| integration-guide (## zerops.yml + prose) | README.md | `ZEROPS_EXTRACT:integration-guide` (H2→H3 demoted) |
-| zerops.yml YAML block | `zerops.yaml` file | — (standalone file) |
+| integration-guide (## 1. Adding zerops.yaml + prose) | README.md | `ZEROPS_EXTRACT:integration-guide` (H2→H3 demoted) |
+| zerops.yml YAML block | `zerops.yaml` file | — (standalone file, skipped if existing file has more content) |
+| frontmatter `description:` | **NOT pushed** | — (lossy: pull strips markdown links for search use) |
 | Service Definitions | **NOT pushed** | — (read-only reference from API) |
 
 The zerops.yaml file content is always derived from the integration-guide's YAML code block — single source of truth. Editing the YAML in `## zerops.yml` updates both the README integration-guide markers and the `zerops.yaml` file in the same PR.
@@ -355,9 +355,16 @@ GET https://api.zerops.io/api/recipes
 
 ### Cache Behavior
 
-After pushing changes to GitHub, the Strapi cache must be refreshed:
-1. Go to [Strapi admin](https://api-d89-1337.prg1.zerops.app/admin/content-manager/collection-types/api::recipe.recipe) → recipe detail → "Refresh Cache"
-2. Or wait for automatic cache refresh
+After pushing changes to GitHub, the Strapi cache must be refreshed so `zcp sync pull` sees the updated content:
+
+```bash
+zcp sync cache-clear bun-hello-world   # single recipe
+zcp sync cache-clear                   # all recipes
+```
+
+Requires `STRAPI_API_TOKEN` in `.env` (see `.env.example`). Hits `POST /api/recipes/{slug}/cache/clear`.
+
+Alternatively: [Strapi admin](https://api-d89-1337.prg1.zerops.app/admin/content-manager/collection-types/api::recipe.recipe) → recipe detail → "Refresh Cache", or wait for automatic cache refresh.
 
 ### 6 Lifecycle Environments
 
@@ -393,7 +400,10 @@ Add entry with name, slug, icon, categories.
 
 ### 4. Sync to ZCP
 
-Run `zcp sync pull recipes` to pull the new recipe into ZCP's knowledge.
+```bash
+zcp sync cache-clear {slug}    # invalidate Strapi cache
+zcp sync pull recipes {slug}   # pull into ZCP knowledge
+```
 
 ## Embedding and Build
 
