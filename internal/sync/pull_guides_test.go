@@ -25,8 +25,9 @@ func TestPullGuides_WritesFiles(t *testing.T) {
 	}
 
 	cfg := DefaultConfig()
+	cfg.Push.Guides.Repo = "" // disable GitHub path, use local
 	cfg.Paths.DocsLocal = docsDir
-	cfg.Paths.Output = "" // use outDir as root directly
+	cfg.Paths.Output = ""
 
 	results, err := PullGuides(cfg, outDir, "", false)
 	if err != nil {
@@ -73,6 +74,7 @@ func TestPullGuides_Filter(t *testing.T) {
 	}
 
 	cfg := DefaultConfig()
+	cfg.Push.Guides.Repo = ""
 	cfg.Paths.DocsLocal = docsDir
 	cfg.Paths.Output = ""
 
@@ -100,6 +102,7 @@ func TestPullGuides_DryRun(t *testing.T) {
 	}
 
 	cfg := DefaultConfig()
+	cfg.Push.Guides.Repo = ""
 	cfg.Paths.DocsLocal = docsDir
 	cfg.Paths.Output = ""
 

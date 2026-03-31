@@ -16,22 +16,27 @@ type GH struct {
 
 // ReadFile returns file content and blob SHA from default branch.
 func (g *GH) ReadFile(path string) (content string, sha string, err error) {
-	out, err := g.api("repos/"+g.Repo+"/contents/"+path, "--jq", ".content,.sha")
+	out, err := g.api("repos/" + g.Repo + "/contents/" + path)
 	if err != nil {
 		return "", "", fmt.Errorf("read file %s: %w", path, err)
 	}
 
-	lines := strings.SplitN(strings.TrimSpace(out), "\n", 2)
-	if len(lines) != 2 {
-		return "", "", fmt.Errorf("read file %s: unexpected response format", path)
+	var resp struct {
+		Content string `json:"content"`
+		SHA     string `json:"sha"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return "", "", fmt.Errorf("parse response %s: %w", path, err)
 	}
 
-	decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(lines[0], "\n", ""))
+	// GitHub returns base64 with embedded newlines
+	cleaned := strings.ReplaceAll(resp.Content, "\n", "")
+	decoded, err := base64.StdEncoding.DecodeString(cleaned)
 	if err != nil {
 		return "", "", fmt.Errorf("decode content %s: %w", path, err)
 	}
 
-	return string(decoded), strings.TrimSpace(lines[1]), nil
+	return string(decoded), resp.SHA, nil
 }
 
 // CreateBranch creates a new branch from default branch HEAD.

@@ -6,17 +6,16 @@ import (
 )
 
 // ExtractKnowledgeBase extracts knowledge-base content from a recipe .md file.
-// Skips frontmatter, skips H1, stops before "## zerops.yml", demotes H2→H3.
+// Skips frontmatter, skips H1, stops at integration-guide boundary, demotes H2→H3.
 // Returns empty string if no knowledge-base content found.
 func ExtractKnowledgeBase(recipeContent string) string {
 	lines := strings.Split(recipeContent, "\n")
 
 	var out []string
 	inFrontmatter := false
-	pastFrontmatter := false
+	inCodeBlock := false
 
 	for i, line := range lines {
-		// Handle frontmatter
 		if i == 0 && line == "---" {
 			inFrontmatter = true
 			continue
@@ -24,21 +23,20 @@ func ExtractKnowledgeBase(recipeContent string) string {
 		if inFrontmatter {
 			if line == "---" {
 				inFrontmatter = false
-				pastFrontmatter = true
 			}
 			continue
 		}
-		_ = pastFrontmatter
 
-		// Stop at ## zerops.yml section
-		if strings.HasPrefix(line, "## zerops.yml") ||
-			strings.HasPrefix(line, "## zerops.yaml") {
-			break
+		// Track code blocks — headings inside them are not boundaries
+		if strings.HasPrefix(line, "```") {
+			inCodeBlock = !inCodeBlock
 		}
 
-		// Stop at ## Service Definitions
-		if strings.HasPrefix(line, "## Service Definitions") {
-			break
+		// Stop at integration-guide boundary or service definitions (only outside code blocks)
+		if !inCodeBlock {
+			if isIntegrationGuideHeading(line) || strings.HasPrefix(line, "## Service Definitions") {
+				break
+			}
 		}
 
 		// Skip H1 lines
@@ -46,17 +44,15 @@ func ExtractKnowledgeBase(recipeContent string) string {
 			continue
 		}
 
-		// Demote H2 → H3
-		if strings.HasPrefix(line, "## ") {
+		// Demote H2 → H3 (only real headings, not inside code blocks)
+		if !inCodeBlock && strings.HasPrefix(line, "## ") {
 			line = "#" + line
 		}
 
 		out = append(out, line)
 	}
 
-	// Trim leading and trailing blank lines
-	result := strings.TrimSpace(strings.Join(out, "\n"))
-	return result
+	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
 // InjectFragment replaces content between ZEROPS_EXTRACT markers in a README.
@@ -133,13 +129,14 @@ func ExtractZeropsYAML(recipeContent string) string {
 }
 
 // ExtractIntegrationGuide extracts the integration-guide section from a recipe .md.
-// This is everything from "## zerops.yml" (or the first H2 after knowledge-base)
-// up to "## Service Definitions" (exclusive), demoted H2→H3.
+// This is everything from the first integration-guide heading (## zerops.yml,
+// ## 1. Adding zerops.yaml, etc.) up to "## Service Definitions", demoted H2→H3.
 // Returns empty string if no such section exists.
 func ExtractIntegrationGuide(recipeContent string) string {
 	lines := strings.Split(recipeContent, "\n")
 
 	inFrontmatter := false
+	inCodeBlock := false
 	found := false
 	var out []string
 
@@ -155,24 +152,26 @@ func ExtractIntegrationGuide(recipeContent string) string {
 			continue
 		}
 
-		// Start capturing at ## zerops.yml
+		if strings.HasPrefix(line, "```") {
+			inCodeBlock = !inCodeBlock
+		}
+
+		// Start capturing at the integration-guide boundary (outside code blocks)
 		if !found {
-			if strings.HasPrefix(line, "## zerops.yml") ||
-				strings.HasPrefix(line, "## zerops.yaml") {
+			if !inCodeBlock && isIntegrationGuideHeading(line) {
 				found = true
-				// Demote this heading too
-				out = append(out, "#"+line)
+				out = append(out, "#"+line) // demote H2 → H3
 			}
 			continue
 		}
 
-		// Stop at ## Service Definitions
-		if strings.HasPrefix(line, "## Service Definitions") {
+		// Stop at ## Service Definitions (outside code blocks)
+		if !inCodeBlock && strings.HasPrefix(line, "## Service Definitions") {
 			break
 		}
 
-		// Demote H2 → H3
-		if strings.HasPrefix(line, "## ") {
+		// Demote H2 → H3 (only real headings)
+		if !inCodeBlock && strings.HasPrefix(line, "## ") {
 			line = "#" + line
 		}
 
@@ -184,6 +183,22 @@ func ExtractIntegrationGuide(recipeContent string) string {
 	}
 
 	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// isIntegrationGuideHeading returns true if the line marks the start of an
+// integration-guide section. Matches:
+//   - ## zerops.yml / ## zerops.yaml
+//   - ## 1. Adding `zerops.yaml` (numbered heading from API integration-guide)
+//   - Any ## N. heading (numbered integration steps)
+func isIntegrationGuideHeading(line string) bool {
+	if strings.HasPrefix(line, "## zerops.yml") || strings.HasPrefix(line, "## zerops.yaml") {
+		return true
+	}
+	// Numbered heading: "## 1. ..."
+	if strings.HasPrefix(line, "## ") && len(line) > 4 && line[3] >= '0' && line[3] <= '9' && strings.Contains(line[:min(8, len(line))], ".") {
+		return true
+	}
+	return false
 }
 
 // ExtractIntro extracts the frontmatter description as intro text.

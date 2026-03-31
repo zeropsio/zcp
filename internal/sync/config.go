@@ -105,6 +105,11 @@ func LoadConfig(root string) (*Config, error) {
 	cfg.Paths.Output = expandEnv(cfg.Paths.Output)
 	cfg.Paths.DocsLocal = expandEnv(cfg.Paths.DocsLocal)
 
+	// Fall back to DOCS_GUIDES env var if docs_local not set in config
+	if cfg.Paths.DocsLocal == "" {
+		cfg.Paths.DocsLocal = os.Getenv("DOCS_GUIDES")
+	}
+
 	return cfg, nil
 }
 
