@@ -10,8 +10,8 @@ This branch replaces the **dual-layer knowledge model** (separate `runtimes/*.md
 
 | Old | New | Why |
 |-----|-----|-----|
-| `runtimes/` (12 hand-written guides: bun.md, nodejs.md, go.md, ...) | Deleted — runtime knowledge resolves via recipe fallback chain | Maintaining separate runtime guides duplicated effort; the hello-world recipe for each runtime IS the authoritative runtime guide |
-| `recipes/` (28 hand-written recipes: laravel.md, django.md, ...) | Deleted — all recipes pulled from API, gitignored | Hand-written recipes drifted from the canonical app repos; API is the source of truth |
+| `runtimes/` (17 files: 12 language runtimes + 5 infra bases) | Deleted — runtime knowledge resolves via recipe fallback chain; 5 infra bases moved to `bases/` | Maintaining separate runtime guides duplicated effort; the hello-world recipe for each runtime IS the authoritative runtime guide |
+| `recipes/` (29 hand-written recipes: laravel.md, django.md, ...) | Deleted — all recipes pulled from API, gitignored | Hand-written recipes drifted from the canonical app repos; API is the source of truth |
 | `guides/` and `decisions/` (committed) | Now pulled from docs repo, gitignored | Same drift problem — docs repo is canonical |
 | `filterDeployPatterns()` | Removed entirely | Was mode-aware filtering of `### Deploy Patterns` sections; no longer needed since recipes now ship both dev and prod zerops.yml setups with inline comments |
 | Keyword search scoring (`## Keywords` sections) | Removed — search uses title (2x) + content (1x) only | Keywords required manual maintenance; content-based matching is more robust for API-sourced recipes |
@@ -25,7 +25,7 @@ This branch replaces the **dual-layer knowledge model** (separate `runtimes/*.md
 - `runtimeRecipeHints` map — runtime→recipe matching for briefing hints
 - `runtimeNormalizer` — maps `php-nginx` → `php`, etc.
 - Mode adaptation headers (simplified, not removed)
-- BM25 search engine — scoring simplified but fundamentally the same
+- Weighted substring search engine — scoring simplified (keywords removed, title 2x + content 1x)
 
 ### Runtime guide resolution chain
 
@@ -158,7 +158,7 @@ Resolution chain: exact URI match → fuzzy match (prefix/substring/content) →
 
 Simple text-matching with field boosts and query expansion:
 - **Scoring**: title match = 2.0x, content match = 1.0x per word (keywords removed)
-- **Query aliases**: 23 expansions (e.g., `postgres` → `postgres postgresql`, `redis` → `redis valkey`)
+- **Query aliases**: 25 expansions (e.g., `postgres` → `postgres postgresql`, `redis` → `redis valkey`)
 - **Fuzzy recipe matching** (`findMatchingRecipes`): prefix → substring → content search (replaced old keyword matching)
 
 ### Document parsing (documents.go)
@@ -172,11 +172,15 @@ Simple text-matching with field boosts and query expansion:
 
 #### The problem
 
-The bootstrap provision step composes `import.yaml` from scratch using abstract schema from `core.md` — guessing scaling values like `minRam: 1.0` for everything. But the Recipe API provides 6 battle-tested, thoroughly commented `import.yaml` files per recipe (33 recipes × 6 environments = 198 proven configurations). The sync script was ignoring them entirely.
+The bootstrap provision step had nothing — it read abstract schema from `core.md` and the agent had to compose every `import.yaml` from first principles. Every field, every service block, every relationship between services was guessed from documentation.
+
+The Recipe API provides 6 battle-tested, thoroughly commented `import.yaml` files per recipe (33 recipes × 6 environments = 198 proven configurations). The sync script was ignoring them entirely.
 
 #### The solution
 
-The sync script now extracts full import YAML from env0 (dev/stage) and env4 (small-prod) into a `## Service Definitions` section in each recipe `.md`. The Go layer parses these and makes them available for bootstrap to use proven values instead of guessing.
+The sync script now extracts full import YAML from env0 (dev/stage) and env4 (small-prod) into a `## Service Definitions` section in each recipe `.md`. The Go layer parses these into a per-recipe library of complete, proven import configurations.
+
+For any runtime the agent encounters, it can now look up a real, working `import.yaml` that includes the full service block structure with correct type versions, priority ordering, correct autoscaling shape, managed service patterns, and comments explaining why each value was chosen. The shift is **abstract schema documentation → concrete reference implementations**.
 
 #### GetServiceDefinitions
 
