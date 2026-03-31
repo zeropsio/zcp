@@ -45,6 +45,15 @@ lint: ## Run linter for all target platforms
 lint-fast: ## Fast lint (native platform, fast linters only, ~3s)
 	$(LINT) run ./... --fast-only
 
+sync: build ## Pull all knowledge from external sources
+	./bin/zcp sync pull
+
+sync-recipes: build ## Pull recipes from API
+	./bin/zcp sync pull recipes
+
+sync-push: build ## Push knowledge changes as GitHub PRs
+	./bin/zcp sync push
+
 catalog-sync: build ## Refresh platform version catalog from API
 	./bin/zcp catalog sync
 

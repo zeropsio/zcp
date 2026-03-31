@@ -11,14 +11,15 @@ Canonical Sources                          ZCP (consumer)
 Recipe API (Strapi)               pull→   internal/knowledge/recipes/*.md
   extracts.intro                          (frontmatter description)
   extracts.knowledge-base                 (operational knowledge sections)
-  services[].zeropsYaml                   (## zerops.yml section)
-                                  ←push   (split back to fragment + yaml in app repos)
+  extracts.integration-guide              (zerops.yml + integration steps)
+  environments[].import                   (Service Definitions section)
+                                  ←push   (decomposed back to fragments via GitHub API PRs)
 
 docs.zerops.io/guides/*.mdx       pull→   internal/knowledge/guides/
                                   ←push   internal/knowledge/decisions/
 ```
 
-Recipe `.md` files are **gitignored** — run `scripts/sync-knowledge.sh pull` before build.
+Recipe `.md` files are **gitignored** — run `zcp sync pull` (or `make sync`) before build.
 Infrastructure bases (`bases/`) are committed (hand-authored, not API-sourced).
 
 ## Pull (external → ZCP)
@@ -26,7 +27,9 @@ Infrastructure bases (`bases/`) are committed (hand-authored, not API-sourced).
 Run **before starting work** to populate recipe knowledge:
 
 ```bash
-./scripts/sync-knowledge.sh pull [guides|recipes|all]
+zcp sync pull [recipes|guides|all]
+zcp sync pull recipes bun-hello-world   # single recipe
+zcp sync pull --dry-run                 # show what would change
 ```
 
 ### What pull does
@@ -34,9 +37,10 @@ Run **before starting work** to populate recipe knowledge:
 **`pull recipes`** — One API call fetches all recipes (`$ne=service-utility`):
 - Extracts `intro` for frontmatter `description:`
 - Extracts `knowledge-base` fragment from first service (promotes H3 → H2)
-- Extracts `zeropsYaml` from first service
-- Writes `recipes/{slug}.md` with description, knowledge-base sections, and `## zerops.yml`
-- Handles slug remapping (e.g., API slug `recipe` → `nodejs-hello-world`)
+- Extracts `integration-guide` (or falls back to raw `zeropsYaml`)
+- Extracts environment imports for Service Definitions section
+- Writes `recipes/{slug}.md`
+- Handles slug remapping via `.sync.yaml` (e.g., API slug `recipe` → `nodejs-hello-world`)
 
 **`pull guides`** — For each `docs/guides/*.mdx`:
 - Strips MDX frontmatter and import statements
@@ -48,45 +52,56 @@ Run **before starting work** to populate recipe knowledge:
 Run **after `make test` passes** to distribute tested changes:
 
 ```bash
-./scripts/sync-knowledge.sh push [guides|recipes|all]
+zcp sync push recipes                           # all recipes → GitHub PRs
+zcp sync push recipes bun-hello-world           # single recipe → one PR
+zcp sync push recipes bun-hello-world --dry-run # show what would change
+zcp sync push guides                            # all guides → one PR to docs repo
 ```
 
 ### What push does
 
-**`push recipes`** — For each `recipes/*.md` with a matching local app clone:
-- Extracts knowledge-base portion (everything before `## zerops.yml`)
-- Demotes headings: H2 → H3
-- Replaces `knowledge-base` fragment in app README (or appends if new)
-- Extracts YAML from the `## zerops.yml` code block
-- Writes back to `zerops.yaml` in the app repo
-- Tries `{slug}-app/` then `{slug}/` naming conventions
+**`push recipes`** — For each `recipes/*.md`, decomposes the monolithic file into fragments and pushes them to the app repo via GitHub API:
 
-**`push guides`** — For each `internal/knowledge/guides/*.md` and `decisions/*.md`:
+| Fragment | Push target | README marker |
+|---|---|---|
+| frontmatter `description:` | README.md | `ZEROPS_EXTRACT:intro` |
+| knowledge-base (## Base Image, etc.) | README.md | `ZEROPS_EXTRACT:knowledge-base` (H2→H3) |
+| integration-guide (## zerops.yml + prose) | README.md | `ZEROPS_EXTRACT:integration-guide` (H2→H3) |
+| zerops.yml YAML block | `zerops.yaml` file | — |
+| Service Definitions | **NOT pushed** | — (read-only reference) |
+
+The zerops.yaml file is always derived from the integration-guide's YAML code block — single source of truth. Repo resolution tries `{slug}-app` then `{slug}` under the configured org.
+
+**`push guides`** — Batches all guide changes into a single PR to `zeropsio/docs`:
 - Preserves existing MDX frontmatter if the target file exists
 - Generates starter frontmatter for new files
 - Wraps bare `{var}` in `zerops://` URIs with backticks for MDX compatibility
 
-## After push
+### After push
 
-Push only writes to local cloned repos. Review diffs, commit, and push to GitHub:
+Push creates GitHub PRs directly — no local clones needed. Review the PR, merge, then refresh the Strapi cache so the API serves the updated fragments.
 
-```bash
-# Check what changed
-./scripts/sync-knowledge.sh push recipes
+## Configuration
 
-# Review
-cd ~/www/recipe-apps/bun-hello-world-app && git diff
+Sync is configured via `.sync.yaml` at the project root (committed):
 
-# Commit and push
-git add -A && git commit -m "sync: update knowledge-base fragment" && git push
+```yaml
+api_url: https://api.zerops.io/api/recipes
+slug_remap:
+  recipe: nodejs-hello-world
+push:
+  recipes:
+    org: zerops-recipe-apps
+    repo_patterns: ["{slug}-app", "{slug}"]
+    branch_prefix: zcp
+  guides:
+    repo: zeropsio/docs
+    path: apps/docs/content/guides
+paths:
+  output: internal/knowledge
+  docs_local: ""  # for pull guides (set DOCS_GUIDES env or this field)
 ```
 
-Then refresh the Strapi cache so the API serves the updated fragments.
+## Legacy bash script
 
-## Environment variables
-
-Override sibling repo locations if they're not at the default:
-
-```bash
-DOCS_GUIDES=~/code/docs/guides RECIPE_APPS=~/code/apps ./scripts/sync-knowledge.sh pull all
-```
+`scripts/sync-knowledge.sh` is the predecessor. It uses local repo clones for push (manual git commit/push). The Go implementation (`zcp sync`) replaces it with direct GitHub API integration.

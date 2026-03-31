@@ -43,7 +43,7 @@ Most recipes start with only `description` + `## zerops.yml` + `## Service Defin
 
 1. Write `knowledge-base` fragment in the app README (Base Image, Binding, Resource Requirements, Gotchas)
 2. Push to GitHub, refresh Strapi cache
-3. `scripts/sync-knowledge.sh pull recipes` — content appears in ZCP
+3. `zcp sync pull recipes` — content appears in ZCP
 4. Lint tests validate the new content (`NoPlatformDuplication`, `ServiceDefinitionsValid`, etc.)
 
 Currently only **Bun** has a `knowledge-base` fragment. The other 32 recipes have description + zerops.yml + service definitions.
@@ -63,14 +63,27 @@ knowledge-base fragment  →     extracts.knowledge-base  →   recipes/{slug}.m
 integration-guide        →     extracts.integration-guide →  recipes/{slug}.md (zerops.yml + integration steps)
 per-service intro        →     svc.extracts.intro       →   frontmatter description (preferred)
 recipe-level intro       →     extracts.intro           →   frontmatter description (fallback)
+gitRepo URL              →     svc.gitRepo              →   frontmatter repo (push target)
 import.yaml (env0,env4)  →     environments[].import    →   ## Service Definitions section
 ```
 
-**Pull** (`scripts/sync-knowledge.sh pull recipes`): one API call to `api.zerops.io` fetches all non-utility recipes dynamically. No hardcoded list — new recipes appear automatically.
+**Pull** (`zcp sync pull recipes`): one API call to `api.zerops.io` fetches all non-utility recipes dynamically. No hardcoded list — new recipes appear automatically.
 
-**Push** (`scripts/sync-knowledge.sh push recipes`): writes knowledge-base content back to local app repo clones (tries `{slug}-app/` then `{slug}/`). You review, commit, push to GitHub, then refresh the Strapi cache.
+**Push** (`zcp sync push recipes [slug] [--dry-run]`): decomposes the monolithic recipe `.md` back into fragments and pushes them to the app repo via GitHub API as a PR. Each fragment goes to its correct location:
 
-All synced files (`recipes/`, `guides/`, `decisions/`) are **gitignored** — run `scripts/sync-knowledge.sh pull` before build. Infrastructure bases (`bases/`) are committed.
+| Fragment | Push target | README marker |
+|---|---|---|
+| frontmatter `description:` | README.md | `ZEROPS_EXTRACT:intro` |
+| knowledge-base sections (## Base Image, ## Gotchas, etc.) | README.md | `ZEROPS_EXTRACT:knowledge-base` (H2→H3 demoted) |
+| integration-guide (## zerops.yml + prose) | README.md | `ZEROPS_EXTRACT:integration-guide` (H2→H3 demoted) |
+| zerops.yml YAML block | `zerops.yaml` file | — (standalone file) |
+| Service Definitions | **NOT pushed** | — (read-only reference from API) |
+
+The zerops.yaml file content is always derived from the integration-guide's YAML code block — single source of truth. Editing the YAML in `## zerops.yml` updates both the README integration-guide markers and the `zerops.yaml` file in the same PR.
+
+No local clones needed — push uses `gh` CLI to create branches and PRs directly via the GitHub API. The target repo is read from the frontmatter `repo:` field (written during pull from the API's `gitRepo`). Falls back to pattern matching (`{slug}-app`, `{slug}`) if no `repo:` in frontmatter.
+
+All synced files (`recipes/`, `guides/`, `decisions/`) are **gitignored** — run `zcp sync pull` before build. Infrastructure bases (`bases/`) are committed.
 
 ## Recipe File Format
 
@@ -79,6 +92,7 @@ Each recipe in `internal/knowledge/recipes/` has up to 3 content sources from th
 ```markdown
 ---
 description: "Per-service intro — what this app does."
+repo: "https://github.com/zerops-recipe-apps/bun-hello-world-app"
 ---
 
 # Bun Hello World on Zerops
@@ -103,7 +117,14 @@ Includes: Bun, npm, yarn, git, bunx. NOT included: pnpm.
 (full import YAML from environment 4)
 ```
 
-**Three content sources:**
+**Frontmatter fields** (written by `zcp sync pull`, read by `zcp sync push`):
+
+| Field | API source | Purpose |
+|---|---|---|
+| `description` | `svc.extracts.intro` (preferred) or `extracts.intro` | Recipe description for search/disambiguation |
+| `repo` | `svc.gitRepo` | Push target — exact app repo URL, no guessing |
+
+**Three content sections:**
 
 | Source | Fragment | What it contains |
 |---|---|---|
@@ -173,7 +194,7 @@ Simple text-matching with field boosts and query expansion:
 
 ### Document parsing (documents.go)
 
-- **Frontmatter extraction**: YAML `description:` field parsed from `---` blocks (new)
+- **Frontmatter extraction**: YAML `description:` and `repo:` fields parsed from `---` blocks
 - **Description priority**: frontmatter `description:` > `## TL;DR` > first paragraph
 - **Disambiguation**: uses `doc.Description` instead of old `doc.TLDR`
 - **Keywords and TL;DR**: still parsed (legacy) but not used in search scoring
@@ -184,11 +205,11 @@ Simple text-matching with field boosts and query expansion:
 
 The bootstrap provision step had nothing — it read abstract schema from `core.md` and the agent had to compose every `import.yaml` from first principles. Every field, every service block, every relationship between services was guessed from documentation.
 
-The Recipe API provides 6 battle-tested, thoroughly commented `import.yaml` files per recipe (33 recipes × 6 environments = 198 proven configurations). The sync script was ignoring them entirely.
+The Recipe API provides 6 battle-tested, thoroughly commented `import.yaml` files per recipe (33 recipes × 6 environments = 198 proven configurations). The old sync script was ignoring them entirely.
 
 #### The solution
 
-The sync script now extracts full import YAML from env0 (dev/stage) and env4 (small-prod) into a `## Service Definitions` section in each recipe `.md`. The Go layer parses these into a per-recipe library of complete, proven import configurations.
+`zcp sync pull` now extracts full import YAML from env0 (dev/stage) and env4 (small-prod) into a `## Service Definitions` section in each recipe `.md`. The Go layer parses these into a per-recipe library of complete, proven import configurations.
 
 For any runtime the agent encounters, it can now look up a real, working `import.yaml` that includes the full service block structure with correct type versions, priority ordering, correct autoscaling shape, managed service patterns, and comments explaining why each value was chosen. The shift is **abstract schema documentation → concrete reference implementations**.
 
@@ -259,7 +280,7 @@ For production tiers (not part of bootstrap, but relevant for scaling guidance):
 
 ## Description Priority
 
-The sync script extracts descriptions in this priority order:
+`zcp sync pull` extracts descriptions in this priority order:
 
 1. **Per-service intro** (`environments[0].services[].extracts.intro`) — describes what the app does ("Minimal Bun API with PostgreSQL")
 2. **Recipe-level intro** (`extracts.intro`) — describes the recipe package ("A Bun application with six configurations")
@@ -310,7 +331,7 @@ Full zerops.yaml with comments + explanation.
 <!-- #ZEROPS_EXTRACT_END:integration-guide# -->
 ```
 
-Strapi extracts these and serves them via the API. The sync script reads from the API.
+Strapi extracts these and serves them via the API. `zcp sync pull` reads from the API.
 
 ### API Endpoints
 
@@ -329,6 +350,7 @@ GET https://api.zerops.io/api/recipes
 - `sourceData.environments[].services[].extracts["integration-guide"]` — zerops.yml + integration steps (preferred)
 - `sourceData.environments[].services[].zeropsYaml` — raw zerops.yaml (fallback if no integration guide)
 - `sourceData.environments[].services[].extracts["knowledge-base"]` — runtime-specific gotchas
+- `sourceData.environments[].services[].gitRepo` — app repo URL (e.g. `https://github.com/zerops-recipe-apps/bun-hello-world-app`)
 - `sourceData.environments[].import` — full import YAML per environment (6 environments)
 
 ### Cache Behavior
@@ -371,7 +393,7 @@ Add entry with name, slug, icon, categories.
 
 ### 4. Sync to ZCP
 
-Run `scripts/sync-knowledge.sh pull recipes` to pull the new recipe into ZCP's knowledge.
+Run `zcp sync pull recipes` to pull the new recipe into ZCP's knowledge.
 
 ## Embedding and Build
 
@@ -385,16 +407,16 @@ The `go:embed` directive in `documents.go` embeds all knowledge at compile time:
 - `all:recipes`, `all:guides`, `all:decisions` — gitignored, must be pulled before build (the `all:` prefix includes directories even when empty, preventing build failures)
 - `knowledgeDirs` lists the walk order: `themes`, `bases`, `recipes`, `guides`, `decisions`
 
-**Build prerequisite**: `scripts/sync-knowledge.sh pull` before `go build`.
+**Build prerequisite**: `zcp sync pull` (or `make sync`) before `go build`.
 
 ## Current State
 
 - **33 recipes** pulled dynamically from Recipe API (all non-utility recipes)
-- **All recipe .md files are gitignored** — run `scripts/sync-knowledge.sh pull recipes` before build
+- **All recipe .md files are gitignored** — run `zcp sync pull recipes` before build
 - **Infrastructure bases** (alpine, docker, nginx, static, ubuntu) are in `internal/knowledge/bases/` (committed)
 - **Bun** is the only recipe with `knowledge-base` fragment — others have intro + integration guide + service definitions only
-- **elixir** is missing from API; **nodejs** has slug `recipe` (remapped to `nodejs-hello-world` by sync script)
-- **Slug remapping**: API slug `"recipe"` → `"nodejs-hello-world"` (handled in sync script)
+- **elixir** is missing from API; **nodejs** has slug `recipe` (remapped to `nodejs-hello-world` by `.sync.yaml` config)
+- **Slug remapping**: API slug `"recipe"` → `"nodejs-hello-world"` (handled in `.sync.yaml` config)
 
 ## FAQ
 

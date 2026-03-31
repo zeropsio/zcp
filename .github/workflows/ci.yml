@@ -17,6 +17,9 @@ jobs:
         with:
           go-version-file: "go.mod"
 
+      - name: Ensure knowledge directories
+        run: mkdir -p internal/knowledge/{recipes,guides,decisions}
+
       - name: Build (all platforms)
         env:
           CGO_ENABLED: '0'

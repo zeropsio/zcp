@@ -6,7 +6,7 @@ Three changes, each solving a distinct problem:
 
 ### 1. Recipes come from the API, not hand-written files
 
-All recipe `.md` files are now pulled dynamically from the Zerops Recipe API via `scripts/sync-knowledge.sh`. Recipe files are gitignored — no more drift between ZCP's knowledge and the canonical app repos. New recipes appear automatically, no hardcoded lists.
+All recipe `.md` files are now pulled dynamically from the Zerops Recipe API via `zcp sync pull`. Recipe files are gitignored — no more drift between ZCP's knowledge and the canonical app repos. New recipes appear automatically, no hardcoded lists.
 
 **Before:** 29 hand-written recipe files and 17 runtime guides committed to the repo, manually maintained, drifting from the actual app repos.
 
