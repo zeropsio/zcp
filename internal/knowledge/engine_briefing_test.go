@@ -73,17 +73,18 @@ func TestGetBriefing_NilTypes_NoVersionSection(t *testing.T) {
 
 // --- Knowledge Content & Briefing Order Tests ---
 
-func TestGetBriefing_BunRuntime_ContainsBindingRule(t *testing.T) {
+func TestGetBriefing_BunRuntime_ContainsKnowledgeBase(t *testing.T) {
 	store := newTestStore(t)
 	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	if !strings.Contains(briefing, "0.0.0.0") {
-		t.Error("Bun briefing missing 0.0.0.0 binding rule")
+	// API knowledge-base includes Base Image and Gotchas — verify these are surfaced
+	if !strings.Contains(briefing, "BUN_INSTALL") {
+		t.Error("Bun briefing missing BUN_INSTALL gotcha from knowledge-base")
 	}
-	if !strings.Contains(briefing, "Bun.serve") {
-		t.Error("Bun briefing missing Bun.serve reference")
+	if !strings.Contains(briefing, "bunx") {
+		t.Error("Bun briefing missing bunx reference from knowledge-base")
 	}
 }
 
