@@ -64,12 +64,22 @@ The service definitions in each recipe contain `buildFromGit` and `zeropsSetup` 
 
 **Day 365 modification** (add service, change HA, custom scaling): service definitions irrelevant. Agent reads current state via `zerops_discover`, reads schema, generates modification. Unchanged from main.
 
+## How the agent uses this content
+
+The agent does not copy-paste recipe YAML. It generates zerops.yml and import.yaml from scratch during bootstrap, because the user's app has different hostnames, dependencies, env vars, and code than the recipe.
+
+What the recipe content provides is **knowledge through commented examples**. The integration guide's zerops.yml teaches patterns: how to structure build vs run, where `BUN_INSTALL` goes, why `--frozen-lockfile`, how `initCommands` work with `zsc execOnce`, what `readinessCheck` looks like, how dev and prod setups differ structurally. The inline comments are critical — they explain *why* each value was chosen (`# Redirect bun's install cache into the project tree so Zerops can cache it`, `# Only bundled artifacts — no node_modules, no source. 156 KB total.`), not just what it is.
+
+The agent reads these patterns, then applies them to the user's specific situation using the schema rules from `core.md` and the actual env vars discovered during provision. Same for service definitions — the agent reads proven scaling values and structural patterns (priority ordering, dev/stage pairing, verticalAutoscaling shape), then generates its own import from the schema.
+
+This is exactly "the right info" — not English prose the agent interprets, but actual working YAML with explanatory comments the agent learns from.
+
 ## What the branch delivers
 
 1. **Recipes sync from the API** — no drift. 33 recipes pulled dynamically. Integration guides include full zerops.yml with inline comments PLUS framework-specific integration steps (S3 setup, env var mapping, mailer config).
 
 2. **Zero-duplication architecture** — platform universals in one place, prepended once. Knowledge-base contains only runtime-specific gotchas (5 lines for Bun). Integration guide is structural YAML with comments. `NoPlatformDuplication` lint enforces the boundary.
 
-3. **Richer content for LLM** — old: 1 zerops.yml setup (prod only, no comments) + 8-line bare import skeleton + 39 lines of hand-written prose. New: 2 zerops.yml setups (prod + dev, inline comments) + complete import YAML from 2 environment tiers + framework-specific integration steps (when available). Everything the agent needs to generate correct configuration is in actual YAML it can reference, not English it must interpret.
+3. **Richer knowledge for the LLM** — old: 1 zerops.yml setup (prod only, no comments) + 8-line bare import skeleton + 39 lines of hand-written prose. New: 2 zerops.yml setups (prod + dev, inline comments explaining every decision) + complete import YAML from 2 environment tiers + framework-specific integration steps (when available). The agent learns patterns from commented YAML, not from English paragraphs.
 
-4. **Better data for the generative approach** — per-runtime scaling values from production recipes. The agent generates from schema + rules + better reference data. Not templates — data points.
+4. **Better data for the generative approach** — per-runtime scaling values from production recipes. The agent generates from schema + rules + better reference data. Not templates — knowledge through example.
