@@ -160,9 +160,6 @@ func pushRecipeDryRun(gh *GH, slug string, frags recipeFragments) PushResult {
 	}
 
 	var parts []string
-	if frags.Intro != "" {
-		parts = append(parts, "intro")
-	}
 	if frags.IntegrationGuide != "" {
 		parts = append(parts, "integration-guide")
 	}
@@ -176,11 +173,11 @@ func pushRecipeDryRun(gh *GH, slug string, frags recipeFragments) PushResult {
 	return PushResult{Slug: slug, Status: DryRun, Diff: fmt.Sprintf("would update: %s", strings.Join(parts, ", "))}
 }
 
-// injectAllFragments injects all non-empty fragments into the README.
+// injectAllFragments injects non-empty fragments into the README.
+// Intro is NOT injected — the pull-side strips markdown links and collapses
+// whitespace, making the frontmatter description lossy. Pushing it back would
+// overwrite the richer original in the README. The intro marker is read-only.
 func injectAllFragments(readme string, frags recipeFragments) string {
-	if frags.Intro != "" {
-		readme = InjectFragment(readme, "intro", frags.Intro)
-	}
 	if frags.IntegrationGuide != "" {
 		readme = InjectFragment(readme, "integration-guide", frags.IntegrationGuide)
 	}
@@ -212,14 +209,19 @@ func pushRecipeCreate(cfg *Config, gh *GH, slug string, frags recipeFragments) P
 		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("update README: %w", err)}
 	}
 
-	// 8. Commit zerops.yaml if applicable
+	// 8. Commit zerops.yaml if applicable.
+	// Skip if the existing file is longer — the API's integration-guide YAML
+	// may be a subset (e.g. missing healthCheck) and we don't want to regress.
 	if frags.ZeropsYAML != "" {
-		yamlSHA := ""
-		_, existingSHA, readErr := gh.ReadFile("zerops.yaml")
-		if readErr == nil {
-			yamlSHA = existingSHA
+		existing, existingSHA, readErr := gh.ReadFile("zerops.yaml")
+		if readErr != nil {
+			// File doesn't exist yet — create it
+			_ = gh.UpdateFile("zerops.yaml", branch, commitMsg, frags.ZeropsYAML+"\n", "")
+		} else if len(strings.TrimSpace(frags.ZeropsYAML)) >= len(strings.TrimSpace(existing)) {
+			// New content is same size or larger — safe to update
+			_ = gh.UpdateFile("zerops.yaml", branch, commitMsg, frags.ZeropsYAML+"\n", existingSHA)
 		}
-		_ = gh.UpdateFile("zerops.yaml", branch, commitMsg, frags.ZeropsYAML, yamlSHA)
+		// Otherwise: existing file has more content, skip to avoid regression
 	}
 
 	// 9. Create PR

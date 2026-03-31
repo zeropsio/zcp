@@ -133,7 +133,8 @@ old kb
 		want string
 		gone string
 	}{
-		{"new_intro", "New intro text", "old intro"},
+		// Intro is NOT pushed back (lossy round-trip) — old intro preserved
+		{"intro_preserved", "old intro", ""},
 		{"new_guide", "### 1. New guide", "old guide"},
 		{"new_kb", "### Base Image", "old kb"},
 	}
@@ -144,7 +145,7 @@ old kb
 			if !strings.Contains(got, tt.want) {
 				t.Errorf("expected %q in output", tt.want)
 			}
-			if strings.Contains(got, tt.gone) {
+			if tt.gone != "" && strings.Contains(got, tt.gone) {
 				t.Errorf("expected %q to be replaced", tt.gone)
 			}
 		})

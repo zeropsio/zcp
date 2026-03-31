@@ -78,18 +78,20 @@ old guide
 old kb
 <!-- #ZEROPS_EXTRACT_END:knowledge-base# -->`
 
-	// Inject all three in sequence (same as injectAllFragments)
-	result := InjectFragment(readme, "intro", "new intro")
-	result = InjectFragment(result, "integration-guide", "new guide")
-	result = InjectFragment(result, "knowledge-base", "new kb")
+	// Use injectAllFragments which skips intro (lossy round-trip protection)
+	frags := recipeFragments{
+		Intro:            "new intro",
+		IntegrationGuide: "new guide",
+		KnowledgeBase:    "new kb",
+	}
+	result := injectAllFragments(readme, frags)
 
-	// Each fragment should have exactly its new content
 	tests := []struct {
 		name    string
 		present string
 		absent  string
 	}{
-		{"new_intro", "new intro", "old intro"},
+		{"intro_preserved", "old intro", ""}, // intro is read-only — never pushed back
 		{"new_guide", "new guide", "old guide"},
 		{"new_kb", "new kb", "old kb"},
 	}
@@ -100,7 +102,7 @@ old kb
 			if !strings.Contains(result, tt.present) {
 				t.Errorf("missing %q", tt.present)
 			}
-			if strings.Contains(result, tt.absent) {
+			if tt.absent != "" && strings.Contains(result, tt.absent) {
 				t.Errorf("should not contain %q — cross-contamination", tt.absent)
 			}
 		})
