@@ -59,7 +59,8 @@ func DefaultConfig() *Config {
 	return &Config{
 		APIURL: "https://api.zerops.io/api/recipes",
 		SlugRemap: map[string]string{
-			"recipe": "nodejs-hello-world",
+			"recipe":              "nodejs-hello-world",
+			"node-js-hello-world": "nodejs-hello-world",
 		},
 		Environments: EnvConfig{
 			DevStage:  "AI Agent",

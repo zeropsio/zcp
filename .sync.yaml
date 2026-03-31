@@ -2,6 +2,7 @@ api_url: https://api.zerops.io/api/recipes
 
 slug_remap:
   recipe: nodejs-hello-world
+  node-js-hello-world: nodejs-hello-world
 
 environments:
   dev_stage: "AI Agent"
