@@ -60,9 +60,9 @@ Now each recipe is **standalone**: `GetRecipe` prepends only platform universals
 App README (canonical)          Recipe API (Strapi)           ZCP (consumer)
 ─────────────────────          ──────────────────           ──────────────
 knowledge-base fragment  →     extracts.knowledge-base  →   recipes/{slug}.md (knowledge sections)
+integration-guide        →     extracts.integration-guide →  recipes/{slug}.md (zerops.yml + integration steps)
 per-service intro        →     svc.extracts.intro       →   frontmatter description (preferred)
 recipe-level intro       →     extracts.intro           →   frontmatter description (fallback)
-zerops.yaml              →     services[].zeropsYaml    →   ## zerops.yml section
 import.yaml (env0,env4)  →     environments[].import    →   ## Service Definitions section
 ```
 
@@ -74,7 +74,7 @@ All synced files (`recipes/`, `guides/`, `decisions/`) are **gitignored** — ru
 
 ## Recipe File Format
 
-Each recipe in `internal/knowledge/recipes/` follows this structure:
+Each recipe in `internal/knowledge/recipes/` has up to 3 content sources from the app README, all synced via the API:
 
 ```markdown
 ---
@@ -85,50 +85,45 @@ description: "Per-service intro — what this app does."
 
 ## Base Image
 Includes: Bun, npm, yarn, git, bunx. NOT included: pnpm.
-(Only what Zerops ships — not documented by the runtime itself.)
-
-## Binding
-`Bun.serve({hostname: "0.0.0.0"})` — default is localhost = 502
-- Elysia: `hostname: "0.0.0.0"` in constructor
-- Hono: `Bun.serve({fetch: app.fetch, hostname: "0.0.0.0"})`
-(Per-framework one-liners only. WHY 0.0.0.0 matters is in universals.md.)
 
 ## Gotchas
 - `BUN_INSTALL: ./.bun` for build caching — default ~/.bun is outside the project tree
 - Use `bunx` instead of `npx` — npx may not resolve correctly in Bun runtime
-(Runtime-specific only. Tilde behavior, build/run separation, autoscaling timing → universals.md)
 
-## zerops.yml
-> Reference implementation — learn the patterns, adapt to your project.
+## 1. Adding `zerops.yaml`
+(full commented YAML with both prod and dev setups — from integration-guide fragment)
 
-(full commented YAML with both prod and dev setups)
+## 2. Add Support For Object Storage
+(framework-specific integration steps — from integration-guide fragment, e.g. Laravel S3, Django settings)
 
 ## Service Definitions
-> Per-service blocks extracted from battle-tested recipe imports.
-
 ### Dev/Stage (from AI Agent environment)
-(full import YAML from environment 0 — dev+stage pair)
-
+(full import YAML from environment 0)
 ### Small Production
-(full import YAML from environment 4 — production scaling)
+(full import YAML from environment 4)
 ```
 
-Platform knowledge that applies to ALL runtimes lives in `themes/universals.md` and is prepended automatically via `GetRecipe`. Recipes must contain only what's **irreducible to the specific runtime/framework**. The `NoPlatformDuplication` lint test flags violations.
+**Three content sources:**
 
-Note: the current bun knowledge-base still has platform duplications (L7 routing explanation, autoscaling timing, tilde, build/run separation) — the lint warns about these. The format above shows the target state after cleanup at the source (app README).
+| Source | Fragment | What it contains |
+|---|---|---|
+| **knowledge-base** | `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->` | Runtime-specific gotchas, base image — only what you can't learn from platform docs or general runtime docs |
+| **integration-guide** | `<!-- #ZEROPS_EXTRACT_START:integration-guide# -->` | Full zerops.yml with inline comments PLUS framework-specific integration steps (S3, env vars, mailer, etc.) |
+| **imports** | `environments[].import` | Battle-tested import YAML with proven scaling values |
 
-Most recipes currently only have `description` + `## zerops.yml` + `## Service Definitions` (from API). Knowledge-base sections (Base Image, Binding, Gotchas) come from the app README `knowledge-base` fragment — add it there, refresh Strapi cache, then `pull` to see it in ZCP.
+Platform knowledge lives in `themes/universals.md` and is prepended automatically. Recipes contain only what's **irreducible to the specific runtime/framework**. The `NoPlatformDuplication` lint flags violations.
+
+Most recipes currently have `description` + integration guide (zerops.yml) + service definitions. Knowledge-base sections (Base Image, Gotchas) come from the app README `knowledge-base` fragment — only Bun has this so far.
 
 ## Knowledge-Base Content Guidelines
 
-Each item must be **irreducible to the specific runtime/framework** — not a restatement of platform universals:
+Each item must be **irreducible to the specific runtime/framework** — not learnable from platform docs or general runtime docs:
 
-- **What's in the Zerops base image** — not documented by the runtime itself
-- **Per-framework binding syntax** — one-liner `Bun.serve({hostname: "0.0.0.0"})`, not re-explaining L7
+- **What's in the Zerops base image** — not documented by the runtime itself (e.g., bunx included, pnpm not)
 - **Runtime-specific cache/env workarounds** — BUN_INSTALL path, bunx vs npx
-- **Real support ticket / agent failure patterns** — things that actually break
+- **Real support ticket / agent failure patterns** — things that actually break on Zerops
 
-**Do NOT include**: tilde behavior, build/run container separation, L7 routing concepts, autoscaling timing, concrete minRam values (now in Service Definitions from recipe imports) — these are either platform universals (prepended automatically) or structured data (in import YAML).
+**Do NOT include**: binding syntax (agent knows framework APIs, universals covers the platform rule), tilde behavior, build/run separation, L7 routing, autoscaling timing, minRam values — these are either platform universals (prepended automatically), general knowledge (LLM already knows), or structured data (in Service Definitions import YAML).
 
 ## Go Consumption Layer
 
@@ -319,8 +314,9 @@ GET https://api.zerops.io/api/recipes
 **Per-recipe data** (in response):
 - `sourceData.environments[].services[].extracts.intro` — per-service app description (preferred)
 - `sourceData.extracts.intro` — recipe-level description (fallback)
-- `sourceData.environments[].services[].extracts["knowledge-base"]` — operational knowledge
-- `sourceData.environments[].services[].zeropsYaml` — full zerops.yaml
+- `sourceData.environments[].services[].extracts["integration-guide"]` — zerops.yml + integration steps (preferred)
+- `sourceData.environments[].services[].zeropsYaml` — raw zerops.yaml (fallback if no integration guide)
+- `sourceData.environments[].services[].extracts["knowledge-base"]` — runtime-specific gotchas
 - `sourceData.environments[].import` — full import YAML per environment (6 environments)
 
 ### Cache Behavior

@@ -143,16 +143,29 @@ pull_recipes() {
       | first // empty
       | .extracts["knowledge-base"]' 2>/dev/null)
 
-    # Get zerops.yaml from first service that has it
-    local yaml_content
-    yaml_content=$(echo "$recipe_json" | jq -r '
+    # Get integration-guide from first service that has it (promote H3→H2).
+    # The integration guide includes the full zerops.yml with inline comments PLUS
+    # framework-specific integration steps (S3, env vars, mailer setup, etc.).
+    # Falls back to raw zeropsYaml if no integration guide exists.
+    local guide_content
+    guide_content=$(echo "$recipe_json" | jq -r '
       [.sourceData.environments[0].services[]
-       | select(.zeropsYaml != null and .zeropsYaml != "")]
+       | select(.extracts["integration-guide"] != null and .extracts["integration-guide"] != "")]
       | first // empty
-      | .zeropsYaml' 2>/dev/null)
+      | .extracts["integration-guide"]' 2>/dev/null)
+
+    # Fallback: raw zerops.yaml from first service (for recipes without integration-guide)
+    local yaml_content=""
+    if [[ -z "$guide_content" ]]; then
+      yaml_content=$(echo "$recipe_json" | jq -r '
+        [.sourceData.environments[0].services[]
+         | select(.zeropsYaml != null and .zeropsYaml != "")]
+        | first // empty
+        | .zeropsYaml' 2>/dev/null)
+    fi
 
     # Skip recipes with no useful content at all
-    if [[ -z "$kb_content" && -z "$yaml_content" && -z "$intro" ]]; then
+    if [[ -z "$kb_content" && -z "$guide_content" && -z "$yaml_content" && -z "$intro" ]]; then
       echo "  SKIP ${slug}: no content in API"
       continue
     fi
@@ -174,7 +187,12 @@ pull_recipes() {
         echo ""
       fi
 
-      if [[ -n "$yaml_content" ]]; then
+      if [[ -n "$guide_content" ]]; then
+        # Integration guide already includes zerops.yml with context — promote H3→H2.
+        echo "$guide_content" | sed 's/^### /## /'
+        echo ""
+      elif [[ -n "$yaml_content" ]]; then
+        # Fallback: wrap raw YAML in a section
         echo "## zerops.yml"
         echo ""
         echo "> Reference implementation — learn the patterns, adapt to your project."

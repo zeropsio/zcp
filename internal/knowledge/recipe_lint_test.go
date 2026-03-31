@@ -106,22 +106,21 @@ func TestRecipeLint(t *testing.T) {
 				}
 			})
 
-			hasZeropsYml := hasH2Section(content, "zerops.yml")
+			hasZeropsYml := hasH2Section(content, "zerops.yml") || hasH2Section(content, "zerops.yaml")
 			// Recipes synced from API may not yet have knowledge-base content
 			// (Gotchas, Base Image, etc.). Only enforce strict structural checks
 			// on recipes that have been enriched with operational knowledge.
 			hasKnowledgeBase := strings.Contains(content, "## Gotchas") ||
-				strings.Contains(content, "## Base Image") ||
-				strings.Contains(content, "## Binding") ||
-				strings.Contains(content, "## Resource Requirements")
+				strings.Contains(content, "## Base Image")
 
 			t.Run("HasZeropsYml", func(t *testing.T) {
 				if !hasZeropsYml {
 					t.Skip("no zerops.yml section (API may not have YAML for this recipe)")
 				}
 				blocks := findYAMLBlocksInSections(content, "zerops.yml")
+				blocks = append(blocks, findYAMLBlocksInSections(content, "zerops.yaml")...)
 				if len(blocks) == 0 {
-					t.Error("zerops.yml section exists but has no YAML code block")
+					t.Error("zerops.yml/yaml section exists but has no YAML code block")
 				}
 			})
 
@@ -149,9 +148,10 @@ func TestRecipeLint(t *testing.T) {
 				}
 			})
 
-			// --- YAML parsing: zerops.yml ---
+			// --- YAML parsing: zerops.yml / zerops.yaml ---
 
 			zeropsBlocks := findYAMLBlocksInSections(content, "zerops.yml")
+			zeropsBlocks = append(zeropsBlocks, findYAMLBlocksInSections(content, "zerops.yaml")...)
 			for i, block := range zeropsBlocks {
 				t.Run(fmt.Sprintf("ZeropsYml/%d", i), func(t *testing.T) {
 					validateZeropsYml(t, block, hasKnowledgeBase)
