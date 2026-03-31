@@ -125,6 +125,18 @@ Each item must be **irreducible to the specific runtime/framework** — not lear
 
 **Do NOT include**: binding syntax (agent knows framework APIs, universals covers the platform rule), tilde behavior, build/run separation, L7 routing, autoscaling timing, minRam values — these are either platform universals (prepended automatically), general knowledge (LLM already knows), or structured data (in Service Definitions import YAML).
 
+## How the Agent Uses Recipe Content
+
+The agent does not copy-paste recipe YAML. It generates `zerops.yml` and `import.yaml` from scratch during bootstrap, because the user's app has different hostnames, dependencies, env vars, and code than the recipe.
+
+Recipe content provides **knowledge through commented examples**:
+
+- **Integration guide** teaches patterns: how to structure build vs run, where `BUN_INSTALL` goes, why `--frozen-lockfile`, how `initCommands` work with `zsc execOnce`, how dev and prod setups differ structurally. The inline comments are critical — they explain *why* each value was chosen, not just what it is.
+- **Service definitions** teach scaling patterns: priority ordering, dev/stage pairing, verticalAutoscaling shape, minContainers for production.
+- **Knowledge-base** teaches runtime-specific gotchas that aren't visible in the YAML itself.
+
+The agent reads these patterns, then applies them to the user's specific situation using schema rules from `core.md` and actual env vars discovered during provision.
+
 ## Go Consumption Layer
 
 All access goes through the `Provider` interface (`engine.go`). Key methods:
@@ -380,6 +392,14 @@ The `go:embed` directive in `documents.go` embeds all knowledge at compile time:
 - **33 recipes** pulled dynamically from Recipe API (all non-utility recipes)
 - **All recipe .md files are gitignored** — run `scripts/sync-knowledge.sh pull recipes` before build
 - **Infrastructure bases** (alpine, docker, nginx, static, ubuntu) are in `internal/knowledge/bases/` (committed)
-- **Bun** is the only recipe with `knowledge-base` fragment — others have intro + zerops.yml + service definitions only
+- **Bun** is the only recipe with `knowledge-base` fragment — others have intro + integration guide + service definitions only
 - **elixir** is missing from API; **nodejs** has slug `recipe` (remapped to `nodejs-hello-world` by sync script)
 - **Slug remapping**: API slug `"recipe"` → `"nodejs-hello-world"` (handled in sync script)
+
+## FAQ
+
+See [branch-review-response.md](branch-review-response.md) for detailed answers to:
+- Why is the knowledge-base so small? (Point 1 — condensation)
+- What happened to the runtime knowledge layer? (Point 2 — it's preserved, lives in the recipe now)
+- Aren't service definitions pre-made templates? (Point 3 — no, they're reference data for the generative approach)
+- How does the agent use recipe YAML? (Knowledge through commented examples, not copy-paste)
