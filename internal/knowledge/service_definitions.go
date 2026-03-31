@@ -116,6 +116,12 @@ func TransformForBootstrap(importYAML string) string {
 		if strings.HasPrefix(trimmed, "zeropsSetup:") {
 			continue
 		}
+		// Remove enableSubdomainAccess — with startWithoutCode there's no app
+		// listening on any port, so subdomain access points at nothing.
+		// Developer adds it when they push a working app via zcli push.
+		if strings.HasPrefix(trimmed, "enableSubdomainAccess:") {
+			continue
+		}
 		sb.WriteString(line)
 		sb.WriteByte('\n')
 	}

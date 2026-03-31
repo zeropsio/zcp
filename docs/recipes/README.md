@@ -192,8 +192,8 @@ The sync script now extracts full import YAML from env0 (dev/stage) and env4 (sm
 |---|---|
 | `buildFromGit: url` | **Remove** — bootstrap uses SSHFS + `zcli push` |
 | `zeropsSetup: dev/prod` | **Remove** — bootstrap hostnames ARE the setup names |
+| `enableSubdomainAccess: true` | **Remove** — with `startWithoutCode` no app is listening, subdomain points at nothing; developer adds it when they push a working app |
 | (dev services) | **Add** `startWithoutCode: true` — bootstrap dev containers start empty, developer drives via SSH |
-| `enableSubdomainAccess: true` | **Keep** — always needed |
 | `verticalAutoscaling` | **Keep** — proven scaling values |
 | `minContainers`, `minFreeRamGB` | **Keep** — production patterns |
 | `cpuMode: DEDICATED` | **Keep** — HA-prod only |

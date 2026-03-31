@@ -148,8 +148,8 @@ services:
 	if strings.Contains(result, "zeropsSetup") {
 		t.Error("bootstrap transform should remove zeropsSetup")
 	}
-	if !strings.Contains(result, "enableSubdomainAccess") {
-		t.Error("bootstrap transform should keep enableSubdomainAccess")
+	if strings.Contains(result, "enableSubdomainAccess") {
+		t.Error("bootstrap transform should remove enableSubdomainAccess (no app listening with startWithoutCode)")
 	}
 	if !strings.Contains(result, "verticalAutoscaling") {
 		t.Error("bootstrap transform should keep verticalAutoscaling")
