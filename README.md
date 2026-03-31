@@ -224,6 +224,28 @@ Platform knowledge is compiled into the binary. The LLM queries it before genera
 
 This prevents the LLM from guessing Zerops-specific syntax. It reads the rules, then generates config.
 
+### Knowledge sync
+
+Recipe and guide files are **gitignored** — they're pulled from external sources before build. Edits are pushed back as GitHub PRs.
+
+```bash
+# Pull (external → ZCP, before build)
+zcp sync pull recipes                       # All recipes from API
+zcp sync pull guides                        # All guides from zeropsio/docs (GitHub API)
+
+# Edit locally, then push (ZCP → GitHub PRs)
+zcp sync push recipes bun-hello-world       # Creates PR on app repo
+zcp sync push guides                        # Creates PR on zeropsio/docs
+
+# After PR is merged, refresh API cache and re-pull
+zcp sync cache-clear bun-hello-world        # Invalidate Strapi cache
+zcp sync pull recipes bun-hello-world       # Pull merged changes
+```
+
+Push decomposes the monolithic recipe `.md` into fragments (knowledge-base, integration-guide, zerops.yaml) and injects them into the correct marker regions in the app repo README. No local clones needed — everything goes through `gh` CLI and the GitHub API.
+
+Config: `.sync.yaml`. Strapi token for cache-clear: `.env` (see `.env.example`).
+
 ## Session persistence
 
 All workflow state persists locally at `.zcp/state/`:

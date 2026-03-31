@@ -47,6 +47,7 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 | `internal/eval` | LLM recipe eval via Claude CLI headless mode | `runner.go`, `prompt.go` |
 | `internal/catalog` | API-driven version catalog sync for test validation | `sync.go` |
+| `internal/sync` | Bidirectional recipe/guide sync: API pull, GitHub push, Strapi cache | `push_recipes.go`, `transform.go` |
 
 Error codes: see `internal/platform/errors.go` for all codes (AUTH_REQUIRED, SERVICE_NOT_FOUND, etc.)
 
@@ -117,6 +118,26 @@ make setup                                  # Bootstrap dev environment
 make lint-fast                              # Fast lint (~3s)
 make lint-local                             # Full lint (~15s)
 ```
+
+### Knowledge sync
+
+Recipe/guide knowledge is gitignored — pull before build, push after editing.
+
+```bash
+zcp sync pull recipes                       # Pull all recipes from API
+zcp sync pull recipes bun-hello-world       # Pull single recipe
+zcp sync pull guides                        # Pull all guides from docs repo (GitHub API)
+zcp sync push recipes bun-hello-world       # Push edits → GitHub PR on app repo
+zcp sync push recipes bun --dry-run         # Preview what would change
+zcp sync push guides                        # Push guide edits → PR on zeropsio/docs
+zcp sync cache-clear                        # Invalidate Strapi cache (all recipes)
+zcp sync cache-clear bun-hello-world        # Invalidate single recipe
+make sync                                   # Pull all (recipes + guides)
+```
+
+Workflow: `pull` → edit `.md` → `push` (creates PR) → merge → `cache-clear` → `pull` (gets merged changes).
+
+Config: `.sync.yaml` (committed). Strapi token: `.env` (`STRAPI_API_TOKEN`, see `.env.example`).
 
 ---
 
