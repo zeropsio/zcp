@@ -24,7 +24,7 @@ Each recipe in `internal/knowledge/recipes/` follows this structure:
 
 ```markdown
 ---
-description: "From the intro fragment — what this recipe is."
+description: "Per-service intro — what this app does."
 ---
 
 # Bun Hello World on Zerops
@@ -33,32 +33,45 @@ description: "From the intro fragment — what this recipe is."
 What Zerops ships in this runtime's base image (and what's missing).
 
 ## Binding
-Why 0.0.0.0 is required, per-framework patterns.
+Per-framework 0.0.0.0 binding syntax (one-liner, not re-explaining L7).
 
 ## Resource Requirements
-Zerops autoscaling context + minRam sizing.
+Concrete minRam values for dev and prod (not re-explaining autoscaling concepts).
 
 ## Gotchas
-Real failures on Zerops — platform-specific, not general runtime docs.
+Runtime-specific gotchas only (BUN_INSTALL, bunx vs npx).
+Do NOT restate platform universals — they are prepended automatically.
 
 ## zerops.yml
 > Reference implementation — learn the patterns, adapt to your project.
 
 (full commented YAML with both prod and dev setups)
+
+## Service Definitions
+> Per-service blocks extracted from battle-tested recipe imports.
+
+### Dev/Stage (from AI Agent environment)
+(full import YAML for env0)
+
+### Small Production
+(full import YAML for env4)
 ```
 
-**Every section must be Zerops-specific.** Don't restate general runtime documentation. The knowledge-base answers: "what's different about deploying {runtime} on Zerops vs anywhere else?"
+**Every section must be Zerops-specific.** Don't restate platform universals (tilde behavior, build/run separation, L7 routing concepts, autoscaling timing) — those are in `themes/universals.md` and prepended automatically via `GetRecipe`. The `NoPlatformDuplication` lint test flags violations.
 
-Most recipes currently only have `description` + `## zerops.yml` (from API). The sections above (Base Image through Gotchas) come from the `knowledge-base` fragment in the app README — add it there, refresh Strapi cache, then `pull` to see it in ZCP.
+Most recipes currently only have `description` + `## zerops.yml` + `## Service Definitions` (from API). The sections above (Base Image through Gotchas) come from the `knowledge-base` fragment in the app README — add it there, refresh Strapi cache, then `pull` to see it in ZCP.
 
 ## Knowledge-Base Content Guidelines
 
-Each item should be one of:
+Each item must be **irreducible to the specific runtime/framework** — not a restatement of platform universals:
+
 - **What's in the Zerops base image** — not documented by the runtime itself
-- **L7 balancer binding** — per-framework 0.0.0.0 patterns, Zerops-specific
-- **Autoscaling behavior** — minRam must absorb startup spike (~10s reaction time)
-- **Platform gotchas** — tilde extraction, build≠run containers, cache path rules
+- **Per-framework binding syntax** — one-liner `Bun.serve({hostname: "0.0.0.0"})`, not re-explaining L7
+- **Concrete minRam values** — `minRam: 0.5` for dev, `minRam: 0.25` for prod, not re-explaining autoscaling
+- **Runtime-specific cache/env workarounds** — BUN_INSTALL path, bunx vs npx
 - **Real support ticket / agent failure patterns** — things that actually break
+
+**Do NOT include**: tilde behavior, build/run container separation, L7 routing concepts, autoscaling timing — these are platform universals and are prepended automatically.
 
 ## Recipe Taxonomy
 
@@ -118,9 +131,11 @@ GET https://api.zerops.io/api/recipes
 ```
 
 **Per-recipe data** (in response):
-- `sourceData.extracts.intro` — app description
+- `sourceData.environments[].services[].extracts.intro` — per-service app description (preferred)
+- `sourceData.extracts.intro` — recipe-level description (fallback)
 - `sourceData.environments[].services[].extracts["knowledge-base"]` — operational knowledge
 - `sourceData.environments[].services[].zeropsYaml` — full zerops.yaml
+- `sourceData.environments[].import` — full import YAML per environment (6 environments)
 
 ### Cache Behavior
 
