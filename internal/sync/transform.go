@@ -34,11 +34,9 @@ func ExtractKnowledgeBase(recipeContent string) string {
 			inCodeBlock = !inCodeBlock
 		}
 
-		// Stop at integration-guide boundary or service definitions (only outside code blocks)
-		if !inCodeBlock {
-			if isIntegrationGuideHeading(line) || strings.HasPrefix(line, "## Service Definitions") {
-				break
-			}
+		// Stop at integration-guide boundary (only outside code blocks)
+		if !inCodeBlock && isIntegrationGuideHeading(line) {
+			break
 		}
 
 		// Skip H1 lines
@@ -143,7 +141,7 @@ func ExtractZeropsYAML(recipeContent string) string {
 
 // ExtractIntegrationGuide extracts the integration-guide section from a recipe .md.
 // This is everything from the first integration-guide heading (## zerops.yml,
-// ## 1. Adding zerops.yaml, etc.) up to "## Service Definitions", demoted H2→H3.
+// ## 1. Adding zerops.yaml, etc.) to the end, demoted H2→H3.
 // Returns empty string if no such section exists.
 func ExtractIntegrationGuide(recipeContent string) string {
 	lines := strings.Split(recipeContent, "\n")
@@ -176,11 +174,6 @@ func ExtractIntegrationGuide(recipeContent string) string {
 				out = append(out, "#"+line) // demote H2 → H3
 			}
 			continue
-		}
-
-		// Stop at ## Service Definitions (outside code blocks)
-		if !inCodeBlock && strings.HasPrefix(line, "## Service Definitions") {
-			break
 		}
 
 		// Demote H2 → H3 (only real headings)

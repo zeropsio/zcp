@@ -6,52 +6,8 @@ import (
 	"testing"
 )
 
-func TestEnvMatchByName(t *testing.T) {
-	t.Parallel()
-
-	envs := []environment{
-		{Name: "AI Agent", Import: "import-dev"},
-		{Name: "Development", Import: "import-plain"},
-		{Name: "Small Production", Import: "import-prod"},
-	}
-
-	tests := []struct {
-		name    string
-		pattern string
-		want    string
-		wantNil bool
-	}{
-		{"finds_ai_agent", "AI Agent", "import-dev", false},
-		{"finds_small_prod", "Small Production", "import-prod", false},
-		{"partial_match", "Agent", "import-dev", false},
-		{"no_match", "Nonexistent", "", true},
-		{"empty_pattern", "", "", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := findEnvByName(envs, tt.pattern)
-			if tt.wantNil {
-				if got != nil {
-					t.Errorf("expected nil, got %+v", got)
-				}
-				return
-			}
-			if got == nil {
-				t.Fatal("expected non-nil result")
-			}
-			if got.Import != tt.want {
-				t.Errorf("got import %q, want %q", got.Import, tt.want)
-			}
-		})
-	}
-}
-
 func TestPullRecipeMarkdown(t *testing.T) {
 	t.Parallel()
-
-	cfg := DefaultConfig()
 
 	sd := &sourceData{
 		Environments: []environment{
@@ -79,7 +35,7 @@ func TestPullRecipeMarkdown(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown(cfg, "Bun Hello World", "bun-hello-world", sd)
+	md := buildRecipeMarkdown("Bun Hello World", "bun-hello-world", sd)
 
 	tests := []struct {
 		name string
@@ -90,11 +46,6 @@ func TestPullRecipeMarkdown(t *testing.T) {
 		{"has_title", "# Bun Hello World on Zerops"},
 		{"has_kb_promoted", "## Base Image"},
 		{"has_gotchas_promoted", "## Gotchas"},
-		{"has_service_defs", "## Service Definitions"},
-		{"has_dev_import", "### Dev/Stage (from AI Agent environment)"},
-		{"has_prod_import", "### Small Production"},
-		{"has_dev_yaml", "hostname: app"},
-		{"has_prod_yaml", "name: test-prod"},
 	}
 
 	for _, tt := range tests {
@@ -105,12 +56,17 @@ func TestPullRecipeMarkdown(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("no_service_definitions", func(t *testing.T) {
+		t.Parallel()
+		if strings.Contains(md, "## Service Definitions") {
+			t.Error("output should not contain service definitions")
+		}
+	})
 }
 
 func TestPullRecipeMarkdown_WithIntegrationGuide(t *testing.T) {
 	t.Parallel()
-
-	cfg := DefaultConfig()
 
 	sd := &sourceData{
 		Environments: []environment{
@@ -127,7 +83,7 @@ func TestPullRecipeMarkdown_WithIntegrationGuide(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown(cfg, "Test", "test", sd)
+	md := buildRecipeMarkdown("Test", "test", sd)
 
 	if !strings.Contains(md, "## zerops.yml") {
 		t.Error("expected promoted ## zerops.yml heading")
@@ -139,8 +95,6 @@ func TestPullRecipeMarkdown_WithIntegrationGuide(t *testing.T) {
 
 func TestPullRecipeMarkdown_FallbackYAML(t *testing.T) {
 	t.Parallel()
-
-	cfg := DefaultConfig()
 
 	sd := &sourceData{
 		Environments: []environment{
@@ -155,7 +109,7 @@ func TestPullRecipeMarkdown_FallbackYAML(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown(cfg, "Fallback", "fallback", sd)
+	md := buildRecipeMarkdown("Fallback", "fallback", sd)
 
 	if !strings.Contains(md, "## zerops.yml") {
 		t.Error("expected ## zerops.yml section")
@@ -171,14 +125,13 @@ func TestPullRecipeMarkdown_FallbackYAML(t *testing.T) {
 func TestPullRecipeMarkdown_EmptySkipped(t *testing.T) {
 	t.Parallel()
 
-	cfg := DefaultConfig()
 	sd := &sourceData{
 		Environments: []environment{
 			{Name: "AI Agent", Services: []service{}},
 		},
 	}
 
-	md := buildRecipeMarkdown(cfg, "Empty", "empty", sd)
+	md := buildRecipeMarkdown("Empty", "empty", sd)
 	if md != "" {
 		t.Errorf("expected empty markdown for recipe with no content, got: %q", md)
 	}

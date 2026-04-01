@@ -39,14 +39,14 @@ This means the **hello-world recipe for each runtime IS the runtime guide**. No 
 
 ### Recipe enrichment path
 
-Most recipes start with only `description` + `## zerops.yml` + `## Service Definitions` from the API. To add operational knowledge:
+Most recipes start with only `description` + `## zerops.yml` from the API. To add operational knowledge:
 
 1. Write `knowledge-base` fragment in the app README (Base Image, Binding, Resource Requirements, Gotchas)
 2. Push to GitHub, refresh Strapi cache
 3. `zcp sync pull recipes` — content appears in ZCP
-4. Lint tests validate the new content (`NoPlatformDuplication`, `ServiceDefinitionsValid`, etc.)
+4. Lint tests validate the new content (`NoPlatformDuplication`, etc.)
 
-Currently only **Bun** has a `knowledge-base` fragment. The other 32 recipes have description + zerops.yml + service definitions.
+Currently only **Bun** has a `knowledge-base` fragment. The other 32 recipes have description + zerops.yml only.
 
 ### Key design decision: standalone recipes
 
@@ -64,7 +64,6 @@ integration-guide        →     extracts.integration-guide →  recipes/{slug}.
 per-service intro        →     svc.extracts.intro       →   frontmatter description (preferred)
 recipe-level intro       →     extracts.intro           →   frontmatter description (fallback)
 gitRepo URL              →     svc.gitRepo              →   frontmatter repo (push target)
-import.yaml (env0,env4)  →     environments[].import    →   ## Service Definitions section
 ```
 
 **Pull** (`zcp sync pull recipes`): one API call to `api.zerops.io` fetches all non-utility recipes dynamically. No hardcoded list — new recipes appear automatically.
@@ -87,7 +86,7 @@ All synced files (`recipes/`, `guides/`, `decisions/`) are **gitignored** — ru
 
 ## Recipe File Format
 
-Each recipe in `internal/knowledge/recipes/` has up to 3 content sources from the app README, all synced via the API:
+Each recipe in `internal/knowledge/recipes/` has up to 2 content sources from the app README, synced via the API:
 
 ```markdown
 ---
@@ -109,12 +108,6 @@ Includes: Bun, npm, yarn, git, bunx. NOT included: pnpm.
 
 ## 2. Add Support For Object Storage
 (framework-specific integration steps — from integration-guide fragment, e.g. Laravel S3, Django settings)
-
-## Service Definitions
-### Dev/Stage (from AI Agent environment)
-(full import YAML from environment 0)
-### Small Production
-(full import YAML from environment 4)
 ```
 
 **Frontmatter fields** (written by `zcp sync pull`, read by `zcp sync push`):
@@ -124,17 +117,16 @@ Includes: Bun, npm, yarn, git, bunx. NOT included: pnpm.
 | `description` | `svc.extracts.intro` (preferred) or `extracts.intro` | Recipe description for search/disambiguation |
 | `repo` | `svc.gitRepo` | Push target — exact app repo URL, no guessing |
 
-**Three content sections:**
+**Two content sections:**
 
 | Source | Fragment | What it contains |
 |---|---|---|
 | **knowledge-base** | `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->` | Runtime-specific gotchas, base image — only what you can't learn from platform docs or general runtime docs |
 | **integration-guide** | `<!-- #ZEROPS_EXTRACT_START:integration-guide# -->` | Full zerops.yml with inline comments PLUS framework-specific integration steps (S3, env vars, mailer, etc.) |
-| **imports** | `environments[].import` | Battle-tested import YAML with proven scaling values |
 
 Platform knowledge lives in `themes/universals.md` and is prepended automatically. Recipes contain only what's **irreducible to the specific runtime/framework**. The `NoPlatformDuplication` lint flags violations.
 
-Most recipes currently have `description` + integration guide (zerops.yml) + service definitions. Knowledge-base sections (Base Image, Gotchas) come from the app README `knowledge-base` fragment — only Bun has this so far.
+Most recipes currently have `description` + integration guide (zerops.yml). Knowledge-base sections (Base Image, Gotchas) come from the app README `knowledge-base` fragment — only Bun has this so far.
 
 ## Knowledge-Base Content Guidelines
 
@@ -144,7 +136,7 @@ Each item must be **irreducible to the specific runtime/framework** — not lear
 - **Runtime-specific cache/env workarounds** — BUN_INSTALL path, bunx vs npx
 - **Real support ticket / agent failure patterns** — things that actually break on Zerops
 
-**Do NOT include**: binding syntax (agent knows framework APIs, universals covers the platform rule), tilde behavior, build/run separation, L7 routing, autoscaling timing, minRam values — these are either platform universals (prepended automatically), general knowledge (LLM already knows), or structured data (in Service Definitions import YAML).
+**Do NOT include**: binding syntax (agent knows framework APIs, universals covers the platform rule), tilde behavior, build/run separation, L7 routing, autoscaling timing, minRam values — these are either platform universals (prepended automatically) or general knowledge (LLM already knows).
 
 ## How the Agent Uses Recipe Content
 
@@ -153,7 +145,6 @@ The agent does not copy-paste recipe YAML. It generates `zerops.yml` and `import
 Recipe content provides **knowledge through commented examples**:
 
 - **Integration guide** teaches patterns: how to structure build vs run, where `BUN_INSTALL` goes, why `--frozen-lockfile`, how `initCommands` work with `zsc execOnce`, how dev and prod setups differ structurally. The inline comments are critical — they explain *why* each value was chosen, not just what it is.
-- **Service definitions** teach scaling patterns: priority ordering, dev/stage pairing, verticalAutoscaling shape, minContainers for production.
 - **Knowledge-base** teaches runtime-specific gotchas that aren't visible in the YAML itself.
 
 The agent reads these patterns, then applies them to the user's specific situation using schema rules from `core.md` and actual env vars discovered during provision.
@@ -199,78 +190,9 @@ Simple text-matching with field boosts and query expansion:
 - **Disambiguation**: uses `doc.Description` instead of old `doc.TLDR`
 - **Keywords and TL;DR**: still parsed (legacy) but not used in search scoring
 
-### Service Definition Library (service_definitions.go)
-
-#### The problem
-
-The bootstrap provision step had nothing — it read abstract schema from `core.md` and the agent had to compose every `import.yaml` from first principles. Every field, every service block, every relationship between services was guessed from documentation.
-
-The Recipe API provides 6 battle-tested, thoroughly commented `import.yaml` files per recipe (33 recipes × 6 environments = 198 proven configurations). The old sync script was ignoring them entirely.
-
-#### The solution
-
-`zcp sync pull` now extracts full import YAML from env0 (dev/stage) and env4 (small-prod) into a `## Service Definitions` section in each recipe `.md`. The Go layer parses these into a per-recipe library of complete, proven import configurations.
-
-For any runtime the agent encounters, it can now look up a real, working `import.yaml` that includes the full service block structure with correct type versions, priority ordering, correct autoscaling shape, managed service patterns, and comments explaining why each value was chosen. The shift is **abstract schema documentation → concrete reference implementations**.
-
-#### GetServiceDefinitions
-
-`GetServiceDefinitions(name)` returns a `ServiceDefinitions` struct with:
-- `DevStageImport` — full import YAML from env0 (AI Agent: dev+stage pair)
-- `SmallProdImport` — full import YAML from env4 (Small Production: minContainers, minFreeRamGB)
-
-#### TransformForBootstrap
-
-`TransformForBootstrap(importYAML)` adapts recipe imports for bootstrap use. Recipe imports use `buildFromGit` + `zeropsSetup` (automated git-based provisioning). Bootstrap uses `startWithoutCode` (interactive SSH-based iteration):
-
-| Recipe import has | Bootstrap transform |
-|---|---|
-| `buildFromGit: url` | **Remove** — bootstrap uses SSHFS + `zcli push` |
-| `zeropsSetup: dev/prod` | **Remove** — bootstrap hostnames ARE the setup names |
-| `enableSubdomainAccess: true` | **Remove** — with `startWithoutCode` no app is listening, subdomain points at nothing; developer adds it when they push a working app |
-| (dev services) | **Add** `startWithoutCode: true` — bootstrap dev containers start empty, developer drives via SSH |
-| `verticalAutoscaling` | **Keep** — proven scaling values |
-| `minContainers`, `minFreeRamGB` | **Keep** — production patterns |
-| `cpuMode: DEDICATED` | **Keep** — HA-prod only |
-
-These rules are documented in: `core.md` (`startWithoutCode`, `buildFromGit`), `bootstrap.md` (strategy distinction), `service_meta.go` (`StrategyPushDev` vs `StrategyCICD`).
-
-#### extractServiceEntries
-
-`extractServiceEntries(importYAML)` splits an import into runtime (USER category) and managed (STANDARD category) service entries. This enables composite stack assembly from multiple recipes.
-
-#### Composite stack workflow
-
-When no single recipe matches a request (e.g., `bun api + nextjs frontend + python worker + postgres + valkey`), the provision step can:
-
-1. **Look up bun-hello-world** → extract bun service definition (`minRam: 0.5` dev, `0.25` prod)
-2. **Look up nextjs-ssr-hello-world** → extract nodejs service definition (`minRam: 0.25`, `minFreeRamGB: 0.125`)
-3. **Look up python-hello-world** → extract python service definition (`minRam: 0.5` dev)
-4. **Managed services** (postgres, valkey) → from `core.md` schema + service cards
-5. **Merge** into one `import.yaml`, applying bootstrap transforms (drop `buildFromGit`, add `startWithoutCode` on dev)
-6. **Deduplicate** — all three recipes ship their own `db`, but the composite stack only needs one
-
-**Before**: Agent guesses `minRam: 1.0` for everything (bootstrap.md default for compiled runtimes).
-**After**: bun gets `0.5`, nextjs gets `0.25`, python gets `0.5` — values proven in production.
-
-#### Mode ↔ Environment tier mapping
-
-Bootstrap's 3 modes map to recipe environment tiers:
-
-| Bootstrap mode | What it creates | Closest recipe environment | Env index |
-|---|---|---|---|
-| **standard** (default) | `{name}dev` + `{name}stage` | 0 — AI Agent (dev+stage pair) | 0 |
-| **dev** | `{name}dev` only | 0 — AI Agent (dev service only) | 0 |
-| **simple** | `{name}` (single) | 3 — Stage (single prod-like service) | 3 |
-
-For production tiers (not part of bootstrap, but relevant for scaling guidance):
-- Small prod → environment index 4
-- HA prod → environment index 5
-
 ### Lint Tests
 
 - `NoPlatformDuplication` — warns when enriched recipes duplicate universals content (logged, not errored — content is API-sourced, fix at source)
-- `ServiceDefinitionsValid` — validates structural integrity of extracted definitions
 - `HasDescription` — replaced old `HasKeywords` / `HasTLDR` checks
 - `HasGotchas`, `HasZeropsYml` — skip gracefully when recipe lacks knowledge-base enrichment
 - `validateZeropsYml()` takes a `strict bool` — ports and healthCheck enforcement only on enriched recipes
@@ -351,7 +273,6 @@ GET https://api.zerops.io/api/recipes
 - `sourceData.environments[].services[].zeropsYaml` — raw zerops.yaml (fallback if no integration guide)
 - `sourceData.environments[].services[].extracts["knowledge-base"]` — runtime-specific gotchas
 - `sourceData.environments[].services[].gitRepo` — app repo URL (e.g. `https://github.com/zerops-recipe-apps/bun-hello-world-app`)
-- `sourceData.environments[].import` — full import YAML per environment (6 environments)
 
 ### Cache Behavior
 
@@ -370,16 +291,16 @@ Alternatively: [Strapi admin](https://api-d89-1337.prg1.zerops.app/admin/content
 
 Each language/framework recipe offers:
 
-| # | Environment | Purpose | Used by sync |
-|---|-------------|---------|--------------|
-| 0 | AI Agent | Development space for AI agents (dev+stage pair) | **Yes** — Service Definitions Dev/Stage |
-| 1 | Remote (CDE) | Cloud Development Environment via SSH | No |
-| 2 | Local | Local dev with zCLI VPN for DB access | No |
-| 3 | Stage | Production config, single container | No |
-| 4 | Small Production | Production-ready, moderate throughput | **Yes** — Service Definitions Small Prod |
-| 5 | Highly-available Production | Enhanced scaling, dedicated resources, HA | No |
+| # | Environment | Purpose |
+|---|-------------|---------|
+| 0 | AI Agent | Development space for AI agents (dev+stage pair) |
+| 1 | Remote (CDE) | Cloud Development Environment via SSH |
+| 2 | Local | Local dev with zCLI VPN for DB access |
+| 3 | Stage | Production config, single container |
+| 4 | Small Production | Production-ready, moderate throughput |
+| 5 | Highly-available Production | Enhanced scaling, dedicated resources, HA |
 
-Bootstrap mode mapping: `standard`/`dev` → env0, `simple` → env3. Production tiers: small-prod → env4, HA-prod → env5.
+Bootstrap mode mapping: `standard`/`dev` → env0, `simple` → env3.
 
 ## Creating a New Recipe
 
@@ -424,7 +345,7 @@ The `go:embed` directive in `documents.go` embeds all knowledge at compile time:
 - **33 recipes** pulled dynamically from Recipe API (all non-utility recipes)
 - **All recipe .md files are gitignored** — run `zcp sync pull recipes` before build
 - **Infrastructure bases** (alpine, docker, nginx, static, ubuntu) are in `internal/knowledge/bases/` (committed)
-- **Bun** is the only recipe with `knowledge-base` fragment — others have intro + integration guide + service definitions only
+- **Bun** is the only recipe with `knowledge-base` fragment — others have intro + integration guide only
 - **elixir** is missing from API; **nodejs** has slug `recipe` (remapped to `nodejs-hello-world` by `.sync.yaml` config)
 - **Slug remapping**: API slug `"recipe"` → `"nodejs-hello-world"` (handled in `.sync.yaml` config)
 

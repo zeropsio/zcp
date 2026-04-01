@@ -94,20 +94,20 @@ func PullRecipes(cfg *Config, root, filter string, dryRun bool) ([]PullResult, e
 			continue
 		}
 
-		result := pullOneRecipe(cfg, recipe, slug, outDir, dryRun)
+		result := pullOneRecipe(recipe, slug, outDir, dryRun)
 		results = append(results, result)
 	}
 
 	return results, nil
 }
 
-func pullOneRecipe(cfg *Config, recipe APIRecipe, slug, outDir string, dryRun bool) PullResult {
+func pullOneRecipe(recipe APIRecipe, slug, outDir string, dryRun bool) PullResult {
 	var sd sourceData
 	if err := json.Unmarshal(recipe.SourceData, &sd); err != nil {
 		return PullResult{Slug: slug, Status: Error, Reason: fmt.Sprintf("parse sourceData: %v", err)}
 	}
 
-	md := buildRecipeMarkdown(cfg, recipe.Name, slug, &sd)
+	md := buildRecipeMarkdown(recipe.Name, slug, &sd)
 	if md == "" {
 		return PullResult{Slug: slug, Status: Skipped, Reason: "no content in API"}
 	}
@@ -128,7 +128,7 @@ func pullOneRecipe(cfg *Config, recipe APIRecipe, slug, outDir string, dryRun bo
 // markdownLinkPattern matches [text](url) markdown links.
 var markdownLinkPattern = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
 
-func buildRecipeMarkdown(cfg *Config, name, slug string, sd *sourceData) string {
+func buildRecipeMarkdown(name, slug string, sd *sourceData) string {
 	// Find intro: prefer per-service intro over recipe-level
 	intro := findServiceIntro(sd)
 	if intro == "" {
@@ -195,43 +195,7 @@ func buildRecipeMarkdown(cfg *Config, name, slug string, sd *sourceData) string 
 		sb.WriteString("\n```\n")
 	}
 
-	// Service definitions from environment imports
-	devEnv := findEnvByName(sd.Environments, cfg.Environments.DevStage)
-	prodEnv := findEnvByName(sd.Environments, cfg.Environments.SmallProd)
-
-	if devEnv != nil || prodEnv != nil {
-		sb.WriteString("\n## Service Definitions\n\n")
-		sb.WriteString("> Per-service blocks extracted from battle-tested recipe imports.\n")
-		sb.WriteString("> Use these proven scaling values when composing import.yaml for new projects.\n")
-	}
-
-	if devEnv != nil && devEnv.Import != "" {
-		sb.WriteString("\n### Dev/Stage (from AI Agent environment)\n\n")
-		sb.WriteString("```yaml\n")
-		sb.WriteString(devEnv.Import)
-		sb.WriteString("\n```\n")
-	}
-
-	if prodEnv != nil && prodEnv.Import != "" {
-		sb.WriteString("\n### Small Production\n\n")
-		sb.WriteString("```yaml\n")
-		sb.WriteString(prodEnv.Import)
-		sb.WriteString("\n```\n")
-	}
-
 	return sb.String()
-}
-
-func findEnvByName(envs []environment, pattern string) *environment {
-	if pattern == "" {
-		return nil
-	}
-	for i := range envs {
-		if strings.Contains(envs[i].Name, pattern) {
-			return &envs[i]
-		}
-	}
-	return nil
 }
 
 func findServiceIntro(sd *sourceData) string {

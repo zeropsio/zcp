@@ -29,8 +29,8 @@ func TestExtractKnowledgeBase(t *testing.T) {
 			"",
 		},
 		{
-			"stops_at_service_definitions",
-			"# Title\n\n## Base\n\nContent\n\n## Service Definitions\n\n### Dev\n\n```yaml\nfoo\n```\n",
+			"stops_at_ig_boundary",
+			"# Title\n\n## Base\n\nContent\n\n## zerops.yml\n\n```yaml\nfoo: bar\n```\n",
 			"### Base\n\nContent",
 		},
 		{
@@ -144,7 +144,7 @@ func TestExtractIntegrationGuide(t *testing.T) {
 	}{
 		{
 			"full_recipe_with_ig",
-			"---\ndescription: \"test\"\n---\n\n# Title\n\n## Base Image\n\nContent\n\n## zerops.yml\n\n> Reference\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n## Service Definitions\n\n### Dev\n",
+			"---\ndescription: \"test\"\n---\n\n# Title\n\n## Base Image\n\nContent\n\n## zerops.yml\n\n> Reference\n\n```yaml\nzerops:\n  - setup: prod\n```\n",
 			"### zerops.yml\n\n> Reference\n\n```yaml\nzerops:\n  - setup: prod\n```",
 		},
 		{
@@ -154,7 +154,7 @@ func TestExtractIntegrationGuide(t *testing.T) {
 		},
 		{
 			"ig_with_prose_sections",
-			"# Title\n\n## zerops.yml\n\n### 1. Adding zerops.yaml\n\nContent\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n## Extra Steps\n\nDo this too\n\n## Service Definitions\n",
+			"# Title\n\n## zerops.yml\n\n### 1. Adding zerops.yaml\n\nContent\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n## Extra Steps\n\nDo this too\n",
 			"### zerops.yml\n\n### 1. Adding zerops.yaml\n\nContent\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n### Extra Steps\n\nDo this too",
 		},
 	}

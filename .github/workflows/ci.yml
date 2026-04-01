@@ -21,8 +21,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          bash scripts/sync-knowledge.sh pull recipes
-          go run ./cmd/zcp sync pull guides
+          go run ./cmd/zcp sync pull
 
       - name: Build (all platforms)
         env:
@@ -51,8 +50,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          bash scripts/sync-knowledge.sh pull recipes
-          go run ./cmd/zcp sync pull guides
+          go run ./cmd/zcp sync pull
 
       - uses: golangci/golangci-lint-action@v7
         with:

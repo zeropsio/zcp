@@ -34,7 +34,6 @@ type Provider interface {
 	GetUniversals() (string, error)
 	GetBriefing(runtime string, services []string, mode string, liveTypes []platform.ServiceStackType) (string, error)
 	GetRecipe(name, mode string) (string, error)
-	GetServiceDefinitions(name string) *ServiceDefinitions
 }
 
 // Store holds the knowledge base with simple text-matching search.

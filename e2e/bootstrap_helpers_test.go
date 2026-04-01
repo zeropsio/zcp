@@ -23,7 +23,7 @@ type importService struct {
 	Priority         int
 }
 
-// buildImportYAML constructs import YAML from service definitions.
+// buildImportYAML constructs import YAML from test service entries.
 func buildImportYAML(services []importService) string {
 	var b strings.Builder
 	b.WriteString("services:\n")

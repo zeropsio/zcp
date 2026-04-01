@@ -185,7 +185,7 @@ func TestExtractIntegrationGuide_NumberedHeading(t *testing.T) {
 	t.Parallel()
 
 	// Real-world pattern from API: "## 1. Adding zerops.yaml"
-	content := "---\ndescription: \"test\"\nrepo: \"https://github.com/org/repo\"\n---\n\n# Title\n\n## Base Image\n\nContent\n\n## 1. Adding `zerops.yaml`\n\nThe config file.\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n## 2. Environment Variables\n\nSet DB_HOST.\n\n## Service Definitions\n"
+	content := "---\ndescription: \"test\"\nrepo: \"https://github.com/org/repo\"\n---\n\n# Title\n\n## Base Image\n\nContent\n\n## 1. Adding `zerops.yaml`\n\nThe config file.\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n## 2. Environment Variables\n\nSet DB_HOST.\n"
 
 	kb := ExtractKnowledgeBase(content)
 	ig := ExtractIntegrationGuide(content)
@@ -204,9 +204,6 @@ func TestExtractIntegrationGuide_NumberedHeading(t *testing.T) {
 	}
 	if !strings.Contains(ig, "Set DB_HOST") {
 		t.Error("IG should contain ## 2. content")
-	}
-	if strings.Contains(ig, "Service Definitions") {
-		t.Error("IG should NOT contain Service Definitions")
 	}
 }
 
@@ -244,15 +241,6 @@ zerops:
 ## 2. Environment Variables
 
 Set DB_HOST and DB_PORT.
-
-## Service Definitions
-
-### Dev/Stage
-
-` + "```yaml" + `
-project:
-  name: test
-` + "```" + `
 `
 
 	frags := extractFragments(content)
@@ -274,9 +262,6 @@ project:
 	}
 	if !strings.Contains(frags.IntegrationGuide, "DB_HOST") {
 		t.Error("IG missing section 2")
-	}
-	if strings.Contains(frags.IntegrationGuide, "Service Definitions") {
-		t.Error("IG leaked service definitions")
 	}
 
 	// YAML: derived from IG

@@ -102,6 +102,3 @@ paths:
   docs_local: ""  # for pull guides (set DOCS_GUIDES env or this field)
 ```
 
-## Legacy bash script
-
-`scripts/sync-knowledge.sh` is the predecessor. It uses local repo clones for push (manual git commit/push). The Go implementation (`zcp sync`) replaces it with direct GitHub API integration.

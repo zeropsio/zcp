@@ -83,7 +83,7 @@ var managedServiceTypes = map[string]bool{
 	"clickhouse": true, "qdrant": true, "typesense": true,
 }
 
-func TestRecipeLint(t *testing.T) { //nolint:maintidx
+func TestRecipeLint(t *testing.T) {
 	t.Parallel()
 
 	store, err := GetEmbeddedStore()
@@ -215,28 +215,6 @@ func TestRecipeLint(t *testing.T) { //nolint:maintidx
 				}
 				if dupes > 0 {
 					t.Logf("Found %d platform duplications — fix in app README, then re-pull", dupes)
-				}
-			})
-
-			t.Run("ServiceDefinitionsValid", func(t *testing.T) {
-				defs := store.GetServiceDefinitions(name)
-				if defs == nil {
-					t.Skip("no service definitions (recipe may not have import data)")
-				}
-				if defs.DevStageImport != "" {
-					// Dev/stage import should contain services block
-					if !strings.Contains(defs.DevStageImport, "services:") {
-						t.Error("dev/stage import missing 'services:' block")
-					}
-					// Should contain at least one type reference
-					if !strings.Contains(defs.DevStageImport, "type:") {
-						t.Error("dev/stage import has no service type declarations")
-					}
-				}
-				if defs.SmallProdImport != "" {
-					if !strings.Contains(defs.SmallProdImport, "services:") {
-						t.Error("small-prod import missing 'services:' block")
-					}
 				}
 			})
 

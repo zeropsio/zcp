@@ -58,7 +58,7 @@ func TestExtractFragments(t *testing.T) {
 	}{
 		{
 			"full_recipe",
-			"---\ndescription: \"A Bun app\"\n---\n\n# Bun on Zerops\n\n## Base Image\n\nIncludes Bun.\n\n## zerops.yml\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n## Service Definitions\n",
+			"---\ndescription: \"A Bun app\"\n---\n\n# Bun on Zerops\n\n## Base Image\n\nIncludes Bun.\n\n## zerops.yml\n\n```yaml\nzerops:\n  - setup: prod\n```\n",
 			true, true, true, true, true,
 		},
 		{
@@ -158,7 +158,7 @@ func TestZeropsYAML_DerivedFromIntegrationGuide(t *testing.T) {
 	// The YAML in zerops.yaml must always come from the integration-guide section.
 	// If someone edits the YAML block in ## zerops.yml, both the README
 	// integration-guide markers AND zerops.yaml file get the same content.
-	content := "---\ndescription: \"test\"\n---\n\n# App\n\n## Base Image\n\nContent\n\n## zerops.yml\n\n> Ref\n\n```yaml\nzerops:\n  - setup: prod\n    build:\n      base: bun@1.2\n```\n\n## Service Definitions\n"
+	content := "---\ndescription: \"test\"\n---\n\n# App\n\n## Base Image\n\nContent\n\n## zerops.yml\n\n> Ref\n\n```yaml\nzerops:\n  - setup: prod\n    build:\n      base: bun@1.2\n```\n"
 
 	frags := extractFragments(content)
 
