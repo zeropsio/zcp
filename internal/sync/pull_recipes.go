@@ -32,7 +32,6 @@ type sourceData struct {
 
 type environment struct {
 	Name     string    `json:"name"`
-	Import   string    `json:"import"`
 	Services []service `json:"services"`
 }
 

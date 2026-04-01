@@ -14,16 +14,9 @@ import (
 type Config struct {
 	APIURL            string            `yaml:"api_url"`    //nolint:tagliatelle
 	SlugRemap         map[string]string `yaml:"slug_remap"` //nolint:tagliatelle
-	Environments      EnvConfig         `yaml:"environments"`
 	ExcludeCategories []string          `yaml:"exclude_categories"` //nolint:tagliatelle
 	Push              PushConfig        `yaml:"push"`
 	Paths             PathsConfig       `yaml:"paths"`
-}
-
-// EnvConfig holds environment name patterns for matching API environments.
-type EnvConfig struct {
-	DevStage  string `yaml:"dev_stage"`  //nolint:tagliatelle
-	SmallProd string `yaml:"small_prod"` //nolint:tagliatelle
 }
 
 // PushConfig holds push target configuration.
@@ -61,10 +54,6 @@ func DefaultConfig() *Config {
 		SlugRemap: map[string]string{
 			"recipe":              "nodejs-hello-world",
 			"node-js-hello-world": "nodejs-hello-world",
-		},
-		Environments: EnvConfig{
-			DevStage:  "AI Agent",
-			SmallProd: "Small Production",
 		},
 		ExcludeCategories: []string{"service-utility"},
 		Push: PushConfig{

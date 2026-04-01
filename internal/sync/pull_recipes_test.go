@@ -12,8 +12,7 @@ func TestPullRecipeMarkdown(t *testing.T) {
 	sd := &sourceData{
 		Environments: []environment{
 			{
-				Name:   "AI Agent",
-				Import: "project:\n  name: test\nservices:\n  - hostname: app",
+				Name: "AI Agent",
 				Services: []service{
 					{
 						GitRepo: "https://github.com/zerops-recipe-apps/bun-hello-world-app",
@@ -28,10 +27,7 @@ func TestPullRecipeMarkdown(t *testing.T) {
 			{Name: "Development"},
 			{Name: "Stage"},
 			{Name: "Production"},
-			{
-				Name:   "Small Production",
-				Import: "project:\n  name: test-prod",
-			},
+			{Name: "Small Production"},
 		},
 	}
 

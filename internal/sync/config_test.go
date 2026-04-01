@@ -26,8 +26,6 @@ func TestLoadConfig_Defaults(t *testing.T) {
 		{"push_recipes_commit_prefix", cfg.Push.Recipes.CommitPrefix, "chore(knowledge)"},
 		{"push_guides_repo", cfg.Push.Guides.Repo, "zeropsio/docs"},
 		{"push_guides_path", cfg.Push.Guides.Path, "apps/docs/content/guides"},
-		{"env_dev_stage", cfg.Environments.DevStage, "AI Agent"},
-		{"env_small_prod", cfg.Environments.SmallProd, "Small Production"},
 	}
 
 	for _, tt := range tests {
@@ -48,9 +46,6 @@ func TestLoadConfig_FromYAML(t *testing.T) {
 api_url: https://custom.api/recipes
 slug_remap:
   foo: bar
-environments:
-  dev_stage: "Custom Dev"
-  small_prod: "Custom Prod"
 exclude_categories:
   - test-cat
 push:
@@ -84,7 +79,6 @@ paths:
 	}{
 		{"api_url", cfg.APIURL, "https://custom.api/recipes"},
 		{"slug_remap_foo", cfg.SlugRemap["foo"], "bar"},
-		{"env_dev_stage", cfg.Environments.DevStage, "Custom Dev"},
 		{"push_org", cfg.Push.Recipes.Org, "custom-org"},
 		{"push_branch_prefix", cfg.Push.Recipes.BranchPrefix, "custom"},
 		{"guides_repo", cfg.Push.Guides.Repo, "custom/docs"},
