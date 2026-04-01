@@ -72,36 +72,41 @@ clean: ## Remove build artifacts
 ###########
 # RELEASE #
 ###########
-release: ## Minor bump, test, tag, push (e.g. v2.61.0 → v2.62.0)
+release: ## Minor bump, test, tag, push (e.g. v2.61.0 → v2.62.0). Use V=x.y.z for explicit version.
 	@$(MAKE) _release BUMP=minor
 
-release-patch: ## Patch bump, test, tag, push (e.g. v2.61.0 → v2.61.1)
+release-patch: ## Patch bump, test, tag, push (e.g. v2.61.0 → v2.61.1). Use V=x.y.z for explicit version.
 	@$(MAKE) _release BUMP=patch
 
 _release:
 	@if [ -n "$$(git diff --name-only 2>/dev/null)$$(git diff --cached --name-only 2>/dev/null)" ]; then \
 		echo "ERROR: working tree is dirty. Commit first."; exit 1; \
 	fi; \
-	LATEST=$$(git describe --tags --abbrev=0 2>/dev/null); \
-	if [ -z "$$LATEST" ]; then echo "ERROR: no existing tags found"; exit 1; fi; \
-	MAJOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f1); \
-	MINOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f2); \
-	PATCH=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f3); \
-	if [ "$(BUMP)" = "minor" ]; then \
-		NEXT="v$$MAJOR.$$((MINOR + 1)).0"; \
+	if [ -n "$(V)" ]; then \
+		NEXT="v$$(echo '$(V)' | sed 's/^v//')"; \
 	else \
-		NEXT="v$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
+		LATEST=$$(git describe --tags --abbrev=0 2>/dev/null); \
+		if [ -z "$$LATEST" ]; then echo "ERROR: no existing tags found"; exit 1; fi; \
+		MAJOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f1); \
+		MINOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f2); \
+		PATCH=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f3); \
+		if [ "$(BUMP)" = "minor" ]; then \
+			NEXT="v$$MAJOR.$$((MINOR + 1)).0"; \
+		else \
+			NEXT="v$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
+		fi; \
 	fi; \
-	COMMITS=$$(git rev-list "$$LATEST"..HEAD --count 2>/dev/null || echo 0); \
+	LATEST=$${LATEST:-$$(git describe --tags --abbrev=0 2>/dev/null)}; \
+	COMMITS=$$(git rev-list "$${LATEST:-HEAD}"..HEAD --count 2>/dev/null || echo 0); \
 	if [ "$$COMMITS" = "0" ]; then \
-		printf "\033[33mWarning:\033[0m no new commits since $$LATEST\n"; \
+		printf "\033[33mWarning:\033[0m no new commits since $${LATEST:-HEAD}\n"; \
 		printf "Release \033[1m$$NEXT\033[0m anyway? [y/N] "; \
 		read ans; \
 		case "$$ans" in [yY]*) ;; *) echo "Aborted."; exit 1;; esac; \
 	fi; \
 	printf "Running tests...\n"; \
 	go test ./... -count=1 -short || { echo "ERROR: tests failed, aborting release."; exit 1; }; \
-	echo "Tagging $$NEXT ($$COMMITS commits since $$LATEST)..."; \
+	echo "Tagging $$NEXT ($$COMMITS commits since $${LATEST:-no previous tag})..."; \
 	git tag -a "$$NEXT" -m "Release $$NEXT"; \
 	echo "Pushing..."; \
 	git push origin HEAD "$$NEXT"; \
