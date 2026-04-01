@@ -12,8 +12,8 @@ import (
 
 // Config holds all sync configuration loaded from .sync.yaml.
 type Config struct {
-	APIURL            string            `yaml:"api_url"`    //nolint:tagliatelle
-	SlugRemap         map[string]string `yaml:"slug_remap"` //nolint:tagliatelle
+	APIURL            string            `yaml:"api_url"`            //nolint:tagliatelle
+	SlugRemap         map[string]string `yaml:"slug_remap"`         //nolint:tagliatelle
 	ExcludeCategories []string          `yaml:"exclude_categories"` //nolint:tagliatelle
 	Push              PushConfig        `yaml:"push"`
 	Paths             PathsConfig       `yaml:"paths"`
