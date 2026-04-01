@@ -7,11 +7,11 @@ import (
 	"sync"
 )
 
-//go:embed themes/*.md recipes/*.md guides/*.md decisions/*.md runtimes/*.md
+//go:embed themes/*.md bases/*.md all:recipes all:guides all:decisions
 var contentFS embed.FS
 
 // knowledgeDirs lists the top-level directories in the embedded knowledge filesystem.
-var knowledgeDirs = []string{"themes", "recipes", "guides", "decisions", "runtimes"}
+var knowledgeDirs = []string{"themes", "bases", "recipes", "guides", "decisions"}
 
 // Document represents a parsed knowledge document.
 type Document struct {
@@ -60,13 +60,22 @@ func loadFromEmbedded() map[string]*Document {
 
 func parseDocument(path, content string) *Document {
 	uri := pathToURI(path)
-	title := extractTitle(content)
-	keywords := extractKeywords(content)
-	tldr := extractTLDR(content)
 
-	desc := tldr
+	// Parse optional YAML frontmatter (--- block at start of file).
+	var frontmatter map[string]string
+	frontmatter, body := extractFrontmatter(content)
+
+	title := extractTitle(body)
+	keywords := extractKeywords(body) // legacy: still parsed from ## Keywords if present
+	tldr := extractTLDR(body)         // legacy: still parsed from ## TL;DR if present
+
+	// Description priority: frontmatter description > TL;DR > first paragraph
+	desc := frontmatter["description"]
 	if desc == "" {
-		desc = extractFirstParagraph(content)
+		desc = tldr
+	}
+	if desc == "" {
+		desc = extractFirstParagraph(body)
 	}
 
 	return &Document{
@@ -75,9 +84,49 @@ func parseDocument(path, content string) *Document {
 		Title:       title,
 		Keywords:    keywords,
 		TLDR:        tldr,
-		Content:     content,
+		Content:     body, // body without frontmatter — what gets injected into agent context
 		Description: desc,
 	}
+}
+
+// extractFrontmatter parses YAML-style frontmatter from the start of content.
+// Returns key-value pairs and the remaining body. If no frontmatter, returns empty map and original content.
+func extractFrontmatter(content string) (map[string]string, string) {
+	lines := strings.Split(content, "\n")
+	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
+		return nil, content
+	}
+
+	fm := make(map[string]string)
+	endIdx := -1
+	for i := 1; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "---" {
+			endIdx = i
+			break
+		}
+		if key, val, ok := strings.Cut(trimmed, ":"); ok {
+			k := strings.TrimSpace(key)
+			v := strings.TrimSpace(val)
+			// Strip surrounding quotes
+			if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+				v = v[1 : len(v)-1]
+			}
+			fm[k] = v
+		}
+	}
+
+	if endIdx < 0 {
+		return nil, content
+	}
+
+	// Skip blank lines after frontmatter
+	bodyStart := endIdx + 1
+	for bodyStart < len(lines) && strings.TrimSpace(lines[bodyStart]) == "" {
+		bodyStart++
+	}
+
+	return fm, strings.Join(lines[bodyStart:], "\n")
 }
 
 func pathToURI(fsPath string) string {

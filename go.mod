@@ -10,6 +10,7 @@ require (
 
 require (
 	github.com/google/jsonschema-go v0.4.2 // indirect
+	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/shopspring/decimal v1.3.1 // indirect

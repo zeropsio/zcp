@@ -37,9 +37,6 @@ func (s *Store) GetBriefing(runtime string, services []string, mode string, live
 		slug := normalizeRuntimeName(runtime)
 		if slug != "" {
 			if guide := s.getRuntimeGuide(slug); guide != "" {
-				if mode != "" {
-					guide = filterDeployPatterns(guide, mode)
-				}
 				sb.WriteString(guide)
 				sb.WriteString("\n\n---\n\n")
 			}
@@ -109,7 +106,7 @@ func (s *Store) GetRecipe(name, mode string) (string, error) {
 	// Try exact match first.
 	uri := "zerops://recipes/" + name
 	if doc, err := s.Get(uri); err == nil {
-		content := s.prependRecipeContext(name, doc.Content)
+		content := s.prependRecipeContext(doc.Content)
 		if mode != "" {
 			rt := s.detectRecipeRuntime(name)
 			content = prependModeAdaptation(mode, rt) + content
@@ -129,7 +126,7 @@ func (s *Store) GetRecipe(name, mode string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("recipe %q not found: %w", matches[0], err)
 		}
-		content := s.prependRecipeContext(matches[0], doc.Content)
+		content := s.prependRecipeContext(doc.Content)
 		if mode != "" {
 			rt := s.detectRecipeRuntime(matches[0])
 			content = prependModeAdaptation(mode, rt) + content
@@ -158,13 +155,9 @@ func (s *Store) detectRecipeRuntime(recipeName string) string {
 	return ""
 }
 
-// prependRecipeContext prepends universals and an auto-detected runtime guide to recipe content.
-func (s *Store) prependRecipeContext(recipeName, content string) string {
-	if rt := s.detectRecipeRuntime(recipeName); rt != "" {
-		if guide := s.getRuntimeGuide(rt); guide != "" {
-			content = guide + "\n\n---\n\n" + content
-		}
-	}
+// prependRecipeContext prepends platform universals to recipe content.
+// Runtime guides are NOT prepended — each recipe is standalone with its own knowledge.
+func (s *Store) prependRecipeContext(content string) string {
 	return s.prependUniversals(content)
 }
 
@@ -187,16 +180,13 @@ func (s *Store) findMatchingRecipes(query string) []string {
 			seen[name] = true
 			continue
 		}
-		// Keyword match.
+		// Content match — search title and body for the query term.
 		doc, err := s.Get("zerops://recipes/" + name)
 		if err != nil {
 			continue
 		}
-		for _, kw := range doc.Keywords {
-			if strings.EqualFold(kw, queryLower) {
-				seen[name] = true
-				break
-			}
+		if strings.Contains(strings.ToLower(doc.Content), queryLower) {
+			seen[name] = true
 		}
 	}
 
@@ -216,9 +206,9 @@ func (s *Store) formatDisambiguation(query string, matches []string) string {
 		sb.WriteString("- **")
 		sb.WriteString(name)
 		sb.WriteString("**")
-		if doc, err := s.Get("zerops://recipes/" + name); err == nil && doc.TLDR != "" {
+		if doc, err := s.Get("zerops://recipes/" + name); err == nil && doc.Description != "" {
 			sb.WriteString(" — ")
-			sb.WriteString(doc.TLDR)
+			sb.WriteString(doc.Description)
 		}
 		sb.WriteString("\n")
 	}
@@ -235,95 +225,15 @@ func (s *Store) prependUniversals(content string) string {
 	return universals + "\n\n---\n\n" + content
 }
 
-// filterDeployPatterns filters the "### Deploy Patterns" section of a runtime guide
-// to show only the pattern relevant to the given mode.
-// mode mapping: "dev"/"standard" → keep **Dev deploy**, "simple" → keep **Dev deploy**,
-// "stage" → keep **Prod deploy**. Empty mode returns the guide unchanged.
-func filterDeployPatterns(guide, mode string) string {
-	const header = "### Deploy Patterns"
-	idx := strings.Index(guide, header)
-	if idx < 0 {
-		return guide
-	}
-
-	// Find the end of the Deploy Patterns section (next ### or end of string).
-	sectionStart := idx + len(header)
-	rest := guide[sectionStart:]
-	sectionEnd := strings.Index(rest, "\n### ")
-	var section string
-	if sectionEnd < 0 {
-		section = rest
-		sectionEnd = len(rest)
-	} else {
-		section = rest[:sectionEnd]
-	}
-
-	var keepPrefix string
+// prependModeAdaptation returns a concise mode-specific pointer for recipes.
+// Recipes now include both dev and prod zerops.yml setups with inline comments,
+// so the header only needs to direct the agent to the right setup block.
+func prependModeAdaptation(mode, _ string) string {
 	switch mode {
 	case "dev", "standard":
-		keepPrefix = "**Dev deploy**:"
+		return "> **Mode: dev** — Use the `dev` setup block from the zerops.yml below.\n\n"
 	case "simple":
-		// Simple is hybrid: deployFiles from dev + start/healthCheck from prod.
-		// Show both patterns so the agent has full context.
-		return guide
-	case "stage":
-		keepPrefix = "**Prod deploy**:"
-	default:
-		return guide
-	}
-
-	// Filter lines within the section.
-	var filtered []string
-	for line := range strings.SplitSeq(section, "\n") {
-		trimmed := strings.TrimSpace(line)
-		// Keep empty lines and lines matching our mode prefix.
-		if trimmed == "" || strings.HasPrefix(trimmed, keepPrefix) {
-			filtered = append(filtered, line)
-		}
-		// Drop lines starting with other deploy pattern prefixes.
-	}
-
-	return guide[:idx] + header + strings.Join(filtered, "\n") + rest[sectionEnd:]
-}
-
-// isImplicitWebserverRuntime returns true for runtimes with built-in web servers
-// that need no start command or explicit port configuration.
-// Accepts base names as returned by detectRecipeRuntime (e.g., "php")
-// and full runtime prefixes (e.g., "php-nginx").
-func isImplicitWebserverRuntime(runtimeBase string) bool {
-	switch runtimeBase {
-	case "php", runtimePHPNginx, runtimePHPApache, runtimeNginx, runtimeStatic:
-		return true
-	}
-	return false
-}
-
-// prependModeAdaptation returns a mode-specific adaptation header for recipes.
-// runtime is the base runtime name (e.g., "php", "nodejs") from detectRecipeRuntime.
-// Empty runtime is treated as dynamic (safe default).
-func prependModeAdaptation(mode, runtime string) string {
-	implicit := isImplicitWebserverRuntime(runtime)
-	switch mode {
-	case "dev", "standard":
-		var startNote string
-		if implicit {
-			startNote = "> - Omit `start:` and `run.ports` entirely (webserver is built-in)\n"
-		} else {
-			startNote = "> - Use `start: zsc noop --silent` (not the production start command)\n"
-		}
-		return "> **Mode: dev** — This recipe shows production patterns. For your dev entry:\n" +
-			"> - Use `deployFiles: [.]` (not the production pattern below)\n" +
-			startNote +
-			"> - Omit `healthCheck` (you control the server manually)\n" +
-			"> The build commands and dependencies from this recipe still apply.\n\n"
-	case "simple":
-		if implicit {
-			return "> **Mode: simple** — Use the production patterns below but keep `deployFiles: [.]`\n" +
-				"> since this is a self-deploying service. Omit `start:` and `run.ports` (webserver built-in).\n" +
-				"> `healthCheck` applies as-is.\n\n"
-		}
-		return "> **Mode: simple** — Use the production patterns below but keep `deployFiles: [.]`\n" +
-			"> since this is a self-deploying service. The start command and healthCheck apply as-is.\n\n"
+		return "> **Mode: simple** — Use the `prod` setup block below, but override `deployFiles: [.]`.\n\n"
 	default:
 		return ""
 	}

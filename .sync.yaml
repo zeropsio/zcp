@@ -1,0 +1,25 @@
+api_url: https://api.zerops.io/api/recipes
+
+slug_remap:
+  recipe: nodejs-hello-world
+  node-js-hello-world: nodejs-hello-world
+
+exclude_categories:
+  - service-utility
+
+push:
+  recipes:
+    org: zerops-recipe-apps
+    repo_patterns:
+      - "{slug}-app"
+      - "{slug}"
+    branch_prefix: zcp
+    commit_prefix: "chore(knowledge)"
+  guides:
+    repo: zeropsio/docs
+    path: apps/docs/content/guides
+    branch_prefix: zcp
+    commit_prefix: "chore(guides)"
+
+paths:
+  output: internal/knowledge

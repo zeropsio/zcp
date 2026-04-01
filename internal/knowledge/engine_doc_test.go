@@ -75,9 +75,9 @@ func TestStore_RecipesEmbedded(t *testing.T) {
 	if len(recipes) < 20 {
 		t.Errorf("ListRecipes() = %d, want >= 20", len(recipes))
 	}
-	// Spot-check a known recipe
-	if !slices.Contains(recipes, "laravel") {
-		t.Errorf("expected laravel in recipes, got: %v", recipes)
+	// Spot-check a known recipe (pulled from API)
+	if !slices.Contains(recipes, "bun-hello-world") {
+		t.Errorf("expected bun-hello-world in recipes, got: %v", recipes)
 	}
 }
 
@@ -90,8 +90,8 @@ func TestPathToURI(t *testing.T) {
 	}{
 		{"themes/core.md", "zerops://themes/core"},
 		{"themes/services.md", "zerops://themes/services"},
-		{"recipes/laravel.md", "zerops://recipes/laravel"},
-		{"runtimes/nodejs.md", "zerops://runtimes/nodejs"},
+		{"recipes/bun-hello-world.md", "zerops://recipes/bun-hello-world"},
+		{"bases/nginx.md", "zerops://bases/nginx"},
 	}
 	for _, tt := range tests {
 		got := pathToURI(tt.path)
@@ -107,7 +107,7 @@ func TestURIToPath(t *testing.T) {
 		path string
 	}{
 		{"zerops://themes/core", "themes/core.md"},
-		{"zerops://recipes/laravel", "recipes/laravel.md"},
+		{"zerops://recipes/bun-hello-world", "recipes/bun-hello-world.md"},
 	}
 	for _, tt := range tests {
 		got := uriToPath(tt.uri)

@@ -15,82 +15,51 @@ func TestPrependModeAdaptation_RuntimeAware(t *testing.T) {
 		wantAbsent   []string
 	}{
 		{
-			name:    "standard_nodejs_uses_zsc_noop",
+			name:    "dev_standard_points_to_dev_setup",
 			mode:    "standard",
 			runtime: "nodejs",
 			wantContains: []string{
-				"zsc noop --silent",
-				"Mode: dev",
+				"`dev`",
+				"setup block",
 			},
 			wantAbsent: []string{
-				"webserver",
-				"Omit `start:`",
+				"zsc noop",
+				"deployFiles: [.]",
+				"healthCheck",
 			},
 		},
 		{
-			name:    "standard_go_uses_zsc_noop",
-			mode:    "standard",
+			name:    "dev_mode_points_to_dev_setup",
+			mode:    "dev",
 			runtime: "go",
 			wantContains: []string{
-				"zsc noop --silent",
-			},
-		},
-		{
-			name:    "standard_php_omits_start",
-			mode:    "standard",
-			runtime: "php",
-			wantContains: []string{
-				"Omit",
-				"start:",
-				"webserver",
+				"`dev`",
+				"setup block",
 			},
 			wantAbsent: []string{
 				"zsc noop",
+				"deployFiles: [.]",
 			},
 		},
 		{
-			name:    "dev_php_omits_start",
-			mode:    "dev",
-			runtime: "php",
-			wantContains: []string{
-				"Omit",
-			},
-			wantAbsent: []string{
-				"zsc noop",
-			},
-		},
-		{
-			name:    "simple_nodejs_uses_real_start",
+			name:    "simple_points_to_prod_with_deployfiles_note",
 			mode:    "simple",
 			runtime: "nodejs",
 			wantContains: []string{
-				"start command",
-				"healthCheck",
+				"`prod`",
 				"deployFiles: [.]",
 			},
 			wantAbsent: []string{
 				"zsc noop",
+				"healthCheck",
 			},
 		},
 		{
-			name:    "simple_php_omits_start_and_ports",
-			mode:    "simple",
-			runtime: "php",
-			wantContains: []string{
-				"Omit",
-				"start:",
-				"webserver",
-			},
-			wantAbsent: []string{
-				"zsc noop",
-			},
-		},
-		{
-			name:    "empty_runtime_defaults_to_dynamic",
+			name:    "empty_runtime_still_works",
 			mode:    "standard",
 			runtime: "",
 			wantContains: []string{
-				"zsc noop --silent",
+				"`dev`",
 			},
 		},
 		{
@@ -98,6 +67,20 @@ func TestPrependModeAdaptation_RuntimeAware(t *testing.T) {
 			mode:         "",
 			runtime:      "nodejs",
 			wantContains: []string{},
+		},
+		{
+			name:    "all_modes_are_concise",
+			mode:    "dev",
+			runtime: "php",
+			wantContains: []string{
+				"`dev`",
+			},
+			wantAbsent: []string{
+				"Omit",
+				"webserver",
+				// Mode header should be a single concise line, not multi-line instructions
+				"start:",
+			},
 		},
 	}
 
@@ -121,95 +104,16 @@ func TestPrependModeAdaptation_RuntimeAware(t *testing.T) {
 					t.Errorf("should NOT contain %q, got:\n%s", absent, result)
 				}
 			}
-		})
-	}
-}
-
-func TestFilterDeployPatterns_SimpleModeShowsBoth(t *testing.T) {
-	t.Parallel()
-	guide := `# Go on Zerops
-
-### Deploy Patterns
-
-**Dev deploy**: deployFiles: [.], start: zsc noop --silent
-**Prod deploy**: buildCommands: [go build -o app], deployFiles: app, start: ./app
-
-### Common Mistakes
-`
-	tests := []struct {
-		name         string
-		mode         string
-		wantContains []string
-		wantAbsent   []string
-	}{
-		{
-			name:         "dev_keeps_only_dev",
-			mode:         "dev",
-			wantContains: []string{"Dev deploy"},
-			wantAbsent:   []string{"Prod deploy"},
-		},
-		{
-			name:         "standard_keeps_only_dev",
-			mode:         "standard",
-			wantContains: []string{"Dev deploy"},
-			wantAbsent:   []string{"Prod deploy"},
-		},
-		{
-			name:         "simple_shows_both_patterns",
-			mode:         "simple",
-			wantContains: []string{"Dev deploy", "Prod deploy"},
-		},
-		{
-			name:         "stage_keeps_only_prod",
-			mode:         "stage",
-			wantContains: []string{"Prod deploy"},
-			wantAbsent:   []string{"Dev deploy"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			result := filterDeployPatterns(guide, tt.mode)
-			for _, want := range tt.wantContains {
-				if !strings.Contains(result, want) {
-					t.Errorf("should contain %q, got:\n%s", want, result)
+			// Mode adaptation must be concise — single blockquote line, not multi-line instructions.
+			lines := strings.Split(strings.TrimSpace(result), "\n")
+			nonEmpty := 0
+			for _, l := range lines {
+				if strings.TrimSpace(l) != "" {
+					nonEmpty++
 				}
 			}
-			for _, absent := range tt.wantAbsent {
-				if strings.Contains(result, absent) {
-					t.Errorf("should NOT contain %q, got:\n%s", absent, result)
-				}
-			}
-		})
-	}
-}
-
-func TestIsImplicitWebserverRuntime(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		runtime string
-		want    bool
-	}{
-		{"php", true},
-		{"php-nginx", true},
-		{"php-apache", true},
-		{"nginx", true},
-		{"static", true},
-		{"nodejs", false},
-		{"go", false},
-		{"python", false},
-		{"bun", false},
-		{"java", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.runtime, func(t *testing.T) {
-			t.Parallel()
-			got := isImplicitWebserverRuntime(tt.runtime)
-			if got != tt.want {
-				t.Errorf("isImplicitWebserverRuntime(%q) = %v, want %v", tt.runtime, got, tt.want)
+			if nonEmpty > 2 {
+				t.Errorf("mode adaptation should be concise (max 2 non-empty lines), got %d:\n%s", nonEmpty, result)
 			}
 		})
 	}

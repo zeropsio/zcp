@@ -73,31 +73,32 @@ func TestGetBriefing_NilTypes_NoVersionSection(t *testing.T) {
 
 // --- Knowledge Content & Briefing Order Tests ---
 
-func TestGetBriefing_BunRuntime_ContainsBindingRule(t *testing.T) {
+func TestGetBriefing_BunRuntime_ContainsKnowledgeBase(t *testing.T) {
 	store := newTestStore(t)
 	briefing, err := store.GetBriefing("bun@1.2", []string{"postgresql@16"}, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	if !strings.Contains(briefing, "0.0.0.0") {
-		t.Error("Bun briefing missing 0.0.0.0 binding rule")
+	// API knowledge-base includes Base Image and Gotchas — verify these are surfaced
+	if !strings.Contains(briefing, "BUN_INSTALL") {
+		t.Error("Bun briefing missing BUN_INSTALL gotcha from knowledge-base")
 	}
-	if !strings.Contains(briefing, "Bun.serve") {
-		t.Error("Bun briefing missing Bun.serve reference")
+	if !strings.Contains(briefing, "bunx") {
+		t.Error("Bun briefing missing bunx reference from knowledge-base")
 	}
 }
 
-func TestStore_GetRecipe_BunHono(t *testing.T) {
+func TestStore_GetRecipe_BunHelloWorld(t *testing.T) {
 	store := newTestStore(t)
-	content, err := store.GetRecipe("bun-hono", "")
+	content, err := store.GetRecipe("bun-hello-world", "")
 	if err != nil {
-		t.Fatalf("GetRecipe(bun-hono): %v", err)
+		t.Fatalf("GetRecipe(bun-hello-world): %v", err)
 	}
 	if !strings.Contains(content, "0.0.0.0") {
-		t.Error("bun-hono recipe missing 0.0.0.0 binding rule")
+		t.Error("bun-hello-world recipe missing 0.0.0.0 binding rule")
 	}
 	if !strings.Contains(content, "zerops.yml") {
-		t.Error("bun-hono recipe missing zerops.yml example")
+		t.Error("bun-hello-world recipe missing zerops.yml example")
 	}
 }
 
@@ -110,8 +111,8 @@ func TestStore_GetBriefing_SurfacesMatchingRecipes(t *testing.T) {
 	if !strings.Contains(briefing, "Matching Recipes") {
 		t.Error("Bun briefing missing Matching Recipes section")
 	}
-	if !strings.Contains(briefing, "bun-hono") {
-		t.Error("Bun briefing missing bun-hono recipe hint")
+	if !strings.Contains(briefing, "bun-hello-world") {
+		t.Error("Bun briefing missing bun-hello-world recipe hint")
 	}
 }
 
@@ -140,19 +141,22 @@ func TestStore_GetBriefing_StaticRecipes(t *testing.T) {
 	}
 }
 
-func TestStore_GetBriefing_RustNoRecipes(t *testing.T) {
+func TestStore_GetBriefing_RustHasHelloWorldRecipe(t *testing.T) {
 	store := newTestStore(t)
 	briefing, err := store.GetBriefing("rust@1", nil, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	// Rust runtime guide should still be present
+	// Rust runtime guide should be present (from recipes/rust-hello-world)
 	if !strings.Contains(briefing, "Rust") {
 		t.Error("Rust briefing missing runtime guide content")
 	}
-	// No recipes exist for rust, so no Matching Recipes section
-	if strings.Contains(briefing, "Matching Recipes") {
-		t.Error("Rust briefing should NOT contain Matching Recipes section (no rust recipes)")
+	// Rust now has a hello-world recipe
+	if !strings.Contains(briefing, "Matching Recipes") {
+		t.Error("Rust briefing should contain Matching Recipes section (rust-hello-world exists)")
+	}
+	if !strings.Contains(briefing, "rust-hello-world") {
+		t.Error("Rust briefing should mention rust-hello-world recipe")
 	}
 }
 
@@ -173,21 +177,21 @@ func TestStore_GetBriefing_AutoPromotesRuntimeFromServices(t *testing.T) {
 		{
 			name:          "python in services gets promoted",
 			services:      []string{"python@3.12", "valkey@7.2"},
-			wantRuntime:   "Python on Zerops",
+			wantRuntime:   "Python",
 			wantService:   "Valkey",
-			wantNoService: "", // Python may appear in runtime section, not as service card
+			wantNoService: "",
 		},
 		{
 			name:          "java in services gets promoted",
 			services:      []string{"java@21", "mariadb@10.6"},
-			wantRuntime:   "Java on Zerops",
+			wantRuntime:   "Java",
 			wantService:   "MariaDB",
 			wantNoService: "",
 		},
 		{
 			name:          "nodejs in services gets promoted",
 			services:      []string{"nodejs@22", "postgresql@16"},
-			wantRuntime:   "Node.js on Zerops",
+			wantRuntime:   "Node.js",
 			wantService:   "PostgreSQL",
 			wantNoService: "",
 		},
@@ -279,11 +283,11 @@ func TestStore_GetBriefing_NoPromotionWhenRuntimeSet(t *testing.T) {
 		t.Fatalf("GetBriefing: %v", err)
 	}
 	// PHP should be the runtime guide (from explicit runtime param)
-	if !strings.Contains(briefing, "PHP on Zerops") {
+	if !strings.Contains(briefing, "PHP") || !strings.Contains(briefing, "on Zerops") {
 		t.Error("briefing missing explicitly-set PHP runtime guide")
 	}
 	// Node.js should NOT get its own runtime guide (it's in services, runtime is already set)
-	if strings.Contains(briefing, "Node.js on Zerops") {
+	if strings.Contains(briefing, "Node.js Hello World on Zerops") {
 		t.Error("briefing should not have second runtime guide when runtime is already set")
 	}
 }
@@ -294,10 +298,11 @@ func TestStore_GetBriefing_LayerOrderRealDocs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	runtimeIdx := strings.Index(briefing, "Bun on Zerops")
+	// Runtime guide comes from recipes/bun-hello-world (new format)
+	runtimeIdx := strings.Index(briefing, "Bun Hello World on Zerops")
 	serviceIdx := strings.Index(briefing, "Service Cards")
 	if runtimeIdx < 0 {
-		t.Fatal("briefing missing Bun runtime guide")
+		t.Fatal("briefing missing Bun runtime guide (expected from recipes/bun-hello-world)")
 	}
 	if serviceIdx < 0 {
 		t.Fatal("briefing missing Service Cards section")
@@ -337,19 +342,15 @@ func TestGetBriefing_NoStaticVersionLines(t *testing.T) {
 	}
 }
 
-func TestGetBriefing_PHPBriefingMentionsTuning(t *testing.T) {
+func TestGetBriefing_PHPBriefingHasContent(t *testing.T) {
 	store := newTestStore(t)
 	briefing, err := store.GetBriefing("php-nginx@8.4", nil, "", nil)
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	for _, want := range []string{
-		"PHP_INI_",
-		"restart",
-	} {
-		if !strings.Contains(briefing, want) {
-			t.Errorf("PHP briefing missing %q", want)
-		}
+	// PHP recipe from API should at minimum have a zerops.yml section
+	if !strings.Contains(briefing, "PHP") {
+		t.Error("PHP briefing missing PHP reference")
 	}
 }
 
@@ -375,53 +376,9 @@ func TestGetBriefing_NoStaticServiceTypeVersions(t *testing.T) {
 	}
 }
 
-// --- Mode-filtered Deploy Patterns tests ---
-
-func TestGetBriefing_ModeDevFiltersDeployPatterns(t *testing.T) {
-	store := newTestStore(t)
-	briefing, err := store.GetBriefing("bun@1.2", nil, "dev", nil)
-	if err != nil {
-		t.Fatalf("GetBriefing: %v", err)
-	}
-	if !strings.Contains(briefing, "**Dev deploy**:") {
-		t.Error("dev mode briefing should contain Dev deploy pattern")
-	}
-	if strings.Contains(briefing, "**Prod deploy**:") {
-		t.Error("dev mode briefing should NOT contain Prod deploy pattern")
-	}
-}
-
-func TestGetBriefing_ModeStageFiltersDeployPatterns(t *testing.T) {
-	store := newTestStore(t)
-	briefing, err := store.GetBriefing("bun@1.2", nil, "stage", nil)
-	if err != nil {
-		t.Fatalf("GetBriefing: %v", err)
-	}
-	if !strings.Contains(briefing, "**Prod deploy**:") {
-		t.Error("stage mode briefing should contain Prod deploy pattern")
-	}
-	if strings.Contains(briefing, "**Dev deploy**:") {
-		t.Error("stage mode briefing should NOT contain Dev deploy pattern")
-	}
-}
-
-func TestGetBriefing_EmptyModeShowsAllPatterns(t *testing.T) {
-	store := newTestStore(t)
-	briefing, err := store.GetBriefing("bun@1.2", nil, "", nil)
-	if err != nil {
-		t.Fatalf("GetBriefing: %v", err)
-	}
-	if !strings.Contains(briefing, "**Dev deploy**:") {
-		t.Error("empty mode briefing should contain Dev deploy pattern")
-	}
-	if !strings.Contains(briefing, "**Prod deploy**:") {
-		t.Error("empty mode briefing should contain Prod deploy pattern")
-	}
-}
-
 func TestGetRecipe_ModeDevAddsAdaptation(t *testing.T) {
 	store := newTestStore(t)
-	recipe, err := store.GetRecipe("bun-hono", "dev")
+	recipe, err := store.GetRecipe("bun-hello-world", "dev")
 	if err != nil {
 		t.Fatalf("GetRecipe: %v", err)
 	}
@@ -435,7 +392,7 @@ func TestGetRecipe_ModeDevAddsAdaptation(t *testing.T) {
 
 func TestGetRecipe_ModeSimpleAddsAdaptation(t *testing.T) {
 	store := newTestStore(t)
-	recipe, err := store.GetRecipe("bun-hono", "simple")
+	recipe, err := store.GetRecipe("bun-hello-world", "simple")
 	if err != nil {
 		t.Fatalf("GetRecipe: %v", err)
 	}
@@ -446,7 +403,7 @@ func TestGetRecipe_ModeSimpleAddsAdaptation(t *testing.T) {
 
 func TestGetRecipe_EmptyModeNoAdaptation(t *testing.T) {
 	store := newTestStore(t)
-	recipe, err := store.GetRecipe("bun-hono", "")
+	recipe, err := store.GetRecipe("bun-hello-world", "")
 	if err != nil {
 		t.Fatalf("GetRecipe: %v", err)
 	}

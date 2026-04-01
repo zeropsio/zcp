@@ -17,6 +17,12 @@ jobs:
         with:
           go-version-file: "go.mod"
 
+      - name: Pull knowledge (recipes + guides)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          go run ./cmd/zcp sync pull
+
       - name: Build (all platforms)
         env:
           CGO_ENABLED: '0'
@@ -39,6 +45,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: "go.mod"
+
+      - name: Pull knowledge (recipes + guides)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          go run ./cmd/zcp sync pull
 
       - uses: golangci/golangci-lint-action@v7
         with:
