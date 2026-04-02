@@ -19,10 +19,10 @@ func testStoreWithCore(t *testing.T) *Store {
 				"## Schema Rules\n\nPorts 10-65435.\n\n" +
 				"## Build/Deploy Lifecycle\n\nBuild and Run are SEPARATE containers.",
 		},
-		"zerops://themes/universals": {
-			URI:     "zerops://themes/universals",
-			Title:   "Zerops Platform Universals",
-			Content: "# Zerops Platform Universals\n\nBind 0.0.0.0. deployFiles mandatory. No .env files.",
+		"zerops://themes/model": {
+			URI:     "zerops://themes/model",
+			Title:   "Zerops Platform Model",
+			Content: "# Zerops Platform Model\n\n## Container Universe\n\nFull Linux containers (Incus). Hierarchy: Project > Service > Container(s).\n\n## Networking\n\nL7 LB terminates SSL. Ports 10-65435.\n\n## Platform Constraints\n\nBind 0.0.0.0. deployFiles mandatory. No .env files. Cross-service: ${hostname_varname}.",
 		},
 		"zerops://recipes/php-hello-world": {
 			URI:     "zerops://recipes/php-hello-world",
@@ -41,8 +41,38 @@ func testStoreWithCore(t *testing.T) *Store {
 		},
 		"zerops://themes/operations": {
 			URI:     "zerops://themes/operations",
-			Title:   "Zerops Operations & Decisions",
-			Content: "# Zerops Operations & Decisions\n\n## Service Selection Decisions\n\n### Choose Database\n\nUse PostgreSQL for everything unless you have a specific reason not to.\n\n### Choose Cache\n\nUse Valkey (default) — KeyDB is deprecated.\n\n### Choose Runtime Base\n\nGo, Rust, .NET build natively — use alpine base for smaller images.",
+			Title:   "Zerops Operations & Production",
+			Content: "# Zerops Operations & Production\n\n## Networking\n\nVXLAN private network.\n\n## Production Checklist\n\nHA mode, backups, scaling.",
+		},
+		"zerops://decisions/choose-database": {
+			URI:     "zerops://decisions/choose-database",
+			Title:   "Choosing a Database on Zerops",
+			TLDR:    "Use PostgreSQL for everything unless you have a specific reason not to.",
+			Content: "# Choosing a Database\n\n## TL;DR\nUse PostgreSQL for everything unless you have a specific reason not to.\n\n## Decision Matrix\nPostgreSQL (default), MariaDB, ClickHouse.",
+		},
+		"zerops://decisions/choose-cache": {
+			URI:     "zerops://decisions/choose-cache",
+			Title:   "Choosing a Cache on Zerops",
+			TLDR:    "Use Valkey — KeyDB is deprecated.",
+			Content: "# Choosing a Cache\n\n## TL;DR\nUse Valkey — KeyDB is deprecated.",
+		},
+		"zerops://decisions/choose-queue": {
+			URI:     "zerops://decisions/choose-queue",
+			Title:   "Choosing a Queue on Zerops",
+			TLDR:    "Use NATS for most use cases.",
+			Content: "# Choosing a Queue\n\n## TL;DR\nUse NATS for most use cases.",
+		},
+		"zerops://decisions/choose-search": {
+			URI:     "zerops://decisions/choose-search",
+			Title:   "Choosing a Search on Zerops",
+			TLDR:    "Use Meilisearch for simple full-text.",
+			Content: "# Choosing a Search\n\n## TL;DR\nUse Meilisearch for simple full-text.",
+		},
+		"zerops://decisions/choose-runtime-base": {
+			URI:     "zerops://decisions/choose-runtime-base",
+			Title:   "Choosing a Runtime Base on Zerops",
+			TLDR:    "Use Alpine as default. Ubuntu for glibc. Docker for pre-built images.",
+			Content: "# Choosing a Runtime Base\n\n## TL;DR\nUse Alpine as default. Ubuntu for glibc. Docker for pre-built images.",
 		},
 		"zerops://recipes/ghost": {
 			URI:     "zerops://recipes/ghost",
@@ -115,7 +145,7 @@ func TestStore_GetUniversals_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(content, "Platform Universals") {
+	if !strings.Contains(content, "Platform Constraints") {
 		t.Error("expected universals title")
 	}
 	if !strings.Contains(content, "0.0.0.0") {
@@ -184,7 +214,7 @@ func TestStore_GetRecipe_PrependsUniversals(t *testing.T) {
 	}
 
 	// Should contain universals before recipe content
-	if !strings.Contains(recipe, "Platform Universals") {
+	if !strings.Contains(recipe, "Platform Constraints") {
 		t.Error("recipe should be prepended with universals")
 	}
 	if !strings.Contains(recipe, "maxContainers: 1") {
@@ -192,7 +222,7 @@ func TestStore_GetRecipe_PrependsUniversals(t *testing.T) {
 	}
 
 	// Universals should appear before recipe content
-	uIdx := strings.Index(recipe, "Platform Universals")
+	uIdx := strings.Index(recipe, "Platform Constraints")
 	rIdx := strings.Index(recipe, "maxContainers: 1")
 	if uIdx >= rIdx {
 		t.Error("universals should appear before recipe content")
@@ -465,7 +495,7 @@ func TestStore_GetRecipe_PrependsUniversalsOnly(t *testing.T) {
 	}
 
 	// Should contain universals
-	if !strings.Contains(recipe, "Platform Universals") {
+	if !strings.Contains(recipe, "Platform Constraints") {
 		t.Error("recipe should be prepended with universals")
 	}
 	// Should NOT contain runtime guide — framework recipes are standalone
@@ -477,7 +507,7 @@ func TestStore_GetRecipe_PrependsUniversalsOnly(t *testing.T) {
 		t.Error("recipe should contain original content")
 	}
 	// Order: universals -> recipe content
-	uIdx := strings.Index(recipe, "Platform Universals")
+	uIdx := strings.Index(recipe, "Platform Constraints")
 	cIdx := strings.Index(recipe, "Multi-base build")
 	if uIdx >= cIdx {
 		t.Error("universals should appear before recipe content")

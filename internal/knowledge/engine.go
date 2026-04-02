@@ -32,6 +32,7 @@ type Provider interface {
 	Search(query string, limit int) []SearchResult
 	GetCore() (string, error)
 	GetUniversals() (string, error)
+	GetModel() (string, error)
 	GetBriefing(runtime string, services []string, mode string, liveTypes []platform.ServiceStackType) (string, error)
 	GetRecipe(name, mode string) (string, error)
 }
@@ -198,11 +199,25 @@ func (s *Store) GetCore() (string, error) {
 	return doc.Content, nil
 }
 
-// GetUniversals returns the platform universals content.
+// GetUniversals returns the "Platform Constraints" section from model.md.
+// These are the hard rules prepended to every recipe response.
 func (s *Store) GetUniversals() (string, error) {
-	doc, err := s.Get("zerops://themes/universals")
+	doc, err := s.Get("zerops://themes/model")
 	if err != nil {
-		return "", fmt.Errorf("universals not found: %w", err)
+		return "", fmt.Errorf("platform model not found: %w", err)
+	}
+	sections := doc.H2Sections()
+	if constraints, ok := sections["Platform Constraints"]; ok {
+		return "# Platform Constraints\n\n" + constraints, nil
+	}
+	return "", fmt.Errorf("platform constraints section not found in model.md")
+}
+
+// GetModel returns the platform model content (Container Universe, Lifecycle, Networking, etc.).
+func (s *Store) GetModel() (string, error) {
+	doc, err := s.Get("zerops://themes/model")
+	if err != nil {
+		return "", fmt.Errorf("platform model not found: %w", err)
 	}
 	return doc.Content, nil
 }

@@ -18,7 +18,7 @@ type EventsInput struct {
 func RegisterEvents(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_events",
-		Description: "Fetch project activity timeline. Aggregates processes and build/deploy events sorted by time.",
+		Description: "Fetch project activity timeline. Aggregates processes and build/deploy events sorted by time. ALWAYS filter by serviceHostname (project-level includes stale builds from other services). Stop polling after stack.build shows FINISHED. Check stack.build process for build status, NOT appVersion (different events).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Fetch project activity timeline",
 			ReadOnlyHint:   true,

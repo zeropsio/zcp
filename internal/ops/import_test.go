@@ -227,6 +227,31 @@ func TestImport_ModeWarnings(t *testing.T) {
 	}
 }
 
+func TestImport_EnvVariablesAtServiceLevel_Warning(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: app
+    type: nodejs@22
+    envVariables:
+      MY_VAR: hello
+`
+	mock := importMock()
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	found := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "envVariables") && strings.Contains(w, "silently dropped") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected envVariables warning, got: %v", result.Warnings)
+	}
+}
+
 func TestImport_NilTypes_NoWarnings(t *testing.T) {
 	t.Parallel()
 	content := `services:
@@ -450,7 +475,7 @@ func TestImport_InvalidHostname(t *testing.T) {
 		{
 			name: "hostname too long",
 			content: `services:
-  - hostname: a2345678901234567890123456
+  - hostname: a2345678901234567890123456789012345678901
     type: nodejs@22
 `,
 		},

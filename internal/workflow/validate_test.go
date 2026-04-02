@@ -24,7 +24,7 @@ func TestValidatePlanHostname(t *testing.T) {
 		{"has_hyphen", "my-app", "invalid hostname"},
 		{"has_underscore", "my_app", "invalid hostname"},
 		{"has_uppercase", "AppDev", "invalid hostname"},
-		{"too_long", strings.Repeat("a", 26), "invalid hostname"},
+		{"too_long", strings.Repeat("a", 41), "invalid hostname"},
 		{"empty", "", "empty"},
 	}
 	for _, tt := range tests {
@@ -315,8 +315,8 @@ func TestValidateBootstrapTargets_InvalidHostname_Error(t *testing.T) {
 
 func TestValidateBootstrapTargets_StageHostnameOverflow_Error(t *testing.T) {
 	t.Parallel()
-	// "dev" suffix = 3 chars, stage suffix = 5 chars. Base needs to be 21 chars to make stage overflow (21+5=26>25).
-	base := strings.Repeat("a", 21)
+	// "dev" suffix = 3 chars, stage suffix = 5 chars. Base needs to be 36 chars to make stage overflow (36+5=41>40).
+	base := strings.Repeat("a", 36)
 	targets := []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: base + "dev", Type: "nodejs@22"}},
 	}

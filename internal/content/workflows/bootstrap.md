@@ -160,6 +160,12 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 | Mode present | Managed services default to NON_HA if omitted |
 | Framework secrets | If using Laravel/Rails/Django/etc., add `envSecrets` with `<@generateRandomString(...)>` (e.g., `APP_KEY`, `SECRET_KEY_BASE`) |
 
+**Managed service hostname conventions**: `db` (postgresql/mariadb), `cache` (valkey), `queue` (nats/kafka), `search` (elasticsearch/meilisearch), `storage` (object-storage). Standardizes cross-service references and discovery.
+
+**Priority ordering**: managed services `priority: 10`, runtime services default or `priority: 5`. Databases must be ready before apps that depend on them.
+
+**zeropsSetup**: only set when using `buildFromGit` and the zerops.yml setup name differs from hostname. Defaults to hostname. With `startWithoutCode`, omit — `zcli push` uses hostname as setup name.
+
 Present import.yml to the user for review before proceeding.
 
 ### Env var discovery protocol (mandatory before generate)
@@ -791,6 +797,17 @@ When any verification check fails, enter the iteration loop instead of giving up
 | HTTP 502 | Subdomain not activated | Call `zerops_subdomain action="enable"` |
 | curl returns empty | App not listening on 0.0.0.0 | Add HOST=0.0.0.0 to envVariables |
 | HTTP 500 | App error | Check `zerops_logs` + framework log files on mount path — log tells exact cause. Do NOT start alternative servers. |
+
+### Common deployment issues
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| HTTP 502 despite app running | App binds localhost, not 0.0.0.0 | Bind `0.0.0.0:{port}` |
+| HTTP 000 (connection refused) | Server not running on dev service | Start server via SSH first |
+| SSH hangs after starting server | Expected — server runs in foreground | Use Bash `run_in_background=true` |
+| `jq: command not found` via SSH | jq not in containers | Pipe outside: `ssh dev "curl ..." \| jq .` |
+| Empty env variable | Wrong var name or not discovered | Check `zerops_discover includeEnvs=true` |
+| SSHFS stale after deploy | Container replaced | Auto-reconnects — wait ~10s |
 </section>
 
 <section name="deploy-agents">

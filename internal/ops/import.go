@@ -88,6 +88,16 @@ func Import(
 				}
 			}
 			warnings = knowledge.ValidateServiceTypes(services, liveTypes)
+			// Warn on envVariables at service level — API silently drops them.
+			for _, svc := range services {
+				if _, has := svc["envVariables"]; has {
+					hostname, _ := svc["hostname"].(string)
+					warnings = append(warnings, fmt.Sprintf(
+						"service %q: 'envVariables' at service level is silently dropped by the API. Use 'envSecrets' for import-time secrets, or zerops.yml run.envVariables for runtime config.",
+						hostname,
+					))
+				}
+			}
 		}
 	}
 

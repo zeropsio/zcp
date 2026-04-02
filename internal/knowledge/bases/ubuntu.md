@@ -4,12 +4,14 @@
 ubuntu, glibc, apt-get, base image, cgo, zerops.yml
 
 ## TL;DR
-Full glibc base (~100MB). Use for CGO Go, Python C extensions, legacy glibc-dependent software. Package manager: `apt-get update && apt-get install -y`.
-
-### Usage
-
-Full glibc (~100MB), `apt-get update && apt-get install -y`.
+Full glibc base (~100MB). Use when Alpine's musl libc causes compatibility issues.
 
 ### When to Use
+- CGO-enabled Go builds linking C libraries (musl mismatch causes 502)
+- Python C extensions (numpy, scipy, pandas with compiled backends)
+- Deno and Gleam runtimes (only available on Ubuntu)
+- Legacy software requiring glibc
+- PHP extensions that fail platform requirements on Alpine
 
-Use for: CGO Go, Python C extensions, Deno, legacy glibc-dependent software.
+### Package Installation
+`sudo apt-get update && sudo apt-get install -y {package}` — sudo required (containers run as `zerops` user). NEVER use `apk` on Ubuntu.

@@ -72,6 +72,10 @@ This shows whether the issue is new or recurring.
 | Service not starting | Port outside range or bad start cmd | Ports 10-65435, verify `start` in zerops.yml |
 | DB connection timeout | Wrong connection string or DB not running | Use `http://hostname:port`, verify DB status |
 | Deploy OK but app broken | Missing env vars or wrong format | `zerops_discover includeEnvs=true` |
+| HTTP 000 (connection refused) | Server not running on dev service | Start server via SSH first |
+| SSH hangs after starting server | Expected — server runs in foreground | Use Bash `run_in_background=true` |
+| `jq: command not found` via SSH | jq not in containers | Pipe outside: `ssh dev "curl ..." \| jq .` |
+| SSHFS stale after deploy | Container replaced | Auto-reconnects — wait ~10s |
 
 #### Step 7 — Load knowledge for uncommon issues
 

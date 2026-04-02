@@ -372,7 +372,7 @@ Content B.`
 
 // --- getRelevantDecisions with real embedded store ---
 
-func TestGetRelevantDecisions_WithRealOpsDoc(t *testing.T) {
+func TestGetRelevantDecisions_WithDecisionFiles(t *testing.T) {
 	t.Parallel()
 	store, err := GetEmbeddedStore()
 	if err != nil {

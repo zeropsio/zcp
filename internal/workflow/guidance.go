@@ -74,6 +74,13 @@ func assembleKnowledge(params GuidanceParams) string {
 	}
 	var parts []string
 
+	// Platform model at discover — agent needs conceptual foundation before planning.
+	if params.Step == StepDiscover {
+		if model, err := params.KP.GetModel(); err == nil && model != "" {
+			parts = append(parts, model)
+		}
+	}
+
 	// import.yml schema at provision.
 	if params.Step == StepProvision {
 		if s := getCoreSection(params.KP, "import.yml Schema"); s != "" {

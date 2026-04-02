@@ -38,7 +38,7 @@ func ValidateZeropsYml(workingDir, targetHostname string, roles ...string) []str
 		return warnings
 	}
 
-	if !hasImplicitWebServer(entry.Run.Base, entry.Build.baseStrings()) {
+	if !hasImplicitWebServer(entry.Run.Base, entry.Build.BaseStrings()) {
 		if entry.Run.Start == "" {
 			warnings = append(warnings, "run.start is empty — app will not start after deploy")
 		}
@@ -109,7 +109,7 @@ type ZeropsYmlEntry struct {
 
 // HasPorts returns true if the entry has at least one run.ports entry.
 func (e ZeropsYmlEntry) HasPorts() bool {
-	return len(e.Run.Ports) > 0 || hasImplicitWebServer(e.Run.Base, e.Build.baseStrings())
+	return len(e.Run.Ports) > 0 || hasImplicitWebServer(e.Run.Base, e.Build.BaseStrings())
 }
 
 // HasDeployFiles returns true if the entry has non-empty build.deployFiles.
@@ -120,7 +120,7 @@ func (e ZeropsYmlEntry) HasDeployFiles() bool {
 // HasImplicitWebServer returns true if the entry's runtime has a built-in web
 // server that starts automatically (no run.start or run.ports needed).
 func (e ZeropsYmlEntry) HasImplicitWebServer() bool {
-	return hasImplicitWebServer(e.Run.Base, e.Build.baseStrings())
+	return hasImplicitWebServer(e.Run.Base, e.Build.BaseStrings())
 }
 
 // ParseZeropsYml reads and parses zerops.yml from workingDir.
@@ -180,19 +180,20 @@ func (b zeropsYmlBuild) deployFilesList() []string {
 }
 
 type zeropsYmlRun struct {
-	Base        string          `yaml:"base"`
-	Start       string          `yaml:"start"`
-	Ports       []zeropsYmlPort `yaml:"ports"`
-	HealthCheck any             `yaml:"healthCheck"`
-	DeployFiles any             `yaml:"deployFiles"` // catch misplaced field (belongs under build:)
+	Base            string          `yaml:"base"`
+	Start           string          `yaml:"start"`
+	Ports           []zeropsYmlPort `yaml:"ports"`
+	HealthCheck     any             `yaml:"healthCheck"`
+	DeployFiles     any             `yaml:"deployFiles"`     // catch misplaced field (belongs under build:)
+	PrepareCommands any             `yaml:"prepareCommands"` // for /var/www detection
 }
 
 type zeropsYmlPort struct {
 	Port int `yaml:"port"`
 }
 
-// baseStrings normalizes Base to []string regardless of YAML format (string or []string).
-func (b zeropsYmlBuild) baseStrings() []string {
+// BaseStrings normalizes Base to []string regardless of YAML format (string or []string).
+func (b zeropsYmlBuild) BaseStrings() []string {
 	switch v := b.Base.(type) {
 	case string:
 		if v == "" {

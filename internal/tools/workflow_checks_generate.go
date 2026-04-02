@@ -181,6 +181,30 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 		}
 	}
 
+	// run.prepareCommands must not reference /var/www (deploy files arrive AFTER prepare).
+	if cmds := stringifyCommands(entry.Run.PrepareCommands); cmds != "" {
+		if strings.Contains(cmds, "/var/www") {
+			checks = append(checks, workflow.StepCheck{
+				Name:   hostname + "_prepare_varwww",
+				Status: statusFail,
+				Detail: "run.prepareCommands references /var/www — deploy files arrive AFTER prepareCommands. Use addToRunPrepare + /home/zerops/ instead.",
+			})
+		}
+	}
+
+	// build.base must not be a webserver variant (php-nginx, php-apache).
+	for _, base := range entry.Build.BaseStrings() {
+		baseLower := strings.ToLower(base)
+		if strings.Contains(baseLower, "php-nginx") || strings.Contains(baseLower, "php-apache") {
+			checks = append(checks, workflow.StepCheck{
+				Name:   hostname + "_build_base_webserver",
+				Status: statusFail,
+				Detail: fmt.Sprintf("build.base %q is a webserver variant (run base only). Use build.base: php@X, run.base: %s", base, base),
+			})
+			break
+		}
+	}
+
 	// Dev services need deployFiles: [.] for full source iteration.
 	if strings.Contains(hostname, "dev") && target.Runtime.EffectiveMode() != workflow.PlanModeSimple {
 		if deployFilesContainsDot(entry.Build.DeployFiles) {
@@ -212,6 +236,24 @@ func deployFilesContainsDot(deployFiles any) bool {
 		}
 	}
 	return false
+}
+
+// stringifyCommands converts a YAML commands field (string or []string) to a single string for pattern matching.
+func stringifyCommands(commands any) string {
+	switch v := commands.(type) {
+	case string:
+		return v
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, " ")
+	default:
+		return ""
+	}
 }
 
 // collectPlanHostnames extracts all hostnames from the bootstrap plan.

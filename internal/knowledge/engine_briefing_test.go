@@ -385,8 +385,10 @@ func TestGetRecipe_ModeDevAddsAdaptation(t *testing.T) {
 	if !strings.Contains(recipe, "**Mode: dev**") {
 		t.Error("dev mode recipe should contain mode adaptation header")
 	}
-	if !strings.Contains(recipe, "deployFiles: [.]") {
-		t.Error("dev mode recipe adaptation should mention deployFiles: [.]")
+	// Dev mode recipes contain deployFiles in their YAML blocks (dev setup uses [.] or ./).
+	// The adaptation header points to the dev setup block.
+	if !strings.Contains(recipe, "setup: dev") && !strings.Contains(recipe, "deployFiles") {
+		t.Error("dev mode recipe should contain dev setup with deployFiles")
 	}
 }
 

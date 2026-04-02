@@ -23,10 +23,10 @@ func testKnowledgeStore(t *testing.T) *knowledge.Store {
 			Title:   "Zerops Core Reference",
 			Content: "# Zerops Core Reference\n\nUniversal rules here.",
 		},
-		"zerops://themes/universals": {
-			URI:     "zerops://themes/universals",
-			Title:   "Zerops Platform Universals",
-			Content: "# Zerops Platform Universals\n\nBind 0.0.0.0. deployFiles mandatory.",
+		"zerops://themes/model": {
+			URI:     "zerops://themes/model",
+			Title:   "Zerops Platform Model",
+			Content: "# Zerops Platform Model\n\n## Container Universe\n\nLinux containers.\n\n## Platform Constraints\n\nBind 0.0.0.0. deployFiles mandatory.",
 		},
 		"zerops://recipes/php-hello-world": {
 			URI:     "zerops://recipes/php-hello-world",
@@ -235,11 +235,11 @@ func TestKnowledgeTool_ScopeInfrastructure_PrependsUniversals(t *testing.T) {
 	}
 
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "Platform Universals") {
+	if !strings.Contains(text, "Platform Constraints") {
 		t.Error("scope=infrastructure should prepend universals")
 	}
 	// Universals should appear before core content
-	uIdx := strings.Index(text, "Platform Universals")
+	uIdx := strings.Index(text, "Platform Constraints")
 	cIdx := strings.Index(text, "Zerops Core Reference")
 	if uIdx >= cIdx {
 		t.Error("universals should appear before core reference")
@@ -259,7 +259,7 @@ func TestKnowledgeTool_RecipeMode_PrependsUniversals(t *testing.T) {
 	}
 
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "Platform Universals") {
+	if !strings.Contains(text, "Platform Constraints") {
 		t.Error("recipe should be prepended with universals")
 	}
 	if !strings.Contains(text, "maxContainers") {
@@ -362,7 +362,7 @@ func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
 				}
 				// Stacks should appear before universals/core
 				sIdx := strings.Index(text, "Available Service Stacks")
-				uIdx := strings.Index(text, "Platform Universals")
+				uIdx := strings.Index(text, "Platform Constraints")
 				if sIdx >= uIdx {
 					t.Error("stacks should appear before universals")
 				}
@@ -372,7 +372,7 @@ func TestKnowledgeTool_ScopeWithLiveStacks(t *testing.T) {
 			if tt.wantCore && !strings.Contains(text, "Zerops Core Reference") {
 				t.Error("scope should include core reference")
 			}
-			if tt.wantUniversal && !strings.Contains(text, "Platform Universals") {
+			if tt.wantUniversal && !strings.Contains(text, "Platform Constraints") {
 				t.Error("scope should include universals")
 			}
 		})
@@ -417,7 +417,7 @@ func TestKnowledgeTool_Scope_CallTwice_BothReturnFull(t *testing.T) {
 	if text1 != text2 {
 		t.Error("second scope call should return same full content as first (no dedup)")
 	}
-	if !strings.Contains(text1, "Platform Universals") {
+	if !strings.Contains(text1, "Platform Constraints") {
 		t.Error("scope call should always include universals")
 	}
 }

@@ -194,7 +194,16 @@ func (s *Store) getWiringSyntax() string {
 	return doc.H2Sections()["Wiring Syntax"]
 }
 
-// decisionSectionMap maps service base names to operations.md decision section names.
+// decisionFileMap maps decision display names to decisions/ file URIs.
+var decisionFileMap = map[string]string{
+	"Choose Database":     "zerops://decisions/choose-database",
+	"Choose Cache":        "zerops://decisions/choose-cache",
+	"Choose Queue":        "zerops://decisions/choose-queue",
+	"Choose Search":       "zerops://decisions/choose-search",
+	"Choose Runtime Base": "zerops://decisions/choose-runtime-base",
+}
+
+// decisionSectionMap maps service base names to decision names.
 var decisionSectionMap = map[string]string{
 	"postgresql":    "Choose Database",
 	"mariadb":       "Choose Database",
@@ -251,45 +260,28 @@ func parseH3Sections(content string) map[string]string {
 }
 
 // getRelevantDecisions returns compact decision hints based on the runtime and services.
-// Decision sections are H3 subsections inside the "Service Selection Decisions" H2 of operations.md.
+// Reads from authoritative decisions/ files (not operations.md).
 func (s *Store) getRelevantDecisions(runtime string, services []string) string {
-	doc, err := s.Get("zerops://themes/operations")
-	if err != nil {
-		return ""
-	}
-	h2Sections := doc.H2Sections()
-	decisionBlock, ok := h2Sections["Service Selection Decisions"]
-	if !ok || decisionBlock == "" {
-		return ""
-	}
-	sections := parseH3Sections(decisionBlock)
-
 	var hints []string
 
 	// Runtime-related decisions
 	if runtime != "" {
 		base, _, _ := strings.Cut(runtime, "@")
 		if base == "go" || base == "python" || base == "dotnet" || base == "rust" {
-			if section, ok := sections["Choose Runtime Base"]; ok && section != "" {
-				summary := extractDecisionSummary(section)
-				if summary != "" {
-					hints = append(hints, "- **Choose Runtime Base**: "+summary)
-				}
+			if summary := s.getDecisionSummary("Choose Runtime Base"); summary != "" {
+				hints = append(hints, "- **Choose Runtime Base**: "+summary)
 			}
 		}
 	}
 
-	// Service-related decisions (deduplicate by section name)
+	// Service-related decisions (deduplicate by decision name)
 	seen := make(map[string]bool)
 	for _, svc := range services {
 		base, _, _ := strings.Cut(svc, "@")
-		if sectionName, ok := decisionSectionMap[base]; ok && !seen[sectionName] {
-			seen[sectionName] = true
-			if section, ok2 := sections[sectionName]; ok2 && section != "" {
-				summary := extractDecisionSummary(section)
-				if summary != "" {
-					hints = append(hints, "- **"+sectionName+"**: "+summary)
-				}
+		if decisionName, ok := decisionSectionMap[base]; ok && !seen[decisionName] {
+			seen[decisionName] = true
+			if summary := s.getDecisionSummary(decisionName); summary != "" {
+				hints = append(hints, "- **"+decisionName+"**: "+summary)
 			}
 		}
 	}
@@ -298,6 +290,23 @@ func (s *Store) getRelevantDecisions(runtime string, services []string) string {
 		return ""
 	}
 	return strings.Join(hints, "\n")
+}
+
+// getDecisionSummary loads a decision file and extracts the TL;DR as the summary.
+func (s *Store) getDecisionSummary(decisionName string) string {
+	uri, ok := decisionFileMap[decisionName]
+	if !ok {
+		return ""
+	}
+	doc, err := s.Get(uri)
+	if err != nil {
+		return ""
+	}
+	// Use TL;DR if available (decisions/ files have it), fall back to first paragraph.
+	if doc.TLDR != "" {
+		return doc.TLDR
+	}
+	return doc.Description
 }
 
 // extractDecisionSummary extracts the first paragraph (all lines until first blank line)

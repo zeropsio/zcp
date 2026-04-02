@@ -38,7 +38,7 @@ func TestCore_H2Sections_ContainsZeropsYmlSchema(t *testing.T) {
 	}
 }
 
-func TestCore_H2Sections_ContainsRulesAndPitfalls(t *testing.T) {
+func TestCore_H2Sections_ContainsSchemaAndExamples(t *testing.T) {
 	t.Parallel()
 	store, err := GetEmbeddedStore()
 	if err != nil {
@@ -49,8 +49,10 @@ func TestCore_H2Sections_ContainsRulesAndPitfalls(t *testing.T) {
 		t.Fatalf("Get core: %v", err)
 	}
 	sections := doc.H2Sections()
-	if _, ok := sections["Rules & Pitfalls"]; !ok {
-		t.Error("core.md missing H2 section 'Rules & Pitfalls'")
+	for _, name := range []string{"import.yml Schema", "zerops.yml Schema", "Schema Rules", "Multi-Service Examples"} {
+		if _, ok := sections[name]; !ok {
+			t.Errorf("core.md missing H2 section %q", name)
+		}
 	}
 }
 
@@ -166,28 +168,23 @@ func TestServices_H2Sections_ContainsAllNormalizedServices(t *testing.T) {
 	}
 }
 
-func TestOperations_DecisionSections_Accessible(t *testing.T) {
+func TestDecisionFiles_Accessible(t *testing.T) {
 	t.Parallel()
 	store, err := GetEmbeddedStore()
 	if err != nil {
 		t.Fatalf("GetEmbeddedStore: %v", err)
 	}
-	doc, err := store.Get("zerops://themes/operations")
-	if err != nil {
-		t.Fatalf("Get operations: %v", err)
-	}
-	h2 := doc.H2Sections()
-	decisions, ok := h2["Service Selection Decisions"]
-	if !ok {
-		t.Fatal("operations.md missing H2 section 'Service Selection Decisions'")
-	}
-	h3 := parseH3Sections(decisions)
 
-	for _, name := range []string{"Choose Database", "Choose Cache", "Choose Queue", "Choose Search", "Choose Runtime Base"} {
+	for name, uri := range decisionFileMap {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if _, ok := h3[name]; !ok {
-				t.Errorf("operations.md 'Service Selection Decisions' missing H3 subsection %q", name)
+			doc, err := store.Get(uri)
+			if err != nil {
+				t.Errorf("decision file %q (%s) not found: %v", name, uri, err)
+				return
+			}
+			if doc.TLDR == "" {
+				t.Errorf("decision file %q missing TL;DR", name)
 			}
 		})
 	}

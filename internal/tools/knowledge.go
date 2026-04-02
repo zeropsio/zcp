@@ -108,7 +108,10 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			}
 			result := core
 			if universals, uErr := store.GetUniversals(); uErr == nil {
-				result = universals + "\n\n---\n\n" + core
+				result = universals + "\n\n---\n\n" + result
+			}
+			if model, mErr := store.GetModel(); mErr == nil {
+				result = model + "\n\n---\n\n" + result
 			}
 			if client != nil && cache != nil {
 				if types := cache.Get(ctx, client); len(types) > 0 {
