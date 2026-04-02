@@ -16,6 +16,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
+	"github.com/zeropsio/zcp/internal/service"
 	"github.com/zeropsio/zcp/internal/update"
 )
 
@@ -24,8 +25,31 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "init":
-			if err := zcpinit.Run(".", runtime.Detect()); err != nil {
+			rt := runtime.Detect()
+			if len(os.Args) > 2 {
+				switch os.Args[2] {
+				case "nginx":
+					if err := zcpinit.RunNginx(); err != nil {
+						log.Fatalf("init nginx: %v", err)
+					}
+					return
+				case "sshfs":
+					if err := zcpinit.RunSSHFS(); err != nil {
+						log.Fatalf("init sshfs: %v", err)
+					}
+					return
+				}
+			}
+			if err := zcpinit.Run(".", rt); err != nil {
 				log.Fatalf("init: %v", err)
+			}
+			return
+		case "service":
+			if len(os.Args) < 4 || os.Args[2] != "start" {
+				log.Fatal("usage: zcp service start <nginx|vscode>")
+			}
+			if err := service.Start(os.Args[3]); err != nil {
+				log.Fatalf("service start: %v", err)
 			}
 			return
 		case "version":

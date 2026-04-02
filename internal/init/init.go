@@ -18,6 +18,12 @@ const (
 	markerEnd   = "# ZCP:END"
 )
 
+// step is a named, idempotent init operation.
+type step struct {
+	name string
+	fn   func(string) error
+}
+
 // Run executes the init subcommand, generating configuration files in baseDir.
 // Steps:
 //  1. Generate CLAUDE.md in baseDir
@@ -25,24 +31,25 @@ const (
 //  3. Configure permissions in baseDir/.claude/settings.local.json
 //  4. Configure SSH in $HOME/.ssh/config (container only, managed section)
 //  5. Install shell aliases in $HOME/.config/zerops/aliases + source from .bashrc
+//     6-9. Container-only: git config, Claude configs, VS Code settings (if InContainer)
 //
 // All steps are idempotent — re-running resets to defaults.
 func Run(baseDir string, rt runtime.Info) error {
-	steps := []struct {
-		name string
-		fn   func(string) error
-	}{
+	steps := []step{
 		{"CLAUDE.md", generateCLAUDEMD},
 		{"MCP config", generateMCPConfig},
 		{"Permissions", generateSettingsLocal},
 		{"SSH config", func(_ string) error { return generateSSHConfig(rt) }},
 		{"Shell aliases", generateAliases},
 	}
+	if rt.InContainer {
+		steps = append(steps, containerSteps()...)
+	}
 
-	for _, step := range steps {
-		fmt.Fprintf(os.Stderr, "  → %s\n", step.name)
-		if err := step.fn(baseDir); err != nil {
-			return fmt.Errorf("%s: %w", step.name, err)
+	for _, s := range steps {
+		fmt.Fprintf(os.Stderr, "  → %s\n", s.name)
+		if err := s.fn(baseDir); err != nil {
+			return fmt.Errorf("%s: %w", s.name, err)
 		}
 	}
 

@@ -1,0 +1,13 @@
+{
+  "autorun": false,
+  "autokill": true,
+  "terminals": [
+    {
+      "name": "Claude Terminal",
+      "command": "claude",
+      "focus": true,
+      "open": true,
+      "splitTerminal": true
+    }
+  ]
+}

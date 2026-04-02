@@ -11,6 +11,17 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
+// stubContainerCommands prevents container init steps from running real commands.
+func stubContainerCommands(t *testing.T) {
+	t.Helper()
+	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
+	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
+	zcpinit.SetGitInitDir(t.TempDir())
+	t.Cleanup(func() { zcpinit.ResetGitInitDir() })
+	zcpinit.SetVSCodeWorkDir(t.TempDir())
+	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
+}
+
 func TestRun_GeneratesCLAUDEMD(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -56,6 +67,7 @@ func TestRun_GeneratesSSHConfig(t *testing.T) {
 	dir := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	stubContainerCommands(t)
 
 	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
 	if err != nil {
@@ -247,6 +259,7 @@ func TestRun_ReportsSteps(t *testing.T) {
 	dir := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	stubContainerCommands(t)
 
 	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
 	if err != nil {
@@ -273,6 +286,7 @@ func TestSSHConfig_Container_ManagedSection(t *testing.T) {
 	dir := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	stubContainerCommands(t)
 
 	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
 	if err != nil {
@@ -301,6 +315,7 @@ func TestSSHConfig_Container_ControlMaster(t *testing.T) {
 	dir := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	stubContainerCommands(t)
 
 	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
 	if err != nil {
@@ -330,6 +345,7 @@ func TestSSHConfig_Container_PreservesExisting(t *testing.T) {
 	dir := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	stubContainerCommands(t)
 
 	// Write pre-existing SSH config.
 	sshDir := filepath.Join(homeDir, ".ssh")
@@ -368,6 +384,7 @@ func TestSSHConfig_Container_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	stubContainerCommands(t)
 
 	rt := runtime.Info{InContainer: true}
 

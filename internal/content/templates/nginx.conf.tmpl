@@ -1,0 +1,110 @@
+worker_processes auto;
+pid /run/nginx.pid;
+error_log /var/log/nginx/error.log;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    access_log /var/log/nginx/access.log;
+    client_max_body_size 0;
+    map_hash_bucket_size 128;
+
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ""      close;
+    }
+{{- if .HasAuth}}
+
+    map $cookie___zcp_auth $zcp_cookie_ok {
+        {{.PasswordHash}} 1;
+        default 0;
+    }
+{{- end}}
+
+    server {
+        listen 8080;
+{{- if .HasAuth}}
+
+        location = /zcp-logout {
+            add_header Set-Cookie "__zcp_auth=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0";
+            return 302 /zcp-login;
+        }
+
+        location = /zcp-login {
+            default_type text/html;
+            return 200 '<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #0f1117; font-family: system-ui, sans-serif; }
+  .card { background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 12px; padding: 2rem; width: 100%; max-width: 360px; }
+  h1 { color: #fff; font-size: 1.25rem; margin-bottom: 1.5rem; }
+  input { width: 100%; padding: 0.65rem 0.85rem; background: #0f1117; border: 1px solid #2a2d3a; border-radius: 8px; color: #fff; font-size: 0.95rem; margin-bottom: 1rem; outline: none; }
+  input:focus { border-color: #5865f2; }
+  button { width: 100%; padding: 0.65rem; background: #5865f2; border: none; border-radius: 8px; color: #fff; font-size: 0.95rem; cursor: pointer; }
+  button:hover { background: #4752c4; }
+  .error { color: #f87171; font-size: 0.85rem; margin-top: 0.75rem; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Login</h1>
+  <input type="password" id="token" placeholder="Access token" autofocus />
+  <button onclick="login()">Sign in</button>
+  <div class="error" id="err"></div>
+</div>
+<script>
+  if (new URLSearchParams(window.location.search).get("invalid") === "1") {
+    document.getElementById("err").textContent = "Invalid token.";
+  }
+  function login() {
+    var t = document.getElementById("token").value.trim();
+    if (!t) return;
+    window.location.href = "/zcp-auth/" + t;
+  }
+  document.getElementById("token").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") login();
+  });
+</script>
+</body>
+</html>';
+        }
+
+        location = /zcp-auth/{{.PasswordHash}} {
+            add_header Set-Cookie "__zcp_auth={{.PasswordHash}}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=86400";
+            return 302 /;
+        }
+
+        location ~ /zcp-auth/ {
+            return 302 /zcp-login?invalid=1;
+        }
+{{- end}}
+
+        location / {
+{{- if .HasAuth}}
+            if ($zcp_cookie_ok = 0) {
+                return 302 /zcp-login;
+            }
+{{- end}}
+
+            proxy_pass http://127.0.0.1:8081;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
+            proxy_hide_header X-Frame-Options;
+            add_header Content-Security-Policy "frame-ancestors 'self' https://app.zerops.io https://*.zerops.io https://*.zerops.app https://*.zerops.dev http://localhost:*" always;
+        }
+    }
+}
