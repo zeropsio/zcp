@@ -15,6 +15,7 @@ type WorkflowState struct {
 	UpdatedAt string          `json:"updatedAt"`
 	Bootstrap *BootstrapState `json:"bootstrap,omitempty"`
 	Deploy    *DeployState    `json:"deploy,omitempty"`
+	Recipe    *RecipeState    `json:"recipe,omitempty"`
 }
 
 // immediateWorkflows are stateless — no session, just guidance.

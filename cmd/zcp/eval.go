@@ -27,6 +27,10 @@ func runEval(args []string) {
 		runEvalRun(args[1:])
 	case "suite":
 		runEvalSuite(args[1:])
+	case "create":
+		runEvalCreate(args[1:])
+	case "create-suite":
+		runEvalCreateSuite(args[1:])
 	case "cleanup":
 		runEvalCleanup(args[1:])
 	case "results":
@@ -42,10 +46,12 @@ func printEvalUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: zcp eval <command>
 
 Commands:
-  run      --recipe <name>[,name...]   Run evaluation for specific recipes
-  suite    [--tag <tag>]               Run evaluation for all recipes
-  cleanup  [--prefix <prefix>]         Full project cleanup (or prefix-only with --prefix)
-  results  [--suite <id>]              Show latest results summary`)
+  run          --recipe <name>[,name...]       Run evaluation for specific recipes
+  suite        [--tag <tag>]                   Run evaluation for all recipes
+  create       --framework <name> --tier <t>   Create a recipe via headless workflow
+  create-suite --frameworks <a,b> --tier <t>   Batch-create recipes
+  cleanup      [--prefix <prefix>]             Full project cleanup (or prefix-only with --prefix)
+  results      [--suite <id>]                  Show latest results summary`)
 }
 
 func runEvalRun(args []string) {
@@ -110,6 +116,105 @@ func runEvalSuite(args []string) {
 
 	fmt.Fprintf(os.Stderr, "Running eval suite: %d recipes\n", len(recipes))
 	result, err := suite.RunAll(ctx, recipes)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	printSuiteResult(result)
+}
+
+func runEvalCreate(args []string) {
+	var framework, tier string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--framework":
+			if i+1 < len(args) {
+				framework = args[i+1]
+				i++
+			}
+		case "--tier":
+			if i+1 < len(args) {
+				tier = args[i+1]
+				i++
+			}
+		}
+	}
+	if framework == "" {
+		fmt.Fprintln(os.Stderr, "error: --framework required")
+		os.Exit(1)
+	}
+	if tier == "" {
+		tier = "minimal"
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
+	config := eval.RecipeCreateConfig{
+		MCPConfig:  evalMCPConfig(),
+		ResultsDir: evalResultsDir(),
+	}
+	creator := eval.NewRecipeCreator(config)
+
+	fmt.Fprintf(os.Stderr, "Creating %s %s recipe...\n", framework, tier)
+	result, err := creator.CreateRecipe(ctx, framework, tier)
+	stop()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	status := "SUCCESS"
+	if !result.Success {
+		status = "FAIL"
+	}
+	if result.Error != "" {
+		status = "ERROR: " + result.Error
+	}
+	fmt.Fprintf(os.Stderr, "\n%s: %s (%s)\nLog: %s\n", result.Slug, status, result.Duration, result.LogFile)
+}
+
+func runEvalCreateSuite(args []string) {
+	var frameworks, tier string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--frameworks":
+			if i+1 < len(args) {
+				frameworks = args[i+1]
+				i++
+			}
+		case "--tier":
+			if i+1 < len(args) {
+				tier = args[i+1]
+				i++
+			}
+		}
+	}
+	if frameworks == "" {
+		fmt.Fprintln(os.Stderr, "error: --frameworks required")
+		os.Exit(1)
+	}
+	if tier == "" {
+		tier = "minimal"
+	}
+
+	frameworkList := strings.Split(frameworks, ",")
+	for i, f := range frameworkList {
+		frameworkList[i] = strings.TrimSpace(f)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
+	config := eval.RecipeCreateConfig{
+		MCPConfig:  evalMCPConfig(),
+		ResultsDir: evalResultsDir(),
+	}
+	creator := eval.NewRecipeCreator(config)
+	suite := eval.NewRecipeCreateSuite(creator)
+
+	fmt.Fprintf(os.Stderr, "Creating %d recipes (%s tier)...\n", len(frameworkList), tier)
+	result, err := suite.CreateAll(ctx, frameworkList, tier)
+	stop()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -219,22 +324,25 @@ func evalMCPConfig() string {
 }
 
 func initPlatformClient() (platform.Client, string, context.Context) {
-	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
 	creds, err := auth.ResolveCredentials()
 	if err != nil {
+		stop()
 		fmt.Fprintf(os.Stderr, "auth error: %v\n", err)
 		os.Exit(1)
 	}
 
 	client, err := platform.NewZeropsClient(creds.Token, creds.APIHost)
 	if err != nil {
+		stop()
 		fmt.Fprintf(os.Stderr, "client error: %v\n", err)
 		os.Exit(1)
 	}
 
 	authInfo, err := auth.Resolve(ctx, client)
 	if err != nil {
+		stop()
 		fmt.Fprintf(os.Stderr, "auth error: %v\n", err)
 		os.Exit(1)
 	}

@@ -36,7 +36,7 @@ type Runner struct {
 // NewRunner creates a new eval runner.
 func NewRunner(config RunnerConfig, store *knowledge.Store, client platform.Client, projectID string) *Runner {
 	if config.Model == "" {
-		config.Model = "sonnet"
+		config.Model = defaultModel
 	}
 	if config.MaxTurns == 0 {
 		config.MaxTurns = 60

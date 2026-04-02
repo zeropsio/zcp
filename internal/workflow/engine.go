@@ -41,7 +41,8 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 		if existing, err := LoadSessionByID(e.stateDir, e.sessionID); err == nil {
 			bootstrapDone := existing.Bootstrap != nil && !existing.Bootstrap.Active
 			deployDone := existing.Deploy != nil && !existing.Deploy.Active
-			if bootstrapDone || deployDone {
+			recipeDone := existing.Recipe != nil && !existing.Recipe.Active
+			if bootstrapDone || deployDone || recipeDone {
 				if err := ResetSessionByID(e.stateDir, e.sessionID); err != nil {
 					return nil, fmt.Errorf("start auto-reset: %w", err)
 				}

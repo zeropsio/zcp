@@ -27,3 +27,7 @@ type StepChecker func(ctx context.Context, plan *ServicePlan, state *BootstrapSt
 // Separate from StepChecker because deploy has no ServicePlan or BootstrapState.
 // Returns nil result to skip checking (equivalent to always-pass).
 type DeployStepChecker func(ctx context.Context, state *DeployState) (*StepCheckResult, error)
+
+// RecipeStepChecker validates recipe workflow step postconditions.
+// Returns nil result to skip checking (equivalent to always-pass).
+type RecipeStepChecker func(ctx context.Context, plan *RecipePlan, state *RecipeState) (*StepCheckResult, error)

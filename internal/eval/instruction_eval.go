@@ -44,7 +44,7 @@ type EvalScore struct {
 // RunInstructionEval executes the full A/B evaluation matrix.
 func RunInstructionEval(ctx context.Context, config InstructionEvalConfig) ([]InstructionEvalResult, error) {
 	if config.Model == "" {
-		config.Model = "sonnet"
+		config.Model = defaultModel
 	}
 	if config.MaxTurns == 0 {
 		config.MaxTurns = 5

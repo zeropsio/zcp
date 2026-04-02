@@ -41,11 +41,11 @@ cmd/zcp/main.go → internal/server  → MCP tools  → internal/ops      → in
 | `internal/server` | MCP server setup, tool registration, system prompt |
 | `internal/tools` | MCP tool handlers (15 tools) |
 | `internal/ops` | Business logic — deploy, verify, import, scale |
-| `internal/workflow` | Bootstrap/deploy conductors, personalized guidance, checkers, session state, router |
+| `internal/workflow` | Bootstrap/deploy/recipe conductors, personalized guidance, checkers, session state, router |
 | `internal/platform` | Zerops API client, types, error codes |
 | `internal/auth` | Token resolution (env var / zcli), project discovery |
 | `internal/knowledge` | BM25 search, embedded docs + recipes, session-aware briefings |
-| `internal/content` | Embedded workflow guides (bootstrap.md, deploy.md) |
+| `internal/content` | Embedded workflow guides (bootstrap.md, deploy.md, recipe.md, cicd.md) |
 
 ---
 
@@ -72,7 +72,7 @@ Route(RouterInput) → []FlowOffering{Workflow, Priority, Hint}
 | **All managed** (all runtimes have ZCP state) | strategy-based deploy (p1) | bootstrap (p2) |
 | **Unmanaged runtimes exist** (services without ZCP state) | strategy-based or debug (p1-2) | bootstrap (p2) |
 
-Strategy-based routing reads `ServiceMeta.DeployStrategy` persisted from prior bootstraps. Utility offerings (debug, configure, zerops_scale) are always appended at priority 5. Scale is a direct tool — no workflow needed. Stale metas (hostnames deleted from API) are filtered out automatically.
+Strategy-based routing reads `ServiceMeta.DeployStrategy` persisted from prior bootstraps. Utility offerings (recipe, scale) are always appended at priority 4-5. Scale is a direct tool — no workflow needed. Stale metas (hostnames deleted from API) are filtered out automatically.
 
 ---
 
@@ -80,11 +80,11 @@ Strategy-based routing reads `ServiceMeta.DeployStrategy` persisted from prior b
 
 ### Immediate (stateless)
 
-**debug**, **scale**, **configure** — return guidance markdown, no session tracking.
+**cicd** — return guidance markdown, no session tracking.
 
 ### Orchestrated (session-tracked)
 
-**bootstrap** and **deploy** — create a session with state persistence, checker-based validation, and iteration support.
+**bootstrap**, **deploy**, and **recipe** — create a session with state persistence, checker-based validation, and iteration support.
 
 ---
 
@@ -187,6 +187,64 @@ See `docs/spec-guidance-philosophy.md` for the full guidance delivery specificat
 
 ---
 
+## Recipe workflow
+
+Recipe is a 6-step workflow that creates deployable recipe repositories — reference implementations with 6 environment tiers (AI Agent, Remote CDE, Local, Stage, Small Production, HA Production).
+
+### The 6 steps
+
+```
+┌──────────┐   ┌───────────┐   ┌──────────┐   ┌────────┐   ┌──────────┐   ┌───────┐
+│ RESEARCH │──▶│ PROVISION │──▶│ GENERATE │──▶│ DEPLOY │──▶│ FINALIZE │──▶│ CLOSE │
+│  (fixed) │   │  (fixed)  │   │(creative)│   │(branch)│   │(creative)│   │(skip.)│
+└──────────┘   └───────────┘   └──────────┘   └────────┘   └──────────┘   └───────┘
+```
+
+| Step | What happens | Hard check |
+|------|-------------|------------|
+| **research** | Fill framework research fields, submit `RecipePlan` with type/slug/targets validated against live catalog | Plan validation (slug format, types, required fields, showcase extras) |
+| **provision** | Create workspace services via import.yaml | — (self-attested) |
+| **generate** | Write app code + zerops.yml + README with extract fragments | Fragment markers present, YAML code block, comment ratio ≥ 30%, Gotchas section, no placeholders |
+| **deploy** | Deploy, enable subdomains, verify health | — (self-attested, uses iteration escalation) |
+| **finalize** | Generate 13 recipe repo files (6 import.yaml + 6 env README + main README) | All files exist, valid YAML, project naming, priority/HA/scaling per env tier, comment quality |
+| **close** | Write `RecipeMeta`, present publish commands | — (administrative, skippable) |
+
+Only **close** is skippable. Iteration resets generate + deploy + finalize while preserving research + provision.
+
+### Recipe plan model
+
+The **research** step produces a **RecipePlan** that drives all subsequent steps:
+
+```
+RecipePlan
+  ├─ Framework     "laravel"
+  ├─ Tier          "minimal" | "showcase"
+  ├─ Slug          "laravel-hello-world"
+  ├─ RuntimeType   "php-nginx@8.4"
+  ├─ Decisions     {WebServer, BuildBase, OS, DevTooling}
+  ├─ Research      {ServiceType, PackageManager, HTTPPort, BuildCommands, ...}
+  └─ Targets[]     {Hostname, Type, Role, Environments[]}
+```
+
+### Headless creation (eval)
+
+```bash
+zcp eval create --framework laravel --tier minimal           # Single recipe
+zcp eval create-suite --frameworks laravel,nestjs --tier minimal  # Batch
+```
+
+Spawns Claude CLI headlessly against the recipe workflow. Results in `.zcp/eval/results/`.
+
+### Publish flow
+
+```
+recipe complete → zcp sync push recipes {slug} → merge PR → zcp sync cache-clear {slug} → zcp sync pull recipes {slug}
+```
+
+Recipe metadata persists at `{stateDir}/recipes/{slug}.json`.
+
+---
+
 ## Post-bootstrap: ServiceMeta persistence
 
 Bootstrap writes per-service metadata at two points:
@@ -252,8 +310,9 @@ All workflow state persists locally at `.zcp/state/`:
 
 | File | Purpose |
 |------|---------|
-| `sessions/{id}.json` | Session state: bootstrap/deploy steps, plan, env vars, iteration |
+| `sessions/{id}.json` | Session state: bootstrap/deploy/recipe steps, plan, env vars, iteration |
 | `services/{hostname}.json` | Per-service metadata (mode, strategy, stage pairing) |
+| `recipes/{slug}.json` | Recipe metadata (slug, framework, tier, runtimeType) |
 | `registry.json` | Active session tracking with PID-based ownership |
 
 Sessions survive process restarts. The MCP system prompt shows the active session state so the LLM can resume where it left off. Dead sessions (stale PID) can be taken over via `zerops_workflow action="resume"`.

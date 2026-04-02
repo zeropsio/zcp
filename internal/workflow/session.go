@@ -109,6 +109,9 @@ func IterateSession(stateDir, sessionID string) (*WorkflowState, error) {
 	if state.Deploy != nil {
 		state.Deploy.ResetForIteration()
 	}
+	if state.Recipe != nil {
+		state.Recipe.ResetForIteration()
+	}
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
 	if err := saveSessionState(stateDir, sessionID, state); err != nil {

@@ -42,10 +42,10 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/auth` | Token resolution (env var / zcli), project discovery | `auth.go` |
 | `internal/knowledge` | BM25 search, embedded docs, session-aware briefings, runtime-aware mode adaptation | `engine.go`, `briefing.go` |
 | `internal/runtime` | Container vs local detection | `runtime.go` |
-| `internal/content` | Embedded templates + workflow catalog | `content.go` |
-| `internal/workflow` | Workflow orchestration, bootstrap/deploy conductors, guidance assembly, session state | `session.go`, `deploy_guidance.go` |
+| `internal/content` | Embedded templates + workflow catalog (bootstrap, deploy, recipe, cicd) | `content.go` |
+| `internal/workflow` | Workflow orchestration, bootstrap/deploy/recipe conductors, guidance assembly, session state | `session.go`, `deploy_guidance.go`, `recipe.go`, `engine_recipe.go` |
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
-| `internal/eval` | LLM recipe eval via Claude CLI headless mode | `runner.go`, `prompt.go` |
+| `internal/eval` | LLM recipe eval + headless recipe creation via Claude CLI | `runner.go`, `prompt.go`, `recipe_create.go` |
 | `internal/catalog` | API-driven version catalog sync for test validation | `sync.go` |
 | `internal/sync` | Bidirectional recipe/guide sync: API pull, GitHub push, Strapi cache | `push_recipes.go`, `transform.go` |
 

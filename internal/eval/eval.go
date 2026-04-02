@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// defaultModel is the default Claude model for eval runs.
+const defaultModel = "sonnet"
+
 // RecipeMetadata holds parsed recipe data used for prompt generation.
 type RecipeMetadata struct {
 	Name     string       `json:"name"`

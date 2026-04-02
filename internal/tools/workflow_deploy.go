@@ -132,7 +132,7 @@ func handleDeploySkip(_ context.Context, engine *workflow.Engine, input Workflow
 	}
 	reason := input.Reason
 	if reason == "" {
-		reason = "skipped by user"
+		reason = defaultSkipReason
 	}
 
 	resp, err := engine.DeploySkip(input.Step, reason)

@@ -14,6 +14,7 @@ func TestGetWorkflow_AllWorkflows(t *testing.T) {
 		{"bootstrap"},
 		{"deploy"},
 		{"cicd"},
+		{"recipe"},
 	}
 
 	for _, tt := range tests {
@@ -141,7 +142,7 @@ func TestListWorkflows_Complete(t *testing.T) {
 
 	workflows := ListWorkflows()
 
-	expected := []string{"bootstrap", "cicd", "deploy"}
+	expected := []string{"bootstrap", "cicd", "deploy", "recipe"}
 	if len(workflows) != len(expected) {
 		t.Fatalf("expected %d workflows, got %d: %v", len(expected), len(workflows), workflows)
 	}

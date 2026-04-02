@@ -17,7 +17,7 @@ func TestRoute_EmptyProject(t *testing.T) {
 			name:           "no services, no metas, no sessions",
 			input:          RouterInput{},
 			wantTop:        "bootstrap",
-			wantMinOffered: 2, // bootstrap + scale
+			wantMinOffered: 3, // bootstrap + recipe + scale
 		},
 		{
 			name: "active bootstrap session offers resume",
@@ -201,6 +201,19 @@ func TestRoute_AlwaysIncludesUtilities(t *testing.T) {
 			}
 			if !hasScale {
 				t.Error("missing utility workflow \"scale\"")
+			}
+
+			hasRecipe := false
+			for _, o := range offerings {
+				if o.Workflow == "recipe" {
+					hasRecipe = true
+					if o.Priority != 4 {
+						t.Errorf("recipe priority = %d, want 4", o.Priority)
+					}
+				}
+			}
+			if !hasRecipe {
+				t.Error("missing utility workflow \"recipe\"")
 			}
 		})
 	}

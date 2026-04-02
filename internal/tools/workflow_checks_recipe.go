@@ -1,0 +1,372 @@
+package tools
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/workflow"
+)
+
+// buildRecipeStepChecker returns a step checker for the given recipe step.
+func buildRecipeStepChecker(step, _, stateDir string) workflow.RecipeStepChecker {
+	switch step {
+	case workflow.RecipeStepGenerate:
+		return checkRecipeGenerate(stateDir)
+	case workflow.RecipeStepFinalize:
+		return wrapFinalizeChecker()
+	}
+	return nil
+}
+
+// wrapFinalizeChecker returns a RecipeStepChecker that reads outputDir from state.
+func wrapFinalizeChecker() workflow.RecipeStepChecker {
+	return func(ctx context.Context, plan *workflow.RecipePlan, state *workflow.RecipeState) (*workflow.StepCheckResult, error) {
+		outputDir := ""
+		if state != nil {
+			outputDir = state.OutputDir
+		}
+		checker := checkRecipeFinalize(outputDir)
+		return checker(ctx, plan, state)
+	}
+}
+
+// Fragment marker patterns (errata E5: colon separator, trailing hash).
+var placeholderRe = regexp.MustCompile(`(?i)(PLACEHOLDER_\w+|<your-[^>]+>|TODO\b)`)
+
+// Required fragment names for recipe READMEs.
+var requiredFragments = []string{"integration-guide", "knowledge-base", "intro"}
+
+// checkRecipeGenerate validates the generate step for recipe workflow.
+// Extends bootstrap's checkGenerate with recipe-specific fragment quality checks.
+func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
+	return func(_ context.Context, plan *workflow.RecipePlan, state *workflow.RecipeState) (*workflow.StepCheckResult, error) {
+		if plan == nil {
+			return nil, nil
+		}
+
+		projectRoot := filepath.Dir(filepath.Dir(stateDir))
+
+		var checks []workflow.StepCheck
+
+		// Find the app target (first target with role "app").
+		var appHostname string
+		for _, t := range plan.Targets {
+			if t.Role == workflow.RecipeRoleApp {
+				appHostname = t.Hostname
+				break
+			}
+		}
+		if appHostname == "" && len(plan.Targets) > 0 {
+			appHostname = plan.Targets[0].Hostname
+		}
+
+		// Check zerops.yml existence and structure.
+		mountPath := filepath.Join(projectRoot, appHostname)
+		ymlDir := projectRoot
+		if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
+			ymlDir = mountPath
+		}
+
+		doc, parseErr := ops.ParseZeropsYml(ymlDir)
+		if parseErr != nil {
+			checks = append(checks, workflow.StepCheck{
+				Name: "zerops_yml_exists", Status: statusFail,
+				Detail: fmt.Sprintf("zerops.yml not found: %v", parseErr),
+			})
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name: "zerops_yml_exists", Status: statusPass,
+			})
+			checks = append(checks, checkRecipeSetups(doc, appHostname, plan)...)
+		}
+
+		// Check README fragments.
+		readmePath := filepath.Join(ymlDir, "README.md")
+		readmeContent, readErr := os.ReadFile(readmePath)
+		if readErr != nil {
+			checks = append(checks, workflow.StepCheck{
+				Name: "readme_exists", Status: statusFail,
+				Detail: fmt.Sprintf("README.md not found at %s", readmePath),
+			})
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name: "readme_exists", Status: statusPass,
+			})
+			checks = append(checks, checkReadmeFragments(string(readmeContent))...)
+		}
+
+		allPassed := true
+		for i := range checks {
+			if checks[i].Status == statusFail {
+				allPassed = false
+				break
+			}
+		}
+		summary := "recipe generate checks passed"
+		if !allPassed {
+			summary = "recipe generate checks failed"
+		}
+		return &workflow.StepCheckResult{
+			Passed: allPassed, Checks: checks, Summary: summary,
+		}, nil
+	}
+}
+
+// checkRecipeSetups validates zerops.yml has the required setups for a recipe.
+func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, plan *workflow.RecipePlan) []workflow.StepCheck {
+	var checks []workflow.StepCheck
+
+	entry := doc.FindEntry(hostname)
+	if entry == nil {
+		checks = append(checks, workflow.StepCheck{
+			Name: hostname + "_setup", Status: statusFail,
+			Detail: fmt.Sprintf("no setup entry for %q in zerops.yml", hostname),
+		})
+		return checks
+	}
+	checks = append(checks, workflow.StepCheck{
+		Name: hostname + "_setup", Status: statusPass,
+	})
+
+	// Check for required setups: recipe needs base+prod+dev (minimal) or base+prod+dev+worker (showcase).
+	requiredSetups := []string{"base", "prod", "dev"}
+	if plan.Tier == workflow.RecipeTierShowcase {
+		requiredSetups = append(requiredSetups, "worker")
+	}
+
+	// Check if the doc has multiple setup entries or if setup names are referenced.
+	// Since zerops.yml structure may vary, check available entries in the doc.
+	for _, setup := range requiredSetups {
+		setupEntry := doc.FindEntry(hostname + ":" + setup)
+		if setupEntry == nil {
+			// Also try standalone setup name.
+			setupEntry = doc.FindEntry(setup)
+		}
+		// For now, record the check but don't fail — zerops.yml setup structure varies.
+		if setupEntry != nil {
+			checks = append(checks, workflow.StepCheck{
+				Name: hostname + "_setup_" + setup, Status: statusPass,
+			})
+		}
+		// Don't fail on missing individual setups — the main entry existence is sufficient
+		// for Phase 3. Phase-specific setup validation will be added when the zerops.yml
+		// parser supports multi-setup detection.
+	}
+
+	return checks
+}
+
+// checkReadmeFragments validates README.md contains required fragment markers and quality.
+func checkReadmeFragments(content string) []workflow.StepCheck {
+	var checks []workflow.StepCheck
+
+	// Check required fragment markers.
+	for _, name := range requiredFragments {
+		startTag := fmt.Sprintf("#ZEROPS_EXTRACT_START:%s#", name)
+		endTag := fmt.Sprintf("#ZEROPS_EXTRACT_END:%s#", name)
+
+		hasStart := strings.Contains(content, startTag)
+		hasEnd := strings.Contains(content, endTag)
+
+		if hasStart && hasEnd {
+			checks = append(checks, workflow.StepCheck{
+				Name: "fragment_" + name, Status: statusPass,
+			})
+		} else {
+			detail := fmt.Sprintf("missing fragment markers for %q", name)
+			if hasStart && !hasEnd {
+				detail = fmt.Sprintf("fragment %q has start marker but missing end marker", name)
+			}
+			checks = append(checks, workflow.StepCheck{
+				Name: "fragment_" + name, Status: statusFail,
+				Detail: detail,
+			})
+		}
+	}
+
+	// Check integration-guide fragment has zerops.yaml code block.
+	igContent := extractFragmentContent(content, "integration-guide")
+	if igContent != "" {
+		if strings.Contains(igContent, "```yaml") || strings.Contains(igContent, "```yml") {
+			checks = append(checks, workflow.StepCheck{
+				Name: "integration_guide_yaml", Status: statusPass,
+			})
+			// Check comment ratio in the YAML code block.
+			yamlBlock := extractYAMLBlock(igContent)
+			if yamlBlock != "" {
+				ratio := commentRatio(yamlBlock)
+				if ratio >= 0.3 {
+					checks = append(checks, workflow.StepCheck{
+						Name: "comment_ratio", Status: statusPass,
+						Detail: fmt.Sprintf("%.0f%% comments", ratio*100),
+					})
+				} else {
+					checks = append(checks, workflow.StepCheck{
+						Name: "comment_ratio", Status: statusFail,
+						Detail: fmt.Sprintf("comment ratio %.0f%% is below 30%% minimum", ratio*100),
+					})
+				}
+			}
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name: "integration_guide_yaml", Status: statusFail,
+				Detail: "integration-guide fragment must contain a zerops.yaml code block",
+			})
+		}
+	}
+
+	// Check knowledge-base fragment has Gotchas section.
+	kbContent := extractFragmentContent(content, "knowledge-base")
+	if kbContent != "" {
+		if strings.Contains(kbContent, "### Gotchas") || strings.Contains(kbContent, "## Gotchas") {
+			checks = append(checks, workflow.StepCheck{
+				Name: "knowledge_base_gotchas", Status: statusPass,
+			})
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name: "knowledge_base_gotchas", Status: statusFail,
+				Detail: "knowledge-base fragment must include a Gotchas section",
+			})
+		}
+	}
+
+	// Check intro fragment constraints.
+	introContent := extractFragmentContent(content, "intro")
+	if introContent != "" {
+		lines := nonEmptyLines(introContent)
+		if len(lines) > 3 {
+			checks = append(checks, workflow.StepCheck{
+				Name: "intro_length", Status: statusFail,
+				Detail: fmt.Sprintf("intro must be 1-3 lines, got %d", len(lines)),
+			})
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name: "intro_length", Status: statusPass,
+			})
+		}
+		if strings.Contains(introContent, "#") {
+			checks = append(checks, workflow.StepCheck{
+				Name: "intro_no_titles", Status: statusFail,
+				Detail: "intro must not contain markdown titles",
+			})
+		}
+	}
+
+	// Check no placeholders anywhere in README.
+	if matches := placeholderRe.FindAllString(content, -1); len(matches) > 0 {
+		checks = append(checks, workflow.StepCheck{
+			Name: "no_placeholders", Status: statusFail,
+			Detail: fmt.Sprintf("found placeholder strings: %s", strings.Join(uniqueStrings(matches), ", ")),
+		})
+	} else {
+		checks = append(checks, workflow.StepCheck{
+			Name: "no_placeholders", Status: statusPass,
+		})
+	}
+
+	return checks
+}
+
+// extractFragmentContent extracts content between ZEROPS_EXTRACT_START and END markers.
+// Looks for the full HTML comment form: <!-- #ZEROPS_EXTRACT_START:name# -->
+func extractFragmentContent(content, name string) string {
+	startMarker := fmt.Sprintf("#ZEROPS_EXTRACT_START:%s#", name)
+	endMarker := fmt.Sprintf("#ZEROPS_EXTRACT_END:%s#", name)
+
+	startIdx := strings.Index(content, startMarker)
+	if startIdx < 0 {
+		return ""
+	}
+	// Find the end of the start marker line (skip past closing -->).
+	afterStart := startIdx + len(startMarker)
+	lineEnd := strings.Index(content[afterStart:], "\n")
+	if lineEnd < 0 {
+		return ""
+	}
+	contentStart := afterStart + lineEnd + 1
+
+	// Find the end marker, but look for the <!-- that precedes it.
+	endIdx := strings.Index(content[contentStart:], endMarker)
+	if endIdx < 0 {
+		return ""
+	}
+	// Walk back from the endMarker to find the start of its <!-- comment.
+	extractEnd := contentStart + endIdx
+	for extractEnd > contentStart && content[extractEnd-1] != '\n' {
+		extractEnd--
+	}
+	return strings.TrimSpace(content[contentStart:extractEnd])
+}
+
+// extractYAMLBlock extracts content from the first ```yaml ... ``` block.
+func extractYAMLBlock(content string) string {
+	start := strings.Index(content, "```yaml")
+	if start < 0 {
+		start = strings.Index(content, "```yml")
+	}
+	if start < 0 {
+		return ""
+	}
+	// Skip past the opening fence line.
+	lineEnd := strings.Index(content[start:], "\n")
+	if lineEnd < 0 {
+		return ""
+	}
+	blockStart := start + lineEnd + 1
+
+	end := strings.Index(content[blockStart:], "```")
+	if end < 0 {
+		return ""
+	}
+	return content[blockStart : blockStart+end]
+}
+
+// commentRatio calculates the ratio of comment lines to total non-empty lines.
+func commentRatio(yamlContent string) float64 {
+	lines := strings.Split(yamlContent, "\n")
+	total := 0
+	comments := 0
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		total++
+		if strings.HasPrefix(trimmed, "#") {
+			comments++
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(comments) / float64(total)
+}
+
+// nonEmptyLines returns non-empty lines from content.
+func nonEmptyLines(content string) []string {
+	var result []string
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.TrimSpace(line) != "" {
+			result = append(result, line)
+		}
+	}
+	return result
+}
+
+// uniqueStrings returns unique strings from a slice.
+func uniqueStrings(ss []string) []string {
+	seen := make(map[string]bool, len(ss))
+	var result []string
+	for _, s := range ss {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
+}

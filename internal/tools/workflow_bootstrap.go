@@ -96,7 +96,7 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 
 	reason := input.Reason
 	if reason == "" {
-		reason = "skipped by user"
+		reason = defaultSkipReason
 	}
 
 	resp, err := engine.BootstrapSkip(input.Step, reason)

@@ -19,6 +19,7 @@ Before ANY work on service code (reading, debugging, fixing, deploying), start a
   zerops_workflow action="start" workflow="..."
   deploy — deploy, fix, or investigate services
   bootstrap — create/adopt services
+  recipe — create recipe repo files (6 env tiers)
   cicd — set up CI/CD pipelines
 Direct tools (no workflow): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_deploy (manual strategy), zerops_discover, zerops_knowledge`
 
@@ -100,13 +101,31 @@ func buildWorkflowHint(stateDir string) string {
 	var hints []string
 	for _, s := range alive {
 		hint := fmt.Sprintf("Active workflow: %s", s.Workflow)
-		if s.Workflow == "bootstrap" {
-			if state, loadErr := workflow.LoadSessionByID(stateDir, s.SessionID); loadErr == nil {
+		if state, loadErr := workflow.LoadSessionByID(stateDir, s.SessionID); loadErr == nil {
+			switch s.Workflow {
+			case "bootstrap":
 				if state.Bootstrap != nil && state.Bootstrap.Active {
 					stepNum := state.Bootstrap.CurrentStep + 1
 					total := len(state.Bootstrap.Steps)
 					stepName := state.Bootstrap.CurrentStepName()
 					hint += fmt.Sprintf(" (step %d/%d: %s)", stepNum, total, stepName)
+				}
+			case "deploy":
+				if state.Deploy != nil && state.Deploy.Active {
+					stepNum := state.Deploy.CurrentStep + 1
+					total := len(state.Deploy.Steps)
+					stepName := state.Deploy.CurrentStepName()
+					hint += fmt.Sprintf(" (step %d/%d: %s)", stepNum, total, stepName)
+				}
+			case "recipe":
+				if state.Recipe != nil && state.Recipe.Active {
+					stepNum := state.Recipe.CurrentStep + 1
+					total := len(state.Recipe.Steps)
+					stepName := state.Recipe.CurrentStepName()
+					hint += fmt.Sprintf(" (step %d/%d: %s)", stepNum, total, stepName)
+					if state.Recipe.Plan != nil {
+						hint += fmt.Sprintf(" [%s %s]", state.Recipe.Plan.Framework, state.Recipe.Plan.Tier)
+					}
 				}
 			}
 		}

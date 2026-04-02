@@ -167,22 +167,25 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 	}
 }
 
-// appendUtilities adds debug, scale, configure at priority 5 if not already present.
+// appendUtilities adds recipe, scale at priority 4-5 if not already present.
 func appendUtilities(offerings []FlowOffering) []FlowOffering {
 	has := make(map[string]bool, len(offerings))
 	for _, o := range offerings {
 		has[o.Workflow] = true
 	}
 	utils := []struct {
-		name, hint string
+		name     string
+		priority int
+		hint     string
 	}{
-		{"scale", `zerops_scale serviceHostname="..." — direct tool, no workflow needed`},
+		{"recipe", 4, `zerops_workflow action="start" workflow="recipe" — create recipe repo files`},
+		{"scale", 5, `zerops_scale serviceHostname="..." — direct tool, no workflow needed`},
 	}
 	for _, u := range utils {
 		if !has[u.name] {
 			offerings = append(offerings, FlowOffering{
 				Workflow: u.name,
-				Priority: 5,
+				Priority: u.priority,
 				Hint:     u.hint,
 			})
 		}

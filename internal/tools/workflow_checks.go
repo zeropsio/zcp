@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	stepProvision = "provision"
-	stepGenerate  = "generate"
-	stepDeploy    = "deploy"
-	statusFail    = "fail"
-	statusPass    = "pass"
+	stepProvision     = "provision"
+	stepGenerate      = "generate"
+	stepDeploy        = "deploy"
+	statusFail        = "fail"
+	statusPass        = "pass"
+	defaultSkipReason = "skipped by user"
 )
 
 func buildStepChecker(step string, client platform.Client, fetcher platform.LogFetcher, projectID string, httpClient ops.HTTPDoer, engine *workflow.Engine, stateDir string) workflow.StepChecker {
