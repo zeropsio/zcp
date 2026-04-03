@@ -35,6 +35,12 @@ type step struct {
 //
 // All steps are idempotent — re-running resets to defaults.
 func Run(baseDir string, rt runtime.Info) error {
+	// Ensure HOME is set — many tools (git, ssh) need it but Zerops
+	// containers may start with HOME="" or HOME="/".
+	if home := os.Getenv("HOME"); home == "" || home == "/" {
+		os.Setenv("HOME", resolveHome()) //nolint:errcheck // Setenv only fails on invalid key
+	}
+
 	steps := []step{
 		{"CLAUDE.md", generateCLAUDEMD},
 		{"MCP config", generateMCPConfig},
