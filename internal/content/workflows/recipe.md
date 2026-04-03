@@ -3,9 +3,18 @@
 Create a Zerops recipe: a deployable reference implementation with 6 environment tiers and structured documentation.
 
 <section name="research-minimal">
-## Research — Minimal Recipe (Type 3)
+## Research — Recipe Plan
 
 Fill in all research fields by examining the framework's documentation and existing recipes.
+
+### What type of recipe?
+
+| Type | Slug pattern | Example | Key characteristic |
+|------|-------------|---------|-------------------|
+| **1. Runtime hello world** | `{runtime}-hello-world` | `go-hello-world` | Raw HTTP + SQL, no framework. Simplest possible app. |
+| **2a. Frontend static** | `{framework}-hello-world` | `react-hello-world` | Builds to HTML/CSS/JS, `run.base: static`. No DB. |
+| **2b. Frontend SSR** | `{framework}-hello-world` | `nextjs-hello-world` | SSR framework (Next.js, Nuxt, etc.) with DB. |
+| **3. Backend framework** | `{framework}-minimal` | `laravel-minimal` | Framework with ORM, migrations, templates. |
 
 ### Reference Loading
 Hello-world recipes exist per RUNTIME, not per framework. Load the runtime's recipe:
@@ -13,12 +22,12 @@ Hello-world recipes exist per RUNTIME, not per framework. Load the runtime's rec
 zerops_knowledge recipe="{runtime-base}-hello-world"
 ```
 Example: for Laravel (php-nginx runtime), load `php-hello-world`, NOT `laravel-hello-world`.
+For React (static runtime), load an existing static recipe or the nodejs hello-world.
 
 Load the runtime briefing for platform-specific rules:
 ```
 zerops_knowledge runtime="{runtime-base}"
 ```
-Example: `zerops_knowledge runtime="php-nginx"` — returns PHP deployment patterns, build lifecycle, env var conventions.
 
 Load the import.yaml schema for type validation:
 ```
@@ -27,18 +36,29 @@ zerops_knowledge scope="infrastructure"
 
 ### Framework Identity
 - **Service type** (from available stacks): match against live catalog
+  - Runtime hello world: the bare runtime (e.g., `go@1`, `bun@1`)
+  - Frontend static: `static` for prod, but `nodejs@22` (or similar) for build base
+  - Frontend SSR: the SSR runtime (e.g., `nodejs@22`)
+  - Backend framework: the framework's runtime (e.g., `php-nginx@8.4`, `nodejs@22`)
 - **Package manager**: npm, yarn, pnpm, bun, composer, pip, cargo, go mod
-- **HTTP port**: the port the framework listens on by default
+- **HTTP port**: the port the app listens on (not applicable for `run.base: static`)
 
 ### Build & Deploy Pipeline
 - **Build commands**: ordered list (e.g., `npm install`, `npm run build`)
 - **Deploy files**: what to deploy (`.` for dev, build output dir for prod)
-- **Start command**: the RUN command (not build). Leave empty for implicit webserver types (php-nginx, php-apache, nginx, static) where the server auto-starts.
+  - Static frontend: build output (e.g., `dist/~`, `build/~`, `.next/~`)
+  - Runtime/framework: varies by language
+- **Start command**: the RUN command (not build).
+  - Leave **empty** for implicit webserver types (php-nginx, php-apache, nginx, static) — server auto-starts.
+  - Static frontends: empty (nginx serves the files)
+  - Runtime hello world: the app binary/entrypoint
 - **Cache strategy**: directories to cache between builds (e.g., `node_modules`, `vendor`)
 
 ### Database & Migration
-- **DB driver**: mysql, postgresql, sqlite, mongodb, none
-- **Migration command**: framework-specific (e.g., `php artisan migrate`)
+- **DB driver**: mysql, postgresql, sqlite, mongodb, **none**
+  - Static frontends (type 2a): set `none` — no database
+  - All others: typically postgresql
+- **Migration command**: framework-specific (e.g., `php artisan migrate`). Raw SQL for runtime hello world.
 - **Seed command**: optional data seeding
 
 ### Environment & Secrets
@@ -48,14 +68,16 @@ zerops_knowledge scope="infrastructure"
 ### Decision Tree Resolution
 Resolve these 4 decisions (ZCP provides defaults, you may override with justification):
 1. **Web server**: builtin (Node/Go/Rust), nginx-sidecar (PHP), nginx-proxy (static)
-2. **Build base**: primary runtime; add nodejs to buildBases if Vite/Webpack needed
+2. **Build base**: primary runtime; add nodejs to buildBases if frontend asset build needed (Vite/Webpack)
 3. **OS**: ubuntu-22 (default), alpine (Go/Rust static binaries)
-4. **Dev tooling**: hot-reload (Node/Bun), watch (Python/PHP), manual (Go/Rust/Java)
+4. **Dev tooling**: hot-reload (Node/Bun), watch (Python/PHP), manual (Go/Rust/Java), none (static)
 
 ### Targets
-Define workspace services for minimal recipe:
-- **app**: the runtime service (all 6 environments)
-- **db**: database service if needed (all 6 environments)
+Define workspace services based on recipe type:
+- **Type 1 (runtime hello world)**: app + db
+- **Type 2a (frontend static)**: app only (NO database)
+- **Type 2b (frontend SSR)**: app + db
+- **Type 3 (backend framework)**: app + db
 
 ### Submission
 Submit via:
@@ -114,13 +136,15 @@ Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}s
 
 Dev starts immediately with an empty container (RUNNING). Stage stays in READY_TO_DEPLOY until first deploy from dev.
 
+**Static frontends (type 2a):** `run.base: static` serves via built-in Nginx — both dev and stage use `type: static`. Dev still gets `startWithoutCode: true` for the build container. The runtime for building is `nodejs@22` (or similar) as `build.base` in zerops.yaml, NOT as the service type.
+
 **Managed service conventions:**
 - Hostname: `db` (postgresql/mariadb), `cache` (valkey), `queue` (nats), `search` (meilisearch), `storage` (object-storage)
 - `priority: 10` for all managed services (start before app)
 - `mode: NON_HA` for workspace
 - `object-storage` requires `objectStorageSize` field
 
-**Shared storage mount** (if shared-storage in plan): Add `mount: [{storage-hostname}]` to both dev and stage in import.yaml. This pre-configures the connection but does NOT activate runtime mount. You MUST also add `mount: [{storage-hostname}]` in zerops.yaml `run:` section.
+**If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair. Skip managed service conventions.
 
 **Framework secrets**: If `needsAppSecret == true`, add `envSecrets` with `<@generateRandomString(<32>)>` and add `#yamlPreprocessor=on` as the first line.
 
@@ -153,12 +177,14 @@ This gives SSHFS access to `/var/www/appdev/` — all code writes go here.
 
 > **Two kinds of "mount" (disambiguation):** (1) `zerops_mount` — SSHFS tool, mounts service `/var/www` locally for development. (2) Shared storage mount — platform feature, attaches a shared-storage volume at `/mnt/{hostname}`. These are completely unrelated.
 
-### 4. Discover env vars (mandatory before generate)
+### 4. Discover env vars (mandatory before generate — skip if no managed services)
 
 After services reach RUNNING, discover actual env vars:
 ```
 zerops_discover includeEnvs=true
 ```
+
+**If the plan has no managed services** (type 2a static frontend): skip this step — there are no env vars to discover.
 
 Record which env vars exist. Common patterns:
 
@@ -188,6 +214,16 @@ Write the application code, zerops.yaml, and README with documentation fragments
 **Use SSHFS for file operations**, SSH for running commands (dependency installs, git init).
 Files placed on the mount are already on the dev container — deploy doesn't "send" them, it triggers a build from what's already there.
 
+### What to generate per recipe type
+
+**Type 1 (runtime hello world):** Raw HTTP server with a single file. DB connection via standard library. Raw SQL migration for a `greetings` table. No framework, no ORM.
+
+**Type 2a (frontend static):** SPA/static site. Framework project (React/Vue/Svelte) with a simple page showing framework name, greeting, and environment indicator. Build-time env var injection. No DB connection.
+
+**Type 2b (frontend SSR):** SSR framework project (Next.js/Nuxt/SvelteKit). Server-rendered pages with DB connection. Framework's API routes for health endpoint.
+
+**Type 3 (backend framework):** Full framework project. ORM-based migrations, template-rendered dashboard, framework CLI tools. Uses the framework's conventions throughout.
+
 ### zerops.yaml — Dev entry ONLY first
 
 Write the **dev** entry only. The stage entry comes after dev is verified in the deploy step.
@@ -195,10 +231,13 @@ Write the **dev** entry only. The stage entry comes after dev is verified in the
 **Dev setup rules (CRITICAL):**
 - `setup: appdev` — must match the dev hostname
 - `deployFiles: [.]` — **MANDATORY for self-deploy, no exceptions**
-- `start: zsc noop --silent` — agent controls server manually (exception: omit `start` entirely for implicit-webserver runtimes: php-nginx, php-apache, nginx, static)
+- `start: zsc noop --silent` — agent controls server manually
+  - **Exception**: omit `start` entirely for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
+  - **Static frontends (type 2a)**: omit `start` — Nginx auto-serves from documentRoot
 - **NO buildCommands with compilation** — dev only does dependency installation (npm install, composer install, etc.)
+  - **Static frontends**: dev may need `npm run build` since the output needs to exist for Nginx to serve
 - **NO healthCheck** — agent controls lifecycle; healthCheck would restart container during iteration
-- `envVariables:` — map discovered vars to what the app expects:
+- `envVariables:` — map discovered vars to what the app expects (skip if no managed services):
   ```yaml
   envVariables:
     DATABASE_URL: ${db_connectionString}
@@ -206,16 +245,18 @@ Write the **dev** entry only. The stage entry comes after dev is verified in the
     # ONLY variables from zerops_discover — never guess
   ```
 
-**Base setup** (shared between dev and prod):
-- Common env vars shared across both
-- Use `extends: base` pattern if the runtime supports it
+**Static frontends:** Set `documentRoot: dist` (or `build`, `.output/public`, etc.) matching the build output. No `start` command needed.
 
 ### Required endpoints
 
-The app must expose:
+**Types 1, 2b, 3, 4 (server-side):**
 - `GET /` — health dashboard (HTML, shows framework name + service connectivity)
 - `GET /health` or `GET /api/health` — JSON health endpoint
 - `GET /status` — JSON status with actual connectivity checks (DB ping, cache ping, latency)
+
+**Type 2a (static frontend):**
+- `GET /` — simple page showing framework name, greeting, timestamp, environment indicator
+- No server-side health endpoint (static files only)
 
 ### App README with extract fragments
 
@@ -235,10 +276,10 @@ Write `README.md` at `/var/www/appdev/README.md` with three documentation fragme
 Before completing generate:
 - [ ] zerops.yaml has `setup: appdev` matching hostname
 - [ ] `deployFiles: [.]` on dev
-- [ ] `start: zsc noop --silent` (or omitted for implicit-webserver)
-- [ ] No compilation in buildCommands (dependency install only for dev)
+- [ ] `start: zsc noop --silent` (or omitted for implicit-webserver/static)
+- [ ] No compilation in buildCommands (dependency install only — exception: static frontend build)
 - [ ] No healthCheck on dev entry
-- [ ] All env vars from discovery, none guessed
+- [ ] All env vars from discovery, none guessed (skip if no managed services)
 - [ ] README has all 3 extract fragments with proper markers
 
 ### Completion
@@ -252,7 +293,7 @@ zerops_workflow action="complete" step="generate" attestation="App code and zero
 
 ### integration-guide Fragment
 Must contain:
-- Complete zerops.yaml with ALL setups (base, prod, dev, worker if showcase)
+- Complete zerops.yaml with ALL setups (base, prod, dev; worker if showcase)
 - Every config line should have an inline comment explaining WHY
 - Build commands must be ordered correctly
 - Deploy files must differ between dev (`.`) and prod (build output)
@@ -290,13 +331,13 @@ zerops_deploy serviceHostname="appdev"
 ```
 This triggers a build from files already on the mount. Blocks until complete.
 
-**Step 2: Start the dev server** (skip for implicit-webserver: php-nginx, php-apache, nginx, static)
-
-After deploy, env vars are OS env vars. Start the server via SSH:
-```bash
-ssh appdev "cd /var/www && {start_command} &"
-```
-Example: `ssh appdev "cd /var/www && node index.js &"`
+**Step 2: Start the dev server**
+- **Server-side apps** (types 1, 2b, 3, 4): Start via SSH:
+  ```bash
+  ssh appdev "cd /var/www && {start_command} &"
+  ```
+- **Implicit-webserver runtimes** (php-nginx, php-apache, nginx): Skip — server auto-starts.
+- **Static frontends** (type 2a): Skip — Nginx serves the built files automatically.
 
 **Step 3: Enable dev subdomain**
 ```
@@ -307,7 +348,7 @@ zerops_subdomain action="enable" serviceHostname="appdev"
 ```
 zerops_verify serviceHostname="appdev"
 ```
-Check: service RUNNING, subdomain returns 200, health endpoint responds.
+Check: service RUNNING, subdomain returns 200, health endpoint responds (or page loads for static).
 
 **Step 5: Iterate if needed** (max 3 iterations)
 If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify.
@@ -316,26 +357,25 @@ If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix 
 
 **Step 6: Generate stage entry in zerops.yaml**
 Add a `setup: appstage` entry to zerops.yaml on the appdev mount. Stage differences from dev:
-- Real `start` command (not `zsc noop`)
+- Real `start` command (not `zsc noop`). For static: still no `start` (Nginx serves).
 - Real `buildCommands` with compilation/bundling
 - Real `deployFiles` (build output, not `.`)
-- Add `healthCheck` (httpGet on app port)
+- Add `healthCheck` (httpGet on app port) — for server-side apps only, not static
 - Add `deploy.readinessCheck` if app has `initCommands` (migrations)
-- Copy `envVariables` from dev entry
+- Copy `envVariables` from dev entry (if any)
 - Use runtime knowledge Prod patterns as reference
 
 **Step 7: Deploy appstage from appdev (cross-deploy)**
 ```
 zerops_deploy serviceHostname="appstage" sourceServiceHostname="appdev"
 ```
-Stage builds from dev's source code with the stage zerops.yaml entry. Server auto-starts via the real `start` command.
+Stage builds from dev's source code with the stage zerops.yaml entry. Server auto-starts via the real `start` command (or Nginx for static).
 
 **Step 7b: Connect shared storage** (if applicable)
 After stage transitions from READY_TO_DEPLOY to ACTIVE, connect storage:
 ```
 zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"
 ```
-Import `mount:` only applies to ACTIVE services — stage was READY_TO_DEPLOY during import.
 
 **Step 8: Enable stage subdomain**
 ```
@@ -346,7 +386,6 @@ zerops_subdomain action="enable" serviceHostname="appstage"
 ```
 zerops_verify serviceHostname="appstage"
 ```
-Check: service RUNNING, subdomain returns 200, health endpoint responds with real data connections.
 
 **Step 10: Present both URLs**
 
@@ -359,6 +398,7 @@ Check: service RUNNING, subdomain returns 200, health endpoint responds with rea
 | Build fails | Wrong build commands, missing dependencies | Check `zerops_logs`, fix and redeploy |
 | Stage deploy fails | zerops.yaml setup name doesn't match hostname | Ensure `setup: appstage` matches |
 | Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |
+| Static site 404 | Wrong `documentRoot` | Match to actual build output directory |
 
 ### Completion
 ```
@@ -399,6 +439,8 @@ Plus:
 | corePackage | — | — | — | — | SERIOUS |
 | minFreeRamGB | — | — | 0.25 | 0.125 | 0.25 |
 | enableSubdomainAccess | yes | yes | yes | yes | yes |
+
+**If plan has no database** (type 2a): skip DB rows in scaling matrix. Environment import.yaml files contain only the app service.
 
 ### import.yaml Rules
 - `priority: 10` on all data services (ensures they start before app)
