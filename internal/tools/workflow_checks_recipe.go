@@ -125,54 +125,36 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 	}
 }
 
-// checkRecipeSetups validates zerops.yml has at least one setup entry for the app.
-// Tries multiple name patterns: {hostname}, {hostname}stage, {hostname}dev, or any entry.
-func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, plan *workflow.RecipePlan) []workflow.StepCheck {
+// checkRecipeSetups validates zerops.yml has a dev setup entry for the app.
+// At generate time only the dev entry exists — prod is added during deploy.
+// Accepts both generic names (dev, prod) and hostname-matching names (appdev, appstage).
+func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, _ *workflow.RecipePlan) []workflow.StepCheck {
 	var checks []workflow.StepCheck
 
-	// Try finding a setup entry by multiple conventions.
+	// Try finding a dev setup entry by multiple conventions:
+	// 1. Generic "dev" (preferred — matches zeropsSetup: dev in import.yaml)
+	// 2. Hostname-suffixed "{hostname}dev" (legacy — hostname-matching)
+	// 3. Bare hostname (fallback)
 	var entry *ops.ZeropsYmlEntry
-	for _, name := range []string{hostname, hostname + "stage", hostname + "dev"} {
+	var foundName string
+	for _, name := range []string{"dev", hostname + "dev", hostname} {
 		if e := doc.FindEntry(name); e != nil {
 			entry = e
+			foundName = name
 			break
 		}
 	}
 	if entry == nil {
 		checks = append(checks, workflow.StepCheck{
 			Name: hostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no setup entry for %q (also tried %sdev, %sstage) in zerops.yml", hostname, hostname, hostname),
+			Detail: fmt.Sprintf("no dev setup entry found in zerops.yml (tried: dev, %sdev, %s)", hostname, hostname),
 		})
 		return checks
 	}
 	checks = append(checks, workflow.StepCheck{
 		Name: hostname + "_setup", Status: statusPass,
+		Detail: fmt.Sprintf("found setup: %s", foundName),
 	})
-
-	// Check for required setups: recipe needs base+prod+dev (minimal) or base+prod+dev+worker (showcase).
-	requiredSetups := []string{"base", "prod", "dev"}
-	if plan.Tier == workflow.RecipeTierShowcase {
-		requiredSetups = append(requiredSetups, "worker")
-	}
-
-	// Check if the doc has multiple setup entries or if setup names are referenced.
-	// Since zerops.yml structure may vary, check available entries in the doc.
-	for _, setup := range requiredSetups {
-		setupEntry := doc.FindEntry(hostname + ":" + setup)
-		if setupEntry == nil {
-			// Also try standalone setup name.
-			setupEntry = doc.FindEntry(setup)
-		}
-		// For now, record the check but don't fail — zerops.yml setup structure varies.
-		if setupEntry != nil {
-			checks = append(checks, workflow.StepCheck{
-				Name: hostname + "_setup_" + setup, Status: statusPass,
-			})
-		}
-		// Don't fail on missing individual setups — the main entry existence is sufficient
-		// for Phase 3. Phase-specific setup validation will be added when the zerops.yml
-		// parser supports multi-setup detection.
-	}
 
 	return checks
 }

@@ -128,7 +128,10 @@ Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}s
 | `startWithoutCode` | `true` | omit |
 | `maxContainers` | `1` | omit (default) |
 | `enableSubdomainAccess` | `true` | `true` |
+| `zeropsSetup` | `dev` | `prod` |
 | `verticalAutoscaling.minRam` | `1.0` for compiled runtimes (Go, Rust, Java, .NET, Elixir, Gleam) | omit (default) |
+
+**`zeropsSetup` is required on the workspace import.yaml** — it maps hostnames to generic setup names in zerops.yaml (`setup: dev` / `setup: prod`). Without it, the platform defaults to hostname matching and the agent is forced to use `setup: appdev` / `setup: appstage` instead of generic names.
 
 Dev starts immediately with an empty container (RUNNING). Stage stays in READY_TO_DEPLOY until first deploy from dev.
 
@@ -154,6 +157,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 | Priority | Data services: `priority: 10` |
 | Preprocessor | `#zeropsPreprocessor=on` if using `<@...>` functions |
 | envSecrets | Per-service on app/worker, NOT at project level |
+| zeropsSetup | `dev` on dev services, `prod` on stage services |
 
 ### 2. Import services
 
@@ -254,6 +258,16 @@ Write the **dev** entry only. The stage entry comes after dev is verified in the
 ### .env.example preservation
 
 If the framework scaffolds a `.env.example` file (e.g., `composer create-project`), **keep it** — it documents the expected environment variable keys for local development. Remove `.env` (contains generated secrets), but preserve `.env.example` with empty values as a reference for users running locally.
+
+### Framework environment conventions
+
+Use the framework's **standard** environment names and values — don't invent new ones:
+- **Laravel**: `APP_ENV=local` (not `development`) — `local` enables detailed error pages and stack traces
+- **Node.js/Next.js**: `NODE_ENV=development`
+- **Django**: `DEBUG=True`, `DJANGO_SETTINGS_MODULE=config.settings.development`
+- **Rails**: `RAILS_ENV=development`
+
+Check the framework's documentation if unsure — wrong env names cause subtle behavior differences (e.g., Laravel's `local` enables whoops error handler, `development` does not).
 
 ### Required endpoints
 
@@ -520,11 +534,47 @@ zerops_workflow action="complete" step="finalize" attestation="All 13+ recipe fi
 </section>
 
 <section name="close">
-## Close — Publish
+## Close — Verify & Publish
 
-Recipe creation is complete. Finalize and publish.
+Recipe creation is complete. Before publishing, dispatch a verification sub-agent to review the recipe from the perspective of a framework expert.
 
-### Publishing Steps
+### 1. Verification Sub-Agent (mandatory)
+
+Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent should act as a **{framework} expert** who has never seen this recipe before, reviewing it for correctness, completeness, and usability.
+
+**Sub-agent prompt template:**
+
+> You are a {framework} expert reviewing a Zerops recipe. Read ALL files in {outputDir}/ and {appDir}/ and verify:
+>
+> **App code review:**
+> - Does the app actually work? Check routes, views, config, migrations.
+> - Are framework conventions followed? (e.g., Laravel: APP_ENV should be `local` not `development`, trusted proxies wired in code AND env)
+> - Is there dead code, unused dependencies, or missing files? (e.g., Tailwind plugin in vite.config.js but no Tailwind classes used)
+> - Does `.env.example` exist with the right keys?
+>
+> **zerops.yaml review:**
+> - Do `setup: dev` and `setup: prod` entries have correct build/deploy/run config?
+> - Are deployFiles complete for prod? (common miss: `composer.lock`, `.env.example`)
+> - Are env vars correct for the framework? (e.g., Laravel SESSION_DRIVER, CACHE_STORE)
+> - Is the comment quality good? (WHY not WHAT, no restating key names)
+>
+> **import.yaml review (all 6 environments):**
+> - Do all files use `zeropsSetup: dev`/`zeropsSetup: prod` (NOT hostname-matching like `appstage`)?
+> - Is `buildFromGit` present on all non-startWithoutCode services?
+> - Is `corePackage: SERIOUS` at project level (not verticalAutoscaling) in env 5?
+> - Are `envSecrets` per-service (not project level)?
+> - Is the scaling matrix correct across tiers?
+>
+> **README review:**
+> - Does the environments/README.md describe all 6 tiers (not a copy of the app README)?
+> - Does the knowledge-base fragment contain ONLY irreducible content (not repeating zerops.yaml)?
+> - Are there exactly 3 extract fragments with proper markers?
+>
+> Report issues as: `[CRITICAL]` (breaks deploy), `[WRONG]` (incorrect but works), `[STYLE]` (quality improvement).
+
+Apply any CRITICAL or WRONG fixes before completing the close step.
+
+### 2. Publishing Steps
 1. Push recipe to GitHub:
    ```
    zcp sync push recipes {slug}
@@ -538,15 +588,9 @@ Recipe creation is complete. Finalize and publish.
    zcp sync pull recipes {slug}
    ```
 
-### Testing
-Run the recipe through eval to verify quality:
+### 3. Completion
 ```
-zcp eval run --recipe {slug}
-```
-
-### Completion
-```
-zerops_workflow action="complete" step="close" attestation="Recipe published and tested"
+zerops_workflow action="complete" step="close" attestation="Recipe verified by {framework} expert sub-agent, {N} issues found and fixed"
 ```
 
 Or skip if not publishing now:

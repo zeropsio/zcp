@@ -41,6 +41,6 @@ var recipeStepDetails = []StepDetail{
 	{
 		Name:         RecipeStepClose,
 		Tools:        []string{"zerops_workflow"},
-		Verification: "SUCCESS WHEN: recipe administratively closed, publish commands presented.",
+		Verification: "SUCCESS WHEN: verification sub-agent reviewed the recipe, critical/wrong issues fixed, recipe administratively closed.",
 	},
 }
