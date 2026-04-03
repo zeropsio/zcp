@@ -15,13 +15,11 @@ var knowledgeDirs = []string{"themes", "bases", "recipes", "guides", "decisions"
 
 // Document represents a parsed knowledge document.
 type Document struct {
-	Path        string   // themes/core.md, recipes/laravel.md
-	URI         string   // zerops://themes/core, zerops://recipes/laravel
-	Title       string   // Zerops Core Reference
-	Keywords    []string // [zerops, core, principles, ...]
-	TLDR        string   // One-sentence summary
-	Content     string   // Full markdown content
-	Description string   // TL;DR or first paragraph
+	Path        string // themes/core.md, recipes/laravel.md
+	URI         string // zerops://themes/core, zerops://recipes/laravel
+	Title       string // Zerops Core Reference
+	Content     string // Full markdown content (what gets injected into agent context)
+	Description string // Frontmatter description or first paragraph
 
 	sectionsOnce sync.Once
 	sections     map[string]string // cached H2 sections (lazily populated, thread-safe)
@@ -66,14 +64,9 @@ func parseDocument(path, content string) *Document {
 	frontmatter, body := extractFrontmatter(content)
 
 	title := extractTitle(body)
-	keywords := extractKeywords(body)
-	tldr := extractTLDR(body)
 
-	// Description priority: frontmatter description > TL;DR > first paragraph
+	// Description: frontmatter description > first paragraph
 	desc := frontmatter["description"]
-	if desc == "" {
-		desc = tldr
-	}
 	if desc == "" {
 		desc = extractFirstParagraph(body)
 	}
@@ -82,9 +75,7 @@ func parseDocument(path, content string) *Document {
 		Path:        path,
 		URI:         uri,
 		Title:       title,
-		Keywords:    keywords,
-		TLDR:        tldr,
-		Content:     body, // body without frontmatter — what gets injected into agent context
+		Content:     body,
 		Description: desc,
 	}
 }
@@ -145,55 +136,6 @@ func extractTitle(content string) string {
 		line = strings.TrimSpace(line)
 		if rest, ok := strings.CutPrefix(line, "# "); ok {
 			return rest
-		}
-	}
-	return ""
-}
-
-func extractKeywords(content string) []string {
-	lines := strings.Split(content, "\n")
-	inKeywords := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "## Keywords" {
-			inKeywords = true
-			continue
-		}
-		if inKeywords {
-			if trimmed == "" || strings.HasPrefix(trimmed, "##") {
-				break
-			}
-			parts := strings.Split(trimmed, ",")
-			var keywords []string
-			for _, p := range parts {
-				kw := strings.TrimSpace(p)
-				if kw != "" {
-					keywords = append(keywords, strings.ToLower(kw))
-				}
-			}
-			return keywords
-		}
-	}
-	return nil
-}
-
-func extractTLDR(content string) string {
-	lines := strings.Split(content, "\n")
-	inTLDR := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "## TL;DR" {
-			inTLDR = true
-			continue
-		}
-		if inTLDR {
-			if trimmed == "" {
-				continue
-			}
-			if strings.HasPrefix(trimmed, "##") {
-				break
-			}
-			return trimmed
 		}
 	}
 	return ""

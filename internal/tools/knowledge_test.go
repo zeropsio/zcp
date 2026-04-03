@@ -31,12 +31,12 @@ func testKnowledgeStore(t *testing.T) *knowledge.Store {
 		"zerops://recipes/php-hello-world": {
 			URI:     "zerops://recipes/php-hello-world",
 			Title:   "PHP Hello World on Zerops",
-			Content: "# PHP Hello World on Zerops\n\n## Keywords\nphp, php-nginx, zerops.yml\n\n## TL;DR\nPHP-specific rules.\n\n### Details\nPHP-specific rules.",
+			Content: "# PHP Hello World on Zerops\n\nPHP-specific rules.\n\n### Details\nPHP-specific rules.",
 		},
 		"zerops://recipes/nodejs-hello-world": {
 			URI:     "zerops://recipes/nodejs-hello-world",
 			Title:   "Node.js Hello World on Zerops",
-			Content: "# Node.js Hello World on Zerops\n\n## Keywords\nnodejs, node, npm\n\n## TL;DR\nNode.js-specific rules.\n\n### Details\nNode.js-specific rules.",
+			Content: "# Node.js Hello World on Zerops\n\nNode.js-specific rules.\n\n### Details\nNode.js-specific rules.",
 		},
 		"zerops://themes/services": {
 			URI:     "zerops://themes/services",

@@ -92,22 +92,11 @@ func runEvalRun(args []string) {
 	printSuiteResult(result)
 }
 
-func runEvalSuite(args []string) {
-	var tag string
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--tag" && i+1 < len(args) {
-			tag = args[i+1]
-			i++
-		}
-	}
-
+func runEvalSuite(_ []string) {
 	runner, store, ctx := initEvalRunner()
 	suite := eval.NewSuite(runner)
 
 	recipes := store.ListRecipes()
-	if tag != "" {
-		recipes = filterRecipesByTag(store, recipes, tag)
-	}
 
 	if len(recipes) == 0 {
 		fmt.Fprintln(os.Stderr, "no recipes to evaluate")
@@ -366,23 +355,6 @@ func initEvalRunner() (*eval.Runner, *knowledge.Store, context.Context) {
 
 	runner := eval.NewRunner(config, store, client, projectID)
 	return runner, store, ctx
-}
-
-func filterRecipesByTag(store *knowledge.Store, recipes []string, tag string) []string {
-	var filtered []string
-	for _, r := range recipes {
-		doc, err := store.Get("zerops://recipes/" + r)
-		if err != nil {
-			continue
-		}
-		for _, kw := range doc.Keywords {
-			if strings.EqualFold(kw, tag) {
-				filtered = append(filtered, r)
-				break
-			}
-		}
-	}
-	return filtered
 }
 
 func printSuiteResult(result *eval.SuiteResult) {

@@ -2,8 +2,8 @@ package knowledge
 
 // Tests for: recipe structural integrity, YAML validity, and content correctness.
 //
-// Validates every embedded recipe against structural rules (Keywords, TL;DR,
-// zerops.yml, Gotchas), YAML parsing rules, and content pattern rules.
+// Validates every embedded recipe against structural rules (zerops.yml,
+// Gotchas), YAML parsing rules, and content pattern rules.
 //
 // Run: go test ./internal/knowledge/ -run TestRecipeLint -v
 

@@ -25,10 +25,6 @@ func TestParseRecipeMetadata(t *testing.T) {
 			recipeName: "go",
 			content: `# Go on Zerops
 
-## Keywords
-go, golang, net/http, postgresql, api, stdlib
-
-## TL;DR
 Go stdlib HTTP server on port 8080 with PostgreSQL.
 
 ## zerops.yml
@@ -71,10 +67,6 @@ services:
 			recipeName: "react-static",
 			content: `# React Static on Zerops
 
-## Keywords
-react, static, vite, ssg, spa
-
-## TL;DR
 React static site with Vite.
 
 ## zerops.yml
@@ -108,10 +100,6 @@ services:
 			recipeName: "laravel",
 			content: `# Laravel on Zerops
 
-## Keywords
-laravel, php, postgresql, valkey, redis, s3, nginx
-
-## TL;DR
 Laravel on PHP-Nginx with PostgreSQL.
 
 ## zerops.yml
@@ -161,10 +149,6 @@ services:
 			recipeName: "discord-py",
 			content: `# Discord Bot with Python on Zerops
 
-## Keywords
-discord, discordpy, python, bot
-
-## TL;DR
 Discord.py bot on Python.
 
 ## zerops.yml

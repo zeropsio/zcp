@@ -292,7 +292,7 @@ func (s *Store) getRelevantDecisions(runtime string, services []string) string {
 	return strings.Join(hints, "\n")
 }
 
-// getDecisionSummary loads a decision file and extracts the TL;DR as the summary.
+// getDecisionSummary loads a decision file and returns its Description (first paragraph).
 func (s *Store) getDecisionSummary(decisionName string) string {
 	uri, ok := decisionFileMap[decisionName]
 	if !ok {
@@ -301,11 +301,6 @@ func (s *Store) getDecisionSummary(decisionName string) string {
 	doc, err := s.Get(uri)
 	if err != nil {
 		return ""
-	}
-	// Fall back to Description (first paragraph). TLDR field is empty since
-	// ## TL;DR sections were removed from source files.
-	if doc.TLDR != "" {
-		return doc.TLDR
 	}
 	return doc.Description
 }
