@@ -97,43 +97,129 @@ zerops_workflow action="complete" step="research" recipePlan={...}
 <section name="provision">
 ## Provision — Create Workspace Services
 
-Create all services defined in the recipe plan using import.yaml.
+Create all workspace services from the recipe plan. This follows the same pattern as bootstrap — dev/stage pairs for the app runtime, with shared managed services.
 
-### Steps
-1. Build an import.yaml with all target services from the recipe plan
-2. Import via `zerops_import`
-3. Verify all services exist via `zerops_discover`
-4. Record discovered env vars for managed dependencies
+### 1. Generate import.yaml
 
-### Import Template
-```yaml
-project:
-  name: {slug}-workspace
-services:
-  - hostname: {hostname}
-    type: {type}
-    # Add mode, ports, env vars as needed
+Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}stage` pair.
+
+**Dev vs stage properties:**
+
+| Property | Dev (`appdev`) | Stage (`appstage`) |
+|----------|---------------|-------------------|
+| `startWithoutCode` | `true` | omit |
+| `maxContainers` | `1` | omit (default) |
+| `enableSubdomainAccess` | `true` | `true` |
+| `verticalAutoscaling.minRam` | `1.0` for compiled runtimes (Go, Rust, Java, .NET, Elixir, Gleam) | omit (default) |
+
+Dev starts immediately with an empty container (RUNNING). Stage stays in READY_TO_DEPLOY until first deploy from dev.
+
+**Managed service conventions:**
+- Hostname: `db` (postgresql/mariadb), `cache` (valkey), `queue` (nats), `search` (meilisearch), `storage` (object-storage)
+- `priority: 10` for all managed services (start before app)
+- `mode: NON_HA` for workspace
+- `object-storage` requires `objectStorageSize` field
+
+**Shared storage mount** (if shared-storage in plan): Add `mount: [{storage-hostname}]` to both dev and stage in import.yaml. This pre-configures the connection but does NOT activate runtime mount. You MUST also add `mount: [{storage-hostname}]` in zerops.yaml `run:` section.
+
+**Framework secrets**: If `needsAppSecret == true`, add `envSecrets` with `<@generateRandomString(<32>)>` and add `#yamlPreprocessor=on` as the first line.
+
+**Validation checklist:**
+
+| Check | What to verify |
+|-------|---------------|
+| Hostnames | [a-z0-9] pattern, max 25 chars |
+| Service types | Match available stacks from research |
+| Mode present | Managed services have `mode: NON_HA` |
+| Priority | Data services: `priority: 10` |
+| Preprocessor | `#yamlPreprocessor=on` if using `<@...>` functions |
+
+### 2. Import services
+
 ```
+zerops_import content="..."
+```
+
+Wait for all services to reach RUNNING.
+
+### 3. Mount dev filesystem
+
+Mount the dev service for direct file access:
+```
+zerops_mount serviceHostname="appdev"
+```
+
+This gives SSHFS access to `/var/www/appdev/` — all code writes go here.
+
+> **Two kinds of "mount" (disambiguation):** (1) `zerops_mount` — SSHFS tool, mounts service `/var/www` locally for development. (2) Shared storage mount — platform feature, attaches a shared-storage volume at `/mnt/{hostname}`. These are completely unrelated.
+
+### 4. Discover env vars (mandatory before generate)
+
+After services reach RUNNING, discover actual env vars:
+```
+zerops_discover includeEnvs=true
+```
+
+Record which env vars exist. Common patterns:
+
+| Service type | Available env vars |
+|-------------|-------------------|
+| PostgreSQL | `${db_connectionString}`, `${db_host}`, `${db_port}`, `${db_user}`, `${db_password}`, `${db_dbName}` |
+| MariaDB | `${db_connectionString}`, `${db_host}`, `${db_port}`, `${db_user}`, `${db_password}`, `${db_dbName}` |
+| Valkey | `${cache_host}`, `${cache_port}` (no password — private network) |
+| Object Storage | `${storage_apiUrl}`, `${storage_accessKeyId}`, `${storage_secretAccessKey}`, `${storage_bucketName}` |
+
+**ONLY use variables that were actually discovered.** Guessing variable names causes runtime failures.
 
 ### Completion
 ```
-zerops_workflow action="complete" step="provision" attestation="All services created and verified: {list}"
+zerops_workflow action="complete" step="provision" attestation="Services created: {list}. Env vars discovered: {list}. Dev mounted at /var/www/appdev/"
 ```
 </section>
 
 <section name="generate">
 ## Generate — App Code & Configuration
 
-Generate the application code, zerops.yaml, and README with documentation fragments.
+Write the application code, zerops.yaml, and README with documentation fragments. All files are written to the **mounted dev filesystem** at `/var/www/appdev/`.
 
-### zerops.yaml Requirements
-- **base** setup: shared configuration (env vars, build steps)
-- **prod** setup: production optimizations (caching, compiled assets)
-- **dev** setup: development mode (hot-reload, debug, source deploy)
-- Showcase: additional **worker** setup if applicable
+### WHERE to write files
 
-### App README Requirements
-The app README.md must include documentation fragments marked with extract tags:
+**SSHFS mount**: `/var/www/appdev/` — write all source code, zerops.yaml, and README here.
+**Use SSHFS for file operations**, SSH for running commands (dependency installs, git init).
+Files placed on the mount are already on the dev container — deploy doesn't "send" them, it triggers a build from what's already there.
+
+### zerops.yaml — Dev entry ONLY first
+
+Write the **dev** entry only. The stage entry comes after dev is verified in the deploy step.
+
+**Dev setup rules (CRITICAL):**
+- `setup: appdev` — must match the dev hostname
+- `deployFiles: [.]` — **MANDATORY for self-deploy, no exceptions**
+- `start: zsc noop --silent` — agent controls server manually (exception: omit `start` entirely for implicit-webserver runtimes: php-nginx, php-apache, nginx, static)
+- **NO buildCommands with compilation** — dev only does dependency installation (npm install, composer install, etc.)
+- **NO healthCheck** — agent controls lifecycle; healthCheck would restart container during iteration
+- `envVariables:` — map discovered vars to what the app expects:
+  ```yaml
+  envVariables:
+    DATABASE_URL: ${db_connectionString}
+    REDIS_HOST: ${cache_host}
+    # ONLY variables from zerops_discover — never guess
+  ```
+
+**Base setup** (shared between dev and prod):
+- Common env vars shared across both
+- Use `extends: base` pattern if the runtime supports it
+
+### Required endpoints
+
+The app must expose:
+- `GET /` — health dashboard (HTML, shows framework name + service connectivity)
+- `GET /health` or `GET /api/health` — JSON health endpoint
+- `GET /status` — JSON status with actual connectivity checks (DB ping, cache ping, latency)
+
+### App README with extract fragments
+
+Write `README.md` at `/var/www/appdev/README.md` with three documentation fragments:
 - `<!-- #ZEROPS_EXTRACT_START:integration-guide# -->` — complete zerops.yaml with comments
 - `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->` — platform knowledge with Gotchas section
 - `<!-- #ZEROPS_EXTRACT_START:intro# -->` — 1-3 line introduction (no titles, no images)
@@ -142,10 +228,22 @@ The app README.md must include documentation fragments marked with extract tags:
 - Comment ratio in zerops.yaml code blocks must be >= 0.3
 - No `PLACEHOLDER_*`, `<your-...>`, or `TODO` strings
 - All env var references must use discovered variable names
+- Comments explain WHY, not WHAT (don't restate the key name)
+- Max 80 chars per comment line
+
+### Pre-deploy checklist
+Before completing generate:
+- [ ] zerops.yaml has `setup: appdev` matching hostname
+- [ ] `deployFiles: [.]` on dev
+- [ ] `start: zsc noop --silent` (or omitted for implicit-webserver)
+- [ ] No compilation in buildCommands (dependency install only for dev)
+- [ ] No healthCheck on dev entry
+- [ ] All env vars from discovery, none guessed
+- [ ] README has all 3 extract fragments with proper markers
 
 ### Completion
 ```
-zerops_workflow action="complete" step="generate" attestation="App code generated with zerops.yaml and README fragments"
+zerops_workflow action="complete" step="generate" attestation="App code and zerops.yaml written to /var/www/appdev/. README with 3 fragments."
 ```
 </section>
 
@@ -180,34 +278,100 @@ Must contain:
 </section>
 
 <section name="deploy">
-## Deploy — Build & Verify
+## Deploy — Build, Start & Verify
 
-Deploy the application to all runtime services and verify health.
+Deploy follows the same flow as bootstrap standard mode. Deploy dev first, verify it works, then generate stage and deploy stage.
 
-### Steps
-1. Deploy to each runtime service via `zerops_deploy`
-2. Enable subdomain access via `zerops_subdomain`
-3. Verify deployment health via `zerops_verify`
-4. Check logs for errors via `zerops_logs`
+### Dev deployment flow
 
-### Health Criteria
-- All runtime services in RUNNING status
-- HTTP health check passes on subdomain URL
-- No error-level logs in the last 5 minutes
-- For showcase: worker process running, queue connection established
+**Step 1: Deploy appdev (self-deploy)**
+```
+zerops_deploy serviceHostname="appdev"
+```
+This triggers a build from files already on the mount. Blocks until complete.
+
+**Step 2: Start the dev server** (skip for implicit-webserver: php-nginx, php-apache, nginx, static)
+
+After deploy, env vars are OS env vars. Start the server via SSH:
+```bash
+ssh appdev "cd /var/www && {start_command} &"
+```
+Example: `ssh appdev "cd /var/www && node index.js &"`
+
+**Step 3: Enable dev subdomain**
+```
+zerops_subdomain action="enable" serviceHostname="appdev"
+```
+
+**Step 4: Verify appdev**
+```
+zerops_verify serviceHostname="appdev"
+```
+Check: service RUNNING, subdomain returns 200, health endpoint responds.
+
+**Step 5: Iterate if needed** (max 3 iterations)
+If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify.
+
+### Stage deployment flow
+
+**Step 6: Generate stage entry in zerops.yaml**
+Add a `setup: appstage` entry to zerops.yaml on the appdev mount. Stage differences from dev:
+- Real `start` command (not `zsc noop`)
+- Real `buildCommands` with compilation/bundling
+- Real `deployFiles` (build output, not `.`)
+- Add `healthCheck` (httpGet on app port)
+- Add `deploy.readinessCheck` if app has `initCommands` (migrations)
+- Copy `envVariables` from dev entry
+- Use runtime knowledge Prod patterns as reference
+
+**Step 7: Deploy appstage from appdev (cross-deploy)**
+```
+zerops_deploy serviceHostname="appstage" sourceServiceHostname="appdev"
+```
+Stage builds from dev's source code with the stage zerops.yaml entry. Server auto-starts via the real `start` command.
+
+**Step 7b: Connect shared storage** (if applicable)
+After stage transitions from READY_TO_DEPLOY to ACTIVE, connect storage:
+```
+zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"
+```
+Import `mount:` only applies to ACTIVE services — stage was READY_TO_DEPLOY during import.
+
+**Step 8: Enable stage subdomain**
+```
+zerops_subdomain action="enable" serviceHostname="appstage"
+```
+
+**Step 9: Verify appstage**
+```
+zerops_verify serviceHostname="appstage"
+```
+Check: service RUNNING, subdomain returns 200, health endpoint responds with real data connections.
+
+**Step 10: Present both URLs**
+
+### Common deployment issues
+
+| Issue | Diagnosis | Fix |
+|-------|-----------|-----|
+| HTTP 502 | App not listening on 0.0.0.0, or wrong port | Fix bind address in app config |
+| Empty env vars | Deploy hasn't happened yet | Deploy first — env vars activate at deploy time |
+| Build fails | Wrong build commands, missing dependencies | Check `zerops_logs`, fix and redeploy |
+| Stage deploy fails | zerops.yaml setup name doesn't match hostname | Ensure `setup: appstage` matches |
+| Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |
 
 ### Completion
 ```
-zerops_workflow action="complete" step="deploy" attestation="All services deployed and healthy: {urls}"
+zerops_workflow action="complete" step="deploy" attestation="Dev deployed at {dev_url}, stage deployed at {stage_url}. Both healthy."
 ```
 </section>
 
 <section name="finalize">
 ## Finalize — Recipe Repository Files
 
-Generate the complete recipe repository structure with 6 environment tiers.
+Generate the complete recipe repository structure with 6 environment tiers. These files go to the **recipe output directory** (shown in `outputDir` field), NOT to the mounted service filesystem.
 
-**Output directory**: Write all files to the output directory shown in the workflow status response (`outputDir` field). This is `{projectRoot}/{slug}/` — e.g., `/var/www/zcprecipator/laravel-hello-world/`. Create the directory if it doesn't exist.
+**Output directory**: `{outputDir}` — e.g., `/var/www/zcprecipator/laravel-minimal/`. Create the directory if it doesn't exist.
 
 ### Required Files (13+ total)
 For each environment (0-5):
