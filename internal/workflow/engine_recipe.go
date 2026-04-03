@@ -121,9 +121,9 @@ func (e *Engine) RecipeCompletePlan(plan RecipePlan, attestation string, liveTyp
 	plan.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	state.Recipe.Plan = &plan
 
-	// Set output directory: {projectRoot}/{slug}/ (e.g., /var/www/zcprecipator/laravel-hello-world/).
+	// Set output directory: {projectRoot}/zcprecipator/{slug}/ (e.g., /var/www/zcprecipator/laravel-hello-world/).
 	projectRoot := filepath.Dir(filepath.Dir(e.stateDir))
-	state.Recipe.OutputDir = filepath.Join(projectRoot, plan.Slug)
+	state.Recipe.OutputDir = filepath.Join(projectRoot, "zcprecipator", plan.Slug)
 
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
