@@ -318,20 +318,37 @@ Recipes are read by both humans and AI agents. Write like a senior dev explainin
 - Use dashes for asides — not parentheses, not semicolons
 - One thought per comment line, flow naturally with the YAML structure
 
-**Comment placement:**
-- Above the key for multi-line explanations
-- Inline for short context (`DB_NAME: db  # matches PostgreSQL hostname`)
-- Group related comments into a block before a section, not scattered
+**Comment shape — match existing recipes exactly:**
+- 1-2 lines per comment block, ~50-60 chars wide (natural prose, not compressed)
+- Above the key, not inline (exception: short value annotations like `DB_NAME: db  # matches PostgreSQL hostname`)
+- Multi-line comments for decisions: explain the choice and its consequence in flowing sentences
+- Group a 2-3 line comment block before a logical section, then let the config breathe
+- Never exceed 70 chars per comment line (existing recipes peak at 75, average 53)
+
+**Example of correct style** (from go-hello-world):
+```yaml
+    # CGO_ENABLED=0 produces a fully static binary — no C compiler
+    # or system libraries linked at runtime. lib/pq is pure Go
+    # so this is safe and results in a portable artifact.
+    envVariables:
+      CGO_ENABLED: "0"
+    buildCommands:
+      # Download all module dependencies, then build both the
+      # app server and the database migration binary.
+      - go mod download
+```
 
 **Anti-patterns:**
 - Don't restate the key name ("# Set the build base" on `base: php@8.4`)
 - Don't write generic descriptions ("# This is the build section")
 - Don't use "we" or "you" excessively
 - Don't explain YAML syntax itself
+- Don't write single-word comments ("# dependencies", "# port")
+- Don't compress to telegraphic style ("# static bin, no C" — write full sentences)
 
 **Metrics:**
-- Comment ratio: at least 30% of config lines should have comments
-- Max 80 chars per comment line
+- Comment ratio: at least 30% of YAML config lines should have comment lines
+- Target ~50-60 chars per comment line, never exceed 70
 - Every non-obvious decision should have a reason
 </section>
 
