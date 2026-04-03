@@ -59,10 +59,14 @@ func RunNginx() error {
 }
 
 // createNginxDirs creates directories needed by nginx.
+// Chmod is applied separately because MkdirAll doesn't update existing dirs.
 func createNginxDirs() error {
 	for _, d := range nginxDirs {
 		if err := os.MkdirAll(d, 0777); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d, err)
+		}
+		if err := os.Chmod(d, 0777); err != nil {
+			return fmt.Errorf("chmod %s: %w", d, err)
 		}
 	}
 	return nil
