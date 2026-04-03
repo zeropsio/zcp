@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -17,7 +19,7 @@ type MountInput struct {
 }
 
 // RegisterMount registers the zerops_mount tool.
-func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mounter ops.Mounter, _ runtime.Info, engine *workflow.Engine) {
+func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mounter ops.Mounter, rtInfo runtime.Info, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_mount",
 		Description: "Mount/unmount service filesystems via SSHFS. Actions: mount (REQUIRES active workflow session), unmount, status.",
@@ -42,6 +44,14 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 
 		switch input.Action {
 		case "mount":
+			// Guard: prevent self-mount when running inside a Zerops container.
+			if rtInfo.InContainer && strings.EqualFold(input.ServiceHostname, rtInfo.ServiceName) {
+				return convertError(platform.NewPlatformError(
+					platform.ErrSelfServiceBlocked,
+					fmt.Sprintf("Cannot mount %q — ZCP is running on this service", input.ServiceHostname),
+					"Mounting a service into itself is not supported. Mount other services instead.",
+				)), nil, nil
+			}
 			if blocked := requireWorkflow(engine); blocked != nil {
 				return blocked, nil, nil
 			}

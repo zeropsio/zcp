@@ -47,6 +47,7 @@ const (
 	ErrDeployFailed           = "DEPLOY_FAILED"
 	ErrPrerequisiteMissing    = "PREREQUISITE_MISSING"
 	ErrWorkflowRequired       = "WORKFLOW_REQUIRED"
+	ErrSelfServiceBlocked     = "SELF_SERVICE_BLOCKED"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

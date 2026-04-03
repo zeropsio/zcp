@@ -73,12 +73,16 @@ func (s *stubMounter) CleanupUnit(_ context.Context, _ string) error {
 }
 
 func mountServer(mock platform.Client, mounter ops.Mounter) *mcp.Server {
-	return mountServerWithEngine(mock, mounter, nil)
+	return mountServerWithRT(mock, mounter, runtime.Info{}, nil)
 }
 
 func mountServerWithEngine(mock platform.Client, mounter ops.Mounter, engine *workflow.Engine) *mcp.Server {
+	return mountServerWithRT(mock, mounter, runtime.Info{}, engine)
+}
+
+func mountServerWithRT(mock platform.Client, mounter ops.Mounter, rtInfo runtime.Info, engine *workflow.Engine) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, engine)
+	RegisterMount(srv, mock, "proj-1", mounter, rtInfo, engine)
 	return srv
 }
 
@@ -355,5 +359,136 @@ func TestMountTool_StatusAllowedWithoutWorkflow(t *testing.T) {
 
 	if result.IsError {
 		t.Errorf("status action should work without workflow, got error: %s", getTextContent(t, result))
+	}
+}
+
+func TestMountTool_SelfMount_Blocked(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "zcpx"},
+	})
+	mounter := newStubMounter()
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+	if _, err := engine.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("bootstrap start: %v", err)
+	}
+
+	srv := mountServerWithRT(mock, mounter, runtime.Info{
+		InContainer: true,
+		ServiceName: "zcpx",
+	}, engine)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action":          "mount",
+		"serviceHostname": "zcpx",
+	})
+
+	if !result.IsError {
+		t.Fatal("expected self-mount to be blocked")
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, platform.ErrSelfServiceBlocked) {
+		t.Errorf("expected error code %s, got: %s", platform.ErrSelfServiceBlocked, text)
+	}
+}
+
+func TestMountTool_SelfMount_CaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "zcpx"},
+	})
+	mounter := newStubMounter()
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+	if _, err := engine.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("bootstrap start: %v", err)
+	}
+
+	srv := mountServerWithRT(mock, mounter, runtime.Info{
+		InContainer: true,
+		ServiceName: "zcpx",
+	}, engine)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action":          "mount",
+		"serviceHostname": "ZCPX",
+	})
+
+	if !result.IsError {
+		t.Fatal("expected case-insensitive self-mount to be blocked")
+	}
+}
+
+func TestMountTool_SelfMount_LocalDev_Allowed(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "zcpx"},
+	})
+	mounter := newStubMounter()
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+	if _, err := engine.BootstrapStart("proj-1", "test"); err != nil {
+		t.Fatalf("bootstrap start: %v", err)
+	}
+
+	// InContainer=false: guard should not activate.
+	srv := mountServerWithRT(mock, mounter, runtime.Info{}, engine)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action":          "mount",
+		"serviceHostname": "zcpx",
+	})
+
+	if result.IsError {
+		t.Errorf("local dev mount should succeed, got: %s", getTextContent(t, result))
+	}
+}
+
+func TestMountTool_SelfUnmount_Allowed(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "zcpx"},
+	})
+	mounter := newStubMounter()
+
+	// Even in container, unmount of self should be allowed (cleanup).
+	srv := mountServerWithRT(mock, mounter, runtime.Info{
+		InContainer: true,
+		ServiceName: "zcpx",
+	}, nil)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action":          "unmount",
+		"serviceHostname": "zcpx",
+	})
+
+	if result.IsError {
+		t.Errorf("self-unmount should be allowed, got: %s", getTextContent(t, result))
+	}
+}
+
+func TestMountTool_SelfStatus_Allowed(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "zcpx"},
+	})
+	mounter := newStubMounter()
+
+	// Even in container, status of self should be allowed.
+	srv := mountServerWithRT(mock, mounter, runtime.Info{
+		InContainer: true,
+		ServiceName: "zcpx",
+	}, nil)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action":          "status",
+		"serviceHostname": "zcpx",
+	})
+
+	if result.IsError {
+		t.Errorf("self-status should be allowed, got: %s", getTextContent(t, result))
 	}
 }
