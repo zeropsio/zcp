@@ -7,5 +7,6 @@
   "editor.minimap.enabled": false,
   "workbench.activityBar.visible": true,
   "workbench.sideBar.location": "left",
+  "claudeCode.allowDangerouslySkipPermissions": true,
   "claudeCode.dangerouslySkipPermissions": true
 }
