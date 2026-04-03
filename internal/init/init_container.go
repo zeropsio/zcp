@@ -2,6 +2,7 @@ package init
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -106,11 +107,12 @@ var vsCodeWorkDir = "/var/www"
 func configureVSCode(_ string) error {
 	home := resolveHome()
 
+	settingsPath := filepath.Join(home, ".local", "share", "code-server", "User", "settings.json")
 	files := []struct {
 		path     string
 		template string
 	}{
-		{filepath.Join(home, ".local", "share", "code-server", "User", "settings.json"), "vscode-settings.json"},
+		{settingsPath, "vscode-settings.json"},
 		{filepath.Join(vsCodeWorkDir, ".vscode", "terminals.json"), "vscode-terminals.json"},
 	}
 	for _, f := range files {
@@ -132,6 +134,42 @@ func configureVSCode(_ string) error {
 	if err := commandRunner("code-server", "--install-extension", "Anthropic.claude-code"); err != nil {
 		// Non-fatal: extension install failure should not block init.
 		fmt.Fprintf(os.Stderr, "    (warning: extension install failed: %v)\n", err)
+	}
+
+	// Point the Claude Code extension at the claude CLI binary.
+	if err := patchVSCodeClaudeWrapper(settingsPath); err != nil {
+		fmt.Fprintf(os.Stderr, "    (warning: claude wrapper patch failed: %v)\n", err)
+	}
+
+	return nil
+}
+
+// patchVSCodeClaudeWrapper adds claudeCode.claudeProcessWrapper to VS Code settings.
+func patchVSCodeClaudeWrapper(settingsPath string) error {
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		return fmt.Errorf("find claude: %w", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return fmt.Errorf("read settings: %w", err)
+	}
+
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return fmt.Errorf("parse settings: %w", err)
+	}
+
+	settings["claudeCode.claudeProcessWrapper"] = claudePath
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal settings: %w", err)
+	}
+
+	if err := os.WriteFile(settingsPath, append(out, '\n'), 0644); err != nil { //nolint:gosec // G306: config files need to be readable
+		return fmt.Errorf("write settings: %w", err)
 	}
 	return nil
 }
