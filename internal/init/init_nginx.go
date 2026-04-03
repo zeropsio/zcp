@@ -58,8 +58,8 @@ func RunNginx() error {
 	return nil
 }
 
-// createNginxDirs creates directories needed by nginx.
-// Chmod is applied separately because MkdirAll doesn't update existing dirs.
+// createNginxDirs creates directories needed by nginx and ensures
+// any pre-existing log files are writable by the non-root worker.
 func createNginxDirs() error {
 	for _, d := range nginxDirs {
 		if err := os.MkdirAll(d, 0777); err != nil {
@@ -67,6 +67,15 @@ func createNginxDirs() error {
 		}
 		if err := os.Chmod(d, 0777); err != nil {
 			return fmt.Errorf("chmod %s: %w", d, err)
+		}
+	}
+
+	// Fix ownership/perms on pre-existing log files (created by apt as www-data:adm 0640).
+	for _, f := range []string{"/var/log/nginx/error.log", "/var/log/nginx/access.log"} {
+		if _, err := os.Stat(f); err == nil {
+			if err := os.Chmod(f, 0666); err != nil {
+				return fmt.Errorf("chmod %s: %w", f, err)
+			}
 		}
 	}
 	return nil
