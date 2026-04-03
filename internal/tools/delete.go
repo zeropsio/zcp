@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -19,7 +21,7 @@ type DeleteInput struct {
 // RegisterDelete registers the zerops_delete tool.
 // stateDir is the workflow state directory; empty string disables service meta cleanup.
 // mounter, when non-nil, enables best-effort SSHFS unmount of the deleted service.
-func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, stateDir string, mounter ops.Mounter) {
+func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, stateDir string, mounter ops.Mounter, rtInfo runtime.Info) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_delete",
 		Description: "Delete a service. This is destructive and permanent. " +
@@ -30,6 +32,15 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeleteInput) (*mcp.CallToolResult, any, error) {
+		// Guard: prevent self-deletion when running inside a Zerops container.
+		if rtInfo.InContainer && strings.EqualFold(input.ServiceHostname, rtInfo.ServiceName) {
+			return convertError(platform.NewPlatformError(
+				platform.ErrSelfServiceBlocked,
+				fmt.Sprintf("Cannot delete %q — ZCP is running on this service", input.ServiceHostname),
+				"Delete this service manually via Zerops GUI, zcli, or from a different machine.",
+			)), nil, nil
+		}
+
 		// Best-effort: unmount SSHFS before delete so the service still exists for clean unmount.
 		if mounter != nil {
 			if res, umErr := ops.UnmountService(ctx, client, projectID, mounter, input.ServiceHostname); umErr != nil {

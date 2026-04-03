@@ -7,11 +7,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -22,7 +24,7 @@ func TestDeleteTool_Confirmed(t *testing.T) {
 		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "", nil)
+	RegisterDelete(srv, mock, "proj-1", "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
@@ -48,7 +50,7 @@ func TestDeleteTool_EmptyHostname(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "", nil)
+	RegisterDelete(srv, mock, "proj-1", "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "",
@@ -84,7 +86,7 @@ func TestDeleteTool_CleansUpServiceMeta(t *testing.T) {
 		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", stateDir, nil)
+	RegisterDelete(srv, mock, "proj-1", stateDir, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
@@ -108,7 +110,7 @@ func TestDeleteTool_NoStateDir_StillSucceeds(t *testing.T) {
 		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "", nil)
+	RegisterDelete(srv, mock, "proj-1", "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
@@ -130,7 +132,7 @@ func TestDeleteTool_UnmountsOnSuccess(t *testing.T) {
 	mounter.states["/var/www/api"] = platform.MountStateActive
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "", mounter)
+	RegisterDelete(srv, mock, "proj-1", "", mounter, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
@@ -157,7 +159,7 @@ func TestDeleteTool_UnmountOrphanUnit(t *testing.T) {
 	mounter.units["api"] = true // Orphan unit, no FUSE mount.
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "", mounter)
+	RegisterDelete(srv, mock, "proj-1", "", mounter, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
@@ -186,7 +188,7 @@ func TestDeleteTool_NilMounter_NoUnmount(t *testing.T) {
 		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "", nil) // nil mounter = local dev
+	RegisterDelete(srv, mock, "proj-1", "", nil, runtime.Info{}) // nil mounter = local dev
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
@@ -209,7 +211,7 @@ func TestDeleteTool_UnmountError_StillSucceeds(t *testing.T) {
 	mounter.mountErr = errors.New("unmount failed") // mountErr used by Mount, but we need unmount to fail
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDelete(srv, mock, "proj-1", "", mounter)
+	RegisterDelete(srv, mock, "proj-1", "", mounter, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_delete", map[string]any{
 		"serviceHostname": "api",
@@ -227,6 +229,97 @@ func TestDeleteTool_UnmountError_StillSucceeds(t *testing.T) {
 	}
 	if proc.Status != "FINISHED" {
 		t.Errorf("status = %q, want %q", proc.Status, "FINISHED")
+	}
+}
+
+func TestDeleteTool_SelfDelete_Blocked(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "zcpx"}}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDelete(srv, mock, "proj-1", "", nil, runtime.Info{
+		InContainer: true,
+		ServiceName: "zcpx",
+		ServiceID:   "svc-1",
+	})
+
+	result := callTool(t, srv, "zerops_delete", map[string]any{
+		"serviceHostname": "zcpx",
+	})
+
+	if !result.IsError {
+		t.Fatal("expected self-delete to be blocked")
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, platform.ErrSelfServiceBlocked) {
+		t.Errorf("expected error code %s, got: %s", platform.ErrSelfServiceBlocked, text)
+	}
+}
+
+func TestDeleteTool_SelfDelete_CaseInsensitive(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "zcpx"}}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDelete(srv, mock, "proj-1", "", nil, runtime.Info{
+		InContainer: true,
+		ServiceName: "zcpx",
+	})
+
+	result := callTool(t, srv, "zerops_delete", map[string]any{
+		"serviceHostname": "ZCPX",
+	})
+
+	if !result.IsError {
+		t.Fatal("expected case-insensitive self-delete to be blocked")
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, platform.ErrSelfServiceBlocked) {
+		t.Errorf("expected error code %s, got: %s", platform.ErrSelfServiceBlocked, text)
+	}
+}
+
+func TestDeleteTool_SelfDelete_LocalDev_Allowed(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "zcpx"}}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	// InContainer=false: guard should not activate even if hostname matches.
+	RegisterDelete(srv, mock, "proj-1", "", nil, runtime.Info{})
+
+	result := callTool(t, srv, "zerops_delete", map[string]any{
+		"serviceHostname": "zcpx",
+	})
+
+	if result.IsError {
+		t.Errorf("local dev delete should succeed, got: %s", getTextContent(t, result))
+	}
+}
+
+func TestDeleteTool_OtherService_InContainer_Allowed(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithProcess(&platform.Process{ID: "proc-delete-svc-1", ActionName: "delete", Status: "FINISHED"})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDelete(srv, mock, "proj-1", "", nil, runtime.Info{
+		InContainer: true,
+		ServiceName: "zcpx",
+	})
+
+	result := callTool(t, srv, "zerops_delete", map[string]any{
+		"serviceHostname": "api",
+	})
+
+	if result.IsError {
+		t.Errorf("deleting other service should succeed, got: %s", getTextContent(t, result))
 	}
 }
 
