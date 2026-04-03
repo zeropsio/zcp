@@ -45,6 +45,7 @@ cmd/zcp/main.go → internal/server  → MCP tools  → internal/ops      → in
 | `internal/platform` | Zerops API client, types, error codes |
 | `internal/auth` | Token resolution (env var / zcli), project discovery |
 | `internal/knowledge` | Text search, embedded docs + recipes, session-aware briefings |
+| `internal/schema` | Live Zerops YAML schema fetching, caching, enum extraction, LLM formatting |
 | `internal/content` | Embedded workflow guides (bootstrap.md, deploy.md, recipe.md, cicd.md) |
 
 ---
@@ -273,14 +274,14 @@ Dev services get source-deployed (`deployFiles: [.]`). Stage services get proper
 
 ## Knowledge system
 
-Platform knowledge is compiled into the binary. The LLM queries it before generating any configuration:
+Platform knowledge comes from two sources: embedded docs (compiled into the binary) and live schemas (fetched from the Zerops API at runtime).
 
 - **Briefings** — stack-specific rules (e.g., "Node.js must bind 0.0.0.0, use these env var patterns for PostgreSQL wiring")
 - **Recipes** — complete framework configs (Laravel, Next.js, Django, etc.) with zerops.yml + import.yml
-- **Infrastructure scope** — full import.yml and zerops.yml schema reference
+- **Live schemas** — zerops.yml and import.yaml JSON schemas fetched from the public API, cached 24h. Provides authoritative enum values (119 service types, 79 build bases, 97 run bases, modes, policies) and field descriptions. Injected into workflow responses per-step — bootstrap gets import.yaml at provision, zerops.yml at generate; recipe gets step-appropriate schemas. Also used for validation in import and recipe plan submission.
 - **Text search** — search across all embedded docs by title + content matching
 
-This prevents the LLM from guessing Zerops-specific syntax. It reads the rules, then generates config.
+This prevents the LLM from guessing Zerops-specific syntax. It reads the rules and live schemas, then generates config.
 
 ### Knowledge sync
 
