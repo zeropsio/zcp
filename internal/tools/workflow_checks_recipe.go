@@ -126,18 +126,17 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 }
 
 // checkRecipeSetups validates zerops.yml has a dev setup entry for the app.
-// At generate time only the dev entry exists — prod is added during deploy.
-// Accepts both generic names (dev, prod) and hostname-matching names (appdev, appstage).
+// At generate time only the dev entry exists — prod/stage is added during deploy.
+// Workspace uses hostname matching: zerops.yaml setup names must match hostnames.
 func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, _ *workflow.RecipePlan) []workflow.StepCheck {
 	var checks []workflow.StepCheck
 
-	// Try finding a dev setup entry by multiple conventions:
-	// 1. Generic "dev" (preferred — matches zeropsSetup: dev in import.yaml)
-	// 2. Hostname-suffixed "{hostname}dev" (legacy — hostname-matching)
-	// 3. Bare hostname (fallback)
+	// Try finding a dev setup entry by hostname conventions:
+	// 1. "{hostname}dev" (standard — matches workspace appdev hostname)
+	// 2. Bare hostname (single-service recipes)
 	var entry *ops.ZeropsYmlEntry
 	var foundName string
-	for _, name := range []string{"dev", hostname + "dev", hostname} {
+	for _, name := range []string{hostname + "dev", hostname} {
 		if e := doc.FindEntry(name); e != nil {
 			entry = e
 			foundName = name
@@ -147,7 +146,7 @@ func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, _ *workflow.Recip
 	if entry == nil {
 		checks = append(checks, workflow.StepCheck{
 			Name: hostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no dev setup entry found in zerops.yml (tried: dev, %sdev, %s)", hostname, hostname),
+			Detail: fmt.Sprintf("no dev setup entry found in zerops.yml (tried: %sdev, %s)", hostname, hostname),
 		})
 		return checks
 	}

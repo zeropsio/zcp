@@ -128,10 +128,9 @@ Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}s
 | `startWithoutCode` | `true` | omit |
 | `maxContainers` | `1` | omit (default) |
 | `enableSubdomainAccess` | `true` | `true` |
-| `zeropsSetup` | `dev` | `prod` |
 | `verticalAutoscaling.minRam` | `1.0` for compiled runtimes (Go, Rust, Java, .NET, Elixir, Gleam) | omit (default) |
 
-**`zeropsSetup` is required on the workspace import.yaml** — it maps hostnames to generic setup names in zerops.yaml (`setup: dev` / `setup: prod`). Without it, the platform defaults to hostname matching and the agent is forced to use `setup: appdev` / `setup: appstage` instead of generic names.
+**DO NOT add `zeropsSetup` or `buildFromGit` to the workspace import.** These fields require each other — `zeropsSetup` without `buildFromGit` causes API errors. The workspace uses hostname matching: zerops.yaml `setup:` names must match service hostnames exactly (`setup: appdev`, `setup: appstage`).
 
 Dev starts immediately with an empty container (RUNNING). Stage stays in READY_TO_DEPLOY until first deploy from dev.
 
@@ -157,7 +156,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 | Priority | Data services: `priority: 10` |
 | Preprocessor | `#zeropsPreprocessor=on` if using `<@...>` functions |
 | envSecrets | Per-service on app/worker, NOT at project level |
-| zeropsSetup | `dev` on dev services, `prod` on stage services |
+| NO zeropsSetup | Workspace import must NOT include zeropsSetup (requires buildFromGit) |
 
 ### 2. Import services
 
@@ -225,19 +224,19 @@ Files placed on the mount are already on the dev container — deploy doesn't "s
 
 **Type 3 (backend framework):** Full framework project. ORM-based migrations, template-rendered dashboard, framework CLI tools. Uses the framework's conventions throughout.
 
-### zerops.yaml — Setup naming convention
+### Two kinds of import.yaml (critical distinction)
 
-zerops.yaml uses **generic setup names**: `setup: dev` and `setup: prod` (never hostname-specific like `appdev`/`appstage`). The import.yaml `zeropsSetup` field maps hostnames to setups:
-- `hostname: appdev` → `zeropsSetup: dev`
-- `hostname: appstage` → `zeropsSetup: prod`
-- `hostname: app` (env 2-5) → `zeropsSetup: prod`
+1. **Workspace import** (provision step) — creates the agent's dev/stage infrastructure. NO `zeropsSetup`, NO `buildFromGit`. The platform uses hostname matching: zerops.yaml `setup:` names **must** match service hostnames.
+2. **Recipe import** (finalize step) — the 6 deliverable files for end users. Uses `zeropsSetup` + `buildFromGit` to map hostnames to setup names in the published repo.
+
+This means zerops.yaml setup names are the **hostnames** (`appdev`, `appstage`), not generic names. The finalize import.yaml uses `zeropsSetup: appstage` to map env 2-5 hostname `app` to the `appstage` setup in zerops.yaml.
 
 ### zerops.yaml — Dev entry ONLY first
 
 Write the **dev** entry only. The stage entry comes after dev is verified in the deploy step.
 
 **Dev setup rules (CRITICAL):**
-- `setup: dev` — generic name, mapped via `zeropsSetup` in import.yaml
+- `setup: appdev` — must match the dev service hostname (platform requirement)
 - `deployFiles: [.]` — **MANDATORY for self-deploy, no exceptions**
 - `start: zsc noop --silent` — agent controls server manually
   - **Exception**: omit `start` entirely for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
@@ -424,8 +423,8 @@ If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix 
 
 ### Stage deployment flow
 
-**Step 6: Generate prod entry in zerops.yaml**
-Add a `setup: prod` entry to zerops.yaml on the appdev mount. The `zeropsSetup: prod` in import.yaml maps `appstage` hostname to this setup. Prod differences from dev:
+**Step 6: Generate stage entry in zerops.yaml**
+Add a `setup: appstage` entry to zerops.yaml on the appdev mount. The setup name must match the `appstage` hostname (workspace uses hostname matching). Prod differences from dev:
 - Real `start` command (not `zsc noop`). For static: still no `start` (Nginx serves).
 - Real `buildCommands` with compilation/bundling
 - Real `deployFiles` (build output, not `.`)
@@ -465,7 +464,7 @@ zerops_verify serviceHostname="appstage"
 | HTTP 502 | App not listening on 0.0.0.0, or wrong port | Fix bind address in app config |
 | Empty env vars | Deploy hasn't happened yet | Deploy first — env vars activate at deploy time |
 | Build fails | Wrong build commands, missing dependencies | Check `zerops_logs`, fix and redeploy |
-| Stage deploy fails | zerops.yaml setup name doesn't match zeropsSetup | Ensure `setup: prod` matches `zeropsSetup: prod` in import.yaml |
+| Stage deploy fails | zerops.yaml setup name doesn't match hostname | Ensure `setup: appstage` matches the `appstage` hostname |
 | Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |
 | Static site 404 | Wrong `documentRoot` | Match to actual build output directory |
 
@@ -517,8 +516,8 @@ Plus:
 - `#zeropsPreprocessor=on` when using `<@generateRandomString(<32>)>`
 - `corePackage: SERIOUS` at **project level** for env 5 (NOT under verticalAutoscaling)
 - `verticalAutoscaling` nesting: minFreeRamGB, cpuMode under it
-- `zeropsSetup: prod` on app/worker services (maps to `setup: prod` in zerops.yaml)
-- `zeropsSetup: dev` on dev services in env 0-1 (maps to `setup: dev` in zerops.yaml)
+- `zeropsSetup: appstage` on prod/stage app services (maps to `setup: appstage` in zerops.yaml)
+- `zeropsSetup: appdev` on dev services in env 0-1 (maps to `setup: appdev` in zerops.yaml)
 - `buildFromGit: https://github.com/zerops-recipe-apps/{slug}-app` on all non-startWithoutCode app/worker services
 - `startWithoutCode: true` + `maxContainers: 1` on dev services in env 0-1
 - Comment line width <= 80 chars
@@ -559,7 +558,7 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 > - Is the comment quality good? (WHY not WHAT, no restating key names)
 >
 > **import.yaml review (all 6 environments):**
-> - Do all files use `zeropsSetup: dev`/`zeropsSetup: prod` (NOT hostname-matching like `appstage`)?
+> - Do all files use `zeropsSetup` matching zerops.yaml setup names (`appdev`/`appstage`)?
 > - Is `buildFromGit` present on all non-startWithoutCode services?
 > - Is `corePackage: SERIOUS` at project level (not verticalAutoscaling) in env 5?
 > - Are `envSecrets` per-service (not project level)?
