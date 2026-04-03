@@ -541,7 +541,7 @@ ZCP provides **generated boilerplate** that the LLM customizes:
 - Env 5 has `corePackage: SERIOUS`, HA modes, dedicated CPU
 - Env 4 has `minContainers: 2`
 - `envSecrets` present where framework needs app secret
-- `# zeropsPreprocessor=on` present when using `<@generateRandomString>`
+- `#zeropsPreprocessor=on` present when using `<@generateRandomString>`
 - `verticalAutoscaling` nesting correct (minRam, minFreeRamGB, cpuMode under it)
 - Comment line width <= 80 chars in YAML files
 - No cross-environment references in comments
@@ -939,7 +939,7 @@ zcp sync push recipes {slug}
 ```
 For each env in [agent, remote, local, stage, small-prod, ha-prod]:
   1. Start with project: name: {slug}-{env-suffix}
-  2. If env needs preprocessor (framework has secrets): add # zeropsPreprocessor=on
+  2. If env needs preprocessor (framework has secrets): add #zeropsPreprocessor=on
   3. For each service in RecipePlan:
      a. Apply env-specific overrides (mode, scaling, containers)
      b. For app services:

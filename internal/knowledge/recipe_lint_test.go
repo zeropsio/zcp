@@ -475,10 +475,10 @@ func validateImportYml(t *testing.T, block, rawSection string) {
 		firstLine := strings.TrimSpace(strings.SplitN(rawSection, "\n", 2)[0])
 		// Look for the preprocessor directive in the raw YAML content
 		if !containsPreprocessorDirective(rawSection) {
-			t.Error("import.yml uses <@...> but missing #yamlPreprocessor=on directive")
+			t.Error("import.yml uses <@...> but missing #zeropsPreprocessor=on directive")
 		}
-		if strings.Contains(rawSection, "#zeropsPreprocessor=on") {
-			t.Error("import.yml uses #zeropsPreprocessor=on (wrong — use #yamlPreprocessor=on)")
+		if strings.Contains(rawSection, "#yamlPreprocessor=on") {
+			t.Error("import.yml uses #yamlPreprocessor=on (wrong — use #zeropsPreprocessor=on)")
 		}
 		_ = firstLine // used above indirectly
 	}
@@ -487,7 +487,7 @@ func validateImportYml(t *testing.T, block, rawSection string) {
 func containsPreprocessorDirective(section string) bool {
 	for line := range strings.SplitSeq(section, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "#yamlPreprocessor=on" {
+		if trimmed == "#zeropsPreprocessor=on" {
 			return true
 		}
 	}

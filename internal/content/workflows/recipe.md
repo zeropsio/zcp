@@ -142,7 +142,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 **If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair. Skip managed service conventions.
 
-**Framework secrets**: If `needsAppSecret == true`, add `envSecrets` with `<@generateRandomString(<32>)>` and add `#yamlPreprocessor=on` as the first line.
+**Framework secrets**: If `needsAppSecret == true`, add `envSecrets` with `<@generateRandomString(<32>)>` and add `#zeropsPreprocessor=on` as the first line.
 
 **Validation checklist:**
 
@@ -152,7 +152,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 | Service types | Match available stacks from research |
 | Mode present | Managed services have `mode: NON_HA` |
 | Priority | Data services: `priority: 10` |
-| Preprocessor | `#yamlPreprocessor=on` if using `<@...>` functions |
+| Preprocessor | `#zeropsPreprocessor=on` if using `<@...>` functions |
 
 ### 2. Import services
 
@@ -479,7 +479,7 @@ Plus:
 ### import.yaml Rules
 - `priority: 10` on all data services (ensures they start before app)
 - `envSecrets` where `needsAppSecret == true`
-- `# zeropsPreprocessor=on` when using `<@generateRandomString>`
+- `#zeropsPreprocessor=on` when using `<@generateRandomString>`
 - `verticalAutoscaling` nesting: minRam, minFreeRamGB, cpuMode under it
 - Comment line width <= 80 chars
 - Comment ratio >= 0.3 per file

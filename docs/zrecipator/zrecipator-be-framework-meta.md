@@ -267,7 +267,7 @@ services:
     enableSubdomainAccess: true
 ```
 
-**Framework-specific additions**: If the framework needs `envSecrets` (like Laravel's `APP_KEY`), add them to both `appdev` and `appstage` with `# zeropsPreprocessor=on` at the top.
+**Framework-specific additions**: If the framework needs `envSecrets` (like Laravel's `APP_KEY`), add them to both `appdev` and `appstage` with `#zeropsPreprocessor=on` at the top.
 
 ---
 
@@ -576,7 +576,7 @@ A service = multiple containers behind a single hostname. Each container runs an
 Zerops has three categories of environment variables:
 
 1. **zerops.yaml envs** (`build.envVariables`, `run.envVariables`): Non-sensitive constants, versioned with code. Can reference generated variables via `${hostname_key}` syntax.
-2. **Secret envs** (`envSecrets` in import.yaml, or managed in UI): Sensitive or runtime-mutable values (API keys, app secrets). Set once at import time, persist across deploys. Use `# zeropsPreprocessor=on` with `<@generateRandomString(<N>)>` to auto-generate secrets.
+2. **Secret envs** (`envSecrets` in import.yaml, or managed in UI): Sensitive or runtime-mutable values (API keys, app secrets). Set once at import time, persist across deploys. Use `#zeropsPreprocessor=on` with `<@generateRandomString(<N>)>` to auto-generate secrets.
 3. **Generated envs**: Platform-provided variables for each service (e.g., `db_hostname`, `db_port`, `db_connectionString`). Referenced from zerops.yaml or secret envs using `${hostname_key}` syntax.
 
 Env vars can be set at **project level** (visible to all services) or **service level** (visible only to that service, but other services can reference them).
@@ -1363,7 +1363,7 @@ These are 1-line explanations woven into existing comments — not separate para
 
 #### Additional import.yaml Features (use when needed)
 
-- **YAML Preprocessor**: `# zeropsPreprocessor=on` as first line enables `<@generateRandomString(<N>)>` for secret generation via `envSecrets`. See [preprocessor docs](https://docs.zerops.io/references/import-yaml/pre-processor).
+- **YAML Preprocessor**: `#zeropsPreprocessor=on` as first line enables `<@generateRandomString(<N>)>` for secret generation via `envSecrets`. See [preprocessor docs](https://docs.zerops.io/references/import-yaml/pre-processor).
 - **envSecrets**: Per-service secrets set at project creation (e.g., `APP_KEY`). Unlike `envVariables` in zerops.yaml, these persist and aren't redeployed.
 - **Setup Inheritance (`extends`)**: Backend framework recipes always use `extends: base` — frameworks invariably share 10+ env vars between prod and dev.
 - **Multi-base builds**: `base: [php@8.4, nodejs@22]` when build needs multiple runtimes.
@@ -1827,7 +1827,7 @@ zerops:
 - [ ] Env vars follow `{hostname}_{key}` pattern (not `{service_type}_{key}`)
 - [ ] Folder names use em dash (`—`), not hyphen (`-`)
 - [ ] `envSecrets` used for app secrets (APP_KEY, SECRET_KEY, etc.)
-- [ ] `# zeropsPreprocessor=on` present when using `<@generateRandomString>`
+- [ ] `#zeropsPreprocessor=on` present when using `<@generateRandomString>`
 - [ ] `deployFiles` paths match `start` command paths
 
 #### Gate 2: BUILD & RUNTIME — errors that fail loudly
@@ -2104,7 +2104,7 @@ Note: `{{.PhpSocket}}` is a Zerops template variable — not a user-configurable
 
 ### Laravel import.yaml (AI Agent env — key patterns)
 
-- `# zeropsPreprocessor=on` enables secret generation
+- `#zeropsPreprocessor=on` enables secret generation
 - `type: php-nginx@8.4` — not `php@8.4` (needs web server)
 - `envSecrets` for `APP_KEY` with `<@generateRandomString(<32>)>`
 - `buildFromGit` points to the app repository

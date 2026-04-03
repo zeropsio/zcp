@@ -118,7 +118,7 @@ zerops:
 
 ## import.yml (Full)
 ` + "```yaml" + `
-#yamlPreprocessor=on
+#zeropsPreprocessor=on
 services:
   - hostname: app
     type: php-nginx@8.4

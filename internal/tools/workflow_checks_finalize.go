@@ -221,7 +221,7 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 			} else {
 				checks = append(checks, workflow.StepCheck{
 					Name: prefix + "_preprocessor", Status: statusFail,
-					Detail: "# zeropsPreprocessor=on required when using <@generateRandomString>",
+					Detail: "#zeropsPreprocessor=on required when using <@generateRandomString>",
 				})
 			}
 		}

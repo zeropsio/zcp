@@ -49,7 +49,7 @@ services[]:                            # REQUIRED
 ```
 
 ### Preprocessor Functions
-Enable with `#yamlPreprocessor=on` as first line. Syntax: `<@function(<args>)>`, chain modifiers with `|`: `<@generateRandomString(<32>)|sha256>`.
+Enable with `#zeropsPreprocessor=on` as first line. Syntax: `<@function(<args>)>`, chain modifiers with `|`: `<@generateRandomString(<32>)|sha256>`.
 
 **Functions:**
 - `<@generateRandomString(<len>)>` -- random alphanumeric string
@@ -269,7 +269,7 @@ Same pattern as above but using `api` prefix instead of `app`. zerops.yaml needs
 
 **Full-Stack Dev/Stage (App + DB + Cache + Storage):**
 ```yaml
-#yamlPreprocessor=on
+#zeropsPreprocessor=on
 services:
   - hostname: db
     type: postgresql@16

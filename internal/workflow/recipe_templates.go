@@ -126,7 +126,7 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 	projectName := fmt.Sprintf("%s-%s", plan.Slug, envTiers[envIndex].Suffix)
 
 	if plan.Research.NeedsAppSecret {
-		b.WriteString("# zeropsPreprocessor=on\n")
+		b.WriteString("#zeropsPreprocessor=on\n")
 	}
 	fmt.Fprintf(&b, "project:\n")
 	fmt.Fprintf(&b, "  name: %s\n", projectName)

@@ -156,7 +156,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 | Service types | Match available stacks |
 | No duplicates | No duplicate hostnames |
 | object-storage | Requires `objectStorageSize` field |
-| Preprocessor | `#yamlPreprocessor=on` if using `<@...>` functions |
+| Preprocessor | `#zeropsPreprocessor=on` if using `<@...>` functions |
 | Mode present | Managed services default to NON_HA if omitted |
 | Framework secrets | If using Laravel/Rails/Django/etc., add `envSecrets` with `<@generateRandomString(...)>` (e.g., `APP_KEY`, `SECRET_KEY_BASE`) |
 

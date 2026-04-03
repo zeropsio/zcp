@@ -589,7 +589,7 @@ Validates:
 - Env 5: `corePackage: SERIOUS`, HA modes on applicable services, DEDICATED cpuMode
 - Env 4: `minContainers: 2` on app services
 - `envSecrets` present where `plan.Research.NeedsAppSecret == true`
-- `# zeropsPreprocessor=on` present when `envSecrets` uses `<@generateRandomString>`
+- `#zeropsPreprocessor=on` present when `envSecrets` uses `<@generateRandomString>`
 - `verticalAutoscaling` nesting correct (minRam, minFreeRamGB, cpuMode under it)
 - Comment line width ≤ 80 chars in YAML files
 - No `PLACEHOLDER_*` strings anywhere
