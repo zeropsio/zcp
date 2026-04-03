@@ -26,13 +26,15 @@ func SetNginxOutputPath(path string) { nginxOutputPath = path }
 func ResetNginxOutputPath() { nginxOutputPath = "/etc/nginx/nginx.conf" }
 
 // nginxDirs are the directories that must exist before nginx can start.
-var nginxDirs = []string{"/var/log/nginx", "/var/lib/nginx/tmp"}
+var nginxDirs = []string{"/var/log/nginx", "/var/lib/nginx/tmp", "/var/lib/nginx/body", "/var/lib/nginx/proxy", "/var/lib/nginx/fastcgi", "/var/lib/nginx/uwsgi", "/var/lib/nginx/scgi"}
 
 // SetNginxDirs overrides the nginx directories for testing.
 func SetNginxDirs(dirs []string) { nginxDirs = dirs }
 
 // ResetNginxDirs restores the default nginx directories.
-func ResetNginxDirs() { nginxDirs = []string{"/var/log/nginx", "/var/lib/nginx/tmp"} }
+func ResetNginxDirs() {
+	nginxDirs = []string{"/var/log/nginx", "/var/lib/nginx/tmp", "/var/lib/nginx/body", "/var/lib/nginx/proxy", "/var/lib/nginx/fastcgi", "/var/lib/nginx/uwsgi", "/var/lib/nginx/scgi"}
+}
 
 // RunNginx generates /etc/nginx/nginx.conf and creates required directories.
 // Authentication is enabled when VSCODE_PASSWORD env var is set.
