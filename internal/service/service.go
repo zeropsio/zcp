@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -51,7 +52,16 @@ func Start(name string) error {
 		return fmt.Errorf("find %s: %w", cfg.binary, err)
 	}
 
-	return runFunc(binary, cfg.args)
+	fmt.Fprintf(os.Stderr, "[zcp] service %s: resolved %s → %s\n", name, cfg.binary, binary)
+	fmt.Fprintf(os.Stderr, "[zcp] service %s: args=%v\n", name, cfg.args)
+
+	err = runFunc(binary, cfg.args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zcp] service %s: exited with error: %v\n", name, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "[zcp] service %s: exited cleanly (code 0)\n", name)
+	}
+	return err
 }
 
 // runCommand starts a child process and waits for it.
@@ -64,8 +74,22 @@ func runCommand(binary string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
+	cmd.Env = os.Environ()
 
-	if err := cmd.Run(); err != nil {
+	fmt.Fprintf(os.Stderr, "[zcp] exec: %s %v (pid will follow)\n", binary, args[1:])
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "[zcp] started pid %d\n", cmd.Process.Pid)
+
+	err := cmd.Wait()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			fmt.Fprintf(os.Stderr, "[zcp] pid %d exited: code=%d state=%s\n",
+				cmd.Process.Pid, exitErr.ExitCode(), exitErr.ProcessState)
+		}
 		return fmt.Errorf("%s exited: %w", args[0], err)
 	}
 	return nil
