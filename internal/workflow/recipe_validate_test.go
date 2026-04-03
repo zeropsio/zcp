@@ -260,10 +260,12 @@ func TestValidateRecipePlan_SlugPatterns(t *testing.T) {
 	}{
 		{"php-hello-world", true},
 		{"bun-hello-world", true},
+		{"python-hello-world", true},
 		{"laravel-minimal", true},
 		{"nestjs-minimal", true},
+		{"django-minimal", true},
 		{"nestjs-showcase", true},
-		{"django-rest-hello-world", true},
+		{"django-showcase", true},
 		{"BadSlug", false},
 		{"laravel", false},
 		{"laravel-", false},
