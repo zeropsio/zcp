@@ -93,14 +93,16 @@ type ResearchData struct {
 
 // RecipeResponse is returned from recipe workflow actions.
 type RecipeResponse struct {
-	SessionID   string           `json:"sessionId"`
-	Intent      string           `json:"intent"`
-	Iteration   int              `json:"iteration"`
-	Message     string           `json:"message"`
-	Progress    RecipeProgress   `json:"progress"`
-	Current     *RecipeStepInfo  `json:"current,omitempty"`
-	CheckResult *StepCheckResult `json:"checkResult,omitempty"`
-	OutputDir   string           `json:"outputDir,omitempty"`
+	SessionID       string           `json:"sessionId"`
+	Intent          string           `json:"intent"`
+	Iteration       int              `json:"iteration"`
+	Message         string           `json:"message"`
+	Progress        RecipeProgress   `json:"progress"`
+	Current         *RecipeStepInfo  `json:"current,omitempty"`
+	CheckResult     *StepCheckResult `json:"checkResult,omitempty"`
+	OutputDir       string           `json:"outputDir,omitempty"`
+	AvailableStacks string           `json:"availableStacks,omitempty"`
+	SchemaKnowledge string           `json:"schemaKnowledge,omitempty"`
 }
 
 // RecipeProgress summarizes overall recipe progress.

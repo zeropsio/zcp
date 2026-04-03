@@ -9,6 +9,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -44,7 +45,7 @@ type immediateResponse struct {
 
 // RegisterWorkflow registers the zerops_workflow tool.
 // selfHostname is the hostname of the service running ZCP (empty when local).
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string) {
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
 		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt services), deploy (deploy/fix/investigate), recipe (create recipe repo files), cicd (CI/CD setup). After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route\".",
@@ -57,7 +58,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, cache, logFetcher, input, stateDir, selfHostname)
+			return handleWorkflowAction(ctx, projectID, engine, client, cache, schemaCache, logFetcher, input, stateDir, selfHostname)
 		}
 
 		// Legacy: static workflow guidance.
@@ -84,7 +85,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string) (*mcp.CallToolResult, any, error) {
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -94,18 +95,18 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 
 	switch input.Action {
 	case "start":
-		return handleStart(ctx, projectID, engine, client, cache, input)
+		return handleStart(ctx, projectID, engine, client, cache, schemaCache, input)
 	case "reset":
 		return handleReset(engine)
 	case "iterate":
-		return handleIterate(ctx, engine, client, cache)
+		return handleIterate(ctx, engine, client, cache, schemaCache)
 	case "complete":
 		active := detectActiveWorkflow(engine)
 		if active == workflowDeploy {
 			return handleDeployComplete(ctx, engine, client, projectID, stateDir, input)
 		}
 		if active == workflowRecipe {
-			return handleRecipeComplete(ctx, engine, client, cache, projectID, stateDir, input)
+			return handleRecipeComplete(ctx, engine, client, cache, schemaCache, projectID, stateDir, input)
 		}
 		var liveTypes []platform.ServiceStackType
 		if cache != nil && client != nil {
@@ -127,11 +128,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			return handleDeployStatus(ctx, engine)
 		}
 		if active == workflowRecipe {
-			return handleRecipeStatus(ctx, engine)
+			return handleRecipeStatus(ctx, engine, schemaCache)
 		}
 		return handleBootstrapStatus(ctx, engine, client, cache)
 	case "resume":
-		return handleResume(ctx, engine, client, cache, input)
+		return handleResume(ctx, engine, client, cache, schemaCache, input)
 	case "list":
 		return handleListSessions(engine)
 	case "route":
@@ -146,7 +147,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	}
 }
 
-func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	// Immediate workflows: stateless, return guidance directly.
 	if workflow.IsImmediateWorkflow(input.Workflow) {
 		wfContent, err := content.GetWorkflow(input.Workflow)
@@ -190,7 +191,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	// Recipe workflow.
 	if input.Workflow == workflowRecipe {
-		return handleRecipeStart(ctx, projectID, engine, client, cache, input)
+		return handleRecipeStart(ctx, projectID, engine, client, cache, schemaCache, input)
 	}
 
 	// Unknown workflow — return error.
@@ -231,7 +232,7 @@ func handleReset(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
 	return textResult("Session reset successfully."), nil, nil
 }
 
-func handleIterate(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
+func handleIterate(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
 	if _, err := engine.Iterate(); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
@@ -243,12 +244,12 @@ func handleIterate(ctx context.Context, engine *workflow.Engine, client platform
 		return handleDeployStatus(ctx, engine)
 	}
 	if active == workflowRecipe {
-		return handleRecipeStatus(ctx, engine)
+		return handleRecipeStatus(ctx, engine, schemaCache)
 	}
 	return bootstrapStatusResult(ctx, engine, client, cache)
 }
 
-func handleResume(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleResume(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.SessionID == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -266,7 +267,7 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 		return handleDeployStatus(ctx, engine)
 	}
 	if active == workflowRecipe {
-		return handleRecipeStatus(ctx, engine)
+		return handleRecipeStatus(ctx, engine, schemaCache)
 	}
 	return bootstrapStatusResult(ctx, engine, client, cache)
 }

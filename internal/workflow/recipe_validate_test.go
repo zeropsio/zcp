@@ -1,10 +1,12 @@
 package workflow
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // validMinimalPlan returns a structurally valid minimal recipe plan for testing.
@@ -58,7 +60,7 @@ func TestValidateRecipePlan_Valid(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			errs := ValidateRecipePlan(tt.plan, nil)
+			errs := ValidateRecipePlan(tt.plan, nil, nil)
 			if len(errs) > 0 {
 				t.Errorf("expected valid plan, got errors: %v", errs)
 			}
@@ -105,7 +107,7 @@ func TestValidateRecipePlan_MissingFields(t *testing.T) {
 			t.Parallel()
 			plan := validMinimalPlan()
 			tt.modify(&plan)
-			errs := ValidateRecipePlan(plan, nil)
+			errs := ValidateRecipePlan(plan, nil, nil)
 			if len(errs) == 0 {
 				t.Fatal("expected validation errors")
 			}
@@ -147,7 +149,7 @@ func TestValidateRecipePlan_ShowcaseMissingFields(t *testing.T) {
 			plan.Research.QueueDriver = "redis"
 			tt.modify(&plan)
 
-			errs := ValidateRecipePlan(plan, nil)
+			errs := ValidateRecipePlan(plan, nil, nil)
 			if len(errs) == 0 {
 				t.Fatal("expected validation errors for showcase missing field")
 			}
@@ -171,16 +173,16 @@ func TestValidateRecipePlan_InvalidTypes(t *testing.T) {
 	liveTypes := []platform.ServiceStackType{
 		{
 			Name:     "php-nginx",
-			Category: "runtime",
+			Category: "USER",
 			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "php-nginx@8.4", Status: "active"},
+				{Name: "php-nginx@8.4", Status: "ACTIVE"},
 			},
 		},
 		{
-			Name:     "php",
-			Category: "runtime",
+			Name:     "zbuild php",
+			Category: "BUILD",
 			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "php@8.4", Status: "active"},
+				{Name: "php@8.4", Status: "ACTIVE"},
 			},
 		},
 	}
@@ -204,7 +206,7 @@ func TestValidateRecipePlan_InvalidTypes(t *testing.T) {
 			plan := validMinimalPlan()
 			tt.modify(&plan)
 
-			errs := ValidateRecipePlan(plan, liveTypes)
+			errs := ValidateRecipePlan(plan, liveTypes, nil)
 			if len(errs) == 0 {
 				t.Fatal("expected validation errors for invalid types")
 			}
@@ -228,22 +230,22 @@ func TestValidateRecipePlan_ValidWithLiveTypes(t *testing.T) {
 	liveTypes := []platform.ServiceStackType{
 		{
 			Name:     "php-nginx",
-			Category: "runtime",
+			Category: "USER",
 			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "php-nginx@8.4", Status: "active"},
+				{Name: "php-nginx@8.4", Status: "ACTIVE"},
 			},
 		},
 		{
-			Name:     "php",
-			Category: "runtime",
+			Name:     "zbuild php",
+			Category: "BUILD",
 			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "php@8.4", Status: "active"},
+				{Name: "php@8.4", Status: "ACTIVE"},
 			},
 		},
 	}
 
 	plan := validMinimalPlan()
-	errs := ValidateRecipePlan(plan, liveTypes)
+	errs := ValidateRecipePlan(plan, liveTypes, nil)
 	if len(errs) > 0 {
 		t.Errorf("expected valid plan with live types, got errors: %v", errs)
 	}
@@ -273,7 +275,7 @@ func TestValidateRecipePlan_SlugPatterns(t *testing.T) {
 			t.Parallel()
 			plan := validMinimalPlan()
 			plan.Slug = tt.slug
-			errs := ValidateRecipePlan(plan, nil)
+			errs := ValidateRecipePlan(plan, nil, nil)
 
 			hasSlugErr := false
 			for _, e := range errs {
@@ -288,6 +290,158 @@ func TestValidateRecipePlan_SlugPatterns(t *testing.T) {
 			}
 			if !tt.valid && !hasSlugErr {
 				t.Errorf("slug %q should be invalid, got no slug error", tt.slug)
+			}
+		})
+	}
+}
+
+// loadTestSchemas loads the live schema test data from internal/schema/testdata/.
+func loadTestSchemas(t *testing.T) *schema.Schemas {
+	t.Helper()
+	zeropsData, err := os.ReadFile("../schema/testdata/zerops_yml_schema.json")
+	if err != nil {
+		t.Fatalf("read zerops.yml schema: %v", err)
+	}
+	importData, err := os.ReadFile("../schema/testdata/import_yml_schema.json")
+	if err != nil {
+		t.Fatalf("read import.yaml schema: %v", err)
+	}
+	zy, err := schema.ParseZeropsYmlSchema(zeropsData)
+	if err != nil {
+		t.Fatalf("parse zerops.yml schema: %v", err)
+	}
+	iy, err := schema.ParseImportYmlSchema(importData)
+	if err != nil {
+		t.Fatalf("parse import.yaml schema: %v", err)
+	}
+	return &schema.Schemas{ZeropsYml: zy, ImportYml: iy}
+}
+
+func TestValidateRecipePlan_WithSchemas(t *testing.T) {
+	t.Parallel()
+	schemas := loadTestSchemas(t)
+
+	plan := validMinimalPlan()
+	errs := ValidateRecipePlan(plan, nil, schemas)
+	if len(errs) > 0 {
+		t.Errorf("expected valid plan with schemas, got errors: %v", errs)
+	}
+}
+
+func TestValidateRecipePlan_SchemaBuildBaseValidation(t *testing.T) {
+	t.Parallel()
+	schemas := loadTestSchemas(t)
+
+	tests := []struct {
+		name    string
+		bases   []string
+		wantErr bool
+	}{
+		{"php valid", []string{"php@8.4"}, false},
+		{"nodejs valid", []string{"nodejs@22"}, false},
+		{"multi valid", []string{"php@8.4", "nodejs@22"}, false},
+		{"invalid base", []string{"foobar@1.0"}, true},
+		{"php-nginx not a build base", []string{"php-nginx@8.4"}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			plan := validMinimalPlan()
+			plan.BuildBases = tt.bases
+			errs := ValidateRecipePlan(plan, nil, schemas)
+			hasBuildErr := false
+			for _, e := range errs {
+				if strings.Contains(e, "buildBase") {
+					hasBuildErr = true
+					break
+				}
+			}
+			if tt.wantErr && !hasBuildErr {
+				t.Errorf("expected buildBase error for %v, got none", tt.bases)
+			}
+			if !tt.wantErr && hasBuildErr {
+				t.Errorf("unexpected buildBase error for %v: %v", tt.bases, errs)
+			}
+		})
+	}
+}
+
+func TestValidateRecipePlan_SchemaRuntimeTypeValidation(t *testing.T) {
+	t.Parallel()
+	schemas := loadTestSchemas(t)
+
+	tests := []struct {
+		name    string
+		rt      string
+		wantErr bool
+	}{
+		{"php-nginx valid", "php-nginx@8.4", false},
+		{"nodejs valid", "nodejs@22", false},
+		{"static valid", "static", false},
+		{"bare php invalid", "php@8.4", true},
+		{"nonexistent invalid", "foobar@1.0", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			plan := validMinimalPlan()
+			plan.RuntimeType = tt.rt
+			errs := ValidateRecipePlan(plan, nil, schemas)
+			hasRTErr := false
+			for _, e := range errs {
+				if strings.Contains(e, "runtimeType") {
+					hasRTErr = true
+					break
+				}
+			}
+			if tt.wantErr && !hasRTErr {
+				t.Errorf("expected runtimeType error for %q, got none", tt.rt)
+			}
+			if !tt.wantErr && hasRTErr {
+				t.Errorf("unexpected runtimeType error for %q: %v", tt.rt, errs)
+			}
+		})
+	}
+}
+
+func TestValidateRecipePlan_SchemaTargetTypeValidation(t *testing.T) {
+	t.Parallel()
+	schemas := loadTestSchemas(t)
+
+	tests := []struct {
+		name    string
+		targets []RecipeTarget
+		wantErr bool
+	}{
+		{"valid targets", []RecipeTarget{
+			{Hostname: "app", Type: "php-nginx@8.4", Role: "app"},
+			{Hostname: "db", Type: "postgresql@16", Role: "db"},
+		}, false},
+		{"invalid target type", []RecipeTarget{
+			{Hostname: "app", Type: "foobar@1.0", Role: "app"},
+		}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			plan := validMinimalPlan()
+			plan.Targets = tt.targets
+			errs := ValidateRecipePlan(plan, nil, schemas)
+			hasTypeErr := false
+			for _, e := range errs {
+				if strings.Contains(e, "import.yaml schema") {
+					hasTypeErr = true
+					break
+				}
+			}
+			if tt.wantErr && !hasTypeErr {
+				t.Errorf("expected target type error, got none")
+			}
+			if !tt.wantErr && hasTypeErr {
+				t.Errorf("unexpected target type error: %v", errs)
 			}
 		})
 	}

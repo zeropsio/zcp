@@ -6,15 +6,16 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // slugPattern validates recipe slug format: {framework}-hello-world or {framework}-showcase.
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*-(hello-world|showcase)$`)
 
-// ValidateRecipePlan validates a recipe plan against structural rules and optionally
-// against live service types from the Zerops API catalog.
+// ValidateRecipePlan validates a recipe plan against structural rules.
+// Uses live JSON schemas (preferred) or API service types (fallback) for type validation.
 // Returns a slice of validation errors (empty = valid).
-func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType) []string {
+func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType, schemas *schema.Schemas) []string {
 	var errs []string
 
 	// Framework.
@@ -34,51 +35,115 @@ func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType) 
 		errs = append(errs, fmt.Sprintf("slug %q must match pattern {framework}-hello-world or {framework}-showcase", plan.Slug))
 	}
 
-	// RuntimeType.
+	// RuntimeType — validate against schema run.base enum, then import types, then liveTypes.
 	if plan.RuntimeType == "" {
 		errs = append(errs, "runtimeType is required")
-	} else if liveTypes != nil && !typeExists(plan.RuntimeType, liveTypes) {
-		errs = append(errs, fmt.Sprintf("runtimeType %q not found in available service types", plan.RuntimeType))
+	} else {
+		errs = append(errs, validateRuntimeType(plan.RuntimeType, schemas, liveTypes)...)
 	}
 
-	// BuildBases: best-effort validation. Build bases (zerops.yml build.base values)
-	// may include build-only types not present as service stack types in the catalog.
-	// Only warn if the base name prefix doesn't match any known stack type.
-	if liveTypes != nil {
-		for _, bb := range plan.BuildBases {
-			base, _, _ := strings.Cut(bb, "@")
-			found := false
-			for _, st := range liveTypes {
-				if st.Name == base {
-					found = true
-					break
-				}
-			}
-			if !found {
-				errs = append(errs, fmt.Sprintf("buildBase %q: base name %q not found in available service types", bb, base))
-			}
-		}
-	}
+	// BuildBases — validate against schema build.base enum, falling back to liveTypes.
+	errs = append(errs, validateBuildBases(plan.BuildBases, schemas, liveTypes)...)
+
+	// Targets — validate against schema import service types when available.
+	errs = append(errs, validateTargets(plan.Targets, schemas)...)
 
 	// Research fields — required for all tiers.
 	errs = append(errs, validateResearchFields(plan.Research, plan.Tier, plan.RuntimeType)...)
 
-	// Targets validation.
-	if len(plan.Targets) == 0 {
-		errs = append(errs, "at least one target is required")
+	return errs
+}
+
+// validateRuntimeType checks the runtime type against schema enums or liveTypes.
+func validateRuntimeType(rt string, schemas *schema.Schemas, liveTypes []platform.ServiceStackType) []string {
+	// Prefer schema: check import.yaml service types (authoritative for what can be created).
+	if schemas != nil && schemas.ImportYml != nil {
+		if !schemas.ImportYml.ServiceTypeSet()[rt] {
+			return []string{fmt.Sprintf("runtimeType %q not found in available service types (schema)", rt)}
+		}
+		return nil
 	}
-	for i, t := range plan.Targets {
+	// Fallback: liveTypes from API.
+	if liveTypes != nil && !typeExists(rt, liveTypes) {
+		return []string{fmt.Sprintf("runtimeType %q not found in available service types", rt)}
+	}
+	return nil
+}
+
+// validateBuildBases checks build bases against schema build.base enum or liveTypes.
+// liveTypes fallback: scans Version.Name (not ServiceStackType.Name) because build bases
+// like "php@8.4" appear as version names under BUILD-category types (e.g., "zbuild php"),
+// not as top-level type names.
+func validateBuildBases(bases []string, schemas *schema.Schemas, liveTypes []platform.ServiceStackType) []string {
+	if len(bases) == 0 {
+		return nil
+	}
+
+	// Prefer schema: zerops.yml build.base enum is the authoritative list.
+	if schemas != nil && schemas.ZeropsYml != nil {
+		baseSet := schemas.ZeropsYml.BuildBaseSet()
+		var errs []string
+		for _, bb := range bases {
+			base, _, _ := strings.Cut(bb, "@")
+			if !baseSet[base] {
+				errs = append(errs, fmt.Sprintf("buildBase %q: base name %q not found in zerops.yml schema", bb, base))
+			}
+		}
+		return errs
+	}
+
+	// Fallback: check version name bases across all API types.
+	if liveTypes == nil {
+		return nil
+	}
+	var errs []string
+	for _, bb := range bases {
+		base, _, _ := strings.Cut(bb, "@")
+		found := false
+		for _, st := range liveTypes {
+			for _, v := range st.Versions {
+				vBase, _, _ := strings.Cut(v.Name, "@")
+				if vBase == base {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			errs = append(errs, fmt.Sprintf("buildBase %q: base name %q not found in available service types", bb, base))
+		}
+	}
+	return errs
+}
+
+// validateTargets checks target fields and optionally types against schema.
+func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
+	if len(targets) == 0 {
+		return []string{"at least one target is required"}
+	}
+
+	var svcTypeSet map[string]bool
+	if schemas != nil && schemas.ImportYml != nil {
+		svcTypeSet = schemas.ImportYml.ServiceTypeSet()
+	}
+
+	var errs []string
+	for i, t := range targets {
 		if t.Hostname == "" {
 			errs = append(errs, fmt.Sprintf("target[%d]: hostname is required", i))
 		}
 		if t.Type == "" {
 			errs = append(errs, fmt.Sprintf("target[%d]: type is required", i))
+		} else if svcTypeSet != nil && !svcTypeSet[t.Type] {
+			errs = append(errs, fmt.Sprintf("target[%d]: type %q not found in import.yaml schema", i, t.Type))
 		}
 		if t.Role == "" {
 			errs = append(errs, fmt.Sprintf("target[%d]: role is required", i))
 		}
 	}
-
 	return errs
 }
 

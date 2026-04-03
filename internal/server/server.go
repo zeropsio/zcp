@@ -13,6 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/tools"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -72,6 +73,7 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 func (s *Server) registerTools() {
 	projectID := s.authInfo.ProjectID
 	stackCache := ops.NewStackTypeCache(ops.DefaultStackTypeCacheTTL)
+	schemaCache := schema.NewCache(schema.DefaultCacheTTL)
 
 	// Workflow engine: state at .zcp/state/ relative to working directory.
 	var (
@@ -88,7 +90,7 @@ func (s *Server) registerTools() {
 	knowledgeTracker := ops.NewKnowledgeTracker()
 
 	// Read-only tools
-	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName)
+	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName)
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir)
 	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache, knowledgeTracker, wfEngine)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)

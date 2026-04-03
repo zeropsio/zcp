@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // RecipeStart creates a new session with recipe state and returns the first step.
@@ -96,8 +97,8 @@ func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, c
 }
 
 // RecipeCompletePlan validates a structured recipe plan, completes the research step,
-// and stores it in state. liveTypes may be nil (validation skips type checks).
-func (e *Engine) RecipeCompletePlan(plan RecipePlan, attestation string, liveTypes []platform.ServiceStackType) (*RecipeResponse, error) {
+// and stores it in state. Prefers schema enums for validation; falls back to liveTypes.
+func (e *Engine) RecipeCompletePlan(plan RecipePlan, attestation string, liveTypes []platform.ServiceStackType, schemas *schema.Schemas) (*RecipeResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("recipe complete plan: %w", err)
@@ -110,7 +111,7 @@ func (e *Engine) RecipeCompletePlan(plan RecipePlan, attestation string, liveTyp
 	}
 
 	// Validate the plan.
-	if errs := ValidateRecipePlan(plan, liveTypes); len(errs) > 0 {
+	if errs := ValidateRecipePlan(plan, liveTypes, schemas); len(errs) > 0 {
 		return nil, fmt.Errorf("recipe complete plan: validation failed: %s", strings.Join(errs, "; "))
 	}
 

@@ -14,7 +14,7 @@ func TestRecipeStart_Success(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "", "")
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -52,7 +52,7 @@ func TestRecipeStart_DefaultTier(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "", "")
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -70,7 +70,7 @@ func TestRecipeStart_InvalidTier(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "", "")
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "")
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -89,7 +89,7 @@ func TestRecipeComplete_Research(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "", "")
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "")
 
 	// Start recipe session.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
@@ -167,7 +167,7 @@ func TestRecipeComplete_MissingPlan(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "", "")
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "")
 
 	// Start.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -191,7 +191,7 @@ func TestRecipeSkip_CloseAllowed(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, dir, "")
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "")
 
 	// Start and advance to close step via engine directly.
 	resp, err := engine.RecipeStart("proj1", "test recipe", "minimal")
@@ -221,7 +221,7 @@ func TestRecipeSkip_CloseAllowed(t *testing.T) {
 			{Hostname: "app", Type: "bun@1", Role: "app", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
 	}
-	if _, err := engine.RecipeCompletePlan(plan, "research done for bun", nil); err != nil {
+	if _, err := engine.RecipeCompletePlan(plan, "research done for bun", nil, nil); err != nil {
 		t.Fatalf("complete plan: %v", err)
 	}
 
@@ -249,7 +249,7 @@ func TestRecipeStatus(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "", "")
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "")
 
 	// Start recipe.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -281,7 +281,7 @@ func TestRecipeAutoReset_CompletedSession(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, engine, nil, "", "")
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "")
 
 	// Start and complete all recipe steps.
 	if _, err := engine.RecipeStart("proj1", "test", "minimal"); err != nil {
@@ -301,7 +301,7 @@ func TestRecipeAutoReset_CompletedSession(t *testing.T) {
 			{Hostname: "app", Type: "bun@1", Role: "app", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
 	}
-	if _, err := engine.RecipeCompletePlan(plan, "research done for testing", nil); err != nil {
+	if _, err := engine.RecipeCompletePlan(plan, "research done for testing", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, step := range []string{"provision", "generate", "deploy", "finalize", "close"} {

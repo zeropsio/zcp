@@ -96,6 +96,14 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 	var parts []string
 
 	switch step {
+	case RecipeStepResearch:
+		// Infrastructure rules and import.yaml schema for informed plan decisions.
+		for _, name := range []string{"import.yaml Schema", "Rules & Pitfalls"} {
+			if s := getCoreSection(kp, name); s != "" {
+				parts = append(parts, "## "+name+"\n\n"+s)
+			}
+		}
+
 	case RecipeStepProvision:
 		// import.yaml schema for provisioning services.
 		if s := getCoreSection(kp, "import.yaml Schema"); s != "" {

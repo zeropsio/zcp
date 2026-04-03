@@ -46,6 +46,7 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/workflow` | Workflow orchestration, bootstrap/deploy/recipe conductors, guidance assembly, session state | `session.go`, `deploy_guidance.go`, `recipe.go`, `engine_recipe.go` |
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 | `internal/eval` | LLM recipe eval + headless recipe creation via Claude CLI | `runner.go`, `prompt.go`, `recipe_create.go` |
+| `internal/schema` | Live Zerops YAML schema fetching, caching, enum extraction, LLM formatting | `schema.go`, `cache.go`, `format.go` |
 | `internal/catalog` | API-driven version catalog sync for test validation | `sync.go` |
 | `internal/sync` | Bidirectional recipe/guide sync: API pull, GitHub push, Strapi cache | `push_recipes.go`, `transform.go` |
 
