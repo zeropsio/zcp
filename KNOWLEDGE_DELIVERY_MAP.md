@@ -161,9 +161,14 @@ func (b *BootstrapState) buildGuide(step, iteration, env, kp) string
   - Runtime briefing: `kp.GetBriefing(runtimeBase, nil, mode, nil)`
   - Dependency briefing: `kp.GetBriefing("", dependencyTypes, mode, nil)`
   - Env vars: `formatEnvVarsForGuide(discoveredEnvVars)` — markdown table of `${hostname_varName}` refs
-  - zerops.yml schema + rules: `getCoreSection(kp, "zerops.yml Schema")` + `getCoreSection(kp, "Rules & Pitfalls")`
+  - zerops.yaml schema: `getCoreSection(kp, "zerops.yaml Schema")`
 
-- **At deploy**: `getCoreSection(kp, "Schema Rules")`
+- **At deploy**: none (bootstrap.md deploy section covers all deploy semantics)
+
+Note: Rules & Pitfalls and Schema Rules deliberately excluded from bootstrap.
+Runtime briefings already provide correct patterns for each runtime; cross-runtime
+rules are noise. The 400+ line bootstrap.md deploy section covers tilde syntax,
+deploy modes, path invariants, and common issues.
 
 **Layer 3: Iteration Delta** (`guidance.go:28-32`):
 - If `iteration > 0`, calls `BuildIterationDelta()` which **replaces** normal guidance
@@ -175,11 +180,11 @@ assembleGuidance():
   ├─ Iteration delta (if iteration > 0) → RETURN early
   ├─ Static guidance [ResolveProgressiveGuidance()]
   └─ Knowledge layers [assembleKnowledge()]
-      ├─ import.yml Schema (provision)
+      ├─ Platform model (discover)
+      ├─ import.yaml Schema (provision)
       ├─ Runtime + dependency briefings (generate)
       ├─ Env vars markdown (generate)
-      ├─ zerops.yml schema + rules (generate)
-      └─ Schema Rules (deploy)
+      └─ zerops.yaml Schema (generate)
 ```
 
 ### Deploy Workflow Guidance
@@ -234,13 +239,21 @@ func (r *RecipeState) buildGuide(step, iteration, kp) string
 - Generate: base + fragments sections
 - Other steps: step-name sections
 
-**Knowledge injection** (`recipe_guidance.go:90-135`):
-- **Provision**: `getCoreSection(kp, "import.yml Schema")`
+**Knowledge injection** (`recipe_guidance.go:90-143`):
+- **Research**: none (agent fills form using own knowledge + on-demand zerops_knowledge)
+- **Provision**: `getCoreSection(kp, "import.yaml Schema")`
 - **Generate**: 
   - Runtime briefing: `kp.GetBriefing(runtimeBase, nil, "", nil)`
   - Discovered env vars: `formatEnvVarsForGuide()`
-  - zerops.yml schema + rules
-- **Deploy**: `getCoreSection(kp, "Schema Rules")`
+  - zerops.yaml schema: `getCoreSection(kp, "zerops.yaml Schema")`
+- **Deploy**: none (static guidance + iteration loop)
+- **Finalize**: `getCoreSection(kp, "import.yaml Schema")`
+- **Close**: none
+
+Note: Rules & Pitfalls and Schema Rules are deliberately excluded from recipe workflow.
+Recipe is about CREATING knowledge — the agent discovers framework pitfalls and documents
+them rather than copying from a rule sheet. Bootstrap injects these because it CONSUMES
+rules to create correct deployments.
 
 ---
 
@@ -295,12 +308,11 @@ var contentFS embed.FS
 
 **Delivery paths**:
 1. **scope="infrastructure"** → returned second (after universals)
-2. **bootstrap provision step** → `getCoreSection("import.yml Schema")`
-3. **bootstrap generate step** → `getCoreSection("zerops.yml Schema")` + `getCoreSection("Rules & Pitfalls")`
-4. **bootstrap deploy step** → `getCoreSection("Schema Rules")`
-5. **recipe provision step** → `getCoreSection("import.yml Schema")`
-6. **recipe generate step** → `getCoreSection("zerops.yml Schema")` + `getCoreSection("Rules & Pitfalls")`
-7. **recipe deploy step** → `getCoreSection("Schema Rules")`
+2. **bootstrap provision step** → `getCoreSection("import.yaml Schema")`
+3. **bootstrap generate step** → `getCoreSection("zerops.yaml Schema")`
+5. **recipe provision step** → `getCoreSection("import.yaml Schema")`
+6. **recipe generate step** → `getCoreSection("zerops.yaml Schema")` + runtime briefing + env vars
+7. **recipe finalize step** → `getCoreSection("import.yaml Schema")`
 8. **deploy prepare step** → knowledge pointers injected via `buildKnowledgeMap()`
 9. **query search** → if "schema" or "rules" in query
 

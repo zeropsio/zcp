@@ -108,21 +108,18 @@ func assembleKnowledge(params GuidanceParams) string {
 		parts = append(parts, formatEnvVarsForGuide(params.DiscoveredEnvVars))
 	}
 
-	// zerops.yaml schema + rules at generate step.
+	// zerops.yaml field reference at generate step.
+	// Rules & Pitfalls deliberately excluded — the runtime briefing already provides
+	// correct patterns for the specific runtime; cross-runtime rules are noise.
 	if needsRuntimeKnowledge(params.Step) {
-		for _, name := range []string{"zerops.yaml Schema", "Rules & Pitfalls"} {
-			if s := getCoreSection(params.KP, name); s != "" {
-				parts = append(parts, "## "+name+"\n\n"+s)
-			}
+		if s := getCoreSection(params.KP, "zerops.yaml Schema"); s != "" {
+			parts = append(parts, "## zerops.yaml Schema\n\n"+s)
 		}
 	}
 
-	// Schema rules at bootstrap deploy step.
-	if params.Step == StepDeploy {
-		if s := getCoreSection(params.KP, "Schema Rules"); s != "" {
-			parts = append(parts, "## Deploy Rules\n\n"+s)
-		}
-	}
+	// Deploy: no knowledge injection. The 400+ line bootstrap.md deploy section
+	// already covers tilde syntax, deploy modes, path invariants, and common issues.
+	// Schema Rules would be ~40% duplication.
 
 	if len(parts) == 0 {
 		return ""

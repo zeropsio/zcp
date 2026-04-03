@@ -88,6 +88,10 @@ func resolveRecipeGuidance(step string, plan *RecipePlan) string {
 }
 
 // assembleRecipeKnowledge gathers step-relevant knowledge from the knowledge store.
+// Recipe workflow is about CREATING knowledge — the agent discovers framework pitfalls
+// and documents them. Only schema field references and runtime patterns are injected;
+// cross-runtime rules (Rules & Pitfalls, Schema Rules) are deliberately excluded so
+// the agent researches and captures them rather than copying from a rule sheet.
 // All knowledge retrieval is best-effort — errors are silently skipped.
 func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars map[string][]string, kp knowledge.Provider) string {
 	if kp == nil {
@@ -96,53 +100,39 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 	var parts []string
 
 	switch step {
-	case RecipeStepResearch:
-		// Rules & pitfalls for informed plan decisions (deployment patterns, service
-		// creation rules, runtime-specific settings). The LLM is filling a form here,
-		// not writing YAML — full import.yaml schema + preprocessor docs are deferred
-		// to provision/finalize where YAML is actually generated.
-		if s := getCoreSection(kp, "Rules & Pitfalls"); s != "" {
-			parts = append(parts, "## Rules & Pitfalls\n\n"+s)
-		}
+	// Research: no knowledge injection. Agent fills a form about the framework
+	// using its own knowledge + on-demand zerops_knowledge calls.
 
 	case RecipeStepProvision:
-		// import.yaml schema for provisioning services.
+		// import.yaml field reference for writing service definitions.
 		if s := getCoreSection(kp, "import.yaml Schema"); s != "" {
 			parts = append(parts, "## import.yaml Schema\n\n"+s)
 		}
 
 	case RecipeStepGenerate:
-		// Runtime briefing for code generation.
+		// Runtime briefing: base hello-world patterns to extend.
 		if plan != nil && plan.RuntimeType != "" {
 			base, _, _ := strings.Cut(plan.RuntimeType, "@")
 			if briefing, err := kp.GetBriefing(base, nil, "", nil); err == nil && briefing != "" {
 				parts = append(parts, briefing)
 			}
 		}
-		// Discovered env vars.
+		// Discovered env vars: real variable names from provisioned services.
 		if len(discoveredEnvVars) > 0 {
 			parts = append(parts, formatEnvVarsForGuide(discoveredEnvVars))
 		}
-		// zerops.yaml schema + rules.
-		for _, name := range []string{"zerops.yaml Schema", "Rules & Pitfalls"} {
-			if s := getCoreSection(kp, name); s != "" {
-				parts = append(parts, "## "+name+"\n\n"+s)
-			}
+		// zerops.yaml field reference for writing config.
+		if s := getCoreSection(kp, "zerops.yaml Schema"); s != "" {
+			parts = append(parts, "## zerops.yaml Schema\n\n"+s)
 		}
 
-	case RecipeStepDeploy:
-		// Schema rules for deployment.
-		if s := getCoreSection(kp, "Schema Rules"); s != "" {
-			parts = append(parts, "## Deploy Rules\n\n"+s)
-		}
+	// Deploy: no knowledge injection. Static guidance covers the deploy flow;
+	// the iteration loop catches issues via real build/runtime feedback.
 
 	case RecipeStepFinalize:
-		// import.yaml schema + rules for generating 6 environment-specific import.yaml files.
-		// Needs field reference, preprocessor functions (secrets), and import generation rules.
-		for _, name := range []string{"import.yaml Schema", "Rules & Pitfalls"} {
-			if s := getCoreSection(kp, name); s != "" {
-				parts = append(parts, "## "+name+"\n\n"+s)
-			}
+		// import.yaml field reference for generating 6 environment-specific files.
+		if s := getCoreSection(kp, "import.yaml Schema"); s != "" {
+			parts = append(parts, "## import.yaml Schema\n\n"+s)
 		}
 	}
 

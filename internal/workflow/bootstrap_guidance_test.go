@@ -596,7 +596,7 @@ func TestBuildGuide_Generate_ContainsZeropsYmlSchema(t *testing.T) {
 	}
 }
 
-func TestBuildGuide_Deploy_ContainsSchemaRules(t *testing.T) {
+func TestBuildGuide_Deploy_NoSchemaRules(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeProvider(t)
 	bs := NewBootstrapState()
@@ -604,8 +604,8 @@ func TestBuildGuide_Deploy_ContainsSchemaRules(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
 	}}
 	guide := bs.buildGuide(StepDeploy, 0, EnvContainer, store)
-	if !strings.Contains(guide, "Deploy Rules") {
-		t.Error("deploy guide should contain 'Deploy Rules'")
+	if strings.Contains(guide, "Deploy Rules") {
+		t.Error("deploy guide should NOT contain 'Deploy Rules' — bootstrap.md deploy section already covers this")
 	}
 }
 
