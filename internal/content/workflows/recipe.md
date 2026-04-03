@@ -307,11 +307,32 @@ Must contain:
 - No images
 - Plain text describing what the recipe demonstrates
 
-### Comment Conventions
-- YAML comments: `# Explanation` on the line above or inline
+### Writing Style — Developer to Developer
+
+Recipes are read by both humans and AI agents. Write like a senior dev explaining their config to a colleague — not documentation, not tutorials.
+
+**Voice:**
+- Direct, concise, no filler ("Install production deps only" not "In this step we will install the production dependencies")
+- Explain the WHY and the consequence, not the WHAT ("CGO_ENABLED=0 produces a fully static binary — no C libraries linked at runtime" not "Set CGO_ENABLED to 0")
+- Mention Zerops-specific behavior when it differs from standard ("npm prune after build — runtime container doesn't re-install" not just "npm prune")
+- Use dashes for asides — not parentheses, not semicolons
+- One thought per comment line, flow naturally with the YAML structure
+
+**Comment placement:**
+- Above the key for multi-line explanations
+- Inline for short context (`DB_NAME: db  # matches PostgreSQL hostname`)
+- Group related comments into a block before a section, not scattered
+
+**Anti-patterns:**
+- Don't restate the key name ("# Set the build base" on `base: php@8.4`)
+- Don't write generic descriptions ("# This is the build section")
+- Don't use "we" or "you" excessively
+- Don't explain YAML syntax itself
+
+**Metrics:**
 - Comment ratio: at least 30% of config lines should have comments
-- Comments explain WHY, not WHAT (don't restate the key name)
 - Max 80 chars per comment line
+- Every non-obvious decision should have a reason
 </section>
 
 <section name="deploy">
