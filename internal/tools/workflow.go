@@ -191,7 +191,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	// Recipe workflow.
 	if input.Workflow == workflowRecipe {
-		return handleRecipeStart(ctx, projectID, engine, client, cache, schemaCache, input)
+		return handleRecipeStart(ctx, projectID, engine, client, cache, input)
 	}
 
 	// Export workflow — immediate (guidance-based, like cicd).

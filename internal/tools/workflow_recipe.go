@@ -13,7 +13,7 @@ import (
 )
 
 // handleRecipeStart validates tier and creates a recipe session.
-func handleRecipeStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleRecipeStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	tier := input.Tier
 	if tier == "" {
 		tier = workflow.RecipeTierMinimal
