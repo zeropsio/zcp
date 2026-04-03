@@ -17,17 +17,13 @@ Fill in all research fields by examining the framework's documentation and exist
 | **3. Backend framework** | `{framework}-minimal` | `laravel-minimal` | Framework with ORM, migrations, templates. |
 
 ### Reference Loading
-Hello-world recipes exist per RUNTIME, not per framework. Load the runtime's recipe:
+Hello-world recipes exist per RUNTIME, not per framework. The hello-world IS the runtime guide — it contains the proven zerops.yaml patterns, build lifecycle, env var wiring, and platform-specific comments for that runtime. Load it:
 ```
 zerops_knowledge recipe="{runtime-base}-hello-world"
 ```
-Example: for Laravel (php-nginx runtime), load `php-hello-world`, NOT `laravel-hello-world`.
-For React (static runtime), load an existing static recipe or the nodejs hello-world.
+Example: for Laravel (php-nginx runtime), load `php-hello-world`. For Next.js (nodejs runtime), load `nodejs-hello-world`. For React static, load `nodejs-hello-world` (build base reference).
 
-Load the runtime briefing for platform-specific rules:
-```
-zerops_knowledge runtime="{runtime-base}"
-```
+Your job is to extend this base with framework-specific knowledge: `documentRoot` for PHP frameworks, multi-base builds for asset pipelines (Vite/Webpack), trusted proxy config, framework CLI commands, etc. These discoveries go into the zerops.yaml comments and the knowledge-base README fragment.
 
 Load the import.yaml schema for type validation:
 ```
