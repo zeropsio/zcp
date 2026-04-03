@@ -97,11 +97,12 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 
 	switch step {
 	case RecipeStepResearch:
-		// Schema structure + rules for informed plan decisions.
-		for _, name := range []string{"import.yaml Schema", "Rules & Pitfalls"} {
-			if s := getCoreSection(kp, name); s != "" {
-				parts = append(parts, "## "+name+"\n\n"+s)
-			}
+		// Rules & pitfalls for informed plan decisions (deployment patterns, service
+		// creation rules, runtime-specific settings). The LLM is filling a form here,
+		// not writing YAML — full import.yaml schema + preprocessor docs are deferred
+		// to provision/finalize where YAML is actually generated.
+		if s := getCoreSection(kp, "Rules & Pitfalls"); s != "" {
+			parts = append(parts, "## Rules & Pitfalls\n\n"+s)
 		}
 
 	case RecipeStepProvision:
@@ -133,6 +134,15 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		// Schema rules for deployment.
 		if s := getCoreSection(kp, "Schema Rules"); s != "" {
 			parts = append(parts, "## Deploy Rules\n\n"+s)
+		}
+
+	case RecipeStepFinalize:
+		// import.yaml schema + rules for generating 6 environment-specific import.yaml files.
+		// Needs field reference, preprocessor functions (secrets), and import generation rules.
+		for _, name := range []string{"import.yaml Schema", "Rules & Pitfalls"} {
+			if s := getCoreSection(kp, name); s != "" {
+				parts = append(parts, "## "+name+"\n\n"+s)
+			}
 		}
 	}
 
