@@ -83,7 +83,8 @@ func checkFileExists(baseDir, relPath string) []workflow.StepCheck {
 // importYAMLDoc is a minimal struct for validating import.yaml structure.
 type importYAMLDoc struct {
 	Project struct {
-		Name string `yaml:"name"`
+		Name        string `yaml:"name"`
+		CorePackage string `yaml:"corePackage,omitempty"`
 	} `yaml:"project"`
 	Services []importService `yaml:"services"`
 }
@@ -95,13 +96,16 @@ type importService struct {
 	Mode                string                   `yaml:"mode,omitempty"`
 	EnableSubdomain     *bool                    `yaml:"enableSubdomainAccess,omitempty"`
 	MinContainers       *int                     `yaml:"minContainers,omitempty"`
+	ZeropsSetup         string                   `yaml:"zeropsSetup,omitempty"`
+	BuildFromGit        string                   `yaml:"buildFromGit,omitempty"`
+	StartWithoutCode    *bool                    `yaml:"startWithoutCode,omitempty"`
+	MaxContainers       *int                     `yaml:"maxContainers,omitempty"`
 	VerticalAutoscaling *importVerticalAutoscale `yaml:"verticalAutoscaling,omitempty"`
 }
 
 type importVerticalAutoscale struct {
 	MinFreeRAMGB *float64 `yaml:"minFreeRamGB,omitempty"` //nolint:tagliatelle // Zerops API field name
 	CPUMode      string   `yaml:"cpuMode,omitempty"`
-	CorePackage  string   `yaml:"corePackage,omitempty"`
 }
 
 // validateImportYAML runs structural checks on an import.yaml file.
@@ -234,6 +238,18 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 func checkEnv5Requirements(doc importYAMLDoc, plan *workflow.RecipePlan, prefix string) []workflow.StepCheck {
 	var checks []workflow.StepCheck
 
+	// corePackage at project level.
+	if doc.Project.CorePackage != "SERIOUS" {
+		checks = append(checks, workflow.StepCheck{
+			Name: prefix + "_core_package", Status: statusFail,
+			Detail: "env 5 project should have corePackage: SERIOUS",
+		})
+	} else {
+		checks = append(checks, workflow.StepCheck{
+			Name: prefix + "_core_package", Status: statusPass,
+		})
+	}
+
 	for _, svc := range doc.Services {
 		role := findTargetRole(plan, svc.Hostname)
 
@@ -245,7 +261,7 @@ func checkEnv5Requirements(doc importYAMLDoc, plan *workflow.RecipePlan, prefix 
 			})
 		}
 
-		// DEDICATED cpuMode.
+		// DEDICATED cpuMode on runtime services.
 		if svc.VerticalAutoscaling != nil {
 			if svc.VerticalAutoscaling.CPUMode != "DEDICATED" && (role == workflow.RecipeRoleApp || role == workflow.RecipeRoleWorker) {
 				checks = append(checks, workflow.StepCheck{
@@ -308,10 +324,22 @@ func checkCommentWidth(content, prefix string) []workflow.StepCheck {
 }
 
 // findTargetRole finds the role for a hostname in the recipe plan.
+// Handles env 0-1 suffixed hostnames (appdev/appstage → app target).
 func findTargetRole(plan *workflow.RecipePlan, hostname string) string {
 	for _, t := range plan.Targets {
 		if t.Hostname == hostname {
 			return t.Role
+		}
+	}
+	// Try stripping dev/stage suffix for env 0-1 hostnames.
+	for _, suffix := range []string{"dev", "stage"} {
+		base := strings.TrimSuffix(hostname, suffix)
+		if base != hostname {
+			for _, t := range plan.Targets {
+				if t.Hostname == base {
+					return t.Role
+				}
+			}
 		}
 	}
 	return ""

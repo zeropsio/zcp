@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+// repoURL is the expected buildFromGit URL pattern.
+const testRepoBase = "https://github.com/zerops-recipe-apps/"
+
 func testMinimalPlan() *RecipePlan {
 	return &RecipePlan{
 		Framework:   "laravel",
@@ -100,13 +103,17 @@ func TestGenerateEnvImportYAML_AllEnvs(t *testing.T) {
 				t.Errorf("expected project name %q in YAML", expectedName)
 			}
 
-			// App secret check.
+			// App secret check — per-service, not project level.
 			if plan.Research.NeedsAppSecret {
 				if !strings.Contains(yaml, "envSecrets") {
 					t.Error("expected envSecrets for NeedsAppSecret=true")
 				}
 				if !strings.Contains(yaml, "zeropsPreprocessor=on") {
 					t.Error("expected zeropsPreprocessor=on for generateRandomString")
+				}
+				// Must use correct angle bracket syntax.
+				if !strings.Contains(yaml, "<@generateRandomString(<32>)>") {
+					t.Error("expected <@generateRandomString(<32>)> with inner angle brackets")
 				}
 			}
 
@@ -117,6 +124,25 @@ func TestGenerateEnvImportYAML_AllEnvs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGenerateEnvImportYAML_EnvSecretsPerService(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+	yaml := GenerateEnvImportYAML(plan, 0)
+
+	// envSecrets must NOT be at project level.
+	lines := strings.Split(yaml, "\n") //nolint:stringsseq // need index access
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "envSecrets:" {
+			// Check indentation — project-level would be 2 spaces, service-level is 4+.
+			indent := len(line) - len(strings.TrimLeft(line, " "))
+			if indent <= 2 && i > 0 && strings.Contains(lines[i-1], "project:") || strings.Contains(lines[max(0, i-2)], "project:") {
+				t.Error("envSecrets must be per-service, not at project level")
+			}
+		}
 	}
 }
 
@@ -132,8 +158,19 @@ func TestGenerateEnvImportYAML_Env5_HA(t *testing.T) {
 	if !strings.Contains(yaml, "cpuMode: DEDICATED") {
 		t.Error("expected DEDICATED cpuMode for env 5")
 	}
+
+	// corePackage must be at project level, NOT under verticalAutoscaling.
 	if !strings.Contains(yaml, "corePackage: SERIOUS") {
 		t.Error("expected SERIOUS corePackage for env 5")
+	}
+	// Verify it's at project level (indented 2 spaces under project:).
+	for line := range strings.SplitSeq(yaml, "\n") {
+		if strings.Contains(line, "corePackage: SERIOUS") {
+			indent := len(line) - len(strings.TrimLeft(line, " "))
+			if indent > 4 {
+				t.Errorf("corePackage should be at project level (indent<=4), got indent=%d", indent)
+			}
+		}
 	}
 }
 
@@ -148,24 +185,91 @@ func TestGenerateEnvImportYAML_Env4_MinContainers(t *testing.T) {
 	}
 }
 
-func TestGenerateEnvImportYAML_Env01_DevHostname(t *testing.T) {
+func TestGenerateEnvImportYAML_Env01_DevStageServices(t *testing.T) {
 	t.Parallel()
 
 	plan := testMinimalPlan()
-	yaml0 := GenerateEnvImportYAML(plan, 0)
-	yaml1 := GenerateEnvImportYAML(plan, 1)
 
-	if !strings.Contains(yaml0, "hostname: appdev") {
-		t.Error("expected appdev hostname for env 0")
-	}
-	if !strings.Contains(yaml1, "hostname: appdev") {
-		t.Error("expected appdev hostname for env 1")
-	}
+	for _, envIdx := range []int{0, 1} {
+		t.Run(fmt.Sprintf("env_%d", envIdx), func(t *testing.T) {
+			t.Parallel()
+			yaml := GenerateEnvImportYAML(plan, envIdx)
 
-	// Env 2+ should use bare hostname.
-	yaml2 := GenerateEnvImportYAML(plan, 2)
-	if strings.Contains(yaml2, "hostname: appdev") {
-		t.Error("env 2 should use bare hostname, not appdev")
+			// Dev service: appdev with startWithoutCode, maxContainers, zeropsSetup: dev.
+			if !strings.Contains(yaml, "hostname: appdev") {
+				t.Error("expected appdev hostname")
+			}
+			if !strings.Contains(yaml, "startWithoutCode: true") {
+				t.Error("expected startWithoutCode: true on dev service")
+			}
+			if !strings.Contains(yaml, "maxContainers: 1") {
+				t.Error("expected maxContainers: 1 on dev service")
+			}
+			if !strings.Contains(yaml, "zeropsSetup: dev") {
+				t.Error("expected zeropsSetup: dev on dev service")
+			}
+			// Dev service must NOT have buildFromGit.
+			// (startWithoutCode services don't build from git)
+
+			// Stage service: appstage with zeropsSetup: prod, buildFromGit.
+			if !strings.Contains(yaml, "hostname: appstage") {
+				t.Error("expected appstage hostname for stage service")
+			}
+			if !strings.Contains(yaml, "zeropsSetup: prod") {
+				t.Error("expected zeropsSetup: prod on stage service")
+			}
+			expectedRepo := testRepoBase + plan.Slug + "-app"
+			if !strings.Contains(yaml, "buildFromGit: "+expectedRepo) {
+				t.Errorf("expected buildFromGit: %s", expectedRepo)
+			}
+		})
+	}
+}
+
+func TestGenerateEnvImportYAML_Env2Plus_ProdService(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+
+	for envIdx := 2; envIdx < EnvTierCount(); envIdx++ {
+		t.Run(fmt.Sprintf("env_%d", envIdx), func(t *testing.T) {
+			t.Parallel()
+			yaml := GenerateEnvImportYAML(plan, envIdx)
+
+			// Bare hostname — no appdev/appstage.
+			if strings.Contains(yaml, "hostname: appdev") {
+				t.Error("env 2+ should use bare hostname, not appdev")
+			}
+			if !strings.Contains(yaml, "hostname: app") {
+				t.Error("expected bare hostname: app")
+			}
+
+			// zeropsSetup: prod + buildFromGit.
+			if !strings.Contains(yaml, "zeropsSetup: prod") {
+				t.Error("expected zeropsSetup: prod on app service")
+			}
+			expectedRepo := testRepoBase + plan.Slug + "-app"
+			if !strings.Contains(yaml, "buildFromGit: "+expectedRepo) {
+				t.Errorf("expected buildFromGit: %s", expectedRepo)
+			}
+
+			// Must NOT have startWithoutCode.
+			if strings.Contains(yaml, "startWithoutCode") {
+				t.Error("env 2+ should not have startWithoutCode")
+			}
+		})
+	}
+}
+
+func TestGenerateEnvImportYAML_Showcase_WorkerServices(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+	yaml := GenerateEnvImportYAML(plan, 0)
+
+	// Worker in env 0 should have zeropsSetup and buildFromGit.
+	if !strings.Contains(yaml, "hostname: workerdev") {
+		t.Error("expected workerdev hostname for worker in env 0")
 	}
 }
 

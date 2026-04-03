@@ -142,7 +142,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 **If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair. Skip managed service conventions.
 
-**Framework secrets**: If `needsAppSecret == true`, add `envSecrets` with `<@generateRandomString(<32>)>` and add `#zeropsPreprocessor=on` as the first line.
+**Framework secrets**: If `needsAppSecret == true`, add per-service `envSecrets` with `<@generateRandomString(<32>)>` on each app/worker service and add `#zeropsPreprocessor=on` as the first line. Each service gets its own generated key — do NOT put envSecrets at project level.
 
 **Validation checklist:**
 
@@ -153,6 +153,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 | Mode present | Managed services have `mode: NON_HA` |
 | Priority | Data services: `priority: 10` |
 | Preprocessor | `#zeropsPreprocessor=on` if using `<@...>` functions |
+| envSecrets | Per-service on app/worker, NOT at project level |
 
 ### 2. Import services
 
@@ -220,12 +221,19 @@ Files placed on the mount are already on the dev container — deploy doesn't "s
 
 **Type 3 (backend framework):** Full framework project. ORM-based migrations, template-rendered dashboard, framework CLI tools. Uses the framework's conventions throughout.
 
+### zerops.yaml — Setup naming convention
+
+zerops.yaml uses **generic setup names**: `setup: dev` and `setup: prod` (never hostname-specific like `appdev`/`appstage`). The import.yaml `zeropsSetup` field maps hostnames to setups:
+- `hostname: appdev` → `zeropsSetup: dev`
+- `hostname: appstage` → `zeropsSetup: prod`
+- `hostname: app` (env 2-5) → `zeropsSetup: prod`
+
 ### zerops.yaml — Dev entry ONLY first
 
 Write the **dev** entry only. The stage entry comes after dev is verified in the deploy step.
 
 **Dev setup rules (CRITICAL):**
-- `setup: appdev` — must match the dev hostname
+- `setup: dev` — generic name, mapped via `zeropsSetup` in import.yaml
 - `deployFiles: [.]` — **MANDATORY for self-deploy, no exceptions**
 - `start: zsc noop --silent` — agent controls server manually
   - **Exception**: omit `start` entirely for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
@@ -242,6 +250,10 @@ Write the **dev** entry only. The stage entry comes after dev is verified in the
   ```
 
 **Static frontends:** Set `documentRoot: dist` (or `build`, `.output/public`, etc.) matching the build output. No `start` command needed.
+
+### .env.example preservation
+
+If the framework scaffolds a `.env.example` file (e.g., `composer create-project`), **keep it** — it documents the expected environment variable keys for local development. Remove `.env` (contains generated secrets), but preserve `.env.example` with empty values as a reference for users running locally.
 
 ### Required endpoints
 
@@ -270,13 +282,14 @@ Write `README.md` at `/var/www/appdev/README.md` with three documentation fragme
 
 ### Pre-deploy checklist
 Before completing generate:
-- [ ] zerops.yaml has `setup: appdev` matching hostname
+- [ ] zerops.yaml has `setup: dev` (generic name, not hostname-specific)
 - [ ] `deployFiles: [.]` on dev
 - [ ] `start: zsc noop --silent` (or omitted for implicit-webserver/static)
 - [ ] No compilation in buildCommands (dependency install only — exception: static frontend build)
 - [ ] No healthCheck on dev entry
 - [ ] All env vars from discovery, none guessed (skip if no managed services)
 - [ ] README has all 3 extract fragments with proper markers
+- [ ] `.env.example` preserved if framework-scaffolded (`.env` removed)
 
 ### Completion
 ```
@@ -289,16 +302,24 @@ zerops_workflow action="complete" step="generate" attestation="App code and zero
 
 ### integration-guide Fragment
 Must contain:
-- Complete zerops.yaml with ALL setups (base, prod, dev; worker if showcase)
+- Complete zerops.yaml with ALL setups (`prod`, `dev`; `worker` if showcase)
+- Setup names are generic (`prod`/`dev`), NOT hostname-specific
 - Every config line should have an inline comment explaining WHY
 - Build commands must be ordered correctly
 - Deploy files must differ between dev (`.`) and prod (build output)
 
 ### knowledge-base Fragment
+
+Each item must be **irreducible** — not learnable from the zerops.yaml comments, platform docs, or general framework docs. Do NOT repeat what's already documented in the integration-guide zerops.yaml comments.
+
 Must contain:
 - `### Gotchas` section with at least 2 framework-specific pitfalls on Zerops
-- Common deployment issues and solutions
-- Environment variable conventions
+- Only things the zerops.yaml comments DON'T cover: code-level changes needed (e.g., trusted proxy middleware config in app code), base image contents, runtime-specific cache paths
+
+Do NOT include:
+- Config values already visible in zerops.yaml (e.g., don't re-explain `TRUSTED_PROXIES` value — explain the code-side change needed instead)
+- Platform universals (build/run separation, L7 routing, tilde behavior, autoscaling timing)
+- Generic framework knowledge (how Laravel works, what Vite does)
 
 ### intro Fragment
 - 1-3 lines only
@@ -389,8 +410,8 @@ If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix 
 
 ### Stage deployment flow
 
-**Step 6: Generate stage entry in zerops.yaml**
-Add a `setup: appstage` entry to zerops.yaml on the appdev mount. Stage differences from dev:
+**Step 6: Generate prod entry in zerops.yaml**
+Add a `setup: prod` entry to zerops.yaml on the appdev mount. The `zeropsSetup: prod` in import.yaml maps `appstage` hostname to this setup. Prod differences from dev:
 - Real `start` command (not `zsc noop`). For static: still no `start` (Nginx serves).
 - Real `buildCommands` with compilation/bundling
 - Real `deployFiles` (build output, not `.`)
@@ -430,7 +451,7 @@ zerops_verify serviceHostname="appstage"
 | HTTP 502 | App not listening on 0.0.0.0, or wrong port | Fix bind address in app config |
 | Empty env vars | Deploy hasn't happened yet | Deploy first — env vars activate at deploy time |
 | Build fails | Wrong build commands, missing dependencies | Check `zerops_logs`, fix and redeploy |
-| Stage deploy fails | zerops.yaml setup name doesn't match hostname | Ensure `setup: appstage` matches |
+| Stage deploy fails | zerops.yaml setup name doesn't match zeropsSetup | Ensure `setup: prod` matches `zeropsSetup: prod` in import.yaml |
 | Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |
 | Static site 404 | Wrong `documentRoot` | Match to actual build output directory |
 
@@ -478,9 +499,14 @@ Plus:
 
 ### import.yaml Rules
 - `priority: 10` on all data services (ensures they start before app)
-- `envSecrets` where `needsAppSecret == true`
-- `#zeropsPreprocessor=on` when using `<@generateRandomString>`
-- `verticalAutoscaling` nesting: minRam, minFreeRamGB, cpuMode under it
+- `envSecrets` per-service on app/worker services (NOT at project level) where `needsAppSecret == true`
+- `#zeropsPreprocessor=on` when using `<@generateRandomString(<32>)>`
+- `corePackage: SERIOUS` at **project level** for env 5 (NOT under verticalAutoscaling)
+- `verticalAutoscaling` nesting: minFreeRamGB, cpuMode under it
+- `zeropsSetup: prod` on app/worker services (maps to `setup: prod` in zerops.yaml)
+- `zeropsSetup: dev` on dev services in env 0-1 (maps to `setup: dev` in zerops.yaml)
+- `buildFromGit: https://github.com/zerops-recipe-apps/{slug}-app` on all non-startWithoutCode app/worker services
+- `startWithoutCode: true` + `maxContainers: 1` on dev services in env 0-1
 - Comment line width <= 80 chars
 - Comment ratio >= 0.3 per file
 - No `PLACEHOLDER_*` strings

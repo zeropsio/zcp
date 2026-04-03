@@ -12,6 +12,9 @@ const (
 	RecipeRoleWorker = "worker"
 )
 
+// RecipeAppRepoBase is the GitHub org where recipe app repos live.
+const RecipeAppRepoBase = "https://github.com/zerops-recipe-apps/"
+
 // Environment tier definitions with folder names (em-dash U+2014).
 var envTiers = []struct {
 	Index  int
@@ -115,8 +118,7 @@ func GenerateEnvREADME(plan *RecipePlan, envIndex int) string {
 	return b.String()
 }
 
-// GenerateEnvImportYAML returns the import.yaml skeleton for a specific env.
-// Returns YAML with service structure — LLM adds comments.
+// GenerateEnvImportYAML returns the import.yaml for a specific env.
 func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 	if envIndex < 0 || envIndex >= len(envTiers) {
 		return ""
@@ -131,9 +133,9 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 	fmt.Fprintf(&b, "project:\n")
 	fmt.Fprintf(&b, "  name: %s\n", projectName)
 
-	if plan.Research.NeedsAppSecret {
-		b.WriteString("  envSecrets:\n")
-		fmt.Fprintf(&b, "    APP_KEY: <@generateRandomString(32)>\n")
+	// corePackage at project level for env 5.
+	if envIndex == 5 {
+		b.WriteString("  corePackage: SERIOUS\n")
 	}
 
 	b.WriteString("services:\n")
@@ -142,27 +144,62 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 		if !TargetInEnv(target, envIndex) {
 			continue
 		}
-		writeServiceBlock(&b, plan, target, envIndex)
+		if isRuntimeService(target.Role) && envIndex <= 1 {
+			// Env 0-1: generate dev + stage pair for runtime services.
+			writeDevServiceBlock(&b, plan, target, envIndex)
+			writeStageServiceBlock(&b, plan, target, envIndex)
+		} else {
+			writeServiceBlock(&b, plan, target, envIndex)
+		}
 	}
 
 	return b.String()
 }
 
+// writeDevServiceBlock writes the dev service entry for env 0-1.
+func writeDevServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget, _ int) {
+	hostname := target.Hostname + "dev"
+	fmt.Fprintf(b, "  - hostname: %s\n", hostname)
+	fmt.Fprintf(b, "    type: %s\n", target.Type)
+	b.WriteString("    startWithoutCode: true\n")
+	b.WriteString("    maxContainers: 1\n")
+	b.WriteString("    zeropsSetup: dev\n")
+	b.WriteString("    enableSubdomainAccess: true\n")
+	writeServiceEnvSecrets(b, plan)
+}
+
+// writeStageServiceBlock writes the stage service entry for env 0-1.
+func writeStageServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget, _ int) {
+	hostname := target.Hostname + "stage"
+	fmt.Fprintf(b, "  - hostname: %s\n", hostname)
+	fmt.Fprintf(b, "    type: %s\n", target.Type)
+	b.WriteString("    zeropsSetup: prod\n")
+	writeServiceBuildFromGit(b, plan)
+	b.WriteString("    enableSubdomainAccess: true\n")
+	writeServiceEnvSecrets(b, plan)
+}
+
 // writeServiceBlock writes a single service entry in import.yaml.
 func writeServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget, envIndex int) {
-	fmt.Fprintf(b, "  - hostname: %s\n", serviceHostname(target, envIndex))
+	fmt.Fprintf(b, "  - hostname: %s\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 
 	// Data services get priority: 10.
-	if target.Role != RecipeRoleApp && target.Role != RecipeRoleWorker {
+	if !isRuntimeService(target.Role) {
 		b.WriteString("    priority: 10\n")
 	}
 
-	// HA mode for env 5.
+	// HA mode for env 5 data services.
 	if IsDataService(target.Role) && envIndex == 5 {
 		b.WriteString("    mode: HA\n")
 	} else if IsDataService(target.Role) {
 		b.WriteString("    mode: NON_HA\n")
+	}
+
+	// Runtime services: zeropsSetup + buildFromGit.
+	if isRuntimeService(target.Role) {
+		b.WriteString("    zeropsSetup: prod\n")
+		writeServiceBuildFromGit(b, plan)
 	}
 
 	// Subdomain access for app services.
@@ -174,14 +211,28 @@ func writeServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget
 	writeAutoscaling(b, target, envIndex)
 
 	// Min containers for env 4-5.
-	if (target.Role == RecipeRoleApp || target.Role == RecipeRoleWorker) && envIndex >= 4 {
+	if isRuntimeService(target.Role) && envIndex >= 4 {
 		b.WriteString("    minContainers: 2\n")
 	}
 
-	// Dev+prod setups for env 0-1, prod only for 2-5.
-	if target.Role == RecipeRoleApp && envIndex <= 1 {
-		fmt.Fprintf(b, "    buildFromGit: %s\n", plan.Slug)
+	// Per-service envSecrets.
+	if isRuntimeService(target.Role) {
+		writeServiceEnvSecrets(b, plan)
 	}
+}
+
+// writeServiceEnvSecrets writes envSecrets block on a service (not project).
+func writeServiceEnvSecrets(b *strings.Builder, plan *RecipePlan) {
+	if !plan.Research.NeedsAppSecret {
+		return
+	}
+	b.WriteString("    envSecrets:\n")
+	b.WriteString("      APP_KEY: <@generateRandomString(<32>)>\n")
+}
+
+// writeServiceBuildFromGit writes the buildFromGit URL.
+func writeServiceBuildFromGit(b *strings.Builder, plan *RecipePlan) {
+	fmt.Fprintf(b, "    buildFromGit: %s%s-app\n", RecipeAppRepoBase, plan.Slug)
 }
 
 // writeAutoscaling writes verticalAutoscaling block for higher environments.
@@ -190,8 +241,7 @@ func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
 		return
 	}
 
-	needsScaling := (envIndex == 3 && (target.Role == RecipeRoleApp || target.Role == RecipeRoleWorker || IsDataService(target.Role))) || envIndex >= 4
-
+	needsScaling := (envIndex == 3 && (isRuntimeService(target.Role) || IsDataService(target.Role))) || envIndex >= 4
 	if !needsScaling {
 		return
 	}
@@ -205,20 +255,15 @@ func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
 		b.WriteString("      minFreeRamGB: 0.125\n")
 	case 5:
 		b.WriteString("      minFreeRamGB: 0.25\n")
-		b.WriteString("      cpuMode: DEDICATED\n")
-		if target.Role == RecipeRoleApp || target.Role == RecipeRoleWorker {
-			b.WriteString("      corePackage: SERIOUS\n")
+		if isRuntimeService(target.Role) {
+			b.WriteString("      cpuMode: DEDICATED\n")
 		}
 	}
 }
 
-// serviceHostname returns the hostname for a target in a specific environment.
-// Env 0-1 use appdev/appstage pattern for apps; others use bare hostname.
-func serviceHostname(target RecipeTarget, envIndex int) string {
-	if target.Role == RecipeRoleApp && envIndex <= 1 {
-		return target.Hostname + "dev"
-	}
-	return target.Hostname
+// isRuntimeService returns true for app and worker roles.
+func isRuntimeService(role string) bool {
+	return role == RecipeRoleApp || role == RecipeRoleWorker
 }
 
 // TargetInEnv checks if a target is included in a specific environment.
