@@ -48,6 +48,7 @@ type BootstrapResponse struct {
 	Current         *BootstrapStepInfo `json:"current,omitempty"`
 	Message         string             `json:"message"`
 	AvailableStacks string             `json:"availableStacks,omitempty"`
+	SchemaKnowledge string             `json:"schemaKnowledge,omitempty"`
 	CheckResult     *StepCheckResult   `json:"checkResult,omitempty"`
 }
 

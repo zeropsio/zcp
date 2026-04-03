@@ -250,7 +250,7 @@ func TestValidateServiceTypes_Valid(t *testing.T) {
 		{"hostname": "db", "type": "postgresql@16", "mode": "NON_HA"},
 	}
 
-	warnings := ValidateServiceTypes(services, types)
+	warnings := ValidateServiceTypes(services, types, nil)
 
 	if len(warnings) != 0 {
 		t.Errorf("expected no warnings, got: %v", warnings)
@@ -264,7 +264,7 @@ func TestValidateServiceTypes_InvalidType(t *testing.T) {
 		{"hostname": "api", "type": "ruby@3.2"},
 	}
 
-	warnings := ValidateServiceTypes(services, types)
+	warnings := ValidateServiceTypes(services, types, nil)
 
 	if len(warnings) == 0 {
 		t.Fatal("expected warnings for invalid type")
@@ -288,7 +288,7 @@ func TestValidateServiceTypes_MissingMode(t *testing.T) {
 		{"hostname": "db", "type": "postgresql@16"},
 	}
 
-	warnings := ValidateServiceTypes(services, types)
+	warnings := ValidateServiceTypes(services, types, nil)
 
 	if len(warnings) == 0 {
 		t.Fatal("expected warning for missing mode on postgresql")
@@ -322,7 +322,7 @@ func TestValidateServiceTypes_NoTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			warnings := ValidateServiceTypes(services, tt.types)
+			warnings := ValidateServiceTypes(services, tt.types, nil)
 			if warnings != nil {
 				t.Errorf("expected nil warnings, got: %v", warnings)
 			}

@@ -965,8 +965,10 @@ func TestBuildResponse_Provision_GuideContainsKnowledge(t *testing.T) {
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	if !strings.Contains(resp.Current.DetailedGuide, "import.yaml Schema") {
-		t.Error("provision guide should contain 'import.yaml Schema' from knowledge injection")
+	// Static import.yaml schema is no longer injected in guidance —
+	// it's replaced by live schema in the SchemaKnowledge response field.
+	if strings.Contains(resp.Current.DetailedGuide, "import.yaml Schema") {
+		t.Error("provision guide should not contain static 'import.yaml Schema' (now injected as live SchemaKnowledge)")
 	}
 }
 

@@ -112,7 +112,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if cache != nil && client != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
-		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir)
+		return handleBootstrapComplete(ctx, engine, client, cache, schemaCache, input, liveTypes, logFetcher, projectID, stateDir)
 	case "skip":
 		active := detectActiveWorkflow(engine)
 		if active == workflowDeploy {
@@ -121,7 +121,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if active == workflowRecipe {
 			return handleRecipeSkip(ctx, engine, input)
 		}
-		return handleBootstrapSkip(ctx, engine, client, cache, input)
+		return handleBootstrapSkip(ctx, engine, client, cache, schemaCache, input)
 	case "status":
 		active := detectActiveWorkflow(engine)
 		if active == workflowDeploy {
@@ -130,7 +130,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if active == workflowRecipe {
 			return handleRecipeStatus(ctx, engine, schemaCache)
 		}
-		return handleBootstrapStatus(ctx, engine, client, cache)
+		return handleBootstrapStatus(ctx, engine, client, cache, schemaCache)
 	case "resume":
 		return handleResume(ctx, engine, client, cache, schemaCache, input)
 	case "list":
@@ -181,6 +181,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 				"Reset existing session first with action=reset")), nil, nil
 		}
 		populateStacks(ctx, resp, client, cache)
+		injectBootstrapSchemaKnowledge(ctx, resp, schemaCache)
 		return jsonResult(resp), nil, nil
 	}
 
@@ -246,7 +247,7 @@ func handleIterate(ctx context.Context, engine *workflow.Engine, client platform
 	if active == workflowRecipe {
 		return handleRecipeStatus(ctx, engine, schemaCache)
 	}
-	return bootstrapStatusResult(ctx, engine, client, cache)
+	return bootstrapStatusResult(ctx, engine, client, cache, schemaCache)
 }
 
 func handleResume(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
@@ -269,7 +270,7 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 	if active == workflowRecipe {
 		return handleRecipeStatus(ctx, engine, schemaCache)
 	}
-	return bootstrapStatusResult(ctx, engine, client, cache)
+	return bootstrapStatusResult(ctx, engine, client, cache, schemaCache)
 }
 
 func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {

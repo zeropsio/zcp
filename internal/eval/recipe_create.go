@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // RecipeCreateConfig holds configuration for headless recipe creation.
@@ -68,7 +70,7 @@ func (c *RecipeCreator) CreateRecipe(ctx context.Context, framework, tier string
 	}
 
 	// Build prompt.
-	prompt := BuildRecipeCreatePrompt(framework, tier)
+	prompt := BuildRecipeCreatePrompt(ctx, framework, tier)
 
 	// Write prompt to file for inspection.
 	promptFile := filepath.Join(outDir, "prompt.md")
@@ -158,8 +160,11 @@ func (c *RecipeCreator) spawnClaude(ctx context.Context, prompt, logFile string)
 }
 
 // BuildRecipeCreatePrompt generates the prompt for headless recipe creation.
-func BuildRecipeCreatePrompt(framework, tier string) string {
-	return fmt.Sprintf(`Create a %s %s recipe for Zerops. Follow ZCP's recipe workflow exactly:
+// Includes live schema context (best-effort) so the LLM knows valid service types
+// and build/run bases before starting the workflow.
+func BuildRecipeCreatePrompt(ctx context.Context, framework, tier string) string {
+	schemaCtx := fetchSchemaContext(ctx)
+	return schemaCtx + fmt.Sprintf(`Create a %s %s recipe for Zerops. Follow ZCP's recipe workflow exactly:
 
 1. Start the recipe workflow:
    zerops_workflow action="start" workflow="recipe" intent="Create a %s %s recipe" tier="%s"
@@ -183,6 +188,25 @@ func BuildRecipeCreatePrompt(framework, tier string) string {
 
 Start now with step 1.
 `, framework, tier, framework, tier, tier)
+}
+
+// fetchSchemaContext fetches live schemas and formats a compact context block.
+// Best-effort: returns empty string on failure (eval continues without schema).
+func fetchSchemaContext(ctx context.Context) string {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	schemas, err := schema.FetchSchemas(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "zcp: eval: schema fetch failed (non-fatal): %v\n", err)
+		return ""
+	}
+
+	out := schema.FormatBothForLLM(schemas)
+	if out == "" {
+		return ""
+	}
+	return "# Zerops Platform Schema (live)\n\n" + out + "\n---\n\n"
 }
 
 // RecipeCreateSuite runs batch recipe creation.

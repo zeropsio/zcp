@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -29,7 +30,7 @@ func needsStacks(resp *workflow.BootstrapResponse) bool {
 	return stackSteps[resp.Current.Name]
 }
 
-func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -49,6 +50,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		if needsStacks(resp) {
 			populateStacks(ctx, resp, client, cache)
 		}
+		injectBootstrapSchemaKnowledge(ctx, resp, schemaCache)
 		return jsonResult(resp), nil, nil
 	}
 
@@ -83,10 +85,11 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, client, cache)
 	}
+	injectBootstrapSchemaKnowledge(ctx, resp, schemaCache)
 	return jsonResult(resp), nil, nil
 }
 
-func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -109,16 +112,17 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, client, cache)
 	}
+	injectBootstrapSchemaKnowledge(ctx, resp, schemaCache)
 	return jsonResult(resp), nil, nil
 }
 
-func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
-	return bootstrapStatusResult(ctx, engine, client, cache)
+func handleBootstrapStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
+	return bootstrapStatusResult(ctx, engine, client, cache, schemaCache)
 }
 
 // bootstrapStatusResult returns the current bootstrap status as a BootstrapResponse.
 // Shared by handleBootstrapStatus, handleResume, and handleIterate.
-func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
+func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
 	resp, err := engine.BootstrapStatus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -129,6 +133,7 @@ func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, client 
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, client, cache)
 	}
+	injectBootstrapSchemaKnowledge(ctx, resp, schemaCache)
 	return jsonResult(resp), nil, nil
 }
 
@@ -139,6 +144,29 @@ func populateStacks(ctx context.Context, resp *workflow.BootstrapResponse, clien
 	}
 	if types := cache.Get(ctx, client); len(types) > 0 {
 		resp.AvailableStacks = knowledge.FormatStackList(types)
+	}
+}
+
+// injectBootstrapSchemaKnowledge adds live schema knowledge to a bootstrap response.
+// Provision gets import.yaml schema (service types, modes, constraints).
+// Generate gets zerops.yml schema (build/run bases, deploy fields).
+func injectBootstrapSchemaKnowledge(ctx context.Context, resp *workflow.BootstrapResponse, schemaCache *schema.Cache) {
+	if resp == nil || schemaCache == nil || resp.Current == nil {
+		return
+	}
+
+	schemas := schemaCache.Get(ctx)
+	if schemas == nil {
+		return
+	}
+
+	switch resp.Current.Name {
+	case workflow.StepProvision:
+		resp.SchemaKnowledge = schema.FormatImportYmlForLLM(schemas.ImportYml)
+	case workflow.StepGenerate:
+		resp.SchemaKnowledge = schema.FormatZeropsYmlForLLM(schemas.ZeropsYml)
+	case workflow.StepDiscover, workflow.StepDeploy, workflow.StepClose:
+		// No schema injection needed for these steps.
 	}
 }
 

@@ -97,18 +97,15 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 
 	switch step {
 	case RecipeStepResearch:
-		// Infrastructure rules and import.yaml schema for informed plan decisions.
-		for _, name := range []string{"import.yaml Schema", "Rules & Pitfalls"} {
-			if s := getCoreSection(kp, name); s != "" {
-				parts = append(parts, "## "+name+"\n\n"+s)
-			}
+		// Rules & pitfalls for informed plan decisions.
+		// NOTE: import.yaml/zerops.yml schema structure is injected as live SchemaKnowledge
+		// in the tools layer (injectSchemaKnowledge) — no need to duplicate from core.md.
+		if s := getCoreSection(kp, "Rules & Pitfalls"); s != "" {
+			parts = append(parts, "## Rules & Pitfalls\n\n"+s)
 		}
 
 	case RecipeStepProvision:
-		// import.yaml schema for provisioning services.
-		if s := getCoreSection(kp, "import.yaml Schema"); s != "" {
-			parts = append(parts, "## import.yaml Schema\n\n"+s)
-		}
+		// Live import.yaml schema is injected as SchemaKnowledge in tools layer.
 
 	case RecipeStepGenerate:
 		// Runtime briefing for code generation.
@@ -122,11 +119,10 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		if len(discoveredEnvVars) > 0 {
 			parts = append(parts, formatEnvVarsForGuide(discoveredEnvVars))
 		}
-		// zerops.yaml schema + rules.
-		for _, name := range []string{"zerops.yaml Schema", "Rules & Pitfalls"} {
-			if s := getCoreSection(kp, name); s != "" {
-				parts = append(parts, "## "+name+"\n\n"+s)
-			}
+		// Rules & pitfalls (deploy semantics, tilde syntax, cache architecture).
+		// NOTE: zerops.yml schema structure is injected as live SchemaKnowledge in tools layer.
+		if s := getCoreSection(kp, "Rules & Pitfalls"); s != "" {
+			parts = append(parts, "## Rules & Pitfalls\n\n"+s)
 		}
 
 	case RecipeStepDeploy:

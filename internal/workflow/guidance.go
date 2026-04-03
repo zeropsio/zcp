@@ -81,12 +81,8 @@ func assembleKnowledge(params GuidanceParams) string {
 		}
 	}
 
-	// import.yaml schema at provision.
-	if params.Step == StepProvision {
-		if s := getCoreSection(params.KP, "import.yaml Schema"); s != "" {
-			parts = append(parts, "## import.yaml Schema\n\n"+s)
-		}
-	}
+	// Live import.yaml schema is injected as SchemaKnowledge in the tools layer
+	// (injectBootstrapSchemaKnowledge at provision step) — no static core.md dupe needed.
 
 	// Runtime + dependency knowledge at generate step.
 	if needsRuntimeKnowledge(params.Step) {
@@ -108,12 +104,11 @@ func assembleKnowledge(params GuidanceParams) string {
 		parts = append(parts, formatEnvVarsForGuide(params.DiscoveredEnvVars))
 	}
 
-	// zerops.yaml schema + rules at generate step.
+	// Rules & pitfalls at generate step (deploy semantics, tilde syntax, cache architecture).
+	// NOTE: zerops.yml schema structure is injected as live SchemaKnowledge in tools layer.
 	if needsRuntimeKnowledge(params.Step) {
-		for _, name := range []string{"zerops.yaml Schema", "Rules & Pitfalls"} {
-			if s := getCoreSection(params.KP, name); s != "" {
-				parts = append(parts, "## "+name+"\n\n"+s)
-			}
+		if s := getCoreSection(params.KP, "Rules & Pitfalls"); s != "" {
+			parts = append(parts, "## Rules & Pitfalls\n\n"+s)
 		}
 	}
 

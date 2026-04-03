@@ -11,6 +11,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // ServiceImportError represents an error for a specific service during import.
@@ -52,6 +53,7 @@ func Import(
 	content string,
 	filePath string,
 	liveTypes []platform.ServiceStackType,
+	schemas *schema.Schemas,
 ) (*ImportResult, error) {
 	yamlContent, err := resolveInput(content, filePath)
 	if err != nil {
@@ -87,7 +89,7 @@ func Import(
 					services = append(services, svcMap)
 				}
 			}
-			warnings = knowledge.ValidateServiceTypes(services, liveTypes)
+			warnings = knowledge.ValidateServiceTypes(services, liveTypes, schemas)
 			// Warn on envVariables at service level — API silently drops them.
 			for _, svc := range services {
 				if _, has := svc["envVariables"]; has {

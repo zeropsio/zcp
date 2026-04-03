@@ -524,7 +524,7 @@ func TestBuildGuide_NilKnowledge_ReturnBaseGuide(t *testing.T) {
 	}
 }
 
-func TestBuildGuide_Provision_ContainsImportSchema(t *testing.T) {
+func TestBuildGuide_Provision_OmitsStaticSchema(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeProvider(t)
 	bs := NewBootstrapState()
@@ -532,21 +532,10 @@ func TestBuildGuide_Provision_ContainsImportSchema(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
 	}}
 	guide := bs.buildGuide(StepProvision, 0, EnvContainer, store)
-	if !strings.Contains(guide, "import.yaml Schema") {
-		t.Error("provision guide should contain 'import.yaml Schema'")
-	}
-}
-
-func TestBuildGuide_Provision_ContainsPreprocessorFunctions(t *testing.T) {
-	t.Parallel()
-	store := testKnowledgeProvider(t)
-	bs := NewBootstrapState()
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
-	}}
-	guide := bs.buildGuide(StepProvision, 0, EnvContainer, store)
-	if !strings.Contains(guide, "Preprocessor Functions") {
-		t.Error("provision guide should contain 'Preprocessor Functions' (H3 inside import.yaml Schema)")
+	// Static import.yaml schema is no longer injected in guidance —
+	// it's replaced by live schema in the SchemaKnowledge response field.
+	if strings.Contains(guide, "import.yaml Schema") {
+		t.Error("provision guide should not contain static 'import.yaml Schema' (now injected as live SchemaKnowledge)")
 	}
 }
 
@@ -583,7 +572,7 @@ func TestBuildGuide_Generate_ContainsEnvVars(t *testing.T) {
 	}
 }
 
-func TestBuildGuide_Generate_ContainsZeropsYmlSchema(t *testing.T) {
+func TestBuildGuide_Generate_OmitsStaticSchema(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeProvider(t)
 	bs := NewBootstrapState()
@@ -591,8 +580,10 @@ func TestBuildGuide_Generate_ContainsZeropsYmlSchema(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
 	}}
 	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, store)
-	if !strings.Contains(guide, "zerops.yaml Schema") {
-		t.Error("generate guide should contain 'zerops.yaml Schema'")
+	// Static zerops.yaml schema is no longer injected in guidance —
+	// it's replaced by live schema in the SchemaKnowledge response field.
+	if strings.Contains(guide, "zerops.yaml Schema") {
+		t.Error("generate guide should not contain static 'zerops.yaml Schema' (now injected as live SchemaKnowledge)")
 	}
 }
 

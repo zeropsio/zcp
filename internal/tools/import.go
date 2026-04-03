@@ -7,6 +7,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -17,7 +18,7 @@ type ImportInput struct {
 }
 
 // RegisterImport registers the zerops_import tool.
-func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, engine *workflow.Engine) {
+func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
 		Description: "REQUIRES active workflow session. Import services from YAML into the project. Validates service types, blocks until all processes complete. Returns final statuses (FINISHED/FAILED).",
@@ -33,7 +34,11 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, c
 		if cache != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
-		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, liveTypes)
+		var schemas *schema.Schemas
+		if schemaCache != nil {
+			schemas = schemaCache.Get(ctx)
+		}
+		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, liveTypes, schemas)
 		if err != nil {
 			return convertError(err), nil, nil
 		}

@@ -43,7 +43,7 @@ func TestImport_Success(t *testing.T) {
 `
 	mock := importMock()
 
-	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestImport_Success(t *testing.T) {
 func TestImport_NoInput(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	_, err := Import(context.Background(), mock, "proj-1", "", "", nil)
+	_, err := Import(context.Background(), mock, "proj-1", "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error when neither content nor filePath provided")
 	}
@@ -90,7 +90,7 @@ func TestImport_NoInput(t *testing.T) {
 func TestImport_BothInputs(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	_, err := Import(context.Background(), mock, "proj-1", "content", "/some/path", nil)
+	_, err := Import(context.Background(), mock, "proj-1", "content", "/some/path", nil, nil)
 	if err == nil {
 		t.Fatal("expected error when both content and filePath provided")
 	}
@@ -106,7 +106,7 @@ func TestImport_BothInputs(t *testing.T) {
 func TestImport_FileNotFound(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	_, err := Import(context.Background(), mock, "proj-1", "", "/nonexistent/file.yml", nil)
+	_, err := Import(context.Background(), mock, "proj-1", "", "/nonexistent/file.yml", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -146,7 +146,7 @@ func TestImport_FileRead(t *testing.T) {
 			},
 		})
 
-	result, err := Import(context.Background(), mock, "proj-1", "", fp, nil)
+	result, err := Import(context.Background(), mock, "proj-1", "", fp, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestImport_VersionWarnings(t *testing.T) {
 		},
 	}
 	mock := importMock()
-	result, err := Import(context.Background(), mock, "proj-1", content, "", types)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", types, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestImport_ModeWarnings(t *testing.T) {
 		},
 	}
 	mock := importMock()
-	result, err := Import(context.Background(), mock, "proj-1", content, "", types)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", types, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestImport_EnvVariablesAtServiceLevel_Warning(t *testing.T) {
       MY_VAR: hello
 `
 	mock := importMock()
-	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestImport_NilTypes_NoWarnings(t *testing.T) {
     type: ruby@3.2
 `
 	mock := importMock()
-	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestImport_DeletingServiceConflict_WaitsAndSucceeds(t *testing.T) {
     type: nodejs@22
     mode: NON_HA
 `
-	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestImport_DeletingServiceConflict_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := Import(ctx, mock, "proj-1", content, "", nil)
+	_, err := Import(ctx, mock, "proj-1", content, "", nil, nil)
 	if err == nil {
 		t.Fatal("expected timeout error for stuck DELETING service")
 	}
@@ -362,7 +362,7 @@ func TestImport_DeletingServiceNoConflict(t *testing.T) {
     type: nodejs@22
     mode: NON_HA
 `
-	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestImport_InvalidHostname(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mock := importMock()
-			_, err := Import(context.Background(), mock, "proj-1", tt.content, "", nil)
+			_, err := Import(context.Background(), mock, "proj-1", tt.content, "", nil, nil)
 			if err == nil {
 				t.Fatal("expected error for invalid hostname")
 			}
@@ -523,7 +523,7 @@ func TestImport_ServiceError_Surfaced(t *testing.T) {
 			},
 		})
 
-	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -575,7 +575,7 @@ func TestImport_MixedSuccessAndError(t *testing.T) {
 			},
 		})
 
-	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -621,7 +621,7 @@ func TestImport_AllErrors(t *testing.T) {
 			},
 		})
 
-	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestImport_FailReason_Mapped(t *testing.T) {
 			},
 		})
 
-	result, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -732,7 +732,7 @@ func TestImport_ZeropsYamlPassthrough(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			mock := importMock()
-			_, err := Import(context.Background(), mock, "proj-1", tt.content, "", nil)
+			_, err := Import(context.Background(), mock, "proj-1", tt.content, "", nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -757,7 +757,7 @@ func TestImport_APIError(t *testing.T) {
 			Message: "import failed",
 		})
 
-	_, err := Import(context.Background(), mock, "proj-1", content, "", nil)
+	_, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error from API")
 	}
