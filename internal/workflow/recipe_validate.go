@@ -9,8 +9,9 @@ import (
 	"github.com/zeropsio/zcp/internal/schema"
 )
 
-// slugPattern validates recipe slug format: {framework}-hello-world or {framework}-showcase.
-var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*-(hello-world|showcase)$`)
+// slugPattern validates recipe slug format:
+// {runtime}-hello-world (bare runtime), {framework}-minimal, or {framework}-showcase.
+var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*-(hello-world|minimal|showcase)$`)
 
 // ValidateRecipePlan validates a recipe plan against structural rules.
 // Uses live JSON schemas (preferred) or API service types (fallback) for type validation.
@@ -32,7 +33,7 @@ func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType, 
 	if plan.Slug == "" {
 		errs = append(errs, "slug is required")
 	} else if !slugPattern.MatchString(plan.Slug) {
-		errs = append(errs, fmt.Sprintf("slug %q must match pattern {framework}-hello-world or {framework}-showcase", plan.Slug))
+		errs = append(errs, fmt.Sprintf("slug %q must match pattern {runtime}-hello-world, {framework}-minimal, or {framework}-showcase", plan.Slug))
 	}
 
 	// RuntimeType — validate against schema run.base enum, then import types, then liveTypes.

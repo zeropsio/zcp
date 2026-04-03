@@ -46,7 +46,7 @@ Previously, the LLM only got static schema docs from an embedded markdown file. 
 
 ### 2. Recipe workflow — teaching + validating
 
-Recipes are reference implementations (laravel-hello-world, nestjs-showcase, etc.) with 6 environment tiers. The schema is used for both knowledge injection and hard validation.
+Recipes are reference implementations with 6 environment tiers. Three naming tiers exist: `{runtime}-hello-world` (bare runtime, no framework), `{framework}-minimal` (framework + DB), and `{framework}-showcase` (full stack with cache/search/storage). During creation, the LLM loads baseline configs from the tier below — creating `laravel-minimal` loads `php-hello-world` as a proven starting point; creating `laravel-showcase` loads `laravel-minimal` (or falls back to `php-hello-world` if minimal doesn't exist yet). The schema is used for both knowledge injection and hard validation.
 
 **Knowledge injection** (same pattern as bootstrap):
 
