@@ -100,6 +100,7 @@ type RecipeResponse struct {
 	Progress    RecipeProgress   `json:"progress"`
 	Current     *RecipeStepInfo  `json:"current,omitempty"`
 	CheckResult *StepCheckResult `json:"checkResult,omitempty"`
+	OutputDir   string           `json:"outputDir,omitempty"`
 }
 
 // RecipeProgress summarizes overall recipe progress.
@@ -243,6 +244,7 @@ func (r *RecipeState) BuildResponse(sessionID, intent string, iteration int, env
 		SessionID: sessionID,
 		Intent:    intent,
 		Iteration: iteration,
+		OutputDir: r.OutputDir,
 		Progress: RecipeProgress{
 			Total:     len(r.Steps),
 			Completed: completed,

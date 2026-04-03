@@ -207,13 +207,15 @@ zerops_workflow action="complete" step="deploy" attestation="All services deploy
 
 Generate the complete recipe repository structure with 6 environment tiers.
 
+**Output directory**: Write all files to the output directory shown in the workflow status response (`outputDir` field). This is `{projectRoot}/{slug}/` — e.g., `/var/www/zcprecipator/laravel-hello-world/`. Create the directory if it doesn't exist.
+
 ### Required Files (13+ total)
 For each environment (0-5):
-- `{env_folder}/import.yaml` — service import configuration
-- `{env_folder}/README.md` — environment-specific documentation
+- `{outputDir}/{env_folder}/import.yaml` — service import configuration
+- `{outputDir}/{env_folder}/README.md` — environment-specific documentation
 
 Plus:
-- `README.md` — main recipe README
+- `{outputDir}/README.md` — main recipe README
 
 ### Environment Folders
 - `0 — AI Agent` — ZCP/AI-driven development
