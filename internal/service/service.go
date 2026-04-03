@@ -55,7 +55,7 @@ func Start(name string) error {
 
 // runCommand starts a child process and waits for it, forwarding signals.
 func runCommand(binary string, args []string) error {
-	cmd := exec.Command(binary, args[1:]...)
+	cmd := exec.Command(binary, args[1:]...) //nolint:gosec // binary is resolved from a hardcoded service map via LookPath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
