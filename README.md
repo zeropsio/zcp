@@ -190,7 +190,7 @@ See `docs/spec-guidance-philosophy.md` for the full guidance delivery specificat
 
 ## Recipe workflow
 
-Recipe is a 6-step workflow that creates deployable recipe repositories — reference implementations with 6 environment tiers (AI Agent, Remote CDE, Local, Stage, Small Production, HA Production).
+Recipe is a 6-step workflow that creates deployable recipe repositories — reference implementations with 6 environment tiers (AI Agent, Remote CDE, Local, Stage, Small Production, HA Production). Supports 4 recipe types: runtime hello world (`go-hello-world`), frontend static (`react-hello-world`), frontend SSR (`nextjs-hello-world`), and backend framework (`laravel-minimal`, `laravel-showcase`).
 
 ### The 6 steps
 
@@ -204,9 +204,9 @@ Recipe is a 6-step workflow that creates deployable recipe repositories — refe
 | Step | What happens | Hard check |
 |------|-------------|------------|
 | **research** | Fill framework research fields, submit `RecipePlan` with type/slug/targets validated against live catalog | Plan validation (slug format, types, required fields, showcase extras) |
-| **provision** | Create workspace services via import.yaml | — (self-attested) |
+| **provision** | Create dev/stage service pairs via import.yaml, mount dev filesystem, discover env vars | — (self-attested) |
 | **generate** | Write app code + zerops.yml + README with extract fragments | Fragment markers present, YAML code block, comment ratio ≥ 30%, Gotchas section, no placeholders |
-| **deploy** | Deploy, enable subdomains, verify health | — (self-attested, uses iteration escalation) |
+| **deploy** | Deploy dev, start server, verify, generate stage entry, cross-deploy stage, verify | — (self-attested, uses iteration escalation) |
 | **finalize** | Generate 13 recipe repo files (6 import.yaml + 6 env README + main README) | All files exist, valid YAML, project naming, priority/HA/scaling per env tier, comment quality |
 | **close** | Write `RecipeMeta`, present publish commands | — (administrative, skippable) |
 
@@ -220,7 +220,7 @@ The **research** step produces a **RecipePlan** that drives all subsequent steps
 RecipePlan
   ├─ Framework     "laravel"
   ├─ Tier          "minimal" | "showcase"
-  ├─ Slug          "laravel-hello-world"
+  ├─ Slug          "laravel-minimal"
   ├─ RuntimeType   "php-nginx@8.4"
   ├─ Decisions     {WebServer, BuildBase, OS, DevTooling}
   ├─ Research      {ServiceType, PackageManager, HTTPPort, BuildCommands, ...}
