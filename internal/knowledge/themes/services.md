@@ -1,10 +1,6 @@
 # Managed Service Reference
 
-## TL;DR
 Reference cards for all 14 Zerops managed services. Each card provides type, ports, env vars, wiring templates, connection pattern, HA specifics, and gotchas.
-
-## Keywords
-postgresql, mariadb, valkey, keydb, elasticsearch, kafka, nats, meilisearch, clickhouse, qdrant, typesense, rabbitmq, object storage, shared storage, database, cache, search, queue, s3, connection string, mode, HA, NON_HA, backup, export, import, debug, mount, pg_dump, mysqldump, wiring, env vars, envSecrets, envVariables, cross-service, reference
 
 ## Wiring Syntax
 

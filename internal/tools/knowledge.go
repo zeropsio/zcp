@@ -107,9 +107,6 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 					"Check that core knowledge files are embedded")), nil, nil
 			}
 			result := core
-			if universals, uErr := store.GetUniversals(); uErr == nil {
-				result = universals + "\n\n---\n\n" + result
-			}
 			if model, mErr := store.GetModel(); mErr == nil {
 				result = model + "\n\n---\n\n" + result
 			}

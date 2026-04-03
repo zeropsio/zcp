@@ -1,10 +1,6 @@
 # Zerops Operations & Production
 
-## TL;DR
 Operational guides covering networking, CI/CD, logging, monitoring, scaling, and production hardening. Covers everything beyond core YAML configuration.
-
-## Keywords
-operations, networking, cloudflare, firewall, vpn, ssh, logging, monitoring, ci-cd, github actions, scaling, production, checklist, smtp, cdn, debug, backup, rbac, choose, database, cache, queue, search, object storage, s3
 
 ## Networking
 

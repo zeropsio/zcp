@@ -17,17 +17,8 @@ type SearchResult struct {
 	Snippet string  `json:"snippet"`
 }
 
-// Resource represents an MCP Resource entry.
-type Resource struct {
-	URI         string `json:"uri"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	MimeType    string `json:"mimeType"`
-}
-
 // Provider interface for knowledge access.
 type Provider interface {
-	List() []Resource
 	Get(uri string) (*Document, error)
 	Search(query string, limit int) []SearchResult
 	GetCore() (string, error)
@@ -162,23 +153,6 @@ func (s *Store) Search(query string, limit int) []SearchResult {
 		}
 	}
 	return results
-}
-
-// List returns all available resources for MCP list_resources().
-func (s *Store) List() []Resource {
-	resources := make([]Resource, 0, len(s.docs))
-	for _, doc := range s.docs {
-		resources = append(resources, Resource{
-			URI:         doc.URI,
-			Name:        doc.Title,
-			Description: doc.Description,
-			MimeType:    "text/markdown",
-		})
-	}
-	sort.Slice(resources, func(i, j int) bool {
-		return resources[i].URI < resources[j].URI
-	})
-	return resources
 }
 
 // Get returns a document by URI.

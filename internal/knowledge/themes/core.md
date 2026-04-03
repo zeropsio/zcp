@@ -1,18 +1,6 @@
-> **STOP — Do NOT generate import.yml, zerops.yml, or application code directly from this reference.**
-> This document is a reference, not an action plan. To create or bootstrap services, start a
-> workflow session first: `zerops_workflow action="start" workflow="bootstrap"`.
-> The workflow provides step-by-step guidance including env var discovery, correct file paths
-> (SSHFS mounts), and deploy sequencing that this reference alone cannot provide.
-
 # Zerops YAML Reference
 
-> Platform model + constraints: see `zerops://themes/model`.
-
-## TL;DR
 YAML generation reference: import.yml and zerops.yml schemas, rules, pitfalls, and complete multi-service examples.
-
-## Keywords
-import.yml, zerops.yml, schema, ports, binding, environment variables, autoscaling, yaml, pipeline, tilde, HA, NON_HA, cron, health check, readiness check, prepareCommands, buildCommands, deployFiles, envSecrets, envVariables, preprocessor
 
 ---
 

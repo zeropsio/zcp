@@ -1,9 +1,5 @@
 # Ubuntu on Zerops
 
-## Keywords
-ubuntu, glibc, apt-get, base image, cgo, zerops.yml
-
-## TL;DR
 Full glibc base (~100MB). Use when Alpine's musl libc causes compatibility issues.
 
 ### When to Use

@@ -1,9 +1,5 @@
 # Alpine on Zerops
 
-## Keywords
-alpine, musl, apk, base image, lightweight, zerops.yml
-
-## TL;DR
 Default base OS (~5MB). Uses musl libc. Package manager: `sudo apk add --no-cache`.
 
 ### Default Base

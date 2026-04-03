@@ -1,9 +1,5 @@
 # Static on Zerops
 
-## Keywords
-static, ssg, spa, react, vue, angular, svelte, nextjs, nuxt, astro, vite, zerops.yml
-
-## TL;DR
 Static service serves pre-built HTML/CSS/JS. Build with `nodejs@22`, run with `static`. Use tilde (`~`) in `deployFiles` for correct webroot. No start command needed.
 
 ### Build != Run

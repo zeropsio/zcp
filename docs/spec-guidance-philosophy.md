@@ -118,8 +118,8 @@ The knowledge base uses a layered architecture where each layer adds specificity
 │  Layer 4: Recipes (recipes/*.md)                    │  Framework-specific
 │  Laravel, Next.js, Django, Phoenix, ...             │  refinements
 ├─────────────────────────────────────────────────────┤
-│  Layer 3: Runtime Guides (runtimes/*.md)            │  General per-runtime
-│  nodejs, php, go, python, elixir, ...              │  knowledge
+│  Layer 3: Runtime Guides (recipes/{rt}-hello-world) │  General per-runtime
+│  nodejs, php, go, python, elixir, ... + bases/*.md │  knowledge
 ├─────────────────────────────────────────────────────┤
 │  Layer 2: Service Cards (themes/services.md)        │  Managed service
 │  PostgreSQL, Valkey, Kafka, Object Storage, ...    │  reference
@@ -127,8 +127,8 @@ The knowledge base uses a layered architecture where each layer adds specificity
 │  Layer 1: Core Reference (themes/core.md)           │  YAML schemas,
 │  import.yml + zerops.yml schemas, rules, pitfalls  │  platform rules
 ├─────────────────────────────────────────────────────┤
-│  Layer 0: Universals (themes/universals.md)         │  Platform truths
-│  Bind 0.0.0.0, deployFiles, no .env, zsc execOnce │  for ALL services
+│  Layer 0: Universals (Platform Constraints H2 from  │  Platform truths
+│  themes/model.md) — bind, deployFiles, no .env, zsc│  for ALL services
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -136,21 +136,22 @@ The knowledge base uses a layered architecture where each layer adds specificity
 
 1. **General knowledge in runtimes, specific refinements in recipes.** A runtime guide (e.g., `nodejs.md`) contains knowledge valid for ANY Node.js app on Zerops — binding, deploy patterns, common mistakes. A recipe (e.g., `nextjs.md`) adds framework-specific config that builds ON TOP of the runtime knowledge.
 
-2. **Recipes inherit from runtimes.** When `GetRecipe()` delivers a recipe, it automatically prepends the universals and the matching runtime guide (`briefing.go:prependRecipeContext`). The agent sees: universals + runtime guide + recipe content — a complete, layered knowledge package.
+2. **Recipes inherit universals.** When `GetRecipe()` delivers a recipe, it automatically prepends the platform constraints (`briefing.go:prependRecipeContext`). Runtime guides are NOT prepended — each recipe is standalone with its own knowledge.
 
 3. **Briefings compose dynamically.** When `GetBriefing()` assembles knowledge for a specific stack, it layers: live stacks → runtime guide → recipe hints → service cards → wiring syntax → decision hints → version check. Each layer is optional — a stack with no managed services skips the service card layer.
 
 4. **Recipes MUST NOT contradict their parent runtime.** A recipe refines — it does not override platform truths or runtime conventions. If a runtime says "bind 0.0.0.0:8000", the recipe's zerops.yml must include that binding. Contradictions between layers indicate a bug.
 
-5. **Runtime guides cover dev AND prod patterns.** Each runtime guide includes both deploy patterns (dev: `deployFiles: [.]` + `zsc noop --silent`, prod: optimized build + compiled output). Mode-aware filtering (`filterDeployPatterns` in `briefing.go`) shows only the relevant pattern based on the current session mode.
+5. **Runtime guides cover dev AND prod patterns.** Each runtime guide includes both deploy patterns (dev: `deployFiles: [.]` + `zsc noop --silent`, prod: optimized build + compiled output). Mode adaptation is handled by `prependModeAdaptation()` in `briefing.go`, which adds a mode-specific header directing the agent to the right setup block.
 
 **Composition flows (code references):**
 
 | Entry point | Composition | Code |
 |-------------|-------------|------|
-| `GetRecipe(name, mode)` | universals + runtime guide + recipe | `briefing.go:108-142` |
+| `GetRecipe(name, mode)` | universals + recipe | `briefing.go:105-139` |
 | `GetBriefing(runtime, services, mode, liveTypes)` | stacks → runtime → recipes → cards → wiring → decisions → versions | `briefing.go:18-101` |
 | `GetCore()` | core reference only (platform model + YAML schemas) | `engine.go:197-203` |
+| `GetModel()` + `GetCore()` (via scope handler) | platform model + core reference | `tools/knowledge.go:102-125` |
 
 **Recipe-to-runtime mapping** (`runtimeRecipeHints` in `engine.go:215-226`): Maps runtime base names to recipe name prefixes. Used for two purposes: (1) suggesting relevant recipes in briefings, and (2) auto-detecting the parent runtime when loading a recipe via `detectRecipeRuntime`.
 

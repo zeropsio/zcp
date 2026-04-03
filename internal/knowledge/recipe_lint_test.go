@@ -192,7 +192,7 @@ func TestRecipeLint(t *testing.T) {
 					t.Skip("recipe not yet enriched with knowledge-base content")
 				}
 				// Enriched recipes should not restate platform universals.
-				// These patterns are already covered in universals.md and would
+				// These patterns are already covered in model.md Platform Constraints and would
 				// cause the agent to see the same information twice via GetRecipe.
 				// Logged as warnings (not errors) because content is API-sourced —
 				// fix at source (app README) then re-pull to clear.

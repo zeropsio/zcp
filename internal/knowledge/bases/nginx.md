@@ -1,9 +1,5 @@
 # Nginx on Zerops
 
-## Keywords
-nginx, reverse proxy, spa, routing, prerender, zerops.yml, template
-
-## TL;DR
 Nginx runtime with SPA routing by default. Template variable `{{.DocumentRoot}}` resolves to configured document root. Prerender.io via `PRERENDER_TOKEN`.
 
 ### Default Behavior

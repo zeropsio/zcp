@@ -66,8 +66,8 @@ func parseDocument(path, content string) *Document {
 	frontmatter, body := extractFrontmatter(content)
 
 	title := extractTitle(body)
-	keywords := extractKeywords(body) // legacy: still parsed from ## Keywords if present
-	tldr := extractTLDR(body)         // legacy: still parsed from ## TL;DR if present
+	keywords := extractKeywords(body)
+	tldr := extractTLDR(body)
 
 	// Description priority: frontmatter description > TL;DR > first paragraph
 	desc := frontmatter["description"]

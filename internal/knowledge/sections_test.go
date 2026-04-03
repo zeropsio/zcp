@@ -153,53 +153,6 @@ Final content`
 	}
 }
 
-// --- Decision Summary Tests ---
-
-func TestExtractDecisionSummary(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{
-			name:    "single line",
-			content: "Use PostgreSQL for everything.",
-			want:    "Use PostgreSQL for everything.",
-		},
-		{
-			name:    "multi-line paragraph",
-			content: "Use PostgreSQL for most use cases.\nMariaDB only when wsrep replication is needed.\nClickHouse for analytics.",
-			want:    "Use PostgreSQL for most use cases. MariaDB only when wsrep replication is needed. ClickHouse for analytics.",
-		},
-		{
-			name:    "stops at blank line",
-			content: "Use PostgreSQL for most use cases.\n\nDetailed comparison table below:",
-			want:    "Use PostgreSQL for most use cases.",
-		},
-		{
-			name:    "skips H2 headers",
-			content: "## Subsection\nUse Valkey.\nKeyDB is deprecated.",
-			want:    "Use Valkey. KeyDB is deprecated.",
-		},
-		{
-			name:    "empty content",
-			content: "",
-			want:    "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := extractDecisionSummary(tt.content)
-			if got != tt.want {
-				t.Errorf("extractDecisionSummary() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 // --- Runtime Normalizer Tests ---
 
 func TestNormalizeRuntimeName(t *testing.T) {

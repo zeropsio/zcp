@@ -922,7 +922,7 @@ Bootstrap has wider ranges because it allows up to 10 iterations (configurable v
 | K7 | Deploy guidance ≤ 55 lines per step | Personalized builder limits |
 | K8 | On-demand knowledge (zerops_knowledge) auto-filters by active session mode; agent can override with explicit `mode` param | `resolveKnowledgeMode()` reads Engine state |
 | K9 | Recipe mode adaptation is runtime-aware: implicit-webserver runtimes (PHP, nginx, static) get "omit start" instead of "use zsc noop" | `isImplicitWebserverRuntime()` + `prependModeAdaptation(mode, runtime)` |
-| K10 | Simple mode shows both Dev and Prod deploy patterns in runtime guides (hybrid: deployFiles from dev, start from prod) | `filterDeployPatterns()` returns unfiltered for simple |
+| K10 | Simple mode shows both Dev and Prod deploy patterns in runtime guides (hybrid: deployFiles from dev, start from prod) | `prependModeAdaptation()` adds mode-specific header |
 
 ### Flow Invariants
 

@@ -183,8 +183,8 @@ func TestDecisionFiles_Accessible(t *testing.T) {
 				t.Errorf("decision file %q (%s) not found: %v", name, uri, err)
 				return
 			}
-			if doc.TLDR == "" {
-				t.Errorf("decision file %q missing TL;DR", name)
+			if doc.Description == "" {
+				t.Errorf("decision file %q missing description", name)
 			}
 		})
 	}

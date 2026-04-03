@@ -1,9 +1,5 @@
 # Docker on Zerops
 
-## Keywords
-docker, dockerfile, compose, vm, container, network host, zerops.yml
-
-## TL;DR
 Docker runs in a VM (not container) -- slower boot, higher overhead. `--network=host` is MANDATORY. No autoscaling -- resource changes require VM restart.
 
 ### VM Runtime

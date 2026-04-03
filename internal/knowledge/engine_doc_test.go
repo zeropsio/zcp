@@ -7,25 +7,6 @@ import (
 	"testing"
 )
 
-func TestStore_List(t *testing.T) {
-	store := newTestStore(t)
-	resources := store.List()
-	if len(resources) < 30 {
-		t.Errorf("List() returned %d resources, want >= 30", len(resources))
-	}
-	for _, r := range resources {
-		if !strings.HasPrefix(r.URI, "zerops://") {
-			t.Errorf("resource URI %q doesn't start with zerops://", r.URI)
-		}
-		if r.Name == "" {
-			t.Errorf("resource %s has empty name", r.URI)
-		}
-		if r.MimeType != "text/markdown" {
-			t.Errorf("resource %s mimeType = %q, want text/markdown", r.URI, r.MimeType)
-		}
-	}
-}
-
 func TestStore_Get(t *testing.T) {
 	store := newTestStore(t)
 	doc, err := store.Get("zerops://themes/services")
@@ -34,9 +15,6 @@ func TestStore_Get(t *testing.T) {
 	}
 	if !strings.Contains(doc.Content, "PostgreSQL") {
 		t.Error("services doc should contain 'PostgreSQL'")
-	}
-	if len(doc.Keywords) == 0 {
-		t.Error("services doc should have keywords")
 	}
 }
 
@@ -118,31 +96,6 @@ func TestURIToPath(t *testing.T) {
 }
 
 // --- Document Parsing Tests ---
-
-func TestParseDocument_Keywords(t *testing.T) {
-	store := newTestStore(t)
-	doc, err := store.Get("zerops://themes/services")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(doc.Keywords) == 0 {
-		t.Fatal("expected keywords for services")
-	}
-	if !slices.Contains(doc.Keywords, "postgresql") {
-		t.Errorf("services keywords should contain 'postgresql', got %v", doc.Keywords)
-	}
-}
-
-func TestParseDocument_TLDR(t *testing.T) {
-	store := newTestStore(t)
-	doc, err := store.Get("zerops://themes/services")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if doc.TLDR == "" {
-		t.Error("expected TL;DR for services")
-	}
-}
 
 func TestParseDocument_Title(t *testing.T) {
 	store := newTestStore(t)

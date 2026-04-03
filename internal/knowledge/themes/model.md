@@ -2,12 +2,6 @@
 
 How Zerops works — the mental model for understanding all Zerops configuration.
 
-## Keywords
-
-zerops, platform, architecture, lifecycle, build, deploy, run, container, networking, vxlan, scaling, storage, base image, alpine, ubuntu
-
-## TL;DR
-
 Zerops runs Linux containers (Incus) in VXLAN private networks. Build and run are separate containers — deployFiles is the only bridge. Three storage types: container disk, shared storage (NFS), object storage (S3/MinIO).
 
 ## Container Universe

@@ -224,8 +224,8 @@ func TestSearch_TopResultHasFullContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(doc.Content, "## Keywords") && !strings.Contains(doc.Content, "## PostgreSQL") && !strings.Contains(doc.Content, "postgresql") {
-		t.Error("top result doc should contain '## Keywords' or '## PostgreSQL' or 'postgresql'")
+	if !strings.Contains(doc.Content, "## PostgreSQL") && !strings.Contains(doc.Content, "postgresql") {
+		t.Error("top result doc should contain '## PostgreSQL' or 'postgresql'")
 	}
 }
 

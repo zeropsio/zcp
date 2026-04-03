@@ -302,29 +302,10 @@ func (s *Store) getDecisionSummary(decisionName string) string {
 	if err != nil {
 		return ""
 	}
-	// Use TL;DR if available (decisions/ files have it), fall back to first paragraph.
+	// Fall back to Description (first paragraph). TLDR field is empty since
+	// ## TL;DR sections were removed from source files.
 	if doc.TLDR != "" {
 		return doc.TLDR
 	}
 	return doc.Description
-}
-
-// extractDecisionSummary extracts the first paragraph (all lines until first blank line)
-// from a decision section. This provides richer context than just the first line.
-func extractDecisionSummary(content string) string {
-	var lines []string
-	for line := range strings.SplitSeq(content, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" && len(lines) > 0 {
-			break
-		}
-		if trimmed != "" && !strings.HasPrefix(trimmed, "##") {
-			lines = append(lines, trimmed)
-		}
-	}
-	result := strings.Join(lines, " ")
-	if len(result) > 500 {
-		return result[:500] + "..."
-	}
-	return result
 }
