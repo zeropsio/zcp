@@ -23,9 +23,9 @@ func TestResolveGuidance(t *testing.T) {
 			true,
 		},
 		{
-			"provision_has_import_yml",
+			"provision_has_import_yaml",
 			"provision",
-			"import.yml",
+			"import.yaml",
 			true,
 		},
 		{
@@ -227,7 +227,7 @@ func TestResolveProgressiveGuidance_GenerateSimple(t *testing.T) {
 	if !strings.Contains(guide, "healthCheck") {
 		t.Error("generate-simple should mention healthCheck")
 	}
-	// Should NOT include standard/dev mode zerops.yml rules.
+	// Should NOT include standard/dev mode zerops.yaml rules.
 	if strings.Contains(guide, "Dev setup rules") {
 		t.Error("simple mode should not include standard/dev 'Dev setup rules' section")
 	}
@@ -532,8 +532,8 @@ func TestBuildGuide_Provision_ContainsImportSchema(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
 	}}
 	guide := bs.buildGuide(StepProvision, 0, EnvContainer, store)
-	if !strings.Contains(guide, "import.yml Schema") {
-		t.Error("provision guide should contain 'import.yml Schema'")
+	if !strings.Contains(guide, "import.yaml Schema") {
+		t.Error("provision guide should contain 'import.yaml Schema'")
 	}
 }
 
@@ -546,7 +546,7 @@ func TestBuildGuide_Provision_ContainsPreprocessorFunctions(t *testing.T) {
 	}}
 	guide := bs.buildGuide(StepProvision, 0, EnvContainer, store)
 	if !strings.Contains(guide, "Preprocessor Functions") {
-		t.Error("provision guide should contain 'Preprocessor Functions' (H3 inside import.yml Schema)")
+		t.Error("provision guide should contain 'Preprocessor Functions' (H3 inside import.yaml Schema)")
 	}
 }
 
@@ -591,8 +591,8 @@ func TestBuildGuide_Generate_ContainsZeropsYmlSchema(t *testing.T) {
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
 	}}
 	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, store)
-	if !strings.Contains(guide, "zerops.yml Schema") {
-		t.Error("generate guide should contain 'zerops.yml Schema'")
+	if !strings.Contains(guide, "zerops.yaml Schema") {
+		t.Error("generate guide should contain 'zerops.yaml Schema'")
 	}
 }
 
@@ -694,7 +694,7 @@ func TestResolveProgressiveGuidance_ProvisionLocal_ContainsAddendum(t *testing.T
 		t.Fatal("expected non-empty guidance for provision step in local mode")
 	}
 	// Must contain the base provision section.
-	if !strings.Contains(guide, "import.yml") {
+	if !strings.Contains(guide, "import.yaml") {
 		t.Error("local provision should include base provision section")
 	}
 	// Must contain the local addendum.

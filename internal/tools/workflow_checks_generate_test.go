@@ -47,7 +47,7 @@ func TestCheckGenerate_NoZeropsYml_Fails(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 	if result.Passed {
-		t.Error("expected fail for missing zerops.yml")
+		t.Error("expected fail for missing zerops.yaml")
 	}
 	if result.Summary != "generate checks failed" {
 		t.Errorf("Summary = %q, want 'generate checks failed'", result.Summary)
@@ -388,7 +388,7 @@ func TestCheckGenerate_StandardMode_OnlyChecksDev(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
-	// zerops.yml with only appdev entry — no appstage.
+	// zerops.yaml with only appdev entry — no appstage.
 	writeZeropsYml(t, dir, `zerops:
   - setup: appdev
     envVariables:
@@ -425,7 +425,7 @@ func TestCheckGenerate_StandardMode_OnlyChecksDev(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.Passed {
-		t.Errorf("expected pass with only dev hostname in zerops.yml, got fail: %s", result.Summary)
+		t.Errorf("expected pass with only dev hostname in zerops.yaml, got fail: %s", result.Summary)
 		for _, c := range result.Checks {
 			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
 		}
@@ -437,7 +437,7 @@ func TestCheckGenerate_StandardMode_NoStageChecks(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
-	// zerops.yml with only appdev entry — no appstage.
+	// zerops.yaml with only appdev entry — no appstage.
 	writeZeropsYml(t, dir, `zerops:
   - setup: appdev
     build:
@@ -537,7 +537,7 @@ func TestCheckGenerate_MountPath_FindsYml(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
-	// Write zerops.yml to mount path /var/www/{hostname}/ (simulated as dir/{hostname}/).
+	// Write zerops.yaml to mount path /var/www/{hostname}/ (simulated as dir/{hostname}/).
 	mountDir := filepath.Join(dir, "appdev")
 	if err := os.MkdirAll(mountDir, 0755); err != nil {
 		t.Fatal(err)
@@ -555,7 +555,7 @@ func TestCheckGenerate_MountPath_FindsYml(t *testing.T) {
           path: /health
           port: 8080
 `)
-	// No zerops.yml at project root — only in mount path.
+	// No zerops.yaml at project root — only in mount path.
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
@@ -569,7 +569,7 @@ func TestCheckGenerate_MountPath_FindsYml(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.Passed {
-		t.Errorf("expected pass when zerops.yml is in mount path, got fail: %s", result.Summary)
+		t.Errorf("expected pass when zerops.yaml is in mount path, got fail: %s", result.Summary)
 		for _, c := range result.Checks {
 			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
 		}
@@ -1008,7 +1008,7 @@ func TestCheckGenerate_MixedExistingAndNew(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
-	// Write zerops.yml only for the NEW target — existing target has no yml.
+	// Write zerops.yaml only for the NEW target — existing target has no yml.
 	writeZeropsYml(t, dir, `zerops:
   - setup: webdev
     build:
@@ -1062,10 +1062,10 @@ func TestCheckGenerate_MixedExistingAndNew(t *testing.T) {
 	}
 }
 
-// writeZeropsYml is a test helper that writes zerops.yml to the given directory.
+// writeZeropsYml is a test helper that writes zerops.yaml to the given directory.
 func writeZeropsYml(t *testing.T, dir, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 }

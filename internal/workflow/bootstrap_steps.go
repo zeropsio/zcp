@@ -29,7 +29,7 @@ var stepDetails = []StepDetail{
 	{
 		Name:         StepGenerate,
 		Tools:        []string{"zerops_knowledge"},
-		Verification: "SUCCESS WHEN: zerops.yml exists with setup entry for each target AND env var references match discovered variables AND run.start present (dynamic runtimes) AND deployFiles set (dev uses [.]) AND ports defined.",
+		Verification: "SUCCESS WHEN: zerops.yaml exists with setup entry for each target AND env var references match discovered variables AND run.start present (dynamic runtimes) AND deployFiles set (dev uses [.]) AND ports defined.",
 	},
 	{
 		Name:         StepDeploy,

@@ -40,7 +40,7 @@ func extractMarkdownTitle(content string) string {
 	return ""
 }
 
-// importYmlRoot mirrors the import.yml structure for YAML parsing.
+// importYmlRoot mirrors the import.yaml structure for YAML parsing.
 type importYmlRoot struct {
 	Services []importYmlService `yaml:"services"`
 }
@@ -69,15 +69,18 @@ var runtimeTypes = map[string]bool{
 	"static":     true,
 }
 
-// extractFromImportYml parses import.yml sections to find runtime type and managed services.
+// extractFromImportYml parses import.yaml/import.yml sections to find runtime type and managed services.
 // Returns the runtime type and a list of non-runtime service definitions.
 func extractFromImportYml(content string) (string, []ServiceDef) {
-	blocks := findYAMLBlocksInSections(content, "import.yml")
+	blocks := findYAMLBlocksInSections(content, "import.yaml")
+	if len(blocks) == 0 {
+		blocks = findYAMLBlocksInSections(content, "import.yml")
+	}
 	if len(blocks) == 0 {
 		return "", nil
 	}
 
-	// Use the first import.yml block (Full variant if present)
+	// Use the first import block (Full variant if present)
 	block := blocks[0]
 	var root importYmlRoot
 	if err := yaml.Unmarshal([]byte(block), &root); err != nil {
@@ -102,7 +105,7 @@ func extractFromImportYml(content string) (string, []ServiceDef) {
 	return runtime, services
 }
 
-// zeropsYmlRoot for parsing zerops.yml to extract runtime base.
+// zeropsYmlRoot for parsing zerops.yaml to extract runtime base.
 type zeropsYmlRoot struct {
 	Zerops []zeropsYmlEntry `yaml:"zerops"`
 }
@@ -120,9 +123,12 @@ type zeropsYmlRun struct {
 	Base string `yaml:"base"`
 }
 
-// extractRuntimeFromZeropsYml gets the runtime base from zerops.yml when import.yml isn't available.
+// extractRuntimeFromZeropsYml gets the runtime base from zerops.yaml/zerops.yml when import data isn't available.
 func extractRuntimeFromZeropsYml(content string) string {
-	blocks := findYAMLBlocksInSections(content, "zerops.yml")
+	blocks := findYAMLBlocksInSections(content, "zerops.yaml")
+	if len(blocks) == 0 {
+		blocks = findYAMLBlocksInSections(content, "zerops.yml")
+	}
 	if len(blocks) == 0 {
 		return ""
 	}

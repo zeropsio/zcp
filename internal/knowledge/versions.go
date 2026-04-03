@@ -141,7 +141,7 @@ func writeVersionLine(sb *strings.Builder, requested string, activeVersions map[
 	}
 }
 
-// ValidateServiceTypes checks import.yml service entries against live types.
+// ValidateServiceTypes checks import.yaml service entries against live types.
 // Returns warning strings. Also warns on missing mode for managed services.
 // Returns nil if types is nil/empty.
 func ValidateServiceTypes(services []map[string]any, types []platform.ServiceStackType) []string {

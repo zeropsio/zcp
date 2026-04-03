@@ -167,7 +167,7 @@ func BuildRecipeCreatePrompt(framework, tier string) string {
 2. Follow each step's guidance precisely. The workflow has 6 steps:
    - research: Fill in all framework research fields, submit structured RecipePlan
    - provision: Create workspace services via import.yaml
-   - generate: Write app code with zerops.yml and README fragments
+   - generate: Write app code with zerops.yaml and README fragments
    - deploy: Deploy and verify health
    - finalize: Generate all 6 environment import.yaml files + READMEs
    - close: Complete or skip

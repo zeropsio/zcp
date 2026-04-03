@@ -1,10 +1,10 @@
 # Zerops YAML Reference
 
-YAML generation reference: import.yml and zerops.yml schemas, rules, pitfalls, and complete multi-service examples.
+YAML generation reference: import.yaml and zerops.yaml schemas, rules, pitfalls, and complete multi-service examples.
 
 ---
 
-## import.yml Schema
+## import.yaml Schema
 
 ```
 project:                               # OPTIONAL (omit in ZCP context)
@@ -25,16 +25,16 @@ services[]:                            # REQUIRED
   envSecrets: map<string,string>       # blurred in GUI by default, editable/deletable
   dotEnvSecrets: string                # .env format, auto-creates secrets
   # NOTE: envVariables does NOT exist at service level — only at project level
-  # For non-secret env vars on a service, use zerops_env after import or zerops.yml run.envVariables
+  # For non-secret env vars on a service, use zerops_env after import or zerops.yaml run.envVariables
   buildFromGit: url                    # one-time build from repo — use ONLY with verified URLs (utility recipes like mailpit). Do NOT guess URLs.
   objectStorageSize: 1-100             # GB, object-storage only (changeable in GUI later)
   objectStoragePolicy: private | public-read | public-objects-read | public-write | public-read-write
   objectStorageRawPolicy: string       # custom IAM Policy JSON (alternative to objectStoragePolicy)
   override: bool                       # triggers redeploy of existing runtime service with same hostname
-  mount: string[]                      # pre-configure shared storage connection (ALSO requires mount in zerops.yml run section to activate)
+  mount: string[]                      # pre-configure shared storage connection (ALSO requires mount in zerops.yaml run section to activate)
   nginxConfig: string                  # custom nginx config for PHP/static/nginx services
-  zeropsSetup: string                  # inline zerops.yml setup name
-  zeropsYaml: object                   # inline zerops.yml configuration in import
+  zeropsSetup: string                  # inline zerops.yaml setup name
+  zeropsYaml: object                   # inline zerops.yaml configuration in import
   verticalAutoscaling:                 # RUNTIME + DB/CACHE ONLY (not shared-storage, not object-storage)
     cpuMode: SHARED | DEDICATED        # default SHARED
     minCpu/maxCpu: int                 # CPU threads
@@ -72,7 +72,7 @@ Enable with `#yamlPreprocessor=on` as first line. Syntax: `<@function(<args>)>`,
 
 ---
 
-## zerops.yml Schema
+## zerops.yaml Schema
 
 ```
 zerops[]:
@@ -135,7 +135,7 @@ zerops[]:
   | Simple (single service) | Self-deploy | `[.]` | Real start command |
   | Production (buildFromGit) | Platform from git | Recipe pattern | Compiled/prod start |
 
-  Self-deploy with specific paths (e.g., `[app]`, `dist/~`) destroys source files + zerops.yml after deploy, making iteration impossible. Only cross-deploy targets and git-based builds can use specific paths safely.
+  Self-deploy with specific paths (e.g., `[app]`, `dist/~`) destroys source files + zerops.yaml after deploy, making iteration impossible. Only cross-deploy targets and git-based builds can use specific paths safely.
 
 ### Cache Architecture (Two-Layer)
 - **Base layer**: OS + prepareCommands (invalidated only when prepareCommands change)
@@ -175,7 +175,7 @@ services:
     enableSubdomainAccess: true
 ```
 Dev starts immediately (RUNNING) with `startWithoutCode`. Stage stays in READY_TO_DEPLOY until first deploy from dev.
-zerops.yml must have `setup: appdev` and `setup: appstage` blocks matching hostnames.
+zerops.yaml must have `setup: appdev` and `setup: appstage` blocks matching hostnames.
 
 **Dev/Stage Setup (API + DB) — alternative prefix:**
 ```yaml
@@ -195,7 +195,7 @@ services:
     type: bun@1.2
     enableSubdomainAccess: true
 ```
-Same pattern as above but using `api` prefix instead of `app`. zerops.yml needs `setup: apidev` and `setup: apistage`.
+Same pattern as above but using `api` prefix instead of `app`. zerops.yaml needs `setup: apidev` and `setup: apistage`.
 
 **Full-Stack Dev/Stage (App + DB + Cache + Storage):**
 ```yaml
@@ -240,4 +240,4 @@ services:
     buildFromGit: https://github.com/user/repo
     enableSubdomainAccess: true
 ```
-zeropsSetup omitted — defaults to hostname `app`, so zerops.yml needs `setup: app`.
+zeropsSetup omitted — defaults to hostname `app`, so zerops.yaml needs `setup: app`.

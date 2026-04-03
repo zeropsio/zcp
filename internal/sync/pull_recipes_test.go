@@ -81,8 +81,8 @@ func TestPullRecipeMarkdown_WithIntegrationGuide(t *testing.T) {
 
 	md := buildRecipeMarkdown("Test", "test", sd)
 
-	if !strings.Contains(md, "## zerops.yml") {
-		t.Error("expected promoted ## zerops.yml heading")
+	if !strings.Contains(md, "## zerops.yml") && !strings.Contains(md, "## zerops.yaml") {
+		t.Error("expected promoted ## zerops.yml or ## zerops.yaml heading")
 	}
 	if !strings.Contains(md, "## Integration Steps") {
 		t.Error("expected promoted ## Integration Steps heading")
@@ -107,8 +107,8 @@ func TestPullRecipeMarkdown_FallbackYAML(t *testing.T) {
 
 	md := buildRecipeMarkdown("Fallback", "fallback", sd)
 
-	if !strings.Contains(md, "## zerops.yml") {
-		t.Error("expected ## zerops.yml section")
+	if !strings.Contains(md, "## zerops.yaml") {
+		t.Error("expected ## zerops.yaml section")
 	}
 	if !strings.Contains(md, "```yaml") {
 		t.Error("expected yaml code block")

@@ -17,7 +17,7 @@ var buildCommandPrefixes = []string{
 	"mvn package", "gradle build",
 }
 
-// checkGenerate validates the generate step by checking zerops.yml quality.
+// checkGenerate validates the generate step by checking zerops.yaml quality.
 // It verifies: existence, hostname match, env ref validity, port presence, and deployFiles.
 func checkGenerate(stateDir string) workflow.StepChecker {
 	return func(_ context.Context, plan *workflow.ServicePlan, state *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
@@ -30,7 +30,7 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 
 		var checks []workflow.StepCheck
 
-		// Check each target's zerops.yml. Agent writes to SSHFS mount at
+		// Check each target's zerops.yaml. Agent writes to SSHFS mount at
 		// /var/www/{hostname}/, so look there first. Fall back to project root
 		// for local/test environments where files are written directly.
 		for _, target := range plan.Targets {
@@ -50,7 +50,7 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 			if parseErr != nil {
 				checks = append(checks, workflow.StepCheck{
 					Name: "zerops_yml_exists", Status: statusFail,
-					Detail: fmt.Sprintf("zerops.yml not found at %s or %s: %v", mountPath, projectRoot, parseErr),
+					Detail: fmt.Sprintf("zerops.yaml not found at %s or %s: %v", mountPath, projectRoot, parseErr),
 				})
 				continue
 			}
@@ -77,13 +77,13 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 	}
 }
 
-// checkGenerateEntry validates a single hostname's zerops.yml entry.
+// checkGenerateEntry validates a single hostname's zerops.yaml entry.
 func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.BootstrapTarget, state *workflow.BootstrapState) []workflow.StepCheck {
 	entry := doc.FindEntry(hostname)
 	if entry == nil {
 		return []workflow.StepCheck{{
 			Name: hostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no setup entry for %q in zerops.yml", hostname),
+			Detail: fmt.Sprintf("no setup entry for %q in zerops.yaml", hostname),
 		}}
 	}
 

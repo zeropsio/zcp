@@ -81,10 +81,10 @@ func assembleKnowledge(params GuidanceParams) string {
 		}
 	}
 
-	// import.yml schema at provision.
+	// import.yaml schema at provision.
 	if params.Step == StepProvision {
-		if s := getCoreSection(params.KP, "import.yml Schema"); s != "" {
-			parts = append(parts, "## import.yml Schema\n\n"+s)
+		if s := getCoreSection(params.KP, "import.yaml Schema"); s != "" {
+			parts = append(parts, "## import.yaml Schema\n\n"+s)
 		}
 	}
 
@@ -108,9 +108,9 @@ func assembleKnowledge(params GuidanceParams) string {
 		parts = append(parts, formatEnvVarsForGuide(params.DiscoveredEnvVars))
 	}
 
-	// zerops.yml schema + rules at generate step.
+	// zerops.yaml schema + rules at generate step.
 	if needsRuntimeKnowledge(params.Step) {
-		for _, name := range []string{"zerops.yml Schema", "Rules & Pitfalls"} {
+		for _, name := range []string{"zerops.yaml Schema", "Rules & Pitfalls"} {
 			if s := getCoreSection(params.KP, name); s != "" {
 				parts = append(parts, "## "+name+"\n\n"+s)
 			}

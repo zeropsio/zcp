@@ -7,16 +7,16 @@ Reference cards for all 14 Zerops managed services. Each card provides type, por
 - **Hostname substitution**: In templates below, each service uses a sample hostname (e.g., `db`, `cache`, `search`). Replace it with your actual service hostname. The syntax `${hostname_varname}` is real Zerops cross-service reference syntax — `hostname` must match the target service hostname exactly, with dashes converted to underscores.
 - **Reference**: `${hostname_variablename}` — dashes in hostnames become underscores
 - **envSecrets**: passwords, tokens, keys (blurred in GUI by default, editable/deletable)
-- **import.yml service level**: ONLY `envSecrets` and `dotEnvSecrets` exist. There is NO `envVariables` at service level (only at project level). Use `envSecrets` only for generated secrets (`<@generateRandomString(...)>`) and real credentials.
+- **import.yaml service level**: ONLY `envSecrets` and `dotEnvSecrets` exist. There is NO `envVariables` at service level (only at project level). Use `envSecrets` only for generated secrets (`<@generateRandomString(...)>`) and real credentials.
 - **Hostname = DNS**: use hostname directly for host (`db`, NOT `${db_hostname}`), but use `${db_port}` for port
 - **Internal**: ALWAYS `http://` — NEVER `https://` (SSL at L7 balancer)
 - **Project vars**: auto-inherited by all services — do NOT re-reference (creates shadow)
 - **Password sync**: changing DB password in GUI does NOT update env vars (manual sync)
 
-**Wire credentials in zerops.yml `run.envVariables`** — Managed services auto-generate credentials but they are NOT automatically available to runtime services. Wire them via `run.envVariables` in zerops.yml (the deploy-time config). Use import.yml `envSecrets` ONLY for generated secrets like `<@generateRandomString(...)>`:
+**Wire credentials in zerops.yaml `run.envVariables`** — Managed services auto-generate credentials but they are NOT automatically available to runtime services. Wire them via `run.envVariables` in zerops.yaml (the deploy-time config). Use import.yaml `envSecrets` ONLY for generated secrets like `<@generateRandomString(...)>`:
 
 ```yaml
-# zerops.yml — wire cross-service references here
+# zerops.yaml — wire cross-service references here
 zerops:
   - setup: myapp
     run:
@@ -28,7 +28,7 @@ zerops:
         DB_PASSWORD: ${mydb_password}
 ```
 ```yaml
-# import.yml — only generated secrets here
+# import.yaml — only generated secrets here
 services:
   - hostname: mydb
     type: mariadb@{version}
@@ -41,11 +41,11 @@ services:
       APP_SECRET: <@generateRandomString(<32>)>
 ```
 
-Without zerops.yml wiring, the runtime service has no way to connect to managed services.
+Without zerops.yaml wiring, the runtime service has no way to connect to managed services.
 
 ## Service Wiring Templates
 
-Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-service references (both VARS and SECRETS) in zerops.yml `run.envVariables`. Use import.yml `envSecrets` ONLY for generated secrets (`<@generateRandomString(...)>`) and real credentials that must exist before first deploy. There is no `envVariables` at service level in import.yml — using it will silently drop the values. Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
+Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-service references (both VARS and SECRETS) in zerops.yaml `run.envVariables`. Use import.yaml `envSecrets` ONLY for generated secrets (`<@generateRandomString(...)>`) and real credentials that must exist before first deploy. There is no `envVariables` at service level in import.yaml — using it will silently drop the values. Replace sample hostnames (`db`, `cache`, etc.) with your actual service hostname.
 
 ## PostgreSQL
 **Type**: `postgresql` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
@@ -110,12 +110,12 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 
 ## Shared Storage
 **Type**: `shared-storage` (no version) | **Mode**: optional (default NON_HA), immutable
-**Mount**: `/mnt/{hostname}` -- **two steps required**: (1) `mount: [hostname]` in import.yml service definition pre-configures the connection, (2) `mount: [hostname]` in zerops.yml `run:` section activates the mount at runtime. Both are needed -- import.yml alone is NOT sufficient.
+**Mount**: `/mnt/{hostname}` -- **two steps required**: (1) `mount: [hostname]` in import.yaml service definition pre-configures the connection, (2) `mount: [hostname]` in zerops.yaml `run:` section activates the mount at runtime. Both are needed -- import.yaml alone is NOT sufficient.
 **HA**: 1:1 replication, auto-failover
-**Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). NON_HA = data loss on hardware failure. Import YAML `mount:` only pre-configures -- storage is NOT available until zerops.yml `run.mount` is set and service is deployed.
-**Post-deploy connect**: If a runtime service was in READY_TO_DEPLOY during import (e.g., stage), the `mount:` in import.yml does NOT apply. After first deploy transitions the service to ACTIVE, connect storage via `zerops_manage action="connect-storage" serviceHostname="{runtime}" storageHostname="{storage}"`.
+**Gotchas**: SeaweedFS backend. Max 60 GB. POSIX only (not S3). NON_HA = data loss on hardware failure. Import YAML `mount:` only pre-configures -- storage is NOT available until zerops.yaml `run.mount` is set and service is deployed.
+**Post-deploy connect**: If a runtime service was in READY_TO_DEPLOY during import (e.g., stage), the `mount:` in import.yaml does NOT apply. After first deploy transitions the service to ACTIVE, connect storage via `zerops_manage action="connect-storage" serviceHostname="{runtime}" storageHostname="{storage}"`.
 **Wiring**: No env vars. Mount path: `/mnt/{hostname}`. POSIX filesystem, max 60 GB.
-**Disambiguation**: `zerops_mount` (SSHFS dev tool) is a completely different feature -- it mounts the service `/var/www` locally for development, not shared storage. Shared storage mount (`/mnt/{hostname}`) is a platform feature configured via import.yml + zerops.yml or `zerops_manage action="connect-storage"`.
+**Disambiguation**: `zerops_mount` (SSHFS dev tool) is a completely different feature -- it mounts the service `/var/www` locally for development, not shared storage. Shared storage mount (`/mnt/{hostname}`) is a platform feature configured via import.yaml + zerops.yaml or `zerops_manage action="connect-storage"`.
 
 ## Kafka
 **Type**: `kafka` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable

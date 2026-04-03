@@ -123,17 +123,21 @@ func (e ZeropsYmlEntry) HasImplicitWebServer() bool {
 	return hasImplicitWebServer(e.Run.Base, e.Build.BaseStrings())
 }
 
-// ParseZeropsYml reads and parses zerops.yml from workingDir.
+// ParseZeropsYml reads and parses zerops.yaml (or zerops.yml fallback) from workingDir.
 // Returns the parsed document or an error if the file is missing or invalid.
 func ParseZeropsYml(workingDir string) (*ZeropsYmlDoc, error) {
-	ymlPath := filepath.Join(workingDir, "zerops.yml")
+	ymlPath := filepath.Join(workingDir, "zerops.yaml")
 	data, err := os.ReadFile(ymlPath)
 	if err != nil {
-		return nil, fmt.Errorf("zerops.yml not found at %s", ymlPath)
+		ymlPath = filepath.Join(workingDir, "zerops.yml")
+		data, err = os.ReadFile(ymlPath)
+		if err != nil {
+			return nil, fmt.Errorf("zerops.yaml not found in %s (also tried zerops.yml)", workingDir)
+		}
 	}
 	var doc ZeropsYmlDoc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("zerops.yml invalid YAML: %w", err)
+		return nil, fmt.Errorf("%s invalid YAML: %w", filepath.Base(ymlPath), err)
 	}
 	return &doc, nil
 }

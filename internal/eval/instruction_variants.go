@@ -27,7 +27,7 @@ Edits on mount survive restarts but not deploys.`
 // sharedLocal is the local environment text shared by all variants.
 const sharedLocal = `
 Local machine — code in working directory, infrastructure on Zerops.
-Deploy: zcli push (zerops.yml at repo root, each deploy = new container).`
+Deploy: zcli push (zerops.yaml at repo root, each deploy = new container).`
 
 // InstructionVariants returns instruction text variants to evaluate.
 // All variants encode the same process (discover → workflow → code).

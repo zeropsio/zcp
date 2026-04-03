@@ -69,7 +69,7 @@ This shows whether the issue is new or recurring.
 | 502 Bad Gateway | App binds to localhost | Bind `0.0.0.0` (check runtime exceptions) |
 | Env vars show literal `${...}` | Dashes in cross-references | Use underscores: `${service_hostname}` |
 | Build FAILED | Wrong buildCommands or missing deps | Check build logs |
-| Service not starting | Port outside range or bad start cmd | Ports 10-65435, verify `start` in zerops.yml |
+| Service not starting | Port outside range or bad start cmd | Ports 10-65435, verify `start` in zerops.yaml |
 | DB connection timeout | Wrong connection string or DB not running | Use `http://hostname:port`, verify DB status |
 | Deploy OK but app broken | Missing env vars or wrong format | `zerops_discover includeEnvs=true` |
 | HTTP 000 (connection refused) | Server not running on dev service | Start server via SSH first |
@@ -148,7 +148,7 @@ A restart without understanding the root cause means the problem will likely rec
 
 ## Deploy Flow
 
-Two concerns: ensure zerops.yml is correct for the runtime (hard), then deploy and verify with iteration (the harder part).
+Two concerns: ensure zerops.yaml is correct for the runtime (hard), then deploy and verify with iteration (the harder part).
 
 ---
 
@@ -167,18 +167,18 @@ zerops_discover includeEnvs=true
 ```
 
 Note each service type (nodejs@22, go@1, etc.) and status.
-- **RUNNING** → subsequent deploy. zerops.yml likely exists already.
-- **READY_TO_DEPLOY** → first deploy after bootstrap. zerops.yml may need creation.
+- **RUNNING** → subsequent deploy. zerops.yaml likely exists already.
+- **READY_TO_DEPLOY** → first deploy after bootstrap. zerops.yaml may need creation.
 
 **Route based on result:**
-- **RUNNING + zerops.yml exists + no changes** → Skip to deploy step
-- **RUNNING + no zerops.yml or needs changes** → Load knowledge, fix config
+- **RUNNING + zerops.yaml exists + no changes** → Skip to deploy step
+- **RUNNING + no zerops.yaml or needs changes** → Load knowledge, fix config
 - **READY_TO_DEPLOY** → First deploy, load knowledge, generate config
 - **Service not found** → Wrong hostname or not created. Use bootstrap workflow.
 
-### Check zerops.yml
+### Check zerops.yaml
 
-Does a `zerops.yml` exist with `setup:` entries for all target hostnames?
+Does a `zerops.yaml` exist with `setup:` entries for all target hostnames?
 
 - **YES and user is re-deploying** → skip to deploy step.
 - **NO or user wants to create/fix it** → use the runtime + service knowledge included below.
@@ -187,7 +187,7 @@ Does a `zerops.yml` exist with `setup:` entries for all target hostnames?
 
 Before deploying, verify:
 
-1. **`zerops.yml` must exist** at the working directory root with `setup:` entries matching target service hostnames.
+1. **`zerops.yaml` must exist** at the working directory root with `setup:` entries matching target service hostnames.
 2. **`includeGit=true` requires `deployFiles: [.]`** — individual paths break git structure.
 3. **Environment variables must be resolved.** Run `zerops_discover includeEnvs=true` and verify cross-referenced variables have real values (not `${...}` literals).
 4. **NEVER hardcode credential values.** Always use `${hostname_varName}` references.
@@ -213,7 +213,7 @@ For framework-specific patterns: `zerops_knowledge recipe="{name}"`
 <section name="deploy-execute-standard">
 ### Standard mode (dev+stage) — deploy flow
 
-**Prerequisites**: dev service mounted, zerops.yml with dev entry, code on mount path.
+**Prerequisites**: dev service mounted, zerops.yaml with dev entry, code on mount path.
 
 1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push`. SSHFS mount auto-reconnects after deploy.
 2. **Start dev server** (deploy activated envVariables — no server runs because `start: zsc noop --silent`): start server via SSH (Bash tool `run_in_background=true`). Env vars are now OS env vars. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically.
@@ -235,7 +235,7 @@ For framework-specific patterns: `zerops_knowledge recipe="{name}"`
 <section name="deploy-execute-dev">
 ### Dev-only mode — deploy flow
 
-**Prerequisites**: dev service mounted, zerops.yml with dev entry, code on mount path.
+**Prerequisites**: dev service mounted, zerops.yaml with dev entry, code on mount path.
 
 1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy.
 2. **Start dev server** (dev uses `zsc noop --silent`): start via SSH with `run_in_background=true`. **Implicit-webserver runtimes: skip — auto-starts.**
@@ -246,7 +246,7 @@ For framework-specific patterns: `zerops_knowledge recipe="{name}"`
 <section name="deploy-execute-simple">
 ### Simple mode — deploy flow
 
-**Prerequisites**: service mounted, zerops.yml with setup entry (real start command + healthCheck).
+**Prerequisites**: service mounted, zerops.yaml with setup entry (real start command + healthCheck).
 
 1. **Deploy**: `zerops_deploy targetService="{hostname}"` — server auto-starts (real start command + healthCheck).
 2. **Verify**: `zerops_verify serviceHostname="{hostname}"` — must return status=healthy
@@ -256,12 +256,12 @@ For framework-specific patterns: `zerops_knowledge recipe="{name}"`
 <section name="deploy-iteration">
 ### Dev iteration: manual start cycle
 
-After `zerops_deploy` to dev, env vars from zerops.yml are available as OS env vars. The container runs `zsc noop --silent` — no server process. The agent starts the server via SSH.
+After `zerops_deploy` to dev, env vars from zerops.yaml are available as OS env vars. The container runs `zsc noop --silent` — no server process. The agent starts the server via SSH.
 
 **Key facts:**
 1. **After deploy, env vars are OS env vars.** Available immediately when the server starts. NEVER hardcode values or pass them inline.
 2. **Code on SSHFS mount is live on the container** — watch-mode frameworks reload automatically, others need manual restart.
-3. **Redeploy only when zerops.yml itself changes** (envVariables, ports, buildCommands). Code-only changes on the mount just need a server restart.
+3. **Redeploy only when zerops.yaml itself changes** (envVariables, ports, buildCommands). Code-only changes on the mount just need a server restart.
 
 **The cycle:**
 1. **Edit code** on the mount path — changes appear instantly in the container at `/var/www/`.
@@ -288,9 +288,9 @@ When `zerops_verify` returns "degraded" or "unhealthy", iterate — do not give 
 - http_status: fail → managed service connectivity issue, check `detail` for which connection failed
 
 **Fix based on diagnosis:**
-- Build error → fix zerops.yml (buildCommands, deployFiles, start)
+- Build error → fix zerops.yaml (buildCommands, deployFiles, start)
 - Runtime error → fix app code
-- Env var issue → fix zerops.yml envVariables mapping
+- Env var issue → fix zerops.yaml envVariables mapping
 - Connection error → verify managed service RUNNING, check hostname/port
 
 **Redeploy:**
@@ -360,7 +360,7 @@ You control when and what to deploy. ZCP does not start a guided workflow for ma
 **Dev services (zsc noop):** Server does not auto-start after deploy. Start manually via SSH.
 **Stage/simple services:** Server auto-starts with healthCheck.
 
-**Code-only changes (no zerops.yml change):** Edit on mount, restart server via SSH. No redeploy needed.
+**Code-only changes (no zerops.yaml change):** Edit on mount, restart server via SSH. No redeploy needed.
 
 **Switch to guided deploys:** `zerops_workflow action="strategy" strategies={"hostname":"push-dev"}`
 </section>

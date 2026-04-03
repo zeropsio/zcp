@@ -29,7 +29,7 @@ func RegisterDeployLocal(
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_deploy",
 		Description: "Push local code to Zerops — blocks until build completes. " +
-			"Requires zerops.yml and zcli installed. " +
+			"Requires zerops.yaml and zcli installed. " +
 			"Set targetService to the Zerops service hostname.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",

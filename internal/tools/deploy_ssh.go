@@ -34,7 +34,7 @@ func RegisterDeploySSH(
 	} else {
 		desc += "workingDir defaults to /var/www. "
 	}
-	desc += "Requires zerops.yml. Self-deploy: set targetService only. Cross-deploy: set sourceService + targetService. " +
+	desc += "Requires zerops.yaml. Self-deploy: set targetService only. Cross-deploy: set sourceService + targetService. " +
 		"Self-deploying services MUST use deployFiles: [.] — otherwise source files are destroyed."
 
 	mcp.AddTool(srv, &mcp.Tool{

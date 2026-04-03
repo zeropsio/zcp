@@ -99,7 +99,7 @@ zerops_knowledge recipe="{recipe-name}"
 Examples: `laravel`, `django`, `phoenix`, `nextjs`, `ghost`, `symfony`, `rails`
 
 Recipes contain critical patterns that generic runtime guides do not cover:
-- **Required secrets** (APP_KEY, SECRET_KEY_BASE, etc.) — what goes in import.yml `envSecrets`
+- **Required secrets** (APP_KEY, SECRET_KEY_BASE, etc.) — what goes in import.yaml `envSecrets`
 - **Scaffolding commands** — correct flags to avoid `.env` shadowing, RAM scaling
 - **Driver/config defaults** — what breaks without a DB, what needs explicit env vars
 - **Common failures** — framework-specific gotchas like "never use artisan serve on php-nginx"
@@ -120,11 +120,11 @@ zerops_workflow action="complete" step="discover" plan=[{runtime: {devHostname, 
 </section>
 
 <section name="provision">
-### Generate import.yml, provision services, discover env vars
+### Generate import.yaml, provision services, discover env vars
 
-**Adopted services (isExisting: true):** Do NOT generate import.yml entries for adopted services — they already exist on the platform. If the plan contains ONLY adopted targets with all dependencies as `EXISTS`, skip import entirely and go straight to env var discovery. If the plan mixes new + adopted targets, generate import.yml for new targets only.
+**Adopted services (isExisting: true):** Do NOT generate import.yaml entries for adopted services — they already exist on the platform. If the plan contains ONLY adopted targets with all dependencies as `EXISTS`, skip import entirely and go straight to env var discovery. If the plan mixes new + adopted targets, generate import.yaml for new targets only.
 
-Generate import.yml ONLY. Do NOT write zerops.yml or application code — that happens in the generate step AFTER env var discovery. The import.yml schema rules are included below.
+Generate import.yaml ONLY. Do NOT write zerops.yaml or application code — that happens in the generate step AFTER env var discovery. The import.yaml schema rules are included below.
 
 > **mode defaults to NON_HA for managed services** — databases, caches, object-storage, shared-storage.
 > Set `HA` explicitly for production.
@@ -142,13 +142,13 @@ Generate import.yml ONLY. Do NOT write zerops.yml or application code — that h
 
 Dev starts immediately with an empty container (RUNNING). Stage stays in READY_TO_DEPLOY until first deploy from dev — no wasted resources running an empty container.
 
-**Shared storage mount** (if shared-storage is in the stack): Add `mount: [{storage-hostname}]` to both dev and stage service definitions in import.yml. This pre-configures the connection but does NOT make storage available at runtime. You MUST also add `mount: [{storage-hostname}]` in the zerops.yml `run:` section and deploy for the storage to actually mount at `/mnt/{storage-hostname}`.
+**Shared storage mount** (if shared-storage is in the stack): Add `mount: [{storage-hostname}]` to both dev and stage service definitions in import.yaml. This pre-configures the connection but does NOT make storage available at runtime. You MUST also add `mount: [{storage-hostname}]` in the zerops.yaml `run:` section and deploy for the storage to actually mount at `/mnt/{storage-hostname}`.
 
-> **Two kinds of "mount" (disambiguation):** (1) `zerops_mount` — SSHFS tool, mounts service `/var/www` locally for development. (2) Shared storage mount — platform feature, attaches a shared-storage volume at `/mnt/{hostname}` via `mount:` in import.yml + zerops.yml. These are completely unrelated.
+> **Two kinds of "mount" (disambiguation):** (1) `zerops_mount` — SSHFS tool, mounts service `/var/www` locally for development. (2) Shared storage mount — platform feature, attaches a shared-storage volume at `/mnt/{hostname}` via `mount:` in import.yaml + zerops.yaml. These are completely unrelated.
 
 > **IMPORTANT**: Import `mount:` only applies to ACTIVE services. Stage services are READY_TO_DEPLOY during import, so the mount pre-configuration silently doesn't apply. After first deploy transitions stage to ACTIVE, connect storage via `zerops_manage action="connect-storage" serviceHostname="{stage}" storageHostname="{storage}"`.
 
-**Validation checklist** (import.yml only):
+**Validation checklist** (import.yaml only):
 
 | Check | What to verify |
 |-------|---------------|
@@ -164,13 +164,18 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 **Priority ordering**: managed services `priority: 10`, runtime services default or `priority: 5`. Databases must be ready before apps that depend on them.
 
-**zeropsSetup**: only set when using `buildFromGit` and the zerops.yml setup name differs from hostname. Defaults to hostname. With `startWithoutCode`, omit — `zcli push` uses hostname as setup name.
+**zeropsSetup**: only set when using `buildFromGit` and the zerops.yaml setup name differs from hostname. Defaults to hostname. With `startWithoutCode`, omit — `zcli push` uses hostname as setup name.
 
-Present import.yml to the user for review before proceeding.
+**File extensions:** Use `import.yaml` and `zerops.yaml` for all new files. The legacy `.yml` extension is also accepted — existing repos may use `zerops.yml`.
+
+Present import.yaml to the user for review before proceeding. Then import:
+```
+zerops_import filePath="./import.yaml"
+```
 
 ### Env var discovery protocol (mandatory before generate)
 
-After importing services and waiting for them to reach RUNNING, discover the ACTUAL env vars available to each service. This data is critical for writing correct zerops.yml envVariables and for subagent prompts.
+After importing services and waiting for them to reach RUNNING, discover the ACTUAL env vars available to each service. This data is critical for writing correct zerops.yaml envVariables and for subagent prompts.
 
 **Single call — returns env vars for ALL services:**
 ```
@@ -187,7 +192,7 @@ Record which env vars exist. Common patterns by service type:
 | MongoDB | `{host}_connectionString`, `{host}_host`, `{host}_port`, `{host}_user`, `{host}_password` | connectionString preferred |
 | RabbitMQ | `{host}_connectionString`, `{host}_host`, `{host}_port`, `{host}_user`, `{host}_password` | Use AMQP connection string |
 
-**In zerops.yml envVariables**, map discovered vars to what the app expects:
+**In zerops.yaml envVariables**, map discovered vars to what the app expects:
 ```yaml
 envVariables:
   DATABASE_URL: ${db_connectionString}
@@ -198,21 +203,21 @@ envVariables:
 
 **ONLY use variables that were actually discovered.** Guessing variable names causes runtime failures. If a variable doesn't appear in discovery, it doesn't exist.
 
-**How these reach your app**: All variables mapped in zerops.yml `envVariables` are injected as standard OS environment variables at container start. Your app reads them with the runtime's native env var API. No `.env` files or dotenv libraries needed.
+**How these reach your app**: All variables mapped in zerops.yaml `envVariables` are injected as standard OS environment variables at container start. Your app reads them with the runtime's native env var API. No `.env` files or dotenv libraries needed.
 </section>
 
 <section name="generate">
-### Generate zerops.yml and application code
+### Generate zerops.yaml and application code
 
-**Adopted services (isExisting: true):** Skip zerops.yml and code generation entirely for adopted targets. These services already have working code and configuration from their previous deploy. The generate checker automatically skips validation for adopted targets. If ALL targets are adopted, complete this step with attestation "All targets are existing services — no code generation needed."
+**Adopted services (isExisting: true):** Skip zerops.yaml and code generation entirely for adopted targets. These services already have working code and configuration from their previous deploy. The generate checker automatically skips validation for adopted targets. If ALL targets are adopted, complete this step with attestation "All targets are existing services — no code generation needed."
 
 **Prerequisites**: Services mounted, env vars discovered.
 
-> **WHERE TO WRITE FILES**: Write ALL files (zerops.yml, app code, configs) to the SSHFS mount path `/var/www/{hostname}/` — this is the path returned by `zerops_mount` in the provision step. `/var/www/` without the hostname suffix is the zcpx orchestrator's own filesystem — writing there has NO effect on the target service. Every file must go under `/var/www/{hostname}/`.
+> **WHERE TO WRITE FILES**: Write ALL files (zerops.yaml, app code, configs) to the SSHFS mount path `/var/www/{hostname}/` — this is the path returned by `zerops_mount` in the provision step. `/var/www/` without the hostname suffix is the zcpx orchestrator's own filesystem — writing there has NO effect on the target service. Every file must go under `/var/www/{hostname}/`.
 
 **SSHFS mount is for source code only** — small file reads/writes (editing .go, .ts, .yml files). Commands that generate many files (npm install, pip install, go mod download, composer install, bundle install, cargo build) MUST run via SSH on the container: `ssh {hostname} "cd /var/www && {install_command}"`. Running them locally through the SSHFS network mount is orders of magnitude slower.
 
-> **CRITICAL — self-deploying services MUST use `deployFiles: [.]`:** Containers are volatile. After deploy, ONLY `deployFiles` content survives. If a self-deploying service uses `[dist]`, `[app]`, or any build output path, all source files + zerops.yml are DESTROYED. Further iteration becomes impossible. Any service that deploys to itself (dev services, simple mode services) MUST ALWAYS use `deployFiles: [.]`. No exceptions. Cross-deploy targets (stage) can use specific paths for compiled output because their source lives on the dev service.
+> **CRITICAL — self-deploying services MUST use `deployFiles: [.]`:** Containers are volatile. After deploy, ONLY `deployFiles` content survives. If a self-deploying service uses `[dist]`, `[app]`, or any build output path, all source files + zerops.yaml are DESTROYED. Further iteration becomes impossible. Any service that deploys to itself (dev services, simple mode services) MUST ALWAYS use `deployFiles: [.]`. No exceptions. Cross-deploy targets (stage) can use specific paths for compiled output because their source lives on the dev service.
 
 **PHP runtimes (php-nginx, php-apache) are different:** The web server is built into the runtime and serves files automatically. There is no `start:` command — both dev and prod just need correct `deployFiles`.
 
@@ -253,16 +258,16 @@ The top-level `"status": "ok"` is ALWAYS required — with or without connection
 
 #### How envVariables reach your app
 
-zerops.yml `envVariables` are activated by deploy. After `zerops_deploy`:
+zerops.yaml `envVariables` are activated by deploy. After `zerops_deploy`:
 - All mapped vars are injected as standard OS environment variables
 - Cross-service references (`${db_connectionString}`) resolved to real values
 - Vars persist across server restarts within the same container
 
-Write zerops.yml + app code first, then deploy, then start the server and test. **NEVER hardcode credential values or pass them inline** — always use `${hostname_varName}` references in zerops.yml and read env vars via the runtime's native API. Do NOT create `.env` files — empty values shadow OS env vars. Tools like `composer create-project` create `.env` files automatically; use `--no-scripts` to prevent this. Check your framework recipe for the correct scaffolding command. Dotenv libraries in existing projects are harmless (they fall back to OS vars when no .env exists).
+Write zerops.yaml + app code first, then deploy, then start the server and test. **NEVER hardcode credential values or pass them inline** — always use `${hostname_varName}` references in zerops.yaml and read env vars via the runtime's native API. Do NOT create `.env` files — empty values shadow OS env vars. Tools like `composer create-project` create `.env` files automatically; use `--no-scripts` to prevent this. Check your framework recipe for the correct scaffolding command. Dotenv libraries in existing projects are harmless (they fall back to OS vars when no .env exists).
 
-#### Env var mapping in zerops.yml
+#### Env var mapping in zerops.yaml
 
-In zerops.yml `envVariables`, ONLY use variables discovered in the provision step:
+In zerops.yaml `envVariables`, ONLY use variables discovered in the provision step:
 ```yaml
 envVariables:
   DATABASE_URL: ${db_connectionString}
@@ -273,13 +278,13 @@ envVariables:
 
 #### Files are already on the container
 
-Since you're writing to an SSHFS mount, every file you create or modify is immediately present on the running container. The deploy step runs the build pipeline and activates zerops.yml config (envVariables, ports). Containers are volatile — only `deployFiles` content survives a deploy.
+Since you're writing to an SSHFS mount, every file you create or modify is immediately present on the running container. The deploy step runs the build pipeline and activates zerops.yaml config (envVariables, ports). Containers are volatile — only `deployFiles` content survives a deploy.
 
 > Consider committing the generated code before proceeding to deploy. This preserves your work if the deploy cycle requires iteration.
 </section>
 
 <section name="generate-standard">
-### Standard mode (dev+stage) — zerops.yml rules
+### Standard mode (dev+stage) — zerops.yaml rules
 
 **Write dev entry ONLY now. Stage entry comes after dev is verified (deploy step).**
 All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
@@ -301,7 +306,7 @@ All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 | readinessCheck | **None** | Optional |
 
 **MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
-- [ ] zerops.yml has `setup:` entry for dev hostname ONLY (no stage entry yet)
+- [ ] zerops.yaml has `setup:` entry for dev hostname ONLY (no stage entry yet)
 - [ ] Dev setup uses `deployFiles: [.]` — NO EXCEPTIONS
 - [ ] Dev `run.start` is `zsc noop --silent` (not real start cmd) — implicit-webserver runtimes: omit start entirely
 - [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
@@ -310,7 +315,7 @@ All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 </section>
 
 <section name="generate-dev">
-### Dev-only mode — zerops.yml rules
+### Dev-only mode — zerops.yaml rules
 
 **Write a single dev entry. No stage service exists in this mode.**
 All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
@@ -322,7 +327,7 @@ All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 - **NO healthCheck** — agent controls lifecycle manually.
 
 **MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
-- [ ] zerops.yml has `setup:` entry for dev hostname
+- [ ] zerops.yaml has `setup:` entry for dev hostname
 - [ ] Dev setup uses `deployFiles: [.]` — NO EXCEPTIONS
 - [ ] `run.start` is `zsc noop --silent` — implicit-webserver runtimes: omit start entirely
 - [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
@@ -331,7 +336,7 @@ All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 </section>
 
 <section name="generate-simple">
-### Simple mode — zerops.yml rules
+### Simple mode — zerops.yaml rules
 
 **Write a single entry with a REAL start command.** Unlike dev/standard, simple mode services auto-start after deploy — no manual SSH start needed.
 All files go to `/var/www/{hostname}/` (the SSHFS mount path from provision).
@@ -370,7 +375,7 @@ zerops:
 - Single `setup:` entry (no dev/stage split)
 
 **MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
-- [ ] zerops.yml has `setup:` entry for the service hostname
+- [ ] zerops.yaml has `setup:` entry for the service hostname
 - [ ] Uses `deployFiles: [.]` — NO EXCEPTIONS
 - [ ] `run.start` is the REAL start command (NOT `zsc noop`)
 - [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
@@ -386,16 +391,16 @@ zerops:
 <section name="deploy">
 ### Deploy overview
 
-**Adopted services (isExisting: true):** Do NOT call `zerops_deploy` for adopted services — they already have deployed code running. Instead, verify they are healthy: `zerops_verify serviceHostname="{hostname}"`. If verification fails, report the issue to the user — they need to fix their existing service. Only deploy adopted services if the user explicitly requests it or if zerops.yml changes need activation.
+**Adopted services (isExisting: true):** Do NOT call `zerops_deploy` for adopted services — they already have deployed code running. Instead, verify they are healthy: `zerops_verify serviceHostname="{hostname}"`. If verification fails, report the issue to the user — they need to fix their existing service. Only deploy adopted services if the user explicitly requests it or if zerops.yaml changes need activation.
 
 **Core principle: Deploy first — env vars activate at deploy time. Dev is for iterating and fixing. Stage is for final validation.**
 
 **Mandatory dev lifecycle** — deploy-first. Dev uses an idle start command so no server auto-starts. The agent MUST:
-1. Write zerops.yml (dev entry only) + app code to SSHFS mount
+1. Write zerops.yaml (dev entry only) + app code to SSHFS mount
 2. `zerops_deploy` to dev — activates envVariables, runs build pipeline, persists files. Container restarts with `zsc noop`.
 3. Start server via SSH — env vars are now available as OS env vars
 4. `zerops_verify` dev — endpoints respond with real env var values
-5. Generate stage entry in zerops.yml — dev is proven, now write the production config based on what worked
+5. Generate stage entry in zerops.yaml — dev is proven, now write the production config based on what worked
 6. `zerops_deploy` to stage (stage has real `start:` command — server auto-starts there)
 7. `zerops_verify` stage
 
@@ -422,7 +427,7 @@ Steps 2-4 repeat on every iteration. Stage (steps 5-7) only after dev is healthy
 3. **Enable dev subdomain**: `zerops_subdomain serviceHostname="appdev" action="enable"` — returns `subdomainUrls`
 4. **Verify appdev**: `zerops_verify serviceHostname="appdev"` — must return status=healthy
 5. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
-6. **Generate stage entry** in zerops.yml — dev is proven, now write the `setup: appstage` entry. See "Dev → Stage: What to know" below.
+6. **Generate stage entry** in zerops.yaml — dev is proven, now write the `setup: appstage` entry. See "Dev → Stage: What to know" below.
 7. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING. Stage is never a deploy source — no `.git` needed on target.
 7b. **Connect shared storage to stage** (if shared-storage is in the stack): `zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"` — stage was READY_TO_DEPLOY during import, so the import `mount:` did not apply.
 8. **Enable stage subdomain**: `zerops_subdomain serviceHostname="appstage" action="enable"` — returns `subdomainUrls`
@@ -443,12 +448,12 @@ Steps 2-4 repeat on every iteration. Stage (steps 5-7) only after dev is healthy
 
 ### Dev iteration: manual start cycle
 
-After `zerops_deploy` to dev, env vars from zerops.yml are available as OS env vars. The container runs `zsc noop --silent` — no server process. The agent starts the server via SSH.
+After `zerops_deploy` to dev, env vars from zerops.yaml are available as OS env vars. The container runs `zsc noop --silent` — no server process. The agent starts the server via SSH.
 
 **Key facts:**
 1. **After deploy, env vars are OS env vars.** Available immediately when the server starts. NEVER hardcode values or pass them inline.
 2. **Code on SSHFS mount is live on the container** — the dev workflow depends on runtime (watch-mode frameworks reload automatically, others need manual restart).
-3. **Redeploy only when zerops.yml itself changes** (envVariables, ports, buildCommands). Code-only changes on the mount just need a server restart.
+3. **Redeploy only when zerops.yaml itself changes** (envVariables, ports, buildCommands). Code-only changes on the mount just need a server restart.
 
 **The cycle:**
 1. **Edit code** on the mount path — changes appear instantly in the container at `/var/www/`.
@@ -469,11 +474,11 @@ Same as standard mode steps 1-5, but no stage pair. All verification happens on 
 
 1. **Import services** with `startWithoutCode: true` so the service starts immediately:
    ```
-   zerops_import content="<import.yml>"
+   zerops_import content="<import.yaml>"
    zerops_discover
    ```
 
-   > **Subdomain activation:** `enableSubdomainAccess: true` in import.yml pre-configures routing, but **does NOT activate it**. You MUST call `zerops_subdomain action="enable"` after the first deploy of each new service to activate the L7 balancer route. Re-deploys do NOT deactivate it. Without the explicit enable call, the subdomain returns 502. The call is idempotent — safe to call even if already active. Use `zerops_discover` to check current status and URL.
+   > **Subdomain activation:** `enableSubdomainAccess: true` in import.yaml pre-configures routing, but **does NOT activate it**. You MUST call `zerops_subdomain action="enable"` after the first deploy of each new service to activate the L7 balancer route. Re-deploys do NOT deactivate it. Without the explicit enable call, the subdomain returns 502. The call is idempotent — safe to call even if already active. Use `zerops_discover` to check current status and URL.
 
 2. **Mount and discover:**
    ```
@@ -481,9 +486,9 @@ Same as standard mode steps 1-5, but no stage pair. All verification happens on 
    zerops_discover includeEnvs=true
    ```
 
-3. **Write code** to mount path `/var/www/{hostname}/`. Use `${hostname_varName}` references in zerops.yml envVariables — NEVER hardcode credentials. Env vars activate after deploy.
+3. **Write code** to mount path `/var/www/{hostname}/`. Use `${hostname_varName}` references in zerops.yaml envVariables — NEVER hardcode credentials. Env vars activate after deploy.
 
-#### Simple mode zerops.yml
+#### Simple mode zerops.yaml
 
 Simple mode services self-deploy (same rules as dev services).
 Unlike dev, simple mode uses a real `start` command and `healthCheck` — server auto-starts after deploy with env vars injected.
@@ -532,7 +537,7 @@ zerops:
 Prevents context rot by delegating per-service work to specialist agents with fresh context. **Use this for 2 or more runtime service pairs.** For a single service pair, follow the inline flow above.
 
 **Parent agent steps:**
-1. `zerops_import content="<import.yml>"` — create all services (blocks until all processes finish)
+1. `zerops_import content="<import.yaml>"` — create all services (blocks until all processes finish)
 2. `zerops_discover` — verify dev services reached RUNNING
 3. **Mount all dev services**: `zerops_mount action="mount" serviceHostname="{devHostname}"` for each
 4. **Discover ALL env vars**: `zerops_discover includeEnvs=true` — single call returns all services with env vars. Record exact var names.
@@ -571,7 +576,7 @@ Write files directly to this path — they appear inside the container at `/var/
 
 ## Services
 
-| Role | Hostname | zerops.yml setup |
+| Role | Hostname | zerops.yaml setup |
 |------|----------|------------------|
 | Dev | {devHostname} | `{devHostname}` |
 | Stage | {stageHostname} | `{stageHostname}` |
@@ -580,15 +585,15 @@ Managed services in this project: {managedServices}
 
 ## Discovered Environment Variables
 
-**CRITICAL**: These are the ONLY variables that exist. Use ONLY these in zerops.yml envVariables.
+**CRITICAL**: These are the ONLY variables that exist. Use ONLY these in zerops.yaml envVariables.
 
 {envVarSection}
 
-These vars become OS env vars after `zerops_deploy` activates zerops.yml envVariables.
+These vars become OS env vars after `zerops_deploy` activates zerops.yaml envVariables.
 Your app reads them via the runtime's native env var API. No `.env` files. No dotenv libraries.
-**NEVER hardcode credential values** — always use `${hostname_varName}` references in zerops.yml.
+**NEVER hardcode credential values** — always use `${hostname_varName}` references in zerops.yaml.
 
-### Mapping in zerops.yml
+### Mapping in zerops.yaml
 
 ```yaml
 envVariables:
@@ -600,7 +605,7 @@ envVariables:
 
 {runtimeKnowledge}
 
-## zerops.yml Structure
+## zerops.yaml Structure
 
 Write the dev setup entry now. Stage entry is generated after dev is verified (task 9).
 
@@ -628,7 +633,7 @@ zerops:
 
 **Environment variables**: see "Discovered Environment Variables" above. Read via runtime's native env var API.
 
-Your app MUST expose these endpoints on the port defined in zerops.yml `run.ports`:
+Your app MUST expose these endpoints on the port defined in zerops.yaml `run.ports`:
 
 | Endpoint | Response | Purpose |
 |----------|----------|---------|
@@ -669,15 +674,15 @@ Execute IN ORDER. Every step has verification — do not skip any.
 
 | # | Task | Action | Verify |
 |---|------|--------|--------|
-| 1 | Write zerops.yml (dev entry only) | Write to `{mountPath}/zerops.yml` with dev setup entry. Stage entry comes later (task 9). | File exists with dev setup name |
-| 2 | Write app code | HTTP server on the port defined in zerops.yml `run.ports` with `/`, `/health`, `/status`. Read env vars via runtime's native API. | Code references discovered env vars |
+| 1 | Write zerops.yaml (dev entry only) | Write to `{mountPath}/zerops.yaml` with dev setup entry. Stage entry comes later (task 9). | File exists with dev setup name |
+| 2 | Write app code | HTTP server on the port defined in zerops.yaml `run.ports` with `/`, `/health`, `/status`. Read env vars via runtime's native API. | Code references discovered env vars |
 | 3 | Write .gitignore | Build artifacts and IDE files only. Do NOT include `.env` — no .env files exist on Zerops | File exists, no `.env` entry |
 | 4 | Deploy dev | `zerops_deploy targetService="{devHostname}"` — activates envVariables as OS env vars | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
 | 6 | Start dev server | Start via SSH (Bash tool `run_in_background=true`). Env vars are available after deploy. Skip for implicit-webserver runtimes (php-nginx, php-apache, nginx, static — auto-starts). | `TaskOutput` shows startup message |
 | 7 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
 | 8 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
-| 9 | Generate stage entry | Dev is proven — now write the stage `setup:` entry in zerops.yml. Stage runs the production build of your app. `start:` must be the production run command appropriate for your runtime and framework (not the dev command from SSH). Your runtime knowledge Prod deploy pattern shows examples — adapt to your specific situation. `buildCommands` include the full build pipeline (deps + compilation/bundling if applicable). `deployFiles` are the build output (not `[.]`). Add `healthCheck`. Copy `envVariables` from dev. | Stage entry in zerops.yml |
+| 9 | Generate stage entry | Dev is proven — now write the stage `setup:` entry in zerops.yaml. Stage runs the production build of your app. `start:` must be the production run command appropriate for your runtime and framework (not the dev command from SSH). Your runtime knowledge Prod deploy pattern shows examples — adapt to your specific situation. `buildCommands` include the full build pipeline (deps + compilation/bundling if applicable). `deployFiles` are the build output (not `[.]`). Add `healthCheck`. Copy `envVariables` from dev. | Stage entry in zerops.yaml |
 | 10 | Review stage entry | Is `start:` a production run command (adapted to your framework, not a generic example)? Do `buildCommands` produce what `deployFiles` expects? `healthCheck` present? | Self-check |
 | 11 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` — stage has real start command, server auto-starts. No SSH start needed. | status=DEPLOYED (blocks until complete) |
 | 12 | Verify stage | `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{stageHostname}"` | status=healthy |
@@ -701,9 +706,9 @@ If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ah
    | http_health: fail | App started but endpoint broken — check `zerops_logs` + framework log files on mount path (e.g., `{mountPath}/storage/logs/laravel.log`) FIRST, then check `detail` for HTTP status. Do NOT try alternative servers (`php artisan serve`, `node server.js`, etc.) — fix the underlying error. |
    | http_status: fail | Managed service connectivity issue — check `detail` for which connection failed. Verify env var mapping matches discovered vars. |
 
-2. **Fix**: Edit files at `{mountPath}/` — fix zerops.yml, app code, or both
+2. **Fix**: Edit files at `{mountPath}/` — fix zerops.yaml, app code, or both
 
-3. **Redeploy** (only if zerops.yml changed): `zerops_deploy targetService="{devHostname}"`. For code-only fixes on the mount, just restart the server — no redeploy needed.
+3. **Redeploy** (only if zerops.yaml changed): `zerops_deploy targetService="{devHostname}"`. For code-only fixes on the mount, just restart the server — no redeploy needed.
 
 4. **Start server** via SSH (Bash tool `run_in_background=true`). Env vars are present after deploy. Check startup via `TaskOutput`.
 
@@ -771,9 +776,9 @@ When any verification check fails, enter the iteration loop instead of giving up
    | /status shows errors | Service connectivity issue. Check env var names match discovered vars. Verify managed service is RUNNING. |
 
 2. **Fix** — based on diagnosis:
-   - Build error -> fix zerops.yml (buildCommands, deployFiles, start)
+   - Build error -> fix zerops.yaml (buildCommands, deployFiles, start)
    - Runtime error -> fix app code on mount path
-   - Env var issue -> fix zerops.yml envVariables mapping, or check for typos in variable names
+   - Env var issue -> fix zerops.yaml envVariables mapping, or check for typos in variable names
    - Connection error -> verify managed service is RUNNING (`zerops_discover`), check hostname/port match
 
 3. **Redeploy** — `zerops_deploy` to the SAME service (always dev first)
@@ -791,9 +796,9 @@ When any verification check fails, enter the iteration loop instead of giving up
 |---------|-------------|-----|
 | Build FAILED: "command not found" | Wrong buildCommands for runtime | Check recipe, fix build pipeline |
 | Build FAILED: "module not found" | Missing dependency init | Add `go mod tidy`, `bun install`, etc. to buildCommands |
-| App crashes: "EADDRINUSE" | Port conflict | Ensure app listens on correct port from zerops.yml |
+| App crashes: "EADDRINUSE" | Port conflict | Ensure app listens on correct port from zerops.yaml |
 | App crashes: "connection refused" | Wrong DB/cache host | Check envVariables mapping matches discovered vars |
-| /status: "db: error" | Missing or wrong env var | Compare zerops.yml envVariables with discovered var names |
+| /status: "db: error" | Missing or wrong env var | Compare zerops.yaml envVariables with discovered var names |
 | HTTP 502 | Subdomain not activated | Call `zerops_subdomain action="enable"` |
 | curl returns empty | App not listening on 0.0.0.0 | Add HOST=0.0.0.0 to envVariables |
 | HTTP 500 | App error | Check `zerops_logs` + framework log files on mount path — log tells exact cause. Do NOT start alternative servers. |
@@ -814,7 +819,7 @@ When any verification check fails, enter the iteration loop instead of giving up
 ### For 2+ runtime service pairs — agent orchestration
 
 **Parent agent steps:**
-1. `zerops_import content="<import.yml>"` — create all services
+1. `zerops_import content="<import.yaml>"` — create all services
 2. `zerops_discover` — verify dev services reached RUNNING
 3. Mount all dev services
 4. Discover ALL env vars: `zerops_discover includeEnvs=true`
@@ -832,9 +837,9 @@ See the main deploy section for the full Service Bootstrap Agent Prompt and Veri
 |---------|-------------|-----|
 | Build FAILED: "command not found" | Wrong buildCommands for runtime | Check recipe, fix build pipeline |
 | Build FAILED: "module not found" | Missing dependency init | Add install step to buildCommands |
-| App crashes: "EADDRINUSE" | Port conflict | Ensure app listens on correct port from zerops.yml |
+| App crashes: "EADDRINUSE" | Port conflict | Ensure app listens on correct port from zerops.yaml |
 | App crashes: "connection refused" | Wrong DB/cache host | Check envVariables mapping matches discovered vars |
-| /status: "db: error" | Missing or wrong env var | Compare zerops.yml envVariables with discovered var names |
+| /status: "db: error" | Missing or wrong env var | Compare zerops.yaml envVariables with discovered var names |
 | HTTP 502 | Subdomain not activated | Call `zerops_subdomain action="enable"` |
 | curl returns empty | App not listening on 0.0.0.0 | Add HOST=0.0.0.0 to envVariables |
 | HTTP 500 | App error | Check `zerops_logs` + framework log files on mount path |
@@ -920,13 +925,13 @@ If the user only wants managed services (DB, cache, storage) without any runtime
 
 **Import rules for local mode:**
 
-| Mode | Runtime services in import.yml | Managed services |
+| Mode | Runtime services in import.yaml | Managed services |
 |------|-------------------------------|-----------------|
 | Standard | `{name}stage` ONLY (NO `{name}dev`) | Yes — shared, same as container mode |
 | Simple | `{name}` (single service) | Yes |
 | Dev / Managed-only | NONE — no runtime services | Yes |
 
-**Stage service properties** (standard mode — in import.yml):
+**Stage service properties** (standard mode — in import.yaml):
 - Do NOT set `startWithoutCode` — stage waits for first deploy (READY_TO_DEPLOY)
 - `enableSubdomainAccess: true`
 - No `maxContainers: 1` (use defaults)
@@ -960,17 +965,17 @@ If the user only wants managed services (DB, cache, storage) without any runtime
 
 **Write all files locally** in the current working directory. No SSHFS mounts, no remote paths.
 
-#### zerops.yml
+#### zerops.yaml
 
-Write zerops.yml in the project root. The `setup:` name must match the Zerops service hostname:
+Write zerops.yaml in the project root. The `setup:` name must match the Zerops service hostname:
 
 | Mode | `setup:` name | Notes |
 |------|------------|-------|
 | Standard | `{name}stage` | Stage is the deploy target. User's machine is dev. |
 | Simple | `{name}` | Single service — direct deploy target. |
-| Managed-only | No zerops.yml needed | No runtime service on Zerops. |
+| Managed-only | No zerops.yaml needed | No runtime service on Zerops. |
 
-**Standard mode — zerops.yml for stage service:**
+**Standard mode — zerops.yaml for stage service:**
 ```yaml
 zerops:
   - setup: {name}stage
@@ -1006,13 +1011,13 @@ zerops:
 
 The `.env` file was generated in the provision step with actual credential values. Verify it contains all the variables your app needs. If the framework has its own `.env` format (Laravel, Django), adapt the variable names to match.
 
-**IMPORTANT**: `.env` is for LOCAL development only. On Zerops, env vars come from zerops.yml `envVariables` via `${hostname_varName}` references — resolved at container runtime. Both coexist: `.env` for local, zerops.yml for Zerops.
+**IMPORTANT**: `.env` is for LOCAL development only. On Zerops, env vars come from zerops.yaml `envVariables` via `${hostname_varName}` references — resolved at container runtime. Both coexist: `.env` for local, zerops.yaml for Zerops.
 
 **Do NOT delete existing `.env` files** — they are the local credential bridge. If the framework scaffolded one (e.g., `composer create-project`), merge the discovered credentials into it rather than removing it.
 
-#### Env var mapping in zerops.yml
+#### Env var mapping in zerops.yaml
 
-In zerops.yml `envVariables`, ONLY use variables discovered in the provision step:
+In zerops.yaml `envVariables`, ONLY use variables discovered in the provision step:
 ```yaml
 envVariables:
   DATABASE_URL: ${db_connectionString}
@@ -1021,7 +1026,7 @@ envVariables:
   # Map ONLY variables listed in the discovery response
 ```
 
-`${hostname_varName}` references work regardless of push source (local or container) — Zerops resolves them at container runtime. **NEVER hardcode credential values** — always use `${hostname_varName}` references in zerops.yml and actual values in `.env`.
+`${hostname_varName}` references work regardless of push source (local or container) — Zerops resolves them at container runtime. **NEVER hardcode credential values** — always use `${hostname_varName}` references in zerops.yaml and actual values in `.env`.
 
 #### Application code requirements
 
@@ -1067,7 +1072,7 @@ Test locally: `curl localhost:{port}/status` — should show connectivity to man
 
 #### MANDATORY PRE-DEPLOY CHECK
 
-- [ ] zerops.yml has `setup:` entry matching the Zerops service hostname (NOT devHostname)
+- [ ] zerops.yaml has `setup:` entry matching the Zerops service hostname (NOT devHostname)
 - [ ] `run.start` is the REAL start command — NOT `zsc noop`
 - [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports
 - [ ] `healthCheck` configured with correct port and path
@@ -1119,9 +1124,9 @@ Max 3 iterations. After that, present diagnosis to user with what was tried and 
 |---------|-------------|-----|
 | Build FAILED: "command not found" | Wrong buildCommands for runtime | Check recipe, fix build pipeline |
 | Build FAILED: "module not found" | Missing dependency install | Add install step to buildCommands |
-| App crashes on start | Wrong start command or port mismatch | Fix start/ports in zerops.yml |
+| App crashes on start | Wrong start command or port mismatch | Fix start/ports in zerops.yaml |
 | HTTP 502 | Subdomain not enabled | `zerops_subdomain action="enable"` |
-| /status connectivity errors | Wrong env var mapping | Compare zerops.yml envVariables with discovered vars |
+| /status connectivity errors | Wrong env var mapping | Compare zerops.yaml envVariables with discovered vars |
 | HTTP 500 | App error | Check `zerops_logs` — log tells exact cause |
 
 #### Platform rules
@@ -1132,5 +1137,5 @@ Max 3 iterations. After that, present diagnosis to user with what was tried and 
 - NEVER write dependency dirs (node_modules/, vendor/)
 - Internal connections use http://, never https://
 - 0.0.0.0 binding: app must listen on 0.0.0.0, not localhost or 127.0.0.1
-- **No `.env` files on Zerops** — env vars come from zerops.yml envVariables. `.env` is for local development only.
+- **No `.env` files on Zerops** — env vars come from zerops.yaml envVariables. `.env` is for local development only.
 </section>

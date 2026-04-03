@@ -43,7 +43,7 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 func formatEnvVarsForGuide(envVars map[string][]string) string {
 	var sb strings.Builder
 	sb.WriteString("## Discovered Environment Variables\n\n")
-	sb.WriteString("**ONLY use these in zerops.yml envVariables. Anything else = empty at runtime.**\n\n")
+	sb.WriteString("**ONLY use these in zerops.yaml envVariables. Anything else = empty at runtime.**\n\n")
 	for hostname, vars := range envVars {
 		sb.WriteString("**" + hostname + "**: ")
 		refs := make([]string, len(vars))

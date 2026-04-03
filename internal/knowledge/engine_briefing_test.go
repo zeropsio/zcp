@@ -97,8 +97,8 @@ func TestStore_GetRecipe_BunHelloWorld(t *testing.T) {
 	if !strings.Contains(content, "0.0.0.0") {
 		t.Error("bun-hello-world recipe missing 0.0.0.0 binding rule")
 	}
-	if !strings.Contains(content, "zerops.yml") {
-		t.Error("bun-hello-world recipe missing zerops.yml example")
+	if !strings.Contains(content, "zerops.yaml") {
+		t.Error("bun-hello-world recipe missing zerops.yaml example")
 	}
 }
 

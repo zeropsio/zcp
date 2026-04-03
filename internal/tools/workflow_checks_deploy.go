@@ -27,7 +27,7 @@ func buildDeployStepChecker(step string, client platform.Client, projectID, stat
 }
 
 // checkDeployPrepare validates platform integration at the prepare step:
-// zerops.yml exists and parses, setup entries match deploy targets,
+// zerops.yaml exists and parses, setup entries match deploy targets,
 // env var references valid (re-discovered from API).
 func checkDeployPrepare(client platform.Client, projectID, stateDir string) workflow.DeployStepChecker {
 	return func(ctx context.Context, state *workflow.DeployState) (*workflow.StepCheckResult, error) {
@@ -40,15 +40,15 @@ func checkDeployPrepare(client platform.Client, projectID, stateDir string) work
 
 		var checks []workflow.StepCheck
 
-		// Find and parse zerops.yml.
+		// Find and parse zerops.yaml.
 		doc, parseErr := findAndParseZeropsYml(projectRoot, state.Targets)
 		if parseErr != nil {
 			checks = append(checks, workflow.StepCheck{
 				Name: "zerops_yml_exists", Status: statusFail,
-				Detail: fmt.Sprintf("zerops.yml not found or invalid: %v", parseErr),
+				Detail: fmt.Sprintf("zerops.yaml not found or invalid: %v", parseErr),
 			})
 			return &workflow.StepCheckResult{
-				Passed: false, Checks: checks, Summary: "zerops.yml not found",
+				Passed: false, Checks: checks, Summary: "zerops.yaml not found",
 			}, nil
 		}
 		checks = append(checks, workflow.StepCheck{
@@ -61,7 +61,7 @@ func checkDeployPrepare(client platform.Client, projectID, stateDir string) work
 			if entry == nil {
 				checks = append(checks, workflow.StepCheck{
 					Name: t.Hostname + "_setup", Status: statusFail,
-					Detail: fmt.Sprintf("no setup entry for %q in zerops.yml", t.Hostname),
+					Detail: fmt.Sprintf("no setup entry for %q in zerops.yaml", t.Hostname),
 				})
 			} else {
 				checks = append(checks, workflow.StepCheck{
@@ -135,7 +135,7 @@ func checkDeployResult(client platform.Client, projectID string) workflow.Deploy
 			case "READY_TO_DEPLOY":
 				checks = append(checks, workflow.StepCheck{
 					Name: t.Hostname + "_status", Status: statusFail,
-					Detail: "still READY_TO_DEPLOY — container didn't start. Check: start command, ports, env vars in zerops.yml run section. Deploy creates new container, local files lost.",
+					Detail: "still READY_TO_DEPLOY — container didn't start. Check: start command, ports, env vars in zerops.yaml run section. Deploy creates new container, local files lost.",
 				})
 				allPassed = false
 			default:
@@ -166,7 +166,7 @@ func checkDeployResult(client platform.Client, projectID string) workflow.Deploy
 	}
 }
 
-// findAndParseZeropsYml locates and parses zerops.yml from project root or mount paths.
+// findAndParseZeropsYml locates and parses zerops.yaml from project root or mount paths.
 func findAndParseZeropsYml(projectRoot string, targets []workflow.DeployTarget) (*ops.ZeropsYmlDoc, error) {
 	// Try mount path for first target (container environment).
 	if len(targets) > 0 {

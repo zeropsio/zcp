@@ -111,7 +111,7 @@ For multiple services, add one `zeropsio/actions` step per target service, each 
 ## GitLab Integration Configuration
 
 GitLab uses Zerops GUI webhook (no CI pipeline file needed).
-Zerops pulls code directly and runs the zerops.yml build pipeline.
+Zerops pulls code directly and runs the zerops.yaml build pipeline.
 
 ### 1. Connect repository in Zerops
 

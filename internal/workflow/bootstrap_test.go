@@ -965,8 +965,8 @@ func TestBuildResponse_Provision_GuideContainsKnowledge(t *testing.T) {
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	if !strings.Contains(resp.Current.DetailedGuide, "import.yml Schema") {
-		t.Error("provision guide should contain 'import.yml Schema' from knowledge injection")
+	if !strings.Contains(resp.Current.DetailedGuide, "import.yaml Schema") {
+		t.Error("provision guide should contain 'import.yaml Schema' from knowledge injection")
 	}
 }
 

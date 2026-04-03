@@ -125,7 +125,7 @@ FIX the specific error, then redeploy + verify.`
 	case iteration <= 4:
 		guidance = `PREVIOUS FIXES FAILED. Systematic check:
 1. zerops_discover includeEnvs=true — are all env vars present and correct?
-2. Does zerops.yml envVariables ONLY use discovered variable names?
+2. Does zerops.yaml envVariables ONLY use discovered variable names?
 3. Does the app bind 0.0.0.0 (not localhost/127.0.0.1)?
 4. Is deployFiles correct? (dev MUST be [.], stage = build output)
 5. Is run.ports.port matching what the app actually listens on?

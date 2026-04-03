@@ -97,9 +97,9 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 
 	switch step {
 	case RecipeStepProvision:
-		// import.yml schema for provisioning services.
-		if s := getCoreSection(kp, "import.yml Schema"); s != "" {
-			parts = append(parts, "## import.yml Schema\n\n"+s)
+		// import.yaml schema for provisioning services.
+		if s := getCoreSection(kp, "import.yaml Schema"); s != "" {
+			parts = append(parts, "## import.yaml Schema\n\n"+s)
 		}
 
 	case RecipeStepGenerate:
@@ -114,8 +114,8 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		if len(discoveredEnvVars) > 0 {
 			parts = append(parts, formatEnvVarsForGuide(discoveredEnvVars))
 		}
-		// zerops.yml schema + rules.
-		for _, name := range []string{"zerops.yml Schema", "Rules & Pitfalls"} {
+		// zerops.yaml schema + rules.
+		for _, name := range []string{"zerops.yaml Schema", "Rules & Pitfalls"} {
 			if s := getCoreSection(kp, name); s != "" {
 				parts = append(parts, "## "+name+"\n\n"+s)
 			}

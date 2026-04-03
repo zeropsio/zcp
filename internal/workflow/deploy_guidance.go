@@ -35,7 +35,7 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 	// Checklist.
 	sb.WriteString("### Checklist\n")
 	hostnames := targetHostnameList(state.Targets)
-	fmt.Fprintf(&sb, "1. zerops.yml must exist with `setup:` entries for: %s\n", strings.Join(hostnames, ", "))
+	fmt.Fprintf(&sb, "1. zerops.yaml must exist with `setup:` entries for: %s\n", strings.Join(hostnames, ", "))
 	sb.WriteString("2. Env var references (`${hostname_varName}`) must match real variables\n")
 	if state.Mode == PlanModeStandard || state.Mode == PlanModeDev {
 		sb.WriteString("3. Dev entry: `start: zsc noop --silent`, NO healthCheck\n")
@@ -121,21 +121,21 @@ func buildDeployGuide(state *DeployState, iteration int, env Environment) string
 	sb.WriteString("- Subdomain persists across re-deploys. Check `zerops_discover` for status and URL.\n\n")
 
 	// Code-only changes shortcut.
-	sb.WriteString("### Code-only changes (no zerops.yml change)\n")
+	sb.WriteString("### Code-only changes (no zerops.yaml change)\n")
 	if env == EnvLocal {
 		sb.WriteString("- Edit code locally with hot reload — no redeploy needed for dev.\n")
-		sb.WriteString("- Redeploy ONLY when zerops.yml changes or you want to update the Zerops service.\n\n")
+		sb.WriteString("- Redeploy ONLY when zerops.yaml changes or you want to update the Zerops service.\n\n")
 	} else {
 		sb.WriteString("- Edit code on mount → restart server via SSH. No redeploy needed.\n")
 		sb.WriteString("- Implicit-webserver runtimes (PHP, nginx, static): changes take effect immediately, no restart needed.\n")
-		sb.WriteString("- Redeploy ONLY when zerops.yml changes (envVariables, ports, buildCommands, deployFiles).\n\n")
+		sb.WriteString("- Redeploy ONLY when zerops.yaml changes (envVariables, ports, buildCommands, deployFiles).\n\n")
 	}
 
 	// Diagnostic pointers.
 	sb.WriteString("### If something breaks\n")
 	sb.WriteString("- Build failed → zerops_logs, check buildCommands, dependencies, runtime version\n")
 	sb.WriteString("- Container didn't start → check start command, ports, env vars. Deploy = new container.\n")
-	sb.WriteString("- Running but unreachable → zerops_subdomain, check ports in zerops.yml vs app\n")
+	sb.WriteString("- Running but unreachable → zerops_subdomain, check ports in zerops.yaml vs app\n")
 	sb.WriteString("- zerops_verify unhealthy → check `detail` field for specific failed check\n")
 
 	return sb.String()
@@ -158,7 +158,7 @@ func buildVerifyGuide() string {
 func buildKnowledgeMap(targets []DeployTarget) string {
 	var sb strings.Builder
 	sb.WriteString("### Knowledge on demand\n")
-	sb.WriteString("- zerops.yml schema: `zerops_knowledge query=\"zerops.yml schema\"`\n")
+	sb.WriteString("- zerops.yaml schema: `zerops_knowledge query=\"zerops.yaml schema\"`\n")
 
 	// Personalized runtime pointers from targets.
 	seen := make(map[string]bool)
@@ -300,7 +300,7 @@ func writeIterationEscalation(sb *strings.Builder, iteration int) {
 		sb.WriteString("Check `zerops_logs severity=\"error\"`. Build failed? → review buildLogs from deploy response.\n")
 		sb.WriteString("Container crash? → check start command, ports, env vars.\n")
 	case 2:
-		sb.WriteString("Systematic check: zerops.yml config (ports, start, deployFiles),\n")
+		sb.WriteString("Systematic check: zerops.yaml config (ports, start, deployFiles),\n")
 		sb.WriteString("env var references (typos = literal strings!), runtime version compatibility.\n")
 	default:
 		sb.WriteString("Present diagnostic summary to user: exact error from logs,\n")

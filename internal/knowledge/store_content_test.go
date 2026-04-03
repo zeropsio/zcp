@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestCore_H2Sections_ContainsImportYmlSchema(t *testing.T) {
+func TestCore_H2Sections_ContainsImportYamlSchema(t *testing.T) {
 	t.Parallel()
 	store, err := GetEmbeddedStore()
 	if err != nil {
@@ -17,12 +17,12 @@ func TestCore_H2Sections_ContainsImportYmlSchema(t *testing.T) {
 		t.Fatalf("Get core: %v", err)
 	}
 	sections := doc.H2Sections()
-	if _, ok := sections["import.yml Schema"]; !ok {
-		t.Error("core.md missing H2 section 'import.yml Schema'")
+	if _, ok := sections["import.yaml Schema"]; !ok {
+		t.Error("core.md missing H2 section 'import.yaml Schema'")
 	}
 }
 
-func TestCore_H2Sections_ContainsZeropsYmlSchema(t *testing.T) {
+func TestCore_H2Sections_ContainsZeropsYamlSchema(t *testing.T) {
 	t.Parallel()
 	store, err := GetEmbeddedStore()
 	if err != nil {
@@ -33,8 +33,8 @@ func TestCore_H2Sections_ContainsZeropsYmlSchema(t *testing.T) {
 		t.Fatalf("Get core: %v", err)
 	}
 	sections := doc.H2Sections()
-	if _, ok := sections["zerops.yml Schema"]; !ok {
-		t.Error("core.md missing H2 section 'zerops.yml Schema'")
+	if _, ok := sections["zerops.yaml Schema"]; !ok {
+		t.Error("core.md missing H2 section 'zerops.yaml Schema'")
 	}
 }
 
@@ -49,7 +49,7 @@ func TestCore_H2Sections_ContainsSchemaAndExamples(t *testing.T) {
 		t.Fatalf("Get core: %v", err)
 	}
 	sections := doc.H2Sections()
-	for _, name := range []string{"import.yml Schema", "zerops.yml Schema", "Schema Rules", "Multi-Service Examples"} {
+	for _, name := range []string{"import.yaml Schema", "zerops.yaml Schema", "Schema Rules", "Multi-Service Examples"} {
 		if _, ok := sections[name]; !ok {
 			t.Errorf("core.md missing H2 section %q", name)
 		}
@@ -72,7 +72,7 @@ func TestCore_H2Sections_ContainsSchemaRules(t *testing.T) {
 	}
 }
 
-func TestCore_ImportYmlSchema_ContainsPreprocessorFunctions(t *testing.T) {
+func TestCore_ImportYamlSchema_ContainsPreprocessorFunctions(t *testing.T) {
 	t.Parallel()
 	store, err := GetEmbeddedStore()
 	if err != nil {
@@ -83,12 +83,12 @@ func TestCore_ImportYmlSchema_ContainsPreprocessorFunctions(t *testing.T) {
 		t.Fatalf("Get core: %v", err)
 	}
 	sections := doc.H2Sections()
-	importSchema, ok := sections["import.yml Schema"]
+	importSchema, ok := sections["import.yaml Schema"]
 	if !ok {
-		t.Fatal("core.md missing H2 section 'import.yml Schema'")
+		t.Fatal("core.md missing H2 section 'import.yaml Schema'")
 	}
 	if !strings.Contains(importSchema, "Preprocessor Functions") {
-		t.Error("'import.yml Schema' section should contain 'Preprocessor Functions' as H3 subsection")
+		t.Error("'import.yaml Schema' section should contain 'Preprocessor Functions' as H3 subsection")
 	}
 }
 

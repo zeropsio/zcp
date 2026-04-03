@@ -22,7 +22,7 @@ type RecipeMetadata struct {
 	Services []ServiceDef `json:"services"`
 }
 
-// ServiceDef defines a managed service from a recipe's import.yml.
+// ServiceDef defines a managed service from a recipe's import.yaml.
 type ServiceDef struct {
 	Type string `json:"type"` // e.g., "postgresql@16"
 	Role string `json:"role"` // e.g., "db", "cache", "storage"

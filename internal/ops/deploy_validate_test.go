@@ -769,12 +769,95 @@ func TestValidateEnvReferences_LiteralDollar_Ignored(t *testing.T) {
 	}
 }
 
+func TestParseZeropsYml_ExtensionFallback(t *testing.T) {
+	t.Parallel()
+
+	validYAML := `zerops:
+  - setup: appdev
+    build:
+      base: bun@1.2
+      buildCommands: ["bun install"]
+      deployFiles: [.]
+    run:
+      start: bun run src/index.ts
+`
+
+	tests := []struct {
+		name         string
+		files        map[string]string // filename → content
+		wantSetup    string            // expected first entry setup name
+		wantErr      bool
+		wantContains string // error message must contain
+	}{
+		{
+			name:      "yaml extension found",
+			files:     map[string]string{"zerops.yaml": validYAML},
+			wantSetup: "appdev",
+		},
+		{
+			name:      "yml fallback",
+			files:     map[string]string{"zerops.yml": validYAML},
+			wantSetup: "appdev",
+		},
+		{
+			name:      "yaml takes priority over yml",
+			files:     map[string]string{"zerops.yaml": validYAML, "zerops.yml": "zerops:\n  - setup: other\n"},
+			wantSetup: "appdev",
+		},
+		{
+			name:         "neither extension found",
+			files:        map[string]string{},
+			wantErr:      true,
+			wantContains: "zerops.yaml",
+		},
+		{
+			name:         "neither extension — error mentions yml fallback",
+			files:        map[string]string{},
+			wantErr:      true,
+			wantContains: "zerops.yml",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			doc, err := ParseZeropsYml(dir)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if tt.wantContains != "" && !strings.Contains(err.Error(), tt.wantContains) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.wantContains)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(doc.Zerops) == 0 {
+				t.Fatal("expected at least one entry")
+			}
+			if doc.Zerops[0].Setup != tt.wantSetup {
+				t.Errorf("got setup %q, want %q", doc.Zerops[0].Setup, tt.wantSetup)
+			}
+		})
+	}
+}
+
 func runValidateTest(t *testing.T, hostname, yml string, wantWarnings int, wantContains string, noWarnings bool) {
 	t.Helper()
 
 	dir := t.TempDir()
 	if yml != "" {
-		if err := os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte(yml), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(yml), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}

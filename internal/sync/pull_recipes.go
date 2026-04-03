@@ -187,7 +187,7 @@ func buildRecipeMarkdown(name, slug string, sd *sourceData) string {
 		sb.WriteString(promoteHeadings(guide))
 		sb.WriteString("\n\n")
 	} else if yamlContent != "" {
-		sb.WriteString("## zerops.yml\n\n")
+		sb.WriteString("## zerops.yaml\n\n")
 		sb.WriteString("> Reference implementation — learn the patterns, adapt to your project.\n\n")
 		sb.WriteString("```yaml\n")
 		sb.WriteString(yamlContent)

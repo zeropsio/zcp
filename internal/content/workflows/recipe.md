@@ -13,7 +13,7 @@ Load the runtime's existing hello-world recipe as reference:
 zerops_knowledge recipe="{runtime}-hello-world"
 ```
 
-Load the import.yml schema for type validation:
+Load the import.yaml schema for type validation:
 ```
 zerops_knowledge scope="import-yaml-schema"
 ```
@@ -117,9 +117,9 @@ zerops_workflow action="complete" step="provision" attestation="All services cre
 <section name="generate">
 ## Generate — App Code & Configuration
 
-Generate the application code, zerops.yml, and README with documentation fragments.
+Generate the application code, zerops.yaml, and README with documentation fragments.
 
-### zerops.yml Requirements
+### zerops.yaml Requirements
 - **base** setup: shared configuration (env vars, build steps)
 - **prod** setup: production optimizations (caching, compiled assets)
 - **dev** setup: development mode (hot-reload, debug, source deploy)
@@ -138,7 +138,7 @@ The app README.md must include documentation fragments marked with extract tags:
 
 ### Completion
 ```
-zerops_workflow action="complete" step="generate" attestation="App code generated with zerops.yml and README fragments"
+zerops_workflow action="complete" step="generate" attestation="App code generated with zerops.yaml and README fragments"
 ```
 </section>
 

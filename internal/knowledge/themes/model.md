@@ -29,10 +29,10 @@ Upgrading from Lightweight to Serious costs $10 one-time, is irreversible, and c
 
 | File | Purpose | Scope |
 |------|---------|-------|
-| `import.yml` | **Topology** -- WHAT exists | Services, types, versions, scaling, env vars |
-| `zerops.yml` | **Lifecycle** -- HOW it runs | Build, deploy, run commands per service |
+| `import.yaml` | **Topology** -- WHAT exists | Services, types, versions, scaling, env vars |
+| `zerops.yaml` | **Lifecycle** -- HOW it runs | Build, deploy, run commands per service |
 
-These are separate concerns. `import.yml` creates infrastructure. `zerops.yml` defines what happens when code is pushed. A service can exist (imported) without any code deployed yet.
+These are separate concerns. `import.yaml` creates infrastructure. `zerops.yaml` defines what happens when code is pushed. A service can exist (imported) without any code deployed yet.
 
 ## Build/Deploy Lifecycle
 
@@ -130,8 +130,8 @@ Non-negotiable rules. Violating any causes failures.
 - Build and Run = SEPARATE containers. `deployFiles` = the ONLY bridge.
 - `run.prepareCommands` runs BEFORE deploy files arrive. Never reference `/var/www/` there.
 - Zerops injects env vars as OS env vars. Do NOT create `.env` files — empty values shadow OS vars.
-- Cross-service wiring: `${hostname_varname}` in zerops.yml `run.envVariables`.
-- import.yml service level: `envSecrets` ONLY (not `envVariables` — silently dropped by API).
+- Cross-service wiring: `${hostname_varname}` in zerops.yaml `run.envVariables`.
+- import.yaml service level: `envSecrets` ONLY (not `envVariables` — silently dropped by API).
 - Shared secrets (APP_KEY, SECRET_KEY_BASE): MUST be project-level, not per-service envSecrets.
 - Migrations: `zsc execOnce ${appVersionId} -- <command>` in `initCommands`.
 - Sessions: external store (Valkey, database) when running multiple containers.

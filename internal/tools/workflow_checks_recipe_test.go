@@ -46,7 +46,7 @@ A minimal Laravel application demonstrating Zerops deployment.
 
 <!-- #ZEROPS_EXTRACT_START:integration-guide# -->
 ` + "```yaml" + `
-# Laravel zerops.yml configuration
+# Laravel zerops.yaml configuration
 # Base setup shared between environments
 zerops:
   # Service configuration
@@ -96,12 +96,12 @@ func TestCheckRecipeGenerate_ValidMinimal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create app mount dir with zerops.yml and README.
+	// Create app mount dir with zerops.yaml and README.
 	appDir := filepath.Join(dir, "app")
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(appDir, "zerops.yml"), `zerops:
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
   - setup: app
     build:
       base: php-nginx@8.4
@@ -148,7 +148,7 @@ func TestCheckRecipeGenerate_MissingFragments(t *testing.T) {
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(appDir, "zerops.yml"), `zerops:
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
   - setup: app
     build:
       base: php-nginx@8.4
@@ -197,7 +197,7 @@ func TestCheckRecipeGenerate_LowCommentRatio(t *testing.T) {
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(appDir, "zerops.yml"), `zerops:
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
   - setup: app
     build:
       base: php-nginx@8.4
@@ -269,7 +269,7 @@ func TestCheckRecipeGenerate_PlaceholderText(t *testing.T) {
 	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(appDir, "zerops.yml"), `zerops:
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
   - setup: app
     build:
       base: php-nginx@8.4

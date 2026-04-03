@@ -59,7 +59,7 @@ func extractFragments(content string) recipeFragments {
 	ig := ExtractIntegrationGuide(content)
 
 	// ZeropsYAML is the YAML code block WITHIN the integration-guide.
-	// Single source of truth: edit the YAML in the ## zerops.yml section,
+	// Single source of truth: edit the YAML in the ## zerops.yaml section,
 	// and both the README integration-guide markers AND zerops.yaml file update.
 	var yaml string
 	if ig != "" {

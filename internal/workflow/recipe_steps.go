@@ -26,7 +26,7 @@ var recipeStepDetails = []StepDetail{
 	{
 		Name:         RecipeStepGenerate,
 		Tools:        []string{"zerops_knowledge"},
-		Verification: "SUCCESS WHEN: zerops.yml valid with base+prod+dev setups AND app README has integration-guide fragment with commented zerops.yaml AND knowledge-base fragment exists with Gotchas section AND comment ratio >= 0.3.",
+		Verification: "SUCCESS WHEN: zerops.yaml valid with base+prod+dev setups AND app README has integration-guide fragment with commented zerops.yaml AND knowledge-base fragment exists with Gotchas section AND comment ratio >= 0.3.",
 	},
 	{
 		Name:         RecipeStepDeploy,
