@@ -33,19 +33,19 @@ func TestStart_UnknownService(t *testing.T) {
 }
 
 func TestStart_KnownService_ArgsCorrect(t *testing.T) {
-	// Not parallel — mutates execFunc.
+	// Not parallel — mutates runFunc.
 	type captured struct {
 		binary string
 		args   []string
 	}
 	var got captured
 
-	service.SetExecFunc(func(binary string, args []string, _ []string) error {
+	service.SetRunFunc(func(binary string, args []string) error {
 		got.binary = binary
 		got.args = args
 		return nil
 	})
-	t.Cleanup(func() { service.ResetExecFunc() })
+	t.Cleanup(func() { service.ResetRunFunc() })
 
 	tests := []struct {
 		name     string

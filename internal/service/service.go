@@ -1,12 +1,13 @@
 // Package service provides exec wrappers for container services.
-// Each wrapper replaces the current process via syscall.Exec,
-// making the service the direct child of the container supervisor.
+// Each wrapper starts the service as a child process and waits for it,
+// forwarding signals so the service can shut down gracefully.
 package service
 
 import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"syscall"
 )
 
@@ -27,17 +28,17 @@ var services = map[string]execConfig{
 	},
 }
 
-// execFunc replaces the current process. Tests override this to avoid actual exec.
-var execFunc = syscall.Exec
+// runFunc starts a service and waits for it to exit. Tests override this.
+var runFunc = runCommand
 
-// SetExecFunc overrides the exec function for testing.
-func SetExecFunc(fn func(string, []string, []string) error) { execFunc = fn }
+// SetRunFunc overrides the run function for testing.
+func SetRunFunc(fn func(string, []string) error) { runFunc = fn }
 
-// ResetExecFunc restores the default exec function.
-func ResetExecFunc() { execFunc = syscall.Exec }
+// ResetRunFunc restores the default run function.
+func ResetRunFunc() { runFunc = runCommand }
 
-// Start replaces the current process with the named service.
-// On success, this function never returns (process is replaced).
+// Start runs the named service as a child process and blocks until it exits.
+// Signals (SIGINT, SIGTERM) are forwarded to the child.
 func Start(name string) error {
 	cfg, ok := services[name]
 	if !ok {
@@ -49,7 +50,35 @@ func Start(name string) error {
 		return fmt.Errorf("find %s: %w", cfg.binary, err)
 	}
 
-	return execFunc(binary, cfg.args, os.Environ())
+	return runFunc(binary, cfg.args)
+}
+
+// runCommand starts a child process and waits for it, forwarding signals.
+func runCommand(binary string, args []string) error {
+	cmd := exec.Command(binary, args[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+
+	// Forward signals to child so it can shut down gracefully.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		for s := range sig {
+			_ = cmd.Process.Signal(s)
+		}
+	}()
+
+	if err := cmd.Wait(); err != nil {
+		signal.Stop(sig)
+		return fmt.Errorf("%s exited: %w", args[0], err)
+	}
+	signal.Stop(sig)
+	return nil
 }
 
 // List returns the names of all available services.
