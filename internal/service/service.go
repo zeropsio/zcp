@@ -4,6 +4,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -53,31 +54,20 @@ func Start(name string) error {
 	return runFunc(binary, cfg.args)
 }
 
-// runCommand starts a child process and waits for it, forwarding signals.
+// runCommand starts a child process and waits for it.
+// The context cancels on SIGINT/SIGTERM, which sends SIGKILL to the child.
 func runCommand(binary string, args []string) error {
-	cmd := exec.Command(binary, args[1:]...) //nolint:gosec // binary is resolved from a hardcoded service map via LookPath
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	cmd := exec.CommandContext(ctx, binary, args[1:]...) //nolint:gosec // binary is resolved from a hardcoded service map via LookPath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start: %w", err)
-	}
-
-	// Forward signals to child so it can shut down gracefully.
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		for s := range sig {
-			_ = cmd.Process.Signal(s)
-		}
-	}()
-
-	if err := cmd.Wait(); err != nil {
-		signal.Stop(sig)
+	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s exited: %w", args[0], err)
 	}
-	signal.Stop(sig)
 	return nil
 }
 
