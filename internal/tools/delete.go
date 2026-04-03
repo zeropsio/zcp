@@ -37,7 +37,7 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 			return convertError(platform.NewPlatformError(
 				platform.ErrSelfServiceBlocked,
 				fmt.Sprintf("Cannot delete %q — ZCP is running on this service", input.ServiceHostname),
-				"Delete this service manually via Zerops GUI, zcli, or from a different machine.",
+				"Delete this service manually via zcli or Zerops GUI.",
 			)), nil, nil
 		}
 
