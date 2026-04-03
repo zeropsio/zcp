@@ -19,6 +19,8 @@ func TestRunNginx_WithPassword(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
 	zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "log"), filepath.Join(tmpDir, "tmp")})
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
+	zcpinit.SetNginxLogFiles(nil)
+	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
 	t.Setenv("VSCODE_PASSWORD", "test-password-123")
 
 	err := zcpinit.RunNginx()
@@ -65,6 +67,8 @@ func TestRunNginx_WithoutPassword(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
 	zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "log")})
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
+	zcpinit.SetNginxLogFiles(nil)
+	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
 	// VSCODE_PASSWORD not set.
 
 	err := zcpinit.RunNginx()
@@ -111,6 +115,8 @@ func TestRunNginx_CreatesDirectories(t *testing.T) {
 	tmpNginx := filepath.Join(tmpDir, "lib", "nginx", "tmp")
 	zcpinit.SetNginxDirs([]string{logDir, tmpNginx})
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
+	zcpinit.SetNginxLogFiles(nil)
+	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
 	zcpinit.SetNginxOutputPath(filepath.Join(tmpDir, "nginx.conf"))
 	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
 
@@ -140,6 +146,8 @@ func TestRunNginx_Idempotent(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
 	zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "log")})
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
+	zcpinit.SetNginxLogFiles(nil)
+	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
 	t.Setenv("VSCODE_PASSWORD", "idempotent-test")
 
 	if err := zcpinit.RunNginx(); err != nil {
@@ -165,6 +173,8 @@ func TestRunNginx_NoFakeServerBlock(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
 	zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "log")})
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
+	zcpinit.SetNginxLogFiles(nil)
+	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
 	t.Setenv("VSCODE_PASSWORD", "test")
 
 	if err := zcpinit.RunNginx(); err != nil {

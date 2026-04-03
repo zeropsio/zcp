@@ -36,6 +36,17 @@ func ResetNginxDirs() {
 	nginxDirs = []string{"/var/log/nginx", "/var/lib/nginx/tmp", "/var/lib/nginx/body", "/var/lib/nginx/proxy", "/var/lib/nginx/fastcgi", "/var/lib/nginx/uwsgi", "/var/lib/nginx/scgi"}
 }
 
+// nginxLogFiles are pre-existing log files that need chmod for non-root access.
+var nginxLogFiles = []string{"/var/log/nginx/error.log", "/var/log/nginx/access.log"}
+
+// SetNginxLogFiles overrides the nginx log files for testing.
+func SetNginxLogFiles(files []string) { nginxLogFiles = files }
+
+// ResetNginxLogFiles restores the default nginx log files.
+func ResetNginxLogFiles() {
+	nginxLogFiles = []string{"/var/log/nginx/error.log", "/var/log/nginx/access.log"}
+}
+
 // RunNginx generates /etc/nginx/nginx.conf and creates required directories.
 // Authentication is enabled when VSCODE_PASSWORD env var is set.
 func RunNginx() error {
@@ -70,8 +81,8 @@ func createNginxDirs() error {
 		}
 	}
 
-	// Fix ownership/perms on pre-existing log files (created by apt as www-data:adm 0640).
-	for _, f := range []string{"/var/log/nginx/error.log", "/var/log/nginx/access.log"} {
+	// Fix perms on pre-existing log files (created by apt as www-data:adm 0640).
+	for _, f := range nginxLogFiles {
 		if _, err := os.Stat(f); err == nil {
 			if err := os.Chmod(f, 0666); err != nil {
 				return fmt.Errorf("chmod %s: %w", f, err)
