@@ -102,7 +102,6 @@ type RecipeResponse struct {
 	CheckResult     *StepCheckResult `json:"checkResult,omitempty"`
 	OutputDir       string           `json:"outputDir,omitempty"`
 	AvailableStacks string           `json:"availableStacks,omitempty"`
-	SchemaKnowledge string           `json:"schemaKnowledge,omitempty"`
 }
 
 // RecipeProgress summarizes overall recipe progress.

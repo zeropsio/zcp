@@ -34,9 +34,6 @@ func handleRecipeStart(ctx context.Context, projectID string, engine *workflow.E
 		}
 	}
 
-	// Inject live schema knowledge for research.
-	injectSchemaKnowledge(ctx, resp, schemaCache)
-
 	return jsonResult(resp), nil, nil
 }
 
@@ -71,9 +68,6 @@ func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client p
 			"Check step name and session state")), nil, nil
 	}
 
-	// Inject schema knowledge for the next step.
-	injectSchemaKnowledge(ctx, resp, schemaCache)
-
 	return jsonResult(resp), nil, nil
 }
 
@@ -91,7 +85,7 @@ func handleRecipeCompletePlan(ctx context.Context, engine *workflow.Engine, clie
 		attestation = fmt.Sprintf("Research completed for %s %s recipe (%s)", input.RecipePlan.Framework, input.RecipePlan.Tier, input.RecipePlan.Slug)
 	}
 
-	// Fetch schemas once — used for both validation and knowledge injection.
+	// Get live schemas for plan validation (build/run base enums).
 	var schemas *schema.Schemas
 	if schemaCache != nil {
 		schemas = schemaCache.Get(ctx)
@@ -108,10 +102,6 @@ func handleRecipeCompletePlan(ctx context.Context, engine *workflow.Engine, clie
 			fmt.Sprintf("Recipe plan submission failed: %v", err),
 			"Ensure research step is current and plan is valid")), nil, nil
 	}
-
-	// Inject schema knowledge for the next step (provision).
-	// Reuse already-fetched schemas to avoid a second cache lookup.
-	injectSchemaKnowledgeWith(resp, schemas)
 
 	return jsonResult(resp), nil, nil
 }
@@ -140,7 +130,7 @@ func handleRecipeSkip(_ context.Context, engine *workflow.Engine, input Workflow
 }
 
 // handleRecipeStatus returns current recipe state.
-func handleRecipeStatus(ctx context.Context, engine *workflow.Engine, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
+func handleRecipeStatus(_ context.Context, engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
 	resp, err := engine.RecipeStatus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -149,45 +139,5 @@ func handleRecipeStatus(ctx context.Context, engine *workflow.Engine, schemaCach
 			"")), nil, nil
 	}
 
-	injectSchemaKnowledge(ctx, resp, schemaCache)
-
 	return jsonResult(resp), nil, nil
-}
-
-// injectSchemaKnowledge fetches schemas from cache and injects step-appropriate
-// schema info into the recipe response.
-func injectSchemaKnowledge(ctx context.Context, resp *workflow.RecipeResponse, schemaCache *schema.Cache) {
-	if resp == nil || schemaCache == nil || resp.Current == nil {
-		return
-	}
-	schemas := schemaCache.Get(ctx)
-	injectSchemaKnowledgeWith(resp, schemas)
-}
-
-// injectSchemaKnowledgeWith injects pre-fetched schema knowledge into a recipe response.
-// Avoids redundant cache lookups when the caller already has schemas.
-func injectSchemaKnowledgeWith(resp *workflow.RecipeResponse, schemas *schema.Schemas) {
-	if resp == nil || schemas == nil || resp.Current == nil {
-		return
-	}
-
-	switch resp.Current.Name {
-	case workflow.RecipeStepResearch:
-		// Research needs both schemas for informed planning.
-		resp.SchemaKnowledge = schema.FormatBothForLLM(schemas)
-	case workflow.RecipeStepProvision:
-		// Provision needs import.yaml schema for service creation.
-		resp.SchemaKnowledge = schema.FormatImportYmlForLLM(schemas.ImportYml)
-	case workflow.RecipeStepGenerate:
-		// Generate needs zerops.yml schema for config writing.
-		resp.SchemaKnowledge = schema.FormatZeropsYmlForLLM(schemas.ZeropsYml)
-	case workflow.RecipeStepFinalize:
-		// Finalize needs both: import.yaml for env tiers, zerops.yml for inline config.
-		resp.SchemaKnowledge = schema.FormatBothForLLM(schemas)
-	case workflow.RecipeStepDeploy:
-		// Deploy may need schema for troubleshooting.
-		resp.SchemaKnowledge = schema.FormatZeropsYmlForLLM(schemas.ZeropsYml)
-	case workflow.RecipeStepClose:
-		// Close step: no schema knowledge needed.
-	}
 }

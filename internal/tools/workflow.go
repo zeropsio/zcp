@@ -99,7 +99,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "reset":
 		return handleReset(engine)
 	case "iterate":
-		return handleIterate(ctx, engine, client, cache, schemaCache)
+		return handleIterate(ctx, engine, client, cache)
 	case "complete":
 		active := detectActiveWorkflow(engine)
 		if active == workflowDeploy {
@@ -112,7 +112,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if cache != nil && client != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
-		return handleBootstrapComplete(ctx, engine, client, cache, schemaCache, input, liveTypes, logFetcher, projectID, stateDir)
+		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir)
 	case "skip":
 		active := detectActiveWorkflow(engine)
 		if active == workflowDeploy {
@@ -121,18 +121,18 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if active == workflowRecipe {
 			return handleRecipeSkip(ctx, engine, input)
 		}
-		return handleBootstrapSkip(ctx, engine, client, cache, schemaCache, input)
+		return handleBootstrapSkip(ctx, engine, client, cache, input)
 	case "status":
 		active := detectActiveWorkflow(engine)
 		if active == workflowDeploy {
 			return handleDeployStatus(ctx, engine)
 		}
 		if active == workflowRecipe {
-			return handleRecipeStatus(ctx, engine, schemaCache)
+			return handleRecipeStatus(ctx, engine)
 		}
-		return handleBootstrapStatus(ctx, engine, client, cache, schemaCache)
+		return handleBootstrapStatus(ctx, engine, client, cache)
 	case "resume":
-		return handleResume(ctx, engine, client, cache, schemaCache, input)
+		return handleResume(ctx, engine, client, cache, input)
 	case "list":
 		return handleListSessions(engine)
 	case "route":
@@ -181,7 +181,6 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 				"Reset existing session first with action=reset")), nil, nil
 		}
 		populateStacks(ctx, resp, client, cache)
-		injectBootstrapSchemaKnowledge(ctx, resp, schemaCache)
 		return jsonResult(resp), nil, nil
 	}
 
@@ -248,7 +247,7 @@ func handleReset(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
 	return textResult("Session reset successfully."), nil, nil
 }
 
-func handleIterate(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache) (*mcp.CallToolResult, any, error) {
+func handleIterate(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
 	if _, err := engine.Iterate(); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
@@ -260,12 +259,12 @@ func handleIterate(ctx context.Context, engine *workflow.Engine, client platform
 		return handleDeployStatus(ctx, engine)
 	}
 	if active == workflowRecipe {
-		return handleRecipeStatus(ctx, engine, schemaCache)
+		return handleRecipeStatus(ctx, engine)
 	}
-	return bootstrapStatusResult(ctx, engine, client, cache, schemaCache)
+	return bootstrapStatusResult(ctx, engine, client, cache)
 }
 
-func handleResume(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleResume(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.SessionID == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -283,9 +282,9 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 		return handleDeployStatus(ctx, engine)
 	}
 	if active == workflowRecipe {
-		return handleRecipeStatus(ctx, engine, schemaCache)
+		return handleRecipeStatus(ctx, engine)
 	}
-	return bootstrapStatusResult(ctx, engine, client, cache, schemaCache)
+	return bootstrapStatusResult(ctx, engine, client, cache)
 }
 
 func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
