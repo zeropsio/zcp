@@ -155,7 +155,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Workflow %q not found: %v", input.Workflow, err),
-				"Valid workflows: bootstrap, deploy, recipe, cicd")), nil, nil
+				"Valid workflows: bootstrap, deploy, recipe, cicd, export")), nil, nil
 		}
 
 		// CI/CD: prepend service context from ServiceMeta (if available).
@@ -195,11 +195,26 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return handleRecipeStart(ctx, projectID, engine, client, cache, schemaCache, input)
 	}
 
+	// Export workflow — immediate (guidance-based, like cicd).
+	if input.Workflow == "export" {
+		wfContent, err := content.GetWorkflow("export")
+		if err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Export workflow not found: %v", err),
+				"Valid workflows: bootstrap, deploy, recipe, cicd, export")), nil, nil
+		}
+		return jsonResult(immediateResponse{
+			Workflow: "export",
+			Guidance: wfContent,
+		}), nil, nil
+	}
+
 	// Unknown workflow — return error.
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
-		"Valid workflows: bootstrap, deploy, recipe, cicd")), nil, nil
+		"Valid workflows: bootstrap, deploy, recipe, cicd, export")), nil, nil
 }
 
 // detectActiveWorkflow returns the active workflow type from engine state.

@@ -14,11 +14,11 @@ func TestDiscover_AllServices(t *testing.T) {
 	t.Parallel()
 
 	services := []platform.ServiceStack{
-		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING", Mode: "HA",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-		{ID: "svc-2", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
+		{ID: "svc-2", Name: "db", ProjectID: "proj-1", Status: "RUNNING", Mode: "NON_HA",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
-		{ID: "svc-3", Name: "cache", ProjectID: "proj-1", Status: "RUNNING",
+		{ID: "svc-3", Name: "cache", ProjectID: "proj-1", Status: "RUNNING", Mode: "NON_HA",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@7.2"}},
 	}
 
@@ -35,6 +35,12 @@ func TestDiscover_AllServices(t *testing.T) {
 	}
 	if len(result.Services) != 3 {
 		t.Fatalf("expected 3 services, got %d", len(result.Services))
+	}
+	if result.Services[0].Mode != "HA" {
+		t.Errorf("expected api mode=HA, got %s", result.Services[0].Mode)
+	}
+	if result.Services[1].Mode != "NON_HA" {
+		t.Errorf("expected db mode=NON_HA, got %s", result.Services[1].Mode)
 	}
 }
 
@@ -54,6 +60,7 @@ func TestDiscover_SingleService_Found(t *testing.T) {
 	// GetService returns full detail including CurrentAutoscaling (active config).
 	detailSvc := &platform.ServiceStack{
 		ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+		Mode:                 "HA",
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
 		Ports:                []platform.Port{{Port: 3000, Protocol: "TCP", Public: true}},
 		CurrentAutoscaling: &platform.CustomAutoscaling{
@@ -85,6 +92,9 @@ func TestDiscover_SingleService_Found(t *testing.T) {
 	}
 	if svc.ServiceID != "svc-1" {
 		t.Errorf("expected serviceId=svc-1, got %s", svc.ServiceID)
+	}
+	if svc.Mode != "HA" {
+		t.Errorf("expected mode=HA, got %s", svc.Mode)
 	}
 	// Resources should come from CurrentAutoscaling (active config).
 	if svc.Resources == nil {

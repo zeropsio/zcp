@@ -38,6 +38,7 @@ var testServicePrefixes = []string{
 	"zcpmnt", "zcpapp",                           // mount_test.go
 	"zcpsd",                                      // discover_subdomain_test.go
 	"zcpsl",                                      // subdomain_lifecycle_test.go
+	"zcpex", "zcped",                             // export_multi_test.go
 	"bn",                                         // bootstrap_negative_test.go
 	"lrv",                                        // laravel_recipe_test.go
 }

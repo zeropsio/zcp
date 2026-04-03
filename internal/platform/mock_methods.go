@@ -212,6 +212,30 @@ func (m *Mock) DeleteProjectEnv(_ context.Context, envID string) (*Process, erro
 	}, nil
 }
 
+func (m *Mock) GetProjectExport(_ context.Context, _ string) (string, error) {
+	if err := m.getError("GetProjectExport"); err != nil {
+		return "", err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.exportYAML == "" {
+		return "project:\n  name: mock-export\nservices: []\n", nil
+	}
+	return m.exportYAML, nil
+}
+
+func (m *Mock) GetServiceStackExport(_ context.Context, _ string) (string, error) {
+	if err := m.getError("GetServiceStackExport"); err != nil {
+		return "", err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.serviceExportYAML == "" {
+		return "services: []\n", nil
+	}
+	return m.serviceExportYAML, nil
+}
+
 func (m *Mock) ImportServices(_ context.Context, _ string, yamlContent string) (*ImportResult, error) {
 	if err := m.getError("ImportServices"); err != nil {
 		return nil, err

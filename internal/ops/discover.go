@@ -31,6 +31,7 @@ type ServiceInfo struct {
 	ServiceID        string           `json:"serviceId"`
 	Type             string           `json:"type"`
 	Status           string           `json:"status"`
+	Mode             string           `json:"mode,omitempty"`
 	ManagedByZCP     bool             `json:"managedByZcp"`
 	IsInfrastructure bool             `json:"isInfrastructure"`
 	MountPath        string           `json:"mountPath,omitempty"`
@@ -117,6 +118,7 @@ func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 		ServiceID:        svc.ID,
 		Type:             svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 		Status:           svc.Status,
+		Mode:             svc.Mode,
 		IsInfrastructure: workflow.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName),
 		SubdomainEnabled: svc.SubdomainAccess,
 	}

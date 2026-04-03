@@ -27,6 +27,8 @@ type Mock struct {
 	appVersionEvents   []AppVersionEvent
 	stackTypes         []ServiceStackType
 	autoscalingProcess *Process // non-nil → SetAutoscaling returns this process
+	exportYAML         string   // project export YAML
+	serviceExportYAML  string   // service export YAML
 
 	// CapturedImportYAML stores the YAML content passed to ImportServices.
 	CapturedImportYAML string
@@ -164,6 +166,22 @@ func (m *Mock) WithServiceStackTypes(types []ServiceStackType) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stackTypes = types
+	return m
+}
+
+// WithExportYAML sets the YAML returned by GetProjectExport.
+func (m *Mock) WithExportYAML(yaml string) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.exportYAML = yaml
+	return m
+}
+
+// WithServiceExportYAML sets the YAML returned by GetServiceStackExport.
+func (m *Mock) WithServiceExportYAML(yaml string) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.serviceExportYAML = yaml
 	return m
 }
 
