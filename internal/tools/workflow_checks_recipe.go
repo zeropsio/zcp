@@ -18,17 +18,21 @@ func buildRecipeStepChecker(step, _, stateDir string) workflow.RecipeStepChecker
 	case workflow.RecipeStepGenerate:
 		return checkRecipeGenerate(stateDir)
 	case workflow.RecipeStepFinalize:
-		return wrapFinalizeChecker()
+		return checkRecipeFinalizeFromState(stateDir)
 	}
 	return nil
 }
 
-// wrapFinalizeChecker returns a RecipeStepChecker that reads outputDir from state.
-func wrapFinalizeChecker() workflow.RecipeStepChecker {
+// checkRecipeFinalizeFromState returns a finalize checker that derives outputDir
+// from stateDir (project root) or falls back to state.OutputDir if set.
+func checkRecipeFinalizeFromState(stateDir string) workflow.RecipeStepChecker {
 	return func(ctx context.Context, plan *workflow.RecipePlan, state *workflow.RecipeState) (*workflow.StepCheckResult, error) {
+		// Use explicit OutputDir if set, otherwise derive from stateDir.
 		outputDir := ""
-		if state != nil {
+		if state != nil && state.OutputDir != "" {
 			outputDir = state.OutputDir
+		} else if stateDir != "" {
+			outputDir = filepath.Dir(filepath.Dir(stateDir))
 		}
 		checker := checkRecipeFinalize(outputDir)
 		return checker(ctx, plan, state)
@@ -66,10 +70,14 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 		}
 
 		// Check zerops.yml existence and structure.
-		mountPath := filepath.Join(projectRoot, appHostname)
+		// Try mount paths: {hostname}dev (standard mode), {hostname} (bare), then project root.
 		ymlDir := projectRoot
-		if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
-			ymlDir = mountPath
+		for _, candidate := range []string{appHostname + "dev", appHostname} {
+			mountPath := filepath.Join(projectRoot, candidate)
+			if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
+				ymlDir = mountPath
+				break
+			}
 		}
 
 		doc, parseErr := ops.ParseZeropsYml(ymlDir)
@@ -117,15 +125,23 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 	}
 }
 
-// checkRecipeSetups validates zerops.yml has the required setups for a recipe.
+// checkRecipeSetups validates zerops.yml has at least one setup entry for the app.
+// Tries multiple name patterns: {hostname}, {hostname}stage, {hostname}dev, or any entry.
 func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, plan *workflow.RecipePlan) []workflow.StepCheck {
 	var checks []workflow.StepCheck
 
-	entry := doc.FindEntry(hostname)
+	// Try finding a setup entry by multiple conventions.
+	var entry *ops.ZeropsYmlEntry
+	for _, name := range []string{hostname, hostname + "stage", hostname + "dev"} {
+		if e := doc.FindEntry(name); e != nil {
+			entry = e
+			break
+		}
+	}
 	if entry == nil {
 		checks = append(checks, workflow.StepCheck{
 			Name: hostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no setup entry for %q in zerops.yml", hostname),
+			Detail: fmt.Sprintf("no setup entry for %q (also tried %sdev, %sstage) in zerops.yml", hostname, hostname, hostname),
 		})
 		return checks
 	}

@@ -8,14 +8,21 @@ Create a Zerops recipe: a deployable reference implementation with 6 environment
 Fill in all research fields by examining the framework's documentation and existing recipes.
 
 ### Reference Loading
-Load the runtime's existing hello-world recipe as reference:
+Hello-world recipes exist per RUNTIME, not per framework. Load the runtime's recipe:
 ```
-zerops_knowledge recipe="{runtime}-hello-world"
+zerops_knowledge recipe="{runtime-base}-hello-world"
 ```
+Example: for Laravel (php-nginx runtime), load `php-hello-world`, NOT `laravel-hello-world`.
+
+Load the runtime briefing for platform-specific rules:
+```
+zerops_knowledge runtime="{runtime-base}"
+```
+Example: `zerops_knowledge runtime="php-nginx"` — returns PHP deployment patterns, build lifecycle, env var conventions.
 
 Load the import.yaml schema for type validation:
 ```
-zerops_knowledge scope="import-yaml-schema"
+zerops_knowledge scope="infrastructure"
 ```
 
 ### Framework Identity
@@ -26,7 +33,7 @@ zerops_knowledge scope="import-yaml-schema"
 ### Build & Deploy Pipeline
 - **Build commands**: ordered list (e.g., `npm install`, `npm run build`)
 - **Deploy files**: what to deploy (`.` for dev, build output dir for prod)
-- **Start command**: the RUN command (not build)
+- **Start command**: the RUN command (not build). Leave empty for implicit webserver types (php-nginx, php-apache, nginx, static) where the server auto-starts.
 - **Cache strategy**: directories to cache between builds (e.g., `node_modules`, `vendor`)
 
 ### Database & Migration

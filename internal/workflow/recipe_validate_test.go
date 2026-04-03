@@ -84,7 +84,10 @@ func TestValidateRecipePlan_MissingFields(t *testing.T) {
 		{"missing httpPort", func(p *RecipePlan) { p.Research.HTTPPort = 0 }, "research.httpPort is required"},
 		{"missing buildCommands", func(p *RecipePlan) { p.Research.BuildCommands = nil }, "research.buildCommands is required"},
 		{"missing deployFiles", func(p *RecipePlan) { p.Research.DeployFiles = nil }, "research.deployFiles is required"},
-		{"missing startCommand", func(p *RecipePlan) { p.Research.StartCommand = "" }, "research.startCommand is required"},
+		{"missing startCommand (non-implicit)", func(p *RecipePlan) {
+			p.RuntimeType = "nodejs@22"
+			p.Research.StartCommand = ""
+		}, "research.startCommand is required"},
 		{"missing targets", func(p *RecipePlan) { p.Targets = nil }, "at least one target is required"},
 		{"target missing hostname", func(p *RecipePlan) {
 			p.Targets = []RecipeTarget{{Type: "php@8.4", Role: "app"}}

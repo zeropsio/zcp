@@ -41,17 +41,27 @@ func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType) 
 		errs = append(errs, fmt.Sprintf("runtimeType %q not found in available service types", plan.RuntimeType))
 	}
 
-	// BuildBases validation against live catalog.
+	// BuildBases: best-effort validation. Build bases (zerops.yml build.base values)
+	// may include build-only types not present as service stack types in the catalog.
+	// Only warn if the base name prefix doesn't match any known stack type.
 	if liveTypes != nil {
 		for _, bb := range plan.BuildBases {
-			if !typeExists(bb, liveTypes) {
-				errs = append(errs, fmt.Sprintf("buildBase %q not found in available service types", bb))
+			base, _, _ := strings.Cut(bb, "@")
+			found := false
+			for _, st := range liveTypes {
+				if st.Name == base {
+					found = true
+					break
+				}
+			}
+			if !found {
+				errs = append(errs, fmt.Sprintf("buildBase %q: base name %q not found in available service types", bb, base))
 			}
 		}
 	}
 
 	// Research fields — required for all tiers.
-	errs = append(errs, validateResearchFields(plan.Research, plan.Tier)...)
+	errs = append(errs, validateResearchFields(plan.Research, plan.Tier, plan.RuntimeType)...)
 
 	// Targets validation.
 	if len(plan.Targets) == 0 {
@@ -72,8 +82,19 @@ func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType) 
 	return errs
 }
 
+// hasImplicitWebServer returns true for runtime types where nginx/apache manages HTTP
+// and no explicit start command is needed (php-nginx, php-apache, nginx, static).
+func hasImplicitWebServer(runtimeType string) bool {
+	base, _, _ := strings.Cut(runtimeType, "@")
+	switch base {
+	case "php-nginx", "php-apache", "nginx", "static":
+		return true
+	}
+	return false
+}
+
 // validateResearchFields checks that all required research fields are present.
-func validateResearchFields(r ResearchData, tier string) []string {
+func validateResearchFields(r ResearchData, tier, runtimeType string) []string {
 	var errs []string
 
 	if r.ServiceType == "" {
@@ -91,7 +112,7 @@ func validateResearchFields(r ResearchData, tier string) []string {
 	if len(r.DeployFiles) == 0 {
 		errs = append(errs, "research.deployFiles is required (at least one)")
 	}
-	if r.StartCommand == "" {
+	if r.StartCommand == "" && !hasImplicitWebServer(runtimeType) {
 		errs = append(errs, "research.startCommand is required")
 	}
 
