@@ -148,8 +148,20 @@ zerops[]:
 - **NEVER** set `verticalAutoscaling` for shared-storage or object-storage. REASON: these service types don't support vertical scaling; setting it causes import failure
 - **ALWAYS** set `priority: 10` for databases/storage services. REASON: ensures they start before application services that depend on them
 - **ALWAYS** set `enableSubdomainAccess: true` in import.yaml AND call `zerops_subdomain action="enable"` once after the first deploy of each new service. REASON: the import flag marks intent; the subdomain API call activates the L7 route
+- **ALWAYS** use `valkey@7.2` (not `valkey@8`). REASON: v8 passes dry-run validation but fails actual import
 - **NEVER** use Docker `:latest` tag. REASON: cached and won't re-pull; always use specific version tags
+- **ALWAYS** use `--network=host` for Docker services. REASON: without it, container cannot receive traffic from Zerops routing
 - **ALWAYS** use `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` for Object Storage. REASON: MinIO backend doesn't support virtual-hosted style
+
+### Import Generation (dev/stage patterns)
+- **Standard mode:** create dev/stage pairs for runtimes. Naming: `{prefix}dev` and `{prefix}stage` (e.g., `appdev`/`appstage`, `apidev`/`apistage`). Dev mode: single `{prefix}dev`. Simple mode: single `{name}` with real start command
+- **ALWAYS** set `startWithoutCode: true` ONLY on dev services (not stage). Simple mode: set on the single service. REASON: dev starts immediately; stage stays in READY_TO_DEPLOY until code arrives
+- **ALWAYS** set `maxContainers: 1` for dev services. REASON: dev uses SSHFS; multiple containers cause file conflicts
+- **ONLY** set `zeropsSetup` when using `buildFromGit` and the zerops.yaml setup name differs from hostname. REASON: defaults to hostname
+- **ALWAYS** set `minRam` high enough for initial RAM spikes (autoscaling has ~10-20s reaction time). Dev needs higher than stage/prod (compilation on container)
+- **ALWAYS** use managed service hostname conventions: `db`, `cache`, `queue`, `search`, `storage`. REASON: standardizes cross-service references
+- **ALWAYS** match zerops.yaml `setup:` to service hostname. REASON: `zcli push` defaults to hostname; mismatch = "setup not found"
+- **ALWAYS** add `run.healthCheck` and `deploy.readinessCheck` ONLY to stage/prod entries, NEVER to dev. REASON: dev uses `zsc noop --silent`; healthCheck would restart the container during iteration
 
 ### Runtime-Specific
 - **ALWAYS** set `server.address=0.0.0.0` for Java Spring Boot. REASON: Spring Boot defaults to localhost binding -> unreachable from LB
@@ -164,7 +176,6 @@ zerops[]:
 - **NEVER** attempt to change HA/NON_HA mode after creation. REASON: mode is immutable; must delete and recreate service
 - **NEVER** attempt to change hostname after creation. REASON: hostname is immutable; it becomes the internal DNS name
 - **NEVER** expect disk to shrink. REASON: auto-scaling only increases disk; to reduce, recreate the service
-- **ALWAYS** use `zsc execOnce <key> -- <cmd>` for migrations in HA. REASON: prevents duplicate execution across multiple containers
 
 ---
 
