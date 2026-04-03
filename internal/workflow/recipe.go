@@ -246,7 +246,6 @@ func (r *RecipeState) BuildResponse(sessionID, intent string, iteration int, env
 		SessionID: sessionID,
 		Intent:    intent,
 		Iteration: iteration,
-		OutputDir: r.OutputDir,
 		Progress: RecipeProgress{
 			Total:     len(r.Steps),
 			Completed: completed,
@@ -265,7 +264,15 @@ func (r *RecipeState) BuildResponse(sessionID, intent string, iteration int, env
 		}
 		resp.Current.DetailedGuide = r.buildGuide(detail.Name, iteration, kp)
 		resp.Message = fmt.Sprintf("Recipe step %d/%d: %s", r.CurrentStep+1, len(r.Steps), detail.Name)
+
+		// Only expose outputDir during finalize/close — earlier steps write to
+		// mounted service filesystems, not the recipe output directory.
+		if detail.Name == RecipeStepFinalize || detail.Name == RecipeStepClose {
+			resp.OutputDir = r.OutputDir
+		}
 	} else {
+		// Recipe complete — include outputDir for post-completion reference.
+		resp.OutputDir = r.OutputDir
 		resp.Message = "Recipe complete. All steps finished."
 	}
 
