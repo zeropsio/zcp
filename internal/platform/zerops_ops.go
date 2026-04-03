@@ -98,6 +98,40 @@ func (z *ZeropsClient) DisconnectSharedStorage(ctx context.Context, serviceID, s
 	return &proc, nil
 }
 
+// ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+
+func (z *ZeropsClient) GetProjectExport(ctx context.Context, projectID string) (string, error) {
+	pathParam := path.ProjectId{Id: uuid.ProjectId(projectID)}
+	resp, err := z.handler.GetProjectExport(ctx, pathParam)
+	if err != nil {
+		return "", mapSDKError(err, "project")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return "", mapSDKError(err, "project")
+	}
+	return out.Yaml.Native(), nil
+}
+
+func (z *ZeropsClient) GetServiceStackExport(ctx context.Context, serviceID string) (string, error) {
+	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
+	resp, err := z.handler.GetServiceStackExport(ctx, pathParam)
+	if err != nil {
+		return "", mapSDKError(err, "service")
+	}
+	out, err := resp.Output()
+	if err != nil {
+		return "", mapSDKError(err, "service")
+	}
+	return out.Yaml.Native(), nil
+}
+
+// ---------------------------------------------------------------------------
+// Scaling
+// ---------------------------------------------------------------------------
+
 func (z *ZeropsClient) SetAutoscaling(ctx context.Context, serviceID string, params AutoscalingParams) (*Process, error) {
 	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
 

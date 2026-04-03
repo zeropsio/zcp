@@ -38,6 +38,10 @@ type Client interface {
 	CreateProjectEnv(ctx context.Context, projectID string, key, content string, sensitive bool) (*Process, error)
 	DeleteProjectEnv(ctx context.Context, envID string) (*Process, error)
 
+	// Export (returns re-importable YAML)
+	GetProjectExport(ctx context.Context, projectID string) (string, error)
+	GetServiceStackExport(ctx context.Context, serviceID string) (string, error)
+
 	// Import
 	ImportServices(ctx context.Context, projectID string, yaml string) (*ImportResult, error)
 

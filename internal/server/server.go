@@ -104,6 +104,7 @@ func (s *Server) registerTools() {
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, projectID, s.authInfo, s.logFetcher)
 	}
+	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID)

@@ -93,6 +93,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_logs", title: "Fetch service logs", readOnly: true, idempotent: true},
 		{name: "zerops_events", title: "Fetch project activity timeline", readOnly: true, idempotent: true},
 		{name: "zerops_verify", title: "Verify service health", readOnly: true, idempotent: true},
+		{name: "zerops_export", title: "Export project/service configuration", readOnly: true, idempotent: true},
 
 		// Mutating tools
 		{name: "zerops_process", title: "Check or cancel async process", idempotent: true, destructive: boolPtr(false)},
@@ -186,6 +187,7 @@ func TestAnnotations_DescriptionWordCount(t *testing.T) {
 		"zerops_knowledge",
 		"zerops_verify",
 		"zerops_process",
+		"zerops_export",
 	}
 
 	for _, name := range trimmedTools {
@@ -222,6 +224,7 @@ func TestAnnotations_DescriptionKeywords(t *testing.T) {
 		{name: "zerops_knowledge", keywords: []string{"briefing", "scope", "query", "recipe"}},
 		{name: "zerops_verify", keywords: []string{"health", "pass", "fail", "info"}},
 		{name: "zerops_process", keywords: []string{"cancel", "status"}},
+		{name: "zerops_export", keywords: []string{"export", "yaml", "service"}},
 	}
 
 	for _, tt := range tests {
