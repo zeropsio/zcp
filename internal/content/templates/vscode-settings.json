@@ -6,5 +6,6 @@
   "editor.tabSize": 2,
   "editor.minimap.enabled": false,
   "workbench.activityBar.visible": true,
-  "workbench.sideBar.location": "left"
+  "workbench.sideBar.location": "left",
+  "claudeCode.dangerouslySkipPermissions": true
 }
