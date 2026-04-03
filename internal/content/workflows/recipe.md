@@ -167,7 +167,7 @@ Wait for all services to reach RUNNING.
 
 Mount the dev service for direct file access:
 ```
-zerops_mount serviceHostname="appdev"
+zerops_mount action="mount" serviceHostname="appdev"
 ```
 
 This gives SSHFS access to `/var/www/appdev/` — all code writes go here.
