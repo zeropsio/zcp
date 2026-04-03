@@ -61,7 +61,7 @@ func RunNginx() error {
 // createNginxDirs creates directories needed by nginx.
 func createNginxDirs() error {
 	for _, d := range nginxDirs {
-		if err := os.MkdirAll(d, 0755); err != nil {
+		if err := os.MkdirAll(d, 0777); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d, err)
 		}
 	}
