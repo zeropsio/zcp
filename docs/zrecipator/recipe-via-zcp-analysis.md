@@ -154,7 +154,7 @@ The meta-prompt must be **self-contained** because the executing agent has no in
 |---|------|-----------|----------------|-----------------|
 | 1 | `zerops_workflow` | No | No | Orchestration hub |
 | 2 | `zerops_discover` | Yes | No | Service/env var discovery |
-| 3 | `zerops_knowledge` | Yes | No | 4 modes: briefing, scope, query (BM25), recipe |
+| 3 | `zerops_knowledge` | Yes | No | 4 modes: briefing, scope, query (text search), recipe |
 | 4 | `zerops_logs` | Yes | No | Debug failures |
 | 5 | `zerops_events` | Yes | No | Activity timeline |
 | 6 | `zerops_process` | Yes | No | Check async processes |
@@ -172,7 +172,7 @@ The meta-prompt must be **self-contained** because the executing agent has no in
 
 | Directory | Count | Content |
 |-----------|-------|---------|
-| `themes/` | 4 | `core.md` (YAML schemas, rules), `operations.md`, `services.md` (service cards, wiring), `universals.md` |
+| `themes/` | 4 | `model.md` (platform model, constraints), `core.md` (YAML schemas), `operations.md`, `services.md` (service cards, wiring) |
 | `bases/` | 5 | `alpine.md`, `docker.md`, `nginx.md`, `static.md`, `ubuntu.md` |
 | `recipes/` | ~35 | Per-framework recipe guides |
 | `guides/` | ~25 | Operational guides (backup, cdn, logging, networking, etc.) |
@@ -210,7 +210,7 @@ Persisted at `.zcp/state/sessions/{id}.json`. Survives process restarts. Max 10 
 | Environment Variables — Three Categories | `themes/core.md` "Env Variables" section | 100% |
 | Referencing Pattern | `themes/services.md` wiring syntax | 100% |
 | zerops.yaml Intelligence Principle | `themes/core.md` + zerops.yml JSON schema | 90% |
-| deployFiles and start Command Validation | `themes/core.md` "Rules & Pitfalls" | 90% |
+| deployFiles and start Command Validation | `themes/core.md` "Schema Rules" + ZCP checkers | 90% |
 | Build Cache Strategy | Runtime briefings + `themes/core.md` | 80% |
 | .gitignore Alignment | Not in ZCP (new content) | 0% |
 | Runtime Base Image OS | Runtime briefings, `bases/*.md` | 80% |

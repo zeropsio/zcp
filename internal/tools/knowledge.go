@@ -50,7 +50,7 @@ func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) string {
 func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
-		Description: "Load Zerops platform knowledge. Four modes: (1) briefing — stack-specific rules via runtime/services params. (2) scope=infrastructure — complete platform reference, required before generating YAML. (3) query — BM25 search. (4) recipe — pre-built framework configs.",
+		Description: "Load Zerops platform knowledge. Four modes: (1) briefing — stack-specific rules via runtime/services params. (2) scope=infrastructure — complete platform reference, required before generating YAML. (3) query — text search. (4) recipe — pre-built framework configs.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Zerops knowledge access",
 			ReadOnlyHint:   true,
@@ -81,7 +81,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"Must provide at least one of: query, runtime/services, scope, or recipe",
-				"Specify query for BM25 search, runtime/services for briefing, scope for platform reference, or recipe for a recipe")), nil, nil
+				"Specify query for text search, runtime/services for briefing, scope for platform reference, or recipe for a recipe")), nil, nil
 		}
 
 		if modeCount > 1 {

@@ -52,7 +52,7 @@ Currently only **Bun** has a `knowledge-base` fragment. The other 32 recipes hav
 
 In the old model, `GetRecipe("laravel")` would prepend the PHP runtime guide to the Laravel recipe content. This was wrong — Laravel has its own PHP configuration needs (Composer, Artisan, queue workers) that differ from a bare PHP hello-world. The runtime guide's generic advice created confusion.
 
-Now each recipe is **standalone**: `GetRecipe` prepends only platform universals (`themes/universals.md`) which are truly universal. Runtime-specific knowledge lives in the recipe's own `knowledge-base` fragment.
+Now each recipe is **standalone**: `GetRecipe` prepends only platform constraints (extracted from `themes/model.md` "Platform Constraints" H2 section). Runtime-specific knowledge lives in the recipe's own `knowledge-base` fragment.
 
 ## How It Works
 
@@ -124,7 +124,7 @@ Includes: Bun, npm, yarn, git, bunx. NOT included: pnpm.
 | **knowledge-base** | `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->` | Runtime-specific gotchas, base image — only what you can't learn from platform docs or general runtime docs |
 | **integration-guide** | `<!-- #ZEROPS_EXTRACT_START:integration-guide# -->` | Full zerops.yml with inline comments PLUS framework-specific integration steps (S3, env vars, mailer, etc.) |
 
-Platform knowledge lives in `themes/universals.md` and is prepended automatically. Recipes contain only what's **irreducible to the specific runtime/framework**. The `NoPlatformDuplication` lint flags violations.
+Platform constraints are extracted from `themes/model.md` and prepended automatically. Recipes contain only what's **irreducible to the specific runtime/framework**. The `NoPlatformDuplication` lint flags violations.
 
 Most recipes currently have `description` + integration guide (zerops.yml). Knowledge-base sections (Base Image, Gotchas) come from the app README `knowledge-base` fragment — only Bun has this so far.
 
@@ -156,7 +156,7 @@ All access goes through the `Provider` interface (`engine.go`). Key methods:
 ### GetRecipe (briefing.go)
 
 `GetRecipe(name, mode)` returns the full recipe content with:
-1. **Platform universals** prepended (from `themes/universals.md`) — always
+1. **Platform constraints** prepended (from `themes/model.md` "Platform Constraints" H2) — always
 2. **Mode adaptation header** — concise single-line pointer to the right setup block:
    - `dev`/`standard`: "Use the `dev` setup block from the zerops.yml below."
    - `simple`: "Use the `prod` setup block below, but override `deployFiles: [.]`."
@@ -186,9 +186,8 @@ Simple text-matching with field boosts and query expansion:
 ### Document parsing (documents.go)
 
 - **Frontmatter extraction**: YAML `description:` and `repo:` fields parsed from `---` blocks
-- **Description priority**: frontmatter `description:` > `## TL;DR` > first paragraph
-- **Disambiguation**: uses `doc.Description` instead of old `doc.TLDR`
-- **Keywords and TL;DR**: still parsed (legacy) but not used in search scoring
+- **Description priority**: frontmatter `description:` > first paragraph
+- **Disambiguation**: uses `doc.Description` for recipe listing
 
 ### Lint Tests
 

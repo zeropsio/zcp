@@ -37,7 +37,7 @@ graph TB
 
     Engine -->|"assemble guidance"| Guidance["Guidance Assembly<br/>(bootstrap_guidance.go)"]
     Guidance -->|"extract sections"| Content["Embedded Content<br/>(bootstrap.md / deploy.md)"]
-    Guidance -->|"inject knowledge"| Knowledge["Knowledge Store<br/>(BM25 + recipes + schemas)"]
+    Guidance -->|"inject knowledge"| Knowledge["Knowledge Store<br/>(text search + recipes + schemas)"]
 
     Agent -->|"operational tools"| OpTools["zerops_discover<br/>zerops_import<br/>zerops_mount<br/>zerops_deploy<br/>zerops_verify<br/>zerops_subdomain"]
 

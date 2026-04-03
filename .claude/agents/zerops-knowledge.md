@@ -105,11 +105,11 @@ When the prompt specifies a task type, add these to your standard factual brief:
 ```
 cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/platform → Zerops API
                                                                 internal/auth
-                                                                internal/knowledge (BM25)
+                                                                internal/knowledge (text search)
 ```
 
 Key packages to know:
-- `internal/knowledge/recipes/` — 30 service recipes with Keywords, TL;DR, zerops.yml, import.yml, Gotchas
+- `internal/knowledge/recipes/` — 30+ service recipes with zerops.yml, import.yml, Gotchas
 - `internal/content/` — embedded workflow templates (bootstrap.md, deploy.md, etc.)
 - `internal/workflow/` — session state, bootstrap conductor
 - `internal/platform/` — Zerops API client, error codes

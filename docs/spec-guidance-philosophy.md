@@ -105,7 +105,7 @@ ZCP operations follow a two-tier model:
 | **Platform mechanics** | Container lifecycle, env var resolution, build vs run container, deployFiles behavior | Verified against live platform | Stable (changes with Zerops releases) |
 | **Mode workflows** | Standard: dev→stage flow. Dev: dev-only. Simple: auto-start. | Defined in ZCP code | Stable (changes with ZCP releases) |
 | **Strategy procedures** | push-dev: SSH self-deploy. ci-cd: git webhook. manual: user-managed. | Defined in ZCP code | Stable |
-| **Runtime knowledge** | Node.js zerops.yml patterns, Go build config, PHP implicit webserver | Knowledge store (BM25 + recipes) | Updated periodically |
+| **Runtime knowledge** | Node.js zerops.yml patterns, Go build config, PHP implicit webserver | Knowledge store (text search + recipes) | Updated periodically |
 | **Recipe patterns** | Next.js, Laravel, Django framework-specific configs | Knowledge store (recipes/) | Updated periodically |
 | **Operational data** | Service status, env var values, health check results, logs | Live API (zerops_discover, zerops_verify, zerops_logs) | Dynamic (changes constantly) |
 
@@ -125,7 +125,7 @@ The knowledge base uses a layered architecture where each layer adds specificity
 │  PostgreSQL, Valkey, Kafka, Object Storage, ...    │  reference
 ├─────────────────────────────────────────────────────┤
 │  Layer 1: Core Reference (themes/core.md)           │  YAML schemas,
-│  import.yml + zerops.yml schemas, rules, pitfalls  │  platform rules
+│  import.yml + zerops.yml schemas, deploy semantics  │  platform rules
 ├─────────────────────────────────────────────────────┤
 │  Layer 0: Universals (Platform Constraints H2 from  │  Platform truths
 │  themes/model.md) — bind, deployFiles, no .env, zsc│  for ALL services

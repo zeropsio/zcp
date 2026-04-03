@@ -34,7 +34,7 @@ Read every line in the recipe and ask: "Would an LLM get this wrong without this
 
 **Keep if**: It's a Zerops platform behavior, a non-obvious gotcha verified on live platform, or a specific env var / config pattern that only works on Zerops.
 
-**Be skeptical of**: "Best practices" that are just general framework advice. "Configuration" sections that restate framework documentation. Keywords that don't help BM25 find THIS recipe specifically.
+**Be skeptical of**: "Best practices" that are just general framework advice. "Configuration" sections that restate framework documentation.
 
 ### 3. Check the wiring pattern
 
@@ -103,8 +103,6 @@ Not a rigid template — adapt to the framework. Some frameworks need layers (La
 
 ### What every recipe needs (lint-enforced)
 
-- `## Keywords` — framework-specific terms for BM25 search (>= 3). Not managed service names, not generic terms like "api" or "typescript".
-- `## TL;DR` — what runtime, what's Zerops-specific
 - `## zerops.yml` — at least one valid YAML example with `zerops:` entries
 - `## import.yml` — at least one valid import example (lint checks for content)
 - `## Gotchas` — Zerops-specific gotchas (lint checks section exists)
@@ -121,7 +119,7 @@ Not a rigid template — adapt to the framework. Some frameworks need layers (La
 
 **Framework-specific packages on a "base" recipe**: When a framework (Filament, Twill) is built on another (Laravel), the recipe should reference the base recipe and document ONLY the differences. Don't duplicate the base. The LLM knows the relationship.
 
-**Keywords are for BM25 search disambiguation.** "filament" finds the Filament recipe, not the Laravel one. Don't add terms shared by many recipes (php, nodejs, zerops.yml) — they don't help disambiguation. Add terms a user would search for when they specifically want THIS framework.
+**Search finds recipes by title and content.** Use a descriptive title (e.g., "Filament on Zerops") so text search can disambiguate. The LLM can also find recipes by name via `zerops_knowledge recipe="filament"`.
 
 ---
 

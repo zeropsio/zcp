@@ -29,7 +29,7 @@ Zerops platform schemas (live, authoritative for YAML field validation):
 ```
 cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/platform → Zerops API
                                                                 internal/auth
-                                                                internal/knowledge (BM25)
+                                                                internal/knowledge (text search)
 ```
 
 | Package | Responsibility | Key file |
@@ -40,7 +40,7 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/ops` | Business logic, validation | `discover.go`, `manage.go`, ... |
 | `internal/platform` | Zerops API client, types, errors | `client.go`, `errors.go` |
 | `internal/auth` | Token resolution (env var / zcli), project discovery | `auth.go` |
-| `internal/knowledge` | BM25 search, embedded docs, session-aware briefings, runtime-aware mode adaptation | `engine.go`, `briefing.go` |
+| `internal/knowledge` | Text search, embedded docs, session-aware briefings, runtime-aware mode adaptation | `engine.go`, `briefing.go` |
 | `internal/runtime` | Container vs local detection | `runtime.go` |
 | `internal/content` | Embedded templates + workflow catalog (bootstrap, deploy, recipe, cicd) | `content.go` |
 | `internal/workflow` | Workflow orchestration, bootstrap/deploy/recipe conductors, guidance assembly, session state | `session.go`, `deploy_guidance.go`, `recipe.go`, `engine_recipe.go` |

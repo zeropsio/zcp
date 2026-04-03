@@ -31,7 +31,7 @@ Through ZCP tools, the LLM can:
 ```
 cmd/zcp/main.go → internal/server  → MCP tools  → internal/ops      → internal/platform → Zerops API
                                                  → internal/workflow  (orchestration + routing)
-                                                 → internal/knowledge (BM25 search)
+                                                 → internal/knowledge (text search)
                                                  → internal/auth      (token resolution)
 ```
 
@@ -44,7 +44,7 @@ cmd/zcp/main.go → internal/server  → MCP tools  → internal/ops      → in
 | `internal/workflow` | Bootstrap/deploy/recipe conductors, personalized guidance, checkers, session state, router |
 | `internal/platform` | Zerops API client, types, error codes |
 | `internal/auth` | Token resolution (env var / zcli), project discovery |
-| `internal/knowledge` | BM25 search, embedded docs + recipes, session-aware briefings |
+| `internal/knowledge` | Text search, embedded docs + recipes, session-aware briefings |
 | `internal/content` | Embedded workflow guides (bootstrap.md, deploy.md, recipe.md, cicd.md) |
 
 ---
@@ -278,7 +278,7 @@ Platform knowledge is compiled into the binary. The LLM queries it before genera
 - **Briefings** — stack-specific rules (e.g., "Node.js must bind 0.0.0.0, use these env var patterns for PostgreSQL wiring")
 - **Recipes** — complete framework configs (Laravel, Next.js, Django, etc.) with zerops.yml + import.yml
 - **Infrastructure scope** — full import.yml and zerops.yml schema reference
-- **Text search** — BM25 search across all embedded docs
+- **Text search** — search across all embedded docs by title + content matching
 
 This prevents the LLM from guessing Zerops-specific syntax. It reads the rules, then generates config.
 
