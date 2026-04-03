@@ -95,7 +95,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 
 	switch input.Action {
 	case "start":
-		return handleStart(ctx, projectID, engine, client, cache, schemaCache, input)
+		return handleStart(ctx, projectID, engine, client, cache, input)
 	case "reset":
 		return handleReset(engine)
 	case "iterate":
@@ -147,7 +147,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	}
 }
 
-func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	// Immediate workflows: stateless, return guidance directly.
 	if workflow.IsImmediateWorkflow(input.Workflow) {
 		wfContent, err := content.GetWorkflow(input.Workflow)
