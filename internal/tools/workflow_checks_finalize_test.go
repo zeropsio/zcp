@@ -191,6 +191,95 @@ func TestCheckRecipeFinalize_EnvSecrets(t *testing.T) {
 	}
 }
 
+func TestCheckRecipeFinalize_StartWithoutCode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	plan := testFinalizePlan()
+	writeRecipeFiles(t, dir, plan)
+
+	// Inject startWithoutCode into env 0 import.yaml.
+	env0Path := filepath.Join(dir, workflow.EnvFolder(0), "import.yaml")
+	data, err := os.ReadFile(env0Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Add startWithoutCode after the first hostname line.
+	modified := strings.Replace(string(data), "type: bun@1\n", "type: bun@1\n    startWithoutCode: true\n", 1)
+	if err := os.WriteFile(env0Path, []byte(modified), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	checker := checkRecipeFinalize(dir)
+	result, err := checker(context.Background(), plan, &workflow.RecipeState{OutputDir: dir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	found := false
+	for _, c := range result.Checks {
+		if c.Status == "fail" && strings.Contains(c.Name, "no_start_without_code") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected startWithoutCode check to fail")
+	}
+}
+
+func TestCheckSectionHeadingComments(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+		wantOK  bool
+	}{
+		{
+			name:    "no headings",
+			content: "# Installs deps for production.\nservices:\n  - hostname: app\n",
+			wantOK:  true,
+		},
+		{
+			name:    "separator line",
+			content: "# ---------------------------------------------------\nservices:\n",
+			wantOK:  false,
+		},
+		{
+			name:    "heading with dashes",
+			content: "# -- Dev Runtime --\nservices:\n",
+			wantOK:  false,
+		},
+		{
+			name:    "heading with equals",
+			content: "# == Database ==\nservices:\n",
+			wantOK:  false,
+		},
+		{
+			name:    "short dashes ok",
+			content: "# --\nservices:\n",
+			wantOK:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			checks := checkSectionHeadingComments(tt.content, "test")
+			passed := true
+			for _, c := range checks {
+				if c.Status == statusFail {
+					passed = false
+				}
+			}
+			if passed != tt.wantOK {
+				t.Errorf("checkSectionHeadingComments() passed=%v, want %v", passed, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestCheckRecipeFinalize_CommentRatio(t *testing.T) {
 	t.Parallel()
 

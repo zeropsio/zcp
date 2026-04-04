@@ -72,6 +72,22 @@ func ValidateZeropsYml(workingDir, targetHostname string, roles ...string) []str
 		}
 	}
 
+	// When cherry-picking (not "."), check each path exists.
+	if len(deployFiles) > 0 && !slices.Contains(deployFiles, ".") && !slices.Contains(deployFiles, "./") {
+		var missing []string
+		for _, df := range deployFiles {
+			p := filepath.Join(workingDir, df)
+			if _, err := os.Stat(p); err != nil {
+				missing = append(missing, df)
+			}
+		}
+		if len(missing) > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"deployFiles paths not found: %s — these will be missing from the deploy artifact",
+				strings.Join(missing, ", ")))
+		}
+	}
+
 	// Stage services with "zsc noop" build command are likely misconfigured.
 	if isStage && entry.Build.hasZscNoop() {
 		warnings = append(warnings, fmt.Sprintf(
@@ -115,6 +131,11 @@ func (e ZeropsYmlEntry) HasPorts() bool {
 // HasDeployFiles returns true if the entry has non-empty build.deployFiles.
 func (e ZeropsYmlEntry) HasDeployFiles() bool {
 	return len(e.Build.deployFilesList()) > 0
+}
+
+// DeployFilesList returns the normalized list of deploy file paths.
+func (e ZeropsYmlEntry) DeployFilesList() []string {
+	return e.Build.deployFilesList()
 }
 
 // HasImplicitWebServer returns true if the entry's runtime has a built-in web

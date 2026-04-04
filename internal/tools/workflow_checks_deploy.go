@@ -75,6 +75,9 @@ func checkDeployPrepare(client platform.Client, projectID, stateDir string) work
 					Name: t.Hostname + "_setup", Status: statusPass,
 				})
 
+				// Validate deployFiles paths exist.
+				checks = append(checks, validateDeployFiles(projectRoot, t.Hostname, entry)...)
+
 				// Validate env var references if entry has envVariables.
 				if len(entry.EnvVariables) > 0 && client != nil {
 					checks = append(checks, validateDeployEnvRefs(ctx, client, projectID, t.Hostname, entry, state.Targets)...)
@@ -186,6 +189,38 @@ func findAndParseZeropsYml(projectRoot string, targets []workflow.DeployTarget) 
 	}
 	// Fall back to project root (local environment).
 	return ops.ParseZeropsYml(projectRoot)
+}
+
+// validateDeployFiles checks that cherry-picked deployFiles paths exist on the filesystem.
+// Skipped when deployFiles is [.] (deploys everything).
+func validateDeployFiles(projectRoot, hostname string, entry *ops.ZeropsYmlEntry) []workflow.StepCheck {
+	if !entry.HasDeployFiles() {
+		return nil
+	}
+	deployFiles := entry.DeployFilesList()
+	// Skip if deploying everything.
+	if slices.Contains(deployFiles, ".") || slices.Contains(deployFiles, "./") {
+		return nil
+	}
+
+	var missing []string
+	for _, df := range deployFiles {
+		p := filepath.Join(projectRoot, df)
+		if _, err := os.Stat(p); err != nil {
+			missing = append(missing, df)
+		}
+	}
+	if len(missing) > 0 {
+		return []workflow.StepCheck{{
+			Name:   hostname + "_deploy_files",
+			Status: statusFail,
+			Detail: fmt.Sprintf("deployFiles paths not found: %s — these will be missing from the deploy artifact", strings.Join(missing, ", ")),
+		}}
+	}
+	return []workflow.StepCheck{{
+		Name:   hostname + "_deploy_files",
+		Status: statusPass,
+	}}
 }
 
 // validateDeployEnvRefs re-discovers env vars via API and validates references.

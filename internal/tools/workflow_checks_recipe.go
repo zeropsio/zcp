@@ -210,6 +210,8 @@ func checkReadmeFragments(content string) []workflow.StepCheck {
 						Detail: fmt.Sprintf("comment ratio %.0f%% is below 30%% minimum", ratio*100),
 					})
 				}
+				// Section-heading comment check on zerops.yaml.
+				checks = append(checks, checkSectionHeadingComments(yamlBlock, "zerops_yaml")...)
 			}
 		} else {
 			checks = append(checks, workflow.StepCheck{

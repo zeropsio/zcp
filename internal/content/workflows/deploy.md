@@ -67,7 +67,7 @@ This shows whether the issue is new or recurring.
 |---------|-------------|--------------|
 | ECONNREFUSED between services | Using `https://` internally | Use `http://` for all internal connections |
 | 502 Bad Gateway | App binds to localhost | Bind `0.0.0.0` (check runtime exceptions) |
-| Env vars show literal `${...}` | Dashes in cross-references | Use underscores: `${service_hostname}` |
+| Env vars show literal `${...}` | Dashes in cross-references | Use underscores: `${db_hostname}` not `${db-hostname}` |
 | Build FAILED | Wrong buildCommands or missing deps | Check build logs |
 | Service not starting | Port outside range or bad start cmd | Ports 10-65435, verify `start` in zerops.yaml |
 | DB connection timeout | Wrong connection string or DB not running | Use `http://hostname:port`, verify DB status |
@@ -189,8 +189,9 @@ Before deploying, verify:
 
 1. **`zerops.yaml` must exist** at the working directory root with `setup:` entries matching target service hostnames.
 2. **`includeGit=true` requires `deployFiles: [.]`** — individual paths break git structure.
-3. **Environment variables must be resolved.** Run `zerops_discover includeEnvs=true` and verify cross-referenced variables have real values (not `${...}` literals).
-4. **NEVER hardcode credential values.** Always use `${hostname_varName}` references.
+3. **`deployFiles` completeness check**: When cherry-picking files (not using `.`), verify every listed path exists AND that your `run.start` command and framework can find all required files. Common misses: `app/` (Laravel/PHP), `src/` (many frameworks), lock files, config dirs. Run `ls` to check.
+4. **Environment variables must be resolved.** Run `zerops_discover includeEnvs=true` and verify cross-referenced variables have real values (not `${...}` literals).
+5. **NEVER hardcode credential values.** Always use `${hostname_varName}` references.
 
 Platform knowledge (YAML schemas, runtime rules) is included in this guide automatically.
 For framework-specific patterns: `zerops_knowledge recipe="{name}"`

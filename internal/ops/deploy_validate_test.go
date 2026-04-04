@@ -111,6 +111,7 @@ func TestValidateZeropsYml_DeployFiles(t *testing.T) {
 		wantWarnings int
 		wantContains string
 		noWarnings   bool
+		createDirs   []string
 	}{
 		{
 			name:     "missing deployFiles",
@@ -139,6 +140,7 @@ func TestValidateZeropsYml_DeployFiles(t *testing.T) {
 `,
 			wantWarnings: 1,
 			wantContains: "dev service should use deployFiles: [.]",
+			createDirs:   []string{"dist"},
 		},
 		{
 			name:     "stage without dot deployFiles is fine",
@@ -153,6 +155,7 @@ func TestValidateZeropsYml_DeployFiles(t *testing.T) {
         - port: 8080
 `,
 			noWarnings: true,
+			createDirs: []string{"dist"},
 		},
 		{
 			name:     "valid dev config",
@@ -210,6 +213,7 @@ func TestValidateZeropsYml_DeployFiles(t *testing.T) {
 `,
 			wantWarnings: 1,
 			wantContains: "dev service should use deployFiles: [.]",
+			createDirs:   []string{"dist"},
 		},
 		{
 			name:     "deployFiles under run instead of build",
@@ -240,14 +244,35 @@ func TestValidateZeropsYml_DeployFiles(t *testing.T) {
       ports:
         - port: 8080
 `,
-			noWarnings: true,
+			noWarnings:   true,
+			createDirs:   []string{"dist"},
+		},
+		{
+			name:     "cherry-picked deployFiles with missing paths",
+			hostname: "appstage",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      deployFiles:
+        - app
+        - vendor
+        - public
+        - nonexistent
+    run:
+      start: php artisan serve
+      ports:
+        - port: 8080
+`,
+			wantWarnings: 1,
+			wantContains: "deployFiles paths not found: nonexistent",
+			createDirs:   []string{"app", "vendor", "public"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			runValidateTest(t, tt.hostname, tt.yml, tt.wantWarnings, tt.wantContains, tt.noWarnings)
+			runValidateTest(t, tt.hostname, tt.yml, tt.wantWarnings, tt.wantContains, tt.noWarnings, tt.createDirs...)
 		})
 	}
 }
@@ -308,7 +333,7 @@ func TestValidateZeropsYml_HealthChecks(t *testing.T) {
 			yml: `zerops:
   - setup: appstage
     build:
-      deployFiles: [dist]
+      deployFiles: [.]
     run:
       start: node dist/index.js
       ports:
@@ -326,7 +351,7 @@ func TestValidateZeropsYml_HealthChecks(t *testing.T) {
 			yml: `zerops:
   - setup: appstage
     build:
-      deployFiles: [dist]
+      deployFiles: [.]
     deploy:
       readinessCheck:
         httpGet:
@@ -390,7 +415,7 @@ func TestValidateZeropsYml_ImplicitWebServer(t *testing.T) {
 			yml: `zerops:
   - setup: appstage
     build:
-      deployFiles: [dist]
+      deployFiles: [.]
     run:
       base: nginx@1.22
 `,
@@ -402,7 +427,7 @@ func TestValidateZeropsYml_ImplicitWebServer(t *testing.T) {
 			yml: `zerops:
   - setup: appstage
     build:
-      deployFiles: [dist]
+      deployFiles: [.]
     run:
       base: static
 `,
@@ -852,12 +877,17 @@ func TestParseZeropsYml_ExtensionFallback(t *testing.T) {
 	}
 }
 
-func runValidateTest(t *testing.T, hostname, yml string, wantWarnings int, wantContains string, noWarnings bool) {
+func runValidateTest(t *testing.T, hostname, yml string, wantWarnings int, wantContains string, noWarnings bool, createDirs ...string) {
 	t.Helper()
 
 	dir := t.TempDir()
 	if yml != "" {
 		if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(yml), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, d := range createDirs {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0755); err != nil {
 			t.Fatal(err)
 		}
 	}

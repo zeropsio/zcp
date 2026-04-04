@@ -190,9 +190,9 @@ Record which env vars exist. Common patterns:
 
 | Service type | Available env vars |
 |-------------|-------------------|
-| PostgreSQL | `${db_connectionString}`, `${db_host}`, `${db_port}`, `${db_user}`, `${db_password}`, `${db_dbName}` |
-| MariaDB | `${db_connectionString}`, `${db_host}`, `${db_port}`, `${db_user}`, `${db_password}`, `${db_dbName}` |
-| Valkey | `${cache_host}`, `${cache_port}` (no password — private network) |
+| PostgreSQL | `${db_hostname}`, `${db_port}`, `${db_user}`, `${db_password}`, `${db_connectionString}`, `${db_dbName}` |
+| MariaDB | `${db_hostname}`, `${db_port}`, `${db_user}`, `${db_password}`, `${db_connectionString}`, `${db_dbName}` |
+| Valkey | `${cache_hostname}`, `${cache_port}` (no password — private network) |
 | Object Storage | `${storage_apiUrl}`, `${storage_accessKeyId}`, `${storage_secretAccessKey}`, `${storage_bucketName}` |
 
 **ONLY use variables that were actually discovered.** Guessing variable names causes runtime failures.
@@ -375,6 +375,7 @@ Recipes are read by both humans and AI agents. Write like a senior dev explainin
 **Anti-patterns:**
 - Don't restate the key name ("# Set the build base" on `base: php@8.4`)
 - Don't write generic descriptions ("# This is the build section")
+- Don't add section-heading comments with decorators (`# -- Dev Runtime --`, `# === Database ===`, `# ----------`) — the YAML structure itself provides grouping. Comments explain decisions, not label sections.
 - Don't use "we" or "you" excessively
 - Don't explain YAML syntax itself
 - Don't write single-word comments ("# dependencies", "# port")
@@ -427,7 +428,7 @@ If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix 
 Add a `setup: prod` entry to zerops.yaml on the appdev mount. Prod differences from dev:
 - Real `start` command (not `zsc noop`). For static: still no `start` (Nginx serves).
 - Real `buildCommands` with compilation/bundling
-- Real `deployFiles` (build output, not `.`)
+- Real `deployFiles` (build output, not `.`) — **verify completeness**: list ALL dirs/files your start command and framework need at runtime. Common misses: `app/` (Laravel), `src/` (many frameworks), `storage/` (Laravel), lock files. When cherry-picking (not using `.`), run `ls` to see what exists and cross-reference with your start command and framework requirements.
 - Add `healthCheck` (httpGet on app port) — **required for prod** (restarts unresponsive containers). Omit only on dev and static.
 - Add `deploy.readinessCheck` if app has `initCommands` (migrations)
 - Copy `envVariables` from dev entry (if any), adjust APP_ENV/APP_DEBUG for production
@@ -516,11 +517,11 @@ Plus:
 - `#zeropsPreprocessor=on` when using `<@generateRandomString(<32>)>`
 - `corePackage: SERIOUS` at **project level** for env 5 (NOT under verticalAutoscaling)
 - `verticalAutoscaling` nesting: minFreeRamGB, cpuMode under it
+- Every runtime service in the recipe deliverable uses `buildFromGit` — **NO `startWithoutCode`** (that's workspace-only, never in finalize output)
 - `zeropsSetup: prod` + `buildFromGit` on all prod/stage app/worker services
 - `zeropsSetup: dev` + `buildFromGit` on all dev app/worker services in env 0-1
-- Every runtime service in the recipe deliverable uses `buildFromGit` — no `startWithoutCode` (that's workspace-only)
-- `buildFromGit: https://github.com/zerops-recipe-apps/{slug}-app` on all non-startWithoutCode app/worker services
-- `startWithoutCode: true` + `maxContainers: 1` on dev services in env 0-1
+- `buildFromGit: https://github.com/zerops-recipe-apps/{slug}-app`
+- Env 0-1 dev hostnames: `appdev`, `workerdev` (suffix `dev`). Env 0-1 stage hostnames: `appstage`, `workerstage` (suffix `stage`). Env 2+ uses bare hostname: `app`, `worker`.
 - Comment line width <= 80 chars
 - Comment ratio >= 0.3 per file
 - No `PLACEHOLDER_*` strings
@@ -558,12 +559,13 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 > - Does `setup: prod` have `deploy.readinessCheck`? Missing readinessCheck means broken builds get traffic.
 > - Are deployFiles complete for prod? (common miss: `composer.lock`, `.env.example`)
 > - Are env vars correct for the framework? (e.g., Laravel SESSION_DRIVER, CACHE_STORE)
-> - Is the comment quality good? (WHY not WHAT, no restating key names)
+> - Is the comment quality good? (WHY not WHAT, no restating key names, no section-heading decorators like `# -- Section --`)
 >
 > **import.yaml review (all 6 environments):**
 > - Do ALL runtime services have `buildFromGit` + `zeropsSetup`? (dev=`zeropsSetup: dev`, prod/stage=`zeropsSetup: prod`)
-> - Is there NO `startWithoutCode` anywhere? (that's workspace-only, not for recipe deliverables)
-> - Is `buildFromGit` present on all non-startWithoutCode services?
+> - Is there NO `startWithoutCode` anywhere? (that's workspace-only, never in recipe deliverables)
+> - Do ALL runtime services have `buildFromGit`?
+> - Are env 0-1 hostnames suffixed correctly? (`appdev`/`appstage`, NOT `appdev`/`app`)
 > - Is `corePackage: SERIOUS` at project level (not verticalAutoscaling) in env 5?
 > - Are `envSecrets` per-service (not project level)?
 > - Is the scaling matrix correct across tiers?

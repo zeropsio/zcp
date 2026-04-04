@@ -725,7 +725,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 - zerops_subdomain MUST be called once after the first deploy of each new service (even if enableSubdomainAccess was in import). Re-deploys do NOT deactivate it. Use `zerops_discover` to check status and get URL.
 - subdomainUrls from enable response are already full URLs — do NOT prepend https://.
 - Internal connections use http://, never https://.
-- Env var cross-references use underscores: ${service_hostname}.
+- Env var cross-references: `${hostname_varName}` (e.g. `${db_hostname}`, `${db_port}`). Variable names are platform-defined — ALWAYS use `zerops_discover includeEnvs=true` to get actual names, never guess.
 - **NO .env files** — Zerops injects all envVariables/envSecrets as OS env vars at container start. Do NOT create `.env` files, use dotenv libraries, or add env-file-loading code.
 - 0.0.0.0 binding: app must listen on 0.0.0.0, not localhost or 127.0.0.1.
 

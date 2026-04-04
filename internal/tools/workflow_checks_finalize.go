@@ -192,6 +192,16 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 		}
 	}
 
+	// Recipe deliverables must NOT have startWithoutCode (workspace-only).
+	for _, svc := range doc.Services {
+		if svc.StartWithoutCode != nil && *svc.StartWithoutCode {
+			checks = append(checks, workflow.StepCheck{
+				Name: prefix + "_" + svc.Hostname + "_no_start_without_code", Status: statusFail,
+				Detail: fmt.Sprintf("service %q has startWithoutCode — recipe deliverables must use buildFromGit only (startWithoutCode is workspace-only)", svc.Hostname),
+			})
+		}
+	}
+
 	// Env 5: HA checks.
 	if envIndex == 5 {
 		checks = append(checks, checkEnv5Requirements(doc, plan, prefix)...)
@@ -230,6 +240,9 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 
 	// Comment line width.
 	checks = append(checks, checkCommentWidth(content, prefix)...)
+
+	// Section-heading comment patterns — labels, not explanations.
+	checks = append(checks, checkSectionHeadingComments(content, prefix)...)
 
 	// envSecrets check.
 	if plan.Research.NeedsAppSecret {
@@ -348,6 +361,46 @@ func checkCommentWidth(content, prefix string) []workflow.StepCheck {
 	}
 	return []workflow.StepCheck{{
 		Name: prefix + "_comment_width", Status: statusPass,
+	}}
+}
+
+// checkSectionHeadingComments detects decorator-style comment headings
+// like "# -- Dev Runtime --", "# === Database ===" or pure separator
+// lines like "# ---------------------------------------------------".
+// These label sections rather than explain decisions — YAML structure
+// provides grouping, comments should explain WHY.
+func checkSectionHeadingComments(content, prefix string) []workflow.StepCheck {
+	var headings []string
+	for i, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		body := strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
+		// Pure separator: only dashes, equals, or underscores.
+		stripped := strings.NewReplacer("-", "", "=", "", "_", "", " ", "").Replace(body)
+		if len(body) > 3 && stripped == "" {
+			headings = append(headings, fmt.Sprintf("line %d", i+1))
+			continue
+		}
+		// Heading pattern: "-- Text --", "== Text ==", etc.
+		if (strings.HasPrefix(body, "-- ") && strings.HasSuffix(body, " --")) ||
+			(strings.HasPrefix(body, "== ") && strings.HasSuffix(body, " ==")) {
+			headings = append(headings, fmt.Sprintf("line %d", i+1))
+		}
+	}
+	if len(headings) > 0 {
+		detail := strings.Join(headings, ", ")
+		if len(headings) > 3 {
+			detail = strings.Join(headings[:3], ", ") + fmt.Sprintf(" and %d more", len(headings)-3)
+		}
+		return []workflow.StepCheck{{
+			Name: prefix + "_comment_headings", Status: statusFail,
+			Detail: "section-heading comments found: " + detail + " — use explanatory comments, not labels",
+		}}
+	}
+	return []workflow.StepCheck{{
+		Name: prefix + "_comment_headings", Status: statusPass,
 	}}
 }
 
