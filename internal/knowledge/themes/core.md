@@ -134,14 +134,26 @@ zerops[]:
 - **NEVER** set `run.base: alpine@*` for Go. REASON: causes glibc/musl mismatch for CGO-linked binaries -> 502. Omit `run.base` or use `run.base: go@latest`
 - **ALWAYS** use `os: ubuntu` for Deno and Gleam. REASON: these runtimes are not available on Alpine
 
-### Environment Variables — Two Separate Systems
-- **envSecrets** (import.yaml or GUI): injected directly as OS env vars at container start. The app reads them via `getenv()` / `process.env` / `os.Getenv()` etc. Changes require a **service restart** (not just redeploy) to take effect.
+### Environment Variables — Three Levels
+
+**Where to put what:**
+
+| What | Where | Why |
+|------|-------|-----|
+| Shared config (non-secret, all services) | `project.envVariables` in import.yaml | Auto-inherited by every service. Do NOT re-reference in zerops.yaml (creates shadow). |
+| Cross-service wiring (DB creds, cache host) | `run.envVariables` in zerops.yaml | `${hostname_varname}` references resolve at deploy time. This is the ONLY place cross-service refs work. |
+| Per-service secrets (APP_KEY, SECRET_KEY_BASE) | `envSecrets` per-service in import.yaml | Each service gets its own key. Blurred in GUI. Auto-injected as OS vars — do NOT re-reference in zerops.yaml. |
+
+**How they work:**
+- **project.envVariables** (import.yaml): inherited by all services in the project. Good for shared non-secret config (e.g. `APP_NAME`, `LOG_LEVEL`). Changes via GUI, no redeploy needed.
 - **run.envVariables** (zerops.yaml): injected at deploy time. Support `${hostname_varname}` cross-service references. Changes take effect on next deploy.
-- These are **separate injection paths** — envSecrets are already available as OS vars, do NOT re-reference them in run.envVariables. Writing `APP_KEY: ${APP_KEY}` in envVariables does NOT reference the envSecret — `${...}` is ONLY for cross-service references (`${db_hostname}`). It creates a literal string `${APP_KEY}`.
-- Cross-service: `${hostname_varname}` (dashes→underscores) — the ONLY use of `${...}` syntax. References another service's auto-generated vars.
-- import.yaml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` (project-level only).
-- Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) — do NOT set these in import.yaml
-- `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`
+- **envSecrets** (import.yaml per-service, or GUI): injected directly as OS env vars at container start. Changes require a **service restart** (not just redeploy).
+
+**Critical rules:**
+- `${...}` syntax is ONLY for cross-service references in run.envVariables (`${db_hostname}`). Writing `APP_KEY: ${APP_KEY}` does NOT reference the envSecret — it creates a literal string.
+- import.yaml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` at service level (project-level only).
+- Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) — do NOT set these in import.yaml.
+- `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`.
 
 ### Import & Service Creation
 - **ALWAYS** set explicit `mode: NON_HA` or `mode: HA` for managed services (DB, cache, shared-storage). Mode defaults to NON_HA if omitted. Set HA explicitly for production. IMMUTABLE
