@@ -497,21 +497,29 @@ zerops_workflow action="complete" step="deploy" attestation="Dev deployed at {de
 <section name="finalize">
 ## Finalize — Recipe Repository Files
 
-### Step 1: Generate base files
+### Step 1: Generate scaffolds
 
-Call the generate-finalize action — this creates all 13 files (6 import.yaml + 6 env READMEs + 1 root README) from the recipe plan:
+Call the generate-finalize action — this creates **scaffolds** for all 13 files from the recipe plan:
 ```
 zerops_workflow action="generate-finalize"
 ```
-Files are written to the **recipe output directory** (`outputDir` in recipe state).
+Files are written to the **recipe output directory** (`outputDir` in recipe state). These are **bare-bones templates** — correct structure and scaling, but with no comments and generic README text.
 
-### Step 2: Customize import.yaml comments
+### Step 2: Fill in every import.yaml (MANDATORY)
 
-The generated import.yaml files have correct structure but minimal comments. Open each import.yaml and **add explanatory comments** (WHY, not WHAT):
-- Comment ratio must be >= 0.3 per file
+**The scaffolds are NOT ready to ship.** Open each of the 6 import.yaml files and:
+- Add **explanatory comments throughout** — every service, every scaling decision, every field choice needs a comment explaining WHY
+- Comment ratio must be >= 0.3 per file (the scaffold has 0%)
 - Comment lines max 80 chars
 - **NO section-heading comments** (`# === Title ===`, `# ----------`) — the checker rejects these
-- Explain scaling decisions, mode choices, and service relationships
+- Reference the actual zerops.yaml config: explain how the import.yaml connects to the app's build/deploy/run lifecycle
+- Each environment should explain its purpose and trade-offs (why NON_HA here, why HA there, why this RAM threshold)
+
+### Step 3: Review READMEs
+
+The generated README files have correct markers and deploy links. Review and adjust:
+- Root README: verify the intro text accurately describes the recipe
+- Env READMEs: verify the environment descriptions match what the import.yaml provides
 
 ### Step 3: Complete
 
