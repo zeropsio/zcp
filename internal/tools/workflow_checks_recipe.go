@@ -242,18 +242,13 @@ func checkReadmeFragments(content string) []workflow.StepCheck {
 	// Check blank line after start marker.
 	for _, name := range requiredFragments {
 		marker := fmt.Sprintf("#ZEROPS_EXTRACT_START:%s#", name)
-		idx := strings.Index(content, marker)
-		if idx < 0 {
+		_, afterMarker, found := strings.Cut(content, marker)
+		if !found {
 			continue
 		}
-		afterMarker := content[idx+len(marker):]
-		// Skip to end of marker line.
-		if nlIdx := strings.Index(afterMarker, "\n"); nlIdx >= 0 {
-			nextLine := ""
-			rest := afterMarker[nlIdx+1:]
-			if nlIdx2 := strings.Index(rest, "\n"); nlIdx2 >= 0 {
-				nextLine = rest[:nlIdx2]
-			}
+		// Skip to end of marker line, then check next line is blank.
+		if _, rest, ok := strings.Cut(afterMarker, "\n"); ok {
+			nextLine, _, _ := strings.Cut(rest, "\n")
 			if nextLine != "" && !strings.HasPrefix(nextLine, "<!--") {
 				checks = append(checks, workflow.StepCheck{
 					Name: "fragment_" + name + "_blank_after_marker", Status: statusFail,
