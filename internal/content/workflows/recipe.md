@@ -537,6 +537,7 @@ Follow the injected **import.yaml Schema** for all platform rules (priority, mod
 - `buildFromGit: https://github.com/zerops-recipe-apps/{slug}-app`
 - Env 0-1 hostnames: `appdev`/`appstage` (suffixed). Env 2+ uses bare hostname: `app`, `worker`.
 - `corePackage: SERIOUS` at **project level** for env 5 (NOT under verticalAutoscaling)
+- **NO section-heading comments** (`# === Title ===`, `# ----------`, `# -- Section --`) — the checker rejects these. Comments explain WHY, not label sections.
 - Comment line width <= 80 chars, comment ratio >= 0.3 per file
 - No `PLACEHOLDER_*` strings, no cross-environment references in comments
 - Project names: `{slug}-{env-suffix}` convention
