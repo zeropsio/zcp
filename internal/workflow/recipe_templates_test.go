@@ -432,8 +432,7 @@ func TestBuildFinalizeOutput_FileCount(t *testing.T) {
 	if _, ok := files["README.md"]; !ok {
 		t.Error("missing main README.md")
 	}
-
-	// Check app README exists.
+	// Check app README scaffold exists.
 	if _, ok := files["appdev/README.md"]; !ok {
 		t.Error("missing appdev/README.md")
 	}

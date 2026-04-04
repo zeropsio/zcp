@@ -59,7 +59,8 @@ func BuildFinalizeOutput(plan *RecipePlan) map[string]string {
 		files[folder+"/README.md"] = GenerateEnvREADME(plan, i)
 	}
 
-	// App README scaffold (for zerops-recipe-apps/{slug}-app).
+	// App README scaffold (correct markers, deploy button, cover).
+	// Agent fills in integration-guide and knowledge-base content.
 	files["appdev/README.md"] = GenerateAppREADME(plan)
 
 	return files

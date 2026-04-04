@@ -257,11 +257,19 @@ Check the framework's documentation if unsure — wrong env names cause subtle b
 Write `README.md` at `/var/www/appdev/README.md` with three extract fragments. **Critical formatting** — match this structure exactly:
 
 ```markdown
-# Recipe Name — Zerops Recipe
+# {Framework} {PrettyName} Recipe App
 
 <!-- #ZEROPS_EXTRACT_START:intro# -->
-One-line description of what this recipe demonstrates.
+A minimal {Framework} application with a {DB} connection,
+demonstrating database connectivity, migrations, and a health endpoint.
+Used within [{Framework} {PrettyName} recipe](https://app.zerops.io/recipes/{slug}) for [Zerops](https://zerops.io) platform.
 <!-- #ZEROPS_EXTRACT_END:intro# -->
+
+⬇️ **Full recipe page and deploy with one-click**
+
+[![Deploy on Zerops](https://github.com/zeropsio/recipe-shared-assets/blob/main/deploy-button/light/deploy-button.svg)](https://app.zerops.io/recipes/{slug}?environment=small-production)
+
+![{framework} cover](https://github.com/zeropsio/recipe-shared-assets/blob/main/covers/svg/cover-{framework}.svg)
 
 ## Integration Guide
 
@@ -272,7 +280,7 @@ The main configuration file — place at repository root. It tells Zerops how to
 
 \`\`\`yaml
 zerops:
-  ...
+  ... (paste full zerops.yaml with comments)
 \`\`\`
 
 ### 2. Step Title (if any code changes needed)
@@ -499,34 +507,39 @@ zerops_workflow action="complete" step="deploy" attestation="Dev deployed at {de
 <section name="finalize">
 ## Finalize — Recipe Repository Files
 
-### Step 1: Generate scaffolds
+### Step 1: Generate recipe files
 
-Call the generate-finalize action — this creates **scaffolds** for all 13 files from the recipe plan:
+Call the generate-finalize action — this creates **all recipe repo files** from your research plan:
 ```
 zerops_workflow action="generate-finalize"
 ```
-Files are written to the **recipe output directory** (`outputDir` in recipe state). These are **bare-bones templates** — correct structure and scaling, but with no comments and generic README text.
+Files are written to the **recipe output directory** (`outputDir` in recipe state):
+- 1 root README with deploy button, cover image, and environment links
+- 6 environment folders, each with import.yaml and README.md
+- 1 app README scaffold at `appdev/README.md` with correct ZEROPS_EXTRACT markers, deploy button, and cover — **copy to `/var/www/appdev/README.md` and fill in** the integration-guide (your zerops.yaml with comments, code change steps) and knowledge-base (framework gotchas)
+- import.yaml files include **rich framework-aware comments** derived from your research plan — platform knowledge, scaling rationale, and framework-specific references
 
-### Step 2: Fill in every import.yaml (MANDATORY)
+### Step 2: Reconcile import.yaml against your actual build
 
-**The scaffolds are NOT ready to ship.** Open each of the 6 import.yaml files and:
-- Add **explanatory comments throughout** — every service, every scaling decision, every field choice needs a comment explaining WHY
-- Comment ratio must be >= 0.3 per file (the scaffold has 0%)
-- Comment lines max 80 chars
-- **NO section-heading comments** (`# === Title ===`, `# ----------`) — the checker rejects these
-- Reference the actual zerops.yaml config: explain how the import.yaml connects to the app's build/deploy/run lifecycle
-- Each environment should explain its purpose and trade-offs (why NON_HA here, why HA there, why this RAM threshold)
+The generated import.yaml files use your **research plan data** (framework, runtime type, start command, DB type, secret key). Since you implemented the app from that plan, the comments should be accurate. **Do NOT rewrite from scratch** — the structure, scaling, and comments are correct by construction.
+
+**Review each import.yaml and fix ONLY what doesn't match reality:**
+- Verify framework-specific references match what you actually built (start command, build pipeline description)
+- Verify service types and hostnames match the workspace you provisioned
+- If you deviated from the plan during implementation, update the affected comments
+- Comment lines max 80 chars, no section-heading decorators (`# === Title ===`, `# ----------`)
+- Do NOT add redundant comments — the generated comment ratio is already >= 0.3
 
 ### Step 3: Review READMEs
 
-The generated README files have correct markers and deploy links. Review and adjust:
-- Root README: verify the intro text accurately describes the recipe
-- Env READMEs: verify the environment descriptions match what the import.yaml provides
+The generated README files have correct markers, deploy links, and dynamic descriptions. Review and adjust:
+- Root README: verify intro text accurately describes the recipe
+- Env READMEs: verify environment descriptions match what the import.yaml provides
 
-### Step 3: Complete
+### Step 4: Complete
 
 ```
-zerops_workflow action="complete" step="finalize" attestation="All 13+ recipe files generated and validated"
+zerops_workflow action="complete" step="finalize" attestation="All recipe files generated and validated against actual build"
 ```
 </section>
 

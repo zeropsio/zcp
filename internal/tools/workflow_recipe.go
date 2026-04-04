@@ -185,7 +185,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine) (*mcp.CallToolResult,
 		"files":   written,
 		"count":   len(written),
 		"dir":     outputDir,
-		"message": fmt.Sprintf("Generated %d scaffold files. These are bare-bones templates — EVERY import.yaml needs explanatory comments added (currently 0%% comment ratio, minimum 30%%). Open each import.yaml and add comments explaining WHY for every service, scaling decision, and field choice. Then review READMEs and complete the finalize step.", len(written)),
+		"message": fmt.Sprintf("Generated %d recipe files with rich framework-aware comments derived from your research plan. Do NOT rewrite from scratch — reconcile against your actual build: verify framework references match what you implemented (start command, build pipeline, service types). Fix only what diverged from the plan. Review READMEs for accuracy. Then complete the finalize step.", len(written)),
 	}), nil, nil
 }
 
