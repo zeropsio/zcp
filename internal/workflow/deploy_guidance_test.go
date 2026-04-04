@@ -33,23 +33,23 @@ func TestBuildPrepareGuide_Personalized(t *testing.T) {
 				"deployFiles",
 				"${",
 				"zerops_knowledge",
-				"ci-cd",
+				"push-git",
 			},
 		},
 		{
 			name: "dev_cicd",
 			state: &DeployState{
 				Mode:     PlanModeDev,
-				Strategy: StrategyCICD,
+				Strategy: StrategyPushGit,
 				Targets: []DeployTarget{
-					{Hostname: "apidev", Role: DeployRoleDev, Strategy: StrategyCICD},
+					{Hostname: "apidev", Role: DeployRoleDev, Strategy: StrategyPushGit},
 				},
 			},
 			env: EnvContainer,
 			wantContains: []string{
 				"apidev",
 				"dev",
-				"ci-cd",
+				"push-git",
 				"zerops_knowledge",
 			},
 		},
@@ -134,7 +134,7 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 			name: "dev_cicd_iter0",
 			state: &DeployState{
 				Mode:     PlanModeDev,
-				Strategy: StrategyCICD,
+				Strategy: StrategyPushGit,
 				Targets: []DeployTarget{
 					{Hostname: "apidev", Role: DeployRoleDev},
 				},

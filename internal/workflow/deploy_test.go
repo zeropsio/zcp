@@ -190,7 +190,7 @@ func TestBuildDeployTargets_Simple(t *testing.T) {
 		{
 			Hostname:       "app",
 			Mode:           PlanModeSimple,
-			DeployStrategy: StrategyCICD,
+			DeployStrategy: StrategyPushGit,
 		},
 	}
 	targets, mode, strategy := BuildDeployTargets(metas)
@@ -198,7 +198,7 @@ func TestBuildDeployTargets_Simple(t *testing.T) {
 	if mode != PlanModeSimple {
 		t.Errorf("mode: want simple, got %s", mode)
 	}
-	if strategy != StrategyCICD {
+	if strategy != StrategyPushGit {
 		t.Errorf("strategy: want ci-cd, got %s", strategy)
 	}
 	if len(targets) != 1 {
@@ -253,11 +253,11 @@ func TestBuildDeployTargets_PopulatesStrategy(t *testing.T) {
 func TestNewDeployState_CapturesStrategy(t *testing.T) {
 	t.Parallel()
 	targets := []DeployTarget{
-		{Hostname: "app", Role: DeployRoleSimple, Status: deployTargetPending, Strategy: StrategyCICD},
+		{Hostname: "app", Role: DeployRoleSimple, Status: deployTargetPending, Strategy: StrategyPushGit},
 	}
-	ds := NewDeployState(targets, PlanModeSimple, StrategyCICD)
+	ds := NewDeployState(targets, PlanModeSimple, StrategyPushGit)
 
-	if ds.Strategy != StrategyCICD {
+	if ds.Strategy != StrategyPushGit {
 		t.Errorf("Strategy: want ci-cd, got %s", ds.Strategy)
 	}
 }

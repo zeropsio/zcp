@@ -105,21 +105,14 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	}
 
 	sb.WriteString("\nAvailable strategies:\n")
-	sb.WriteString("- **push-dev**: Guided deploy workflow (prepare → deploy → verify)\n")
-	sb.WriteString("- **ci-cd**: Automated deployments via CI/CD pipeline (GitHub Actions, GitLab CI, etc.)\n")
-	sb.WriteString("- **manual**: You control when to deploy — call zerops_deploy directly, no guided workflow\n\n")
+	sb.WriteString("- **push-dev**: Guided deploy workflow — edit on container, deploy to Zerops\n")
+	sb.WriteString("- **push-git**: Push code to git repository — optional CI/CD for auto-deploy\n")
+	sb.WriteString("- **manual**: You control when to deploy — call zerops_deploy directly\n\n")
 	sb.WriteString("→ `zerops_workflow action=\"strategy\" strategies={\"<hostname>\":\"push-dev\"}`\n\n")
 	sb.WriteString("After setting strategies:\n")
 	sb.WriteString("- push-dev: `zerops_workflow action=\"start\" workflow=\"deploy\"`\n")
-	sb.WriteString("- ci-cd: `zerops_workflow action=\"start\" workflow=\"cicd\"`\n")
+	sb.WriteString("- push-git: `zerops_workflow action=\"start\" workflow=\"deploy\"`\n")
 	sb.WriteString("- manual: call `zerops_deploy` directly when ready\n\n")
-
-	// CI/CD Gate
-	sb.WriteString("## CI/CD Gate\n\n")
-	sb.WriteString("If you choose **ci-cd** strategy, you must:\n")
-	sb.WriteString("1. Push code to a git repository (GitHub, GitLab, etc.)\n")
-	sb.WriteString("2. Configure webhooks or CI/CD integration\n")
-	sb.WriteString("3. Ensure the `.zcp/` state directory is NOT committed (add to `.gitignore`)\n\n")
 
 	// Router-based workflow offerings
 	sb.WriteString("## What's Next?\n\n")

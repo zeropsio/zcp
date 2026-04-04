@@ -10,14 +10,14 @@ import (
 // StrategyToSection maps deploy strategy constants to deploy.md section names.
 var StrategyToSection = map[string]string{
 	StrategyPushDev: "deploy-push-dev",
-	StrategyCICD:    "deploy-ci-cd",
+	StrategyPushGit: "deploy-push-git",
 	StrategyManual:  "deploy-manual",
 }
 
 // strategyDescriptions provides one-line descriptions for strategy alternatives.
 var strategyDescriptions = map[string]string{
 	StrategyPushDev: "SSH self-deploy from dev container",
-	StrategyCICD:    "auto-deploy on git push via webhook",
+	StrategyPushGit: "push to git remote (optional CI/CD)",
 	StrategyManual:  "you manage deployments yourself",
 }
 

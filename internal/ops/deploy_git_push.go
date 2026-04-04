@@ -1,0 +1,95 @@
+package ops
+
+import (
+	"fmt"
+	"net/url"
+	"strings"
+)
+
+const defaultGitHost = "github.com"
+const defaultBranch = "main"
+
+// BuildGitPushCommand builds an SSH command that pushes committed code to an
+// external git remote (GitHub/GitLab). The LLM commits before calling this;
+// the tool handles auth, remote setup, and push.
+//
+// Security: .netrc created with trap-based cleanup (runs even on failure),
+// umask 077 prevents world-readable token, remoteURL is shell-quoted.
+func BuildGitPushCommand(workingDir, remoteURL, branch string, id GitIdentity) string {
+	if branch == "" {
+		branch = defaultBranch
+	}
+	host := parseGitHost(remoteURL)
+
+	var parts []string
+
+	// Trap-based cleanup: .netrc removed on exit regardless of success/failure.
+	parts = append(parts, "trap 'rm -f ~/.netrc' EXIT")
+
+	// Auth: .netrc from $GIT_TOKEN env var (never in command args or git config).
+	netrc := fmt.Sprintf(
+		`umask 077 && echo "machine %s login oauth2 password $GIT_TOKEN" > ~/.netrc && chmod 600 ~/.netrc`,
+		host,
+	)
+	parts = append(parts, netrc)
+
+	// Working directory.
+	parts = append(parts, fmt.Sprintf("cd %s", workingDir))
+
+	// Init fallback: only if .git doesn't exist (first-time setup).
+	parts = append(parts, fmt.Sprintf("(test -d .git || git init -q -b %s)", branch))
+
+	// Git identity (internal commits, not user-facing).
+	email := shellQuote(id.Email)
+	name := shellQuote(id.Name)
+	parts = append(parts, fmt.Sprintf("git config user.email %s && git config user.name %s", email, name))
+
+	// Remote setup (idempotent): only if remoteURL provided.
+	if remoteURL != "" {
+		quoted := shellQuote(remoteURL)
+		parts = append(parts, fmt.Sprintf(
+			"(git remote add origin %s 2>/dev/null || git remote set-url origin %s)",
+			quoted, quoted,
+		))
+	}
+
+	// Fallback commit: only if NO commits exist yet (fresh git init).
+	// LLM normally commits before calling git-push; this handles the init case.
+	parts = append(parts, "(git rev-parse HEAD >/dev/null 2>&1 || (git add -A && git commit -q -m 'initial commit'))")
+
+	// Push.
+	parts = append(parts, fmt.Sprintf("git push -u origin %s", branch))
+
+	return strings.Join(parts, " && ")
+}
+
+// parseGitHost extracts the hostname from a git remote URL.
+// Supports https://host/..., http://host/..., and host:port formats.
+// Returns "github.com" as default if parsing fails or URL is empty.
+func parseGitHost(rawURL string) string {
+	if rawURL == "" {
+		return defaultGitHost
+	}
+
+	// Try standard URL parsing.
+	if strings.Contains(rawURL, "://") {
+		u, err := url.Parse(rawURL)
+		if err == nil && u.Hostname() != "" {
+			return u.Hostname()
+		}
+	}
+
+	// Fallback for URLs without scheme (e.g., "github.com/user/repo").
+	if idx := strings.Index(rawURL, "/"); idx > 0 {
+		host := rawURL[:idx]
+		// Strip port if present.
+		if colonIdx := strings.LastIndex(host, ":"); colonIdx > 0 {
+			host = host[:colonIdx]
+		}
+		if host != "" {
+			return host
+		}
+	}
+
+	return defaultGitHost
+}

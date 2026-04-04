@@ -217,9 +217,10 @@ func writeStrategySection(b *strings.Builder, metas []*workflow.ServiceMeta) {
 		b.WriteString(": push-dev\n")
 		b.WriteString("Deploy via guided workflow: zerops_workflow action=\"start\" workflow=\"deploy\"\n")
 		b.WriteString("Switch: zerops_workflow action=\"strategy\" strategies={...}\n\n")
-	case workflow.StrategyCICD:
-		b.WriteString(": ci-cd\n")
-		b.WriteString("Deploys happen via git webhook: zerops_workflow action=\"start\" workflow=\"cicd\"\n")
+	case workflow.StrategyPushGit:
+		b.WriteString(": push-git\n")
+		b.WriteString("Deploy via git push: zerops_workflow action=\"start\" workflow=\"deploy\"\n")
+		b.WriteString("CI/CD setup: zerops_workflow action=\"start\" workflow=\"cicd\"\n")
 		b.WriteString("Switch: zerops_workflow action=\"strategy\" strategies={...}\n\n")
 	default:
 		b.WriteString("\n")

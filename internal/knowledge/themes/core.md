@@ -30,7 +30,7 @@ services[]:                            # REQUIRED
   objectStorageSize: 1-100             # GB, object-storage only (changeable in GUI later)
   objectStoragePolicy: private | public-read | public-objects-read | public-write | public-read-write
   objectStorageRawPolicy: string       # custom IAM Policy JSON (alternative to objectStoragePolicy)
-  override: bool                       # triggers redeploy of existing runtime service with same hostname
+  override: bool                       # re-imports existing service with same hostname (updates config, can activate READY_TO_DEPLOY services)
   mount: string[]                      # pre-configure shared storage connection (ALSO requires mount in zerops.yaml run section to activate)
   nginxConfig: string                  # custom nginx config for PHP/static/nginx services
   zeropsSetup: string                  # inline zerops.yaml setup name
@@ -173,6 +173,7 @@ zerops[]:
 - **ALWAYS** set `maxContainers: 1` for dev services. REASON: dev uses SSHFS; multiple containers cause file conflicts
 - **ONLY** set `zeropsSetup` in import.yaml when using `buildFromGit`. REASON: zeropsSetup requires buildFromGit (API rejects one without the other). For workspace deploys (no buildFromGit), use `zerops_deploy setup="..."` parameter instead
 - **ALWAYS** set `minRam` high enough for initial RAM spikes (autoscaling has ~10-20s reaction time). Dev needs higher than stage/prod (compilation on container)
+- **Activating READY_TO_DEPLOY services**: re-import with `override: true` + `startWithoutCode: true` to transition the service to ACTIVE without deploying code first
 - **ALWAYS** use managed service hostname conventions: `db`, `cache`, `queue`, `search`, `storage`. REASON: standardizes cross-service references
 - **Shared secrets** (encryption/session keys): put in `project.envVariables` when multiple services in the same project share a database — they must share the key or encrypted data becomes unreadable across services. Use preprocessor: `<@generateRandomString(<32>)>`. **Per-service secrets**: put in service-level `envSecrets`. Determine which pattern applies based on what the framework uses the secret for (encryption = shared, API token = per-service).
 - **ALWAYS** use generic `setup:` names in zerops.yaml (`dev`, `prod`, `worker`). When deploying to a hostname that differs from the setup name, pass `setup="..."` to `zerops_deploy`. REASON: generic names work across all environments; `zeropsSetup` in recipe import.yaml + `--setup` in workspace deploy both handle the mapping

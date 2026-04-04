@@ -23,6 +23,15 @@ type DeployResult struct {
 	BuildLogsSource   string   `json:"buildLogsSource,omitempty"` // "build_container" or empty
 }
 
+// GitPushResult contains the outcome of a git-push deploy operation.
+type GitPushResult struct {
+	Status    string   `json:"status"`              // "PUSHED" or "NOTHING_TO_PUSH"
+	RemoteURL string   `json:"remoteUrl,omitempty"` // The remote URL used
+	Branch    string   `json:"branch"`              // Branch pushed to
+	Message   string   `json:"message"`             // Human-readable summary
+	Warnings  []string `json:"warnings,omitempty"`  // Non-fatal warnings
+}
+
 // SSHDeployer executes commands on remote Zerops services.
 type SSHDeployer interface {
 	ExecSSH(ctx context.Context, hostname string, command string) ([]byte, error)

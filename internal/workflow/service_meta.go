@@ -12,7 +12,7 @@ import (
 // Strategy constants for deploy decisions.
 const (
 	StrategyPushDev = "push-dev"
-	StrategyCICD    = "ci-cd"
+	StrategyPushGit = "push-git"
 	StrategyManual  = "manual"
 )
 
@@ -74,6 +74,10 @@ func ReadServiceMeta(baseDir, hostname string) (*ServiceMeta, error) {
 	var meta ServiceMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, fmt.Errorf("unmarshal service meta: %w", err)
+	}
+	// Migrate legacy "ci-cd" strategy to "push-git".
+	if meta.DeployStrategy == "ci-cd" {
+		meta.DeployStrategy = StrategyPushGit
 	}
 	return &meta, nil
 }

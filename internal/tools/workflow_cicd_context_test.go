@@ -41,7 +41,7 @@ func TestBuildCICDContext(t *testing.T) {
 				writeMeta(t, dir, &workflow.ServiceMeta{
 					Hostname:       "appdev",
 					StageHostname:  "appstage",
-					DeployStrategy: workflow.StrategyCICD,
+					DeployStrategy: workflow.StrategyPushGit,
 					BootstrappedAt: "2026-01-01",
 				})
 				return dir
@@ -55,7 +55,7 @@ func TestBuildCICDContext(t *testing.T) {
 				dir := t.TempDir()
 				writeMeta(t, dir, &workflow.ServiceMeta{
 					Hostname:       "apidev",
-					DeployStrategy: workflow.StrategyCICD,
+					DeployStrategy: workflow.StrategyPushGit,
 					BootstrappedAt: "2026-01-01",
 				})
 				return dir
@@ -91,7 +91,7 @@ func TestBuildCICDContext(t *testing.T) {
 				dir := t.TempDir()
 				writeMeta(t, dir, &workflow.ServiceMeta{
 					Hostname:       "appdev",
-					DeployStrategy: workflow.StrategyCICD,
+					DeployStrategy: workflow.StrategyPushGit,
 					StageHostname:  "appstage",
 					BootstrappedAt: "2026-01-01",
 				})

@@ -187,7 +187,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 				{ID: "s2", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"}},
 			},
 			metas: []*workflow.ServiceMeta{
-				{Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: workflow.StrategyCICD},
+				{Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: workflow.StrategyPushGit},
 			},
 			wantContains: []string{
 				"cicd",
@@ -201,7 +201,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 				{ID: "s2", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"}},
 			},
 			metas: []*workflow.ServiceMeta{
-				{Hostname: "deletedservice", BootstrappedAt: "2026-01-01", DeployStrategy: workflow.StrategyCICD},
+				{Hostname: "deletedservice", BootstrappedAt: "2026-01-01", DeployStrategy: workflow.StrategyPushGit},
 			},
 			wantContains: []string{
 				"bootstrap", // Stale meta filtered; unmanaged runtimes trigger adoption

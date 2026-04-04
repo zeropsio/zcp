@@ -14,7 +14,7 @@ import (
 // validStrategies is the set of allowed strategy values.
 var validStrategies = map[string]bool{
 	workflow.StrategyPushDev: true,
-	workflow.StrategyCICD:    true,
+	workflow.StrategyPushGit: true,
 	workflow.StrategyManual:  true,
 }
 
@@ -24,7 +24,7 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Strategies map is required for strategy action",
-			"Provide strategies: {\"hostname\": \"push-dev|ci-cd|manual\"}")), nil, nil
+			"Provide strategies: {\"hostname\": \"push-dev|push-git|manual\"}")), nil, nil
 	}
 
 	// Validate all strategy values first.
@@ -33,7 +33,7 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Invalid strategy %q for %q", strategy, hostname),
-				"Valid strategies: push-dev, ci-cd, manual")), nil, nil
+				"Valid strategies: push-dev, push-git, manual")), nil, nil
 		}
 	}
 
@@ -69,8 +69,8 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 	nextHint := `When code is ready: zerops_workflow action="start" workflow="deploy"`
 	if allStrategiesAre(input.Strategies, workflow.StrategyManual) {
 		nextHint = `When code is ready: zerops_deploy targetService="..." (manual strategy — deploy directly)`
-	} else if allStrategiesAre(input.Strategies, workflow.StrategyCICD) {
-		nextHint = `Set up CI/CD: zerops_workflow action="start" workflow="cicd"`
+	} else if allStrategiesAre(input.Strategies, workflow.StrategyPushGit) {
+		nextHint = `Push to git: zerops_workflow action="start" workflow="deploy"`
 	}
 
 	result := map[string]string{
@@ -146,11 +146,11 @@ func buildStrategySelectionResponse(metas []*workflow.ServiceMeta) strategySelec
 	sb.WriteString("- **Good for**: Prototyping, experimenting, quick iterations.\n")
 	sb.WriteString("- **Trade-off**: Manual process — you trigger each deploy yourself.\n\n")
 
-	sb.WriteString("### ci-cd\n")
-	sb.WriteString("Deploys happen automatically when you push to a git repository.\n")
-	sb.WriteString("- **How it works**: Connect a GitHub/GitLab repo. Every push triggers a build and deploy via webhook.\n")
-	sb.WriteString("- **Good for**: Team development, production workflows, deploys tied to git history.\n")
-	sb.WriteString("- **Trade-off**: Requires initial pipeline setup (I can help with that).\n\n")
+	sb.WriteString("### push-git\n")
+	sb.WriteString("You push code to a git repository (GitHub/GitLab).\n")
+	sb.WriteString("- **How it works**: Commit on the dev container, push to remote. Optionally set up CI/CD for automatic deploys.\n")
+	sb.WriteString("- **Good for**: Team development, CI/CD pipelines, exporting to git.\n")
+	sb.WriteString("- **Trade-off**: Requires git setup (token, remote). I can help with all of it.\n\n")
 
 	sb.WriteString("### manual\n")
 	sb.WriteString("You control when and what to deploy. No guided workflow.\n")

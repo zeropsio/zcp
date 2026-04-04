@@ -52,14 +52,14 @@ func TestRoute_AllBootstrapped(t *testing.T) {
 		wantTop string
 	}{
 		{
-			name: "ci-cd strategy",
+			name: "push-git strategy",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{{
-					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyCICD,
+					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushGit,
 				}},
 				LiveServices: []string{"appdev"},
 			},
-			wantTop: "cicd",
+			wantTop: "deploy",
 		},
 		{
 			name: "push-dev strategy",
@@ -223,14 +223,14 @@ func TestRoute_StaleMetaFiltering(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{
-			{Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyCICD},
+			{Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushGit},
 			{Hostname: "staleservice", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev},
 		},
 		LiveServices: []string{"appdev"},
 	}
 	offerings := Route(input)
-	if offerings[0].Workflow != "cicd" {
-		t.Errorf("top = %q, want cicd (stale meta should be filtered)", offerings[0].Workflow)
+	if offerings[0].Workflow != "deploy" {
+		t.Errorf("top = %q, want deploy (stale meta should be filtered, push-git dominant)", offerings[0].Workflow)
 	}
 }
 

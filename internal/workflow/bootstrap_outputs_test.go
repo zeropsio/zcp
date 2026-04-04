@@ -429,7 +429,7 @@ func TestWriteBootstrapOutputs_CopiesStrategiesToDecisions(t *testing.T) {
 		wantKey  string
 	}{
 		{"push-dev strategy", StrategyPushDev, StrategyPushDev},
-		{"ci-cd strategy", StrategyCICD, StrategyCICD},
+		{"ci-cd strategy", StrategyPushGit, StrategyPushGit},
 		{"manual strategy", StrategyManual, StrategyManual},
 	}
 	for _, tt := range tests {
@@ -546,7 +546,7 @@ func TestWriteBootstrapOutputs_ExplicitStrategyPreserved(t *testing.T) {
 	}
 
 	// Store explicit ci-cd strategy during bootstrap — should persist to meta.
-	if err := eng.BootstrapStoreStrategies(map[string]string{"appdev": StrategyCICD}); err != nil {
+	if err := eng.BootstrapStoreStrategies(map[string]string{"appdev": StrategyPushGit}); err != nil {
 		t.Fatalf("BootstrapStoreStrategies: %v", err)
 	}
 
@@ -563,8 +563,8 @@ func TestWriteBootstrapOutputs_ExplicitStrategyPreserved(t *testing.T) {
 	if meta == nil {
 		t.Fatal("expected appdev meta")
 	}
-	if meta.DeployStrategy != StrategyCICD {
-		t.Errorf("explicit strategy should be preserved: want %q, got %q", StrategyCICD, meta.DeployStrategy)
+	if meta.DeployStrategy != StrategyPushGit {
+		t.Errorf("explicit strategy should be preserved: want %q, got %q", StrategyPushGit, meta.DeployStrategy)
 	}
 }
 
@@ -766,7 +766,7 @@ func TestBuildTransitionMessage_WithMultipleServices_ListsAll(t *testing.T) {
 			},
 			Strategies: map[string]string{
 				"appdev": StrategyPushDev,
-				"apidev": StrategyCICD,
+				"apidev": StrategyPushGit,
 			},
 		},
 	}
@@ -780,7 +780,7 @@ func TestBuildTransitionMessage_WithMultipleServices_ListsAll(t *testing.T) {
 	if !strings.Contains(msg, StrategyPushDev) {
 		t.Error("message should show push-dev strategy for appdev")
 	}
-	if !strings.Contains(msg, StrategyCICD) {
+	if !strings.Contains(msg, StrategyPushGit) {
 		t.Error("message should show ci-cd strategy for apidev")
 	}
 }
@@ -807,8 +807,8 @@ func TestBuildTransitionMessage_AllStrategyOptionsListed(t *testing.T) {
 	if !strings.Contains(msg, "push-dev") {
 		t.Error("message should document push-dev strategy")
 	}
-	if !strings.Contains(msg, "ci-cd") {
-		t.Error("message should document ci-cd strategy")
+	if !strings.Contains(msg, "push-git") {
+		t.Error("message should document push-git strategy")
 	}
 	if !strings.Contains(msg, "manual") {
 		t.Error("message should document manual strategy")
@@ -868,18 +868,18 @@ func TestBuildTransitionMessage_CICDGateIncluded(t *testing.T) {
 		},
 	}
 	msg := BuildTransitionMessage(state)
-	// Verify CI/CD gate section with requirements.
-	if !strings.Contains(msg, "CI/CD Gate") {
-		t.Error("message should include CI/CD Gate section")
+	// Verify strategy section lists push-git with CI/CD as optional.
+	if !strings.Contains(msg, "push-git") {
+		t.Error("message should include push-git strategy")
 	}
-	if !strings.Contains(msg, "git repository") {
-		t.Error("message should mention git repository requirement")
+	if !strings.Contains(msg, "CI/CD") {
+		t.Error("message should mention CI/CD as optional for push-git")
 	}
-	if !strings.Contains(msg, ".zcp/") {
-		t.Error("message should mention .zcp/ state directory")
+	if !strings.Contains(msg, "push-dev") {
+		t.Error("message should include push-dev strategy")
 	}
-	if !strings.Contains(msg, ".gitignore") {
-		t.Error("message should mention .gitignore")
+	if !strings.Contains(msg, "manual") {
+		t.Error("message should include manual strategy")
 	}
 }
 

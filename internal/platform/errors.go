@@ -48,6 +48,10 @@ const (
 	ErrPrerequisiteMissing    = "PREREQUISITE_MISSING"
 	ErrWorkflowRequired       = "WORKFLOW_REQUIRED"
 	ErrSelfServiceBlocked     = "SELF_SERVICE_BLOCKED"
+	ErrGitTokenMissing        = "GIT_TOKEN_MISSING"
+	ErrGitHistoryConflict     = "GIT_HISTORY_CONFLICT"
+	ErrGitPushRejected        = "GIT_PUSH_REJECTED"
+	ErrGitAuthFailed          = "GIT_AUTH_FAILED"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

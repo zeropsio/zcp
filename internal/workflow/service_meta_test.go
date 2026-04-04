@@ -190,7 +190,7 @@ func TestStrategyConstants(t *testing.T) {
 		want     string
 	}{
 		{"StrategyPushDev", StrategyPushDev, "push-dev"},
-		{"StrategyCICD", StrategyCICD, "ci-cd"},
+		{"StrategyPushGit", StrategyPushGit, "push-git"},
 		{"StrategyManual", StrategyManual, "manual"},
 	}
 

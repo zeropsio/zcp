@@ -151,10 +151,11 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 	}
 
 	switch dominant {
-	case StrategyCICD:
+	case StrategyPushGit:
 		return []FlowOffering{
-			{Workflow: "cicd", Priority: 1, Hint: `zerops_workflow action="start" workflow="cicd"`},
-			{Workflow: "deploy", Priority: 2, Hint: `zerops_workflow action="start" workflow="deploy"`},
+			{Workflow: "deploy", Priority: 1, Hint: `zerops_workflow action="start" workflow="deploy"`},
+			{Workflow: "cicd", Priority: 2, Hint: `zerops_workflow action="start" workflow="cicd"`},
+			{Workflow: "export", Priority: 3, Hint: `zerops_workflow action="start" workflow="export"`},
 		}
 	case StrategyPushDev:
 		return []FlowOffering{{
