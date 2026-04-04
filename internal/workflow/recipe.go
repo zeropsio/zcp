@@ -100,6 +100,7 @@ type RecipeResponse struct {
 	Intent          string           `json:"intent"`
 	Iteration       int              `json:"iteration"`
 	Message         string           `json:"message"`
+	PrettyName      string           `json:"prettyName,omitempty"`
 	Progress        RecipeProgress   `json:"progress"`
 	Current         *RecipeStepInfo  `json:"current,omitempty"`
 	CheckResult     *StepCheckResult `json:"checkResult,omitempty"`
@@ -253,6 +254,11 @@ func (r *RecipeState) BuildResponse(sessionID, intent string, iteration int, env
 			Completed: completed,
 			Steps:     summaries,
 		},
+	}
+
+	// Expose derived pretty name so the agent can use it in titles and READMEs.
+	if r.Plan != nil {
+		resp.PrettyName = recipePrettyName(r.Plan.Slug, r.Plan.Framework)
 	}
 
 	if r.CurrentStep < len(r.Steps) {

@@ -254,7 +254,7 @@ Check the framework's documentation if unsure — wrong env names cause subtle b
 
 ### App README with extract fragments
 
-Write `README.md` at `/var/www/appdev/README.md` with three extract fragments. **Critical formatting** — match this structure exactly:
+Write `README.md` at `/var/www/appdev/README.md` with three extract fragments. Use `prettyName` from the workflow response for titles (e.g., "Minimal", "Hello World", "Showcase"). **Critical formatting** — match this structure exactly:
 
 ```markdown
 # {Framework} {PrettyName} Recipe App
@@ -516,7 +516,7 @@ zerops_workflow action="generate-finalize"
 Files are written to the **recipe output directory** (`outputDir` in recipe state):
 - 1 root README with deploy button, cover image, and environment links
 - 6 environment folders, each with import.yaml and README.md
-- 1 app README scaffold at `appdev/README.md` with correct ZEROPS_EXTRACT markers, deploy button, and cover — **copy to `/var/www/appdev/README.md` and fill in** the integration-guide (your zerops.yaml with comments, code change steps) and knowledge-base (framework gotchas)
+- 1 app README scaffold at `appdev/README.md` — has correct ZEROPS_EXTRACT markers, deploy button, and cover image. **Use as a reference** to verify your app README at `/var/www/appdev/README.md` has these elements. Do NOT overwrite your existing integration-guide and knowledge-base content — those were written from your actual implementation and are correct
 - import.yaml files include **rich framework-aware comments** derived from your research plan — platform knowledge, scaling rationale, and framework-specific references
 
 ### Step 2: Reconcile import.yaml against your actual build
