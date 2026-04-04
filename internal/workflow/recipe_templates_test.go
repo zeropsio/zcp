@@ -582,35 +582,6 @@ func TestEnvFolder_OutOfRange(t *testing.T) {
 	}
 }
 
-func TestTargetInEnv(t *testing.T) {
-	t.Parallel()
-
-	target := RecipeTarget{
-		Hostname:     "app",
-		Type:         "php@8.4",
-		Role:         "app",
-		Environments: []string{"0", "1", "2"},
-	}
-
-	tests := []struct {
-		envIndex int
-		want     bool
-	}{
-		{0, true}, {1, true}, {2, true},
-		{3, false}, {4, false}, {5, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("env_%d", tt.envIndex), func(t *testing.T) {
-			t.Parallel()
-			got := TargetInEnv(target, tt.envIndex)
-			if got != tt.want {
-				t.Errorf("TargetInEnv(env=%d) = %v, want %v", tt.envIndex, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestIsDataService(t *testing.T) {
 	t.Parallel()
 

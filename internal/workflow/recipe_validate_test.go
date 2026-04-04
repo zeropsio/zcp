@@ -92,17 +92,14 @@ func TestValidateRecipePlan_MissingFields(t *testing.T) {
 		}, "research.startCommand is required"},
 		{"missing targets", func(p *RecipePlan) { p.Targets = nil }, "at least one target is required"},
 		{"target missing hostname", func(p *RecipePlan) {
-			p.Targets = []RecipeTarget{{Type: "php@8.4", Role: "app", Environments: []string{"0"}}}
+			p.Targets = []RecipeTarget{{Type: "php@8.4", Role: "app"}}
 		}, "hostname is required"},
 		{"target missing type", func(p *RecipePlan) {
-			p.Targets = []RecipeTarget{{Hostname: "app", Role: "app", Environments: []string{"0"}}}
+			p.Targets = []RecipeTarget{{Hostname: "app", Role: "app"}}
 		}, "type is required"},
 		{"target missing role", func(p *RecipePlan) {
-			p.Targets = []RecipeTarget{{Hostname: "app", Type: "php@8.4", Environments: []string{"0"}}}
+			p.Targets = []RecipeTarget{{Hostname: "app", Type: "php@8.4"}}
 		}, "role is required"},
-		{"target missing environments", func(p *RecipePlan) {
-			p.Targets = []RecipeTarget{{Hostname: "app", Type: "php@8.4", Role: "app"}}
-		}, "environments is required"},
 	}
 
 	for _, tt := range tests {

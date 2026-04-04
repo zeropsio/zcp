@@ -147,9 +147,6 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 	}
 
 	for _, target := range plan.Targets {
-		if !workflow.TargetInEnv(target, envIndex) {
-			continue
-		}
 		if workflow.IsDataService(target.Role) {
 			svc, exists := svcMap[target.Hostname]
 			if exists && (svc.Priority == nil || *svc.Priority != 10) {

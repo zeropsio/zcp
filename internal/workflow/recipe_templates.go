@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 )
 
@@ -239,11 +238,6 @@ func isRuntimeService(role string) bool {
 	return role == RecipeRoleApp || role == RecipeRoleWorker
 }
 
-// TargetInEnv checks if a target is included in a specific environment.
-func TargetInEnv(target RecipeTarget, envIndex int) bool {
-	return slices.Contains(target.Environments, fmt.Sprintf("%d", envIndex))
-}
-
 // IsDataService returns true for non-runtime service roles.
 func IsDataService(role string) bool {
 	switch role {
@@ -282,15 +276,12 @@ func envDescription(plan *RecipePlan, envIndex int) string {
 }
 
 // buildServiceIncludesList returns "It includes a dev service..., a staging service, and a database."
-// based on what targets exist in the given environment.
+// based on targets in the plan. All targets appear in all environments.
 func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 	var parts []string
 	runtimeSeen := false
 
 	for _, target := range plan.Targets {
-		if !TargetInEnv(target, envIndex) {
-			continue
-		}
 		if isRuntimeService(target.Role) {
 			if !runtimeSeen {
 				runtimeSeen = true

@@ -54,8 +54,8 @@ type RecipePlan struct {
 type RecipeTarget struct {
 	Hostname     string   `json:"hostname"`
 	Type         string   `json:"type"`
-	Role         string   `json:"role"`         // app, worker, db, cache, etc.
-	Environments []string `json:"environments"` // which envs include this service
+	Role         string   `json:"role"`                   // app, worker, db, cache, etc.
+	Environments []string `json:"environments,omitempty"` // ignored — all targets appear in all environments
 }
 
 // DecisionResults holds the 4 recipe decision tree outputs.

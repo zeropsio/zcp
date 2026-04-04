@@ -19,22 +19,8 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 
 	b.WriteString("\nservices:\n")
 
-	// Determine which targets belong in this env.
-	// If no target has Environments set, fall back to including ALL targets
-	// (prevents empty services: sections from malformed plans).
-	targets := plan.Targets
-	hasAnyMatch := false
-	for _, t := range targets {
-		if TargetInEnv(t, envIndex) {
-			hasAnyMatch = true
-			break
-		}
-	}
-
-	for _, target := range targets {
-		if hasAnyMatch && !TargetInEnv(target, envIndex) {
-			continue
-		}
+	// All targets appear in all environments — recipes don't have per-env filtering.
+	for _, target := range plan.Targets {
 		if isRuntimeService(target.Role) && envIndex <= 1 {
 			writeDevService(&b, plan, target, envIndex)
 			writeStageService(&b, plan, target, envIndex)
@@ -224,11 +210,9 @@ func writeDataServiceComment(b *strings.Builder, plan *RecipePlan, target Recipe
 	dbName := dataServiceTypeName(target)
 	devHostname, stageHostname := "", ""
 	for _, t := range plan.Targets {
-		if isRuntimeService(t.Role) && TargetInEnv(t, envIndex) {
-			if envIndex <= 1 {
-				devHostname = t.Hostname + "dev"
-				stageHostname = t.Hostname + "stage"
-			}
+		if isRuntimeService(t.Role) {
+			devHostname = t.Hostname + "dev"
+			stageHostname = t.Hostname + "stage"
 			break
 		}
 	}
