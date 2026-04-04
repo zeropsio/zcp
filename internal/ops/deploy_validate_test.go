@@ -244,8 +244,8 @@ func TestValidateZeropsYml_DeployFiles(t *testing.T) {
       ports:
         - port: 8080
 `,
-			noWarnings:   true,
-			createDirs:   []string{"dist"},
+			noWarnings: true,
+			createDirs: []string{"dist"},
 		},
 		{
 			name:     "cherry-picked deployFiles with missing paths",
