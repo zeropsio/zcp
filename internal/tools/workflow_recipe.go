@@ -171,7 +171,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine) (*mcp.CallToolResult,
 				fmt.Sprintf("mkdir %s: %v", filepath.Dir(fullPath), err),
 				"")), nil, nil
 		}
-		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(fullPath, []byte(content), 0o600); err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("write %s: %v", fullPath, err),

@@ -184,7 +184,7 @@ func checkHTTPStatus(ctx context.Context, httpClient HTTPDoer, url string) Check
 	// Check status field if present — accept common healthy values.
 	if sr.Status != "" {
 		switch sr.Status {
-		case "ok", "healthy", "up", "running", "pass":
+		case "ok", StatusHealthy, "up", "running", "pass":
 			// All good.
 		default:
 			return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("status: %s", sr.Status), HTTPStatus: resp.StatusCode}
