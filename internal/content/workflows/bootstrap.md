@@ -164,7 +164,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 **Priority ordering**: managed services `priority: 10`, runtime services default or `priority: 5`. Databases must be ready before apps that depend on them.
 
-**zeropsSetup**: only set when using `buildFromGit` and the zerops.yaml setup name differs from hostname. Defaults to hostname. With `startWithoutCode`, omit — `zcli push` uses hostname as setup name.
+**zeropsSetup**: only set in import.yaml when using `buildFromGit` (API rejects one without the other). For workspace deploys without `buildFromGit`, use `zerops_deploy setup="..."` to map hostname to setup name. zerops.yaml should use generic names (`dev`, `prod`) — the `setup` parameter handles the mapping at deploy time.
 
 **File extensions:** Use `import.yaml` and `zerops.yaml` for all new files. The legacy `.yml` extension is also accepted — existing repos may use `zerops.yml`.
 

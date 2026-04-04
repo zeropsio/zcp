@@ -78,12 +78,17 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 }
 
 // checkGenerateEntry validates a single hostname's zerops.yaml entry.
+// Accepts generic setup names (dev, prod) via --setup param, or hostname matching.
 func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.BootstrapTarget, state *workflow.BootstrapState) []workflow.StepCheck {
-	entry := doc.FindEntry(hostname)
+	// Try generic "dev" first (preferred), then hostname (legacy fallback).
+	entry := doc.FindEntry("dev")
+	if entry == nil {
+		entry = doc.FindEntry(hostname)
+	}
 	if entry == nil {
 		return []workflow.StepCheck{{
 			Name: hostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no setup entry for %q in zerops.yaml", hostname),
+			Detail: fmt.Sprintf("no setup entry for %q (also tried \"dev\") in zerops.yaml", hostname),
 		}}
 	}
 

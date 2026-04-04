@@ -157,14 +157,14 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 }
 
 // writeDevServiceBlock writes the dev service entry for env 0-1.
-// zeropsSetup: dev maps this hostname to `setup: dev` in zerops.yaml.
+// No zeropsSetup — startWithoutCode services receive code via zcli push
+// with --setup param at deploy time, not via buildFromGit.
 func writeDevServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget, _ int) {
 	hostname := target.Hostname + "dev"
 	fmt.Fprintf(b, "  - hostname: %s\n", hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 	b.WriteString("    startWithoutCode: true\n")
 	b.WriteString("    maxContainers: 1\n")
-	b.WriteString("    zeropsSetup: dev\n")
 	b.WriteString("    enableSubdomainAccess: true\n")
 	writeServiceEnvSecrets(b, plan)
 }

@@ -516,8 +516,8 @@ Plus:
 - `#zeropsPreprocessor=on` when using `<@generateRandomString(<32>)>`
 - `corePackage: SERIOUS` at **project level** for env 5 (NOT under verticalAutoscaling)
 - `verticalAutoscaling` nesting: minFreeRamGB, cpuMode under it
-- `zeropsSetup: prod` on prod/stage app services (maps to `setup: prod` in zerops.yaml)
-- `zeropsSetup: dev` on dev services in env 0-1 (maps to `setup: dev` in zerops.yaml)
+- `zeropsSetup: prod` + `buildFromGit` on all non-startWithoutCode app/worker services
+- NO `zeropsSetup` on `startWithoutCode` services (setup mapping happens via `--setup` at deploy time)
 - `buildFromGit: https://github.com/zerops-recipe-apps/{slug}-app` on all non-startWithoutCode app/worker services
 - `startWithoutCode: true` + `maxContainers: 1` on dev services in env 0-1
 - Comment line width <= 80 chars
@@ -560,8 +560,7 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 > - Is the comment quality good? (WHY not WHAT, no restating key names)
 >
 > **import.yaml review (all 6 environments):**
-> - Do all env 0-1 files use `zeropsSetup: dev` (dev) and `zeropsSetup: prod` (stage)?
-> - Do all env 2-5 files use `zeropsSetup: prod`?
+> - Do `buildFromGit` services have `zeropsSetup: prod`? Do `startWithoutCode` services have NO `zeropsSetup`?
 > - Is `buildFromGit` present on all non-startWithoutCode services?
 > - Is `corePackage: SERIOUS` at project level (not verticalAutoscaling) in env 5?
 > - Are `envSecrets` per-service (not project level)?

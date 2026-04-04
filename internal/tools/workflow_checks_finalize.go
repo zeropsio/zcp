@@ -164,6 +164,34 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 		}
 	}
 
+	// zeropsSetup requires buildFromGit (and vice versa). No exceptions.
+	// startWithoutCode services must NOT have zeropsSetup — they use --setup at deploy time.
+	for _, svc := range doc.Services {
+		role := findTargetRole(plan, svc.Hostname)
+		if !workflow.IsDataService(role) && role != "" {
+			hasSetup := svc.ZeropsSetup != ""
+			hasGit := svc.BuildFromGit != ""
+			checkName := prefix + "_" + svc.Hostname + "_setup_git"
+
+			switch {
+			case hasSetup && !hasGit:
+				checks = append(checks, workflow.StepCheck{
+					Name: checkName, Status: statusFail,
+					Detail: fmt.Sprintf("service %q has zeropsSetup without buildFromGit (API requires both)", svc.Hostname),
+				})
+			case hasGit && !hasSetup:
+				checks = append(checks, workflow.StepCheck{
+					Name: checkName, Status: statusFail,
+					Detail: fmt.Sprintf("service %q has buildFromGit without zeropsSetup (must specify which setup to build)", svc.Hostname),
+				})
+			case hasSetup && hasGit:
+				checks = append(checks, workflow.StepCheck{
+					Name: checkName, Status: statusPass,
+				})
+			}
+		}
+	}
+
 	// Env 5: HA checks.
 	if envIndex == 5 {
 		checks = append(checks, checkEnv5Requirements(doc, plan, prefix)...)

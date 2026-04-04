@@ -157,10 +157,10 @@ zerops[]:
 - **Standard mode:** create dev/stage pairs for runtimes. Naming: `{prefix}dev` and `{prefix}stage` (e.g., `appdev`/`appstage`, `apidev`/`apistage`). Dev mode: single `{prefix}dev`. Simple mode: single `{name}` with real start command
 - **ALWAYS** set `startWithoutCode: true` ONLY on dev services (not stage). Simple mode: set on the single service. REASON: dev starts immediately; stage stays in READY_TO_DEPLOY until code arrives
 - **ALWAYS** set `maxContainers: 1` for dev services. REASON: dev uses SSHFS; multiple containers cause file conflicts
-- **ONLY** set `zeropsSetup` when using `buildFromGit` and the zerops.yaml setup name differs from hostname. REASON: defaults to hostname
+- **ONLY** set `zeropsSetup` in import.yaml when using `buildFromGit`. REASON: zeropsSetup requires buildFromGit (API rejects one without the other). For workspace deploys (no buildFromGit), use `zerops_deploy setup="..."` parameter instead
 - **ALWAYS** set `minRam` high enough for initial RAM spikes (autoscaling has ~10-20s reaction time). Dev needs higher than stage/prod (compilation on container)
 - **ALWAYS** use managed service hostname conventions: `db`, `cache`, `queue`, `search`, `storage`. REASON: standardizes cross-service references
-- **ALWAYS** match zerops.yaml `setup:` to service hostname. REASON: `zcli push` defaults to hostname; mismatch = "setup not found"
+- **ALWAYS** use generic `setup:` names in zerops.yaml (`dev`, `prod`, `worker`). When deploying to a hostname that differs from the setup name, pass `setup="..."` to `zerops_deploy`. REASON: generic names work across all environments; `zeropsSetup` in recipe import.yaml + `--setup` in workspace deploy both handle the mapping
 - **ALWAYS** add `run.healthCheck` and `deploy.readinessCheck` ONLY to stage/prod entries, NEVER to dev. REASON: dev uses `zsc noop --silent`; healthCheck would restart the container during iteration
 
 ### Runtime-Specific
@@ -310,4 +310,4 @@ services:
     buildFromGit: https://github.com/user/repo
     enableSubdomainAccess: true
 ```
-zeropsSetup omitted — defaults to hostname `app`, so zerops.yaml needs `setup: app`.
+zeropsSetup omitted — with `buildFromGit`, defaults to hostname `app`, so zerops.yaml needs `setup: app`. For recipe repos with generic names (`setup: prod`), set `zeropsSetup: prod` explicitly.

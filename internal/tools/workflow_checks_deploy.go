@@ -56,12 +56,19 @@ func checkDeployPrepare(client platform.Client, projectID, stateDir string) work
 		})
 
 		// Check setup entries match deploy targets.
+		// Try generic names (dev/prod) first, then hostname (legacy).
 		for _, t := range state.Targets {
-			entry := doc.FindEntry(t.Hostname)
+			entry := doc.FindEntry(t.Role) // "dev" or "stage" → try as setup name
+			if entry == nil && t.Role == "stage" {
+				entry = doc.FindEntry("prod") // stage role maps to prod setup
+			}
+			if entry == nil {
+				entry = doc.FindEntry(t.Hostname) // legacy: hostname matching
+			}
 			if entry == nil {
 				checks = append(checks, workflow.StepCheck{
 					Name: t.Hostname + "_setup", Status: statusFail,
-					Detail: fmt.Sprintf("no setup entry for %q in zerops.yaml", t.Hostname),
+					Detail: fmt.Sprintf("no setup entry for %q (also tried %q) in zerops.yaml", t.Hostname, t.Role),
 				})
 			} else {
 				checks = append(checks, workflow.StepCheck{
