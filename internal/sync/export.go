@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -210,7 +211,7 @@ func exportHybrid(tw *tar.Writer, sourceDir, prefix string) error {
 // exportGitSubtree exports a directory's git-tracked files to the tar.
 // relPrefix is the relative path from source root to this subtree (empty for root).
 func exportGitSubtree(tw *tar.Writer, dir, archivePrefix, relPrefix string) error {
-	cmd := exec.Command("git", "ls-files", "-z") //nolint:gosec,noctx // controlled path
+	cmd := exec.Command("git", "ls-files", "-z") //nolint:noctx // controlled path
 	cmd.Dir = dir
 
 	var stdout, stderr bytes.Buffer
@@ -223,8 +224,7 @@ func exportGitSubtree(tw *tar.Writer, dir, archivePrefix, relPrefix string) erro
 		return exportSubdirWalk(tw, dir, archivePrefix, relPrefix)
 	}
 
-	files := strings.Split(stdout.String(), "\x00")
-	for _, f := range files {
+	for f := range strings.SplitSeq(stdout.String(), "\x00") {
 		if f == "" {
 			continue
 		}
@@ -280,15 +280,13 @@ func exportSubdirWalk(tw *tar.Writer, dir, archivePrefix, relPrefix string) erro
 // includeUntrackedTimeline adds TIMELINE.md if it exists but isn't tracked by git.
 func includeUntrackedTimeline(tw *tar.Writer, sourceDir, prefix string, trackedFiles []string) error {
 	timelinePath := filepath.Join(sourceDir, "TIMELINE.md")
-	ti, err := os.Stat(timelinePath)
-	if err != nil {
-		return nil // doesn't exist
+	ti, statErr := os.Stat(timelinePath)
+	if statErr != nil {
+		return nil //nolint:nilerr // not-found is expected, not an error
 	}
 
-	for _, f := range trackedFiles {
-		if f == "TIMELINE.md" {
-			return nil // already tracked
-		}
+	if slices.Contains(trackedFiles, "TIMELINE.md") {
+		return nil
 	}
 
 	return addFileToTar(tw, timelinePath, filepath.Join(prefix, "TIMELINE.md"), ti)
