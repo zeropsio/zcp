@@ -22,7 +22,7 @@ Don't trust the recipe. Test it.
 
 **Secret format verification**: If the recipe sets framework secrets (via `envSecrets` or `zerops_env`), verify the generated value is in the format the framework actually expects. Deploy and check — format errors often manifest as HTTP 500 at runtime, not at import time.
 
-**Secret scope verification**: If the recipe uses import.yml `envSecrets` on individual services, consider whether dev and stage services need the SAME secret (e.g., encryption keys, signing keys). If yes, the secret must be project-level (via `zerops_env project=true`), not per-service `envSecrets`.
+**Secret scope verification**: If the recipe uses import.yaml `envSecrets` on individual services, consider whether dev and stage services need the SAME secret (e.g., encryption keys, signing keys). If yes, the secret must be project-level (via `zerops_env project=true`), not per-service `envSecrets`.
 
 **Deploy and test**: Actually scaffold the framework, deploy it, and hit the endpoints. This catches issues that static review misses — wrong client library versions, missing PHP extensions, incompatible config formats. See "E2E Testing" section below.
 
@@ -41,7 +41,7 @@ Read every line in the recipe and ask: "Would an LLM get this wrong without this
 Every recipe that uses managed services should wire them via `${hostname_varName}` — the universal Zerops cross-service reference pattern. Check:
 
 - Are all managed service values wired dynamically? No hardcoded hostnames, ports, or database names.
-- Does the recipe explain that `hostname` in `${hostname_varName}` comes from the import.yml service hostname? An agent who names their DB `mydb` instead of `db` needs to use `${mydb_hostname}`, not `${db_hostname}`.
+- Does the recipe explain that `hostname` in `${hostname_varName}` comes from the import.yaml service hostname? An agent who names their DB `mydb` instead of `db` needs to use `${mydb_hostname}`, not `${db_hostname}`.
 - Does the recipe rely on vars that don't actually exist on the service? Verify each ref against `zerops_discover` output.
 
 ### 4. Check migration / init commands
@@ -75,7 +75,7 @@ The most important part. Every recipe claim should be verified by deploying real
 
 1. **Service env var discovery**: Import managed services, `zerops_discover includeEnvs=true`, verify expected env var names exist on each service. This catches wrong var names in recipes.
 
-2. **End-to-end deploy**: Scaffold the framework on a container (SSH), write zerops.yml with all dynamic refs, deploy via `zerops_deploy`, verify `/status` endpoint returns OK for all managed service connections.
+2. **End-to-end deploy**: Scaffold the framework on a container (SSH), write zerops.yaml with all dynamic refs, deploy via `zerops_deploy`, verify `/status` endpoint returns OK for all managed service connections.
 
 3. **Specific gotchas**: If the recipe documents a gotcha, write a test that would FAIL without the fix. E.g., wrong APP_KEY format → HTTP 500.
 
@@ -103,8 +103,8 @@ Not a rigid template — adapt to the framework. Some frameworks need layers (La
 
 ### What every recipe needs (lint-enforced)
 
-- `## zerops.yml` — at least one valid YAML example with `zerops:` entries
-- `## import.yml` — at least one valid import example (lint checks for content)
+- `## zerops.yaml` — at least one valid YAML example with `zerops:` entries
+- `## import.yaml` — at least one valid import example (lint checks for content)
 - `## Gotchas` — Zerops-specific gotchas (lint checks section exists)
 
 ### Content principles
@@ -131,7 +131,7 @@ Not a rigid template — adapt to the framework. Some frameworks need layers (La
 go test ./internal/knowledge/ -run TestRecipeLint -v
 ```
 
-Checks: title, keywords (>= 3), TL;DR, zerops.yml validity, import.yml presence, gotchas section, no stale URIs, no preprocessor in zerops.yml, versions against platform catalog.
+Checks: title, keywords (>= 3), TL;DR, zerops.yaml validity, import.yaml presence, gotchas section, no stale URIs, no preprocessor in zerops.yaml, versions against platform catalog.
 
 ### Manual review
 
@@ -152,7 +152,7 @@ Deploy the framework, hit endpoints, verify managed service connections. See "E2
 Things that went wrong in past audits — not rules to blindly apply, but patterns to watch for:
 
 - **Hardcoded hostnames/ports**: `DB_HOST: db` works only if the service is named `db`. Dynamic refs decouple the recipe from specific naming.
-- **Per-service secrets that should be shared**: Import.yml `envSecrets` generates a DIFFERENT value for each service. Encryption/signing keys shared across dev+stage must be project-level.
+- **Per-service secrets that should be shared**: Import.yaml `envSecrets` generates a DIFFERENT value for each service. Encryption/signing keys shared across dev+stage must be project-level.
 - **Framework-level migration locks + `zsc execOnce`**: Double-locking. The framework lock may require infrastructure (cache table, Redis) that doesn't exist at init time. `zsc execOnce` is sufficient.
 - **Production-only config in recipes**: An LLM creating a dev service copies the recipe. If the recipe only shows production config, the dev service gets wrong debug/optimization settings.
 - **Generic framework advice**: "Configure your database credentials correctly" — the LLM knows this. "Valkey env var is `hostname` not `host`" — the LLM doesn't know this.

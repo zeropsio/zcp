@@ -313,7 +313,7 @@ func loadTestSchemas(t *testing.T) *schema.Schemas {
 	t.Helper()
 	zeropsData, err := os.ReadFile("../schema/testdata/zerops_yml_schema.json")
 	if err != nil {
-		t.Fatalf("read zerops.yml schema: %v", err)
+		t.Fatalf("read zerops.yaml schema: %v", err)
 	}
 	importData, err := os.ReadFile("../schema/testdata/import_yml_schema.json")
 	if err != nil {
@@ -321,7 +321,7 @@ func loadTestSchemas(t *testing.T) *schema.Schemas {
 	}
 	zy, err := schema.ParseZeropsYmlSchema(zeropsData)
 	if err != nil {
-		t.Fatalf("parse zerops.yml schema: %v", err)
+		t.Fatalf("parse zerops.yaml schema: %v", err)
 	}
 	iy, err := schema.ParseImportYmlSchema(importData)
 	if err != nil {

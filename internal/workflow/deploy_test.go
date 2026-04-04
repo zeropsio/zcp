@@ -11,7 +11,7 @@ func TestNewDeployState_StandardMode(t *testing.T) {
 		{Hostname: "appdev", Role: DeployRoleDev, Status: deployTargetPending},
 		{Hostname: "appstage", Role: DeployRoleStage, Status: deployTargetPending},
 	}
-	ds := NewDeployState(targets, PlanModeStandard, StrategyPushDev)
+	ds := NewDeployState(targets, PlanModeStandard)
 
 	if !ds.Active {
 		t.Error("expected Active")
@@ -38,7 +38,7 @@ func TestNewDeployState_SimpleMode(t *testing.T) {
 	targets := []DeployTarget{
 		{Hostname: "app", Role: DeployRoleSimple, Status: deployTargetPending},
 	}
-	ds := NewDeployState(targets, PlanModeSimple, StrategyPushDev)
+	ds := NewDeployState(targets, PlanModeSimple)
 
 	if len(ds.Targets) != 1 {
 		t.Fatalf("Targets: want 1, got %d", len(ds.Targets))
@@ -52,11 +52,11 @@ func TestDeployState_CompleteStep_Sequence(t *testing.T) {
 	t.Parallel()
 	ds := NewDeployState([]DeployTarget{
 		{Hostname: "app", Role: DeployRoleSimple, Status: deployTargetPending},
-	}, PlanModeSimple, StrategyPushDev)
+	}, PlanModeSimple)
 	ds.Steps[0].Status = stepInProgress
 
 	// Complete prepare.
-	if err := ds.CompleteStep(DeployStepPrepare, "Config checked, zerops.yml valid"); err != nil {
+	if err := ds.CompleteStep(DeployStepPrepare, "Config checked, zerops.yaml valid"); err != nil {
 		t.Fatalf("complete prepare: %v", err)
 	}
 	if ds.CurrentStepName() != DeployStepExecute {
@@ -82,7 +82,7 @@ func TestDeployState_CompleteStep_Sequence(t *testing.T) {
 
 func TestDeployState_CompleteStep_WrongStep(t *testing.T) {
 	t.Parallel()
-	ds := NewDeployState(nil, PlanModeSimple, StrategyPushDev)
+	ds := NewDeployState(nil, PlanModeSimple)
 	ds.Steps[0].Status = stepInProgress
 
 	err := ds.CompleteStep(DeployStepExecute, "some attestation text here")
@@ -98,7 +98,7 @@ func TestDeployState_ResetForIteration(t *testing.T) {
 	t.Parallel()
 	ds := NewDeployState([]DeployTarget{
 		{Hostname: "app", Role: DeployRoleSimple, Status: deployTargetPending},
-	}, PlanModeSimple, StrategyPushDev)
+	}, PlanModeSimple)
 
 	// Complete all steps.
 	ds.Steps[0].Status = stepInProgress
@@ -134,10 +134,10 @@ func TestDeployState_BuildResponse(t *testing.T) {
 	t.Parallel()
 	ds := NewDeployState([]DeployTarget{
 		{Hostname: "appdev", Role: DeployRoleDev, Status: deployTargetPending},
-	}, PlanModeStandard, StrategyPushDev)
+	}, PlanModeStandard)
 	ds.Steps[0].Status = stepInProgress
 
-	resp := ds.BuildResponse("sess-1", "deploy app", 0, EnvContainer)
+	resp := ds.BuildResponse("sess-1", "deploy app", 0, EnvContainer, "")
 	if resp.SessionID != "sess-1" {
 		t.Errorf("SessionID: want sess-1, got %s", resp.SessionID)
 	}
@@ -165,13 +165,10 @@ func TestBuildDeployTargets_Standard(t *testing.T) {
 			DeployStrategy: StrategyPushDev,
 		},
 	}
-	targets, mode, strategy := BuildDeployTargets(metas)
+	targets, mode := BuildDeployTargets(metas)
 
 	if mode != PlanModeStandard {
 		t.Errorf("mode: want standard, got %s", mode)
-	}
-	if strategy != StrategyPushDev {
-		t.Errorf("strategy: want push-dev, got %s", strategy)
 	}
 	if len(targets) != 2 {
 		t.Fatalf("targets: want 2, got %d", len(targets))
@@ -193,13 +190,10 @@ func TestBuildDeployTargets_Simple(t *testing.T) {
 			DeployStrategy: StrategyPushGit,
 		},
 	}
-	targets, mode, strategy := BuildDeployTargets(metas)
+	targets, mode := BuildDeployTargets(metas)
 
 	if mode != PlanModeSimple {
 		t.Errorf("mode: want simple, got %s", mode)
-	}
-	if strategy != StrategyPushGit {
-		t.Errorf("strategy: want push-git, got %s", strategy)
 	}
 	if len(targets) != 1 {
 		t.Fatalf("targets: want 1, got %d", len(targets))
@@ -211,19 +205,16 @@ func TestBuildDeployTargets_Simple(t *testing.T) {
 
 func TestBuildDeployTargets_Empty(t *testing.T) {
 	t.Parallel()
-	targets, mode, strategy := BuildDeployTargets(nil)
+	targets, mode := BuildDeployTargets(nil)
 	if targets != nil {
 		t.Error("expected nil targets for nil metas")
 	}
 	if mode != "" {
 		t.Error("expected empty mode for nil metas")
 	}
-	if strategy != "" {
-		t.Error("expected empty strategy for nil metas")
-	}
 }
 
-func TestBuildDeployTargets_PopulatesStrategy(t *testing.T) {
+func TestBuildDeployTargets_PopulatesTargetStrategy(t *testing.T) {
 	t.Parallel()
 	metas := []*ServiceMeta{
 		{
@@ -233,12 +224,9 @@ func TestBuildDeployTargets_PopulatesStrategy(t *testing.T) {
 			DeployStrategy: StrategyPushDev,
 		},
 	}
-	targets, _, strategy := BuildDeployTargets(metas)
+	targets, _ := BuildDeployTargets(metas)
 
-	if strategy != StrategyPushDev {
-		t.Errorf("strategy: want push-dev, got %s", strategy)
-	}
-	// Both dev and stage targets should have strategy set.
+	// Both dev and stage targets should have strategy from their meta.
 	if len(targets) != 2 {
 		t.Fatalf("targets: want 2, got %d", len(targets))
 	}
@@ -247,17 +235,5 @@ func TestBuildDeployTargets_PopulatesStrategy(t *testing.T) {
 	}
 	if targets[1].Strategy != StrategyPushDev {
 		t.Errorf("target[1].Strategy: want push-dev, got %q", targets[1].Strategy)
-	}
-}
-
-func TestNewDeployState_CapturesStrategy(t *testing.T) {
-	t.Parallel()
-	targets := []DeployTarget{
-		{Hostname: "app", Role: DeployRoleSimple, Status: deployTargetPending, Strategy: StrategyPushGit},
-	}
-	ds := NewDeployState(targets, PlanModeSimple, StrategyPushGit)
-
-	if ds.Strategy != StrategyPushGit {
-		t.Errorf("Strategy: want push-git, got %s", ds.Strategy)
 	}
 }

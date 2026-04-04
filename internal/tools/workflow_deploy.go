@@ -50,50 +50,24 @@ func handleDeployStart(ctx context.Context, engine *workflow.Engine, client plat
 			platform.ErrInvalidParameter, msg, suggestion)), nil, nil
 	}
 
-	// Strategy check: if any runtime service has no strategy, present selection guidance.
-	var needStrategy []*workflow.ServiceMeta
-	for _, m := range runtimeMetas {
-		if m.DeployStrategy == "" {
-			needStrategy = append(needStrategy, m)
-		}
-	}
-	if len(needStrategy) > 0 {
-		return jsonResult(buildStrategySelectionResponse(needStrategy)), nil, nil
-	}
-
-	// Manual strategy: return deploy commands directly, no session.
-	if allManualStrategy(runtimeMetas) {
-		targets, mode, _ := workflow.BuildDeployTargets(runtimeMetas)
-		if client != nil {
-			enrichTargetRuntimeTypes(ctx, client, projectID, targets)
-		}
-		return jsonResult(buildManualDeployResponse(targets, mode)), nil, nil
-	}
-
-	targets, mode, strategy := workflow.BuildDeployTargets(runtimeMetas)
+	targets, mode := workflow.BuildDeployTargets(runtimeMetas)
 
 	// Enrich targets with runtime types from live API (best-effort).
 	if client != nil {
 		enrichTargetRuntimeTypes(ctx, client, projectID, targets)
 	}
 
-	// Check for mixed strategies: all runtime services must have the same strategy for now.
-	for i := 1; i < len(targets); i++ {
-		if targets[i].Strategy != targets[0].Strategy {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Mixed strategies not supported: %q vs %q", targets[0].Strategy, targets[i].Strategy),
-				"Deploy one strategy at a time. Create separate deploy sessions per strategy.")), nil, nil
-		}
-	}
-
-	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode, strategy)
+	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrWorkflowActive,
 			fmt.Sprintf("Deploy start failed: %v", err),
 			"Reset existing session first with action=reset")), nil, nil
 	}
+
+	// Append informational strategy status (read fresh from metas, not cached).
+	resp.Message += "\n\n" + buildStrategyStatusNote(runtimeMetas)
+
 	return jsonResult(resp), nil, nil
 }
 
@@ -174,74 +148,30 @@ func handleDeployStatus(_ context.Context, engine *workflow.Engine) (*mcp.CallTo
 	return jsonResult(resp), nil, nil
 }
 
-// --- Manual strategy support ---
-
-// allManualStrategy returns true if all runtime metas have manual deploy strategy.
-func allManualStrategy(metas []*workflow.ServiceMeta) bool {
+// buildStrategyStatusNote reads strategy from metas and returns an informational note.
+func buildStrategyStatusNote(metas []*workflow.ServiceMeta) string {
+	var noStrategy []string
+	strategies := make(map[string]bool)
 	for _, m := range metas {
-		if m.DeployStrategy != workflow.StrategyManual {
-			return false
-		}
-	}
-	return true
-}
-
-// manualDeployResponse is returned when deploy workflow is called with manual strategy.
-type manualDeployResponse struct {
-	Action         string              `json:"action"`
-	Message        string              `json:"message"`
-	Services       []manualServiceInfo `json:"services"`
-	SwitchStrategy string              `json:"switchStrategy"`
-}
-
-type manualServiceInfo struct {
-	Hostname   string `json:"hostname"`
-	Mode       string `json:"mode"`
-	Command    string `json:"command"`
-	PostDeploy string `json:"postDeploy,omitempty"`
-}
-
-// buildManualDeployResponse builds the redirect response for manual strategy.
-func buildManualDeployResponse(targets []workflow.DeployTarget, mode string) manualDeployResponse {
-	resp := manualDeployResponse{
-		Action:         "manual_deploy",
-		Message:        "Deploy strategy is manual. Deploy directly when ready.",
-		SwitchStrategy: `zerops_workflow action="strategy" strategies={...}`,
-	}
-
-	devHostname := ""
-	for _, t := range targets {
-		if t.Role == workflow.DeployRoleDev {
-			devHostname = t.Hostname
-			break
+		if m.DeployStrategy == "" {
+			noStrategy = append(noStrategy, m.Hostname)
+		} else {
+			strategies[m.DeployStrategy] = true
 		}
 	}
 
-	for _, t := range targets {
-		info := manualServiceInfo{
-			Hostname: t.Hostname,
-			Mode:     t.Role,
-		}
-		switch t.Role {
-		case workflow.DeployRoleDev:
-			info.Command = fmt.Sprintf(`zerops_deploy targetService="%s"`, t.Hostname)
-			info.PostDeploy = "New container — start server via SSH. Subdomain persists."
-		case workflow.DeployRoleStage:
-			src := devHostname
-			if src == "" {
-				src = t.Hostname
-			}
-			info.Command = fmt.Sprintf(`zerops_deploy sourceService="%s" targetService="%s"`, src, t.Hostname)
-			info.PostDeploy = "Server auto-starts. Subdomain persists."
-		default: // simple
-			info.Command = fmt.Sprintf(`zerops_deploy targetService="%s"`, t.Hostname)
-			if mode == workflow.PlanModeSimple {
-				info.PostDeploy = "Server auto-starts. Subdomain persists."
-			} else {
-				info.PostDeploy = "Subdomain persists."
-			}
-		}
-		resp.Services = append(resp.Services, info)
+	if len(noStrategy) > 0 {
+		return fmt.Sprintf("Strategy note: %v have no strategy set. Discuss with user before deploying. Set via: zerops_workflow action=\"strategy\" strategies={...}", noStrategy)
 	}
-	return resp
+
+	// All have strategy — summarize.
+	var names []string
+	for s := range strategies {
+		names = append(names, s)
+	}
+	summary := fmt.Sprintf("Strategy: %s.", names[0])
+	if len(names) > 1 {
+		summary = fmt.Sprintf("Strategies: %v.", names)
+	}
+	return summary + " Change anytime via action=\"strategy\"."
 }

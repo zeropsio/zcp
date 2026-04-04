@@ -23,9 +23,6 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 		devHostname := target.Runtime.DevHostname
 		mode := target.Runtime.EffectiveMode()
 
-		// Strategy lookup ALWAYS by DevHostname — agent stores strategies under DevHostname.
-		strategy := state.Bootstrap.Strategies[devHostname]
-
 		// Meta hostname: local mode writes appstage (dev doesn't exist), container writes appdev.
 		metaHostname := devHostname
 		stageHostname := target.Runtime.StageHostname()
@@ -34,13 +31,20 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			stageHostname = ""
 		}
 
+		// Adopted services (isExisting=true) get empty BootstrapSession
+		// to signal adoption rather than fresh bootstrap.
+		bootstrapSession := state.SessionID
+		if target.Runtime.IsExisting {
+			bootstrapSession = ""
+		}
+
 		meta := &ServiceMeta{
 			Hostname:         metaHostname,
 			Mode:             mode,
 			StageHostname:    stageHostname,
-			DeployStrategy:   strategy,
+			DeployStrategy:   "",
 			Environment:      string(e.environment),
-			BootstrapSession: state.SessionID,
+			BootstrapSession: bootstrapSession,
 			BootstrappedAt:   now,
 		}
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
@@ -75,12 +79,18 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			stageHostname = ""
 		}
 
+		// Adopted services (isExisting=true) get empty BootstrapSession.
+		bootstrapSession := state.SessionID
+		if target.Runtime.IsExisting {
+			bootstrapSession = ""
+		}
+
 		meta := &ServiceMeta{
 			Hostname:         metaHostname,
 			Mode:             target.Runtime.EffectiveMode(),
 			StageHostname:    stageHostname,
 			Environment:      string(e.environment),
-			BootstrapSession: state.SessionID,
+			BootstrapSession: bootstrapSession,
 		}
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", metaHostname, err)

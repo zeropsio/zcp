@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// FormatZeropsYmlForLLM returns a compact, LLM-friendly representation of the zerops.yml schema.
+// FormatZeropsYmlForLLM returns a compact, LLM-friendly representation of the zerops.yaml schema.
 // Includes field descriptions, types, and valid enum values.
 func FormatZeropsYmlForLLM(s *ZeropsYmlSchema) string {
 	if s == nil || s.Raw == nil {
@@ -14,7 +14,7 @@ func FormatZeropsYmlForLLM(s *ZeropsYmlSchema) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("## zerops.yml Schema (live)\n\n")
+	sb.WriteString("## zerops.yaml Schema (live)\n\n")
 
 	setup := navigatePath(s.Raw, "properties", "zerops", "items", "properties")
 	if setup == nil {

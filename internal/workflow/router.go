@@ -130,6 +130,7 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 }
 
 // strategyOfferings creates offerings based on the dominant deploy strategy across metas.
+// Deploy is always offered (strategy is resolved within the flow, not before).
 func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 	strategies := make(map[string]int)
 	for _, m := range metas {
@@ -137,10 +138,13 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 			strategies[m.DeployStrategy]++
 		}
 	}
-	if len(strategies) == 0 {
-		return nil
-	}
 
+	// Always offer deploy — strategy is informational, resolved within flow.
+	offerings := []FlowOffering{{
+		Workflow: "deploy", Priority: 1, Hint: `zerops_workflow action="start" workflow="deploy"`,
+	}}
+
+	// Find dominant strategy for additional offerings.
 	var dominant string
 	var maxCount int
 	for s, c := range strategies {
@@ -150,22 +154,14 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 		}
 	}
 
-	switch dominant {
-	case StrategyPushGit:
-		return []FlowOffering{
-			{Workflow: "deploy", Priority: 1, Hint: `zerops_workflow action="start" workflow="deploy"`},
-			{Workflow: "cicd", Priority: 2, Hint: `zerops_workflow action="start" workflow="cicd"`},
-			{Workflow: "export", Priority: 3, Hint: `zerops_workflow action="start" workflow="export"`},
-		}
-	case StrategyPushDev:
-		return []FlowOffering{{
-			Workflow: "deploy", Priority: 1, Hint: `zerops_workflow action="start" workflow="deploy"`,
-		}}
-	case StrategyManual:
-		return nil // Manual strategy: no deploy/cicd workflow. User deploys directly via zerops_deploy.
-	default:
-		return nil
+	if dominant == StrategyPushGit {
+		offerings = append(offerings,
+			FlowOffering{Workflow: "cicd", Priority: 2, Hint: `zerops_workflow action="start" workflow="cicd"`},
+			FlowOffering{Workflow: "export", Priority: 3, Hint: `zerops_workflow action="start" workflow="export"`},
+		)
 	}
+
+	return offerings
 }
 
 // appendUtilities adds recipe, scale at priority 4-5 if not already present.

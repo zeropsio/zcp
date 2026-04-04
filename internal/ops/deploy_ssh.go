@@ -110,7 +110,7 @@ func deploySSH(
 		)
 	}
 
-	// Pre-deploy validation: read zerops.yml from SSHFS mount (local filesystem).
+	// Pre-deploy validation: read zerops.yaml from SSHFS mount (local filesystem).
 	// Mount path: /var/www/{sourceService}/ maps to remote /var/www/
 	setupName := setup
 	if setupName == "" {

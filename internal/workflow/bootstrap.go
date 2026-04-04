@@ -37,7 +37,6 @@ type BootstrapState struct {
 	Steps             []BootstrapStep     `json:"steps"`
 	Plan              *ServicePlan        `json:"plan,omitempty"`
 	DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"`
-	Strategies        map[string]string   `json:"strategies,omitempty"` // hostname -> strategy (push-dev, push-git, manual)
 }
 
 // BootstrapResponse is returned from conductor actions.
@@ -91,7 +90,6 @@ func NewBootstrapState() *BootstrapState {
 		Active:      true,
 		CurrentStep: 0,
 		Steps:       steps,
-		Strategies:  make(map[string]string),
 	}
 }
 

@@ -15,7 +15,7 @@ func testStoreWithCore(t *testing.T) *Store {
 			Title: "Zerops Core Reference",
 			Content: "# Zerops Core Reference\n\nConceptual model of how Zerops works.\n\n" +
 				"ALWAYS bind 0.0.0.0. NEVER use apt-get on Alpine.\n\n" +
-				"YAML schema reference.\n\n## zerops.yml Schema\n\nStructure rules.\n\n" +
+				"YAML schema reference.\n\n## zerops.yaml Schema\n\nStructure rules.\n\n" +
 				"## Schema Rules\n\nPorts 10-65435.\n\n" +
 				"## Build/Deploy Lifecycle\n\nBuild and Run are SEPARATE containers.",
 		},

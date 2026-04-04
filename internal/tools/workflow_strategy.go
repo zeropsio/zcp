@@ -120,59 +120,6 @@ func allStrategiesAre(strategies map[string]string, strategy string) bool {
 	return true
 }
 
-// strategySelectionResponse is returned when deploy is attempted without strategies set.
-type strategySelectionResponse struct {
-	Action   string   `json:"action"`
-	Services []string `json:"services"`
-	Guidance string   `json:"guidance"`
-}
-
-// buildStrategySelectionResponse creates conversational guidance for strategy selection.
-func buildStrategySelectionResponse(metas []*workflow.ServiceMeta) strategySelectionResponse {
-	hostnames := make([]string, 0, len(metas))
-	var sb strings.Builder
-
-	sb.WriteString("## How should your services be deployed?\n\n")
-	sb.WriteString("Before deploying, choose a strategy for each service:\n\n")
-
-	for _, m := range metas {
-		hostnames = append(hostnames, m.Hostname)
-		sb.WriteString(fmt.Sprintf("### %s (%s, %s mode)\n\n", m.Hostname, m.Mode, m.Mode))
-	}
-
-	sb.WriteString("### push-dev\n")
-	sb.WriteString("You deploy by pushing code from a dev container via SSH.\n")
-	sb.WriteString("- **How it works**: Edit code on the dev container, then `zcli push` deploys it. Fast feedback loop.\n")
-	sb.WriteString("- **Good for**: Prototyping, experimenting, quick iterations.\n")
-	sb.WriteString("- **Trade-off**: Manual process — you trigger each deploy yourself.\n\n")
-
-	sb.WriteString("### push-git\n")
-	sb.WriteString("You push code to a git repository (GitHub/GitLab).\n")
-	sb.WriteString("- **How it works**: Commit on the dev container, push to remote. Optionally set up CI/CD for automatic deploys.\n")
-	sb.WriteString("- **Good for**: Team development, CI/CD pipelines, exporting to git.\n")
-	sb.WriteString("- **Trade-off**: Requires git setup (token, remote). I can help with all of it.\n\n")
-
-	sb.WriteString("### manual\n")
-	sb.WriteString("You control when and what to deploy. No guided workflow.\n")
-	sb.WriteString("- **How it works**: Edit code, call zerops_deploy when ready.\n")
-	sb.WriteString("- **Good for**: Experienced users, external CI/CD, custom workflows.\n")
-	sb.WriteString("- **Trade-off**: No guided prepare/verify cycle — you manage the deploy process.\n\n")
-
-	// Build example command.
-	parts := make([]string, 0, len(hostnames))
-	for _, h := range hostnames {
-		parts = append(parts, fmt.Sprintf("%q:\"push-dev\"", h))
-	}
-	sb.WriteString(fmt.Sprintf("→ `zerops_workflow action=\"strategy\" strategies={%s}`\n\n", strings.Join(parts, ",")))
-	sb.WriteString("After choosing, re-run: `zerops_workflow action=\"start\" workflow=\"deploy\"`\n")
-
-	return strategySelectionResponse{
-		Action:   "strategy_required",
-		Services: hostnames,
-		Guidance: sb.String(),
-	}
-}
-
 // handleRoute gathers router input from live API + local state and returns flow offerings.
 func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client, projectID, stateDir, selfHostname string) (*mcp.CallToolResult, any, error) {
 	var liveHostnames []string

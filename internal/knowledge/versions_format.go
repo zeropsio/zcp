@@ -123,7 +123,7 @@ func FormatServiceStacks(types []platform.ServiceStackType) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("## Service Stacks (live)\n[B]=also usable as build.base in zerops.yml\n")
+	sb.WriteString("## Service Stacks (live)\n[B]=also usable as build.base in zerops.yaml\n")
 
 	writeCategory := func(cat string, stacks []platform.ServiceStackType) {
 		var entries []string

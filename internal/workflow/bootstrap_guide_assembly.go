@@ -59,7 +59,7 @@ func formatEnvVarsForGuide(envVars map[string][]string) string {
 const bootstrapCompleteMsg = "Bootstrap complete."
 
 // BuildTransitionMessage creates a summary message when bootstrap completes.
-// Includes service list, deploy strategy selection, CI/CD gate, and router offerings.
+// Includes service list, transition hint, and router offerings.
 func BuildTransitionMessage(state *WorkflowState) string {
 	if state == nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return bootstrapCompleteMsg
@@ -88,31 +88,8 @@ func BuildTransitionMessage(state *WorkflowState) string {
 		}
 	}
 
-	// Deployment Strategy Selection
-	sb.WriteString("\n## Deploy Strategy\n\n")
-	sb.WriteString("Choose how to deploy code to your services:\n\n")
-	strategies := state.Bootstrap.Strategies
-	if strategies == nil {
-		strategies = make(map[string]string)
-	}
-	for _, t := range state.Bootstrap.Plan.Targets {
-		hostname := t.Runtime.DevHostname
-		current := strategies[hostname]
-		if current == "" {
-			current = "(not yet selected)"
-		}
-		sb.WriteString(fmt.Sprintf("- **%s**: %s\n", hostname, current))
-	}
-
-	sb.WriteString("\nAvailable strategies:\n")
-	sb.WriteString("- **push-dev**: Guided deploy workflow — edit on container, deploy to Zerops\n")
-	sb.WriteString("- **push-git**: Push code to git repository — optional CI/CD for auto-deploy\n")
-	sb.WriteString("- **manual**: You control when to deploy — call zerops_deploy directly\n\n")
-	sb.WriteString("→ `zerops_workflow action=\"strategy\" strategies={\"<hostname>\":\"push-dev\"}`\n\n")
-	sb.WriteString("After setting strategies:\n")
-	sb.WriteString("- push-dev: `zerops_workflow action=\"start\" workflow=\"deploy\"`\n")
-	sb.WriteString("- push-git: `zerops_workflow action=\"start\" workflow=\"deploy\"`\n")
-	sb.WriteString("- manual: call `zerops_deploy` directly when ready\n\n")
+	sb.WriteString("\nInfrastructure is ready with minimal scaffolding. To implement your application, start the deploy flow:\n")
+	sb.WriteString("`zerops_workflow action=\"start\" workflow=\"deploy\"`\n\n")
 
 	// Router-based workflow offerings
 	sb.WriteString("## What's Next?\n\n")

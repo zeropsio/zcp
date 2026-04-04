@@ -175,7 +175,7 @@ func TestWorkflowTool_Action_Start_Deploy_Stateful(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Action_Start_Deploy_ManualStrategy_ReturnsRedirect(t *testing.T) {
+func TestWorkflowTool_Action_Start_Deploy_ManualStrategy_CreatesSession(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
@@ -202,17 +202,9 @@ func TestWorkflowTool_Action_Start_Deploy_ManualStrategy_ReturnsRedirect(t *test
 	if result.IsError {
 		t.Fatalf("manual strategy should not return error: %s", getTextContent(t, result))
 	}
-	// Manual strategy must NOT create a session.
-	if engine.HasActiveSession() {
-		t.Error("manual strategy should not create a deploy session")
-	}
-	// Response must contain manual_deploy action and zerops_deploy command.
-	text := getTextContent(t, result)
-	if !strings.Contains(text, "manual_deploy") {
-		t.Errorf("response should contain manual_deploy action, got: %s", text)
-	}
-	if !strings.Contains(text, "zerops_deploy") {
-		t.Errorf("response should contain zerops_deploy command, got: %s", text)
+	// Per spec: manual strategy creates a session (strategy is informational, not a gate).
+	if !engine.HasActiveSession() {
+		t.Error("manual strategy should create a deploy session (strategy is informational)")
 	}
 }
 

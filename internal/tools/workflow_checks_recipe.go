@@ -69,7 +69,7 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 			appHostname = plan.Targets[0].Hostname
 		}
 
-		// Check zerops.yml existence and structure.
+		// Check zerops.yaml existence and structure.
 		// Try mount paths: {hostname}dev (standard mode), {hostname} (bare), then project root.
 		ymlDir := projectRoot
 		for _, candidate := range []string{appHostname + "dev", appHostname} {
@@ -84,7 +84,7 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 		if parseErr != nil {
 			checks = append(checks, workflow.StepCheck{
 				Name: "zerops_yml_exists", Status: statusFail,
-				Detail: fmt.Sprintf("zerops.yml not found: %v", parseErr),
+				Detail: fmt.Sprintf("zerops.yaml not found: %v", parseErr),
 			})
 		} else {
 			checks = append(checks, workflow.StepCheck{
@@ -125,7 +125,7 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 	}
 }
 
-// checkRecipeSetups validates zerops.yml has a dev setup entry for the app.
+// checkRecipeSetups validates zerops.yaml has a dev setup entry for the app.
 // At generate time only the dev entry exists — prod is added during deploy.
 // zerops.yaml uses generic names: `setup: dev` and `setup: prod`.
 // The deploy tool's --setup param maps hostname→setup at deploy time.
@@ -148,7 +148,7 @@ func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, _ *workflow.Recip
 	if entry == nil {
 		checks = append(checks, workflow.StepCheck{
 			Name: hostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no dev setup entry found in zerops.yml (tried: dev, %sdev, %s)", hostname, hostname),
+			Detail: fmt.Sprintf("no dev setup entry found in zerops.yaml (tried: dev, %sdev, %s)", hostname, hostname),
 		})
 		return checks
 	}

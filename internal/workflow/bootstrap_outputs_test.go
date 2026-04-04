@@ -419,62 +419,40 @@ func TestProvisionMeta_PreExistingDepMetaSurvives(t *testing.T) {
 	}
 }
 
-// --- C7: Deploy strategy persistence + XC1 Mode field ---
+// --- C7: Bootstrap always writes empty DeployStrategy ---
 
-func TestWriteBootstrapOutputs_CopiesStrategiesToDecisions(t *testing.T) {
+func TestWriteBootstrapOutputs_AlwaysWritesEmptyStrategy(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name     string
-		strategy string
-		wantKey  string
-	}{
-		{"push-dev strategy", StrategyPushDev, StrategyPushDev},
-		{"ci-cd strategy", StrategyPushGit, StrategyPushGit},
-		{"manual strategy", StrategyManual, StrategyManual},
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvContainer, nil)
+
+	_, err := eng.BootstrapStart("proj-1", "strategy must be empty")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			// Use EnvLocal — strategy stored under "appdev" but meta written to "appstage".
-			eng := NewEngine(dir, EnvLocal, nil)
 
-			_, err := eng.BootstrapStart("proj-1", "app with strategy")
-			if err != nil {
-				t.Fatalf("BootstrapStart: %v", err)
-			}
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
 
-			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
-			}}, nil, nil)
-			if err != nil {
-				t.Fatalf("BootstrapCompletePlan: %v", err)
-			}
+	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
 
-			// Store strategy under DevHostname (as the agent does).
-			if err := eng.BootstrapStoreStrategies(map[string]string{"appdev": tt.strategy}); err != nil {
-				t.Fatalf("BootstrapStoreStrategies: %v", err)
-			}
-
-			for _, step := range []string{"provision", "generate", "deploy", "close"} {
-				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
-					t.Fatalf("BootstrapComplete(%s): %v", step, err)
-				}
-			}
-
-			// Local mode: meta written as appstage (not appdev).
-			meta, err := ReadServiceMeta(dir, "appstage")
-			if err != nil {
-				t.Fatalf("ReadServiceMeta: %v", err)
-			}
-			if meta == nil {
-				t.Fatal("expected appstage meta (local mode writes stage hostname)")
-			}
-			got := meta.DeployStrategy
-			if got != tt.wantKey {
-				t.Errorf("DeployStrategy: want %q, got %q", tt.wantKey, got)
-			}
-		})
+	meta, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected appdev meta")
+	}
+	if meta.DeployStrategy != "" {
+		t.Errorf("bootstrap must NEVER set DeployStrategy, got %q", meta.DeployStrategy)
 	}
 }
 
@@ -528,12 +506,12 @@ func TestWriteBootstrapOutputs_NoAutoAssignStrategy(t *testing.T) {
 	}
 }
 
-func TestWriteBootstrapOutputs_ExplicitStrategyPreserved(t *testing.T) {
+func TestWriteBootstrapOutputs_LocalMode_AlwaysEmptyStrategy(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	_, err := eng.BootstrapStart("proj-1", "explicit strategy test")
+	_, err := eng.BootstrapStart("proj-1", "local mode strategy test")
 	if err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
@@ -543,11 +521,6 @@ func TestWriteBootstrapOutputs_ExplicitStrategyPreserved(t *testing.T) {
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
-	}
-
-	// Store explicit ci-cd strategy during bootstrap — should persist to meta.
-	if err := eng.BootstrapStoreStrategies(map[string]string{"appdev": StrategyPushGit}); err != nil {
-		t.Fatalf("BootstrapStoreStrategies: %v", err)
 	}
 
 	for _, step := range []string{"provision", "generate", "deploy", "close"} {
@@ -563,8 +536,8 @@ func TestWriteBootstrapOutputs_ExplicitStrategyPreserved(t *testing.T) {
 	if meta == nil {
 		t.Fatal("expected appdev meta")
 	}
-	if meta.DeployStrategy != StrategyPushGit {
-		t.Errorf("explicit strategy should be preserved: want %q, got %q", StrategyPushGit, meta.DeployStrategy)
+	if meta.DeployStrategy != "" {
+		t.Errorf("bootstrap must NEVER set DeployStrategy, got %q", meta.DeployStrategy)
 	}
 }
 
@@ -669,7 +642,7 @@ func TestBuildTransitionMessage_WithPlan_IncludesServices(t *testing.T) {
 	}
 }
 
-func TestBuildTransitionMessage_WithPlan_IncludesStrategySection(t *testing.T) {
+func TestBuildTransitionMessage_WithPlan_NoStrategySection(t *testing.T) {
 	t.Parallel()
 	state := &WorkflowState{
 		Bootstrap: &BootstrapState{
@@ -684,17 +657,19 @@ func TestBuildTransitionMessage_WithPlan_IncludesStrategySection(t *testing.T) {
 					},
 				},
 			},
-			Strategies: map[string]string{"appdev": StrategyPushDev},
 		},
 	}
 	msg := BuildTransitionMessage(state)
-	// Should mention deploy strategy selection.
-	if !strings.Contains(msg, "Deploy Strategy") && !strings.Contains(msg, "strategy") {
-		t.Error("message should include deploy strategy section")
+	// Bootstrap must NOT include strategy selection.
+	if strings.Contains(msg, "Deploy Strategy") {
+		t.Error("bootstrap transition must NOT contain Deploy Strategy section")
+	}
+	if strings.Contains(msg, `action="strategy"`) {
+		t.Error("bootstrap transition must NOT contain strategy action command")
 	}
 }
 
-func TestBuildTransitionMessage_WithPlan_IncludesCICDGate(t *testing.T) {
+func TestBuildTransitionMessage_WithPlan_IncludesTransitionHint(t *testing.T) {
 	t.Parallel()
 	state := &WorkflowState{
 		Bootstrap: &BootstrapState{
@@ -712,9 +687,11 @@ func TestBuildTransitionMessage_WithPlan_IncludesCICDGate(t *testing.T) {
 		},
 	}
 	msg := BuildTransitionMessage(state)
-	// Should include CI/CD workflow option.
-	if !strings.Contains(msg, "CI/CD") && !strings.Contains(msg, "cicd") {
-		t.Error("message should include CI/CD workflow option")
+	if !strings.Contains(msg, "deploy") {
+		t.Error("message should hint at deploy flow")
+	}
+	if !strings.Contains(msg, "minimal scaffolding") {
+		t.Error("message should mention minimal scaffolding")
 	}
 }
 
@@ -764,10 +741,6 @@ func TestBuildTransitionMessage_WithMultipleServices_ListsAll(t *testing.T) {
 					},
 				},
 			},
-			Strategies: map[string]string{
-				"appdev": StrategyPushDev,
-				"apidev": StrategyPushGit,
-			},
 		},
 	}
 	msg := BuildTransitionMessage(state)
@@ -777,15 +750,9 @@ func TestBuildTransitionMessage_WithMultipleServices_ListsAll(t *testing.T) {
 	if !strings.Contains(msg, "apidev") {
 		t.Error("message should list apidev")
 	}
-	if !strings.Contains(msg, StrategyPushDev) {
-		t.Error("message should show push-dev strategy for appdev")
-	}
-	if !strings.Contains(msg, StrategyPushGit) {
-		t.Error("message should show ci-cd strategy for apidev")
-	}
 }
 
-func TestBuildTransitionMessage_AllStrategyOptionsListed(t *testing.T) {
+func TestBuildTransitionMessage_NoStrategyOptions(t *testing.T) {
 	t.Parallel()
 	state := &WorkflowState{
 		Bootstrap: &BootstrapState{
@@ -803,15 +770,15 @@ func TestBuildTransitionMessage_AllStrategyOptionsListed(t *testing.T) {
 		},
 	}
 	msg := BuildTransitionMessage(state)
-	// Verify all three strategy options are documented.
-	if !strings.Contains(msg, "push-dev") {
-		t.Error("message should document push-dev strategy")
+	// Bootstrap transition must NOT list strategy options.
+	if strings.Contains(msg, "push-dev") {
+		t.Error("bootstrap transition must NOT list push-dev strategy")
 	}
-	if !strings.Contains(msg, "push-git") {
-		t.Error("message should document push-git strategy")
+	if strings.Contains(msg, "push-git") {
+		t.Error("bootstrap transition must NOT list push-git strategy")
 	}
-	if !strings.Contains(msg, "manual") {
-		t.Error("message should document manual strategy")
+	if strings.Contains(msg, "manual") {
+		t.Error("bootstrap transition must NOT list manual strategy")
 	}
 }
 
@@ -838,8 +805,8 @@ func TestBuildTransitionMessage_EmptyTargets_ManagedOnly(t *testing.T) {
 	if strings.Contains(msg, "Deploy Strategy") {
 		t.Error("managed-only message should NOT contain Deploy Strategy section")
 	}
-	if strings.Contains(msg, "CI/CD Gate") {
-		t.Error("managed-only message should NOT contain CI/CD Gate section")
+	if strings.Contains(msg, "push-git Gate") {
+		t.Error("managed-only message should NOT contain push-git Gate section")
 	}
 	// Should offer utility operations.
 	if !strings.Contains(msg, "scale") {
@@ -850,7 +817,7 @@ func TestBuildTransitionMessage_EmptyTargets_ManagedOnly(t *testing.T) {
 	}
 }
 
-func TestBuildTransitionMessage_CICDGateIncluded(t *testing.T) {
+func TestBuildTransitionMessage_IncludesRouterOfferings(t *testing.T) {
 	t.Parallel()
 	state := &WorkflowState{
 		Bootstrap: &BootstrapState{
@@ -868,18 +835,12 @@ func TestBuildTransitionMessage_CICDGateIncluded(t *testing.T) {
 		},
 	}
 	msg := BuildTransitionMessage(state)
-	// Verify strategy section lists push-git with CI/CD as optional.
-	if !strings.Contains(msg, "push-git") {
-		t.Error("message should include push-git strategy")
+	// Should include deploy and push-git as router offerings.
+	if !strings.Contains(msg, "Deploy") && !strings.Contains(msg, "deploy") {
+		t.Error("message should include deploy offering")
 	}
-	if !strings.Contains(msg, "CI/CD") {
-		t.Error("message should mention CI/CD as optional for push-git")
-	}
-	if !strings.Contains(msg, "push-dev") {
-		t.Error("message should include push-dev strategy")
-	}
-	if !strings.Contains(msg, "manual") {
-		t.Error("message should include manual strategy")
+	if !strings.Contains(msg, "What's Next") {
+		t.Error("message should include What's Next section")
 	}
 }
 
@@ -988,7 +949,7 @@ func TestWriteBootstrapOutputs_LocalMode_HostnameIsStage(t *testing.T) {
 	}
 }
 
-func TestWriteBootstrapOutputs_LocalMode_StrategyPreserved(t *testing.T) {
+func TestWriteBootstrapOutputs_LocalMode_EmptyStrategy(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
@@ -1004,18 +965,13 @@ func TestWriteBootstrapOutputs_LocalMode_StrategyPreserved(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	// Strategy stored under DevHostname (agent sends strategies by DevHostname).
-	if err := eng.BootstrapStoreStrategies(map[string]string{"appdev": StrategyPushDev}); err != nil {
-		t.Fatalf("BootstrapStoreStrategies: %v", err)
-	}
-
 	for _, step := range []string{"provision", "generate", "deploy", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
 	}
 
-	// Strategy should survive: stored under "appdev" but written to appstage.json.
+	// Local mode: meta written as appstage. Strategy always empty after bootstrap.
 	meta, err := ReadServiceMeta(dir, "appstage")
 	if err != nil {
 		t.Fatalf("ReadServiceMeta(appstage): %v", err)
@@ -1023,7 +979,117 @@ func TestWriteBootstrapOutputs_LocalMode_StrategyPreserved(t *testing.T) {
 	if meta == nil {
 		t.Fatal("expected appstage meta")
 	}
-	if meta.DeployStrategy != StrategyPushDev {
-		t.Errorf("DeployStrategy = %q, want %q", meta.DeployStrategy, StrategyPushDev)
+	if meta.DeployStrategy != "" {
+		t.Errorf("bootstrap must NEVER set DeployStrategy, got %q", meta.DeployStrategy)
+	}
+}
+
+// --- Phase 3: Adoption simplification — isExisting targets get empty BootstrapSession ---
+
+func TestWriteBootstrapOutputs_AdoptedService_EmptyBootstrapSession(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name             string
+		isExisting       bool
+		wantEmptySession bool
+	}{
+		{"adopted (isExisting=true) gets empty BootstrapSession", true, true},
+		{"new service (isExisting=false) gets session ID", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			eng := NewEngine(dir, EnvContainer, nil)
+
+			_, err := eng.BootstrapStart("proj-1", "adoption test")
+			if err != nil {
+				t.Fatalf("BootstrapStart: %v", err)
+			}
+
+			sessionID := eng.SessionID()
+			if sessionID == "" {
+				t.Fatal("expected non-empty session ID")
+			}
+
+			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+				Runtime: RuntimeTarget{
+					DevHostname: "appdev",
+					Type:        "nodejs@22",
+					IsExisting:  tt.isExisting,
+				},
+			}}, nil, nil)
+			if err != nil {
+				t.Fatalf("BootstrapCompletePlan: %v", err)
+			}
+
+			for _, step := range []string{"provision", "generate", "deploy", "close"} {
+				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
+					t.Fatalf("BootstrapComplete(%s): %v", step, err)
+				}
+			}
+
+			meta, err := ReadServiceMeta(dir, "appdev")
+			if err != nil {
+				t.Fatalf("ReadServiceMeta: %v", err)
+			}
+			if meta == nil {
+				t.Fatal("expected appdev meta")
+			}
+
+			if tt.wantEmptySession {
+				if meta.BootstrapSession != "" {
+					t.Errorf("adopted service BootstrapSession: want empty, got %q", meta.BootstrapSession)
+				}
+			} else {
+				if meta.BootstrapSession != sessionID {
+					t.Errorf("new service BootstrapSession: want %q, got %q", sessionID, meta.BootstrapSession)
+				}
+			}
+
+			// BootstrappedAt should always be set regardless of adoption.
+			if meta.BootstrappedAt == "" {
+				t.Error("BootstrappedAt should be set for both adopted and new services")
+			}
+		})
+	}
+}
+
+func TestProvisionMeta_AdoptedService_EmptyBootstrapSession(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvContainer, nil)
+
+	_, err := eng.BootstrapStart("proj-1", "adoption provision test")
+	if err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{
+			DevHostname: "appdev",
+			Type:        "nodejs@22",
+			IsExisting:  true,
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Provisioned ok", nil); err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
+	}
+
+	meta, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected appdev meta after provision")
+	}
+
+	// Adopted service provision meta should also have empty BootstrapSession.
+	if meta.BootstrapSession != "" {
+		t.Errorf("adopted service provision BootstrapSession: want empty, got %q", meta.BootstrapSession)
 	}
 }

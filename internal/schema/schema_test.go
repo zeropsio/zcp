@@ -205,7 +205,7 @@ func TestFormatZeropsYmlForLLM(t *testing.T) {
 	}
 
 	checks := []string{
-		"## zerops.yml Schema (live)",
+		"## zerops.yaml Schema (live)",
 		"### build",
 		"### run",
 		"base",

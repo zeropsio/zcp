@@ -57,7 +57,7 @@ func localTestAuth() auth.Info {
 	}
 }
 
-// tmpWithZeropsYml creates a temp dir with a minimal zerops.yml.
+// tmpWithZeropsYml creates a temp dir with a minimal zerops.yaml (uses .yml for fallback testing).
 func tmpWithZeropsYml(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -191,7 +191,7 @@ func TestDeployLocal_MissingZeropsYml(t *testing.T) {
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
 		"app", "", dir, false)
 	if err == nil {
-		t.Fatal("expected error for missing zerops.yml")
+		t.Fatal("expected error for missing zerops.yaml")
 	}
 
 	var pe *platform.PlatformError

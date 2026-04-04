@@ -207,7 +207,7 @@ const (
 var recipeStepDetails = []StepDetail{
     {Name: RecipeStepResearch,  Tools: []string{"zerops_knowledge", "zerops_discover", "zerops_workflow"}, Verification: "SUCCESS WHEN: RecipePlan submitted with all research fields, types validated against live catalog, decision branches resolved."},
     {Name: RecipeStepProvision, Tools: []string{"zerops_import", "zerops_process", "zerops_discover", "zerops_mount"}, Verification: "SUCCESS WHEN: all workspace services exist with expected status AND types match AND managed dep env vars recorded."},
-    {Name: RecipeStepGenerate,  Tools: []string{"zerops_knowledge"}, Verification: "SUCCESS WHEN: zerops.yml valid with base+prod+dev setups AND app README has integration-guide fragment with commented zerops.yaml AND knowledge-base fragment exists with Gotchas section AND comment ratio ≥ 0.3."},
+    {Name: RecipeStepGenerate,  Tools: []string{"zerops_knowledge"}, Verification: "SUCCESS WHEN: zerops.yaml valid with base+prod+dev setups AND app README has integration-guide fragment with commented zerops.yaml AND knowledge-base fragment exists with Gotchas section AND comment ratio ≥ 0.3."},
     {Name: RecipeStepDeploy,    Tools: []string{"zerops_deploy", "zerops_discover", "zerops_subdomain", "zerops_logs", "zerops_mount", "zerops_verify", "zerops_manage"}, Verification: "SUCCESS WHEN: all runtime services deployed, accessible, AND healthy."},
     {Name: RecipeStepFinalize,  Tools: []string{"zerops_workflow"}, Verification: "SUCCESS WHEN: all recipe repo files generated (6 import.yaml + 7 READMEs), fragment tags valid, YAML valid, env scaling correct, no placeholders."},
     {Name: RecipeStepClose,     Tools: []string{"zerops_workflow"}, Verification: "SUCCESS WHEN: recipe administratively closed, publish commands presented."},
@@ -402,7 +402,7 @@ Fill in all research fields. Load the runtime's hello-world recipe as a referenc
 ...
 
 ### Decision Tree Resolution
-Use `zerops_knowledge` scope mode to load import.yml schema.
+Use `zerops_knowledge` scope mode to load import.yaml schema.
 - Web server: {guidance on when builtin vs nginx-sidecar}
 - Build base: {guidance on multi-runtime builds}
 ...
@@ -464,8 +464,8 @@ func (r *RecipeState) buildGuide(step string, iteration int, env Environment, kp
     //    - finalize: "finalize" section
     //    - other steps: section matching step name
     // 3. Append knowledge via assembleKnowledge (reuse from guidance.go)
-    //    - provision: import.yml schema
-    //    - generate: runtime briefing + env vars + zerops.yml schema
+    //    - provision: import.yaml schema
+    //    - generate: runtime briefing + env vars + zerops.yaml schema
     //    - deploy: schema rules
 }
 ```

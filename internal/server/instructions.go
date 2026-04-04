@@ -30,7 +30,7 @@ Edits on mount survive restarts but not deploys. zerops_discover refreshes servi
 
 const localEnvironment = `
 Local machine — code in working directory, infrastructure on Zerops.
-Deploy: zcli push (zerops.yml at repo root, each deploy = new container).
+Deploy: zcli push (zerops.yaml at repo root, each deploy = new container).
 zerops_discover refreshes service state.`
 
 // routingInstructions is intentionally empty — routing merged into baseInstructions

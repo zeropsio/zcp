@@ -59,7 +59,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
 			projectEnvs: []platform.EnvVar{
 				{ID: "pe1", Key: "APP_KEY", Content: "base64:secretkey"},
 			},
-			wantVars:     2, // 1 from zerops.yml + 1 project
+			wantVars:     2, // 1 from zerops.yaml + 1 project
 			wantServices: 1,
 			wantContains: []string{"DB_HOST=db", "APP_KEY=base64:secretkey"},
 		},
@@ -82,7 +82,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
 			wantContains: []string{"NODE_ENV=production", "DB_HOST=db"},
 		},
 		{
-			name: "zerops.yml envVariable takes precedence over project env",
+			name: "zerops.yaml envVariable takes precedence over project env",
 			zeropsYml: `zerops:
   - setup: app
     envVariables:

@@ -80,14 +80,14 @@ func validateBuildBases(bases []string, schemas *schema.Schemas, liveTypes []pla
 		return nil
 	}
 
-	// Prefer schema: zerops.yml build.base enum is the authoritative list.
+	// Prefer schema: zerops.yaml build.base enum is the authoritative list.
 	if schemas != nil && schemas.ZeropsYml != nil {
 		baseSet := schemas.ZeropsYml.BuildBaseSet()
 		var errs []string
 		for _, bb := range bases {
 			base, _, _ := strings.Cut(bb, "@")
 			if !baseSet[base] {
-				errs = append(errs, fmt.Sprintf("buildBase %q: base name %q not found in zerops.yml schema", bb, base))
+				errs = append(errs, fmt.Sprintf("buildBase %q: base name %q not found in zerops.yaml schema", bb, base))
 			}
 		}
 		return errs

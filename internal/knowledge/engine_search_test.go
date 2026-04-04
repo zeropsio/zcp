@@ -126,9 +126,9 @@ func TestSearch_S3ObjectStorage(t *testing.T) {
 
 func TestSearch_ZeropsYmlBuildCache(t *testing.T) {
 	store := newTestStore(t)
-	results := store.Search("zerops.yml build cache", 5)
+	results := store.Search("zerops.yaml build cache", 5)
 	if len(results) == 0 {
-		t.Fatal("expected results for 'zerops.yml build cache'")
+		t.Fatal("expected results for 'zerops.yaml build cache'")
 	}
 	found := false
 	for _, r := range results[:min(3, len(results))] {
@@ -144,9 +144,9 @@ func TestSearch_ZeropsYmlBuildCache(t *testing.T) {
 
 func TestSearch_ImportYmlServices(t *testing.T) {
 	store := newTestStore(t)
-	results := store.Search("import.yml services", 5)
+	results := store.Search("import.yaml services", 5)
 	if len(results) == 0 {
-		t.Fatal("expected results for 'import.yml services'")
+		t.Fatal("expected results for 'import.yaml services'")
 	}
 	found := false
 	for _, r := range results[:min(3, len(results))] {

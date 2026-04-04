@@ -21,8 +21,34 @@ var strategyDescriptions = map[string]string{
 	StrategyManual:  "you manage deployments yourself",
 }
 
+// readCurrentStrategy reads the deploy strategy for a hostname from its ServiceMeta.
+// Returns empty string if meta not found or stateDir is empty.
+func readCurrentStrategy(stateDir, hostname string) string {
+	if stateDir == "" {
+		return ""
+	}
+	meta, err := ReadServiceMeta(stateDir, hostname)
+	if err != nil || meta == nil {
+		return ""
+	}
+	return meta.DeployStrategy
+}
+
+// dominantStrategy reads strategy from the first non-stage target's meta.
+func dominantStrategy(stateDir string, targets []DeployTarget) string {
+	for _, t := range targets {
+		if t.Role == DeployRoleStage {
+			continue
+		}
+		if s := readCurrentStrategy(stateDir, t.Hostname); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 // buildPrepareGuide generates personalized prepare step guidance from state.
-func buildPrepareGuide(state *DeployState, env Environment) string {
+func buildPrepareGuide(state *DeployState, env Environment, stateDir string) string {
 	var sb strings.Builder
 
 	sb.WriteString("## Deploy Preparation\n\n")
@@ -30,7 +56,8 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 	// Setup summary.
 	sb.WriteString("### Your services\n")
 	writeTargetSummary(&sb, state)
-	fmt.Fprintf(&sb, "Mode: %s | Strategy: %s\n\n", state.Mode, state.Strategy)
+	strategy := dominantStrategy(stateDir, state.Targets)
+	fmt.Fprintf(&sb, "Mode: %s | Strategy: %s\n\n", state.Mode, strategy)
 
 	// Checklist.
 	sb.WriteString("### Checklist\n")
@@ -64,7 +91,7 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 	sb.WriteString("\n")
 
 	// Strategy note.
-	writeStrategyNote(&sb, state.Strategy)
+	writeStrategyNote(&sb, strategy)
 
 	// Knowledge pointers.
 	sb.WriteString(buildKnowledgeMap(state.Targets))
@@ -73,10 +100,11 @@ func buildPrepareGuide(state *DeployState, env Environment) string {
 }
 
 // buildDeployGuide generates personalized deploy step guidance from state.
-func buildDeployGuide(state *DeployState, iteration int, env Environment) string {
+func buildDeployGuide(state *DeployState, iteration int, env Environment, stateDir string) string {
 	var sb strings.Builder
 
-	fmt.Fprintf(&sb, "## Execute — %s mode, %s\n\n", state.Mode, state.Strategy)
+	strategy := dominantStrategy(stateDir, state.Targets)
+	fmt.Fprintf(&sb, "## Execute — %s mode, %s\n\n", state.Mode, strategy)
 
 	// Iteration escalation replaces workflow on retries.
 	if iteration > 0 {

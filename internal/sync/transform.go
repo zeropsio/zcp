@@ -100,8 +100,8 @@ func InjectFragment(readme, fragmentName, fragment string) string {
 	return readme + "\n\n" + startMarker + "\n" + fragment + "\n" + endMarker
 }
 
-// ExtractZeropsYAML extracts the YAML code block from "## zerops.yml" or
-// "## zerops.yaml" section.
+// ExtractZeropsYAML extracts the YAML code block from "## zerops.yaml" or
+// "## zerops.yml" (legacy) section.
 func ExtractZeropsYAML(recipeContent string) string {
 	lines := strings.Split(recipeContent, "\n")
 
@@ -140,7 +140,7 @@ func ExtractZeropsYAML(recipeContent string) string {
 }
 
 // ExtractIntegrationGuide extracts the integration-guide section from a recipe .md.
-// This is everything from the first integration-guide heading (## zerops.yml,
+// This is everything from the first integration-guide heading (## zerops.yaml,
 // ## 1. Adding zerops.yaml, etc.) to the end, demoted H2→H3.
 // Returns empty string if no such section exists.
 func ExtractIntegrationGuide(recipeContent string) string {
@@ -193,7 +193,7 @@ func ExtractIntegrationGuide(recipeContent string) string {
 
 // isIntegrationGuideHeading returns true if the line marks the start of an
 // integration-guide section. Matches:
-//   - ## zerops.yml / ## zerops.yaml
+//   - ## zerops.yaml / ## zerops.yml (legacy)
 //   - ## 1. Adding `zerops.yaml` (numbered heading from API integration-guide)
 //   - Any ## N. heading (numbered integration steps)
 func isIntegrationGuideHeading(line string) bool {

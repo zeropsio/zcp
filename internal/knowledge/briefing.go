@@ -226,12 +226,12 @@ func (s *Store) prependUniversals(content string) string {
 }
 
 // prependModeAdaptation returns a concise mode-specific pointer for recipes.
-// Recipes now include both dev and prod zerops.yml setups with inline comments,
+// Recipes now include both dev and prod zerops.yaml setups with inline comments,
 // so the header only needs to direct the agent to the right setup block.
 func prependModeAdaptation(mode, _ string) string {
 	switch mode {
 	case "dev", "standard":
-		return "> **Mode: dev** — Use the `dev` setup block from the zerops.yml below.\n\n"
+		return "> **Mode: dev** — Use the `dev` setup block from the zerops.yaml below.\n\n"
 	case "simple":
 		return "> **Mode: simple** — Use the `prod` setup block below, but override `deployFiles: [.]`.\n\n"
 	default:

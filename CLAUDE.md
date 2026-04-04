@@ -20,7 +20,7 @@ Key specs:
 
 Zerops platform schemas (live, authoritative for YAML field validation):
 - **Import YAML**: `https://api.app-prg1.zerops.io/api/rest/public/settings/import-project-yml-json-schema.json`
-- **zerops.yml**: `https://api.app-prg1.zerops.io/api/rest/public/settings/zerops-yml-json-schema.json`
+- **zerops.yaml**: `https://api.app-prg1.zerops.io/api/rest/public/settings/zerops-yml-json-schema.json`
 
 ---
 

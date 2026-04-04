@@ -1,4 +1,4 @@
-// Package schema provides access to live Zerops YAML schemas (zerops.yml + import.yaml).
+// Package schema provides access to live Zerops YAML schemas (zerops.yaml + import.yaml).
 // Schemas are fetched from the public API and cached with a TTL.
 // Extracted enums are used for validation; formatted output is used for LLM knowledge injection.
 package schema
@@ -22,7 +22,7 @@ type Schemas struct {
 	ImportYml *ImportYmlSchema
 }
 
-// ZeropsYmlSchema holds extracted data from the zerops.yml JSON schema.
+// ZeropsYmlSchema holds extracted data from the zerops.yaml JSON schema.
 type ZeropsYmlSchema struct {
 	BuildBases []string       // valid build.base values (e.g., "php@8.4", "nodejs@22")
 	RunBases   []string       // valid run.base values (e.g., "php-nginx@8.4", "static")
@@ -50,7 +50,7 @@ type ImportYmlSchema struct {
 func ParseZeropsYmlSchema(data []byte) (*ZeropsYmlSchema, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parse zerops.yml schema: %w", err)
+		return nil, fmt.Errorf("parse zerops.yaml schema: %w", err)
 	}
 
 	s := &ZeropsYmlSchema{Raw: raw}
@@ -59,14 +59,14 @@ func ParseZeropsYmlSchema(data []byte) (*ZeropsYmlSchema, error) {
 	buildBase := navigatePath(raw, "properties", "zerops", "items", "properties", "build", "properties", "base")
 	s.BuildBases = extractEnum(buildBase)
 	if len(s.BuildBases) == 0 {
-		fmt.Fprintln(os.Stderr, "zcp: schema: zerops.yml build.base enum is empty — schema structure may have changed")
+		fmt.Fprintln(os.Stderr, "zcp: schema: zerops.yaml build.base enum is empty — schema structure may have changed")
 	}
 
 	// run.base: properties.zerops.items.properties.run.properties.base
 	runBase := navigatePath(raw, "properties", "zerops", "items", "properties", "run", "properties", "base")
 	s.RunBases = extractEnum(runBase)
 	if len(s.RunBases) == 0 {
-		fmt.Fprintln(os.Stderr, "zcp: schema: zerops.yml run.base enum is empty — schema structure may have changed")
+		fmt.Fprintln(os.Stderr, "zcp: schema: zerops.yaml run.base enum is empty — schema structure may have changed")
 	}
 
 	// Precompute sets once.

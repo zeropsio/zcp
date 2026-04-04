@@ -3,7 +3,6 @@ package workflow
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"strings"
 	"time"
@@ -278,23 +277,6 @@ func (e *Engine) BootstrapSkip(stepName, reason string) (*BootstrapResponse, err
 		return nil, fmt.Errorf("bootstrap skip save: %w", err)
 	}
 	return state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
-}
-
-// BootstrapStoreStrategies saves per-hostname deploy strategies to the active bootstrap state.
-func (e *Engine) BootstrapStoreStrategies(strategies map[string]string) error {
-	state, err := e.loadState()
-	if err != nil {
-		return fmt.Errorf("store strategies: %w", err)
-	}
-	if state.Bootstrap == nil {
-		return fmt.Errorf("store strategies: no bootstrap state")
-	}
-	if state.Bootstrap.Strategies == nil {
-		state.Bootstrap.Strategies = make(map[string]string, len(strategies))
-	}
-	maps.Copy(state.Bootstrap.Strategies, strategies)
-	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	return saveSessionState(e.stateDir, e.sessionID, state)
 }
 
 // StoreDiscoveredEnvVars saves discovered env var names for a service hostname.

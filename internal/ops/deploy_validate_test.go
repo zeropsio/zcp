@@ -1,4 +1,4 @@
-// Tests for: ops/deploy_validate.go — zerops.yml pre-deploy validation.
+// Tests for: ops/deploy_validate.go — zerops.yaml pre-deploy validation.
 package ops
 
 import (

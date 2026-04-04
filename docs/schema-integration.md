@@ -8,7 +8,7 @@ Two public JSON schemas, no auth required:
 
 | Schema | URL | What we extract |
 |--------|-----|-----------------|
-| **zerops.yml** | `api.app-prg1.zerops.io/.../zerops-yml-json-schema.json` | `build.base` enum (79 values), `run.base` enum (97 values) |
+| **zerops.yaml** | `api.app-prg1.zerops.io/.../zerops-yml-json-schema.json` | `build.base` enum (79 values), `run.base` enum (97 values) |
 | **import.yaml** | `api.app-prg1.zerops.io/.../import-project-yml-json-schema.json` | Service type enum (119 values), mode enum, corePackage enum, objectStoragePolicy enum |
 
 Fetched once, cached 24 hours. Concurrent requests are coalesced (only one HTTP fetch at a time). Response bodies are capped at 5MB. All enums precomputed into O(1) lookup sets at parse time.
@@ -22,12 +22,12 @@ When the LLM submits a `RecipePlan` after the research step, we validate against
 | Field | Validated against | What it catches |
 |-------|------------------|-----------------|
 | `runtimeType` | import.yaml service type enum | Invalid runtime like `foobar@1.0` |
-| `buildBases[]` | zerops.yml `build.base` enum | Invalid build base like `php-nginx@8.4` (that's a run base, not a build base) |
+| `buildBases[]` | zerops.yaml `build.base` enum | Invalid build base like `php-nginx@8.4` (that's a run base, not a build base) |
 | `targets[].type` | import.yaml service type enum | Invalid service type in targets |
 
 Falls back to live API types (`liveTypes`) if schemas are unavailable.
 
-**Why this matters:** `build.base` and `run.base` enums are different from service types. The live API's `ServiceStackType` list doesn't tell you which values are valid for `build.base` in zerops.yml. Only the zerops.yml JSON schema has this. This is the one thing the schema provides that nothing else does.
+**Why this matters:** `build.base` and `run.base` enums are different from service types. The live API's `ServiceStackType` list doesn't tell you which values are valid for `build.base` in zerops.yaml. Only the zerops.yaml JSON schema has this. This is the one thing the schema provides that nothing else does.
 
 ### 2. Import pre-flight validation
 

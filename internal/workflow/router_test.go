@@ -72,14 +72,14 @@ func TestRoute_AllBootstrapped(t *testing.T) {
 			wantTop: "deploy",
 		},
 		{
-			name: "manual strategy — bootstrap as add-new",
+			name: "manual strategy — deploy still offered",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{{
 					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyManual,
 				}},
 				LiveServices: []string{"appdev"},
 			},
-			wantTop: "bootstrap", // Manual has no deploy offering; bootstrap (add new) is first
+			wantTop: "deploy", // Deploy always offered — strategy is informational, not a gate
 		},
 	}
 	for _, tt := range tests {

@@ -348,7 +348,7 @@ func TestGetBriefing_PHPBriefingHasContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBriefing: %v", err)
 	}
-	// PHP recipe from API should at minimum have a zerops.yml section
+	// PHP recipe from API should at minimum have a zerops.yaml section
 	if !strings.Contains(briefing, "PHP") {
 		t.Error("PHP briefing missing PHP reference")
 	}

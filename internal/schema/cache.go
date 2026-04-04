@@ -93,7 +93,7 @@ func (c *Cache) Get(ctx context.Context) *Schemas {
 func FetchSchemas(ctx context.Context) (*Schemas, error) {
 	zeropsData, err := fetchURL(ctx, ZeropsYmlURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetch zerops.yml schema: %w", err)
+		return nil, fmt.Errorf("fetch zerops.yaml schema: %w", err)
 	}
 	importData, err := fetchURL(ctx, ImportYmlURL)
 	if err != nil {

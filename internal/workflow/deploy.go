@@ -32,7 +32,6 @@ type DeployState struct {
 	Steps       []DeployStep   `json:"steps"`
 	Targets     []DeployTarget `json:"targets"`
 	Mode        string         `json:"mode"`
-	Strategy    string         `json:"strategy,omitempty"`
 }
 
 // DeployStep represents a step in the deploy workflow.
@@ -102,7 +101,7 @@ var deployStepDetails = []struct {
 }
 
 // NewDeployState creates a deploy state with ordered targets.
-func NewDeployState(targets []DeployTarget, mode, strategy string) *DeployState {
+func NewDeployState(targets []DeployTarget, mode string) *DeployState {
 	steps := make([]DeployStep, len(deployStepDetails))
 	for i, d := range deployStepDetails {
 		steps[i] = DeployStep{Name: d.Name, Status: stepPending}
@@ -113,20 +112,18 @@ func NewDeployState(targets []DeployTarget, mode, strategy string) *DeployState 
 		Steps:       steps,
 		Targets:     targets,
 		Mode:        mode,
-		Strategy:    strategy,
 	}
 }
 
 // BuildDeployTargets constructs ordered targets from service metas.
-// Returns targets, detected mode, and detected strategy.
-func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, string) {
+// Returns targets and detected mode.
+func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string) {
 	if len(metas) == 0 {
-		return nil, "", ""
+		return nil, ""
 	}
 
 	var targets []DeployTarget
 	mode := ""
-	strategy := ""
 
 	for _, m := range metas {
 		metaMode := m.Mode
@@ -135,9 +132,6 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, string) {
 		}
 		if mode == "" {
 			mode = metaMode
-		}
-		if strategy == "" {
-			strategy = m.DeployStrategy
 		}
 
 		targets = append(targets, DeployTarget{
@@ -158,7 +152,7 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string, string) {
 		}
 	}
 
-	return targets, mode, strategy
+	return targets, mode
 }
 
 func deployRoleFromMode(mode, _, stageHostname string) string {
@@ -261,7 +255,7 @@ func (d *DeployState) ResetForIteration() {
 }
 
 // BuildResponse constructs a DeployResponse.
-func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env Environment) *DeployResponse {
+func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env Environment, stateDir string) *DeployResponse {
 	completed := 0
 	summaries := make([]DeployStepOutSum, len(d.Steps))
 	for i, s := range d.Steps {
@@ -298,7 +292,7 @@ func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env
 			Name:  detail.Name,
 			Tools: detail.Tools,
 		}
-		resp.Current.DetailedGuide = d.buildGuide(detail.Name, iteration, env)
+		resp.Current.DetailedGuide = d.buildGuide(detail.Name, iteration, env, stateDir)
 		resp.Message = fmt.Sprintf("Deploy step %d/%d: %s", d.CurrentStep+1, len(d.Steps), detail.Name)
 	} else {
 		resp.Message = "Deploy complete. All steps finished."
@@ -309,12 +303,12 @@ func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env
 
 // buildGuide generates personalized deploy step guidance from state.
 // Deploy uses compact guidance with knowledge pointers — the agent pulls on demand.
-func (d *DeployState) buildGuide(step string, iteration int, env Environment) string {
+func (d *DeployState) buildGuide(step string, iteration int, env Environment, stateDir string) string {
 	switch step {
 	case DeployStepPrepare:
-		return buildPrepareGuide(d, env)
+		return buildPrepareGuide(d, env, stateDir)
 	case DeployStepExecute:
-		return buildDeployGuide(d, iteration, env)
+		return buildDeployGuide(d, iteration, env, stateDir)
 	case DeployStepVerify:
 		return buildVerifyGuide()
 	}

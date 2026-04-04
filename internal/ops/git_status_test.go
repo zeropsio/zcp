@@ -11,7 +11,7 @@ func TestParseGitStatus(t *testing.T) {
 		want   GitStatus
 	}{
 		{
-			name: "S0: no git, no zerops.yml",
+			name: "S0: no git, no zerops.yaml",
 			output: `GIT_DIR=no
 REMOTE=
 BRANCH=
@@ -24,7 +24,7 @@ ZEROPS_YML=no`,
 			},
 		},
 		{
-			name: "S1: internal git, no remote, has zerops.yml",
+			name: "S1: internal git, no remote, has zerops.yaml",
 			output: `GIT_DIR=yes
 REMOTE=
 BRANCH=main

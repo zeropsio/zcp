@@ -13,7 +13,7 @@ This branch replaces the **dual-layer knowledge model** (separate `runtimes/*.md
 | `runtimes/` (17 files: 12 language runtimes + 5 infra bases) | Deleted — runtime knowledge resolves via recipe fallback chain; 5 infra bases moved to `bases/` | Maintaining separate runtime guides duplicated effort; the hello-world recipe for each runtime IS the authoritative runtime guide |
 | `recipes/` (29 hand-written recipes: laravel.md, django.md, ...) | Deleted — all recipes pulled from API, gitignored | Hand-written recipes drifted from the canonical app repos; API is the source of truth |
 | `guides/` and `decisions/` (committed) | Now pulled from docs repo, gitignored | Same drift problem — docs repo is canonical |
-| `filterDeployPatterns()` | Removed entirely | Was mode-aware filtering of `### Deploy Patterns` sections; no longer needed since recipes now ship both dev and prod zerops.yml setups with inline comments |
+| `filterDeployPatterns()` | Removed entirely | Was mode-aware filtering of `### Deploy Patterns` sections; no longer needed since recipes now ship both dev and prod zerops.yaml setups with inline comments |
 | Keyword search scoring (`## Keywords` sections) | Removed — search uses title (2x) + content (1x) only | Keywords required manual maintenance; content-based matching is more robust for API-sourced recipes |
 | Runtime guide prepending in `GetRecipe` | Removed — each recipe is standalone | Framework recipes (laravel) shouldn't have PHP runtime knowledge injected; the recipe's own knowledge-base fragment is the authoritative source |
 | Verbose mode adaptation header (5 lines) | Concise single-line pointer to setup block | Recipes now include both setups with comments — the header was restating what the YAML already teaches |
@@ -39,14 +39,14 @@ This means the **hello-world recipe for each runtime IS the runtime guide**. No 
 
 ### Recipe enrichment path
 
-Most recipes start with only `description` + `## zerops.yml` from the API. To add operational knowledge:
+Most recipes start with only `description` + `## zerops.yaml` from the API. To add operational knowledge:
 
 1. Write `knowledge-base` fragment in the app README (Base Image, Binding, Resource Requirements, Gotchas)
 2. Push to GitHub, refresh Strapi cache
 3. `zcp sync pull recipes` — content appears in ZCP
 4. Lint tests validate the new content (`NoPlatformDuplication`, etc.)
 
-Currently only **Bun** has a `knowledge-base` fragment. The other 32 recipes have description + zerops.yml only.
+Currently only **Bun** has a `knowledge-base` fragment. The other 32 recipes have description + zerops.yaml only.
 
 ### Key design decision: standalone recipes
 
@@ -60,7 +60,7 @@ Now each recipe is **standalone**: `GetRecipe` prepends only platform constraint
 App README (canonical)          Recipe API (Strapi)           ZCP (consumer)
 ─────────────────────          ──────────────────           ──────────────
 knowledge-base fragment  →     extracts.knowledge-base  →   recipes/{slug}.md (knowledge sections)
-integration-guide        →     extracts.integration-guide →  recipes/{slug}.md (zerops.yml + integration steps)
+integration-guide        →     extracts.integration-guide →  recipes/{slug}.md (zerops.yaml + integration steps)
 per-service intro        →     svc.extracts.intro       →   frontmatter description (preferred)
 recipe-level intro       →     extracts.intro           →   frontmatter description (fallback)
 gitRepo URL              →     svc.gitRepo              →   frontmatter repo (push target)
@@ -74,11 +74,11 @@ gitRepo URL              →     svc.gitRepo              →   frontmatter repo
 |---|---|---|
 | knowledge-base sections (## Base Image, ## Gotchas, etc.) | README.md | `ZEROPS_EXTRACT:knowledge-base` (H2→H3 demoted) |
 | integration-guide (## 1. Adding zerops.yaml + prose) | README.md | `ZEROPS_EXTRACT:integration-guide` (H2→H3 demoted) |
-| zerops.yml YAML block | `zerops.yaml` file | — (standalone file, skipped if existing file has more content) |
+| zerops.yaml YAML block | `zerops.yaml` file | — (standalone file, skipped if existing file has more content) |
 | frontmatter `description:` | **NOT pushed** | — (lossy: pull strips markdown links for search use) |
 | Service Definitions | **NOT pushed** | — (read-only reference from API) |
 
-The zerops.yaml file content is always derived from the integration-guide's YAML code block — single source of truth. Editing the YAML in `## zerops.yml` updates both the README integration-guide markers and the `zerops.yaml` file in the same PR.
+The zerops.yaml file content is always derived from the integration-guide's YAML code block — single source of truth. Editing the YAML in `## zerops.yaml` updates both the README integration-guide markers and the `zerops.yaml` file in the same PR.
 
 No local clones needed — push uses `gh` CLI to create branches and PRs directly via the GitHub API. The target repo is read from the frontmatter `repo:` field (written during pull from the API's `gitRepo`). Falls back to pattern matching (`{slug}-app`, `{slug}`) if no `repo:` in frontmatter.
 
@@ -122,11 +122,11 @@ Includes: Bun, npm, yarn, git, bunx. NOT included: pnpm.
 | Source | Fragment | What it contains |
 |---|---|---|
 | **knowledge-base** | `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->` | Runtime-specific gotchas, base image — only what you can't learn from platform docs or general runtime docs |
-| **integration-guide** | `<!-- #ZEROPS_EXTRACT_START:integration-guide# -->` | Full zerops.yml with inline comments PLUS framework-specific integration steps (S3, env vars, mailer, etc.) |
+| **integration-guide** | `<!-- #ZEROPS_EXTRACT_START:integration-guide# -->` | Full zerops.yaml with inline comments PLUS framework-specific integration steps (S3, env vars, mailer, etc.) |
 
 Platform constraints are extracted from `themes/model.md` and prepended automatically. Recipes contain only what's **irreducible to the specific runtime/framework**. The `NoPlatformDuplication` lint flags violations.
 
-Most recipes currently have `description` + integration guide (zerops.yml). Knowledge-base sections (Base Image, Gotchas) come from the app README `knowledge-base` fragment — only Bun has this so far.
+Most recipes currently have `description` + integration guide (zerops.yaml). Knowledge-base sections (Base Image, Gotchas) come from the app README `knowledge-base` fragment — only Bun has this so far.
 
 ## Knowledge-Base Content Guidelines
 
@@ -140,7 +140,7 @@ Each item must be **irreducible to the specific runtime/framework** — not lear
 
 ## How the Agent Uses Recipe Content
 
-The agent does not copy-paste recipe YAML. It generates `zerops.yml` and `import.yaml` from scratch during bootstrap, because the user's app has different hostnames, dependencies, env vars, and code than the recipe.
+The agent does not copy-paste recipe YAML. It generates `zerops.yaml` and `import.yaml` from scratch during bootstrap, because the user's app has different hostnames, dependencies, env vars, and code than the recipe.
 
 Recipe content provides **knowledge through commented examples**:
 
@@ -158,9 +158,9 @@ All access goes through the `Provider` interface (`engine.go`). Key methods:
 `GetRecipe(name, mode)` returns the full recipe content with:
 1. **Platform constraints** prepended (from `themes/model.md` "Platform Constraints" H2) — always
 2. **Mode adaptation header** — concise single-line pointer to the right setup block:
-   - `dev`/`standard`: "Use the `dev` setup block from the zerops.yml below."
+   - `dev`/`standard`: "Use the `dev` setup block from the zerops.yaml below."
    - `simple`: "Use the `prod` setup block below, but override `deployFiles: [.]`."
-   - Recipes now include both `dev` and `prod` zerops.yml setups with inline comments, so the header doesn't need to restate what the YAML teaches.
+   - Recipes now include both `dev` and `prod` zerops.yaml setups with inline comments, so the header doesn't need to restate what the YAML teaches.
 
 Resolution chain: exact URI match → fuzzy match (prefix/substring/content) → disambiguation list.
 
@@ -268,7 +268,7 @@ GET https://api.zerops.io/api/recipes
 **Per-recipe data** (in response):
 - `sourceData.environments[].services[].extracts.intro` — per-service app description (preferred)
 - `sourceData.extracts.intro` — recipe-level description (fallback)
-- `sourceData.environments[].services[].extracts["integration-guide"]` — zerops.yml + integration steps (preferred)
+- `sourceData.environments[].services[].extracts["integration-guide"]` — zerops.yaml + integration steps (preferred)
 - `sourceData.environments[].services[].zeropsYaml` — raw zerops.yaml (fallback if no integration guide)
 - `sourceData.environments[].services[].extracts["knowledge-base"]` — runtime-specific gotchas
 - `sourceData.environments[].services[].gitRepo` — app repo URL (e.g. `https://github.com/zerops-recipe-apps/bun-hello-world-app`)

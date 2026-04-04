@@ -95,7 +95,7 @@ func Import(
 				if _, has := svc["envVariables"]; has {
 					hostname, _ := svc["hostname"].(string)
 					warnings = append(warnings, fmt.Sprintf(
-						"service %q: 'envVariables' at service level is silently dropped by the API. Use 'envSecrets' for import-time secrets, or zerops.yml run.envVariables for runtime config.",
+						"service %q: 'envVariables' at service level is silently dropped by the API. Use 'envSecrets' for import-time secrets, or zerops.yaml run.envVariables for runtime config.",
 						hostname,
 					))
 				}

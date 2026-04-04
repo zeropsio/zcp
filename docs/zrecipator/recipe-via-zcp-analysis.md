@@ -102,12 +102,12 @@ Bootstrap modes: standard (dev+stage pairs), dev (single dev), simple (single wi
 
 Hard checks before step completion:
 - Provision: all services exist with expected status, types match, managed dep env vars discovered
-- Generate: zerops.yml valid, setup entries exist, env var refs valid, ports present
+- Generate: zerops.yaml valid, setup entries exist, env var refs valid, ports present
 - Deploy: all runtimes RUNNING, subdomain access enabled, health checks pass
 
 Knowledge injection per step:
-- Provision: import.yml schema from `themes/core`
-- Generate: runtime briefing, dependency briefing, discovered env vars, zerops.yml schema + rules
+- Provision: import.yaml schema from `themes/core`
+- Generate: runtime briefing, dependency briefing, discovered env vars, zerops.yaml schema + rules
 - Deploy: schema rules from core
 
 ---
@@ -182,7 +182,7 @@ The meta-prompt must be **self-contained** because the executing agent has no in
 
 1. **System prompt** (MCP Instructions): base instructions, workflow hints, environment context, project summary + router offerings
 2. **Step guidance** (per-step): static content from `workflows/bootstrap.md` via `<section>` tags, environment-aware, mode-specific, failure-aware
-3. **Knowledge injection** (appended to step guidance): import.yml schema, runtime briefing, env vars, zerops.yml schema
+3. **Knowledge injection** (appended to step guidance): import.yaml schema, runtime briefing, env vars, zerops.yaml schema
 4. **Iteration escalation**: `BuildIterationDelta` — diagnose → checklist → ask user
 5. **On-demand knowledge** (LLM-initiated): `zerops_knowledge` with scope, briefing, query, recipe modes
 
@@ -209,7 +209,7 @@ Persisted at `.zcp/state/sessions/{id}.json`. Survives process restarts. Max 10 
 | Build & Deploy Pipeline | `themes/core.md` + bootstrap guidance | 100% |
 | Environment Variables — Three Categories | `themes/core.md` "Env Variables" section | 100% |
 | Referencing Pattern | `themes/services.md` wiring syntax | 100% |
-| zerops.yaml Intelligence Principle | `themes/core.md` + zerops.yml JSON schema | 90% |
+| zerops.yaml Intelligence Principle | `themes/core.md` + zerops.yaml JSON schema | 90% |
 | deployFiles and start Command Validation | `themes/core.md` "Schema Rules" + ZCP checkers | 90% |
 | Build Cache Strategy | Runtime briefings + `themes/core.md` | 80% |
 | .gitignore Alignment | Not in ZCP (new content) | 0% |
@@ -217,7 +217,7 @@ Persisted at `.zcp/state/sessions/{id}.json`. Survives process restarts. Max 10 
 | Comment System (85% standard) | Not in ZCP (new content, recipe-specific) | 0% |
 | Service Priority | `themes/core.md` import schema | 90% |
 | Port Configuration | Runtime briefings | 100% |
-| healthCheck vs readinessCheck | `themes/core.md` zerops.yml schema | 100% |
+| healthCheck vs readinessCheck | `themes/core.md` zerops.yaml schema | 100% |
 | Process Managers | Runtime briefings per language | 100% |
 | Resource Configuration | `runtime_resources.go` + briefings | 90% |
 | initCommands Intelligence | `themes/core.md` + briefings | 80% |
@@ -482,7 +482,7 @@ type RecipePlan struct {
 
 ### Step 3: GENERATE (reuse bootstrap + recipe additions)
 
-**Purpose**: Write zerops.yml + app code on mounted filesystem.
+**Purpose**: Write zerops.yaml + app code on mounted filesystem.
 
 **Tools**: `zerops_knowledge`, file operations via mount
 
@@ -490,14 +490,14 @@ type RecipePlan struct {
 - Health dashboard spec (endpoint schema, panels, HTTP status codes)
 - Migration spec (framework migration system, `zsc execOnce` wrapping, greetings table)
 - Env var pattern (`extends: base`, actual discovered env vars from provision)
-- zerops.yml structure template (base + prod + dev, with all research values substituted)
-- Comment conventions for zerops.yml (lighter than import.yaml, 0.3-0.4 ratio)
+- zerops.yaml structure template (base + prod + dev, with all research values substituted)
+- Comment conventions for zerops.yaml (lighter than import.yaml, 0.3-0.4 ratio)
 - `.gitignore` rules aligned with cache strategy
 - For showcase: queue worker setup, additional panels (cache, queue, storage, search, mail)
 
 All platform knowledge (schemas, briefings, wiring syntax) injected via existing `assembleKnowledge()`.
 
-**Completion check**: Same as bootstrap generate — zerops.yml valid, setup entries exist, env var refs valid, ports present.
+**Completion check**: Same as bootstrap generate — zerops.yaml valid, setup entries exist, env var refs valid, ports present.
 
 ### Step 4: DEPLOY (reuse bootstrap)
 
@@ -871,7 +871,7 @@ Instead of a separate research agent writing `research.md`, ZCP's knowledge syst
 - Runtime hello-world recipe (proven base config) via `zerops_knowledge recipe="{lang}-hello-world"`
 - Runtime briefing (stack rules, wiring) via `zerops_knowledge` briefing mode
 - Live service type catalog (validated versions)
-- Import/zerops.yml JSON schemas (from API)
+- Import/zerops.yaml JSON schemas (from API)
 
 The LLM fills in framework-specific research (build commands, libraries, migration system) from its training data + optional web search. Output: `RecipePlan` with all decisions resolved.
 

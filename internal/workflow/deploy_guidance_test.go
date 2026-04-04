@@ -15,13 +15,12 @@ func TestBuildPrepareGuide_Personalized(t *testing.T) {
 		wantAbsent   []string
 	}{
 		{
-			name: "standard_push_dev",
+			name: "standard",
 			state: &DeployState{
-				Mode:     PlanModeStandard,
-				Strategy: StrategyPushDev,
+				Mode: PlanModeStandard,
 				Targets: []DeployTarget{
-					{Hostname: "appdev", Role: DeployRoleDev, Strategy: StrategyPushDev},
-					{Hostname: "appstage", Role: DeployRoleStage, Strategy: StrategyPushDev},
+					{Hostname: "appdev", Role: DeployRoleDev},
+					{Hostname: "appstage", Role: DeployRoleStage},
 				},
 			},
 			env: EnvContainer,
@@ -29,45 +28,39 @@ func TestBuildPrepareGuide_Personalized(t *testing.T) {
 				"appdev",
 				"appstage",
 				"standard",
-				"push-dev",
 				"deployFiles",
 				"${",
 				"zerops_knowledge",
-				"push-git",
 			},
 		},
 		{
-			name: "dev_cicd",
+			name: "dev",
 			state: &DeployState{
-				Mode:     PlanModeDev,
-				Strategy: StrategyPushGit,
+				Mode: PlanModeDev,
 				Targets: []DeployTarget{
-					{Hostname: "apidev", Role: DeployRoleDev, Strategy: StrategyPushGit},
+					{Hostname: "apidev", Role: DeployRoleDev},
 				},
 			},
 			env: EnvContainer,
 			wantContains: []string{
 				"apidev",
 				"dev",
-				"push-git",
 				"zerops_knowledge",
 			},
 		},
 		{
-			name: "simple_manual",
+			name: "simple_local",
 			state: &DeployState{
-				Mode:     PlanModeSimple,
-				Strategy: StrategyManual,
+				Mode: PlanModeSimple,
 				Targets: []DeployTarget{
-					{Hostname: "web", Role: DeployRoleSimple, Strategy: StrategyManual},
+					{Hostname: "web", Role: DeployRoleSimple},
 				},
 			},
 			env: EnvLocal,
 			wantContains: []string{
 				"web",
 				"simple",
-				"manual",
-				"healthCheck", // simple requires healthCheck
+				"healthCheck",
 			},
 		},
 	}
@@ -75,7 +68,7 @@ func TestBuildPrepareGuide_Personalized(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			guide := buildPrepareGuide(tt.state, tt.env)
+			guide := buildPrepareGuide(tt.state, tt.env, "")
 
 			if guide == "" {
 				t.Fatal("expected non-empty guidance")
@@ -111,8 +104,7 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 		{
 			name: "standard_push_dev_iter0",
 			state: &DeployState{
-				Mode:     PlanModeStandard,
-				Strategy: StrategyPushDev,
+				Mode: PlanModeStandard,
 				Targets: []DeployTarget{
 					{Hostname: "appdev", Role: DeployRoleDev},
 					{Hostname: "appstage", Role: DeployRoleStage},
@@ -133,8 +125,7 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 		{
 			name: "dev_cicd_iter0",
 			state: &DeployState{
-				Mode:     PlanModeDev,
-				Strategy: StrategyPushGit,
+				Mode: PlanModeDev,
 				Targets: []DeployTarget{
 					{Hostname: "apidev", Role: DeployRoleDev},
 				},
@@ -149,8 +140,7 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 		{
 			name: "simple_manual_iter0",
 			state: &DeployState{
-				Mode:     PlanModeSimple,
-				Strategy: StrategyManual,
+				Mode: PlanModeSimple,
 				Targets: []DeployTarget{
 					{Hostname: "web", Role: DeployRoleSimple},
 				},
@@ -165,8 +155,7 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 		{
 			name: "iteration_1_escalation",
 			state: &DeployState{
-				Mode:     PlanModeStandard,
-				Strategy: StrategyPushDev,
+				Mode: PlanModeStandard,
 				Targets: []DeployTarget{
 					{Hostname: "appdev", Role: DeployRoleDev},
 				},
@@ -181,8 +170,7 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 		{
 			name: "iteration_3_user_escalation",
 			state: &DeployState{
-				Mode:     PlanModeDev,
-				Strategy: StrategyPushDev,
+				Mode: PlanModeDev,
 				Targets: []DeployTarget{
 					{Hostname: "appdev", Role: DeployRoleDev},
 				},
@@ -199,7 +187,7 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			guide := buildDeployGuide(tt.state, tt.iteration, EnvContainer)
+			guide := buildDeployGuide(tt.state, tt.iteration, EnvContainer, "")
 
 			if guide == "" {
 				t.Fatal("expected non-empty guidance")

@@ -69,7 +69,7 @@ var runtimeTypes = map[string]bool{
 	"static":     true,
 }
 
-// extractFromImportYml parses import.yaml/import.yml sections to find runtime type and managed services.
+// extractFromImportYml parses import.yaml/import.yml sections in recipe content to find runtime type and managed services.
 // Returns the runtime type and a list of non-runtime service definitions.
 func extractFromImportYml(content string) (string, []ServiceDef) {
 	blocks := findYAMLBlocksInSections(content, "import.yaml")
@@ -123,7 +123,7 @@ type zeropsYmlRun struct {
 	Base string `yaml:"base"`
 }
 
-// extractRuntimeFromZeropsYml gets the runtime base from zerops.yaml/zerops.yml when import data isn't available.
+// extractRuntimeFromZeropsYml gets the runtime base from zerops.yaml/zerops.yml section headings when import data isn't available.
 func extractRuntimeFromZeropsYml(content string) string {
 	blocks := findYAMLBlocksInSections(content, "zerops.yaml")
 	if len(blocks) == 0 {

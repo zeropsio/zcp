@@ -114,24 +114,24 @@ zerops_deploy targetService="{hostname}" strategy="git-push" remoteUrl="{repoUrl
 If push fails with auth error: verify GIT_TOKEN is set via `zerops_discover includeEnvs=true`.
 If push fails with history conflict: push from a dev service (which preserves .git/).
 
-### zerops.yml Verification
+### zerops.yaml Verification
 
-Check if zerops.yml exists and has the correct setup:
+Check if zerops.yaml exists and has the correct setup:
 
 ```bash
 ssh {hostname} "cat /var/www/zerops.yml 2>/dev/null || cat /var/www/zerops.yaml 2>/dev/null || echo 'NOT_FOUND'"
 ```
 
-If zerops.yml is missing or incomplete:
+If zerops.yaml is missing or incomplete:
 1. Detect framework from service type (e.g., `nodejs@22` → Node.js)
 2. Load matching recipe: `zerops_knowledge recipe="{runtime}-hello-world"`
-3. Generate zerops.yml from recipe template + discovered ports and env vars
+3. Generate zerops.yaml from recipe template + discovered ports and env vars
 4. Write to container and commit:
    ```bash
-   ssh {hostname} "cat > /var/www/zerops.yml << 'ZEROPS_EOF'
-   {generated zerops.yml content}
+   ssh {hostname} "cat > /var/www/zerops.yaml << 'ZEROPS_EOF'
+   {generated zerops.yaml content}
    ZEROPS_EOF"
-   ssh {hostname} "cd /var/www && git add zerops.yml && git commit -m 'add zerops.yml' && git push"
+   ssh {hostname} "cd /var/www && git add zerops.yaml && git commit -m 'add zerops.yaml' && git push"
    ```
 5. Mark generated sections with comments: `# VERIFY: default from {recipe} template`
 
@@ -139,7 +139,7 @@ If zerops.yml is missing or incomplete:
 
 If service already has a git remote:
 1. Note the remote URL — this is the repo for buildFromGit
-2. Verify zerops.yml is in the repo
+2. Verify zerops.yaml is in the repo
 3. Skip to Generate step
 </section>
 
@@ -319,7 +319,7 @@ Summarize what was created:
 
  **Generated files:**
  - `import.yaml` — infrastructure definition with `buildFromGit: {repoUrl}`
- - `zerops.yml` — build/deploy pipeline config (in repo)
+ - `zerops.yaml` — build/deploy pipeline config (in repo)
 
  {IF CI/CD configured:}
  **CI/CD:** {GitHub Actions | GitHub webhook | GitLab webhook} configured

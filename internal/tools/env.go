@@ -10,7 +10,7 @@ import (
 
 // EnvInput is the input type for zerops_env.
 type EnvInput struct {
-	Action          string   `json:"action"                    jsonschema:"Action: set, delete, or generate-dotenv. generate-dotenv reads zerops.yml envVariables, resolves ${hostname_varName} refs via API, and writes .env file."`
+	Action          string   `json:"action"                    jsonschema:"Action: set, delete, or generate-dotenv. generate-dotenv reads zerops.yaml envVariables, resolves ${hostname_varName} refs via API, and writes .env file."`
 	ServiceHostname string   `json:"serviceHostname,omitempty" jsonschema:"Hostname of the service to modify env vars on. Required unless project=true."`
 	Project         bool     `json:"project,omitempty"         jsonschema:"Set to true to manage project-level env vars instead of service-level."`
 	Variables       []string `json:"variables,omitempty"       jsonschema:"List of env vars. For set: KEY=VALUE strings. For delete: KEY names only."`
@@ -20,7 +20,7 @@ type EnvInput struct {
 func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage environment variables. Actions: set, delete, generate-dotenv. set/delete scope: service (serviceHostname) or project (project=true). After set/delete, reload: zerops_manage action=\"reload\". generate-dotenv: reads zerops.yml envVariables, resolves ${hostname_varName} refs, writes .env file — no secret values in response. To read env var keys, use zerops_discover with includeEnvs=true.",
+		Description: "Manage environment variables. Actions: set, delete, generate-dotenv. set/delete scope: service (serviceHostname) or project (project=true). After set/delete, reload: zerops_manage action=\"reload\". generate-dotenv: reads zerops.yaml envVariables, resolves ${hostname_varName} refs, writes .env file — no secret values in response. To read env var keys, use zerops_discover with includeEnvs=true.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
 			DestructiveHint: boolPtr(true),

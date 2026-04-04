@@ -1,0 +1,798 @@
+# ZCP Workflow Specification
+
+> **Status**: Authoritative — all workflow behavior, state transitions, and flow logic MUST conform to this document.
+> **Scope**: Bootstrap, adoption, strategy, deploy — both container and local environments, all modes.
+> **Date**: 2026-04-04
+> **Companion**: `spec-knowledge-distribution.md` — defines WHAT knowledge is delivered at each step and WHY.
+
+---
+
+## 1. Lifecycle Overview
+
+Every service on Zerops goes through two phases:
+
+```mermaid
+flowchart LR
+    subgraph Phase1 ["Phase 1: Enter Evidence (once)"]
+        Bootstrap["Bootstrap<br/>(new service)"]
+        Adoption["Adoption<br/>(existing service)"]
+    end
+
+    subgraph Phase2 ["Phase 2: Development Lifecycle (repeated)"]
+        Deploy["Deploy Flow<br/>knowledge → work → deploy"]
+    end
+
+    Bootstrap --> Meta["ServiceMeta<br/>(evidence file)"]
+    Adoption --> Meta
+    Meta --> Deploy
+    Deploy -->|"strategy read<br/>from meta"| Deploy
+
+    style Meta fill:#dfd,stroke:#0a0
+```
+
+**Phase 1 — Infrastructure**: Bootstrap creates new services (or adoption registers existing ones) and writes an evidence file (ServiceMeta). Only **minimal scaffolding** is deployed — a hello-world proving infrastructure works. No application logic, no strategy. Phase 1 answers: "can this service start, respond, and reach its dependencies?"
+
+**Phase 2 — Development**: Deploy flow covers ALL code work for the service. Implementing the user's actual application, bug fixes, config changes — everything. It provides knowledge, lets the agent work, resolves deploy strategy if needed, and deploys at the end. Strategy is always read fresh from ServiceMeta.
+
+**The boundary is strict**: Bootstrap writes zerops.yaml + minimal proof-of-concept. The moment the agent needs to write application logic, it must be in deploy flow. If the user says "create me an app for uploading photos in Bun", bootstrap creates Bun service + dependencies with a hello-world, then deploy flow implements the photo upload app.
+
+### ServiceMeta — The Evidence File
+
+ServiceMeta (`.zcp/state/services/{hostname}.json`) is the persistent evidence that a service is under ZCP management.
+
+```
+ServiceMeta {
+  Hostname         string  // service identifier
+  Mode             string  // "standard" | "dev" | "simple"
+  StageHostname    string  // stage pair (standard mode only, empty otherwise)
+  DeployStrategy   string  // "push-dev" | "push-git" | "manual" (empty until set)
+  Environment      string  // "container" | "local"
+  BootstrapSession string  // session ID that created this (null for adoption)
+  BootstrappedAt   string  // date — empty = incomplete
+}
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> Provisioned: bootstrap provision step<br/>(partial meta, no BootstrappedAt)
+    Provisioned --> Evidenced: bootstrap close OR adoption<br/>(BootstrappedAt set)
+    Evidenced --> StrategySet: action="strategy"<br/>(DeployStrategy set)
+    StrategySet --> StrategySet: action="strategy"<br/>(strategy changed)
+
+    note right of Evidenced
+        DeployStrategy empty.
+        Deploy flow informs agent,
+        resolves before deploying.
+    end note
+
+    note right of StrategySet
+        Strategy = push-dev | push-git | manual.
+        Deploy flow reads from meta each time.
+    end note
+```
+
+`IsComplete()` returns true when `BootstrappedAt` is set. Strategy is always read from meta at the moment it's needed — never copied into session state.
+
+### Principles
+
+- **Workflow is NOT a gate.** An agent does not need to start a workflow to call `zerops_scale`, `zerops_manage`, or any other direct tool. Workflows add structure for multi-step operations.
+- **Strategy never blocks work.** Agent can always start editing code. Strategy is resolved before deploying, not before working.
+- **Tools work independently.** `zerops_discover`, `zerops_verify`, `zerops_knowledge` work without any active workflow.
+
+---
+
+## 2. Bootstrap Flow
+
+Bootstrap creates a new service on Zerops and writes the evidence file. That is its only job — it does NOT set deploy strategy.
+
+```mermaid
+flowchart TD
+    Start([Agent triggers bootstrap]) --> CreateSession["Create session<br/>Generate 16-hex ID<br/>Register in registry"]
+    CreateSession --> Discover
+
+    subgraph Bootstrap ["Bootstrap Flow (5 steps)"]
+        direction TB
+        Discover["1. DISCOVER<br/>─────────────<br/>Classify services<br/>Identify stack<br/>Choose mode<br/>Submit plan"]
+
+        Provision["2. PROVISION<br/>─────────────<br/>Generate import.yaml<br/>Create services<br/>Mount dev filesystems<br/>Discover env vars"]
+
+        Generate["3. GENERATE<br/>─────────────<br/>Write zerops.yaml<br/>Write app code<br/>Mode-specific rules"]
+
+        Deploy["4. DEPLOY<br/>─────────────<br/>Deploy to services<br/>Start servers<br/>Enable subdomains<br/>Full health verification"]
+
+        Close["5. CLOSE<br/>─────────────<br/>Write ServiceMeta<br/>Append reflog"]
+    end
+
+    Discover -->|"plan submitted"| Provision
+    Provision -->|"services created"| ModeCheck{Has runtime<br/>targets?}
+
+    ModeCheck -->|Yes| Generate
+    ModeCheck -->|"No (managed-only)"| SkipGen["SKIP generate"]
+    SkipGen --> SkipDeploy["SKIP deploy"]
+    SkipDeploy --> SkipClose["SKIP close"]
+
+    Generate -->|"code written"| Deploy
+    Deploy -->|"all healthy"| Close
+
+    Deploy -->|"failed"| IterCheck{Iteration<br/>< max?}
+    IterCheck -->|Yes| Iterate["ITERATE<br/>Reset steps 2-3"]
+    Iterate --> Generate
+    IterCheck -->|No| FailReport["Report to user"]
+
+    SkipClose --> Complete
+    Close --> Complete
+
+    Complete([Bootstrap Complete<br/>ServiceMeta written<br/>No strategy set])
+
+    style Discover fill:#e8f4fd,stroke:#2196F3
+    style Provision fill:#e8f4fd,stroke:#2196F3
+    style Generate fill:#fff3e0,stroke:#FF9800
+    style Deploy fill:#fce4ec,stroke:#E91E63
+    style Close fill:#e8f4fd,stroke:#2196F3
+    style SkipGen fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
+    style SkipDeploy fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
+    style SkipClose fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
+```
+
+### 2.1 Session Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: action=start
+    Created --> Active: first step in_progress
+
+    Active --> Active: complete/skip step
+    Active --> Iterating: action=iterate
+    Iterating --> Active: reset steps, continue
+
+    Active --> Completed: all steps done
+    Completed --> [*]: session deleted,<br/>ServiceMeta written
+
+    Active --> Suspended: process dies
+    Suspended --> Active: action=resume
+
+    Active --> Cancelled: action=reset
+    Cancelled --> [*]: session deleted
+```
+
+**Create**: `zerops_workflow action="start" workflow="bootstrap" intent="..."`
+- Generates 16-hex session ID, registers in registry with PID.
+- Sets step 0 (discover) to `in_progress`.
+- Returns available stack catalog from live API.
+
+**Progress**: `action="complete" step="{name}" attestation="..."` (min 10 chars).
+- Optional checker validates before allowing completion. Failure → step stays, agent gets details.
+
+**Skip**: `action="skip" step="{name}" reason="..."`.
+- `discover` and `provision`: NEVER skippable.
+- `generate`, `deploy`, `close`: ONLY for managed-only (no runtime targets).
+
+**Iterate**: `action="iterate"` resets `generate` + `deploy` to pending. Preserves discover, provision, close, plan, env vars. Max 10 iterations (configurable via `ZCP_MAX_ITERATIONS`).
+
+**Resume**: `action="resume" sessionId="..."` takes over dead session (PID check). Continues from current step.
+
+### 2.2 Exclusivity
+
+Per-service, not global. Multiple bootstraps coexist for different services. Same-hostname lock: incomplete ServiceMeta from alive session blocks new bootstrap for that hostname. Dead PID → auto-unlock.
+
+### 2.3 Step 1: Discover
+
+**Purpose**: Classify services, identify stack, choose mode, submit plan.
+
+**Procedure**:
+1. `zerops_discover` — see existing services.
+2. Identify runtime + dependencies from user intent.
+3. Validate types against `availableStacks`.
+4. Choose mode:
+   - **Standard** (default): `{name}dev` + `{name}stage` + managed.
+   - **Dev**: `{name}dev` + managed.
+   - **Simple**: `{name}` + managed.
+5. Present plan to user, get confirmation.
+6. Submit: `action="complete" step="discover" plan=[...]`
+
+**Plan structure**:
+```
+ServicePlan {
+  Targets: [{
+    Runtime: {
+      DevHostname    string  // a-z0-9, max 25 chars
+      Type           string  // validated against live catalog
+      IsExisting     bool    // true = adoption path (see §3)
+      BootstrapMode  string  // "standard" | "dev" | "simple" (empty → standard)
+      ExplicitStage  string  // optional stage hostname override
+    },
+    Dependencies: [{
+      Hostname    string
+      Type        string
+      Mode        string  // "HA" | "NON_HA" (defaults to NON_HA for managed)
+      Resolution  string  // "CREATE" | "EXISTS" | "SHARED"
+    }]
+  }]
+}
+```
+
+**Validation**: Hostnames `[a-z0-9]` max 25 chars. Standard mode: devHostname must end in "dev", stage derived as `{prefix}stage`. Types against live catalog. Resolution: CREATE = must not exist, EXISTS = must exist, SHARED = another target creates it. Hostname lock check. Errors accumulated (all reported at once).
+
+### 2.4 Step 2: Provision
+
+**Purpose**: Create infrastructure, mount filesystems, discover env vars.
+
+**Procedure**:
+1. Generate import.yaml → `zerops_import` (blocks until all processes complete).
+2. `zerops_discover` — verify services exist.
+3. Mount: container = `zerops_mount` per dev runtime at `/var/www/{hostname}/`. Local = none.
+4. `zerops_discover includeEnvs=true` — discover env var NAMES only.
+
+**Env var security model**:
+- `includeEnvs=true` returns keys and annotations only — SAFE by default.
+- `includeEnvValues=true` opt-in exposes actual values — for troubleshooting only.
+- Session stores NAMES ONLY — never values.
+- Agent uses `${hostname_varName}` references — resolved at container level.
+
+**import.yaml by mode**:
+
+| Property | Dev service | Stage service | Simple service |
+|----------|-----------|---------------|----------------|
+| `startWithoutCode` | `true` | omit | `true` |
+| `maxContainers` | `1` | omit | omit |
+| `enableSubdomainAccess` | `true` | `true` | `true` |
+
+**Expected states**: dev → RUNNING, stage → READY_TO_DEPLOY, managed → RUNNING/ACTIVE.
+
+**On completion**: Writes partial ServiceMeta (no BootstrappedAt) — signals bootstrap in-progress, provides hostname lock.
+
+**Checker**: All services exist, types match, status correct, managed dependency env vars discovered.
+
+### 2.5 Step 3: Generate
+
+**Purpose**: Write zerops.yaml and **minimal scaffolding code** proving infrastructure works. NOT the user's application.
+
+**Scope boundary**: Generate writes the MINIMUM needed to verify infrastructure:
+- zerops.yaml with mode-specific rules
+- A hello-world server with required endpoints
+- Env var wiring to prove dependency connectivity
+
+Generate does NOT write application logic, business features, or the user's actual request. That happens in deploy flow (§4). If the user asked for "a photo upload app", generate creates a hello-world with /status proving S3 connectivity — the photo upload implementation comes in deploy flow.
+
+**Skip**: Only if managed-only.
+
+**Required endpoints** (minimal proof-of-concept):
+
+| Endpoint | Response | Purpose |
+|----------|----------|---------|
+| `GET /` | `"Service: {hostname}"` | Smoke test |
+| `GET /health` | `{"status":"ok"}` (200) | Liveness probe |
+| `GET /status` | Connectivity JSON (200) | Proves managed service connections |
+
+`/status` must actually connect to each dependency:
+```json
+{
+  "service": "{hostname}",
+  "status": "ok",
+  "connections": {
+    "db": {"status": "ok", "latency_ms": 5},
+    "cache": {"status": "ok", "latency_ms": 1}
+  }
+}
+```
+
+**zerops.yaml rules by mode**:
+
+| Property | Standard (dev entry) | Standard (stage entry) | Dev | Simple |
+|----------|---------------------|----------------------|-----|--------|
+| `start` | `zsc noop --silent` | real command | `zsc noop --silent` | real command |
+| `healthCheck` | none | required | none | required |
+| `deployFiles` | `[.]` | build output (NOT `[.]`) | `[.]` | `[.]` |
+| `buildCommands` | deps install | deps + compile | deps install | deps + compile |
+| PHP runtimes | omit `start:` | omit `start:` | omit `start:` | omit `start:` |
+| Stage entry | NOT YET (written after dev verified) | — | N/A | N/A |
+
+**Why `zsc noop`**: Manual server lifecycle control. With real start, deploy auto-starts and agent can't iterate without redeploying.
+
+**Why no healthCheck on dev**: `zsc noop` exits immediately — healthCheck would restart container in a loop.
+
+**Why stage entry deferred**: Written after dev verification. Prevents deploying untested config.
+
+**Why stage `deployFiles` is build output, NOT `[.]`**: Stage receives compiled artifacts optimized for production. Dev uses `[.]` because it iterates on source.
+
+**Pre-deploy checklist** (agent verifies before completing step):
+- [ ] `setup:` hostname matches plan
+- [ ] `deployFiles: [.]` for dev services (NO EXCEPTIONS)
+- [ ] `start:` correct for mode (noop for standard/dev, real for simple, omit for PHP)
+- [ ] `run.ports` matches app listen port (omit for PHP)
+- [ ] `envVariables` uses ONLY discovered var names
+- [ ] App binds to `0.0.0.0:{port}` (NOT localhost)
+- [ ] Simple mode: `healthCheck` present
+- [ ] Standard mode: NO stage entry yet
+
+**Checker**: zerops.yaml exists, setup entries match plan, env refs match discovered vars, ports defined, deployFiles set.
+
+### 2.6 Step 4: Deploy
+
+**Purpose**: Deploy code, start servers, enable subdomains, verify health.
+
+**Skip**: Only if managed-only.
+
+**Standard mode (container)**:
+```
+Phase 1 — Deploy Dev:
+  1. zerops_deploy targetService={dev}     ← blocks until build completes
+  2. Start server manually via SSH          ← dev has zsc noop
+  3. zerops_subdomain action="enable" serviceHostname={dev}
+  4. zerops_verify serviceHostname={dev}
+
+Phase 2 — Deploy Stage (after dev healthy):
+  5. Write stage entry in zerops.yaml (real start, healthCheck, deployFiles=build output)
+  6. zerops_deploy sourceService={dev} targetService={stage}
+  7. zerops_manage action="connect-storage" (if shared-storage)
+  8. zerops_subdomain action="enable" serviceHostname={stage}
+  9. zerops_verify serviceHostname={stage}
+
+Phase 3 — Cross-verify:
+  10. zerops_verify (batch, all targets)
+```
+
+**Dev mode**: Steps 1-4 only.
+
+**Simple mode**: Deploy → auto-starts (healthCheck) → verify.
+
+**Local (any mode)**: Per-target `zcli push` → verify. No SSH.
+
+**Dev iteration cycle** (code-only changes, container):
+1. Edit code on SSHFS mount → changes instant on service
+2. Kill previous server, start new via SSH
+3. Check startup via TaskOutput
+4. Test: `ssh {dev} "curl -s localhost:{port}/health"` | jq .
+5. Redeploy ONLY if zerops.yaml changed. Code-only → server restart only.
+
+**Multi-service orchestration** (3+ services): Parent agent spawns sub-agents per service pair in parallel. Each gets mount path, env vars, runtime knowledge. Parent runs final cross-verification.
+
+**Checker**: `VerifyAll()` (HTTP + logs + startup) + subdomain access.
+
+**Verification failure diagnosis**:
+
+| Failed check | Diagnosis | Fix |
+|-------------|-----------|-----|
+| `service_running`: fail | Service not running | Check deploy status, `zerops_logs severity=error` |
+| `startup_detected`: fail | App crashed on start | `zerops_logs severity=error since=5m` |
+| `error_logs`: info | Advisory — errors found | Read detail. Infra noise → ignore. App errors → investigate. |
+| `http_root`: fail | Not responding on / | Check port, binding, start command |
+| `http_status`: fail | Dependency connectivity | Check env var mapping vs discovered vars |
+
+### 2.7 Step 5: Close
+
+**Purpose**: Write final evidence file. Bootstrap is done.
+
+**On completion** (Active→false):
+1. Write final ServiceMeta per runtime target:
+   - `BootstrappedAt` = today's date
+   - `DeployStrategy` = **empty** (NEVER set during bootstrap)
+   - Container: hostname = devHostname
+   - Local + standard: hostname = stageHostname (inverted)
+2. Append reflog to CLAUDE.md.
+3. Delete session, unregister.
+4. Return completion message: service list with modes. NO strategy prompt.
+
+**Bootstrap is done. Service is in evidence with minimal scaffolding deployed.**
+
+**Natural transition**: If the user's intent requires application development (e.g., "create an app for X"), the agent should immediately start deploy flow (§4) to implement the actual application. Bootstrap proved the infrastructure works; deploy flow is where the real code gets written.
+
+### 2.8 Managed-Only Fast Path
+
+No runtime targets: discover → provision → SKIP generate → SKIP deploy → SKIP close. No ServiceMeta (managed services are API-authoritative).
+
+### 2.9 Mode Behavior Matrix
+
+| Aspect | Standard | Dev | Simple |
+|--------|----------|-----|--------|
+| Services | `{name}dev` + `{name}stage` + managed | `{name}dev` + managed | `{name}` + managed |
+| Mounts (container) | dev only | dev only | service |
+| zerops.yaml start (dev) | `zsc noop --silent` | `zsc noop --silent` | real command |
+| zerops.yaml start (stage) | real command | N/A | N/A |
+| healthCheck | none (dev) / required (stage) | none | required |
+| deployFiles | `[.]` (dev) / build output (stage) | `[.]` | `[.]` |
+| Server start (container) | SSH manual (dev) / auto (stage) | SSH manual | auto |
+| Deploy sequence | dev → verify → stage → verify | dev → verify | deploy → verify |
+| Subdomain enable | both dev + stage | dev only | service only |
+| PHP runtimes | omit `start:` entirely | omit `start:` | omit `start:` |
+
+---
+
+## 3. Adoption Flow
+
+Adoption registers an existing unmanaged service into ZCP management. The outcome is the same as bootstrap: a ServiceMeta with mode and BootstrappedAt.
+
+### 3.1 When Adoption Applies
+
+- Project has runtime services with `managedByZCP=false` (no complete ServiceMeta).
+- Init instructions label these as "needs ZCP adoption."
+- `zerops_workflow action="route"` offers adoption.
+
+### 3.2 What Happens
+
+Adoption is a simplified process:
+
+1. **Discover**: Agent classifies the existing service. Determines mode from hostname patterns (dev+stage → standard, dev-only → dev, no suffix → simple).
+2. **Verify**: Confirm the service is running and healthy (`zerops_verify`).
+3. **Write evidence**: Create ServiceMeta with:
+   - Hostname, Mode, StageHostname (if standard)
+   - Environment (container/local)
+   - `BootstrapSession` = null (not created by bootstrap)
+   - `BootstrappedAt` = today's date
+   - `DeployStrategy` = empty
+
+No import, no code generation, no deploy. The service already exists and runs.
+
+### 3.3 Mixed Adoption + New
+
+When the user wants to adopt existing services AND create new ones, this goes through bootstrap (§2) with `isExisting: true` on adopted targets. Each target follows its path:
+- New targets: full bootstrap (import, generate, deploy)
+- Existing targets: verify-only, write meta
+
+### 3.4 Outcome
+
+ServiceMeta identical in structure to bootstrap output. The service is now "managed by ZCP" and can enter deploy flow.
+
+---
+
+## 4. Deploy Flow
+
+Deploy flow is the **development lifecycle** for any service under ZCP management. It is the MANDATORY wrapper for any code work on runtime services — implementing features, fixing bugs, changing config. No code change should happen outside of this flow.
+
+```mermaid
+flowchart TD
+    Start([Agent wants to work<br/>with service code]) --> ReadMeta["Read ServiceMeta<br/>from evidence file"]
+    ReadMeta --> CheckEvidence{ServiceMeta<br/>exists?}
+    
+    CheckEvidence -->|No| NeedBootstrap["Service not in evidence.<br/>Run bootstrap or adoption first."]
+    CheckEvidence -->|Yes| StartFlow
+
+    StartFlow["START PHASE<br/>──────────────<br/>Provide knowledge<br/>Report strategy status"] --> Work
+
+    Work["WORK PHASE<br/>──────────────<br/>Agent edits code<br/>ZCP stays out of the way"] --> PreDeploy
+
+    PreDeploy["PRE-DEPLOY<br/>──────────────<br/>Read strategy from meta"] --> StratCheck
+
+    StratCheck{Strategy<br/>in meta?}
+    StratCheck -->|"Empty"| AskUser["Discuss with user:<br/>push-dev / push-git / manual<br/>→ action='strategy'"]
+    AskUser --> SetStrategy["Write strategy to meta"]
+    SetStrategy --> ExecuteDeploy
+    
+    StratCheck -->|"Set"| ExecuteDeploy
+
+    ExecuteDeploy["DEPLOY<br/>──────────────<br/>Execute per strategy<br/>(read fresh from meta)"]
+    ExecuteDeploy --> Verify
+
+    Verify["VERIFY<br/>──────────────<br/>zerops_verify per target"]
+    Verify --> Done([Deploy complete])
+    
+    Verify -->|"Failed"| Iterate{Iteration<br/>< max?}
+    Iterate -->|Yes| Work
+    Iterate -->|No| UserHelp["Present to user"]
+
+    style StartFlow fill:#e8f4fd,stroke:#2196F3
+    style Work fill:#fff3e0,stroke:#FF9800
+    style ExecuteDeploy fill:#fce4ec,stroke:#E91E63
+```
+
+### 4.1 When Deploy Flow Starts
+
+Deploy flow MUST start when the agent intends to make ANY code change to a runtime service:
+
+- **Implementing features**: User said "add photo upload" → deploy flow
+- **Bug fixes**: "Login doesn't work" → deploy flow
+- **Config changes**: "Change the port" → deploy flow
+- **Any code modification**: If it touches a runtime service's files → deploy flow
+
+**After bootstrap**: If the user's original intent requires application development (e.g., "create a photo upload app"), the agent should start deploy flow immediately after bootstrap completes. Bootstrap created the infrastructure; deploy flow implements the application.
+
+**Agent MUST NOT** edit runtime service code outside of deploy flow. The flow ensures the agent has platform knowledge, knows the deploy strategy, and deploys + verifies at the end.
+
+### 4.2 Start Phase — Strategy from Meta
+
+At the start of deploy flow, the system reads ServiceMeta and informs the agent about strategy status. This is **informational, not blocking**.
+
+**If strategy is NOT set** (DeployStrategy empty in meta):
+> "No deploy strategy is configured for this service. Proceed with your code changes. Before deploying, discuss with the user how they want to deploy (push-dev / push-git / manual)."
+
+**If strategy IS set** (DeployStrategy in meta has value):
+> "Deploy strategy: {strategy}. Will deploy according to this strategy. If you want to change it, let me know at any time."
+
+**Key principle**: Strategy never blocks the start of work. Agent can always begin editing code immediately. Strategy is read from meta — if user changed it since last deploy, the new value is used automatically.
+
+### 4.3 Deploy Strategies
+
+Three strategies determine how code gets to Zerops:
+
+#### push-dev
+- **Container**: `zerops_deploy targetService="{hostname}"` — SSH self-deploy. Blocks until build completes.
+- **Local**: `zcli push` — pushes code from local machine.
+- **After deploy**: Manual server start via SSH for dev (zsc noop). Stage and simple auto-start.
+- **Good for**: Quick iterations, prototyping, direct control.
+
+#### push-git
+- **Mechanism**: Commit code, push to external git remote (GitHub/GitLab).
+- **First time**: Requires setup — GIT_TOKEN, .netrc, remote URL configuration.
+- **Command**: `zerops_deploy targetService="{hostname}" strategy="git-push" remoteUrl="{url}"`
+- **Subsequent**: `zerops_deploy targetService="{hostname}" strategy="git-push"`
+- **Optional CI/CD**: GitHub Actions workflow or webhook for automatic deploys on push.
+- **Good for**: Team development, CI/CD pipelines, code in git.
+
+#### manual
+- **Mechanism**: User manages deployments themselves.
+- **Agent role**: Tell user what needs to happen. User executes.
+- **Good for**: Experienced users, external CI/CD systems.
+
+### 4.4 Strategy Setting and Changing
+
+```
+zerops_workflow action="strategy" strategies={"appdev": "push-dev"}
+```
+
+- Validates: must be `push-dev`, `push-git`, or `manual`.
+- Writes to ServiceMeta.DeployStrategy.
+- Can be called at ANY time — before, during, or between deploy flows.
+- Subsequent deploy flow reads the updated value from meta.
+- Returns guidance for the chosen strategy.
+
+**Strategy is always read from meta, never cached in deploy session.** This means:
+- User changes strategy between deploys → next deploy uses new strategy automatically.
+- User changes strategy mid-flow → pre-deploy phase reads the current value.
+- No "session strategy" concept — meta is the single source of truth.
+
+### 4.5 Pre-Deploy Phase
+
+Before actual deployment, the system:
+1. Reads current strategy from ServiceMeta (fresh read, not cached).
+2. If empty → agent must discuss with user and set via `action="strategy"`.
+3. If set → proceed with deployment.
+
+**Deploy checker** (`checkDeployPrepare`):
+- zerops.yaml exists and parses.
+- Setup entries match targets (tries role name: "dev"/"stage"/"prod", then hostname).
+- deployFiles paths exist on filesystem.
+- Env var references (`${hostname_varName}`) re-discovered from API and validated.
+
+### 4.6 Mode-Specific Deploy Behavior
+
+**Standard mode** (container):
+1. Deploy dev → manual start → verify dev
+2. Write stage entry (real start, healthCheck, deployFiles=build output)
+3. Deploy stage (from dev) → auto-starts → verify stage
+
+**Standard mode** (local):
+1. `zcli push` per target → verify
+
+**Dev mode**: Dev deploy + start + verify only.
+
+**Simple mode**: Deploy → auto-starts → verify.
+
+**Deploy result checker** (`checkDeployResult`):
+- `RUNNING`/`ACTIVE` → pass
+- `READY_TO_DEPLOY` → fail: "container didn't start — check start command, ports, env vars"
+- Other status → fail: "check zerops_logs severity=error"
+- Subdomain access check for services with ports
+
+### 4.7 Iteration on Failure
+
+When deploy fails, agent can iterate. Escalating guidance tiers:
+
+**Bootstrap iteration tiers** (wider ranges, up to 10 iterations):
+- Iteration 1-2: DIAGNOSE
+- Iteration 3-4: SYSTEMATIC
+- Iteration 5+: STOP
+
+**Deploy iteration tiers** (faster escalation):
+- Iteration 1: DIAGNOSE
+- Iteration 2: SYSTEMATIC
+- Iteration 3+: STOP
+
+### 4.8 Operational Details
+
+- `zerops_deploy` blocks until build completes. Returns DEPLOYED or BUILD_FAILED.
+- `zerops_subdomain action="enable"` must be called once after first deploy of new service. Persists across re-deploys.
+- Dev server start via SSH needed after every deploy (container, dynamic runtimes only). NOT for PHP/nginx/static (implicit-webserver auto-starts).
+- Stage entry written AFTER dev verified (standard mode).
+- `zerops_deploy sourceService={dev} targetService={stage}` for cross-deploy.
+- `zerops_manage action="connect-storage"` after first stage deploy (if shared-storage).
+
+---
+
+## 5. Environment Differences
+
+Both environments follow the same flows but with different mechanisms.
+
+### 5.1 Container Mode
+
+```
+┌─────────────────────────────────────┐
+│  zcpx container (ZCP service)       │
+│                                     │
+│  SSHFS mounts:                      │
+│    /var/www/appdev/  ──────────┐    │
+│    /var/www/apidev/  ──────┐   │    │
+│                            │   │    │
+│  Agent edits code here     │   │    │
+│  Changes appear instantly  │   │    │
+│  on target containers      │   │    │
+└────────────────────────────┼───┼────┘
+                             │   │
+                    ┌────────┘   └────────┐
+                    ▼                     ▼
+           ┌──────────────┐     ┌──────────────┐
+           │  apidev      │     │  appdev      │
+           │  container   │     │  container   │
+           │  /var/www/   │     │  /var/www/   │
+           └──────────────┘     └──────────────┘
+```
+
+- **Detection**: `serviceId` env var present.
+- **Code access**: SSHFS mounts at `/var/www/{hostname}/`.
+- **Deploy (push-dev)**: SSH into service, git init + zcli push from inside.
+- **Deploy (push-git)**: SSH into service, git commit + push to remote.
+- **Server start**: Manual via SSH for dev (zsc noop). Auto for stage/simple.
+- **Commands**: `ssh {hostname} "cd /var/www && {command}"`.
+- **Mount tool**: Available.
+- **ServiceMeta hostname**: devHostname (standard), hostname (dev/simple).
+
+### 5.2 Local Mode
+
+```
+┌─────────────────────────────────────┐
+│  Developer's machine                │
+│                                     │
+│  Code in working directory          │
+│  zerops.yaml at repository root     │
+│  Deploy pushes code via zcli push   │
+└─────────────────────────────────────┘
+           │
+           │ zcli push
+           ▼
+    ┌──────────────┐
+    │  Zerops      │
+    │  service     │
+    │  container   │
+    └──────────────┘
+```
+
+- **Detection**: `serviceId` env var absent.
+- **Code access**: Working directory.
+- **Deploy (push-dev)**: `zcli push` from local machine.
+- **Deploy (push-git)**: git commit + push from local.
+- **Server start**: Real start command in zerops.yaml. healthCheck always.
+- **Mount tool**: Not available.
+- **ServiceMeta hostname**: stageHostname for standard (inverted), hostname for dev/simple.
+
+### 5.3 Guidance Adaptation
+
+Generate and deploy steps use entirely different guidance for local vs container (full replacement, not addenda). Other steps use base + local addendum. See `spec-knowledge-distribution.md` for details.
+
+---
+
+## 6. Workflow Routing
+
+`zerops_workflow action="route"` returns prioritized offerings based on project state.
+
+**Priority ordering**:
+1. (P1) Incomplete bootstrap → resume/start hint
+2. (P1) Unmanaged runtimes → adoption offering
+3. (P1-P2) Managed services with push-dev/push-git → deploy offering
+4. (P1-P2) Managed services with push-git → CI/CD setup hint
+5. (P3) Add new services → bootstrap hint
+6. (P4-P5) Utilities → recipe, scale
+
+Manual strategy → no deploy offering (user manages directly).
+
+Route returns **facts, not recommendations**.
+
+---
+
+## 7. Session Management
+
+### 7.1 Session State
+
+Stored at `.zcp/state/sessions/{id}.json`:
+```
+WorkflowState {
+  Version    "1"
+  SessionID  16-hex random
+  PID        process owner
+  ProjectID  Zerops project
+  Workflow   "bootstrap" | "deploy" | "recipe"
+  Iteration  counter
+  Intent     user's goal
+  CreatedAt  RFC3339
+  UpdatedAt  RFC3339
+  Bootstrap  *BootstrapState
+  Deploy     *DeployState
+  Recipe     *RecipeState
+}
+```
+
+### 7.2 Registry
+
+`.zcp/state/registry.json` — tracks active sessions. File-locked via `.registry.lock`. Auto-prunes dead PIDs and sessions >24h old (on new session creation).
+
+### 7.3 Resume
+
+`action="resume" sessionId="..."`: loads session, checks PID dead → takes over (updates PID). PID alive → error. Continues from current step with full state preserved.
+
+---
+
+## 8. Invariants
+
+### Evidence
+
+| ID | Invariant |
+|----|-----------|
+| E1 | Every managed runtime service has a ServiceMeta with Mode and BootstrappedAt |
+| E2 | Bootstrap creates ServiceMeta with empty DeployStrategy |
+| E3 | Adoption creates ServiceMeta with null BootstrapSession |
+| E4 | IsComplete() = BootstrappedAt is non-empty |
+| E5 | Partial meta (no BootstrappedAt) signals bootstrap in-progress |
+| E6 | Only runtime services get ServiceMeta — managed services are API-authoritative |
+
+### Bootstrap
+
+| ID | Invariant |
+|----|-----------|
+| B1 | 5 steps in strict order: discover → provision → generate → deploy → close |
+| B2 | discover/provision always mandatory |
+| B3 | generate/deploy/close skippable only for managed-only |
+| B4 | Attestation ≥ 10 chars on completion |
+| B5 | Checker failure blocks step advancement |
+| B6 | Per-service exclusivity via hostname lock |
+| B7 | Bootstrap does NOT set deploy strategy |
+| B8 | Non-discover steps require plan from discover step (defense-in-depth) |
+| B9 | Generate writes MINIMAL scaffolding (hello-world), NOT application logic |
+| B10 | After bootstrap with app-development intent, agent immediately starts deploy flow |
+
+### Deploy Flow
+
+| ID | Invariant |
+|----|-----------|
+| D1 | Deploy flow requires ServiceMeta with BootstrappedAt |
+| D0 | ALL code changes to runtime services MUST go through deploy flow |
+| D2 | Strategy is informational at start, not a gate |
+| D3 | Strategy read from meta at deploy time, never cached in session |
+| D4 | Strategy resolved before actual deployment (within flow) |
+| D5 | Strategy can be changed at any time via action="strategy" |
+| D6 | push-git includes optional CI/CD setup |
+| D7 | manual strategy: agent informs, user executes |
+| D8 | Deploy checkers validate platform integration, not application correctness |
+| D9 | Checker failure blocks step advancement — agent receives CheckResult with details |
+| D10 | Mixed strategies across targets in single deploy session are rejected |
+
+### Strategy
+
+| ID | Invariant |
+|----|-----------|
+| S1 | Three values: push-dev, push-git, manual |
+| S2 | Never auto-assigned |
+| S3 | Set via explicit action="strategy", writes to ServiceMeta |
+| S4 | Deploy flow always reads fresh from meta |
+
+### Operational
+
+| ID | Invariant |
+|----|-----------|
+| O1 | zerops_deploy blocks until build completes |
+| O2 | zerops_import blocks until all processes complete |
+| O3 | zerops_subdomain called once after first deploy (persists) |
+| O4 | Dev server started manually via SSH after every deploy (container, dynamic runtimes) |
+| O5 | Stage entry written AFTER dev verified (standard mode) |
+| O6 | Stage deployFiles = build output, NOT [.] |
+
+---
+
+## Appendix A: Recovery Patterns
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Build FAILED: "command not found" | Wrong buildCommands | Check runtime knowledge |
+| Build FAILED: "module not found" | Missing deps | Add to buildCommands |
+| App crash: "EADDRINUSE" | Port conflict | Match port to zerops.yaml |
+| App crash: "connection refused" | Wrong env var | Check envVariables vs discovered |
+| HTTP 502 | Subdomain not active | `zerops_subdomain action="enable"` |
+| Empty response | Not on 0.0.0.0 | Fix binding |
+| READY_TO_DEPLOY after deploy | Start failed | Check start command, runtime version |

@@ -77,7 +77,7 @@ type CustomAutoscaling struct {
 	MaxDisk            float64 `json:"maxDisk"`
 	MinFreeCPUCores    float64 `json:"minFreeCpuCores"`
 	MinFreeCPUPercent  float64 `json:"minFreeCpuPercent"`
-	MinFreeRAMGB       float64 `json:"minFreeRamGB"` //nolint:tagliatelle // matches Zerops import.yml naming
+	MinFreeRAMGB       float64 `json:"minFreeRamGB"` //nolint:tagliatelle // matches Zerops import.yaml naming
 	MinFreeRAMPercent  float64 `json:"minFreeRamPercent"`
 	SwapEnabled        bool    `json:"swapEnabled"`
 }

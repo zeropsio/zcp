@@ -16,7 +16,7 @@ const (
 	DeployRoleStage = "stage"
 )
 
-// ValidateZeropsYml checks zerops.yml for common issues before deploy.
+// ValidateZeropsYml checks zerops.yaml for common issues before deploy.
 // role is optional ("dev", "stage", or empty). When empty, falls back to hostname substring heuristic.
 // Returns a list of warning strings (empty = no issues found).
 func ValidateZeropsYml(workingDir, targetHostname string, roles ...string) []string {
@@ -28,13 +28,13 @@ func ValidateZeropsYml(workingDir, targetHostname string, roles ...string) []str
 	}
 
 	if len(doc.Zerops) == 0 {
-		return []string{"zerops.yml has no setup entries under 'zerops:' key"}
+		return []string{"zerops.yaml has no setup entries under 'zerops:' key"}
 	}
 
 	// Find matching setup entry.
 	entry := doc.FindEntry(targetHostname)
 	if entry == nil {
-		warnings = append(warnings, fmt.Sprintf("no setup entry for hostname %q in zerops.yml", targetHostname))
+		warnings = append(warnings, fmt.Sprintf("no setup entry for hostname %q in zerops.yaml", targetHostname))
 		return warnings
 	}
 
@@ -109,12 +109,12 @@ func ValidateZeropsYml(workingDir, targetHostname string, roles ...string) []str
 	return warnings
 }
 
-// ZeropsYmlDoc is the top-level zerops.yml structure (minimal for validation).
+// ZeropsYmlDoc is the top-level zerops.yaml structure (minimal for validation).
 type ZeropsYmlDoc struct {
 	Zerops []ZeropsYmlEntry `yaml:"zerops"`
 }
 
-// ZeropsYmlEntry represents a single setup entry in zerops.yml.
+// ZeropsYmlEntry represents a single setup entry in zerops.yaml.
 type ZeropsYmlEntry struct {
 	Setup        string            `yaml:"setup"`
 	Build        zeropsYmlBuild    `yaml:"build"`

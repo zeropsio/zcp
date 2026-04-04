@@ -8,20 +8,20 @@ import (
 )
 
 // DeployStart creates a new deploy session with targets ordered by mode.
-func (e *Engine) DeployStart(projectID, intent string, targets []DeployTarget, mode, strategy string) (*DeployResponse, error) {
+func (e *Engine) DeployStart(projectID, intent string, targets []DeployTarget, mode string) (*DeployResponse, error) {
 	state, err := e.Start(projectID, WorkflowDeploy, intent)
 	if err != nil {
 		return nil, fmt.Errorf("deploy start: %w", err)
 	}
 
-	ds := NewDeployState(targets, mode, strategy)
+	ds := NewDeployState(targets, mode)
 	ds.Steps[0].Status = stepInProgress
 	state.Deploy = ds
 
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("deploy start save: %w", err)
 	}
-	return ds.BuildResponse(state.SessionID, intent, state.Iteration, e.environment), nil
+	return ds.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.stateDir), nil
 }
 
 // DeployComplete completes the current deploy step.
@@ -42,7 +42,7 @@ func (e *Engine) DeployComplete(ctx context.Context, step, attestation string, c
 			return nil, fmt.Errorf("deploy step check: %w", checkErr)
 		}
 		if result != nil && !result.Passed {
-			resp := state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment)
+			resp := state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.stateDir)
 			resp.CheckResult = result
 			resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", step, result.Summary)
 			return resp, nil
@@ -66,7 +66,7 @@ func (e *Engine) DeployComplete(ctx context.Context, step, attestation string, c
 	} else if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("deploy complete save: %w", err)
 	}
-	resp := state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment)
+	resp := state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.stateDir)
 	resp.CheckResult = checkResult
 	if cleanupErr != nil {
 		resp.Message += "\n\nWarning: session cleanup failed: " + cleanupErr.Error()
@@ -91,7 +91,7 @@ func (e *Engine) DeploySkip(step, reason string) (*DeployResponse, error) {
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("deploy skip save: %w", err)
 	}
-	return state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment), nil
+	return state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.stateDir), nil
 }
 
 // DeployStatus returns the current deploy progress with fresh guidance.
@@ -103,5 +103,5 @@ func (e *Engine) DeployStatus() (*DeployResponse, error) {
 	if state.Deploy == nil {
 		return nil, fmt.Errorf("deploy status: no deploy state")
 	}
-	return state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment), nil
+	return state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.stateDir), nil
 }

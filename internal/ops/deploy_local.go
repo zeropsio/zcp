@@ -89,13 +89,13 @@ func DeployLocal(
 		workingDir = "."
 	}
 
-	// 4. Validate zerops.yml.
+	// 4. Validate zerops.yaml.
 	zeropsYmlPath := workingDir + "/zerops.yml"
 	if _, statErr := os.Stat(zeropsYmlPath); statErr != nil {
 		return nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("zerops.yml not found at %s", workingDir),
-			"Create zerops.yml in your project directory. Use zerops_knowledge for examples.",
+			fmt.Sprintf("zerops.yaml not found at %s", workingDir),
+			"Create zerops.yaml in your project directory. Use zerops_knowledge for examples.",
 		)
 	}
 
@@ -136,7 +136,7 @@ func DeployLocal(
 		return nil, platform.NewPlatformError(
 			platform.ErrDeployFailed,
 			"zcli push failed: "+strings.TrimSpace(lastLines(stderr, 5)),
-			"Check zerops.yml syntax and build configuration.",
+			"Check zerops.yaml syntax and build configuration.",
 		)
 	}
 

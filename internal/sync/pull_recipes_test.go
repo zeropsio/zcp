@@ -82,7 +82,7 @@ func TestPullRecipeMarkdown_WithIntegrationGuide(t *testing.T) {
 	md := buildRecipeMarkdown("Test", "test", sd)
 
 	if !strings.Contains(md, "## zerops.yml") && !strings.Contains(md, "## zerops.yaml") {
-		t.Error("expected promoted ## zerops.yml or ## zerops.yaml heading")
+		t.Error("expected promoted ## zerops.yaml or ## zerops.yml heading")
 	}
 	if !strings.Contains(md, "## Integration Steps") {
 		t.Error("expected promoted ## Integration Steps heading")

@@ -209,13 +209,15 @@ envVariables:
 <section name="generate">
 ### Generate zerops.yaml and application code
 
+Write MINIMAL scaffolding — a hello-world server with the required endpoints (/, /health, /status). Do NOT implement application logic here. The actual application is built in the deploy flow after bootstrap completes.
+
 **Adopted services (isExisting: true):** Skip zerops.yaml and code generation entirely for adopted targets. These services already have working code and configuration from their previous deploy. The generate checker automatically skips validation for adopted targets. If ALL targets are adopted, complete this step with attestation "All targets are existing services — no code generation needed."
 
 **Prerequisites**: Services mounted, env vars discovered.
 
 > **WHERE TO WRITE FILES**: Write ALL files (zerops.yaml, app code, configs) to the SSHFS mount path `/var/www/{hostname}/` — this is the path returned by `zerops_mount` in the provision step. `/var/www/` without the hostname suffix is the zcpx orchestrator's own filesystem — writing there has NO effect on the target service. Every file must go under `/var/www/{hostname}/`.
 
-**SSHFS mount is for source code only** — small file reads/writes (editing .go, .ts, .yml files). Commands that generate many files (npm install, pip install, go mod download, composer install, bundle install, cargo build) MUST run via SSH on the container: `ssh {hostname} "cd /var/www && {install_command}"`. Running them locally through the SSHFS network mount is orders of magnitude slower.
+**SSHFS mount is for source code only** — small file reads/writes (editing .go, .ts, .yaml files). Commands that generate many files (npm install, pip install, go mod download, composer install, bundle install, cargo build) MUST run via SSH on the container: `ssh {hostname} "cd /var/www && {install_command}"`. Running them locally through the SSHFS network mount is orders of magnitude slower.
 
 > **CRITICAL — self-deploying services MUST use `deployFiles: [.]`:** Containers are volatile. After deploy, ONLY `deployFiles` content survives. If a self-deploying service uses `[dist]`, `[app]`, or any build output path, all source files + zerops.yaml are DESTROYED. Further iteration becomes impossible. Any service that deploys to itself (dev services, simple mode services) MUST ALWAYS use `deployFiles: [.]`. No exceptions. Cross-deploy targets (stage) can use specific paths for compiled output because their source lives on the dev service.
 
@@ -286,6 +288,8 @@ Since you're writing to an SSHFS mount, every file you create or modify is immed
 <section name="generate-standard">
 ### Standard mode (dev+stage) — zerops.yaml rules
 
+Write MINIMAL scaffolding — a hello-world server with the required endpoints (/, /health, /status). Do NOT implement application logic here. The actual application is built in the deploy flow after bootstrap completes.
+
 **Write dev entry ONLY now. Stage entry comes after dev is verified (deploy step).**
 All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 
@@ -317,6 +321,8 @@ All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 <section name="generate-dev">
 ### Dev-only mode — zerops.yaml rules
 
+Write MINIMAL scaffolding — a hello-world server with the required endpoints (/, /health, /status). Do NOT implement application logic here. The actual application is built in the deploy flow after bootstrap completes.
+
 **Write a single dev entry. No stage service exists in this mode.**
 All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 
@@ -337,6 +343,8 @@ All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 
 <section name="generate-simple">
 ### Simple mode — zerops.yaml rules
+
+Write MINIMAL scaffolding — a hello-world server with the required endpoints (/, /health, /status). Do NOT implement application logic here. The actual application is built in the deploy flow after bootstrap completes.
 
 **Write a single entry with a REAL start command.** Unlike dev/standard, simple mode services auto-start after deploy — no manual SSH start needed.
 All files go to `/var/www/{hostname}/` (the SSHFS mount path from provision).
@@ -889,6 +897,8 @@ The transition message includes:
 **Complete this step:** use `zerops_workflow action="complete" step="close" attestation="Bootstrap finalized, services operational"`.
 
 **Skip this step** only in impossible edge cases (no services at all). Normal projects always reach this step.
+
+Infrastructure is ready with minimal scaffolding. If your goal requires application development, start the deploy flow now: `zerops_workflow action="start" workflow="deploy"`
 </section>
 
 ---
@@ -941,7 +951,7 @@ If the user only wants managed services (DB, cache, storage) without any runtime
 
 1. **Discover env vars**: `zerops_discover includeEnvs=true` — same protocol as container mode (keys only).
 
-2. **Generate .env for local development**: Use `zerops_env action="generate-dotenv" serviceHostname="{appHostname}"` to generate a `.env` file. It reads the service's zerops.yml envVariables, resolves `${hostname_varName}` references internally against live service data, writes the `.env` file, and returns a summary of resolved variables. The local app reads `.env` directly via dotenv or framework auto-loading.
+2. **Generate .env for local development**: Use `zerops_env action="generate-dotenv" serviceHostname="{appHostname}"` to generate a `.env` file. It reads the service's zerops.yaml envVariables, resolves `${hostname_varName}` references internally against live service data, writes the `.env` file, and returns a summary of resolved variables. The local app reads `.env` directly via dotenv or framework auto-loading.
 
 3. **Add `.env` to `.gitignore`** — it contains secrets. Never commit it.
 
@@ -950,6 +960,8 @@ If the user only wants managed services (DB, cache, storage) without any runtime
 
 <section name="generate-local">
 ### Generate — Local Mode
+
+Write MINIMAL scaffolding — a hello-world server with the required endpoints (/, /health, /status). Do NOT implement application logic here. The actual application is built in the deploy flow after bootstrap completes.
 
 **Write all files locally** in the current working directory. No SSHFS mounts, no remote paths.
 

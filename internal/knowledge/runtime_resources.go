@@ -8,7 +8,7 @@ package knowledge
 // These values are the SINGLE SOURCE OF TRUTH for:
 //   - Runtime guide "Resource Requirements" sections
 //   - Scaling guide general table
-//   - Workflow import.yml generation (dev minRam per runtime)
+//   - Workflow import.yaml generation (dev minRam per runtime)
 //   - runtime_resources_test.go cross-validation
 type RuntimeResources struct {
 	DevMinRAM   float64 // GB — compilation/install spike on dev container
