@@ -556,7 +556,10 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 >
 > Report issues as: `[CRITICAL]` (breaks deploy), `[WRONG]` (incorrect but works), `[STYLE]` (quality improvement).
 
-Apply any CRITICAL or WRONG fixes before completing the close step.
+Apply any CRITICAL or WRONG fixes, then **redeploy** to verify the fixes work:
+- If zerops.yaml or app code changed: `zerops_deploy targetService="appdev" setup="dev"` then cross-deploy to stage
+- If only import.yaml (finalize output) changed: re-run finalize checks
+- Do NOT skip redeployment — the verification is meaningless if fixes aren't tested.
 
 ### 2. Export & Publish
 
