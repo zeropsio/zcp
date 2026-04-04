@@ -17,18 +17,13 @@ Fill in all research fields by examining the framework's documentation and exist
 | **3. Backend framework** | `{framework}-minimal` | `laravel-minimal` | Framework with ORM, migrations, templates. |
 
 ### Reference Loading
-Hello-world recipes exist per RUNTIME, not per framework. The hello-world IS the runtime guide — it contains the proven zerops.yaml patterns, build lifecycle, env var wiring, and platform-specific comments for that runtime. Load it:
+Hello-world recipes exist per RUNTIME, not per framework. The hello-world IS the runtime guide — proven zerops.yaml patterns for that runtime. Load it:
 ```
 zerops_knowledge recipe="{runtime-base}-hello-world"
 ```
-Example: for Laravel (php-nginx runtime), load `php-hello-world`. For Next.js (nodejs runtime), load `nodejs-hello-world`. For React static, load `nodejs-hello-world` (build base reference).
+Example: for Laravel (php-nginx runtime), load `php-hello-world`. For Next.js (nodejs runtime), load `nodejs-hello-world`.
 
-Your job is to extend this base with framework-specific knowledge: `documentRoot` for PHP frameworks, multi-base builds for asset pipelines (Vite/Webpack), trusted proxy config, framework CLI commands, etc. These discoveries go into the zerops.yaml comments and the knowledge-base README fragment.
-
-Load the import.yaml schema for type validation:
-```
-zerops_knowledge scope="infrastructure"
-```
+Your job is to extend this base with framework-specific knowledge (documentRoot, multi-base builds, trusted proxy config, etc.). These discoveries go into the zerops.yaml comments and knowledge-base fragment.
 
 ### Framework Identity
 - **Service type** (from available stacks): match against live catalog
@@ -136,27 +131,17 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 **Static frontends (type 2a):** `run.base: static` serves via built-in Nginx — both dev and stage use `type: static`. Dev still gets `startWithoutCode: true` for the build container. The runtime for building is `nodejs@22` (or similar) as `build.base` in zerops.yaml, NOT as the service type.
 
-**Managed service conventions:**
-- Hostname: `db` (postgresql/mariadb), `cache` (valkey), `queue` (nats), `search` (meilisearch), `storage` (object-storage)
-- `priority: 10` for all managed services (start before app)
-- `mode: NON_HA` for workspace
-- `object-storage` requires `objectStorageSize` field
+**If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair.
 
-**If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair. Skip managed service conventions.
+**Framework secrets**: If `needsAppSecret == true`, add per-service `envSecrets` with `<@generateRandomString(<32>)>` on each app/worker service and add `#zeropsPreprocessor=on` as the first line. Each service gets its own key — never project-level. These are auto-injected as OS env vars — do NOT wire them in zerops.yaml `envVariables`.
 
-**Framework secrets**: If `needsAppSecret == true`, add per-service `envSecrets` with `<@generateRandomString(<32>)>` on each app/worker service and add `#zeropsPreprocessor=on` as the first line. Each service gets its own generated key — do NOT put envSecrets at project level.
-
-**Validation checklist:**
+Follow the injected **import.yaml Schema** for all field rules (hostname conventions, priority, mode, preprocessor syntax). Recipe-specific validation:
 
 | Check | What to verify |
 |-------|---------------|
-| Hostnames | [a-z0-9] pattern, max 25 chars |
-| Service types | Match available stacks from research |
-| Mode present | Managed services have `mode: NON_HA` |
-| Priority | Data services: `priority: 10` |
-| Preprocessor | `#zeropsPreprocessor=on` if using `<@...>` functions |
-| envSecrets | Per-service on app/worker, NOT at project level |
 | NO zeropsSetup | Workspace import must NOT include zeropsSetup (requires buildFromGit) |
+| envSecrets | Per-service on app/worker, NOT at project level |
+| Service types | Match available stacks from research |
 
 ### 2. Import services
 
@@ -186,16 +171,7 @@ zerops_discover includeEnvs=true
 
 **If the plan has no managed services** (type 2a static frontend): skip this step — there are no env vars to discover.
 
-Record which env vars exist. Common patterns:
-
-| Service type | Available env vars |
-|-------------|-------------------|
-| PostgreSQL | `${db_hostname}`, `${db_port}`, `${db_user}`, `${db_password}`, `${db_connectionString}`, `${db_dbName}` |
-| MariaDB | `${db_hostname}`, `${db_port}`, `${db_user}`, `${db_password}`, `${db_connectionString}`, `${db_dbName}` |
-| Valkey | `${cache_hostname}`, `${cache_port}` (no password — private network) |
-| Object Storage | `${storage_apiUrl}`, `${storage_accessKeyId}`, `${storage_secretAccessKey}`, `${storage_bucketName}` |
-
-**ONLY use variables that were actually discovered.** Guessing variable names causes runtime failures.
+Record which env vars exist. **ONLY use variables that were actually discovered** — guessing names causes silent runtime failures (`${...}` becomes a literal string, not an error). Service-specific variable names are in the injected service reference cards.
 
 ### Completion
 ```
@@ -233,28 +209,13 @@ zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`.
 
 ### zerops.yaml — Dev entry ONLY first
 
-Write the **dev** entry only. The prod entry comes after dev is verified in the deploy step.
+Write the **dev** entry only. The prod entry comes after dev is verified in the deploy step. Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific conventions:
 
-**Dev setup rules (CRITICAL):**
 - `setup: dev` — generic name. Deploy uses `zerops_deploy targetService="appdev" setup="dev"` to map it.
-- `deployFiles: [.]` — **MANDATORY for self-deploy, no exceptions**
-- `start: zsc noop --silent` — agent controls server manually
-  - **Exception**: omit `start` entirely for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
-  - **Static frontends (type 2a)**: omit `start` — Nginx auto-serves from documentRoot
-- **NO buildCommands with compilation** — dev only does dependency installation (npm install, composer install, etc.)
-  - **Static frontends**: dev may need `npm run build` since the output needs to exist for Nginx to serve
-- **NO healthCheck** — agent controls lifecycle; healthCheck would restart container during iteration
-- `envVariables:` — map discovered **cross-service** vars to what the app expects (skip if no managed services):
-  ```yaml
-  envVariables:
-    DATABASE_URL: ${db_connectionString}
-    REDIS_HOST: ${cache_hostname}
-    # ONLY cross-service references from zerops_discover — never guess
-    # DO NOT add envSecrets here (APP_KEY, SECRET_KEY_BASE, etc.)
-    # — they are already injected as OS env vars automatically
-  ```
-
-**Static frontends:** Set `documentRoot: dist` (or `build`, `.output/public`, etc.) matching the build output. No `start` command needed.
+- `deployFiles: [.]` — **MANDATORY for self-deploy**
+- `start: zsc noop --silent` — exception: omit `start` for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
+- **NO healthCheck on dev** — agent controls lifecycle; healthCheck restarts during iteration
+- `envVariables:` — ONLY cross-service references from `zerops_discover`. **Do NOT add envSecrets** (APP_KEY, SECRET_KEY_BASE) — they are already injected as OS env vars automatically.
 
 ### .env.example preservation
 
@@ -296,15 +257,11 @@ Write `README.md` at `/var/www/appdev/README.md` with three documentation fragme
 - Max 80 chars per comment line
 
 ### Pre-deploy checklist
-Before completing generate:
-- [ ] zerops.yaml has `setup: dev` (generic name — deploy maps via `setup="dev"` param)
-- [ ] `deployFiles: [.]` on dev
-- [ ] `start: zsc noop --silent` (or omitted for implicit-webserver/static)
-- [ ] No compilation in buildCommands (dependency install only — exception: static frontend build)
-- [ ] No healthCheck on dev entry
-- [ ] All env vars from discovery, none guessed (skip if no managed services)
+- [ ] `setup: dev` (generic name), `deployFiles: [.]`, no healthCheck
+- [ ] envVariables has only cross-service refs — no envSecrets re-referenced
+- [ ] All env var names from `zerops_discover`, none guessed
 - [ ] README has all 3 extract fragments with proper markers
-- [ ] `.env.example` preserved if framework-scaffolded (`.env` removed)
+- [ ] `.env.example` preserved (`.env` removed)
 
 ### Completion
 ```
@@ -479,8 +436,8 @@ zerops_verify serviceHostname="appstage"
 
 | Issue | Diagnosis | Fix |
 |-------|-----------|-----|
-| HTTP 502 | App not listening on 0.0.0.0, or wrong port | Fix bind address in app config |
-| Empty env vars | Deploy hasn't happened yet | Deploy first — env vars activate at deploy time |
+| HTTP 502 | App not binding 0.0.0.0 or wrong port | Check runtime knowledge for bind rules |
+| Empty env vars | Deploy hasn't happened yet | Deploy first — envVariables activate at deploy time. envSecrets need restart. |
 | Build fails | Wrong build commands, missing dependencies | Check `zerops_logs`, fix and redeploy |
 | Stage deploy fails | zerops.yaml setup name doesn't match --setup param | Ensure `setup: prod` in zerops.yaml and `setup="prod"` in zerops_deploy |
 | Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |
@@ -529,20 +486,16 @@ Plus:
 **If plan has no database** (type 2a): skip DB rows in scaling matrix. Environment import.yaml files contain only the app service.
 
 ### import.yaml Rules
-- `priority: 10` on all data services (ensures they start before app)
-- `envSecrets` per-service on app/worker services (NOT at project level) where `needsAppSecret == true`
-- `#zeropsPreprocessor=on` when using `<@generateRandomString(<32>)>`
-- `corePackage: SERIOUS` at **project level** for env 5 (NOT under verticalAutoscaling)
-- `verticalAutoscaling` nesting: minFreeRamGB, cpuMode under it
-- Every runtime service in the recipe deliverable uses `buildFromGit` — **NO `startWithoutCode`** (that's workspace-only, never in finalize output)
-- `zeropsSetup: prod` + `buildFromGit` on all prod/stage app/worker services
-- `zeropsSetup: dev` + `buildFromGit` on all dev app/worker services in env 0-1
+
+Follow the injected **import.yaml Schema** for all platform rules (priority, mode, hostname conventions, preprocessor). Recipe-specific rules:
+
+- Every runtime service uses `buildFromGit` — **NO `startWithoutCode`** (workspace-only, never in finalize)
+- `zeropsSetup: prod` + `buildFromGit` on prod/stage services; `zeropsSetup: dev` + `buildFromGit` on dev services (env 0-1)
 - `buildFromGit: https://github.com/zerops-recipe-apps/{slug}-app`
-- Env 0-1 dev hostnames: `appdev`, `workerdev` (suffix `dev`). Env 0-1 stage hostnames: `appstage`, `workerstage` (suffix `stage`). Env 2+ uses bare hostname: `app`, `worker`.
-- Comment line width <= 80 chars
-- Comment ratio >= 0.3 per file
-- No `PLACEHOLDER_*` strings
-- No cross-environment references in comments
+- Env 0-1 hostnames: `appdev`/`appstage` (suffixed). Env 2+ uses bare hostname: `app`, `worker`.
+- `corePackage: SERIOUS` at **project level** for env 5 (NOT under verticalAutoscaling)
+- Comment line width <= 80 chars, comment ratio >= 0.3 per file
+- No `PLACEHOLDER_*` strings, no cross-environment references in comments
 - Project names: `{slug}-{env-suffix}` convention
 
 ### Completion
