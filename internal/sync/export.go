@@ -26,7 +26,7 @@ var skipFiles = map[string]bool{
 }
 
 // skipPathPatterns are path segments that indicate generated/cached files.
-// Matched against the relative path within the source directory.
+// Used only in the walk fallback (non-git directories).
 var skipPathPatterns = []string{
 	"storage/framework/views/",    // Laravel compiled Blade cache
 	"storage/framework/cache/",    // Laravel file cache
@@ -38,7 +38,6 @@ var skipPathPatterns = []string{
 	".phpunit.cache/",
 	"__pycache__/",
 	".next/cache/",
-	"dist/",
 }
 
 // knownEnvFolders are the expected environment tier folder prefixes.
@@ -47,30 +46,47 @@ var knownEnvFolders = []string{
 }
 
 // ExportRecipe creates a .tar.gz archive of the recipe output directory.
-// When the source directory contains a .git directory, uses git archive
-// to export only tracked files (respects .gitignore). Otherwise falls
-// back to a filesystem walk with skip lists.
-// The archive is written to os.TempDir first, then moved to CWD to
-// avoid packing the output file into its own archive.
-// Returns the final path to the created archive.
-func ExportRecipe(sourceDir string) (string, error) {
+//
+// The source directory typically has no .git at root but contains subdirectories
+// (like appdev/) that are SSHFS mounts with their own .git. The export handles
+// this by using git ls-files for any subdirectory that has .git (respecting its
+// .gitignore), and a filtered walk for the rest.
+//
+// The archive is written to os.TempDir first, then moved to CWD to avoid
+// packing the output file into its own archive.
+//
+// If includeTimeline is true and TIMELINE.md doesn't exist, returns a
+// TimelinePrompt in the result instead of an error.
+func ExportRecipe(sourceDir string, includeTimeline bool) (*ExportResult, error) {
 	sourceDir, err := filepath.Abs(sourceDir)
 	if err != nil {
-		return "", fmt.Errorf("resolve source dir: %w", err)
+		return nil, fmt.Errorf("resolve source dir: %w", err)
 	}
 
 	info, err := os.Stat(sourceDir)
 	if err != nil {
-		return "", fmt.Errorf("stat source dir: %w", err)
+		return nil, fmt.Errorf("stat source dir: %w", err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("%s is not a directory", sourceDir)
+		return nil, fmt.Errorf("%s is not a directory", sourceDir)
 	}
 
 	// Warn about structure issues.
 	warnings := validateRecipeLayout(sourceDir)
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "  warning: %s\n", w)
+	}
+
+	// Check TIMELINE.md when requested.
+	if includeTimeline {
+		timelinePath := filepath.Join(sourceDir, "TIMELINE.md")
+		if _, err := os.Stat(timelinePath); os.IsNotExist(err) {
+			return &ExportResult{
+				NeedsTimeline:  true,
+				TimelinePrompt: buildTimelinePrompt(sourceDir),
+				TimelinePath:   timelinePath,
+			}, nil
+		}
 	}
 
 	baseName := filepath.Base(sourceDir)
@@ -80,11 +96,10 @@ func ExportRecipe(sourceDir string) (string, error) {
 	// Write to temp dir first to avoid self-inclusion.
 	tmpFile, err := os.CreateTemp("", archivePrefix+"-*.tar.gz")
 	if err != nil {
-		return "", fmt.Errorf("create temp file: %w", err)
+		return nil, fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 
-	// Clean up temp file on error.
 	success := false
 	defer func() {
 		if !success {
@@ -95,97 +110,77 @@ func ExportRecipe(sourceDir string) (string, error) {
 	gw := gzip.NewWriter(tmpFile)
 	tw := tar.NewWriter(gw)
 
-	// Choose export strategy: git archive (respects .gitignore) or walk.
-	hasGit := hasGitDir(sourceDir)
-	if hasGit {
-		err = exportViaGit(tw, sourceDir, archivePrefix)
-	} else {
-		err = exportViaWalk(tw, sourceDir, archivePrefix)
-	}
+	err = exportHybrid(tw, sourceDir, archivePrefix)
 
-	// Close writers in order (tar → gzip → file) before moving.
 	tw.Close()
 	gw.Close()
 	tmpFile.Close()
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// Move to CWD.
 	if err := os.Rename(tmpPath, finalName); err != nil {
-		// Cross-device: copy instead.
 		if cpErr := copyFile(tmpPath, finalName); cpErr != nil {
-			return "", fmt.Errorf("move archive: %w", cpErr)
+			return nil, fmt.Errorf("move archive: %w", cpErr)
 		}
 		os.Remove(tmpPath)
 	}
 
 	success = true
-	return finalName, nil
+	return &ExportResult{ArchivePath: finalName}, nil
 }
 
-// exportViaGit uses git ls-files to get tracked files and writes them to tar.
-func exportViaGit(tw *tar.Writer, sourceDir, prefix string) error {
-	cmd := exec.Command("git", "ls-files", "-z") //nolint:gosec,noctx // controlled internal path
-	cmd.Dir = sourceDir
+// ExportResult holds the outcome of an export operation.
+type ExportResult struct {
+	ArchivePath    string // path to created archive (empty if NeedsTimeline)
+	NeedsTimeline  bool   // true if TIMELINE.md is missing and was requested
+	TimelinePrompt string // prompt for the AI to generate TIMELINE.md
+	TimelinePath   string // where to write TIMELINE.md
+}
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git ls-files: %w\nstderr: %s", err, stderr.String())
+// exportHybrid walks the source directory. For subdirectories that have
+// their own .git (e.g. SSHFS-mounted app dirs), it uses git ls-files to
+// respect .gitignore. For everything else, it uses a filtered walk.
+func exportHybrid(tw *tar.Writer, sourceDir, prefix string) error {
+	// First pass: find subdirectories with .git (git subtrees).
+	gitSubtrees := make(map[string]bool)
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		return fmt.Errorf("read source dir: %w", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		subdir := filepath.Join(sourceDir, e.Name())
+		if hasGitDir(subdir) {
+			gitSubtrees[subdir] = true
+		}
 	}
 
-	files := strings.Split(stdout.String(), "\x00")
-	for _, rel := range files {
-		if rel == "" {
-			continue
-		}
-		fullPath := filepath.Join(sourceDir, rel)
-		fi, err := os.Stat(fullPath)
-		if err != nil {
-			continue // deleted but tracked — skip
-		}
-		if fi.IsDir() {
-			continue
-		}
-		if skipFiles[fi.Name()] {
-			continue
-		}
-
-		if err := addFileToTar(tw, fullPath, filepath.Join(prefix, rel), fi); err != nil {
+	// If root itself has .git, use git for everything.
+	if hasGitDir(sourceDir) {
+		if err := exportGitSubtree(tw, sourceDir, prefix, ""); err != nil {
 			return err
 		}
+		return includeUntrackedTimeline(tw, sourceDir, prefix, nil)
 	}
 
-	// Also include untracked TIMELINE.md if it exists (may not be committed yet).
-	timelinePath := filepath.Join(sourceDir, "TIMELINE.md")
-	if ti, err := os.Stat(timelinePath); err == nil {
-		// Check if already included.
-		found := false
-		for _, f := range files {
-			if f == "TIMELINE.md" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			if err := addFileToTar(tw, timelinePath, filepath.Join(prefix, "TIMELINE.md"), ti); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// exportViaWalk walks the filesystem with skip lists (no .git available).
-func exportViaWalk(tw *tar.Writer, sourceDir, prefix string) error {
+	// Walk the root, switching to git for subtrees.
 	return filepath.Walk(sourceDir, func(path string, fi os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+
+		// If this directory is a git subtree, export via git and skip walk.
+		if fi.IsDir() && gitSubtrees[path] {
+			rel, _ := filepath.Rel(sourceDir, path)
+			if err := exportGitSubtree(tw, path, prefix, rel); err != nil {
+				return err
+			}
+			return filepath.SkipDir
 		}
 
 		if fi.IsDir() && skipDirs[fi.Name()] {
@@ -203,7 +198,6 @@ func exportViaWalk(tw *tar.Writer, sourceDir, prefix string) error {
 			return fmt.Errorf("rel path: %w", err)
 		}
 
-		// Skip known generated/cached file patterns.
 		relSlash := strings.ReplaceAll(rel, string(filepath.Separator), "/")
 		if matchesSkipPattern(relSlash) {
 			return nil
@@ -211,6 +205,93 @@ func exportViaWalk(tw *tar.Writer, sourceDir, prefix string) error {
 
 		return addFileToTar(tw, path, filepath.Join(prefix, rel), fi)
 	})
+}
+
+// exportGitSubtree exports a directory's git-tracked files to the tar.
+// relPrefix is the relative path from source root to this subtree (empty for root).
+func exportGitSubtree(tw *tar.Writer, dir, archivePrefix, relPrefix string) error {
+	cmd := exec.Command("git", "ls-files", "-z") //nolint:gosec,noctx // controlled path
+	cmd.Dir = dir
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		// Fallback: if git fails (e.g. bare init), walk instead.
+		fmt.Fprintf(os.Stderr, "  warning: git ls-files failed in %s, falling back to walk\n", dir)
+		return exportSubdirWalk(tw, dir, archivePrefix, relPrefix)
+	}
+
+	files := strings.Split(stdout.String(), "\x00")
+	for _, f := range files {
+		if f == "" {
+			continue
+		}
+		fullPath := filepath.Join(dir, f)
+		fi, err := os.Stat(fullPath)
+		if err != nil {
+			continue // deleted but tracked
+		}
+		if fi.IsDir() || skipFiles[fi.Name()] {
+			continue
+		}
+
+		archivePath := filepath.Join(archivePrefix, relPrefix, f)
+		if err := addFileToTar(tw, fullPath, archivePath, fi); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// exportSubdirWalk walks a subdirectory with skip lists (fallback when git fails).
+func exportSubdirWalk(tw *tar.Writer, dir, archivePrefix, relPrefix string) error {
+	return filepath.Walk(dir, func(path string, fi os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if fi.IsDir() && skipDirs[fi.Name()] {
+			return filepath.SkipDir
+		}
+		if fi.IsDir() {
+			return nil
+		}
+		if skipFiles[fi.Name()] {
+			return nil
+		}
+
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return fmt.Errorf("rel path: %w", err)
+		}
+
+		relSlash := strings.ReplaceAll(rel, string(filepath.Separator), "/")
+		if matchesSkipPattern(relSlash) {
+			return nil
+		}
+
+		archivePath := filepath.Join(archivePrefix, relPrefix, rel)
+		return addFileToTar(tw, path, archivePath, fi)
+	})
+}
+
+// includeUntrackedTimeline adds TIMELINE.md if it exists but isn't tracked by git.
+func includeUntrackedTimeline(tw *tar.Writer, sourceDir, prefix string, trackedFiles []string) error {
+	timelinePath := filepath.Join(sourceDir, "TIMELINE.md")
+	ti, err := os.Stat(timelinePath)
+	if err != nil {
+		return nil // doesn't exist
+	}
+
+	for _, f := range trackedFiles {
+		if f == "TIMELINE.md" {
+			return nil // already tracked
+		}
+	}
+
+	return addFileToTar(tw, timelinePath, filepath.Join(prefix, "TIMELINE.md"), ti)
 }
 
 // matchesSkipPattern checks if a relative path matches any skip pattern.
@@ -251,10 +332,8 @@ func addFileToTar(tw *tar.Writer, fullPath, archivePath string, fi os.FileInfo) 
 func validateRecipeLayout(sourceDir string) []string {
 	var warnings []string
 
-	// Check for environments/ directory.
 	envsDir := filepath.Join(sourceDir, "environments")
 	if _, err := os.Stat(envsDir); os.IsNotExist(err) {
-		// Check if env folders are at root level (not nested).
 		entries, readErr := os.ReadDir(sourceDir)
 		if readErr == nil {
 			for _, e := range entries {
@@ -267,7 +346,6 @@ func validateRecipeLayout(sourceDir string) []string {
 		}
 	}
 
-	// Check for appdev/ or similar app directory.
 	hasApp := false
 	entries, err := os.ReadDir(sourceDir)
 	if err == nil {
@@ -295,9 +373,9 @@ func isEnvFolder(name string) bool {
 	return false
 }
 
-// hasGitDir checks if sourceDir contains a .git directory.
-func hasGitDir(sourceDir string) bool {
-	info, err := os.Stat(filepath.Join(sourceDir, ".git"))
+// hasGitDir checks if a directory contains a .git directory.
+func hasGitDir(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, ".git"))
 	return err == nil && info.IsDir()
 }
 
@@ -319,6 +397,36 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Close()
+}
+
+// buildTimelinePrompt returns instructions for the AI to create TIMELINE.md.
+func buildTimelinePrompt(sourceDir string) string {
+	return fmt.Sprintf(`TIMELINE.md is missing from %s.
+
+Write a TIMELINE.md documenting the recipe creation session. Include:
+
+## Format
+- Step-by-step build history with timestamps or durations
+- Each step: what was done, decisions made, issues encountered
+- Issues table: severity, description, resolution
+- Final output section: URLs, file locations, archive path
+
+## Steps to document
+1. **Research** — framework analysis, recipe plan decisions
+2. **Provision** — services created, env vars discovered
+3. **Generate** — app scaffolded, code changes made, zerops.yaml written
+4. **Deploy** — build durations, failures and fixes, verification results
+5. **Finalize** — environment tiers generated, check results
+6. **Close** — verification sub-agent findings, final fixes
+
+## Rules
+- Be factual — document what happened, not what should happen
+- Include error messages and fix descriptions for any failures
+- Note build durations where available
+- List all URLs (dev, stage subdomains)
+
+Write TIMELINE.md to: %s/TIMELINE.md
+Then call export again.`, sourceDir, sourceDir)
 }
 
 // CollectRecipeFiles reads all files from a recipe environments directory
@@ -357,7 +465,6 @@ func CollectRecipeFiles(sourceDir, slug string) (map[string]string, error) {
 			return fmt.Errorf("read %s: %w", rel, err)
 		}
 
-		// Target path in zeropsio/recipes: {slug}/{relative}
 		targetPath := slug + "/" + strings.ReplaceAll(rel, string(filepath.Separator), "/")
 		files[targetPath] = string(data)
 

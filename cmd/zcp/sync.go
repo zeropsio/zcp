@@ -221,16 +221,26 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 
 	case "export":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe export <source-dir>")
+			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe export <source-dir> [--include-timeline]")
 			os.Exit(1)
 		}
 		sourceDir := args[1]
-		outPath, err := sync.ExportRecipe(sourceDir)
+		includeTimeline := false
+		for _, a := range args[2:] {
+			if a == "--include-timeline" {
+				includeTimeline = true
+			}
+		}
+		result, err := sync.ExportRecipe(sourceDir, includeTimeline)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "Exported: %s\n", outPath)
+		if result.NeedsTimeline {
+			fmt.Fprintln(os.Stderr, result.TimelinePrompt)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Exported: %s\n", result.ArchivePath)
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown recipe subcommand: %s\n", sub)
@@ -264,12 +274,14 @@ Subcommands:
   export <source-dir>               Create .tar.gz archive of recipe output
 
 Flags:
-  --dry-run    Show what would change without writing
+  --dry-run            Show what would change without writing
+  --include-timeline   Prompt for TIMELINE.md if missing (export only)
 
 Examples:
   zcp sync recipe create-repo laravel-minimal
   zcp sync recipe publish laravel-minimal ../zcprecipator/laravel-minimal-v4
-  zcp sync recipe export ../zcprecipator/laravel-minimal-v4`)
+  zcp sync recipe export ../zcprecipator/laravel-minimal-v4
+  zcp sync recipe export ../zcprecipator/laravel-minimal-v4 --include-timeline`)
 }
 
 func printSyncUsage() {

@@ -595,19 +595,36 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 
 Apply any CRITICAL or WRONG fixes before completing the close step.
 
-### 2. Publishing Steps
-1. Push recipe to GitHub:
-   ```
-   zcp sync push recipes {slug}
-   ```
-2. After PR is merged, clear Strapi cache:
-   ```
-   zcp sync cache-clear {slug}
-   ```
-3. Pull merged version:
-   ```
-   zcp sync pull recipes {slug}
-   ```
+### 2. Export & Publish
+
+**Export archive** (for debugging/sharing):
+```
+zcp sync recipe export {outputDir} --include-timeline
+```
+If TIMELINE.md is missing, the command returns a prompt — write the TIMELINE documenting the session, then run export again.
+
+**Create app repo** (if new recipe, repo doesn't exist yet):
+```
+zcp sync recipe create-repo {slug}
+```
+Creates `zerops-recipe-apps/{slug}-app` on GitHub. Skips if already exists.
+
+**Publish environments** to `zeropsio/recipes`:
+```
+zcp sync recipe publish {slug} {outputDir}
+```
+Commits all environment folders as a PR on `zeropsio/recipes/{slug}/`.
+
+**Push knowledge** (README fragments) to the app repo:
+```
+zcp sync push recipes {slug}
+```
+
+**After PR is merged**, clear Strapi cache and pull:
+```
+zcp sync cache-clear {slug}
+zcp sync pull recipes {slug}
+```
 
 ### 3. Completion
 ```
