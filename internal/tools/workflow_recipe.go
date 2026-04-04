@@ -185,7 +185,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine) (*mcp.CallToolResult,
 		"files":   written,
 		"count":   len(written),
 		"dir":     outputDir,
-		"message": fmt.Sprintf("Generated %d recipe files. Structure and scaling are final — do NOT rewrite. Your job: enrich every comment to be specific to THIS recipe's implementation. Replace generic descriptions with what your zerops.yaml actually does, how your dev workflow works, what your build produces. If a comment could apply to any framework, it's too generic — make it specific.", len(written)),
+		"message": fmt.Sprintf("Regenerated %d recipe files. Structure and scaling are correct — add framework-specific comments to each import.yaml (the 30%% comment ratio check will enforce this). Reference your zerops.yaml for what each service actually does.", len(written)),
 	}), nil, nil
 }
 

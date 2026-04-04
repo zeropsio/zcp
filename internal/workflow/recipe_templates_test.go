@@ -449,64 +449,71 @@ func TestBuildFinalizeOutput_FileCount(t *testing.T) {
 	}
 }
 
-func TestGenerateEnvImportYAML_CommentQuality(t *testing.T) {
+func TestGenerateEnvImportYAML_PlatformComments(t *testing.T) {
 	t.Parallel()
 
 	plan := testMinimalPlan()
 
-	for i := 0; i < EnvTierCount(); i++ {
-		t.Run(fmt.Sprintf("env_%d", i), func(t *testing.T) {
-			t.Parallel()
-			yaml := GenerateEnvImportYAML(plan, i)
+	// Env 0: data service gets platform comments.
+	yaml0 := GenerateEnvImportYAML(plan, 0)
+	for _, want := range []string{
+		"zerops-recipe-apps", // correct buildFromGit org
+		"MariaDB",            // DB type name in comment
+		"NON_HA",             // mode explanation
+		"Priority 10",        // priority explanation
+	} {
+		if !strings.Contains(yaml0, want) {
+			t.Errorf("env 0: expected %q in output", want)
+		}
+	}
 
-			// Count comment lines vs total lines.
-			var commentLines, totalLines int
-			for line := range strings.SplitSeq(yaml, "\n") {
-				trimmed := strings.TrimSpace(line)
-				if trimmed == "" {
-					continue
-				}
-				totalLines++
-				if strings.HasPrefix(trimmed, "#") {
-					commentLines++
-				}
-			}
-
-			if totalLines == 0 {
-				t.Fatal("no content in YAML")
-			}
-
-			ratio := float64(commentLines) / float64(totalLines)
-			if ratio < 0.2 {
-				t.Errorf("comment ratio %.2f is below 0.2 threshold (%d comments / %d lines)",
-					ratio, commentLines, totalLines)
-			}
-
-			// Must contain framework-specific references.
-			if !strings.Contains(yaml, "MariaDB") && !strings.Contains(yaml, "PostgreSQL") {
-				t.Error("expected database type name in comments")
-			}
-		})
+	// Env 5: HA + DEDICATED + SERIOUS in platform comments.
+	yaml5 := GenerateEnvImportYAML(plan, 5)
+	for _, want := range []string{
+		"SERIOUS",   // corePackage comment
+		"HA",        // mode
+		"DEDICATED", // cpuMode
+	} {
+		if !strings.Contains(yaml5, want) {
+			t.Errorf("env 5: expected %q in output", want)
+		}
 	}
 }
 
-func TestGenerateEnvImportYAML_Env0_FrameworkAwareComments(t *testing.T) {
+func TestGenerateEnvImportYAML_TemplateBaseline_BelowCommentThreshold(t *testing.T) {
 	t.Parallel()
 
 	plan := testMinimalPlan()
-	yaml := GenerateEnvImportYAML(plan, 0)
 
-	checks := []string{
-		"Development workspace", // dev service comment
-		"Staging service",       // stage service comment
-		"php artisan serve",     // start command referenced
-		"zerops-recipe-apps",    // correct org in buildFromGit
-		"single-node database",  // db comment
-		"Priority 10",           // explains why priority
-	}
-	for _, want := range checks {
-		if !strings.Contains(yaml, want) {
-			t.Errorf("env 0: expected comment containing %q", want)
+	// Template generates platform comments only — baseline is BELOW the 30%
+	// finalize threshold. This is intentional: the agent MUST add framework
+	// comments to pass the checker. Verify the template isn't accidentally
+	// meeting the threshold on its own.
+	for i := 0; i < EnvTierCount(); i++ {
+		yaml := GenerateEnvImportYAML(plan, i)
+		var commentLines, totalLines int
+		for line := range strings.SplitSeq(yaml, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || trimmed == "#zeropsPreprocessor=on" {
+				continue
+			}
+			totalLines++
+			if strings.HasPrefix(trimmed, "#") {
+				commentLines++
+			}
+		}
+		if totalLines == 0 {
+			t.Fatalf("env %d: no content", i)
+		}
+		ratio := float64(commentLines) / float64(totalLines)
+		// Platform comments should provide ~10-25% baseline, NOT >= 30%.
+		if ratio >= 0.30 {
+			t.Errorf("env %d: template ratio %.0f%% meets 30%% threshold — agent won't be forced to add comments",
+				i, ratio*100)
+		}
+		// But should have SOME platform comments (not zero).
+		if commentLines == 0 {
+			t.Errorf("env %d: expected at least some platform comments", i)
 		}
 	}
 }

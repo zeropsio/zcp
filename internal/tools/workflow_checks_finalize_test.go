@@ -283,7 +283,7 @@ func TestCheckRecipeFinalize_CommentRatio(t *testing.T) {
 	dir := t.TempDir()
 	plan := testFinalizePlan()
 
-	// Write template files — now include rich framework-aware comments.
+	// Write template files — platform comments only, below 30% threshold.
 	files := workflow.BuildFinalizeOutput(plan)
 	for relPath, content := range files {
 		fullPath := filepath.Join(dir, relPath)
@@ -301,10 +301,16 @@ func TestCheckRecipeFinalize_CommentRatio(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Templates now include rich comments — comment_ratio should pass.
+	// Template baseline has platform comments only — comment_ratio SHOULD fail
+	// at 30% threshold. This forces the agent to add framework-specific comments.
+	hasCommentFail := false
 	for _, c := range result.Checks {
 		if c.Status == "fail" && strings.Contains(c.Name, "comment_ratio") {
-			t.Errorf("template should pass comment_ratio check, but failed: %s", c.Detail)
+			hasCommentFail = true
+			break
 		}
+	}
+	if !hasCommentFail {
+		t.Error("expected comment_ratio to fail for template-only output (agent must enrich)")
 	}
 }

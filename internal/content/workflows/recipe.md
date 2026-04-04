@@ -507,49 +507,42 @@ zerops_workflow action="complete" step="deploy" attestation="Dev deployed at {de
 <section name="finalize">
 ## Finalize — Recipe Repository Files
 
-Recipe files were **auto-generated** in the output directory when deploy completed. They are ready for review — do NOT rewrite from scratch, do NOT generate your own import.yaml files.
+Recipe files were **auto-generated** in the output directory when deploy completed. The output directory (`outputDir` in the response) contains:
+- 6 environment folders with import.yaml (correct structure, scaling, buildFromGit) and README.md
+- 1 root README with deploy button, cover image, environment links
+- 1 app README scaffold at `appdev/README.md` with correct markers and deploy button — compare with your app README at `/var/www/appdev/` to ensure yours has the same structural elements (deploy button, cover, markers)
 
-The output directory (`outputDir` in the response) contains:
-- 1 root README with deploy button, cover image, and environment links
-- 6 environment folders, each with import.yaml and README.md
-- 1 app README scaffold at `appdev/README.md` — has correct ZEROPS_EXTRACT markers, deploy button, and cover image. **Use as a reference** to verify your app README at `/var/www/appdev/README.md` has these elements. Do NOT overwrite your existing integration-guide and knowledge-base content
-- import.yaml files include **rich framework-aware comments** derived from your research plan — platform knowledge, scaling rationale, and framework-specific references
+**Do NOT rewrite import.yaml from scratch.** The YAML structure, scaling matrix, buildFromGit URLs, and platform config are final. To regenerate after fixing the plan: `zerops_workflow action="generate-finalize"`
 
-If you need to regenerate (e.g., after fixing an issue that changes the plan):
-```
-zerops_workflow action="generate-finalize"
-```
+### Step 1: Write comments for every import.yaml
 
-### Step 1: Enrich import.yaml with implementation-specific knowledge
+The generated import.yaml files have correct YAML but **minimal comments** — only platform-level explanations (DB mode, priority, corePackage). The **30% comment ratio check will fail** until you add framework-specific comments. This is intentional.
 
-The generated import.yaml files have correct **structure, scaling, and platform knowledge** (priority, HA mode, minContainers, buildFromGit URLs). They also have **plan-derived comments** referencing your framework, runtime, start command, and DB type.
+You already know everything needed — you built the app, wrote the zerops.yaml, and deployed both dev and stage. Now describe what each service does and why, using that implementation knowledge.
 
-But the template doesn't know what you actually built. **Your job is to make every comment specific to THIS recipe's implementation.** Read each import.yaml and enrich:
+**For each runtime service**, add a comment block above it explaining:
+- What `zeropsSetup: dev` / `zeropsSetup: prod` means for THIS framework (reference your zerops.yaml — what gets built, what gets deployed, how the dev workflow works)
+- Why `enableSubdomainAccess` matters here (agent verification, QA review, custom domain)
 
-**For each dev service comment (env 0-1):** The template says a generic "deploys full source tree with {runtime} pre-installed." Replace with what actually happens — how does the dev workflow work for this specific framework? What command does the developer run? What's the edit→see cycle? Example: "PHP-FPM interprets per-request, so code edits take effect immediately — no rebuild or restart needed."
+**For each data service**, the template already explains mode/priority. Add what THIS app uses the database for (migrations, sessions, cache, etc.)
 
-**For each prod/stage service comment:** The template says a generic "install optimized dependencies and deploy production-ready artifacts." Replace with what YOUR zerops.yaml `setup: prod` actually does — mention specific build commands, what gets deployed, what's excluded. Example: "Composer --no-dev + autoloader optimization, deploy only app/, config/, vendor/, public/ — no tests, no dev tooling."
+**For the project secret** (if present), explain what THIS framework uses it for (encryption, CSRF, session signing, etc.)
 
-**For each data service comment:** The template names the DB type. Add what it's used for in this specific app — migrations, sessions, queue backend, etc.
-
-**For the project secret comment:** The template mentions the key name generically. Explain what this specific framework uses it for — "Laravel uses APP_KEY for cookie encryption, CSRF tokens, and session signing."
-
-**Rules:**
-- Do NOT change the YAML structure, scaling values, or buildFromGit URLs — those are correct
-- Do NOT add section-heading decorators (`# === Title ===`, `# ----------`)
-- Comment lines max 80 chars
-- Every comment must be specific to THIS recipe — if you could copy-paste a comment into a different framework's recipe unchanged, it's too generic
+**Comment style** (you already know this from generate step — same rules):
+- Explain WHY, not WHAT. Don't restate the key name.
+- 1-3 lines per block, ~50-60 chars wide, max 80.
+- No section-heading decorators (`# -- Title --`, `# === Foo ===`).
+- Dev-to-dev tone — like explaining your config to a colleague.
 
 ### Step 2: Review READMEs
 
-The generated README files have correct markers, deploy links, and dynamic descriptions. Review:
-- Root README: verify intro accurately describes THIS recipe (framework + DB + what it demonstrates)
-- Env READMEs: verify environment descriptions match the actual services
+- Root README: verify intro text matches what this recipe actually demonstrates
+- Env READMEs: descriptions are auto-generated from plan data — verify accuracy
 
 ### Step 3: Complete
 
 ```
-zerops_workflow action="complete" step="finalize" attestation="All recipe files reviewed and reconciled against actual build"
+zerops_workflow action="complete" step="finalize" attestation="All import.yaml files enriched with implementation-specific comments"
 ```
 </section>
 
