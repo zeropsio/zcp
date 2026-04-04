@@ -265,7 +265,8 @@ One-line description of what this recipe demonstrates.
 
 <!-- #ZEROPS_EXTRACT_START:integration-guide# -->
 
-### zerops.yaml
+### 1. Adding `zerops.yaml`
+The main configuration file — place at repository root. It tells Zerops how to build, deploy and run your app.
 
 \`\`\`yaml
 zerops:
@@ -273,7 +274,7 @@ zerops:
 \`\`\`
 
 ### 2. Step Title (if any code changes needed)
-...
+Description of why this change is needed.
 
 <!-- #ZEROPS_EXTRACT_END:integration-guide# -->
 
@@ -289,8 +290,9 @@ zerops:
 **Rules:**
 - Section headings (`## Integration Guide`) go OUTSIDE markers — they're visible in the README but not extracted
 - Content INSIDE markers uses **H3** (`###`), not H2
-- Blank line after each start marker
-- Intro has no heading inside — plain text only
+- **Intro**: content directly after start marker (NO blank line) — plain text, no headings
+- **integration-guide / knowledge-base**: blank line after start marker
+- **Step 1** must be `### 1. Adding \`zerops.yaml\`` with a description paragraph before the code block (the API renders it as a section title)
 
 ### Code Quality
 - Comment ratio in zerops.yaml code blocks must be >= 0.3

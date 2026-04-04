@@ -53,16 +53,16 @@ func TestGenerateRecipeREADME_Minimal(t *testing.T) {
 	if !strings.Contains(readme, "Laravel") {
 		t.Error("expected README to contain framework name")
 	}
-	if !strings.Contains(readme, "minimal") {
-		t.Error("expected README to mention minimal")
+	if !strings.Contains(readme, "ZEROPS_EXTRACT_START:intro") {
+		t.Error("expected README to have intro extract markers")
 	}
-	if !strings.Contains(readme, "## Environments") {
-		t.Error("expected README to have Environments section")
+	if !strings.Contains(readme, "deploy with one click") {
+		t.Error("expected README to have deploy links")
 	}
-	// Should list all 6 environments.
-	for i := range 6 {
-		if !strings.Contains(readme, fmt.Sprintf("| %d |", i)) {
-			t.Errorf("expected README to list environment %d", i)
+	// Should list all 6 environments with links.
+	for _, env := range envTiers {
+		if !strings.Contains(readme, env.Label) {
+			t.Errorf("expected README to list environment %q", env.Label)
 		}
 	}
 }
@@ -286,14 +286,17 @@ func TestGenerateEnvREADME_FixedContent(t *testing.T) {
 			if readme == "" {
 				t.Fatal("expected non-empty README")
 			}
-			if !strings.Contains(readme, plan.Slug) {
-				t.Error("expected slug in README")
+			if !strings.Contains(readme, "Laravel") {
+				t.Error("expected framework name in README")
 			}
-			if !strings.Contains(readme, "## Import") {
-				t.Error("expected Import section")
+			if !strings.Contains(readme, "ZEROPS_EXTRACT_START:intro") {
+				t.Error("expected intro extract markers")
 			}
-			if !strings.Contains(readme, "## Services") {
-				t.Error("expected Services section")
+			if !strings.Contains(readme, "ZEROPS_EXTRACT_END:intro") {
+				t.Error("expected intro extract end marker")
+			}
+			if !strings.Contains(readme, "app.zerops.io/recipes") {
+				t.Error("expected deploy link")
 			}
 		})
 	}

@@ -61,61 +61,157 @@ func BuildFinalizeOutput(plan *RecipePlan) map[string]string {
 }
 
 // GenerateRecipeREADME returns the main recipe README.md content.
+// Matches the format used by zeropsio/recipes (with ZEROPS_EXTRACT markers
+// and deploy-with-one-click links for each environment).
 func GenerateRecipeREADME(plan *RecipePlan) string {
 	var b strings.Builder
 
 	title := titleCase(plan.Framework)
+	tier := "Hello World"
 	if plan.Tier == RecipeTierShowcase {
-		fmt.Fprintf(&b, "# Zerops x %s — Showcase\n\n", title)
-	} else {
-		fmt.Fprintf(&b, "# Zerops x %s\n\n", title)
+		tier = "Showcase"
 	}
+	fmt.Fprintf(&b, "# %s %s Recipe\n\n", title, tier)
 
-	fmt.Fprintf(&b, "A %s recipe for [Zerops](https://zerops.io) — ", plan.Framework)
-	if plan.Tier == RecipeTierShowcase {
-		b.WriteString("a full-featured showcase with multiple services.\n\n")
-	} else {
-		b.WriteString("a minimal hello-world deployment.\n\n")
+	// Intro with extract markers.
+	b.WriteString("<!-- #ZEROPS_EXTRACT_START:intro# -->\n")
+	fmt.Fprintf(&b, "A [%s](%s) application", title, frameworkURL(plan.Framework))
+	if plan.Research.DBDriver != "" && plan.Research.DBDriver != "none" {
+		fmt.Fprintf(&b, " connected to %s,", dbDisplayName(plan.Research.DBDriver))
 	}
+	fmt.Fprintf(&b, " running on [Zerops](https://zerops.io) with six ready-made environment configurations")
+	b.WriteString(" — from AI agent and remote development to stage and highly-available production.\n")
+	b.WriteString("<!-- #ZEROPS_EXTRACT_END:intro# -->\n\n")
 
-	b.WriteString("## Environments\n\n")
-	b.WriteString("| # | Environment | Use case |\n")
-	b.WriteString("|---|-------------|----------|\n")
+	// Environment list with deploy links.
+	b.WriteString("Offered in examples for the whole development lifecycle")
+	b.WriteString(" — from environments for AI agents like [Claude Code](https://www.anthropic.com/claude-code)")
+	b.WriteString(" through environments for remote (CDE) or local development")
+	b.WriteString(" to stage and productions of all sizes.\n\n")
+
 	for _, env := range envTiers {
-		fmt.Fprintf(&b, "| %d | %s | %s |\n", env.Index, env.Label, envUseCase(env.Index))
+		slug := envSlugSuffix(env.Index)
+		fmt.Fprintf(&b, "- **%s** [[info]](/%s) — [[deploy with one click]](https://app.zerops.io/recipes/%s?environment=%s)\n",
+			env.Label,
+			envFolderURLEncoded(env.Folder),
+			plan.Slug,
+			slug,
+		)
 	}
 
-	b.WriteString("\n## Quick Start\n\n")
-	b.WriteString("Import any environment to your Zerops project:\n\n")
-	b.WriteString("```yaml\n")
-	fmt.Fprintf(&b, "# Choose an environment folder and import its import.yaml\n")
-	b.WriteString("```\n\n")
-	b.WriteString("See each environment's README for details.\n")
+	b.WriteString("\n---\n\n")
+	fmt.Fprintf(&b, "Need help setting your project up? Join [Zerops Discord community](https://discord.gg/zeropsio).\n")
 
 	return b.String()
 }
 
 // GenerateEnvREADME returns the README.md for a specific environment tier.
+// Matches the format used by zeropsio/recipes (with ZEROPS_EXTRACT intro marker).
 func GenerateEnvREADME(plan *RecipePlan, envIndex int) string {
 	if envIndex < 0 || envIndex >= len(envTiers) {
 		return ""
 	}
 	env := envTiers[envIndex]
+	title := titleCase(plan.Framework)
+	slug := envSlugSuffix(envIndex)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s — %s\n\n", plan.Slug, env.Label)
-	fmt.Fprintf(&b, "Environment %d: %s\n\n", env.Index, envDescription(envIndex))
-	fmt.Fprintf(&b, "## Import\n\n")
-	fmt.Fprintf(&b, "Import `import.yaml` to your Zerops project.\n\n")
-	fmt.Fprintf(&b, "## Services\n\n")
+	fmt.Fprintf(&b, "# %s %s — %s Environment\n\n", title, tierLabel(plan.Tier), env.Label)
+	fmt.Fprintf(&b, "This is %s environment for [%s %s (info + deploy)](https://app.zerops.io/recipes/%s?environment=%s) recipe on [Zerops](https://zerops.io).\n\n",
+		aOrAn(env.Label), title, tierLabel(plan.Tier), plan.Slug, slug)
 
-	for _, t := range plan.Targets {
-		if TargetInEnv(t, envIndex) {
-			fmt.Fprintf(&b, "- **%s** (%s) — %s\n", t.Hostname, t.Type, t.Role)
-		}
-	}
+	// Environment intro with extract markers.
+	b.WriteString("<!-- #ZEROPS_EXTRACT_START:intro# -->\n")
+	fmt.Fprintf(&b, "**%s** %s\n", env.Label, envDescription(envIndex))
+	b.WriteString("<!-- #ZEROPS_EXTRACT_END:intro# -->\n")
 
 	return b.String()
+}
+
+// tierLabel returns a display label for the recipe tier.
+func tierLabel(tier string) string {
+	if tier == RecipeTierShowcase {
+		return "Showcase"
+	}
+	return "Hello World"
+}
+
+// aOrAn returns "an" for vowel-starting words, "a" otherwise.
+func aOrAn(s string) string {
+	if len(s) == 0 {
+		return "a"
+	}
+	switch s[0] {
+	case 'A', 'E', 'I', 'O', 'U', 'a', 'e', 'i', 'o', 'u':
+		return "an"
+	}
+	return "a"
+}
+
+// envSlugSuffix returns the URL-safe environment slug for deploy links.
+func envSlugSuffix(envIndex int) string {
+	switch envIndex {
+	case 0:
+		return "ai-agent"
+	case 1:
+		return "remote-cde"
+	case 2:
+		return "local"
+	case 3:
+		return "stage"
+	case 4:
+		return "small-production"
+	case 5:
+		return "highly-available-production"
+	}
+	return ""
+}
+
+// envFolderURLEncoded returns the URL-encoded folder name for README links.
+func envFolderURLEncoded(folder string) string {
+	// Replace spaces and em-dash for URL encoding.
+	r := strings.NewReplacer(" ", "%20", "\u2014", "%E2%80%94", "(", "(", ")", ")")
+	return r.Replace(folder)
+}
+
+// frameworkURL returns a reasonable URL for a framework name.
+func frameworkURL(framework string) string {
+	urls := map[string]string{
+		"laravel": "https://laravel.com",
+		"django":  "https://djangoproject.com",
+		"rails":   "https://rubyonrails.org",
+		"nextjs":  "https://nextjs.org",
+		"nuxt":    "https://nuxt.com",
+		"bun":     "https://bun.sh",
+		"express": "https://expressjs.com",
+		"flask":   "https://flask.palletsprojects.com",
+		"fastapi": "https://fastapi.tiangolo.com",
+		"spring":  "https://spring.io",
+		"phoenix": "https://phoenixframework.org",
+		"gin":     "https://gin-gonic.com",
+		"fiber":   "https://gofiber.io",
+		"svelte":  "https://svelte.dev",
+		"react":   "https://react.dev",
+		"vue":     "https://vuejs.org",
+		"angular": "https://angular.dev",
+	}
+	if u, ok := urls[strings.ToLower(framework)]; ok {
+		return u
+	}
+	return "https://zerops.io"
+}
+
+// dbDisplayName returns a display name for a DB driver.
+func dbDisplayName(driver string) string {
+	switch driver {
+	case "postgresql", "pgsql":
+		return "[PostgreSQL](https://www.postgresql.org/)"
+	case "mysql", "mariadb":
+		return "[MariaDB](https://mariadb.org/)"
+	case "mongodb":
+		return "[MongoDB](https://www.mongodb.com/)"
+	}
+	return driver
 }
 
 // GenerateEnvImportYAML returns the import.yaml for a specific env.
