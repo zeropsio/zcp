@@ -507,21 +507,22 @@ zerops_workflow action="complete" step="deploy" attestation="Dev deployed at {de
 <section name="finalize">
 ## Finalize — Recipe Repository Files
 
-### Step 1: Generate recipe files
+Recipe files were **auto-generated** in the output directory when deploy completed. They are ready for review — do NOT rewrite from scratch, do NOT generate your own import.yaml files.
 
-Call the generate-finalize action — this creates **all recipe repo files** from your research plan:
+The output directory (`outputDir` in the response) contains:
+- 1 root README with deploy button, cover image, and environment links
+- 6 environment folders, each with import.yaml and README.md
+- 1 app README scaffold at `appdev/README.md` — has correct ZEROPS_EXTRACT markers, deploy button, and cover image. **Use as a reference** to verify your app README at `/var/www/appdev/README.md` has these elements. Do NOT overwrite your existing integration-guide and knowledge-base content
+- import.yaml files include **rich framework-aware comments** derived from your research plan — platform knowledge, scaling rationale, and framework-specific references
+
+If you need to regenerate (e.g., after fixing an issue that changes the plan):
 ```
 zerops_workflow action="generate-finalize"
 ```
-Files are written to the **recipe output directory** (`outputDir` in recipe state):
-- 1 root README with deploy button, cover image, and environment links
-- 6 environment folders, each with import.yaml and README.md
-- 1 app README scaffold at `appdev/README.md` — has correct ZEROPS_EXTRACT markers, deploy button, and cover image. **Use as a reference** to verify your app README at `/var/www/appdev/README.md` has these elements. Do NOT overwrite your existing integration-guide and knowledge-base content — those were written from your actual implementation and are correct
-- import.yaml files include **rich framework-aware comments** derived from your research plan — platform knowledge, scaling rationale, and framework-specific references
 
-### Step 2: Reconcile import.yaml against your actual build
+### Step 1: Reconcile import.yaml against your actual build
 
-The generated import.yaml files use your **research plan data** (framework, runtime type, start command, DB type, secret key). Since you implemented the app from that plan, the comments should be accurate. **Do NOT rewrite from scratch** — the structure, scaling, and comments are correct by construction.
+The generated import.yaml files use your **research plan data** (framework, runtime type, start command, DB type, secret key). Since you implemented the app from that plan, the comments should be accurate.
 
 **Review each import.yaml and fix ONLY what doesn't match reality:**
 - Verify framework-specific references match what you actually built (start command, build pipeline description)
@@ -530,16 +531,16 @@ The generated import.yaml files use your **research plan data** (framework, runt
 - Comment lines max 80 chars, no section-heading decorators (`# === Title ===`, `# ----------`)
 - Do NOT add redundant comments — the generated comment ratio is already >= 0.3
 
-### Step 3: Review READMEs
+### Step 2: Review READMEs
 
 The generated README files have correct markers, deploy links, and dynamic descriptions. Review and adjust:
 - Root README: verify intro text accurately describes the recipe
 - Env READMEs: verify environment descriptions match what the import.yaml provides
 
-### Step 4: Complete
+### Step 3: Complete
 
 ```
-zerops_workflow action="complete" step="finalize" attestation="All recipe files generated and validated against actual build"
+zerops_workflow action="complete" step="finalize" attestation="All recipe files reviewed and reconciled against actual build"
 ```
 </section>
 

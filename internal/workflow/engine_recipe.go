@@ -68,6 +68,12 @@ func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, c
 		return nil, fmt.Errorf("recipe complete: %w", err)
 	}
 
+	// Auto-generate finalize files when deploy completes (entering finalize step).
+	// Files are written to outputDir so the agent only needs to review and reconcile.
+	if step == RecipeStepDeploy && state.Recipe.CurrentStepName() == RecipeStepFinalize {
+		e.autoGenerateFinalizeFiles(state)
+	}
+
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	var cleanupErr error
 	if !state.Recipe.Active {
@@ -190,6 +196,32 @@ func (e *Engine) RecipeSession() *RecipeState {
 		return nil
 	}
 	return state.Recipe
+}
+
+// autoGenerateFinalizeFiles writes all template-generated recipe files to outputDir.
+// Called automatically when deploy completes and finalize step begins.
+// Best-effort — errors logged to stderr, never block step transition.
+func (e *Engine) autoGenerateFinalizeFiles(state *WorkflowState) {
+	if state.Recipe == nil || state.Recipe.Plan == nil || state.Recipe.OutputDir == "" {
+		return
+	}
+	files := BuildFinalizeOutput(state.Recipe.Plan)
+	var count int
+	for relPath, content := range files {
+		fullPath := filepath.Join(state.Recipe.OutputDir, relPath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: auto-generate mkdir %s: %v\n", filepath.Dir(fullPath), err)
+			continue
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o600); err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: auto-generate write %s: %v\n", fullPath, err)
+			continue
+		}
+		count++
+	}
+	if count > 0 {
+		fmt.Fprintf(os.Stderr, "zcp: auto-generated %d recipe files in %s\n", count, state.Recipe.OutputDir)
+	}
 }
 
 // writeRecipeOutputs writes the RecipeMeta file for the completed recipe.
