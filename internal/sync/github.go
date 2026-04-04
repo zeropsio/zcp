@@ -78,22 +78,45 @@ func (g *GH) UpdateFile(path, branch, message, content, blobSHA string) error {
 }
 
 // CreatePR opens a pull request and returns the URL.
+// Uses the GitHub API directly so it works without a local git remote.
 func (g *GH) CreatePR(branch, title, body string) (string, error) {
-	cmd := exec.Command("gh", "pr", "create", //nolint:gosec,noctx // controlled internal values
-		"--repo", g.Repo,
-		"--head", branch,
-		"--title", title,
-		"--body", body)
+	// Get default branch name for the base.
+	baseBranch, err := g.api("repos/"+g.Repo, "--jq", ".default_branch")
+	if err != nil {
+		return "", fmt.Errorf("get default branch: %w", err)
+	}
+	baseBranch = strings.TrimSpace(baseBranch)
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("create PR: %w\nstderr: %s", err, stderr.String())
+	payload := struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		Head  string `json:"head"`
+		Base  string `json:"base"`
+	}{
+		Title: title,
+		Body:  body,
+		Head:  branch,
+		Base:  baseBranch,
 	}
 
-	return strings.TrimSpace(stdout.String()), nil
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal PR payload: %w", err)
+	}
+
+	out, err := g.apiRaw("repos/"+g.Repo+"/pulls", data)
+	if err != nil {
+		return "", fmt.Errorf("create PR: %w", err)
+	}
+
+	var resp struct {
+		HTMLURL string `json:"html_url"` //nolint:tagliatelle // GitHub API field
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return "", fmt.Errorf("parse PR response: %w", err)
+	}
+
+	return resp.HTMLURL, nil
 }
 
 // DefaultBranchSHA returns the HEAD SHA of the default branch.
