@@ -281,7 +281,7 @@ func (r *RecipeState) BuildResponse(sessionID, intent string, iteration int, env
 
 		// Finalize step: files were auto-generated when deploy completed.
 		if detail.Name == RecipeStepFinalize && r.OutputDir != "" {
-			resp.Message += fmt.Sprintf(". Recipe files auto-generated in %s — review and reconcile against your actual build", r.OutputDir)
+			resp.Message += fmt.Sprintf(". Recipe files auto-generated in %s — enrich every comment to be specific to YOUR implementation (structure and scaling are final, comments need your expertise)", r.OutputDir)
 		}
 	} else {
 		// Recipe complete — include outputDir for post-completion reference.

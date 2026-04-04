@@ -185,7 +185,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine) (*mcp.CallToolResult,
 		"files":   written,
 		"count":   len(written),
 		"dir":     outputDir,
-		"message": fmt.Sprintf("Generated %d recipe files with rich framework-aware comments derived from your research plan. Do NOT rewrite from scratch — reconcile against your actual build: verify framework references match what you implemented (start command, build pipeline, service types). Fix only what diverged from the plan. Review READMEs for accuracy. Then complete the finalize step.", len(written)),
+		"message": fmt.Sprintf("Generated %d recipe files. Structure and scaling are final — do NOT rewrite. Your job: enrich every comment to be specific to THIS recipe's implementation. Replace generic descriptions with what your zerops.yaml actually does, how your dev workflow works, what your build produces. If a comment could apply to any framework, it's too generic — make it specific.", len(written)),
 	}), nil, nil
 }
 

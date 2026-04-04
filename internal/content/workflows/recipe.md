@@ -520,22 +520,31 @@ If you need to regenerate (e.g., after fixing an issue that changes the plan):
 zerops_workflow action="generate-finalize"
 ```
 
-### Step 1: Reconcile import.yaml against your actual build
+### Step 1: Enrich import.yaml with implementation-specific knowledge
 
-The generated import.yaml files use your **research plan data** (framework, runtime type, start command, DB type, secret key). Since you implemented the app from that plan, the comments should be accurate.
+The generated import.yaml files have correct **structure, scaling, and platform knowledge** (priority, HA mode, minContainers, buildFromGit URLs). They also have **plan-derived comments** referencing your framework, runtime, start command, and DB type.
 
-**Review each import.yaml and fix ONLY what doesn't match reality:**
-- Verify framework-specific references match what you actually built (start command, build pipeline description)
-- Verify service types and hostnames match the workspace you provisioned
-- If you deviated from the plan during implementation, update the affected comments
-- Comment lines max 80 chars, no section-heading decorators (`# === Title ===`, `# ----------`)
-- Do NOT add redundant comments — the generated comment ratio is already >= 0.3
+But the template doesn't know what you actually built. **Your job is to make every comment specific to THIS recipe's implementation.** Read each import.yaml and enrich:
+
+**For each dev service comment (env 0-1):** The template says a generic "deploys full source tree with {runtime} pre-installed." Replace with what actually happens — how does the dev workflow work for this specific framework? What command does the developer run? What's the edit→see cycle? Example: "PHP-FPM interprets per-request, so code edits take effect immediately — no rebuild or restart needed."
+
+**For each prod/stage service comment:** The template says a generic "install optimized dependencies and deploy production-ready artifacts." Replace with what YOUR zerops.yaml `setup: prod` actually does — mention specific build commands, what gets deployed, what's excluded. Example: "Composer --no-dev + autoloader optimization, deploy only app/, config/, vendor/, public/ — no tests, no dev tooling."
+
+**For each data service comment:** The template names the DB type. Add what it's used for in this specific app — migrations, sessions, queue backend, etc.
+
+**For the project secret comment:** The template mentions the key name generically. Explain what this specific framework uses it for — "Laravel uses APP_KEY for cookie encryption, CSRF tokens, and session signing."
+
+**Rules:**
+- Do NOT change the YAML structure, scaling values, or buildFromGit URLs — those are correct
+- Do NOT add section-heading decorators (`# === Title ===`, `# ----------`)
+- Comment lines max 80 chars
+- Every comment must be specific to THIS recipe — if you could copy-paste a comment into a different framework's recipe unchanged, it's too generic
 
 ### Step 2: Review READMEs
 
-The generated README files have correct markers, deploy links, and dynamic descriptions. Review and adjust:
-- Root README: verify intro text accurately describes the recipe
-- Env READMEs: verify environment descriptions match what the import.yaml provides
+The generated README files have correct markers, deploy links, and dynamic descriptions. Review:
+- Root README: verify intro accurately describes THIS recipe (framework + DB + what it demonstrates)
+- Env READMEs: verify environment descriptions match the actual services
 
 ### Step 3: Complete
 
