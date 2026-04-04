@@ -80,7 +80,7 @@ func TestDeploy_SSHMode_Success(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-				tt.sourceService, tt.targetService, tt.workingDir, false)
+				tt.sourceService, tt.targetService, "", tt.workingDir, false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -120,7 +120,7 @@ func TestDeploy_SSHMode_SourceNotFound(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"nonexistent", "app", "", false)
+		"nonexistent", "app", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for nonexistent source service")
 	}
@@ -145,7 +145,7 @@ func TestDeploy_SSHMode_TargetNotFound(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "nonexistent", "", false)
+		"builder", "nonexistent", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for nonexistent target service")
 	}
@@ -163,7 +163,7 @@ func TestDeploy_SSHMode_SSHError(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", false)
+		"builder", "app", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for SSH failure")
 	}
@@ -192,7 +192,7 @@ func TestDeploy_SSHMode_SignalKilled(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", false)
+		"builder", "app", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for signal killed")
 	}
@@ -224,7 +224,7 @@ func TestDeploy_SSHMode_CommandNotFound(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", false)
+		"builder", "app", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for command not found")
 	}
@@ -254,7 +254,7 @@ func TestDeploy_SSHMode_GenericError(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", false)
+		"builder", "app", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for generic SSH failure")
 	}
@@ -284,7 +284,7 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 	}
 
 	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"builder", "app", "", false)
+		"builder", "app", "", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestDeploy_SSHMode_Exit255WithBuildSuccess(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-				"builder", "app", "", false)
+				"builder", "app", "", "", false)
 			if err != nil {
 				t.Fatalf("expected success (build triggered recovery), got error: %v", err)
 			}
@@ -395,7 +395,7 @@ func TestDeploy_SSHMode_Exit255RealFailure(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-				"builder", "app", "", false)
+				"builder", "app", "", "", false)
 			if err == nil {
 				t.Fatal("expected error for exit 255 without build success markers")
 			}
@@ -525,7 +525,7 @@ func TestBuildSSHCommand_ShellQuoting(t *testing.T) {
 				FullName: tt.fullName,
 			}
 			id := GitIdentity{Name: tt.fullName, Email: tt.email}
-			cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", false, id)
+			cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, id)
 			tt.checkFunc(t, cmd)
 		})
 	}
@@ -599,7 +599,7 @@ func TestDeploy_SelfDeploy_AutoInfer(t *testing.T) {
 
 	// Only targetService provided, sourceService empty → auto-infer self-deploy.
 	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"", "app", "", false)
+		"", "app", "", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -632,7 +632,7 @@ func TestDeploy_SelfDeploy_IncludeGitForced(t *testing.T) {
 
 	// Self-deploy (source == target): includeGit should be forced to true even if false is passed.
 	result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"app", "app", "", false)
+		"app", "app", "", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -660,7 +660,7 @@ func TestDeploy_TargetOnly_NoSSH(t *testing.T) {
 
 	// sshDeployer=nil + targetService="app" → ErrNotImplemented.
 	_, err := DeploySSH(context.Background(), mock, "proj-1", nil, authInfo,
-		"", "app", "", false)
+		"", "app", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for nil SSH deployer with target-only")
 	}
@@ -721,7 +721,7 @@ func TestDeploy_WorkingDir_MountPath_Rejected(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-				"app", "app", tt.workingDir, false)
+				"app", "app", "", tt.workingDir, false)
 
 			if tt.wantErr {
 				if err == nil {
@@ -752,7 +752,7 @@ func TestDeploy_NilSSHDeployer(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", nil, authInfo,
-		"builder", "app", "", false)
+		"builder", "app", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for nil SSH deployer")
 	}

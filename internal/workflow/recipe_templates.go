@@ -157,25 +157,25 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 }
 
 // writeDevServiceBlock writes the dev service entry for env 0-1.
-// zeropsSetup matches the zerops.yaml setup name ({hostname}dev).
+// zeropsSetup: dev maps this hostname to `setup: dev` in zerops.yaml.
 func writeDevServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget, _ int) {
 	hostname := target.Hostname + "dev"
 	fmt.Fprintf(b, "  - hostname: %s\n", hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 	b.WriteString("    startWithoutCode: true\n")
 	b.WriteString("    maxContainers: 1\n")
-	fmt.Fprintf(b, "    zeropsSetup: %sdev\n", target.Hostname)
+	b.WriteString("    zeropsSetup: dev\n")
 	b.WriteString("    enableSubdomainAccess: true\n")
 	writeServiceEnvSecrets(b, plan)
 }
 
 // writeStageServiceBlock writes the stage service entry for env 0-1.
-// zeropsSetup matches the zerops.yaml setup name ({hostname}stage).
+// zeropsSetup: prod maps this hostname to `setup: prod` in zerops.yaml.
 func writeStageServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget, _ int) {
 	hostname := target.Hostname + "stage"
 	fmt.Fprintf(b, "  - hostname: %s\n", hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
-	fmt.Fprintf(b, "    zeropsSetup: %sstage\n", target.Hostname)
+	b.WriteString("    zeropsSetup: prod\n")
 	writeServiceBuildFromGit(b, plan)
 	b.WriteString("    enableSubdomainAccess: true\n")
 	writeServiceEnvSecrets(b, plan)
@@ -199,9 +199,9 @@ func writeServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget
 	}
 
 	// Runtime services: zeropsSetup + buildFromGit.
-	// zeropsSetup maps the bare hostname to the zerops.yaml setup name ({hostname}stage).
+	// zeropsSetup: prod maps the bare hostname to `setup: prod` in zerops.yaml.
 	if isRuntimeService(target.Role) {
-		fmt.Fprintf(b, "    zeropsSetup: %sstage\n", target.Hostname)
+		b.WriteString("    zeropsSetup: prod\n")
 		writeServiceBuildFromGit(b, plan)
 	}
 

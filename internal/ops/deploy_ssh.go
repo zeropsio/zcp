@@ -39,6 +39,7 @@ func DeploySSH(
 	authInfo auth.Info,
 	sourceService string,
 	targetService string,
+	setup string,
 	workingDir string,
 	includeGit bool,
 ) (*DeployResult, error) {
@@ -65,7 +66,7 @@ func DeploySSH(
 
 	id := GitIdentity{Name: authInfo.FullName, Email: authInfo.Email}
 	return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
-		sourceService, targetService, workingDir, includeGit, id)
+		sourceService, targetService, setup, workingDir, includeGit, id)
 }
 
 func deploySSH(
@@ -76,6 +77,7 @@ func deploySSH(
 	authInfo auth.Info,
 	sourceService string,
 	targetService string,
+	setup string,
 	workingDir string,
 	includeGit bool,
 	id GitIdentity,
@@ -110,13 +112,17 @@ func deploySSH(
 
 	// Pre-deploy validation: read zerops.yml from SSHFS mount (local filesystem).
 	// Mount path: /var/www/{sourceService}/ maps to remote /var/www/
+	setupName := setup
+	if setupName == "" {
+		setupName = targetService
+	}
 	var warnings []string
 	mountPath := filepath.Join("/var/www", sourceService)
 	if _, statErr := os.Stat(mountPath); statErr == nil {
-		warnings = ValidateZeropsYml(mountPath, targetService)
+		warnings = ValidateZeropsYml(mountPath, setupName)
 	}
 
-	cmd := buildSSHCommand(authInfo, target.ID, workingDir, includeGit, id)
+	cmd := buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, id)
 
 	output, err := sshDeployer.ExecSSH(ctx, source.Name, cmd)
 	if err != nil {
@@ -151,7 +157,7 @@ func deploySSH(
 	}, nil
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir string, includeGit bool, id GitIdentity) string {
+func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, id GitIdentity) string {
 	parts := make([]string, 0, 2)
 
 	// Login to zcli on the remote host.
@@ -173,6 +179,9 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir string, inc
 
 	// Push from workingDir with git handling.
 	pushArgs := fmt.Sprintf("zcli push --service-id %s", targetServiceID)
+	if setup != "" {
+		pushArgs += " --setup " + setup
+	}
 	if includeGit {
 		pushArgs += " -g"
 	}

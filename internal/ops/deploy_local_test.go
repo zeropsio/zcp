@@ -90,7 +90,7 @@ func TestDeployLocal_Success(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte("zerops:\n  - setup: appstage\n    build:\n      base: nodejs@22\n"), 0o644)
 
 	result, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"appstage", dir, false)
+		"appstage", "", dir, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestDeployLocal_IncludeGit(t *testing.T) {
 	dir := tmpWithZeropsYml(t)
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", dir, true)
+		"app", "", dir, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestDeployLocal_ZcliNotFound(t *testing.T) {
 	defer restore()
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", ".", false)
+		"app", "", ".", false)
 	if err == nil {
 		t.Fatal("expected error for missing zcli")
 	}
@@ -189,7 +189,7 @@ func TestDeployLocal_MissingZeropsYml(t *testing.T) {
 	dir := t.TempDir() // empty dir
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", dir, false)
+		"app", "", dir, false)
 	if err == nil {
 		t.Fatal("expected error for missing zerops.yml")
 	}
@@ -218,7 +218,7 @@ func TestDeployLocal_LoginFailed(t *testing.T) {
 	dir := tmpWithZeropsYml(t)
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", dir, false)
+		"app", "", dir, false)
 	if err == nil {
 		t.Fatal("expected error for login failure")
 	}
@@ -248,7 +248,7 @@ func TestDeployLocal_PushFailed(t *testing.T) {
 	dir := tmpWithZeropsYml(t)
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"app", dir, false)
+		"app", "", dir, false)
 	if err == nil {
 		t.Fatal("expected error for push failure")
 	}
@@ -269,7 +269,7 @@ func TestDeployLocal_NoTargetService(t *testing.T) {
 	defer restore()
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"", ".", false)
+		"", "", ".", false)
 	if err == nil {
 		t.Fatal("expected error for empty targetService")
 	}
@@ -292,7 +292,7 @@ func TestDeployLocal_ServiceNotFound(t *testing.T) {
 	defer restore()
 
 	_, err := DeployLocal(context.Background(), mock, "proj-1", localTestAuth(),
-		"nonexistent", ".", false)
+		"nonexistent", "", ".", false)
 	if err == nil {
 		t.Fatal("expected error for nonexistent service")
 	}

@@ -14,6 +14,7 @@ import (
 type DeploySSHInput struct {
 	SourceService string `json:"sourceService,omitempty" jsonschema:"Hostname to deploy FROM. Omit for self-deploy (auto-inferred from targetService). Set for cross-deploy (e.g. dev→stage)."`
 	TargetService string `json:"targetService"           jsonschema:"Hostname of the service to deploy to."`
+	Setup         string `json:"setup,omitempty"         jsonschema:"zerops.yaml setup name to use. Required when setup name differs from hostname (e.g. setup=prod for hostname=appstage). Omit when setup name matches hostname."`
 	WorkingDir    string `json:"workingDir,omitempty"    jsonschema:"Container path for deploy. Default: /var/www. In container mode: omit entirely (always correct)."`
 	IncludeGit    bool   `json:"includeGit,omitempty"    jsonschema:"Include .git directory in the push (-g flag). Auto-forced for self-deploy."`
 }
@@ -46,7 +47,7 @@ func RegisterDeploySSH(
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
 		result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
-			input.SourceService, input.TargetService, input.WorkingDir, input.IncludeGit)
+			input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit)
 		if err != nil {
 			return convertError(err), nil, nil
 		}

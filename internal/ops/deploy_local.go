@@ -53,6 +53,7 @@ func DeployLocal(
 	projectID string,
 	authInfo auth.Info,
 	targetService string,
+	setup string,
 	workingDir string,
 	includeGit bool,
 ) (*DeployResult, error) {
@@ -98,7 +99,11 @@ func DeployLocal(
 		)
 	}
 
-	warnings := ValidateZeropsYml(workingDir, targetService)
+	setupName := setup
+	if setupName == "" {
+		setupName = targetService
+	}
+	warnings := ValidateZeropsYml(workingDir, setupName)
 
 	// 5. Login.
 	_, stderr, err := runner.Run(ctx, "zcli", "login", authInfo.Token)
@@ -117,12 +122,14 @@ func DeployLocal(
 		"--service-id", target.ID,
 		"--project-id", projectID,
 		"--working-dir", workingDir,
-		"--no-git",
+	}
+	if setup != "" {
+		args = append(args, "--setup", setup)
 	}
 	if includeGit {
-		// Replace --no-git with -g.
-		args = args[:len(args)-1]
 		args = append(args, "-g")
+	} else {
+		args = append(args, "--no-git")
 	}
 	_, stderr, err = runner.Run(ctx, "zcli", args...)
 	if err != nil {

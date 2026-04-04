@@ -13,6 +13,7 @@ import (
 // No sourceService — code lives locally, not on a remote service.
 type DeployLocalInput struct {
 	TargetService string `json:"targetService"        jsonschema:"Hostname of the Zerops service to deploy to."`
+	Setup         string `json:"setup,omitempty"      jsonschema:"zerops.yaml setup name to use. Required when setup name differs from hostname (e.g. setup=prod for hostname=appstage). Omit when setup name matches hostname."`
 	WorkingDir    string `json:"workingDir,omitempty" jsonschema:"Local path to push from. Default: current directory."`
 	IncludeGit    bool   `json:"includeGit,omitempty" jsonschema:"Include .git directory in the push (-g flag)."`
 }
@@ -37,7 +38,7 @@ func RegisterDeployLocal(
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployLocalInput) (*mcp.CallToolResult, any, error) {
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,
-			input.TargetService, input.WorkingDir, input.IncludeGit)
+			input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit)
 		if err != nil {
 			return convertError(err), nil, nil
 		}

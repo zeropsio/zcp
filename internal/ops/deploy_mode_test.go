@@ -16,7 +16,7 @@ func TestDeploy_NoParams(t *testing.T) {
 	authInfo := testAuthInfo()
 
 	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-		"", "", "", false)
+		"", "", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for no params")
 	}
@@ -69,7 +69,7 @@ func TestDeploy_ModeDetection(t *testing.T) {
 			authInfo := testAuthInfo()
 
 			result, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
-				tt.sourceService, tt.targetService, "", false)
+				tt.sourceService, tt.targetService, "", "", false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

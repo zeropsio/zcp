@@ -195,7 +195,7 @@ func TestGenerateEnvImportYAML_Env01_DevStageServices(t *testing.T) {
 			t.Parallel()
 			yaml := GenerateEnvImportYAML(plan, envIdx)
 
-			// Dev service: appdev with startWithoutCode, maxContainers, zeropsSetup: appdev.
+			// Dev service: appdev with startWithoutCode, maxContainers, zeropsSetup: dev.
 			if !strings.Contains(yaml, "hostname: appdev") {
 				t.Error("expected appdev hostname")
 			}
@@ -205,18 +205,18 @@ func TestGenerateEnvImportYAML_Env01_DevStageServices(t *testing.T) {
 			if !strings.Contains(yaml, "maxContainers: 1") {
 				t.Error("expected maxContainers: 1 on dev service")
 			}
-			if !strings.Contains(yaml, "zeropsSetup: appdev") {
-				t.Error("expected zeropsSetup: appdev on dev service")
+			if !strings.Contains(yaml, "zeropsSetup: dev") {
+				t.Error("expected zeropsSetup: dev on dev service")
 			}
 			// Dev service must NOT have buildFromGit.
 			// (startWithoutCode services don't build from git)
 
-			// Stage service: appstage with zeropsSetup: appstage, buildFromGit.
+			// Stage service: appstage with zeropsSetup: prod, buildFromGit.
 			if !strings.Contains(yaml, "hostname: appstage") {
 				t.Error("expected appstage hostname for stage service")
 			}
-			if !strings.Contains(yaml, "zeropsSetup: appstage") {
-				t.Error("expected zeropsSetup: appstage on stage service")
+			if !strings.Contains(yaml, "zeropsSetup: prod") {
+				t.Error("expected zeropsSetup: prod on stage service")
 			}
 			expectedRepo := testRepoBase + plan.Slug + "-app"
 			if !strings.Contains(yaml, "buildFromGit: "+expectedRepo) {
@@ -244,9 +244,9 @@ func TestGenerateEnvImportYAML_Env2Plus_ProdService(t *testing.T) {
 				t.Error("expected bare hostname: app")
 			}
 
-			// zeropsSetup: appstage (maps bare hostname to zerops.yaml setup).
-			if !strings.Contains(yaml, "zeropsSetup: appstage") {
-				t.Error("expected zeropsSetup: appstage on app service")
+			// zeropsSetup: prod (maps bare hostname to setup: prod in zerops.yaml).
+			if !strings.Contains(yaml, "zeropsSetup: prod") {
+				t.Error("expected zeropsSetup: prod on app service")
 			}
 			expectedRepo := testRepoBase + plan.Slug + "-app"
 			if !strings.Contains(yaml, "buildFromGit: "+expectedRepo) {

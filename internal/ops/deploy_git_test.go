@@ -99,7 +99,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			t.Parallel()
 
 			id := GitIdentity{Name: tt.authInfo.FullName, Email: tt.authInfo.Email}
-			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, tt.includeGit, id)
+			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, "", tt.includeGit, id)
 
 			for _, part := range tt.wantParts {
 				if !contains(cmd, part) {
@@ -119,7 +119,7 @@ func TestBuildSSHCommand_FreshInit_BranchMain(t *testing.T) {
 	t.Parallel()
 
 	id := GitIdentity{Name: "Test User", Email: "test@example.com"}
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", false, id)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, id)
 
 	if !contains(cmd, "git init -q -b main") {
 		t.Errorf("fresh init must use -b main\ngot: %s", cmd)
@@ -147,7 +147,7 @@ func TestBuildSSHCommand_AlwaysCommits(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", false, tt.id)
+			cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, tt.id)
 
 			if !contains(cmd, "git add -A && (git diff-index") {
 				t.Errorf("command must always stage and commit\ngot: %s", cmd)
@@ -160,7 +160,7 @@ func TestBuildSSHCommand_NoChanges_SkipsCommit(t *testing.T) {
 	t.Parallel()
 
 	id := GitIdentity{Name: "Test User", Email: "test@example.com"}
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", false, id)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, id)
 
 	if !contains(cmd, "git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy'") {
 		t.Errorf("must use diff-index to skip commit when nothing changed\ngot: %s", cmd)
@@ -171,7 +171,7 @@ func TestBuildSSHCommand_PreservesRemoteAndGitignore(t *testing.T) {
 	t.Parallel()
 
 	id := GitIdentity{Name: "Test User", Email: "test@example.com"}
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", false, id)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, id)
 
 	unwanted := []string{"git remote", ".gitignore"}
 	for _, s := range unwanted {
