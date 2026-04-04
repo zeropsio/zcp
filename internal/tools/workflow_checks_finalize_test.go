@@ -314,3 +314,92 @@ func TestCheckRecipeFinalize_CommentRatio(t *testing.T) {
 		t.Error("expected comment_ratio to fail for template-only output (agent must enrich)")
 	}
 }
+
+func TestCheckRecipeFinalize_HandWrittenFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	plan := testFinalizePlan()
+
+	// Write hand-crafted import.yaml for env 0 WITHOUT zeropsSetup/buildFromGit.
+	// This simulates the agent rewriting auto-generated files from scratch.
+	handwritten := `# AI agent environment
+project:
+  name: bun-hello-world-agent
+services:
+  # Some comment about the app
+  - hostname: app
+    type: bun@1
+    priority: 10
+  # Some comment about the DB
+  - hostname: db
+    type: postgresql@16
+    priority: 10
+    mode: NON_HA
+`
+	env0Dir := filepath.Join(dir, workflow.EnvFolder(0))
+	if err := os.MkdirAll(env0Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(env0Dir, "import.yaml"), []byte(handwritten), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Write valid README for env 0.
+	if err := os.WriteFile(filepath.Join(env0Dir, "README.md"), []byte("# Test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write remaining files from template so other checks don't mask our failures.
+	files := workflow.BuildFinalizeOutput(plan)
+	for relPath, content := range files {
+		if strings.HasPrefix(relPath, workflow.EnvFolder(0)+"/") {
+			continue // skip env 0 — we wrote our hand-crafted version
+		}
+		fullPath := filepath.Join(dir, relPath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if filepath.Base(relPath) == "import.yaml" {
+			content = addCommentsToYAML(content)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	checker := checkRecipeFinalize(dir)
+	result, err := checker(context.Background(), plan, &workflow.RecipeState{OutputDir: dir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should fail: app service missing zeropsSetup+buildFromGit.
+	foundSetupGit := false
+	// Should fail: env 0 missing appdev/appstage hostnames.
+	foundDevHost := false
+	foundStageHost := false
+
+	for _, c := range result.Checks {
+		if c.Status == "fail" {
+			if strings.Contains(c.Name, "setup_git") && strings.Contains(c.Detail, "missing zeropsSetup") {
+				foundSetupGit = true
+			}
+			if strings.Contains(c.Name, "appdev_exists") {
+				foundDevHost = true
+			}
+			if strings.Contains(c.Name, "appstage_exists") {
+				foundStageHost = true
+			}
+		}
+	}
+
+	if !foundSetupGit {
+		t.Error("expected setup_git check to fail for hand-written file missing zeropsSetup+buildFromGit")
+	}
+	if !foundDevHost {
+		t.Error("expected appdev_exists check to fail — env 0 should have appdev, not bare app")
+	}
+	if !foundStageHost {
+		t.Error("expected appstage_exists check to fail — env 0 should have appstage")
+	}
+}

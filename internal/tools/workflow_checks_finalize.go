@@ -117,11 +117,10 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 	// Parse YAML.
 	var doc importYAMLDoc
 	if err := yaml.Unmarshal([]byte(content), &doc); err != nil {
-		checks = append(checks, workflow.StepCheck{
+		return append(checks, workflow.StepCheck{
 			Name: prefix + "_valid_yaml", Status: statusFail,
 			Detail: fmt.Sprintf("invalid YAML: %v", err),
 		})
-		return checks
 	}
 	checks = append(checks, workflow.StepCheck{
 		Name: prefix + "_valid_yaml", Status: statusPass,
@@ -140,57 +139,12 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 		})
 	}
 
-	// Data service priority.
 	svcMap := make(map[string]importService, len(doc.Services))
 	for _, svc := range doc.Services {
 		svcMap[svc.Hostname] = svc
 	}
 
-	for _, target := range plan.Targets {
-		if workflow.IsDataService(target.Role) {
-			svc, exists := svcMap[target.Hostname]
-			if exists && (svc.Priority == nil || *svc.Priority != 10) {
-				checks = append(checks, workflow.StepCheck{
-					Name: prefix + "_" + target.Hostname + "_priority", Status: statusFail,
-					Detail: fmt.Sprintf("data service %q should have priority: 10", target.Hostname),
-				})
-			} else if exists {
-				checks = append(checks, workflow.StepCheck{
-					Name: prefix + "_" + target.Hostname + "_priority", Status: statusPass,
-				})
-			}
-		}
-	}
-
-	// zeropsSetup requires buildFromGit (and vice versa). No exceptions.
-	// Applies to runtime services (app, worker) and utility services (mailpit).
-	for _, svc := range doc.Services {
-		role := findTargetRole(plan, svc.Hostname)
-		svcType := findTargetType(plan, svc.Hostname)
-		needsGitCheck := role != "" && (!workflow.IsDataService(role) || workflow.IsUtilityType(svcType))
-		if needsGitCheck {
-			hasSetup := svc.ZeropsSetup != ""
-			hasGit := svc.BuildFromGit != ""
-			checkName := prefix + "_" + svc.Hostname + "_setup_git"
-
-			switch {
-			case hasSetup && !hasGit:
-				checks = append(checks, workflow.StepCheck{
-					Name: checkName, Status: statusFail,
-					Detail: fmt.Sprintf("service %q has zeropsSetup without buildFromGit (API requires both)", svc.Hostname),
-				})
-			case hasGit && !hasSetup:
-				checks = append(checks, workflow.StepCheck{
-					Name: checkName, Status: statusFail,
-					Detail: fmt.Sprintf("service %q has buildFromGit without zeropsSetup (must specify which setup to build)", svc.Hostname),
-				})
-			case hasSetup && hasGit:
-				checks = append(checks, workflow.StepCheck{
-					Name: checkName, Status: statusPass,
-				})
-			}
-		}
-	}
+	checks = append(checks, checkServiceStructure(doc, svcMap, plan, envIndex, prefix)...)
 
 	// Recipe deliverables must NOT have startWithoutCode (workspace-only).
 	for _, svc := range doc.Services {
@@ -268,6 +222,87 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 				checks = append(checks, workflow.StepCheck{
 					Name: prefix + "_preprocessor", Status: statusFail,
 					Detail: "#zeropsPreprocessor=on required when using <@generateRandomString>",
+				})
+			}
+		}
+	}
+
+	return checks
+}
+
+// checkServiceStructure validates data service priority, zeropsSetup+buildFromGit
+// on runtime/utility services, and dev/stage hostname pairs in env 0-1.
+func checkServiceStructure(doc importYAMLDoc, svcMap map[string]importService, plan *workflow.RecipePlan, envIndex int, prefix string) []workflow.StepCheck {
+	var checks []workflow.StepCheck
+
+	// Data service priority.
+	for _, target := range plan.Targets {
+		if workflow.IsDataService(target.Role) {
+			svc, exists := svcMap[target.Hostname]
+			if exists && (svc.Priority == nil || *svc.Priority != 10) {
+				checks = append(checks, workflow.StepCheck{
+					Name: prefix + "_" + target.Hostname + "_priority", Status: statusFail,
+					Detail: fmt.Sprintf("data service %q should have priority: 10", target.Hostname),
+				})
+			} else if exists {
+				checks = append(checks, workflow.StepCheck{
+					Name: prefix + "_" + target.Hostname + "_priority", Status: statusPass,
+				})
+			}
+		}
+	}
+
+	// Runtime and utility services MUST have zeropsSetup+buildFromGit.
+	for _, svc := range doc.Services {
+		role := findTargetRole(plan, svc.Hostname)
+		svcType := findTargetType(plan, svc.Hostname)
+		needsGitCheck := role != "" && (!workflow.IsDataService(role) || workflow.IsUtilityType(svcType))
+		if !needsGitCheck {
+			continue
+		}
+		hasSetup := svc.ZeropsSetup != ""
+		hasGit := svc.BuildFromGit != ""
+		checkName := prefix + "_" + svc.Hostname + "_setup_git"
+
+		switch {
+		case hasSetup && hasGit:
+			checks = append(checks, workflow.StepCheck{Name: checkName, Status: statusPass})
+		case !hasSetup && !hasGit:
+			checks = append(checks, workflow.StepCheck{
+				Name: checkName, Status: statusFail,
+				Detail: fmt.Sprintf("service %q is missing zeropsSetup and buildFromGit — recipe deliverables require both (do NOT rewrite auto-generated files from scratch)", svc.Hostname),
+			})
+		case hasSetup && !hasGit:
+			checks = append(checks, workflow.StepCheck{
+				Name: checkName, Status: statusFail,
+				Detail: fmt.Sprintf("service %q has zeropsSetup without buildFromGit (API requires both)", svc.Hostname),
+			})
+		default:
+			checks = append(checks, workflow.StepCheck{
+				Name: checkName, Status: statusFail,
+				Detail: fmt.Sprintf("service %q has buildFromGit without zeropsSetup (must specify which setup to build)", svc.Hostname),
+			})
+		}
+	}
+
+	// Env 0-1: runtime services must use dev/stage hostname pairs.
+	if envIndex <= 1 {
+		for _, target := range plan.Targets {
+			if !workflow.IsRuntimeService(target.Role) || workflow.IsUtilityType(target.Type) {
+				continue
+			}
+			devHost := target.Hostname + "dev"
+			stageHost := target.Hostname + "stage"
+			if _, ok := svcMap[devHost]; !ok {
+				checks = append(checks, workflow.StepCheck{
+					Name: prefix + "_" + devHost + "_exists", Status: statusFail,
+					Detail: fmt.Sprintf("env 0-1 should have %q (dev service) — do NOT use bare hostname %q", devHost, target.Hostname),
+				})
+			}
+			if _, ok := svcMap[stageHost]; !ok {
+				checks = append(checks, workflow.StepCheck{
+					Name: prefix + "_" + stageHost + "_exists", Status: statusFail,
+					Detail: fmt.Sprintf("env 0-1 should have %q (stage service) — do NOT use bare hostname %q", stageHost, target.Hostname),
 				})
 			}
 		}

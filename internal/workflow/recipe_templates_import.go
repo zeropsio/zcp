@@ -21,7 +21,7 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 	b.WriteString("\nservices:\n")
 
 	for _, target := range plan.Targets {
-		if isRuntimeService(target.Role) && !IsUtilityType(target.Type) && envIndex <= 1 {
+		if IsRuntimeService(target.Role) && !IsUtilityType(target.Type) && envIndex <= 1 {
 			writeDevService(&b, plan, target)
 			writeStageService(&b, plan, target)
 		} else {
@@ -106,7 +106,7 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 
 	// Priority: non-runtime services start before app.
-	if !isRuntimeService(target.Role) {
+	if !IsRuntimeService(target.Role) {
 		b.WriteString("    priority: 10\n")
 	}
 
@@ -120,13 +120,13 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 	}
 
 	// Recipe runtime services: zeropsSetup + buildFromGit from recipe app repo.
-	if isRuntimeService(target.Role) {
+	if IsRuntimeService(target.Role) {
 		fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.Role, false))
 		writeRecipeAppBuildFromGit(b, plan)
 	}
 
 	// Utility services: zeropsSetup + buildFromGit from utility repo.
-	if IsUtilityType(target.Type) && !isRuntimeService(target.Role) {
+	if IsUtilityType(target.Type) && !IsRuntimeService(target.Role) {
 		b.WriteString("    zeropsSetup: app\n")
 		fmt.Fprintf(b, "    buildFromGit: %s\n", utilityBuildFromGitURL(target.Type))
 	}
@@ -137,7 +137,7 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 	}
 
 	// minContainers: runtime services in production tiers.
-	if isRuntimeService(target.Role) && envIndex >= 4 {
+	if IsRuntimeService(target.Role) && envIndex >= 4 {
 		b.WriteString("    minContainers: 2\n")
 	}
 
@@ -205,7 +205,7 @@ func writeObjectStorageComment(b *strings.Builder, envIndex int) {
 func runtimeHostnameList(plan *RecipePlan, envIndex int) string {
 	var names []string
 	for _, t := range plan.Targets {
-		if isRuntimeService(t.Role) {
+		if IsRuntimeService(t.Role) {
 			if envIndex <= 1 {
 				names = append(names, t.Hostname+"dev", t.Hostname+"stage")
 			} else {
@@ -224,7 +224,7 @@ func writeRecipeAppBuildFromGit(b *strings.Builder, plan *RecipePlan) {
 // writeAutoscaling writes the verticalAutoscaling block per tier.
 // Caller must ensure the service type supports autoscaling.
 func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
-	isRT := isRuntimeService(target.Role)
+	isRT := IsRuntimeService(target.Role)
 	isData := IsDataService(target.Role)
 	isUtil := IsUtilityType(target.Type)
 	if !isRT && !isData {

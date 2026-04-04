@@ -250,8 +250,8 @@ func dbDisplayName(driver string) string {
 
 // Import YAML generation is in recipe_templates_import.go.
 
-// isRuntimeService returns true for app and worker roles.
-func isRuntimeService(role string) bool {
+// IsRuntimeService returns true for app and worker roles.
+func IsRuntimeService(role string) bool {
 	return role == RecipeRoleApp || role == RecipeRoleWorker
 }
 
@@ -299,7 +299,7 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 	runtimeSeen := false
 
 	for _, target := range plan.Targets {
-		if isRuntimeService(target.Role) {
+		if IsRuntimeService(target.Role) {
 			if !runtimeSeen {
 				runtimeSeen = true
 				if envIndex <= 1 {
