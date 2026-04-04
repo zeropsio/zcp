@@ -219,6 +219,20 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		}
 		printRecipeResult(result)
 
+	case "push-app":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe push-app <slug> <app-dir> [--dry-run]")
+			os.Exit(1)
+		}
+		slug := args[1]
+		appDir := args[2]
+		result, err := sync.PushAppSource(cfg, slug, appDir, dryRun)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		printRecipeResult(result)
+
 	case "export":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe export <recipe-dir> [--app-dir <path>] [--include-timeline]")
@@ -275,6 +289,7 @@ func printRecipeUsage() {
 
 Subcommands:
   create-repo <slug>                Create app repo in zerops-recipe-apps org
+  push-app <slug> <app-dir>         Push app source to the app repo
   publish <slug> <source-dir>       Publish environments to zeropsio/recipes
   export <recipe-dir>               Create .tar.gz archive of recipe output
 
@@ -285,9 +300,9 @@ Flags:
 
 Examples:
   zcp sync recipe create-repo laravel-minimal
-  zcp sync recipe publish laravel-minimal ../zcprecipator/laravel-minimal-v4
-  zcp sync recipe export ../zcprecipator/laravel-minimal --app-dir /var/www/appdev
-  zcp sync recipe export ../zcprecipator/laravel-minimal --include-timeline`)
+  zcp sync recipe push-app laravel-minimal /var/www/appdev
+  zcp sync recipe publish laravel-minimal /var/www/zcprecipator/laravel-minimal
+  zcp sync recipe export /var/www/zcprecipator/laravel-minimal --app-dir /var/www/appdev`)
 }
 
 func printSyncUsage() {

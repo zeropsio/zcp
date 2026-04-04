@@ -569,11 +569,12 @@ zcp sync recipe export {outputDir} --app-dir /var/www/appdev --include-timeline
 ```
 If TIMELINE.md is missing, the command returns a prompt — write the TIMELINE documenting the session, then run export again.
 
-**Create app repo** (if new recipe, repo doesn't exist yet):
+**Create app repo and push source**:
 ```
 zcp sync recipe create-repo {slug}
+zcp sync recipe push-app {slug} /var/www/appdev
 ```
-Creates `zerops-recipe-apps/{slug}-app` on GitHub. Skips if already exists.
+Creates `zerops-recipe-apps/{slug}-app` on GitHub, then pushes the app source code.
 
 **Publish environments** to `zeropsio/recipes`:
 ```

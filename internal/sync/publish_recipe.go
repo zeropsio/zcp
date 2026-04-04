@@ -1,7 +1,9 @@
 package sync
 
 import (
+	"bytes"
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
@@ -74,6 +76,53 @@ func PublishRecipe(cfg *Config, slug, sourceDir string, dryRun bool) (PushResult
 	}
 
 	return PushResult{Slug: slug, Status: Created, PRURL: prURL}, nil
+}
+
+// PushAppSource pushes the app source directory to the recipe app repo.
+// Uses git to add remote + push. The app dir must have .git initialized.
+func PushAppSource(cfg *Config, slug, appDir string, dryRun bool) (PushResult, error) {
+	org := cfg.Push.Recipes.Org
+	repoName := slug + "-app"
+	fullRepo := org + "/" + repoName
+	repoURL := "https://github.com/" + fullRepo + ".git"
+
+	if dryRun {
+		return PushResult{Slug: slug, Status: DryRun, Diff: fmt.Sprintf("would push %s to %s", appDir, fullRepo)}, nil
+	}
+
+	// Verify .git exists.
+	if !hasGitDir(appDir) {
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("no .git in %s — run git init first", appDir)
+	}
+
+	// Add remote (ignore error if already exists).
+	_ = runGit(appDir, "remote", "add", "origin", repoURL)
+	// Update URL in case remote exists with wrong URL.
+	_ = runGit(appDir, "remote", "set-url", "origin", repoURL)
+
+	// Stage all, commit if needed, push.
+	_ = runGit(appDir, "add", "-A")
+	_ = runGit(appDir, "diff-index", "--quiet", "HEAD", "--") // check if clean
+	// Commit only if there are changes (ignore error if nothing to commit).
+	_ = runGit(appDir, "commit", "-q", "-m", "recipe: "+slug)
+
+	if err := runGit(appDir, "push", "-u", "origin", "HEAD"); err != nil {
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("git push: %w", err)
+	}
+
+	return PushResult{Slug: slug, Status: Created, PRURL: "https://github.com/" + fullRepo}, nil
+}
+
+// runGit runs a git command in the given directory.
+func runGit(dir string, args ...string) error {
+	cmd := exec.Command("git", args...) //nolint:gosec // controlled internal values
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git %s: %w\nstderr: %s", args[0], err, stderr.String())
+	}
+	return nil
 }
 
 // CreateRecipeRepo creates a new public repo in the recipe apps org.
