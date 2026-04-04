@@ -367,24 +367,6 @@ func IsDataService(role string) bool {
 	return false
 }
 
-// envUseCase returns a brief use-case description for an environment tier.
-func envUseCase(envIndex int) string {
-	switch envIndex {
-	case 0:
-		return "AI-driven development via ZCP"
-	case 1:
-		return "Cloud development environment"
-	case 2:
-		return "Local development with Zerops"
-	case 3:
-		return "Staging and testing"
-	case 4:
-		return "Small production deployment"
-	case 5:
-		return "High-availability production"
-	}
-	return ""
-}
 
 // envDescription returns a longer description for an environment tier.
 func envDescription(envIndex int) string {
