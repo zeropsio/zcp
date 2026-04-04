@@ -314,23 +314,38 @@ zerops_workflow action="complete" step="generate" attestation="App code and zero
 ## Fragment Quality Requirements
 
 ### integration-guide Fragment
+
+The integration guide answers: **"What must I change in my existing app to run it on Zerops?"** It targets a developer bringing their own codebase, not someone cloning the demo.
+
 Must contain:
-- Complete zerops.yaml with ALL setups (`prod`, `dev`; `worker` if showcase)
-- Setup names are generic (`prod`/`dev`), NOT hostname-specific
-- Every config line should have an inline comment explaining WHY
-- Build commands must be ordered correctly
-- Deploy files must differ between dev (`.`) and prod (build output)
+- **`## zerops.yaml`** — complete config with ALL setups (`prod`, `dev`; `worker` if showcase). Setup names are generic (`prod`/`dev`), NOT hostname-specific. Every config line has an inline comment explaining WHY. Deploy files differ between dev (`.`) and prod (build output). This is always present in every recipe.
+- **Numbered integration steps** (if any) — code changes the agent made to the app that any user bringing their own codebase would also need to make. These go AFTER the zerops.yaml section as `## 2. Step Title`, `## 3. Step Title`, etc. The specific steps depend on what the framework requires to run behind Zerops.
+
+**What belongs in integration steps:**
+- Code-level changes the agent made that are required to work on Zerops (e.g., trusted proxy middleware in `bootstrap/app.php` — without it, CSRF breaks behind the L7 balancer)
+- Framework config file changes for the platform (e.g., wiring S3 credentials in Django settings, configuring Redis session driver)
+- Any modification to app source that a user bringing their own app would also need to do
+
+**What does NOT belong in integration steps:**
+- Demo-specific scaffolding (custom routes, dashboard views, sample controllers) — these exist only in the recipe app, a real user wouldn't replicate them
+- Config values already visible in zerops.yaml (the user can read those inline)
+- Generic framework setup (how to install Laravel, what Vite does)
 
 ### knowledge-base Fragment
 
-Each item must be **irreducible** — not learnable from the zerops.yaml comments, platform docs, or general framework docs. Do NOT repeat what's already documented in the integration-guide zerops.yaml comments.
+The knowledge base answers: **"What will bite me that I can't learn from the zerops.yaml comments or platform docs?"** Each item must be **irreducible** — not learnable from the integration-guide, platform docs, or general framework docs.
 
 Must contain:
 - `### Gotchas` section with at least 2 framework-specific pitfalls on Zerops
-- Only things the zerops.yaml comments DON'T cover: code-level changes needed (e.g., trusted proxy middleware config in app code), base image contents, runtime-specific cache paths
+- Zerops-specific behavior that differs from standard expectations (e.g., no .env file, base image contents, pdo extension availability)
+
+**What belongs in knowledge-base vs integration-guide:**
+- If it's a **required code change** → integration-guide step (the user needs to do this)
+- If it's a **gotcha or quirk** the user should know about → knowledge-base (awareness, not action)
+- If both: put the actionable step in integration-guide, put the "why it matters" explanation in knowledge-base. Example: trustProxies config is an integration step (action), but "CSRF fails without it because L7 terminates SSL" is a gotcha (awareness).
 
 Do NOT include:
-- Config values already visible in zerops.yaml (e.g., don't re-explain `TRUSTED_PROXIES` value — explain the code-side change needed instead)
+- Config values already visible in zerops.yaml (don't re-explain what the comments already cover)
 - Platform universals (build/run separation, L7 routing, tilde behavior, autoscaling timing)
 - Generic framework knowledge (how Laravel works, what Vite does)
 
@@ -571,8 +586,9 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 > - Is the scaling matrix correct across tiers?
 >
 > **README review:**
-> - Does the environments/README.md describe all 6 tiers (not a copy of the app README)?
+> - Does the integration-guide include numbered steps for code changes the agent made that any user would also need? (e.g., trusted proxy config, storage driver wiring). Demo-specific code (custom routes, views) does NOT belong — only changes that apply to any app on Zerops.
 > - Does the knowledge-base fragment contain ONLY irreducible content (not repeating zerops.yaml)?
+> - Is there clear separation: integration-guide = actionable steps, knowledge-base = awareness/gotchas?
 > - Are there exactly 3 extract fragments with proper markers?
 >
 > Report issues as: `[CRITICAL]` (breaks deploy), `[WRONG]` (incorrect but works), `[STYLE]` (quality improvement).
