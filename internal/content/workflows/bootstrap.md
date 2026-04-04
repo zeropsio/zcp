@@ -39,11 +39,11 @@ When runtime services exist but ZCP doesn't know them (no ServiceMeta files), th
 
 1. List all runtime services from discover result (exclude managed services — databases, caches, storage).
 
-2. For each runtime service, present to user with suggested mode:
-   - If `{name}dev` + `{name}stage` both exist → suggest **standard** mode
-   - If `{name}dev` exists alone → suggest **dev** mode
-   - If a service exists without `dev` suffix and user wants dev+stage → suggest **standard** with explicit `stageHostname`
-   - Otherwise → suggest **simple** mode
+2. For each runtime service, present to user with suggested mode. Adoption accepts ANY valid hostname — do not require `dev`/`stage` suffixes:
+   - If two services form an obvious dev+stage pair (e.g., `apidev`+`apistage`, `web`+`webstage`, `backend`+`backendprod`) → suggest **standard** mode with explicit `stageHostname` if hostnames don't follow `{name}dev`/`{name}stage` convention
+   - If a single service exists and user doesn't need a stage pair → suggest **dev** mode (works with any hostname: `api`, `backend`, `appdev`, etc.)
+   - If a single service exists and user wants dev+stage → suggest **standard** with explicit `stageHostname`
+   - If user wants the simplest setup → suggest **simple** mode (any hostname)
 
 3. Ask user to confirm: "These services already exist. I'll register them in ZCP so I can manage deploys, CI/CD, and configuration. I won't recreate or delete anything. OK?"
 
@@ -82,13 +82,13 @@ If the user hasn't specified, ask. Don't guess frameworks — the build config d
 
 #### Choose bootstrap mode
 
-- **Standard** (default): Creates `{name}dev` + `{name}stage` + shared managed services. Dev for iteration, stage for validation.
-- **Dev**: Creates `{name}dev` + managed services only. No stage pair. When user says "just get it running" or "prototype."
-- **Simple**: Creates single `{name}` + managed services. Real start command, auto-starts after deploy. Only if user explicitly requests simplest setup.
+- **Standard** (default): Creates dev + stage pair + shared managed services. Dev for iteration, stage for validation. Convention: `{name}dev` + `{name}stage`, but any valid hostname pair works with explicit `stageHostname`.
+- **Dev**: Creates single service + managed services only. No stage pair. Any valid hostname (`api`, `backend`, `appdev`, etc.). When user says "just get it running" or "prototype."
+- **Simple**: Creates single service + managed services. Real start command, auto-starts after deploy. Any valid hostname. Only if user explicitly requests simplest setup.
 
 Default = standard (dev+stage). Ask user to confirm the mode before proceeding.
 
-Multi-runtime naming: use role or runtime as prefix — `phpdev`/`phpstage` + `bundev`/`bunstage` (or `apidev`/`webdev` by role). Managed services are shared, no dev/stage suffixes: `db`, `cache`, `storage`.
+Hostname naming: `{name}dev`/`{name}stage` is a convention, not a requirement. For new services it provides auto-derivation; for adoption, use whatever hostnames already exist. Multi-runtime: use role or runtime as prefix — `phpdev`/`phpstage` or `api`/`apistage` (or explicit `stageHostname` for non-standard names). Managed services are shared, no dev/stage suffixes: `db`, `cache`, `storage`.
 
 #### Load framework-specific knowledge (MANDATORY for known frameworks)
 
