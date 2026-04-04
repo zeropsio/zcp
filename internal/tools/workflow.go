@@ -25,7 +25,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, deploy, recipe, or cicd."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, or route."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, or generate-finalize (recipe only — generates all 13 recipe files from plan)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (e.g. discover, provision, generate, deploy, close)."`
@@ -113,6 +113,14 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			liveTypes = cache.Get(ctx, client)
 		}
 		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir)
+	case "generate-finalize":
+		if detectActiveWorkflow(engine) == workflowRecipe {
+			return handleRecipeGenerateFinalize(engine)
+		}
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"generate-finalize is only available during recipe workflow",
+			"")), nil, nil
 	case "skip":
 		active := detectActiveWorkflow(engine)
 		if active == workflowDeploy {

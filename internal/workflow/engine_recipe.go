@@ -183,6 +183,15 @@ func (e *Engine) RecipeStatus() (*RecipeResponse, error) {
 	return state.Recipe.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge), nil
 }
 
+// RecipeSession returns the current recipe state, or nil if no active session.
+func (e *Engine) RecipeSession() *RecipeState {
+	state, err := e.loadState()
+	if err != nil || state.Recipe == nil {
+		return nil
+	}
+	return state.Recipe
+}
+
 // writeRecipeOutputs writes the RecipeMeta file for the completed recipe.
 // Best-effort — errors logged to stderr.
 func (e *Engine) writeRecipeOutputs(state *WorkflowState) {

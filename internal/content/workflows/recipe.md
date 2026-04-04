@@ -497,54 +497,24 @@ zerops_workflow action="complete" step="deploy" attestation="Dev deployed at {de
 <section name="finalize">
 ## Finalize — Recipe Repository Files
 
-Generate the complete recipe repository structure with 6 environment tiers. These files go to the **recipe output directory** (shown in `outputDir` field), NOT to the mounted service filesystem.
+### Step 1: Generate base files
 
-**Output directory**: `{outputDir}` — e.g., `/var/www/zcprecipator/laravel-minimal/`. Create the directory if it doesn't exist.
+Call the generate-finalize action — this creates all 13 files (6 import.yaml + 6 env READMEs + 1 root README) from the recipe plan:
+```
+zerops_workflow action="generate-finalize"
+```
+Files are written to the **recipe output directory** (`outputDir` in recipe state).
 
-### Required Files (13+ total)
-For each environment (0-5):
-- `{outputDir}/{env_folder}/import.yaml` — service import configuration
-- `{outputDir}/{env_folder}/README.md` — environment-specific documentation
+### Step 2: Customize import.yaml comments
 
-Plus:
-- `{outputDir}/README.md` — main recipe README
+The generated import.yaml files have correct structure but minimal comments. Open each import.yaml and **add explanatory comments** (WHY, not WHAT):
+- Comment ratio must be >= 0.3 per file
+- Comment lines max 80 chars
+- **NO section-heading comments** (`# === Title ===`, `# ----------`) — the checker rejects these
+- Explain scaling decisions, mode choices, and service relationships
 
-### Environment Folders
-- `0 — AI Agent` — ZCP/AI-driven development
-- `1 — Remote (CDE)` — cloud development environment
-- `2 — Local` — local development with Zerops
-- `3 — Stage` — staging environment
-- `4 — Small Production` — small production (minContainers: 2)
-- `5 — Highly-available Production` — HA production (dedicated CPU, HA mode)
+### Step 3: Complete
 
-### Scaling Matrix
-| Property | Env 0-1 | Env 2 | Env 3 | Env 4 | Env 5 |
-|----------|---------|-------|-------|-------|-------|
-| App setups | dev + prod | prod | prod | prod | prod |
-| DB mode | NON_HA | NON_HA | NON_HA | NON_HA | HA |
-| minContainers | — | — | — | 2 | 2 |
-| cpuMode | — | — | — | — | DEDICATED |
-| corePackage | — | — | — | — | SERIOUS |
-| minFreeRamGB | — | — | 0.25 | 0.125 | 0.25 |
-| enableSubdomainAccess | yes | yes | yes | yes | yes |
-
-**If plan has no database** (type 2a): skip DB rows in scaling matrix. Environment import.yaml files contain only the app service.
-
-### import.yaml Rules
-
-Follow the injected **import.yaml Schema** for all platform rules (priority, mode, hostname conventions, preprocessor). Recipe-specific rules:
-
-- Every runtime service uses `buildFromGit` — **NO `startWithoutCode`** (workspace-only, never in finalize)
-- `zeropsSetup: prod` + `buildFromGit` on prod/stage services; `zeropsSetup: dev` + `buildFromGit` on dev services (env 0-1)
-- `buildFromGit: https://github.com/zerops-recipe-apps/{slug}-app`
-- Env 0-1 hostnames: `appdev`/`appstage` (suffixed). Env 2+ uses bare hostname: `app`, `worker`.
-- `corePackage: SERIOUS` at **project level** for env 5 (NOT under verticalAutoscaling)
-- **NO section-heading comments** (`# === Title ===`, `# ----------`, `# -- Section --`) — the checker rejects these. Comments explain WHY, not label sections.
-- Comment line width <= 80 chars, comment ratio >= 0.3 per file
-- No `PLACEHOLDER_*` strings, no cross-environment references in comments
-- Project names: `{slug}-{env-suffix}` convention
-
-### Completion
 ```
 zerops_workflow action="complete" step="finalize" attestation="All 13+ recipe files generated and validated"
 ```

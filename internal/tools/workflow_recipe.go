@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -127,6 +129,64 @@ func handleRecipeSkip(_ context.Context, engine *workflow.Engine, input Workflow
 			"Only the close step can be skipped in recipe workflow")), nil, nil
 	}
 	return jsonResult(resp), nil, nil
+}
+
+// handleRecipeGenerateFinalize generates all recipe repo files using BuildFinalizeOutput.
+// Writes files to the recipe output directory and returns the list of files written.
+func handleRecipeGenerateFinalize(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
+	session := engine.RecipeSession()
+	if session == nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"No active recipe session",
+			"")), nil, nil
+	}
+
+	plan := session.Plan
+	if plan == nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"Recipe plan not set — complete the research step first",
+			"")), nil, nil
+	}
+
+	outputDir := session.OutputDir
+	if outputDir == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"Output directory not set in recipe state",
+			"")), nil, nil
+	}
+
+	// Generate all files from the plan.
+	files := workflow.BuildFinalizeOutput(plan)
+
+	// Write files to disk.
+	var written []string
+	for relPath, content := range files {
+		fullPath := filepath.Join(outputDir, relPath)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("mkdir %s: %v", filepath.Dir(fullPath), err),
+				"")), nil, nil
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("write %s: %v", fullPath, err),
+				"")), nil, nil
+		}
+		written = append(written, relPath)
+	}
+
+	return jsonResult(map[string]any{
+		"status":  "generated",
+		"files":   written,
+		"count":   len(written),
+		"dir":     outputDir,
+		"message": fmt.Sprintf("Generated %d recipe files. Review and customize import.yaml comments, then complete the finalize step.", len(written)),
+	}), nil, nil
 }
 
 // handleRecipeStatus returns current recipe state.
