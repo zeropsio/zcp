@@ -142,7 +142,8 @@ zerops[]:
 |------|-------|-----|
 | Shared config (non-secret, all services) | `project.envVariables` in import.yaml | Auto-inherited by every service. Do NOT re-reference in zerops.yaml (creates shadow). |
 | Cross-service wiring (DB creds, cache host) | `run.envVariables` in zerops.yaml | `${hostname_varname}` references resolve at deploy time. This is the ONLY place cross-service refs work. |
-| Per-service secrets (APP_KEY, SECRET_KEY_BASE) | `envSecrets` per-service in import.yaml | Each service gets its own key. Blurred in GUI. Auto-injected as OS vars — do NOT re-reference in zerops.yaml. |
+| Shared secrets (encryption/session keys used by multiple services sharing a DB) | `project.envVariables` in import.yaml (with preprocessor) | Services sharing a database MUST share encryption keys — data encrypted by one must be decryptable by the other. Project-level vars are auto-inherited by all services. |
+| Per-service secrets (API keys, tokens unique to one service) | `envSecrets` per-service in import.yaml | Blurred in GUI. Auto-injected as OS vars — do NOT re-reference in zerops.yaml. |
 
 **How they work:**
 - **project.envVariables** (import.yaml): inherited by all services in the project. Good for shared non-secret config (e.g. `APP_NAME`, `LOG_LEVEL`). Changes via GUI, no redeploy needed.
@@ -174,7 +175,7 @@ zerops[]:
 - **ONLY** set `zeropsSetup` in import.yaml when using `buildFromGit`. REASON: zeropsSetup requires buildFromGit (API rejects one without the other). For workspace deploys (no buildFromGit), use `zerops_deploy setup="..."` parameter instead
 - **ALWAYS** set `minRam` high enough for initial RAM spikes (autoscaling has ~10-20s reaction time). Dev needs higher than stage/prod (compilation on container)
 - **ALWAYS** use managed service hostname conventions: `db`, `cache`, `queue`, `search`, `storage`. REASON: standardizes cross-service references
-- **ALWAYS** put `envSecrets` per-service (not project level) for framework secrets (APP_KEY, SECRET_KEY_BASE). REASON: each service needs its own key — sharing across dev/stage leaks session cookies. envSecrets are auto-injected as OS vars, no need to wire them in zerops.yaml
+- **Shared secrets** (encryption/session keys): put in `project.envVariables` when multiple services in the same project share a database — they must share the key or encrypted data becomes unreadable across services. Use preprocessor: `<@generateRandomString(<32>)>`. **Per-service secrets**: put in service-level `envSecrets`. Determine which pattern applies based on what the framework uses the secret for (encryption = shared, API token = per-service).
 - **ALWAYS** use generic `setup:` names in zerops.yaml (`dev`, `prod`, `worker`). When deploying to a hostname that differs from the setup name, pass `setup="..."` to `zerops_deploy`. REASON: generic names work across all environments; `zeropsSetup` in recipe import.yaml + `--setup` in workspace deploy both handle the mapping
 - **ALWAYS** add `run.healthCheck` and `deploy.readinessCheck` ONLY to stage/prod entries, NEVER to dev. REASON: dev uses `zsc noop --silent`; healthCheck would restart the container during iteration
 

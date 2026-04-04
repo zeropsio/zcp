@@ -83,8 +83,9 @@ func checkFileExists(baseDir, relPath string) []workflow.StepCheck {
 // importYAMLDoc is a minimal struct for validating import.yaml structure.
 type importYAMLDoc struct {
 	Project struct {
-		Name        string `yaml:"name"`
-		CorePackage string `yaml:"corePackage,omitempty"`
+		Name         string            `yaml:"name"`
+		CorePackage  string            `yaml:"corePackage,omitempty"`
+		EnvVariables map[string]string `yaml:"envVariables,omitempty"`
 	} `yaml:"project"`
 	Services []importService `yaml:"services"`
 }
@@ -244,16 +245,17 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 	// Section-heading comment patterns — labels, not explanations.
 	checks = append(checks, checkSectionHeadingComments(content, prefix)...)
 
-	// envSecrets check.
+	// Shared secret check — should be project-level envVariables, not per-service envSecrets.
 	if plan.Research.NeedsAppSecret {
-		if strings.Contains(content, "envSecrets") {
+		if len(doc.Project.EnvVariables) > 0 {
 			checks = append(checks, workflow.StepCheck{
-				Name: prefix + "_env_secrets", Status: statusPass,
+				Name: prefix + "_shared_secret", Status: statusPass,
+				Detail: "shared secret in project.envVariables",
 			})
 		} else {
 			checks = append(checks, workflow.StepCheck{
-				Name: prefix + "_env_secrets", Status: statusFail,
-				Detail: "envSecrets required (needsAppSecret=true) but not found",
+				Name: prefix + "_shared_secret", Status: statusFail,
+				Detail: "needsAppSecret=true but no project.envVariables found — shared secrets belong at project level, not per-service envSecrets",
 			})
 		}
 

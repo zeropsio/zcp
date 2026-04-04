@@ -23,6 +23,7 @@ func testMinimalPlan() *RecipePlan {
 			DeployFiles:    []string{"."},
 			StartCommand:   "php artisan serve",
 			NeedsAppSecret: true,
+			AppSecretKey:   "APP_KEY",
 			DBDriver:       "mysql",
 			MigrationCmd:   "php artisan migrate",
 		},
@@ -103,17 +104,20 @@ func TestGenerateEnvImportYAML_AllEnvs(t *testing.T) {
 				t.Errorf("expected project name %q in YAML", expectedName)
 			}
 
-			// App secret check — per-service, not project level.
+			// Shared secret at project level via envVariables.
 			if plan.Research.NeedsAppSecret {
-				if !strings.Contains(yaml, "envSecrets") {
-					t.Error("expected envSecrets for NeedsAppSecret=true")
-				}
 				if !strings.Contains(yaml, "zeropsPreprocessor=on") {
 					t.Error("expected zeropsPreprocessor=on for generateRandomString")
 				}
-				// Must use correct angle bracket syntax.
 				if !strings.Contains(yaml, "<@generateRandomString(<32>)>") {
 					t.Error("expected <@generateRandomString(<32>)> with inner angle brackets")
+				}
+				// Must be under project.envVariables, not per-service envSecrets.
+				if strings.Contains(yaml, "envSecrets") {
+					t.Error("shared secret should be project-level envVariables, not per-service envSecrets")
+				}
+				if !strings.Contains(yaml, "  envVariables:") {
+					t.Error("expected project-level envVariables")
 				}
 			}
 
@@ -127,22 +131,18 @@ func TestGenerateEnvImportYAML_AllEnvs(t *testing.T) {
 	}
 }
 
-func TestGenerateEnvImportYAML_EnvSecretsPerService(t *testing.T) {
+func TestGenerateEnvImportYAML_SharedSecretProjectLevel(t *testing.T) {
 	t.Parallel()
 
 	plan := testMinimalPlan()
 	yaml := GenerateEnvImportYAML(plan, 0)
 
-	// envSecrets must NOT be at project level.
-	lines := strings.Split(yaml, "\n") //nolint:stringsseq // need index access
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "envSecrets:" {
-			// Check indentation — project-level would be 2 spaces, service-level is 4+.
-			indent := len(line) - len(strings.TrimLeft(line, " "))
-			if indent <= 2 && i > 0 && strings.Contains(lines[i-1], "project:") || strings.Contains(lines[max(0, i-2)], "project:") {
-				t.Error("envSecrets must be per-service, not at project level")
-			}
-		}
+	// Shared secret must be at project level (envVariables), not per-service envSecrets.
+	if strings.Contains(yaml, "envSecrets") {
+		t.Error("should not have per-service envSecrets — shared secret belongs at project level")
+	}
+	if !strings.Contains(yaml, "  envVariables:") {
+		t.Error("expected project-level envVariables for shared secret")
 	}
 }
 

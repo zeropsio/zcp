@@ -138,6 +138,12 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 		b.WriteString("  corePackage: SERIOUS\n")
 	}
 
+	// Project-level envVariables for shared secrets (all services inherit).
+	if plan.Research.NeedsAppSecret && plan.Research.AppSecretKey != "" {
+		b.WriteString("  envVariables:\n")
+		fmt.Fprintf(&b, "    %s: <@generateRandomString(<32>)>\n", plan.Research.AppSecretKey)
+	}
+
 	b.WriteString("services:\n")
 
 	for _, target := range plan.Targets {
@@ -165,7 +171,6 @@ func writeDevServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTar
 	b.WriteString("    zeropsSetup: dev\n")
 	writeServiceBuildFromGit(b, plan)
 	b.WriteString("    enableSubdomainAccess: true\n")
-	writeServiceEnvSecrets(b, plan)
 }
 
 // writeStageServiceBlock writes the stage service entry for env 0-1 recipe deliverable.
@@ -176,7 +181,6 @@ func writeStageServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeT
 	b.WriteString("    zeropsSetup: prod\n")
 	writeServiceBuildFromGit(b, plan)
 	b.WriteString("    enableSubdomainAccess: true\n")
-	writeServiceEnvSecrets(b, plan)
 }
 
 // writeServiceBlock writes a single service entry in import.yaml.
@@ -215,20 +219,6 @@ func writeServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget
 	if isRuntimeService(target.Role) && envIndex >= 4 {
 		b.WriteString("    minContainers: 2\n")
 	}
-
-	// Per-service envSecrets.
-	if isRuntimeService(target.Role) {
-		writeServiceEnvSecrets(b, plan)
-	}
-}
-
-// writeServiceEnvSecrets writes envSecrets block on a service (not project).
-func writeServiceEnvSecrets(b *strings.Builder, plan *RecipePlan) {
-	if !plan.Research.NeedsAppSecret {
-		return
-	}
-	b.WriteString("    envSecrets:\n")
-	b.WriteString("      APP_KEY: <@generateRandomString(<32>)>\n")
 }
 
 // writeServiceBuildFromGit writes the buildFromGit URL.

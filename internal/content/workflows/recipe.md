@@ -133,7 +133,15 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 **If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair.
 
-**Framework secrets**: If `needsAppSecret == true`, add per-service `envSecrets` with `<@generateRandomString(<32>)>` on each app/worker service and add `#zeropsPreprocessor=on` as the first line. Each service gets its own key — never project-level. These are auto-injected as OS env vars — do NOT wire them in zerops.yaml `envVariables`.
+**Framework secrets**: If `needsAppSecret == true`, determine during research whether the secret is used for encryption/sessions (shared by services hitting the same DB) or is per-service.
+- **Shared** (e.g. Laravel APP_KEY, Django SECRET_KEY, Rails SECRET_KEY_BASE — used for encryption): do NOT add to workspace import. After services reach RUNNING, set at project level so all services inherit it:
+  ```
+  zerops_env project=true action=set key=APP_KEY value="$(openssl rand -base64 32)"
+  ```
+  The recipe deliverable uses `project.envVariables` with the preprocessor to generate at import time.
+- **Per-service** (unique API tokens, webhook secrets): add as service-level `envSecrets` in import.yaml.
+
+Follow the injected **import.yaml Schema** for the three env var levels (project envVariables, service envSecrets, zerops.yaml run.envVariables).
 
 Follow the injected **import.yaml Schema** for all field rules (hostname conventions, priority, mode, preprocessor syntax). Recipe-specific validation:
 
@@ -554,7 +562,7 @@ Apply any CRITICAL or WRONG fixes before completing the close step.
 
 **Export archive** (for debugging/sharing):
 ```
-zcp sync recipe export {outputDir} --include-timeline
+zcp sync recipe export {outputDir} --app-dir /var/www/appdev --include-timeline
 ```
 If TIMELINE.md is missing, the command returns a prompt — write the TIMELINE documenting the session, then run export again.
 

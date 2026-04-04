@@ -164,12 +164,13 @@ func TestCheckRecipeFinalize_InvalidYAML(t *testing.T) {
 	}
 }
 
-func TestCheckRecipeFinalize_EnvSecrets(t *testing.T) {
+func TestCheckRecipeFinalize_SharedSecret(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	plan := testFinalizePlan()
 	plan.Research.NeedsAppSecret = true
+	plan.Research.AppSecretKey = "SECRET_KEY"
 
 	writeRecipeFiles(t, dir, plan)
 
@@ -179,14 +180,10 @@ func TestCheckRecipeFinalize_EnvSecrets(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// The generated templates include envSecrets when NeedsAppSecret is true,
-	// so this should pass.
+	// Generated templates put shared secret in project.envVariables.
 	for _, c := range result.Checks {
-		if c.Name != "" && c.Status == "fail" && c.Detail != "" {
-			// Check it's not an envSecrets failure.
-			if strings.Contains(c.Name, "env_secrets") {
-				t.Errorf("envSecrets check should pass: %s", c.Detail)
-			}
+		if c.Status == "fail" && strings.Contains(c.Name, "shared_secret") {
+			t.Errorf("shared secret check should pass: %s", c.Detail)
 		}
 	}
 }

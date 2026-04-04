@@ -221,17 +221,22 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 
 	case "export":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe export <source-dir> [--include-timeline]")
+			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe export <recipe-dir> [--app-dir <path>] [--include-timeline]")
 			os.Exit(1)
 		}
-		sourceDir := args[1]
-		includeTimeline := false
-		for _, a := range args[2:] {
-			if a == "--include-timeline" {
-				includeTimeline = true
+		opts := sync.ExportOpts{RecipeDir: args[1]}
+		for i := 2; i < len(args); i++ {
+			switch args[i] {
+			case "--include-timeline":
+				opts.IncludeTimeline = true
+			case "--app-dir":
+				if i+1 < len(args) {
+					opts.AppDir = args[i+1]
+					i++
+				}
 			}
 		}
-		result, err := sync.ExportRecipe(sourceDir, includeTimeline)
+		result, err := sync.ExportRecipe(opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -271,17 +276,18 @@ func printRecipeUsage() {
 Subcommands:
   create-repo <slug>                Create app repo in zerops-recipe-apps org
   publish <slug> <source-dir>       Publish environments to zeropsio/recipes
-  export <source-dir>               Create .tar.gz archive of recipe output
+  export <recipe-dir>               Create .tar.gz archive of recipe output
 
 Flags:
-  --dry-run            Show what would change without writing
-  --include-timeline   Prompt for TIMELINE.md if missing (export only)
+  --dry-run              Show what would change without writing
+  --app-dir <path>       App source dir to include (e.g. /var/www/appdev)
+  --include-timeline     Prompt for TIMELINE.md if missing (export only)
 
 Examples:
   zcp sync recipe create-repo laravel-minimal
   zcp sync recipe publish laravel-minimal ../zcprecipator/laravel-minimal-v4
-  zcp sync recipe export ../zcprecipator/laravel-minimal-v4
-  zcp sync recipe export ../zcprecipator/laravel-minimal-v4 --include-timeline`)
+  zcp sync recipe export ../zcprecipator/laravel-minimal --app-dir /var/www/appdev
+  zcp sync recipe export ../zcprecipator/laravel-minimal --include-timeline`)
 }
 
 func printSyncUsage() {

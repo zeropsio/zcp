@@ -81,6 +81,7 @@ type ResearchData struct {
 	SeedCmd      string `json:"seedCmd,omitempty"`
 	// Environment & secrets.
 	NeedsAppSecret bool   `json:"needsAppSecret"`
+	AppSecretKey   string `json:"appSecretKey,omitempty"` // e.g. "APP_KEY", "SECRET_KEY_BASE" — framework-specific name
 	LoggingDriver  string `json:"loggingDriver"`
 	// Showcase-only fields.
 	CacheLib      string `json:"cacheLib,omitempty"`
