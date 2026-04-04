@@ -252,10 +252,45 @@ Check the framework's documentation if unsure — wrong env names cause subtle b
 
 ### App README with extract fragments
 
-Write `README.md` at `/var/www/appdev/README.md` with three documentation fragments:
-- `<!-- #ZEROPS_EXTRACT_START:integration-guide# -->` — complete zerops.yaml with comments
-- `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->` — platform knowledge with Gotchas section
-- `<!-- #ZEROPS_EXTRACT_START:intro# -->` — 1-3 line introduction (no titles, no images)
+Write `README.md` at `/var/www/appdev/README.md` with three extract fragments. **Critical formatting** — match this structure exactly:
+
+```markdown
+# Recipe Name — Zerops Recipe
+
+<!-- #ZEROPS_EXTRACT_START:intro# -->
+One-line description of what this recipe demonstrates.
+<!-- #ZEROPS_EXTRACT_END:intro# -->
+
+## Integration Guide
+
+<!-- #ZEROPS_EXTRACT_START:integration-guide# -->
+
+### zerops.yaml
+
+\`\`\`yaml
+zerops:
+  ...
+\`\`\`
+
+### 2. Step Title (if any code changes needed)
+...
+
+<!-- #ZEROPS_EXTRACT_END:integration-guide# -->
+
+<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+
+### Gotchas
+- **Gotcha 1** — explanation
+- **Gotcha 2** — explanation
+
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+```
+
+**Rules:**
+- Section headings (`## Integration Guide`) go OUTSIDE markers — they're visible in the README but not extracted
+- Content INSIDE markers uses **H3** (`###`), not H2
+- Blank line after each start marker
+- Intro has no heading inside — plain text only
 
 ### Code Quality
 - Comment ratio in zerops.yaml code blocks must be >= 0.3
@@ -284,9 +319,9 @@ zerops_workflow action="complete" step="generate" attestation="App code and zero
 
 The integration guide answers: **"What must I change in my existing app to run it on Zerops?"** It targets a developer bringing their own codebase, not someone cloning the demo.
 
-Must contain:
-- **`## zerops.yaml`** — complete config with ALL setups (`prod`, `dev`; `worker` if showcase). Setup names are generic (`prod`/`dev`), NOT hostname-specific. Every config line has an inline comment explaining WHY. Deploy files differ between dev (`.`) and prod (build output). This is always present in every recipe.
-- **Numbered integration steps** (if any) — code changes the agent made to the app that any user bringing their own codebase would also need to make. These go AFTER the zerops.yaml section as `## 2. Step Title`, `## 3. Step Title`, etc. The specific steps depend on what the framework requires to run behind Zerops.
+Must contain (all inside the markers, using **H3** headings):
+- **`### zerops.yaml`** — complete config with ALL setups (`prod`, `dev`; `worker` if showcase). Setup names are generic (`prod`/`dev`), NOT hostname-specific. Every config line has an inline comment explaining WHY.
+- **Numbered integration steps** (if any) — `### 2. Step Title`, `### 3. Step Title`, etc. Code changes the agent made that any user bringing their own codebase would also need.
 
 **What belongs in integration steps:**
 - Code-level changes the agent made that are required to work on Zerops (e.g., trusted proxy middleware in `bootstrap/app.php` — without it, CSRF breaks behind the L7 balancer)

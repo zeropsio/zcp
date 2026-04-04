@@ -221,6 +221,48 @@ func checkReadmeFragments(content string) []workflow.StepCheck {
 		}
 	}
 
+	// Check fragment heading levels — content inside markers must use H3, not H2.
+	// H2 section titles go OUTSIDE markers in the README.
+	for _, name := range []string{"integration-guide", "knowledge-base"} {
+		fc := extractFragmentContent(content, name)
+		if fc == "" {
+			continue
+		}
+		for line := range strings.SplitSeq(fc, "\n") {
+			if strings.HasPrefix(line, "## ") && !strings.HasPrefix(line, "### ") {
+				checks = append(checks, workflow.StepCheck{
+					Name: "fragment_" + name + "_heading_level", Status: statusFail,
+					Detail: fmt.Sprintf("fragment %q has H2 heading inside markers — use H3 (###). H2 section titles go OUTSIDE markers.", name),
+				})
+				break
+			}
+		}
+	}
+
+	// Check blank line after start marker.
+	for _, name := range requiredFragments {
+		marker := fmt.Sprintf("#ZEROPS_EXTRACT_START:%s#", name)
+		idx := strings.Index(content, marker)
+		if idx < 0 {
+			continue
+		}
+		afterMarker := content[idx+len(marker):]
+		// Skip to end of marker line.
+		if nlIdx := strings.Index(afterMarker, "\n"); nlIdx >= 0 {
+			nextLine := ""
+			rest := afterMarker[nlIdx+1:]
+			if nlIdx2 := strings.Index(rest, "\n"); nlIdx2 >= 0 {
+				nextLine = rest[:nlIdx2]
+			}
+			if nextLine != "" && !strings.HasPrefix(nextLine, "<!--") {
+				checks = append(checks, workflow.StepCheck{
+					Name: "fragment_" + name + "_blank_after_marker", Status: statusFail,
+					Detail: fmt.Sprintf("fragment %q needs a blank line after the start marker", name),
+				})
+			}
+		}
+	}
+
 	// Check knowledge-base fragment has Gotchas section.
 	kbContent := extractFragmentContent(content, "knowledge-base")
 	if kbContent != "" {

@@ -39,12 +39,17 @@ func testRecipeState() *workflow.RecipeState {
 const validREADME = `# Laravel Hello World
 
 <!-- #ZEROPS_EXTRACT_START:intro# -->
+
 A minimal Laravel application demonstrating Zerops deployment.
+
 <!-- #ZEROPS_EXTRACT_END:intro# -->
 
 ## Integration Guide
 
 <!-- #ZEROPS_EXTRACT_START:integration-guide# -->
+
+### zerops.yaml
+
 ` + "```yaml" + `
 # Laravel zerops.yaml configuration
 # Base setup shared between environments
@@ -72,17 +77,20 @@ zerops:
         - port: 80
           httpSupport: true
 ` + "```" + `
+
 <!-- #ZEROPS_EXTRACT_END:integration-guide# -->
 
 ## Knowledge Base
 
 <!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+
 ### Getting Started
 Laravel on Zerops uses PHP-FPM behind nginx.
 
 ### Gotchas
 - Always set APP_KEY via envSecrets, not environment variables
 - Use stderr logging driver, not file-based logging
+
 <!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
 `
 
