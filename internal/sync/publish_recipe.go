@@ -115,7 +115,7 @@ func PushAppSource(cfg *Config, slug, appDir string, dryRun bool) (PushResult, e
 
 // runGit runs a git command in the given directory.
 func runGit(dir string, args ...string) error {
-	cmd := exec.Command("git", args...) //nolint:gosec,noctx // short-lived CLI command
+	cmd := exec.Command("git", args...) //nolint:noctx // short-lived CLI command
 	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
