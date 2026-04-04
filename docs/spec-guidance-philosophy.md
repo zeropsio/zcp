@@ -29,7 +29,7 @@ This document defines HOW and WHEN ZCP delivers knowledge and guidance to the AI
 **We don't know what the user wants from their application.** We don't know how it should work, what state the code is in, whether they want health checks, or what "healthy" means. We DO know:
 
 - Mode of services (standard/dev/simple) — and they may want to change it
-- Strategy (push-dev/ci-cd/manual) — and they may want to switch
+- Strategy (push-dev/push-git/manual) — and they may want to switch
 - Zerops platform mechanics — how the deploy pipeline works, what survives deploy, env var behavior, zerops.yml schema
 
 ZCP validates **platform integration** (always objectively correct/incorrect) and provides **contextual guidance** (Zerops-specific knowledge). It never imposes assumptions about application correctness.
@@ -104,7 +104,7 @@ ZCP operations follow a two-tier model:
 |----------|----------|--------|-----------|
 | **Platform mechanics** | Container lifecycle, env var resolution, build vs run container, deployFiles behavior | Verified against live platform | Stable (changes with Zerops releases) |
 | **Mode workflows** | Standard: dev→stage flow. Dev: dev-only. Simple: auto-start. | Defined in ZCP code | Stable (changes with ZCP releases) |
-| **Strategy procedures** | push-dev: SSH self-deploy. ci-cd: git webhook. manual: user-managed. | Defined in ZCP code | Stable |
+| **Strategy procedures** | push-dev: SSH self-deploy. push-git: git webhook. manual: user-managed. | Defined in ZCP code | Stable |
 | **Runtime knowledge** | Node.js zerops.yml patterns, Go build config, PHP implicit webserver | Knowledge store (text search + recipes) | Updated periodically |
 | **Recipe patterns** | Next.js, Laravel, Django framework-specific configs | Knowledge store (recipes/) | Updated periodically |
 | **Operational data** | Service status, env var values, health check results, logs | Live API (zerops_discover, zerops_verify, zerops_logs) | Dynamic (changes constantly) |
@@ -384,8 +384,8 @@ Mode: standard | Strategy: push-dev
 **Strategy note** (brief, non-forcing):
 ```
 Currently: push-dev (SSH self-deploy from dev container)
-Other options: ci-cd (auto-deploy on git push), manual (you manage)
-Change: zerops_workflow action="strategy" strategies={"appdev":"ci-cd"}
+Other options: push-git (auto-deploy on git push), manual (you manage)
+Change: zerops_workflow action="strategy" strategies={"appdev":"push-git"}
 ```
 
 ### 6.3 Layer 2: Contextual (Conditional)

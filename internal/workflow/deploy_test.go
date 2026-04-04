@@ -199,7 +199,7 @@ func TestBuildDeployTargets_Simple(t *testing.T) {
 		t.Errorf("mode: want simple, got %s", mode)
 	}
 	if strategy != StrategyPushGit {
-		t.Errorf("strategy: want ci-cd, got %s", strategy)
+		t.Errorf("strategy: want push-git, got %s", strategy)
 	}
 	if len(targets) != 1 {
 		t.Fatalf("targets: want 1, got %d", len(targets))
@@ -258,6 +258,6 @@ func TestNewDeployState_CapturesStrategy(t *testing.T) {
 	ds := NewDeployState(targets, PlanModeSimple, StrategyPushGit)
 
 	if ds.Strategy != StrategyPushGit {
-		t.Errorf("Strategy: want ci-cd, got %s", ds.Strategy)
+		t.Errorf("Strategy: want push-git, got %s", ds.Strategy)
 	}
 }

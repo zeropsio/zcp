@@ -290,7 +290,7 @@ Same as container mode — `zerops_verify` uses API + subdomain HTTP.
 | Strategy | Container | Local |
 |----------|-----------|-------|
 | push-dev | SSH: dev → stage | zcli push: local → target |
-| ci-cd | Git webhook | Git webhook (same) |
+| push-git | Git push + optional CI/CD | Git push + optional CI/CD (same) |
 | manual | zerops_deploy directly | zerops_deploy directly (same) |
 
 Strategy names, selection flow, ServiceMeta storage — all unchanged.
