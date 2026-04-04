@@ -135,7 +135,7 @@ func BuildTransitionMessage(state *WorkflowState) string {
 }
 
 // routeFromBootstrapState generates workflow offerings based on bootstrap state.
-// Returns up to 3 primary offerings (deploy, ci-cd, and utilities).
+// Returns up to 3 primary offerings (deploy, cicd, and utilities).
 func routeFromBootstrapState(state *WorkflowState) []FlowOffering {
 	if state == nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return nil

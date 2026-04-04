@@ -21,7 +21,7 @@
 | **Immediate workflow** | Stateless workflow (cicd) — returns guidance without creating a session. |
 | **Direct tool** | Self-contained MCP tool that operates independently without a workflow session. Tool schema + nextActions provide sufficient guidance. Examples: zerops_scale, zerops_manage. |
 | **Runtime class** | Verification classification: Dynamic (nodejs, go, bun...), Implicit (php-nginx, php-apache), Static (nginx, static), Worker (no ports), Managed (postgresql, valkey...). |
-| **Strategy** | Deployment method per service: `push-dev` (deploy workflow), `ci-cd` (cicd workflow), or `manual` (direct zerops_deploy, no workflow). Always explicit — never auto-assigned. Set via `action=strategy` after bootstrap. Each strategy maps to a different interaction model. |
+| **Strategy** | Deployment method per service: `push-dev` (deploy workflow), `push-git` (deploy + optional cicd/export workflows), or `manual` (direct zerops_deploy, no workflow). Always explicit — never auto-assigned. Set via `action=strategy` after bootstrap. Each strategy maps to a different interaction model. |
 
 ---
 
@@ -502,7 +502,7 @@ Complete:
 
 **Transition message**: The close step response includes `BuildTransitionMessage()` which:
 - Lists all bootstrapped services with modes
-- Presents strategy selection with per-strategy next steps (push-dev → deploy workflow, ci-cd → cicd workflow, manual → direct zerops_deploy)
+- Presents strategy selection with per-strategy next steps (push-dev → deploy workflow, push-git → deploy + optional cicd/export, manual → direct zerops_deploy)
 - Provides `action=strategy` command hint
 
 **Strategy is NEVER auto-assigned.** All modes require explicit `action=strategy` after bootstrap. Each strategy maps to a different interaction model (see §4.2).
@@ -592,12 +592,12 @@ Each strategy maps to a different interaction model:
 | Strategy | How it works | Good for | Interaction model |
 |----------|-------------|----------|-------------------|
 | `push-dev` | SSH push from dev container, you trigger each deploy | Prototyping, quick iterations | Deploy workflow (3-step session) |
-| `ci-cd` | Automatic deploys on git push via webhook | Team dev, production workflows | CI/CD workflow (3-step session) |
+| `push-git` | Push to git remote, optional CI/CD for auto-deploy | Team dev, CI/CD, export | Deploy + optional cicd/export workflows |
 | `manual` | You control when to deploy, call zerops_deploy directly | Experienced users, external CI/CD | Direct tool calls (no session) |
 
-### 4.3 CI/CD Strategy Gate
+### 4.3 CI/CD Context Gate
 
-`handleCICDStart()` is a hard gate — only services with `ci-cd` strategy are included. If no services have `ci-cd`, the workflow returns an error asking the user to set strategy first.
+`buildCICDContext()` filters by `push-git` strategy — only services with `push-git` strategy are included in CI/CD context. If no services have `push-git`, the CI/CD workflow gets empty context.
 
 ### 4.4 Guidance Model
 
@@ -735,7 +735,7 @@ ServiceMeta {
   Hostname:         string   // immutable
   Mode:             string   // "standard" | "dev" | "simple" (empty for managed)
   StageHostname:    string   // derived stage (standard mode only)
-  DeployStrategy:   string   // "push-dev" | "ci-cd" | "manual" (empty until explicitly set)
+  DeployStrategy:   string   // "push-dev" | "push-git" | "manual" (empty until explicitly set)
   BootstrapSession: string   // session ID that created this
   BootstrappedAt:   string   // date — empty means bootstrap incomplete
 }
@@ -755,7 +755,7 @@ stateDiagram-v2
     end note
 
     note right of StrategySet
-        DeployStrategy = push-dev | ci-cd | manual.
+        DeployStrategy = push-dev | push-git | manual.
         Deploy workflow can proceed.
     end note
 ```
@@ -932,7 +932,7 @@ Bootstrap has wider ranges because it allows up to 10 iterations (configurable v
 |----|-----------|-------------|
 | F1 | Deploy workflow requires existing ServiceMeta files with non-manual strategy set | `handleDeployStart()` reads metas + checks DeployStrategy + manual gate |
 | F1b | Manual strategy returns redirect with deploy commands, no session | `allManualStrategy()` + `buildManualDeployResponse()` |
-| F2 | CI/CD workflow requires at least one service with ci-cd strategy | `handleCICDStart()` filters by StrategyCICD |
+| F2 | CI/CD workflow requires at least one service with push-git strategy | `buildCICDContext()` filters by StrategyPushGit |
 | F3 | Router returns facts only — no recommendations, no intent matching | `Route()` returns FlowOffering without Reason field |
 | F4 | Immediate workflows (cicd) are stateless | `IsImmediateWorkflow()` check |
 | F5 | Bootstrap auto-resets completed sessions on new start | `engine.Start()` checks Active=false |
