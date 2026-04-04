@@ -516,8 +516,9 @@ Plus:
 - `#zeropsPreprocessor=on` when using `<@generateRandomString(<32>)>`
 - `corePackage: SERIOUS` at **project level** for env 5 (NOT under verticalAutoscaling)
 - `verticalAutoscaling` nesting: minFreeRamGB, cpuMode under it
-- `zeropsSetup: prod` + `buildFromGit` on all non-startWithoutCode app/worker services
-- NO `zeropsSetup` on `startWithoutCode` services (setup mapping happens via `--setup` at deploy time)
+- `zeropsSetup: prod` + `buildFromGit` on all prod/stage app/worker services
+- `zeropsSetup: dev` + `buildFromGit` on all dev app/worker services in env 0-1
+- Every runtime service in the recipe deliverable uses `buildFromGit` — no `startWithoutCode` (that's workspace-only)
 - `buildFromGit: https://github.com/zerops-recipe-apps/{slug}-app` on all non-startWithoutCode app/worker services
 - `startWithoutCode: true` + `maxContainers: 1` on dev services in env 0-1
 - Comment line width <= 80 chars
@@ -560,7 +561,8 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 > - Is the comment quality good? (WHY not WHAT, no restating key names)
 >
 > **import.yaml review (all 6 environments):**
-> - Do `buildFromGit` services have `zeropsSetup: prod`? Do `startWithoutCode` services have NO `zeropsSetup`?
+> - Do ALL runtime services have `buildFromGit` + `zeropsSetup`? (dev=`zeropsSetup: dev`, prod/stage=`zeropsSetup: prod`)
+> - Is there NO `startWithoutCode` anywhere? (that's workspace-only, not for recipe deliverables)
 > - Is `buildFromGit` present on all non-startWithoutCode services?
 > - Is `corePackage: SERIOUS` at project level (not verticalAutoscaling) in env 5?
 > - Are `envSecrets` per-service (not project level)?

@@ -156,21 +156,19 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 	return b.String()
 }
 
-// writeDevServiceBlock writes the dev service entry for env 0-1.
-// No zeropsSetup — startWithoutCode services receive code via zcli push
-// with --setup param at deploy time, not via buildFromGit.
+// writeDevServiceBlock writes the dev service entry for env 0-1 recipe deliverable.
+// Both dev and stage use buildFromGit — Zerops pulls from the recipe repo on import.
 func writeDevServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget, _ int) {
 	hostname := target.Hostname + "dev"
 	fmt.Fprintf(b, "  - hostname: %s\n", hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
-	b.WriteString("    startWithoutCode: true\n")
-	b.WriteString("    maxContainers: 1\n")
+	b.WriteString("    zeropsSetup: dev\n")
+	writeServiceBuildFromGit(b, plan)
 	b.WriteString("    enableSubdomainAccess: true\n")
 	writeServiceEnvSecrets(b, plan)
 }
 
-// writeStageServiceBlock writes the stage service entry for env 0-1.
-// zeropsSetup: prod maps this hostname to `setup: prod` in zerops.yaml.
+// writeStageServiceBlock writes the stage service entry for env 0-1 recipe deliverable.
 func writeStageServiceBlock(b *strings.Builder, plan *RecipePlan, target RecipeTarget, _ int) {
 	hostname := target.Hostname + "stage"
 	fmt.Fprintf(b, "  - hostname: %s\n", hostname)

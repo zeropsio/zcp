@@ -195,18 +195,21 @@ func TestGenerateEnvImportYAML_Env01_DevStageServices(t *testing.T) {
 			t.Parallel()
 			yaml := GenerateEnvImportYAML(plan, envIdx)
 
-			// Dev service: appdev with startWithoutCode, maxContainers, NO zeropsSetup.
+			// Dev service: appdev with zeropsSetup: dev + buildFromGit.
 			if !strings.Contains(yaml, "hostname: appdev") {
 				t.Error("expected appdev hostname")
 			}
-			if !strings.Contains(yaml, "startWithoutCode: true") {
-				t.Error("expected startWithoutCode: true on dev service")
+			if !strings.Contains(yaml, "zeropsSetup: dev") {
+				t.Error("expected zeropsSetup: dev on dev service")
 			}
-			if !strings.Contains(yaml, "maxContainers: 1") {
-				t.Error("expected maxContainers: 1 on dev service")
+			expectedDevRepo := testRepoBase + plan.Slug + "-app"
+			if !strings.Contains(yaml, "buildFromGit: "+expectedDevRepo) {
+				t.Errorf("expected buildFromGit on dev service")
 			}
-			// Dev service must NOT have zeropsSetup or buildFromGit.
-			// Setup mapping happens at deploy time via --setup param.
+			// Recipe deliverable must NOT have startWithoutCode.
+			if strings.Contains(yaml, "startWithoutCode") {
+				t.Error("recipe deliverable must not have startWithoutCode (that's workspace only)")
+			}
 
 			// Stage service: appstage with zeropsSetup: prod, buildFromGit.
 			if !strings.Contains(yaml, "hostname: appstage") {
