@@ -134,11 +134,11 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 **If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair.
 
 **Framework secrets**: If `needsAppSecret == true`, determine during research whether the secret is used for encryption/sessions (shared by services hitting the same DB) or is per-service.
-- **Shared** (used for encryption, CSRF, session signing — any secret that multiple services must agree on): do NOT add to workspace import. After services reach RUNNING, set at project level so all services inherit it:
+- **Shared** (used for encryption, CSRF, session signing — any secret that multiple services must agree on): do NOT add to workspace import. After services reach RUNNING, generate the value first (e.g., via SSH: `openssl rand -base64 32`), then set it at project level:
   ```
-  zerops_env project=true action=set key={SECRET_KEY_NAME} value="$(openssl rand -base64 32)"
+  zerops_env project=true action=set variables=["{SECRET_KEY_NAME}={generated_value}"]
   ```
-  The recipe deliverable uses `project.envVariables` with the preprocessor to generate at import time.
+  After setting, **restart all running services** (`zerops_manage action="restart"`) — env var changes only take effect on restart or new deploy. The recipe deliverable uses `project.envVariables` with the preprocessor to generate at import time.
 - **Per-service** (unique API tokens, webhook secrets): add as service-level `envSecrets` in import.yaml.
 
 Follow the injected **import.yaml Schema** for the three env var levels (project envVariables, service envSecrets, zerops.yaml run.envVariables).
@@ -486,7 +486,7 @@ zerops_verify serviceHostname="appstage"
 | Issue | Diagnosis | Fix |
 |-------|-----------|-----|
 | HTTP 502 | App not binding 0.0.0.0 or wrong port | Check runtime knowledge for bind rules |
-| Empty env vars | Deploy hasn't happened yet | Deploy first — envVariables activate at deploy time. envSecrets need restart. |
+| Empty env vars | Deploy hasn't happened yet, or service not restarted after env change | Deploy first — envVariables activate at deploy time. After `zerops_env set`, restart the service (`zerops_manage action="restart"`) — env vars are cached at process start. |
 | Build fails | Wrong build commands, missing dependencies | Check `zerops_logs`, fix and redeploy |
 | Stage deploy fails | zerops.yaml setup name doesn't match --setup param | Ensure `setup: prod` in zerops.yaml and `setup="prod"` in zerops_deploy |
 | Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |

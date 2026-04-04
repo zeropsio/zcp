@@ -56,9 +56,9 @@ func managedServiceKind(role string) string {
 	switch role {
 	case "db":
 		return "database"
-	case "cache": //nolint:goconst // role string, not a shared constant
+	case "cache": //nolint:goconst
 		return "cache"
-	case "search": //nolint:goconst // role string, not a shared constant
+	case "search": //nolint:goconst
 		return "search engine"
 	default:
 		return "service"

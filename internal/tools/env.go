@@ -20,7 +20,7 @@ type EnvInput struct {
 func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage environment variables. Actions: set, delete, generate-dotenv. set/delete scope: service (serviceHostname) or project (project=true). After set/delete, reload: zerops_manage action=\"reload\". generate-dotenv: reads zerops.yaml envVariables, resolves ${hostname_varName} refs, writes .env file — no secret values in response. To read env var keys, use zerops_discover with includeEnvs=true.",
+		Description: "Manage environment variables. Actions: set, delete, generate-dotenv. Scope: service (serviceHostname) or project (project=true). After set/delete, RESTART affected services — env vars only take effect after restart. For project-level vars, restart ALL running services. generate-dotenv: resolves ${hostname_varName} refs, writes .env file. To read keys, use zerops_discover includeEnvs=true.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
 			DestructiveHint: boolPtr(true),
