@@ -138,6 +138,14 @@ make sync                                   # Pull all (recipes + guides)
 
 Workflow: `pull` → edit `.md` → `push` (creates PR) → merge → `cache-clear` → `pull` (gets merged changes).
 
+### Recipe publishing
+
+```bash
+zcp sync recipe create-repo laravel-minimal   # Create zerops-recipe-apps/{slug}-app repo
+zcp sync recipe publish laravel-minimal ./dir  # Publish environments → PR on zeropsio/recipes
+zcp sync recipe export ./dir                   # Create .tar.gz archive of recipe output
+```
+
 Config: `.sync.yaml` (committed). Strapi token: `.env` (`STRAPI_API_TOKEN`, see `.env.example`).
 
 ---

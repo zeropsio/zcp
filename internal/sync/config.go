@@ -28,6 +28,7 @@ type PushConfig struct {
 // RecipePushConfig holds recipe push target configuration.
 type RecipePushConfig struct {
 	Org          string   `yaml:"org"`
+	RecipesRepo  string   `yaml:"recipes_repo"`  //nolint:tagliatelle
 	RepoPatterns []string `yaml:"repo_patterns"` //nolint:tagliatelle
 	BranchPrefix string   `yaml:"branch_prefix"` //nolint:tagliatelle
 	CommitPrefix string   `yaml:"commit_prefix"` //nolint:tagliatelle
@@ -59,6 +60,7 @@ func DefaultConfig() *Config {
 		Push: PushConfig{
 			Recipes: RecipePushConfig{
 				Org:          "zerops-recipe-apps",
+				RecipesRepo:  "zeropsio/recipes",
 				RepoPatterns: []string{"{slug}-app", "{slug}"},
 				BranchPrefix: "zcp",
 				CommitPrefix: "chore(knowledge)",

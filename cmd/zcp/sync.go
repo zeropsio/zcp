@@ -71,6 +71,8 @@ func runSync(args []string) {
 		runSyncPush(cfg, root, category, filter, dryRun)
 	case "cache-clear":
 		runSyncCacheClear(cfg, positional[1:])
+	case "recipe":
+		runSyncRecipe(cfg, positional[1:], dryRun)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown sync action: %s\n", action)
 		printSyncUsage()
@@ -182,6 +184,92 @@ func printPushResults(results []sync.PushResult) {
 	fmt.Fprintf(os.Stderr, "Pushed %d PRs (%d skipped)\n", created, skipped)
 }
 
+func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
+	if len(args) == 0 {
+		printRecipeUsage()
+		os.Exit(1)
+	}
+
+	sub := args[0]
+	switch sub {
+	case "create-repo":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe create-repo <slug> [--dry-run]")
+			os.Exit(1)
+		}
+		slug := args[1]
+		result, err := sync.CreateRecipeRepo(cfg, slug, dryRun)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		printRecipeResult(result)
+
+	case "publish":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe publish <slug> <source-dir> [--dry-run]")
+			os.Exit(1)
+		}
+		slug := args[1]
+		sourceDir := args[2]
+		result, err := sync.PublishRecipe(cfg, slug, sourceDir, dryRun)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		printRecipeResult(result)
+
+	case "export":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe export <source-dir>")
+			os.Exit(1)
+		}
+		sourceDir := args[1]
+		outPath, err := sync.ExportRecipe(sourceDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Exported: %s\n", outPath)
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown recipe subcommand: %s\n", sub)
+		printRecipeUsage()
+		os.Exit(1)
+	}
+}
+
+func printRecipeResult(r sync.PushResult) {
+	switch r.Status {
+	case sync.Created:
+		fmt.Fprintf(os.Stderr, "  Created: %s → %s\n", r.Slug, r.PRURL)
+	case sync.Skipped:
+		fmt.Fprintf(os.Stderr, "  Skipped: %s — %s\n", r.Slug, r.Reason)
+	case sync.DryRun:
+		fmt.Fprintf(os.Stderr, "  [dry-run] %s: %s\n", r.Slug, r.Diff)
+	case sync.Error:
+		fmt.Fprintf(os.Stderr, "  ERROR %s: %v\n", r.Slug, r.Err)
+		os.Exit(1)
+	}
+}
+
+func printRecipeUsage() {
+	fmt.Fprintln(os.Stderr, `Usage: zcp sync recipe <subcommand> [args] [flags]
+
+Subcommands:
+  create-repo <slug>                Create app repo in zerops-recipe-apps org
+  publish <slug> <source-dir>       Publish environments to zeropsio/recipes
+  export <source-dir>               Create .tar.gz archive of recipe output
+
+Flags:
+  --dry-run    Show what would change without writing
+
+Examples:
+  zcp sync recipe create-repo laravel-minimal
+  zcp sync recipe publish laravel-minimal ../zcprecipator/laravel-minimal-v4
+  zcp sync recipe export ../zcprecipator/laravel-minimal-v4`)
+}
+
 func printSyncUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: zcp sync <action> [category] [slug] [flags]
 
@@ -189,6 +277,7 @@ Actions:
   pull          Pull knowledge from external sources into ZCP
   push          Push ZCP knowledge changes as GitHub PRs
   cache-clear   Invalidate Strapi cache for recipes (requires STRAPI_API_TOKEN)
+  recipe        Recipe repo management (create-repo, publish, export)
 
 Categories:
   recipes   Recipe knowledge (API for pull, app repos for push)
@@ -205,5 +294,7 @@ Examples:
   zcp sync push recipes bun-hello-world --dry-run
   zcp sync push guides
   zcp sync cache-clear bun-hello-world
-  zcp sync cache-clear`)
+  zcp sync recipe create-repo laravel-minimal
+  zcp sync recipe publish laravel-minimal ./output-dir
+  zcp sync recipe export ./output-dir`)
 }

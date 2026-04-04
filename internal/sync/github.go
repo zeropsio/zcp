@@ -211,6 +211,19 @@ func (g *GH) UpdateRef(branch, sha string) error {
 	return nil
 }
 
+// CreateOrgRepo creates a new public repository in an organization.
+func (g *GH) CreateOrgRepo(org, name string) error {
+	cmd := exec.Command("gh", "repo", "create", org+"/"+name, "--public") //nolint:gosec,noctx // controlled internal values
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("create repo %s/%s: %w\nstderr: %s", org, name, err, stderr.String())
+	}
+	return nil
+}
+
 func (g *GH) api(args ...string) (string, error) {
 	cmdArgs := append([]string{"api"}, args...)
 	cmd := exec.Command("gh", cmdArgs...) //nolint:noctx // short-lived CLI command
