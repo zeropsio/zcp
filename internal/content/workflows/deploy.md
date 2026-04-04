@@ -67,7 +67,8 @@ This shows whether the issue is new or recurring.
 |---------|-------------|--------------|
 | ECONNREFUSED between services | Using `https://` internally | Use `http://` for all internal connections |
 | 502 Bad Gateway | App binds to localhost | Bind `0.0.0.0` (check runtime exceptions) |
-| Env vars show literal `${...}` | Dashes in cross-references | Use underscores: `${db_hostname}` not `${db-hostname}` |
+| Env vars show literal `${...}` | Wrong reference syntax | `${...}` is ONLY for cross-service refs (`${db_hostname}`). envSecrets are auto-injected — never reference them in envVariables |
+| envSecret changes not visible | Container has stale env | envSecrets require service **restart** (not just redeploy) to take effect |
 | Build FAILED | Wrong buildCommands or missing deps | Check build logs |
 | Service not starting | Port outside range or bad start cmd | Ports 10-65435, verify `start` in zerops.yaml |
 | DB connection timeout | Wrong connection string or DB not running | Use `http://hostname:port`, verify DB status |

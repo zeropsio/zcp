@@ -134,11 +134,13 @@ zerops[]:
 - **NEVER** set `run.base: alpine@*` for Go. REASON: causes glibc/musl mismatch for CGO-linked binaries -> 502. Omit `run.base` or use `run.base: go@latest`
 - **ALWAYS** use `os: ubuntu` for Deno and Gleam. REASON: these runtimes are not available on Alpine
 
-### Environment Variables
-- `envSecrets` for secrets (write-only after creation), `run.envVariables` for config (requires redeploy)
-- Cross-service: `${hostname_varname}` (dashes->underscores) -- the only way to wire services
-- import.yaml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` (project-level only)
-- Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) -- do NOT set these in import.yaml
+### Environment Variables — Two Separate Systems
+- **envSecrets** (import.yaml or GUI): injected directly as OS env vars at container start. The app reads them via `getenv()` / `process.env` / `os.Getenv()` etc. Changes require a **service restart** (not just redeploy) to take effect.
+- **run.envVariables** (zerops.yaml): injected at deploy time. Support `${hostname_varname}` cross-service references. Changes take effect on next deploy.
+- These are **separate injection paths** — envSecrets are already available as OS vars, do NOT re-reference them in run.envVariables. Writing `APP_KEY: ${APP_KEY}` in envVariables does NOT reference the envSecret — `${...}` is ONLY for cross-service references (`${db_hostname}`). It creates a literal string `${APP_KEY}`.
+- Cross-service: `${hostname_varname}` (dashes→underscores) — the ONLY use of `${...}` syntax. References another service's auto-generated vars.
+- import.yaml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` (project-level only).
+- Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) — do NOT set these in import.yaml
 - `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`
 
 ### Import & Service Creation

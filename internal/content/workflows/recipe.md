@@ -244,12 +244,14 @@ Write the **dev** entry only. The prod entry comes after dev is verified in the 
 - **NO buildCommands with compilation** — dev only does dependency installation (npm install, composer install, etc.)
   - **Static frontends**: dev may need `npm run build` since the output needs to exist for Nginx to serve
 - **NO healthCheck** — agent controls lifecycle; healthCheck would restart container during iteration
-- `envVariables:` — map discovered vars to what the app expects (skip if no managed services):
+- `envVariables:` — map discovered **cross-service** vars to what the app expects (skip if no managed services):
   ```yaml
   envVariables:
     DATABASE_URL: ${db_connectionString}
-    REDIS_HOST: ${cache_host}
-    # ONLY variables from zerops_discover — never guess
+    REDIS_HOST: ${cache_hostname}
+    # ONLY cross-service references from zerops_discover — never guess
+    # DO NOT add envSecrets here (APP_KEY, SECRET_KEY_BASE, etc.)
+    # — they are already injected as OS env vars automatically
   ```
 
 **Static frontends:** Set `documentRoot: dist` (or `build`, `.output/public`, etc.) matching the build output. No `start` command needed.

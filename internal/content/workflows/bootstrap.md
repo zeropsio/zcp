@@ -158,7 +158,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 | object-storage | Requires `objectStorageSize` field |
 | Preprocessor | `#zeropsPreprocessor=on` if using `<@...>` functions |
 | Mode present | Managed services default to NON_HA if omitted |
-| Framework secrets | If using Laravel/Rails/Django/etc., add `envSecrets` with `<@generateRandomString(...)>` (e.g., `APP_KEY`, `SECRET_KEY_BASE`) |
+| Framework secrets | If using Laravel/Rails/Django/etc., add `envSecrets` with `<@generateRandomString(...)>` (e.g., `APP_KEY`, `SECRET_KEY_BASE`). These are auto-injected as OS env vars — do NOT re-reference them in zerops.yaml `run.envVariables`. |
 
 **Managed service hostname conventions**: `db` (postgresql/mariadb), `cache` (valkey), `queue` (nats/kafka), `search` (elasticsearch/meilisearch), `storage` (object-storage). Standardizes cross-service references and discovery.
 
