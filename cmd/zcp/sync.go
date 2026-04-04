@@ -243,6 +243,8 @@ func printRecipeResult(r sync.PushResult) {
 	switch r.Status {
 	case sync.Created:
 		fmt.Fprintf(os.Stderr, "  Created: %s → %s\n", r.Slug, r.PRURL)
+	case sync.Updated:
+		fmt.Fprintf(os.Stderr, "  Updated: %s → %s\n", r.Slug, r.PRURL)
 	case sync.Skipped:
 		fmt.Fprintf(os.Stderr, "  Skipped: %s — %s\n", r.Slug, r.Reason)
 	case sync.DryRun:

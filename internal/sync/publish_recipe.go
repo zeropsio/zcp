@@ -9,7 +9,7 @@ import (
 func PublishRecipe(cfg *Config, slug, sourceDir string, dryRun bool) (PushResult, error) {
 	files, err := CollectRecipeFiles(sourceDir, slug)
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error, Err: err}, nil
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("collect files: %w", err)
 	}
 
 	if len(files) == 0 {
@@ -92,7 +92,7 @@ func CreateRecipeRepo(cfg *Config, slug string, dryRun bool) (PushResult, error)
 	}
 
 	if err := gh.CreateOrgRepo(org, repoName); err != nil {
-		return PushResult{Slug: slug, Status: Error, Err: err}, nil
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create repo: %w", err)
 	}
 
 	return PushResult{Slug: slug, Status: Created, PRURL: "https://github.com/" + fullRepo}, nil
