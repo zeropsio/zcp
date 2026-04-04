@@ -7,8 +7,13 @@ import (
 
 // Recipe role constants.
 const (
-	RecipeRoleApp    = "app"
-	RecipeRoleWorker = "worker"
+	RecipeRoleApp     = "app"
+	RecipeRoleWorker  = "worker"
+	RecipeRoleDB      = "db"
+	RecipeRoleCache   = "cache"
+	RecipeRoleStorage = "storage"
+	RecipeRoleSearch  = "search"
+	RecipeRoleMail    = "mail"
 )
 
 // RecipeAppRepoBase is the GitHub org where recipe app repos live.
@@ -253,7 +258,7 @@ func isRuntimeService(role string) bool {
 // IsDataService returns true for non-runtime service roles.
 func IsDataService(role string) bool {
 	switch role {
-	case "db", "cache", "storage", "search", "mail":
+	case RecipeRoleDB, RecipeRoleCache, RecipeRoleStorage, RecipeRoleSearch, RecipeRoleMail:
 		return true
 	}
 	return false
@@ -318,15 +323,15 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 // dataServiceLabel returns a human-readable label for a data service role.
 func dataServiceLabel(role string) string {
 	switch role {
-	case "db":
+	case RecipeRoleDB:
 		return "a low-resource database"
-	case "cache":
+	case RecipeRoleCache:
 		return "a cache store"
-	case "storage":
+	case RecipeRoleStorage:
 		return "an object storage"
-	case "search":
+	case RecipeRoleSearch:
 		return "a search engine"
-	case "mail":
+	case RecipeRoleMail:
 		return "a mail service"
 	}
 	return "a " + role + " service"

@@ -54,11 +54,11 @@ func recipeSetupName(role string, isDev bool) string {
 // managedServiceKind returns a human-readable kind label for comments.
 func managedServiceKind(role string) string {
 	switch role {
-	case "db":
+	case RecipeRoleDB:
 		return "database"
-	case "cache": //nolint:goconst
-		return "cache"
-	case "search": //nolint:goconst
+	case RecipeRoleCache:
+		return RecipeRoleCache
+	case RecipeRoleSearch:
 		return "search engine"
 	default:
 		return "service"
