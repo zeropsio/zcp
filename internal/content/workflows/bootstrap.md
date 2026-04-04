@@ -177,7 +177,7 @@ zerops_import filePath="./import.yaml"
 
 After importing services and waiting for them to reach RUNNING, discover the ACTUAL env vars available to each service. This data is critical for writing correct zerops.yaml envVariables and for subagent prompts.
 
-**Single call — returns env vars for ALL services:**
+**Single call — returns env var keys for ALL services (keys only — sufficient for `${hostname_varName}` references):**
 ```
 zerops_discover includeEnvs=true
 ```
@@ -483,7 +483,7 @@ Same as standard mode steps 1-5, but no stage pair. All verification happens on 
 2. **Mount and discover:**
    ```
    zerops_mount action="mount" serviceHostname="{hostname}"
-   zerops_discover includeEnvs=true
+   zerops_discover includeEnvs=true   # keys only
    ```
 
 3. **Write code** to mount path `/var/www/{hostname}/`. Use `${hostname_varName}` references in zerops.yaml envVariables — NEVER hardcode credentials. Env vars activate after deploy.
@@ -540,7 +540,7 @@ Prevents context rot by delegating per-service work to specialist agents with fr
 1. `zerops_import content="<import.yaml>"` — create all services (blocks until all processes finish)
 2. `zerops_discover` — verify dev services reached RUNNING
 3. **Mount all dev services**: `zerops_mount action="mount" serviceHostname="{devHostname}"` for each
-4. **Discover ALL env vars**: `zerops_discover includeEnvs=true` — single call returns all services with env vars. Record exact var names.
+4. **Discover ALL env vars**: `zerops_discover includeEnvs=true` — single call returns all services with env var keys (keys only — sufficient for `${hostname_varName}` references). Record exact var names.
 5. For each **runtime** service pair, spawn a Service Bootstrap Agent (in parallel):
    ```
    Task(subagent_type="general-purpose", model="sonnet", prompt=<Service Bootstrap Agent Prompt below>)
@@ -725,7 +725,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 - zerops_subdomain MUST be called once after the first deploy of each new service (even if enableSubdomainAccess was in import). Re-deploys do NOT deactivate it. Use `zerops_discover` to check status and get URL.
 - subdomainUrls from enable response are already full URLs — do NOT prepend https://.
 - Internal connections use http://, never https://.
-- Env var cross-references: `${hostname_varName}` (e.g. `${db_hostname}`, `${db_port}`). Variable names are platform-defined — ALWAYS use `zerops_discover includeEnvs=true` to get actual names, never guess.
+- Env var cross-references: `${hostname_varName}` (e.g. `${db_hostname}`, `${db_port}`). Variable names are platform-defined — ALWAYS use `zerops_discover includeEnvs=true` (keys only) to get actual names, never guess.
 - **NO .env files** — Zerops injects all envVariables/envSecrets as OS env vars at container start. Do NOT create `.env` files, use dotenv libraries, or add env-file-loading code.
 - 0.0.0.0 binding: app must listen on 0.0.0.0, not localhost or 127.0.0.1.
 
@@ -811,7 +811,7 @@ When any verification check fails, enter the iteration loop instead of giving up
 | HTTP 000 (connection refused) | Server not running on dev service | Start server via SSH first |
 | SSH hangs after starting server | Expected — server runs in foreground | Use Bash `run_in_background=true` |
 | `jq: command not found` via SSH | jq not in containers | Pipe outside: `ssh dev "curl ..." \| jq .` |
-| Empty env variable | Wrong var name or not discovered | Check `zerops_discover includeEnvs=true` |
+| Empty env variable | Wrong var name or not discovered | Check `zerops_discover includeEnvs=true` (keys only). If keys present but values suspect, add `includeEnvValues=true` to inspect actual values |
 | SSHFS stale after deploy | Container replaced | Auto-reconnects — wait ~10s |
 </section>
 
@@ -822,7 +822,7 @@ When any verification check fails, enter the iteration loop instead of giving up
 1. `zerops_import content="<import.yaml>"` — create all services
 2. `zerops_discover` — verify dev services reached RUNNING
 3. Mount all dev services
-4. Discover ALL env vars: `zerops_discover includeEnvs=true`
+4. Discover ALL env vars: `zerops_discover includeEnvs=true` (keys only)
 5. Spawn Service Bootstrap Agents (in parallel) for each runtime service pair
 6. Spawn Verify-Managed Agents (in parallel) for each managed service
 7. After ALL agents complete: `zerops_discover` — final verification
@@ -940,20 +940,9 @@ If the user only wants managed services (DB, cache, storage) without any runtime
 
 **After services reach RUNNING:**
 
-1. **Discover env vars**: `zerops_discover includeEnvs=true` — same protocol as container mode.
+1. **Discover env vars**: `zerops_discover includeEnvs=true` — same protocol as container mode (keys only).
 
-2. **Generate .env for local development**: From discovered env vars, create a `.env` file in the project root with actual values (hostnames, ports, passwords). The local app reads these directly via dotenv or framework auto-loading. Format:
-   ```
-   # Generated by ZCP — do not commit
-   # Requires VPN: zcli vpn up <projectId>
-   DB_HOST=db
-   DB_PORT=3306
-   DB_PASSWORD=<actual-password>
-   DB_CONNECTION_STRING=<actual-connection-string>
-   CACHE_HOST=cache
-   CACHE_PORT=6379
-   ```
-   Map variable names to what the framework expects (e.g., `DATABASE_URL` for Laravel/Rails, `DB_CONNECTION_STRING` for others).
+2. **Generate .env for local development**: Use `zerops_env action="generate-dotenv" serviceHostname="{appHostname}"` to generate a `.env` file. It reads the service's zerops.yml envVariables, resolves `${hostname_varName}` references internally against live service data, writes the `.env` file, and returns a summary of resolved variables. The local app reads `.env` directly via dotenv or framework auto-loading.
 
 3. **Add `.env` to `.gitignore`** — it contains secrets. Never commit it.
 

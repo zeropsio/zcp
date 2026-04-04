@@ -385,7 +385,7 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := envVarsToMaps(tt.envs)
+			result := envVarsToMaps(tt.envs, true)
 			if len(result) != len(tt.wantKeys) {
 				t.Fatalf("expected %d envs, got %d", len(tt.wantKeys), len(result))
 			}
@@ -423,6 +423,46 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEnvVarsToMaps_KeysOnly(t *testing.T) {
+	t.Parallel()
+
+	envs := []platform.EnvVar{
+		{ID: "e1", Key: "PORT", Content: "3000"},
+		{ID: "e2", Key: "DB_URL", Content: "${db_connectionString}"},
+		{ID: "e3", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
+	}
+
+	result := envVarsToMaps(envs, false)
+	if len(result) != 3 {
+		t.Fatalf("expected 3 envs, got %d", len(result))
+	}
+
+	for _, m := range result {
+		if _, hasValue := m["value"]; hasValue {
+			t.Errorf("key %q: should NOT have value when includeValues=false", m["key"])
+		}
+		if m["key"] == nil {
+			t.Error("key should always be present")
+		}
+	}
+
+	// Annotations still present without values.
+	byKey := make(map[string]map[string]any, len(result))
+	for _, m := range result {
+		byKey[m["key"].(string)] = m
+	}
+
+	if byKey["DB_URL"]["isReference"] != true {
+		t.Error("DB_URL should have isReference=true even without values")
+	}
+	if byKey["zeropsSubdomain"]["isPlatformInjected"] != true {
+		t.Error("zeropsSubdomain should have isPlatformInjected=true even without values")
+	}
+	if _, has := byKey["PORT"]["isReference"]; has {
+		t.Error("PORT should not have isReference")
 	}
 }
 

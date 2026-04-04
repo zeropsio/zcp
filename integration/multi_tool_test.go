@@ -276,10 +276,11 @@ func TestIntegration_EnvSetThenDiscover(t *testing.T) {
 		t.Fatalf("env set returned error: %s", getTextContent(t, setResult))
 	}
 
-	// Step 2: Read env vars via zerops_discover with includeEnvs=true.
+	// Step 2: Read env vars via zerops_discover with includeEnvs + includeEnvValues.
 	discoverText := callAndGetText(t, session, "zerops_discover", map[string]any{
-		"service":     "app",
-		"includeEnvs": true,
+		"service":          "app",
+		"includeEnvs":      true,
+		"includeEnvValues": true,
 	})
 
 	var dr ops.DiscoverResult

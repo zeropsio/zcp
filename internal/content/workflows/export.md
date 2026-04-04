@@ -13,7 +13,7 @@ Create a deployable git repository from an existing Zerops service, with import.
 zerops_discover service="{hostname}" includeEnvs=true
 ```
 
-Note: service type, status, ports, env vars, scaling config, mode.
+Note: service type, status, ports, env var keys (keys only), scaling config, mode.
 
 ### Step 2: Check git state on container
 
@@ -171,7 +171,7 @@ services:
     buildFromGit: {repo-url}  # from prepare step
     enableSubdomainAccess: true
     envSecrets:
-      {key}: {value}          # from discover (isSecret=true vars)
+      {key}: {value}          # envSecrets are rare (APP_KEY etc.) — auto-generated at import time or provided by user. envVariables use ${hostname_varName} references (keys-only discover is sufficient)
     verticalAutoscaling:
       cpuMode: {SHARED|DEDICATED}
       minRam: {value}

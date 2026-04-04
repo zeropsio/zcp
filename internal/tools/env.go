@@ -10,7 +10,7 @@ import (
 
 // EnvInput is the input type for zerops_env.
 type EnvInput struct {
-	Action          string   `json:"action"                    jsonschema:"Action to perform: set or delete. To read env vars use zerops_discover with includeEnvs=true."`
+	Action          string   `json:"action"                    jsonschema:"Action: set, delete, or generate-dotenv. generate-dotenv reads zerops.yml envVariables, resolves ${hostname_varName} refs via API, and writes .env file."`
 	ServiceHostname string   `json:"serviceHostname,omitempty" jsonschema:"Hostname of the service to modify env vars on. Required unless project=true."`
 	Project         bool     `json:"project,omitempty"         jsonschema:"Set to true to manage project-level env vars instead of service-level."`
 	Variables       []string `json:"variables,omitempty"       jsonschema:"List of env vars. For set: KEY=VALUE strings. For delete: KEY names only."`
@@ -20,7 +20,7 @@ type EnvInput struct {
 func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage environment variables. Actions: set, delete. Scope: service (serviceHostname) or project (project=true). After changing env vars, reload the service: zerops_manage action=\"reload\" (~4s). Cross-service references use underscore syntax: ${hostname_varName}. To read env vars, use zerops_discover with includeEnvs=true.",
+		Description: "Manage environment variables. Actions: set, delete, generate-dotenv. set/delete scope: service (serviceHostname) or project (project=true). After set/delete, reload: zerops_manage action=\"reload\". generate-dotenv: reads zerops.yml envVariables, resolves ${hostname_varName} refs, writes .env file — no secret values in response. To read env var keys, use zerops_discover with includeEnvs=true.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
 			DestructiveHint: boolPtr(true),
@@ -49,14 +49,20 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 			}
 			result.NextActions = nextActionEnvDeleteSuccess
 			return jsonResult(result), nil, nil
+		case "generate-dotenv":
+			result, err := ops.EnvGenerateDotenv(ctx, client, projectID, input.ServiceHostname, "")
+			if err != nil {
+				return convertError(err), nil, nil
+			}
+			return jsonResult(result), nil, nil
 		case "":
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Action is required",
-				"Use set or delete")), nil, nil
+				"Use set, delete, or generate-dotenv")), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",
-				"Use set or delete")), nil, nil
+				"Use set, delete, or generate-dotenv")), nil, nil
 		}
 	})
 }

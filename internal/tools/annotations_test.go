@@ -215,7 +215,7 @@ func TestAnnotations_DescriptionKeywords(t *testing.T) {
 		name     string
 		keywords []string
 	}{
-		{name: "zerops_discover", keywords: []string{"env var", "includeEnvs"}},
+		{name: "zerops_discover", keywords: []string{"env var", "includeEnvs", "includeEnvValues"}},
 		{name: "zerops_deploy", keywords: []string{"SSH", "zerops.yaml", "deployFiles"}},
 		{name: "zerops_import", keywords: []string{"workflow", "YAML"}},
 		{name: "zerops_manage", keywords: []string{"reload", "restart", "connect-storage", "/mnt/"}},

@@ -45,12 +45,15 @@ type ServiceInfo struct {
 }
 
 // Discover fetches project and service information.
+// When includeEnvs is true, env var keys and annotations are returned.
+// When includeEnvValues is also true, actual env var values are included (for troubleshooting).
 func Discover(
 	ctx context.Context,
 	client platform.Client,
 	projectID string,
 	hostname string,
 	includeEnvs bool,
+	includeEnvValues bool,
 ) (*DiscoverResult, error) {
 	proj, err := client.GetProject(ctx, projectID)
 	if err != nil {
@@ -81,11 +84,12 @@ func Discover(
 			return nil, getErr
 		}
 		info := buildDetailedServiceInfo(detail)
+		var rawEnvs []platform.EnvVar
 		if includeEnvs {
-			attachEnvs(ctx, client, &info, detail.ID, result)
+			rawEnvs = attachEnvs(ctx, client, &info, detail.ID, result, includeEnvValues)
 		}
 		if detail.SubdomainAccess {
-			info.SubdomainURL = extractSubdomainURL(ctx, client, detail.ID, info.Envs)
+			info.SubdomainURL = extractSubdomainURL(ctx, client, detail.ID, rawEnvs)
 		}
 		result.Services = []ServiceInfo{info}
 		addEnvRefNotes(result)
@@ -99,13 +103,13 @@ func Discover(
 		}
 		info := buildSummaryServiceInfo(&services[i])
 		if includeEnvs {
-			attachEnvs(ctx, client, &info, services[i].ID, result)
+			attachEnvs(ctx, client, &info, services[i].ID, result, includeEnvValues)
 		}
 		result.Services = append(result.Services, info)
 	}
 
 	if includeEnvs {
-		attachProjectEnvs(ctx, client, &result.Project, projectID, result)
+		attachProjectEnvs(ctx, client, &result.Project, projectID, result, includeEnvValues)
 	}
 
 	addEnvRefNotes(result)
@@ -212,24 +216,27 @@ func buildContainersMap(a *platform.CustomAutoscaling) map[string]any {
 	return m
 }
 
-func attachProjectEnvs(ctx context.Context, client platform.Client, info *ProjectInfo, projectID string, result *DiscoverResult) {
+func attachProjectEnvs(ctx context.Context, client platform.Client, info *ProjectInfo, projectID string, result *DiscoverResult, includeValues bool) {
 	envs, err := client.GetProjectEnv(ctx, projectID)
 	if err != nil {
 		result.Warnings = append(result.Warnings,
 			fmt.Sprintf("Failed to fetch project env vars: %s", err.Error()))
 		return
 	}
-	info.Envs = envVarsToMaps(envs)
+	info.Envs = envVarsToMaps(envs, includeValues)
 }
 
-func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, serviceID string, result *DiscoverResult) {
+// attachEnvs fetches service env vars and converts them for JSON output.
+// Returns raw envs for internal use (e.g. extractSubdomainURL).
+func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, serviceID string, result *DiscoverResult, includeValues bool) []platform.EnvVar {
 	envs, err := client.GetServiceEnv(ctx, serviceID)
 	if err != nil {
 		result.Warnings = append(result.Warnings,
 			fmt.Sprintf("Failed to fetch env vars for %s: %s", info.Hostname, err.Error()))
-		return
+		return nil
 	}
-	info.Envs = envVarsToMaps(envs)
+	info.Envs = envVarsToMaps(envs, includeValues)
+	return envs
 }
 
 // BuildSubdomainURL constructs a full subdomain URL for a service port.
@@ -247,13 +254,11 @@ func BuildSubdomainURL(hostname, subdomainHost string, port int) string {
 }
 
 // extractSubdomainURL reads the zeropsSubdomain env var for the URL.
-// Checks already-fetched envs first (when includeEnvs=true), falls back to API call.
-func extractSubdomainURL(ctx context.Context, client platform.Client, serviceID string, fetchedEnvs []map[string]any) string {
-	for _, env := range fetchedEnvs {
-		if env["key"] == envKeyZeropsSubdomain {
-			if v, ok := env["value"].(string); ok {
-				return v
-			}
+// Checks already-fetched raw envs first (when includeEnvs=true), falls back to API call.
+func extractSubdomainURL(ctx context.Context, client platform.Client, serviceID string, rawEnvs []platform.EnvVar) string {
+	for _, env := range rawEnvs {
+		if env.Key == envKeyZeropsSubdomain {
+			return env.Content
 		}
 	}
 	envs, err := client.GetServiceEnv(ctx, serviceID)

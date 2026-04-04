@@ -26,7 +26,7 @@ func TestDiscover_AllServices(t *testing.T) {
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services)
 
-	result, err := Discover(context.Background(), mock, "proj-1", "", false)
+	result, err := Discover(context.Background(), mock, "proj-1", "", false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestDiscover_SingleService_Found(t *testing.T) {
 		WithServices(services).
 		WithService(detailSvc)
 
-	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
+	result, err := Discover(context.Background(), mock, "proj-1", "api", false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestDiscover_SingleService_OmitsZeroResources(t *testing.T) {
 		WithServices(services).
 		WithService(detailSvc)
 
-	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
+	result, err := Discover(context.Background(), mock, "proj-1", "api", false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestDiscover_SingleService_FallsBackToCustom(t *testing.T) {
 		WithServices(services).
 		WithService(detailSvc)
 
-	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
+	result, err := Discover(context.Background(), mock, "proj-1", "api", false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestDiscover_SingleService_NotFound(t *testing.T) {
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services)
 
-	_, err := Discover(context.Background(), mock, "proj-1", "missing", false)
+	_, err := Discover(context.Background(), mock, "proj-1", "missing", false, false)
 	if err == nil {
 		t.Fatal("expected error for missing service")
 	}
@@ -262,7 +262,7 @@ func TestDiscover_WithEnvs(t *testing.T) {
 			{ID: "e2", Key: "DB_HOST", Content: "localhost"},
 		})
 
-	result, err := Discover(context.Background(), mock, "proj-1", "", true)
+	result, err := Discover(context.Background(), mock, "proj-1", "", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestDiscover_EnvFetchError_Graceful(t *testing.T) {
 		WithServices(services).
 		WithError("GetServiceEnv", fmt.Errorf("env fetch error"))
 
-	result, err := Discover(context.Background(), mock, "proj-1", "", true)
+	result, err := Discover(context.Background(), mock, "proj-1", "", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestDiscover_ProjectEnvs_NoFilter(t *testing.T) {
 			{ID: "pe2", Key: "APP_ENV", Content: "production"},
 		})
 
-	result, err := Discover(context.Background(), mock, "proj-1", "", true)
+	result, err := Discover(context.Background(), mock, "proj-1", "", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestDiscover_ProjectEnvs_WithServiceFilter(t *testing.T) {
 			{ID: "pe1", Key: "GLOBAL_KEY", Content: "global_val"},
 		})
 
-	result, err := Discover(context.Background(), mock, "proj-1", "api", true)
+	result, err := Discover(context.Background(), mock, "proj-1", "api", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestDiscover_ProjectEnvFetchError_Graceful(t *testing.T) {
 		WithServices(services).
 		WithError("GetProjectEnv", fmt.Errorf("project env fetch error"))
 
-	result, err := Discover(context.Background(), mock, "proj-1", "", true)
+	result, err := Discover(context.Background(), mock, "proj-1", "", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -410,7 +410,7 @@ func TestDiscover_SuccessfulEnvs_NoWarnings(t *testing.T) {
 			{ID: "pe1", Key: "APP_ENV", Content: "production"},
 		})
 
-	result, err := Discover(context.Background(), mock, "proj-1", "", true)
+	result, err := Discover(context.Background(), mock, "proj-1", "", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -505,7 +505,7 @@ func TestDiscover_FiltersSystemServices(t *testing.T) {
 				WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 				WithServices(tt.services)
 
-			result, err := Discover(context.Background(), mock, "proj-1", "", false)
+			result, err := Discover(context.Background(), mock, "proj-1", "", false, false)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -581,7 +581,7 @@ func TestDiscover_EnvRefAnnotation(t *testing.T) {
 				WithServices(services).
 				WithServiceEnv("svc-1", tt.envs)
 
-			result, err := Discover(context.Background(), mock, "proj-1", "api", true)
+			result, err := Discover(context.Background(), mock, "proj-1", "api", true, true)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -623,7 +623,7 @@ func TestDiscover_NotesOnReferences(t *testing.T) {
 			{ID: "e2", Key: "DB_HOST", Content: "${db_hostname}"},
 		})
 
-	result, err := Discover(context.Background(), mock, "proj-1", "api", true)
+	result, err := Discover(context.Background(), mock, "proj-1", "api", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -652,7 +652,7 @@ func TestDiscover_NoNotesWithoutReferences(t *testing.T) {
 			{ID: "e2", Key: "HOST", Content: "0.0.0.0"},
 		})
 
-	result, err := Discover(context.Background(), mock, "proj-1", "api", true)
+	result, err := Discover(context.Background(), mock, "proj-1", "api", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -677,7 +677,7 @@ func TestDiscover_SubdomainEnabled_Summary(t *testing.T) {
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services)
 
-	result, err := Discover(context.Background(), mock, "proj-1", "", false)
+	result, err := Discover(context.Background(), mock, "proj-1", "", false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -727,7 +727,7 @@ func TestDiscover_SubdomainURL_DetailedView(t *testing.T) {
 		})
 
 	// Detailed view with includeEnvs=true — URL comes from already-fetched envs.
-	result, err := Discover(context.Background(), mock, "proj-1", "api", true)
+	result, err := Discover(context.Background(), mock, "proj-1", "api", true, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -767,7 +767,7 @@ func TestDiscover_SubdomainURL_DetailedNoEnvs(t *testing.T) {
 		})
 
 	// Detailed view with includeEnvs=false — should still fetch env to get URL.
-	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
+	result, err := Discover(context.Background(), mock, "proj-1", "api", false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -803,7 +803,7 @@ func TestDiscover_SubdomainURL_DisabledNoFetch(t *testing.T) {
 		WithError("GetServiceEnv", fmt.Errorf("should not be called"))
 
 	// When subdomain is disabled and includeEnvs=false, should NOT call GetServiceEnv.
-	result, err := Discover(context.Background(), mock, "proj-1", "api", false)
+	result, err := Discover(context.Background(), mock, "proj-1", "api", false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -822,7 +822,7 @@ func TestDiscover_ProjectNotFound(t *testing.T) {
 	mock := platform.NewMock().
 		WithError("GetProject", fmt.Errorf("project not found"))
 
-	_, err := Discover(context.Background(), mock, "proj-1", "", false)
+	_, err := Discover(context.Background(), mock, "proj-1", "", false, false)
 	if err == nil {
 		t.Fatal("expected error when project not found")
 	}

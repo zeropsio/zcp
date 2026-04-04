@@ -254,7 +254,7 @@ The `isExisting` flag is immutable after plan submission and affects per-target 
 
 5. **Mount dev filesystems**: `zerops_mount action="mount" serviceHostname="{devHostname}"` for each runtime dev service. NOT stage. NOT managed. Mount path: `/var/www/{hostname}/`.
 
-6. **Discover env vars**: `zerops_discover includeEnvs=true` — single call returns ALL services with actual env var values. **Store NAMES ONLY** in session state:
+6. **Discover env vars**: `zerops_discover includeEnvs=true` — single call returns ALL services with env var keys (add `includeEnvValues=true` for actual values). **Store NAMES ONLY** in session state:
    ```
    BootstrapState.DiscoveredEnvVars = map[hostname][]varNames
    ```
@@ -771,12 +771,14 @@ stateDiagram-v2
 **Storage**: `BootstrapState.DiscoveredEnvVars = map[hostname][]varNames`
 
 **Flow**:
-1. `zerops_discover includeEnvs=true` returns actual values (passwords, connection strings) — TRANSIENT
-2. Session stores NAMES ONLY — PERSISTENT during session
-3. Agent guidance uses `${hostname_varName}` references — SAFE (no secrets in prompts)
-4. Agents write references in zerops.yml `envVariables` — resolved at container level
+1. `zerops_discover includeEnvs=true` returns keys and annotations only (no values) — SAFE by default
+2. `includeEnvValues=true` opt-in exposes actual values (passwords, connection strings) — for troubleshooting only
+3. Session stores NAMES ONLY — PERSISTENT during session
+4. Agent guidance uses `${hostname_varName}` references — SAFE (no secrets in prompts)
+5. Agents write references in zerops.yml `envVariables` — resolved at container level
+6. `zerops_env action="generate-dotenv"` generates `.env` files by resolving zerops.yml refs internally
 
-**Security**: Discover tool exposes unmasked values. This is by design for validation purposes. Agent prompts receive names only. Values never persisted in session state.
+**Security**: Keys-only by default — no secrets exposed in normal discovery. Values available via `includeEnvValues=true` for troubleshooting. Agent prompts receive names only. Values never persisted in session state.
 
 ---
 

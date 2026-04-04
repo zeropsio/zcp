@@ -133,14 +133,17 @@ var platformInjectedKeys = map[string]bool{
 }
 
 // envVarsToMaps converts platform env vars to a slice of maps for JSON output.
+// When includeValues is false, only keys and annotations are returned (no secret values in LLM context).
 // Values containing ${...} cross-service references are annotated with isReference: true.
 // Platform-injected keys are annotated with isPlatformInjected: true.
-func envVarsToMaps(envs []platform.EnvVar) []map[string]any {
+func envVarsToMaps(envs []platform.EnvVar, includeValues bool) []map[string]any {
 	result := make([]map[string]any, 0, len(envs))
 	for _, e := range envs {
 		m := map[string]any{
-			"key":   e.Key,
-			"value": e.Content,
+			"key": e.Key,
+		}
+		if includeValues {
+			m["value"] = e.Content
 		}
 		if crossRefPattern.MatchString(e.Content) {
 			m["isReference"] = true

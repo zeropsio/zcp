@@ -21,7 +21,7 @@ Collect everything before diagnosing. The most common mistake is jumping to conc
 zerops_discover service="{hostname}" includeEnvs=true
 ```
 
-Note: status, container count, resource usage, all env vars. If the service doesn't exist, stop here.
+Note: status, container count, resource usage, env var keys (keys only). If the service doesn't exist, stop here.
 
 #### Step 2 — Recent events
 
@@ -72,7 +72,7 @@ This shows whether the issue is new or recurring.
 | Build FAILED | Wrong buildCommands or missing deps | Check build logs |
 | Service not starting | Port outside range or bad start cmd | Ports 10-65435, verify `start` in zerops.yaml |
 | DB connection timeout | Wrong connection string or DB not running | Use `http://hostname:port`, verify DB status |
-| Deploy OK but app broken | Missing env vars or wrong format | `zerops_discover includeEnvs=true` |
+| Deploy OK but app broken | Missing env vars or wrong format | `zerops_discover includeEnvs=true` (keys only). If keys present but app still broken, add `includeEnvValues=true` to inspect actual values |
 | HTTP 000 (connection refused) | Server not running on dev service | Start server via SSH first |
 | SSH hangs after starting server | Expected — server runs in foreground | Use Bash `run_in_background=true` |
 | `jq: command not found` via SSH | jq not in containers | Pipe outside: `ssh dev "curl ..." \| jq .` |
@@ -121,7 +121,7 @@ Gather ALL data before diagnosing. Do not jump to conclusions.
 
 | # | Action | Tool | What to look for |
 |---|--------|------|-----------------|
-| 1 | Check status | zerops_discover service="{hostname}" includeEnvs=true | Status, containers, resources, env vars |
+| 1 | Check status | zerops_discover service="{hostname}" includeEnvs=true | Status, containers, resources, env var keys (keys only). If keys present but app still broken, add `includeEnvValues=true` to inspect actual values |
 | 2 | Recent events | zerops_events serviceHostname="{hostname}" limit=10 | Failed deploys, restarts, scaling |
 | 3 | Error logs | zerops_logs serviceHostname="{hostname}" severity="error" since="1h" | Error messages, stack traces |
 | 4 | Warning logs | zerops_logs serviceHostname="{hostname}" severity="warning" since="1h" | Connection issues, retries |
@@ -167,7 +167,7 @@ Two concerns: ensure zerops.yaml is correct for the runtime (hard), then deploy 
 zerops_discover includeEnvs=true
 ```
 
-Note each service type (nodejs@22, go@1, etc.) and status.
+Returns env var keys only (no values). Note each service type (nodejs@22, go@1, etc.) and status.
 - **RUNNING** → subsequent deploy. zerops.yaml likely exists already.
 - **READY_TO_DEPLOY** → first deploy after bootstrap. zerops.yaml may need creation.
 
@@ -191,7 +191,7 @@ Before deploying, verify:
 1. **`zerops.yaml` must exist** at the working directory root with `setup:` entries matching target service hostnames.
 2. **`includeGit=true` requires `deployFiles: [.]`** — individual paths break git structure.
 3. **`deployFiles` completeness check**: When cherry-picking files (not using `.`), verify every listed path exists AND that your `run.start` command and framework can find all required files. Common misses: `app/` (Laravel/PHP), `src/` (many frameworks), lock files, config dirs. Run `ls` to check.
-4. **Environment variables must be resolved.** Run `zerops_discover includeEnvs=true` and verify cross-referenced variables have real values (not `${...}` literals).
+4. **Environment variables must be resolved.** Run `zerops_discover includeEnvs=true` (keys only) and verify cross-referenced variable names exist. If values need inspection, add `includeEnvValues=true`.
 5. **NEVER hardcode credential values.** Always use `${hostname_varName}` references.
 
 Platform knowledge (YAML schemas, runtime rules) is included in this guide automatically.

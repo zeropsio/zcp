@@ -177,6 +177,8 @@ After services reach RUNNING, discover actual env vars:
 zerops_discover includeEnvs=true
 ```
 
+Returns keys and annotations only (keys only — sufficient for validating env var names).
+
 **If the plan has no managed services** (type 2a static frontend): skip this step — there are no env vars to discover.
 
 Record which env vars exist. **ONLY use variables that were actually discovered** — guessing names causes silent runtime failures (`${...}` becomes a literal string, not an error). Service-specific variable names are in the injected service reference cards.

@@ -28,7 +28,7 @@ func TestEnvTool_GetAction_ReturnsError(t *testing.T) {
 		t.Fatal("expected IsError for get action")
 	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "set or delete") {
+	if !strings.Contains(text, "set, delete, or generate-dotenv") {
 		t.Errorf("error should suggest 'set or delete', got: %s", text)
 	}
 }
@@ -119,7 +119,7 @@ func TestEnvTool_EmptyAction(t *testing.T) {
 		t.Error("expected IsError for empty action")
 	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "set or delete") {
+	if !strings.Contains(text, "set, delete, or generate-dotenv") {
 		t.Errorf("error should suggest 'set or delete', got: %s", text)
 	}
 }
@@ -139,7 +139,7 @@ func TestEnvTool_InvalidAction(t *testing.T) {
 		t.Error("expected IsError for invalid action")
 	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "set or delete") {
+	if !strings.Contains(text, "set, delete, or generate-dotenv") {
 		t.Errorf("error should suggest 'set or delete', got: %s", text)
 	}
 }

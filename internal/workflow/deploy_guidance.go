@@ -177,7 +177,7 @@ func buildKnowledgeMap(targets []DeployTarget) string {
 		sb.WriteString("- Runtime docs: `zerops_knowledge query=\"<your runtime>\"` (e.g. nodejs, go, php-apache)\n")
 	}
 
-	sb.WriteString("- Env var discovery: `zerops_discover includeEnvs=true`\n")
+	sb.WriteString("- Env var keys: `zerops_discover includeEnvs=true` (keys only). If values needed for troubleshooting: add `includeEnvValues=true`\n")
 	return sb.String()
 }
 

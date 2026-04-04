@@ -155,7 +155,7 @@ func writeManagedSection(b *strings.Builder, managed []platform.ServiceStack) {
 			svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 			svc.Status)
 	}
-	b.WriteString("Env vars: zerops_discover includeEnvs=true\n\n")
+	b.WriteString("Env var keys: zerops_discover includeEnvs=true (keys only, no values). Local .env: zerops_env action=generate-dotenv\n\n")
 }
 
 // writeUnmanagedRuntimesSection lists runtime services without ZCP state and

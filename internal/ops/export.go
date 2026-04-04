@@ -49,7 +49,7 @@ func ExportProject(
 	}
 
 	// Step 2: Discover services for metadata the export doesn't include.
-	discoverResult, err := Discover(ctx, client, projectID, "", false)
+	discoverResult, err := Discover(ctx, client, projectID, "", false, false)
 	if err != nil {
 		return nil, fmt.Errorf("discover for export: %w", err)
 	}

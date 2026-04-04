@@ -120,7 +120,7 @@ ssh {devHostname} "cd /var/www && git add -A && git commit -m 'initial' && git p
 ```
 
 If push fails with authentication error:
-1. Verify GIT_TOKEN is set: `zerops_discover service="{devHostname}" includeEnvs=true` — look for GIT_TOKEN
+1. Verify GIT_TOKEN is set: `zerops_discover service="{devHostname}" includeEnvs=true` (keys only — sufficient for checking GIT_TOKEN presence) — look for GIT_TOKEN
 2. Verify .netrc exists: `ssh {devHostname} "test -f ~/.netrc && echo OK || echo MISSING"`
 3. Recreate .netrc if missing (see above)
 
