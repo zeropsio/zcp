@@ -725,12 +725,11 @@ func TestCheckHTTPStatus(t *testing.T) {
 			wantDetail: "connection 'db': error",
 		},
 		{
-			name: "connections ok but missing top-level status",
+			name: "connections ok but missing top-level status — pass (framework may omit status field)",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
 				fmt.Fprint(w, `{"service":"app","connections":{"db":{"status":"ok"}}}`)
 			},
-			wantStatus: "fail",
-			wantDetail: "status: ",
+			wantStatus: "pass",
 		},
 		{
 			name: "connections ok but top-level status error",
@@ -756,12 +755,12 @@ func TestCheckHTTPStatus(t *testing.T) {
 			wantDetail: "status: error",
 		},
 		{
-			name: "not JSON — includes body excerpt",
+			name: "not JSON but 200 — passes (framework may return HTML health page)",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
 				fmt.Fprint(w, `<html>not found</html>`)
 			},
-			wantStatus:     "fail",
-			wantDetail:     "response not JSON (HTTP 200): <html>not found</html>",
+			wantStatus:     "pass",
+			wantDetail:     "HTTP 200 (non-JSON)",
 			wantHTTPStatus: 200,
 		},
 		{

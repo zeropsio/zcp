@@ -172,25 +172,33 @@ func checkHTTPStatus(ctx context.Context, httpClient HTTPDoer, url string) Check
 		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("read body: %v", err)}
 	}
 
+	// Try parsing as JSON with status field. Accept any 2xx with valid JSON
+	// regardless of the exact response shape — recipes use framework-native
+	// formats (e.g. {"status":"healthy"}) not the bootstrap spec.
 	var sr statusResponse
 	if err := json.Unmarshal(body, &sr); err != nil {
-		excerpt := truncateBody(body, 200)
-		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("response not JSON (HTTP %d): %s", resp.StatusCode, excerpt), HTTPStatus: resp.StatusCode}
+		// Not JSON but HTTP 2xx — still a pass (might be HTML or plain text health page).
+		return CheckResult{Name: name, Status: CheckPass, Detail: fmt.Sprintf("HTTP %d (non-JSON)", resp.StatusCode), HTTPStatus: resp.StatusCode}
 	}
 
-	if sr.Status != "ok" {
-		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("status: %s", sr.Status)}
-	}
-
-	if len(sr.Connections) > 0 {
-		for connName, conn := range sr.Connections {
-			if conn.Status != "ok" {
-				return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("connection '%s': %s", connName, conn.Status)}
-			}
+	// Check status field if present — accept common healthy values.
+	if sr.Status != "" {
+		switch sr.Status {
+		case "ok", "healthy", "up", "running", "pass":
+			// All good.
+		default:
+			return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("status: %s", sr.Status), HTTPStatus: resp.StatusCode}
 		}
 	}
 
-	return CheckResult{Name: name, Status: CheckPass}
+	// Check connections if present (bootstrap format).
+	for connName, conn := range sr.Connections {
+		if conn.Status != "" && conn.Status != "ok" && conn.Status != "connected" {
+			return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("connection '%s': %s", connName, conn.Status)}
+		}
+	}
+
+	return CheckResult{Name: name, Status: CheckPass, HTTPStatus: resp.StatusCode}
 }
 
 // truncateBody returns a string-truncated body with "..." if over max bytes.
