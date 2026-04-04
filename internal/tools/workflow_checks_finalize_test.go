@@ -283,7 +283,7 @@ func TestCheckRecipeFinalize_CommentRatio(t *testing.T) {
 	dir := t.TempDir()
 	plan := testFinalizePlan()
 
-	// Write files WITHOUT extra comments.
+	// Write template files — now include rich framework-aware comments.
 	files := workflow.BuildFinalizeOutput(plan)
 	for relPath, content := range files {
 		fullPath := filepath.Join(dir, relPath)
@@ -301,15 +301,10 @@ func TestCheckRecipeFinalize_CommentRatio(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should have comment_ratio failures (templates don't have enough comments).
-	hasCommentFail := false
+	// Templates now include rich comments — comment_ratio should pass.
 	for _, c := range result.Checks {
 		if c.Status == "fail" && strings.Contains(c.Name, "comment_ratio") {
-			hasCommentFail = true
-			break
+			t.Errorf("template should pass comment_ratio check, but failed: %s", c.Detail)
 		}
-	}
-	if !hasCommentFail {
-		t.Error("expected comment_ratio check to fail for uncommented templates")
 	}
 }

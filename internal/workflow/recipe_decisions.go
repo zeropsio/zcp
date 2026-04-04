@@ -46,7 +46,7 @@ func ResolveDevTooling(framework, runtimeType string) string {
 
 	// Node/Bun frameworks typically support hot-reload.
 	switch base {
-	case "nodejs", "bun":
+	case "nodejs", "bun": //nolint:goconst // runtime name, not a shared constant
 		return "hot-reload"
 	}
 

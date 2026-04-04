@@ -13,7 +13,7 @@ func testMinimalPlan() *RecipePlan {
 	return &RecipePlan{
 		Framework:   "laravel",
 		Tier:        RecipeTierMinimal,
-		Slug:        "laravel-hello-world",
+		Slug:        "laravel-minimal",
 		RuntimeType: "php-nginx@8.4",
 		Research: ResearchData{
 			ServiceType:    "php-nginx",
@@ -50,14 +50,32 @@ func TestGenerateRecipeREADME_Minimal(t *testing.T) {
 
 	readme := GenerateRecipeREADME(testMinimalPlan())
 
-	if !strings.Contains(readme, "Laravel") {
-		t.Error("expected README to contain framework name")
+	tests := []struct {
+		name   string
+		want   string
+		negate bool
+	}{
+		{"framework name", "Laravel", false},
+		{"pretty name from slug", "Minimal", false},
+		{"no Hello World for minimal", "Hello World", true},
+		{"intro extract markers", "ZEROPS_EXTRACT_START:intro", false},
+		{"deploy links", "deploy with one click", false},
+		{"deploy button", "deploy-button.svg", false},
+		{"cover image", "cover-laravel.svg", false},
+		{"opencode mention", "opencode.ai", false},
+		{"more recipes line", "Laravel recipes", false},
+		{"discord link", "discord.gg/zeropsio", false},
 	}
-	if !strings.Contains(readme, "ZEROPS_EXTRACT_START:intro") {
-		t.Error("expected README to have intro extract markers")
-	}
-	if !strings.Contains(readme, "deploy with one click") {
-		t.Error("expected README to have deploy links")
+	for _, tt := range tests {
+		if tt.negate {
+			if strings.Contains(readme, tt.want) {
+				t.Errorf("%s: should NOT contain %q", tt.name, tt.want)
+			}
+		} else {
+			if !strings.Contains(readme, tt.want) {
+				t.Errorf("%s: expected to contain %q", tt.name, tt.want)
+			}
+		}
 	}
 	// Should list all 6 environments with links.
 	for _, env := range envTiers {
@@ -74,6 +92,19 @@ func TestGenerateRecipeREADME_Showcase(t *testing.T) {
 
 	if !strings.Contains(readme, "Showcase") {
 		t.Error("expected README to mention showcase")
+	}
+}
+
+func TestGenerateRecipeREADME_HelloWorld(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+	plan.Slug = "bun-hello-world"
+	plan.Framework = "bun"
+	readme := GenerateRecipeREADME(plan)
+
+	if !strings.Contains(readme, "# Bun Hello World Recipe") {
+		t.Error("expected 'Bun Hello World Recipe' title derived from slug")
 	}
 }
 
@@ -289,6 +320,12 @@ func TestGenerateEnvREADME_FixedContent(t *testing.T) {
 			if !strings.Contains(readme, "Laravel") {
 				t.Error("expected framework name in README")
 			}
+			if !strings.Contains(readme, "Minimal") {
+				t.Error("expected pretty name 'Minimal' from slug")
+			}
+			if strings.Contains(readme, "Hello World") {
+				t.Error("should NOT contain 'Hello World' for minimal tier")
+			}
 			if !strings.Contains(readme, "ZEROPS_EXTRACT_START:intro") {
 				t.Error("expected intro extract markers")
 			}
@@ -298,7 +335,84 @@ func TestGenerateEnvREADME_FixedContent(t *testing.T) {
 			if !strings.Contains(readme, "app.zerops.io/recipes") {
 				t.Error("expected deploy link")
 			}
+
+			// Env type label must appear in intro paragraph.
+			env := envTiers[i]
+			lowerLabel := strings.ToLower(env.Label)
+			if !strings.Contains(readme, lowerLabel+" environment for") {
+				t.Errorf("expected '%s environment for' in intro paragraph", lowerLabel)
+			}
+
+			// Extract intro should use sentence-cased IntroLabel.
+			if !strings.Contains(readme, "**"+env.IntroLabel+"**") {
+				t.Errorf("expected sentence-cased label **%s** in extract", env.IntroLabel)
+			}
 		})
+	}
+}
+
+func TestGenerateEnvREADME_DynamicDescription(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+
+	// Env 0-1 should include "dev service" and "database" from targets.
+	for _, envIdx := range []int{0, 1} {
+		readme := GenerateEnvREADME(plan, envIdx)
+		if !strings.Contains(readme, "dev service") {
+			t.Errorf("env %d: expected 'dev service' in description", envIdx)
+		}
+		if !strings.Contains(readme, "staging service") {
+			t.Errorf("env %d: expected 'staging service' in description", envIdx)
+		}
+		if !strings.Contains(readme, "database") {
+			t.Errorf("env %d: expected 'database' in description", envIdx)
+		}
+	}
+}
+
+func TestRecipePrettyName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		slug      string
+		framework string
+		want      string
+	}{
+		{"laravel-minimal", "laravel", "Minimal"},
+		{"bun-hello-world", "bun", "Hello World"},
+		{"django-showcase", "django", "Showcase"},
+		{"nextjs-hello-world", "nextjs", "Hello World"},
+		{"react-static-starter", "react", "Static Starter"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.slug, func(t *testing.T) {
+			t.Parallel()
+			got := recipePrettyName(tt.slug, tt.framework)
+			if got != tt.want {
+				t.Errorf("recipePrettyName(%q, %q) = %q, want %q", tt.slug, tt.framework, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNaturalJoin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		parts []string
+		want  string
+	}{
+		{nil, ""},
+		{[]string{"a"}, "a"},
+		{[]string{"a", "b"}, "a and b"},
+		{[]string{"a", "b", "c"}, "a, b, and c"},
+	}
+	for _, tt := range tests {
+		got := naturalJoin(tt.parts)
+		if got != tt.want {
+			t.Errorf("naturalJoin(%v) = %q, want %q", tt.parts, got, tt.want)
+		}
 	}
 }
 
@@ -308,8 +422,8 @@ func TestBuildFinalizeOutput_FileCount(t *testing.T) {
 	plan := testMinimalPlan()
 	files := BuildFinalizeOutput(plan)
 
-	// 1 main README + 6 * (import.yaml + README.md) = 13 files.
-	expectedCount := 1 + 6*2
+	// 1 main README + 6 * (import.yaml + README.md) + 1 app README = 14 files.
+	expectedCount := 1 + 6*2 + 1
 	if len(files) != expectedCount {
 		t.Errorf("expected %d files, got %d", expectedCount, len(files))
 	}
@@ -317,6 +431,11 @@ func TestBuildFinalizeOutput_FileCount(t *testing.T) {
 	// Check main README exists.
 	if _, ok := files["README.md"]; !ok {
 		t.Error("missing main README.md")
+	}
+
+	// Check app README exists.
+	if _, ok := files["appdev/README.md"]; !ok {
+		t.Error("missing appdev/README.md")
 	}
 
 	// Check all env folders.
@@ -327,6 +446,113 @@ func TestBuildFinalizeOutput_FileCount(t *testing.T) {
 		}
 		if _, ok := files[folder+"/README.md"]; !ok {
 			t.Errorf("missing %s/README.md", folder)
+		}
+	}
+}
+
+func TestGenerateEnvImportYAML_CommentQuality(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+
+	for i := 0; i < EnvTierCount(); i++ {
+		t.Run(fmt.Sprintf("env_%d", i), func(t *testing.T) {
+			t.Parallel()
+			yaml := GenerateEnvImportYAML(plan, i)
+
+			// Count comment lines vs total lines.
+			var commentLines, totalLines int
+			for line := range strings.SplitSeq(yaml, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "" {
+					continue
+				}
+				totalLines++
+				if strings.HasPrefix(trimmed, "#") {
+					commentLines++
+				}
+			}
+
+			if totalLines == 0 {
+				t.Fatal("no content in YAML")
+			}
+
+			ratio := float64(commentLines) / float64(totalLines)
+			if ratio < 0.2 {
+				t.Errorf("comment ratio %.2f is below 0.2 threshold (%d comments / %d lines)",
+					ratio, commentLines, totalLines)
+			}
+
+			// Must contain framework-specific references.
+			if !strings.Contains(yaml, "MariaDB") && !strings.Contains(yaml, "PostgreSQL") {
+				t.Error("expected database type name in comments")
+			}
+		})
+	}
+}
+
+func TestGenerateEnvImportYAML_Env0_FrameworkAwareComments(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+	yaml := GenerateEnvImportYAML(plan, 0)
+
+	checks := []string{
+		"Development workspace", // dev service comment
+		"Staging service",       // stage service comment
+		"php artisan serve",     // start command referenced
+		"zerops-recipe-apps",    // correct org in buildFromGit
+		"single-node database",  // db comment
+		"Priority 10",           // explains why priority
+	}
+	for _, want := range checks {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("env 0: expected comment containing %q", want)
+		}
+	}
+}
+
+func TestGenerateEnvImportYAML_ProjectNameSuffixes(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+
+	wantSuffixes := map[int]string{
+		0: "agent", 1: "remote", 2: "local",
+		3: "stage", 4: "small-prod", 5: "ha-prod",
+	}
+	for envIdx, suffix := range wantSuffixes {
+		yaml := GenerateEnvImportYAML(plan, envIdx)
+		expected := plan.Slug + "-" + suffix
+		if !strings.Contains(yaml, expected) {
+			t.Errorf("env %d: expected project name %q", envIdx, expected)
+		}
+	}
+}
+
+func TestGenerateAppREADME(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+	readme := GenerateAppREADME(plan)
+
+	checks := []struct {
+		name string
+		want string
+	}{
+		{"title", "# Laravel Minimal Recipe App"},
+		{"intro extract", "ZEROPS_EXTRACT_START:intro"},
+		{"integration-guide extract", "ZEROPS_EXTRACT_START:integration-guide"},
+		{"knowledge-base extract", "ZEROPS_EXTRACT_START:knowledge-base"},
+		{"deploy button", "deploy-button.svg"},
+		{"cover image", "cover-laravel.svg"},
+		{"recipe link", "app.zerops.io/recipes/laravel-minimal"},
+		{"H2 outside marker", "## Integration Guide"},
+		{"step 1 heading", "### 1. Adding `zerops.yaml`"},
+	}
+	for _, tt := range checks {
+		if !strings.Contains(readme, tt.want) {
+			t.Errorf("%s: expected to contain %q", tt.name, tt.want)
 		}
 	}
 }

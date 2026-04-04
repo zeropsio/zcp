@@ -16,6 +16,8 @@ const (
 	RecipeTierShowcase = "showcase" // type 4
 )
 
+const recipeDBNone = "none"
+
 // RecipeState tracks progress through the recipe workflow.
 type RecipeState struct {
 	Active            bool                `json:"active"`
