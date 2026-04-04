@@ -140,13 +140,12 @@ zerops[]:
 
 | What | Where | Why |
 |------|-------|-----|
-| Shared config (non-secret, all services) | `project.envVariables` in import.yaml | Auto-inherited by every service. Do NOT re-reference in zerops.yaml (creates shadow). |
+| Anything shared across services | `project.envVariables` in import.yaml | Auto-inherited by every service. Use for shared config (APP_NAME), shared secrets (APP_KEY with preprocessor), or any value that must be identical across services (e.g. encryption keys when sharing a DB). Do NOT re-reference in zerops.yaml (creates shadow). |
 | Cross-service wiring (DB creds, cache host) | `run.envVariables` in zerops.yaml | `${hostname_varname}` references resolve at deploy time. This is the ONLY place cross-service refs work. |
-| Shared secrets (encryption/session keys used by multiple services sharing a DB) | `project.envVariables` in import.yaml (with preprocessor) | Services sharing a database MUST share encryption keys — data encrypted by one must be decryptable by the other. Project-level vars are auto-inherited by all services. |
-| Per-service secrets (API keys, tokens unique to one service) | `envSecrets` per-service in import.yaml | Blurred in GUI. Auto-injected as OS vars — do NOT re-reference in zerops.yaml. |
+| Per-service secrets (unique to one service) | `envSecrets` per-service in import.yaml | Blurred in GUI. Auto-injected as OS vars — do NOT re-reference in zerops.yaml. |
 
 **How they work:**
-- **project.envVariables** (import.yaml): inherited by all services in the project. Good for shared non-secret config (e.g. `APP_NAME`, `LOG_LEVEL`). Changes via GUI, no redeploy needed.
+- **project.envVariables** (import.yaml): inherited by all services in the project. Use for any value that should be the same everywhere — shared config, shared secrets (with `<@generateRandomString(...)>`), feature flags, etc. Changes via GUI, no redeploy needed.
 - **run.envVariables** (zerops.yaml): injected at deploy time. Support `${hostname_varname}` cross-service references. Changes take effect on next deploy.
 - **envSecrets** (import.yaml per-service, or GUI): injected directly as OS env vars at container start. Changes require a **service restart** (not just redeploy).
 
