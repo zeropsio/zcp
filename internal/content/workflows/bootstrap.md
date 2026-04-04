@@ -16,7 +16,16 @@ Two phases: generate correct configuration (the hard part), then deploy and veri
 ## Phase 1: Configuration
 
 <section name="discover">
-### Classify services, plan, confirm with user
+### Process
+
+1. Read `availableStacks` in this response — these are the ONLY valid service types. Pick from them. Do not guess or invent type names.
+2. Call `zerops_discover` to see what already exists in the project.
+3. Map the user's request to types from `availableStacks`.
+4. If the stack uses a known framework, load its recipe: `zerops_knowledge recipe="{name}"`.
+5. Choose mode (standard/dev/simple), present plan to user for confirmation.
+6. After user confirms, submit: `zerops_workflow action="complete" step="discover" plan=[...]`
+
+### Classify existing services
 
 Call `zerops_discover` to see what exists. Each service returns `managedByZCP` (has ServiceMeta) and `isInfrastructure` (database, cache, storage) fields. Classify based on facts:
 
