@@ -326,23 +326,30 @@ Key commands: zerops_deploy targetService="{devHostname}" (self-deploy),
 zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" (cross-deploy).
 </section>
 
-<section name="deploy-ci-cd">
-### CI/CD Deploy Strategy
+<section name="deploy-push-git">
+### Push-Git Deploy Strategy
 
-CI/CD integration is configured for this service.
-Deployments trigger automatically when you push to the trigger branch.
+Push committed code from the dev container to an external git repository (GitHub/GitLab).
 
-**To deploy changes:**
-1. Commit and push: `ssh {devHostname} "cd /var/www && git add -A && git commit -m 'update' && git push"`
-   Or if working on an SSHFS mount: commit and push via the mount path.
-2. CI/CD pipeline triggers automatically (GitHub Actions or GitLab webhook)
-3. Monitor: `zerops_events serviceHostname="{stageHostname}"`
-4. Verify: `zerops_verify serviceHostname="{stageHostname}"`
+**First time setup** (once per service):
+1. Get a GitHub/GitLab token from the user (Contents: Read and write for GitHub, write_repository for GitLab)
+2. Store as project env var: `zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]`
+3. Commit: `ssh {devHostname} "cd /var/www && git add -A && git commit -m 'initial commit'"`
+4. Push with remote URL: `zerops_deploy targetService="{devHostname}" strategy="git-push" remoteUrl="{url}"`
 
-**No `zerops_deploy` needed.** The CI/CD pipeline handles the build and deployment.
+**Subsequent deploys:**
+1. Commit with a descriptive message:
+   `ssh {devHostname} "cd /var/www && git add -A && git commit -m '{what changed}'"`
+2. Push to remote:
+   `zerops_deploy targetService="{devHostname}" strategy="git-push"`
+3. If CI/CD is configured: build triggers automatically.
+   Monitor: `zerops_events serviceHostname="{stageHostname}"`
+4. If no CI/CD: deploy to stage manually:
+   `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`
 
-**To reconfigure:** `zerops_workflow action="start" workflow="cicd"` for CI/CD setup guidance.
-**To switch strategy:** `zerops_workflow action="strategy" strategies={"hostname":"push-dev"}`
+**Set up CI/CD:** `zerops_workflow action="start" workflow="cicd"`
+**Export with import.yaml:** `zerops_workflow action="start" workflow="export"`
+**Switch strategy:** `zerops_workflow action="strategy" strategies={"{hostname}":"push-dev"}`
 </section>
 
 <section name="deploy-manual">

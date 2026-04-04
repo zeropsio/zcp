@@ -97,25 +97,22 @@ Ask user: "Where should I push the code?"
 
 ### Git Init and Push (states S0 and S1)
 
+Create .gitignore if missing:
 ```bash
-# Initialize git if needed (S0)
-ssh {hostname} "cd /var/www && git init -q -b main"
-
-# Set git identity
-ssh {hostname} "cd /var/www && git config user.email 'deploy@zerops.io' && git config user.name 'ZCP Export'"
-
-# Create .gitignore if missing
 ssh {hostname} "cd /var/www && test -f .gitignore || echo 'node_modules/\nvendor/\n.env\n.env.*\n*.log\ndist/\nbuild/\n.cache/' > .gitignore"
+```
+Customize for framework: `zerops_knowledge query="{runtime} gitignore"`
 
-# Add remote
-ssh {hostname} "cd /var/www && git remote add origin {repoUrl}"
-
-# Commit and push
-ssh {hostname} "cd /var/www && git add -A && git commit -m 'initial: export from Zerops' && git push -u origin main"
+Commit and push (tool handles git init, .netrc auth, remote setup):
+```bash
+ssh {hostname} "cd /var/www && git add -A && git commit -m 'initial: export from Zerops'"
+```
+```
+zerops_deploy targetService="{hostname}" strategy="git-push" remoteUrl="{repoUrl}"
 ```
 
-If push fails with auth error: verify GIT_TOKEN is set correctly and .netrc exists.
-If push fails with "remote already exists": `git remote set-url origin {repoUrl}` instead of `add`.
+If push fails with auth error: verify GIT_TOKEN is set via `zerops_discover includeEnvs=true`.
+If push fails with history conflict: push from a dev service (which preserves .git/).
 
 ### zerops.yml Verification
 
@@ -336,5 +333,8 @@ Summarize what was created:
  **To deploy manually:**
  ```
  zcli push --service-id {serviceId}
- ```"
+ ```
+
+ **Set deploy strategy** (if not already set):
+ `zerops_workflow action=\"strategy\" strategies={\"{hostname}\":\"push-git\"}`"
 </section>

@@ -883,9 +883,8 @@ If the user asks for changes after initial bootstrap:
 
 The transition message includes:
 - **Services list** — all provisioned services with modes and dependencies
-- **Deploy strategy options** — push-dev, ci-cd, or manual (strategy selection happens during the deploy or cicd workflows, not here)
-- **CI/CD gate requirements** — if the user chooses CI/CD strategy later
-- **Router offerings** — ranked workflow suggestions (deploy, cicd, and utilities)
+- **Deploy strategy options** — push-dev, push-git, or manual (strategy selection happens during the deploy or cicd workflows, not here)
+- **Router offerings** — ranked workflow suggestions (deploy, cicd, export, and utilities)
 
 **Complete this step:** use `zerops_workflow action="complete" step="close" attestation="Bootstrap finalized, services operational"`.
 

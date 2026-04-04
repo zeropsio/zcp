@@ -115,14 +115,17 @@ chmod +x /var/www/.git/hooks/pre-push'
 
 ### Push Initial Code
 
+Commit first, then push (tool handles .netrc auth, remote setup):
 ```bash
-ssh {devHostname} "cd /var/www && git add -A && git commit -m 'initial' && git push -u origin {branch}"
+ssh {devHostname} "cd /var/www && git add -A && git commit -m 'initial commit'"
+```
+```
+zerops_deploy targetService="{devHostname}" strategy="git-push" remoteUrl="{repoUrl}"
 ```
 
 If push fails with authentication error:
-1. Verify GIT_TOKEN is set: `zerops_discover service="{devHostname}" includeEnvs=true` (keys only — sufficient for checking GIT_TOKEN presence) — look for GIT_TOKEN
-2. Verify .netrc exists: `ssh {devHostname} "test -f ~/.netrc && echo OK || echo MISSING"`
-3. Recreate .netrc if missing (see above)
+1. Verify GIT_TOKEN is set: `zerops_discover service="{devHostname}" includeEnvs=true` — look for GIT_TOKEN
+2. Retry the push: `zerops_deploy targetService="{devHostname}" strategy="git-push"`
 
 ---
 
@@ -179,7 +182,10 @@ For multiple services, add one `zeropsio/actions` step per target service, each 
 ### 5. Commit and push
 
 ```bash
-ssh {devHostname} "cd /var/www && git add -A && git commit -m 'add CI/CD workflow' && git push"
+ssh {devHostname} "cd /var/www && git add -A && git commit -m 'ci: add deploy workflow'"
+```
+```
+zerops_deploy targetService="{devHostname}" strategy="git-push"
 ```
 
 First push to main triggers deploy.
