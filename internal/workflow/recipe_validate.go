@@ -144,6 +144,9 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 		if t.Role == "" {
 			errs = append(errs, fmt.Sprintf("target[%d]: role is required", i))
 		}
+		if len(t.Environments) == 0 {
+			errs = append(errs, fmt.Sprintf("target[%d] %q: environments is required (e.g. [\"0\",\"1\",\"2\",\"3\",\"4\",\"5\"])", i, t.Hostname))
+		}
 	}
 	return errs
 }

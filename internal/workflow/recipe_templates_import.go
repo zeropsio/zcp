@@ -19,8 +19,20 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 
 	b.WriteString("\nservices:\n")
 
-	for _, target := range plan.Targets {
-		if !TargetInEnv(target, envIndex) {
+	// Determine which targets belong in this env.
+	// If no target has Environments set, fall back to including ALL targets
+	// (prevents empty services: sections from malformed plans).
+	targets := plan.Targets
+	hasAnyMatch := false
+	for _, t := range targets {
+		if TargetInEnv(t, envIndex) {
+			hasAnyMatch = true
+			break
+		}
+	}
+
+	for _, target := range targets {
+		if hasAnyMatch && !TargetInEnv(target, envIndex) {
 			continue
 		}
 		if isRuntimeService(target.Role) && envIndex <= 1 {
