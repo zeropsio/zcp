@@ -367,7 +367,6 @@ func IsDataService(role string) bool {
 	return false
 }
 
-
 // envDescription returns a longer description for an environment tier.
 func envDescription(envIndex int) string {
 	switch envIndex {
