@@ -7,23 +7,93 @@ import (
 	"strings"
 )
 
+// PublishOpts holds recipe metadata for template placeholder replacement.
+type PublishOpts struct {
+	Slug        string // e.g. "laravel-minimal"
+	PrettyName  string // e.g. "Laravel Minimal"
+	Software    string // e.g. "Laravel"
+	Description string // one-line description for intro
+	Tags        string // e.g. "php" for recipe filtering
+	CoverSVG    string // e.g. "cover-laravel.svg" (empty = omit)
+}
+
+// templatePlaceholders maps template placeholders to PublishOpts values.
+func templatePlaceholders(opts PublishOpts) map[string]string {
+	return map[string]string{
+		"PLACEHOLDER_PRETTY_RECIPE_NAME": opts.PrettyName,
+		"PLACEHOLDER_RECIPE_SOFTWARE":    opts.Software,
+		"PLACEHOLDER_RECIPE_DESCRIPTION": opts.Description,
+		"PLACEHOLDER_RECIPE_DIRECTORY":   opts.Slug,
+		"PLACEHOLDER_RECIPE_TAGS":        opts.Tags,
+		"PLACEHOLDER_PRETTY_RECIPE_TAGS": opts.Tags,
+		"PLACEHOLDER_COVER_SVG":          opts.CoverSVG,
+		"PLACEHOLDER_PROJECT_NAME":       opts.Slug,
+	}
+}
+
+// applyPlaceholders replaces all PLACEHOLDER_ values in content.
+func applyPlaceholders(content string, placeholders map[string]string) string {
+	for k, v := range placeholders {
+		content = strings.ReplaceAll(content, k, v)
+	}
+	return content
+}
+
 // PublishRecipe publishes recipe environment files to zeropsio/recipes as a PR.
-func PublishRecipe(cfg *Config, slug, sourceDir string, dryRun bool) (PushResult, error) {
-	files, err := CollectRecipeFiles(sourceDir, slug)
+// Fetches the _template from the recipes repo, applies placeholders, then
+// overlays the generated import.yaml files from the recipe output.
+func PublishRecipe(cfg *Config, slug, sourceDir string, opts PublishOpts, dryRun bool) (PushResult, error) {
+	// Collect our generated import.yaml files.
+	localFiles, err := CollectRecipeFiles(sourceDir, slug)
 	if err != nil {
 		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("collect files: %w", err)
 	}
-
-	if len(files) == 0 {
-		return PushResult{Slug: slug, Status: Skipped, Reason: "no files found in environments/"}, nil
+	if len(localFiles) == 0 {
+		return PushResult{Slug: slug, Status: Skipped, Reason: "no files found"}, nil
 	}
 
 	repo := cfg.Push.Recipes.RecipesRepo
 	if repo == "" {
-		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("recipes_repo not configured in .sync.yaml")}, nil
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("recipes_repo not configured")
 	}
 
 	gh := &GH{Repo: repo}
+	opts.Slug = slug
+	placeholders := templatePlaceholders(opts)
+
+	// Fetch _template files from the recipes repo.
+	templateFiles, err := fetchTemplateFiles(gh, "_template")
+	if err != nil {
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("fetch template: %w", err)
+	}
+
+	// Build final file map: template files with placeholders replaced,
+	// then overlay our generated import.yaml files.
+	files := make(map[string]string, len(templateFiles)+len(localFiles))
+
+	// Apply template files, remapping _template/ → {slug}/
+	for path, content := range templateFiles {
+		// Skip .human marker file.
+		if strings.HasSuffix(path, "/.human") || path == ".human" {
+			continue
+		}
+		// Remap path: _template/X → {slug}/X
+		newPath := slug + "/" + strings.TrimPrefix(path, "_template/")
+		// Apply placeholders to content.
+		files[newPath] = applyPlaceholders(content, placeholders)
+	}
+
+	// Overlay our generated files (import.yaml, README.md from recipe output).
+	// Our import.yaml replaces the template stub; our README.md is skipped
+	// since the template README is better (has markers, deploy links).
+	for path, content := range localFiles {
+		if strings.HasSuffix(path, "/import.yaml") {
+			files[path] = content
+		}
+		// Skip README.md from local — template READMEs have correct markers.
+		// Exception: root README.md if template doesn't cover intro well enough
+		// could be overlaid here in the future.
+	}
 
 	if dryRun {
 		var paths []string
@@ -40,42 +110,80 @@ func PublishRecipe(cfg *Config, slug, sourceDir string, dryRun bool) (PushResult
 	// Get base SHA.
 	headSHA, err := gh.DefaultBranchSHA()
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("get HEAD SHA: %w", err)}, nil
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("get HEAD SHA: %w", err)
 	}
 
 	// Create branch.
 	branch := fmt.Sprintf("%s/recipe-%s-%s", cfg.Push.Recipes.BranchPrefix, slug, today())
 	if err := gh.CreateBranch(branch); err != nil {
-		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("create branch: %w", err)}, nil
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create branch: %w", err)
 	}
 
 	// Create tree with all files.
 	treeSHA, err := gh.CreateTree(headSHA, files)
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("create tree: %w", err)}, nil
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create tree: %w", err)
 	}
 
 	// Create commit.
 	commitMsg := fmt.Sprintf("%s: publish %s environments", cfg.Push.Recipes.CommitPrefix, slug)
 	commitSHA, err := gh.CreateCommit(treeSHA, headSHA, commitMsg)
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("create commit: %w", err)}, nil
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create commit: %w", err)
 	}
 
 	// Update branch ref.
 	if err := gh.UpdateRef(branch, commitSHA); err != nil {
-		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("update ref: %w", err)}, nil
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("update ref: %w", err)
 	}
 
 	// Create PR.
 	title := fmt.Sprintf("recipe: publish %s", slug)
-	body := fmt.Sprintf("Publish %s recipe environments (%d files).\n\nGenerated by ZCP recipe workflow.", slug, len(files))
+	body := fmt.Sprintf("Publish %s recipe environments (%d files).\n\nGenerated by ZCP recipe workflow using _template.", slug, len(files))
 	prURL, err := gh.CreatePR(branch, title, body)
 	if err != nil {
-		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("create PR: %w", err)}, nil
+		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create PR: %w", err)
 	}
 
 	return PushResult{Slug: slug, Status: Created, PRURL: prURL}, nil
+}
+
+// fetchTemplateFiles reads all files from the _template directory in the recipes repo.
+// Returns a map of relative paths (from repo root) to content.
+func fetchTemplateFiles(gh *GH, templateDir string) (map[string]string, error) {
+	files := make(map[string]string)
+
+	// List top-level entries in _template.
+	entries, err := gh.ListDirectory(templateDir)
+	if err != nil {
+		return nil, fmt.Errorf("list template dir: %w", err)
+	}
+
+	for _, entry := range entries {
+		entryPath := templateDir + "/" + entry
+
+		// Try reading as file first.
+		content, _, readErr := gh.ReadFile(entryPath)
+		if readErr == nil {
+			files[entryPath] = content
+			continue
+		}
+
+		// Must be a directory — list its contents.
+		subEntries, listErr := gh.ListDirectory(entryPath)
+		if listErr != nil {
+			continue
+		}
+		for _, sub := range subEntries {
+			subPath := entryPath + "/" + sub
+			subContent, _, subReadErr := gh.ReadFile(subPath)
+			if subReadErr == nil {
+				files[subPath] = subContent
+			}
+		}
+	}
+
+	return files, nil
 }
 
 // PushAppSource pushes the app source directory to the recipe app repo.
@@ -102,8 +210,7 @@ func PushAppSource(cfg *Config, slug, appDir string, dryRun bool) (PushResult, e
 
 	// Stage all, commit if needed, push.
 	_ = runGit(appDir, "add", "-A")
-	_ = runGit(appDir, "diff-index", "--quiet", "HEAD", "--") // check if clean
-	// Commit only if there are changes (ignore error if nothing to commit).
+	_ = runGit(appDir, "diff-index", "--quiet", "HEAD", "--")
 	_ = runGit(appDir, "commit", "-q", "-m", "recipe: "+slug)
 
 	if err := runGit(appDir, "push", "-u", "origin", "HEAD"); err != nil {

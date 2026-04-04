@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/zeropsio/zcp/internal/sync"
@@ -207,12 +208,65 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 
 	case "publish":
 		if len(args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe publish <slug> <source-dir> [--dry-run]")
+			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe publish <slug> <source-dir> [--name <pretty>] [--software <name>] [--desc <text>] [--tags <tag>] [--cover <file.svg>] [--dry-run]")
 			os.Exit(1)
 		}
 		slug := args[1]
 		sourceDir := args[2]
-		result, err := sync.PublishRecipe(cfg, slug, sourceDir, dryRun)
+		opts := sync.PublishOpts{Slug: slug}
+		for i := 3; i < len(args); i++ {
+			switch args[i] {
+			case "--name":
+				if i+1 < len(args) {
+					opts.PrettyName = args[i+1]
+					i++
+				}
+			case "--software":
+				if i+1 < len(args) {
+					opts.Software = args[i+1]
+					i++
+				}
+			case "--desc":
+				if i+1 < len(args) {
+					opts.Description = args[i+1]
+					i++
+				}
+			case "--tags":
+				if i+1 < len(args) {
+					opts.Tags = args[i+1]
+					i++
+				}
+			case "--cover":
+				if i+1 < len(args) {
+					opts.CoverSVG = args[i+1]
+					i++
+				}
+			}
+		}
+		// Derive defaults from slug if not provided.
+		if opts.PrettyName == "" {
+			opts.PrettyName = strings.ReplaceAll(strings.ReplaceAll(slug, "-", " "), "  ", " ")
+			// Title case.
+			words := strings.Fields(opts.PrettyName)
+			for j, w := range words {
+				if len(w) > 0 {
+					words[j] = strings.ToUpper(w[:1]) + w[1:]
+				}
+			}
+			opts.PrettyName = strings.Join(words, " ")
+		}
+		if opts.Software == "" {
+			// First word of pretty name.
+			if idx := strings.Index(opts.PrettyName, " "); idx > 0 {
+				opts.Software = opts.PrettyName[:idx]
+			} else {
+				opts.Software = opts.PrettyName
+			}
+		}
+		if opts.Tags == "" {
+			opts.Tags = strings.ToLower(opts.Software)
+		}
+		result, err := sync.PublishRecipe(cfg, slug, sourceDir, opts, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
