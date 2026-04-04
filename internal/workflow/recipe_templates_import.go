@@ -21,9 +21,9 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 	b.WriteString("\nservices:\n")
 
 	for _, target := range plan.Targets {
-		if isRuntimeService(target.Role) && envIndex <= 1 {
-			writeDevService(&b, plan, target, envIndex)
-			writeStageService(&b, plan, target, envIndex)
+		if isRuntimeService(target.Role) && !IsUtilityType(target.Type) && envIndex <= 1 {
+			writeDevService(&b, plan, target)
+			writeStageService(&b, plan, target)
 		} else {
 			writeSingleService(&b, plan, target, envIndex)
 		}
@@ -67,41 +67,51 @@ func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int) {
 }
 
 // writeDevService writes a dev service block for env 0-1.
-func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, _ int) {
+func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
 	fmt.Fprintf(b, "  - hostname: %sdev\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 	b.WriteString("    zeropsSetup: dev\n")
-	writeServiceBuildFromGit(b, plan)
-	b.WriteString("    enableSubdomainAccess: true\n")
+	writeRecipeAppBuildFromGit(b, plan)
+	if target.Role == RecipeRoleApp {
+		b.WriteString("    enableSubdomainAccess: true\n")
+	}
 	writeAutoscaling(b, target, 0) // env 0-1 share same scaling
 	b.WriteByte('\n')
 }
 
 // writeStageService writes a stage service block for env 0-1.
-func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, _ int) {
+func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
 	fmt.Fprintf(b, "  - hostname: %sstage\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
-	b.WriteString("    zeropsSetup: prod\n")
-	writeServiceBuildFromGit(b, plan)
-	b.WriteString("    enableSubdomainAccess: true\n")
+	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.Role, false))
+	writeRecipeAppBuildFromGit(b, plan)
+	if target.Role == RecipeRoleApp {
+		b.WriteString("    enableSubdomainAccess: true\n")
+	}
 	writeAutoscaling(b, target, 0)
 	b.WriteByte('\n')
 }
 
-// writeSingleService writes a service entry for env 2-5.
+// writeSingleService writes a service entry for env 2-5 (and non-runtime services in env 0-1).
 func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, envIndex int) {
-	if IsDataService(target.Role) {
-		writeDataServiceComment(b, plan, target, envIndex)
+	// Platform-knowledge comments per service category.
+	if ServiceSupportsMode(target.Type) {
+		writeManagedServiceComment(b, plan, target, envIndex)
+	} else if IsObjectStorageType(target.Type) {
+		writeObjectStorageComment(b, envIndex)
 	}
+	// Runtime + utility: no template comments (agent writes framework-specific ones).
 
 	fmt.Fprintf(b, "  - hostname: %s\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 
+	// Priority: non-runtime services start before app.
 	if !isRuntimeService(target.Role) {
 		b.WriteString("    priority: 10\n")
 	}
 
-	if IsDataService(target.Role) {
+	// Mode: only managed services that support it.
+	if ServiceSupportsMode(target.Type) {
 		if envIndex == 5 {
 			b.WriteString("    mode: HA\n")
 		} else {
@@ -109,71 +119,114 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 		}
 	}
 
+	// Recipe runtime services: zeropsSetup + buildFromGit from recipe app repo.
 	if isRuntimeService(target.Role) {
-		b.WriteString("    zeropsSetup: prod\n")
-		writeServiceBuildFromGit(b, plan)
+		fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.Role, false))
+		writeRecipeAppBuildFromGit(b, plan)
 	}
 
-	if target.Role == RecipeRoleApp {
+	// Utility services: zeropsSetup + buildFromGit from utility repo.
+	if IsUtilityType(target.Type) && !isRuntimeService(target.Role) {
+		b.WriteString("    zeropsSetup: app\n")
+		fmt.Fprintf(b, "    buildFromGit: %s\n", utilityBuildFromGitURL(target.Type))
+	}
+
+	// Subdomain: app role + utility services with web UI.
+	if target.Role == RecipeRoleApp || IsUtilityType(target.Type) {
 		b.WriteString("    enableSubdomainAccess: true\n")
 	}
 
+	// minContainers: runtime services in production tiers.
 	if isRuntimeService(target.Role) && envIndex >= 4 {
 		b.WriteString("    minContainers: 2\n")
 	}
 
-	writeAutoscaling(b, target, envIndex)
+	// Object storage: size and policy instead of autoscaling.
+	if IsObjectStorageType(target.Type) {
+		b.WriteString("    objectStorageSize: 1\n")
+		b.WriteString("    objectStoragePolicy: private\n")
+	}
+
+	// Vertical autoscaling: only services that support it.
+	if ServiceSupportsAutoscaling(target.Type) {
+		writeAutoscaling(b, target, envIndex)
+	}
+
 	b.WriteByte('\n')
 }
 
-// writeDataServiceComment writes platform-knowledge comments for data services.
-// These are always-true regardless of framework.
-func writeDataServiceComment(b *strings.Builder, plan *RecipePlan, target RecipeTarget, envIndex int) {
-	dbName := dataServiceTypeName(target)
+// writeManagedServiceComment writes platform-knowledge comments for managed services.
+// Generalizes across db, cache, and search roles — not database-specific.
+func writeManagedServiceComment(b *strings.Builder, plan *RecipePlan, target RecipeTarget, envIndex int) {
+	typeName := dataServiceTypeName(target)
+	kind := managedServiceKind(target.Role)
 
 	switch envIndex {
 	case 0, 1:
-		devH, stageH := "", ""
-		for _, t := range plan.Targets {
-			if isRuntimeService(t.Role) {
-				devH = t.Hostname + "dev"
-				stageH = t.Hostname + "stage"
-				break
-			}
-		}
+		hosts := runtimeHostnameList(plan, envIndex)
 		writeComment(b,
-			fmt.Sprintf("%s single-node database — shared by %s and %s.", dbName, devH, stageH),
-			"NON_HA for dev/staging. Priority 10 starts DB before app.")
+			fmt.Sprintf("%s single-node %s — shared by %s.", typeName, kind, hosts),
+			fmt.Sprintf("NON_HA for dev/staging. Priority 10 starts %s before app.", kind))
 	case 2:
 		writeComment(b,
-			fmt.Sprintf("%s in Zerops — connect from local via 'zcli vpn up'.", dbName),
-			"Priority 10 starts DB before the app service.")
+			fmt.Sprintf("%s in Zerops — connect from local via 'zcli vpn up'.", typeName),
+			fmt.Sprintf("Priority 10 starts %s before the app service.", kind))
 	case 3:
 		writeComment(b,
-			fmt.Sprintf("%s single-node for staging — data is replaceable.", dbName),
-			"Priority 10 starts DB first.")
+			fmt.Sprintf("%s single-node for staging — data is replaceable.", typeName),
+			fmt.Sprintf("Priority 10 starts %s first.", kind))
 	case 4:
 		writeComment(b,
-			fmt.Sprintf("%s single-node. Zerops encrypts and backs up automatically.", dbName),
-			"Consider HA mode for high-traffic (see env 5).",
-			"Priority 10 starts DB before the app.")
+			fmt.Sprintf("%s single-node. Consider HA mode for high-traffic (see env 5).", typeName),
+			fmt.Sprintf("Priority 10 starts %s before the app.", kind))
 	case 5:
 		writeComment(b,
-			fmt.Sprintf("%s HA — replicates across nodes, no single point of failure.", dbName),
-			"Dedicated CPU for consistent query performance.",
-			"Priority 10 starts DB before app containers.")
+			fmt.Sprintf("%s HA — replicates across nodes, no single point of failure.", typeName),
+			"Dedicated CPU for consistent performance.",
+			fmt.Sprintf("Priority 10 starts %s before app containers.", kind))
 	}
 }
 
-// writeServiceBuildFromGit writes the buildFromGit URL.
-func writeServiceBuildFromGit(b *strings.Builder, plan *RecipePlan) {
+// writeObjectStorageComment writes platform-knowledge comments for object storage.
+func writeObjectStorageComment(b *strings.Builder, envIndex int) {
+	switch envIndex {
+	case 0, 1:
+		writeComment(b, "S3-compatible object storage (MinIO) for file uploads and assets.")
+	case 2:
+		writeComment(b, "S3-compatible object storage — access via S3 API with VPN or service env vars.")
+	case 3:
+		writeComment(b, "S3-compatible object storage for staging assets.")
+	case 4, 5:
+		writeComment(b, "S3-compatible object storage. Use external backups for critical data.")
+	}
+}
+
+// runtimeHostnameList returns a natural-language list of runtime hostnames for comments.
+func runtimeHostnameList(plan *RecipePlan, envIndex int) string {
+	var names []string
+	for _, t := range plan.Targets {
+		if isRuntimeService(t.Role) {
+			if envIndex <= 1 {
+				names = append(names, t.Hostname+"dev", t.Hostname+"stage")
+			} else {
+				names = append(names, t.Hostname)
+			}
+		}
+	}
+	return naturalJoin(names)
+}
+
+// writeRecipeAppBuildFromGit writes the buildFromGit URL for recipe app services.
+func writeRecipeAppBuildFromGit(b *strings.Builder, plan *RecipePlan) {
 	fmt.Fprintf(b, "    buildFromGit: %s%s-app\n", RecipeAppRepoBase, plan.Slug)
 }
 
 // writeAutoscaling writes the verticalAutoscaling block per tier.
+// Caller must ensure the service type supports autoscaling.
 func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
 	isRT := isRuntimeService(target.Role)
 	isData := IsDataService(target.Role)
+	isUtil := IsUtilityType(target.Type)
 	if !isRT && !isData {
 		return
 	}
@@ -182,14 +235,14 @@ func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
 
 	switch {
 	case envIndex <= 2:
-		if isRT {
+		if isRT && !isUtil {
 			b.WriteString("      minRam: 0.5\n")
 		} else {
 			b.WriteString("      minRam: 0.25\n")
 		}
 
 	case envIndex == 3:
-		if isRT {
+		if isRT && !isUtil {
 			b.WriteString("      minRam: 0.5\n")
 		} else {
 			b.WriteString("      minRam: 0.25\n")
@@ -197,22 +250,22 @@ func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
 		b.WriteString("      minFreeRamGB: 0.25\n")
 
 	case envIndex == 4:
-		if isRT {
-			b.WriteString("      minRam: 0.25\n")
-			b.WriteString("      minFreeRamGB: 0.125\n")
-		} else {
-			b.WriteString("      minRam: 0.25\n")
-			b.WriteString("      minFreeRamGB: 0.125\n")
-		}
+		b.WriteString("      minRam: 0.25\n")
+		b.WriteString("      minFreeRamGB: 0.125\n")
 
 	case envIndex == 5:
-		b.WriteString("      cpuMode: DEDICATED\n")
-		if isRT {
-			b.WriteString("      minRam: 0.5\n")
-			b.WriteString("      minFreeRamGB: 0.25\n")
+		if isUtil {
+			// Utilities (mailpit): lighter scaling, no DEDICATED.
+			b.WriteString("      minRam: 0.25\n")
 		} else {
-			b.WriteString("      minRam: 1\n")
-			b.WriteString("      minFreeRamGB: 0.5\n")
+			b.WriteString("      cpuMode: DEDICATED\n")
+			if isRT {
+				b.WriteString("      minRam: 0.5\n")
+				b.WriteString("      minFreeRamGB: 0.25\n")
+			} else {
+				b.WriteString("      minRam: 1\n")
+				b.WriteString("      minFreeRamGB: 0.5\n")
+			}
 		}
 	}
 }
@@ -268,6 +321,8 @@ func dataServiceTypeName(target RecipeTarget) string {
 		"mongodb": "MongoDB", "keydb": "KeyDB", "valkey": "Valkey",
 		"elasticsearch": "Elasticsearch", "opensearch": "OpenSearch",
 		"rabbitmq": "RabbitMQ", "nats": "NATS",
+		"meilisearch": "Meilisearch", "qdrant": "Qdrant", "typesense": "Typesense",
+		"clickhouse": "ClickHouse",
 	}
 	if name, ok := names[strings.ToLower(base)]; ok {
 		return name

@@ -6,7 +6,7 @@ Reference cards for all 14 Zerops managed services. Each card provides type, por
 
 - **Hostname substitution**: In templates below, each service uses a sample hostname (e.g., `db`, `cache`, `search`). Replace it with your actual service hostname. The syntax `${hostname_varname}` is real Zerops cross-service reference syntax — `hostname` must match the target service hostname exactly, with dashes converted to underscores.
 - **Reference**: `${hostname_variablename}` — dashes in hostnames become underscores
-- **envSecrets** (import.yaml or GUI): injected directly as OS env vars — the app reads them via `getenv()` without any wiring. Do NOT re-reference envSecrets in zerops.yaml `run.envVariables` — `${APP_KEY}` is NOT a valid reference (it becomes a literal string). The `${...}` syntax is ONLY for cross-service references. Changes to envSecrets require a service **restart** to take effect.
+- **envSecrets** (import.yaml or GUI): injected directly as OS env vars — the app reads them via `getenv()` without any wiring. Do NOT re-reference envSecrets in zerops.yaml `run.envVariables` — `${MY_SECRET}` is NOT a valid reference (it becomes a literal string). The `${...}` syntax is ONLY for cross-service references. Changes to envSecrets require a service **restart** to take effect.
 - **import.yaml service level**: ONLY `envSecrets` and `dotEnvSecrets` exist. There is NO `envVariables` at service level (only at project level). Use `envSecrets` only for generated secrets (`<@generateRandomString(...)>`) and real credentials.
 - **Hostname = DNS**: use hostname directly for host (`db`, NOT `${db_hostname}`), but use `${db_port}` for port
 - **Internal**: ALWAYS `http://` — NEVER `https://` (SSL at L7 balancer)

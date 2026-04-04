@@ -163,10 +163,12 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 	}
 
 	// zeropsSetup requires buildFromGit (and vice versa). No exceptions.
-	// startWithoutCode services must NOT have zeropsSetup — they use --setup at deploy time.
+	// Applies to runtime services (app, worker) and utility services (mailpit).
 	for _, svc := range doc.Services {
 		role := findTargetRole(plan, svc.Hostname)
-		if !workflow.IsDataService(role) && role != "" {
+		svcType := findTargetType(plan, svc.Hostname)
+		needsGitCheck := role != "" && (!workflow.IsDataService(role) || workflow.IsUtilityType(svcType))
+		if needsGitCheck {
 			hasSetup := svc.ZeropsSetup != ""
 			hasGit := svc.BuildFromGit != ""
 			checkName := prefix + "_" + svc.Hostname + "_setup_git"
@@ -292,17 +294,18 @@ func checkEnv5Requirements(doc importYAMLDoc, plan *workflow.RecipePlan, prefix 
 
 	for _, svc := range doc.Services {
 		role := findTargetRole(plan, svc.Hostname)
+		svcType := findTargetType(plan, svc.Hostname)
 
-		// HA mode on data services.
-		if workflow.IsDataService(role) && svc.Mode != "HA" {
+		// HA mode on managed services that support mode (not object-storage).
+		if workflow.IsDataService(role) && workflow.ServiceSupportsMode(svcType) && svc.Mode != "HA" {
 			checks = append(checks, workflow.StepCheck{
 				Name: prefix + "_" + svc.Hostname + "_ha_mode", Status: statusFail,
 				Detail: fmt.Sprintf("env 5 data service %q should have mode: HA", svc.Hostname),
 			})
 		}
 
-		// DEDICATED cpuMode on runtime services.
-		if svc.VerticalAutoscaling != nil {
+		// DEDICATED cpuMode on recipe runtime services (not utilities).
+		if svc.VerticalAutoscaling != nil && !workflow.IsUtilityType(svcType) {
 			if svc.VerticalAutoscaling.CPUMode != "DEDICATED" && (role == workflow.RecipeRoleApp || role == workflow.RecipeRoleWorker) {
 				checks = append(checks, workflow.StepCheck{
 					Name: prefix + "_" + svc.Hostname + "_cpu_mode", Status: statusFail,
@@ -406,21 +409,37 @@ func checkSectionHeadingComments(content, prefix string) []workflow.StepCheck {
 // findTargetRole finds the role for a hostname in the recipe plan.
 // Handles env 0-1 suffixed hostnames (appdev/appstage → app target).
 func findTargetRole(plan *workflow.RecipePlan, hostname string) string {
-	for _, t := range plan.Targets {
-		if t.Hostname == hostname {
-			return t.Role
+	if t := findTarget(plan, hostname); t != nil {
+		return t.Role
+	}
+	return ""
+}
+
+// findTargetType finds the service type for a hostname in the recipe plan.
+// Handles env 0-1 suffixed hostnames (appdev/appstage → app target).
+func findTargetType(plan *workflow.RecipePlan, hostname string) string {
+	if t := findTarget(plan, hostname); t != nil {
+		return t.Type
+	}
+	return ""
+}
+
+// findTarget finds a target by hostname, stripping dev/stage suffixes for env 0-1.
+func findTarget(plan *workflow.RecipePlan, hostname string) *workflow.RecipeTarget {
+	for i := range plan.Targets {
+		if plan.Targets[i].Hostname == hostname {
+			return &plan.Targets[i]
 		}
 	}
-	// Try stripping dev/stage suffix for env 0-1 hostnames.
 	for _, suffix := range []string{"dev", "stage"} {
 		base := strings.TrimSuffix(hostname, suffix)
 		if base != hostname {
-			for _, t := range plan.Targets {
-				if t.Hostname == base {
-					return t.Role
+			for i := range plan.Targets {
+				if plan.Targets[i].Hostname == base {
+					return &plan.Targets[i]
 				}
 			}
 		}
 	}
-	return ""
+	return nil
 }

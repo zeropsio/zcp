@@ -126,11 +126,10 @@ Use Object Storage (S3) for any files that must survive deploys or container rep
 Use Valkey for sessions and cache when running multiple containers.
 
 ### Framework Production Settings
-- **Laravel**: `APP_ENV: production`, `APP_DEBUG: "false"`, `TRUSTED_PROXIES: 127.0.0.1,10.0.0.0/8`
-- **Symfony**: `APP_ENV: prod`, `TRUSTED_PROXIES: 127.0.0.1,10.0.0.0/8`
-- **Django**: `DEBUG: "false"`, `CSRF_TRUSTED_ORIGINS: https://your-domain.com`
-- **Spring Boot**: `server.address: 0.0.0.0`, set `-Xmx` to ~75% container RAM
-- **Phoenix**: `PHX_SERVER: "true"`, `SECRET_KEY_BASE` via preprocessor
+- Set the framework's production mode flag (disables debug output, stack traces, verbose errors)
+- Configure proxy trust settings — Zerops L7 balancer terminates SSL, so frameworks with CSRF/origin validation need to trust the proxy (check framework docs for the specific setting)
+- Bind `0.0.0.0` — frameworks that default to localhost must be reconfigured
+- For JVM-based runtimes, set max heap (`-Xmx`) to ~75% of container RAM to leave room for native memory
 
 ### DNS and SSL
 Cloudflare with **Full (strict)** SSL. WAF exception for ACME challenge. Both A and AAAA records for shared IPv4.

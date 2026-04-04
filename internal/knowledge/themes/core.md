@@ -140,7 +140,7 @@ zerops[]:
 
 | What | Where | Why |
 |------|-------|-----|
-| Anything shared across services | `project.envVariables` in import.yaml | Auto-inherited by every service. Use for shared config (APP_NAME), shared secrets (APP_KEY with preprocessor), or any value that must be identical across services (e.g. encryption keys when sharing a DB). Do NOT re-reference in zerops.yaml (creates shadow). |
+| Anything shared across services | `project.envVariables` in import.yaml | Auto-inherited by every service. Use for shared config, shared secrets (with preprocessor), or any value that must be identical across services (e.g. encryption keys when sharing a DB). Do NOT re-reference in zerops.yaml (creates shadow). |
 | Cross-service wiring (DB creds, cache host) | `run.envVariables` in zerops.yaml | `${hostname_varname}` references resolve at deploy time. This is the ONLY place cross-service refs work. |
 | Per-service secrets (unique to one service) | `envSecrets` per-service in import.yaml | Blurred in GUI. Auto-injected as OS vars — do NOT re-reference in zerops.yaml. |
 
@@ -150,7 +150,7 @@ zerops[]:
 - **envSecrets** (import.yaml per-service, or GUI): injected directly as OS env vars at container start. Changes require a **service restart** (not just redeploy).
 
 **Critical rules:**
-- `${...}` syntax is ONLY for cross-service references in run.envVariables (`${db_hostname}`). Writing `APP_KEY: ${APP_KEY}` does NOT reference the envSecret — it creates a literal string.
+- `${...}` syntax is ONLY for cross-service references in run.envVariables (`${db_hostname}`). Writing `MY_SECRET: ${MY_SECRET}` does NOT reference the envSecret — it creates a literal string.
 - import.yaml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` at service level (project-level only).
 - Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) — do NOT set these in import.yaml.
 - `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`.
@@ -179,14 +179,12 @@ zerops[]:
 - **ALWAYS** use generic `setup:` names in zerops.yaml (`dev`, `prod`, `worker`). When deploying to a hostname that differs from the setup name, pass `setup="..."` to `zerops_deploy`. REASON: generic names work across all environments; `zeropsSetup` in recipe import.yaml + `--setup` in workspace deploy both handle the mapping
 - **ALWAYS** add `run.healthCheck` and `deploy.readinessCheck` ONLY to stage/prod entries, NEVER to dev. REASON: dev uses `zsc noop --silent`; healthCheck would restart the container during iteration
 
-### Runtime-Specific
-- **ALWAYS** set `server.address=0.0.0.0` for Java Spring Boot. REASON: Spring Boot defaults to localhost binding -> unreachable from LB
-- **ALWAYS** set `TRUSTED_PROXIES: "127.0.0.1,10.0.0.0/8"` for PHP Laravel. REASON: reverse proxy breaks CSRF validation without trusted proxy config
-- **ALWAYS** set `CSRF_TRUSTED_ORIGINS` for Django behind proxy. REASON: reverse proxy changes the origin header; Django blocks requests
-- **ALWAYS** set `PHX_SERVER=true` for Phoenix/Elixir releases. REASON: without it, the HTTP server doesn't start in release mode
-- **ALWAYS** use `cargo b --release` for Rust. REASON: debug builds are 10-100x slower
-- **ALWAYS** use `CGO_ENABLED=0 go build` when unsure about CGO dependencies. REASON: produces static binary compatible with any base
-- **ALWAYS** use `sudo apk add --no-cache php84-<ext>` for Alpine PHP extensions. REASON: version prefix must match PHP major+minor; sudo required
+### Build & Runtime
+- **ALWAYS** build compiled languages (Rust, Go, Java, .NET) with release/optimized flags for production. REASON: debug builds are dramatically slower and larger
+- **ALWAYS** use `CGO_ENABLED=0 go build` when unsure about CGO dependencies. REASON: produces static binary compatible with any container base (avoids glibc/musl mismatch)
+- **ALWAYS** use `sudo apk add --no-cache php84-<ext>` for Alpine PHP extensions. REASON: version prefix must match PHP major+minor; sudo required in build container
+- **ALWAYS** bind `0.0.0.0`, not `localhost` or `127.0.0.1`. Many frameworks default to localhost — override in config or env var. REASON: L7 LB routes to container VXLAN IP; localhost binding = 502
+- **ALWAYS** configure the framework's proxy trust setting (if it has one). REASON: Zerops L7 balancer terminates SSL and forwards via reverse proxy — frameworks that validate origin/CSRF headers will reject requests unless they trust the proxy. Check the framework's documentation for the specific setting
 
 ### Scaling & Platform
 - **NEVER** attempt to change HA/NON_HA mode after creation. REASON: mode is immutable; must delete and recreate service
@@ -311,7 +309,7 @@ services:
     type: bun@1.2
     enableSubdomainAccess: true
     envSecrets:
-      APP_KEY: <@generateRandomString(<32>)>
+      SECRET_KEY: <@generateRandomString(<32>)>
 ```
 
 **Production (buildFromGit, no SSHFS):**

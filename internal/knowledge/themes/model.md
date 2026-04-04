@@ -125,13 +125,13 @@ Non-negotiable rules. Violating any causes failures.
 
 - MUST bind `0.0.0.0` (not localhost). L7 LB routes to container VXLAN IP. Binding localhost = 502.
 - Internal traffic = plain HTTP. NEVER `https://` between services.
-- MUST trust proxy headers. Framework config: see runtime recipe ## Gotchas.
+- MUST trust proxy headers. Configure the framework's proxy trust setting if it has one (L7 LB terminates SSL and forwards via reverse proxy).
 - Deploy = new container. `deployFiles` MANDATORY — without it, run container starts empty.
 - Build and Run = SEPARATE containers. `deployFiles` = the ONLY bridge.
 - `run.prepareCommands` runs BEFORE deploy files arrive. Never reference `/var/www/` there.
 - Zerops injects env vars as OS env vars. Do NOT create `.env` files — empty values shadow OS vars.
 - Cross-service wiring: `${hostname_varname}` in zerops.yaml `run.envVariables`.
 - import.yaml service level: `envSecrets` ONLY (not `envVariables` — silently dropped by API).
-- Shared secrets (APP_KEY, SECRET_KEY_BASE): MUST be project-level, not per-service envSecrets.
+- Shared secrets (encryption keys, CSRF tokens): MUST be project-level, not per-service envSecrets.
 - Migrations: `zsc execOnce ${appVersionId} -- <command>` in `initCommands`.
 - Sessions: external store (Valkey, database) when running multiple containers.

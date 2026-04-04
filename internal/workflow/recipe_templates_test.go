@@ -39,8 +39,11 @@ func testShowcasePlan() *RecipePlan {
 	plan.Tier = RecipeTierShowcase
 	plan.Slug = "laravel-showcase"
 	plan.Targets = append(plan.Targets,
-		RecipeTarget{Hostname: "redis", Type: "keydb@6", Role: "cache", Environments: []string{"0", "1", "3", "4", "5"}},
-		RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", Role: "worker", Environments: []string{"0", "1", "3", "4", "5"}},
+		RecipeTarget{Hostname: "redis", Type: "valkey@7.2", Role: "cache"},
+		RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", Role: "worker"},
+		RecipeTarget{Hostname: "storage", Type: "object-storage", Role: "storage"},
+		RecipeTarget{Hostname: "mailpit", Type: "mailpit", Role: "mail"},
+		RecipeTarget{Hostname: "search", Type: "meilisearch@1", Role: "search"},
 	)
 	return plan
 }
@@ -296,12 +299,162 @@ func TestGenerateEnvImportYAML_Showcase_WorkerServices(t *testing.T) {
 	t.Parallel()
 
 	plan := testShowcasePlan()
-	yaml := GenerateEnvImportYAML(plan, 0)
 
-	// Worker in env 0 should have zeropsSetup and buildFromGit.
-	if !strings.Contains(yaml, "hostname: workerdev") {
-		t.Error("expected workerdev hostname for worker in env 0")
+	t.Run("env_0_worker_dev_stage", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 0)
+
+		if !strings.Contains(yaml, "hostname: workerdev") {
+			t.Error("expected workerdev hostname")
+		}
+		if !strings.Contains(yaml, "hostname: workerstage") {
+			t.Error("expected workerstage hostname")
+		}
+		// Worker stage uses zeropsSetup: worker (not prod).
+		if !strings.Contains(yaml, "zeropsSetup: worker") {
+			t.Error("expected zeropsSetup: worker on workerstage")
+		}
+		// Workers must NOT have enableSubdomainAccess.
+		lines := strings.Split(yaml, "\n")
+		inWorker := false
+		for _, line := range lines {
+			if strings.Contains(line, "hostname: workerdev") || strings.Contains(line, "hostname: workerstage") {
+				inWorker = true
+			} else if strings.Contains(line, "hostname:") {
+				inWorker = false
+			}
+			if inWorker && strings.Contains(line, "enableSubdomainAccess") {
+				t.Error("worker services must NOT have enableSubdomainAccess")
+			}
+		}
+	})
+
+	t.Run("env_2_worker_prod", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 2)
+
+		if !strings.Contains(yaml, "hostname: worker") {
+			t.Error("expected bare worker hostname in env 2")
+		}
+		if !strings.Contains(yaml, "zeropsSetup: worker") {
+			t.Error("expected zeropsSetup: worker")
+		}
+	})
+}
+
+func TestGenerateEnvImportYAML_Showcase_ObjectStorage(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+
+	for _, envIdx := range []int{0, 2, 5} {
+		t.Run(fmt.Sprintf("env_%d", envIdx), func(t *testing.T) {
+			t.Parallel()
+			yaml := GenerateEnvImportYAML(plan, envIdx)
+
+			if !strings.Contains(yaml, "hostname: storage") {
+				t.Error("expected storage hostname")
+			}
+			if !strings.Contains(yaml, "objectStorageSize:") {
+				t.Error("expected objectStorageSize for object-storage")
+			}
+			if !strings.Contains(yaml, "objectStoragePolicy:") {
+				t.Error("expected objectStoragePolicy for object-storage")
+			}
+			// Object storage must NOT have mode or verticalAutoscaling.
+			lines := strings.Split(yaml, "\n")
+			inStorage := false
+			for _, line := range lines {
+				if strings.Contains(line, "hostname: storage") {
+					inStorage = true
+				} else if strings.TrimSpace(line) != "" && strings.HasPrefix(strings.TrimSpace(line), "- hostname:") {
+					inStorage = false
+				}
+				if inStorage {
+					if strings.Contains(line, "mode:") {
+						t.Error("object-storage must NOT have mode field")
+					}
+					if strings.Contains(line, "verticalAutoscaling:") {
+						t.Error("object-storage must NOT have verticalAutoscaling")
+					}
+				}
+			}
+		})
 	}
+}
+
+func TestGenerateEnvImportYAML_Showcase_UtilityService(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+
+	t.Run("env_0_mailpit", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 0)
+
+		// Mailpit is a single service (no dev/stage pair).
+		if !strings.Contains(yaml, "hostname: mailpit") {
+			t.Error("expected mailpit hostname")
+		}
+		if strings.Contains(yaml, "hostname: mailpitdev") {
+			t.Error("mailpit should NOT have dev/stage pair")
+		}
+		// Should have buildFromGit from utility repo.
+		if !strings.Contains(yaml, "buildFromGit: "+testRepoBase+"mailpit-app") {
+			t.Error("expected buildFromGit pointing to mailpit-app utility repo")
+		}
+		// Should have enableSubdomainAccess (web UI).
+		if !strings.Contains(yaml, "enableSubdomainAccess: true") {
+			t.Error("expected enableSubdomainAccess for mailpit web UI")
+		}
+	})
+
+	t.Run("env_5_mailpit_no_dedicated", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 5)
+
+		// Mailpit in env 5 should NOT have cpuMode: DEDICATED (it's a utility).
+		lines := strings.Split(yaml, "\n")
+		inMailpit := false
+		for _, line := range lines {
+			if strings.Contains(line, "hostname: mailpit") {
+				inMailpit = true
+			} else if strings.TrimSpace(line) != "" && strings.HasPrefix(strings.TrimSpace(line), "- hostname:") {
+				inMailpit = false
+			}
+			if inMailpit && strings.Contains(line, "cpuMode: DEDICATED") {
+				t.Error("utility service (mailpit) should NOT have cpuMode: DEDICATED")
+			}
+		}
+	})
+}
+
+func TestGenerateEnvImportYAML_Showcase_ManagedComments(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+
+	t.Run("cache_not_called_database", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 0)
+
+		// Valkey comment should say "cache", not "database".
+		if strings.Contains(yaml, "Valkey single-node database") {
+			t.Error("cache service should be called 'cache', not 'database'")
+		}
+		if !strings.Contains(yaml, "Valkey") {
+			t.Error("expected Valkey type name in comments")
+		}
+	})
+
+	t.Run("search_not_called_database", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 0)
+
+		if strings.Contains(yaml, "Meilisearch single-node database") {
+			t.Error("search service should be called 'search engine', not 'database'")
+		}
+	})
 }
 
 func TestGenerateEnvREADME_FixedContent(t *testing.T) {
@@ -613,5 +766,121 @@ func TestIsDataService(t *testing.T) {
 				t.Errorf("IsDataService(%q) = %v, want %v", tt.role, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestServiceTypeCapabilities(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		serviceType   string
+		supportsMode  bool
+		supportsScale bool
+		isObjStorage  bool
+		isUtility     bool
+	}{
+		{"runtime", "php-nginx@8.4", false, true, false, false},
+		{"postgresql", "postgresql@16", true, true, false, false},
+		{"valkey", "valkey@7.2", true, true, false, false},
+		{"meilisearch", "meilisearch@1", true, true, false, false},
+		{"object_storage", "object-storage", false, false, true, false},
+		{"shared_storage", "shared-storage", true, false, false, false},
+		{"mailpit", "mailpit", false, true, false, true},
+		{"nodejs", "nodejs@22", false, true, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ServiceSupportsMode(tt.serviceType); got != tt.supportsMode {
+				t.Errorf("ServiceSupportsMode(%q) = %v, want %v", tt.serviceType, got, tt.supportsMode)
+			}
+			if got := ServiceSupportsAutoscaling(tt.serviceType); got != tt.supportsScale {
+				t.Errorf("ServiceSupportsAutoscaling(%q) = %v, want %v", tt.serviceType, got, tt.supportsScale)
+			}
+			if got := IsObjectStorageType(tt.serviceType); got != tt.isObjStorage {
+				t.Errorf("IsObjectStorageType(%q) = %v, want %v", tt.serviceType, got, tt.isObjStorage)
+			}
+			if got := IsUtilityType(tt.serviceType); got != tt.isUtility {
+				t.Errorf("IsUtilityType(%q) = %v, want %v", tt.serviceType, got, tt.isUtility)
+			}
+		})
+	}
+}
+
+func TestRecipeSetupName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		role  string
+		isDev bool
+		want  string
+	}{
+		{"app", true, "dev"},
+		{"app", false, "prod"},
+		{"worker", true, "dev"},
+		{"worker", false, "worker"},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s_dev=%v", tt.role, tt.isDev), func(t *testing.T) {
+			t.Parallel()
+			got := recipeSetupName(tt.role, tt.isDev)
+			if got != tt.want {
+				t.Errorf("recipeSetupName(%q, %v) = %q, want %q", tt.role, tt.isDev, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGenerateEnvImportYAML_Showcase_Env5_HA(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+	yaml := GenerateEnvImportYAML(plan, 5)
+
+	// corePackage: SERIOUS still required.
+	if !strings.Contains(yaml, "corePackage: SERIOUS") {
+		t.Error("expected corePackage: SERIOUS in env 5")
+	}
+
+	// Managed services (db, cache, search) get mode: HA.
+	for _, hostname := range []string{"db", "redis", "search"} {
+		if !strings.Contains(yaml, "hostname: "+hostname) {
+			t.Errorf("expected hostname %s in env 5", hostname)
+		}
+	}
+	if !strings.Contains(yaml, "mode: HA") {
+		t.Error("expected mode: HA on managed services in env 5")
+	}
+
+	// Object storage does NOT get mode: HA.
+	// Verify by checking storage section doesn't contain mode.
+	lines := strings.Split(yaml, "\n")
+	inStorage := false
+	for _, line := range lines {
+		if strings.Contains(line, "hostname: storage") {
+			inStorage = true
+		} else if strings.TrimSpace(line) != "" && strings.HasPrefix(strings.TrimSpace(line), "- hostname:") {
+			inStorage = false
+		}
+		if inStorage && strings.Contains(line, "mode:") {
+			t.Error("object-storage must NOT have mode field even in env 5")
+		}
+	}
+
+	// App and worker get cpuMode: DEDICATED.
+	// Mailpit does NOT.
+	inMailpit := false
+	for _, line := range lines {
+		if strings.Contains(line, "hostname: mailpit") {
+			inMailpit = true
+		} else if strings.TrimSpace(line) != "" && strings.HasPrefix(strings.TrimSpace(line), "- hostname:") {
+			inMailpit = false
+		}
+		if inMailpit && strings.Contains(line, "cpuMode: DEDICATED") {
+			t.Error("mailpit should NOT have cpuMode: DEDICATED in env 5")
+		}
 	}
 }

@@ -49,6 +49,9 @@ func TestValidateRecipePlan_Valid(t *testing.T) {
 			p.Research.CacheLib = "predis"
 			p.Research.SessionDriver = "redis"
 			p.Research.QueueDriver = "redis"
+			p.Research.StorageDriver = "s3"
+			p.Research.SearchLib = "meilisearch"
+			p.Research.MailLib = "smtp"
 			p.Targets = append(p.Targets, RecipeTarget{
 				Hostname: "redis", Type: "keydb@6", Role: "cache",
 				Environments: []string{"0", "1", "3", "4", "5"},
@@ -136,6 +139,9 @@ func TestValidateRecipePlan_ShowcaseMissingFields(t *testing.T) {
 		{"missing cacheLib", func(p *RecipePlan) { p.Research.CacheLib = "" }, "cacheLib"},
 		{"missing sessionDriver", func(p *RecipePlan) { p.Research.SessionDriver = "" }, "sessionDriver"},
 		{"missing queueDriver", func(p *RecipePlan) { p.Research.QueueDriver = "" }, "queueDriver"},
+		{"missing storageDriver", func(p *RecipePlan) { p.Research.StorageDriver = "" }, "storageDriver"},
+		{"missing searchLib", func(p *RecipePlan) { p.Research.SearchLib = "" }, "searchLib"},
+		{"missing mailLib", func(p *RecipePlan) { p.Research.MailLib = "" }, "mailLib"},
 	}
 
 	for _, tt := range tests {
@@ -147,6 +153,9 @@ func TestValidateRecipePlan_ShowcaseMissingFields(t *testing.T) {
 			plan.Research.CacheLib = "predis"
 			plan.Research.SessionDriver = "redis"
 			plan.Research.QueueDriver = "redis"
+			plan.Research.StorageDriver = "s3"
+			plan.Research.SearchLib = "meilisearch"
+			plan.Research.MailLib = "smtp"
 			tt.modify(&plan)
 
 			errs := ValidateRecipePlan(plan, nil, nil)

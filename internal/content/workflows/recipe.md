@@ -21,7 +21,7 @@ Hello-world recipes exist per RUNTIME, not per framework. The hello-world IS the
 ```
 zerops_knowledge recipe="{runtime-base}-hello-world"
 ```
-Example: for Laravel (php-nginx runtime), load `php-hello-world`. For Next.js (nodejs runtime), load `nodejs-hello-world`.
+Example: for a php-nginx framework, load `php-hello-world`. For a nodejs framework, load `nodejs-hello-world`. The hello-world IS the runtime — match the base runtime, not the framework name.
 
 Your job is to extend this base with framework-specific knowledge (documentRoot, multi-base builds, trusted proxy config, etc.). These discoveries go into the zerops.yaml comments and knowledge-base fragment.
 
@@ -53,7 +53,7 @@ Your job is to extend this base with framework-specific knowledge (documentRoot,
 - **Seed command**: optional data seeding
 
 ### Environment & Secrets
-- **Needs app secret**: does the framework require an APP_KEY/SECRET_KEY?
+- **Needs app secret**: does the framework require a generated secret key for encryption/sessions?
 - **Logging driver**: stderr (preferred), file, syslog
 
 ### Decision Tree Resolution
@@ -85,7 +85,7 @@ Includes everything from minimal research, PLUS:
 ### Additional Showcase Fields
 - **Cache library**: Redis client library for the framework
 - **Session driver**: Redis-backed session configuration
-- **Queue driver**: queue/job system (e.g., Laravel Horizon, Bull, Celery)
+- **Queue driver**: queue/job system for the framework
 - **Storage driver**: object storage integration (S3-compatible)
 - **Search library**: search integration (e.g., Meilisearch, Elasticsearch)
 - **Mail library**: email sending (e.g., SMTP via Mailpit for dev)
@@ -123,7 +123,7 @@ Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}s
 | `startWithoutCode` | `true` | omit |
 | `maxContainers` | `1` | omit (default) |
 | `enableSubdomainAccess` | `true` | `true` |
-| `verticalAutoscaling.minRam` | `1.0` for compiled runtimes (Go, Rust, Java, .NET, Elixir, Gleam) | omit (default) |
+| `verticalAutoscaling.minRam` | `1.0` for compiled runtimes (compilation needs RAM) | omit (default) |
 
 **DO NOT add `zeropsSetup` or `buildFromGit` to the workspace import.** These fields require each other — `zeropsSetup` without `buildFromGit` causes API errors. The workspace deploys via `zerops_deploy` with the `setup` parameter instead.
 
@@ -134,9 +134,9 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 **If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair.
 
 **Framework secrets**: If `needsAppSecret == true`, determine during research whether the secret is used for encryption/sessions (shared by services hitting the same DB) or is per-service.
-- **Shared** (e.g. Laravel APP_KEY, Django SECRET_KEY, Rails SECRET_KEY_BASE — used for encryption): do NOT add to workspace import. After services reach RUNNING, set at project level so all services inherit it:
+- **Shared** (used for encryption, CSRF, session signing — any secret that multiple services must agree on): do NOT add to workspace import. After services reach RUNNING, set at project level so all services inherit it:
   ```
-  zerops_env project=true action=set key=APP_KEY value="$(openssl rand -base64 32)"
+  zerops_env project=true action=set key={SECRET_KEY_NAME} value="$(openssl rand -base64 32)"
   ```
   The recipe deliverable uses `project.envVariables` with the preprocessor to generate at import time.
 - **Per-service** (unique API tokens, webhook secrets): add as service-level `envSecrets` in import.yaml.
@@ -225,7 +225,7 @@ Write the **dev** entry only. The prod entry comes after dev is verified in the 
 - `deployFiles: [.]` — **MANDATORY for self-deploy**
 - `start: zsc noop --silent` — exception: omit `start` for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
 - **NO healthCheck on dev** — agent controls lifecycle; healthCheck restarts during iteration
-- `envVariables:` — ONLY cross-service references from `zerops_discover`. **Do NOT add envSecrets** (APP_KEY, SECRET_KEY_BASE) — they are already injected as OS env vars automatically.
+- `envVariables:` — ONLY cross-service references from `zerops_discover`. **Do NOT add envSecrets** (framework secret keys) — they are already injected as OS env vars automatically.
 
 ### .env.example preservation
 
@@ -233,13 +233,7 @@ If the framework scaffolds a `.env.example` file (e.g., `composer create-project
 
 ### Framework environment conventions
 
-Use the framework's **standard** environment names and values — don't invent new ones:
-- **Laravel**: `APP_ENV=local` (not `development`) — `local` enables detailed error pages and stack traces
-- **Node.js/Next.js**: `NODE_ENV=development`
-- **Django**: `DEBUG=True`, `DJANGO_SETTINGS_MODULE=config.settings.development`
-- **Rails**: `RAILS_ENV=development`
-
-Check the framework's documentation if unsure — wrong env names cause subtle behavior differences (e.g., Laravel's `local` enables whoops error handler, `development` does not).
+Use the framework's **standard** environment names and values — don't invent new ones. Check the framework's documentation for the correct dev/production mode flag. Wrong env names cause subtle behavior differences (e.g., debug mode not activating, error pages not showing, optimizations not running). The runtime hello-world recipe loaded during research documents the base patterns.
 
 ### Required endpoints
 
@@ -336,14 +330,14 @@ Must contain (all inside the markers, using **H3** headings):
 - **Numbered integration steps** (if any) — `### 2. Step Title`, `### 3. Step Title`, etc. Code changes the agent made that any user bringing their own codebase would also need.
 
 **What belongs in integration steps:**
-- Code-level changes the agent made that are required to work on Zerops (e.g., trusted proxy middleware in `bootstrap/app.php` — without it, CSRF breaks behind the L7 balancer)
-- Framework config file changes for the platform (e.g., wiring S3 credentials in Django settings, configuring Redis session driver)
+- Code-level changes the agent made that are required to work on Zerops (e.g., proxy trust configuration — without it, CSRF/origin validation breaks behind the L7 balancer)
+- Framework config file changes for the platform (e.g., wiring S3 credentials, configuring a Redis session/cache driver)
 - Any modification to app source that a user bringing their own app would also need to do
 
 **What does NOT belong in integration steps:**
 - Demo-specific scaffolding (custom routes, dashboard views, sample controllers) — these exist only in the recipe app, a real user wouldn't replicate them
 - Config values already visible in zerops.yaml (the user can read those inline)
-- Generic framework setup (how to install Laravel, what Vite does)
+- Generic framework setup (how to install the framework, what build tools do)
 
 ### knowledge-base Fragment
 
@@ -361,7 +355,7 @@ Must contain:
 Do NOT include:
 - Config values already visible in zerops.yaml (don't re-explain what the comments already cover)
 - Platform universals (build/run separation, L7 routing, tilde behavior, autoscaling timing)
-- Generic framework knowledge (how Laravel works, what Vite does)
+- Generic framework knowledge (how the framework works, what build tools do)
 
 ### intro Fragment
 - 1-3 lines only
@@ -457,10 +451,10 @@ If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix 
 Add a `setup: prod` entry to zerops.yaml on the appdev mount. Prod differences from dev:
 - Real `start` command (not `zsc noop`). For static: still no `start` (Nginx serves).
 - Real `buildCommands` with compilation/bundling
-- Real `deployFiles` (build output, not `.`) — **verify completeness**: list ALL dirs/files your start command and framework need at runtime. Common misses: `app/` (Laravel), `src/` (many frameworks), `storage/` (Laravel), lock files. When cherry-picking (not using `.`), run `ls` to see what exists and cross-reference with your start command and framework requirements.
+- Real `deployFiles` (build output, not `.`) — **verify completeness**: list ALL dirs/files your start command and framework need at runtime. When cherry-picking (not using `.`), run `ls` to see what exists and cross-reference with your start command and framework requirements.
 - Add `healthCheck` (httpGet on app port) — **required for prod** (restarts unresponsive containers). Omit only on dev and static.
 - Add `deploy.readinessCheck` if app has `initCommands` (migrations)
-- Copy `envVariables` from dev entry (if any), adjust APP_ENV/APP_DEBUG for production
+- Copy `envVariables` from dev entry (if any), adjust environment mode flags for production
 - Use runtime knowledge Prod patterns as reference
 
 **Step 7: Deploy appstage from appdev (cross-deploy)**
@@ -561,16 +555,16 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 >
 > **App code review:**
 > - Does the app actually work? Check routes, views, config, migrations.
-> - Are framework conventions followed? (e.g., Laravel: APP_ENV should be `local` not `development`, trusted proxies wired in code AND env)
-> - Is there dead code, unused dependencies, or missing files? (e.g., Tailwind plugin in vite.config.js but no Tailwind classes used)
+> - Are framework conventions followed? (correct env mode flag, proxy trust configured, framework-idiomatic patterns)
+> - Is there dead code, unused dependencies, or missing files?
 > - Does `.env.example` exist with the right keys?
 >
 > **zerops.yaml review:**
 > - Do `setup: dev` and `setup: prod` entries have correct build/deploy/run config?
 > - Does `setup: prod` have `healthCheck` (httpGet on the health endpoint)? Missing healthCheck means unhealthy containers are never restarted.
 > - Does `setup: prod` have `deploy.readinessCheck`? Missing readinessCheck means broken builds get traffic.
-> - Are deployFiles complete for prod? (common miss: `composer.lock`, `.env.example`)
-> - Are env vars correct for the framework? (e.g., Laravel SESSION_DRIVER, CACHE_STORE)
+> - Are deployFiles complete for prod? (run `ls` and verify all dirs/files the start command needs are included)
+> - Are env vars correct for the framework? (production mode flags, service connection vars, secret references)
 > - Is the comment quality good? (WHY not WHAT, no restating key names, no section-heading decorators like `# -- Section --`)
 >
 > **import.yaml review (all 6 environments):**
