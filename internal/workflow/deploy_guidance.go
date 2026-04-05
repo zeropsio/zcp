@@ -93,6 +93,7 @@ func buildPrepareGuide(state *DeployState, env Environment, stateDir string) str
 				fmt.Fprintf(&sb, "  - %s: `/var/www/%s/`\n", t.Hostname, t.Hostname)
 			}
 		}
+		sb.WriteString("- Agent Browser (agent-browser.dev) installed — use for browser-based testing/verification of deployed web apps\n")
 	}
 	sb.WriteString("\n")
 
