@@ -78,6 +78,9 @@ func buildPrepareGuide(state *DeployState, env Environment, stateDir string) str
 	}
 	sb.WriteString("\n")
 
+	// Development workflow — strategy and environment aware.
+	writeDevelopmentWorkflow(&sb, state, strategy, env)
+
 	// Platform rules.
 	sb.WriteString("### Platform rules\n")
 	sb.WriteString("- Deploy = new container — local files lost, only `deployFiles` content survives\n")
@@ -210,6 +213,62 @@ func buildKnowledgeMap(targets []DeployTarget) string {
 
 	sb.WriteString("- Env var keys: `zerops_discover includeEnvs=true` (keys only). If values needed for troubleshooting: add `includeEnvValues=true`\n")
 	return sb.String()
+}
+
+// writeDevelopmentWorkflow writes strategy-aware development iteration guidance.
+// This tells the LLM HOW to develop and test code before deploying.
+func writeDevelopmentWorkflow(sb *strings.Builder, state *DeployState, strategy string, env Environment) {
+	sb.WriteString("### Development workflow\n")
+
+	if env == EnvLocal {
+		sb.WriteString("Edit code locally. Managed services accessible via VPN (`zcli vpn up`).\n")
+		sb.WriteString("Test locally, then deploy when ready.\n\n")
+		return
+	}
+
+	// Container environment — strategy determines iteration flow.
+	switch strategy {
+	case StrategyPushGit:
+		sb.WriteString("Edit code on the SSHFS mount. When ready:\n")
+		sb.WriteString("1. Commit: `ssh {dev} \"cd /var/www && git add -A && git commit -m 'description'\"`\n")
+		sb.WriteString("2. Push: `zerops_deploy targetService=\"{dev}\" strategy=\"git-push\"`\n")
+		sb.WriteString("3. If CI/CD configured, stage deploys automatically.\n\n")
+	case StrategyManual:
+		sb.WriteString("Edit code on the SSHFS mount. Tell the user when changes are ready to deploy.\n")
+		sb.WriteString("User controls deployment timing.\n\n")
+	default: // push-dev or unset
+		writePushDevWorkflow(sb, state)
+	}
+}
+
+// writePushDevWorkflow writes the push-dev iteration cycle.
+func writePushDevWorkflow(sb *strings.Builder, state *DeployState) {
+	devHostname := ""
+	for _, t := range state.Targets {
+		if t.Role == DeployRoleDev || t.Role == DeployRoleSimple {
+			devHostname = t.Hostname
+			break
+		}
+	}
+	if devHostname == "" {
+		return
+	}
+
+	if state.Mode == PlanModeSimple {
+		fmt.Fprintf(sb, "Edit code on `/var/www/%s/`. After changes:\n", devHostname)
+		fmt.Fprintf(sb, "- `zerops_deploy targetService=\"%s\"` — server auto-starts with healthCheck\n", devHostname)
+		fmt.Fprintf(sb, "- `zerops_verify serviceHostname=\"%s\"`\n\n", devHostname)
+		return
+	}
+
+	// Dev/standard: manual SSH start cycle.
+	fmt.Fprintf(sb, "Edit code on `/var/www/%s/`. Iteration cycle:\n", devHostname)
+	fmt.Fprintf(sb, "1. Edit files on mount — changes appear instantly in container\n")
+	fmt.Fprintf(sb, "2. Start/restart server: `ssh %s \"cd /var/www && {start_command}\"` (Bash `run_in_background=true`)\n", devHostname)
+	fmt.Fprintf(sb, "3. Test: `ssh %s \"curl -s localhost:{port}/health\"` | jq .\n", devHostname)
+	sb.WriteString("4. Repeat until working\n")
+	sb.WriteString("- Code-only changes: restart server. No redeploy needed.\n")
+	sb.WriteString("- zerops.yaml changes (envVariables, ports): redeploy required.\n\n")
 }
 
 // --- helpers ---

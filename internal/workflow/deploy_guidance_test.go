@@ -115,6 +115,89 @@ func TestBuildPrepareGuide_DevelopmentFraming(t *testing.T) {
 	}
 }
 
+func TestBuildPrepareGuide_DevelopmentWorkflow_StrategyAware(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		state        *DeployState
+		env          Environment
+		wantContains []string
+		wantAbsent   []string
+	}{
+		{
+			name: "push_dev_container_standard",
+			state: &DeployState{
+				Mode: PlanModeStandard,
+				Targets: []DeployTarget{
+					{Hostname: "appdev", Role: DeployRoleDev},
+					{Hostname: "appstage", Role: DeployRoleStage},
+				},
+			},
+			env: EnvContainer,
+			wantContains: []string{
+				"Development workflow",
+				"/var/www/appdev/",
+				"restart server",
+				"curl",
+			},
+		},
+		{
+			name: "push_dev_container_simple",
+			state: &DeployState{
+				Mode: PlanModeSimple,
+				Targets: []DeployTarget{
+					{Hostname: "web", Role: DeployRoleSimple},
+				},
+			},
+			env: EnvContainer,
+			wantContains: []string{
+				"Development workflow",
+				"/var/www/web/",
+				"auto-starts",
+			},
+			wantAbsent: []string{
+				"restart server",
+			},
+		},
+		{
+			name: "local_env",
+			state: &DeployState{
+				Mode: PlanModeStandard,
+				Targets: []DeployTarget{
+					{Hostname: "appdev", Role: DeployRoleDev},
+				},
+			},
+			env: EnvLocal,
+			wantContains: []string{
+				"Development workflow",
+				"locally",
+				"VPN",
+			},
+			wantAbsent: []string{
+				"/var/www/",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			guide := buildPrepareGuide(tt.state, tt.env, "")
+
+			for _, want := range tt.wantContains {
+				if !strings.Contains(guide, want) {
+					t.Errorf("guide should contain %q\ngot:\n%s", want, guide)
+				}
+			}
+			for _, absent := range tt.wantAbsent {
+				if strings.Contains(guide, absent) {
+					t.Errorf("guide should NOT contain %q", absent)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildDeployGuide_Personalized(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

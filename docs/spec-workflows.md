@@ -786,6 +786,34 @@ WorkflowState {
 
 ---
 
+## §9 Planned Features
+
+### 9.1 Mode Expansion (simple/dev → standard)
+
+**Status**: Planned, not implemented.
+
+**Problem**: A service bootstrapped in simple or dev mode needs to expand to standard (dev+stage). This requires creating a new stage service, updating zerops.yaml with a stage entry, deploying to stage, and updating ServiceMeta.
+
+**Proposed approach**: Bootstrap in expansion mode. The existing service is treated as adopted (`isExisting: true`), and the new stage service is created. Plan example:
+
+```json
+{
+  "runtime": {
+    "devHostname": "app",
+    "type": "bun@1.3",
+    "isExisting": true,
+    "bootstrapMode": "standard",
+    "stageHostname": "appstage"
+  }
+}
+```
+
+Bootstrap adoption path handles it: adopted target skips generate+deploy (code already exists), new stage gets created and deployed via cross-deploy from dev. ServiceMeta updates from simple/dev → standard with new stageHostname.
+
+**Why bootstrap, not deploy**: Creating services is infrastructure work. Bootstrap already handles service creation, ServiceMeta writes, and import.yaml generation. Deploy flow handles code changes, not infrastructure topology changes.
+
+---
+
 ## Appendix A: Recovery Patterns
 
 | Symptom | Cause | Fix |
