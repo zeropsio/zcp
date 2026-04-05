@@ -38,6 +38,10 @@ func writeRecipeFiles(t *testing.T, dir string, plan *workflow.RecipePlan) {
 	t.Helper()
 
 	files := workflow.BuildFinalizeOutput(plan)
+	// Replace the TODO-scaffold app README with a real-looking one so the
+	// scaffold-TODO check passes (the check exists to force agents to overlay
+	// the real README from the mount; tests don't have a mount).
+	files["appdev/README.md"] = validTestAppREADME()
 	for relPath, content := range files {
 		fullPath := filepath.Join(dir, relPath)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
@@ -51,6 +55,33 @@ func writeRecipeFiles(t *testing.T, dir string, plan *workflow.RecipePlan) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// validTestAppREADME returns a minimal app README with all 3 extract-fragment
+// markers and no TODO scaffold text — enough to satisfy the scaffold check.
+func validTestAppREADME() string {
+	return `# Test Recipe App
+
+<!-- #ZEROPS_EXTRACT_START:intro# -->
+A minimal app for testing.
+<!-- #ZEROPS_EXTRACT_END:intro# -->
+
+## Integration Guide
+
+<!-- #ZEROPS_EXTRACT_START:integration-guide# -->
+
+### 1. Adding ` + "`zerops.yaml`" + `
+Place at repo root.
+
+<!-- #ZEROPS_EXTRACT_END:integration-guide# -->
+
+<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+
+### Gotchas
+- Test gotcha.
+
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+`
 }
 
 // addCommentsToYAML adds inline comments to YAML content to meet comment ratio.

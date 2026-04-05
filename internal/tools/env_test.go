@@ -18,7 +18,7 @@ func TestEnvTool_GetAction_ReturnsError(t *testing.T) {
 		WithServiceEnv("svc-1", []platform.EnvVar{{Key: "PORT", Content: "3000"}})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1")
+	RegisterEnv(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "get", "serviceHostname": "api",
@@ -43,7 +43,7 @@ func TestEnvTool_Set_PollsToFinished(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1")
+	RegisterEnv(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action":          "set",
@@ -79,7 +79,7 @@ func TestEnvTool_Delete_PollsToFinished(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1")
+	RegisterEnv(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action":          "delete",
@@ -109,7 +109,7 @@ func TestEnvTool_EmptyAction(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1")
+	RegisterEnv(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "", "serviceHostname": "api",
@@ -129,7 +129,7 @@ func TestEnvTool_InvalidAction(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEnv(srv, mock, "proj-1")
+	RegisterEnv(srv, mock, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_env", map[string]any{
 		"action": "wipe", "serviceHostname": "api",

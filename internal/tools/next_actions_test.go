@@ -21,8 +21,6 @@ func TestNextActions_ContainToolNames(t *testing.T) {
 		{"import_success_workflow", nextActionImportSuccess, "workflow"},
 		{"import_partial_events", nextActionImportPartial, "zerops_events"},
 		{"import_partial_workflow", nextActionImportPartial, "zerops_workflow"},
-		{"env_set_reload", nextActionEnvSetSuccess, "zerops_manage"},
-		{"env_delete_reload", nextActionEnvDeleteSuccess, "zerops_manage"},
 		{"manage_start_discover", nextActionManageStart, "zerops_discover"},
 		{"manage_stop_manage", nextActionManageStop, "zerops_manage"},
 		{"manage_restart_logs", nextActionManageRestart, "zerops_logs"},

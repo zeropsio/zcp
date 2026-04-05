@@ -238,6 +238,9 @@ func (e *Engine) autoGenerateFinalizeFiles(state *WorkflowState) {
 		return
 	}
 	files := BuildFinalizeOutput(state.Recipe.Plan)
+	if OverlayRealAppREADME(files, state.Recipe.Plan) {
+		fmt.Fprintln(os.Stderr, "zcp: overlaid appdev/README.md from mount (agent's real README)")
+	}
 	var count int
 	for relPath, content := range files {
 		fullPath := filepath.Join(state.Recipe.OutputDir, relPath)

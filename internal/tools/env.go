@@ -2,10 +2,13 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // EnvInput is the input type for zerops_env.
@@ -14,13 +17,27 @@ type EnvInput struct {
 	ServiceHostname string   `json:"serviceHostname,omitempty" jsonschema:"Hostname of the service to modify env vars on. Required unless project=true."`
 	Project         bool     `json:"project,omitempty"         jsonschema:"Set to true to manage project-level env vars instead of service-level."`
 	Variables       []string `json:"variables,omitempty"       jsonschema:"List of env vars. For set: KEY=VALUE strings. For delete: KEY names only."`
+	SkipRestart     bool     `json:"skipRestart,omitempty"     jsonschema:"set/delete: skip the automatic service restart after the env change. Default false (auto-restart affected services so the new value takes effect). Pass true only if you will redeploy immediately afterwards and the restart would be wasted."`
+}
+
+// envChangeResult wraps the underlying set/delete result with the list of
+// services that were auto-restarted so the new env value takes effect.
+type envChangeResult struct {
+	Process            *platform.Process   `json:"process,omitempty"`
+	RestartedServices  []string            `json:"restartedServices,omitempty"`
+	RestartWarnings    []string            `json:"restartWarnings,omitempty"`
+	RestartSkipped     bool                `json:"restartSkipped,omitempty"`
+	RestartedProcesses []*platform.Process `json:"restartedProcesses,omitempty"`
+	NextActions        string              `json:"nextActions,omitempty"`
 }
 
 // RegisterEnv registers the zerops_env tool.
-func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
+// selfHostname is the hostname of the service running ZCP — it is excluded
+// from auto-restart so the tool does not kill its own MCP connection.
+func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostname string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage environment variables. Actions: set, delete, generate-dotenv. Scope: service (serviceHostname) or project (project=true). After set/delete, RESTART affected services — env vars only take effect after restart. For project-level vars, restart ALL running services. generate-dotenv: resolves ${hostname_varName} refs, writes .env file. To read keys, use zerops_discover includeEnvs=true.",
+		Description: "Manage environment variables. Actions: set, delete, generate-dotenv. Scope: service (serviceHostname) or project (project=true). After set/delete the affected services are AUTOMATICALLY RESTARTED so the new value takes effect — env vars are only read at process start, not reloaded. Pass skipRestart=true only if you will deploy immediately anyway. generate-dotenv: resolves ${hostname_varName} refs, writes .env file. To read keys, use zerops_discover includeEnvs=true.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
 			DestructiveHint: boolPtr(true),
@@ -30,25 +47,27 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 
 		switch input.Action {
 		case "set":
-			result, err := ops.EnvSet(ctx, client, projectID, input.ServiceHostname, input.Project, input.Variables)
+			setResult, err := ops.EnvSet(ctx, client, projectID, input.ServiceHostname, input.Project, input.Variables)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			if result.Process != nil {
-				result.Process, _ = pollManageProcess(ctx, client, result.Process, onProgress)
+			if setResult.Process != nil {
+				setResult.Process, _ = pollManageProcess(ctx, client, setResult.Process, onProgress)
 			}
-			result.NextActions = nextActionEnvSetSuccess
-			return jsonResult(result), nil, nil
+			resp := envChangeResult{Process: setResult.Process}
+			applyAutoRestart(ctx, client, projectID, input, selfHostname, &resp, onProgress)
+			return jsonResult(resp), nil, nil
 		case "delete":
-			result, err := ops.EnvDelete(ctx, client, projectID, input.ServiceHostname, input.Project, input.Variables)
+			delResult, err := ops.EnvDelete(ctx, client, projectID, input.ServiceHostname, input.Project, input.Variables)
 			if err != nil {
 				return convertError(err), nil, nil
 			}
-			if result.Process != nil {
-				result.Process, _ = pollManageProcess(ctx, client, result.Process, onProgress)
+			if delResult.Process != nil {
+				delResult.Process, _ = pollManageProcess(ctx, client, delResult.Process, onProgress)
 			}
-			result.NextActions = nextActionEnvDeleteSuccess
-			return jsonResult(result), nil, nil
+			resp := envChangeResult{Process: delResult.Process}
+			applyAutoRestart(ctx, client, projectID, input, selfHostname, &resp, onProgress)
+			return jsonResult(resp), nil, nil
 		case "generate-dotenv":
 			result, err := ops.EnvGenerateDotenv(ctx, client, projectID, input.ServiceHostname, "")
 			if err != nil {
@@ -65,4 +84,131 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID string) {
 				"Use set, delete, or generate-dotenv")), nil, nil
 		}
 	})
+}
+
+// applyAutoRestart restarts the services affected by an env change so the new
+// value takes effect. Populates resp with the outcomes. Best-effort — restart
+// failures are reported as warnings; the env change itself has already
+// succeeded by the time this is called.
+func applyAutoRestart(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	input EnvInput,
+	selfHostname string,
+	resp *envChangeResult,
+	onProgress ops.ProgressCallback,
+) {
+	if input.SkipRestart {
+		resp.RestartSkipped = true
+		resp.NextActions = "skipRestart=true — env values are NOT yet live in containers. Restart manually (zerops_manage action=restart) or deploy to pick them up."
+		return
+	}
+
+	targets, warn := resolveRestartTargets(ctx, client, projectID, input, selfHostname)
+	if warn != "" {
+		resp.RestartWarnings = append(resp.RestartWarnings, warn)
+	}
+	if len(targets) == 0 {
+		// No ACTIVE runtime services to restart — the env value is stored and
+		// will be injected at the next service start/deploy.
+		resp.NextActions = "No ACTIVE services needed restart. The new env value will be injected when a service starts or deploys."
+		return
+	}
+
+	for _, t := range targets {
+		proc, err := client.RestartService(ctx, t.id)
+		if err != nil {
+			resp.RestartWarnings = append(resp.RestartWarnings,
+				fmt.Sprintf("%s: restart failed: %v — run zerops_manage action=restart manually", t.hostname, err))
+			continue
+		}
+		if proc != nil {
+			polled, _ := pollManageProcess(ctx, client, proc, onProgress)
+			resp.RestartedProcesses = append(resp.RestartedProcesses, polled)
+		}
+		resp.RestartedServices = append(resp.RestartedServices, t.hostname)
+	}
+
+	switch {
+	case len(resp.RestartedServices) == 0:
+		resp.NextActions = "Restart failed on all affected services — see restartWarnings."
+	case len(resp.RestartWarnings) > 0:
+		resp.NextActions = fmt.Sprintf("Restarted %d service(s), %d failed — see restartWarnings.", len(resp.RestartedServices), len(resp.RestartWarnings))
+	default:
+		resp.NextActions = fmt.Sprintf("Restarted %s — env values are live.", strings.Join(resp.RestartedServices, ", "))
+	}
+}
+
+type restartTarget struct {
+	id       string
+	hostname string
+}
+
+// resolveRestartTargets returns the services that should be restarted after
+// an env change. Scoping rules:
+//
+//   - Service-level change: just the named service, if ACTIVE.
+//   - Project-level change: all ACTIVE user-runtime services, EXCLUDING the
+//     ZCP service running this code (would kill our own MCP connection) and
+//     managed services (they consume their own generated credentials, not
+//     user-set project envs).
+//
+// Returns a warning string if the target service is not found or not ACTIVE
+// (so the agent understands why no restart happened).
+func resolveRestartTargets(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	input EnvInput,
+	selfHostname string,
+) ([]restartTarget, string) {
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Sprintf("could not list services for auto-restart: %v", err)
+	}
+
+	if input.Project {
+		var targets []restartTarget
+		for _, svc := range services {
+			if !isAutoRestartEligible(svc, selfHostname) {
+				continue
+			}
+			targets = append(targets, restartTarget{id: svc.ID, hostname: svc.Name})
+		}
+		return targets, ""
+	}
+
+	// Service-level: only the named service.
+	for _, svc := range services {
+		if svc.Name != input.ServiceHostname {
+			continue
+		}
+		if svc.Status != statusActive {
+			return nil, fmt.Sprintf("%s is %s (not ACTIVE) — env stored, will apply on next start", svc.Name, svc.Status)
+		}
+		return []restartTarget{{id: svc.ID, hostname: svc.Name}}, ""
+	}
+	return nil, fmt.Sprintf("service %q not found for auto-restart", input.ServiceHostname)
+}
+
+// isAutoRestartEligible reports whether a service should be restarted after a
+// project-level env change.
+func isAutoRestartEligible(svc platform.ServiceStack, selfHostname string) bool {
+	if svc.Status != statusActive {
+		return false
+	}
+	if svc.IsSystem() {
+		return false
+	}
+	if selfHostname != "" && svc.Name == selfHostname {
+		return false
+	}
+	// Managed services (databases, caches, search, object/shared storage,
+	// messaging) consume their own credentials — user-set project envs do
+	// not affect their operation, so restarting is unnecessary downtime.
+	if workflow.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		return false
+	}
+	return true
 }

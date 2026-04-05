@@ -47,6 +47,12 @@ func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
 			checks = append(checks, validateImportYAML(string(data), plan, i, folder)...)
 		}
 
+		// Reject TODO scaffold markers in the app README deliverable — if the
+		// agent didn't overlay the real README from the mount, the scaffold's
+		// `TODO: paste ...` / `**TODO** — add framework-specific gotchas`
+		// would otherwise reach the published recipe.
+		checks = append(checks, checkAppREADMENoScaffoldTODOs(dir)...)
+
 		allPassed := true
 		for i := range checks {
 			if checks[i].Status == statusFail {
@@ -76,6 +82,35 @@ func checkFileExists(baseDir, relPath string) []workflow.StepCheck {
 	}
 	return []workflow.StepCheck{{
 		Name:   "file_" + strings.ReplaceAll(relPath, "/", "_"),
+		Status: statusPass,
+	}}
+}
+
+// checkAppREADMENoScaffoldTODOs fails if the deliverable appdev/README.md
+// still contains the generate-finalize scaffold's TODO markers. The agent
+// should write the real README to the SSHFS mount during the generate step;
+// generate-finalize overlays it automatically. If this check fires, either
+// the agent didn't write the README on the mount OR the overlay failed
+// validation — tell them the exact fix.
+func checkAppREADMENoScaffoldTODOs(outputDir string) []workflow.StepCheck {
+	readmePath := filepath.Join(outputDir, "appdev", "README.md")
+	data, err := os.ReadFile(readmePath)
+	if err != nil {
+		// No app README to check — not a failure at this layer (the
+		// file_appdev_README.md existence check above catches missing files).
+		return nil
+	}
+	content := string(data)
+	if strings.Contains(content, "TODO: paste the full zerops.yaml content here") ||
+		strings.Contains(content, "**TODO** \u2014 add framework-specific gotchas") {
+		return []workflow.StepCheck{{
+			Name:   "appdev_readme_no_todo_scaffold",
+			Status: statusFail,
+			Detail: "appdev/README.md still contains scaffold TODO markers — write the real README at /var/www/{appHostname}dev/README.md during the generate step with all 3 extract fragments filled in, then re-run generate-finalize to overlay it into the deliverable.",
+		}}
+	}
+	return []workflow.StepCheck{{
+		Name:   "appdev_readme_no_todo_scaffold",
 		Status: statusPass,
 	}}
 }

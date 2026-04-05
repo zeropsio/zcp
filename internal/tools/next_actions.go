@@ -8,12 +8,13 @@ import (
 
 // NextActions constants provide actionable follow-up instructions for LLMs.
 const (
-	nextActionDeploySuccess    = "Check logs: zerops_logs severity=ERROR since=5m."
-	nextActionDeployBuildFail  = "Build failed — check buildLogs in response for build output. Fix and redeploy."
-	nextActionImportSuccess    = "Verify services: zerops_discover. Continue workflow: mount dev, discover env vars, write code, then deploy."
-	nextActionImportPartial    = "Check failed processes: zerops_events. Fix and re-import via zerops_workflow."
-	nextActionEnvSetSuccess    = "IMPORTANT: Env var changes require a service restart to take effect (reload is NOT sufficient — runtime processes cache env vars at startup). Restart affected services: zerops_manage action=\"restart\" serviceHostname=\"{service}\". For project-level vars, restart ALL running runtime services."
-	nextActionEnvDeleteSuccess = "IMPORTANT: Env var removal requires a service restart to take effect. Restart affected services: zerops_manage action=\"restart\" serviceHostname=\"{service}\". For project-level vars, restart ALL running runtime services."
+	nextActionDeploySuccess   = "Check logs: zerops_logs severity=ERROR since=5m."
+	nextActionDeployBuildFail = "Build failed — check buildLogs in response for build output. Fix and redeploy."
+	nextActionImportSuccess   = "Verify services: zerops_discover. Continue workflow: mount dev, discover env vars, write code, then deploy."
+	nextActionImportPartial   = "Check failed processes: zerops_events. Fix and re-import via zerops_workflow."
+	// nextActionEnvSetSuccess + nextActionEnvDeleteSuccess removed — zerops_env
+	// now auto-restarts affected services and crafts its own per-call message
+	// listing what was restarted (see envChangeResult.NextActions).
 	nextActionManageStart      = "Verify service is running: zerops_discover."
 	nextActionManageStop       = "Service stopped. Start with: zerops_manage action=start."
 	nextActionManageRestart    = "Verify health: zerops_logs severity=ERROR since=1m."

@@ -177,6 +177,11 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, serviceComments map[s
 	// Generate all files from the plan.
 	files := workflow.BuildFinalizeOutput(plan)
 
+	// Overlay the real app README from the SSHFS mount if the agent wrote
+	// one during the generate step. Prevents the TODO scaffold from landing
+	// in the deliverable folder.
+	readmeOverlay := workflow.OverlayRealAppREADME(files, plan)
+
 	// Write files to disk.
 	var written []string
 	for relPath, content := range files {
@@ -198,10 +203,16 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, serviceComments map[s
 
 	hasComments := len(plan.ServiceComments) > 0 || plan.ProjectComment != ""
 	var message string
-	if hasComments {
-		message = fmt.Sprintf("Regenerated %d recipe files with your comments baked into ALL 6 import.yaml files. Review the output — do NOT edit these files by hand. To refine a comment, call generate-finalize again with updated serviceComments/projectComment (it will merge and regenerate).", len(written))
+	var readmeNote string
+	if readmeOverlay {
+		readmeNote = " App README overlaid from /var/www mount (real content, not scaffold)."
 	} else {
-		message = fmt.Sprintf("Regenerated %d recipe files with platform comments only. The 30%% comment ratio check will fail until you add framework-specific comments. Provide them via `zerops_workflow action=\"generate-finalize\" serviceComments={\"<hostname>\":\"<why this service is here>\", ...} projectComment=\"<shared-secret rationale>\"` — one call bakes your comments into ALL 6 files. Do NOT edit import.yaml files by hand (rewriting drops auto-generated zeropsSetup/buildFromGit fields).", len(written))
+		readmeNote = " App README uses the TODO scaffold — write /var/www/{appHostname}dev/README.md during generate step and re-run generate-finalize to overlay it."
+	}
+	if hasComments {
+		message = fmt.Sprintf("Regenerated %d recipe files with your comments baked into ALL 6 import.yaml files. Review the output — do NOT edit these files by hand. To refine a comment, call generate-finalize again with updated serviceComments/projectComment (it will merge and regenerate).%s", len(written), readmeNote)
+	} else {
+		message = fmt.Sprintf("Regenerated %d recipe files with platform comments only. The 30%% comment ratio check will fail until you add framework-specific comments. Provide them via `zerops_workflow action=\"generate-finalize\" serviceComments={\"<hostname>\":\"<why this service is here>\", ...} projectComment=\"<shared-secret rationale>\"` — one call bakes your comments into ALL 6 files. Do NOT edit import.yaml files by hand (rewriting drops auto-generated zeropsSetup/buildFromGit fields).%s", len(written), readmeNote)
 	}
 	return jsonResult(map[string]any{
 		"status":  "generated",

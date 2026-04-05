@@ -25,6 +25,10 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 		// (managed, utility, and runtime in env 2-5) gets a single entry.
 		// IsRuntimeType already excludes utility, so no extra check needed.
 		if IsRuntimeType(target.Type) && envIndex <= 1 {
+			// Agent comment emitted ONCE above the pair — not per service.
+			// The pair shares the same base hostname ("app") and the comment
+			// describes both dev and stage roles together.
+			writeAgentServiceComment(&b, plan, target.Hostname)
 			writeDevService(&b, plan, target)
 			writeStageService(&b, plan, target)
 		} else {
@@ -75,9 +79,9 @@ func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int) {
 }
 
 // writeDevService writes a dev service block for env 0-1. Called only for
-// runtime targets, so target.Type is guaranteed IsRuntimeType.
+// runtime targets, so target.Type is guaranteed IsRuntimeType. Agent comment
+// is emitted by the caller above the dev+stage pair.
 func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
-	writeAgentServiceComment(b, plan, target.Hostname)
 	fmt.Fprintf(b, "  - hostname: %sdev\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 	b.WriteString("    zeropsSetup: dev\n")
@@ -91,9 +95,9 @@ func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget) 
 }
 
 // writeStageService writes a stage service block for env 0-1. Called only for
-// runtime targets, so target.Type is guaranteed IsRuntimeType.
+// runtime targets, so target.Type is guaranteed IsRuntimeType. Agent comment
+// is emitted by the caller above the dev+stage pair.
 func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
-	writeAgentServiceComment(b, plan, target.Hostname)
 	fmt.Fprintf(b, "  - hostname: %sstage\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.IsWorker, false))
@@ -109,13 +113,17 @@ func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget
 func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, envIndex int) {
 	// Agent-authored framework-specific comment (shared across all 6 envs for this
 	// hostname). Emitted first so it reads as the "what this is" intro.
-	writeAgentServiceComment(b, plan, target.Hostname)
+	hasAgent := writeAgentServiceComment(b, plan, target.Hostname)
 
-	// Platform-knowledge comments per service category.
-	if ServiceSupportsMode(target.Type) {
-		writeManagedServiceComment(b, plan, target, envIndex)
-	} else if IsObjectStorageType(target.Type) {
-		writeObjectStorageComment(b, envIndex)
+	// Platform-knowledge comments per service category — skipped when the agent
+	// provided their own comment (otherwise two comment blocks stack and repeat
+	// the same information about mode/priority/scaling).
+	if !hasAgent {
+		if ServiceSupportsMode(target.Type) {
+			writeManagedServiceComment(b, plan, target, envIndex)
+		} else if IsObjectStorageType(target.Type) {
+			writeObjectStorageComment(b, envIndex)
+		}
 	}
 	// Runtime + utility: no template comments (agent writes framework-specific ones).
 
@@ -291,16 +299,19 @@ func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
 
 // writeAgentServiceComment emits the agent-authored comment for a service at
 // service indent (2 spaces), keyed by base hostname in plan.ServiceComments.
-// No-op if the plan has no entry for this hostname (agent hasn't provided one yet).
-func writeAgentServiceComment(b *strings.Builder, plan *RecipePlan, hostname string) {
+// Returns true if a comment was emitted, false if no entry existed for this
+// hostname — the caller uses this signal to avoid stacking a duplicate
+// platform-level comment on top of the agent's.
+func writeAgentServiceComment(b *strings.Builder, plan *RecipePlan, hostname string) bool {
 	if plan == nil || len(plan.ServiceComments) == 0 {
-		return
+		return false
 	}
 	text, ok := plan.ServiceComments[hostname]
 	if !ok || strings.TrimSpace(text) == "" {
-		return
+		return false
 	}
 	writeAgentCommentAtIndent(b, text, "  ")
+	return true
 }
 
 // writeAgentCommentAtIndent wraps free-form text into # comment lines at the
