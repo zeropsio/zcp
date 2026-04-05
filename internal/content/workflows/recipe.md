@@ -499,6 +499,7 @@ zerops_verify serviceHostname="appstage"
 ```
 This identifies *which* initCommand failed. For *why* it failed, fetch runtime logs on the target service — the stderr is there, not in buildLogs.
 
+
 ### Common deployment issues
 
 | Issue | Diagnosis | Fix |
@@ -526,27 +527,36 @@ Recipe files were **auto-generated** in the output directory when deploy complet
 - 1 root README with deploy button, cover image, environment links
 - 1 app README scaffold at `appdev/README.md` with correct markers and deploy button — compare with your app README at `/var/www/appdev/` to ensure yours has the same structural elements (deploy button, cover, markers)
 
-**Do NOT rewrite import.yaml from scratch.** The YAML structure, scaling matrix, buildFromGit URLs, and platform config are final. To regenerate after fixing the plan: `zerops_workflow action="generate-finalize"`
+### Do NOT edit import.yaml files by hand
 
-### Step 1: Write comments for every import.yaml
+The 6 import.yaml files share the same service definitions — only scaling differs per tier. Editing them one by one means 6× the work, and agents that try end up rewriting files from scratch, dropping the auto-generated `zeropsSetup` + `buildFromGit` fields. **Use structured comment inputs instead.** One call bakes your comments into all 6 files at once.
 
-The generated import.yaml files have correct YAML but **minimal comments** — only platform-level explanations (DB mode, priority, corePackage). The **30% comment ratio check will fail** until you add framework-specific comments. This is intentional.
+### Step 1: Provide framework-specific comments as structured input
 
-You already know everything needed — you built the app, wrote the zerops.yaml, and deployed both dev and stage. Now describe what each service does and why, using that implementation knowledge.
+You already know what each service does — you built the app, wrote the zerops.yaml, and deployed both dev and stage. Pass that knowledge as `serviceComments` (keyed by base hostname — NOT `appdev`/`appstage`, just `app`) and `projectComment` (for the shared-secret block, if any):
 
-**For each runtime service**, add a comment block above it explaining:
-- What `zeropsSetup: dev` / `zeropsSetup: prod` means for THIS framework (reference your zerops.yaml — what gets built, what gets deployed, how the dev workflow works)
-- Why `enableSubdomainAccess` matters here (agent verification, QA review, custom domain)
+```
+zerops_workflow action="generate-finalize" \
+  serviceComments={
+    "app": "Runtime service. zeropsSetup:dev mounts /var/www via SSHFS for live development; zeropsSetup:prod builds once with composer install --no-dev and runs php artisan config:cache in run.initCommands so paths resolve against /var/www, not /build/source.",
+    "db": "PostgreSQL holds the schema, sessions, cache, and queued jobs — Laravel's default database driver for all three. Priority 10 so it starts before the app container."
+  } \
+  projectComment="APP_KEY is the AES-256-CBC encryption key. It is shared across ALL containers (not per-service) so session cookies and encrypted DB values remain valid when users hit different app containers behind the L7 balancer."
+```
 
-**For each data service**, the template already explains mode/priority. Add what THIS app uses the database for (migrations, sessions, cache, etc.)
+**What comments should cover:**
+- **Runtime service**: what `zeropsSetup: dev` / `zeropsSetup: prod` means for THIS framework, why `enableSubdomainAccess` matters.
+- **Data service**: what THIS app uses it for (migrations + sessions + cache + jobs, etc.).
+- **Utility service** (mailpit, etc.): why it's present, how to access.
+- **Project secret**: what the framework uses it for (encryption, CSRF, session signing).
 
-**For the project secret** (if present), explain what THIS framework uses it for (encryption, CSRF, session signing, etc.)
-
-**Comment style** (you already know this from generate step — same rules):
+**Comment style:**
 - Explain WHY, not WHAT. Don't restate the key name.
-- 1-3 lines per block, ~50-60 chars wide, max 80.
+- 1-3 sentences per service. Lines auto-wrap at 80 chars.
 - No section-heading decorators (`# -- Title --`, `# === Foo ===`).
 - Dev-to-dev tone — like explaining your config to a colleague.
+
+**Refining a comment**: just call `generate-finalize` again with the updated entry. Passing a key with an empty string deletes it. Passing `null`/omitting the map leaves existing comments untouched.
 
 ### Step 2: Review READMEs
 
@@ -556,7 +566,7 @@ You already know everything needed — you built the app, wrote the zerops.yaml,
 ### Step 3: Complete
 
 ```
-zerops_workflow action="complete" step="finalize" attestation="All import.yaml files enriched with implementation-specific comments"
+zerops_workflow action="complete" step="finalize" attestation="Comments provided via generate-finalize; all 6 import.yaml files regenerated with comments baked in"
 ```
 </section>
 

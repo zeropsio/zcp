@@ -35,6 +35,11 @@ type WorkflowInput struct {
 	Strategies  map[string]string          `json:"strategies,omitempty"  jsonschema:"Per-service strategy map for strategy action (e.g. {\"appdev\":\"push-git\"})."`
 	Tier        string                     `json:"tier,omitempty"        jsonschema:"Recipe tier: minimal or showcase (recipe workflow only)."`
 	RecipePlan  *workflow.RecipePlan       `json:"recipePlan,omitempty"  jsonschema:"Structured recipe plan for research step completion."`
+
+	// Recipe comment inputs — passed to generate-finalize to bake agent-authored
+	// comments into all 6 import.yaml files at once, replacing per-file Edit.
+	ServiceComments map[string]string `json:"serviceComments,omitempty" jsonschema:"Recipe generate-finalize only: map of base hostname (e.g. 'app', 'db') to framework-specific comment. Comment is emitted above the service in ALL 6 import.yaml files. Use this instead of editing files by hand."`
+	ProjectComment  string            `json:"projectComment,omitempty"  jsonschema:"Recipe generate-finalize only: comment emitted above the project: block in ALL 6 import.yaml files (typically explains the shared secret rationale)."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -115,7 +120,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir)
 	case "generate-finalize":
 		if detectActiveWorkflow(engine) == workflowRecipe {
-			return handleRecipeGenerateFinalize(engine)
+			return handleRecipeGenerateFinalize(engine, input.ServiceComments, input.ProjectComment)
 		}
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

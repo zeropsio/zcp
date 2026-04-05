@@ -88,10 +88,12 @@ func resolveRecipeGuidance(step string, plan *RecipePlan) string {
 }
 
 // assembleRecipeKnowledge gathers step-relevant knowledge from the knowledge store.
-// Recipe workflow is about CREATING knowledge — the agent discovers framework pitfalls
-// and documents them. Only schema field references and runtime patterns are injected;
-// cross-runtime rules (Rules & Pitfalls, Schema Rules) are deliberately excluded so
-// the agent researches and captures them rather than copying from a rule sheet.
+// Recipe workflow is about CREATING framework-specific knowledge — the agent discovers
+// and documents framework pitfalls. But PLATFORM invariants (lifecycle phases, port
+// ranges, hostname conventions, mode immutability) are NOT framework discoveries —
+// they are Zerops rules and must be injected so the agent does not re-derive them
+// wrong. Both schema field references AND Rules & Pitfalls are delivered; only the
+// framework-specific layer is left for the agent to research.
 // All knowledge retrieval is best-effort — errors are silently skipped.
 func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars map[string][]string, kp knowledge.Provider) string {
 	if kp == nil {
@@ -107,6 +109,10 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		// import.yaml field reference for writing service definitions.
 		if s := getCoreSection(kp, "import.yaml Schema"); s != "" {
 			parts = append(parts, "## import.yaml Schema\n\n"+s)
+		}
+		// Platform rules: hostname conventions, priority, mode immutability, etc.
+		if s := getCoreSection(kp, "Rules & Pitfalls"); s != "" {
+			parts = append(parts, "## Rules & Pitfalls\n\n"+s)
 		}
 
 	case RecipeStepGenerate:
@@ -124,6 +130,12 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		// zerops.yaml field reference for writing config.
 		if s := getCoreSection(kp, "zerops.yaml Schema"); s != "" {
 			parts = append(parts, "## zerops.yaml Schema\n\n"+s)
+		}
+		// Platform rules: lifecycle matrix (build vs run vs init), port ranges,
+		// env var levels, deploy semantics. Critical — the #1 recipe failure is
+		// putting a command in the wrong lifecycle phase.
+		if s := getCoreSection(kp, "Rules & Pitfalls"); s != "" {
+			parts = append(parts, "## Rules & Pitfalls\n\n"+s)
 		}
 
 	// Deploy: no knowledge injection. Static guidance covers the deploy flow;

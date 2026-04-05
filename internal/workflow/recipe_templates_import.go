@@ -50,6 +50,11 @@ func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int) {
 		b.WriteString("#zeropsPreprocessor=on\n\n")
 	}
 
+	// Agent-authored project comment (e.g. "APP_KEY is used for AES-256-CBC
+	// encryption and shared across containers so sessions stay valid."). Emitted
+	// above the project: line at indent 0 so it introduces the whole block.
+	writeAgentCommentAtIndent(b, plan.ProjectComment, "")
+
 	b.WriteString("project:\n")
 	fmt.Fprintf(b, "  name: %s\n", projectName)
 
@@ -68,6 +73,7 @@ func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int) {
 
 // writeDevService writes a dev service block for env 0-1.
 func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
+	writeAgentServiceComment(b, plan, target.Hostname)
 	fmt.Fprintf(b, "  - hostname: %sdev\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 	b.WriteString("    zeropsSetup: dev\n")
@@ -81,6 +87,7 @@ func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget) 
 
 // writeStageService writes a stage service block for env 0-1.
 func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
+	writeAgentServiceComment(b, plan, target.Hostname)
 	fmt.Fprintf(b, "  - hostname: %sstage\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.Role, false))
@@ -94,6 +101,10 @@ func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget
 
 // writeSingleService writes a service entry for env 2-5 (and non-runtime services in env 0-1).
 func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, envIndex int) {
+	// Agent-authored framework-specific comment (shared across all 6 envs for this
+	// hostname). Emitted first so it reads as the "what this is" intro.
+	writeAgentServiceComment(b, plan, target.Hostname)
+
 	// Platform-knowledge comments per service category.
 	if ServiceSupportsMode(target.Type) {
 		writeManagedServiceComment(b, plan, target, envIndex)
@@ -271,6 +282,36 @@ func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
 }
 
 // --- Comment helpers ---
+
+// writeAgentServiceComment emits the agent-authored comment for a service at
+// service indent (2 spaces), keyed by base hostname in plan.ServiceComments.
+// No-op if the plan has no entry for this hostname (agent hasn't provided one yet).
+func writeAgentServiceComment(b *strings.Builder, plan *RecipePlan, hostname string) {
+	if plan == nil || len(plan.ServiceComments) == 0 {
+		return
+	}
+	text, ok := plan.ServiceComments[hostname]
+	if !ok || strings.TrimSpace(text) == "" {
+		return
+	}
+	writeAgentCommentAtIndent(b, text, "  ")
+}
+
+// writeAgentCommentAtIndent wraps free-form text into # comment lines at the
+// given indent. Preserves explicit newlines in the input (for paragraph breaks).
+func writeAgentCommentAtIndent(b *strings.Builder, text, indent string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	maxWidth := max(80-len(indent)-2, 20) // "# "
+	for _, line := range wrapText(text, maxWidth) {
+		if line == "" {
+			fmt.Fprintf(b, "%s#\n", indent)
+		} else {
+			fmt.Fprintf(b, "%s# %s\n", indent, line)
+		}
+	}
+}
 
 // writeComment writes a multi-line YAML comment at service indent (2 spaces).
 // Lines auto-wrap to fit within 80 total characters.

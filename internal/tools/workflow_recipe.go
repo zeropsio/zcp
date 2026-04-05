@@ -133,7 +133,9 @@ func handleRecipeSkip(_ context.Context, engine *workflow.Engine, input Workflow
 
 // handleRecipeGenerateFinalize generates all recipe repo files using BuildFinalizeOutput.
 // Writes files to the recipe output directory and returns the list of files written.
-func handleRecipeGenerateFinalize(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
+// When serviceComments or projectComment are provided, they are merged into the plan
+// and baked into every generated import.yaml — no per-file hand-editing required.
+func handleRecipeGenerateFinalize(engine *workflow.Engine, serviceComments map[string]string, projectComment string) (*mcp.CallToolResult, any, error) {
 	session := engine.RecipeSession()
 	if session == nil {
 		return convertError(platform.NewPlatformError(
@@ -158,6 +160,20 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine) (*mcp.CallToolResult,
 			"")), nil, nil
 	}
 
+	// Persist comment inputs into the plan (provided entries overwrite; empty
+	// string deletes prior entries; nil map leaves existing untouched). Then
+	// reload the session so BuildFinalizeOutput sees the merged plan.
+	if serviceComments != nil || projectComment != "" {
+		if err := engine.UpdateRecipeComments(serviceComments, projectComment); err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("persist comment inputs: %v", err),
+				"")), nil, nil
+		}
+		session = engine.RecipeSession()
+		plan = session.Plan
+	}
+
 	// Generate all files from the plan.
 	files := workflow.BuildFinalizeOutput(plan)
 
@@ -180,12 +196,19 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine) (*mcp.CallToolResult,
 		written = append(written, relPath)
 	}
 
+	hasComments := len(plan.ServiceComments) > 0 || plan.ProjectComment != ""
+	var message string
+	if hasComments {
+		message = fmt.Sprintf("Regenerated %d recipe files with your comments baked into ALL 6 import.yaml files. Review the output — do NOT edit these files by hand. To refine a comment, call generate-finalize again with updated serviceComments/projectComment (it will merge and regenerate).", len(written))
+	} else {
+		message = fmt.Sprintf("Regenerated %d recipe files with platform comments only. The 30%% comment ratio check will fail until you add framework-specific comments. Provide them via `zerops_workflow action=\"generate-finalize\" serviceComments={\"<hostname>\":\"<why this service is here>\", ...} projectComment=\"<shared-secret rationale>\"` — one call bakes your comments into ALL 6 files. Do NOT edit import.yaml files by hand (rewriting drops auto-generated zeropsSetup/buildFromGit fields).", len(written))
+	}
 	return jsonResult(map[string]any{
 		"status":  "generated",
 		"files":   written,
 		"count":   len(written),
 		"dir":     outputDir,
-		"message": fmt.Sprintf("Regenerated %d recipe files. Structure and scaling are correct — add framework-specific comments to each import.yaml (the 30%% comment ratio check will enforce this). Reference your zerops.yaml for what each service actually does.", len(written)),
+		"message": message,
 	}), nil, nil
 }
 

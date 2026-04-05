@@ -198,6 +198,38 @@ func (e *Engine) RecipeSession() *RecipeState {
 	return state.Recipe
 }
 
+// UpdateRecipeComments merges agent-authored comments into the recipe plan and
+// persists the session. Provided entries overwrite; empty-string values delete
+// prior entries; nil map leaves existing entries untouched. Empty projectComment
+// is a no-op (pass a single space to clear if ever needed).
+func (e *Engine) UpdateRecipeComments(serviceComments map[string]string, projectComment string) error {
+	state, err := e.loadState()
+	if err != nil {
+		return fmt.Errorf("update recipe comments load: %w", err)
+	}
+	if state.Recipe == nil || state.Recipe.Plan == nil {
+		return fmt.Errorf("update recipe comments: no active recipe plan")
+	}
+	plan := state.Recipe.Plan
+	if serviceComments != nil {
+		if plan.ServiceComments == nil {
+			plan.ServiceComments = map[string]string{}
+		}
+		for k, v := range serviceComments {
+			if v == "" {
+				delete(plan.ServiceComments, k)
+			} else {
+				plan.ServiceComments[k] = v
+			}
+		}
+	}
+	if projectComment != "" {
+		plan.ProjectComment = projectComment
+	}
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return saveSessionState(e.stateDir, e.sessionID, state)
+}
+
 // autoGenerateFinalizeFiles writes all template-generated recipe files to outputDir.
 // Called automatically when deploy completes and finalize step begins.
 // Best-effort — errors logged to stderr, never block step transition.

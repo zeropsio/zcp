@@ -48,6 +48,12 @@ type RecipePlan struct {
 	Research    ResearchData    `json:"research"`
 	Targets     []RecipeTarget  `json:"targets"`
 	CreatedAt   string          `json:"createdAt,omitempty"`
+	// Agent-authored comments baked into import.yaml at generate-finalize time.
+	// Keyed by base hostname (e.g. "app", "db") — dev/stage variants share the base comment.
+	// Removes the ergonomic trap of editing 6 similar files by hand (agents rewrite instead of Edit).
+	ServiceComments map[string]string `json:"serviceComments,omitempty"`
+	// Comment for the project-level block (shared secret rationale, corePackage, etc.).
+	ProjectComment string `json:"projectComment,omitempty"`
 }
 
 // RecipeTarget defines a service in the recipe workspace.
