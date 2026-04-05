@@ -82,10 +82,12 @@ _release:
 	@if [ -n "$$(git diff --name-only 2>/dev/null)$$(git diff --cached --name-only 2>/dev/null)" ]; then \
 		echo "ERROR: working tree is dirty. Commit first."; exit 1; \
 	fi; \
+	echo "Fetching remote tags..."; \
+	git fetch --tags --force || { echo "ERROR: cannot fetch tags from remote"; exit 1; }; \
 	if [ -n "$(V)" ]; then \
 		NEXT="v$$(echo '$(V)' | sed 's/^v//')"; \
 	else \
-		LATEST=$$(git describe --tags --abbrev=0 2>/dev/null); \
+		LATEST=$$(git tag -l 'v*' --sort=-v:refname | head -1); \
 		if [ -z "$$LATEST" ]; then echo "ERROR: no existing tags found"; exit 1; fi; \
 		MAJOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f1); \
 		MINOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f2); \
@@ -96,7 +98,7 @@ _release:
 			NEXT="v$$MAJOR.$$MINOR.$$((PATCH + 1))"; \
 		fi; \
 	fi; \
-	LATEST=$${LATEST:-$$(git describe --tags --abbrev=0 2>/dev/null)}; \
+	LATEST=$${LATEST:-$$(git tag -l 'v*' --sort=-v:refname | head -1)}; \
 	COMMITS=$$(git rev-list "$${LATEST:-HEAD}"..HEAD --count 2>/dev/null || echo 0); \
 	if [ "$$COMMITS" = "0" ]; then \
 		printf "\033[33mWarning:\033[0m no new commits since $${LATEST:-HEAD}\n"; \
