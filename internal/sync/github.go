@@ -20,7 +20,7 @@ func CheckGH() error {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return fmt.Errorf("gh CLI not installed: install from https://cli.github.com")
 	}
-	cmd := exec.Command("gh", "auth", "status") //nolint:gosec,noctx // short-lived check
+	cmd := exec.Command("gh", "auth", "status") //nolint:noctx // short-lived check
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
