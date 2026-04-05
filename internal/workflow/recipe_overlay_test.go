@@ -104,7 +104,7 @@ x
 }
 
 func TestOverlayRealAppREADME_NoFileNoOp(t *testing.T) {
-	t.Parallel()
+	// Not parallel — mutates recipeMountBaseOverride (package-level var).
 	plan := &RecipePlan{Targets: []RecipeTarget{{Hostname: "app", Type: "php-nginx@8.4"}}}
 	files := map[string]string{"appdev/README.md": "SCAFFOLD"}
 
@@ -121,7 +121,7 @@ func TestOverlayRealAppREADME_NoFileNoOp(t *testing.T) {
 }
 
 func TestOverlayRealAppREADME_SkipsWorkersAsAppTarget(t *testing.T) {
-	t.Parallel()
+	// Not parallel — reads recipeMountBaseOverride (package-level var).
 	plan := &RecipePlan{
 		Targets: []RecipeTarget{
 			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
