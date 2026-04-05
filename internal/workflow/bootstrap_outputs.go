@@ -42,7 +42,7 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			Hostname:         metaHostname,
 			Mode:             mode,
 			StageHostname:    stageHostname,
-			DeployStrategy:   StrategyPushDev,
+			DeployStrategy:   "",
 			Environment:      string(e.environment),
 			BootstrapSession: bootstrapSession,
 			BootstrappedAt:   now,

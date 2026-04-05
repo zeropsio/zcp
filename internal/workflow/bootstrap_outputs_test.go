@@ -451,21 +451,21 @@ func TestWriteBootstrapOutputs_AlwaysWritesEmptyStrategy(t *testing.T) {
 	if meta == nil {
 		t.Fatal("expected appdev meta")
 	}
-	if meta.DeployStrategy != StrategyPushDev {
-		t.Errorf("bootstrap must set push-dev DeployStrategy, got %q", meta.DeployStrategy)
+	if meta.DeployStrategy != "" {
+		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
 	}
 }
 
-func TestWriteBootstrapOutputs_DefaultPushDevStrategy(t *testing.T) {
+func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
 		bootstrapMode string
 		env           Environment
 	}{
-		{"dev mode gets default push-dev", PlanModeDev, EnvLocal},
-		{"simple mode gets default push-dev", PlanModeSimple, EnvLocal},
-		{"standard mode gets default push-dev", PlanModeStandard, EnvContainer},
+		{"dev mode gets empty strategy", PlanModeDev, EnvLocal},
+		{"simple mode gets empty strategy", PlanModeSimple, EnvLocal},
+		{"standard mode gets empty strategy", PlanModeStandard, EnvContainer},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -485,7 +485,7 @@ func TestWriteBootstrapOutputs_DefaultPushDevStrategy(t *testing.T) {
 				t.Fatalf("BootstrapCompletePlan: %v", err)
 			}
 
-			// Bootstrap always writes push-dev as default strategy.
+			// Bootstrap always writes empty strategy — user sets it later.
 			for _, step := range []string{"provision", "generate", "deploy", "close"} {
 				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 					t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -499,14 +499,14 @@ func TestWriteBootstrapOutputs_DefaultPushDevStrategy(t *testing.T) {
 			if meta == nil {
 				t.Fatal("expected appdev meta")
 			}
-			if meta.DeployStrategy != StrategyPushDev {
-				t.Errorf("DeployStrategy: want push-dev, got %q", meta.DeployStrategy)
+			if meta.DeployStrategy != "" {
+				t.Errorf("DeployStrategy: want empty, got %q", meta.DeployStrategy)
 			}
 		})
 	}
 }
 
-func TestWriteBootstrapOutputs_LocalMode_DefaultPushDevStrategy(t *testing.T) {
+func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyStrategy(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
@@ -536,8 +536,8 @@ func TestWriteBootstrapOutputs_LocalMode_DefaultPushDevStrategy(t *testing.T) {
 	if meta == nil {
 		t.Fatal("expected appdev meta")
 	}
-	if meta.DeployStrategy != StrategyPushDev {
-		t.Errorf("bootstrap must set push-dev DeployStrategy, got %q", meta.DeployStrategy)
+	if meta.DeployStrategy != "" {
+		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
 	}
 }
 
@@ -972,7 +972,7 @@ func TestWriteBootstrapOutputs_LocalMode_HostnameIsStage(t *testing.T) {
 	}
 }
 
-func TestWriteBootstrapOutputs_LocalMode_DefaultPushDevStrategy2(t *testing.T) {
+func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyStrategy2(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
@@ -994,7 +994,7 @@ func TestWriteBootstrapOutputs_LocalMode_DefaultPushDevStrategy2(t *testing.T) {
 		}
 	}
 
-	// Local mode: meta written as appstage. Strategy is push-dev (bootstrap default).
+	// Local mode: meta written as appstage. Strategy is empty (bootstrap default).
 	meta, err := ReadServiceMeta(dir, "appstage")
 	if err != nil {
 		t.Fatalf("ReadServiceMeta(appstage): %v", err)
@@ -1002,8 +1002,8 @@ func TestWriteBootstrapOutputs_LocalMode_DefaultPushDevStrategy2(t *testing.T) {
 	if meta == nil {
 		t.Fatal("expected appstage meta")
 	}
-	if meta.DeployStrategy != StrategyPushDev {
-		t.Errorf("bootstrap must set push-dev DeployStrategy, got %q", meta.DeployStrategy)
+	if meta.DeployStrategy != "" {
+		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
 	}
 }
 

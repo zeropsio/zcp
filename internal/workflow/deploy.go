@@ -138,7 +138,7 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string) {
 			Hostname: m.Hostname,
 			Role:     deployRoleFromMode(metaMode, m.Hostname, m.StageHostname),
 			Status:   deployTargetPending,
-			Strategy: m.DeployStrategy,
+			Strategy: m.EffectiveStrategy(),
 		})
 
 		// Standard mode: add stage target after dev.
@@ -147,7 +147,7 @@ func BuildDeployTargets(metas []*ServiceMeta) ([]DeployTarget, string) {
 				Hostname: m.StageHostname,
 				Role:     DeployRoleStage,
 				Status:   deployTargetPending,
-				Strategy: m.DeployStrategy,
+				Strategy: m.EffectiveStrategy(),
 			})
 		}
 	}

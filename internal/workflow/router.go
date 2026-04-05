@@ -134,8 +134,8 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 	strategies := make(map[string]int)
 	for _, m := range metas {
-		if m.DeployStrategy != "" {
-			strategies[m.DeployStrategy]++
+		if s := m.EffectiveStrategy(); s != "" {
+			strategies[s]++
 		}
 	}
 

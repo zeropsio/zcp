@@ -187,8 +187,8 @@ func writeUnmanagedRuntimesSection(b *strings.Builder, unmanaged []platform.Serv
 func writeStrategySection(b *strings.Builder, metas []*workflow.ServiceMeta) {
 	strategies := make(map[string]int)
 	for _, m := range metas {
-		if m.DeployStrategy != "" {
-			strategies[m.DeployStrategy]++
+		if s := m.EffectiveStrategy(); s != "" {
+			strategies[s]++
 		}
 	}
 

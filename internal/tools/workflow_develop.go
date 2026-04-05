@@ -171,37 +171,37 @@ func handleDeployStatus(_ context.Context, engine *workflow.Engine) (*mcp.CallTo
 }
 
 // buildStrategyStatusNote reads strategy from metas and returns a status note.
-// Unconfirmed strategies (bootstrap default) get a prompt to discuss with user.
+// Per spec D2: strategy is informational at start, not a gate.
 func buildStrategyStatusNote(metas []*workflow.ServiceMeta) string {
-	var unconfirmed []string
+	var unset []string
 	strategies := make(map[string]bool)
-	allConfirmed := true
 	for _, m := range metas {
-		strategies[m.DeployStrategy] = true
-		if !m.StrategyConfirmed {
-			unconfirmed = append(unconfirmed, m.Hostname)
-			allConfirmed = false
+		s := m.EffectiveStrategy()
+		if s == "" {
+			unset = append(unset, m.Hostname)
+		} else {
+			strategies[s] = true
 		}
 	}
 
-	if !allConfirmed {
+	if len(unset) > 0 {
 		return fmt.Sprintf(
-			"REQUIRED: Before deploying, confirm deploy strategy with the user.\n"+
-				"Services %s use push-dev (default from bootstrap).\n"+
-				"Ask the user: keep push-dev, or switch to push-git (git remote + optional CI/CD) or manual?\n"+
-				"Set via: zerops_workflow action=\"strategy\" strategies={...}\n"+
-				"Strategy can be changed anytime later.",
-			unconfirmed)
+			"No deploy strategy set for: %s.\n"+
+				"Proceed with your code changes. Before deploying, discuss with the user:\n"+
+				"- push-dev (SSH self-deploy, quick iterations)\n"+
+				"- push-git (git remote + optional CI/CD)\n"+
+				"- manual (user controls deployments)\n"+
+				"Set via: zerops_workflow action=\"strategy\" strategies={...}",
+			strings.Join(unset, ", "))
 	}
 
-	// All confirmed — concise summary.
+	// All set — concise summary.
 	var names []string
 	for s := range strategies {
 		names = append(names, s)
 	}
-	summary := fmt.Sprintf("Strategy: %s.", names[0])
-	if len(names) > 1 {
-		summary = fmt.Sprintf("Strategies: %s.", strings.Join(names, ", "))
+	if len(names) == 1 {
+		return fmt.Sprintf("Strategy: %s. Change anytime via action=\"strategy\".", names[0])
 	}
-	return summary + " Change anytime via action=\"strategy\"."
+	return fmt.Sprintf("Strategies: %s. Change anytime via action=\"strategy\".", strings.Join(names, ", "))
 }

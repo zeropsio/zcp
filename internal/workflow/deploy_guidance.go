@@ -31,7 +31,7 @@ func readCurrentStrategy(stateDir, hostname string) string {
 	if err != nil || meta == nil {
 		return ""
 	}
-	return meta.DeployStrategy
+	return meta.EffectiveStrategy()
 }
 
 // dominantStrategy reads strategy from the first non-stage target's meta.
@@ -60,7 +60,11 @@ func buildPrepareGuide(state *DeployState, env Environment, stateDir string) str
 	sb.WriteString("### Your services\n")
 	writeTargetSummary(&sb, state)
 	strategy := dominantStrategy(stateDir, state.Targets)
-	fmt.Fprintf(&sb, "Mode: %s | Strategy: %s\n\n", state.Mode, strategy)
+	if strategy != "" {
+		fmt.Fprintf(&sb, "Mode: %s | Strategy: %s\n\n", state.Mode, strategy)
+	} else {
+		fmt.Fprintf(&sb, "Mode: %s | Strategy: not set\n\n", state.Mode)
+	}
 
 	// Checklist.
 	sb.WriteString("### Checklist\n")
@@ -111,7 +115,11 @@ func buildDeployGuide(state *DeployState, iteration int, env Environment, stateD
 	var sb strings.Builder
 
 	strategy := dominantStrategy(stateDir, state.Targets)
-	fmt.Fprintf(&sb, "## Execute — %s mode, %s\n\n", state.Mode, strategy)
+	if strategy != "" {
+		fmt.Fprintf(&sb, "## Execute — %s mode, %s\n\n", state.Mode, strategy)
+	} else {
+		fmt.Fprintf(&sb, "## Execute — %s mode, strategy pending\n\n", state.Mode)
+	}
 
 	// Iteration escalation replaces workflow on retries.
 	if iteration > 0 {
@@ -238,8 +246,13 @@ func writeDevelopmentWorkflow(sb *strings.Builder, state *DeployState, strategy 
 	case StrategyManual:
 		sb.WriteString("Edit code on the SSHFS mount. Tell the user when changes are ready to deploy.\n")
 		sb.WriteString("User controls deployment timing.\n\n")
-	default: // push-dev or unset
-		writePushDevWorkflow(sb, state)
+	default:
+		if strategy == "" {
+			sb.WriteString("Implement your changes. Set deploy strategy before deploying:\n")
+			sb.WriteString("`zerops_workflow action=\"strategy\" strategies={...}`\n\n")
+		} else {
+			writePushDevWorkflow(sb, state)
+		}
 	}
 }
 
@@ -295,6 +308,14 @@ func writeTargetSummary(sb *strings.Builder, state *DeployState) {
 
 func writeStrategyNote(sb *strings.Builder, current string) {
 	sb.WriteString("### Strategy\n")
+	if current == "" {
+		sb.WriteString("Not set. Before deploying, discuss with the user and choose:\n")
+		for strategy, d := range strategyDescriptions {
+			fmt.Fprintf(sb, "- %s (%s)\n", strategy, d)
+		}
+		sb.WriteString("Set via: `zerops_workflow action=\"strategy\" strategies={...}`\n\n")
+		return
+	}
 	desc := strategyDescriptions[current]
 	fmt.Fprintf(sb, "Currently: %s (%s)\n", current, desc)
 

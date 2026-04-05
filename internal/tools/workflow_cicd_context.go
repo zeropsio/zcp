@@ -20,7 +20,7 @@ func buildCICDContext(stateDir string) string {
 
 	var targets []string
 	for _, m := range metas {
-		if m.DeployStrategy != workflow.StrategyPushGit {
+		if m.EffectiveStrategy() != workflow.StrategyPushGit {
 			continue
 		}
 		if m.StageHostname != "" {

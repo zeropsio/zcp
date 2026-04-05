@@ -216,24 +216,56 @@ func TestBuildDeployTargets_Empty(t *testing.T) {
 
 func TestBuildDeployTargets_PopulatesTargetStrategy(t *testing.T) {
 	t.Parallel()
-	metas := []*ServiceMeta{
+	tests := []struct {
+		name         string
+		meta         *ServiceMeta
+		wantStrategy string
+	}{
 		{
-			Hostname:       "appdev",
-			Mode:           PlanModeStandard,
-			StageHostname:  "appstage",
-			DeployStrategy: StrategyPushDev,
+			"confirmed push-dev populates strategy",
+			&ServiceMeta{
+				Hostname:          "appdev",
+				Mode:              PlanModeStandard,
+				StageHostname:     "appstage",
+				DeployStrategy:    StrategyPushDev,
+				StrategyConfirmed: true,
+			},
+			StrategyPushDev,
+		},
+		{
+			"unconfirmed push-dev treated as empty (old bootstrap default)",
+			&ServiceMeta{
+				Hostname:       "appdev",
+				Mode:           PlanModeStandard,
+				StageHostname:  "appstage",
+				DeployStrategy: StrategyPushDev,
+			},
+			"",
+		},
+		{
+			"empty strategy stays empty",
+			&ServiceMeta{
+				Hostname:      "appdev",
+				Mode:          PlanModeStandard,
+				StageHostname: "appstage",
+			},
+			"",
 		},
 	}
-	targets, _ := BuildDeployTargets(metas)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			targets, _ := BuildDeployTargets([]*ServiceMeta{tt.meta})
 
-	// Both dev and stage targets should have strategy from their meta.
-	if len(targets) != 2 {
-		t.Fatalf("targets: want 2, got %d", len(targets))
-	}
-	if targets[0].Strategy != StrategyPushDev {
-		t.Errorf("target[0].Strategy: want push-dev, got %q", targets[0].Strategy)
-	}
-	if targets[1].Strategy != StrategyPushDev {
-		t.Errorf("target[1].Strategy: want push-dev, got %q", targets[1].Strategy)
+			if len(targets) != 2 {
+				t.Fatalf("targets: want 2, got %d", len(targets))
+			}
+			if targets[0].Strategy != tt.wantStrategy {
+				t.Errorf("target[0].Strategy: want %q, got %q", tt.wantStrategy, targets[0].Strategy)
+			}
+			if targets[1].Strategy != tt.wantStrategy {
+				t.Errorf("target[1].Strategy: want %q, got %q", tt.wantStrategy, targets[1].Strategy)
+			}
+		})
 	}
 }

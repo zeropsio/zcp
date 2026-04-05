@@ -125,7 +125,7 @@ func TestBuildPrepareGuide_DevelopmentWorkflow_StrategyAware(t *testing.T) {
 		wantAbsent   []string
 	}{
 		{
-			name: "push_dev_container_standard",
+			name: "no_strategy_container_standard",
 			state: &DeployState{
 				Mode: PlanModeStandard,
 				Targets: []DeployTarget{
@@ -136,13 +136,12 @@ func TestBuildPrepareGuide_DevelopmentWorkflow_StrategyAware(t *testing.T) {
 			env: EnvContainer,
 			wantContains: []string{
 				"Development workflow",
-				"/var/www/appdev/",
-				"restart server",
-				"curl",
+				"Set deploy strategy",
+				`action="strategy"`,
 			},
 		},
 		{
-			name: "push_dev_container_simple",
+			name: "no_strategy_container_simple",
 			state: &DeployState{
 				Mode: PlanModeSimple,
 				Targets: []DeployTarget{
@@ -152,8 +151,7 @@ func TestBuildPrepareGuide_DevelopmentWorkflow_StrategyAware(t *testing.T) {
 			env: EnvContainer,
 			wantContains: []string{
 				"Development workflow",
-				"/var/www/web/",
-				"auto-starts",
+				"Set deploy strategy",
 			},
 			wantAbsent: []string{
 				"restart server",

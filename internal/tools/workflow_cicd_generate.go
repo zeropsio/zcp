@@ -61,7 +61,7 @@ func buildCICDTargets(stateDir string, services map[string]string) []cicdTarget 
 
 	var targets []cicdTarget
 	for _, m := range metas {
-		if m.DeployStrategy != workflow.StrategyPushGit {
+		if m.EffectiveStrategy() != workflow.StrategyPushGit {
 			continue
 		}
 		// Stage is the deploy target in standard mode; dev hostname otherwise.
