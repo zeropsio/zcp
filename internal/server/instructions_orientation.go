@@ -76,7 +76,7 @@ func buildPostBootstrapOrientation(cls serviceClassification) string {
 	// Operations (only when bootstrapped services exist).
 	if len(cls.bootstrapped) > 0 {
 		b.WriteString("### Operations\n")
-		b.WriteString("- Deploy/fix/investigate: zerops_workflow action=\"start\" workflow=\"deploy\"\n")
+		b.WriteString("- Develop/deploy/fix: zerops_workflow action=\"start\" workflow=\"deploy\"\n")
 		b.WriteString("- Env vars: zerops_env action=\"set|delete\" (reload after: zerops_manage action=\"reload\")\n")
 		b.WriteString("- Scale: zerops_scale serviceHostname=\"...\"\n")
 	}

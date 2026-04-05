@@ -864,7 +864,7 @@ func TestBuildResponse_GenerateStep_UsesProgressiveGuidance(t *testing.T) {
 				t.Errorf("generate guide for %s mode should NOT contain %q", tt.name, tt.wantExclude)
 			}
 			// All modes should include common content.
-			if !strings.Contains(resp.Current.DetailedGuide, "Application code requirements") {
+			if !strings.Contains(resp.Current.DetailedGuide, "Verification server endpoints") {
 				t.Errorf("generate guide for %s mode missing common content", tt.name)
 			}
 		})

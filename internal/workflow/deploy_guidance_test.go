@@ -83,12 +83,35 @@ func TestBuildPrepareGuide_Personalized(t *testing.T) {
 					t.Errorf("guide should NOT contain %q", absent)
 				}
 			}
-			// Max 55 lines.
+			// Max 60 lines.
 			lines := strings.Count(guide, "\n") + 1
-			if lines > 55 {
-				t.Errorf("guide has %d lines, max 55", lines)
+			if lines > 60 {
+				t.Errorf("guide has %d lines, max 60", lines)
 			}
 		})
+	}
+}
+
+func TestBuildPrepareGuide_DevelopmentFraming(t *testing.T) {
+	t.Parallel()
+	state := &DeployState{
+		Mode: PlanModeStandard,
+		Targets: []DeployTarget{
+			{Hostname: "appdev", Role: DeployRoleDev},
+			{Hostname: "appstage", Role: DeployRoleStage},
+		},
+	}
+	guide := buildPrepareGuide(state, EnvContainer, "")
+
+	// Must frame as development workflow, not just deployment.
+	if !strings.Contains(guide, "Development") {
+		t.Error("guide should frame as development workflow")
+	}
+	if !strings.Contains(guide, "verification server") {
+		t.Error("guide should mention replacing verification server from bootstrap")
+	}
+	if !strings.Contains(guide, "application code") {
+		t.Error("guide should mention working with existing application code")
 	}
 }
 
@@ -197,10 +220,10 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 					t.Errorf("guide should contain %q\ngot:\n%s", want, guide)
 				}
 			}
-			// Max 55 lines.
+			// Max 60 lines.
 			lines := strings.Count(guide, "\n") + 1
-			if lines > 55 {
-				t.Errorf("guide has %d lines, max 55", lines)
+			if lines > 60 {
+				t.Errorf("guide has %d lines, max 60", lines)
 			}
 		})
 	}

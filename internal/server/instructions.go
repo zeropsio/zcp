@@ -17,11 +17,11 @@ const sshfsMountBase = "/var/www"
 const baseInstructions = `ZCP manages Zerops PaaS infrastructure.
 Before ANY work on service code (reading, debugging, fixing, deploying), start a workflow:
   zerops_workflow action="start" workflow="..."
-  deploy — deploy, fix, or investigate services
-  bootstrap — create/adopt services
+  bootstrap — create/adopt infrastructure only (not the user's app)
+  deploy — all app development, deploying, fixing, investigating
   recipe — create recipe repo files (6 env tiers)
   cicd — set up CI/CD pipelines
-Direct tools (no workflow): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_deploy (manual strategy), zerops_discover, zerops_knowledge`
+Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_deploy (manual), zerops_discover, zerops_knowledge`
 
 const containerEnvironment = `
 Control plane container — manages OTHER services, does not serve traffic.
@@ -258,7 +258,7 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID,
 
 	// Service listing with classification labels.
 	if cls.total == 0 {
-		b.WriteString("Project is empty — no services configured yet.")
+		b.WriteString("Project is empty — no services configured yet.\nBootstrap creates infrastructure first, then deploy workflow handles all app development.")
 	} else {
 		b.WriteString("Current services:\n")
 		for _, svc := range services {

@@ -48,7 +48,7 @@ type immediateResponse struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt services), deploy (deploy/fix/investigate), recipe (create recipe repo files), cicd (CI/CD setup). After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route\".",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), deploy (all development, deployment, fixing, investigating), recipe (create recipe repo files), cicd (CI/CD setup). After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,

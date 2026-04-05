@@ -37,7 +37,7 @@ func TestResolveGuidance(t *testing.T) {
 		{
 			"generate_section_exists",
 			"generate",
-			"Application code requirements",
+			"Verification server endpoints",
 			true,
 		},
 		{
@@ -196,7 +196,7 @@ func TestResolveProgressiveGuidance_GenerateStandard(t *testing.T) {
 		t.Fatal("expected non-empty guidance for generate step")
 	}
 	// Should include base generate + standard mode sections.
-	if !strings.Contains(guide, "Application code requirements") {
+	if !strings.Contains(guide, "Verification server endpoints") {
 		t.Error("generate base section missing")
 	}
 	if !strings.Contains(guide, "zsc noop --silent") {
@@ -218,7 +218,7 @@ func TestResolveProgressiveGuidance_GenerateSimple(t *testing.T) {
 		t.Fatal("expected non-empty guidance for generate step in simple mode")
 	}
 	// Should include base generate + simple sections.
-	if !strings.Contains(guide, "Application code requirements") {
+	if !strings.Contains(guide, "Verification server endpoints") {
 		t.Error("generate base section missing")
 	}
 	if !strings.Contains(guide, "REAL start command") {

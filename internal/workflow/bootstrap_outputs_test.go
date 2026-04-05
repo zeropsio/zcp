@@ -690,8 +690,8 @@ func TestBuildTransitionMessage_WithPlan_IncludesTransitionHint(t *testing.T) {
 	if !strings.Contains(msg, "deploy") {
 		t.Error("message should hint at deploy flow")
 	}
-	if !strings.Contains(msg, "minimal scaffolding") {
-		t.Error("message should mention minimal scaffolding")
+	if !strings.Contains(msg, "verification server") {
+		t.Error("message should mention verification server")
 	}
 }
 

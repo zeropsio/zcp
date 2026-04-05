@@ -1,8 +1,10 @@
-# Deploy: Deploy, Fix, and Operate Zerops Services
+# Deploy: Develop, Deploy, Fix, and Operate Zerops Services
 
 ## Overview
 
-This workflow covers deploying code, investigating issues, and iterating fixes. Start with investigation if something is broken, or skip to prepare/deploy if code is ready.
+This workflow covers all application development, deploying code, investigating issues, and iterating fixes. If you're arriving from bootstrap, the user's original request (their app, feature, dashboard, API, etc.) has NOT been built yet — bootstrap only created infrastructure with a verification server. Implement the user's actual application here, then deploy it.
+
+Start with investigation if something is broken, or skip to prepare/deploy if code is ready.
 
 ---
 
@@ -159,7 +161,13 @@ Two concerns: ensure zerops.yaml is correct for the runtime (hard), then deploy 
 ---
 
 <section name="deploy-prepare">
-## Prepare: Configuration Check
+## Prepare: Discover State and Plan Work
+
+This is the development workflow for all code work on Zerops services. First discover what exists, then implement what the user wants.
+
+- **Service has only a verification server** (hello-world from bootstrap with /, /health, /status) → replace it with the user's actual application
+- **Service has existing application code** → modify it according to the user's request
+- **Code is ready, just needs deploying** → skip to deploy step
 
 ### Discover target services
 

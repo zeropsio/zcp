@@ -51,7 +51,10 @@ func dominantStrategy(stateDir string, targets []DeployTarget) string {
 func buildPrepareGuide(state *DeployState, env Environment, stateDir string) string {
 	var sb strings.Builder
 
-	sb.WriteString("## Deploy Preparation\n\n")
+	sb.WriteString("## Development & Deploy\n\n")
+	sb.WriteString("This is the development workflow. Discover what code exists on the service, implement what the user wants, then deploy and verify.\n")
+	sb.WriteString("If the service has only a bootstrap verification server (hello-world with /, /health, /status), replace it with the actual application.\n")
+	sb.WriteString("If the service already has application code, modify it according to the user's request.\n\n")
 
 	// Setup summary.
 	sb.WriteString("### Your services\n")

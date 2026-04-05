@@ -30,11 +30,11 @@ flowchart LR
     style Meta fill:#dfd,stroke:#0a0
 ```
 
-**Phase 1 — Infrastructure**: Bootstrap creates new services (or adoption registers existing ones) and writes an evidence file (ServiceMeta). Only **minimal scaffolding** is deployed — a hello-world proving infrastructure works. No application logic, no strategy. Phase 1 answers: "can this service start, respond, and reach its dependencies?"
+**Phase 1 — Infrastructure**: Bootstrap creates new services (or adoption registers existing ones) and writes an evidence file (ServiceMeta). Only a **verification server** is deployed — a hello-world proving infrastructure works (/, /health, /status). No application logic, no strategy. Phase 1 answers: "can this service start, respond, and reach its dependencies?"
 
-**Phase 2 — Development**: Deploy flow covers ALL code work for the service. Implementing the user's actual application, bug fixes, config changes — everything. It provides knowledge, lets the agent work, resolves deploy strategy if needed, and deploys at the end. Strategy is always read fresh from ServiceMeta.
+**Phase 2 — Development**: Deploy flow covers ALL code work on the service — implementing the user's actual application, bug fixes, config changes, everything. It discovers what code exists (verification server from bootstrap or existing application), provides runtime knowledge, lets the agent implement what the user wants, and deploys at the end. Strategy is always read fresh from ServiceMeta.
 
-**The boundary is strict**: Bootstrap writes zerops.yaml + minimal proof-of-concept. The moment the agent needs to write application logic, it must be in deploy flow. If the user says "create me an app for uploading photos in Bun", bootstrap creates Bun service + dependencies with a hello-world, then deploy flow implements the photo upload app.
+**The boundary is strict**: Bootstrap writes zerops.yaml + infrastructure verification server. The moment the agent needs to write application logic, it must be in deploy flow. If the user says "create me an app for uploading photos in Bun", bootstrap creates Bun service + dependencies with a hello-world verification server, then deploy flow implements the photo upload app.
 
 ### ServiceMeta — The Evidence File
 
@@ -245,14 +245,14 @@ ServicePlan {
 
 ### 2.5 Step 3: Generate
 
-**Purpose**: Write zerops.yaml and **minimal scaffolding code** proving infrastructure works. NOT the user's application.
+**Purpose**: Write zerops.yaml and an **infrastructure verification server** proving services are reachable. NOT the user's application.
 
 **Scope boundary**: Generate writes the MINIMUM needed to verify infrastructure:
 - zerops.yaml with mode-specific rules
-- A hello-world server with required endpoints
+- A verification server with exactly three endpoints (/, /health, /status) — under 50 lines
 - Env var wiring to prove dependency connectivity
 
-Generate does NOT write application logic, business features, or the user's actual request. That happens in deploy flow (§4). If the user asked for "a photo upload app", generate creates a hello-world with /status proving S3 connectivity — the photo upload implementation comes in deploy flow.
+Generate does NOT write application logic, business features, or the user's actual request. That happens in deploy flow (§4). If the user asked for "a photo upload app", generate creates a verification server with /status proving S3 connectivity — the photo upload implementation comes in deploy flow.
 
 **Skip**: Only if managed-only.
 
@@ -373,7 +373,7 @@ Phase 3 — Cross-verify:
 3. Delete session, unregister.
 4. Return completion message: service list with modes. NO strategy prompt.
 
-**Bootstrap is done. Service is in evidence with minimal scaffolding deployed.**
+**Bootstrap is done. Service is in evidence with verification server deployed. No application code written.**
 
 **Natural transition**: If the user's intent requires application development (e.g., "create an app for X"), the agent should immediately start deploy flow (§4) to implement the actual application. Bootstrap proved the infrastructure works; deploy flow is where the real code gets written.
 
@@ -477,14 +477,15 @@ flowchart TD
 
 ### 4.1 When Deploy Flow Starts
 
-Deploy flow MUST start when the agent intends to make ANY code change to a runtime service:
+Deploy flow MUST start for ANY work on runtime service code:
 
+- **After bootstrap**: Service has only a verification server — deploy flow implements the user's actual application
 - **Implementing features**: User said "add photo upload" → deploy flow
 - **Bug fixes**: "Login doesn't work" → deploy flow
 - **Config changes**: "Change the port" → deploy flow
 - **Any code modification**: If it touches a runtime service's files → deploy flow
 
-**After bootstrap**: If the user's original intent requires application development (e.g., "create a photo upload app"), the agent should start deploy flow immediately after bootstrap completes. Bootstrap created the infrastructure; deploy flow implements the application.
+Deploy flow discovers what code exists on the service (verification server from bootstrap or existing application) and acts accordingly. Bootstrap created infrastructure; deploy flow is for all development.
 
 **Agent MUST NOT** edit runtime service code outside of deploy flow. The flow ensures the agent has platform knowledge, knows the deploy strategy, and deploys + verifies at the end.
 
@@ -744,8 +745,8 @@ WorkflowState {
 | B6 | Per-service exclusivity via hostname lock |
 | B7 | Bootstrap does NOT set deploy strategy |
 | B8 | Non-discover steps require plan from discover step (defense-in-depth) |
-| B9 | Generate writes MINIMAL scaffolding (hello-world), NOT application logic |
-| B10 | After bootstrap with app-development intent, agent immediately starts deploy flow |
+| B9 | Generate writes an infrastructure verification server (hello-world, under 50 lines), NOT application logic |
+| B10 | After bootstrap, agent starts deploy flow for all application development |
 
 ### Deploy Flow
 

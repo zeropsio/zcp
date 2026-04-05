@@ -212,7 +212,7 @@ Session exclusivity is per-service, not global: multiple bootstraps can run for 
 
 ### 4.4 Generate Step — the most complex knowledge delivery point
 
-This is where the agent writes zerops.yaml and application code for the first time on Zerops. Asymmetry is at its peak for configuration knowledge.
+This is where the agent writes zerops.yaml and an infrastructure verification server for the first time on Zerops. Asymmetry is at its peak for configuration knowledge.
 
 **What the agent needs**: Everything about how zerops.yaml works on Zerops, runtime-specific patterns, env var wiring, and mode-specific rules.
 
@@ -276,7 +276,7 @@ When environment is container, mode-specific sections are **appended** to the ba
 
 **What the system delivers**: Static guidance ONLY. No `GetBriefing()`, no schema injection, no env var injection.
 
-**Why NO knowledge injection**: The agent just completed the generate step — it wrote zerops.yaml, it wrote the application code, it used the env var references. It KNOWS all of this. Re-injecting would waste ~100 lines of context on information the agent created moments ago. The deploy procedure (SSH push, subdomain enable, verify) is entirely in the static guidance.
+**Why NO knowledge injection**: The agent just completed the generate step — it wrote zerops.yaml, it wrote the verification server, it used the env var references. It KNOWS all of this. Re-injecting would waste ~100 lines of context on information the agent created moments ago. The deploy procedure (SSH push, subdomain enable, verify) is entirely in the static guidance.
 
 **Contrast with generate step**: Generate injects because the agent hasn't seen Zerops config before. Deploy doesn't inject because the agent just wrote it.
 

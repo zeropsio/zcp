@@ -88,7 +88,8 @@ func BuildTransitionMessage(state *WorkflowState) string {
 		}
 	}
 
-	sb.WriteString("\nInfrastructure is ready with minimal scaffolding. To implement your application, start the deploy flow:\n")
+	sb.WriteString("\nInfrastructure is verified — services running with a verification server (hello-world). No application code has been written yet.\n")
+	sb.WriteString("To implement the user's application, start the deploy workflow:\n")
 	sb.WriteString("`zerops_workflow action=\"start\" workflow=\"deploy\"`\n\n")
 
 	// Router-based workflow offerings

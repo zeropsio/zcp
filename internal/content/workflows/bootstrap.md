@@ -216,9 +216,11 @@ envVariables:
 </section>
 
 <section name="generate">
-### Generate zerops.yaml and application code
+### Generate zerops.yaml and infrastructure verification server
 
-Write MINIMAL scaffolding — a hello-world server with the required endpoints (/, /health, /status). Do NOT implement application logic here. The actual application is built in the deploy flow after bootstrap completes.
+This step verifies that infrastructure works — nothing more. Regardless of what the user asked for (dashboard, API, blog, e-commerce, anything), you are writing a bare-minimum verification server that proves services are reachable and env vars resolve. The user's actual application is implemented AFTER bootstrap, in the deploy workflow.
+
+Write a hello-world server with exactly three endpoints: `GET /`, `GET /health`, `GET /status`. No business logic, no UI, no features, no API beyond these three routes. The server should be under 50 lines of code.
 
 **Adopted services (isExisting: true):** Skip zerops.yaml and code generation entirely for adopted targets. These services already have working code and configuration from their previous deploy. The generate checker automatically skips validation for adopted targets. If ALL targets are adopted, complete this step with attestation "All targets are existing services — no code generation needed."
 
@@ -232,9 +234,9 @@ Write MINIMAL scaffolding — a hello-world server with the required endpoints (
 
 **PHP runtimes (php-nginx, php-apache) are different:** The web server is built into the runtime and serves files automatically. There is no `start:` command — both dev and prod just need correct `deployFiles`.
 
-#### Application code requirements
+#### Verification server endpoints
 
-Every generated application **MUST** expose these endpoints:
+The verification server **MUST** expose exactly these endpoints and nothing else:
 
 | Endpoint | Response | Purpose |
 |----------|----------|---------|
@@ -297,7 +299,7 @@ Since you're writing to an SSHFS mount, every file you create or modify is immed
 <section name="generate-standard">
 ### Standard mode (dev+stage) — zerops.yaml rules
 
-Write MINIMAL scaffolding — a hello-world server with the required endpoints (/, /health, /status). Do NOT implement application logic here. The actual application is built in the deploy flow after bootstrap completes.
+Infrastructure verification only — write a hello-world server (/, /health, /status), not the user's application.
 
 **Write dev entry ONLY now. Stage entry comes after dev is verified (deploy step).**
 All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
@@ -330,7 +332,7 @@ All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 <section name="generate-dev">
 ### Dev-only mode — zerops.yaml rules
 
-Write MINIMAL scaffolding — a hello-world server with the required endpoints (/, /health, /status). Do NOT implement application logic here. The actual application is built in the deploy flow after bootstrap completes.
+Infrastructure verification only — write a hello-world server (/, /health, /status), not the user's application.
 
 **Write a single dev entry. No stage service exists in this mode.**
 All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
@@ -353,7 +355,7 @@ All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 <section name="generate-simple">
 ### Simple mode — zerops.yaml rules
 
-Write MINIMAL scaffolding — a hello-world server with the required endpoints (/, /health, /status). Do NOT implement application logic here. The actual application is built in the deploy flow after bootstrap completes.
+Infrastructure verification only — write a hello-world server (/, /health, /status), not the user's application.
 
 **Write a single entry with a REAL start command.** Unlike dev/standard, simple mode services auto-start after deploy — no manual SSH start needed.
 All files go to `/var/www/{hostname}/` (the SSHFS mount path from provision).
@@ -646,11 +648,13 @@ zerops:
   # Stage entry: generated after dev is verified (task 10)
 ```
 
-## Application Requirements
+## Infrastructure Verification Server
+
+This is NOT the user's application — it is a bare-minimum server that proves infrastructure works. Under 50 lines of code. No business logic, no UI, no features.
 
 **Environment variables**: see "Discovered Environment Variables" above. Read via runtime's native env var API.
 
-Your app MUST expose these endpoints on the port defined in zerops.yaml `run.ports`:
+The server MUST expose exactly these endpoints on the port defined in zerops.yaml `run.ports`:
 
 | Endpoint | Response | Purpose |
 |----------|----------|---------|
@@ -907,7 +911,7 @@ The transition message includes:
 
 **Skip this step** only in impossible edge cases (no services at all). Normal projects always reach this step.
 
-Infrastructure is ready with minimal scaffolding. If your goal requires application development, start the deploy flow now: `zerops_workflow action="start" workflow="deploy"`
+Infrastructure is verified — services running with a verification server only. No application code has been written. To implement the user's application, start the deploy workflow: `zerops_workflow action="start" workflow="deploy"`
 </section>
 
 ---
@@ -970,7 +974,7 @@ If the user only wants managed services (DB, cache, storage) without any runtime
 <section name="generate-local">
 ### Generate — Local Mode
 
-Write MINIMAL scaffolding — a hello-world server with the required endpoints (/, /health, /status). Do NOT implement application logic here. The actual application is built in the deploy flow after bootstrap completes.
+Infrastructure verification only — write a hello-world server (/, /health, /status), not the user's application. Under 50 lines of code.
 
 **Write all files locally** in the current working directory. No SSHFS mounts, no remote paths.
 
@@ -1037,9 +1041,9 @@ envVariables:
 
 `${hostname_varName}` references work regardless of push source (local or container) — Zerops resolves them at container runtime. **NEVER hardcode credential values** — always use `${hostname_varName}` references in zerops.yaml and actual values in `.env`.
 
-#### Application code requirements
+#### Verification server endpoints
 
-Every application **MUST** expose these endpoints:
+The verification server **MUST** expose exactly these endpoints and nothing else:
 
 | Endpoint | Response | Purpose |
 |----------|----------|---------|
