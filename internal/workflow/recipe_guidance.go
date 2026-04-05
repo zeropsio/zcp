@@ -137,6 +137,13 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		if s := getCoreSection(kp, "Rules & Pitfalls"); s != "" {
 			parts = append(parts, "## Rules & Pitfalls\n\n"+s)
 		}
+		// Multi-base knowledge: injected ONLY when the recipe's primary runtime
+		// is non-JS yet its build pipeline runs a JS package manager. Most
+		// recipes (Node, Go, Rust, Python without JS assets) don't hit this and
+		// shouldn't be burdened with zsc install / startWithoutCode details.
+		if needsMultiBaseGuidance(plan) {
+			parts = append(parts, multiBaseGuidance())
+		}
 
 	// Deploy: no knowledge injection. Static guidance covers the deploy flow;
 	// the iteration loop catches issues via real build/runtime feedback.

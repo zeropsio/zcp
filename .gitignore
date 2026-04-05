@@ -2,6 +2,7 @@
 bin/
 builds/
 /zcp
+RECIPE_RUNS/
 
 # Secrets
 .env
