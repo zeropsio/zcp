@@ -93,7 +93,7 @@ var appVersionHintMap = map[string]string{
 	statusBuilding:             "IN_PROGRESS: Build is running. Continue polling.",
 	statusBuildFailed:          "FAILED: Build failed. Run zerops_deploy — response includes buildLogs with pipeline output.",
 	"DEPLOYING":                "IN_PROGRESS: Deploy is running. Continue polling.",
-	"PREPARING_RUNTIME_FAILED": "FAILED: Runtime prepare commands failed. Check prepareCommands in zerops.yaml.",
+	"PREPARING_RUNTIME_FAILED": "FAILED: Container startup failed — run.initCommands or run.prepareCommands exited non-zero (build succeeded). Run zerops_deploy again to see stderr in buildLogs (naming is historical — this is runtime output).",
 	statusCanceled:             "CANCELED: Build was canceled.",
 }
 

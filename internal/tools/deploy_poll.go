@@ -63,12 +63,8 @@ func pollDeployBuild(
 				result.BuildLogsSource = buildContainerSource
 			}
 		}
-		if len(result.BuildLogs) > 0 {
-			result.Suggestion = fmt.Sprintf("Build ended with status %s — see buildLogs field for pipeline output. Fix the issue and redeploy.", event.Status)
-		} else {
-			result.Suggestion = fmt.Sprintf("Build ended with status %s — build logs unavailable. Check zerops.yaml buildCommands syntax and package manifests.", event.Status)
-		}
-		result.NextActions = nextActionDeployBuildFail
+		result.Suggestion = deploySuggestionForStatus(event.Status, len(result.BuildLogs) > 0)
+		result.NextActions = deployNextActionForStatus(event.Status)
 	}
 }
 

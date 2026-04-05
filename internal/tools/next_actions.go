@@ -39,3 +39,36 @@ func deploySuccessNextActions(result *ops.DeployResult) string {
 	}
 	return nextActionDeploySuccess
 }
+
+// deploySuggestionForStatus returns a phase-aware suggestion for a non-ACTIVE
+// deploy status. The agent needs to know WHICH phase failed to look in the
+// right place: buildCommands (build container) vs prepareCommands/initCommands
+// (runtime container starting up).
+func deploySuggestionForStatus(status string, hasLogs bool) string {
+	switch status {
+	case statusBuildFailed:
+		if hasLogs {
+			return "BUILD phase failed — buildCommands exited non-zero. See buildLogs for build container output. Fix buildCommands in zerops.yaml and redeploy."
+		}
+		return "BUILD phase failed — build logs unavailable. Check zerops.yaml buildCommands syntax, package manifests, and dependencies."
+	case statusPreparingRuntimeFailed:
+		if hasLogs {
+			return "RUNTIME startup failed — build succeeded, but run.prepareCommands or run.initCommands failed when the new container tried to start. See buildLogs for the actual stderr (naming is historical: these are runtime logs, not build logs). Common causes: initCommand references /build/source paths baked into build-time caches (move cache commands to run.initCommands), missing env vars, DB connection issues during migration."
+		}
+		return "RUNTIME startup failed — container couldn't start because run.prepareCommands or run.initCommands failed. Logs unavailable; fetch via zerops_logs serviceHostname={service} severity=ERROR since=5m."
+	case statusCanceled:
+		return "Deploy was canceled. Re-run zerops_deploy."
+	}
+	return fmt.Sprintf("Deploy ended with status %s — see buildLogs for output.", status)
+}
+
+// deployNextActionForStatus returns the next-action for a non-ACTIVE status.
+func deployNextActionForStatus(status string) string {
+	switch status {
+	case statusPreparingRuntimeFailed:
+		return "RUNTIME startup failed — fix run.initCommands or run.prepareCommands in zerops.yaml (NOT buildCommands). If the error mentions /build/source paths, move cache/config commands from buildCommands to run.initCommands."
+	case statusBuildFailed:
+		return nextActionDeployBuildFail
+	}
+	return nextActionDeployBuildFail
+}

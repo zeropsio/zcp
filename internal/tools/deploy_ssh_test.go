@@ -552,8 +552,11 @@ func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
 	if parsed.Suggestion == "" {
 		t.Error("expected non-empty suggestion")
 	}
-	if !strings.Contains(parsed.Suggestion, "PREPARING_RUNTIME_FAILED") {
-		t.Errorf("suggestion should mention the status, got: %s", parsed.Suggestion)
+	if !strings.Contains(parsed.Suggestion, "RUNTIME startup failed") {
+		t.Errorf("suggestion should indicate runtime startup failed (not build), got: %s", parsed.Suggestion)
+	}
+	if !strings.Contains(parsed.Suggestion, "initCommands") {
+		t.Errorf("suggestion should direct agent to initCommands/prepareCommands, got: %s", parsed.Suggestion)
 	}
 }
 

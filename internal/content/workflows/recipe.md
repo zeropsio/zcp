@@ -481,13 +481,27 @@ zerops_verify serviceHostname="appstage"
 
 **Step 10: Present both URLs**
 
+### Reading deploy failures — which phase failed?
+
+`zerops_deploy` returns `status` that tells you WHERE to look:
+
+| status | Phase | What to fix |
+|---|---|---|
+| `ACTIVE` | — | Success. |
+| `BUILD_FAILED` | Build container (`/build/source/`) | `buildCommands` exited non-zero. Fix `zerops.yaml` build section. `buildLogs` shows buildCommand stderr. |
+| `PREPARING_RUNTIME_FAILED` | Runtime container startup (`/var/www/`) | Build succeeded but `run.prepareCommands` or `run.initCommands` failed. Fix `zerops.yaml` run section. `buildLogs` field contains runtime stderr (historical name — not actually build logs). |
+| `CANCELED` | — | User/system canceled; redeploy. |
+
+**Key distinction**: `PREPARING_RUNTIME_FAILED` means the build pipeline completed successfully and deploy files were transferred, but the container crashed while running `initCommands` or `prepareCommands`. Do NOT edit `buildCommands` for this — the problem is in the run section. Common cause: a buildCommand produced a cached file containing absolute `/build/source/...` paths that don't resolve at runtime (see core.md rule about config:cache/asset precompile at build time).
+
 ### Common deployment issues
 
 | Issue | Diagnosis | Fix |
 |-------|-----------|-----|
 | HTTP 502 | App not binding 0.0.0.0 or wrong port | Check runtime knowledge for bind rules |
 | Empty env vars | Deploy hasn't happened yet, or service not restarted after env change | Deploy first — envVariables activate at deploy time. After `zerops_env set`, restart the service (`zerops_manage action="restart"`) — env vars are cached at process start. |
-| Build fails | Wrong build commands, missing dependencies | Check `zerops_logs`, fix and redeploy |
+| `BUILD_FAILED` | buildCommands exited non-zero | Check `buildLogs` in deploy response, fix `buildCommands` in zerops.yaml |
+| `PREPARING_RUNTIME_FAILED` | initCommands/prepareCommands failed at container startup | Check `buildLogs` (contains runtime stderr). If it mentions `/build/source/` paths, a build-time cache baked absolute paths — move that cache command to `run.initCommands`. |
 | Stage deploy fails | zerops.yaml setup name doesn't match --setup param | Ensure `setup: prod` in zerops.yaml and `setup="prod"` in zerops_deploy |
 | Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |
 | Static site 404 | Wrong `documentRoot` | Match to actual build output directory |

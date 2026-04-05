@@ -13,12 +13,14 @@ import (
 
 // Shared status constants for process/build results.
 const (
-	actionStatus      = "status"
-	statusActive      = "ACTIVE"
-	statusDeployed    = "DEPLOYED"
-	statusBuildFailed = "BUILD_FAILED"
-	statusFinished    = "FINISHED"
-	statusFailed      = "FAILED"
+	actionStatus                 = "status"
+	statusActive                 = "ACTIVE"
+	statusDeployed               = "DEPLOYED"
+	statusBuildFailed            = "BUILD_FAILED"
+	statusPreparingRuntimeFailed = "PREPARING_RUNTIME_FAILED"
+	statusCanceled               = "CANCELED"
+	statusFinished               = "FINISHED"
+	statusFailed                 = "FAILED"
 )
 
 // convertError converts an error to a CallToolResult with IsError=true.
