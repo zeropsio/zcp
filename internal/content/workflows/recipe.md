@@ -25,6 +25,8 @@ Example: for a php-nginx framework, load `php-hello-world`. For a nodejs framewo
 
 Your job is to extend this base with framework-specific knowledge (documentRoot, multi-base builds, trusted proxy config, etc.). These discoveries go into the zerops.yaml comments and knowledge-base fragment.
 
+**Stop after the hello-world load.** Framework-specific discoveries (documentRoot path, trusted-proxy config, middleware registration, assets pipeline) live in the FRAMEWORK's own docs, not in Zerops knowledge — `zerops_knowledge query=` will not surface them. Fill the remaining research fields from your existing framework knowledge + reasoning. If you must look something up, consult the framework's documentation directly. One runtime briefing + one hello-world load is the whole budget for zerops_knowledge at this step.
+
 ### Framework Identity
 - **Service type** (from available stacks): match against live catalog
   - Runtime hello world: the bare runtime (e.g., `go@1`, `bun@1`)
@@ -57,11 +59,12 @@ Your job is to extend this base with framework-specific knowledge (documentRoot,
 - **Logging driver**: stderr (preferred), file, syslog
 
 ### Decision Tree Resolution
-Resolve these 4 decisions (ZCP provides defaults, you may override with justification):
+Resolve these 5 decisions (ZCP provides defaults, you may override with justification):
 1. **Web server**: builtin (Node/Go/Rust), nginx-sidecar (PHP), nginx-proxy (static)
-2. **Build base**: primary runtime; add nodejs to buildBases if frontend asset build needed (Vite/Webpack)
+2. **Build base**: primary runtime; add `nodejs@22` to buildBases if the framework's scaffold includes a JS asset pipeline (Vite/Webpack/Mix). **The scaffold tells you this** — don't strip the JS pipeline to avoid adding nodejs; keep the scaffold intact and add the second build base.
 3. **OS**: ubuntu-22 (default), alpine (Go/Rust static binaries)
 4. **Dev tooling**: hot-reload (Node/Bun), watch (Python/PHP), manual (Go/Rust/Java), none (static)
+5. **Framework scaffold**: preserve what the framework's official scaffold emits (`composer create-project laravel/laravel`, `npx create-next-app`, `rails new`, `django-admin startproject`). "Minimal" in the recipe slug refers to **external services** (no Redis, no S3, DB-only), NOT to the framework's feature surface. Stripping Vite/Tailwind/ESM from a Laravel/Next.js scaffold makes the recipe non-representative: a user running the same scaffold locally will have those files and will expect them to deploy. Keep them.
 
 ### Targets
 Define workspace services based on recipe type:
@@ -227,15 +230,32 @@ Files placed on the mount are already on the dev container — deploy doesn't "s
 
 zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`. During workspace deploy, the `zerops_deploy` tool's `setup` parameter maps the service hostname to the correct setup name (e.g. `targetService="appdev" setup="dev"`). In recipe import.yaml, `zeropsSetup: dev`/`zeropsSetup: prod` does the same mapping for `buildFromGit` deploys.
 
-### zerops.yaml — Dev entry ONLY first
+### zerops.yaml — Write BOTH dev and prod at once
 
-Write the **dev** entry only. The prod entry comes after dev is verified in the deploy step. Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific conventions:
+Write the complete zerops.yaml with BOTH `setup: dev` and `setup: prod` entries in a single file. The same file is the source of truth for the deploy step AND for the README integration-guide fragment — writing it once eliminates drift between what deploys and what the README documents. The deploy step will verify dev against the live service, then cross-deploy the already-written prod config to stage.
 
-- `setup: dev` — generic name. Deploy uses `zerops_deploy targetService="appdev" setup="dev"` to map it.
-- `deployFiles: [.]` — **MANDATORY for self-deploy**
+Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific conventions for each setup:
+
+**`setup: dev`** (self-deploy from SSHFS mount — agent iterates here):
+- `deployFiles: [.]` — **MANDATORY for self-deploy**; anything else destroys the source tree
 - `start: zsc noop --silent` — exception: omit `start` for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
-- **NO healthCheck on dev** — agent controls lifecycle; healthCheck restarts during iteration
-- `envVariables:` — ONLY cross-service references from `zerops_discover`. **Do NOT add envSecrets** (framework secret keys) — they are already injected as OS env vars automatically.
+- **NO healthCheck, NO readinessCheck** — agent controls lifecycle; checks would restart the container during iteration
+- Framework mode flags set to dev values (`APP_ENV: local`, `NODE_ENV: development`, `DEBUG: "true"`, verbose logging)
+- Same cross-service refs from `zerops_discover` as prod — only mode flags differ
+
+**`setup: prod`** (cross-deployed from dev to stage — end-user production target):
+- Real `buildCommands` (`composer install --no-dev --optimize-autoloader`, `npm run build`, `go build -ldflags "-s -w"`, etc.)
+- Real `deployFiles` listing only what the runtime needs (not `.`) — verify completeness: every path your start command and framework touch at runtime MUST appear here
+- `healthCheck` (httpGet on app port + health path) — **required**; unresponsive containers get restarted
+- `deploy.readinessCheck` if `initCommands` contains migrations
+- `initCommands` for framework cache warming (Laravel `config:cache|route:cache|view:cache`, Rails `assets:precompile` if paths leak, Symfony `cache:warmup`) — **never** in buildCommands; those caches bake `/build/source/...` paths that break at `/var/www/...`
+- Framework mode flags set to prod values (`APP_ENV: production`, `NODE_ENV: production`, `DEBUG: "false"`)
+- Same cross-service ref keys as dev — **only values on mode flags differ**
+
+**Shared across both setups:**
+- `envVariables:` contains ONLY cross-service references from `zerops_discover` + framework mode flags. **Do NOT add envSecrets** (framework secret keys) — they are already injected as OS env vars automatically by the platform.
+- Setup names are generic (`dev`/`prod`). `zerops_deploy targetService=... setup=...` maps hostnames to setup names at deploy time.
+- dev and prod env maps must NOT be bit-identical — a structural check fails the generate step if they are, because it means the dev container behaves exactly like prod (caches enabled, stack traces hidden during iteration).
 
 ### .env.example preservation
 
@@ -316,9 +336,12 @@ Description of why this change is needed.
 - Max 80 chars per comment line
 
 ### Pre-deploy checklist
-- [ ] `setup: dev` (generic name), `deployFiles: [.]`, no healthCheck
-- [ ] envVariables has only cross-service refs — no envSecrets re-referenced
-- [ ] All env var names from `zerops_discover`, none guessed
+- [ ] Both `setup: dev` AND `setup: prod` present (generic names)
+- [ ] dev: `deployFiles: [.]`, no healthCheck, no readinessCheck
+- [ ] prod: real buildCommands, specific deployFiles, healthCheck + readinessCheck
+- [ ] dev and prod envVariables differ on mode flags (APP_ENV/NODE_ENV/DEBUG/LOG_LEVEL)
+- [ ] envVariables has only cross-service refs + mode flags — no envSecrets re-referenced
+- [ ] All env var refs use names from `zerops_discover`, none guessed
 - [ ] README has all 3 extract fragments with proper markers
 - [ ] `.env.example` preserved (`.env` removed)
 
@@ -457,15 +480,14 @@ If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix 
 
 ### Stage deployment flow
 
-**Step 6: Generate prod entry in zerops.yaml**
-Add a `setup: prod` entry to zerops.yaml on the appdev mount. Prod differences from dev:
-- Real `start` command (not `zsc noop`). For static: still no `start` (Nginx serves).
-- Real `buildCommands` with compilation/bundling
-- Real `deployFiles` (build output, not `.`) — **verify completeness**: list ALL dirs/files your start command and framework need at runtime. When cherry-picking (not using `.`), run `ls` to see what exists and cross-reference with your start command and framework requirements.
-- Add `healthCheck` (httpGet on app port) — **required for prod** (restarts unresponsive containers). Omit only on dev and static.
-- Add `deploy.readinessCheck` if app has `initCommands` (migrations)
-- Copy `envVariables` from dev entry (if any), adjust environment mode flags for production
-- Use runtime knowledge Prod patterns as reference
+**Step 6: Verify prod setup (already written at generate)**
+The prod setup block was written to zerops.yaml during the generate step. Before cross-deploying, verify it matches what a real user building from git will need:
+- `deployFiles` lists every path the start command and framework need at runtime — run `ls` on the mount and cross-reference. When cherry-picking (not using `.`), missing one path will DEPLOY_FAILED at first request.
+- `healthCheck` + `deploy.readinessCheck` are present (required for prod — unresponsive containers get restarted; broken builds are gated from traffic).
+- `initCommands` covers framework cache warming + migrations (NEVER in buildCommands — `/build/source/...` paths break at `/var/www/...`).
+- Mode flags differ from dev (APP_ENV/NODE_ENV/DEBUG/LOG_LEVEL).
+
+If anything is missing, edit zerops.yaml on the mount now — the change propagates to the README via the integration-guide fragment (which mirrors the file content).
 
 **Step 7: Deploy appstage from appdev (cross-deploy)**
 ```

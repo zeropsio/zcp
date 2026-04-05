@@ -110,7 +110,7 @@ func TestCheckRecipeGenerate_ValidMinimal(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
-  - setup: app
+  - setup: dev
     build:
       base: php-nginx@8.4
       buildCommands:
@@ -118,7 +118,24 @@ func TestCheckRecipeGenerate_ValidMinimal(t *testing.T) {
       deployFiles:
         - .
     run:
-      start: php artisan serve
+      envVariables:
+        APP_ENV: local
+        APP_DEBUG: "true"
+      ports:
+        - port: 80
+          httpSupport: true
+  - setup: prod
+    build:
+      base: php-nginx@8.4
+      buildCommands:
+        - composer install --no-dev --optimize-autoloader
+      deployFiles:
+        - app
+        - vendor
+    run:
+      envVariables:
+        APP_ENV: production
+        APP_DEBUG: "false"
       ports:
         - port: 80
           httpSupport: true
@@ -140,6 +157,108 @@ func TestCheckRecipeGenerate_ValidMinimal(t *testing.T) {
 				t.Errorf("  %s: %s", c.Name, c.Detail)
 			}
 		}
+	}
+}
+
+func TestCheckRecipeGenerate_MissingProdSetup(t *testing.T) {
+	t.Parallel()
+
+	// Agent wrote dev only — the consolidated generate step now requires BOTH
+	// dev and prod so the file matches the README integration-guide fragment.
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(dir, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run:
+      ports:
+        - port: 80
+`)
+	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
+
+	checker := checkRecipeGenerate(stateDir)
+	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected checks to fail when prod setup missing")
+	}
+	var sawProdFail bool
+	for _, c := range result.Checks {
+		if c.Name == "app_prod_setup" && c.Status == "fail" {
+			sawProdFail = true
+		}
+	}
+	if !sawProdFail {
+		t.Error("expected app_prod_setup fail check")
+	}
+}
+
+func TestCheckRecipeGenerate_DevProdBitIdentical(t *testing.T) {
+	t.Parallel()
+
+	// Both setups present but run.envVariables are byte-equal — the dev
+	// container would behave exactly like prod during iteration.
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(dir, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run:
+      envVariables:
+        APP_ENV: production
+        APP_DEBUG: "false"
+      ports:
+        - port: 80
+  - setup: prod
+    build:
+      base: php-nginx@8.4
+      deployFiles:
+        - app
+    run:
+      envVariables:
+        APP_ENV: production
+        APP_DEBUG: "false"
+      ports:
+        - port: 80
+`)
+	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
+
+	checker := checkRecipeGenerate(stateDir)
+	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected checks to fail on identical dev/prod env maps")
+	}
+	var sawDivergenceFail bool
+	for _, c := range result.Checks {
+		if c.Name == "dev_prod_env_divergence" && c.Status == "fail" {
+			sawDivergenceFail = true
+		}
+	}
+	if !sawDivergenceFail {
+		t.Error("expected dev_prod_env_divergence fail check")
 	}
 }
 

@@ -49,7 +49,7 @@ func TestCore_H2Sections_ContainsSchemaAndExamples(t *testing.T) {
 		t.Fatalf("Get core: %v", err)
 	}
 	sections := doc.H2Sections()
-	for _, name := range []string{"import.yaml Schema", "zerops.yaml Schema", "Schema Rules", "Multi-Service Examples"} {
+	for _, name := range []string{"import.yaml Schema", "zerops.yaml Schema", "Schema Rules"} {
 		if _, ok := sections[name]; !ok {
 			t.Errorf("core.md missing H2 section %q", name)
 		}

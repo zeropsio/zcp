@@ -125,27 +125,25 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 	}
 }
 
-// checkRecipeSetups validates zerops.yaml has a dev setup entry for the app.
-// At generate time only the dev entry exists — prod is added during deploy.
-// zerops.yaml uses generic names: `setup: dev` and `setup: prod`.
-// The deploy tool's --setup param maps hostname→setup at deploy time.
+// checkRecipeSetups validates zerops.yaml has both dev and prod setup entries.
+// Recipes write BOTH setups at generate time — single-write avoids drift between
+// the file that deploys and the README integration-guide fragment that documents
+// it. zerops.yaml uses generic names: `setup: dev` and `setup: prod`.
+// The deploy tool's --setup param maps hostname→setup at cross-deploy time.
 func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, _ *workflow.RecipePlan) []workflow.StepCheck {
 	var checks []workflow.StepCheck
 
-	// Try finding a dev setup entry:
-	// 1. "dev" (correct — generic name used in zerops.yaml)
-	// 2. "{hostname}dev" (legacy fallback)
-	// 3. Bare hostname (single-service recipes)
-	var entry *ops.ZeropsYmlEntry
+	// Dev setup: try "dev" (correct), then legacy fallbacks.
+	var devEntry *ops.ZeropsYmlEntry
 	var foundName string
 	for _, name := range []string{"dev", hostname + "dev", hostname} {
 		if e := doc.FindEntry(name); e != nil {
-			entry = e
+			devEntry = e
 			foundName = name
 			break
 		}
 	}
-	if entry == nil {
+	if devEntry == nil {
 		checks = append(checks, workflow.StepCheck{
 			Name: hostname + "_setup", Status: statusFail,
 			Detail: fmt.Sprintf("no dev setup entry found in zerops.yaml (tried: dev, %sdev, %s)", hostname, hostname),
@@ -157,7 +155,63 @@ func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, _ *workflow.Recip
 		Detail: fmt.Sprintf("found setup: %s", foundName),
 	})
 
+	// Prod setup: required — generate step writes BOTH dev and prod so the
+	// file matches the README integration-guide fragment exactly.
+	prodEntry := doc.FindEntry("prod")
+	if prodEntry == nil {
+		checks = append(checks, workflow.StepCheck{
+			Name: hostname + "_prod_setup", Status: statusFail,
+			Detail: "no prod setup entry found in zerops.yaml — generate step writes BOTH dev and prod setups. The prod block is what cross-deploys to stage and is the reference the README integration-guide documents for end users.",
+		})
+		return checks
+	}
+	checks = append(checks, workflow.StepCheck{
+		Name: hostname + "_prod_setup", Status: statusPass,
+	})
+
+	// Dev/prod env-mode divergence: identical envVariables maps mean the dev
+	// container behaves exactly like prod (caches enabled, stack traces hidden),
+	// hiding iteration feedback from the agent.
+	checks = append(checks, checkRecipeDevProdDivergence(devEntry, prodEntry)...)
+
 	return checks
+}
+
+// checkRecipeDevProdDivergence flags dev and prod run.envVariables maps that
+// are bit-identical. The two setups exist to carry different values for
+// framework mode flags (APP_ENV, NODE_ENV, DEBUG, LOG_LEVEL). Bit-equal maps
+// mean the copy-paste was not adjusted — dev will act as prod, masking bugs.
+func checkRecipeDevProdDivergence(devEntry, prodEntry *ops.ZeropsYmlEntry) []workflow.StepCheck {
+	devEnv := devEntry.Run.EnvVariables
+	prodEnv := prodEntry.Run.EnvVariables
+	// If either side has no run.envVariables block, framework defaults carry
+	// the mode signal — nothing to compare.
+	if len(devEnv) == 0 || len(prodEnv) == 0 {
+		return nil
+	}
+	if recipeEnvMapsEqual(devEnv, prodEnv) {
+		return []workflow.StepCheck{{
+			Name:   "dev_prod_env_divergence",
+			Status: statusFail,
+			Detail: "dev and prod setups have bit-identical run.envVariables — the dev container will behave exactly like prod (caches enabled, stack traces hidden during iteration). Differentiate them with the framework's mode flag (APP_ENV=local vs production, NODE_ENV=development vs production, DEBUG=true vs false, etc.)",
+		}}
+	}
+	return []workflow.StepCheck{{
+		Name: "dev_prod_env_divergence", Status: statusPass,
+	}}
+}
+
+// recipeEnvMapsEqual reports whether two env var maps carry the same keys and values.
+func recipeEnvMapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }
 
 // checkReadmeFragments validates README.md contains required fragment markers and quality.
