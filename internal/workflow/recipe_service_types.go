@@ -2,14 +2,14 @@ package workflow
 
 import "strings"
 
-// Service type capabilities — determines which import.yaml fields are valid
-// for a given Zerops service type. These are type-based (not role-based)
-// because the same role can map to different service types with different
-// field support (e.g., "storage" role → object-storage or shared-storage).
+// Service-type capability predicates. The template layer dispatches on these
+// directly — there is NO intermediate "role" abstraction. The agent submits
+// {hostname, type, isWorker} and every template decision flows from the type
+// and its platform category.
 
 // ServiceSupportsMode returns true if the service type supports mode: HA/NON_HA.
-// Managed services (db, cache, search, messaging) support mode.
-// Object-storage does NOT — it's always replicated internally.
+// Managed services (databases, caches, search, shared-storage, messaging) do.
+// Object-storage does NOT — it's always internally replicated.
 func ServiceSupportsMode(serviceType string) bool {
 	return IsManagedService(serviceType) && !IsObjectStorageType(serviceType)
 }
@@ -33,36 +33,59 @@ func IsSharedStorageType(serviceType string) bool {
 }
 
 // IsUtilityType returns true for utility services deployed from external repos.
-// These are standalone apps (not part of the recipe codebase) with their own
-// buildFromGit URL and zerops.yaml. Currently: mailpit.
+// These are standalone apps (ubuntu-based) with their own buildFromGit URL and
+// their own zerops.yaml in a zerops-recipe-apps repo. Currently: mailpit.
 func IsUtilityType(serviceType string) bool {
 	return strings.HasPrefix(strings.ToLower(serviceType), "mailpit")
 }
 
-// recipeSetupName returns the zeropsSetup name for a recipe service.
-// Convention: dev services use "dev", prod workers use "worker", prod apps use "prod".
-func recipeSetupName(role string, isDev bool) string {
+// IsRuntimeType returns true for Zerops runtime types — the categories where
+// user code executes (php-nginx, nodejs, go, bun, python, rust, nginx, static, ...).
+// Defined by exclusion: not managed and not a utility. Runtime services need
+// zeropsSetup + buildFromGit pointing at the recipe-app repo.
+func IsRuntimeType(serviceType string) bool {
+	return !IsManagedService(serviceType) && !IsUtilityType(serviceType)
+}
+
+// recipeSetupName returns the zeropsSetup name for a recipe RUNTIME service:
+//   - "dev"    → the dev entry that env 0-1 mounts on SSHFS
+//   - "worker" → background/queue worker runtime in prod
+//   - "prod"   → the HTTP-serving primary app runtime in prod
+//
+// Not valid for managed or utility services (they use different setup names
+// or no setup at all).
+func recipeSetupName(isWorker, isDev bool) string {
 	if isDev {
-		return PlanModeDev
+		return "dev"
 	}
-	if role == RecipeRoleWorker {
-		return RecipeRoleWorker
+	if isWorker {
+		return "worker"
 	}
 	return "prod"
 }
 
-// managedServiceKind returns a human-readable kind label for comments.
-func managedServiceKind(role string) string {
-	switch role {
-	case RecipeRoleDB:
+// serviceTypeKind returns a human-readable category label for comment generation.
+// This is the ONLY place service types are grouped by category — it is not used
+// for any template dispatch (dispatch uses the capability predicates above).
+// Empty string for runtime types (callers fall back to the exact type name via
+// dataServiceTypeName for those).
+func serviceTypeKind(serviceType string) string {
+	base, _, _ := strings.Cut(strings.ToLower(serviceType), "@")
+	switch base {
+	case "postgresql", "mariadb", "clickhouse": //nolint:goconst // service-type literals, not worth extracting
 		return "database"
-	case RecipeRoleCache:
-		return RecipeRoleCache
-	case RecipeRoleSearch:
+	case "valkey", "keydb":
+		return "cache"
+	case "elasticsearch", "meilisearch", "qdrant", "typesense": //nolint:goconst // service-type literals
 		return "search engine"
-	default:
-		return "service"
+	case "object-storage", "shared-storage":
+		return "storage"
+	case "nats", "kafka", "rabbitmq":
+		return "messaging"
+	case "mailpit":
+		return "mail catcher"
 	}
+	return ""
 }
 
 // utilityBuildFromGitURL returns the buildFromGit URL for a utility service.

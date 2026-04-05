@@ -60,7 +60,7 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 		// Find the app target (first target with role "app").
 		var appHostname string
 		for _, t := range plan.Targets {
-			if t.Role() == workflow.RecipeRoleApp {
+			if workflow.IsRuntimeType(t.Type) && !t.IsWorker {
 				appHostname = t.Hostname
 				break
 			}

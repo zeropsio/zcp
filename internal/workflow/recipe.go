@@ -56,23 +56,14 @@ type RecipePlan struct {
 	ProjectComment string `json:"projectComment,omitempty"`
 }
 
-// RecipeTarget defines a service in the recipe workspace. Role is NOT a field —
-// it is derived from Type (+ IsWorker for runtime types) via DeriveRole, so
-// the agent can't submit a role the template doesn't recognize.
+// RecipeTarget defines a service in the recipe workspace. There is NO role
+// field — template dispatch uses type-capability predicates directly
+// (IsRuntimeType, IsManagedService, IsUtilityType, IsObjectStorageType, …).
 type RecipeTarget struct {
-	Hostname     string   `json:"hostname"               jsonschema:"Service hostname — lowercase alphanumeric, no hyphens or underscores (e.g. 'app', 'db', 'cache', 'mail')."`
+	Hostname     string   `json:"hostname"               jsonschema:"Service hostname — lowercase alphanumeric, no hyphens or underscores (e.g. 'app', 'db', 'cache')."`
 	Type         string   `json:"type"                   jsonschema:"Zerops service type with version (e.g. 'php-nginx@8.4', 'postgresql@17', 'valkey@7.2'). Must exist in the live catalog."`
-	IsWorker     bool     `json:"isWorker,omitempty"     jsonschema:"Only meaningful for runtime types — set true for background/queue workers, false (default) for the HTTP-serving primary app. Ignored for managed/utility types (their role is inferred from the type)."`
+	IsWorker     bool     `json:"isWorker,omitempty"     jsonschema:"Only meaningful for runtime types — set true for background/queue workers, false (default) for the HTTP-serving primary app. Ignored for managed/utility types (their rendering is fully determined by type)."`
 	Environments []string `json:"environments,omitempty"` // ignored — all targets appear in all environments
-}
-
-// Role returns the canonical template-dispatch role for this target, derived
-// from Type (+ IsWorker). Returns empty string if the type has no role mapping;
-// validation catches that at plan submission so this should never return "" in
-// a state that has passed validation.
-func (t RecipeTarget) Role() string {
-	role, _ := DeriveRole(t.Type, t.IsWorker)
-	return role
 }
 
 // DecisionResults holds the 4 recipe decision tree outputs.

@@ -5,17 +5,6 @@ import (
 	"strings"
 )
 
-// Recipe role constants.
-const (
-	RecipeRoleApp     = "app"
-	RecipeRoleWorker  = "worker"
-	RecipeRoleDB      = "db"
-	RecipeRoleCache   = "cache"
-	RecipeRoleStorage = "storage"
-	RecipeRoleSearch  = "search"
-	RecipeRoleMail    = "mail"
-)
-
 // RecipeAppRepoBase is the GitHub org where recipe app repos live.
 const RecipeAppRepoBase = "https://github.com/zerops-recipe-apps/"
 
@@ -250,20 +239,6 @@ func dbDisplayName(driver string) string {
 
 // Import YAML generation is in recipe_templates_import.go.
 
-// IsRuntimeService returns true for app and worker roles.
-func IsRuntimeService(role string) bool {
-	return role == RecipeRoleApp || role == RecipeRoleWorker
-}
-
-// IsDataService returns true for non-runtime service roles.
-func IsDataService(role string) bool {
-	switch role {
-	case RecipeRoleDB, RecipeRoleCache, RecipeRoleStorage, RecipeRoleSearch, RecipeRoleMail:
-		return true
-	}
-	return false
-}
-
 // envDescription returns a description for an environment tier, dynamically including
 // the services present in the plan. Matches the style used by zeropsio/recipes.
 func envDescription(plan *RecipePlan, envIndex int) string {
@@ -299,7 +274,7 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 	runtimeSeen := false
 
 	for _, target := range plan.Targets {
-		if IsRuntimeService(target.Role()) {
+		if IsRuntimeType(target.Type) {
 			if !runtimeSeen {
 				runtimeSeen = true
 				if envIndex <= 1 {
@@ -310,7 +285,7 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 				}
 			}
 		} else {
-			parts = append(parts, dataServiceLabel(target.Role()))
+			parts = append(parts, dataServiceIncludesLabel(target.Type))
 		}
 	}
 
@@ -320,21 +295,24 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 	return "It includes " + naturalJoin(parts) + "."
 }
 
-// dataServiceLabel returns a human-readable label for a data service role.
-func dataServiceLabel(role string) string {
-	switch role {
-	case RecipeRoleDB:
+// dataServiceIncludesLabel returns the prose label for a non-runtime service
+// in the env description, derived from its type's canonical kind.
+func dataServiceIncludesLabel(serviceType string) string {
+	switch serviceTypeKind(serviceType) {
+	case "database":
 		return "a low-resource database"
-	case RecipeRoleCache:
+	case "cache":
 		return "a cache store"
-	case RecipeRoleStorage:
+	case "storage":
 		return "an object storage"
-	case RecipeRoleSearch:
+	case "search engine":
 		return "a search engine"
-	case RecipeRoleMail:
-		return "a mail service"
+	case "messaging":
+		return "a messaging service"
+	case "mail catcher":
+		return "a mail catcher"
 	}
-	return "a " + role + " service"
+	return "a service"
 }
 
 // naturalJoin joins parts with commas and "and" before the last element.

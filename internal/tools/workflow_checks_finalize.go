@@ -235,28 +235,34 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 func checkServiceStructure(doc importYAMLDoc, svcMap map[string]importService, plan *workflow.RecipePlan, envIndex int, prefix string) []workflow.StepCheck {
 	var checks []workflow.StepCheck
 
-	// Data service priority.
+	// Non-runtime services (managed + utility) need priority: 10 so they
+	// start before the app container.
 	for _, target := range plan.Targets {
-		if workflow.IsDataService(target.Role()) {
-			svc, exists := svcMap[target.Hostname]
-			if exists && (svc.Priority == nil || *svc.Priority != 10) {
-				checks = append(checks, workflow.StepCheck{
-					Name: prefix + "_" + target.Hostname + "_priority", Status: statusFail,
-					Detail: fmt.Sprintf("data service %q should have priority: 10", target.Hostname),
-				})
-			} else if exists {
-				checks = append(checks, workflow.StepCheck{
-					Name: prefix + "_" + target.Hostname + "_priority", Status: statusPass,
-				})
-			}
+		if workflow.IsRuntimeType(target.Type) {
+			continue
+		}
+		svc, exists := svcMap[target.Hostname]
+		if exists && (svc.Priority == nil || *svc.Priority != 10) {
+			checks = append(checks, workflow.StepCheck{
+				Name: prefix + "_" + target.Hostname + "_priority", Status: statusFail,
+				Detail: fmt.Sprintf("service %q should have priority: 10", target.Hostname),
+			})
+		} else if exists {
+			checks = append(checks, workflow.StepCheck{
+				Name: prefix + "_" + target.Hostname + "_priority", Status: statusPass,
+			})
 		}
 	}
 
 	// Runtime and utility services MUST have zeropsSetup+buildFromGit.
+	// Managed services (db/cache/search/storage/messaging) must NOT — they
+	// are platform-owned; buildFromGit is inert and would add noise.
 	for _, svc := range doc.Services {
-		role := findTargetRole(plan, svc.Hostname)
 		svcType := findTargetType(plan, svc.Hostname)
-		needsGitCheck := role != "" && (!workflow.IsDataService(role) || workflow.IsUtilityType(svcType))
+		if svcType == "" {
+			continue // service not in plan (agent-added extras aren't checked)
+		}
+		needsGitCheck := workflow.IsRuntimeType(svcType) || workflow.IsUtilityType(svcType)
 		if !needsGitCheck {
 			continue
 		}
@@ -288,7 +294,7 @@ func checkServiceStructure(doc importYAMLDoc, svcMap map[string]importService, p
 	// Env 0-1: runtime services must use dev/stage hostname pairs.
 	if envIndex <= 1 {
 		for _, target := range plan.Targets {
-			if !workflow.IsRuntimeService(target.Role()) || workflow.IsUtilityType(target.Type) {
+			if !workflow.IsRuntimeType(target.Type) {
 				continue
 			}
 			devHost := target.Hostname + "dev"
@@ -328,20 +334,23 @@ func checkEnv5Requirements(doc importYAMLDoc, plan *workflow.RecipePlan, prefix 
 	}
 
 	for _, svc := range doc.Services {
-		role := findTargetRole(plan, svc.Hostname)
 		svcType := findTargetType(plan, svc.Hostname)
+		if svcType == "" {
+			continue
+		}
 
-		// HA mode on managed services that support mode (not object-storage).
-		if workflow.IsDataService(role) && workflow.ServiceSupportsMode(svcType) && svc.Mode != "HA" {
+		// HA mode on services that support mode (managed, excluding object-storage).
+		if workflow.ServiceSupportsMode(svcType) && svc.Mode != "HA" {
 			checks = append(checks, workflow.StepCheck{
 				Name: prefix + "_" + svc.Hostname + "_ha_mode", Status: statusFail,
-				Detail: fmt.Sprintf("env 5 data service %q should have mode: HA", svc.Hostname),
+				Detail: fmt.Sprintf("env 5 service %q should have mode: HA", svc.Hostname),
 			})
 		}
 
-		// DEDICATED cpuMode on recipe runtime services (not utilities).
-		if svc.VerticalAutoscaling != nil && !workflow.IsUtilityType(svcType) {
-			if svc.VerticalAutoscaling.CPUMode != "DEDICATED" && (role == workflow.RecipeRoleApp || role == workflow.RecipeRoleWorker) {
+		// DEDICATED cpuMode on runtime services (excludes utility, which uses
+		// shared CPU — mailpit's workload is tiny and doesn't justify DEDICATED).
+		if svc.VerticalAutoscaling != nil && workflow.IsRuntimeType(svcType) {
+			if svc.VerticalAutoscaling.CPUMode != "DEDICATED" {
 				checks = append(checks, workflow.StepCheck{
 					Name: prefix + "_" + svc.Hostname + "_cpu_mode", Status: statusFail,
 					Detail: fmt.Sprintf("env 5 service %q should have cpuMode: DEDICATED", svc.Hostname),
@@ -358,8 +367,11 @@ func checkEnv4Requirements(doc importYAMLDoc, plan *workflow.RecipePlan, prefix 
 	var checks []workflow.StepCheck
 
 	for _, svc := range doc.Services {
-		role := findTargetRole(plan, svc.Hostname)
-		if role == workflow.RecipeRoleApp || role == workflow.RecipeRoleWorker {
+		svcType := findTargetType(plan, svc.Hostname)
+		if svcType == "" {
+			continue
+		}
+		if workflow.IsRuntimeType(svcType) {
 			if svc.MinContainers == nil || *svc.MinContainers < 2 {
 				checks = append(checks, workflow.StepCheck{
 					Name: prefix + "_" + svc.Hostname + "_min_containers", Status: statusFail,
@@ -439,15 +451,6 @@ func checkSectionHeadingComments(content, prefix string) []workflow.StepCheck {
 	return []workflow.StepCheck{{
 		Name: prefix + "_comment_headings", Status: statusPass,
 	}}
-}
-
-// findTargetRole finds the role for a hostname in the recipe plan.
-// Handles env 0-1 suffixed hostnames (appdev/appstage → app target).
-func findTargetRole(plan *workflow.RecipePlan, hostname string) string {
-	if t := findTarget(plan, hostname); t != nil {
-		return t.Role()
-	}
-	return ""
 }
 
 // findTargetType finds the service type for a hostname in the recipe plan.

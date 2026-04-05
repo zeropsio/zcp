@@ -21,7 +21,10 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 	b.WriteString("\nservices:\n")
 
 	for _, target := range plan.Targets {
-		if IsRuntimeService(target.Role()) && !IsUtilityType(target.Type) && envIndex <= 1 {
+		// Runtime services in env 0-1 get a dev+stage pair; everything else
+		// (managed, utility, and runtime in env 2-5) gets a single entry.
+		// IsRuntimeType already excludes utility, so no extra check needed.
+		if IsRuntimeType(target.Type) && envIndex <= 1 {
 			writeDevService(&b, plan, target)
 			writeStageService(&b, plan, target)
 		} else {
@@ -71,28 +74,31 @@ func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int) {
 	}
 }
 
-// writeDevService writes a dev service block for env 0-1.
+// writeDevService writes a dev service block for env 0-1. Called only for
+// runtime targets, so target.Type is guaranteed IsRuntimeType.
 func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
 	writeAgentServiceComment(b, plan, target.Hostname)
 	fmt.Fprintf(b, "  - hostname: %sdev\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 	b.WriteString("    zeropsSetup: dev\n")
 	writeRecipeAppBuildFromGit(b, plan)
-	if target.Role() == RecipeRoleApp {
+	// Non-worker runtimes serve HTTP and need a subdomain.
+	if !target.IsWorker {
 		b.WriteString("    enableSubdomainAccess: true\n")
 	}
 	writeAutoscaling(b, target, 0) // env 0-1 share same scaling
 	b.WriteByte('\n')
 }
 
-// writeStageService writes a stage service block for env 0-1.
+// writeStageService writes a stage service block for env 0-1. Called only for
+// runtime targets, so target.Type is guaranteed IsRuntimeType.
 func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
 	writeAgentServiceComment(b, plan, target.Hostname)
 	fmt.Fprintf(b, "  - hostname: %sstage\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
-	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.Role(), false))
+	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.IsWorker, false))
 	writeRecipeAppBuildFromGit(b, plan)
-	if target.Role() == RecipeRoleApp {
+	if !target.IsWorker {
 		b.WriteString("    enableSubdomainAccess: true\n")
 	}
 	writeAutoscaling(b, target, 0)
@@ -117,7 +123,7 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 
 	// Priority: non-runtime services start before app.
-	if !IsRuntimeService(target.Role()) {
+	if !IsRuntimeType(target.Type) {
 		b.WriteString("    priority: 10\n")
 	}
 
@@ -131,24 +137,24 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 	}
 
 	// Recipe runtime services: zeropsSetup + buildFromGit from recipe app repo.
-	if IsRuntimeService(target.Role()) {
-		fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.Role(), false))
+	if IsRuntimeType(target.Type) {
+		fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.IsWorker, false))
 		writeRecipeAppBuildFromGit(b, plan)
 	}
 
-	// Utility services: zeropsSetup + buildFromGit from utility repo.
-	if IsUtilityType(target.Type) && !IsRuntimeService(target.Role()) {
+	// Utility services: zeropsSetup + buildFromGit from the utility repo.
+	if IsUtilityType(target.Type) {
 		b.WriteString("    zeropsSetup: app\n")
 		fmt.Fprintf(b, "    buildFromGit: %s\n", utilityBuildFromGitURL(target.Type))
 	}
 
-	// Subdomain: app role + utility services with web UI.
-	if target.Role() == RecipeRoleApp || IsUtilityType(target.Type) {
+	// Subdomain: runtime apps (non-workers) + utility services with web UI.
+	if (IsRuntimeType(target.Type) && !target.IsWorker) || IsUtilityType(target.Type) {
 		b.WriteString("    enableSubdomainAccess: true\n")
 	}
 
 	// minContainers: runtime services in production tiers.
-	if IsRuntimeService(target.Role()) && envIndex >= 4 {
+	if IsRuntimeType(target.Type) && envIndex >= 4 {
 		b.WriteString("    minContainers: 2\n")
 	}
 
@@ -167,10 +173,13 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 }
 
 // writeManagedServiceComment writes platform-knowledge comments for managed services.
-// Generalizes across db, cache, and search roles — not database-specific.
+// Generalizes across db/cache/search/messaging/storage — not database-specific.
 func writeManagedServiceComment(b *strings.Builder, plan *RecipePlan, target RecipeTarget, envIndex int) {
 	typeName := dataServiceTypeName(target)
-	kind := managedServiceKind(target.Role())
+	kind := serviceTypeKind(target.Type)
+	if kind == "" {
+		kind = "service"
+	}
 
 	switch envIndex {
 	case 0, 1:
@@ -216,7 +225,7 @@ func writeObjectStorageComment(b *strings.Builder, envIndex int) {
 func runtimeHostnameList(plan *RecipePlan, envIndex int) string {
 	var names []string
 	for _, t := range plan.Targets {
-		if IsRuntimeService(t.Role()) {
+		if IsRuntimeType(t.Type) {
 			if envIndex <= 1 {
 				names = append(names, t.Hostname+"dev", t.Hostname+"stage")
 			} else {
@@ -233,27 +242,24 @@ func writeRecipeAppBuildFromGit(b *strings.Builder, plan *RecipePlan) {
 }
 
 // writeAutoscaling writes the verticalAutoscaling block per tier.
-// Caller must ensure the service type supports autoscaling.
+// Caller must ensure the service type supports autoscaling (callers check
+// ServiceSupportsAutoscaling before invoking).
 func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
-	isRT := IsRuntimeService(target.Role())
-	isData := IsDataService(target.Role())
-	isUtil := IsUtilityType(target.Type)
-	if !isRT && !isData {
-		return
-	}
+	isRT := IsRuntimeType(target.Type)   // genuine runtime (excludes utility)
+	isUtil := IsUtilityType(target.Type) // mailpit and similar
 
 	b.WriteString("    verticalAutoscaling:\n")
 
 	switch {
 	case envIndex <= 2:
-		if isRT && !isUtil {
+		if isRT {
 			b.WriteString("      minRam: 0.5\n")
 		} else {
 			b.WriteString("      minRam: 0.25\n")
 		}
 
 	case envIndex == 3:
-		if isRT && !isUtil {
+		if isRT {
 			b.WriteString("      minRam: 0.5\n")
 		} else {
 			b.WriteString("      minRam: 0.25\n")

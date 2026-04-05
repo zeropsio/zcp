@@ -70,7 +70,7 @@ Define workspace services based on recipe type:
 - **Type 2b (frontend SSR)**: app + db
 - **Type 3 (backend framework)**: app + db
 
-**Target fields**: just `hostname` (lowercase alphanumeric, e.g. `app`/`db`/`cache`) and `type` (service type from live catalog, e.g. `php-nginx@8.4`/`postgresql@17`). The template's internal role is derived automatically from the type — `postgresql@*` → db, `valkey@*` → cache, `meilisearch@*` → search, etc. For runtime types, if the service is a background/queue worker instead of the HTTP-serving primary app, set `isWorker: true`. For managed services, `isWorker` is ignored (the role is fully determined by type).
+**Target fields**: just `hostname` (lowercase alphanumeric, e.g. `app`/`db`/`cache`) and `type` (service type from live catalog, e.g. `php-nginx@8.4`/`postgresql@17`). The tool dispatches rendering directly on the type — no role classification needed. For runtime services, if it's a background/queue worker instead of the HTTP-serving primary app, set `isWorker: true`. Workers get a `worker` setup name and no subdomain; the primary app gets a `prod` setup and `enableSubdomainAccess`. For managed/utility services, `isWorker` is ignored.
 
 ### Submission
 Submit via:

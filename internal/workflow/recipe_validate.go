@@ -143,11 +143,12 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 		if svcTypeSet != nil && !svcTypeSet[t.Type] {
 			errs = append(errs, fmt.Sprintf("target[%d]: type %q not found in import.yaml schema", i, t.Type))
 		}
-		// Role is derived from type, not submitted. Verify the type maps
-		// to a known canonical role — otherwise the template layer can't
-		// dispatch and zeropsSetup/buildFromGit would be silently dropped.
-		if _, err := DeriveRole(t.Type, t.IsWorker); err != nil {
-			errs = append(errs, fmt.Sprintf("target[%d]: %v (agent should not encounter this — report as a bug)", i, err))
+		// Managed and utility services must resolve to a serviceTypeKind so
+		// comments render correctly. If a new managed type is added to
+		// managedServicePrefixes without a matching entry in serviceTypeKind,
+		// this fails at plan submission instead of at comment-generation.
+		if (IsManagedService(t.Type) || IsUtilityType(t.Type)) && serviceTypeKind(t.Type) == "" {
+			errs = append(errs, fmt.Sprintf("target[%d]: service type %q has no serviceTypeKind — add it to recipe_service_types.go (this is a tool bug, not an agent error)", i, t.Type))
 		}
 	}
 	return errs
