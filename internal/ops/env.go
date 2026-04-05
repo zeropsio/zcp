@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/preprocess"
 )
 
 // EnvSetResult contains the result of an env set operation.
@@ -40,6 +41,17 @@ func EnvSet(
 
 	pairs, err := parseEnvPairs(variables)
 	if err != nil {
+		return nil, err
+	}
+
+	// Expand Zerops preprocessor expressions (e.g. <@generateRandomString(<32>)>)
+	// through zParser — the same library the platform uses at recipe import
+	// time. Gives recipe-creation workflows a single source of truth for
+	// shared-secret values: the workspace setup and the published deliverable
+	// run the exact same expression, so a bug caught at workspace time
+	// can't reappear at deploy time. Keys are batched into one parse so
+	// setVar/getVar correlate across variables in a single call.
+	if err := expandPairs(ctx, pairs); err != nil {
 		return nil, err
 	}
 
@@ -132,6 +144,33 @@ func EnvDelete(
 	}
 
 	return &EnvDeleteResult{Process: lastProc}, nil
+}
+
+// expandPairs runs each pair's value through the zParser-backed preprocess
+// wrapper in one batch, so setVar/getVar correlations work across variables
+// in the same call. Pairs with no preprocessor syntax pass through untouched.
+// Batching means one shared variable store and one parse — cheaper, and
+// matches how the platform's own preprocessor handles multi-key imports.
+func expandPairs(ctx context.Context, pairs []envPair) error {
+	keys := make([]string, len(pairs))
+	inputs := make(map[string]string, len(pairs))
+	for i, p := range pairs {
+		// Use the index as the batch key — pair keys may repeat (shouldn't,
+		// but we don't want to silently drop duplicates at this layer).
+		batchKey := fmt.Sprintf("%d", i)
+		keys[i] = batchKey
+		inputs[batchKey] = p.Value
+	}
+	expanded, err := preprocess.Batch(ctx, keys, inputs)
+	if err != nil {
+		return platform.NewPlatformError(platform.ErrInvalidParameter,
+			fmt.Sprintf("preprocessor expansion failed: %v", err),
+			"Check your <@...> syntax, or omit it for literal values")
+	}
+	for i := range pairs {
+		pairs[i].Value = expanded[keys[i]]
+	}
+	return nil
 }
 
 func buildEnvFileContent(pairs []envPair) string {

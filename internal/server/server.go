@@ -97,6 +97,7 @@ func (s *Server) registerTools() {
 	tools.RegisterEvents(s.server, s.client, projectID)
 	tools.RegisterProcess(s.server, s.client)
 	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID)
+	tools.RegisterPreprocess(s.server)
 
 	// Mutating tools — deploy registration routes by environment.
 	if s.sshDeployer != nil {

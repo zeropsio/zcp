@@ -4,6 +4,7 @@ package ops
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -78,6 +79,68 @@ func TestEnvSet_Project(t *testing.T) {
 		if mock.calls[i] != want {
 			t.Errorf("call[%d] = %+v, want %+v", i, mock.calls[i], want)
 		}
+	}
+}
+
+func TestEnvSet_Project_PreprocessorExpansion(t *testing.T) {
+	t.Parallel()
+
+	// Values containing <@...> syntax must be expanded through zParser
+	// before being sent to the API. The platform stores literal strings;
+	// the preprocessor is a zcp-side concern that gives workspace setup
+	// byte-for-byte parity with the deliverable's import.yaml.
+	mock := &countingProjectEnvMock{Client: platform.NewMock()}
+
+	_, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
+		"APP_KEY=<@generateRandomString(<32>)>",
+		"PLAIN_VALUE=literal",
+		"PREFIXED=base64:<@generateRandomString(<32>)>",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.calls) != 3 {
+		t.Fatalf("want 3 calls, got %d", len(mock.calls))
+	}
+
+	// APP_KEY: 32 raw chars, no residual <@...> syntax.
+	if got := mock.calls[0].Value; len(got) != 32 {
+		t.Errorf("APP_KEY length = %d, want 32 (value: %q)", len(got), got)
+	}
+	if strings.Contains(mock.calls[0].Value, "<@") || strings.Contains(mock.calls[0].Value, ">") {
+		t.Errorf("APP_KEY still contains preprocessor syntax: %q", mock.calls[0].Value)
+	}
+
+	// PLAIN_VALUE: passes through unchanged.
+	if mock.calls[1].Value != "literal" {
+		t.Errorf("PLAIN_VALUE = %q, want literal", mock.calls[1].Value)
+	}
+
+	// PREFIXED: prefix preserved, function expanded.
+	if !strings.HasPrefix(mock.calls[2].Value, "base64:") {
+		t.Errorf("PREFIXED missing prefix: %q", mock.calls[2].Value)
+	}
+	if len(mock.calls[2].Value) != len("base64:")+32 {
+		t.Errorf("PREFIXED length = %d, want %d", len(mock.calls[2].Value), len("base64:")+32)
+	}
+}
+
+func TestEnvSet_Project_PreprocessorSyntaxError(t *testing.T) {
+	t.Parallel()
+
+	// Invalid preprocessor syntax must fail at expansion time, BEFORE any
+	// API call is made — the agent gets a clear error rather than storing
+	// garbage in the platform.
+	mock := &countingProjectEnvMock{Client: platform.NewMock()}
+
+	_, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
+		"APP_KEY=<@thisFunctionDoesNotExist(<32>)>",
+	})
+	if err == nil {
+		t.Fatal("expected preprocessor error for unknown function")
+	}
+	if len(mock.calls) != 0 {
+		t.Errorf("expansion failure should prevent API calls, got %d calls", len(mock.calls))
 	}
 }
 
