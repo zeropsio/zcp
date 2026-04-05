@@ -117,8 +117,14 @@ Skip this only if you are certain no recipe exists for your framework. The `## M
 
 #### Confirm and submit plan
 
-**PRESENT the plan to user for confirmation before submitting:**
+**STOP — MANDATORY USER CONFIRMATION GATE**
+You MUST present the plan and wait for explicit user confirmation before calling `zerops_workflow action="complete"`.
+Do NOT auto-proceed. Do NOT assume consent. The user MUST reply before you continue.
+
+Present exactly:
 "I'll set up: [list services with types]. Mode: [standard/dev/simple]. OK?"
+
+Then STOP and WAIT for the user's response. Only after the user explicitly confirms, proceed to submit.
 
 **Managed-only projects**: If the user only needs managed services (databases, caches, storage) with no runtime services, submit an empty plan: `plan=[]`. Steps generate, deploy, and close will be skipped automatically.
 
