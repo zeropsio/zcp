@@ -135,12 +135,14 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 **If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair.
 
+**Workspace import MUST NOT contain a `project:` section.** The ZCP project already exists — the API rejects imports that include `project:`. Only `services:` is allowed here. (The 6 recipe **deliverable** imports written in the finalize step DO contain `project:` with `envVariables` + preprocessor — that's a different file for a different use case.)
+
 **Framework secrets**: If `needsAppSecret == true`, determine during research whether the secret is used for encryption/sessions (shared by services hitting the same DB) or is per-service.
-- **Shared** (used for encryption, CSRF, session signing — any secret that multiple services must agree on): do NOT add to workspace import. After services reach RUNNING, generate the value first (e.g., via SSH: `openssl rand -base64 32`), then set it at project level:
+- **Shared** (used for encryption, CSRF, session signing — any secret that multiple services must agree on): do NOT add to workspace import (see above — no `project:` allowed). After services reach RUNNING, generate a 32-char random value (e.g., `openssl rand -hex 16`) and set it at project level:
   ```
   zerops_env project=true action=set variables=["{SECRET_KEY_NAME}={generated_value}"]
   ```
-  After setting, **restart all running services** (`zerops_manage action="restart"`) — env var changes only take effect on restart or new deploy. The recipe deliverable uses `project.envVariables` with the preprocessor to generate at import time.
+  `zerops_env` auto-restarts affected services so the new value takes effect. **Do not prefix the value** (e.g., `base64:`) unless the framework strictly requires it — the recipe deliverable generates the raw value via `<@generateRandomString(<32>)>`, so the workspace value should match.
 - **Per-service** (unique API tokens, webhook secrets): add as service-level `envSecrets` in import.yaml.
 
 Follow the injected **import.yaml Schema** for the three env var levels (project envVariables, service envSecrets, zerops.yaml run.envVariables).
@@ -296,8 +298,8 @@ Description of why this change is needed.
 **Rules:**
 - Section headings (`## Integration Guide`) go OUTSIDE markers — they're visible in the README but not extracted
 - Content INSIDE markers uses **H3** (`###`), not H2
-- **Intro**: content directly after start marker (NO blank line) — plain text, no headings
-- **integration-guide / knowledge-base**: blank line after start marker
+- **All fragments**: blank line required after the start marker (intro, integration-guide, knowledge-base)
+- **Intro content**: plain text, no headings, 1-3 lines
 - **Step 1** must be `### 1. Adding \`zerops.yaml\`` with a description paragraph before the code block (the API renders it as a section title)
 
 ### Code Quality

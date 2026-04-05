@@ -18,7 +18,7 @@ func GenerateAppREADME(plan *RecipePlan) string {
 	fmt.Fprintf(&b, "# %s %s Recipe App\n\n", title, pretty)
 
 	// Intro extract.
-	b.WriteString("<!-- #ZEROPS_EXTRACT_START:intro# -->\n")
+	b.WriteString("<!-- #ZEROPS_EXTRACT_START:intro# -->\n\n")
 	fmt.Fprintf(&b, "A minimal [%s](%s) application", title, frameworkURL(plan.Framework))
 	if plan.Research.DBDriver != "" && plan.Research.DBDriver != recipeDBNone {
 		fmt.Fprintf(&b, " with a %s connection,", dbDisplayNamePlain(plan.Research.DBDriver))

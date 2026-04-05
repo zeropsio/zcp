@@ -275,8 +275,12 @@ func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
 		b.WriteString("      minFreeRamGB: 0.25\n")
 
 	case envIndex == 4:
-		b.WriteString("      minRam: 0.25\n")
-		b.WriteString("      minFreeRamGB: 0.125\n")
+		if isRT {
+			b.WriteString("      minRam: 0.5\n")
+		} else {
+			b.WriteString("      minRam: 0.25\n")
+		}
+		b.WriteString("      minFreeRamGB: 0.25\n")
 
 	case envIndex == 5:
 		if isUtil {
