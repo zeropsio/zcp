@@ -57,15 +57,41 @@ func pollDeployBuild(
 	} else {
 		// Any non-ACTIVE status is a failure — preserve actual API status.
 		result.Status = event.Status
+		result.FailedPhase = failedPhaseForStatus(event.Status)
 		if logFetcher != nil {
-			result.BuildLogs = ops.FetchBuildLogs(ctx, client, logFetcher, projectID, event, 50)
-			if len(result.BuildLogs) > 0 {
-				result.BuildLogsSource = buildContainerSource
+			// Fetch logs from the right container based on failure phase.
+			// BUILD_FAILED + PREPARING_RUNTIME_FAILED: build container has the stderr.
+			// DEPLOY_FAILED: runtime container has the initCommand stderr.
+			switch event.Status {
+			case statusDeployFailed:
+				result.RuntimeLogs = ops.FetchRuntimeLogs(ctx, client, logFetcher, projectID, result.TargetServiceID, 50)
+				if len(result.RuntimeLogs) > 0 {
+					result.RuntimeLogsSource = "runtime_container"
+				}
+			default:
+				result.BuildLogs = ops.FetchBuildLogs(ctx, client, logFetcher, projectID, event, 50)
+				if len(result.BuildLogs) > 0 {
+					result.BuildLogsSource = buildContainerSource
+				}
 			}
 		}
-		result.Suggestion = deploySuggestionForStatus(event.Status, len(result.BuildLogs) > 0)
+		hasLogs := len(result.BuildLogs) > 0 || len(result.RuntimeLogs) > 0
+		result.Suggestion = deploySuggestionForStatus(event.Status, hasLogs)
 		result.NextActions = deployNextActionForStatus(event.Status)
 	}
+}
+
+// failedPhaseForStatus maps app version status to a short phase identifier.
+func failedPhaseForStatus(status string) string {
+	switch status {
+	case statusBuildFailed:
+		return "build"
+	case statusPreparingRuntimeFailed:
+		return "prepare"
+	case statusDeployFailed:
+		return "init"
+	}
+	return ""
 }
 
 // calcBuildDuration computes the build pipeline duration from event build info.

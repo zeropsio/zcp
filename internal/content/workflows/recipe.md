@@ -481,18 +481,23 @@ zerops_verify serviceHostname="appstage"
 
 **Step 10: Present both URLs**
 
-### Reading deploy failures — which phase failed?
+### Reading deploy failures — which phase failed, and where to look
 
-`zerops_deploy` returns `status` that tells you WHERE to look:
+`zerops_deploy` returns `status` that tells you WHICH lifecycle phase failed. Each has a different fix location and a different log source:
 
-| status | Phase | What to fix |
-|---|---|---|
-| `ACTIVE` | — | Success. |
-| `BUILD_FAILED` | Build container (`/build/source/`) | `buildCommands` exited non-zero. Fix `zerops.yaml` build section. `buildLogs` shows buildCommand stderr. |
-| `PREPARING_RUNTIME_FAILED` | Runtime container startup (`/var/www/`) | Build succeeded but `run.prepareCommands` or `run.initCommands` failed. Fix `zerops.yaml` run section. `buildLogs` field contains runtime stderr (historical name — not actually build logs). |
-| `CANCELED` | — | User/system canceled; redeploy. |
+| status | Phase | Where the stderr lives | What to fix |
+|---|---|---|---|
+| `ACTIVE` | — | — | Success. |
+| `BUILD_FAILED` | Build container (`/build/source/`) | `buildLogs` field in deploy response | `buildCommands` exited non-zero. Fix `zerops.yaml` `build.buildCommands`. |
+| `PREPARING_RUNTIME_FAILED` | Runtime prepare (before deploy files arrive) | `buildLogs` field (yes, historical naming) | `run.prepareCommands` exited non-zero. Fix `zerops.yaml` `run.prepareCommands`. Common cause: referencing `/var/www/` paths that don't exist yet — use `addToRunPrepare` + `/home/zerops/` instead. |
+| `DEPLOY_FAILED` | Runtime init (container already started, deploy files at `/var/www/`) | **Runtime logs** — `zerops_logs serviceHostname={service} severity=ERROR since=5m`. NOT buildLogs. | An `initCommand` crashed the container. The deploy response's `error.meta[].metadata.command` field shows which command failed. Fix `zerops.yaml` `run.initCommands`. Common cause: a buildCommand baked `/build/source/...` paths into a compiled cache that doesn't resolve at runtime (move `config:cache`/`asset:precompile`-style commands from `buildCommands` to `run.initCommands`). |
+| `CANCELED` | — | — | User/system canceled; redeploy. |
 
-**Key distinction**: `PREPARING_RUNTIME_FAILED` means the build pipeline completed successfully and deploy files were transferred, but the container crashed while running `initCommands` or `prepareCommands`. Do NOT edit `buildCommands` for this — the problem is in the run section. Common cause: a buildCommand produced a cached file containing absolute `/build/source/...` paths that don't resolve at runtime (see core.md rule about config:cache/asset precompile at build time).
+**Reading the error metadata on `DEPLOY_FAILED`**: the deploy response includes a structured `error` field:
+```json
+{"error": {"code": "commandExec", "meta": [{"metadata": {"command": ["php artisan migrate --force"], "containerId": ["..."]}}]}}
+```
+This identifies *which* initCommand failed. For *why* it failed, fetch runtime logs on the target service — the stderr is there, not in buildLogs.
 
 ### Common deployment issues
 
@@ -501,7 +506,8 @@ zerops_verify serviceHostname="appstage"
 | HTTP 502 | App not binding 0.0.0.0 or wrong port | Check runtime knowledge for bind rules |
 | Empty env vars | Deploy hasn't happened yet, or service not restarted after env change | Deploy first — envVariables activate at deploy time. After `zerops_env set`, restart the service (`zerops_manage action="restart"`) — env vars are cached at process start. |
 | `BUILD_FAILED` | buildCommands exited non-zero | Check `buildLogs` in deploy response, fix `buildCommands` in zerops.yaml |
-| `PREPARING_RUNTIME_FAILED` | initCommands/prepareCommands failed at container startup | Check `buildLogs` (contains runtime stderr). If it mentions `/build/source/` paths, a build-time cache baked absolute paths — move that cache command to `run.initCommands`. |
+| `PREPARING_RUNTIME_FAILED` | run.prepareCommands failed before deploy files arrived | Check `buildLogs`, fix `run.prepareCommands`. Use `addToRunPrepare` instead of referencing `/var/www/`. |
+| `DEPLOY_FAILED` | run.initCommands crashed the container at startup | Check deploy response `error.meta` for which command; fetch stderr via `zerops_logs serviceHostname={service} severity=ERROR since=5m` (NOT buildLogs). If /build/source paths mentioned, move cache commands to run.initCommands. |
 | Stage deploy fails | zerops.yaml setup name doesn't match --setup param | Ensure `setup: prod` in zerops.yaml and `setup="prod"` in zerops_deploy |
 | Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |
 | Static site 404 | Wrong `documentRoot` | Match to actual build output directory |

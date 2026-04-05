@@ -18,6 +18,7 @@ const (
 	statusDeployed               = "DEPLOYED"
 	statusBuildFailed            = "BUILD_FAILED"
 	statusPreparingRuntimeFailed = "PREPARING_RUNTIME_FAILED"
+	statusDeployFailed           = "DEPLOY_FAILED"
 	statusCanceled               = "CANCELED"
 	statusFinished               = "FINISHED"
 	statusFailed                 = "FAILED"

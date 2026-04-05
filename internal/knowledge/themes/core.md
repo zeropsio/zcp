@@ -117,6 +117,17 @@ zerops[]:
 - **ALWAYS** set Cloudflare SSL to "Full (strict)" when using Cloudflare proxy. REASON: "Flexible" causes infinite redirect loops
 
 ### Build & Deploy
+
+**Where to run what** (lifecycle-phase decision matrix):
+
+| Command runs during | Lives in | Working dir | Access | Use for |
+|---|---|---|---|---|
+| Build pipeline (every build) | `build.buildCommands` | `/build/source/` (build container) | No deploy files at runtime paths, no services, no env vars from zerops.yaml run section | Dependency install, compilation, bundling, asset build, linting. Output goes to `deployFiles`. |
+| Runtime image customization (once) | `run.prepareCommands` | `/home/zerops/` (prepare phase, runtime container) | Deploy files NOT yet at `/var/www/` | Install OS packages, configure runtime. Use `addToRunPrepare` to ship build artifacts here. |
+| Every container start | `run.initCommands` | `/var/www/` (runtime container) | Full deploy files, env vars, cross-service connectivity | DB migrations (gate with `zsc execOnce`), framework cache warmup (`config:cache`, `cache:warmup`, etc.), anything that needs absolute paths under `/var/www/` or DB access |
+
+**Rule of thumb**: if a command reads from `/var/www/`, writes a cache that will be used at runtime, or needs DB/service connectivity — it belongs in `run.initCommands`, NOT `buildCommands`.
+
 - **ALWAYS** include `node_modules` in `deployFiles` for Node.js apps (unless bundled). REASON: runtime container doesn't run `npm install`
 - **ALWAYS** deploy fat/uber JARs for Java. REASON: build and run are separate containers; thin JARs lose their dependencies
 - **ALWAYS** use Maven/Gradle wrapper (`./mvnw`, `./gradlew`) or install build tools via `prepareCommands`. REASON: build container has JDK only -- Maven, Gradle are NOT pre-installed

@@ -19,8 +19,11 @@ type DeployResult struct {
 	TimedOut          bool     `json:"timedOut,omitempty"`
 	NextActions       string   `json:"nextActions,omitempty"`
 	Warnings          []string `json:"warnings,omitempty"`
-	BuildLogs         []string `json:"buildLogs,omitempty"`       // last N lines of build output
+	BuildLogs         []string `json:"buildLogs,omitempty"`       // last N lines of build container output (BUILD_FAILED, PREPARING_RUNTIME_FAILED)
 	BuildLogsSource   string   `json:"buildLogsSource,omitempty"` // "build_container" or empty
+	RuntimeLogs       []string `json:"runtimeLogs,omitempty"`     // last N lines of runtime container output (DEPLOY_FAILED — initCommand stderr)
+	RuntimeLogsSource string   `json:"runtimeLogsSource,omitempty"`
+	FailedPhase       string   `json:"failedPhase,omitempty"` // "build" | "prepare" | "init" — which lifecycle phase failed
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.
