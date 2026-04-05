@@ -15,7 +15,7 @@ Single Go binary merging ZAIA CLI + ZAIA-MCP. AI-driven Zerops PaaS management v
 ```
 
 Key specs:
-- `docs/spec-bootstrap-deploy.md` — workflow step specs, invariants, state model
+- `docs/spec-workflows.md` — workflow step specs, invariants, state model
 - `docs/spec-guidance-philosophy.md` — guidance delivery model (inject vs point, personalization)
 
 Zerops platform schemas (live, authoritative for YAML field validation):

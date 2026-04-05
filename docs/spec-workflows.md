@@ -1,7 +1,7 @@
 # ZCP Workflow Specification
 
 > **Status**: Authoritative — all workflow behavior, state transitions, and flow logic MUST conform to this document.
-> **Scope**: Bootstrap, adoption, strategy, deploy — both container and local environments, all modes.
+> **Scope**: Bootstrap, adoption, strategy, develop — both container and local environments, all modes.
 > **Date**: 2026-04-04
 > **Companion**: `spec-knowledge-distribution.md` — defines WHAT knowledge is delivered at each step and WHY.
 

@@ -1,4 +1,4 @@
-# Develop: Develop, Deploy, Fix, and Operate Zerops Services
+# Develop: Build, Deploy, Fix, and Operate Zerops Services
 
 ## Overview
 
