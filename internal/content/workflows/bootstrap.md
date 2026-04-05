@@ -122,7 +122,12 @@ You MUST present the plan and wait for explicit user confirmation before calling
 Do NOT auto-proceed. Do NOT assume consent. The user MUST reply before you continue.
 
 Present exactly:
-"I'll set up: [list services with types]. Mode: [standard/dev/simple]. OK?"
+"I'll set up: [list services with types]. Mode: [standard/dev/simple]. OK?
+
+Modes ([docs](https://docs-2004.prg1.zerops.app/)):
+- **standard** — dev + stage pair, shared managed services. Dev for iteration, stage for validation.
+- **dev** — single service + managed services. No stage pair. Quick prototyping.
+- **simple** — single service with real start command, auto-starts after deploy."
 
 Then STOP and WAIT for the user's response. Only after the user explicitly confirms, proceed to submit.
 
