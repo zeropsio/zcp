@@ -19,22 +19,22 @@ flowchart LR
     end
 
     subgraph Phase2 ["Phase 2: Development Lifecycle (repeated)"]
-        Deploy["Deploy Flow<br/>knowledge → work → deploy"]
+        Develop["Develop Flow<br/>knowledge → work → deploy"]
     end
 
     Bootstrap --> Meta["ServiceMeta<br/>(evidence file)"]
     Adoption --> Meta
-    Meta --> Deploy
-    Deploy -->|"strategy read<br/>from meta"| Deploy
+    Meta --> Develop
+    Develop -->|"strategy read<br/>from meta"| Develop
 
     style Meta fill:#dfd,stroke:#0a0
 ```
 
 **Phase 1 — Infrastructure**: Bootstrap creates new services (or adoption registers existing ones) and writes an evidence file (ServiceMeta). Only a **verification server** is deployed — a hello-world proving infrastructure works (/, /health, /status). No application logic, no strategy. Phase 1 answers: "can this service start, respond, and reach its dependencies?"
 
-**Phase 2 — Development**: Deploy flow covers ALL code work on the service — implementing the user's actual application, bug fixes, config changes, everything. It discovers what code exists (verification server from bootstrap or existing application), provides runtime knowledge, lets the agent implement what the user wants, and deploys at the end. Strategy is always read fresh from ServiceMeta.
+**Phase 2 — Development**: Develop flow covers ALL code work on the service — implementing the user's actual application, bug fixes, config changes, everything. It discovers what code exists (verification server from bootstrap or existing application), provides runtime knowledge, lets the agent implement what the user wants, and deploys at the end. Strategy is always read fresh from ServiceMeta.
 
-**The boundary is strict**: Bootstrap writes zerops.yaml + infrastructure verification server. The moment the agent needs to write application logic, it must be in deploy flow. If the user says "create me an app for uploading photos in Bun", bootstrap creates Bun service + dependencies with a hello-world verification server, then deploy flow implements the photo upload app.
+**The boundary is strict**: Bootstrap writes zerops.yaml + infrastructure verification server. The moment the agent needs to write application logic, it must be in develop flow. If the user says "create me an app for uploading photos in Bun", bootstrap creates Bun service + dependencies with a hello-world verification server, then develop flow implements the photo upload app.
 
 ### ServiceMeta — The Evidence File
 
@@ -61,13 +61,13 @@ stateDiagram-v2
 
     note right of Evidenced
         DeployStrategy empty.
-        Deploy flow informs agent,
+        Develop flow informs agent,
         resolves before deploying.
     end note
 
     note right of StrategySet
         Strategy = push-dev | push-git | manual.
-        Deploy flow reads from meta each time.
+        Develop flow reads from meta each time.
     end note
 ```
 
@@ -252,7 +252,7 @@ ServicePlan {
 - A verification server with exactly three endpoints (/, /health, /status) — under 50 lines
 - Env var wiring to prove dependency connectivity
 
-Generate does NOT write application logic, business features, or the user's actual request. That happens in deploy flow (§4). If the user asked for "a photo upload app", generate creates a verification server with /status proving S3 connectivity — the photo upload implementation comes in deploy flow.
+Generate does NOT write application logic, business features, or the user's actual request. That happens in develop flow (§4). If the user asked for "a photo upload app", generate creates a verification server with /status proving S3 connectivity — the photo upload implementation comes in develop flow.
 
 **Skip**: Only if managed-only.
 
@@ -375,7 +375,7 @@ Phase 3 — Cross-verify:
 
 **Bootstrap is done. Service is in evidence with verification server deployed. No application code written.**
 
-**Natural transition**: If the user's intent requires application development (e.g., "create an app for X"), the agent should immediately start deploy flow (§4) to implement the actual application. Bootstrap proved the infrastructure works; deploy flow is where the real code gets written.
+**Natural transition**: If the user's intent requires application development (e.g., "create an app for X"), the agent should immediately start develop flow (§4) to implement the actual application. Bootstrap proved the infrastructure works; develop flow is where the real code gets written.
 
 ### 2.8 Managed-Only Fast Path
 
@@ -431,13 +431,13 @@ When the user wants to adopt existing services AND create new ones, this goes th
 
 ### 3.4 Outcome
 
-ServiceMeta identical in structure to bootstrap output. The service is now "managed by ZCP" and can enter deploy flow.
+ServiceMeta identical in structure to bootstrap output. The service is now "managed by ZCP" and can enter develop flow.
 
 ---
 
-## 4. Deploy Flow
+## 4. Develop Flow
 
-Deploy flow is the **development lifecycle** for any service under ZCP management. It is the MANDATORY wrapper for any code work on runtime services — implementing features, fixing bugs, changing config. No code change should happen outside of this flow.
+Develop flow is the **development lifecycle** for any service under ZCP management. It is the MANDATORY wrapper for any code work on runtime services — implementing features, fixing bugs, changing config. No code change should happen outside of this flow.
 
 ```mermaid
 flowchart TD
@@ -475,23 +475,23 @@ flowchart TD
     style ExecuteDeploy fill:#fce4ec,stroke:#E91E63
 ```
 
-### 4.1 When Deploy Flow Starts
+### 4.1 When Develop Flow Starts
 
-Deploy flow MUST start for ANY work on runtime service code:
+Develop flow MUST start for ANY work on runtime service code:
 
-- **After bootstrap**: Service has only a verification server — deploy flow implements the user's actual application
-- **Implementing features**: User said "add photo upload" → deploy flow
-- **Bug fixes**: "Login doesn't work" → deploy flow
-- **Config changes**: "Change the port" → deploy flow
-- **Any code modification**: If it touches a runtime service's files → deploy flow
+- **After bootstrap**: Service has only a verification server — develop flow implements the user's actual application
+- **Implementing features**: User said "add photo upload" → develop flow
+- **Bug fixes**: "Login doesn't work" → develop flow
+- **Config changes**: "Change the port" → develop flow
+- **Any code modification**: If it touches a runtime service's files → develop flow
 
-Deploy flow discovers what code exists on the service (verification server from bootstrap or existing application) and acts accordingly. Bootstrap created infrastructure; deploy flow is for all development.
+Develop flow discovers what code exists on the service (verification server from bootstrap or existing application) and acts accordingly. Bootstrap created infrastructure; develop flow is for all development.
 
-**Agent MUST NOT** edit runtime service code outside of deploy flow. The flow ensures the agent has platform knowledge, knows the deploy strategy, and deploys + verifies at the end.
+**Agent MUST NOT** edit runtime service code outside of develop flow. The flow ensures the agent has platform knowledge, knows the deploy strategy, and deploys + verifies at the end.
 
 ### 4.2 Start Phase — Strategy from Meta
 
-At the start of deploy flow, the system reads ServiceMeta and informs the agent about strategy status. This is **informational, not blocking**.
+At the start of develop flow, the system reads ServiceMeta and informs the agent about strategy status. This is **informational, not blocking**.
 
 **If strategy is NOT set** (DeployStrategy empty in meta):
 > "No deploy strategy is configured for this service. Proceed with your code changes. Before deploying, discuss with the user how they want to deploy (push-dev / push-git / manual)."
@@ -532,8 +532,8 @@ zerops_workflow action="strategy" strategies={"appdev": "push-dev"}
 
 - Validates: must be `push-dev`, `push-git`, or `manual`.
 - Writes to ServiceMeta.DeployStrategy.
-- Can be called at ANY time — before, during, or between deploy flows.
-- Subsequent deploy flow reads the updated value from meta.
+- Can be called at ANY time — before, during, or between develop flows.
+- Subsequent develop flow reads the updated value from meta.
 - Returns guidance for the chosen strategy.
 
 **Strategy is always read from meta, never cached in deploy session.** This means:
@@ -699,7 +699,7 @@ WorkflowState {
   SessionID  16-hex random
   PID        process owner
   ProjectID  Zerops project
-  Workflow   "bootstrap" | "deploy" | "recipe"
+  Workflow   "bootstrap" | "develop" | "recipe"
   Iteration  counter
   Intent     user's goal
   CreatedAt  RFC3339
@@ -746,14 +746,14 @@ WorkflowState {
 | B7 | Bootstrap does NOT set deploy strategy |
 | B8 | Non-discover steps require plan from discover step (defense-in-depth) |
 | B9 | Generate writes an infrastructure verification server (hello-world, under 50 lines), NOT application logic |
-| B10 | After bootstrap, agent starts deploy flow for all application development |
+| B10 | After bootstrap, agent starts develop flow for all application development |
 
-### Deploy Flow
+### Develop Flow
 
 | ID | Invariant |
 |----|-----------|
-| D1 | Deploy flow requires ServiceMeta with BootstrappedAt |
-| D0 | ALL code changes to runtime services MUST go through deploy flow |
+| D1 | Develop flow requires ServiceMeta with BootstrappedAt |
+| D0 | ALL code changes to runtime services MUST go through develop flow |
 | D2 | Strategy is informational at start, not a gate |
 | D3 | Strategy read from meta at deploy time, never cached in session |
 | D4 | Strategy resolved before actual deployment (within flow) |
@@ -771,7 +771,7 @@ WorkflowState {
 | S1 | Three values: push-dev, push-git, manual |
 | S2 | Never auto-assigned |
 | S3 | Set via explicit action="strategy", writes to ServiceMeta |
-| S4 | Deploy flow always reads fresh from meta |
+| S4 | Develop flow always reads fresh from meta |
 
 ### Operational
 
@@ -810,7 +810,7 @@ WorkflowState {
 
 Bootstrap adoption path handles it: adopted target skips generate+deploy (code already exists), new stage gets created and deployed via cross-deploy from dev. ServiceMeta updates from simple/dev → standard with new stageHostname.
 
-**Why bootstrap, not deploy**: Creating services is infrastructure work. Bootstrap already handles service creation, ServiceMeta writes, and import.yaml generation. Deploy flow handles code changes, not infrastructure topology changes.
+**Why bootstrap, not deploy**: Creating services is infrastructure work. Bootstrap already handles service creation, ServiceMeta writes, and import.yaml generation. Develop flow handles code changes, not infrastructure topology changes.
 
 ---
 

@@ -27,7 +27,7 @@ func buildPostBootstrapOrientation(cls serviceClassification) string {
 		b.WriteString("ZCP helps you manage this project. Key tools:\n")
 		b.WriteString("- zerops_knowledge query=\"...\" — runtime docs, recipes, schemas\n")
 		b.WriteString("- zerops_discover — current service state and env vars\n")
-		b.WriteString("- zerops_workflow — guided workflows (deploy, bootstrap, cicd)\n\n")
+		b.WriteString("- zerops_workflow — guided workflows (develop, bootstrap, cicd)\n\n")
 
 		runtimeSeen := make(map[string]bool)
 		for _, m := range cls.bootstrapped {
@@ -76,7 +76,7 @@ func buildPostBootstrapOrientation(cls serviceClassification) string {
 	// Operations (only when bootstrapped services exist).
 	if len(cls.bootstrapped) > 0 {
 		b.WriteString("### Operations\n")
-		b.WriteString("- Develop/deploy/fix: zerops_workflow action=\"start\" workflow=\"deploy\"\n")
+		b.WriteString("- Develop/deploy/fix: zerops_workflow action=\"start\" workflow=\"develop\"\n")
 		b.WriteString("- Env vars: zerops_env action=\"set|delete\" (reload after: zerops_manage action=\"reload\")\n")
 		b.WriteString("- Scale: zerops_scale serviceHostname=\"...\"\n")
 	}
@@ -215,11 +215,11 @@ func writeStrategySection(b *strings.Builder, metas []*workflow.ServiceMeta) {
 		b.WriteString("Switch: zerops_workflow action=\"strategy\" strategies={...}\n\n")
 	case workflow.StrategyPushDev:
 		b.WriteString(": push-dev\n")
-		b.WriteString("Deploy via guided workflow: zerops_workflow action=\"start\" workflow=\"deploy\"\n")
+		b.WriteString("Deploy via guided workflow: zerops_workflow action=\"start\" workflow=\"develop\"\n")
 		b.WriteString("Switch: zerops_workflow action=\"strategy\" strategies={...}\n\n")
 	case workflow.StrategyPushGit:
 		b.WriteString(": push-git\n")
-		b.WriteString("Deploy via git push: zerops_workflow action=\"start\" workflow=\"deploy\"\n")
+		b.WriteString("Deploy via git push: zerops_workflow action=\"start\" workflow=\"develop\"\n")
 		b.WriteString("CI/CD setup: zerops_workflow action=\"start\" workflow=\"cicd\"\n")
 		b.WriteString("Switch: zerops_workflow action=\"strategy\" strategies={...}\n\n")
 	default:

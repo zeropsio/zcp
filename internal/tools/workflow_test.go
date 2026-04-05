@@ -140,7 +140,7 @@ func TestWorkflowTool_Action_UnknownAction(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Action_Start_Deploy_Stateful(t *testing.T) {
+func TestWorkflowTool_Action_Start_Develop_Stateful(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
@@ -162,20 +162,20 @@ func TestWorkflowTool_Action_Start_Deploy_Stateful(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
-		"workflow": "deploy",
+		"workflow": "develop",
 		"intent":   "Deploy bun app",
 	})
 
 	if result.IsError {
 		t.Fatalf("unexpected error: %s", getTextContent(t, result))
 	}
-	// Deploy is stateful — should create a session.
+	// Develop is stateful — should create a session.
 	if !engine.HasActiveSession() {
-		t.Error("deploy should create a session")
+		t.Error("develop should create a session")
 	}
 }
 
-func TestWorkflowTool_Action_Start_Deploy_ManualStrategy_CreatesSession(t *testing.T) {
+func TestWorkflowTool_Action_Start_Develop_ManualStrategy_CreatesSession(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
@@ -195,7 +195,7 @@ func TestWorkflowTool_Action_Start_Deploy_ManualStrategy_CreatesSession(t *testi
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
-		"workflow": "deploy",
+		"workflow": "develop",
 		"intent":   "Deploy app",
 	})
 
@@ -204,11 +204,11 @@ func TestWorkflowTool_Action_Start_Deploy_ManualStrategy_CreatesSession(t *testi
 	}
 	// Per spec: manual strategy creates a session (strategy is informational, not a gate).
 	if !engine.HasActiveSession() {
-		t.Error("manual strategy should create a deploy session (strategy is informational)")
+		t.Error("manual strategy should create a develop session (strategy is informational)")
 	}
 }
 
-func TestWorkflowTool_Action_Start_Deploy_NoMetas(t *testing.T) {
+func TestWorkflowTool_Action_Start_Develop_NoMetas(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -216,7 +216,7 @@ func TestWorkflowTool_Action_Start_Deploy_NoMetas(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
-		"workflow": "deploy",
+		"workflow": "develop",
 		"intent":   "Deploy app",
 	})
 
@@ -225,7 +225,7 @@ func TestWorkflowTool_Action_Start_Deploy_NoMetas(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Action_Start_Deploy_IncompleteMetas(t *testing.T) {
+func TestWorkflowTool_Action_Start_Develop_IncompleteMetas(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
@@ -244,7 +244,7 @@ func TestWorkflowTool_Action_Start_Deploy_IncompleteMetas(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
-		"workflow": "deploy",
+		"workflow": "develop",
 		"intent":   "Deploy app",
 	})
 

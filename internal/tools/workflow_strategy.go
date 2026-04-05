@@ -66,11 +66,11 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 	guidance := buildStrategyGuidance(input.Strategies)
 
 	// Build strategy-aware next step hint.
-	nextHint := `When code is ready: zerops_workflow action="start" workflow="deploy"`
+	nextHint := `When code is ready: zerops_workflow action="start" workflow="develop"`
 	if allStrategiesAre(input.Strategies, workflow.StrategyManual) {
 		nextHint = `When code is ready: zerops_deploy targetService="..." (manual strategy — deploy directly)`
 	} else if allStrategiesAre(input.Strategies, workflow.StrategyPushGit) {
-		nextHint = `Push to git: zerops_workflow action="start" workflow="deploy"`
+		nextHint = `Push to git: zerops_workflow action="start" workflow="develop"`
 	}
 
 	result := map[string]string{
@@ -86,7 +86,7 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 
 // buildStrategyGuidance extracts strategy-specific guidance from deploy.md.
 func buildStrategyGuidance(strategies map[string]string) string {
-	md, err := content.GetWorkflow("deploy")
+	md, err := content.GetWorkflow("develop")
 	if err != nil {
 		return ""
 	}

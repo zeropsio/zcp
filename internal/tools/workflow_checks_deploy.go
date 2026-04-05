@@ -13,7 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// buildDeployStepChecker returns the appropriate checker for a deploy workflow step.
+// buildDeployStepChecker returns the appropriate checker for a develop workflow step.
 // Follows the same pattern as buildStepChecker for bootstrap (workflow_checks.go:22).
 func buildDeployStepChecker(step string, client platform.Client, projectID, stateDir string) workflow.DeployStepChecker {
 	switch step {

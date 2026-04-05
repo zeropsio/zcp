@@ -9,7 +9,7 @@ import (
 
 // DeployStart creates a new deploy session with targets ordered by mode.
 func (e *Engine) DeployStart(projectID, intent string, targets []DeployTarget, mode string) (*DeployResponse, error) {
-	state, err := e.Start(projectID, WorkflowDeploy, intent)
+	state, err := e.Start(projectID, WorkflowDevelop, intent)
 	if err != nil {
 		return nil, fmt.Errorf("deploy start: %w", err)
 	}

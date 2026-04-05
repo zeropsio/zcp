@@ -42,7 +42,7 @@ func InstructionVariants() []InstructionVariant {
 			Base: `ZCP manages Zerops PaaS infrastructure.
 Before ANY work on service code (reading, debugging, fixing, deploying), start a workflow:
   zerops_workflow action="start" workflow="..."
-  deploy — deploy, fix, or investigate services
+  develop — develop, deploy, fix, or investigate services
   bootstrap — create/adopt services
   cicd — set up CI/CD pipelines
 Direct tools (no workflow): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_deploy (manual strategy), zerops_discover, zerops_knowledge`,
@@ -56,8 +56,8 @@ Direct tools (no workflow): zerops_scale, zerops_manage, zerops_env, zerops_subd
 			Base: `ZCP manages Zerops PaaS infrastructure.
 Service code depends on platform config NOT in source files (env vars, runtime settings, deploy constraints). You will produce incorrect analysis without this context.
   zerops_discover — see services, state, env vars (ALWAYS call first)
-  zerops_workflow action="start" workflow="deploy|bootstrap|cicd" — get full platform context
-  deploy — deploy, fix, or investigate    bootstrap — create/adopt    cicd — CI/CD
+  zerops_workflow action="start" workflow="develop|bootstrap|cicd" — get full platform context
+  develop — develop, deploy, fix, or investigate    bootstrap — create/adopt    cicd — CI/CD
 Direct tools (no workflow): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -69,9 +69,9 @@ Direct tools (no workflow): zerops_scale, zerops_manage, zerops_env, zerops_subd
 			Base: `ZCP manages Zerops PaaS infrastructure.
 For ANY task involving services, follow this process:
 1. zerops_discover — see what services exist, their state, env vars
-2. zerops_workflow action="start" workflow="deploy|bootstrap|cicd" — get platform context
+2. zerops_workflow action="start" workflow="develop|bootstrap|cicd" — get platform context
 3. Then read/edit code with full understanding
-Workflows: deploy (fix/investigate/deploy), bootstrap (create/adopt), cicd (CI/CD)
+Workflows: develop (fix/investigate/deploy), bootstrap (create/adopt), cicd (CI/CD)
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -83,8 +83,8 @@ Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_
 			Base: `ZCP manages Zerops PaaS infrastructure.
 Files on services are live — editing without platform context causes incorrect fixes. Env vars, runtime config, and deploy constraints are NOT in source code.
   zerops_discover — call FIRST (shows services, env vars, state)
-  zerops_workflow action="start" workflow="deploy|bootstrap|cicd" — provides platform docs and constraints
-  deploy — fix, investigate, deploy    bootstrap — create/adopt    cicd — CI/CD
+  zerops_workflow action="start" workflow="develop|bootstrap|cicd" — provides platform docs and constraints
+  develop — develop, deploy, fix, or investigate    bootstrap — create/adopt    cicd — CI/CD
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -95,8 +95,8 @@ Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_
 			Description: "You are the orchestrator — first action is always discover",
 			Base: `ZCP manages Zerops PaaS infrastructure. You are the orchestrator — you manage services, not code directly.
 Your first action for ANY task: zerops_discover (understand services and state).
-Then: zerops_workflow action="start" workflow="deploy|bootstrap|cicd" for platform context.
-  deploy — fix, investigate, deploy    bootstrap — create/adopt    cicd — CI/CD
+Then: zerops_workflow action="start" workflow="develop|bootstrap|cicd" for platform context.
+  develop — develop, deploy, fix, or investigate    bootstrap — create/adopt    cicd — CI/CD
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -107,8 +107,8 @@ Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_
 			Description: "zerops_discover is the mandatory entry point — everything starts there",
 			Base: `ZCP manages Zerops PaaS infrastructure.
 FIRST STEP (always): zerops_discover — shows services, state, env vars, what needs attention.
-THEN: zerops_workflow action="start" workflow="deploy|bootstrap|cicd" — platform context for code work.
-  deploy — fix, investigate, or deploy code
+THEN: zerops_workflow action="start" workflow="develop|bootstrap|cicd" — platform context for code work.
+  develop — develop, deploy, fix, or investigate code
   bootstrap — create new or adopt existing services
   cicd — set up CI/CD pipelines
 Without discover you don't know the platform state. Without workflow you lack runtime docs and constraints.
@@ -123,9 +123,9 @@ Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_
 			Base: `ZCP manages Zerops PaaS infrastructure.
 Before working on any service, check:
 - Do I know what services exist and their state? → zerops_discover (call first)
-- Do I have platform context for this service? → zerops_workflow action="start" workflow="deploy"
+- Do I have platform context for this service? → zerops_workflow action="start" workflow="develop"
 - Am I editing a live mount (/var/www/{hostname}/)? → these are live services, not local files
-Workflows: deploy (fix/investigate/deploy), bootstrap (create/adopt), cicd (CI/CD)
+Workflows: develop (fix/investigate/deploy), bootstrap (create/adopt), cicd (CI/CD)
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -137,7 +137,7 @@ Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_
 			Base: `ZCP manages Zerops PaaS infrastructure.
 STOP. Do not Read, Edit, or Grep service files until you have:
 1. Called zerops_discover (shows services, env vars, platform state)
-2. Started zerops_workflow action="start" workflow="deploy" (provides runtime docs and constraints)
+2. Started zerops_workflow action="start" workflow="develop" (provides runtime docs and constraints)
 Other workflows: bootstrap (create/adopt services), cicd (CI/CD setup)
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
 			Container: sharedContainer,
@@ -148,7 +148,7 @@ Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_
 			Name:        "Ultra-minimal",
 			Description: "Absolute minimum — one-liner, maximize dynamic content space",
 			Base: `ZCP manages Zerops PaaS. Always: zerops_discover first, then zerops_workflow before any code work.
-Workflows: deploy (fix/investigate/deploy), bootstrap (create/adopt), cicd. Direct: zerops_scale, zerops_manage, zerops_env, zerops_knowledge.`,
+Workflows: develop (fix/investigate/deploy), bootstrap (create/adopt), cicd. Direct: zerops_scale, zerops_manage, zerops_env, zerops_knowledge.`,
 			Container: `
 Control plane. /var/www/{hostname}/ = live SSHFS mount. ssh {hostname} for commands.`,
 			Local: `
@@ -162,7 +162,7 @@ Local dev. Deploy: zcli push. Infra on Zerops.`,
 Pre-flight (complete before ANY service code work):
 [ ] zerops_discover — I know services, state, env vars
 [ ] zerops_workflow started — I have platform context (runtime docs, constraints)
-Workflows: deploy (fix/investigate/deploy), bootstrap (create/adopt), cicd (CI/CD)
+Workflows: develop (fix/investigate/deploy), bootstrap (create/adopt), cicd (CI/CD)
 Direct tools (skip checklist): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge`,
 			Container: sharedContainer,
 			Local:     sharedLocal,

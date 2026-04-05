@@ -59,7 +59,7 @@ func TestRoute_AllBootstrapped(t *testing.T) {
 				}},
 				LiveServices: []string{"appdev"},
 			},
-			wantTop: "deploy",
+			wantTop: "develop",
 		},
 		{
 			name: "push-dev strategy",
@@ -69,17 +69,17 @@ func TestRoute_AllBootstrapped(t *testing.T) {
 				}},
 				LiveServices: []string{"appdev"},
 			},
-			wantTop: "deploy",
+			wantTop: "develop",
 		},
 		{
-			name: "manual strategy — deploy still offered",
+			name: "manual strategy — develop still offered",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{{
 					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyManual,
 				}},
 				LiveServices: []string{"appdev"},
 			},
-			wantTop: "deploy", // Deploy always offered — strategy is informational, not a gate
+			wantTop: "develop", // Deploy always offered — strategy is informational, not a gate
 		},
 	}
 	for _, tt := range tests {
@@ -153,7 +153,7 @@ func TestRoute_UnmanagedRuntimes(t *testing.T) {
 func TestRoute_UnmanagedWithStrategy(t *testing.T) {
 	t.Parallel()
 	// When both unmanaged runtimes and bootstrapped services exist,
-	// adoption is p1 but deploy should also appear.
+	// adoption is p1 but develop should also appear.
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{{
 			Hostname: "apidev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev,
@@ -164,12 +164,12 @@ func TestRoute_UnmanagedWithStrategy(t *testing.T) {
 	offerings := Route(input)
 	hasDeploy := false
 	for _, o := range offerings {
-		if o.Workflow == "deploy" {
+		if o.Workflow == "develop" {
 			hasDeploy = true
 		}
 	}
 	if !hasDeploy {
-		t.Error("expected deploy offering alongside adoption")
+		t.Error("expected develop offering alongside adoption")
 	}
 }
 
@@ -229,8 +229,8 @@ func TestRoute_StaleMetaFiltering(t *testing.T) {
 		LiveServices: []string{"appdev"},
 	}
 	offerings := Route(input)
-	if offerings[0].Workflow != "deploy" {
-		t.Errorf("top = %q, want deploy (stale meta should be filtered, push-git dominant)", offerings[0].Workflow)
+	if offerings[0].Workflow != "develop" {
+		t.Errorf("top = %q, want develop (stale meta should be filtered, push-git dominant)", offerings[0].Workflow)
 	}
 }
 
@@ -266,14 +266,14 @@ func TestRoute_IncompleteMetas(t *testing.T) {
 			wantTop: "bootstrap",
 		},
 		{
-			name: "complete meta routes to deploy",
+			name: "complete meta routes to develop",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{
 					{Hostname: "appdev", BootstrappedAt: "2026-03-04", DeployStrategy: StrategyPushDev},
 				},
 				LiveServices: []string{"appdev"},
 			},
-			wantTop: "deploy",
+			wantTop: "develop",
 		},
 	}
 	for _, tt := range tests {
@@ -293,7 +293,7 @@ func TestRoute_IncompleteMetas(t *testing.T) {
 func TestRoute_NoReasonField(t *testing.T) {
 	t.Parallel()
 	// Verify FlowOffering has no Reason field — facts only, no editorial.
-	offering := FlowOffering{Workflow: "deploy", Priority: 1, Hint: "test"}
+	offering := FlowOffering{Workflow: "develop", Priority: 1, Hint: "test"}
 	_ = offering.Workflow
 	_ = offering.Priority
 	_ = offering.Hint

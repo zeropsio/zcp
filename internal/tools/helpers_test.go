@@ -63,7 +63,7 @@ func callToolMayError(t *testing.T, srv *mcp.Server, name string, args map[strin
 func testEngine(t *testing.T) *workflow.Engine {
 	t.Helper()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	if _, err := engine.Start("proj-1", "deploy", "test"); err != nil {
+	if _, err := engine.Start("proj-1", "develop", "test"); err != nil {
 		t.Fatalf("start test session: %v", err)
 	}
 	return engine

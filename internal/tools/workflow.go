@@ -15,14 +15,14 @@ import (
 
 const (
 	workflowBootstrap = workflow.WorkflowBootstrap
-	workflowDeploy    = workflow.WorkflowDeploy
+	workflowDevelop   = workflow.WorkflowDevelop
 	workflowRecipe    = workflow.WorkflowRecipe
 )
 
 // WorkflowInput is the input type for zerops_workflow.
 type WorkflowInput struct {
 	// Legacy: workflow name for static guidance (backward compat).
-	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, deploy, recipe, or cicd."`
+	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, recipe, or cicd."`
 
 	// Multi-action fields.
 	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, or generate-finalize (recipe only — generates all 13 recipe files from plan)."`
@@ -48,7 +48,7 @@ type immediateResponse struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), deploy (all development, deployment, fixing, investigating), recipe (create recipe repo files), cicd (CI/CD setup). After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route\".",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), cicd (CI/CD setup). After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -66,15 +66,15 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"No workflow specified",
-				"Use workflow=\"bootstrap\", workflow=\"deploy\", or workflow=\"cicd\"")), nil, nil
+				"Use workflow=\"bootstrap\", workflow=\"develop\", or workflow=\"cicd\"")), nil, nil
 		}
 		wfContent, err := content.GetWorkflow(input.Workflow)
 		if err != nil {
 			return convertError(err), nil, nil
 		}
 
-		// Inject live stack types into bootstrap/deploy workflows.
-		if (input.Workflow == workflowBootstrap || input.Workflow == workflowDeploy) && client != nil && cache != nil {
+		// Inject live stack types into bootstrap/develop workflows.
+		if (input.Workflow == workflowBootstrap || input.Workflow == workflowDevelop) && client != nil && cache != nil {
 			if types := cache.Get(ctx, client); len(types) > 0 {
 				stackList := knowledge.FormatStackList(types)
 				wfContent = injectStacks(wfContent, stackList)
@@ -102,7 +102,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleIterate(ctx, engine, client, cache)
 	case "complete":
 		active := detectActiveWorkflow(engine)
-		if active == workflowDeploy {
+		if active == workflowDevelop {
 			return handleDeployComplete(ctx, engine, client, projectID, stateDir, input)
 		}
 		if active == workflowRecipe {
@@ -123,7 +123,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			"")), nil, nil
 	case "skip":
 		active := detectActiveWorkflow(engine)
-		if active == workflowDeploy {
+		if active == workflowDevelop {
 			return handleDeploySkip(ctx, engine, input)
 		}
 		if active == workflowRecipe {
@@ -132,7 +132,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleBootstrapSkip(ctx, engine, client, cache, input)
 	case "status":
 		active := detectActiveWorkflow(engine)
-		if active == workflowDeploy {
+		if active == workflowDevelop {
 			return handleDeployStatus(ctx, engine)
 		}
 		if active == workflowRecipe {
@@ -163,7 +163,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Workflow %q not found: %v", input.Workflow, err),
-				"Valid workflows: bootstrap, deploy, recipe, cicd, export")), nil, nil
+				"Valid workflows: bootstrap, develop, recipe, cicd, export")), nil, nil
 		}
 
 		// CI/CD: prepend service context from ServiceMeta (if available).
@@ -192,8 +192,8 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return jsonResult(resp), nil, nil
 	}
 
-	// Deploy workflow.
-	if input.Workflow == workflowDeploy {
+	// Develop workflow.
+	if input.Workflow == workflowDevelop {
 		return handleDeployStart(ctx, engine, client, projectID, input)
 	}
 
@@ -209,7 +209,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Export workflow not found: %v", err),
-				"Valid workflows: bootstrap, deploy, recipe, cicd, export")), nil, nil
+				"Valid workflows: bootstrap, develop, recipe, cicd, export")), nil, nil
 		}
 		return jsonResult(immediateResponse{
 			Workflow: "export",
@@ -221,7 +221,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
-		"Valid workflows: bootstrap, deploy, recipe, cicd, export")), nil, nil
+		"Valid workflows: bootstrap, develop, recipe, cicd, export")), nil, nil
 }
 
 // detectActiveWorkflow returns the active workflow type from engine state.
@@ -234,7 +234,7 @@ func detectActiveWorkflow(engine *workflow.Engine) string {
 		return ""
 	}
 	if state.Deploy != nil && state.Deploy.Active {
-		return workflowDeploy
+		return workflowDevelop
 	}
 	if state.Recipe != nil && state.Recipe.Active {
 		return workflowRecipe
@@ -263,7 +263,7 @@ func handleIterate(ctx context.Context, engine *workflow.Engine, client platform
 			"Start a session first")), nil, nil
 	}
 	active := detectActiveWorkflow(engine)
-	if active == workflowDeploy {
+	if active == workflowDevelop {
 		return handleDeployStatus(ctx, engine)
 	}
 	if active == workflowRecipe {
@@ -286,7 +286,7 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 			"Session may not exist or may still be active")), nil, nil
 	}
 	active := detectActiveWorkflow(engine)
-	if active == workflowDeploy {
+	if active == workflowDevelop {
 		return handleDeployStatus(ctx, engine)
 	}
 	if active == workflowRecipe {

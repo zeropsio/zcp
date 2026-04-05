@@ -158,9 +158,9 @@ func TestBuildInstructions_BootstrappedWithUnmanaged_BothVisible(t *testing.T) {
 	if !strings.Contains(result, "Available workflows") {
 		t.Error("expected router offerings even when orientation exists")
 	}
-	// Deploy offering from strategy.
-	if !strings.Contains(result, "deploy") {
-		t.Error("expected deploy offering from bootstrapped meta strategy")
+	// Develop offering from strategy.
+	if !strings.Contains(result, "develop") {
+		t.Error("expected develop offering from bootstrapped meta strategy")
 	}
 }
 
@@ -256,7 +256,7 @@ func TestBuildWorkflowHint_AlivePID_ShowsActive(t *testing.T) {
 	dir := t.TempDir()
 	entry := workflow.SessionEntry{
 		SessionID: "alive-session-xyz", PID: os.Getpid(),
-		Workflow: "deploy", ProjectID: "proj-1", Intent: "deploy code",
+		Workflow: "develop", ProjectID: "proj-1", Intent: "deploy code",
 	}
 	if err := workflow.RegisterSession(dir, entry); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
@@ -285,7 +285,7 @@ func TestBuildWorkflowHint_NoSessions_ReturnsEmpty(t *testing.T) {
 
 func TestBaseInstructions_ContainsWorkflowDirective(t *testing.T) {
 	t.Parallel()
-	for _, want := range []string{"Before ANY work", "workflow", "debug", "bootstrap", "deploy"} {
+	for _, want := range []string{"Before ANY work", "workflow", "debug", "bootstrap", "develop"} {
 		if !strings.Contains(baseInstructions, want) {
 			t.Errorf("baseInstructions should contain %q", want)
 		}
@@ -332,7 +332,7 @@ func TestOrientation_DevMode_ManualStrategy(t *testing.T) {
 			t.Errorf("orientation missing %q.\nGot:\n%s", want, result)
 		}
 	}
-	// Deploy workflow now covers development/deployment/fixing for all strategies.
+	// Develop workflow now covers development/deployment/fixing for all strategies.
 	if !strings.Contains(result, "Develop/deploy/fix") {
 		t.Errorf("operations should include develop/deploy/fix.\nGot:\n%s", result)
 	}
@@ -355,8 +355,8 @@ func TestOrientation_StandardMode_DevAndStage(t *testing.T) {
 			t.Errorf("orientation missing %q.\nGot:\n%s", want, result)
 		}
 	}
-	if !strings.Contains(result, `workflow="deploy"`) {
-		t.Errorf("push-dev strategy should mention deploy workflow.\nGot:\n%s", result)
+	if !strings.Contains(result, `workflow="develop"`) {
+		t.Errorf("push-dev strategy should mention develop workflow.\nGot:\n%s", result)
 	}
 }
 
@@ -437,8 +437,8 @@ func TestOrientation_PushDevStrategy(t *testing.T) {
 		}},
 	)
 	result := buildPostBootstrapOrientation(cls)
-	if !strings.Contains(result, `workflow="deploy"`) {
-		t.Errorf("push-dev should suggest deploy workflow.\nGot:\n%s", result)
+	if !strings.Contains(result, `workflow="develop"`) {
+		t.Errorf("push-dev should suggest develop workflow.\nGot:\n%s", result)
 	}
 }
 

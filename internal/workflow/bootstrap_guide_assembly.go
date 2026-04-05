@@ -71,7 +71,7 @@ func BuildTransitionMessage(state *WorkflowState) string {
 			"\n\nAvailable operations:\n" +
 			"- Scale: `zerops_scale serviceHostname=\"...\"`\n" +
 			"- Env vars: `zerops_env action=\"set|delete\"` (reload after: `zerops_manage action=\"reload\"`)\n" +
-			"- Investigate: `zerops_workflow action=\"start\" workflow=\"deploy\"`"
+			"- Investigate: `zerops_workflow action=\"start\" workflow=\"develop\"`"
 	}
 
 	var sb strings.Builder
@@ -89,8 +89,8 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	}
 
 	sb.WriteString("\nInfrastructure is verified — services running with a verification server (hello-world). No application code has been written yet.\n")
-	sb.WriteString("To implement the user's application, start the deploy workflow:\n")
-	sb.WriteString("`zerops_workflow action=\"start\" workflow=\"deploy\"`\n\n")
+	sb.WriteString("To implement the user's application, start the develop workflow:\n")
+	sb.WriteString("`zerops_workflow action=\"start\" workflow=\"develop\"`\n\n")
 
 	// Router-based workflow offerings
 	sb.WriteString("## What's Next?\n\n")
@@ -113,16 +113,16 @@ func BuildTransitionMessage(state *WorkflowState) string {
 }
 
 // routeFromBootstrapState generates workflow offerings based on bootstrap state.
-// Returns up to 3 primary offerings (deploy, cicd, and utilities).
+// Returns up to 3 primary offerings (develop, cicd, and utilities).
 func routeFromBootstrapState(state *WorkflowState) []FlowOffering {
 	if state == nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return nil
 	}
 	offerings := []FlowOffering{
 		{
-			Workflow: "deploy",
+			Workflow: "develop",
 			Priority: 1,
-			Hint:     `zerops_workflow action="start" workflow="deploy"`,
+			Hint:     `zerops_workflow action="start" workflow="develop"`,
 		},
 		{
 			Workflow: "cicd",

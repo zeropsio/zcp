@@ -15,7 +15,7 @@ func TestIsImmediateWorkflow(t *testing.T) {
 		{"debug_removed", "debug", false},
 		{"scale", "scale", false},
 		{"configure_removed", "configure", false},
-		{"deploy", "deploy", false},
+		{"develop", "develop", false},
 		{"bootstrap", "bootstrap", false},
 		{"cicd", "cicd", true},
 		{"unknown", "nonexistent", false},

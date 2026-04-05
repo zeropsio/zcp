@@ -18,7 +18,7 @@ const baseInstructions = `ZCP manages Zerops PaaS infrastructure.
 Before ANY work on service code (reading, debugging, fixing, deploying), start a workflow:
   zerops_workflow action="start" workflow="..."
   bootstrap — create/adopt infrastructure only (not the user's app)
-  deploy — all app development, deploying, fixing, investigating
+  develop — app development, deploying, fixing, investigating
   recipe — create recipe repo files (6 env tiers)
   cicd — set up CI/CD pipelines
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_deploy (manual), zerops_discover, zerops_knowledge`
@@ -110,7 +110,7 @@ func buildWorkflowHint(stateDir string) string {
 					stepName := state.Bootstrap.CurrentStepName()
 					hint += fmt.Sprintf(" (step %d/%d: %s)", stepNum, total, stepName)
 				}
-			case "deploy":
+			case "develop":
 				if state.Deploy != nil && state.Deploy.Active {
 					stepNum := state.Deploy.CurrentStep + 1
 					total := len(state.Deploy.Steps)
@@ -258,7 +258,7 @@ func buildProjectSummary(ctx context.Context, client platform.Client, projectID,
 
 	// Service listing with classification labels.
 	if cls.total == 0 {
-		b.WriteString("Project is empty — no services configured yet.\nBootstrap creates infrastructure first, then deploy workflow handles all app development.")
+		b.WriteString("Project is empty — no services configured yet.\nBootstrap creates infrastructure first, then develop workflow handles all app development.")
 	} else {
 		b.WriteString("Current services:\n")
 		for _, svc := range services {

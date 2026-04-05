@@ -32,12 +32,12 @@ Call `zerops_discover` to see what exists. Each service returns `managedByZCP` (
 | Discover result | Category | Action |
 |----------------|----------|--------|
 | No runtime services (empty or infrastructure-only) | Empty project | Full bootstrap |
-| All runtime services have `managedByZCP=true` | All managed | If stack matches request, route to deploy. If different stack requested, ASK user how to proceed. NEVER auto-delete. |
+| All runtime services have `managedByZCP=true` | All managed | If stack matches request, route to develop. If different stack requested, ASK user how to proceed. NEVER auto-delete. |
 | Any runtime service has `managedByZCP=false` | Unmanaged runtimes exist | ASK user how to proceed. Options: (a) add new services with different hostnames alongside existing, (b) user explicitly approves deletion of specific named services, (c) work with existing. NEVER auto-delete. |
 
 Route:
 - Empty project: proceed normally through all steps
-- All managed: if stack matches, skip bootstrap — route to deploy workflow (`zerops_workflow action="start" workflow="deploy"`). If user wants a different stack, ASK before making any changes. If no ServiceMeta files exist for these services, treat as adoption (see below).
+- All managed: if stack matches, skip bootstrap — route to develop workflow (`zerops_workflow action="start" workflow="develop"`). If user wants a different stack, ASK before making any changes. If no ServiceMeta files exist for these services, treat as adoption (see below).
 - Unmanaged runtimes exist: present existing services to user with types and status. Options: (a) add new services alongside existing, (b) user explicitly approves deletion of specific named services, (c) **adopt existing services** (recommended — see below). NEVER delete without explicit user approval naming each service.
 
 #### Adopting existing services
@@ -224,7 +224,7 @@ envVariables:
 <section name="generate">
 ### Generate zerops.yaml and infrastructure verification server
 
-This step verifies that infrastructure works — nothing more. Regardless of what the user asked for (dashboard, API, blog, e-commerce, anything), you are writing a bare-minimum verification server that proves services are reachable and env vars resolve. The user's actual application is implemented AFTER bootstrap, in the deploy workflow.
+This step verifies that infrastructure works — nothing more. Regardless of what the user asked for (dashboard, API, blog, e-commerce, anything), you are writing a bare-minimum verification server that proves services are reachable and env vars resolve. The user's actual application is implemented AFTER bootstrap, in the develop workflow.
 
 Write a hello-world server with exactly three endpoints: `GET /`, `GET /health`, `GET /status`. No business logic, no UI, no features, no API beyond these three routes. The server should be under 50 lines of code.
 
@@ -917,7 +917,7 @@ The transition message includes:
 
 **Skip this step** only in impossible edge cases (no services at all). Normal projects always reach this step.
 
-Infrastructure is verified — services running with a verification server only. No application code has been written. To implement the user's application, start the deploy workflow: `zerops_workflow action="start" workflow="deploy"`
+Infrastructure is verified — services running with a verification server only. No application code has been written. To implement the user's application, start the develop workflow: `zerops_workflow action="start" workflow="develop"`
 </section>
 
 ---

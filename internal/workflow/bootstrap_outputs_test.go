@@ -687,8 +687,8 @@ func TestBuildTransitionMessage_WithPlan_IncludesTransitionHint(t *testing.T) {
 		},
 	}
 	msg := BuildTransitionMessage(state)
-	if !strings.Contains(msg, "deploy") {
-		t.Error("message should hint at deploy flow")
+	if !strings.Contains(msg, "develop") {
+		t.Error("message should hint at develop flow")
 	}
 	if !strings.Contains(msg, "verification server") {
 		t.Error("message should mention verification server")
@@ -714,7 +714,7 @@ func TestBuildTransitionMessage_WithPlan_IncludesRouterOffering(t *testing.T) {
 	}
 	msg := BuildTransitionMessage(state)
 	// Should list available workflows with priorities.
-	if !strings.Contains(msg, "deploy") && !strings.Contains(msg, "workflow") {
+	if !strings.Contains(msg, "develop") && !strings.Contains(msg, "workflow") {
 		t.Error("message should include available workflows from router")
 	}
 }
@@ -836,8 +836,8 @@ func TestBuildTransitionMessage_IncludesRouterOfferings(t *testing.T) {
 	}
 	msg := BuildTransitionMessage(state)
 	// Should include deploy and push-git as router offerings.
-	if !strings.Contains(msg, "Deploy") && !strings.Contains(msg, "deploy") {
-		t.Error("message should include deploy offering")
+	if !strings.Contains(msg, "Develop") && !strings.Contains(msg, "develop") {
+		t.Error("message should include develop offering")
 	}
 	if !strings.Contains(msg, "What's Next") {
 		t.Error("message should include What's Next section")

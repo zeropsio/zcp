@@ -23,8 +23,8 @@ type StepCheck struct {
 // Returns nil result to skip checking (equivalent to always-pass).
 type StepChecker func(ctx context.Context, plan *ServicePlan, state *BootstrapState) (*StepCheckResult, error)
 
-// DeployStepChecker validates deploy workflow step requirements.
-// Separate from StepChecker because deploy has no ServicePlan or BootstrapState.
+// DeployStepChecker validates develop workflow step requirements.
+// Separate from StepChecker because develop has no ServicePlan or BootstrapState.
 // Returns nil result to skip checking (equivalent to always-pass).
 type DeployStepChecker func(ctx context.Context, state *DeployState) (*StepCheckResult, error)
 

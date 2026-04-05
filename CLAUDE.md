@@ -42,8 +42,8 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/auth` | Token resolution (env var / zcli), project discovery | `auth.go` |
 | `internal/knowledge` | Text search, embedded docs, session-aware briefings, runtime-aware mode adaptation | `engine.go`, `briefing.go` |
 | `internal/runtime` | Container vs local detection | `runtime.go` |
-| `internal/content` | Embedded templates + workflow catalog (bootstrap, deploy, recipe, cicd) | `content.go` |
-| `internal/workflow` | Workflow orchestration, bootstrap/deploy/recipe conductors, guidance assembly, session state | `session.go`, `deploy_guidance.go`, `recipe.go`, `engine_recipe.go` |
+| `internal/content` | Embedded templates + workflow catalog (bootstrap, develop, recipe, cicd) | `content.go` |
+| `internal/workflow` | Workflow orchestration, bootstrap/develop/recipe conductors, guidance assembly, session state | `session.go`, `deploy_guidance.go`, `recipe.go`, `engine_recipe.go` |
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 | `internal/eval` | LLM recipe eval + headless recipe creation via Claude CLI | `runner.go`, `prompt.go`, `recipe_create.go` |
 | `internal/schema` | Live Zerops YAML schema fetching, caching, enum extraction, LLM formatting | `schema.go`, `cache.go`, `format.go` |

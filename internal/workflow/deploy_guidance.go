@@ -177,7 +177,7 @@ func buildDeployGuide(state *DeployState, iteration int, env Environment, stateD
 
 // buildVerifyGuide returns verify step guidance from deploy.md.
 func buildVerifyGuide() string {
-	md, err := content.GetWorkflow("deploy")
+	md, err := content.GetWorkflow("develop")
 	if err != nil {
 		return "Run zerops_verify for each target service. Check health status."
 	}

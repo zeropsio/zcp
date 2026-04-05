@@ -6,7 +6,7 @@ How to audit and improve a ZCP recipe. Designed for a fresh agent with no prior 
 
 ## What a Recipe Is
 
-A recipe is a framework-specific guide for deploying on Zerops. It's consumed by an LLM during bootstrap/deploy workflows. The LLM already knows the framework — it doesn't need the recipe to explain what Laravel or Django is.
+A recipe is a framework-specific guide for deploying on Zerops. It's consumed by an LLM during bootstrap/develop workflows. The LLM already knows the framework — it doesn't need the recipe to explain what Laravel or Django is.
 
 **A recipe should contain ONLY things the LLM cannot derive from general training data.** That means Zerops-platform-specific patterns, gotchas, and configuration. If an LLM with no Zerops knowledge would get it wrong, it belongs in the recipe. If it would get it right, it doesn't.
 

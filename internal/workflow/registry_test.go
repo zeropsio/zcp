@@ -48,7 +48,7 @@ func TestRegisterSession_Multiple(t *testing.T) {
 		entry := SessionEntry{
 			SessionID: id,
 			PID:       os.Getpid(),
-			Workflow:  "deploy",
+			Workflow:  "develop",
 			ProjectID: "proj-1",
 		}
 		if err := RegisterSession(dir, entry); err != nil {
@@ -72,7 +72,7 @@ func TestUnregisterSession_Success(t *testing.T) {
 	entry := SessionEntry{
 		SessionID: "sess-1",
 		PID:       os.Getpid(),
-		Workflow:  "deploy",
+		Workflow:  "develop",
 		ProjectID: "proj-1",
 	}
 	if err := RegisterSession(dir, entry); err != nil {
@@ -215,7 +215,7 @@ func TestWithRegistryLock_ConcurrentAccess(t *testing.T) {
 			entry := SessionEntry{
 				SessionID: fmt.Sprintf("sess-%d", idx),
 				PID:       os.Getpid(),
-				Workflow:  "deploy",
+				Workflow:  "develop",
 				ProjectID: "proj-1",
 			}
 			if err := RegisterSession(dir, entry); err != nil {
@@ -263,7 +263,7 @@ func TestListSessions_ReadOnly_NoSideEffects(t *testing.T) {
 	entry := SessionEntry{
 		SessionID: "dead-sess",
 		PID:       9999999,
-		Workflow:  "deploy",
+		Workflow:  "develop",
 		ProjectID: "proj-1",
 		CreatedAt: "2026-01-01T00:00:00Z",
 		UpdatedAt: "2026-01-01T00:00:00Z",
@@ -361,7 +361,7 @@ func TestRegistryFile_CreatedOnFirstRegister(t *testing.T) {
 	entry := SessionEntry{
 		SessionID: "sess-1",
 		PID:       os.Getpid(),
-		Workflow:  "deploy",
+		Workflow:  "develop",
 		ProjectID: "proj-1",
 	}
 	if err := RegisterSession(dir, entry); err != nil {

@@ -47,7 +47,7 @@ func TestEngine_Reset(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+	if _, err := eng.Start("proj-1", "develop", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := eng.Reset(); err != nil {
@@ -63,7 +63,7 @@ func TestEngine_Reset_ClearsSessionID(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+	if _, err := eng.Start("proj-1", "develop", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if eng.SessionID() == "" {
@@ -83,7 +83,7 @@ func TestEngine_Reset_Unregisters(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+	if _, err := eng.Start("proj-1", "develop", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := eng.Reset(); err != nil {
@@ -104,7 +104,7 @@ func TestEngine_Iterate(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+	if _, err := eng.Start("proj-1", "develop", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -122,7 +122,7 @@ func TestEngine_GetState(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+	if _, err := eng.Start("proj-1", "develop", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -140,7 +140,7 @@ func TestEngine_Start_StoresSessionID(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	state, err := eng.Start("proj-1", "deploy", "test")
+	state, err := eng.Start("proj-1", "develop", "test")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestEngine_Start_RegistersInRegistry(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	state, err := eng.Start("proj-1", "deploy", "test")
+	state, err := eng.Start("proj-1", "develop", "test")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestEngine_Start_AutoResetDoneSession(t *testing.T) {
 	eng := NewEngine(dir, EnvLocal, nil)
 
 	// Create and manually mark bootstrap as completed (inactive).
-	state, err := eng.Start("proj-1", "deploy", "first")
+	state, err := eng.Start("proj-1", "develop", "first")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestEngine_Start_AutoResetDoneSession(t *testing.T) {
 	}
 
 	// Start again — should auto-reset the completed session.
-	state2, err := eng.Start("proj-1", "deploy", "second")
+	state2, err := eng.Start("proj-1", "develop", "second")
 	if err != nil {
 		t.Fatalf("Start after completed: %v", err)
 	}
@@ -207,12 +207,12 @@ func TestEngine_Start_ActiveSessionBlocks(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	if _, err := eng.Start("proj-1", "deploy", "first"); err != nil {
+	if _, err := eng.Start("proj-1", "develop", "first"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
 	// Start with active (non-completed) session should fail.
-	_, err := eng.Start("proj-1", "deploy", "second")
+	_, err := eng.Start("proj-1", "develop", "second")
 	if err == nil {
 		t.Fatal("expected error for second Start with active session")
 	}
@@ -335,10 +335,10 @@ func TestEngine_MultipleEngines_Coexist(t *testing.T) {
 	eng2 := NewEngine(dir, EnvLocal, nil)
 
 	// Both can start deploy sessions (different from bootstrap exclusivity).
-	if _, err := eng1.Start("proj-1", "deploy", "first"); err != nil {
+	if _, err := eng1.Start("proj-1", "develop", "first"); err != nil {
 		t.Fatalf("eng1.Start: %v", err)
 	}
-	if _, err := eng2.Start("proj-1", "deploy", "second"); err != nil {
+	if _, err := eng2.Start("proj-1", "develop", "second"); err != nil {
 		t.Fatalf("eng2.Start: %v", err)
 	}
 
@@ -356,14 +356,14 @@ func TestEngine_SameEngine_ActiveSessionBlocks(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	state, err := eng.Start("proj-1", "deploy", "original")
+	state, err := eng.Start("proj-1", "develop", "original")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	sessionID := state.SessionID
 
 	// Second start on same engine should fail (active non-completed session).
-	_, err = eng.Start("proj-1", "deploy", "retry")
+	_, err = eng.Start("proj-1", "develop", "retry")
 	if err == nil {
 		t.Fatal("expected error: active session should block")
 	}
@@ -763,7 +763,7 @@ func TestEngine_StoreDiscoveredEnvVars_NoBootstrap(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+	if _, err := eng.Start("proj-1", "develop", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -910,7 +910,7 @@ func TestEngine_Iterate_MaxLimit(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+	if _, err := eng.Start("proj-1", "develop", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -941,7 +941,7 @@ func TestEngine_Iterate_EnvOverride(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	if _, err := eng.Start("proj-1", "deploy", "test"); err != nil {
+	if _, err := eng.Start("proj-1", "develop", "test"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -1012,13 +1012,13 @@ func TestInitSessionAtomic_BootstrapExclusivity(t *testing.T) {
 			false, "",
 		},
 		{
-			"deploy_after_bootstrap_ok",
-			"bootstrap", "deploy",
+			"develop_after_bootstrap_ok",
+			"bootstrap", "develop",
 			false, "",
 		},
 		{
-			"two_deploys_ok",
-			"deploy", "deploy",
+			"two_develops_ok",
+			"develop", "develop",
 			false, "",
 		},
 	}
@@ -1062,7 +1062,7 @@ func TestEngine_Resume_DeadSession(t *testing.T) {
 		SessionID: sessionID,
 		PID:       9999999, // Dead PID.
 		ProjectID: "proj-1",
-		Workflow:  "deploy",
+		Workflow:  "develop",
 		Iteration: 2,
 		Intent:    "deploy app",
 		CreatedAt: "2026-03-01T00:00:00Z",
@@ -1074,7 +1074,7 @@ func TestEngine_Resume_DeadSession(t *testing.T) {
 	entry := SessionEntry{
 		SessionID: sessionID,
 		PID:       9999999,
-		Workflow:  "deploy",
+		Workflow:  "develop",
 		ProjectID: "proj-1",
 		CreatedAt: "2026-03-01T00:00:00Z",
 		UpdatedAt: "2026-03-01T01:00:00Z",
@@ -1113,7 +1113,7 @@ func TestEngine_Resume_AliveSession(t *testing.T) {
 	eng1 := NewEngine(dir, EnvLocal, nil)
 
 	// Create an active session (current PID = alive).
-	state, err := eng1.Start("proj-1", "deploy", "test")
+	state, err := eng1.Start("proj-1", "develop", "test")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

@@ -85,7 +85,7 @@ func TestLoadSessionByID_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	original, err := InitSession(dir, "proj-2", "deploy", "develop feature")
+	original, err := InitSession(dir, "proj-2", "develop", "develop feature")
 	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}
@@ -97,8 +97,8 @@ func TestLoadSessionByID_Success(t *testing.T) {
 	if loaded.SessionID != original.SessionID {
 		t.Errorf("SessionID mismatch: want %s, got %s", original.SessionID, loaded.SessionID)
 	}
-	if loaded.Workflow != "deploy" {
-		t.Errorf("Workflow: want deploy, got %s", loaded.Workflow)
+	if loaded.Workflow != "develop" {
+		t.Errorf("Workflow: want develop, got %s", loaded.Workflow)
 	}
 }
 
@@ -247,7 +247,7 @@ func TestIterateSession_WithoutBootstrap_StillWorks(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	state, err := InitSession(dir, "proj-c03b", "deploy", "no bootstrap test")
+	state, err := InitSession(dir, "proj-c03b", "develop", "no bootstrap test")
 	if err != nil {
 		t.Fatalf("InitSession: %v", err)
 	}

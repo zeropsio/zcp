@@ -203,7 +203,7 @@ func TestImportTool_WithWorkflowSession_Succeeds(t *testing.T) {
 
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
-	if _, err := engine.Start("proj-1", "deploy", "test"); err != nil {
+	if _, err := engine.Start("proj-1", "develop", "test"); err != nil {
 		t.Fatalf("start session: %v", err)
 	}
 

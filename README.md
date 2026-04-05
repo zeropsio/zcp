@@ -257,7 +257,7 @@ Bootstrap writes per-service metadata at two points:
 
 Strategy is set separately via `action="strategy"` after bootstrap (never auto-assigned).
 
-Stored at `{stateDir}/services/{hostname}.json`. These metas persist across conversations — the deploy workflow reads them on start for mode, strategy, and preflight validation.
+Stored at `{stateDir}/services/{hostname}.json`. These metas persist across conversations — the develop workflow reads them on start for mode, strategy, and preflight validation.
 
 ---
 

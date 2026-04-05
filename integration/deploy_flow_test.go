@@ -193,7 +193,7 @@ func TestIntegration_DeployError(t *testing.T) {
 
 	// Start workflow session (required by deploy guard).
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "deploy",
+		"action": "start", "workflow": "develop",
 		"intent": "integration test",
 	})
 

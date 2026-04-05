@@ -283,11 +283,11 @@ workflowRecipe = workflow.WorkflowRecipe
 **2. Fix `detectActiveWorkflow` (line ~184) — CRITICAL:**
 ```go
 // BEFORE: defaults to bootstrap
-if state.Deploy != nil && state.Deploy.Active { return workflowDeploy }
+if state.Deploy != nil && state.Deploy.Active { return workflowDevelop }
 return workflowBootstrap
 
 // AFTER: explicit three-way check
-if state.Deploy != nil && state.Deploy.Active { return workflowDeploy }
+if state.Deploy != nil && state.Deploy.Active { return workflowDevelop }
 if state.Recipe != nil && state.Recipe.Active { return workflowRecipe }
 return workflowBootstrap
 ```
@@ -296,7 +296,7 @@ return workflowBootstrap
 ```go
 case "complete":
     active := detectActiveWorkflow(engine)
-    if active == workflowDeploy { return handleDeployComplete(...) }
+    if active == workflowDevelop { return handleDeployComplete(...) }
     if active == workflowRecipe { return handleRecipeComplete(...) }
     return handleBootstrapComplete(...)
 // Same pattern for "skip" and "status"

@@ -141,7 +141,7 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 
 	// Always offer deploy — strategy is informational, resolved within flow.
 	offerings := []FlowOffering{{
-		Workflow: "deploy", Priority: 1, Hint: `zerops_workflow action="start" workflow="deploy"`,
+		Workflow: "develop", Priority: 1, Hint: `zerops_workflow action="start" workflow="develop"`,
 	}}
 
 	// Find dominant strategy for additional offerings.

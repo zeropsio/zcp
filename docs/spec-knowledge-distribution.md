@@ -104,9 +104,9 @@ Detected at startup by `runtime.Detect()`. Immutable for process lifetime.
 | `push-dev` | Agent triggers each deploy | SSH self-deploy (container) or zcli push (local) |
 | `push-git` | Push to git remote | Commit + push, optional CI/CD (GitHub Actions / webhook) |
 | `manual` | User manages directly | Agent informs, user executes |
-| (empty) | Not yet chosen | Deploy flow informs agent, resolves before deploying |
+| (empty) | Not yet chosen | Develop flow informs agent, resolves before deploying |
 
-Set via `zerops_workflow action="strategy"`. Never auto-assigned. Always read from ServiceMeta at deploy time — never cached. See `spec-workflows.md` §4 for full deploy flow behavior.
+Set via `zerops_workflow action="strategy"`. Never auto-assigned. Always read from ServiceMeta at deploy time — never cached. See `spec-workflows.md` §4 for full develop flow behavior.
 
 ### Iteration (D7)
 
@@ -360,7 +360,7 @@ The `isExisting` flag is immutable after plan submission.
 
 ---
 
-## 5. Deploy Flow
+## 5. Develop Flow
 
 > **Note**: Implementation uses internal step names "prepare", "execute", "verify". These map to the conceptual phases described in spec-workflows.md §4: Start → Work → Pre-deploy → Deploy → Verify.
 
@@ -575,7 +575,7 @@ When agent calls `zerops_knowledge` during any workflow, `resolveKnowledgeMode()
 
 ## 8. ServiceMeta Lifecycle
 
-ServiceMeta files (`.zcp/state/services/{hostname}.json`) are the persistent bridge between bootstrap and deploy workflows. They record bootstrap decisions for use in future sessions.
+ServiceMeta files (`.zcp/state/services/{hostname}.json`) are the persistent bridge between bootstrap and develop workflows. They record bootstrap decisions for use in future sessions.
 
 ### 8.1 Partial Meta After Provision
 
@@ -601,7 +601,7 @@ When bootstrap completes (Active→false), `writeBootstrapOutputs()` overwrites 
 `action="strategy"` updates `ServiceMeta.DeployStrategy` for specified hostnames. Returns next-step hint:
 - All `manual` → "When code is ready: `zerops_deploy` directly."
 - All `push-git` → "Set up CI/CD: `zerops_workflow action=\"start\" workflow=\"cicd\"`"
-- Otherwise → "When code is ready: `zerops_workflow action=\"start\" workflow=\"deploy\"`"
+- Otherwise → "When code is ready: `zerops_workflow action=\"start\" workflow=\"develop\"`"
 
 ---
 
@@ -631,7 +631,7 @@ These properties must always hold. Each can be verified by reading the code at t
 | ID | Invariant | Code reference |
 |----|-----------|---------------|
 | KD-01 | Bootstrap discover/provision/generate inject knowledge; deploy does NOT | `guidance.go:assembleKnowledge()` — no case for StepDeploy |
-| KD-02 | Deploy workflow delivers knowledge as pointers, never full injection | `deploy_guidance.go:buildPrepareGuide()` contains `zerops_knowledge query=` strings |
+| KD-02 | Develop workflow delivers knowledge as pointers, never full injection | `deploy_guidance.go:buildPrepareGuide()` contains `zerops_knowledge query=` strings |
 | KD-03 | Iteration ≥ 1 replaces normal guidance, never appends | `guidance.go:assembleGuidance()` — iteration check is FIRST, returns immediately if non-empty |
 | KD-04 | Strategy is never auto-assigned | `bootstrap_outputs.go` — DeployStrategy stays empty; only `handleStrategy()` writes it |
 | KD-05 | Local environment replaces (not extends) container guidance for generate/deploy | `bootstrap_guidance.go` — env check fires BEFORE mode addenda |

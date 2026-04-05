@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// WorkflowDeploy is the workflow name for deploy sessions.
-const WorkflowDeploy = "deploy"
+// WorkflowDevelop is the workflow name for develop sessions.
+const WorkflowDevelop = "develop"
 
 // Deploy step constants.
 const (
@@ -25,7 +25,7 @@ const (
 // deployTargetPending is the initial status for deploy targets.
 const deployTargetPending = "pending"
 
-// DeployState tracks progress through the deploy workflow.
+// DeployState tracks progress through the develop workflow.
 type DeployState struct {
 	Active      bool           `json:"active"`
 	CurrentStep int            `json:"currentStep"`
@@ -34,7 +34,7 @@ type DeployState struct {
 	Mode        string         `json:"mode"`
 }
 
-// DeployStep represents a step in the deploy workflow.
+// DeployStep represents a step in the develop workflow.
 type DeployStep struct {
 	Name        string `json:"name"`
 	Status      string `json:"status"`
@@ -51,7 +51,7 @@ type DeployTarget struct {
 	Strategy    string `json:"strategy,omitempty"`
 }
 
-// DeployResponse is returned from deploy workflow actions.
+// DeployResponse is returned from develop workflow actions.
 type DeployResponse struct {
 	SessionID   string            `json:"sessionId"`
 	Intent      string            `json:"intent"`
