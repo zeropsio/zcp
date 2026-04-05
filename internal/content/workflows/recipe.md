@@ -138,13 +138,15 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 **Workspace import MUST NOT contain a `project:` section.** The ZCP project already exists — the API rejects imports that include `project:`. Only `services:` is allowed here. (The 6 recipe **deliverable** imports written in the finalize step DO contain `project:` with `envVariables` + preprocessor — that's a different file for a different use case.)
 
 **Framework secrets**: If `needsAppSecret == true`, determine during research whether the secret is used for encryption/sessions (shared by services hitting the same DB) or is per-service.
-- **Shared** (used for encryption, CSRF, session signing — any secret that multiple services must agree on): do NOT add to workspace import (see above — no `project:` allowed). After services reach RUNNING, set the value at project level using **the same preprocessor expression the deliverable uses**:
+- **Shared** (used for encryption, CSRF, session signing — any secret that multiple services must agree on): do NOT add to workspace import (see above — no `project:` allowed). After services reach RUNNING, set the value at project level with `zerops_env`. The workspace secret is **throwaway** — it only exists to verify the app boots; it is NOT propagated to the deliverable. Use whatever gives the framework the byte count its cipher needs:
   ```
-  zerops_env project=true action=set variables=["{SECRET_KEY_NAME}=<@generateRandomString(<32>)>"]
+  zerops_env project=true action=set variables=["{SECRET_KEY_NAME}=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
   ```
-  `zerops_env` recognizes `<@generateRandomString(<N>)>` and expands it locally (N random alphanumeric chars) before calling the platform API. This produces the EXACT SAME value format the deliverable's `project.envVariables: <@generateRandomString(<32>)>` produces at import time — no format drift between workspace and deliverable. The services are then auto-restarted so the new value takes effect.
+  (32 literal `a`s works for aes-256-cbc — what matters is the byte count, not randomness, for this throwaway value.) Or use `openssl rand -hex 16` for 32 hex chars, or anything else that produces the required bytes. Services are auto-restarted so the new value takes effect.
 
-  > Why this matters: `zerops_env set` takes literal string values from the platform API. Hand-crafting the secret (`openssl rand -base64 32`, etc.) forces you to guess the byte length and encoding the framework's cipher requires — one wrong assumption and every request crashes during boot. Using the same preprocessor expression as the deliverable makes the workspace and deliverable provably equivalent.
+  The **deliverable's** `project.envVariables` carries `<@generateRandomString(<N>)>` — the actual Zerops preprocessor expands that at recipe-import time when someone deploys the published recipe. That is where the real random secret comes from; the workspace value never leaves your scratch project.
+
+  > **Do NOT copy the framework's encoding conventions into the literal value.** If the framework's docs show `APP_KEY=base64:{22chars}` format, the 22 base64 chars *decode* to 32 bytes — setting `APP_KEY=base64:aaaa...` (literal string) makes the framework try to base64-decode the aaaa chars, producing the wrong byte count. Either (a) set the raw byte string with no prefix, or (b) if the framework only supports the encoded form, generate actual base64 of the right byte count (`openssl rand -base64 32` → 44 chars of real base64).
 - **Per-service** (unique API tokens, webhook secrets): add as service-level `envSecrets` in import.yaml.
 
 Follow the injected **import.yaml Schema** for the three env var levels (project envVariables, service envSecrets, zerops.yaml run.envVariables).

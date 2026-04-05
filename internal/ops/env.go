@@ -43,18 +43,6 @@ func EnvSet(
 		return nil, err
 	}
 
-	// Expand Zerops-preprocessor expressions (e.g. <@generateRandomString(<32>)>)
-	// in values. This lets the workspace use the exact same expression the
-	// recipe deliverable's project.envVariables uses, eliminating format
-	// drift between workspace and deliverable secret values.
-	for i := range pairs {
-		expanded, err := expandPreprocessor(pairs[i].Value)
-		if err != nil {
-			return nil, err
-		}
-		pairs[i].Value = expanded
-	}
-
 	if isProject {
 		var lastProc *platform.Process
 		for _, p := range pairs {
