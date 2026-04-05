@@ -379,11 +379,11 @@ func wrapText(text string, width int) []string {
 func dataServiceTypeName(target RecipeTarget) string {
 	base := strings.SplitN(target.Type, "@", 2)[0]
 	names := map[string]string{
-		"postgresql": "PostgreSQL", "mariadb": "MariaDB", "mysql": "MySQL",
+		svcPostgreSQL: "PostgreSQL", svcMariaDB: "MariaDB", "mysql": "MySQL",
 		"mongodb": "MongoDB", "keydb": "KeyDB", "valkey": "Valkey",
 		"elasticsearch": "Elasticsearch", "opensearch": "OpenSearch",
 		"rabbitmq": "RabbitMQ", "nats": "NATS",
-		"meilisearch": "Meilisearch", "qdrant": "Qdrant", "typesense": "Typesense",
+		svcMeilisearch: "Meilisearch", "qdrant": "Qdrant", "typesense": "Typesense",
 		"clickhouse": "ClickHouse",
 	}
 	if name, ok := names[strings.ToLower(base)]; ok {

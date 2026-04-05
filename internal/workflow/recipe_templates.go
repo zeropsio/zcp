@@ -227,9 +227,9 @@ func frameworkURL(framework string) string {
 // dbDisplayName returns a display name for a DB driver.
 func dbDisplayName(driver string) string {
 	switch driver {
-	case "postgresql", "pgsql":
+	case svcPostgreSQL, "pgsql":
 		return "[PostgreSQL](https://www.postgresql.org/)"
-	case "mysql", "mariadb":
+	case "mysql", svcMariaDB:
 		return "[MariaDB](https://mariadb.org/)"
 	case "mongodb":
 		return "[MongoDB](https://www.mongodb.com/)"

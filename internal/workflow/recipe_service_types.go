@@ -72,11 +72,11 @@ func recipeSetupName(isWorker, isDev bool) string {
 func serviceTypeKind(serviceType string) string {
 	base, _, _ := strings.Cut(strings.ToLower(serviceType), "@")
 	switch base {
-	case "postgresql", "mariadb", "clickhouse": //nolint:goconst // service-type literals, not worth extracting
+	case svcPostgreSQL, svcMariaDB, "clickhouse":
 		return "database"
 	case "valkey", "keydb":
 		return "cache"
-	case "elasticsearch", "meilisearch", "qdrant", "typesense": //nolint:goconst // service-type literals
+	case "elasticsearch", svcMeilisearch, "qdrant", "typesense":
 		return "search engine"
 	case "object-storage", "shared-storage":
 		return "storage"

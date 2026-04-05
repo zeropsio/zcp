@@ -61,9 +61,9 @@ func appDemoDescription(plan *RecipePlan) string {
 // dbDisplayNamePlain returns a plain-text DB name (no markdown links).
 func dbDisplayNamePlain(driver string) string {
 	switch driver {
-	case "postgresql", "pgsql":
+	case svcPostgreSQL, "pgsql":
 		return "PostgreSQL"
-	case "mysql", "mariadb":
+	case "mysql", svcMariaDB:
 		return "MariaDB"
 	case "mongodb":
 		return "MongoDB"

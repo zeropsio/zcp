@@ -2,12 +2,20 @@ package workflow
 
 import "strings"
 
+// Service-type name constants — shared across template/dispatch helpers that
+// would otherwise trip goconst on repeated literals.
+const (
+	svcPostgreSQL  = "postgresql"
+	svcMariaDB     = "mariadb"
+	svcMeilisearch = "meilisearch"
+)
+
 // managedServicePrefixes is the static fallback for managed service classification.
 // Used when live API types are unavailable. Source of truth: Zerops API categories.
 // Does NOT include phantom types that don't exist on Zerops (mysql, mongodb, redis).
 var managedServicePrefixes = []string{
-	"postgresql", "mariadb", "valkey",
-	"keydb", "elasticsearch", "meilisearch", "rabbitmq", "kafka",
+	svcPostgreSQL, svcMariaDB, "valkey",
+	"keydb", "elasticsearch", svcMeilisearch, "rabbitmq", "kafka",
 	"nats", "clickhouse", "qdrant", "typesense",
 	"object-storage", "shared-storage",
 }
