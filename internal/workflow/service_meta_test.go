@@ -464,6 +464,91 @@ func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
 	}
 }
 
+func TestIsKnownService(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		metas    []*ServiceMeta
+		hostname string
+		want     bool
+	}{
+		{
+			"direct hostname match",
+			[]*ServiceMeta{
+				{Hostname: "appdev", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+			},
+			"appdev",
+			true,
+		},
+		{
+			"stage hostname match",
+			[]*ServiceMeta{
+				{Hostname: "appdev", StageHostname: "appstage", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+			},
+			"appstage",
+			true,
+		},
+		{
+			"unknown hostname",
+			[]*ServiceMeta{
+				{Hostname: "appdev", StageHostname: "appstage", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+			},
+			"docs",
+			false,
+		},
+		{
+			"incomplete meta still counts",
+			[]*ServiceMeta{
+				{Hostname: "appdev", BootstrapSession: "s1"},
+			},
+			"appdev",
+			true,
+		},
+		{
+			"empty stateDir returns false",
+			nil,
+			"appdev",
+			false,
+		},
+		{
+			"empty hostname returns false",
+			[]*ServiceMeta{
+				{Hostname: "appdev", BootstrapSession: "s1"},
+			},
+			"",
+			false,
+		},
+		{
+			"no metas at all",
+			nil,
+			"anything",
+			false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var stateDir string
+			if tt.name != "empty stateDir returns false" {
+				stateDir = t.TempDir()
+				for _, m := range tt.metas {
+					if err := WriteServiceMeta(stateDir, m); err != nil {
+						t.Fatalf("WriteServiceMeta: %v", err)
+					}
+				}
+			}
+
+			got := IsKnownService(stateDir, tt.hostname)
+			if got != tt.want {
+				t.Errorf("IsKnownService(%q): want %v, got %v", tt.hostname, tt.want, got)
+			}
+		})
+	}
+}
+
 func TestServiceMeta_NoStatusFieldInJSON(t *testing.T) {
 	t.Parallel()
 

@@ -175,6 +175,7 @@ func appendUtilities(offerings []FlowOffering) []FlowOffering {
 		priority int
 		hint     string
 	}{
+		{"cicd", 3, `zerops_workflow action="start" workflow="cicd" — set up CI/CD pipelines`},
 		{"recipe", 4, `zerops_workflow action="start" workflow="recipe" — create recipe repo files`},
 		{"scale", 5, `zerops_scale serviceHostname="..." — direct tool, no workflow needed`},
 	}

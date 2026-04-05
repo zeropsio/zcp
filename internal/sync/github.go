@@ -14,6 +14,33 @@ type GH struct {
 	Repo string // "owner/repo" format
 }
 
+// CheckGH validates that the gh CLI is installed and authenticated.
+// Returns nil if ready to use, error with actionable message otherwise.
+func CheckGH() error {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return fmt.Errorf("gh CLI not installed: install from https://cli.github.com")
+	}
+	cmd := exec.Command("gh", "auth", "status") //nolint:gosec,noctx // short-lived check
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh not authenticated: run 'gh auth login' first")
+	}
+	return nil
+}
+
+// SetSecret sets a GitHub Actions repository secret.
+// The gh CLI handles NaCl sealed-box encryption automatically.
+func (g *GH) SetSecret(name, value string) error {
+	cmd := exec.Command("gh", "secret", "set", name, "--repo", g.Repo, "--body", value) //nolint:gosec,noctx // controlled values
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("set secret %s: %w\nstderr: %s", name, err, stderr.String())
+	}
+	return nil
+}
+
 // ReadFile returns file content and blob SHA from default branch.
 func (g *GH) ReadFile(path string) (content string, sha string, err error) {
 	out, err := g.api("repos/" + g.Repo + "/contents/" + path)

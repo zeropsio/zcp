@@ -32,7 +32,22 @@ func buildCICDContext(stateDir string) string {
 	if len(targets) == 0 {
 		return ""
 	}
-	return "## Your CI/CD Targets\n\nBased on project configuration:\n" +
-		strings.Join(targets, "\n") +
-		"\n\nGet service IDs: Zerops dashboard -> service -> three-dot menu -> Copy Service ID."
+
+	var b strings.Builder
+	b.WriteString("## Your CI/CD Targets\n\nBased on project configuration:\n")
+	b.WriteString(strings.Join(targets, "\n"))
+	b.WriteString("\n\nGet service IDs: Zerops dashboard -> service -> three-dot menu -> Copy Service ID.")
+
+	// Generate workflow YAML from targets (service IDs not available at this stage —
+	// agent must resolve via zerops_discover and fill in placeholders).
+	cicdTargets := buildCICDTargets(stateDir, nil)
+	if len(cicdTargets) > 0 {
+		yaml := generateGitHubActionsWorkflow(cicdTargets, "main")
+		b.WriteString("\n\n## Generated Workflow (fill service IDs via zerops_discover)\n\n```yaml\n")
+		b.WriteString(yaml)
+		b.WriteString("```\n")
+		b.WriteString("\nReplace `{SERVICE_ID}` placeholders with actual service IDs from `zerops_discover`.")
+	}
+
+	return b.String()
 }

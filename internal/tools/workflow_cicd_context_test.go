@@ -49,6 +49,21 @@ func TestBuildCICDContext(t *testing.T) {
 			want: "appdev -> appstage (stage deploy target)",
 		},
 		{
+			name: "IncludesGeneratedWorkflow",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				writeMeta(t, dir, &workflow.ServiceMeta{
+					Hostname:       "appdev",
+					StageHostname:  "appstage",
+					DeployStrategy: workflow.StrategyPushGit,
+					BootstrappedAt: "2026-01-01",
+				})
+				return dir
+			},
+			want: "zeropsio/actions@main",
+		},
+		{
 			name: "NoStage",
 			setup: func(t *testing.T) string {
 				t.Helper()

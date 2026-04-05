@@ -72,7 +72,7 @@ func TestE2E_Instructions_ServiceListing(t *testing.T) {
 
 	// If there are runtime services and no state dir, all should need adoption.
 	if runtimeCount > 0 {
-		if !strings.Contains(inst, "needs ZCP adoption") {
+		if !strings.Contains(inst, "run bootstrap") {
 			t.Error("runtime services without state dir should show adoption label")
 		}
 		if !strings.Contains(inst, "Runtime services needing adoption") {

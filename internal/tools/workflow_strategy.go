@@ -70,7 +70,7 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 	if allStrategiesAre(input.Strategies, workflow.StrategyManual) {
 		nextHint = `When code is ready: zerops_deploy targetService="..." (manual strategy — deploy directly)`
 	} else if allStrategiesAre(input.Strategies, workflow.StrategyPushGit) {
-		nextHint = `Push to git: zerops_workflow action="start" workflow="develop"`
+		nextHint = `Push to git: zerops_workflow action="start" workflow="develop". CI/CD setup: zerops_workflow action="start" workflow="cicd"`
 	}
 
 	result := map[string]string{

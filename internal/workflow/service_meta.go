@@ -133,6 +133,28 @@ func PruneServiceMetas(baseDir string, liveHostnames map[string]bool) int {
 	return pruned
 }
 
+// IsKnownService checks if a hostname is tracked by any ServiceMeta.
+// A hostname is known if it matches any meta's Hostname or StageHostname.
+// Returns false when stateDir is empty or no metas exist (permissive on error).
+func IsKnownService(stateDir, hostname string) bool {
+	if stateDir == "" || hostname == "" {
+		return false
+	}
+	// Direct match by filename (fast path).
+	meta, _ := ReadServiceMeta(stateDir, hostname)
+	if meta != nil {
+		return true
+	}
+	// Check if it's a stage hostname of any meta.
+	metas, _ := ListServiceMetas(stateDir)
+	for _, m := range metas {
+		if m.StageHostname == hostname {
+			return true
+		}
+	}
+	return false
+}
+
 // DeleteServiceMeta removes the service metadata file for the given hostname.
 // Returns nil if the file does not exist (idempotent).
 func DeleteServiceMeta(baseDir, hostname string) error {

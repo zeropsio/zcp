@@ -88,7 +88,7 @@ func TestClassifyServices_LabelFor(t *testing.T) {
 	if l := cls.labelFor("appstage"); l != "" {
 		t.Errorf("stage label = %q, want empty", l)
 	}
-	if l := cls.labelFor("apidev"); !strings.Contains(l, "needs ZCP adoption") {
+	if l := cls.labelFor("apidev"); !strings.Contains(l, "run bootstrap") {
 		t.Errorf("unmanaged label = %q, want 'not managed'", l)
 	}
 	if l := cls.labelFor("db"); l != "" {
@@ -109,7 +109,7 @@ func TestBuildInstructions_UnmanagedRuntimes_HasAdoptionHint(t *testing.T) {
 	result := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, stateDir)
 
 	// Must contain adoption hint for unmanaged services.
-	if !strings.Contains(result, "needs ZCP adoption") {
+	if !strings.Contains(result, "run bootstrap") {
 		t.Error("expected 'needs ZCP adoption' label for unbootstrapped runtimes")
 	}
 	if !strings.Contains(result, "adopt") {
@@ -151,7 +151,7 @@ func TestBuildInstructions_BootstrappedWithUnmanaged_BothVisible(t *testing.T) {
 		t.Error("expected bootstrapped service detail")
 	}
 	// Adoption hint for unmanaged runtime.
-	if !strings.Contains(result, "needs ZCP adoption") {
+	if !strings.Contains(result, "run bootstrap") {
 		t.Error("expected unmanaged label for apidev")
 	}
 	// Router offerings (no short-circuit).

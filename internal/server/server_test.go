@@ -177,7 +177,7 @@ func TestBuildInstructions_WithServices(t *testing.T) {
 		t.Error("should contain anti-deletion warning")
 	}
 	// Unmanaged runtimes should show adoption hint.
-	if !strings.Contains(inst, "needs ZCP adoption") {
+	if !strings.Contains(inst, "run bootstrap") {
 		t.Error("unmanaged runtime services should be labeled")
 	}
 }
@@ -195,7 +195,7 @@ func TestBuildInstructions_UnmanagedProject(t *testing.T) {
 		t.Error("should contain anti-deletion warning")
 	}
 	// Should show adoption hint for unmanaged runtime.
-	if !strings.Contains(inst, "needs ZCP adoption") {
+	if !strings.Contains(inst, "run bootstrap") {
 		t.Error("unmanaged runtime should be labeled")
 	}
 	// Should recommend bootstrap.

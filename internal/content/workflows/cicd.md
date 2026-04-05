@@ -12,11 +12,65 @@ If no targets are listed, use `zerops_discover` to identify services or ask the 
 
 | Approach | When to use | How it works |
 |----------|------------|--------------|
-| **GitHub Actions** | Repo on GitHub | Workflow file in repo triggers `zeropsio/actions@main` |
+| **GitHub Actions (auto)** | Repo on GitHub + `gh` CLI available | Auto-generate workflow + set ZEROPS_TOKEN secret via `gh` |
+| **GitHub Actions (manual)** | Repo on GitHub | Workflow file in repo triggers `zeropsio/actions@main` |
 | **GitHub webhook** | Repo on GitHub (alternative) | Zerops GUI webhook triggers build on push/tag |
 | **GitLab webhook** | Repo on GitLab | Zerops GUI webhook triggers build on push/tag |
 
-**Recommendation:** GitHub Actions for GitHub repos (config lives in repo, versioned). GitLab webhook for GitLab repos (only option — no Actions equivalent).
+**Recommendation:** GitHub Actions (auto) when `gh` CLI is installed — fastest path, zero browser visits. Otherwise GitHub Actions (manual). GitLab webhook for GitLab repos.
+
+---
+
+## GitHub Actions — Automated Setup
+
+**Prerequisites:** `gh` CLI installed and authenticated (`gh auth status` must succeed).
+
+### 1. Get service IDs
+
+```
+zerops_discover service="{stageHostname}"
+```
+Note the `serviceId` field for each target.
+
+### 2. Get or create Zerops deploy token
+
+**Option A — Use existing ZCP API key** (fastest, ask user first):
+"I can use the existing ZCP API key as the deploy token. This key has full project access. If you prefer a scoped token, go to https://app.zerops.io/settings/token-management to create one. Should I use the existing key?"
+
+If user approves, read the token from the MCP configuration (available as the current API key).
+
+**Option B — User provides a dedicated token:**
+"Go to: https://app.zerops.io/settings/token-management → **Generate** a new token. Paste it here."
+
+### 3. Set GitHub secret automatically
+
+```bash
+gh secret set ZEROPS_TOKEN --repo {owner}/{repo} --body "{zeropsToken}"
+```
+
+### 4. Write workflow file and push
+
+Use the generated workflow YAML from the targets section above (or the template below).
+Write `.github/workflows/deploy.yml` on the container, commit, and push:
+
+```bash
+ssh {devHostname} "mkdir -p /var/www/.github/workflows"
+```
+
+Write the generated YAML content to `.github/workflows/deploy.yml`, then:
+
+```bash
+ssh {devHostname} "cd /var/www && git add -A && git commit -m 'ci: add deploy workflow'"
+```
+```
+zerops_deploy targetService="{devHostname}" strategy="git-push"
+```
+
+First push to main triggers deploy.
+
+### If `gh` is not available
+
+Fall back to the manual GitHub Actions setup below.
 
 ---
 
@@ -129,7 +183,7 @@ If push fails with authentication error:
 
 ---
 
-## GitHub Actions Configuration
+## GitHub Actions — Manual Configuration
 
 ### 1. Get service ID for deploy target
 

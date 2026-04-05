@@ -26,6 +26,7 @@ func RegisterDeployLocal(
 	projectID string,
 	authInfo *auth.Info,
 	logFetcher platform.LogFetcher,
+	stateDir string,
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_deploy",
@@ -37,6 +38,11 @@ func RegisterDeployLocal(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployLocalInput) (*mcp.CallToolResult, any, error) {
+		// Gate: target must be adopted by ZCP.
+		if blocked := requireAdoption(stateDir, input.TargetService); blocked != nil {
+			return blocked, nil, nil
+		}
+
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,
 			input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit)
 		if err != nil {

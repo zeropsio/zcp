@@ -227,7 +227,7 @@ func (c *serviceClassification) labelFor(hostname string) string {
 		return " — bootstrap incomplete" + mount
 	}
 	if slices.Contains(c.unmanagedNames, hostname) {
-		return " — needs ZCP adoption" + mount
+		return " — run bootstrap (isExisting=true) before any work on this service" + mount
 	}
 	return mount
 }

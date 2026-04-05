@@ -32,6 +32,7 @@ func RegisterDeploySSH(
 	authInfo *auth.Info,
 	logFetcher platform.LogFetcher,
 	rtInfo runtime.Info,
+	stateDir string,
 ) {
 	desc := "Deploy code via SSH — blocks until build completes. "
 	if rtInfo.InContainer {
@@ -51,6 +52,11 @@ func RegisterDeploySSH(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
+		// Gate: target (and source) must be adopted by ZCP.
+		if blocked := requireAdoption(stateDir, input.TargetService, input.SourceService); blocked != nil {
+			return blocked, nil, nil
+		}
+
 		// Validate strategy parameter.
 		if input.Strategy != "" && input.Strategy != "git-push" {
 			return convertError(platform.NewPlatformError(
