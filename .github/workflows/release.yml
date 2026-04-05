@@ -62,11 +62,6 @@ jobs:
             file: zcp-linux-amd64
             compress: true
             strip: true
-          - name: linux 386
-            env: { GOOS: linux, GOARCH: 386 }
-            file: zcp-linux-386
-            compress: true
-            strip: true
           - name: darwin amd64
             env: { GOOS: darwin, GOARCH: amd64 }
             file: zcp-darwin-amd64
