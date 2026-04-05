@@ -102,35 +102,52 @@ func TestCheckDevProdEnvDivergence(t *testing.T) {
 		wantInDetail string
 	}{
 		{
-			name: "identical_app_env_flagged",
+			name: "bit_identical_maps_flagged",
 			yaml: `zerops:
   - setup: dev
     run:
       envVariables:
         APP_ENV: production
         APP_DEBUG: "false"
+        DB_HOST: ${db_hostname}
   - setup: prod
     run:
       envVariables:
         APP_ENV: production
         APP_DEBUG: "false"
+        DB_HOST: ${db_hostname}
 `,
 			wantStatus:   statusFail,
-			wantInDetail: "APP_ENV=production",
+			wantInDetail: "bit-identical",
 		},
 		{
-			name: "divergent_app_env_passes",
+			name: "single_value_differs_passes",
 			yaml: `zerops:
   - setup: dev
     run:
       envVariables:
         APP_ENV: local
-        APP_DEBUG: "true"
+        DB_HOST: ${db_hostname}
   - setup: prod
     run:
       envVariables:
         APP_ENV: production
-        APP_DEBUG: "false"
+        DB_HOST: ${db_hostname}
+`,
+			wantStatus: statusPass,
+		},
+		{
+			name: "different_keys_passes",
+			yaml: `zerops:
+  - setup: dev
+    run:
+      envVariables:
+        APP_ENV: local
+        LOG_LEVEL: debug
+  - setup: prod
+    run:
+      envVariables:
+        APP_ENV: production
 `,
 			wantStatus: statusPass,
 		},
@@ -145,35 +162,32 @@ func TestCheckDevProdEnvDivergence(t *testing.T) {
 			wantStatus: "",
 		},
 		{
-			name: "rails_identical_flagged",
+			name: "empty_prod_env_no_check",
 			yaml: `zerops:
   - setup: dev
     run:
       envVariables:
-        RAILS_ENV: production
-  - setup: prod
-    run:
-      envVariables:
-        RAILS_ENV: production
-`,
-			wantStatus:   statusFail,
-			wantInDetail: "RAILS_ENV=production",
-		},
-		{
-			name: "non_mode_keys_ignored",
-			yaml: `zerops:
-  - setup: dev
-    run:
-      envVariables:
-        DB_HOST: ${db_hostname}
         APP_ENV: local
   - setup: prod
     run:
-      envVariables:
-        DB_HOST: ${db_hostname}
-        APP_ENV: production
+      start: php-fpm
 `,
-			wantStatus: statusPass,
+			wantStatus: "",
+		},
+		{
+			name: "custom_keys_identical_still_flagged",
+			yaml: `zerops:
+  - setup: dev
+    run:
+      envVariables:
+        CUSTOM_MODE_FLAG: production
+  - setup: prod
+    run:
+      envVariables:
+        CUSTOM_MODE_FLAG: production
+`,
+			wantStatus:   statusFail,
+			wantInDetail: "bit-identical",
 		},
 	}
 

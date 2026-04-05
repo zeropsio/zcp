@@ -180,37 +180,18 @@ func checkDeployResult(client platform.Client, projectID string) workflow.Deploy
 	}
 }
 
-// frameworkModeKeys lists envVariables that encode a framework's run mode —
-// identical values across dev and prod setups signal copy-paste drift.
-// Includes the major web frameworks' mode/debug/log-level keys; additions
-// are welcome as new framework support lands.
-var frameworkModeKeys = []string{
-	// PHP frameworks
-	"APP_ENV", "APP_DEBUG", "APP_ENVIRONMENT",
-	"LOG_LEVEL", "APP_LOG_LEVEL",
-	// Ruby / Rack
-	"RAILS_ENV", "RACK_ENV",
-	// Node.js
-	"NODE_ENV",
-	// Python
-	"FLASK_ENV", "FLASK_DEBUG",
-	"DJANGO_DEBUG", "DJANGO_SETTINGS_MODULE",
-	// .NET
-	"ASPNETCORE_ENVIRONMENT", "DOTNET_ENVIRONMENT",
-	// Go
-	"GIN_MODE", "GO_ENV",
-	// Java
-	"SPRING_PROFILES_ACTIVE",
-	// Generic
-	"DEBUG", "ENVIRONMENT", "ENV",
-}
-
-// checkDevProdEnvDivergence flags dev/prod setups whose framework-mode env
-// variables carry identical values. The two setups should differ on at least
-// the mode flag (APP_ENV=local vs production, RAILS_ENV=development vs
-// production, etc.) — identical values mean the dev container will behave
-// like production: debug pages hidden, caching enabled, full-source reloads
-// suppressed. Copy-paste from prod → dev is the usual root cause.
+// checkDevProdEnvDivergence flags dev and prod setups whose run.envVariables
+// maps are bit-identical. Two setups named differently exist to be different —
+// the agent writes them precisely to carry different values for the framework
+// to observe (mode flags, debug toggles, log levels, feature toggles). When
+// the maps are literally equal, it is a copy-paste: the dev container will
+// behave exactly like prod, hiding stack traces and enabling caches while
+// developers iterate.
+//
+// This is a structural invariant — no knowledge of which env var keys carry
+// mode signals for which framework is required. If an agent intentionally
+// wants two setups with identical env vars, they can distinguish them with a
+// single semantically-meaningful key (e.g. the framework's own env flag).
 func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 	devEntry := doc.FindEntry("dev")
 	prodEntry := doc.FindEntry("prod")
@@ -220,19 +201,14 @@ func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 	}
 	devEnv := devEntry.Run.EnvVariables
 	prodEnv := prodEntry.Run.EnvVariables
+	// If either side has no run.envVariables block, there is nothing to
+	// compare — the framework's own defaults, OS env vars, or envSecrets
+	// carry the mode signal.
 	if len(devEnv) == 0 || len(prodEnv) == 0 {
 		return nil
 	}
 
-	var identical []string
-	for _, key := range frameworkModeKeys {
-		dv, inDev := devEnv[key]
-		pv, inProd := prodEnv[key]
-		if inDev && inProd && dv == pv {
-			identical = append(identical, fmt.Sprintf("%s=%s", key, dv))
-		}
-	}
-	if len(identical) == 0 {
+	if !envMapsEqual(devEnv, prodEnv) {
 		return []workflow.StepCheck{{
 			Name: "dev_prod_env_divergence", Status: statusPass,
 		}}
@@ -240,8 +216,21 @@ func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 	return []workflow.StepCheck{{
 		Name:   "dev_prod_env_divergence",
 		Status: statusFail,
-		Detail: fmt.Sprintf("dev and prod setups share identical framework-mode values: %s — dev should use the framework's development mode (e.g., APP_ENV=local/APP_DEBUG=true for Laravel, RAILS_ENV=development for Rails, NODE_ENV=development for Node) so developers see stack traces and disabled caches while iterating", strings.Join(identical, ", ")),
+		Detail: "dev and prod setups in zerops.yaml have bit-identical run.envVariables — the dev container will behave exactly like prod (caches enabled, stack traces hidden). Differentiate the two setups using whichever env var your framework reads for its run mode",
 	}}
+}
+
+// envMapsEqual reports whether two string maps carry the same keys and values.
+func envMapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }
 
 // findAndParseZeropsYml locates and parses zerops.yaml from project root or mount paths.

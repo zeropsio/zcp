@@ -16,7 +16,7 @@ type EnvInput struct {
 	Action          string   `json:"action"                    jsonschema:"Action: set, delete, or generate-dotenv. generate-dotenv reads zerops.yaml envVariables, resolves ${hostname_varName} refs via API, and writes .env file."`
 	ServiceHostname string   `json:"serviceHostname,omitempty" jsonschema:"Hostname of the service to modify env vars on. Required unless project=true."`
 	Project         bool     `json:"project,omitempty"         jsonschema:"Set to true to manage project-level env vars instead of service-level."`
-	Variables       []string `json:"variables,omitempty"       jsonschema:"List of env vars. For set: KEY=VALUE strings. For delete: KEY names only."`
+	Variables       []string `json:"variables,omitempty"       jsonschema:"List of env vars. For set: KEY=VALUE strings — VALUE may embed <@generateRandomString(<N>)> to generate N random alphanumeric chars (same format the recipe deliverable preprocessor uses). For delete: KEY names only."`
 	SkipRestart     bool     `json:"skipRestart,omitempty"     jsonschema:"set/delete: skip the automatic service restart after the env change. Default false (auto-restart affected services so the new value takes effect). Pass true only if you will redeploy immediately afterwards and the restart would be wasted."`
 }
 
@@ -37,7 +37,7 @@ type envChangeResult struct {
 func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostname string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage environment variables. Actions: set, delete, generate-dotenv. Scope: service (serviceHostname) or project (project=true). After set/delete the affected services are AUTOMATICALLY RESTARTED so the new value takes effect — env vars are only read at process start, not reloaded. Pass skipRestart=true only if you will deploy immediately anyway. generate-dotenv: resolves ${hostname_varName} refs, writes .env file. To read keys, use zerops_discover includeEnvs=true.",
+		Description: "Manage environment variables. Actions: set, delete, generate-dotenv. Scope: service (serviceHostname) or project (project=true). set values may embed <@generateRandomString(<N>)> — expanded to N random alphanumeric chars, matching the deliverable preprocessor. After set/delete affected services AUTO-RESTART so the new value takes effect. Pass skipRestart=true only if deploying immediately. generate-dotenv: resolves ${hostname_varName} refs, writes .env. Read keys via zerops_discover includeEnvs=true.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
 			DestructiveHint: boolPtr(true),
