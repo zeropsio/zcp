@@ -14,11 +14,11 @@ import (
 // KnowledgeInput is the input type for zerops_knowledge.
 // Supports four modes: query (text search), briefing (contextual assembly), scope (platform reference), or recipe.
 type KnowledgeInput struct {
-	Query    string   `json:"query,omitempty"    jsonschema:"Text search query for finding specific topics in Zerops docs. Use alone (query mode)."`
+	Query    string   `json:"query,omitempty"    jsonschema:"Free-text topic search across Zerops docs (e.g. 'readiness check', 'cross-service wiring'). NOT for fetching known guides by name — if you have a recipe/hello-world name, use recipe= instead. Use alone (query mode)."`
 	Limit    int      `json:"limit,omitempty"    jsonschema:"Maximum number of search results to return (query mode only)."`
 	Runtime  string   `json:"runtime,omitempty"  jsonschema:"Runtime type for stack briefing (e.g. php-nginx@8.4 or bun@1.2). Use with or without services (briefing mode)."`
 	Services []string `json:"services,omitempty" jsonschema:"Service types for stack briefing (e.g. [postgresql@16, valkey@7.2]). Use with or without runtime (briefing mode)."`
-	Recipe   string   `json:"recipe,omitempty"   jsonschema:"Recipe name to retrieve pre-built framework config (e.g. laravel, nextjs). Use alone (recipe mode)."`
+	Recipe   string   `json:"recipe,omitempty"   jsonschema:"Name of a pre-authored guide in the knowledge store. Valid shapes: {runtime}-hello-world (runtime primer — go, bun, php, python, nodejs, deno, dotnet, gleam, java, ruby, rust), {framework}-{ssr,static}-hello-world (frontend framework primer — nextjs-ssr, vue-static, svelte, ...), or {framework}-minimal (backend framework recipe — laravel-minimal, django-minimal, ...). ALWAYS use this field for any named guide lookup — never query= for a known name. Use alone (recipe mode)."`
 	Scope    string   `json:"scope,omitempty"    jsonschema:"Platform reference scope. Use scope=infrastructure for complete Zerops knowledge (YAML schemas, env vars, build/deploy lifecycle). Required before generating YAML. Use alone (scope mode)."`
 	Mode     string   `json:"mode,omitempty"     jsonschema:"Override mode filter (dev, standard, simple, stage). Auto-detected from active workflow session if omitted. Use mode=stage to see prod deploy patterns during dev/standard workflows."`
 }
@@ -50,7 +50,7 @@ func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) string {
 func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
-		Description: "Load Zerops platform knowledge. Four modes: (1) briefing — stack-specific rules via runtime/services params. (2) scope=infrastructure — complete platform reference, required before generating YAML. (3) query — text search. (4) recipe — pre-built framework configs.",
+		Description: "Load Zerops platform knowledge. Four modes: (1) briefing — stack-specific rules via runtime/services params. (2) scope=infrastructure — complete platform reference, required before generating YAML. (3) query — free-text topic search (NOT for fetching known guides — use recipe= for those). (4) recipe — named guide from store: runtime primer ({runtime}-hello-world), frontend primer ({framework}-{ssr,static}-hello-world), or backend framework recipe ({framework}-minimal).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Zerops knowledge access",
 			ReadOnlyHint:   true,
