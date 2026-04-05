@@ -199,7 +199,7 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 			})
 		}
 		// Package install commands need sudo — containers run as zerops user.
-		if hasPkgInstallWithoutSudo(entry.Run.PrepareCommands) {
+		if ops.HasPkgInstallWithoutSudo(entry.Run.PrepareCommands) {
 			checks = append(checks, workflow.StepCheck{
 				Name:   hostname + "_prepare_missing_sudo",
 				Status: statusFail,
@@ -270,30 +270,6 @@ func stringifyCommands(commands any) string {
 	default:
 		return ""
 	}
-}
-
-// hasPkgInstallWithoutSudo checks if any command in a YAML commands field
-// contains apk add or apt-get install without a sudo prefix.
-func hasPkgInstallWithoutSudo(commands any) bool {
-	var cmds []string
-	switch v := commands.(type) {
-	case string:
-		cmds = []string{v}
-	case []any:
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				cmds = append(cmds, s)
-			}
-		}
-	}
-	for _, cmd := range cmds {
-		cmd = strings.TrimSpace(cmd)
-		if (strings.Contains(cmd, "apk add") || strings.Contains(cmd, "apt-get install")) &&
-			!strings.Contains(cmd, "sudo") {
-			return true
-		}
-	}
-	return false
 }
 
 // collectPlanHostnames extracts all hostnames from the bootstrap plan.

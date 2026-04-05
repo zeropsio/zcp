@@ -103,7 +103,8 @@ func DeployLocal(
 	if setupName == "" {
 		setupName = targetService
 	}
-	warnings := ValidateZeropsYml(workingDir, setupName)
+	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	warnings := ValidateZeropsYml(workingDir, setupName, serviceType)
 
 	// 5. Login.
 	_, stderr, err := runner.Run(ctx, "zcli", "login", authInfo.Token)

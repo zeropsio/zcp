@@ -844,6 +844,29 @@ func TestBuildTransitionMessage_IncludesRouterOfferings(t *testing.T) {
 	}
 }
 
+func TestBuildTransitionMessage_IncludesDeployModelPrimer(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{
+					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+				},
+			},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+	if !strings.Contains(msg, "new container") {
+		t.Error("transition message should mention that deploy creates a new container")
+	}
+	if !strings.Contains(msg, "deployFiles") {
+		t.Error("transition message should mention deployFiles as what persists")
+	}
+	if !strings.Contains(msg, "sudo") {
+		t.Error("transition message should mention sudo for prepareCommands")
+	}
+}
+
 func TestWriteBootstrapOutputs_EnvironmentField(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

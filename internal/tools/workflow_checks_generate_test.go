@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -1129,9 +1130,9 @@ func TestHasPkgInstallWithoutSudo(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := hasPkgInstallWithoutSudo(tt.commands)
+			got := ops.HasPkgInstallWithoutSudo(tt.commands)
 			if got != tt.want {
-				t.Errorf("hasPkgInstallWithoutSudo(%v) = %v, want %v", tt.commands, got, tt.want)
+				t.Errorf("HasPkgInstallWithoutSudo(%v) = %v, want %v", tt.commands, got, tt.want)
 			}
 		})
 	}

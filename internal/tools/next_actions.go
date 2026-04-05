@@ -39,6 +39,14 @@ func deploySuccessNextActions(result *ops.DeployResult) string {
 			result.TargetService, result.TargetService,
 		)
 	}
+	if isSelfDeploy && ops.IsImplicitWebServerType(result.TargetServiceType) {
+		return fmt.Sprintf(
+			"Deploy created a new container — previous SSH sessions to %s are dead (exit 255). "+
+				"Built-in webserver will auto-start — no manual action needed. "+
+				"Verify: zerops_verify serviceHostname=\"%s\".",
+			result.TargetService, result.TargetService,
+		)
+	}
 	return nextActionDeploySuccess
 }
 

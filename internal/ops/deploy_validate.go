@@ -17,9 +17,12 @@ const (
 )
 
 // ValidateZeropsYml checks zerops.yaml for common issues before deploy.
-// role is optional ("dev", "stage", or empty). When empty, falls back to hostname substring heuristic.
+// serviceType is the Zerops service type (e.g. "php-nginx@8.4") — used to detect implicit
+// webservers when zerops.yaml bases alone are insufficient (e.g. build.base: php@8.4 for a
+// php-nginx service). Pass "" if unknown.
+// roles is optional ("dev", "stage", or empty). When empty, falls back to hostname substring heuristic.
 // Returns a list of warning strings (empty = no issues found).
-func ValidateZeropsYml(workingDir, targetHostname string, roles ...string) []string {
+func ValidateZeropsYml(workingDir, targetHostname, serviceType string, roles ...string) []string {
 	var warnings []string
 
 	doc, err := ParseZeropsYml(workingDir)
@@ -38,7 +41,8 @@ func ValidateZeropsYml(workingDir, targetHostname string, roles ...string) []str
 		return warnings
 	}
 
-	if !hasImplicitWebServer(entry.Run.Base, entry.Build.BaseStrings()) {
+	implicitWS := hasImplicitWebServer(entry.Run.Base, entry.Build.BaseStrings()) || IsImplicitWebServerType(serviceType)
+	if !implicitWS {
 		if entry.Run.Start == "" {
 			warnings = append(warnings, "run.start is empty — app will not start after deploy")
 		}
@@ -56,6 +60,14 @@ func ValidateZeropsYml(workingDir, targetHostname string, roles ...string) []str
 	// Detect deployFiles in wrong section (run: instead of build:).
 	if entry.Run.DeployFiles != nil {
 		warnings = append(warnings, "deployFiles is under 'run:' but belongs under 'build:' — move it to build.deployFiles")
+	}
+
+	// Package install commands need sudo — containers run as zerops user.
+	if hasPkgInstallWithoutSudo(entry.Run.PrepareCommands) {
+		warnings = append(warnings, "run.prepareCommands has package install without sudo (apk add / apt-get install) — containers run as zerops user, prefix with sudo")
+	}
+	if hasPkgInstallWithoutSudo(entry.Build.PrepareCommands) {
+		warnings = append(warnings, "build.prepareCommands has package install without sudo (apk add / apt-get install) — containers run as zerops user, prefix with sudo")
 	}
 
 	// Determine effective role: explicit parameter > hostname heuristic.
@@ -178,9 +190,10 @@ type zeropsYmlDeploy struct {
 }
 
 type zeropsYmlBuild struct {
-	Base          any `yaml:"base"`          // string or []string — Zerops accepts both
-	BuildCommands any `yaml:"buildCommands"` // string or []string
-	DeployFiles   any `yaml:"deployFiles"`   // string or []string — Zerops accepts both
+	Base            any `yaml:"base"`            // string or []string — Zerops accepts both
+	PrepareCommands any `yaml:"prepareCommands"` // string or []string — for sudo detection
+	BuildCommands   any `yaml:"buildCommands"`   // string or []string
+	DeployFiles     any `yaml:"deployFiles"`     // string or []string — Zerops accepts both
 }
 
 // deployFilesList normalizes DeployFiles to []string regardless of YAML format.
@@ -349,6 +362,35 @@ func IsImplicitWebServerType(serviceType string) bool {
 	switch b {
 	case runtimePHPApach, runtimePHPNginx, runtimeNginx, runtimeStatic:
 		return true
+	}
+	return false
+}
+
+// HasPkgInstallWithoutSudo checks if any command in a YAML commands field
+// contains apk add or apt-get install without a sudo prefix.
+// Exported so tools package can delegate to it instead of duplicating.
+func HasPkgInstallWithoutSudo(commands any) bool {
+	return hasPkgInstallWithoutSudo(commands)
+}
+
+func hasPkgInstallWithoutSudo(commands any) bool {
+	var cmds []string
+	switch v := commands.(type) {
+	case string:
+		cmds = []string{v}
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				cmds = append(cmds, s)
+			}
+		}
+	}
+	for _, cmd := range cmds {
+		cmd = strings.TrimSpace(cmd)
+		if (strings.Contains(cmd, "apk add") || strings.Contains(cmd, "apt-get install")) &&
+			!strings.Contains(cmd, "sudo") {
+			return true
+		}
 	}
 	return false
 }

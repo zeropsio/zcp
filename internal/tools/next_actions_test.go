@@ -59,13 +59,13 @@ func TestDeploySuccessNextActions(t *testing.T) {
 			wantContains: "NOT running",
 		},
 		{
-			name: "self_deploy_implicit_uses_standard",
+			name: "self_deploy_implicit_mentions_autostart",
 			result: &ops.DeployResult{
 				SourceService:     "appdev",
 				TargetService:     "appdev",
 				TargetServiceType: "php-nginx@8.4",
 			},
-			wantContains: "zerops_logs",
+			wantContains: "auto-start",
 			wantAbsent:   "NOT running",
 		},
 		{
@@ -79,13 +79,13 @@ func TestDeploySuccessNextActions(t *testing.T) {
 			wantAbsent:   "NOT running",
 		},
 		{
-			name: "self_deploy_static_uses_standard",
+			name: "self_deploy_static_mentions_autostart",
 			result: &ops.DeployResult{
 				SourceService:     "webdev",
 				TargetService:     "webdev",
 				TargetServiceType: "static",
 			},
-			wantContains: "zerops_logs",
+			wantContains: "auto-start",
 			wantAbsent:   "NOT running",
 		},
 	}

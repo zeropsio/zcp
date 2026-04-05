@@ -88,7 +88,15 @@ func BuildTransitionMessage(state *WorkflowState) string {
 		}
 	}
 
-	sb.WriteString("\nInfrastructure is verified — services running with a verification server (hello-world). No application code has been written yet.\n")
+	sb.WriteString("\nInfrastructure is verified — services running with a verification server (hello-world). No application code has been written yet.\n\n")
+
+	// Deploy model primer — critical context the agent needs BEFORE entering develop workflow.
+	sb.WriteString("## Deploy Model (read before developing)\n\n")
+	sb.WriteString("- **Deploy = new container** — each deploy replaces the container. Only `deployFiles` content persists.\n")
+	sb.WriteString("- **Code on SSHFS mount** — write code to the local mount (`/var/www/{hostname}/`), not via SSH into the container.\n")
+	sb.WriteString("- **prepareCommands need `sudo`** — containers run as `zerops` user. Use `sudo apk add` / `sudo apt-get install`.\n")
+	sb.WriteString("- **Build ≠ Run** — build container has `build.base`, run container has `run.base`. Install runtime packages in `run.prepareCommands`.\n\n")
+
 	sb.WriteString("To implement the user's application, start the develop workflow:\n")
 	sb.WriteString("`zerops_workflow action=\"start\" workflow=\"develop\"`\n\n")
 

@@ -118,8 +118,9 @@ func deploySSH(
 	}
 	var warnings []string
 	mountPath := filepath.Join("/var/www", sourceService)
+	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	if _, statErr := os.Stat(mountPath); statErr == nil {
-		warnings = ValidateZeropsYml(mountPath, setupName)
+		warnings = ValidateZeropsYml(mountPath, setupName, serviceType)
 	}
 
 	cmd := buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, id)

@@ -877,7 +877,17 @@ func TestParseZeropsYml_ExtensionFallback(t *testing.T) {
 	}
 }
 
+// validateTestOpts extends runValidateTest with optional serviceType.
+type validateTestOpts struct {
+	serviceType string
+}
+
 func runValidateTest(t *testing.T, hostname, yml string, wantWarnings int, wantContains string, noWarnings bool, createDirs ...string) {
+	t.Helper()
+	runValidateTestWithOpts(t, hostname, yml, wantWarnings, wantContains, noWarnings, validateTestOpts{}, createDirs...)
+}
+
+func runValidateTestWithOpts(t *testing.T, hostname, yml string, wantWarnings int, wantContains string, noWarnings bool, opts validateTestOpts, createDirs ...string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -892,7 +902,7 @@ func runValidateTest(t *testing.T, hostname, yml string, wantWarnings int, wantC
 		}
 	}
 
-	warnings := ValidateZeropsYml(dir, hostname)
+	warnings := ValidateZeropsYml(dir, hostname, opts.serviceType)
 
 	if noWarnings {
 		if len(warnings) != 0 {
@@ -905,9 +915,227 @@ func runValidateTest(t *testing.T, hostname, yml string, wantWarnings int, wantC
 		t.Errorf("want >= %d warnings, got %d: %v", wantWarnings, len(warnings), warnings)
 	}
 
-	if wantContains != "" && len(warnings) > 0 {
-		if !strings.Contains(warnings[0], wantContains) {
-			t.Errorf("first warning %q should contain %q", warnings[0], wantContains)
+	if wantContains != "" {
+		found := false
+		for _, w := range warnings {
+			if strings.Contains(w, wantContains) {
+				found = true
+				break
+			}
 		}
+		if !found {
+			t.Errorf("no warning contains %q, got: %v", wantContains, warnings)
+		}
+	}
+}
+
+func TestValidateZeropsYml_ServiceTypeImplicitWebServer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		hostname    string
+		serviceType string
+		yml         string
+		noWarnings  bool
+	}{
+		{
+			name:        "php-nginx service type suppresses start/ports warnings even with php build base",
+			hostname:    "kanboard",
+			serviceType: "php-nginx@8.4",
+			yml: `zerops:
+  - setup: kanboard
+    build:
+      base: php@8.4
+      deployFiles: [.]
+`,
+			noWarnings: true,
+		},
+		{
+			name:        "php-apache service type suppresses warnings",
+			hostname:    "app",
+			serviceType: "php-apache@8.3",
+			yml: `zerops:
+  - setup: app
+    build:
+      base: php@8.3
+      deployFiles: [.]
+`,
+			noWarnings: true,
+		},
+		{
+			name:        "nginx service type suppresses warnings",
+			hostname:    "web",
+			serviceType: "nginx@1.26",
+			yml: `zerops:
+  - setup: web
+    build:
+      deployFiles: [.]
+`,
+			noWarnings: true,
+		},
+		{
+			name:        "static service type suppresses warnings",
+			hostname:    "web",
+			serviceType: "static",
+			yml: `zerops:
+  - setup: web
+    build:
+      deployFiles: [.]
+`,
+			noWarnings: true,
+		},
+		{
+			name:        "nodejs service type does not suppress warnings",
+			hostname:    "appdev",
+			serviceType: "nodejs@22",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+`,
+			noWarnings: false,
+		},
+		{
+			name:        "empty service type falls back to yaml bases only",
+			hostname:    "appdev",
+			serviceType: "",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      base: php@8.4
+      deployFiles: [.]
+`,
+			noWarnings: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			wantWarnings := 0
+			if !tt.noWarnings {
+				wantWarnings = 1
+			}
+			runValidateTestWithOpts(t, tt.hostname, tt.yml, wantWarnings, "", tt.noWarnings, validateTestOpts{serviceType: tt.serviceType})
+		})
+	}
+}
+
+func TestValidateZeropsYml_PrepareCommandsSudo(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		hostname     string
+		yml          string
+		wantContains string
+		noWarnings   bool
+	}{
+		{
+			name:     "run.prepareCommands with sudo is fine",
+			hostname: "app",
+			yml: `zerops:
+  - setup: app
+    build:
+      deployFiles: [.]
+    run:
+      base: php-nginx@8.4
+      prepareCommands:
+        - sudo apk add --no-cache php84-ctype
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "run.prepareCommands without sudo warns",
+			hostname: "app",
+			yml: `zerops:
+  - setup: app
+    build:
+      deployFiles: [.]
+    run:
+      base: php-nginx@8.4
+      prepareCommands:
+        - apk add --no-cache php84-ctype
+`,
+			wantContains: "sudo",
+		},
+		{
+			name:     "run.prepareCommands apt-get without sudo warns",
+			hostname: "app",
+			yml: `zerops:
+  - setup: app
+    build:
+      deployFiles: [.]
+    run:
+      base: php-nginx@8.4
+      prepareCommands:
+        - apt-get install -y libcurl4
+`,
+			wantContains: "sudo",
+		},
+		{
+			name:     "build.prepareCommands without sudo warns",
+			hostname: "app",
+			yml: `zerops:
+  - setup: app
+    build:
+      base: nodejs@22
+      prepareCommands:
+        - apk add --no-cache python3
+      buildCommands:
+        - npm install
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 3000
+`,
+			wantContains: "sudo",
+		},
+		{
+			name:     "build.prepareCommands with sudo is fine",
+			hostname: "app",
+			yml: `zerops:
+  - setup: app
+    build:
+      base: nodejs@22
+      prepareCommands:
+        - sudo apk add --no-cache python3
+      buildCommands:
+        - npm install
+      deployFiles: [.]
+    run:
+      start: node index.js
+      ports:
+        - port: 3000
+`,
+			noWarnings: true,
+		},
+		{
+			name:     "non-package commands dont need sudo",
+			hostname: "app",
+			yml: `zerops:
+  - setup: app
+    build:
+      deployFiles: [.]
+    run:
+      base: php-nginx@8.4
+      prepareCommands:
+        - echo "hello"
+`,
+			noWarnings: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			wantWarnings := 0
+			if !tt.noWarnings {
+				wantWarnings = 1
+			}
+			runValidateTestWithOpts(t, tt.hostname, tt.yml, wantWarnings, tt.wantContains, tt.noWarnings, validateTestOpts{})
+		})
 	}
 }
