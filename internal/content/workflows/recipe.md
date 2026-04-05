@@ -537,34 +537,88 @@ Recipe files were **auto-generated** in the output directory when deploy complet
 
 ### Do NOT edit import.yaml files by hand
 
-The 6 import.yaml files share the same service definitions — only scaling differs per tier. Editing them one by one means 6× the work, and agents that try end up rewriting files from scratch, dropping the auto-generated `zeropsSetup` + `buildFromGit` fields. **Use structured comment inputs instead.** One call bakes your comments into all 6 files at once.
+The template emits YAML structure + scaling values only — all prose commentary comes from your `envComments` input. Editing files by hand means agents rewrite them from scratch and drop the auto-generated `zeropsSetup` + `buildFromGit` fields. **Pass structured per-env comments instead.** One call bakes all 6 files.
 
-### Step 1: Provide framework-specific comments as structured input
+### Step 1: Write one tailored comment set per environment
 
-You already know what each service does — you built the app, wrote the zerops.yaml, and deployed both dev and stage. Pass that knowledge as `serviceComments` (keyed by base hostname — NOT `appdev`/`appstage`, just `app`) and `projectComment` (for the shared-secret block, if any):
+The 6 envs are **not interchangeable** — each exists to describe a different deployment context. Copying one comment block into all 6 defeats the purpose. Tailor each env's prose to what makes THAT env distinct:
+
+| Env | Distinct framing |
+|---|---|
+| 0 — AI Agent | dev workspace for an AI agent — SSH in, build, verify via subdomain |
+| 1 — Remote (CDE) | remote dev workspace for humans — SSH/IDE, full toolchain, live edit |
+| 2 — Local | local development + `zcli vpn` connecting to a Zerops-hosted validator |
+| 3 — Stage | single-container staging that mirrors production configuration |
+| 4 — Small Production | production with `minContainers: 2` for rolling-deploy availability |
+| 5 — HA Production | production with `cpuMode: DEDICATED`, `mode: HA`, `corePackage: SERIOUS` |
+
+Pass `envComments` keyed by env index (`"0"`..`"5"`). Each env carries a `service` map (keys match the hostnames that appear in THAT env's file) and an optional `project` comment. **Service key rule**: envs 0-1 carry the dev+stage pair, so keys are `"appdev"` and `"appstage"`; envs 2-5 collapse to a single runtime entry, so the key is the base hostname (`"app"`). Managed services (`"db"` etc.) keep the base hostname everywhere.
 
 ```
 zerops_workflow action="generate-finalize" \
-  serviceComments={
-    "app": "Runtime service. zeropsSetup:dev mounts /var/www via SSHFS for live development; zeropsSetup:prod builds once with composer install --no-dev and runs php artisan config:cache in run.initCommands so paths resolve against /var/www, not /build/source.",
-    "db": "PostgreSQL holds the schema, sessions, cache, and queued jobs — Laravel's default database driver for all three. Priority 10 so it starts before the app container."
-  } \
-  projectComment="APP_KEY is the AES-256-CBC encryption key. It is shared across ALL containers (not per-service) so session cookies and encrypted DB values remain valid when users hit different app containers behind the L7 balancer."
+  envComments={
+    "0": {
+      "service": {
+        "appdev": "Development workspace for AI agents. zeropsSetup:dev deploys the full tree so the agent can SSH in and edit source over SSHFS — PHP reinterprets each request, no restart required. Subdomain gives the agent a URL to verify output.",
+        "appstage": "Staging slot — agent deploys here with zerops_deploy setup=prod to validate the production build (composer install --no-dev + runtime config:cache) before finishing the task.",
+        "db": "PostgreSQL — carries schema, sessions, cache, and queued jobs (all Laravel drivers default to 'database' in the minimal tier). Shared by appdev and appstage. NON_HA fine for dev/staging; priority 10 so db starts before the app containers."
+      },
+      "project": "APP_KEY is Laravel's AES-256-CBC encryption key (32 bytes). Project-level so session cookies and encrypted DB attributes remain valid when the L7 balancer routes a request to any app container."
+    },
+    "1": {
+      "service": {
+        "appdev": "Remote development workspace — SSH or IDE-SSHFS into the dev container and edit source live. zeropsSetup:dev installs the full Composer dependency set so pint/phpunit/pail are available on the container. PHP interprets each request, no restart cycle.",
+        "appstage": "Staging for remote developers — zerops_deploy setup=prod mirrors what CI would build for production, letting you validate config:cache + route:cache before merging.",
+        "db": "PostgreSQL — same persistence layer as in env 0. NON_HA because remote dev environments are replaceable."
+      },
+      "project": "APP_KEY shared across containers (same rationale as env 0)."
+    },
+    "2": {
+      "service": {
+        "app": "Local-env validator — you develop against localhost on your machine (zcli vpn up to reach this Zerops Postgres), then push with zcli to this app container to verify the production build actually deploys cleanly before tagging a release.",
+        "db": "Managed Postgres reachable from your laptop via zcli VPN. Priority 10 so db starts before the app."
+      },
+      "project": "APP_KEY shared across containers."
+    },
+    "3": {
+      "service": {
+        "app": "Staging — mirrors production config (composer install --no-dev + runtime cache warming) but runs on a single container with lower scaling. Public subdomain for QA and stakeholder review. Git integration or zcli push from CI triggers deploys.",
+        "db": "Postgres — single-node because staging data is replaceable."
+      },
+      "project": "APP_KEY shared across containers."
+    },
+    "4": {
+      "service": {
+        "app": "Small production — minContainers: 2 guarantees at least two app containers at all times, spreading load and keeping traffic flowing during rolling deploys and container replacement. Zerops autoscales RAM within verticalAutoscaling bounds.",
+        "db": "Postgres single-node. Consider HA mode (env 5) for higher durability."
+      },
+      "project": "APP_KEY shared across containers — critical in production because sessions break if containers disagree on the key."
+    },
+    "5": {
+      "service": {
+        "app": "HA production. cpuMode: DEDICATED pins cores to this service so shared-tenant noise doesn't pollute request latency under sustained load. minContainers: 2 + autoscaling handles capacity; minFreeRamGB leaves 50% headroom for traffic spikes.",
+        "db": "Postgres HA — replicates data across multiple nodes so a single node failure causes no data loss or downtime. Dedicated CPU ensures DB ops don't compete with co-located workloads."
+      },
+      "project": "APP_KEY shared across every app container — required for session validity behind the L7 balancer at HA scale. corePackage: SERIOUS moves the project balancer, logging, and metrics onto dedicated infrastructure (no shared-tenant overhead) — essential for consistent latency at production throughput."
+    }
+  }
 ```
 
-**What comments should cover:**
-- **Runtime service**: what `zeropsSetup: dev` / `zeropsSetup: prod` means for THIS framework, why `enableSubdomainAccess` matters.
-- **Data service**: what THIS app uses it for (migrations + sessions + cache + jobs, etc.).
-- **Utility service** (mailpit, etc.): why it's present, how to access.
-- **Project secret**: what the framework uses it for (encryption, CSRF, session signing).
+**What each env's commentary should cover:**
+- **Role in the dev lifecycle** (AI agent workspace / remote dev / local validator / staging / small prod / HA prod) — what this env exists for.
+- **What `zeropsSetup: dev` / `zeropsSetup: prod` does for THIS framework** (composer install + caches / bundle step / etc.) — where it's relevant.
+- **Scaling rationale** for fields only present in this env: `minContainers: 2` (envs 4-5), `cpuMode: DEDICATED` (env 5), `mode: HA` (env 5), `corePackage: SERIOUS` (env 5).
+- **Managed service role** — what THIS app uses it for (sessions/cache/queue/etc. in minimal tier collapsing to one DB).
+- **Project secret** — what the framework uses it for + why it must be shared across containers.
 
 **Comment style:**
-- Explain WHY, not WHAT. Don't restate the key name.
+- Explain WHY, not WHAT. Don't restate the field name.
 - 1-3 sentences per service. Lines auto-wrap at 80 chars.
 - No section-heading decorators (`# -- Title --`, `# === Foo ===`).
 - Dev-to-dev tone — like explaining your config to a colleague.
+- Reference framework commands where they add precision (`bun --hot`, `composer install --no-dev`, `config:cache`).
 
-**Refining a comment**: just call `generate-finalize` again with the updated entry. Passing a key with an empty string deletes it. Passing `null`/omitting the map leaves existing comments untouched.
+**Refining one env**: call `generate-finalize` again with only that env's entry under `envComments` — other envs are left untouched. Within an env, passing a service key with an empty string deletes its comment. Passing an empty project string leaves the existing project comment.
 
 ### Step 2: Review READMEs
 

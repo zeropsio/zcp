@@ -49,11 +49,24 @@ type RecipePlan struct {
 	Targets     []RecipeTarget  `json:"targets"`
 	CreatedAt   string          `json:"createdAt,omitempty"`
 	// Agent-authored comments baked into import.yaml at generate-finalize time.
-	// Keyed by base hostname (e.g. "app", "db") — dev/stage variants share the base comment.
-	// Removes the ergonomic trap of editing 6 similar files by hand (agents rewrite instead of Edit).
-	ServiceComments map[string]string `json:"serviceComments,omitempty"`
-	// Comment for the project-level block (shared secret rationale, corePackage, etc.).
-	ProjectComment string `json:"projectComment,omitempty"`
+	// Keyed by env index as string ("0".."5"). Each env carries its own service
+	// and project comments — envs differ (dev workspace vs small-prod vs HA prod)
+	// and the commentary has to match, so the agent writes one set per env.
+	EnvComments map[string]EnvComments `json:"envComments,omitempty"`
+}
+
+// EnvComments holds the agent-authored comments for a single environment's
+// import.yaml file. Service keys match the service entries that appear in
+// THAT file — in envs 0-1 the runtime pair gives two keys ("appdev", "appstage"),
+// in envs 2-5 it collapses to one ("app").
+type EnvComments struct {
+	// Service maps a service key (as it appears in this env's import.yaml) to
+	// the comment block emitted above that service entry.
+	Service map[string]string `json:"service,omitempty"`
+	// Project is the comment emitted above the project: block. Can differ per
+	// env (e.g. env 5 explains corePackage: SERIOUS alongside the shared secret
+	// rationale, other envs only carry the secret rationale).
+	Project string `json:"project,omitempty"`
 }
 
 // RecipeTarget defines a service in the recipe workspace. There is NO role

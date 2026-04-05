@@ -429,32 +429,33 @@ func TestGenerateEnvImportYAML_Showcase_UtilityService(t *testing.T) {
 	})
 }
 
-func TestGenerateEnvImportYAML_Showcase_ManagedComments(t *testing.T) {
+func TestGenerateEnvImportYAML_TemplateEmitsNoServiceComments(t *testing.T) {
 	t.Parallel()
 
+	// The template is dumb about prose — it MUST NOT emit service-level
+	// platform-knowledge comments. All service commentary belongs to the agent
+	// (written per-env in plan.EnvComments). The only comment the template is
+	// allowed to emit is the file-level env-header paragraph at indent 0.
 	plan := testShowcasePlan()
-
-	t.Run("cache_not_called_database", func(t *testing.T) {
-		t.Parallel()
-		yaml := GenerateEnvImportYAML(plan, 0)
-
-		// Valkey comment should say "cache", not "database".
-		if strings.Contains(yaml, "Valkey single-node database") {
-			t.Error("cache service should be called 'cache', not 'database'")
+	for i := 0; i < EnvTierCount(); i++ {
+		yaml := GenerateEnvImportYAML(plan, i)
+		// Every non-header comment is a service/project-level comment —
+		// those are indented 2 spaces. Assert there are zero of them when
+		// the plan has no agent comments.
+		for line := range strings.SplitSeq(yaml, "\n") {
+			if strings.HasPrefix(line, "  # ") || line == "  #" {
+				t.Errorf("env %d: template emitted a service-indent comment (agent owns all service prose): %q", i, line)
+			}
 		}
-		if !strings.Contains(yaml, "Valkey") {
-			t.Error("expected Valkey type name in comments")
+		// And nothing that names specific data-service types in platform prose.
+		// If this starts appearing, some old template-comment path was
+		// accidentally reintroduced.
+		for _, forbidden := range []string{"Valkey single-node", "PostgreSQL single-node", "Meilisearch single-node"} {
+			if strings.Contains(yaml, forbidden) {
+				t.Errorf("env %d: template emitted platform prose %q — should be agent-owned", i, forbidden)
+			}
 		}
-	})
-
-	t.Run("search_not_called_database", func(t *testing.T) {
-		t.Parallel()
-		yaml := GenerateEnvImportYAML(plan, 0)
-
-		if strings.Contains(yaml, "Meilisearch single-node database") {
-			t.Error("search service should be called 'search engine', not 'database'")
-		}
-	})
+	}
 }
 
 func TestGenerateEnvREADME_FixedContent(t *testing.T) {
@@ -602,30 +603,220 @@ func TestBuildFinalizeOutput_FileCount(t *testing.T) {
 	}
 }
 
-func TestGenerateEnvImportYAML_PlatformComments(t *testing.T) {
+func TestGenerateEnvImportYAML_AgentCommentsRendered_Env01(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+	plan.EnvComments = map[string]EnvComments{
+		"0": {
+			Service: map[string]string{
+				"appdev":   "agent-written appdev comment for env 0",
+				"appstage": "agent-written appstage comment for env 0",
+				"db":       "agent-written db comment for env 0",
+			},
+			Project: "agent-written project comment for env 0",
+		},
+		"1": {
+			Service: map[string]string{
+				"appdev":   "agent-written appdev comment for env 1",
+				"appstage": "agent-written appstage comment for env 1",
+				"db":       "agent-written db comment for env 1",
+			},
+		},
+	}
+
+	// Env 0 carries all four agent comments.
+	yaml0 := GenerateEnvImportYAML(plan, 0)
+	for _, want := range []string{
+		"agent-written appdev comment for env 0",
+		"agent-written appstage comment for env 0",
+		"agent-written db comment for env 0",
+		"agent-written project comment for env 0",
+	} {
+		if !strings.Contains(yaml0, want) {
+			t.Errorf("env 0: expected %q in output", want)
+		}
+	}
+	// And env 0 MUST NOT leak env 1's comments (per-env isolation).
+	for _, forbidden := range []string{
+		"comment for env 1",
+	} {
+		if strings.Contains(yaml0, forbidden) {
+			t.Errorf("env 0: leaked env 1 content %q", forbidden)
+		}
+	}
+
+	// Env 1 carries its own comments and no project comment (not provided).
+	yaml1 := GenerateEnvImportYAML(plan, 1)
+	for _, want := range []string{
+		"agent-written appdev comment for env 1",
+		"agent-written appstage comment for env 1",
+		"agent-written db comment for env 1",
+	} {
+		if !strings.Contains(yaml1, want) {
+			t.Errorf("env 1: expected %q in output", want)
+		}
+	}
+	if strings.Contains(yaml1, "project comment for env") {
+		t.Error("env 1: rendered a project comment when none was provided")
+	}
+}
+
+func TestGenerateEnvImportYAML_AgentCommentsRendered_Env2Plus(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+	plan.EnvComments = map[string]EnvComments{
+		"2": {
+			Service: map[string]string{
+				"app": "local-env app comment",
+				"db":  "local-env db comment",
+			},
+			Project: "local-env project comment",
+		},
+		"4": {
+			Service: map[string]string{
+				"app": "small-prod app comment",
+				"db":  "small-prod db comment",
+			},
+			Project: "small-prod project comment",
+		},
+		"5": {
+			Service: map[string]string{
+				"app": "HA-prod app comment — explains DEDICATED CPU",
+				"db":  "HA-prod db comment — explains HA replication",
+			},
+			Project: "HA-prod project comment — explains corePackage SERIOUS",
+		},
+	}
+
+	cases := []struct {
+		env    int
+		wants  []string
+		avoids []string
+	}{
+		{
+			env: 2,
+			wants: []string{
+				"local-env app comment", "local-env db comment", "local-env project comment",
+			},
+			avoids: []string{"small-prod", "HA-prod"},
+		},
+		{
+			env: 4,
+			wants: []string{
+				"small-prod app comment", "small-prod db comment", "small-prod project comment",
+			},
+			avoids: []string{"local-env", "HA-prod"},
+		},
+		{
+			env: 5,
+			wants: []string{
+				"HA-prod app comment", "HA-prod db comment", "HA-prod project comment",
+				"DEDICATED CPU", "HA replication", "corePackage SERIOUS",
+			},
+			avoids: []string{"local-env", "small-prod"},
+		},
+	}
+	for _, tc := range cases {
+		yaml := GenerateEnvImportYAML(plan, tc.env)
+		for _, want := range tc.wants {
+			if !strings.Contains(yaml, want) {
+				t.Errorf("env %d: expected %q in output", tc.env, want)
+			}
+		}
+		for _, avoid := range tc.avoids {
+			if strings.Contains(yaml, avoid) {
+				t.Errorf("env %d: leaked cross-env content %q", tc.env, avoid)
+			}
+		}
+	}
+}
+
+func TestGenerateEnvImportYAML_AgentComments_HostnameKeyMustMatchEnvShape(t *testing.T) {
+	t.Parallel()
+
+	// In env 0-1 the runtime pair takes keys "appdev" + "appstage".
+	// If the agent provides only the base "app" key, nothing renders for
+	// the runtime pair — this asserts the strict key semantics so agents
+	// discover the mistake via the comment-ratio check.
+	plan := testMinimalPlan()
+	plan.EnvComments = map[string]EnvComments{
+		"0": {Service: map[string]string{"app": "wrong-key comment"}},
+	}
+	yaml0 := GenerateEnvImportYAML(plan, 0)
+	if strings.Contains(yaml0, "wrong-key comment") {
+		t.Error("env 0: base-hostname key 'app' should NOT match appdev/appstage entries")
+	}
+}
+
+func TestGenerateEnvImportYAML_AgentComments_CommentRatioReaches30Percent(t *testing.T) {
+	t.Parallel()
+
+	// Realistic-sized per-env comments (2 sentences per service + project)
+	// must push the comment ratio past the 30% finalize threshold for every
+	// env. This proves the check is achievable with the new per-env API.
+	longComment := "This is a realistic-length comment explaining the service's role in this environment. It covers what zeropsSetup does, why the scaling fields have their values, and what the developer should understand about this specific tier."
+
+	plan := testMinimalPlan()
+	plan.EnvComments = map[string]EnvComments{}
+	for i := 0; i < EnvTierCount(); i++ {
+		svc := map[string]string{"db": longComment}
+		if i <= 1 {
+			svc["appdev"] = longComment
+			svc["appstage"] = longComment
+		} else {
+			svc["app"] = longComment
+		}
+		plan.EnvComments[fmt.Sprintf("%d", i)] = EnvComments{
+			Service: svc,
+			Project: longComment,
+		}
+	}
+
+	for i := 0; i < EnvTierCount(); i++ {
+		yaml := GenerateEnvImportYAML(plan, i)
+		var commentLines, totalLines int
+		for line := range strings.SplitSeq(yaml, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || trimmed == "#zeropsPreprocessor=on" {
+				continue
+			}
+			totalLines++
+			if strings.HasPrefix(trimmed, "#") {
+				commentLines++
+			}
+		}
+		ratio := float64(commentLines) / float64(totalLines)
+		if ratio < 0.30 {
+			t.Errorf("env %d: ratio %.0f%% below 30%% threshold with realistic agent comments — API can't reach the bar", i, ratio*100)
+		}
+	}
+}
+
+func TestGenerateEnvImportYAML_StructuralFields(t *testing.T) {
 	t.Parallel()
 
 	plan := testMinimalPlan()
 
-	// Env 0: data service gets platform comments.
+	// Env 0: buildFromGit repo, NON_HA + priority field values.
 	yaml0 := GenerateEnvImportYAML(plan, 0)
 	for _, want := range []string{
-		"zerops-recipe-apps", // correct buildFromGit org
-		"MariaDB",            // DB type name in comment
-		"NON_HA",             // mode explanation
-		"Priority 10",        // priority explanation
+		"zerops-recipe-apps", // buildFromGit org in URL
+		"mode: NON_HA",       // field value
+		"priority: 10",       // field value
 	} {
 		if !strings.Contains(yaml0, want) {
 			t.Errorf("env 0: expected %q in output", want)
 		}
 	}
 
-	// Env 5: HA + DEDICATED + SERIOUS in platform comments.
+	// Env 5: HA + DEDICATED + SERIOUS field values.
 	yaml5 := GenerateEnvImportYAML(plan, 5)
 	for _, want := range []string{
-		"SERIOUS",   // corePackage comment
-		"HA",        // mode
-		"DEDICATED", // cpuMode
+		"corePackage: SERIOUS",
+		"mode: HA",
+		"cpuMode: DEDICATED",
 	} {
 		if !strings.Contains(yaml5, want) {
 			t.Errorf("env 5: expected %q in output", want)
@@ -633,15 +824,15 @@ func TestGenerateEnvImportYAML_PlatformComments(t *testing.T) {
 	}
 }
 
-func TestGenerateEnvImportYAML_TemplateBaseline_BelowCommentThreshold(t *testing.T) {
+func TestGenerateEnvImportYAML_BaselineBelowCommentThreshold(t *testing.T) {
 	t.Parallel()
 
 	plan := testMinimalPlan()
 
-	// Template generates platform comments only — baseline is BELOW the 30%
-	// finalize threshold. This is intentional: the agent MUST add framework
-	// comments to pass the checker. Verify the template isn't accidentally
-	// meeting the threshold on its own.
+	// With no agent comments, the only comments the template emits are the
+	// env-header paragraph at the top of each file. The resulting comment
+	// ratio MUST stay below the 30% finalize threshold so the checker still
+	// forces the agent to contribute per-env service + project prose.
 	for i := 0; i < EnvTierCount(); i++ {
 		yaml := GenerateEnvImportYAML(plan, i)
 		var commentLines, totalLines int
@@ -659,14 +850,9 @@ func TestGenerateEnvImportYAML_TemplateBaseline_BelowCommentThreshold(t *testing
 			t.Fatalf("env %d: no content", i)
 		}
 		ratio := float64(commentLines) / float64(totalLines)
-		// Platform comments should provide ~10-25% baseline, NOT >= 30%.
 		if ratio >= 0.30 {
-			t.Errorf("env %d: template ratio %.0f%% meets 30%% threshold — agent won't be forced to add comments",
+			t.Errorf("env %d: template baseline ratio %.0f%% meets 30%% threshold — agent won't be forced to add comments",
 				i, ratio*100)
-		}
-		// But should have SOME platform comments (not zero).
-		if commentLines == 0 {
-			t.Errorf("env %d: expected at least some platform comments", i)
 		}
 	}
 }

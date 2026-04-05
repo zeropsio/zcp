@@ -37,9 +37,8 @@ type WorkflowInput struct {
 	RecipePlan  *workflow.RecipePlan       `json:"recipePlan,omitempty"  jsonschema:"Structured recipe plan for research step completion."`
 
 	// Recipe comment inputs — passed to generate-finalize to bake agent-authored
-	// comments into all 6 import.yaml files at once, replacing per-file Edit.
-	ServiceComments map[string]string `json:"serviceComments,omitempty" jsonschema:"Recipe generate-finalize only: map of base hostname (e.g. 'app', 'db') to framework-specific comment. Comment is emitted above the service in ALL 6 import.yaml files. Use this instead of editing files by hand."`
-	ProjectComment  string            `json:"projectComment,omitempty"  jsonschema:"Recipe generate-finalize only: comment emitted above the project: block in ALL 6 import.yaml files (typically explains the shared secret rationale)."`
+	// per-env comments into the 6 import.yaml files, replacing per-file Edit.
+	EnvComments map[string]workflow.EnvComments `json:"envComments,omitempty" jsonschema:"Recipe generate-finalize only: per-env comments for all 6 import.yaml files. Keyed by env index as string ('0'..'5'). Each env has {service: {hostname: comment}, project: comment}. Service keys match the hostnames that appear in that env's file — envs 0-1 (dev/stage pair) take 'appdev' and 'appstage'; envs 2-5 take the base hostname 'app'. Each env's commentary should reflect what makes THAT env distinct (AI agent workspace / remote CDE / local validator / stage / small prod with minContainers / HA prod with DEDICATED CPU + corePackage)."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -121,7 +120,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir, mounter)
 	case "generate-finalize":
 		if detectActiveWorkflow(engine) == workflowRecipe {
-			return handleRecipeGenerateFinalize(engine, input.ServiceComments, input.ProjectComment)
+			return handleRecipeGenerateFinalize(engine, input.EnvComments)
 		}
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

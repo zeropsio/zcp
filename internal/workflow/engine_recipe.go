@@ -198,11 +198,16 @@ func (e *Engine) RecipeSession() *RecipeState {
 	return state.Recipe
 }
 
-// UpdateRecipeComments merges agent-authored comments into the recipe plan and
-// persists the session. Provided entries overwrite; empty-string values delete
-// prior entries; nil map leaves existing entries untouched. Empty projectComment
-// is a no-op (pass a single space to clear if ever needed).
-func (e *Engine) UpdateRecipeComments(serviceComments map[string]string, projectComment string) error {
+// UpdateRecipeComments merges agent-authored per-env comments into the recipe
+// plan and persists the session. Merge semantics, per env:
+//   - Service entries with a non-empty value overwrite prior entries for that key.
+//   - Service entries with an empty-string value delete the prior entry.
+//   - A non-empty Project value overwrites; an empty Project value leaves the
+//     prior value untouched (pass a single space to clear if ever needed).
+//
+// Envs not present in the input map are left untouched, so the agent can
+// refine one env at a time without restating the others.
+func (e *Engine) UpdateRecipeComments(envComments map[string]EnvComments) error {
 	state, err := e.loadState()
 	if err != nil {
 		return fmt.Errorf("update recipe comments load: %w", err)
@@ -211,20 +216,29 @@ func (e *Engine) UpdateRecipeComments(serviceComments map[string]string, project
 		return fmt.Errorf("update recipe comments: no active recipe plan")
 	}
 	plan := state.Recipe.Plan
-	if serviceComments != nil {
-		if plan.ServiceComments == nil {
-			plan.ServiceComments = map[string]string{}
+	if envComments != nil {
+		if plan.EnvComments == nil {
+			plan.EnvComments = map[string]EnvComments{}
 		}
-		for k, v := range serviceComments {
-			if v == "" {
-				delete(plan.ServiceComments, k)
-			} else {
-				plan.ServiceComments[k] = v
+		for envKey, incoming := range envComments {
+			existing := plan.EnvComments[envKey]
+			if incoming.Service != nil {
+				if existing.Service == nil {
+					existing.Service = map[string]string{}
+				}
+				for svcKey, text := range incoming.Service {
+					if text == "" {
+						delete(existing.Service, svcKey)
+					} else {
+						existing.Service[svcKey] = text
+					}
+				}
 			}
+			if incoming.Project != "" {
+				existing.Project = incoming.Project
+			}
+			plan.EnvComments[envKey] = existing
 		}
-	}
-	if projectComment != "" {
-		plan.ProjectComment = projectComment
 	}
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	return saveSessionState(e.stateDir, e.sessionID, state)

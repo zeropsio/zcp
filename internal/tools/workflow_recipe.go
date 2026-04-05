@@ -133,9 +133,9 @@ func handleRecipeSkip(_ context.Context, engine *workflow.Engine, input Workflow
 
 // handleRecipeGenerateFinalize generates all recipe repo files using BuildFinalizeOutput.
 // Writes files to the recipe output directory and returns the list of files written.
-// When serviceComments or projectComment are provided, they are merged into the plan
-// and baked into every generated import.yaml — no per-file hand-editing required.
-func handleRecipeGenerateFinalize(engine *workflow.Engine, serviceComments map[string]string, projectComment string) (*mcp.CallToolResult, any, error) {
+// When envComments is provided, it is merged into the plan and baked into the
+// generated import.yaml files — no per-file hand-editing required.
+func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[string]workflow.EnvComments) (*mcp.CallToolResult, any, error) {
 	session := engine.RecipeSession()
 	if session == nil {
 		return convertError(platform.NewPlatformError(
@@ -160,11 +160,11 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, serviceComments map[s
 			"")), nil, nil
 	}
 
-	// Persist comment inputs into the plan (provided entries overwrite; empty
-	// string deletes prior entries; nil map leaves existing untouched). Then
+	// Persist per-env comment inputs into the plan (provided env keys merge;
+	// empty service values delete; nil map leaves existing untouched). Then
 	// reload the session so BuildFinalizeOutput sees the merged plan.
-	if serviceComments != nil || projectComment != "" {
-		if err := engine.UpdateRecipeComments(serviceComments, projectComment); err != nil {
+	if envComments != nil {
+		if err := engine.UpdateRecipeComments(envComments); err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("persist comment inputs: %v", err),
@@ -201,7 +201,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, serviceComments map[s
 		written = append(written, relPath)
 	}
 
-	hasComments := len(plan.ServiceComments) > 0 || plan.ProjectComment != ""
+	hasComments := len(plan.EnvComments) > 0
 	var message string
 	var readmeNote string
 	if readmeOverlay {
@@ -210,9 +210,9 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, serviceComments map[s
 		readmeNote = " App README uses the TODO scaffold — write /var/www/{appHostname}dev/README.md during generate step and re-run generate-finalize to overlay it."
 	}
 	if hasComments {
-		message = fmt.Sprintf("Regenerated %d recipe files with your comments baked into ALL 6 import.yaml files. Review the output — do NOT edit these files by hand. To refine a comment, call generate-finalize again with updated serviceComments/projectComment (it will merge and regenerate).%s", len(written), readmeNote)
+		message = fmt.Sprintf("Regenerated %d recipe files with your per-env comments baked in. Review the output — do NOT edit these files by hand. To refine one env, call generate-finalize again with just that env's updated entry under envComments (merge semantics, rest left untouched).%s", len(written), readmeNote)
 	} else {
-		message = fmt.Sprintf("Regenerated %d recipe files with platform comments only. The 30%% comment ratio check will fail until you add framework-specific comments. Provide them via `zerops_workflow action=\"generate-finalize\" serviceComments={\"<hostname>\":\"<why this service is here>\", ...} projectComment=\"<shared-secret rationale>\"` — one call bakes your comments into ALL 6 files. Do NOT edit import.yaml files by hand (rewriting drops auto-generated zeropsSetup/buildFromGit fields).%s", len(written), readmeNote)
+		message = fmt.Sprintf("Regenerated %d recipe files — no agent comments yet. The 30%% comment ratio check will fail until you provide them. Call `zerops_workflow action=\"generate-finalize\" envComments={\"0\":{\"service\":{\"appdev\":\"...\",\"appstage\":\"...\",\"db\":\"...\"},\"project\":\"...\"}, \"1\":{...}, ..., \"5\":{...}}` with one entry per env (0..5). Service keys match hostnames in that file — envs 0-1 carry appdev+appstage, envs 2-5 carry app. Each env's commentary should reflect what makes THAT env distinct. Do NOT edit import.yaml files by hand (rewriting drops auto-generated zeropsSetup/buildFromGit fields).%s", len(written), readmeNote)
 	}
 	return jsonResult(map[string]any{
 		"status":  "generated",
