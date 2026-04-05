@@ -46,6 +46,15 @@ func pollDeployBuild(
 			result.Message = fmt.Sprintf("Successfully deployed to %s", result.TargetService)
 		}
 		result.NextActions = deploySuccessNextActions(result)
+		// Fetch build warnings/errors even on success (best-effort).
+		// Surfaces issues like silent build failures, missing deployFiles output.
+		if logFetcher != nil {
+			buildWarnings := ops.FetchBuildWarnings(ctx, client, logFetcher, projectID, event, 20)
+			if len(buildWarnings) > 0 {
+				result.BuildLogs = buildWarnings
+				result.BuildLogsSource = buildContainerSource
+			}
+		}
 		if sshDeployer != nil {
 			if err := ops.WaitSSHReady(ctx, sshDeployer, result.TargetService); err != nil {
 				result.Warnings = append(result.Warnings,

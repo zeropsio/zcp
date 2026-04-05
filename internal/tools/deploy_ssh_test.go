@@ -126,6 +126,117 @@ func TestDeployTool_SelfDeploy_TargetOnly(t *testing.T) {
 	}
 }
 
+func TestDeployTool_ActiveDeploy_WithBuildWarnings(t *testing.T) {
+	t.Parallel()
+
+	buildSvcID := "build-svc-42"
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-1",
+				ProjectID:      "proj-1",
+				ServiceStackID: "svc-2",
+				Status:         statusActive,
+				Sequence:       1,
+				Build: &platform.BuildInfo{
+					ServiceStackID: &buildSvcID,
+				},
+			},
+		}).
+		WithLogAccess(&platform.LogAccess{
+			AccessToken: "tok", URL: "https://log.example.com/logs",
+		})
+	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
+		{Message: "WARN: deployFiles paths not found: dist"},
+	})
+	ssh := &stubSSH{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{})
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"sourceService": "builder",
+		"targetService": "app",
+	})
+
+	if result.IsError {
+		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed.Status != statusDeployed {
+		t.Errorf("status = %s, want DEPLOYED", parsed.Status)
+	}
+	if len(parsed.BuildLogs) != 1 {
+		t.Fatalf("expected 1 build warning line, got %d", len(parsed.BuildLogs))
+	}
+	if parsed.BuildLogs[0] != "WARN: deployFiles paths not found: dist" {
+		t.Errorf("buildLogs[0] = %q, want warning about deployFiles", parsed.BuildLogs[0])
+	}
+	if parsed.BuildLogsSource != buildContainerSource {
+		t.Errorf("buildLogsSource = %q, want %q", parsed.BuildLogsSource, buildContainerSource)
+	}
+}
+
+func TestDeployTool_ActiveDeploy_NoBuildWarnings(t *testing.T) {
+	t.Parallel()
+
+	buildSvcID := "build-svc-43"
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "builder"},
+			{ID: "svc-2", Name: "app"},
+		}).
+		WithAppVersionEvents([]platform.AppVersionEvent{
+			{
+				ID:             "av-1",
+				ProjectID:      "proj-1",
+				ServiceStackID: "svc-2",
+				Status:         statusActive,
+				Sequence:       1,
+				Build: &platform.BuildInfo{
+					ServiceStackID: &buildSvcID,
+				},
+			},
+		}).
+		WithLogAccess(&platform.LogAccess{
+			AccessToken: "tok", URL: "https://log.example.com/logs",
+		})
+	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{})
+	ssh := &stubSSH{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{})
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"sourceService": "builder",
+		"targetService": "app",
+	})
+
+	var parsed ops.DeployResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if parsed.Status != statusDeployed {
+		t.Errorf("status = %s, want DEPLOYED", parsed.Status)
+	}
+	if len(parsed.BuildLogs) != 0 {
+		t.Errorf("expected no buildLogs for clean deploy, got %d", len(parsed.BuildLogs))
+	}
+	if parsed.BuildLogsSource != "" {
+		t.Errorf("buildLogsSource should be empty for clean deploy, got %q", parsed.BuildLogsSource)
+	}
+}
+
 func TestDeployTool_BuildFailed(t *testing.T) {
 	t.Parallel()
 
