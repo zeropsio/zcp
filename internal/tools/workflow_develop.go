@@ -19,6 +19,27 @@ func handleDeployStart(ctx context.Context, engine *workflow.Engine, client plat
 			"Run bootstrap first to create services")), nil, nil
 	}
 
+	// Prune stale metas from old bootstrap sessions whose services no longer exist.
+	if client != nil {
+		services, listErr := client.ListServices(ctx, projectID)
+		if listErr == nil {
+			live := make(map[string]bool, len(services))
+			for _, svc := range services {
+				live[svc.Name] = true
+			}
+			workflow.PruneServiceMetas(engine.StateDir(), live)
+
+			// Re-read after pruning to get the clean list.
+			metas, err = workflow.ListServiceMetas(engine.StateDir())
+			if err != nil {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter,
+					fmt.Sprintf("Failed to read service metas after pruning: %v", err),
+					"")), nil, nil
+			}
+		}
+	}
+
 	if len(metas) == 0 {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

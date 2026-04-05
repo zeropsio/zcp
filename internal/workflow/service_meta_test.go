@@ -361,6 +361,109 @@ func TestServiceMeta_IsComplete(t *testing.T) {
 	}
 }
 
+func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		diskMetas     []*ServiceMeta
+		liveHostnames []string
+		wantRemaining []string
+	}{
+		{
+			"removes stale metas not in live project",
+			[]*ServiceMeta{
+				{Hostname: "appdev", Mode: "standard", StageHostname: "appstage", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+				{Hostname: "docs", Mode: "simple", BootstrapSession: "s2", BootstrappedAt: "2026-03-04T12:00:00Z"},
+				{Hostname: "ghost", BootstrapSession: "s3", BootstrappedAt: "2026-03-04T12:00:00Z"},
+			},
+			[]string{"appdev", "appstage", "db"},
+			[]string{"appdev"},
+		},
+		{
+			"keeps meta when stage hostname is live",
+			[]*ServiceMeta{
+				{Hostname: "appdev", Mode: "standard", StageHostname: "appstage", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+			},
+			[]string{"appstage"}, // only stage exists
+			[]string{"appdev"},
+		},
+		{
+			"removes all when none are live",
+			[]*ServiceMeta{
+				{Hostname: "old1", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+				{Hostname: "old2", BootstrapSession: "s2", BootstrappedAt: "2026-03-04T12:00:00Z"},
+			},
+			[]string{"unrelated"},
+			nil,
+		},
+		{
+			"keeps all when all are live",
+			[]*ServiceMeta{
+				{Hostname: "a", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+				{Hostname: "b", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+			},
+			[]string{"a", "b"},
+			[]string{"a", "b"},
+		},
+		{
+			"empty live set removes all",
+			[]*ServiceMeta{
+				{Hostname: "x", BootstrapSession: "s1", BootstrappedAt: "2026-03-04T12:00:00Z"},
+			},
+			nil,
+			nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+
+			for _, m := range tt.diskMetas {
+				if err := WriteServiceMeta(dir, m); err != nil {
+					t.Fatalf("WriteServiceMeta(%s): %v", m.Hostname, err)
+				}
+			}
+
+			live := make(map[string]bool, len(tt.liveHostnames))
+			for _, h := range tt.liveHostnames {
+				live[h] = true
+			}
+
+			pruned := PruneServiceMetas(dir, live)
+
+			remaining, err := ListServiceMetas(dir)
+			if err != nil {
+				t.Fatalf("ListServiceMetas: %v", err)
+			}
+
+			var gotHostnames []string
+			for _, m := range remaining {
+				gotHostnames = append(gotHostnames, m.Hostname)
+			}
+			sort.Strings(gotHostnames)
+			sort.Strings(tt.wantRemaining)
+
+			if len(gotHostnames) != len(tt.wantRemaining) {
+				t.Fatalf("remaining metas: want %v, got %v", tt.wantRemaining, gotHostnames)
+			}
+			for i := range gotHostnames {
+				if gotHostnames[i] != tt.wantRemaining[i] {
+					t.Errorf("remaining[%d]: want %s, got %s", i, tt.wantRemaining[i], gotHostnames[i])
+				}
+			}
+
+			// Verify pruned count matches removed count.
+			wantPruned := len(tt.diskMetas) - len(tt.wantRemaining)
+			if pruned != wantPruned {
+				t.Errorf("pruned count: want %d, got %d", wantPruned, pruned)
+			}
+		})
+	}
+}
+
 func TestServiceMeta_NoStatusFieldInJSON(t *testing.T) {
 	t.Parallel()
 

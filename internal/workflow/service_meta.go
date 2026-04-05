@@ -112,6 +112,27 @@ func ListServiceMetas(baseDir string) ([]*ServiceMeta, error) {
 	return metas, nil
 }
 
+// PruneServiceMetas removes service meta files that don't match any live hostname.
+// A meta is kept if its Hostname OR StageHostname exists in liveHostnames.
+// Returns the number of pruned entries.
+func PruneServiceMetas(baseDir string, liveHostnames map[string]bool) int {
+	metas, err := ListServiceMetas(baseDir)
+	if err != nil || len(metas) == 0 {
+		return 0
+	}
+
+	pruned := 0
+	for _, m := range metas {
+		if liveHostnames[m.Hostname] || liveHostnames[m.StageHostname] {
+			continue
+		}
+		if err := DeleteServiceMeta(baseDir, m.Hostname); err == nil {
+			pruned++
+		}
+	}
+	return pruned
+}
+
 // DeleteServiceMeta removes the service metadata file for the given hostname.
 // Returns nil if the file does not exist (idempotent).
 func DeleteServiceMeta(baseDir, hostname string) error {
