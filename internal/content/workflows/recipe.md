@@ -138,11 +138,20 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 **Workspace import MUST NOT contain a `project:` section.** The ZCP project already exists — the API rejects imports that include `project:`. Only `services:` is allowed here. (The 6 recipe **deliverable** imports written in the finalize step DO contain `project:` with `envVariables` + preprocessor — that's a different file for a different use case.)
 
 **Framework secrets**: If `needsAppSecret == true`, determine during research whether the secret is used for encryption/sessions (shared by services hitting the same DB) or is per-service.
-- **Shared** (used for encryption, CSRF, session signing — any secret that multiple services must agree on): do NOT add to workspace import (see above — no `project:` allowed). After services reach RUNNING, generate a 32-char random value (e.g., `openssl rand -hex 16`) and set it at project level:
+- **Shared** (used for encryption, CSRF, session signing — any secret that multiple services must agree on): do NOT add to workspace import (see above — no `project:` allowed). After services reach RUNNING, generate the value on the dev container and set it at project level:
   ```
   zerops_env project=true action=set variables=["{SECRET_KEY_NAME}={generated_value}"]
   ```
-  `zerops_env` auto-restarts affected services so the new value takes effect. **Do not prefix the value** (e.g., `base64:`) unless the framework strictly requires it — the recipe deliverable generates the raw value via `<@generateRandomString(<32>)>`, so the workspace value should match.
+  `zerops_env` auto-restarts affected services so the new value takes effect.
+
+  **CRITICAL — use the framework's own key-generation command when one exists.** Framework-native commands guarantee the correct byte length and format the framework's cipher requires. Hand-crafting values with `openssl` has caused repeated incidents where the byte count was wrong (e.g., a 34-byte base64-decoded value when AES-256-CBC needs exactly 32 bytes — crashes every request during boot, not only encrypted routes). Run the framework command over SSH on the dev container so its PHP/Ruby/Python runtime is used:
+  - **Laravel**: `ssh appdev "php artisan key:generate --show"` → emits `base64:<44 chars>`. Keep the `base64:` prefix verbatim — Laravel's Encrypter decodes it to the 32 bytes AES-256-CBC requires.
+  - **Rails**: `ssh appdev "rails secret"` → 128-char hex string.
+  - **Django**: `ssh appdev "python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'"` → 50-char URL-safe string.
+  - **Symfony**: `ssh appdev "php -r \"echo bin2hex(random_bytes(16));\""` → 32-char hex string.
+  - **Unknown framework / no helper**: `openssl rand -hex 16` (32 hex chars, no prefix). Use only when research found no framework-native command.
+
+  The recipe deliverable imports use `<@generateRandomString(<32>)>` (32 alphanumeric chars, no prefix). This is a universally-safe default — frameworks that accept raw 32-byte keys (Laravel without `base64:` prefix, most custom code) read it directly. If the framework REQUIRES a specific format (like Laravel's canonical `base64:` prefix), the workspace value you set via `zerops_env` should match what end users will see from the deliverable — document the format choice in the README's knowledge-base fragment.
 - **Per-service** (unique API tokens, webhook secrets): add as service-level `envSecrets` in import.yaml.
 
 Follow the injected **import.yaml Schema** for the three env var levels (project envVariables, service envSecrets, zerops.yaml run.envVariables).

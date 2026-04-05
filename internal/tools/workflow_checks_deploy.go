@@ -55,6 +55,10 @@ func checkDeployPrepare(client platform.Client, projectID, stateDir string) work
 			Name: "zerops_yml_exists", Status: statusPass,
 		})
 
+		// Dev/prod env-mode drift check — catches copy-paste where dev
+		// accidentally inherits prod's APP_ENV/DEBUG/LOG_LEVEL values.
+		checks = append(checks, checkDevProdEnvDivergence(doc)...)
+
 		// Check setup entries match deploy targets.
 		// Try generic names (dev/prod) first, then hostname (legacy).
 		for _, t := range state.Targets {
@@ -174,6 +178,70 @@ func checkDeployResult(client platform.Client, projectID string) workflow.Deploy
 			Passed: allPassed, Checks: checks, Summary: summary,
 		}, nil
 	}
+}
+
+// frameworkModeKeys lists envVariables that encode a framework's run mode —
+// identical values across dev and prod setups signal copy-paste drift.
+// Includes the major web frameworks' mode/debug/log-level keys; additions
+// are welcome as new framework support lands.
+var frameworkModeKeys = []string{
+	// PHP frameworks
+	"APP_ENV", "APP_DEBUG", "APP_ENVIRONMENT",
+	"LOG_LEVEL", "APP_LOG_LEVEL",
+	// Ruby / Rack
+	"RAILS_ENV", "RACK_ENV",
+	// Node.js
+	"NODE_ENV",
+	// Python
+	"FLASK_ENV", "FLASK_DEBUG",
+	"DJANGO_DEBUG", "DJANGO_SETTINGS_MODULE",
+	// .NET
+	"ASPNETCORE_ENVIRONMENT", "DOTNET_ENVIRONMENT",
+	// Go
+	"GIN_MODE", "GO_ENV",
+	// Java
+	"SPRING_PROFILES_ACTIVE",
+	// Generic
+	"DEBUG", "ENVIRONMENT", "ENV",
+}
+
+// checkDevProdEnvDivergence flags dev/prod setups whose framework-mode env
+// variables carry identical values. The two setups should differ on at least
+// the mode flag (APP_ENV=local vs production, RAILS_ENV=development vs
+// production, etc.) — identical values mean the dev container will behave
+// like production: debug pages hidden, caching enabled, full-source reloads
+// suppressed. Copy-paste from prod → dev is the usual root cause.
+func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
+	devEntry := doc.FindEntry("dev")
+	prodEntry := doc.FindEntry("prod")
+	if devEntry == nil || prodEntry == nil {
+		// Only fires when both setups coexist in zerops.yaml.
+		return nil
+	}
+	devEnv := devEntry.Run.EnvVariables
+	prodEnv := prodEntry.Run.EnvVariables
+	if len(devEnv) == 0 || len(prodEnv) == 0 {
+		return nil
+	}
+
+	var identical []string
+	for _, key := range frameworkModeKeys {
+		dv, inDev := devEnv[key]
+		pv, inProd := prodEnv[key]
+		if inDev && inProd && dv == pv {
+			identical = append(identical, fmt.Sprintf("%s=%s", key, dv))
+		}
+	}
+	if len(identical) == 0 {
+		return []workflow.StepCheck{{
+			Name: "dev_prod_env_divergence", Status: statusPass,
+		}}
+	}
+	return []workflow.StepCheck{{
+		Name:   "dev_prod_env_divergence",
+		Status: statusFail,
+		Detail: fmt.Sprintf("dev and prod setups share identical framework-mode values: %s — dev should use the framework's development mode (e.g., APP_ENV=local/APP_DEBUG=true for Laravel, RAILS_ENV=development for Rails, NODE_ENV=development for Node) so developers see stack traces and disabled caches while iterating", strings.Join(identical, ", ")),
+	}}
 }
 
 // findAndParseZeropsYml locates and parses zerops.yaml from project root or mount paths.

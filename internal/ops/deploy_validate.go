@@ -205,12 +205,13 @@ func (b zeropsYmlBuild) deployFilesList() []string {
 }
 
 type zeropsYmlRun struct {
-	Base            string          `yaml:"base"`
-	Start           string          `yaml:"start"`
-	Ports           []zeropsYmlPort `yaml:"ports"`
-	HealthCheck     any             `yaml:"healthCheck"`
-	DeployFiles     any             `yaml:"deployFiles"`     // catch misplaced field (belongs under build:)
-	PrepareCommands any             `yaml:"prepareCommands"` // for /var/www detection
+	Base            string            `yaml:"base"`
+	Start           string            `yaml:"start"`
+	Ports           []zeropsYmlPort   `yaml:"ports"`
+	HealthCheck     any               `yaml:"healthCheck"`
+	DeployFiles     any               `yaml:"deployFiles"`     // catch misplaced field (belongs under build:)
+	PrepareCommands any               `yaml:"prepareCommands"` // for /var/www detection
+	EnvVariables    map[string]string `yaml:"envVariables"`    // canonical location (zerops.yaml schema)
 }
 
 type zeropsYmlPort struct {
