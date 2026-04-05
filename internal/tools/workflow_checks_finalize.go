@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -232,6 +233,10 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 
 	// Section-heading comment patterns — labels, not explanations.
 	checks = append(checks, checkSectionHeadingComments(content, prefix)...)
+
+	// Cross-env references — each env's import.yaml is published as a
+	// standalone deploy target; siblings are invisible to the reader.
+	checks = append(checks, checkCrossEnvReferences(content, prefix)...)
 
 	// Shared secret check — should be project-level envVariables, not per-service envSecrets.
 	if plan.Research.NeedsAppSecret {
@@ -485,6 +490,42 @@ func checkSectionHeadingComments(content, prefix string) []workflow.StepCheck {
 	}
 	return []workflow.StepCheck{{
 		Name: prefix + "_comment_headings", Status: statusPass,
+	}}
+}
+
+// crossEnvRefPattern matches phrases that name a sibling environment by its
+// tier number ("env 0", "env 5", "envs 4-5", "env4", "environment 3"). Each
+// recipe deliverable is published standalone on zerops.io/recipes — users see
+// one env's files, never the siblings — so such references are context-free
+// at the point of reading. The pattern is intentionally scoped to the
+// "env/environment + number" spelling; legitimate prose like "environment
+// variables" or "production" is not flagged.
+var crossEnvRefPattern = regexp.MustCompile(`\b[Ee]nv(ironment)?s?\s*[0-9]`)
+
+// checkCrossEnvReferences scans comment lines for cross-env references.
+func checkCrossEnvReferences(content, prefix string) []workflow.StepCheck {
+	var offenders []string
+	for i, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if crossEnvRefPattern.MatchString(trimmed) {
+			offenders = append(offenders, fmt.Sprintf("line %d", i+1))
+		}
+	}
+	if len(offenders) > 0 {
+		detail := strings.Join(offenders, ", ")
+		if len(offenders) > 3 {
+			detail = strings.Join(offenders[:3], ", ") + fmt.Sprintf(" and %d more", len(offenders)-3)
+		}
+		return []workflow.StepCheck{{
+			Name: prefix + "_cross_env_refs", Status: statusFail,
+			Detail: "comment references a sibling environment by tier number at " + detail + " — each env's import.yaml is published standalone on zerops.io/recipes; readers never see the other envs, so references like 'env 0', 'env 4', 'see env 5' are context-free. Rewrite the comment to describe THIS env on its own terms.",
+		}}
+	}
+	return []workflow.StepCheck{{
+		Name: prefix + "_cross_env_refs", Status: statusPass,
 	}}
 }
 

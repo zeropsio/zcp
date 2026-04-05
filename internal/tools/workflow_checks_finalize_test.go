@@ -308,6 +308,83 @@ func TestCheckSectionHeadingComments(t *testing.T) {
 	}
 }
 
+func TestCheckCrossEnvReferences(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+		wantOK  bool
+	}{
+		{
+			name:    "no cross-env refs",
+			content: "# Production app — dedicated CPU pins cores.\nservices:\n  - hostname: app\n",
+			wantOK:  true,
+		},
+		{
+			name:    "env N in comment",
+			content: "# Same as env 0.\nservices:\n",
+			wantOK:  false,
+		},
+		{
+			name:    "envs range",
+			content: "# Same production build as envs 4-5.\nservices:\n",
+			wantOK:  false,
+		},
+		{
+			name:    "parenthesized reference",
+			content: "# Consider HA (env 5) for higher durability.\nservices:\n",
+			wantOK:  false,
+		},
+		{
+			name:    "no-op in env 4",
+			content: "# zsc execOnce is a no-op here but load-bearing in env 4.\nservices:\n",
+			wantOK:  false,
+		},
+		{
+			name:    "environment variables prose ok",
+			content: "# Laravel reads environment variables at boot.\nservices:\n",
+			wantOK:  true,
+		},
+		{
+			name:    "PHP 8.4 version mention ok",
+			content: "# php-nginx@8.4 runs PHP 8.4 with FPM.\nservices:\n",
+			wantOK:  true,
+		},
+		{
+			name:    "environment 3 phrasing",
+			content: "# Mirrors what environment 3 does for staging.\nservices:\n",
+			wantOK:  false,
+		},
+		{
+			name:    "case-insensitive Env",
+			content: "# See Env 0 for the dev workflow.\nservices:\n",
+			wantOK:  false,
+		},
+		{
+			name:    "reference only inside comment lines",
+			content: "  DB_PORT: env5_port\n",
+			wantOK:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			checks := checkCrossEnvReferences(tt.content, "test")
+			passed := true
+			for _, c := range checks {
+				if c.Status == statusFail {
+					passed = false
+				}
+			}
+			if passed != tt.wantOK {
+				t.Errorf("checkCrossEnvReferences() passed=%v, want %v (content=%q)", passed, tt.wantOK, tt.content)
+			}
+		})
+	}
+}
+
 func TestCheckRecipeFinalize_CommentRatio(t *testing.T) {
 	t.Parallel()
 

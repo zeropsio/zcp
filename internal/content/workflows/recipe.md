@@ -617,6 +617,7 @@ zerops_workflow action="generate-finalize" \
 - No section-heading decorators (`# -- Title --`, `# === Foo ===`).
 - Dev-to-dev tone — like explaining your config to a colleague.
 - Reference framework commands where they add precision (`bun --hot`, `composer install --no-dev`, `config:cache`).
+- **Each env's import.yaml must be self-contained — do NOT reference other envs.** Each env is published as a standalone deploy target on zerops.io/recipes; users land on one env's page, click deploy, and never see the others. Phrases like "same as env 0", "Consider HA (env 5) for higher durability", "zsc execOnce is a no-op here but load-bearing in env 4" are meaningless out of context. Explain what THIS env does and why, without comparing to siblings.
 
 **Refining one env**: call `generate-finalize` again with only that env's entry under `envComments` — other envs are left untouched. Within an env, passing a service key with an empty string deletes its comment. Passing an empty project string leaves the existing project comment.
 
