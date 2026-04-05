@@ -30,11 +30,12 @@ func deploySuccessNextActions(result *ops.DeployResult) string {
 	isSelfDeploy := result.SourceService == result.TargetService
 	if isSelfDeploy && ops.NeedsManualStart(result.TargetServiceType) {
 		return fmt.Sprintf(
-			"CRITICAL: Deploy restarted the container — dev server is NOT running. "+
-				"Start it via SSH immediately (Bash run_in_background=true): "+
+			"CRITICAL: Deploy created a new container — ALL previous SSH sessions to %s are dead (exit 255). "+
+				"Dev server is NOT running (idle start: zsc noop). "+
+				"Open a NEW SSH connection and start the server (Bash run_in_background=true): "+
 				"ssh %s \"cd /var/www && {start_command}\". "+
 				"Check TaskOutput after 3-5s. Then: zerops_verify.",
-			result.TargetService,
+			result.TargetService, result.TargetService,
 		)
 	}
 	return nextActionDeploySuccess

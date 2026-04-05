@@ -77,6 +77,7 @@ This shows whether the issue is new or recurring.
 | Deploy OK but app broken | Missing env vars or wrong format | `zerops_discover includeEnvs=true` (keys only). If keys present but app still broken, add `includeEnvValues=true` to inspect actual values |
 | HTTP 000 (connection refused) | Server not running on dev service | Start server via SSH first |
 | SSH hangs after starting server | Expected — server runs in foreground | Use Bash `run_in_background=true` |
+| SSH exit 255 after deploy | Deploy created new container — old SSH sessions die | Open new SSH connection, start server again |
 | `jq: command not found` via SSH | jq not in containers | Pipe outside: `ssh dev "curl ..." \| jq .` |
 | SSHFS stale after deploy | Container replaced | Auto-reconnects — wait ~10s |
 
@@ -225,8 +226,8 @@ For framework-specific patterns: `zerops_knowledge recipe="{name}"`
 
 **Prerequisites**: dev service mounted, zerops.yaml with dev entry, code on mount path.
 
-1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push`. SSHFS mount auto-reconnects after deploy.
-2. **Start dev server** (deploy activated envVariables — no server runs because `start: zsc noop --silent`): start server via SSH (Bash tool `run_in_background=true`). Env vars are now OS env vars. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically.
+1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push`. **Deploy creates a new container — ALL previous SSH sessions to {devHostname} are dead (exit 255).** SSHFS mount auto-reconnects after deploy.
+2. **Start dev server** via **NEW** SSH connection (old sessions dead). Deploy activated envVariables — no server runs because `start: zsc noop --silent`. Start: Bash tool `run_in_background=true`. Env vars are now OS env vars. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically.
 3. **Verify dev**: `zerops_verify serviceHostname="{devHostname}"` — must return status=healthy
 4. **Iterate if needed** — if unhealthy, enter iteration loop (see below): diagnose → fix → redeploy → re-verify (max 3 iterations)
 5. **Deploy to stage from dev**: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` — pushes from dev container to stage. Zerops runs the stage build pipeline. Stage has real `start:` command — server auto-starts.
@@ -247,8 +248,8 @@ For framework-specific patterns: `zerops_knowledge recipe="{name}"`
 
 **Prerequisites**: dev service mounted, zerops.yaml with dev entry, code on mount path.
 
-1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy.
-2. **Start dev server** (dev uses `zsc noop --silent`): start via SSH with `run_in_background=true`. **Implicit-webserver runtimes: skip — auto-starts.**
+1. **Deploy to dev**: `zerops_deploy targetService="{devHostname}"` — self-deploy. **New container — all SSH sessions to {devHostname} die.**
+2. **Start dev server** via **NEW** SSH (old sessions dead, dev uses `zsc noop --silent`): start with `run_in_background=true`. **Implicit-webserver runtimes: skip — auto-starts.**
 3. **Verify**: `zerops_verify serviceHostname="{devHostname}"` — must return status=healthy
 4. **Iterate if needed** — diagnose → fix → restart/redeploy → re-verify
 </section>
@@ -269,9 +270,10 @@ For framework-specific patterns: `zerops_knowledge recipe="{name}"`
 After `zerops_deploy` to dev, env vars from zerops.yaml are available as OS env vars. The container runs `zsc noop --silent` — no server process. The agent starts the server via SSH.
 
 **Key facts:**
-1. **After deploy, env vars are OS env vars.** Available immediately when the server starts. NEVER hardcode values or pass them inline.
-2. **Code on SSHFS mount is live on the container** — watch-mode frameworks reload automatically, others need manual restart.
-3. **Redeploy only when zerops.yaml itself changes** (envVariables, ports, buildCommands). Code-only changes on the mount just need a server restart.
+1. **Deploy = new container. All previous SSH sessions die (exit 255).** Always open a new SSH connection after deploy. Background tasks running via old SSH are gone.
+2. **After deploy, env vars are OS env vars.** Available immediately when the server starts. NEVER hardcode values or pass them inline.
+3. **Code on SSHFS mount is live on the container** — watch-mode frameworks reload automatically, others need manual restart.
+4. **Redeploy only when zerops.yaml itself changes** (envVariables, ports, buildCommands). Code-only changes on the mount just need a server restart.
 
 **The cycle:**
 1. **Edit code** on the mount path — changes appear instantly in the container at `/var/www/`.

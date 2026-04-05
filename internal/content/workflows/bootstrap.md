@@ -451,8 +451,8 @@ Steps 2-4 repeat on every iteration. Stage (steps 5-7) only after dev is healthy
 > Inside the container, code lives at `/var/www/`. Never use the mount path as
 > `workingDir` in `zerops_deploy` — the default `/var/www` is always correct.
 
-1. **Deploy to appdev**: `zerops_deploy targetService="appdev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. SSHFS mount auto-reconnects after deploy — no remount needed. Deploy tests the build pipeline and ensures deployFiles artifacts persist.
-2. **Start appdev** (deploy activated envVariables — no server runs): start server via SSH (Bash tool `run_in_background=true`). Env vars are now OS env vars. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically after deploy.
+1. **Deploy to appdev**: `zerops_deploy targetService="appdev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. SSHFS mount auto-reconnects after deploy — no remount needed. **Deploy creates a new container — ALL previous SSH sessions to appdev are dead (exit 255).** Deploy tests the build pipeline and ensures deployFiles artifacts persist.
+2. **Start appdev** (deploy activated envVariables — no server runs): start server via **NEW** SSH connection (Bash tool `run_in_background=true`). Old SSH sessions are dead — always open a fresh connection after deploy. Env vars are now OS env vars. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically after deploy.
 3. **Enable dev subdomain**: `zerops_subdomain serviceHostname="appdev" action="enable"` — returns `subdomainUrls`
 4. **Verify appdev**: `zerops_verify serviceHostname="appdev"` — must return status=healthy
 5. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
@@ -480,9 +480,10 @@ Steps 2-4 repeat on every iteration. Stage (steps 5-7) only after dev is healthy
 After `zerops_deploy` to dev, env vars from zerops.yaml are available as OS env vars. The container runs `zsc noop --silent` — no server process. The agent starts the server via SSH.
 
 **Key facts:**
-1. **After deploy, env vars are OS env vars.** Available immediately when the server starts. NEVER hardcode values or pass them inline.
-2. **Code on SSHFS mount is live on the container** — the dev workflow depends on runtime (watch-mode frameworks reload automatically, others need manual restart).
-3. **Redeploy only when zerops.yaml itself changes** (envVariables, ports, buildCommands). Code-only changes on the mount just need a server restart.
+1. **Deploy = new container. All previous SSH sessions die (exit 255).** Always open a new SSH connection after deploy. Background tasks running via old SSH are gone.
+2. **After deploy, env vars are OS env vars.** Available immediately when the server starts. NEVER hardcode values or pass them inline.
+3. **Code on SSHFS mount is live on the container** — the dev workflow depends on runtime (watch-mode frameworks reload automatically, others need manual restart).
+4. **Redeploy only when zerops.yaml itself changes** (envVariables, ports, buildCommands). Code-only changes on the mount just need a server restart.
 
 **The cycle:**
 1. **Edit code** on the mount path — changes appear instantly in the container at `/var/www/`.
@@ -840,6 +841,7 @@ When any verification check fails, enter the iteration loop instead of giving up
 | HTTP 502 despite app running | App binds localhost, not 0.0.0.0 | Bind `0.0.0.0:{port}` |
 | HTTP 000 (connection refused) | Server not running on dev service | Start server via SSH first |
 | SSH hangs after starting server | Expected — server runs in foreground | Use Bash `run_in_background=true` |
+| SSH exit 255 after deploy | Deploy created new container — old SSH sessions die | Open new SSH connection, start server again |
 | `jq: command not found` via SSH | jq not in containers | Pipe outside: `ssh dev "curl ..." \| jq .` |
 | Empty env variable | Wrong var name or not discovered | Check `zerops_discover includeEnvs=true` (keys only). If keys present but values suspect, add `includeEnvValues=true` to inspect actual values |
 | SSHFS stale after deploy | Container replaced | Auto-reconnects — wait ~10s |

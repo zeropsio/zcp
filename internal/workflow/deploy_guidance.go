@@ -146,7 +146,8 @@ func buildDeployGuide(state *DeployState, iteration int, env Environment, stateD
 	} else {
 		sb.WriteString("- After deploy: only `deployFiles` content exists. All other local files lost.\n")
 		if hasRole(state.Targets, DeployRoleDev) {
-			sb.WriteString("- Dev server: start manually after deploy (zsc noop). Env vars are OS env vars.\n")
+			sb.WriteString("- Deploy to dev = new container. ALL previous SSH sessions to that service are dead (exit 255 on old connections).\n")
+			sb.WriteString("- Dev server: start manually via NEW SSH after deploy (idle start: zsc noop). Env vars are OS env vars.\n")
 		}
 		if hasRole(state.Targets, DeployRoleStage) {
 			sb.WriteString("- Stage: auto-starts with healthCheck. Zerops monitors and restarts.\n")
@@ -268,7 +269,8 @@ func writePushDevWorkflow(sb *strings.Builder, state *DeployState) {
 	fmt.Fprintf(sb, "3. Test: `ssh %s \"curl -s localhost:{port}/health\"` | jq .\n", devHostname)
 	sb.WriteString("4. Repeat until working\n")
 	sb.WriteString("- Code-only changes: restart server. No redeploy needed.\n")
-	sb.WriteString("- zerops.yaml changes (envVariables, ports): redeploy required.\n\n")
+	sb.WriteString("- zerops.yaml changes (envVariables, ports): redeploy required — new container kills all SSH sessions.\n")
+	fmt.Fprintf(sb, "- After redeploy: open NEW SSH to %s (old sessions dead, exit 255). Then start server again.\n\n", devHostname)
 }
 
 // --- helpers ---
@@ -309,9 +311,9 @@ func writeStandardWorkflow(sb *strings.Builder, targets []DeployTarget) {
 	pairs := findDevStagePairs(targets)
 	step := 1
 	for _, p := range pairs {
-		fmt.Fprintf(sb, "%d. Deploy to dev: `zerops_deploy targetService=\"%s\"`\n", step, p.dev)
+		fmt.Fprintf(sb, "%d. Deploy to dev: `zerops_deploy targetService=\"%s\"` — new container, all SSH sessions to %s die\n", step, p.dev, p.dev)
 		step++
-		fmt.Fprintf(sb, "%d. Start server on dev manually via SSH (dev uses zsc noop)\n", step)
+		fmt.Fprintf(sb, "%d. Start server on dev via NEW SSH connection (old sessions dead, dev uses idle start zsc noop)\n", step)
 		step++
 		fmt.Fprintf(sb, "%d. Verify dev: `zerops_verify serviceHostname=\"%s\"`\n", step, p.dev)
 		step++
@@ -329,9 +331,9 @@ func writeDevWorkflow(sb *strings.Builder, targets []DeployTarget) {
 		if t.Role != DeployRoleDev {
 			continue
 		}
-		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\"`\n", step, t.Hostname)
+		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\"` — new container, all SSH sessions to %s die\n", step, t.Hostname, t.Hostname)
 		step++
-		fmt.Fprintf(sb, "%d. Start server manually via SSH (dev uses zsc noop)\n", step)
+		fmt.Fprintf(sb, "%d. Start server via NEW SSH connection (old sessions dead, dev uses idle start zsc noop)\n", step)
 		step++
 		fmt.Fprintf(sb, "%d. Verify: `zerops_verify serviceHostname=\"%s\"`\n", step, t.Hostname)
 		step++

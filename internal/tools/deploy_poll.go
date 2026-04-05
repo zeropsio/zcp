@@ -41,7 +41,7 @@ func pollDeployBuild(
 		result.MonitorHint = ""
 		isSelfDeploy := result.SourceService == result.TargetService
 		if isSelfDeploy && ops.NeedsManualStart(result.TargetServiceType) {
-			result.Message = fmt.Sprintf("Successfully deployed to %s. Container restarted — dev server NOT running.", result.TargetService)
+			result.Message = fmt.Sprintf("Successfully deployed to %s. New container replaced old — all SSH sessions dead. Dev server NOT running (idle start). Open new SSH to start server.", result.TargetService)
 		} else {
 			result.Message = fmt.Sprintf("Successfully deployed to %s", result.TargetService)
 		}
