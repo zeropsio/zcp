@@ -91,16 +91,15 @@ func TestEnvSet_Project_PreprocessorExpansion(t *testing.T) {
 	// byte-for-byte parity with the deliverable's import.yaml.
 	mock := &countingProjectEnvMock{Client: platform.NewMock()}
 
-	_, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
+	result, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
 		"APP_KEY=<@generateRandomString(<32>)>",
 		"PLAIN_VALUE=literal",
-		"PREFIXED=base64:<@generateRandomString(<32>)>",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(mock.calls) != 3 {
-		t.Fatalf("want 3 calls, got %d", len(mock.calls))
+	if len(mock.calls) != 2 {
+		t.Fatalf("want 2 calls, got %d", len(mock.calls))
 	}
 
 	// APP_KEY: 32 raw chars, no residual <@...> syntax.
@@ -116,12 +115,87 @@ func TestEnvSet_Project_PreprocessorExpansion(t *testing.T) {
 		t.Errorf("PLAIN_VALUE = %q, want literal", mock.calls[1].Value)
 	}
 
-	// PREFIXED: prefix preserved, function expanded.
-	if !strings.HasPrefix(mock.calls[2].Value, "base64:") {
-		t.Errorf("PREFIXED missing prefix: %q", mock.calls[2].Value)
+	// Stored mirrors API calls — both keys marked Replaced=false (new entries).
+	if len(result.Stored) != 2 {
+		t.Fatalf("want 2 stored entries, got %d", len(result.Stored))
 	}
-	if len(mock.calls[2].Value) != len("base64:")+32 {
-		t.Errorf("PREFIXED length = %d, want %d", len(mock.calls[2].Value), len("base64:")+32)
+	if result.Stored[0].Key != "APP_KEY" || result.Stored[0].Replaced {
+		t.Errorf("Stored[0] = %+v, want {APP_KEY, new}", result.Stored[0])
+	}
+	if result.Stored[1].Value != "literal" {
+		t.Errorf("Stored[1].Value = %q, want literal", result.Stored[1].Value)
+	}
+}
+
+func TestEnvSet_Project_RejectsBase64PrefixedPreprocessor(t *testing.T) {
+	t.Parallel()
+
+	// The recurring APP_KEY footgun: agent wraps preprocessor output in
+	// base64: because the framework's key:generate command outputs that
+	// shape. Platform stores "base64:{32chars}", framework decodes, gets
+	// ~24 bytes, fixed-length cipher rejects. Caught at zcp layer — no
+	// API call should be made.
+	mock := &countingProjectEnvMock{Client: platform.NewMock()}
+
+	_, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
+		"APP_KEY=base64:<@generateRandomString(<32>)>",
+	})
+	if err == nil {
+		t.Fatal("expected error for base64:-prefixed preprocessor expression")
+	}
+	if !strings.Contains(err.Error(), "base64") {
+		t.Errorf("error missing base64 context: %v", err)
+	}
+	if len(mock.calls) != 0 {
+		t.Errorf("rejection should prevent API calls, got %d calls", len(mock.calls))
+	}
+}
+
+func TestEnvSet_Project_AllowsLiteralBase64Value(t *testing.T) {
+	t.Parallel()
+
+	// A caller passing a pre-encoded literal (no <@...> inside) is fine —
+	// they actually did the base64 encoding themselves. This case must
+	// pass through unchanged, distinct from the preprocessor-wrapping
+	// footgun above.
+	mock := &countingProjectEnvMock{Client: platform.NewMock()}
+
+	_, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
+		"APP_KEY=base64:QWxhZGRpbjpPcGVuU2VzYW1lQWxhZGRpbjpPcGVu",
+	})
+	if err != nil {
+		t.Fatalf("literal base64 value should pass through: %v", err)
+	}
+	if len(mock.calls) != 1 {
+		t.Fatalf("want 1 call, got %d", len(mock.calls))
+	}
+}
+
+func TestEnvSet_Project_UpsertExistingKey(t *testing.T) {
+	t.Parallel()
+
+	// Calling EnvSet with an already-existing project env must UPDATE it
+	// (delete + create), not fail with projectEnvDuplicateKey. Agents
+	// iterating on a recipe used to hit this error repeatedly.
+	base := platform.NewMock().WithProjectEnv([]platform.EnvVar{
+		{ID: "env-old-1", Key: "APP_KEY", Content: "old-value"},
+	})
+	mock := &countingProjectEnvMock{Client: base}
+
+	result, err := EnvSet(context.Background(), mock, "proj-1", "", true, []string{
+		"APP_KEY=new-literal-value",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on upsert: %v", err)
+	}
+	if len(mock.calls) != 1 {
+		t.Fatalf("want 1 CreateProjectEnv call, got %d", len(mock.calls))
+	}
+	if mock.calls[0].Value != "new-literal-value" {
+		t.Errorf("created value = %q, want new-literal-value", mock.calls[0].Value)
+	}
+	if len(result.Stored) != 1 || !result.Stored[0].Replaced {
+		t.Errorf("Stored = %+v, want [{APP_KEY, replaced=true}]", result.Stored)
 	}
 }
 

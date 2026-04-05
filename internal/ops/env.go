@@ -11,8 +11,23 @@ import (
 
 // EnvSetResult contains the result of an env set operation.
 type EnvSetResult struct {
-	Process     *platform.Process `json:"process,omitempty"`
-	NextActions string            `json:"nextActions,omitempty"`
+	Process *platform.Process `json:"process,omitempty"`
+	// Stored is the list of {key, value} pairs that were actually written.
+	// Values reflect post-expansion state (preprocessor already applied),
+	// letting the caller verify what the platform actually stores — e.g.
+	// catching an unintended base64: prefix or a miscounted byte length
+	// BEFORE the app runtime trips on it.
+	Stored      []StoredEnv `json:"stored,omitempty"`
+	NextActions string      `json:"nextActions,omitempty"`
+}
+
+// StoredEnv describes one env var as it now lives in the platform.
+type StoredEnv struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	// Replaced is true when the key was upserted (existing entry deleted,
+	// new entry created). False when the key is newly added.
+	Replaced bool `json:"replaced,omitempty"`
 }
 
 // EnvDeleteResult contains the result of an env delete operation.
@@ -21,11 +36,19 @@ type EnvDeleteResult struct {
 	NextActions string            `json:"nextActions,omitempty"`
 }
 
-// EnvSet sets environment variables for a service or project.
-// Service-level: all variables are set in a single API call (one process).
-// Project-level: each variable triggers a separate API call; only the last
-// process is returned. Earlier processes complete independently. On error,
-// returns immediately — earlier variables may already be set.
+// EnvSet sets environment variables for a service or project with upsert
+// semantics — existing keys are replaced, new ones are created.
+//
+// Service-level: a single PUT replaces the entire env file (idempotent by
+// API design). Project-level: the platform exposes CREATE+DELETE only, so
+// zcp does delete-then-create for keys that already exist, eliminating
+// projectEnvDuplicateKey errors from the caller's perspective.
+//
+// Values are run through zParser preprocessor expansion before being stored,
+// so an agent can write the same <@...> expression a recipe deliverable
+// uses and get byte-for-byte identical output. The Stored slice on the
+// result lets the caller verify the final values that landed on the
+// platform (catches base64:<@...> antipatterns and similar mistakes).
 func EnvSet(
 	ctx context.Context,
 	client platform.Client,
@@ -55,16 +78,17 @@ func EnvSet(
 		return nil, err
 	}
 
+	// Reject values where preprocessor output is wrapped in a framework
+	// encoding prefix (`base64:{expanded}`). The platform stores this literal,
+	// the framework then decodes the suffix, and a 32-char expansion becomes
+	// ~24 bytes — the recurring APP_KEY footgun. Caught at zcp instead of
+	// at app boot.
+	if err := rejectEncodingPrefixedSecrets(pairs, variables); err != nil {
+		return nil, err
+	}
+
 	if isProject {
-		var lastProc *platform.Process
-		for _, p := range pairs {
-			proc, setErr := client.CreateProjectEnv(ctx, projectID, p.Key, p.Value, false)
-			if setErr != nil {
-				return nil, setErr
-			}
-			lastProc = proc
-		}
-		return &EnvSetResult{Process: lastProc}, nil
+		return setProjectEnvs(ctx, client, projectID, pairs)
 	}
 
 	svc, err := resolveService(ctx, client, projectID, hostname)
@@ -78,7 +102,46 @@ func EnvSet(
 		return nil, err
 	}
 
-	return &EnvSetResult{Process: proc}, nil
+	stored := make([]StoredEnv, len(pairs))
+	for i, p := range pairs {
+		stored[i] = StoredEnv{Key: p.Key, Value: p.Value}
+	}
+	return &EnvSetResult{Process: proc, Stored: stored}, nil
+}
+
+// setProjectEnvs upserts project-level env vars. The platform API only
+// exposes CREATE + DELETE, so existing keys are delete-then-created; new
+// keys are created directly. Returns the last process plus the full list
+// of stored pairs so the caller can verify what was written.
+func setProjectEnvs(ctx context.Context, client platform.Client, projectID string, pairs []envPair) (*EnvSetResult, error) {
+	existing, err := client.GetProjectEnv(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	existingByKey := make(map[string]string, len(existing))
+	for _, e := range existing {
+		existingByKey[e.Key] = e.ID
+	}
+
+	var lastProc *platform.Process
+	stored := make([]StoredEnv, 0, len(pairs))
+
+	for _, p := range pairs {
+		replaced := false
+		if envID, ok := existingByKey[p.Key]; ok {
+			if _, delErr := client.DeleteProjectEnv(ctx, envID); delErr != nil {
+				return nil, delErr
+			}
+			replaced = true
+		}
+		proc, setErr := client.CreateProjectEnv(ctx, projectID, p.Key, p.Value, false)
+		if setErr != nil {
+			return nil, setErr
+		}
+		lastProc = proc
+		stored = append(stored, StoredEnv{Key: p.Key, Value: p.Value, Replaced: replaced})
+	}
+	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }
 
 // EnvDelete deletes environment variables from a service or project.
@@ -144,6 +207,47 @@ func EnvDelete(
 	}
 
 	return &EnvDeleteResult{Process: lastProc}, nil
+}
+
+// encodingPrefixes names framework conventions where a prefix tells the
+// framework to DECODE the suffix. Wrapping preprocessor output in one of
+// these turns an N-char string into ceil(3N/4) bytes — breaking fixed-
+// length ciphers like aes-256-cbc and causing boot-time failures. The
+// list stays intentionally short: these are prefixes where the framework
+// mutates the trailing bytes, not prefixes that are just stored verbatim.
+var encodingPrefixes = []string{"base64:", "hex:"}
+
+// rejectEncodingPrefixedSecrets refuses values shaped like
+// `base64:<preprocessor-output>`. The original caller input (`variables`)
+// is inspected for the `<@` token — that's the signal the prefix was
+// slapped on top of a preprocessor expression, rather than being part of
+// a literal value the caller actually base64-encoded themselves.
+func rejectEncodingPrefixedSecrets(pairs []envPair, originalVariables []string) error {
+	if len(pairs) != len(originalVariables) {
+		// Can't line up pairs with originals — fall back to skipping the
+		// check rather than emitting a spurious error.
+		return nil
+	}
+	for i, p := range pairs {
+		lower := strings.ToLower(p.Value)
+		for _, prefix := range encodingPrefixes {
+			if !strings.HasPrefix(lower, prefix) {
+				continue
+			}
+			// Only reject when the ORIGINAL input wrapped a preprocessor
+			// expression. A caller passing a pre-encoded literal (e.g.
+			// `base64:{their-own-real-base64}`) is fine and passes through.
+			if !strings.Contains(originalVariables[i], "<@") {
+				continue
+			}
+			return platform.NewPlatformError(platform.ErrInvalidParameter,
+				fmt.Sprintf("value for %q starts with %q wrapping a preprocessor expression — the framework will decode the suffix, turning %d-char output into ~%d bytes and breaking any fixed-length cipher",
+					p.Key, strings.TrimSuffix(prefix, ":"),
+					len(p.Value)-len(prefix), (len(p.Value)-len(prefix))*3/4),
+				"Pass the <@...> expression without the "+prefix+" prefix. Frameworks like Laravel accept the raw 32-char output directly (Encrypter::supported() checks the byte length, which equals the char length for the preprocessor's single-byte ASCII alphabet).")
+		}
+	}
+	return nil
 }
 
 // expandPairs runs each pair's value through the zParser-backed preprocess

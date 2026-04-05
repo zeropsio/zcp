@@ -24,6 +24,7 @@ type EnvInput struct {
 // services that were auto-restarted so the new env value takes effect.
 type envChangeResult struct {
 	Process            *platform.Process   `json:"process,omitempty"`
+	Stored             []ops.StoredEnv     `json:"stored,omitempty"`
 	RestartedServices  []string            `json:"restartedServices,omitempty"`
 	RestartWarnings    []string            `json:"restartWarnings,omitempty"`
 	RestartSkipped     bool                `json:"restartSkipped,omitempty"`
@@ -37,7 +38,7 @@ type envChangeResult struct {
 func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostname string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_env",
-		Description: "Manage environment variables. Actions: set, delete, generate-dotenv. Scope: service (serviceHostname) or project (project=true). Values are stored literally. After set/delete affected services AUTO-RESTART so the new value takes effect. Pass skipRestart=true only if deploying immediately. generate-dotenv: resolves ${hostname_varName} refs, writes .env. Read keys via zerops_discover includeEnvs=true.",
+		Description: "Manage env vars. Actions: set, delete, generate-dotenv. Scope: service (serviceHostname) or project=true. set is UPSERT — existing keys replaced, new ones created. Values with <@...> expand via zParser (same as platform preprocessor). Rejects wrapping preprocessor output in encoding prefix (base64:, hex:). Response 'stored' list verifies what landed. After set/delete services AUTO-RESTART; skipRestart=true only if deploying immediately.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage environment variables",
 			DestructiveHint: boolPtr(true),
@@ -54,7 +55,7 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 			if setResult.Process != nil {
 				setResult.Process, _ = pollManageProcess(ctx, client, setResult.Process, onProgress)
 			}
-			resp := envChangeResult{Process: setResult.Process}
+			resp := envChangeResult{Process: setResult.Process, Stored: setResult.Stored}
 			applyAutoRestart(ctx, client, projectID, input, selfHostname, &resp, onProgress)
 			return jsonResult(resp), nil, nil
 		case "delete":
