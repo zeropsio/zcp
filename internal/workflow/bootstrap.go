@@ -48,6 +48,15 @@ type BootstrapResponse struct {
 	Message         string             `json:"message"`
 	AvailableStacks string             `json:"availableStacks,omitempty"`
 	CheckResult     *StepCheckResult   `json:"checkResult,omitempty"`
+	AutoMounts      []AutoMountInfo    `json:"autoMounts,omitempty"`
+}
+
+// AutoMountInfo reports the result of auto-mounting a service after provision.
+type AutoMountInfo struct {
+	Hostname  string `json:"hostname"`
+	MountPath string `json:"mountPath,omitempty"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
 }
 
 // BootstrapProgress summarizes overall bootstrap progress.

@@ -50,7 +50,8 @@ type immediateResponse struct {
 
 // RegisterWorkflow registers the zerops_workflow tool.
 // selfHostname is the hostname of the service running ZCP (empty when local).
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string) {
+// mounter enables auto-mounting runtime services after provision (nil in local env).
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
 		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), cicd (CI/CD setup). After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route\".",
@@ -63,7 +64,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, cache, schemaCache, logFetcher, input, stateDir, selfHostname)
+			return handleWorkflowAction(ctx, projectID, engine, client, cache, schemaCache, logFetcher, input, stateDir, selfHostname, mounter)
 		}
 
 		// Legacy: static workflow guidance.
@@ -90,7 +91,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter) (*mcp.CallToolResult, any, error) {
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -117,7 +118,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if cache != nil && client != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
-		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir)
+		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir, mounter)
 	case "generate-finalize":
 		if detectActiveWorkflow(engine) == workflowRecipe {
 			return handleRecipeGenerateFinalize(engine, input.ServiceComments, input.ProjectComment)

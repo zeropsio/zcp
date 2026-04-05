@@ -29,7 +29,7 @@ func needsStacks(resp *workflow.BootstrapResponse) bool {
 	return stackSteps[resp.Current.Name]
 }
 
-func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -73,6 +73,13 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			fmt.Sprintf("Complete step failed: %v", err),
 			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
 	}
+
+	// Auto-mount runtime services after successful provision completion.
+	// mounter is nil in local env — no-op naturally.
+	if input.Step == workflow.StepProvision && (resp.CheckResult == nil || resp.CheckResult.Passed) {
+		resp.AutoMounts = autoMountTargets(ctx, client, projectID, mounter, engine)
+	}
+
 	// Append transition message when bootstrap completes (all steps done).
 	if resp.Current == nil {
 		state, stateErr := engine.GetState()
@@ -130,6 +137,42 @@ func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, client 
 		populateStacks(ctx, resp, client, cache)
 	}
 	return jsonResult(resp), nil, nil
+}
+
+// autoMountTargets mounts runtime services from the bootstrap plan after provision.
+// Best-effort: mount failures are reported but don't block step advancement.
+// Returns nil when mounter is nil (local env) or no plan targets exist.
+func autoMountTargets(ctx context.Context, client platform.Client, projectID string, mounter ops.Mounter, engine *workflow.Engine) []workflow.AutoMountInfo {
+	if mounter == nil {
+		return nil
+	}
+	state, err := engine.GetState()
+	if err != nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil {
+		return nil
+	}
+
+	var results []workflow.AutoMountInfo
+	for _, target := range state.Bootstrap.Plan.Targets {
+		hostname := target.Runtime.DevHostname
+		if hostname == "" {
+			continue
+		}
+		result, mountErr := ops.MountService(ctx, client, projectID, mounter, hostname)
+		if mountErr != nil {
+			results = append(results, workflow.AutoMountInfo{
+				Hostname: hostname,
+				Status:   "FAILED",
+				Error:    mountErr.Error(),
+			})
+			continue
+		}
+		results = append(results, workflow.AutoMountInfo{
+			Hostname:  hostname,
+			MountPath: result.MountPath,
+			Status:    result.Status,
+		})
+	}
+	return results
 }
 
 // populateStacks injects live stack catalog into a bootstrap response.

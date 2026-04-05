@@ -23,8 +23,8 @@ var stepDetails = []StepDetail{
 	},
 	{
 		Name:         StepProvision,
-		Tools:        []string{"zerops_import", "zerops_process", "zerops_discover", "zerops_mount"},
-		Verification: "SUCCESS WHEN: all plan services exist in API with ACTIVE/RUNNING status AND service types match plan AND managed dependency env vars recorded in session state.",
+		Tools:        []string{"zerops_import", "zerops_process", "zerops_discover"},
+		Verification: "SUCCESS WHEN: all plan services exist in API with ACTIVE/RUNNING status AND service types match plan AND managed dependency env vars recorded in session state. Runtime services are auto-mounted on completion.",
 	},
 	{
 		Name:         StepGenerate,

@@ -439,7 +439,7 @@ func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
 				t.Fatalf("ListServiceMetas: %v", err)
 			}
 
-			var gotHostnames []string
+			gotHostnames := make([]string, 0, len(remaining))
 			for _, m := range remaining {
 				gotHostnames = append(gotHostnames, m.Hostname)
 			}

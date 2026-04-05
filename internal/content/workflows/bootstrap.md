@@ -188,6 +188,10 @@ Present import.yaml to the user for review before proceeding. Then import:
 zerops_import filePath="./import.yaml"
 ```
 
+### Auto-mount
+
+When this step completes, ZCP automatically mounts all dev and simple-mode runtime services via SSHFS. Mount results are returned in the `autoMounts` field of the response. You do NOT need to call `zerops_mount` — it happens automatically. Stage services (READY_TO_DEPLOY) and managed services are not mounted. If auto-mount fails, the error is reported but the step still advances — you can retry manually with `zerops_mount action="mount" serviceHostname="{hostname}"`.
+
 ### Env var discovery protocol (mandatory before generate)
 
 After importing services and waiting for them to reach RUNNING, discover the ACTUAL env vars available to each service. This data is critical for writing correct zerops.yaml envVariables and for subagent prompts.
@@ -230,9 +234,9 @@ Write a hello-world server with exactly three endpoints: `GET /`, `GET /health`,
 
 **Adopted services (isExisting: true):** Skip zerops.yaml and code generation entirely for adopted targets. These services already have working code and configuration from their previous deploy. The generate checker automatically skips validation for adopted targets. If ALL targets are adopted, complete this step with attestation "All targets are existing services — no code generation needed."
 
-**Prerequisites**: Services mounted, env vars discovered.
+**Prerequisites**: Services auto-mounted (provision step), env vars discovered.
 
-> **WHERE TO WRITE FILES**: Write ALL files (zerops.yaml, app code, configs) to the SSHFS mount path `/var/www/{hostname}/` — this is the path returned by `zerops_mount` in the provision step. `/var/www/` without the hostname suffix is the zcpx orchestrator's own filesystem — writing there has NO effect on the target service. Every file must go under `/var/www/{hostname}/`.
+> **WHERE TO WRITE FILES**: Write ALL files (zerops.yaml, app code, configs) to the SSHFS mount path `/var/www/{hostname}/`. The mount paths are returned in the provision step's `autoMounts` response. `/var/www/` without the hostname suffix is the zcpx orchestrator's own filesystem — writing there has NO effect on the target service. Every file must go under `/var/www/{hostname}/`.
 
 **SSHFS mount is for source code only** — small file reads/writes (editing .go, .ts, .yaml files). Commands that generate many files (npm install, pip install, go mod download, composer install, bundle install, cargo build) MUST run via SSH on the container: `ssh {hostname} "cd /var/www && {install_command}"`. Running them locally through the SSHFS network mount is orders of magnitude slower.
 
@@ -441,7 +445,7 @@ Steps 2-4 repeat on every iteration. Stage (steps 5-7) only after dev is healthy
 
 ### Standard mode (dev+stage) — deploy flow
 
-**Prerequisites**: import done, dev mounted, env vars discovered, code written to mount path (steps 4-7).
+**Prerequisites**: import done, dev auto-mounted (provision step), env vars discovered, code written to mount path.
 
 > **Path distinction:** SSHFS mount path `/var/www/{devHostname}/` is LOCAL only.
 > Inside the container, code lives at `/var/www/`. Never use the mount path as
@@ -505,9 +509,8 @@ Same as standard mode steps 1-5, but no stage pair. All verification happens on 
 
    > **Subdomain activation:** `enableSubdomainAccess: true` in import.yaml pre-configures routing, but **does NOT activate it**. You MUST call `zerops_subdomain action="enable"` after the first deploy of each new service to activate the L7 balancer route. Re-deploys do NOT deactivate it. Without the explicit enable call, the subdomain returns 502. The call is idempotent — safe to call even if already active. Use `zerops_discover` to check current status and URL.
 
-2. **Mount and discover:**
+2. **Services are auto-mounted** from the provision step. Discover env vars if not done:
    ```
-   zerops_mount action="mount" serviceHostname="{hostname}"
    zerops_discover includeEnvs=true   # keys only
    ```
 
@@ -564,7 +567,7 @@ Prevents context rot by delegating per-service work to specialist agents with fr
 **Parent agent steps:**
 1. `zerops_import content="<import.yaml>"` — create all services (blocks until all processes finish)
 2. `zerops_discover` — verify dev services reached RUNNING
-3. **Mount all dev services**: `zerops_mount action="mount" serviceHostname="{devHostname}"` for each
+3. **Dev services are auto-mounted** when the provision step completes — check `autoMounts` in the response.
 4. **Discover ALL env vars**: `zerops_discover includeEnvs=true` — single call returns all services with env var keys (keys only — sufficient for `${hostname_varName}` references). Record exact var names.
 5. For each **runtime** service pair, spawn a Service Bootstrap Agent (in parallel):
    ```
