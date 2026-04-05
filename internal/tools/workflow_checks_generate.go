@@ -117,8 +117,11 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 		}
 	}
 
-	// Port presence.
-	if entry.HasPorts() {
+	// Implicit web server: check both zerops.yaml bases AND service type from plan.
+	implicitWS := entry.HasImplicitWebServer() || ops.IsImplicitWebServerType(target.Runtime.Type)
+
+	// Port presence (skip for implicit web server — port 80 is fixed).
+	if implicitWS || entry.HasPorts() {
 		checks = append(checks, workflow.StepCheck{
 			Name: hostname + "_ports", Status: statusPass,
 		})
@@ -142,7 +145,7 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 	}
 
 	// HealthCheck required for simple mode (unless implicit web server).
-	if target.Runtime.EffectiveMode() == workflow.PlanModeSimple && !entry.HasImplicitWebServer() {
+	if target.Runtime.EffectiveMode() == workflow.PlanModeSimple && !implicitWS {
 		if entry.Run.HealthCheck != nil {
 			checks = append(checks, workflow.StepCheck{
 				Name: hostname + "_health_check", Status: statusPass,
@@ -157,7 +160,7 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 	}
 
 	// run.start required for dynamic runtimes (no implicit web server).
-	if !entry.HasImplicitWebServer() {
+	if !implicitWS {
 		if entry.Run.Start == "" {
 			checks = append(checks, workflow.StepCheck{
 				Name:   hostname + "_run_start",

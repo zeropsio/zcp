@@ -341,6 +341,17 @@ func NeedsManualStart(serviceType string) bool {
 	return true
 }
 
+// IsImplicitWebServerType returns true if the given service type (e.g. "php-nginx@8.4")
+// has a built-in web server that starts automatically.
+func IsImplicitWebServerType(serviceType string) bool {
+	b, _, _ := strings.Cut(serviceType, "@")
+	switch b {
+	case runtimePHPApach, runtimePHPNginx, runtimeNginx, runtimeStatic:
+		return true
+	}
+	return false
+}
+
 // hasImplicitWebServer returns true if the runtime has a built-in web server
 // that starts automatically (no run.start or run.ports needed).
 // Checks run.base first, falls back to build.base strings.

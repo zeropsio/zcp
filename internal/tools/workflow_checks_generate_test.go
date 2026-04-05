@@ -1062,6 +1062,51 @@ func TestCheckGenerate_MixedExistingAndNew(t *testing.T) {
 	}
 }
 
+func TestCheckGenerate_ServiceTypeImplicitWebServer_NoBuildBaseMatch(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	// build.base is "php@8.4" (just the compiler), no run.base set.
+	// Service type is php-nginx@8.4 → implicit web server.
+	// Checker must recognize this and skip ports/start/healthCheck checks.
+	writeZeropsYml(t, dir, `zerops:
+  - setup: dev
+    build:
+      base: php@8.4
+      buildCommands:
+        - composer install --no-dev
+      deployFiles: [.]
+    run:
+      envVariables:
+        DB_HOST: db
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "kanboard", Type: "php-nginx@8.4", BootstrapMode: "simple"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("expected pass — php-nginx service type has implicit web server, got fail: %s", result.Summary)
+		for _, c := range result.Checks {
+			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
+		}
+	}
+	// Specifically: no ports, start, or health_check failures.
+	for _, c := range result.Checks {
+		if c.Status == "fail" && (strings.Contains(c.Name, "ports") || strings.Contains(c.Name, "run_start") || strings.Contains(c.Name, "health_check")) {
+			t.Errorf("implicit web server runtime should not fail %s: %s", c.Name, c.Detail)
+		}
+	}
+}
+
 // writeZeropsYml is a test helper that writes zerops.yaml to the given directory.
 func writeZeropsYml(t *testing.T, dir, content string) {
 	t.Helper()
