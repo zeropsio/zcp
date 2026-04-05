@@ -59,9 +59,15 @@ func deploySuggestionForStatus(status string, hasLogs bool) string {
 		return "DEPLOY phase failed — build succeeded, but a run.initCommand crashed the new container on startup. The deploy response's 'error' field identifies the exact failing command. For the actual stderr output, fetch runtime logs: zerops_logs serviceHostname={service} severity=ERROR since=5m. The buildLogs field does NOT contain this error (it's build container output). Common causes: initCommand references /build/source paths baked into build-time caches (move cache commands like artisan config:cache from buildCommands to run.initCommands), DB connection issues during migration, missing env vars at container start."
 	case statusPreparingRuntimeFailed:
 		if hasLogs {
-			return "RUNTIME PREPARE failed — run.prepareCommands exited non-zero before deploy files arrived. See buildLogs for stderr. Common cause: prepareCommands referencing /var/www/ paths (empty during prepare — use addToRunPrepare + /home/zerops/ instead)."
+			return "RUNTIME PREPARE failed — run.prepareCommands exited non-zero before deploy files arrived. " +
+				"READ buildLogs below for the exact error. " +
+				"Common causes: (1) missing sudo — ALL package install commands need sudo (e.g. sudo apk add --no-cache pkg), containers run as zerops user; " +
+				"(2) wrong package name — Alpine PHP extensions use version prefix: php84-ctype, NOT php-ctype; php84-pdo_pgsql, NOT php-pgsql. " +
+				"Some extensions are built-in since PHP 8.0 (json, tokenizer) — do NOT try to install them; " +
+				"(3) referencing /var/www/ paths (empty during prepare — use addToRunPrepare + /home/zerops/ instead)."
 		}
-		return "RUNTIME PREPARE failed — run.prepareCommands exited non-zero. Logs unavailable; fetch via zerops_logs serviceHostname={service} severity=ERROR since=5m."
+		return "RUNTIME PREPARE failed — run.prepareCommands exited non-zero. Logs unavailable; fetch via zerops_logs serviceHostname={service} severity=ERROR since=5m. " +
+			"Most common cause: missing sudo in prepareCommands (containers run as zerops user)."
 	case statusCanceled:
 		return "Deploy was canceled. Re-run zerops_deploy."
 	}
@@ -74,7 +80,10 @@ func deployNextActionForStatus(status string) string {
 	case statusDeployFailed:
 		return "DEPLOY failed — fix run.initCommands in zerops.yaml (NOT buildCommands). Fetch runtime stderr: zerops_logs serviceHostname={target} severity=ERROR since=5m. If the error mentions /build/source paths, a build-time cache (e.g. config:cache) baked build-container paths into the runtime — move that cache command to run.initCommands."
 	case statusPreparingRuntimeFailed:
-		return "RUNTIME PREPARE failed — fix run.prepareCommands in zerops.yaml (NOT buildCommands, NOT initCommands). prepareCommands run BEFORE deploy files arrive at /var/www — use addToRunPrepare to ship needed files to /home/zerops/."
+		return "RUNTIME PREPARE failed — fix run.prepareCommands in zerops.yaml (NOT buildCommands, NOT initCommands). " +
+			"Checklist: (1) every apk/apt command prefixed with sudo; " +
+			"(2) Alpine PHP extensions match version: php84-<ext> for php@8.4; " +
+			"(3) prepareCommands run BEFORE deploy files arrive at /var/www — use addToRunPrepare to ship needed files to /home/zerops/."
 	case statusBuildFailed:
 		return nextActionDeployBuildFail
 	}

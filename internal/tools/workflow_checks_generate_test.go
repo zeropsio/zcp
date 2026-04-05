@@ -1107,6 +1107,118 @@ func TestCheckGenerate_ServiceTypeImplicitWebServer_NoBuildBaseMatch(t *testing.
 	}
 }
 
+func TestHasPkgInstallWithoutSudo(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		commands any
+		want     bool
+	}{
+		{"nil_commands", nil, false},
+		{"empty_string", "", false},
+		{"sudo_apk_add", "sudo apk add --no-cache php84-ctype", false},
+		{"apk_add_no_sudo", "apk add --no-cache php84-ctype", true},
+		{"sudo_apt_get", "sudo apt-get install -y php8.4-ctype", false},
+		{"apt_get_no_sudo", "apt-get install -y php8.4-ctype", true},
+		{"list_with_sudo", []any{"sudo apk add --no-cache php84-ctype"}, false},
+		{"list_without_sudo", []any{"apk add --no-cache php84-ctype"}, true},
+		{"mixed_list_one_bad", []any{"sudo apk add --no-cache php84-gd", "apk add php84-ctype"}, true},
+		{"unrelated_command", []any{"echo hello"}, false},
+		{"chained_with_sudo", "sudo apt-get update && sudo apt-get install -y imagemagick", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := hasPkgInstallWithoutSudo(tt.commands)
+			if got != tt.want {
+				t.Errorf("hasPkgInstallWithoutSudo(%v) = %v, want %v", tt.commands, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckGenerate_PrepareCommandsMissingSudo_Fails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    build:
+      base: php@8.4
+      buildCommands:
+        - composer install --no-dev
+      deployFiles: [.]
+    run:
+      base: php-nginx@8.4
+      prepareCommands:
+        - apk add --no-cache php84-ctype
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected fail for missing sudo in prepareCommands")
+	}
+	hasSudoFail := false
+	for _, c := range result.Checks {
+		if c.Name == "appdev_prepare_missing_sudo" && c.Status == "fail" {
+			hasSudoFail = true
+			if !strings.Contains(c.Detail, "sudo") {
+				t.Errorf("detail should mention sudo, got: %s", c.Detail)
+			}
+		}
+	}
+	if !hasSudoFail {
+		t.Error("expected appdev_prepare_missing_sudo fail check")
+	}
+}
+
+func TestCheckGenerate_PrepareCommandsWithSudo_Passes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	writeZeropsYml(t, dir, `zerops:
+  - setup: appdev
+    build:
+      base: php@8.4
+      buildCommands:
+        - composer install --no-dev
+      deployFiles: [.]
+    run:
+      base: php-nginx@8.4
+      prepareCommands:
+        - sudo apk add --no-cache php84-ctype
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, c := range result.Checks {
+		if c.Name == "appdev_prepare_missing_sudo" {
+			t.Errorf("should not flag sudo when sudo is present, got check: %+v", c)
+		}
+	}
+}
+
 // writeZeropsYml is a test helper that writes zerops.yaml to the given directory.
 func writeZeropsYml(t *testing.T, dir, content string) {
 	t.Helper()
