@@ -53,6 +53,7 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 			}
 		}
 		meta.DeployStrategy = strategy
+		meta.StrategyConfirmed = true
 		if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,

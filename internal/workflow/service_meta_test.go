@@ -204,6 +204,60 @@ func TestStrategyConstants(t *testing.T) {
 	}
 }
 
+func TestListServiceMetas_SameDeserializationAsRead(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	original := &ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             "standard",
+		StageHostname:    "appstage",
+		DeployStrategy:   StrategyPushGit,
+		Environment:      "container",
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	if err := WriteServiceMeta(dir, original); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	single, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+
+	list, err := ListServiceMetas(dir)
+	if err != nil {
+		t.Fatalf("ListServiceMetas: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("want 1 meta from list, got %d", len(list))
+	}
+
+	// Both paths must produce identical results.
+	if single.Hostname != list[0].Hostname {
+		t.Errorf("Hostname: Read=%q List=%q", single.Hostname, list[0].Hostname)
+	}
+	if single.Mode != list[0].Mode {
+		t.Errorf("Mode: Read=%q List=%q", single.Mode, list[0].Mode)
+	}
+	if single.StageHostname != list[0].StageHostname {
+		t.Errorf("StageHostname: Read=%q List=%q", single.StageHostname, list[0].StageHostname)
+	}
+	if single.DeployStrategy != list[0].DeployStrategy {
+		t.Errorf("DeployStrategy: Read=%q List=%q", single.DeployStrategy, list[0].DeployStrategy)
+	}
+	if single.Environment != list[0].Environment {
+		t.Errorf("Environment: Read=%q List=%q", single.Environment, list[0].Environment)
+	}
+	if single.BootstrapSession != list[0].BootstrapSession {
+		t.Errorf("BootstrapSession: Read=%q List=%q", single.BootstrapSession, list[0].BootstrapSession)
+	}
+	if single.BootstrappedAt != list[0].BootstrappedAt {
+		t.Errorf("BootstrappedAt: Read=%q List=%q", single.BootstrappedAt, list[0].BootstrappedAt)
+	}
+}
+
 func TestListServiceMetas_MultipleMetas(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

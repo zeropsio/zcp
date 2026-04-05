@@ -181,7 +181,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 			},
 		},
 		{
-			name: "bootstrapped with ci-cd meta",
+			name: "bootstrapped with push-git meta",
 			services: []platform.ServiceStack{
 				{ID: "s1", Name: "appdev", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"}},
 				{ID: "s2", Name: "appstage", Status: "ACTIVE", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "bun@1.2"}},

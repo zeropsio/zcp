@@ -20,13 +20,14 @@ const (
 // ZCP's persistent knowledge — the API doesn't track mode, pairing, or strategy.
 // The API is the source of truth for operational state (running, resources, envs).
 type ServiceMeta struct {
-	Hostname         string `json:"hostname"`
-	Mode             string `json:"mode,omitempty"`
-	StageHostname    string `json:"stageHostname,omitempty"`
-	DeployStrategy   string `json:"deployStrategy,omitempty"`
-	Environment      string `json:"environment,omitempty"` // "container" or "local"
-	BootstrapSession string `json:"bootstrapSession"`
-	BootstrappedAt   string `json:"bootstrappedAt"`
+	Hostname          string `json:"hostname"`
+	Mode              string `json:"mode,omitempty"`
+	StageHostname     string `json:"stageHostname,omitempty"`
+	DeployStrategy    string `json:"deployStrategy,omitempty"`
+	StrategyConfirmed bool   `json:"strategyConfirmed,omitempty"` // true after user explicitly confirms/sets strategy
+	Environment       string `json:"environment,omitempty"`       // "container" or "local"
+	BootstrapSession  string `json:"bootstrapSession"`
+	BootstrappedAt    string `json:"bootstrappedAt"`
 }
 
 // IsComplete returns true if bootstrap finished for this service.
@@ -59,6 +60,16 @@ func WriteServiceMeta(baseDir string, meta *ServiceMeta) error {
 	return nil
 }
 
+// parseMeta deserializes a ServiceMeta from JSON.
+// Single deserialization path — both ReadServiceMeta and ListServiceMetas use this.
+func parseMeta(data []byte) (*ServiceMeta, error) {
+	var meta ServiceMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, err
+	}
+	return &meta, nil
+}
+
 // ReadServiceMeta reads service metadata from baseDir/services/{hostname}.json.
 // Returns nil, nil if the file does not exist.
 func ReadServiceMeta(baseDir, hostname string) (*ServiceMeta, error) {
@@ -71,15 +82,11 @@ func ReadServiceMeta(baseDir, hostname string) (*ServiceMeta, error) {
 		return nil, fmt.Errorf("read service meta: %w", err)
 	}
 
-	var meta ServiceMeta
-	if err := json.Unmarshal(data, &meta); err != nil {
+	meta, err := parseMeta(data)
+	if err != nil {
 		return nil, fmt.Errorf("unmarshal service meta: %w", err)
 	}
-	// Migrate legacy "ci-cd" strategy to "push-git".
-	if meta.DeployStrategy == "ci-cd" {
-		meta.DeployStrategy = StrategyPushGit
-	}
-	return &meta, nil
+	return meta, nil
 }
 
 // ListServiceMetas reads all service metadata files from baseDir/services/.
@@ -103,11 +110,11 @@ func ListServiceMetas(baseDir string) ([]*ServiceMeta, error) {
 		if readErr != nil {
 			return nil, fmt.Errorf("read service meta %s: %w", entry.Name(), readErr)
 		}
-		var meta ServiceMeta
-		if unmarshalErr := json.Unmarshal(data, &meta); unmarshalErr != nil {
+		meta, unmarshalErr := parseMeta(data)
+		if unmarshalErr != nil {
 			return nil, fmt.Errorf("unmarshal service meta %s: %w", entry.Name(), unmarshalErr)
 		}
-		metas = append(metas, &meta)
+		metas = append(metas, meta)
 	}
 	return metas, nil
 }

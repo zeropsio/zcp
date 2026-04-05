@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -169,30 +170,38 @@ func handleDeployStatus(_ context.Context, engine *workflow.Engine) (*mcp.CallTo
 	return jsonResult(resp), nil, nil
 }
 
-// buildStrategyStatusNote reads strategy from metas and returns an informational note.
+// buildStrategyStatusNote reads strategy from metas and returns a status note.
+// Unconfirmed strategies (bootstrap default) get a prompt to discuss with user.
 func buildStrategyStatusNote(metas []*workflow.ServiceMeta) string {
-	var noStrategy []string
+	var unconfirmed []string
 	strategies := make(map[string]bool)
+	allConfirmed := true
 	for _, m := range metas {
-		if m.DeployStrategy == "" {
-			noStrategy = append(noStrategy, m.Hostname)
-		} else {
-			strategies[m.DeployStrategy] = true
+		strategies[m.DeployStrategy] = true
+		if !m.StrategyConfirmed {
+			unconfirmed = append(unconfirmed, m.Hostname)
+			allConfirmed = false
 		}
 	}
 
-	if len(noStrategy) > 0 {
-		return fmt.Sprintf("Strategy note: %v have no strategy set. Discuss with user before deploying. Set via: zerops_workflow action=\"strategy\" strategies={...}", noStrategy)
+	if !allConfirmed {
+		return fmt.Sprintf(
+			"REQUIRED: Before deploying, confirm deploy strategy with the user.\n"+
+				"Services %s use push-dev (default from bootstrap).\n"+
+				"Ask the user: keep push-dev, or switch to push-git (git remote + optional CI/CD) or manual?\n"+
+				"Set via: zerops_workflow action=\"strategy\" strategies={...}\n"+
+				"Strategy can be changed anytime later.",
+			unconfirmed)
 	}
 
-	// All have strategy — summarize.
+	// All confirmed — concise summary.
 	var names []string
 	for s := range strategies {
 		names = append(names, s)
 	}
 	summary := fmt.Sprintf("Strategy: %s.", names[0])
 	if len(names) > 1 {
-		summary = fmt.Sprintf("Strategies: %v.", names)
+		summary = fmt.Sprintf("Strategies: %s.", strings.Join(names, ", "))
 	}
 	return summary + " Change anytime via action=\"strategy\"."
 }
