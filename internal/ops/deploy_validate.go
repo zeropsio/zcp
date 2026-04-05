@@ -63,10 +63,10 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, roles ...
 	}
 
 	// Package install commands need sudo — containers run as zerops user.
-	if hasPkgInstallWithoutSudo(entry.Run.PrepareCommands) {
+	if HasPkgInstallWithoutSudo(entry.Run.PrepareCommands) {
 		warnings = append(warnings, "run.prepareCommands has package install without sudo (apk add / apt-get install) — containers run as zerops user, prefix with sudo")
 	}
-	if hasPkgInstallWithoutSudo(entry.Build.PrepareCommands) {
+	if HasPkgInstallWithoutSudo(entry.Build.PrepareCommands) {
 		warnings = append(warnings, "build.prepareCommands has package install without sudo (apk add / apt-get install) — containers run as zerops user, prefix with sudo")
 	}
 
@@ -368,12 +368,7 @@ func IsImplicitWebServerType(serviceType string) bool {
 
 // HasPkgInstallWithoutSudo checks if any command in a YAML commands field
 // contains apk add or apt-get install without a sudo prefix.
-// Exported so tools package can delegate to it instead of duplicating.
 func HasPkgInstallWithoutSudo(commands any) bool {
-	return hasPkgInstallWithoutSudo(commands)
-}
-
-func hasPkgInstallWithoutSudo(commands any) bool {
 	var cmds []string
 	switch v := commands.(type) {
 	case string:
