@@ -269,3 +269,62 @@ func TestBuildDeployTargets_PopulatesTargetStrategy(t *testing.T) {
 		})
 	}
 }
+
+func TestDeployState_SkipStep_PrepareMandatory(t *testing.T) {
+	t.Parallel()
+	ds := NewDeployState([]DeployTarget{
+		{Hostname: "app", Role: DeployRoleSimple, Status: deployTargetPending},
+	}, PlanModeSimple)
+	ds.Steps[0].Status = stepInProgress
+
+	err := ds.SkipStep(DeployStepPrepare, "skip prepare")
+	if err == nil {
+		t.Fatal("expected error: prepare step is mandatory")
+	}
+	if !strings.Contains(err.Error(), "mandatory") {
+		t.Errorf("error should mention 'mandatory', got: %s", err.Error())
+	}
+	// Step must NOT advance.
+	if ds.CurrentStepName() != DeployStepPrepare {
+		t.Errorf("current step should still be prepare, got %s", ds.CurrentStepName())
+	}
+}
+
+func TestDeployState_SkipStep_ExecuteAllowed(t *testing.T) {
+	t.Parallel()
+	ds := NewDeployState([]DeployTarget{
+		{Hostname: "app", Role: DeployRoleSimple, Status: deployTargetPending},
+	}, PlanModeSimple)
+	ds.Steps[0].Status = stepInProgress
+	if err := ds.CompleteStep(DeployStepPrepare, "Config checked and validated ok"); err != nil {
+		t.Fatalf("complete prepare: %v", err)
+	}
+
+	if err := ds.SkipStep(DeployStepExecute, "already deployed manually"); err != nil {
+		t.Fatalf("skip execute should succeed: %v", err)
+	}
+	if ds.CurrentStepName() != DeployStepVerify {
+		t.Errorf("current step should be verify, got %s", ds.CurrentStepName())
+	}
+}
+
+func TestDeployState_SkipStep_VerifyAllowed(t *testing.T) {
+	t.Parallel()
+	ds := NewDeployState([]DeployTarget{
+		{Hostname: "app", Role: DeployRoleSimple, Status: deployTargetPending},
+	}, PlanModeSimple)
+	ds.Steps[0].Status = stepInProgress
+	if err := ds.CompleteStep(DeployStepPrepare, "Config checked and validated ok"); err != nil {
+		t.Fatalf("complete prepare: %v", err)
+	}
+	if err := ds.CompleteStep(DeployStepExecute, "Deployed successfully to service"); err != nil {
+		t.Fatalf("complete execute: %v", err)
+	}
+
+	if err := ds.SkipStep(DeployStepVerify, "verified manually"); err != nil {
+		t.Fatalf("skip verify should succeed: %v", err)
+	}
+	if ds.Active {
+		t.Error("should be inactive after all steps")
+	}
+}

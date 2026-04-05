@@ -206,6 +206,7 @@ func (d *DeployState) CompleteStep(name, attestation string) error {
 }
 
 // SkipStep skips the current step.
+// Prepare is mandatory (validates zerops.yaml before deploy) and cannot be skipped.
 func (d *DeployState) SkipStep(name, reason string) error {
 	if !d.Active {
 		return fmt.Errorf("deploy skip: not active")
@@ -215,6 +216,9 @@ func (d *DeployState) SkipStep(name, reason string) error {
 	}
 	if d.Steps[d.CurrentStep].Name != name {
 		return fmt.Errorf("deploy skip: expected %q, got %q", d.Steps[d.CurrentStep].Name, name)
+	}
+	if name == DeployStepPrepare {
+		return fmt.Errorf("deploy skip: %q is mandatory and cannot be skipped", name)
 	}
 
 	d.Steps[d.CurrentStep].Status = stepSkipped

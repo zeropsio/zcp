@@ -207,21 +207,6 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return handleRecipeStart(ctx, projectID, engine, client, cache, input)
 	}
 
-	// Export workflow — immediate (guidance-based, like cicd).
-	if input.Workflow == "export" {
-		wfContent, err := content.GetWorkflow("export")
-		if err != nil {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Export workflow not found: %v", err),
-				"Valid workflows: bootstrap, develop, recipe, cicd, export")), nil, nil
-		}
-		return jsonResult(immediateResponse{
-			Workflow: "export",
-			Guidance: wfContent,
-		}), nil, nil
-	}
-
 	// Unknown workflow — return error.
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,

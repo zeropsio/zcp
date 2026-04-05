@@ -16,23 +16,12 @@ type WorkflowState struct {
 	Bootstrap *BootstrapState `json:"bootstrap,omitempty"`
 	Deploy    *DeployState    `json:"deploy,omitempty"`
 	Recipe    *RecipeState    `json:"recipe,omitempty"`
-	Export    *ExportState    `json:"export,omitempty"`
-}
-
-// ExportState holds state for the export workflow.
-type ExportState struct {
-	Step         string   `json:"step"`
-	Intent       string   `json:"intent"`       // A=CI/CD, B=buildFromGit, C=both
-	ServiceState string   `json:"serviceState"` // S0, S1, S2
-	Hostname     string   `json:"hostname"`
-	RepoURL      string   `json:"repoUrl,omitempty"`
-	Branch       string   `json:"branch,omitempty"`
-	Services     []string `json:"services,omitempty"`
 }
 
 // immediateWorkflows are stateless — no session, just guidance.
 var immediateWorkflows = map[string]bool{
-	"cicd": true,
+	"cicd":   true,
+	"export": true,
 }
 
 // IsImmediateWorkflow returns true if the workflow is stateless (no session).
