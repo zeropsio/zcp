@@ -70,6 +70,8 @@ Define workspace services based on recipe type:
 - **Type 2b (frontend SSR)**: app + db
 - **Type 3 (backend framework)**: app + db
 
+**Target fields**: just `hostname` (lowercase alphanumeric, e.g. `app`/`db`/`cache`) and `type` (service type from live catalog, e.g. `php-nginx@8.4`/`postgresql@17`). The template's internal role is derived automatically from the type — `postgresql@*` → db, `valkey@*` → cache, `meilisearch@*` → search, etc. For runtime types, if the service is a background/queue worker instead of the HTTP-serving primary app, set `isWorker: true`. For managed services, `isWorker` is ignored (the role is fully determined by type).
+
 ### Submission
 Submit via:
 ```
@@ -571,11 +573,16 @@ zerops_workflow action="complete" step="finalize" attestation="Comments provided
 </section>
 
 <section name="close">
-## Close — Verify & Publish
+## Close — Verify (always) & Publish (only when asked)
 
-Recipe creation is complete. Before publishing, dispatch a verification sub-agent to review the recipe from the perspective of a framework expert.
+Recipe creation is complete. The close step has TWO parts with different triggers:
 
-### 1. Verification Sub-Agent (mandatory)
+1. **Verification sub-agent — ALWAYS run, regardless of whether publishing is requested.** Recipe creation without expert review produces broken recipes; the sub-agent is the only thing catching framework-specific mistakes before the user inherits them.
+2. **Export & publish — ONLY when the user explicitly asks.** If the user did not request publishing, stop after the sub-agent review is complete and any CRITICAL/WRONG fixes are applied.
+
+Do NOT skip the sub-agent to save time. Do NOT publish without an explicit user request.
+
+### 1. Verification Sub-Agent (ALWAYS — mandatory)
 
 Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent should act as a **{framework} expert** who has never seen this recipe before, reviewing it for correctness, completeness, and usability.
 
@@ -619,7 +626,9 @@ Apply any CRITICAL or WRONG fixes, then **redeploy** to verify the fixes work:
 - If only import.yaml (finalize output) changed: re-run finalize checks
 - Do NOT skip redeployment — the verification is meaningless if fixes aren't tested.
 
-### 2. Export & Publish
+### 2. Export & Publish (ONLY when the user asks)
+
+If the user did not explicitly request publishing (e.g. "create recipe" by itself), skip this section entirely and complete the close step. Publishing creates GitHub repos and opens PRs — side effects the user did not request.
 
 **Export archive** (for debugging/sharing):
 ```

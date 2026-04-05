@@ -24,7 +24,7 @@ func testRecipePlan() *workflow.RecipePlan {
 			StartCommand:   "php artisan serve",
 		},
 		Targets: []workflow.RecipeTarget{
-			{Hostname: "app", Type: "php-nginx@8.4", Role: "app", Environments: []string{"0", "1", "2", "3", "4", "5"}},
+			{Hostname: "app", Type: "php-nginx@8.4", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
 	}
 }

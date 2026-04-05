@@ -138,11 +138,16 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 		}
 		if t.Type == "" {
 			errs = append(errs, fmt.Sprintf("target[%d]: type is required", i))
-		} else if svcTypeSet != nil && !svcTypeSet[t.Type] {
+			continue
+		}
+		if svcTypeSet != nil && !svcTypeSet[t.Type] {
 			errs = append(errs, fmt.Sprintf("target[%d]: type %q not found in import.yaml schema", i, t.Type))
 		}
-		if t.Role == "" {
-			errs = append(errs, fmt.Sprintf("target[%d]: role is required", i))
+		// Role is derived from type, not submitted. Verify the type maps
+		// to a known canonical role — otherwise the template layer can't
+		// dispatch and zeropsSetup/buildFromGit would be silently dropped.
+		if _, err := DeriveRole(t.Type, t.IsWorker); err != nil {
+			errs = append(errs, fmt.Sprintf("target[%d]: %v (agent should not encounter this — report as a bug)", i, err))
 		}
 	}
 	return errs

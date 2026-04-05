@@ -299,7 +299,7 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 	runtimeSeen := false
 
 	for _, target := range plan.Targets {
-		if IsRuntimeService(target.Role) {
+		if IsRuntimeService(target.Role()) {
 			if !runtimeSeen {
 				runtimeSeen = true
 				if envIndex <= 1 {
@@ -310,7 +310,7 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 				}
 			}
 		} else {
-			parts = append(parts, dataServiceLabel(target.Role))
+			parts = append(parts, dataServiceLabel(target.Role()))
 		}
 	}
 

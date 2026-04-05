@@ -43,10 +43,10 @@ func IsUtilityType(serviceType string) bool {
 // Convention: dev services use "dev", prod workers use "worker", prod apps use "prod".
 func recipeSetupName(role string, isDev bool) string {
 	if isDev {
-		return "dev"
+		return PlanModeDev
 	}
 	if role == RecipeRoleWorker {
-		return "worker"
+		return RecipeRoleWorker
 	}
 	return "prod"
 }

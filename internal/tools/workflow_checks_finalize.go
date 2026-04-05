@@ -237,7 +237,7 @@ func checkServiceStructure(doc importYAMLDoc, svcMap map[string]importService, p
 
 	// Data service priority.
 	for _, target := range plan.Targets {
-		if workflow.IsDataService(target.Role) {
+		if workflow.IsDataService(target.Role()) {
 			svc, exists := svcMap[target.Hostname]
 			if exists && (svc.Priority == nil || *svc.Priority != 10) {
 				checks = append(checks, workflow.StepCheck{
@@ -288,7 +288,7 @@ func checkServiceStructure(doc importYAMLDoc, svcMap map[string]importService, p
 	// Env 0-1: runtime services must use dev/stage hostname pairs.
 	if envIndex <= 1 {
 		for _, target := range plan.Targets {
-			if !workflow.IsRuntimeService(target.Role) || workflow.IsUtilityType(target.Type) {
+			if !workflow.IsRuntimeService(target.Role()) || workflow.IsUtilityType(target.Type) {
 				continue
 			}
 			devHost := target.Hostname + "dev"
@@ -445,7 +445,7 @@ func checkSectionHeadingComments(content, prefix string) []workflow.StepCheck {
 // Handles env 0-1 suffixed hostnames (appdev/appstage → app target).
 func findTargetRole(plan *workflow.RecipePlan, hostname string) string {
 	if t := findTarget(plan, hostname); t != nil {
-		return t.Role
+		return t.Role()
 	}
 	return ""
 }

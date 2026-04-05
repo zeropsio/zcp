@@ -135,7 +135,6 @@ func TestRecipeComplete_Research(t *testing.T) {
 				map[string]any{
 					"hostname":     "app",
 					"type":         "php-nginx@8.4",
-					"role":         "app",
 					"environments": []any{"0", "1", "2", "3", "4", "5"},
 				},
 			},
@@ -218,7 +217,7 @@ func TestRecipeSkip_CloseAllowed(t *testing.T) {
 			LoggingDriver:  "stderr",
 		},
 		Targets: []workflow.RecipeTarget{
-			{Hostname: "app", Type: "bun@1", Role: "app", Environments: []string{"0", "1", "2", "3", "4", "5"}},
+			{Hostname: "app", Type: "bun@1", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
 	}
 	if _, err := engine.RecipeCompletePlan(plan, "research done for bun", nil, nil); err != nil {
@@ -298,7 +297,7 @@ func TestRecipeAutoReset_CompletedSession(t *testing.T) {
 			MigrationCmd: "none", LoggingDriver: "stderr",
 		},
 		Targets: []workflow.RecipeTarget{
-			{Hostname: "app", Type: "bun@1", Role: "app", Environments: []string{"0", "1", "2", "3", "4", "5"}},
+			{Hostname: "app", Type: "bun@1", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
 	}
 	if _, err := engine.RecipeCompletePlan(plan, "research done for testing", nil, nil); err != nil {

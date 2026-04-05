@@ -27,8 +27,8 @@ func testFinalizePlan() *workflow.RecipePlan {
 			NeedsAppSecret: false,
 		},
 		Targets: []workflow.RecipeTarget{
-			{Hostname: "app", Type: "bun@1", Role: "app", Environments: []string{"0", "1", "2", "3", "4", "5"}},
-			{Hostname: "db", Type: "postgresql@16", Role: "db", Environments: []string{"0", "1", "2", "3", "4", "5"}},
+			{Hostname: "app", Type: "bun@1", Environments: []string{"0", "1", "2", "3", "4", "5"}},
+			{Hostname: "db", Type: "postgresql@16", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
 	}
 }

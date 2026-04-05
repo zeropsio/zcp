@@ -29,7 +29,7 @@ func validMinimalPlan() RecipePlan {
 			LoggingDriver:  "stderr",
 		},
 		Targets: []RecipeTarget{
-			{Hostname: "app", Type: "php-nginx@8.4", Role: "app", Environments: []string{"0", "1", "2", "3", "4", "5"}},
+			{Hostname: "app", Type: "php-nginx@8.4", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
 	}
 }
@@ -53,7 +53,7 @@ func TestValidateRecipePlan_Valid(t *testing.T) {
 			p.Research.SearchLib = "meilisearch"
 			p.Research.MailLib = "smtp"
 			p.Targets = append(p.Targets, RecipeTarget{
-				Hostname: "redis", Type: "keydb@6", Role: "cache",
+				Hostname: "redis", Type: "keydb@6",
 				Environments: []string{"0", "1", "3", "4", "5"},
 			})
 			return p
@@ -95,14 +95,11 @@ func TestValidateRecipePlan_MissingFields(t *testing.T) {
 		}, "research.startCommand is required"},
 		{"missing targets", func(p *RecipePlan) { p.Targets = nil }, "at least one target is required"},
 		{"target missing hostname", func(p *RecipePlan) {
-			p.Targets = []RecipeTarget{{Type: "php@8.4", Role: "app"}}
+			p.Targets = []RecipeTarget{{Type: "php@8.4"}}
 		}, "hostname is required"},
 		{"target missing type", func(p *RecipePlan) {
-			p.Targets = []RecipeTarget{{Hostname: "app", Role: "app"}}
+			p.Targets = []RecipeTarget{{Hostname: "app"}}
 		}, "type is required"},
-		{"target missing role", func(p *RecipePlan) {
-			p.Targets = []RecipeTarget{{Hostname: "app", Type: "php@8.4"}}
-		}, "role is required"},
 	}
 
 	for _, tt := range tests {
@@ -429,11 +426,11 @@ func TestValidateRecipePlan_SchemaTargetTypeValidation(t *testing.T) {
 		wantErr bool
 	}{
 		{"valid targets", []RecipeTarget{
-			{Hostname: "app", Type: "php-nginx@8.4", Role: "app"},
-			{Hostname: "db", Type: "postgresql@16", Role: "db"},
+			{Hostname: "app", Type: "php-nginx@8.4"},
+			{Hostname: "db", Type: "postgresql@16"},
 		}, false},
 		{"invalid target type", []RecipeTarget{
-			{Hostname: "app", Type: "foobar@1.0", Role: "app"},
+			{Hostname: "app", Type: "foobar@1.0"},
 		}, true},
 	}
 

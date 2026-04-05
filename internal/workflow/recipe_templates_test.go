@@ -28,8 +28,8 @@ func testMinimalPlan() *RecipePlan {
 			MigrationCmd:   "php artisan migrate",
 		},
 		Targets: []RecipeTarget{
-			{Hostname: "app", Type: "php-nginx@8.4", Role: "app", Environments: []string{"0", "1", "2", "3", "4", "5"}},
-			{Hostname: "db", Type: "mariadb@10.11", Role: "db", Environments: []string{"0", "1", "2", "3", "4", "5"}},
+			{Hostname: "app", Type: "php-nginx@8.4", Environments: []string{"0", "1", "2", "3", "4", "5"}},
+			{Hostname: "db", Type: "mariadb@10.11", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
 	}
 }
@@ -39,11 +39,11 @@ func testShowcasePlan() *RecipePlan {
 	plan.Tier = RecipeTierShowcase
 	plan.Slug = "laravel-showcase"
 	plan.Targets = append(plan.Targets,
-		RecipeTarget{Hostname: "redis", Type: "valkey@7.2", Role: "cache"},
-		RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", Role: "worker"},
-		RecipeTarget{Hostname: "storage", Type: "object-storage", Role: "storage"},
-		RecipeTarget{Hostname: "mailpit", Type: "mailpit", Role: "mail"},
-		RecipeTarget{Hostname: "search", Type: "meilisearch@1", Role: "search"},
+		RecipeTarget{Hostname: "redis", Type: "valkey@7.2"},
+		RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true},
+		RecipeTarget{Hostname: "storage", Type: "object-storage"},
+		RecipeTarget{Hostname: "mailpit", Type: "mailpit"},
+		RecipeTarget{Hostname: "search", Type: "meilisearch@1"},
 	)
 	return plan
 }
