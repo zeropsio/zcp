@@ -46,42 +46,10 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 
 	switch step {
 	case StepGenerate:
-		if env == EnvLocal {
-			// Local mode: self-contained generate guidance (replaces base + mode-specific).
-			sections = append(sections, ExtractSection(md, "generate-local"))
-		} else {
-			// Base generate section (always).
-			sections = append(sections, ExtractSection(md, "generate"))
-			// Mode-specific sections.
-			if modes[PlanModeStandard] {
-				sections = append(sections, ExtractSection(md, "generate-standard"))
-			}
-			if modes[PlanModeDev] {
-				sections = append(sections, ExtractSection(md, "generate-dev"))
-			}
-			if modes[PlanModeSimple] {
-				sections = append(sections, ExtractSection(md, "generate-simple"))
-			}
-		}
+		sections = appendModeSections(sections, md, "generate", env, modes)
 
 	case StepDeploy:
-		if env == EnvLocal {
-			// Local mode replaces the entire deploy section — SSH content is irrelevant.
-			sections = append(sections, ExtractSection(md, "deploy-local"))
-		} else {
-			// Base deploy overview (always).
-			sections = append(sections, ExtractSection(md, "deploy"))
-			// Mode-specific sections.
-			if modes[PlanModeStandard] {
-				sections = append(sections, ExtractSection(md, "deploy-standard"))
-			}
-			if modes[PlanModeDev] {
-				sections = append(sections, ExtractSection(md, "deploy-dev"))
-			}
-			if modes[PlanModeSimple] {
-				sections = append(sections, ExtractSection(md, "deploy-simple"))
-			}
-		}
+		sections = appendModeSections(sections, md, "deploy", env, modes)
 		// Conditional: agent orchestration for 3+ services.
 		if plan != nil && len(plan.Targets) >= 3 {
 			sections = append(sections, ExtractSection(md, "deploy-agents"))
@@ -103,6 +71,22 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 		return ExtractSection(md, step)
 	}
 	return strings.Join(parts, "\n\n---\n\n")
+}
+
+// appendModeSections appends base + mode-specific guidance sections for a step.
+// Local mode uses a self-contained "{step}-local" section. Container mode uses
+// the base "{step}" section plus per-mode "{step}-standard/dev/simple" sections.
+func appendModeSections(sections []string, md, step string, env Environment, modes map[string]bool) []string {
+	if env == EnvLocal {
+		return append(sections, ExtractSection(md, step+"-local"))
+	}
+	sections = append(sections, ExtractSection(md, step))
+	for _, m := range []string{PlanModeStandard, PlanModeDev, PlanModeSimple} {
+		if modes[m] {
+			sections = append(sections, ExtractSection(md, step+"-"+m))
+		}
+	}
+	return sections
 }
 
 // distinctModes returns the set of effective bootstrap modes across all plan targets.

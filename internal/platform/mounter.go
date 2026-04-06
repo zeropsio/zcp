@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -124,15 +123,19 @@ func (m *SystemMounter) waitForReady(ctx context.Context, path string) error {
 }
 
 // writeProbe verifies a path is writable using Go stdlib (no shell).
-// Creates and immediately removes a temp file. Returns true if both succeed.
+// Creates a unique temp file, closes it, and removes it. Returns true only if
+// all three operations succeed — a failed Close indicates a broken transport.
 func writeProbe(path string) bool {
-	probe := filepath.Join(path, ".mount_probe")
-	f, err := os.Create(probe)
+	f, err := os.CreateTemp(path, ".mount_probe_*")
 	if err != nil {
 		return false
 	}
-	f.Close()
-	os.Remove(probe)
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		os.Remove(name)
+		return false
+	}
+	os.Remove(name)
 	return true
 }
 
@@ -173,13 +176,11 @@ func (m *SystemMounter) ForceUnmount(ctx context.Context, hostname, path string)
 	return nil
 }
 
-// IsWritable checks if the mount point is writable by creating and removing a test file.
-func (m *SystemMounter) IsWritable(ctx context.Context, path string) (bool, error) {
-	testFile := filepath.Join(path, ".mount_test")
-	if err := execWithTimeout(ctx, mountCheckTimeout, "touch", testFile); err != nil {
-		return false, fmt.Errorf("writable check: %w", err)
+// IsWritable checks if the mount point is writable by creating and removing a temp file.
+func (m *SystemMounter) IsWritable(_ context.Context, path string) (bool, error) {
+	if !writeProbe(path) {
+		return false, fmt.Errorf("writable check: cannot write to %s", path)
 	}
-	_ = execWithTimeout(ctx, mountCheckTimeout, "rm", "-f", testFile)
 	return true, nil
 }
 

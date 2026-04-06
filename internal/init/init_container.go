@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/zeropsio/zcp/internal/ops"
+
 	"github.com/zeropsio/zcp/internal/content"
 )
 
@@ -57,9 +59,10 @@ var gitInitDir = "/var/www"
 // configureGit sets global git identity and initializes the workspace as a repo.
 // Idempotent: git config overwrites, git init on existing repo is a no-op.
 func configureGit(_ string) error {
+	id := ops.DeployGitIdentity
 	cmds := [][]string{
-		{"git", "config", "--global", "user.email", "agent@zerops.io"},
-		{"git", "config", "--global", "user.name", "Zerops Agent"},
+		{"git", "config", "--global", "user.email", id.Email},
+		{"git", "config", "--global", "user.name", id.Name},
 		{"git", "init", gitInitDir},
 	}
 	for _, args := range cmds {

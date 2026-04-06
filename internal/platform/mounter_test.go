@@ -10,9 +10,10 @@ func TestWriteProbe(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		setup func(t *testing.T) string
-		want  bool
+		name   string
+		setup  func(t *testing.T) string
+		want   bool
+		verify func(t *testing.T, dir string)
 	}{
 		{
 			name: "writable directory returns true",
@@ -54,6 +55,18 @@ func TestWriteProbe(t *testing.T) {
 				return t.TempDir()
 			},
 			want: true,
+			verify: func(t *testing.T, dir string) {
+				t.Helper()
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					t.Fatalf("readdir: %v", err)
+				}
+				for _, e := range entries {
+					if e.Name() != "." && e.Name() != ".." {
+						t.Errorf("probe file %s should have been cleaned up", e.Name())
+					}
+				}
+			},
 		},
 	}
 
@@ -65,11 +78,8 @@ func TestWriteProbe(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("writeProbe(%s) = %v, want %v", dir, got, tt.want)
 			}
-			if tt.name == "probe file is cleaned up after success" {
-				probe := filepath.Join(dir, ".mount_probe")
-				if _, err := os.Stat(probe); err == nil {
-					t.Errorf("probe file %s should have been cleaned up", probe)
-				}
+			if tt.verify != nil {
+				tt.verify(t, dir)
 			}
 		})
 	}

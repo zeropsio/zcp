@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	zcpinit "github.com/zeropsio/zcp/internal/init"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -51,8 +52,8 @@ func TestContainerSteps_GitConfig(t *testing.T) {
 		name string
 		want []string
 	}{
-		{"git email", []string{"git", "config", "--global", "user.email", "agent@zerops.io"}},
-		{"git name", []string{"git", "config", "--global", "user.name", "Zerops Agent"}},
+		{"git email", []string{"git", "config", "--global", "user.email", ops.DeployGitIdentity.Email}},
+		{"git name", []string{"git", "config", "--global", "user.name", ops.DeployGitIdentity.Name}},
 		{"git init", []string{"git", "init", gitDir}},
 	}
 	for _, tt := range tests {
