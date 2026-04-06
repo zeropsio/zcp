@@ -12,20 +12,23 @@ import (
 
 const mountStatusMounted = "MOUNTED"
 
-// cleanupImportYAML stores import.yaml provenance and cleans up after provision.
-//
-// In all environments:
-//   - Stores a durable provenance copy in stateDir (import-provenance.yaml).
+// cleanupImportYAML copies import.yaml to each mounted service and removes it
+// from the project root. The import.yaml belongs with the service — it persists
+// across deploys (via deployFiles: [.]) and is needed for repo creation / buildFromGit.
 //
 // In container mode (isContainer=true):
-//   - Best-effort copies to each mounted service path for convenience.
-//   - Deletes the original from project root (provenance is in state dir).
+//   - Copies to each mounted service path.
+//   - Deletes from project root only if at least one copy succeeded.
 //
 // In local mode (isContainer=false):
-//   - Leaves the original at project root (user may need it).
+//   - No-op. File stays at project root for the user.
 //
 // stateDir is expected to be {projectRoot}/.zcp/state/.
 func cleanupImportYAML(stateDir string, mounts []workflow.AutoMountInfo, isContainer bool) {
+	if !isContainer {
+		return
+	}
+
 	projectRoot := filepath.Dir(filepath.Dir(stateDir))
 
 	fileNames := []string{"import.yaml", "import.yml"}
@@ -39,11 +42,6 @@ func cleanupImportYAML(stateDir string, mounts []workflow.AutoMountInfo, isConta
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: read import file for cleanup: %v\n", err)
-			if isContainer {
-				if removeErr := os.Remove(candidate); removeErr != nil {
-					fmt.Fprintf(os.Stderr, "zcp: remove import file: %v\n", removeErr)
-				}
-			}
 			return
 		}
 		found = candidate
@@ -54,19 +52,9 @@ func cleanupImportYAML(stateDir string, mounts []workflow.AutoMountInfo, isConta
 		return
 	}
 
-	// Step 1: Store provenance in state dir (all environments).
-	provenancePath := filepath.Join(stateDir, "import-provenance.yaml")
-	if writeErr := os.WriteFile(provenancePath, content, 0o600); writeErr != nil {
-		fmt.Fprintf(os.Stderr, "zcp: store import provenance at %s: %v\n", provenancePath, writeErr)
-		// Provenance storage failed — do NOT delete the source file.
-		return
-	}
-
-	if !isContainer {
-		return
-	}
-
-	// Step 2 (container only): Best-effort copy to mount paths.
+	// Copy to each mounted service. Mount write-readiness is guaranteed by
+	// the write probe in SystemMounter.waitForReady.
+	copied := 0
 	fileName := filepath.Base(found)
 	for _, m := range mounts {
 		if m.MountPath == "" || m.Status != mountStatusMounted {
@@ -75,11 +63,15 @@ func cleanupImportYAML(stateDir string, mounts []workflow.AutoMountInfo, isConta
 		dest := filepath.Join(m.MountPath, fileName)
 		if writeErr := os.WriteFile(dest, content, 0o600); writeErr != nil {
 			fmt.Fprintf(os.Stderr, "zcp: copy import file to %s: %v\n", dest, writeErr)
+			continue
 		}
+		copied++
 	}
 
-	// Step 3 (container only): Delete from project root.
-	if err := os.Remove(found); err != nil {
-		fmt.Fprintf(os.Stderr, "zcp: remove import file: %v\n", err)
+	// Delete from project root only if at least one service has the file.
+	if copied > 0 {
+		if err := os.Remove(found); err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: remove import file: %v\n", err)
+		}
 	}
 }

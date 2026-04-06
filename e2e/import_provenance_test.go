@@ -1,12 +1,12 @@
 //go:build e2e
 
-// Tests for: e2e — import.yaml provenance lifecycle during bootstrap.
+// Tests for: e2e — import.yaml lifecycle during bootstrap.
 //
 // Verifies that after bootstrap provision step:
-// 1. import.yaml is stored as provenance in .zcp/state/
-// 2. import.yaml is removed from project root
-// 3. Mount readiness probe ensures SSHFS is ready before file operations
-// 4. Provenance file survives service deploys (stored in .zcp/state/, not /var/www)
+// 1. import.yaml is copied to each mounted service (persists via deployFiles: [.])
+// 2. In container mode: import.yaml is removed from project root
+// 3. In local mode: import.yaml stays at project root
+// 4. Mount readiness probe ensures SSHFS is ready before file operations
 //
 // Prerequisites:
 //   - ZCP_API_KEY set
@@ -134,42 +134,34 @@ func TestE2E_ImportProvenance_StoredInState(t *testing.T) {
 	assertProvisionPassed(t, provResp)
 	t.Logf("  Provision passed: %s", provResp.CheckResult.Summary)
 
-	// --- Step 5: Verify provenance stored in .zcp/state/ ---
-	step++
-	logStep(t, step, "verify import.yaml provenance")
-
-	provenancePath := filepath.Join(stateDir, "import-provenance.yaml")
-	provenanceData, err := os.ReadFile(provenancePath)
-	if err != nil {
-		t.Fatalf("provenance file not found at %s: %v", provenancePath, err)
-	}
-	if string(provenanceData) != importContent {
-		t.Errorf("provenance content mismatch:\n  got:  %q\n  want: %q", string(provenanceData), importContent)
-	}
-	t.Logf("  Provenance stored: %s (%d bytes)", provenancePath, len(provenanceData))
-
-	// --- Step 6: Verify import.yaml behavior at project root ---
-	// In local mode: file is kept (user may need it).
-	// In container mode: file is deleted (provenance in state dir).
+	// --- Step 5: Verify import.yaml stays at root (local mode = noop) ---
 	step++
 	logStep(t, step, "verify import.yaml at root (local mode keeps it)")
 	if _, err := os.Stat(importPath); err != nil {
-		t.Logf("  import.yaml deleted from root (container mode)")
-	} else {
-		t.Log("  Confirmed: import.yaml kept at root (local mode — expected)")
-		// Clean up the file we created.
-		os.Remove(importPath)
+		t.Fatalf("import.yaml should stay at root in local mode, but got: %v", err)
+	}
+	t.Log("  Confirmed: import.yaml kept at root (local mode)")
+
+	// Verify no provenance file in state dir (import.yaml belongs on service, not ZCP state).
+	provenancePath := filepath.Join(stateDir, "import-provenance.yaml")
+	if _, err := os.Stat(provenancePath); err == nil {
+		t.Errorf("provenance file should NOT exist in state dir, but found at %s", provenancePath)
 	}
 
-	// --- Step 7: Verify provenance content matches what was imported ---
-	step++
-	logStep(t, step, "verify provenance contains all hostnames")
+	// Verify content matches what was imported.
+	rootData, err := os.ReadFile(importPath)
+	if err != nil {
+		t.Fatalf("read import.yaml: %v", err)
+	}
 	for _, hostname := range []string{appHostname, dbHostname} {
-		if !strings.Contains(string(provenanceData), hostname) {
-			t.Errorf("provenance should contain hostname %q, but doesn't", hostname)
+		if !strings.Contains(string(rootData), hostname) {
+			t.Errorf("import.yaml should contain hostname %q, but doesn't", hostname)
 		}
 	}
-	t.Log("  All hostnames present in provenance")
+	t.Log("  All hostnames present in import.yaml")
+
+	// Clean up the file we created.
+	os.Remove(importPath)
 }
 
 func TestE2E_ImportProvenance_MountWriteAfterReadiness(t *testing.T) {

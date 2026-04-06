@@ -69,8 +69,9 @@ func isSshfsMount(path string) (bool, error) {
 }
 
 // Mount creates an SSHFS mount via zsc systemd unit and waits for readiness.
-// Returns only after the mount appears in /proc/mounts and is accessible,
-// or after mountCreateTimeout.
+// Returns only after the mount is fully ready for I/O: appears in /proc/mounts,
+// os.Stat succeeds, AND a write probe confirms the SSH channel is operational.
+// Blocks up to mountCreateTimeout.
 func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) error {
 	if err := ValidateHostname(hostname); err != nil {
 		return err
@@ -98,8 +99,9 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 	return nil
 }
 
-// waitForReady polls until the SSHFS mount is active (appears in /proc/mounts
-// and os.Stat succeeds). Polls every 500ms up to mountCreateTimeout.
+// waitForReady polls until the SSHFS mount is fully ready for I/O.
+// Ready means: appears in /proc/mounts, os.Stat succeeds, AND a write probe
+// confirms the SSH channel is operational. Polls every 500ms up to mountCreateTimeout.
 func (m *SystemMounter) waitForReady(ctx context.Context, path string) error {
 	deadline := time.Now().Add(mountCreateTimeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -107,7 +109,7 @@ func (m *SystemMounter) waitForReady(ctx context.Context, path string) error {
 
 	for {
 		state, err := m.CheckMount(ctx, path)
-		if err == nil && state == MountStateActive {
+		if err == nil && state == MountStateActive && writeProbe(path) {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -119,6 +121,19 @@ func (m *SystemMounter) waitForReady(ctx context.Context, path string) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// writeProbe verifies a path is writable using Go stdlib (no shell).
+// Creates and immediately removes a temp file. Returns true if both succeed.
+func writeProbe(path string) bool {
+	probe := filepath.Join(path, ".mount_probe")
+	f, err := os.Create(probe)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	os.Remove(probe)
+	return true
 }
 
 // Unmount removes the SSHFS mount and zsc unit.
