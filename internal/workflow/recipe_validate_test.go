@@ -53,7 +53,6 @@ func validShowcasePlan() RecipePlan {
 		{Hostname: "db", Type: "mariadb@10.11"},
 		{Hostname: "cache", Type: "keydb@6"},
 		{Hostname: "storage", Type: "object-storage"},
-		{Hostname: "mailpit", Type: "mailpit"},
 		{Hostname: "search", Type: "meilisearch@1"},
 	}
 	return p
@@ -148,7 +147,6 @@ func TestValidateRecipePlan_ShowcaseMissingFields(t *testing.T) {
 		{"missing queueDriver", func(p *RecipePlan) { p.Research.QueueDriver = "" }, "queueDriver"},
 		{"missing storageDriver", func(p *RecipePlan) { p.Research.StorageDriver = "" }, "storageDriver"},
 		{"missing searchLib", func(p *RecipePlan) { p.Research.SearchLib = "" }, "searchLib"},
-		{"missing mailLib", func(p *RecipePlan) { p.Research.MailLib = "" }, "mailLib"},
 	}
 
 	for _, tt := range tests {
@@ -220,15 +218,6 @@ func TestValidateRecipePlan_ShowcaseMissingServices(t *testing.T) {
 			}
 			p.Targets = filtered
 		}, "storage"},
-		{"missing mail catcher", func(p *RecipePlan) {
-			var filtered []RecipeTarget
-			for _, t := range p.Targets {
-				if serviceTypeKind(t.Type) != "mail catcher" {
-					filtered = append(filtered, t)
-				}
-			}
-			p.Targets = filtered
-		}, "mail catcher"},
 		{"missing search engine", func(p *RecipePlan) {
 			var filtered []RecipeTarget
 			for _, t := range p.Targets {

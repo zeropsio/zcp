@@ -97,7 +97,11 @@ zerops_workflow action="complete" step="research" recipePlan={...}
 
 Includes everything from minimal research, PLUS the fields and targets below.
 
-**Reference loading**: load both the hello-world AND the minimal recipe for your framework (see Reference Loading in the minimal section). The minimal recipe's gotchas and zerops.yaml patterns are your starting point — showcase extends them with additional services, not replaces them.
+**Reference loading**: load ONLY the minimal recipe for your framework — this is your direct predecessor and starting point:
+```
+zerops_knowledge recipe="{framework}-minimal"
+```
+Do NOT load the hello-world recipe manually. The generate step automatically injects platform gotchas from earlier ancestors (hello-world tier) — loading it here wastes context with zerops.yaml patterns (raw SQL, different base image) that don't apply to your framework.
 
 ### Additional Showcase Fields
 - **Cache library**: Redis client library for the framework
@@ -105,7 +109,6 @@ Includes everything from minimal research, PLUS the fields and targets below.
 - **Queue driver**: queue/job system for the framework
 - **Storage driver**: object storage integration (S3-compatible)
 - **Search library**: search integration (e.g., Meilisearch, Elasticsearch)
-- **Mail library**: email sending (e.g., SMTP via Mailpit for dev)
 
 ### Showcase Targets
 Define workspace services for showcase recipe. All targets appear in all 6 environment tiers (the finalize step handles per-env scaling and mode differences):
@@ -114,7 +117,6 @@ Define workspace services for showcase recipe. All targets appear in all 6 envir
 - **db**: primary database
 - **redis**: cache + sessions + queues (Valkey or KeyDB)
 - **storage**: S3-compatible object storage
-- **mailpit**: dev email testing (web UI for intercepted mail)
 - **search**: search engine (Meilisearch, Elasticsearch, or Typesense)
 
 ### Submission
@@ -669,7 +671,7 @@ The 6 envs are **not interchangeable** — each exists to describe a different d
 
 Pass `envComments` keyed by env index (`"0"`..`"5"`). Each env carries a `service` map (keys match the hostnames that appear in THAT env's file) and an optional `project` comment. **Service key rule**: envs 0-1 carry the dev+stage pair, so keys are `"appdev"` and `"appstage"`; envs 2-5 collapse to a single runtime entry, so the key is the base hostname (`"app"`). Managed services (`"db"` etc.) keep the base hostname everywhere.
 
-**Showcase service keys**: in envs 2-5, worker is `"worker"`. In envs 0-1, the keys depend on the worker architecture: **monorepo** (same runtime as app) has only `"workerstage"` — no workerdev exists. **Polyglot** (different runtime) has both `"workerdev"` and `"workerstage"`. Other showcase services use base hostname everywhere: `"redis"`, `"storage"`, `"mailpit"`, `"search"`. Every service that appears in a given env's import.yaml should have a comment explaining its role in THAT env.
+**Showcase service keys**: in envs 2-5, worker is `"worker"`. In envs 0-1, showcase monorepo workers have both `"workerdev"` and `"workerstage"` (showcase always generates dev+stage for every runtime). **Polyglot** (different runtime) also has both `"workerdev"` and `"workerstage"`. Other showcase services use base hostname everywhere: `"redis"`, `"storage"`, `"search"`. Every service that appears in a given env's import.yaml should have a comment explaining its role in THAT env.
 
 ```
 zerops_workflow action="generate-finalize" \

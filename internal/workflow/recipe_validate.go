@@ -167,7 +167,6 @@ func validateShowcaseServices(targets []RecipeTarget) []string {
 		kindCache:        false,
 		kindStorage:      false,
 		kindSearchEngine: false,
-		kindMailCatcher:  false,
 	}
 	hasApp, hasWorker := false, false
 
@@ -256,7 +255,6 @@ func showcaseMissing(r ResearchData) []string {
 		{"queueDriver", r.QueueDriver},
 		{"storageDriver", r.StorageDriver},
 		{"searchLib", r.SearchLib},
-		{"mailLib", r.MailLib},
 	}
 	for _, c := range checks {
 		if strings.TrimSpace(c.value) == "" {
