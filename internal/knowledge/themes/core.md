@@ -175,6 +175,7 @@ zerops[]:
 - **NEVER** set `verticalAutoscaling` for shared-storage or object-storage. REASON: these service types don't support vertical scaling; setting it causes import failure
 - **ALWAYS** set `priority: 10` for databases/storage services. REASON: ensures they start before application services that depend on them
 - **ALWAYS** set `enableSubdomainAccess: true` in import.yaml AND call `zerops_subdomain action="enable"` once after the first deploy of each new service. REASON: the import flag marks intent; the subdomain API call activates the L7 route
+- **ALWAYS** prefer the **highest available version** from the live catalog for each service type, unless a specific version is required for compatibility. REASON: new projects should start on the latest stable release; older versions exist for migration/compatibility but should not be chosen by default. Example: if `postgresql@{14,16,17,18}` are available, use `postgresql@18`.
 - **ALWAYS** use `valkey@7.2` (not `valkey@8`). REASON: v8 passes dry-run validation but fails actual import
 - **NEVER** use Docker `:latest` tag. REASON: cached and won't re-pull; always use specific version tags
 - **ALWAYS** use `--network=host` for Docker services. REASON: without it, container cannot receive traffic from Zerops routing

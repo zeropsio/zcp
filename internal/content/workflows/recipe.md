@@ -242,6 +242,7 @@ Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific 
 - **NO healthCheck, NO readinessCheck** — agent controls lifecycle; checks would restart the container during iteration
 - Framework mode flags set to dev values (`APP_ENV: local`, `NODE_ENV: development`, `DEBUG: "true"`, verbose logging)
 - Same cross-service refs from `zerops_discover` as prod — only mode flags differ
+- **Dev dependency pre-install**: if the build base includes a secondary runtime for an asset pipeline, dev `buildCommands` MUST include the dependency install step for that runtime's package manager. This ensures the dev container ships with dependencies pre-populated — the developer (or agent) can SSH in and immediately run the dev server without a manual install step first. Omit the asset compilation step — that's for prod only; dev uses the live dev server.
 
 **`setup: prod`** (cross-deployed from dev to stage — end-user production target):
 - Real `buildCommands` (`composer install --no-dev --optimize-autoloader`, `npm run build`, `go build -ldflags "-s -w"`, etc.)
@@ -275,6 +276,16 @@ Use the framework's **standard** environment names and values — don't invent n
 **Type 2a (static frontend):**
 - `GET /` — simple page showing framework name, greeting, timestamp, environment indicator
 - No server-side health endpoint (static files only)
+
+### Asset pipeline consistency
+
+**Rule**: if `buildCommands` compiles assets (JS, CSS, or both), the primary view/template MUST load those compiled assets via the framework's standard asset inclusion mechanism. Inline `<style>` or `<script>` blocks that bypass the build output are forbidden when a build pipeline exists.
+
+**Why**: a build step that produces assets nobody loads is dead code. Prod wastes build time on compilation that the template ignores. The dev server started in Step 2b serves nothing. The end user cloning the recipe sees a working build config but a template that doesn't use it — indistinguishable from a broken setup.
+
+**How to verify**: if the zerops.yaml prod `buildCommands` includes an asset compilation step (any command that produces built CSS/JS in an output directory), check that the primary view/template references those outputs through the framework's asset helper. Every framework with a build pipeline has one — it's the mechanism that maps source assets to content-hashed output filenames. If you're writing inline styles instead, you've disconnected the pipeline.
+
+This is the generate-step corollary of research decision 5 (scaffold preservation): keeping the config files but not wiring them into the template is functionally identical to stripping the pipeline.
 
 ### App README with extract fragments
 
@@ -342,6 +353,8 @@ Description of why this change is needed.
 - [ ] dev and prod envVariables differ on mode flags (APP_ENV/NODE_ENV/DEBUG/LOG_LEVEL)
 - [ ] envVariables has only cross-service refs + mode flags — no envSecrets re-referenced
 - [ ] All env var refs use names from `zerops_discover`, none guessed
+- [ ] If prod `buildCommands` compiles assets, primary view loads them via framework asset helper (not inline CSS/JS)
+- [ ] If dev build base includes a secondary runtime for an asset pipeline, dev `buildCommands` includes the package manager install
 - [ ] README has all 3 extract fragments with proper markers
 - [ ] `.env.example` preserved (`.env` removed)
 
@@ -465,15 +478,15 @@ The `setup="dev"` parameter maps hostname `appdev` to `setup: dev` in zerops.yam
 - **Static frontends** (type 2a): Skip — Nginx serves the built files automatically.
 
 **Step 2b: Start auxiliary dev processes**
-If the framework scaffold includes a JS asset pipeline (Vite, Webpack, Mix, Tailwind CLI) AND the dev zerops.yaml installs Node via `sudo -E zsc install` in `run.prepareCommands`, you MUST start the dev asset server via SSH after deploy:
+If the build pipeline includes a secondary runtime (installed via `sudo -E zsc install` in `run.prepareCommands`), check whether the scaffold defines a dev server or watch process for that runtime. If it does, start it via SSH after deploy:
 ```bash
-ssh appdev "cd /var/www && npm run dev -- --host 0.0.0.0 &"
+ssh appdev "cd /var/www && {dev_server_command} &"
 ```
-(Or the equivalent: `yarn dev`, `pnpm dev`, `bun run dev`. Always pass `--host 0.0.0.0` for Vite so it binds all interfaces.)
+The dev server command comes from the scaffold's package manager scripts (the `dev` script in `package.json`, `composer.json`, `Makefile`, etc.) — use whatever the scaffold provides. If the dev server needs to accept connections from outside the container (asset servers typically do), pass the appropriate host binding flag so it listens on `0.0.0.0` instead of localhost.
 
-This applies even for implicit-webserver runtimes like PHP — the web server auto-starts, but the JS dev tooling does NOT. Without this step, `@vite` directives render a 500 (missing manifest), Tailwind classes don't compile, and HMR doesn't work.
+This applies even when the primary server auto-starts (implicit-webserver runtimes) — the primary server handles HTTP requests, but auxiliary dev tooling (asset compilation, HMR, file watchers) is a separate process that must be started explicitly.
 
-Do NOT work around the missing dev server by replacing `@vite` with inline CSS or stripping the asset pipeline. The dev container must prove the FULL development experience works — including live asset compilation. The scaffold preservation rule (research decision 5) applies here: if the scaffold emits `@vite` + `vite.config.js` + `package.json`, keep them working.
+Without this step, templates that reference build-pipeline outputs will fail at runtime (missing manifests, uncompiled assets). Do NOT work around this by replacing framework asset helpers with inline CSS/JS — that disconnects the build pipeline (see "Asset pipeline consistency" in the generate section). The dev container must prove the full development experience works, including live asset compilation and any watch processes the scaffold defines.
 
 **Step 3: Enable dev subdomain**
 ```
@@ -689,6 +702,7 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 > **App code review:**
 > - Does the app actually work? Check routes, views, config, migrations.
 > - Are framework conventions followed? (correct env mode flag, proxy trust configured, framework-idiomatic patterns)
+> - If `buildCommands` compiles assets, does the primary view load them via the framework's asset helper (not inline CSS/JS)?
 > - Is there dead code, unused dependencies, or missing files?
 > - Does `.env.example` exist with the right keys?
 >
