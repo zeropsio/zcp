@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -9,9 +11,6 @@ import (
 )
 
 const mountStatusMounted = "MOUNTED"
-
-// importFileNames are the file names to look for at the project root.
-var importFileNames = []string{"import.yaml", "import.yml"}
 
 // cleanupImportYAML removes import.yaml (or import.yml) from the project root
 // after the provision step. If mount paths are available, copies the file there
@@ -21,29 +20,31 @@ var importFileNames = []string{"import.yaml", "import.yml"}
 func cleanupImportYAML(stateDir string, mounts []workflow.AutoMountInfo) {
 	projectRoot := filepath.Dir(filepath.Dir(stateDir))
 
+	fileNames := []string{"import.yaml", "import.yml"}
 	var found string
-	for _, name := range importFileNames {
+	var content []byte
+	for _, name := range fileNames {
 		candidate := filepath.Join(projectRoot, name)
-		if _, err := os.Stat(candidate); err == nil {
-			found = candidate
-			break
+		data, err := os.ReadFile(candidate)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
 		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zcp: read import file for cleanup: %v\n", err)
+			// Still try to delete even if read fails.
+			if removeErr := os.Remove(candidate); removeErr != nil {
+				fmt.Fprintf(os.Stderr, "zcp: remove import file: %v\n", removeErr)
+			}
+			return
+		}
+		found = candidate
+		content = data
+		break
 	}
 	if found == "" {
 		return
 	}
 
-	content, err := os.ReadFile(found)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "zcp: read import file for cleanup: %v\n", err)
-		// Still try to delete even if read fails.
-		if removeErr := os.Remove(found); removeErr != nil {
-			fmt.Fprintf(os.Stderr, "zcp: remove import file: %v\n", removeErr)
-		}
-		return
-	}
-
-	// Copy to each successfully mounted runtime path.
 	fileName := filepath.Base(found)
 	for _, m := range mounts {
 		if m.MountPath == "" || m.Status != mountStatusMounted {
@@ -55,7 +56,6 @@ func cleanupImportYAML(stateDir string, mounts []workflow.AutoMountInfo) {
 		}
 	}
 
-	// Delete from project root.
 	if err := os.Remove(found); err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: remove import file: %v\n", err)
 	}
