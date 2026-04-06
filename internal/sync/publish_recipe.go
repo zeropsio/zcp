@@ -83,16 +83,14 @@ func PublishRecipe(cfg *Config, slug, sourceDir string, opts PublishOpts, dryRun
 		files[newPath] = applyPlaceholders(content, placeholders)
 	}
 
-	// Overlay our generated files (import.yaml, README.md from recipe output).
-	// Our import.yaml replaces the template stub; our README.md is skipped
-	// since the template README is better (has markers, deploy links).
+	// Overlay our generated files — import.yaml AND README.md from recipe
+	// output replace the template stubs. ZCP generates per-environment
+	// READMEs with correct intro fragments and service descriptions;
+	// the template READMEs have TODO placeholders that don't get replaced.
 	for path, content := range localFiles {
-		if strings.HasSuffix(path, "/import.yaml") {
+		if strings.HasSuffix(path, "/import.yaml") || strings.HasSuffix(path, "/README.md") {
 			files[path] = content
 		}
-		// Skip README.md from local — template READMEs have correct markers.
-		// Exception: root README.md if template doesn't cover intro well enough
-		// could be overlaid here in the future.
 	}
 
 	if dryRun {
