@@ -10,6 +10,16 @@ const (
 	svcMeilisearch = "meilisearch"
 )
 
+// Service-kind constants — returned by serviceTypeKind and used by validation.
+const (
+	kindDatabase     = "database"
+	kindCache        = "cache"
+	kindSearchEngine = "search engine"
+	kindStorage      = "storage"
+	kindMessaging    = "messaging"
+	kindMailCatcher  = "mail catcher"
+)
+
 // managedServicePrefixes is the static fallback for managed service classification.
 // Used when live API types are unavailable. Source of truth: Zerops API categories.
 // Does NOT include phantom types that don't exist on Zerops (mysql, mongodb, redis).

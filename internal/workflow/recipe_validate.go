@@ -49,6 +49,11 @@ func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType, 
 	// Targets — validate against schema import service types when available.
 	errs = append(errs, validateTargets(plan.Targets, schemas)...)
 
+	// Showcase-specific: enforce all required service kinds.
+	if plan.Tier == RecipeTierShowcase {
+		errs = append(errs, validateShowcaseServices(plan.Targets)...)
+	}
+
 	// Research fields — required for all tiers.
 	errs = append(errs, validateResearchFields(plan.Research, plan.Tier, plan.RuntimeType)...)
 
@@ -149,6 +154,46 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 		// this fails at plan submission instead of at comment-generation.
 		if (IsManagedService(t.Type) || IsUtilityType(t.Type)) && serviceTypeKind(t.Type) == "" {
 			errs = append(errs, fmt.Sprintf("target[%d]: service type %q has no serviceTypeKind — add it to recipe_service_types.go (this is a tool bug, not an agent error)", i, t.Type))
+		}
+	}
+	return errs
+}
+
+// validateShowcaseServices checks that showcase recipes include all required service kinds:
+// an HTTP app, a worker, and one each of database, cache, storage, search engine, mail catcher.
+func validateShowcaseServices(targets []RecipeTarget) []string {
+	requiredKinds := map[string]bool{
+		kindDatabase:     false,
+		kindCache:        false,
+		kindStorage:      false,
+		kindSearchEngine: false,
+		kindMailCatcher:  false,
+	}
+	hasApp, hasWorker := false, false
+
+	for _, t := range targets {
+		if IsRuntimeType(t.Type) {
+			if t.IsWorker {
+				hasWorker = true
+			} else {
+				hasApp = true
+			}
+		}
+		if kind := serviceTypeKind(t.Type); kind != "" {
+			requiredKinds[kind] = true
+		}
+	}
+
+	var errs []string
+	if !hasApp {
+		errs = append(errs, "showcase requires at least one runtime app target (isWorker=false)")
+	}
+	if !hasWorker {
+		errs = append(errs, "showcase requires at least one runtime worker target (isWorker=true)")
+	}
+	for kind, found := range requiredKinds {
+		if !found {
+			errs = append(errs, fmt.Sprintf("showcase requires a %s service", kind))
 		}
 	}
 	return errs

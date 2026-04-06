@@ -33,12 +33,15 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 
 	for _, target := range plan.Targets {
 		// Runtime services in env 0-1 get a dev+stage pair — EXCEPT monorepo
-		// workers (same runtime as app), which get stage only. The app's dev
-		// container serves as the shared workspace; the agent runs both the
-		// web server and worker as SSH processes from one mount.
+		// workers (same runtime as app) in NON-showcase tiers, which get stage
+		// only. The app's dev container serves as the shared workspace; the agent
+		// runs both the web server and worker as SSH processes from one mount.
+		// Showcase recipes always generate dev+stage for every runtime service —
+		// recipe deliverables show all services independently because end users
+		// importing the recipe won't SSH in to start workers manually.
 		if IsRuntimeType(target.Type) && envIndex <= 1 {
-			if target.IsWorker && SharesAppCodebase(target, plan) {
-				// Monorepo worker: stage only (dev is shared with appdev).
+			if target.IsWorker && SharesAppCodebase(target, plan) && plan.Tier != RecipeTierShowcase {
+				// Monorepo worker (non-showcase): stage only (dev is shared with appdev).
 				writeStageService(&b, plan, target, envComments.Service)
 			} else {
 				writeDevService(&b, plan, target, envComments.Service)

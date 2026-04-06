@@ -305,34 +305,42 @@ func TestGenerateEnvImportYAML_Showcase_MonorepoWorker(t *testing.T) {
 
 	plan := testShowcasePlan() // worker is php-nginx@8.4, same as app = monorepo
 
-	t.Run("env_0_monorepo_no_workerdev", func(t *testing.T) {
+	t.Run("env_0_monorepo_workerdev_exists", func(t *testing.T) {
 		t.Parallel()
 		yaml := GenerateEnvImportYAML(plan, 0)
 
-		// Monorepo worker: NO workerdev (appdev hosts both processes).
-		if strings.Contains(yaml, "hostname: workerdev") {
-			t.Error("monorepo worker must NOT have workerdev — appdev is the shared dev workspace")
+		// Showcase monorepo worker: BOTH workerdev and workerstage in envs 0-1.
+		// Recipe deliverables show all services independently — users importing
+		// the recipe don't SSH in to start workers manually.
+		if !strings.Contains(yaml, "hostname: workerdev") {
+			t.Error("showcase monorepo worker must have workerdev")
 		}
-		// But workerstage MUST exist.
 		if !strings.Contains(yaml, "hostname: workerstage") {
 			t.Error("expected workerstage hostname")
 		}
-		// Worker stage uses zeropsSetup: worker (shared zerops.yaml's worker setup).
-		if !strings.Contains(yaml, "zeropsSetup: worker") {
+		// workerdev uses zeropsSetup: dev (full source mount for dev).
+		workerdevBlock := extractServiceBlock(yaml, "workerdev")
+		if !strings.Contains(workerdevBlock, "zeropsSetup: dev") {
+			t.Error("expected zeropsSetup: dev on workerdev")
+		}
+		// workerstage uses zeropsSetup: worker (shared zerops.yaml's worker setup).
+		workerstageBlock := extractServiceBlock(yaml, "workerstage")
+		if !strings.Contains(workerstageBlock, "zeropsSetup: worker") {
 			t.Error("expected zeropsSetup: worker on workerstage")
 		}
 		// Workers must NOT have enableSubdomainAccess.
-		lines := strings.Split(yaml, "\n")
-		inWorker := false
-		for _, line := range lines {
-			if strings.Contains(line, "hostname: workerstage") {
-				inWorker = true
-			} else if strings.Contains(line, "hostname:") {
-				inWorker = false
-			}
-			if inWorker && strings.Contains(line, "enableSubdomainAccess") {
-				t.Error("worker services must NOT have enableSubdomainAccess")
-			}
+		if strings.Contains(workerdevBlock, "enableSubdomainAccess") {
+			t.Error("workerdev must NOT have enableSubdomainAccess")
+		}
+		if strings.Contains(workerstageBlock, "enableSubdomainAccess") {
+			t.Error("workerstage must NOT have enableSubdomainAccess")
+		}
+		// Both use app repo (monorepo).
+		if !strings.Contains(workerdevBlock, "laravel-showcase-app") {
+			t.Error("workerdev should use app repo URL")
+		}
+		if !strings.Contains(workerstageBlock, "laravel-showcase-app") {
+			t.Error("workerstage should use app repo URL")
 		}
 	})
 
@@ -352,6 +360,30 @@ func TestGenerateEnvImportYAML_Showcase_MonorepoWorker(t *testing.T) {
 			t.Error("monorepo worker should use app repo URL")
 		}
 	})
+}
+
+// TestGenerateEnvImportYAML_NonShowcase_MonorepoWorker verifies that non-showcase
+// tiers keep the monorepo optimization: no workerdev, appdev hosts both processes.
+func TestGenerateEnvImportYAML_NonShowcase_MonorepoWorker(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+	plan.Tier = RecipeTierMinimal // non-showcase
+	plan.Slug = "laravel-minimal"
+
+	yaml := GenerateEnvImportYAML(plan, 0)
+
+	// Non-showcase monorepo: NO workerdev (appdev is shared).
+	if strings.Contains(yaml, "hostname: workerdev") {
+		t.Error("non-showcase monorepo worker must NOT have workerdev — appdev is the shared dev workspace")
+	}
+	if !strings.Contains(yaml, "hostname: workerstage") {
+		t.Error("expected workerstage hostname")
+	}
+	workerstageBlock := extractServiceBlock(yaml, "workerstage")
+	if !strings.Contains(workerstageBlock, "zeropsSetup: worker") {
+		t.Error("expected zeropsSetup: worker on workerstage")
+	}
 }
 
 func TestGenerateEnvImportYAML_Showcase_PolyglotWorker(t *testing.T) {

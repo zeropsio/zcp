@@ -34,6 +34,31 @@ func validMinimalPlan() RecipePlan {
 	}
 }
 
+// validShowcasePlan returns a structurally valid showcase recipe plan for testing.
+// Includes all 7 required showcase service kinds: app, worker, database, cache,
+// storage, mail catcher, search engine.
+func validShowcasePlan() RecipePlan {
+	p := validMinimalPlan()
+	p.Tier = RecipeTierShowcase
+	p.Slug = "laravel-showcase"
+	p.Research.CacheLib = "predis"
+	p.Research.SessionDriver = "redis"
+	p.Research.QueueDriver = "redis"
+	p.Research.StorageDriver = "s3"
+	p.Research.SearchLib = "meilisearch"
+	p.Research.MailLib = "smtp"
+	p.Targets = []RecipeTarget{
+		{Hostname: "app", Type: "php-nginx@8.4"},
+		{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true},
+		{Hostname: "db", Type: "mariadb@10.11"},
+		{Hostname: "cache", Type: "keydb@6"},
+		{Hostname: "storage", Type: "object-storage"},
+		{Hostname: "mailpit", Type: "mailpit"},
+		{Hostname: "search", Type: "meilisearch@1"},
+	}
+	return p
+}
+
 func TestValidateRecipePlan_Valid(t *testing.T) {
 	t.Parallel()
 
@@ -42,22 +67,7 @@ func TestValidateRecipePlan_Valid(t *testing.T) {
 		plan RecipePlan
 	}{
 		{"minimal plan", validMinimalPlan()},
-		{"showcase plan", func() RecipePlan {
-			p := validMinimalPlan()
-			p.Tier = RecipeTierShowcase
-			p.Slug = "laravel-showcase"
-			p.Research.CacheLib = "predis"
-			p.Research.SessionDriver = "redis"
-			p.Research.QueueDriver = "redis"
-			p.Research.StorageDriver = "s3"
-			p.Research.SearchLib = "meilisearch"
-			p.Research.MailLib = "smtp"
-			p.Targets = append(p.Targets, RecipeTarget{
-				Hostname: "redis", Type: "keydb@6",
-				Environments: []string{"0", "1", "3", "4", "5"},
-			})
-			return p
-		}()},
+		{"showcase plan", validShowcasePlan()},
 	}
 
 	for _, tt := range tests {
@@ -144,20 +154,110 @@ func TestValidateRecipePlan_ShowcaseMissingFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			plan := validMinimalPlan()
-			plan.Tier = RecipeTierShowcase
-			plan.Slug = "laravel-showcase"
-			plan.Research.CacheLib = "predis"
-			plan.Research.SessionDriver = "redis"
-			plan.Research.QueueDriver = "redis"
-			plan.Research.StorageDriver = "s3"
-			plan.Research.SearchLib = "meilisearch"
-			plan.Research.MailLib = "smtp"
+			plan := validShowcasePlan()
 			tt.modify(&plan)
 
 			errs := ValidateRecipePlan(plan, nil, nil)
 			if len(errs) == 0 {
 				t.Fatal("expected validation errors for showcase missing field")
+			}
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e, tt.wantErr) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected error containing %q, got: %v", tt.wantErr, errs)
+			}
+		})
+	}
+}
+
+func TestValidateRecipePlan_ShowcaseMissingServices(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		modify  func(*RecipePlan)
+		wantErr string
+	}{
+		{"missing worker", func(p *RecipePlan) {
+			// Remove worker target.
+			var filtered []RecipeTarget
+			for _, t := range p.Targets {
+				if !t.IsWorker {
+					filtered = append(filtered, t)
+				}
+			}
+			p.Targets = filtered
+		}, "worker"},
+		{"missing database", func(p *RecipePlan) {
+			var filtered []RecipeTarget
+			for _, t := range p.Targets {
+				if serviceTypeKind(t.Type) != "database" {
+					filtered = append(filtered, t)
+				}
+			}
+			p.Targets = filtered
+		}, "database"},
+		{"missing cache", func(p *RecipePlan) {
+			var filtered []RecipeTarget
+			for _, t := range p.Targets {
+				if serviceTypeKind(t.Type) != "cache" {
+					filtered = append(filtered, t)
+				}
+			}
+			p.Targets = filtered
+		}, "cache"},
+		{"missing storage", func(p *RecipePlan) {
+			var filtered []RecipeTarget
+			for _, t := range p.Targets {
+				if serviceTypeKind(t.Type) != "storage" {
+					filtered = append(filtered, t)
+				}
+			}
+			p.Targets = filtered
+		}, "storage"},
+		{"missing mail catcher", func(p *RecipePlan) {
+			var filtered []RecipeTarget
+			for _, t := range p.Targets {
+				if serviceTypeKind(t.Type) != "mail catcher" {
+					filtered = append(filtered, t)
+				}
+			}
+			p.Targets = filtered
+		}, "mail catcher"},
+		{"missing search engine", func(p *RecipePlan) {
+			var filtered []RecipeTarget
+			for _, t := range p.Targets {
+				if serviceTypeKind(t.Type) != "search engine" {
+					filtered = append(filtered, t)
+				}
+			}
+			p.Targets = filtered
+		}, "search engine"},
+		{"missing app (no non-worker runtime)", func(p *RecipePlan) {
+			var filtered []RecipeTarget
+			for _, t := range p.Targets {
+				if !IsRuntimeType(t.Type) || t.IsWorker {
+					filtered = append(filtered, t)
+				}
+			}
+			p.Targets = filtered
+		}, "app"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			plan := validShowcasePlan()
+			tt.modify(&plan)
+
+			errs := ValidateRecipePlan(plan, nil, nil)
+			if len(errs) == 0 {
+				t.Fatal("expected validation errors for missing showcase service")
 			}
 			found := false
 			for _, e := range errs {

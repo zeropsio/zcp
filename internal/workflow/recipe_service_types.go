@@ -104,17 +104,17 @@ func serviceTypeKind(serviceType string) string {
 	base, _, _ := strings.Cut(strings.ToLower(serviceType), "@")
 	switch base {
 	case svcPostgreSQL, svcMariaDB, "clickhouse":
-		return "database"
+		return kindDatabase
 	case "valkey", "keydb":
-		return "cache"
+		return kindCache
 	case "elasticsearch", svcMeilisearch, "qdrant", "typesense":
-		return "search engine"
+		return kindSearchEngine
 	case "object-storage", "shared-storage":
-		return "storage"
+		return kindStorage
 	case "nats", "kafka", "rabbitmq":
-		return "messaging"
+		return kindMessaging
 	case "mailpit":
-		return "mail catcher"
+		return kindMailCatcher
 	}
 	return ""
 }

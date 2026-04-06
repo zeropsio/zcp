@@ -299,17 +299,17 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 // in the env description, derived from its type's canonical kind.
 func dataServiceIncludesLabel(serviceType string) string {
 	switch serviceTypeKind(serviceType) {
-	case "database":
+	case kindDatabase:
 		return "a low-resource database"
-	case "cache":
+	case kindCache:
 		return "a cache store"
-	case "storage":
+	case kindStorage:
 		return "an object storage"
-	case "search engine":
+	case kindSearchEngine:
 		return "a search engine"
-	case "messaging":
+	case kindMessaging:
 		return "a messaging service"
-	case "mail catcher":
+	case kindMailCatcher:
 		return "a mail catcher"
 	}
 	return "a service"
