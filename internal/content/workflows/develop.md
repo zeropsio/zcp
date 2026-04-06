@@ -170,6 +170,18 @@ This is the development workflow for all code work on Zerops services. First dis
 - **Service has existing application code** → modify it according to the user's request
 - **Code is ready, just needs deploying** → skip to deploy step
 
+### External repository? Clone it locally first
+
+When the user provides a GitHub URL (or any git URL) to deploy, **clone the repo locally before anything else**. Fetching individual files via HTTP is slow, unreliable, and misses the full picture.
+
+```bash
+git clone --depth 1 https://github.com/{owner}/{repo}.git /tmp/{repo}
+```
+
+Then explore the cloned repo to understand the project structure: check for `Dockerfile`, `package.json`, `composer.json`, `go.mod`, config files, entry points, and database requirements. This gives you the full context needed to write correct `zerops.yaml` and `import.yaml` — no guessing.
+
+Clean up when done: `rm -rf /tmp/{repo}`
+
 ### Discover target services
 
 ```
