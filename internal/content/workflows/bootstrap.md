@@ -146,6 +146,8 @@ zerops_workflow action="complete" step="discover" plan=[{runtime: {devHostname, 
 
 Generate import.yaml ONLY. Do NOT write zerops.yaml or application code — that happens in the generate step AFTER env var discovery. The import.yaml schema rules are included below.
 
+> **CRITICAL — fresh file only.** ALWAYS write a NEW import.yaml from scratch containing ONLY the services for THIS bootstrap session. If an import.yaml already exists at the project root, OVERWRITE it completely — do NOT read, append to, or modify it. Appending to a leftover file re-imports previously created services, causing duplicates and failures. After this step completes, ZCP automatically removes import.yaml from the project root (copying it to mount paths for provenance).
+
 > **mode defaults to NON_HA for managed services** — databases, caches, object-storage, shared-storage.
 > Set `HA` explicitly for production.
 

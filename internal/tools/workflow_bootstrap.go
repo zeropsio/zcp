@@ -78,6 +78,8 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	// mounter is nil in local env — no-op naturally.
 	if input.Step == workflow.StepProvision && (resp.CheckResult == nil || resp.CheckResult.Passed) {
 		resp.AutoMounts = autoMountTargets(ctx, client, projectID, mounter, engine)
+		// Clean up import.yaml from project root — copy to mounts for provenance, then delete.
+		cleanupImportYAML(stateDir, resp.AutoMounts)
 	}
 
 	// Append transition message when bootstrap completes (all steps done).
