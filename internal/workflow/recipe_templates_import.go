@@ -20,6 +20,12 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 
 	var b strings.Builder
 
+	// Preprocessor directive MUST be the very first line — Zerops parser
+	// rejects it anywhere else, causing catastrophic import failure.
+	if plan.Research.NeedsAppSecret {
+		b.WriteString("#zeropsPreprocessor=on\n\n")
+	}
+
 	writeEnvHeader(&b, plan, envIndex)
 	writeProjectSection(&b, plan, envIndex, envComments.Project)
 
@@ -61,10 +67,6 @@ func writeEnvHeader(b *strings.Builder, plan *RecipePlan, envIndex int) {
 // project comment (if any) emitted above it.
 func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int, projectComment string) {
 	projectName := fmt.Sprintf("%s-%s", plan.Slug, envTiers[envIndex].Suffix)
-
-	if plan.Research.NeedsAppSecret {
-		b.WriteString("#zeropsPreprocessor=on\n\n")
-	}
 
 	writeAgentCommentAtIndent(b, projectComment, "")
 

@@ -143,6 +143,11 @@ func TestGenerateEnvImportYAML_AllEnvs(t *testing.T) {
 				if !strings.Contains(yaml, "zeropsPreprocessor=on") {
 					t.Error("expected zeropsPreprocessor=on for generateRandomString")
 				}
+				// Preprocessor directive MUST be on the very first line — Zerops
+				// parser rejects it anywhere else.
+				if !strings.HasPrefix(yaml, "#zeropsPreprocessor=on\n") {
+					t.Errorf("zeropsPreprocessor=on must be the first line, got: %q", strings.SplitN(yaml, "\n", 2)[0])
+				}
 				if !strings.Contains(yaml, "<@generateRandomString(<32>)>") {
 					t.Error("expected <@generateRandomString(<32>)> with inner angle brackets")
 				}
