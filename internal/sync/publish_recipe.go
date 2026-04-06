@@ -112,7 +112,7 @@ func PublishRecipe(cfg *Config, slug, sourceDir string, opts PublishOpts, dryRun
 	}
 
 	// Create branch.
-	branch := fmt.Sprintf("%s/recipe-%s-%s", cfg.Push.Recipes.BranchPrefix, slug, today())
+	branch := fmt.Sprintf("%s/recipe-%s-%s-%s", cfg.Push.Recipes.BranchPrefix, slug, today(), shortRand())
 	if err := gh.CreateBranch(branch); err != nil {
 		return PushResult{Slug: slug, Status: Error}, fmt.Errorf("create branch: %w", err)
 	}

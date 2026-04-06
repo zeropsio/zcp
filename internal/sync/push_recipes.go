@@ -1,6 +1,8 @@
 package sync
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -237,4 +239,13 @@ func pushRecipeCreate(cfg *Config, gh *GH, slug string, frags recipeFragments) P
 
 func today() string {
 	return time.Now().Format("20060102")
+}
+
+// shortRand returns a 4-character hex string for branch name uniqueness.
+func shortRand() string {
+	b := make([]byte, 2)
+	if _, err := rand.Read(b); err != nil {
+		return "0000"
+	}
+	return hex.EncodeToString(b)
 }
