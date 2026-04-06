@@ -26,6 +26,7 @@ type Provider interface {
 	GetModel() (string, error)
 	GetBriefing(runtime string, services []string, mode string, liveTypes []platform.ServiceStackType) (string, error)
 	GetRecipe(name, mode string) (string, error)
+	ListRecipes() []string
 }
 
 // Store holds the knowledge base with simple text-matching search.

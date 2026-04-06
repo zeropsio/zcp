@@ -17,15 +17,25 @@ Fill in all research fields by examining the framework's documentation and exist
 | **3. Backend framework** | `{framework}-minimal` | `laravel-minimal` | Framework with ORM, migrations, templates. |
 
 ### Reference Loading
-Hello-world recipes exist per RUNTIME, not per framework. The hello-world IS the runtime guide — proven zerops.yaml patterns for that runtime. Load it:
+Load knowledge from lower-tier recipes that already exist for your runtime and framework. Each tier builds on the previous:
+
+**1. Hello-world** (platform knowledge): proven zerops.yaml patterns, runtime gotchas, base image details. One exists per runtime — match the base runtime, not the framework name:
 ```
 zerops_knowledge recipe="{runtime-base}-hello-world"
 ```
-Example: for a php-nginx framework, load `php-hello-world`. For a nodejs framework, load `nodejs-hello-world`. The hello-world IS the runtime — match the base runtime, not the framework name.
+Example: for a php-nginx framework, load `php-hello-world`. For a nodejs framework, load `nodejs-hello-world`.
 
-Your job is to extend this base with framework-specific knowledge (documentRoot, multi-base builds, trusted proxy config, etc.). These discoveries go into the zerops.yaml comments and knowledge-base fragment.
+**2. Minimal** (framework knowledge, if building a showcase): if a `{framework}-minimal` recipe exists, load it — it contains framework-specific gotchas, integration steps, and zerops.yaml patterns you should extend:
+```
+zerops_knowledge recipe="{framework}-minimal"
+```
+Skip this if building a minimal recipe (you ARE the minimal).
 
-**Stop after the hello-world load.** Framework-specific discoveries (documentRoot path, trusted-proxy config, middleware registration, assets pipeline) live in the FRAMEWORK's own docs, not in Zerops knowledge — `zerops_knowledge query=` will not surface them. Fill the remaining research fields from your existing framework knowledge + reasoning. If you must look something up, consult the framework's documentation directly. One runtime briefing + one hello-world load is the whole budget for zerops_knowledge at this step.
+Your job is to extend this accumulated base with the NEW knowledge your tier adds. For minimal: framework-specific additions on top of the hello-world (ORM, migrations, templates). For showcase: additional services on top of minimal (cache, queues, storage, search, mail, workers).
+
+**Stop after loading.** Framework-specific discoveries (documentRoot, trusted-proxy, middleware) come from the framework's own docs, not Zerops knowledge. The generate step automatically injects the full predecessor recipe plus earlier ancestors' gotchas — you don't need to memorize everything from the research load.
+
+> **Note**: at the generate step, the system automatically injects knowledge from lower-tier recipes (full content from the direct predecessor, gotchas from earlier tiers). The research load is for filling the plan form — the system handles the rest.
 
 ### Framework Identity
 - **Service type** (from available stacks): match against live catalog
@@ -85,7 +95,9 @@ zerops_workflow action="complete" step="research" recipePlan={...}
 <section name="research-showcase">
 ## Research — Showcase Recipe (Type 4)
 
-Includes everything from minimal research, PLUS:
+Includes everything from minimal research, PLUS the fields and targets below.
+
+**Reference loading**: load both the hello-world AND the minimal recipe for your framework (see Reference Loading in the minimal section). The minimal recipe's gotchas and zerops.yaml patterns are your starting point — showcase extends them with additional services, not replaces them.
 
 ### Additional Showcase Fields
 - **Cache library**: Redis client library for the framework
@@ -96,14 +108,14 @@ Includes everything from minimal research, PLUS:
 - **Mail library**: email sending (e.g., SMTP via Mailpit for dev)
 
 ### Showcase Targets
-Define workspace services for showcase recipe:
-- **app**: runtime service (all 6 environments)
-- **worker**: background job processor (environments 0-1, 3-5)
-- **db**: primary database (all 6 environments)
-- **redis**: cache + sessions + queues (environments 0-1, 3-5)
-- **storage**: S3-compatible object storage (environments 0-1, 3-5)
-- **mailpit**: dev email testing (environments 0-1 only)
-- **search**: search engine (environments 3-5 only)
+Define workspace services for showcase recipe. All targets appear in all 6 environment tiers (the finalize step handles per-env scaling and mode differences):
+- **app**: runtime service — HTTP-serving primary application
+- **worker**: background job processor (`isWorker: true`) — consumes from queue, no HTTP
+- **db**: primary database
+- **redis**: cache + sessions + queues (Valkey or KeyDB)
+- **storage**: S3-compatible object storage
+- **mailpit**: dev email testing (web UI for intercepted mail)
+- **search**: search engine (Meilisearch, Elasticsearch, or Typesense)
 
 ### Submission
 Submit via:
@@ -119,7 +131,7 @@ Create all workspace services from the recipe plan. This follows the same patter
 
 ### 1. Generate import.yaml
 
-Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}stage` pair.
+Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}stage` pair. **Exception**: monorepo workers (same runtime as app) get only `{name}stage` — the app's dev container serves as the shared workspace for both processes. Polyglot workers (different runtime) get their own dev+stage pair.
 
 **Dev vs stage properties:**
 
@@ -230,9 +242,9 @@ Files placed on the mount are already on the dev container — deploy doesn't "s
 
 zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`. During workspace deploy, the `zerops_deploy` tool's `setup` parameter maps the service hostname to the correct setup name (e.g. `targetService="appdev" setup="dev"`). In recipe import.yaml, `zeropsSetup: dev`/`zeropsSetup: prod` does the same mapping for `buildFromGit` deploys.
 
-### zerops.yaml — Write BOTH dev and prod at once
+### zerops.yaml — Write ALL setups at once
 
-Write the complete zerops.yaml with BOTH `setup: dev` and `setup: prod` entries in a single file. The same file is the source of truth for the deploy step AND for the README integration-guide fragment — writing it once eliminates drift between what deploys and what the README documents. The deploy step will verify dev against the live service, then cross-deploy the already-written prod config to stage.
+Write the complete zerops.yaml with ALL setup entries in a single file. Minimal recipes have TWO setups (`dev` + `prod`). Showcase recipes have THREE (`dev` + `prod` + `worker`). The same file is the source of truth for the deploy step AND for the README integration-guide fragment — writing it once eliminates drift between what deploys and what the README documents. The deploy step will verify dev against the live service, then cross-deploy the already-written prod/worker configs to stage.
 
 Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific conventions for each setup:
 
@@ -253,9 +265,25 @@ Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific 
 - Framework mode flags set to prod values (`APP_ENV: production`, `NODE_ENV: production`, `DEBUG: "false"`)
 - Same cross-service ref keys as dev — **only values on mode flags differ**
 
-**Shared across both setups:**
+**`setup: worker`** (showcase only — background job processor):
+
+Whether the worker shares the app's codebase or is a separate project depends on the runtime: **same base runtime type = monorepo** (e.g., both `php-nginx@8.4`), **different type = polyglot** (e.g., `bun@1.2` app + `python@3.12` worker). The system detects this from the plan targets and adjusts the workspace, deploy flow, and published repos automatically.
+
+**Monorepo workers** (same runtime): write a `setup: worker` block in the SAME zerops.yaml alongside `dev` and `prod`. The worker setup shares the build pipeline but runs a different start command. During development, the agent starts both the web server and queue worker as separate SSH processes from the single `appdev` container — no `workerdev` needed.
+
+**Polyglot workers** (different runtime): the worker is a separate codebase with its own zerops.yaml containing `dev` and `prod` setups. The agent writes it to a separate mount (`/var/www/workerdev/`). No `setup: worker` in the app's zerops.yaml — each codebase has its own `dev`/`prod` pair.
+
+Worker setup conventions (apply to both patterns):
+- `start` is the framework's queue/job runner command. MANDATORY — workers have no implicit webserver.
+- **NO healthCheck, NO readinessCheck** — workers don't serve HTTP. They consume from a queue (Redis, NATS, RabbitMQ) and crash-restart is handled by the platform automatically.
+- **NO `ports` section** — workers don't bind any port.
+- `envVariables` shares the same cross-service refs as prod (DB, cache, queue connection vars) PLUS any worker-specific vars (concurrency, retry config). Mode flags match prod.
+- `initCommands` same as prod where applicable (migrations via `zsc execOnce`, cache warming).
+- Build section typically identical to prod (same dependencies, same compilation).
+
+**Shared across all setups:**
 - `envVariables:` contains ONLY cross-service references from `zerops_discover` + framework mode flags. **Do NOT add envSecrets** (framework secret keys) — they are already injected as OS env vars automatically by the platform.
-- Setup names are generic (`dev`/`prod`). `zerops_deploy targetService=... setup=...` maps hostnames to setup names at deploy time.
+- Setup names are generic (`dev`/`prod`/`worker`). `zerops_deploy targetService=... setup=...` maps hostnames to setup names at deploy time.
 - dev and prod env maps must NOT be bit-identical — a structural check fails the generate step if they are, because it means the dev container behaves exactly like prod (caches enabled, stack traces hidden during iteration).
 
 ### .env.example preservation
@@ -350,6 +378,7 @@ Description of why this change is needed.
 
 ### Pre-deploy checklist
 - [ ] Both `setup: dev` AND `setup: prod` present (generic names)
+- [ ] Showcase: `setup: worker` present — no healthCheck, no ports, mandatory start command
 - [ ] dev: `deployFiles: [.]`, no healthCheck, no readinessCheck
 - [ ] prod: real buildCommands, specific deployFiles, healthCheck + readinessCheck
 - [ ] dev and prod envVariables differ on mode flags (APP_ENV/NODE_ENV/DEBUG/LOG_LEVEL)
@@ -501,12 +530,32 @@ zerops_verify serviceHostname="appdev"
 ```
 Check: service RUNNING, subdomain returns 200, health endpoint responds (or page loads for static).
 
-**Step 5: Iterate if needed** (max 3 iterations)
+**Step 5: Start worker dev process** (showcase only — skip for minimal)
+If the recipe has worker targets, how you start the dev worker depends on the architecture:
+
+- **Monorepo** (worker same runtime as app): start the queue worker as an SSH process on appdev alongside the web server:
+  ```bash
+  ssh appdev "cd /var/www && {queue_worker_command} &"
+  ```
+  No workerdev service exists — appdev hosts both processes from the same source.
+
+- **Polyglot** (worker different runtime): deploy the separate worker codebase:
+  ```
+  zerops_deploy targetService="workerdev" setup="dev"
+  ```
+  Then start the worker process via SSH on workerdev.
+
+Verify worker is running via logs (no HTTP endpoint):
+```
+zerops_logs serviceHostname="{worker_hostname}" limit=20
+```
+
+**Step 6: Iterate if needed** (max 3 iterations)
 If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify.
 
 ### Stage deployment flow
 
-**Step 6: Verify prod setup (already written at generate)**
+**Step 7: Verify prod setup (already written at generate)**
 The prod setup block was written to zerops.yaml during the generate step. Before cross-deploying, verify it matches what a real user building from git will need:
 - `deployFiles` lists every path the start command and framework need at runtime — run `ls` on the mount and cross-reference. When cherry-picking (not using `.`), missing one path will DEPLOY_FAILED at first request.
 - `healthCheck` + `deploy.readinessCheck` are present (required for prod — unresponsive containers get restarted; broken builds are gated from traffic).
@@ -515,29 +564,45 @@ The prod setup block was written to zerops.yaml during the generate step. Before
 
 If anything is missing, edit zerops.yaml on the mount now — the change propagates to the README via the integration-guide fragment (which mirrors the file content).
 
-**Step 7: Deploy appstage from appdev (cross-deploy)**
+**Step 8: Deploy appstage from appdev (cross-deploy)**
 ```
 zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
 ```
 The `setup="prod"` maps hostname `appstage` to `setup: prod` in zerops.yaml. Stage builds from dev's source code with the prod config. Server auto-starts via the real `start` command (or Nginx for static).
 
-**Step 7b: Connect shared storage** (if applicable)
+**Step 8b: Connect shared storage** (if applicable)
 After stage transitions from READY_TO_DEPLOY to ACTIVE, connect storage:
 ```
 zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"
 ```
 
-**Step 8: Enable stage subdomain**
+**Step 9: Deploy workerstage** (showcase only — skip for minimal)
+- **Monorepo**: cross-deploy from appdev with the worker setup:
+  ```
+  zerops_deploy sourceService="appdev" targetService="workerstage" setup="worker"
+  ```
+  The `setup="worker"` maps to `setup: worker` in the shared zerops.yaml — same build pipeline, different start command.
+- **Polyglot**: cross-deploy from workerdev:
+  ```
+  zerops_deploy sourceService="workerdev" targetService="workerstage" setup="prod"
+  ```
+  The worker has its own zerops.yaml with `setup: prod`.
+
+**Step 10: Enable stage subdomain**
 ```
 zerops_subdomain action="enable" serviceHostname="appstage"
 ```
 
-**Step 9: Verify appstage**
+**Step 11: Verify appstage**
 ```
 zerops_verify serviceHostname="appstage"
 ```
+For showcase, also verify the worker is running:
+```
+zerops_logs serviceHostname="workerstage" limit=20
+```
 
-**Step 10: Present both URLs**
+**Step 12: Present URLs**
 
 ### Reading deploy failures — which phase failed, and where to look
 
@@ -603,6 +668,8 @@ The 6 envs are **not interchangeable** — each exists to describe a different d
 | 5 — HA Production | production with `cpuMode: DEDICATED`, `mode: HA`, `corePackage: SERIOUS` |
 
 Pass `envComments` keyed by env index (`"0"`..`"5"`). Each env carries a `service` map (keys match the hostnames that appear in THAT env's file) and an optional `project` comment. **Service key rule**: envs 0-1 carry the dev+stage pair, so keys are `"appdev"` and `"appstage"`; envs 2-5 collapse to a single runtime entry, so the key is the base hostname (`"app"`). Managed services (`"db"` etc.) keep the base hostname everywhere.
+
+**Showcase service keys**: in envs 2-5, worker is `"worker"`. In envs 0-1, the keys depend on the worker architecture: **monorepo** (same runtime as app) has only `"workerstage"` — no workerdev exists. **Polyglot** (different runtime) has both `"workerdev"` and `"workerstage"`. Other showcase services use base hostname everywhere: `"redis"`, `"storage"`, `"mailpit"`, `"search"`. Every service that appears in a given env's import.yaml should have a comment explaining its role in THAT env.
 
 ```
 zerops_workflow action="generate-finalize" \

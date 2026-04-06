@@ -300,22 +300,24 @@ func TestGenerateEnvImportYAML_Env2Plus_ProdService(t *testing.T) {
 	}
 }
 
-func TestGenerateEnvImportYAML_Showcase_WorkerServices(t *testing.T) {
+func TestGenerateEnvImportYAML_Showcase_MonorepoWorker(t *testing.T) {
 	t.Parallel()
 
-	plan := testShowcasePlan()
+	plan := testShowcasePlan() // worker is php-nginx@8.4, same as app = monorepo
 
-	t.Run("env_0_worker_dev_stage", func(t *testing.T) {
+	t.Run("env_0_monorepo_no_workerdev", func(t *testing.T) {
 		t.Parallel()
 		yaml := GenerateEnvImportYAML(plan, 0)
 
-		if !strings.Contains(yaml, "hostname: workerdev") {
-			t.Error("expected workerdev hostname")
+		// Monorepo worker: NO workerdev (appdev hosts both processes).
+		if strings.Contains(yaml, "hostname: workerdev") {
+			t.Error("monorepo worker must NOT have workerdev — appdev is the shared dev workspace")
 		}
+		// But workerstage MUST exist.
 		if !strings.Contains(yaml, "hostname: workerstage") {
 			t.Error("expected workerstage hostname")
 		}
-		// Worker stage uses zeropsSetup: worker (not prod).
+		// Worker stage uses zeropsSetup: worker (shared zerops.yaml's worker setup).
 		if !strings.Contains(yaml, "zeropsSetup: worker") {
 			t.Error("expected zeropsSetup: worker on workerstage")
 		}
@@ -323,7 +325,7 @@ func TestGenerateEnvImportYAML_Showcase_WorkerServices(t *testing.T) {
 		lines := strings.Split(yaml, "\n")
 		inWorker := false
 		for _, line := range lines {
-			if strings.Contains(line, "hostname: workerdev") || strings.Contains(line, "hostname: workerstage") {
+			if strings.Contains(line, "hostname: workerstage") {
 				inWorker = true
 			} else if strings.Contains(line, "hostname:") {
 				inWorker = false
@@ -334,15 +336,83 @@ func TestGenerateEnvImportYAML_Showcase_WorkerServices(t *testing.T) {
 		}
 	})
 
-	t.Run("env_2_worker_prod", func(t *testing.T) {
+	t.Run("env_2_monorepo_worker", func(t *testing.T) {
 		t.Parallel()
 		yaml := GenerateEnvImportYAML(plan, 2)
 
 		if !strings.Contains(yaml, "hostname: worker") {
 			t.Error("expected bare worker hostname in env 2")
 		}
+		// Monorepo worker in env 2+: zeropsSetup: worker (shared yaml).
 		if !strings.Contains(yaml, "zeropsSetup: worker") {
 			t.Error("expected zeropsSetup: worker")
+		}
+		// Same buildFromGit as app (monorepo).
+		if !strings.Contains(yaml, "laravel-showcase-app") {
+			t.Error("monorepo worker should use app repo URL")
+		}
+	})
+}
+
+func TestGenerateEnvImportYAML_Showcase_PolyglotWorker(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+	// Override worker to different type = polyglot.
+	for i, t := range plan.Targets {
+		if t.IsWorker {
+			plan.Targets[i].Type = "python@3.12"
+		}
+	}
+
+	t.Run("env_0_polyglot_has_workerdev", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 0)
+
+		// Polyglot: worker gets its own dev+stage pair.
+		if !strings.Contains(yaml, "hostname: workerdev") {
+			t.Error("polyglot worker should have workerdev")
+		}
+		if !strings.Contains(yaml, "hostname: workerstage") {
+			t.Error("polyglot worker should have workerstage")
+		}
+		// Polyglot worker stage uses zeropsSetup: prod (its own zerops.yaml).
+		if !strings.Contains(yaml, "zeropsSetup: prod") {
+			t.Error("expected zeropsSetup: prod on polyglot workerstage")
+		}
+	})
+
+	t.Run("env_2_polyglot_worker", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 2)
+
+		if !strings.Contains(yaml, "hostname: worker") {
+			t.Error("expected bare worker hostname in env 2")
+		}
+		// Polyglot worker: zeropsSetup: prod (own zerops.yaml).
+		lines := strings.Split(yaml, "\n")
+		inWorker := false
+		for _, line := range lines {
+			if strings.Contains(line, "hostname: worker") && !strings.Contains(line, "hostname: workerstage") {
+				inWorker = true
+			} else if strings.Contains(line, "hostname:") {
+				inWorker = false
+			}
+			if inWorker && strings.Contains(line, "zeropsSetup: prod") {
+				// Good — polyglot worker uses prod setup from its own zerops.yaml.
+				return
+			}
+		}
+		t.Error("expected zeropsSetup: prod for polyglot worker in env 2")
+	})
+
+	t.Run("env_2_polyglot_buildFromGit", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 2)
+
+		// Polyglot worker should use {slug}-worker repo.
+		if !strings.Contains(yaml, "laravel-showcase-worker") {
+			t.Error("polyglot worker should use -worker repo URL")
 		}
 	})
 }
@@ -1016,24 +1086,31 @@ func TestServiceTypeCapabilities(t *testing.T) {
 func TestRecipeSetupName(t *testing.T) {
 	t.Parallel()
 
+	appTarget := RecipeTarget{Hostname: "app", Type: "php-nginx@8.4"}
+	monoWorker := RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true}
+	polyWorker := RecipeTarget{Hostname: "worker", Type: "python@3.12", IsWorker: true}
+	plan := &RecipePlan{RuntimeType: "php-nginx@8.4"}
+
 	tests := []struct {
-		name     string
-		isWorker bool
-		isDev    bool
-		want     string
+		name   string
+		target RecipeTarget
+		isDev  bool
+		want   string
 	}{
-		{"app_dev", false, true, "dev"},
-		{"app_prod", false, false, "prod"},
-		{"worker_dev", true, true, "dev"},
-		{"worker_prod", true, false, "worker"},
+		{"app_dev", appTarget, true, "dev"},
+		{"app_prod", appTarget, false, "prod"},
+		{"monorepo_worker_dev", monoWorker, true, "dev"},
+		{"monorepo_worker_stage", monoWorker, false, "worker"},
+		{"polyglot_worker_dev", polyWorker, true, "dev"},
+		{"polyglot_worker_stage", polyWorker, false, "prod"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := recipeSetupName(tt.isWorker, tt.isDev)
+			got := recipeSetupName(tt.target, tt.isDev, plan)
 			if got != tt.want {
-				t.Errorf("recipeSetupName(isWorker=%v, isDev=%v) = %q, want %q", tt.isWorker, tt.isDev, got, tt.want)
+				t.Errorf("recipeSetupName(%s, isDev=%v) = %q, want %q", tt.target.Hostname, tt.isDev, got, tt.want)
 			}
 		})
 	}

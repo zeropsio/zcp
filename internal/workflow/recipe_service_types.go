@@ -63,20 +63,35 @@ func RecipeSetupForMode(mode string) string {
 	return RecipeSetupDev
 }
 
-// recipeSetupName returns the zeropsSetup name for a recipe RUNTIME service:
-//   - "dev"    → the dev entry that env 0-1 mounts on SSHFS
-//   - "worker" → background/queue worker runtime in prod
-//   - "prod"   → the HTTP-serving primary app runtime in prod
-//
-// Not valid for managed or utility services (they use different setup names
-// or no setup at all).
-func recipeSetupName(isWorker, isDev bool) string {
+// SharesAppCodebase returns true when a worker target uses the same base runtime
+// as the primary app — meaning it runs from the same source code (monorepo).
+// When true: no workerdev service (appdev hosts both processes), zeropsSetup is
+// "worker" (a third setup in the shared zerops.yaml), buildFromGit points to {slug}-app.
+// When false (polyglot): worker gets its own dev+stage pair, its own zerops.yaml,
+// zeropsSetup is "prod", buildFromGit points to {slug}-worker.
+func SharesAppCodebase(target RecipeTarget, plan *RecipePlan) bool {
+	if !target.IsWorker || plan == nil {
+		return false
+	}
+	appBase, _, _ := strings.Cut(plan.RuntimeType, "@")
+	workerBase, _, _ := strings.Cut(target.Type, "@")
+	return appBase == workerBase
+}
+
+// recipeSetupName returns the zeropsSetup name for a recipe RUNTIME service.
+// The setup name depends on whether the worker shares the app codebase:
+//   - "dev"    → dev entry (env 0-1 SSHFS mount)
+//   - "worker" → monorepo worker in prod (shared zerops.yaml's worker setup)
+//   - "prod"   → HTTP app in prod, OR polyglot worker (own zerops.yaml's prod setup)
+func recipeSetupName(target RecipeTarget, isDev bool, plan *RecipePlan) string {
 	if isDev {
 		return RecipeSetupDev
 	}
-	if isWorker {
+	// Monorepo worker: the shared zerops.yaml has a dedicated "worker" setup.
+	if target.IsWorker && SharesAppCodebase(target, plan) {
 		return "worker"
 	}
+	// App, or polyglot worker (its own zerops.yaml's prod setup).
 	return RecipeSetupProd
 }
 

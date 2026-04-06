@@ -116,11 +116,13 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		}
 
 	case RecipeStepGenerate:
-		// Runtime briefing: base hello-world patterns to extend.
-		if plan != nil && plan.RuntimeType != "" {
-			base, _, _ := strings.Cut(plan.RuntimeType, "@")
-			if briefing, err := kp.GetBriefing(base, nil, "", nil); err == nil && briefing != "" {
-				parts = append(parts, briefing)
+		// Recipe knowledge chain: inject knowledge from lower-tier recipes.
+		// Direct predecessor (e.g., minimal for showcase): full content.
+		// Earlier ancestors (e.g., hello-world for showcase): gotchas only.
+		// Replaces the old runtime-briefing-only injection with richer context.
+		if plan != nil {
+			if chain := recipeKnowledgeChain(plan, kp); chain != "" {
+				parts = append(parts, chain)
 			}
 		}
 		// Discovered env vars: real variable names from provisioned services.

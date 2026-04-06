@@ -32,11 +32,18 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 	b.WriteString("\nservices:\n")
 
 	for _, target := range plan.Targets {
-		// Runtime services in env 0-1 get a dev+stage pair; everything else
-		// (managed, utility, and runtime in env 2-5) gets a single entry.
+		// Runtime services in env 0-1 get a dev+stage pair — EXCEPT monorepo
+		// workers (same runtime as app), which get stage only. The app's dev
+		// container serves as the shared workspace; the agent runs both the
+		// web server and worker as SSH processes from one mount.
 		if IsRuntimeType(target.Type) && envIndex <= 1 {
-			writeDevService(&b, plan, target, envComments.Service)
-			writeStageService(&b, plan, target, envComments.Service)
+			if target.IsWorker && SharesAppCodebase(target, plan) {
+				// Monorepo worker: stage only (dev is shared with appdev).
+				writeStageService(&b, plan, target, envComments.Service)
+			} else {
+				writeDevService(&b, plan, target, envComments.Service)
+				writeStageService(&b, plan, target, envComments.Service)
+			}
 		} else {
 			writeSingleService(&b, plan, target, envIndex, envComments.Service)
 		}
@@ -93,7 +100,7 @@ func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, 
 	fmt.Fprintf(b, "  - hostname: %s\n", devHost)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 	b.WriteString("    zeropsSetup: dev\n")
-	writeRecipeAppBuildFromGit(b, plan)
+	writeRuntimeBuildFromGit(b, plan, target)
 	// Non-worker runtimes serve HTTP and need a subdomain.
 	if !target.IsWorker {
 		b.WriteString("    enableSubdomainAccess: true\n")
@@ -111,8 +118,8 @@ func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget
 
 	fmt.Fprintf(b, "  - hostname: %s\n", stageHost)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
-	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.IsWorker, false))
-	writeRecipeAppBuildFromGit(b, plan)
+	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target, false, plan))
+	writeRuntimeBuildFromGit(b, plan, target)
 	if !target.IsWorker {
 		b.WriteString("    enableSubdomainAccess: true\n")
 	}
@@ -143,10 +150,10 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 		}
 	}
 
-	// Recipe runtime services: zeropsSetup + buildFromGit from recipe app repo.
+	// Recipe runtime services: zeropsSetup + buildFromGit.
 	if IsRuntimeType(target.Type) {
-		fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target.IsWorker, false))
-		writeRecipeAppBuildFromGit(b, plan)
+		fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target, false, plan))
+		writeRuntimeBuildFromGit(b, plan, target)
 	}
 
 	// Utility services: zeropsSetup + buildFromGit from the utility repo.
@@ -179,9 +186,15 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 	b.WriteByte('\n')
 }
 
-// writeRecipeAppBuildFromGit writes the buildFromGit URL for recipe app services.
-func writeRecipeAppBuildFromGit(b *strings.Builder, plan *RecipePlan) {
-	fmt.Fprintf(b, "    buildFromGit: %s%s-app\n", RecipeAppRepoBase, plan.Slug)
+// writeRuntimeBuildFromGit writes the buildFromGit URL for recipe runtime services.
+// Polyglot workers (different runtime than app) point to {slug}-worker;
+// everything else (app, monorepo workers) points to {slug}-app.
+func writeRuntimeBuildFromGit(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
+	if target.IsWorker && !SharesAppCodebase(target, plan) {
+		fmt.Fprintf(b, "    buildFromGit: %s%s-worker\n", RecipeAppRepoBase, plan.Slug)
+	} else {
+		fmt.Fprintf(b, "    buildFromGit: %s%s-app\n", RecipeAppRepoBase, plan.Slug)
+	}
 }
 
 // writeAutoscaling writes the verticalAutoscaling block per tier.
