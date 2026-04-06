@@ -78,17 +78,18 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 }
 
 // checkGenerateEntry validates a single hostname's zerops.yaml entry.
-// Accepts generic setup names (dev, prod) via --setup param, or hostname matching.
+// Expects canonical recipe setup names: "dev" for dev/standard targets, "prod" for simple targets.
 func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.BootstrapTarget, state *workflow.BootstrapState) []workflow.StepCheck {
-	// Try generic "dev" first (preferred), then hostname (legacy fallback).
-	entry := doc.FindEntry("dev")
-	if entry == nil {
-		entry = doc.FindEntry(hostname)
+	// Canonical setup names from recipes: dev/standard → "dev", simple → "prod".
+	expected := "dev"
+	if target.Runtime.EffectiveMode() == workflow.PlanModeSimple {
+		expected = "prod"
 	}
+	entry := doc.FindEntry(expected)
 	if entry == nil {
 		return []workflow.StepCheck{{
 			Name: hostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no setup entry for %q (also tried \"dev\") in zerops.yaml", hostname),
+			Detail: fmt.Sprintf("zerops.yaml must have setup: %q (canonical recipe name), found none — do NOT use hostname as setup name", expected),
 		}}
 	}
 
@@ -221,8 +222,9 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 		}
 	}
 
-	// Dev services need deployFiles: [.] for full source iteration.
-	if strings.Contains(hostname, "dev") && target.Runtime.EffectiveMode() != workflow.PlanModeSimple {
+	// Dev and standard mode services need deployFiles: [.] for full source iteration.
+	mode := target.Runtime.EffectiveMode()
+	if mode == workflow.PlanModeStandard || mode == workflow.PlanModeDev {
 		if deployFilesContainsDot(entry.Build.DeployFiles) {
 			checks = append(checks, workflow.StepCheck{
 				Name: hostname + "_dev_deploy_files", Status: statusPass,

@@ -68,8 +68,7 @@ func buildPrepareGuide(state *DeployState, env Environment, stateDir string) str
 
 	// Checklist.
 	sb.WriteString("### Checklist\n")
-	hostnames := targetHostnameList(state.Targets)
-	fmt.Fprintf(&sb, "1. zerops.yaml must exist with `setup:` entries for: %s\n", strings.Join(hostnames, ", "))
+	fmt.Fprintf(&sb, "1. zerops.yaml must have `setup: dev` (dev services) and/or `setup: prod` (stage/simple) entries — canonical recipe names, NOT hostnames\n")
 	sb.WriteString("2. Env var references (`${hostname_varName}`) must match real variables\n")
 	if state.Mode == PlanModeStandard || state.Mode == PlanModeDev {
 		sb.WriteString("3. Dev entry: `start: zsc noop --silent`, NO healthCheck\n")
@@ -241,7 +240,7 @@ func writeDevelopmentWorkflow(sb *strings.Builder, state *DeployState, strategy 
 	case StrategyPushGit:
 		sb.WriteString("Edit code on the SSHFS mount. When ready:\n")
 		sb.WriteString("1. Commit: `ssh {dev} \"cd /var/www && git add -A && git commit -m 'description'\"`\n")
-		sb.WriteString("2. Push: `zerops_deploy targetService=\"{dev}\" strategy=\"git-push\"`\n")
+		sb.WriteString("2. Push: `zerops_deploy targetService=\"{dev}\" setup=\"dev\" strategy=\"git-push\"`\n")
 		sb.WriteString("3. If CI/CD configured, stage deploys automatically.\n\n")
 	case StrategyManual:
 		sb.WriteString("Edit code on the SSHFS mount. Tell the user when changes are ready to deploy.\n")
@@ -271,7 +270,7 @@ func writePushDevWorkflow(sb *strings.Builder, state *DeployState) {
 
 	if state.Mode == PlanModeSimple {
 		fmt.Fprintf(sb, "Edit code on `/var/www/%s/`. After changes:\n", devHostname)
-		fmt.Fprintf(sb, "- `zerops_deploy targetService=\"%s\"` — server auto-starts with healthCheck\n", devHostname)
+		fmt.Fprintf(sb, "- `zerops_deploy targetService=\"%s\" setup=\"prod\"` — server auto-starts with healthCheck\n", devHostname)
 		fmt.Fprintf(sb, "- `zerops_verify serviceHostname=\"%s\"`\n\n", devHostname)
 		return
 	}
@@ -333,13 +332,13 @@ func writeStandardWorkflow(sb *strings.Builder, targets []DeployTarget) {
 	pairs := findDevStagePairs(targets)
 	step := 1
 	for _, p := range pairs {
-		fmt.Fprintf(sb, "%d. Deploy to dev: `zerops_deploy targetService=\"%s\"` — new container, all SSH sessions to %s die\n", step, p.dev, p.dev)
+		fmt.Fprintf(sb, "%d. Deploy to dev: `zerops_deploy targetService=\"%s\" setup=\"dev\"` — new container, all SSH sessions to %s die\n", step, p.dev, p.dev)
 		step++
 		fmt.Fprintf(sb, "%d. Start server on dev via NEW SSH connection (old sessions dead, dev uses idle start zsc noop)\n", step)
 		step++
 		fmt.Fprintf(sb, "%d. Verify dev: `zerops_verify serviceHostname=\"%s\"`\n", step, p.dev)
 		step++
-		fmt.Fprintf(sb, "%d. Deploy to stage: `zerops_deploy sourceService=\"%s\" targetService=\"%s\"`\n", step, p.dev, p.stage)
+		fmt.Fprintf(sb, "%d. Deploy to stage: `zerops_deploy sourceService=\"%s\" targetService=\"%s\" setup=\"prod\"`\n", step, p.dev, p.stage)
 		sb.WriteString("   Stage auto-starts (real start command + healthCheck)\n")
 		step++
 		fmt.Fprintf(sb, "%d. Verify stage: `zerops_verify serviceHostname=\"%s\"`\n", step, p.stage)
@@ -353,7 +352,7 @@ func writeDevWorkflow(sb *strings.Builder, targets []DeployTarget) {
 		if t.Role != DeployRoleDev {
 			continue
 		}
-		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\"` — new container, all SSH sessions to %s die\n", step, t.Hostname, t.Hostname)
+		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\" setup=\"dev\"` — new container, all SSH sessions to %s die\n", step, t.Hostname, t.Hostname)
 		step++
 		fmt.Fprintf(sb, "%d. Start server via NEW SSH connection (old sessions dead, dev uses idle start zsc noop)\n", step)
 		step++
@@ -368,7 +367,7 @@ func writeSimpleWorkflow(sb *strings.Builder, targets []DeployTarget) {
 		if t.Role != DeployRoleSimple {
 			continue
 		}
-		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\"` — server auto-starts\n", step, t.Hostname)
+		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\" setup=\"prod\"` — server auto-starts\n", step, t.Hostname)
 		step++
 		fmt.Fprintf(sb, "%d. Verify: `zerops_verify serviceHostname=\"%s\"`\n", step, t.Hostname)
 		step++
@@ -400,7 +399,11 @@ func writeLocalWorkflow(sb *strings.Builder, targets []DeployTarget) {
 	}
 	step := 1
 	for _, t := range targets {
-		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\"` — uploads code, triggers build\n", step, t.Hostname)
+		setup := "prod"
+		if t.Role == DeployRoleDev {
+			setup = PlanModeDev // canonical recipe setup name
+		}
+		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\" setup=\"%s\"` — uploads code, triggers build\n", step, t.Hostname, setup)
 		step++
 		fmt.Fprintf(sb, "%d. Verify: `zerops_verify serviceHostname=\"%s\"` — check health + subdomain\n", step, t.Hostname)
 		step++
@@ -420,14 +423,6 @@ func writeIterationEscalation(sb *strings.Builder, iteration int) {
 		sb.WriteString("Present diagnostic summary to user: exact error from logs,\n")
 		sb.WriteString("current config state, env var values. User decides next step.\n")
 	}
-}
-
-func targetHostnameList(targets []DeployTarget) []string {
-	hostnames := make([]string, 0, len(targets))
-	for _, t := range targets {
-		hostnames = append(hostnames, t.Hostname)
-	}
-	return hostnames
 }
 
 func hasRole(targets []DeployTarget, role string) bool {

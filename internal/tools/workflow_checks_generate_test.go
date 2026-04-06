@@ -110,7 +110,7 @@ func TestCheckGenerate_InvalidEnvRef_Fails(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: dev
     envVariables:
       DATABASE_URL: ${db_fakeVar}
     build:
@@ -163,7 +163,7 @@ func TestCheckGenerate_NoPorts_Fails(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: prod
     build:
       deployFiles: [.]
     run:
@@ -201,7 +201,7 @@ func TestCheckGenerate_NoDeployFiles_Fails(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: prod
     run:
       start: node index.js
       ports:
@@ -239,7 +239,7 @@ func TestCheckGenerate_AllPass(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: prod
     envVariables:
       DATABASE_URL: ${db_connectionString}
     build:
@@ -293,7 +293,7 @@ func TestCheckGenerate_ImplicitWebServer_SkipsPorts(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: prod
     build:
       deployFiles: [.]
     run:
@@ -325,7 +325,7 @@ func TestCheckGenerate_ValidEnvRef_Passes(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: prod
     envVariables:
       DB_URL: ${db_connectionString}
       CACHE_URL: ${cache_connectionString}
@@ -391,7 +391,7 @@ func TestCheckGenerate_StandardMode_OnlyChecksDev(t *testing.T) {
 
 	// zerops.yaml with only appdev entry — no appstage.
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: dev
     envVariables:
       DATABASE_URL: ${db_connectionString}
     build:
@@ -440,7 +440,7 @@ func TestCheckGenerate_StandardMode_NoStageChecks(t *testing.T) {
 
 	// zerops.yaml with only appdev entry — no appstage.
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: dev
     build:
       deployFiles: [.]
     run:
@@ -476,7 +476,7 @@ func TestCheckGenerate_ExistsAndCreateDeps_EnvRefs_Pass(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: prod
     envVariables:
       DATABASE_URL: ${db_connectionString}
       CACHE_PORT: ${cache_port}
@@ -544,7 +544,7 @@ func TestCheckGenerate_MountPath_FindsYml(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeZeropsYml(t, mountDir, `zerops:
-  - setup: appdev
+  - setup: prod
     build:
       deployFiles: [.]
     run:
@@ -590,7 +590,7 @@ func TestCheckGenerate_HealthCheck(t *testing.T) {
 		{
 			name: "simple mode with healthCheck passes",
 			yml: `zerops:
-  - setup: appdev
+  - setup: prod
     build:
       deployFiles: [.]
     run:
@@ -610,7 +610,7 @@ func TestCheckGenerate_HealthCheck(t *testing.T) {
 		{
 			name: "simple mode without healthCheck fails",
 			yml: `zerops:
-  - setup: appdev
+  - setup: prod
     build:
       deployFiles: [.]
     run:
@@ -626,7 +626,7 @@ func TestCheckGenerate_HealthCheck(t *testing.T) {
 		{
 			name: "standard mode without healthCheck passes (not required)",
 			yml: `zerops:
-  - setup: appdev
+  - setup: dev
     build:
       deployFiles: [.]
     run:
@@ -641,7 +641,7 @@ func TestCheckGenerate_HealthCheck(t *testing.T) {
 		{
 			name: "dev mode without healthCheck passes (not required)",
 			yml: `zerops:
-  - setup: appdev
+  - setup: dev
     build:
       deployFiles: [.]
     run:
@@ -656,7 +656,7 @@ func TestCheckGenerate_HealthCheck(t *testing.T) {
 		{
 			name: "simple mode with implicit web server and no healthCheck passes (exempt)",
 			yml: `zerops:
-  - setup: appdev
+  - setup: prod
     build:
       deployFiles: [.]
     run:
@@ -719,7 +719,7 @@ func TestCheckGenerate_MissingRunStart_DynamicRuntime_Fail(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: dev
     build:
       deployFiles: [.]
     run:
@@ -758,7 +758,7 @@ func TestCheckGenerate_MissingRunStart_ImplicitWebServer_Pass(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: prod
     build:
       deployFiles: [.]
     run:
@@ -789,7 +789,7 @@ func TestCheckGenerate_DevDeployFilesNotDot_Fail(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: dev
     build:
       deployFiles: [app]
     run:
@@ -829,7 +829,7 @@ func TestCheckGenerate_DevDeployFilesDot_Pass(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: dev
     build:
       deployFiles: [.]
     run:
@@ -876,7 +876,7 @@ func TestCheckGenerate_RunStartBuildCommand_Fail(t *testing.T) {
 			stateDir := filepath.Join(dir, ".zcp", "state")
 
 			writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: dev
     build:
       deployFiles: [.]
     run:
@@ -915,7 +915,7 @@ func TestCheckGenerate_RunStartValidCommand_NoBuildCmdFail(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: dev
     build:
       deployFiles: [.]
     run:
@@ -962,7 +962,7 @@ func TestCheckGenerate_IsExisting_SkipsValidation(t *testing.T) {
 
 			if tt.hasYml {
 				writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: prod
     build:
       deployFiles: [.]
     run:
@@ -1011,7 +1011,7 @@ func TestCheckGenerate_MixedExistingAndNew(t *testing.T) {
 
 	// Write zerops.yaml only for the NEW target — existing target has no yml.
 	writeZeropsYml(t, dir, `zerops:
-  - setup: webdev
+  - setup: dev
     build:
       deployFiles: [.]
     run:
@@ -1072,7 +1072,7 @@ func TestCheckGenerate_ServiceTypeImplicitWebServer_NoBuildBaseMatch(t *testing.
 	// Service type is php-nginx@8.4 → implicit web server.
 	// Checker must recognize this and skip ports/start/healthCheck checks.
 	writeZeropsYml(t, dir, `zerops:
-  - setup: dev
+  - setup: prod
     build:
       base: php@8.4
       buildCommands:
@@ -1144,7 +1144,7 @@ func TestCheckGenerate_PrepareCommandsMissingSudo_Fails(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: dev
     build:
       base: php@8.4
       buildCommands:
@@ -1190,7 +1190,7 @@ func TestCheckGenerate_PrepareCommandsWithSudo_Passes(t *testing.T) {
 	stateDir := filepath.Join(dir, ".zcp", "state")
 
 	writeZeropsYml(t, dir, `zerops:
-  - setup: appdev
+  - setup: dev
     build:
       base: php@8.4
       buildCommands:

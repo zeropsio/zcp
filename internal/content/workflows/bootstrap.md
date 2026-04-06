@@ -186,7 +186,7 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 **Priority ordering**: managed services `priority: 10`, runtime services default or `priority: 5`. Databases must be ready before apps that depend on them.
 
-**zeropsSetup**: only set in import.yaml when using `buildFromGit` (API rejects one without the other). For workspace deploys without `buildFromGit`, use `zerops_deploy setup="..."` to map hostname to setup name. zerops.yaml should use generic names (`dev`, `prod`) — the `setup` parameter handles the mapping at deploy time.
+**zeropsSetup**: only set in import.yaml when using `buildFromGit` (API rejects one without the other). For workspace deploys without `buildFromGit`, use `zerops_deploy setup="..."` to map hostname to setup name. zerops.yaml uses two canonical setup names from recipes: `setup: dev` (development workspace — idle start, full source, no healthCheck) and `setup: prod` (production/stage/simple — real start, healthCheck). At deploy time, pass `setup="dev"` or `setup="prod"` to map the hostname to the correct entry.
 
 **File extensions:** Use `import.yaml` and `zerops.yaml` for all new files. The legacy `.yml` extension is also accepted — existing repos may use `zerops.yml`.
 
@@ -338,7 +338,7 @@ All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 | readinessCheck | **None** | Optional |
 
 **MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
-- [ ] zerops.yaml has `setup:` entry for dev hostname ONLY (no stage entry yet)
+- [ ] zerops.yaml has `setup: dev` entry (canonical recipe name, NOT the hostname). Stage `setup: prod` comes after dev is verified.
 - [ ] Dev setup uses `deployFiles: [.]` — NO EXCEPTIONS
 - [ ] Dev `run.start` is `zsc noop --silent` (not real start cmd) — implicit-webserver runtimes: omit start entirely
 - [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
@@ -361,7 +361,7 @@ All files go to `/var/www/{devHostname}/` (the SSHFS mount path from provision).
 - **NO healthCheck** — agent controls lifecycle manually.
 
 **MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
-- [ ] zerops.yaml has `setup:` entry for dev hostname
+- [ ] zerops.yaml has `setup: dev` entry (canonical recipe name, NOT the hostname)
 - [ ] Dev setup uses `deployFiles: [.]` — NO EXCEPTIONS
 - [ ] `run.start` is `zsc noop --silent` — implicit-webserver runtimes: omit start entirely
 - [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
@@ -385,7 +385,7 @@ All files go to `/var/www/{hostname}/` (the SSHFS mount path from provision).
 
 ```yaml
 zerops:
-  - setup: {hostname}
+  - setup: prod
     build:
       base: {runtimeVersion}
       buildCommands: [<from runtime knowledge>]
@@ -411,7 +411,7 @@ zerops:
 - Single `setup:` entry (no dev/stage split)
 
 **MANDATORY PRE-DEPLOY CHECK** (do NOT proceed until all pass):
-- [ ] zerops.yaml has `setup:` entry for the service hostname
+- [ ] zerops.yaml has `setup: prod` entry (canonical recipe name — simple mode uses prod profile)
 - [ ] Uses `deployFiles: [.]` — NO EXCEPTIONS
 - [ ] `run.start` is the REAL start command (NOT `zsc noop`)
 - [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports (port 80 fixed)
@@ -444,8 +444,8 @@ Steps 2-4 repeat on every iteration. Stage (steps 5-7) only after dev is healthy
 
 > **Files are already on the dev container** via SSHFS mount — deploy does not "send" files there. Deploy runs the build pipeline (buildCommands, deployFiles), activates envVariables, and restarts the process.
 
-> Bootstrap deploys: `zerops_deploy targetService="{devHostname}"` for self-deploy.
-> Cross-deploy to stage: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"`.
+> Bootstrap deploys: `zerops_deploy targetService="{devHostname}" setup="dev"` for self-deploy.
+> Cross-deploy to stage: `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" setup="prod"`.
 
 `zerops_deploy` blocks until the build pipeline completes. It returns the final status (`DEPLOYED` or `BUILD_FAILED`) along with build duration. No manual polling needed.
 `zerops_import` blocks until all import processes complete. It returns final statuses (`FINISHED` or `FAILED`) for each process.
@@ -458,13 +458,13 @@ Steps 2-4 repeat on every iteration. Stage (steps 5-7) only after dev is healthy
 > Inside the container, code lives at `/var/www/`. Never use the mount path as
 > `workingDir` in `zerops_deploy` — the default `/var/www` is always correct.
 
-1. **Deploy to appdev**: `zerops_deploy targetService="appdev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. SSHFS mount auto-reconnects after deploy — no remount needed. **Deploy creates a new container — ALL previous SSH sessions to appdev are dead (exit 255).** Deploy tests the build pipeline and ensures deployFiles artifacts persist.
+1. **Deploy to appdev**: `zerops_deploy targetService="appdev" setup="dev"` — self-deploy (sourceService auto-inferred, includeGit auto-forced). SSHes into dev container, runs `git init` + `zcli push -g` on native FS at `/var/www`. SSHFS mount auto-reconnects after deploy — no remount needed. **Deploy creates a new container — ALL previous SSH sessions to appdev are dead (exit 255).** Deploy tests the build pipeline and ensures deployFiles artifacts persist.
 2. **Start appdev** (deploy activated envVariables — no server runs): start server via **NEW** SSH connection (Bash tool `run_in_background=true`). Old SSH sessions are dead — always open a fresh connection after deploy. Env vars are now OS env vars. **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): skip this step** — web server starts automatically after deploy.
 3. **Enable dev subdomain**: `zerops_subdomain serviceHostname="appdev" action="enable"` — returns `subdomainUrls`
 4. **Verify appdev**: `zerops_verify serviceHostname="appdev"` — must return status=healthy
 5. **Iterate if needed** — if `zerops_verify` returns degraded/unhealthy, enter the iteration loop: diagnose from `checks` array -> fix on mount path -> redeploy -> re-verify (max 3 iterations)
-6. **Generate stage entry** in zerops.yaml — dev is proven, now write the `setup: appstage` entry. See "Dev → Stage: What to know" below.
-7. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage"` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: appstage` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING. Stage is never a deploy source — no `.git` needed on target.
+6. **Generate stage entry** in zerops.yaml — dev is proven, now write the `setup: prod` entry. See "Dev → Stage: What to know" below.
+7. **Deploy to appstage from dev**: `zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"` — SSH mode: pushes from dev container to stage. Zerops runs the `setup: prod` build pipeline. Transitions stage from READY_TO_DEPLOY -> BUILDING -> RUNNING. Stage is never a deploy source — no `.git` needed on target.
 7b. **Connect shared storage to stage** (if shared-storage is in the stack): `zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"` — stage was READY_TO_DEPLOY during import, so the import `mount:` did not apply.
 8. **Enable stage subdomain**: `zerops_subdomain serviceHostname="appstage" action="enable"` — returns `subdomainUrls`
 9. **Verify appstage**: `zerops_verify serviceHostname="appstage"` — must return status=healthy
@@ -531,7 +531,7 @@ Unlike dev, simple mode uses a real `start` command and `healthCheck` — server
 
 ```yaml
 zerops:
-  - setup: {hostname}
+  - setup: prod
     build:
       base: {runtimeVersion}
       buildCommands: [<from runtime knowledge>]
@@ -559,7 +559,7 @@ zerops:
 
 4. **Deploy:**
    ```
-   zerops_deploy targetService="{hostname}"
+   zerops_deploy targetService="{hostname}" setup="prod"
    ```
 
 5. **Enable subdomain**: `zerops_subdomain serviceHostname="{hostname}" action="enable"` — returns `subdomainUrls`
@@ -614,8 +614,8 @@ Write files directly to this path — they appear inside the container at `/var/
 
 | Role | Hostname | zerops.yaml setup |
 |------|----------|------------------|
-| Dev | {devHostname} | `{devHostname}` |
-| Stage | {stageHostname} | `{stageHostname}` |
+| Dev | {devHostname} | `dev` |
+| Stage | {stageHostname} | `prod` |
 
 Managed services in this project: {managedServices}
 
@@ -647,7 +647,7 @@ Write the dev setup entry now. Stage entry is generated after dev is verified (t
 
 ```yaml
 zerops:
-  - setup: {devHostname}
+  - setup: dev
     build:
       base: {runtimeVersion}
       buildCommands: [<from runtime knowledge>]
@@ -662,7 +662,7 @@ zerops:
         # Map discovered variables to app-expected names
       start: zsc noop --silent   # Dev: idle container. Implicit-webserver runtimes (php-nginx, php-apache, nginx, static): omit start AND ports entirely.
       # NO healthCheck — agent controls lifecycle manually
-  # Stage entry: generated after dev is verified (task 10)
+  # Stage entry (setup: prod): generated after dev is verified (task 10)
 ```
 
 ## Infrastructure Verification Server
@@ -715,14 +715,14 @@ Execute IN ORDER. Every step has verification — do not skip any.
 | 1 | Write zerops.yaml (dev entry only) | Write to `{mountPath}/zerops.yaml` with dev setup entry. Stage entry comes later (task 9). | File exists with dev setup name |
 | 2 | Write app code | HTTP server on the port defined in zerops.yaml `run.ports` with `/`, `/health`, `/status`. Read env vars via runtime's native API. | Code references discovered env vars |
 | 3 | Write .gitignore | Build artifacts and IDE files only. Do NOT include `.env` — no .env files exist on Zerops | File exists, no `.env` entry |
-| 4 | Deploy dev | `zerops_deploy targetService="{devHostname}"` — activates envVariables as OS env vars | status=DEPLOYED (blocks until complete) |
+| 4 | Deploy dev | `zerops_deploy targetService="{devHostname}" setup="dev"` — activates envVariables as OS env vars | status=DEPLOYED (blocks until complete) |
 | 5 | Verify build | Check zerops_deploy return value | Not BUILD_FAILED or timedOut |
 | 6 | Start dev server | Start via SSH (Bash tool `run_in_background=true`). Env vars are available after deploy. Skip for implicit-webserver runtimes (php-nginx, php-apache, nginx, static — auto-starts). | `TaskOutput` shows startup message |
 | 7 | Activate subdomain | `zerops_subdomain serviceHostname="{devHostname}" action="enable"` | Returns `subdomainUrls` |
 | 8 | Verify dev | `zerops_verify serviceHostname="{devHostname}"` | status=healthy |
-| 9 | Generate stage entry | Dev is proven — now write the stage `setup:` entry in zerops.yaml. Stage runs the production build of your app. `start:` must be the production run command appropriate for your runtime and framework (not the dev command from SSH). Your runtime knowledge Prod deploy pattern shows examples — adapt to your specific situation. `buildCommands` include the full build pipeline (deps + compilation/bundling if applicable). `deployFiles` are the build output (not `[.]`). Add `healthCheck`. Copy `envVariables` from dev. | Stage entry in zerops.yaml |
+| 9 | Generate stage entry | Dev is proven — now write the `setup: prod` entry in zerops.yaml. Stage runs the production build of your app. `start:` must be the production run command appropriate for your runtime and framework (not the dev command from SSH). Your runtime knowledge Prod deploy pattern shows examples — adapt to your specific situation. `buildCommands` include the full build pipeline (deps + compilation/bundling if applicable). `deployFiles` are the build output (not `[.]`). Add `healthCheck`. Copy `envVariables` from dev. | Stage entry in zerops.yaml |
 | 10 | Review stage entry | Is `start:` a production run command (adapted to your framework, not a generic example)? Do `buildCommands` produce what `deployFiles` expects? `healthCheck` present? | Self-check |
-| 11 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}"` — stage has real start command, server auto-starts. No SSH start needed. | status=DEPLOYED (blocks until complete) |
+| 11 | Deploy stage | `zerops_deploy sourceService="{devHostname}" targetService="{stageHostname}" setup="prod"` — stage has real start command, server auto-starts. No SSH start needed. | status=DEPLOYED (blocks until complete) |
 | 12 | Verify stage | `zerops_subdomain action="enable"` + `zerops_verify serviceHostname="{stageHostname}"` | status=healthy |
 | 13 | Report | Status (pass/fail) + dev URL + stage URL | — |
 
@@ -746,7 +746,7 @@ If `zerops_verify` returns "degraded" or "unhealthy", iterate — do NOT skip ah
 
 2. **Fix**: Edit files at `{mountPath}/` — fix zerops.yaml, app code, or both
 
-3. **Redeploy** (only if zerops.yaml changed): `zerops_deploy targetService="{devHostname}"`. For code-only fixes on the mount, just restart the server — no redeploy needed.
+3. **Redeploy** (only if zerops.yaml changed): `zerops_deploy targetService="{devHostname}" setup="dev"`. For code-only fixes on the mount, just restart the server — no redeploy needed.
 
 4. **Start server** via SSH (Bash tool `run_in_background=true`). Env vars are present after deploy. Check startup via `TaskOutput`.
 
@@ -756,7 +756,7 @@ Max 3 iterations. After that, report failure with diagnosis.
 
 ## Platform Rules
 
-- All deploys use SSH — `zerops_deploy targetService="{hostname}"` for self-deploy (sourceService auto-inferred, includeGit auto-forced), `sourceService="{dev}" targetService="{stage}"` for cross-deploy.
+- All deploys use SSH — `zerops_deploy targetService="{hostname}" setup="dev"` for dev self-deploy (sourceService auto-inferred, includeGit auto-forced), `sourceService="{dev}" targetService="{stage}" setup="prod"` for cross-deploy to stage.
 - For new projects: write manifests only (package.json, go.mod, Gemfile). Do NOT write lock files (go.sum, bun.lock, package-lock.json) — let build commands generate them. For existing projects: preserve committed lock files.
 - NEVER write dependency dirs (node_modules/, vendor/).
 - zerops_deploy blocks until build completes — returns DEPLOYED or BUILD_FAILED with build duration.
@@ -998,18 +998,18 @@ Infrastructure verification only — write a hello-world server (/, /health, /st
 
 #### zerops.yaml
 
-Write zerops.yaml in the project root. The `setup:` name must match the Zerops service hostname:
+Write zerops.yaml in the project root. Use canonical recipe setup names:
 
 | Mode | `setup:` name | Notes |
 |------|------------|-------|
-| Standard | `{name}stage` | Stage is the deploy target. User's machine is dev. |
-| Simple | `{name}` | Single service — direct deploy target. |
+| Standard | `prod` | Stage is the deploy target. User's machine is dev. |
+| Simple | `prod` | Single service — production profile (real start, healthCheck). |
 | Managed-only | No zerops.yaml needed | No runtime service on Zerops. |
 
 **Standard mode — zerops.yaml for stage service:**
 ```yaml
 zerops:
-  - setup: {name}stage
+  - setup: prod
     build:
       base: {runtimeVersion}
       buildCommands: [<from runtime knowledge>]
@@ -1036,7 +1036,7 @@ zerops:
 - `deployFiles` can be build output (not forced to `[.]` — stage is NOT self-deploying from a dev container)
 - **PHP runtimes (php-nginx, php-apache)**: omit `start:` and `ports:` — web server is built in
 
-**Simple mode** — same as standard stage entry but with `setup: {hostname}`.
+**Simple mode** — same as standard stage entry (also uses `setup: prod`).
 
 #### .env file (credential bridge)
 
@@ -1103,7 +1103,7 @@ Test locally: `curl localhost:{port}/status` — should show connectivity to man
 
 #### MANDATORY PRE-DEPLOY CHECK
 
-- [ ] zerops.yaml has `setup:` entry matching the Zerops service hostname (NOT devHostname)
+- [ ] zerops.yaml has `setup: prod` entry (canonical recipe name — both standard stage and simple use prod profile)
 - [ ] `run.start` is the REAL start command — NOT `zsc noop`
 - [ ] `run.ports` port matches what the app listens on — implicit-webserver runtimes: omit ports
 - [ ] `healthCheck` configured with correct port and path
@@ -1122,7 +1122,7 @@ Test locally: `curl localhost:{port}/status` — should show connectivity to man
 
 | # | Task | Action | Verify |
 |---|------|--------|--------|
-| 1 | Deploy | `zerops_deploy targetService="{hostname}"` — pushes local code, triggers build on Zerops | status=DEPLOYED |
+| 1 | Deploy | `zerops_deploy targetService="{hostname}" setup="prod"` — pushes local code, triggers build on Zerops | status=DEPLOYED |
 | 2 | Enable subdomain | `zerops_subdomain serviceHostname="{hostname}" action="enable"` | Returns subdomainUrls |
 | 3 | Verify | `zerops_verify serviceHostname="{hostname}"` | status=healthy |
 | 4 | Report | Present Zerops URL + status to user | — |
@@ -1144,7 +1144,7 @@ If `zerops_verify` returns degraded or unhealthy:
 
 1. **Diagnose**: Check `zerops_logs severity="error" since="5m"` and the `checks` array from zerops_verify response
 2. **Fix**: Edit code/config locally
-3. **Redeploy**: `zerops_deploy targetService="{hostname}"`
+3. **Redeploy**: `zerops_deploy targetService="{hostname}" setup="prod"`
 4. **Re-verify**: `zerops_verify serviceHostname="{hostname}"`
 
 Max 3 iterations. After that, present diagnosis to user with what was tried and current error state.
