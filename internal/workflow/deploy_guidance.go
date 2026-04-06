@@ -399,9 +399,9 @@ func writeLocalWorkflow(sb *strings.Builder, targets []DeployTarget) {
 	}
 	step := 1
 	for _, t := range targets {
-		setup := "prod"
+		setup := RecipeSetupProd
 		if t.Role == DeployRoleDev {
-			setup = PlanModeDev // canonical recipe setup name
+			setup = RecipeSetupDev
 		}
 		fmt.Fprintf(sb, "%d. Deploy: `zerops_deploy targetService=\"%s\" setup=\"%s\"` — uploads code, triggers build\n", step, t.Hostname, setup)
 		step++

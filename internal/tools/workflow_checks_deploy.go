@@ -64,7 +64,7 @@ func checkDeployPrepare(client platform.Client, projectID, stateDir string) work
 		for _, t := range state.Targets {
 			entry := doc.FindEntry(t.Role) // "dev" or "stage" → try as setup name
 			if entry == nil && t.Role == "stage" {
-				entry = doc.FindEntry("prod") // stage role maps to prod setup
+				entry = doc.FindEntry(workflow.RecipeSetupProd) // stage role maps to prod setup
 			}
 			if entry == nil {
 				entry = doc.FindEntry(t.Hostname) // legacy: hostname matching
@@ -193,8 +193,8 @@ func checkDeployResult(client platform.Client, projectID string) workflow.Deploy
 // wants two setups with identical env vars, they can distinguish them with a
 // single semantically-meaningful key (e.g. the framework's own env flag).
 func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
-	devEntry := doc.FindEntry("dev")
-	prodEntry := doc.FindEntry("prod")
+	devEntry := doc.FindEntry(workflow.RecipeSetupDev)
+	prodEntry := doc.FindEntry(workflow.RecipeSetupProd)
 	if devEntry == nil || prodEntry == nil {
 		// Only fires when both setups coexist in zerops.yaml.
 		return nil

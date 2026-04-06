@@ -157,7 +157,7 @@ func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, _ *workflow.Recip
 
 	// Prod setup: required — generate step writes BOTH dev and prod so the
 	// file matches the README integration-guide fragment exactly.
-	prodEntry := doc.FindEntry("prod")
+	prodEntry := doc.FindEntry(workflow.RecipeSetupProd)
 	if prodEntry == nil {
 		checks = append(checks, workflow.StepCheck{
 			Name: hostname + "_prod_setup", Status: statusFail,

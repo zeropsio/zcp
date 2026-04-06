@@ -47,6 +47,22 @@ func IsRuntimeType(serviceType string) bool {
 	return !IsManagedService(serviceType) && !IsUtilityType(serviceType)
 }
 
+// Canonical recipe setup names. Every recipe uses exactly these two entries
+// in zerops.yaml. All bootstrap/deploy guidance and checkers reference them.
+const (
+	RecipeSetupDev  = "dev"  // development workspace — idle start, full source, no healthCheck
+	RecipeSetupProd = "prod" // production/stage/simple — real start, healthCheck
+)
+
+// RecipeSetupForMode maps a bootstrap plan mode to its canonical recipe setup name.
+// Standard and dev modes use the dev workspace entry; simple mode uses the prod entry.
+func RecipeSetupForMode(mode string) string {
+	if mode == PlanModeSimple {
+		return RecipeSetupProd
+	}
+	return RecipeSetupDev
+}
+
 // recipeSetupName returns the zeropsSetup name for a recipe RUNTIME service:
 //   - "dev"    → the dev entry that env 0-1 mounts on SSHFS
 //   - "worker" → background/queue worker runtime in prod
@@ -56,12 +72,12 @@ func IsRuntimeType(serviceType string) bool {
 // or no setup at all).
 func recipeSetupName(isWorker, isDev bool) string {
 	if isDev {
-		return "dev"
+		return RecipeSetupDev
 	}
 	if isWorker {
 		return "worker"
 	}
-	return "prod"
+	return RecipeSetupProd
 }
 
 // serviceTypeKind returns a human-readable category label for comment generation.

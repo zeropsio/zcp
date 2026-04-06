@@ -80,11 +80,7 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 // checkGenerateEntry validates a single hostname's zerops.yaml entry.
 // Expects canonical recipe setup names: "dev" for dev/standard targets, "prod" for simple targets.
 func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.BootstrapTarget, state *workflow.BootstrapState) []workflow.StepCheck {
-	// Canonical setup names from recipes: dev/standard → "dev", simple → "prod".
-	expected := "dev"
-	if target.Runtime.EffectiveMode() == workflow.PlanModeSimple {
-		expected = "prod"
-	}
+	expected := workflow.RecipeSetupForMode(target.Runtime.EffectiveMode())
 	entry := doc.FindEntry(expected)
 	if entry == nil {
 		return []workflow.StepCheck{{
