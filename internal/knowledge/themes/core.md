@@ -224,7 +224,8 @@ zerops[]:
   - Recipe uses `./app` + `start: ./app` → with `[.]`: same `start: ./app` (binary at `/var/www/app`)
   - Recipe uses `target/release/~binary` + `start: ./binary` → with `[.]`: `start: ./target/release/binary`
   - Principle: tilde extraction no longer happens, directory structure is preserved as-is. Match `start` to where build output actually lands.
-- **`.deployignore`**: Place at repo root (gitignore syntax) to exclude files/folders from deploy artifact. NOT recursive into subdirectories by default. Recommended to mirror `.gitignore` patterns. Also works with `zcli service deploy`.
+- **`.deployignore`**: Place at repo root (gitignore syntax) to exclude files/folders from deploy artifact. NOT recursive into subdirectories by default. Also works with `zcli service deploy`.
+- **`deployFiles` strategy**: when the build produces a small, self-contained artifact (compiled binary, bundled JS), list specific paths. When the runtime reads from most of the project tree (interpreted frameworks — PHP, Ruby, Python, etc.), prefer `deployFiles: [.]` + `.deployignore` over enumerating every directory. Excluding the known-unnecessary (source assets, tests, build configs) is more robust than listing 10+ directories — missed paths break deploys silently, and framework updates that add directories require manual list maintenance.
 - **Deploy mode determines `deployFiles`**:
 
   | Deploy mode | Who deploys? | deployFiles | start |
