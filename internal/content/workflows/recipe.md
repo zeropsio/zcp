@@ -73,7 +73,7 @@ Define workspace services based on recipe type:
 - **Type 2b (frontend SSR)**: app + db
 - **Type 3 (backend framework)**: app + db
 
-**Target fields**: just `hostname` (lowercase alphanumeric, e.g. `app`/`db`/`cache`) and `type` (service type from live catalog, e.g. `php-nginx@8.4`/`postgresql@17`). The tool dispatches rendering directly on the type — no role classification needed. For runtime services, if it's a background/queue worker instead of the HTTP-serving primary app, set `isWorker: true`. Workers get a `worker` setup name and no subdomain; the primary app gets a `prod` setup and `enableSubdomainAccess`. For managed/utility services, `isWorker` is ignored.
+**Target fields**: just `hostname` (lowercase alphanumeric, e.g. `app`/`db`/`cache`) and `type` (service type from live catalog — pick the highest available version for each stack). The tool dispatches rendering directly on the type — no role classification needed. For runtime services, if it's a background/queue worker instead of the HTTP-serving primary app, set `isWorker: true`. Workers get a `worker` setup name and no subdomain; the primary app gets a `prod` setup and `enableSubdomainAccess`. For managed/utility services, `isWorker` is ignored.
 
 ### Submission
 Submit via:
@@ -268,6 +268,8 @@ If the framework scaffolds a `.env.example` file (e.g., `composer create-project
 ### Framework environment conventions
 
 Use the framework's **standard** environment names and values — don't invent new ones. Check the framework's documentation for the correct dev/production mode flag. Wrong env names cause subtle behavior differences (e.g., debug mode not activating, error pages not showing, optimizations not running). The runtime hello-world recipe loaded during research documents the base patterns.
+
+If the framework has a "base URL" / "app URL" / "public URL" environment variable that controls absolute URL generation, set it to `${zeropsSubdomain}` in `run.envVariables`. Without it, the framework defaults to localhost and any feature producing absolute URLs (redirects, mail links, signed URLs, CSRF origin) breaks silently.
 
 ### Required endpoints
 

@@ -74,7 +74,7 @@ type EnvComments struct {
 // (IsRuntimeType, IsManagedService, IsUtilityType, IsObjectStorageType, …).
 type RecipeTarget struct {
 	Hostname     string   `json:"hostname"               jsonschema:"Service hostname — lowercase alphanumeric, no hyphens or underscores (e.g. 'app', 'db', 'cache')."`
-	Type         string   `json:"type"                   jsonschema:"Zerops service type with version (e.g. 'php-nginx@8.4', 'postgresql@17', 'valkey@7.2'). Must exist in the live catalog."`
+	Type         string   `json:"type"                   jsonschema:"Zerops service type with version — pick the highest available version from the live catalog for each stack. Must exist in the live catalog."`
 	IsWorker     bool     `json:"isWorker,omitempty"     jsonschema:"Only meaningful for runtime types — set true for background/queue workers, false (default) for the HTTP-serving primary app. Ignored for managed/utility types (their rendering is fully determined by type)."`
 	Environments []string `json:"environments,omitempty"` // ignored — all targets appear in all environments
 }
