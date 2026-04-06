@@ -58,7 +58,7 @@ to get wrong.
 ### Build container: native multi-base
 
 Set ` + "`build.base`" + ` to a list — both runtimes are fully installed with all
-binaries on PATH:
+binaries on ` + "`PATH`" + `:
 
 ` + "```yaml" + `
 build:
@@ -70,11 +70,15 @@ build:
     - npm ci && npm run build        # JS pipeline runs here, writes to public/build/
 ` + "```" + `
 
-### Run container: single base + zsc install
+### Run container: single base + sudo -E zsc install
 
 ` + "`run.base`" + ` is a single runtime — you cannot pass a list. Secondary runtimes
-at runtime come from ` + "`zsc install <type>@<version>`" + ` in ` + "`run.prepareCommands`" + `
+at runtime come from ` + "`sudo -E zsc install <type>@<version>`" + ` in ` + "`run.prepareCommands`" + `
 (cached into the runtime image once, not re-run per container start).
+
+**` + "`sudo -E`" + ` is mandatory** — ` + "`zsc install`" + ` modifies system paths and needs
+root privileges. The ` + "`-E`" + ` flag preserves environment variables (critical for
+any env-dependent post-install steps).
 
 ### The prod vs dev divergence
 
@@ -91,7 +95,7 @@ running tests). Node must exist at runtime, which means:
   run:
     base: {primary-runtime}@{version}
     prepareCommands:
-      - zsc install nodejs@22        # or bun@1, deno@2 — whatever dev needs
+      - sudo -E zsc install nodejs@22  # or bun@1, deno@2 — whatever dev needs
 ` + "```" + `
 
 Dev's BUILD side can be minimal — no need to bake assets there when the
@@ -101,7 +105,7 @@ whole point of dev is live source editing.
 
 When provision created ` + "`appdev`" + ` with ` + "`startWithoutCode: true`" + `, the container
 spun up with ONLY its service type (primary runtime). No zerops.yaml has been
-applied yet → no ` + "`zsc install`" + ` has run → Node/bun/deno is NOT available.
+applied yet → no ` + "`sudo -E zsc install`" + ` has run → Node/bun/deno is NOT available.
 
 If you SSH into appdev right now expecting ` + "`npm`" + ` or ` + "`node`" + `, you will get
 ` + "`command not found`" + `. The secondary runtime only becomes available after the
@@ -112,6 +116,9 @@ deploy if the dev container has no Node. Options:
 1. Let the first build install it (multi-base build + ship assets in deployFiles) — works when dev doesn't need interactive JS tooling.
 2. Skip the lockfile dependency in initial build commands (` + "`npm install`" + ` instead of ` + "`npm ci`" + `) so the first build is tolerant.
 3. Generate the lockfile locally before the recipe run (not always possible).
+
+**Always ` + "`sudo -E zsc install`" + `** — never bare ` + "`zsc install`" + `. The command
+requires root and the ` + "`-E`" + ` flag preserves environment variables.
 
 Reference: https://docs.zerops.io/references/zsc#install
 `

@@ -111,7 +111,7 @@ These are **proven, deployed configurations**. They show exactly how this langua
 | Question | Example (Laravel) | Your Answer |
 | ----- | ----- | ----- |
 | Extra runtime tools needed for dev? | Node.js (for Inertia frontend) | |
-| How to install extra tools | `run.prepareCommands` with `zsc install nodejs@22` | |
+| How to install extra tools | `run.prepareCommands` with `sudo -E zsc install nodejs@22` | |
 | Dev init commands (beyond migration) | `composer install && npm install` | |
 | Needs temporary RAM scaling? | Yes (`zsc scale ram +0.5GB 10m`) | |
 
@@ -369,7 +369,7 @@ Run OS:
 ```
 Does the framework have an integrated frontend that needs a DIFFERENT runtime?
 ├── YES (e.g., Laravel + Inertia needs Node.js, but run.base is php-nginx)
-│   ├── Add `run.prepareCommands` with `zsc install <runtime>` (e.g., `zsc install nodejs@22`)
+│   ├── Add `run.prepareCommands` with `sudo -E zsc install <runtime>` (e.g., `sudo -E zsc install nodejs@22`)
 │   ├── Add `zsc scale ram +0.5GB 10m` to initCommands (dep install is heavy)
 │   └── Add both package managers to initCommands (e.g., `composer install && npm install`)
 │
@@ -1367,7 +1367,7 @@ These are 1-line explanations woven into existing comments — not separate para
 - **envSecrets**: Per-service secrets set at project creation (e.g., `APP_KEY`). Unlike `envVariables` in zerops.yaml, these persist and aren't redeployed.
 - **Setup Inheritance (`extends`)**: Backend framework recipes always use `extends: base` — frameworks invariably share 10+ env vars between prod and dev.
 - **Multi-base builds**: `base: [php@8.4, nodejs@22]` when build needs multiple runtimes.
-- **`run.prepareCommands`**: Install additional runtime tools via `zsc install <runtime>` (e.g., `zsc install nodejs@22` in a PHP container). See [zsc docs](https://docs.zerops.io/references/zsc). Runs once per container creation, cached in the container image.
+- **`run.prepareCommands`**: Install additional runtime tools via `sudo -E zsc install <runtime>` (e.g., `sudo -E zsc install nodejs@22` in a PHP container). See [zsc docs](https://docs.zerops.io/references/zsc). Runs once per container creation, cached in the container image.
 - **`siteConfigPath`**: Custom Nginx config for PHP-Nginx services.
 - **Object storage**: `objectStorageSize: <GB>` and `objectStoragePolicy: public-read | private`. Typical: 2GB for dev/stage, 5GB small prod, 100GB HA prod.
 - **Mailpit**: SMTP testing tool — `hostname: mailpit`, `type: go@1`, `buildFromGit: https://github.com/zerops-recipe-apps/mailpit-app`, `enableSubdomainAccess: true`.
@@ -1769,7 +1769,7 @@ zerops:
       deployFiles: ./
     run:
       prepareCommands:                          # DECISION: Only if extra runtime needed (Tree 4 → YES). Remove block if not.
-        - zsc install <extra-runtime>           # e.g., zsc install nodejs@22
+        - sudo -E zsc install <extra-runtime>   # e.g., sudo -E zsc install nodejs@22
       envVariables:
         APP_ENV: development
         APP_DEBUG: true
@@ -2060,7 +2060,7 @@ This is a real-world example of a backend framework on Zerops. Use it to underst
 - `composer install --optimize-autoloader --no-dev` for prod
 - `php artisan view:cache`, `config:cache`, `route:cache` — Laravel-specific cache warming
 - `php artisan migrate --isolated --force` — `--isolated` handles multi-container locking
-- Dev: `run.prepareCommands` installs Node.js via `zsc install nodejs@22` (can't multi-base on run)
+- Dev: `run.prepareCommands` installs Node.js via `sudo -E zsc install nodejs@22` (can't multi-base on run)
 - Dev: `initCommands` runs `composer install && npm install` with temporary RAM scaling (`zsc scale ram +0.5GB 10m`)
 - `APP_KEY` via `envSecrets` with `<@generateRandomString(<32>)>`
 - `LOG_CHANNEL: syslog` for multi-container log collection

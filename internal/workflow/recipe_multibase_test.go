@@ -152,14 +152,15 @@ func TestMultiBaseGuidance_ContainsCoreConcepts(t *testing.T) {
 
 	requiredMarkers := []string{
 		"build/run asymmetry",
-		"zsc install",
+		"sudo -E zsc install",
 		"run.prepareCommands",
 		"startWithoutCode trap",
 		"Build container: native multi-base",
-		"Run container: single base",
+		"Run container: single base + sudo -E zsc install",
 		"prod vs dev divergence",
 		"deployFiles",
 		"docs.zerops.io/references/zsc",
+		"sudo -E` is mandatory",
 	}
 
 	for _, marker := range requiredMarkers {
