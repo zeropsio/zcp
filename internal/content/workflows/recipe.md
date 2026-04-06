@@ -97,11 +97,11 @@ zerops_workflow action="complete" step="research" recipePlan={...}
 
 Includes everything from minimal research, PLUS the fields and targets below.
 
-**Reference loading**: load ONLY the minimal recipe for your framework — this is your direct predecessor and starting point:
+**Reference loading — REPLACES the minimal/hello-world loading above.** Showcase recipes load ONE recipe only:
 ```
 zerops_knowledge recipe="{framework}-minimal"
 ```
-Do NOT load the hello-world recipe manually. The generate step automatically injects platform gotchas from earlier ancestors (hello-world tier) — loading it here wastes context with zerops.yaml patterns (raw SQL, different base image) that don't apply to your framework.
+This is your direct predecessor and starting point. **Do NOT load the hello-world recipe.** The generate step automatically injects earlier ancestors' gotchas (hello-world tier) into your context — loading it manually wastes context with raw SQL patterns and different base images that don't apply to your framework. If you load it anyway, ignore its zerops.yaml patterns entirely; use only the minimal recipe's patterns as your template.
 
 ### Additional Showcase Fields
 - **Cache library**: Redis client library for the framework
@@ -375,7 +375,7 @@ Description of why this change is needed.
 - **Step 1** must be `### 1. Adding \`zerops.yaml\`` with a description paragraph before the code block (the API renders it as a section title)
 
 ### Code Quality
-- Comment ratio in zerops.yaml code blocks must be >= 0.3
+- Comment ratio in zerops.yaml code blocks must be >= 0.3 — **aim for 35%** to clear the threshold comfortably on the first attempt. Agents consistently underestimate; writing to 30% lands at 25%.
 - No `PLACEHOLDER_*`, `<your-...>`, or `TODO` strings
 - All env var references must use discovered variable names
 - Comments explain WHY, not WHAT (don't restate the key name)
@@ -550,8 +550,10 @@ For showcase, also verify the worker is running via logs (no HTTP endpoint):
 zerops_logs serviceHostname="appdev" limit=20
 ```
 
+**Redeployment = fresh container.** If you fix code and redeploy during iteration, the platform creates a new container — ALL background processes (asset dev server, queue worker) are gone. Restart them before re-verifying. This applies to every redeploy, not just the first.
+
 **Step 4: Iterate if needed** (max 3 iterations)
-If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify.
+If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify. After any redeploy, repeat Step 2 (start ALL processes) before Step 3 (verify).
 
 ### Stage deployment flow
 
@@ -663,7 +665,11 @@ The 6 envs are **not interchangeable** — each exists to describe a different d
 
 Pass `envComments` keyed by env index (`"0"`..`"5"`). Each env carries a `service` map (keys match the hostnames that appear in THAT env's file) and an optional `project` comment. **Service key rule**: envs 0-1 carry the dev+stage pair, so keys are `"appdev"` and `"appstage"`; envs 2-5 collapse to a single runtime entry, so the key is the base hostname (`"app"`). Managed services (`"db"` etc.) keep the base hostname everywhere.
 
-**Showcase service keys**: in envs 2-5, worker is `"worker"`. In envs 0-1, showcase monorepo workers have both `"workerdev"` and `"workerstage"` (showcase always generates dev+stage for every runtime). **Polyglot** (different runtime) also has both `"workerdev"` and `"workerstage"`. Other showcase services use base hostname everywhere: `"redis"`, `"storage"`, `"search"`. Every service that appears in a given env's import.yaml should have a comment explaining its role in THAT env.
+**Showcase service keys — ALL runtime services get dev+stage in envs 0-1.** This means `"workerdev"` AND `"workerstage"` BOTH need comments in envs 0-1. The template generates these services automatically; omitting a comment key produces a service with no comment in the import.yaml, which degrades quality and risks failing the comment ratio check. Complete key list per env:
+- **Envs 0-1**: `"appdev"`, `"appstage"`, `"workerdev"`, `"workerstage"`, plus all managed services (`"db"`, `"cache"`, `"storage"`, `"search"`, etc.)
+- **Envs 2-5**: `"app"`, `"worker"`, plus all managed services
+
+Polyglot workers (different runtime) follow the same pattern. Every service that appears in a given env's import.yaml MUST have a comment explaining its role in THAT env.
 
 ```
 zerops_workflow action="generate-finalize" \
@@ -724,7 +730,7 @@ zerops_workflow action="generate-finalize" \
 
 **Comment style:**
 - Explain WHY, not WHAT. Don't restate the field name.
-- 1-3 sentences per service. Lines auto-wrap at 80 chars.
+- 2-3 sentences per service (aim for the upper end — single-sentence comments consistently fail the 30% ratio on first attempt). Lines auto-wrap at 80 chars.
 - No section-heading decorators (`# -- Title --`, `# === Foo ===`).
 - Dev-to-dev tone — like explaining your config to a colleague.
 - Reference framework commands where they add precision (`bun --hot`, `composer install --no-dev`, `config:cache`).

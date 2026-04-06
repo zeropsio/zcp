@@ -96,9 +96,14 @@ func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int, pro
 // writeDevService writes a dev service block for env 0-1. Called only for
 // runtime targets, so target.Type is guaranteed IsRuntimeType. Reads the
 // agent's comment keyed by the actual service hostname ("{base}dev").
+// Falls back to a computed default if the agent didn't provide a comment.
 func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, serviceComments map[string]string) {
 	devHost := target.Hostname + "dev"
-	writeAgentCommentAtIndent(b, serviceComments[devHost], "  ")
+	comment := serviceComments[devHost]
+	if comment == "" {
+		comment = defaultDevComment(target)
+	}
+	writeAgentCommentAtIndent(b, comment, "  ")
 
 	fmt.Fprintf(b, "  - hostname: %s\n", devHost)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
@@ -115,9 +120,14 @@ func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, 
 // writeStageService writes a stage service block for env 0-1. Called only for
 // runtime targets, so target.Type is guaranteed IsRuntimeType. Reads the
 // agent's comment keyed by the actual service hostname ("{base}stage").
+// Falls back to a computed default if the agent didn't provide a comment.
 func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, serviceComments map[string]string) {
 	stageHost := target.Hostname + "stage"
-	writeAgentCommentAtIndent(b, serviceComments[stageHost], "  ")
+	comment := serviceComments[stageHost]
+	if comment == "" {
+		comment = defaultStageComment(target, plan)
+	}
+	writeAgentCommentAtIndent(b, comment, "  ")
 
 	fmt.Fprintf(b, "  - hostname: %s\n", stageHost)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
@@ -248,6 +258,28 @@ func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
 			}
 		}
 	}
+}
+
+// --- Default comment fallbacks ---
+
+// defaultDevComment returns a computed comment for a dev service when the agent
+// didn't provide one. Derived from service properties, not framework-specific.
+func defaultDevComment(target RecipeTarget) string {
+	host := target.Hostname + "dev"
+	if target.IsWorker {
+		return fmt.Sprintf("Dev workspace for %s — zeropsSetup:dev deploys the full source tree for SSH editing and manual process management.", host)
+	}
+	return fmt.Sprintf("Dev workspace — zeropsSetup:dev deploys the full source tree so %s is editable over SSHFS.", host)
+}
+
+// defaultStageComment returns a computed comment for a stage service when the
+// agent didn't provide one. Derived from service properties, not framework-specific.
+func defaultStageComment(target RecipeTarget, plan *RecipePlan) string {
+	setup := recipeSetupName(target, false, plan)
+	if target.IsWorker {
+		return fmt.Sprintf("Stage worker — zeropsSetup:%s validates background job processing with production config.", setup)
+	}
+	return fmt.Sprintf("Staging slot — zeropsSetup:%s runs the production build for validation before release.", setup)
 }
 
 // --- Comment helpers ---

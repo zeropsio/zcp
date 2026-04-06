@@ -536,32 +536,61 @@ func TestGenerateEnvImportYAML_Showcase_UtilityService(t *testing.T) {
 	})
 }
 
-func TestGenerateEnvImportYAML_TemplateEmitsNoServiceComments(t *testing.T) {
+func TestGenerateEnvImportYAML_NoPlatformKnowledgeComments(t *testing.T) {
 	t.Parallel()
 
-	// The template is dumb about prose — it MUST NOT emit service-level
-	// platform-knowledge comments. All service commentary belongs to the agent
-	// (written per-env in plan.EnvComments). The only comment the template is
-	// allowed to emit is the file-level env-header paragraph at indent 0.
+	// Template MUST NOT emit platform-knowledge comments (naming specific
+	// managed service types or their characteristics). Default structural
+	// comments are allowed for uncommented runtime services (they describe
+	// the service role from its properties, not platform knowledge).
 	plan := testShowcasePlan()
 	for i := 0; i < EnvTierCount(); i++ {
 		yaml := GenerateEnvImportYAML(plan, i)
-		// Every non-header comment is a service/project-level comment —
-		// those are indented 2 spaces. Assert there are zero of them when
-		// the plan has no agent comments.
-		for line := range strings.SplitSeq(yaml, "\n") {
-			if strings.HasPrefix(line, "  # ") || line == "  #" {
-				t.Errorf("env %d: template emitted a service-indent comment (agent owns all service prose): %q", i, line)
-			}
-		}
-		// And nothing that names specific data-service types in platform prose.
-		// If this starts appearing, some old template-comment path was
-		// accidentally reintroduced.
 		for _, forbidden := range []string{"Valkey single-node", "PostgreSQL single-node", "Meilisearch single-node"} {
 			if strings.Contains(yaml, forbidden) {
 				t.Errorf("env %d: template emitted platform prose %q — should be agent-owned", i, forbidden)
 			}
 		}
+	}
+}
+
+func TestGenerateEnvImportYAML_DefaultCommentsForUncommentedServices(t *testing.T) {
+	t.Parallel()
+
+	// When the agent omits comments for a dev/stage service, the template
+	// generates a structural default so the import.yaml is never bare.
+	plan := testShowcasePlan() // no EnvComments
+	yaml := GenerateEnvImportYAML(plan, 0)
+
+	// workerdev should get a default comment even without agent input.
+	if !strings.Contains(yaml, "# Dev workspace for workerdev") {
+		t.Error("expected default comment for uncommented workerdev in env 0")
+	}
+	if !strings.Contains(yaml, "# Stage worker") {
+		t.Error("expected default comment for uncommented workerstage in env 0")
+	}
+}
+
+func TestGenerateEnvImportYAML_AgentCommentsOverrideDefaults(t *testing.T) {
+	t.Parallel()
+
+	// When the agent provides a comment, the default is NOT emitted.
+	plan := testShowcasePlan()
+	plan.EnvComments = map[string]EnvComments{
+		"0": {
+			Service: map[string]string{
+				"workerdev":   "Agent-written workerdev comment.",
+				"workerstage": "Agent-written workerstage comment.",
+			},
+		},
+	}
+	yaml := GenerateEnvImportYAML(plan, 0)
+
+	if strings.Contains(yaml, "Dev workspace for workerdev") {
+		t.Error("default comment should not appear when agent provides one")
+	}
+	if !strings.Contains(yaml, "Agent-written workerdev comment") {
+		t.Error("expected agent comment for workerdev")
 	}
 }
 
