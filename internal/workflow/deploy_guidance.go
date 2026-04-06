@@ -180,6 +180,7 @@ func buildDeployGuide(state *DeployState, iteration int, env Environment, stateD
 	sb.WriteString("- Container didn't start → check start command, ports, env vars. Deploy = new container.\n")
 	sb.WriteString("- Running but unreachable → zerops_subdomain, check ports in zerops.yaml vs app\n")
 	sb.WriteString("- zerops_verify unhealthy → check `detail` field for specific failed check\n")
+	sb.WriteString("- Process killed (OOM) during SSH work → `zsc scale ram +2GiB 10m` before heavy ops (auto-reverts)\n")
 
 	return sb.String()
 }

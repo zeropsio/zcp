@@ -284,6 +284,8 @@ After `zerops_deploy` to dev, env vars from zerops.yaml are available as OS env 
 
 **Implicit-webserver runtimes (php-nginx, php-apache, nginx, static) skip manual start.** The web server starts automatically after deploy.
 
+**Heavy operations (composer install, npm install, cargo build, etc.) may get killed if the container is near its RAM floor.** Temporarily scale up before running: `ssh {devHostname} "zsc scale ram +2GiB 10m"` — auto-reverts after the duration. Adjust size and duration to match the operation.
+
 **Piping rule:** `ssh {dev} "curl -s localhost:{port}/api"` | jq . — pipe OUTSIDE SSH. `jq` is not available inside containers.
 </section>
 
@@ -321,6 +323,8 @@ When `zerops_verify` returns "degraded" or "unhealthy", iterate — do not give 
 | HTTP 502 | Subdomain not activated | Call zerops_subdomain action="enable" |
 | Empty response body | App not listening on 0.0.0.0 | Add HOST=0.0.0.0 to envVariables |
 | Timeout on /status | Wrong port or app not binding | Check run.ports vs actual listen port |
+
+| Process killed / OOM during SSH work | Container near RAM floor | `zsc scale ram +2GiB 10m` before heavy ops (auto-reverts) |
 
 **After 3 failed iterations**: Stop and report to user with what was tried and current error state.
 

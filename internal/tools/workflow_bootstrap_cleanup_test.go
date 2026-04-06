@@ -16,72 +16,117 @@ func TestCleanupImportYAML(t *testing.T) {
 	const importContent = "services:\n  - hostname: weather\n    type: nodejs@22\n"
 
 	tests := []struct {
-		name          string
-		createFile    bool   // whether to create import.yaml at root
-		fileName      string // file name (import.yaml or import.yml)
-		mounts        []workflow.AutoMountInfo
-		wantDeleted   bool     // file should be removed from root
-		wantCopiedTo  []string // mount subdirs that should contain the file
-		wantNotCopied []string // mount subdirs that should NOT contain the file
+		name           string
+		createFile     bool   // whether to create import.yaml at root
+		fileName       string // file name (import.yaml or import.yml)
+		isContainer    bool   // container vs local mode
+		mounts         []workflow.AutoMountInfo
+		wantDeleted    bool     // file should be removed from root
+		wantCopiedTo   []string // mount subdirs that should contain the file
+		wantNotCopied  []string // mount subdirs that should NOT contain the file
+		wantProvenance bool     // provenance copy in state dir
 	}{
 		{
-			name:       "copies to mount and deletes from root",
-			createFile: true,
-			fileName:   "import.yaml",
+			name:        "container: copies to mount and deletes from root",
+			createFile:  true,
+			fileName:    "import.yaml",
+			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
 				{Hostname: "weather", MountPath: "", Status: "MOUNTED"},
 			},
-			wantDeleted:  true,
-			wantCopiedTo: []string{"weather"},
+			wantDeleted:    true,
+			wantCopiedTo:   []string{"weather"},
+			wantProvenance: true,
 		},
 		{
-			name:       "handles import.yml legacy extension",
-			createFile: true,
-			fileName:   "import.yml",
+			name:        "container: handles import.yml legacy extension",
+			createFile:  true,
+			fileName:    "import.yml",
+			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
 				{Hostname: "app", MountPath: "", Status: "MOUNTED"},
 			},
-			wantDeleted:  true,
-			wantCopiedTo: []string{"app"},
+			wantDeleted:    true,
+			wantCopiedTo:   []string{"app"},
+			wantProvenance: true,
 		},
 		{
-			name:       "no file at root — noop",
-			createFile: false,
-			fileName:   "import.yaml",
+			name:        "no file at root — noop",
+			createFile:  false,
+			fileName:    "import.yaml",
+			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
 				{Hostname: "weather", MountPath: "", Status: "MOUNTED"},
 			},
-			wantDeleted: false,
+			wantDeleted:    false,
+			wantProvenance: false,
 		},
 		{
-			name:        "deletes from root even with no mounts",
+			name:           "container: deletes from root with no mounts — provenance stored",
+			createFile:     true,
+			fileName:       "import.yaml",
+			isContainer:    true,
+			mounts:         nil,
+			wantDeleted:    true,
+			wantProvenance: true,
+		},
+		{
+			name:        "container: skips failed mounts but still deletes",
 			createFile:  true,
 			fileName:    "import.yaml",
-			mounts:      nil,
-			wantDeleted: true,
-		},
-		{
-			name:       "skips failed mounts but still deletes",
-			createFile: true,
-			fileName:   "import.yaml",
+			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
 				{Hostname: "ok", MountPath: "", Status: "MOUNTED"},
 				{Hostname: "bad", Status: "FAILED", Error: "mount failed"},
 			},
-			wantDeleted:   true,
-			wantCopiedTo:  []string{"ok"},
-			wantNotCopied: []string{"bad"},
+			wantDeleted:    true,
+			wantCopiedTo:   []string{"ok"},
+			wantNotCopied:  []string{"bad"},
+			wantProvenance: true,
 		},
 		{
-			name:       "multiple successful mounts get copies",
-			createFile: true,
-			fileName:   "import.yaml",
+			name:        "container: multiple successful mounts get copies",
+			createFile:  true,
+			fileName:    "import.yaml",
+			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
 				{Hostname: "api", MountPath: "", Status: "MOUNTED"},
 				{Hostname: "web", MountPath: "", Status: "MOUNTED"},
 			},
-			wantDeleted:  true,
-			wantCopiedTo: []string{"api", "web"},
+			wantDeleted:    true,
+			wantCopiedTo:   []string{"api", "web"},
+			wantProvenance: true,
+		},
+		{
+			name:        "container: all mount copies fail — still deletes because provenance stored",
+			createFile:  true,
+			fileName:    "import.yaml",
+			isContainer: true,
+			mounts: []workflow.AutoMountInfo{
+				{Hostname: "broken", MountPath: "/nonexistent/path/broken", Status: "MOUNTED"},
+			},
+			wantDeleted:    true,
+			wantProvenance: true,
+		},
+		{
+			name:           "local: stores provenance but keeps file at root",
+			createFile:     true,
+			fileName:       "import.yaml",
+			isContainer:    false,
+			mounts:         nil,
+			wantDeleted:    false,
+			wantProvenance: true,
+		},
+		{
+			name:        "local: stores provenance, no mount copies, keeps root file",
+			createFile:  true,
+			fileName:    "import.yaml",
+			isContainer: false,
+			mounts: []workflow.AutoMountInfo{
+				{Hostname: "app", MountPath: "", Status: "MOUNTED"},
+			},
+			wantDeleted:    false,
+			wantProvenance: true,
 		},
 	}
 
@@ -107,7 +152,7 @@ func TestCleanupImportYAML(t *testing.T) {
 			// Set up mount paths: /var/www/{hostname}/ simulated in temp dir.
 			mountBase := filepath.Join(root, "var", "www")
 			for i := range tt.mounts {
-				if tt.mounts[i].Status == "MOUNTED" {
+				if tt.mounts[i].Status == "MOUNTED" && tt.mounts[i].MountPath == "" {
 					mountDir := filepath.Join(mountBase, tt.mounts[i].Hostname)
 					if err := os.MkdirAll(mountDir, 0o755); err != nil {
 						t.Fatal(err)
@@ -117,7 +162,7 @@ func TestCleanupImportYAML(t *testing.T) {
 			}
 
 			// Execute.
-			cleanupImportYAML(stateDir, tt.mounts)
+			cleanupImportYAML(stateDir, tt.mounts, tt.isContainer)
 
 			// Verify deletion from root.
 			_, err := os.Stat(importPath)
@@ -129,7 +174,20 @@ func TestCleanupImportYAML(t *testing.T) {
 				t.Errorf("import file should still exist at root, but got: %v", err)
 			}
 
-			// Verify copies to mount paths.
+			// Verify provenance copy in state dir.
+			provenancePath := filepath.Join(stateDir, "import-provenance.yaml")
+			provenanceData, provenanceErr := os.ReadFile(provenancePath)
+			if tt.wantProvenance {
+				if provenanceErr != nil {
+					t.Errorf("expected provenance copy at %s, got: %v", provenancePath, provenanceErr)
+				} else if string(provenanceData) != importContent {
+					t.Errorf("provenance content mismatch: got %q, want %q", string(provenanceData), importContent)
+				}
+			} else if provenanceErr == nil {
+				t.Errorf("provenance file should not exist, but found at %s", provenancePath)
+			}
+
+			// Verify copies to mount paths (only relevant for container mode).
 			for _, hostname := range tt.wantCopiedTo {
 				dest := filepath.Join(mountBase, hostname, tt.fileName)
 				data, err := os.ReadFile(dest)

@@ -68,7 +68,9 @@ func isSshfsMount(path string) (bool, error) {
 	return false, scanner.Err()
 }
 
-// Mount creates an SSHFS mount via zsc systemd unit.
+// Mount creates an SSHFS mount via zsc systemd unit and waits for readiness.
+// Returns only after the mount appears in /proc/mounts and is accessible,
+// or after mountCreateTimeout.
 func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) error {
 	if err := ValidateHostname(hostname); err != nil {
 		return err
@@ -87,7 +89,36 @@ func (m *SystemMounter) Mount(ctx context.Context, hostname, localPath string) e
 	if err := execWithTimeout(ctx, mountCreateTimeout, "sudo", "-E", "zsc", "unit", "create", unitName, sshfsCmd); err != nil {
 		return fmt.Errorf("zsc unit create: %w", err)
 	}
+
+	// Wait for mount to appear in /proc/mounts and become accessible.
+	// zsc unit create returns immediately; the SSHFS connection establishes async.
+	if err := m.waitForReady(ctx, localPath); err != nil {
+		return fmt.Errorf("mount readiness: %w", err)
+	}
 	return nil
+}
+
+// waitForReady polls until the SSHFS mount is active (appears in /proc/mounts
+// and os.Stat succeeds). Polls every 500ms up to mountCreateTimeout.
+func (m *SystemMounter) waitForReady(ctx context.Context, path string) error {
+	deadline := time.Now().Add(mountCreateTimeout)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		state, err := m.CheckMount(ctx, path)
+		if err == nil && state == MountStateActive {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("mount at %s not ready after %v", path, mountCreateTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // Unmount removes the SSHFS mount and zsc unit.
