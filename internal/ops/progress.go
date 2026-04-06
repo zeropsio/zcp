@@ -134,7 +134,7 @@ func pollBuild(
 // Unknown statuses are treated as terminal (fail-safe: stop polling immediately).
 func isBuildInProgress(status string) bool {
 	switch status {
-	case "BUILDING", "DEPLOYING":
+	case "UPLOADING", "BUILDING", "DEPLOYING":
 		return true
 	default:
 		return false

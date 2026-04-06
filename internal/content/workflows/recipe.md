@@ -95,9 +95,9 @@ zerops_workflow action="complete" step="research" recipePlan={...}
 <section name="research-showcase">
 ## Research — Showcase Recipe (Type 4)
 
-Includes everything from minimal research, PLUS the fields and targets below.
+All base research fields (framework identity, build pipeline, database, environment, decision tree) apply — see the base research section below. This section adds showcase-specific fields and **overrides the reference loading**.
 
-**Reference loading — REPLACES the minimal/hello-world loading above.** Showcase recipes load ONE recipe only:
+**Reference loading — load ONE recipe only (this REPLACES the hello-world + minimal loading in the base section):**
 ```
 zerops_knowledge recipe="{framework}-minimal"
 ```

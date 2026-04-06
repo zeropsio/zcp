@@ -316,6 +316,24 @@ func TestPollBuild_BuildingThenActive(t *testing.T) {
 	}
 }
 
+func TestPollBuild_UploadingThroughActive(t *testing.T) {
+	t.Parallel()
+
+	// UPLOADING is an in-progress state — the poller must wait through it.
+	// A stuck UPLOADING from a killed push gets reused by the next attempt,
+	// so the poller sees UPLOADING → BUILDING → ACTIVE.
+	seq := newBuildSequencer("UPLOADING", "UPLOADING", statusBuilding, statusActive)
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != statusActive {
+		t.Errorf("status = %s, want ACTIVE", event.Status)
+	}
+}
+
 func TestPollBuild_NoEventThenAppears(t *testing.T) {
 	t.Parallel()
 

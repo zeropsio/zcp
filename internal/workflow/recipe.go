@@ -21,6 +21,7 @@ const recipeDBNone = "none"
 // RecipeState tracks progress through the recipe workflow.
 type RecipeState struct {
 	Active            bool                `json:"active"`
+	Tier              string              `json:"tier"`
 	CurrentStep       int                 `json:"currentStep"`
 	Steps             []RecipeStep        `json:"steps"`
 	Plan              *RecipePlan         `json:"plan,omitempty"`

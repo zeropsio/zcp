@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -293,6 +294,46 @@ func TestRecipeBuildResponse_InProgress(t *testing.T) {
 	}
 	if len(resp.Current.Tools) == 0 {
 		t.Error("expected tools to be populated")
+	}
+}
+
+func TestRecipeBuildResponse_ShowcaseTier_ResearchGuidance(t *testing.T) {
+	t.Parallel()
+
+	// Showcase tier set at start (before plan exists) must deliver showcase-
+	// specific research guidance that tells the agent NOT to load hello-world.
+	rs := NewRecipeState()
+	rs.Tier = RecipeTierShowcase
+	rs.Steps[0].Status = stepInProgress
+
+	resp := rs.BuildResponse("sess-sc", "create showcase", 0, EnvLocal, nil)
+
+	guide := resp.Current.DetailedGuide
+	if !strings.Contains(guide, "load ONE recipe only") {
+		t.Error("showcase research guidance missing 'load ONE recipe only' instruction")
+	}
+	if !strings.Contains(guide, "Do NOT load the hello-world recipe") {
+		t.Error("showcase research guidance missing hello-world prohibition")
+	}
+	// The base research section should also be included (framework identity, etc.)
+	if !strings.Contains(guide, "Framework Identity") {
+		t.Error("showcase research guidance missing base 'Framework Identity' section")
+	}
+}
+
+func TestRecipeBuildResponse_MinimalTier_ResearchGuidance(t *testing.T) {
+	t.Parallel()
+
+	// Minimal tier should get the standard research guidance with hello-world loading.
+	rs := NewRecipeState()
+	rs.Tier = RecipeTierMinimal
+	rs.Steps[0].Status = stepInProgress
+
+	resp := rs.BuildResponse("sess-min", "create minimal", 0, EnvLocal, nil)
+
+	guide := resp.Current.DetailedGuide
+	if !strings.Contains(guide, "Hello-world") {
+		t.Error("minimal research guidance missing hello-world reference loading")
 	}
 }
 

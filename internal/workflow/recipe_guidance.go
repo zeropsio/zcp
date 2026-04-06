@@ -20,7 +20,7 @@ func (r *RecipeState) buildGuide(step string, iteration int, kp knowledge.Provid
 	}
 
 	// Static guidance from recipe.md.
-	guide := resolveRecipeGuidance(step, r.Plan)
+	guide := resolveRecipeGuidance(step, r.Tier, r.Plan)
 
 	// Knowledge injection.
 	if extra := assembleRecipeKnowledge(step, r.Plan, r.DiscoveredEnvVars, kp); extra != "" {
@@ -41,23 +41,29 @@ func (r *RecipeState) lastAttestation() string {
 }
 
 // resolveRecipeGuidance extracts the appropriate static sections from recipe.md.
-func resolveRecipeGuidance(step string, plan *RecipePlan) string {
+// tier is the session-level tier (set at RecipeStart, before the plan exists).
+func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 	md, err := content.GetWorkflow("recipe")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "recipe guidance: failed to load recipe.md: %v\n", err)
 		return ""
 	}
 
-	tier := ""
-	if plan != nil {
-		tier = plan.Tier
+	// Prefer plan tier (set after research), fall back to session tier (set at start).
+	effectiveTier := tier
+	if plan != nil && plan.Tier != "" {
+		effectiveTier = plan.Tier
 	}
 
 	switch step {
 	case RecipeStepResearch:
-		// Research uses tier-specific section.
-		if tier == RecipeTierShowcase {
-			return ExtractSection(md, "research-showcase")
+		// Showcase: send showcase section FIRST (overrides reference loading),
+		// then minimal base (framework identity, build pipeline, decision tree).
+		// The showcase section explicitly says "REPLACES the loading above."
+		if effectiveTier == RecipeTierShowcase {
+			showcase := ExtractSection(md, "research-showcase")
+			minimal := ExtractSection(md, "research-minimal")
+			return showcase + "\n\n---\n\n" + minimal
 		}
 		return ExtractSection(md, "research-minimal")
 

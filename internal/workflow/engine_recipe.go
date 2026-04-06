@@ -24,6 +24,7 @@ func (e *Engine) RecipeStart(projectID, intent, tier string) (*RecipeResponse, e
 	}
 
 	rs := NewRecipeState()
+	rs.Tier = tier
 	rs.Steps[0].Status = stepInProgress
 	state.Recipe = rs
 
