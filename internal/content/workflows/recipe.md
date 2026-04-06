@@ -195,8 +195,6 @@ zerops_mount action="mount" serviceHostname="appdev"
 
 This gives SSHFS access to `/var/www/appdev/` — all code writes go here.
 
-> **Two kinds of "mount" (disambiguation):** (1) `zerops_mount` — SSHFS tool, mounts service `/var/www` locally for development. (2) Shared storage mount — platform feature, attaches a shared-storage volume at `/mnt/{hostname}`. These are completely unrelated.
-
 ### 4. Discover env vars (mandatory before generate — skip if no managed services)
 
 After services reach RUNNING, discover actual env vars:
@@ -224,8 +222,13 @@ Write the application code, zerops.yaml, and README with documentation fragments
 ### WHERE to write files
 
 **SSHFS mount**: `/var/www/appdev/` — write all source code, zerops.yaml, and README here.
-**Use SSHFS for file operations**, SSH for running commands (dependency installs, git init).
+**Use SSHFS for file operations**, SSH for commands that use the **base image's built-in tools** (e.g., `composer create-project` on php-nginx, `git init`).
 Files placed on the mount are already on the dev container — deploy doesn't "send" them, it triggers a build from what's already there.
+
+**What's available BEFORE deploy vs AFTER deploy:**
+- Before deploy: only tools baked into the service type's base image (PHP + Composer on `php-nginx`, Go on `go`, etc.). Secondary build bases (e.g., `nodejs@22` for Vite) are NOT available — they exist only in the build container during `buildCommands`.
+- After deploy: `buildCommands` ran in the build container (dependencies installed), `prepareCommands` ran on the runtime (secondary runtimes installed). Now `npm`, `node`, etc. are available via SSH.
+- **Do NOT run package manager commands for secondary runtimes before deploy** — they will fail. Write code and config to the mount, deploy, THEN use SSH for commands that need the secondary runtime.
 
 ### What to generate per recipe type
 
@@ -377,6 +380,7 @@ Description of why this change is needed.
 - All env var references must use discovered variable names
 - Comments explain WHY, not WHAT (don't restate the key name)
 - Max 80 chars per comment line
+- **zerops.yaml size limit**: Zerops rejects files over 10KB. Showcase recipes with 3 setups and full env var blocks approach this limit. Write concise comments from the start — short sentences that explain the WHY in ~50 chars, not multi-line paragraphs. Don't write verbose comments and plan to trim later; that wastes an iteration and degrades quality.
 
 ### Pre-deploy checklist
 - [ ] Both `setup: dev` AND `setup: prod` present (generic names)
@@ -502,62 +506,56 @@ zerops_deploy targetService="appdev" setup="dev"
 ```
 The `setup="dev"` parameter maps hostname `appdev` to `setup: dev` in zerops.yaml. This triggers a build from files already on the mount. Blocks until complete.
 
-**Step 2: Start the dev server**
+**Step 2: Start ALL dev processes (before any verification)**
+
+Every process the app needs to serve a page must be running before Step 3 (verify). This includes the primary server, asset dev servers, and worker processes. Start them all now:
+
+**2a. Primary server:**
 - **Server-side apps** (types 1, 2b, 3, 4): Start via SSH:
   ```bash
   ssh appdev "cd /var/www && {start_command} &"
   ```
-- **Implicit-webserver runtimes** (php-nginx, php-apache, nginx): Skip primary server — auto-starts.
-- **Static frontends** (type 2a): Skip — Nginx serves the built files automatically.
+- **Implicit-webserver runtimes** (php-nginx, php-apache, nginx): Skip — auto-starts.
+- **Static frontends** (type 2a): Skip — Nginx serves the built files.
 
-**Step 2b: Start auxiliary dev processes**
-If the build pipeline includes a secondary runtime (installed via `sudo -E zsc install` in `run.prepareCommands`), check whether the scaffold defines a dev server or watch process for that runtime. If it does, start it via SSH after deploy:
+**2b. Asset dev server** (if the build pipeline uses a secondary runtime):
+If `run.prepareCommands` installs a secondary runtime (e.g., `sudo -E zsc install nodejs@22`) and the scaffold defines a dev server (e.g., `npm run dev` for Vite), start it now:
 ```bash
 ssh appdev "cd /var/www && {dev_server_command} &"
 ```
-The dev server command comes from the scaffold's package manager scripts (the `dev` script in `package.json`, `composer.json`, `Makefile`, etc.) — use whatever the scaffold provides. If the dev server needs to accept connections from outside the container (asset servers typically do), pass the appropriate host binding flag so it listens on `0.0.0.0` instead of localhost.
+Pass the appropriate host binding flag so it listens on `0.0.0.0` (e.g., `npx vite --host 0.0.0.0`). This applies even when the primary server auto-starts — the primary handles HTTP, but the asset dev server compiles CSS/JS.
 
-This applies even when the primary server auto-starts (implicit-webserver runtimes) — the primary server handles HTTP requests, but auxiliary dev tooling (asset compilation, HMR, file watchers) is a separate process that must be started explicitly.
+**This step is MANDATORY, not optional.** Without it, templates that reference build-pipeline outputs (Vite manifests, Webpack bundles) will 500 on the first page load. Do NOT work around missing assets by running `npm run build` on the dev container — that compiles static assets instead of using HMR, and doesn't prove the dev experience works. Do NOT replace framework asset helpers with inline CSS/JS — that disconnects the build pipeline.
 
-Without this step, templates that reference build-pipeline outputs will fail at runtime (missing manifests, uncompiled assets). Do NOT work around this by replacing framework asset helpers with inline CSS/JS — that disconnects the build pipeline (see "Asset pipeline consistency" in the generate section). The dev container must prove the full development experience works, including live asset compilation and any watch processes the scaffold defines.
-
-**Step 3: Enable dev subdomain**
-```
-zerops_subdomain action="enable" serviceHostname="appdev"
-```
-
-**Step 4: Verify appdev**
-```
-zerops_verify serviceHostname="appdev"
-```
-Check: service RUNNING, subdomain returns 200, health endpoint responds (or page loads for static).
-
-**Step 5: Start worker dev process** (showcase only — skip for minimal)
-If the recipe has worker targets, how you start the dev worker depends on the architecture:
-
-- **Monorepo** (worker same runtime as app): start the queue worker as an SSH process on appdev alongside the web server:
+**2c. Worker dev process** (showcase only):
+- **Monorepo** (worker same runtime as app): start the queue worker as an SSH process on appdev:
   ```bash
   ssh appdev "cd /var/www && {queue_worker_command} &"
   ```
-  No workerdev service exists — appdev hosts both processes from the same source.
-
 - **Polyglot** (worker different runtime): deploy the separate worker codebase:
   ```
   zerops_deploy targetService="workerdev" setup="dev"
   ```
   Then start the worker process via SSH on workerdev.
 
-Verify worker is running via logs (no HTTP endpoint):
+**Step 3: Enable subdomain and verify appdev**
 ```
-zerops_logs serviceHostname="{worker_hostname}" limit=20
+zerops_subdomain action="enable" serviceHostname="appdev"
+zerops_verify serviceHostname="appdev"
+```
+Check: service RUNNING, subdomain returns 200, health endpoint responds (or page loads for static).
+
+For showcase, also verify the worker is running via logs (no HTTP endpoint):
+```
+zerops_logs serviceHostname="appdev" limit=20
 ```
 
-**Step 6: Iterate if needed** (max 3 iterations)
+**Step 4: Iterate if needed** (max 3 iterations)
 If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify.
 
 ### Stage deployment flow
 
-**Step 7: Verify prod setup (already written at generate)**
+**Step 5: Verify prod setup (already written at generate)**
 The prod setup block was written to zerops.yaml during the generate step. Before cross-deploying, verify it matches what a real user building from git will need:
 - `deployFiles` lists every path the start command and framework need at runtime — run `ls` on the mount and cross-reference. When cherry-picking (not using `.`), missing one path will DEPLOY_FAILED at first request.
 - `healthCheck` + `deploy.readinessCheck` are present (required for prod — unresponsive containers get restarted; broken builds are gated from traffic).
@@ -566,19 +564,13 @@ The prod setup block was written to zerops.yaml during the generate step. Before
 
 If anything is missing, edit zerops.yaml on the mount now — the change propagates to the README via the integration-guide fragment (which mirrors the file content).
 
-**Step 8: Deploy appstage from appdev (cross-deploy)**
+**Step 6: Deploy appstage from appdev (cross-deploy)**
 ```
 zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
 ```
 The `setup="prod"` maps hostname `appstage` to `setup: prod` in zerops.yaml. Stage builds from dev's source code with the prod config. Server auto-starts via the real `start` command (or Nginx for static).
 
-**Step 8b: Connect shared storage** (if applicable)
-After stage transitions from READY_TO_DEPLOY to ACTIVE, connect storage:
-```
-zerops_manage action="connect-storage" serviceHostname="appstage" storageHostname="storage"
-```
-
-**Step 9: Deploy workerstage** (showcase only — skip for minimal)
+**Step 7: Deploy workerstage** (showcase only — skip for minimal)
 - **Monorepo**: cross-deploy from appdev with the worker setup:
   ```
   zerops_deploy sourceService="appdev" targetService="workerstage" setup="worker"
@@ -590,12 +582,12 @@ zerops_manage action="connect-storage" serviceHostname="appstage" storageHostnam
   ```
   The worker has its own zerops.yaml with `setup: prod`.
 
-**Step 10: Enable stage subdomain**
+**Step 8: Enable stage subdomain**
 ```
 zerops_subdomain action="enable" serviceHostname="appstage"
 ```
 
-**Step 11: Verify appstage**
+**Step 9: Verify appstage**
 ```
 zerops_verify serviceHostname="appstage"
 ```
@@ -604,7 +596,7 @@ For showcase, also verify the worker is running:
 zerops_logs serviceHostname="workerstage" limit=20
 ```
 
-**Step 12: Present URLs**
+**Step 10: Present URLs**
 
 ### Reading deploy failures — which phase failed, and where to look
 
