@@ -461,8 +461,19 @@ The `setup="dev"` parameter maps hostname `appdev` to `setup: dev` in zerops.yam
   ```bash
   ssh appdev "cd /var/www && {start_command} &"
   ```
-- **Implicit-webserver runtimes** (php-nginx, php-apache, nginx): Skip — server auto-starts.
+- **Implicit-webserver runtimes** (php-nginx, php-apache, nginx): Skip primary server — auto-starts.
 - **Static frontends** (type 2a): Skip — Nginx serves the built files automatically.
+
+**Step 2b: Start auxiliary dev processes**
+If the framework scaffold includes a JS asset pipeline (Vite, Webpack, Mix, Tailwind CLI) AND the dev zerops.yaml installs Node via `sudo -E zsc install` in `run.prepareCommands`, you MUST start the dev asset server via SSH after deploy:
+```bash
+ssh appdev "cd /var/www && npm run dev -- --host 0.0.0.0 &"
+```
+(Or the equivalent: `yarn dev`, `pnpm dev`, `bun run dev`. Always pass `--host 0.0.0.0` for Vite so it binds all interfaces.)
+
+This applies even for implicit-webserver runtimes like PHP — the web server auto-starts, but the JS dev tooling does NOT. Without this step, `@vite` directives render a 500 (missing manifest), Tailwind classes don't compile, and HMR doesn't work.
+
+Do NOT work around the missing dev server by replacing `@vite` with inline CSS or stripping the asset pipeline. The dev container must prove the FULL development experience works — including live asset compilation. The scaffold preservation rule (research decision 5) applies here: if the scaffold emits `@vite` + `vite.config.js` + `package.json`, keep them working.
 
 **Step 3: Enable dev subdomain**
 ```
