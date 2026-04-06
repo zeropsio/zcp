@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -126,9 +127,7 @@ func buildClaudeJSON() ([]byte, error) {
 		return nil, fmt.Errorf("parse mcp-config.json: %w", err)
 	}
 
-	for k, v := range mcp {
-		base[k] = v
-	}
+	maps.Copy(base, mcp)
 	return json.Marshal(base)
 }
 
