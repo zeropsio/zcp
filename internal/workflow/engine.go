@@ -169,6 +169,16 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 	// Write partial metas after provision (no BootstrappedAt = incomplete).
 	if stepName == StepProvision {
 		e.writeProvisionMetas(state)
+
+		// Fast path: pure adoption plans (all isExisting + all EXISTS deps)
+		// auto-complete remaining steps — generate/deploy/close are no-ops.
+		if state.Bootstrap.Plan != nil && state.Bootstrap.Plan.IsAllExisting() {
+			for _, skip := range []string{StepGenerate, StepDeploy, StepClose} {
+				if err := state.Bootstrap.CompleteStep(skip, "all targets adopted — skipped"); err != nil {
+					return nil, fmt.Errorf("adoption fast path: %w", err)
+				}
+			}
+		}
 	}
 
 	sessionID := e.sessionID // capture before outputs may reference it

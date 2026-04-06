@@ -65,6 +65,11 @@ func BuildTransitionMessage(state *WorkflowState) string {
 		return bootstrapCompleteMsg
 	}
 
+	// Adoption: all targets are existing services — no code was generated or deployed.
+	if state.Bootstrap.Plan.IsAllExisting() {
+		return buildAdoptionTransitionMessage(state)
+	}
+
 	// Managed-only: no runtime targets, just managed services.
 	if len(state.Bootstrap.Plan.Targets) == 0 {
 		return bootstrapCompleteMsg + "\n\nManaged services provisioned. No runtime services to deploy." +
@@ -103,6 +108,47 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	// Router-based workflow offerings
 	sb.WriteString("## What's Next?\n\n")
 	sb.WriteString("Infrastructure is ready and verified. Choose your next workflow:\n\n")
+	offerings := routeFromBootstrapState(state)
+	for i, o := range offerings {
+		num := 'A' + rune(i)
+		sb.WriteString(fmt.Sprintf("**%c) %s**\n", num, titleCase(o.Workflow)))
+		if o.Hint != "" {
+			sb.WriteString(fmt.Sprintf("   → `%s`\n", o.Hint))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("**Other operations:**\n")
+	sb.WriteString("- Scale: `zerops_scale serviceHostname=\"...\"`\n")
+	sb.WriteString("- Env vars: `zerops_env action=\"set|delete\"` (reload after: `zerops_manage action=\"reload\"`)\n")
+
+	return sb.String()
+}
+
+// buildAdoptionTransitionMessage creates a summary for pure-adoption bootstraps.
+// Existing services keep their code and configuration — no hello-world was deployed.
+func buildAdoptionTransitionMessage(state *WorkflowState) string {
+	var sb strings.Builder
+	sb.WriteString(bootstrapCompleteMsg + " Services adopted — existing code and configuration preserved.\n\n## Services\n\n")
+
+	for _, t := range state.Bootstrap.Plan.Targets {
+		mode := t.Runtime.EffectiveMode()
+		sb.WriteString(fmt.Sprintf("- **%s** (%s, %s mode)\n", t.Runtime.DevHostname, t.Runtime.Type, mode))
+		if mode == PlanModeStandard {
+			sb.WriteString(fmt.Sprintf("  Stage: **%s**\n", t.Runtime.StageHostname()))
+		}
+		for _, d := range t.Dependencies {
+			sb.WriteString(fmt.Sprintf("  - %s (%s)\n", d.Hostname, d.Type))
+		}
+	}
+
+	sb.WriteString("\n## Deploy Model (read before developing)\n\n")
+	sb.WriteString("- **Deploy = new container** — each deploy replaces the container. Only `deployFiles` content persists.\n")
+	sb.WriteString("- **Code on SSHFS mount** — write code to the local mount (`/var/www/{hostname}/`), not via SSH into the container.\n")
+	sb.WriteString("- **prepareCommands need `sudo`** — containers run as `zerops` user. Use `sudo apk add` / `sudo apt-get install`.\n")
+	sb.WriteString("- **Build ≠ Run** — build container has `build.base`, run container has `run.base`. Install runtime packages in `run.prepareCommands`.\n\n")
+
+	sb.WriteString("## What's Next?\n\n")
 	offerings := routeFromBootstrapState(state)
 	for i, o := range offerings {
 		num := 'A' + rune(i)

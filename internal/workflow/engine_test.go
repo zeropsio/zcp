@@ -501,6 +501,106 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 	}
 }
 
+func TestEngine_BootstrapComplete_AdoptionFastPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvContainer, nil)
+
+	if _, err := eng.BootstrapStart("proj-1", "adopt existing"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	// Submit plan with all targets isExisting=true, all deps EXISTS.
+	_, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
+		Dependencies: []Dependency{
+			{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
+		},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	// Complete provision — should auto-complete generate, deploy, close.
+	resp, err := eng.BootstrapComplete(context.Background(), "provision", "All services exist and are running", nil)
+	if err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
+	}
+
+	// Bootstrap should be fully done after just provision.
+	if resp.Current != nil {
+		t.Errorf("Current should be nil (bootstrap done), got step %q", resp.Current.Name)
+	}
+	if resp.Progress.Completed != 5 {
+		t.Errorf("Completed: want 5, got %d", resp.Progress.Completed)
+	}
+
+	// Session should be cleaned up.
+	sessions, err := ListSessions(dir)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("want 0 sessions after adoption done, got %d", len(sessions))
+	}
+
+	// ServiceMeta should exist with BootstrappedAt set.
+	meta, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected appdev meta to exist")
+	}
+	if meta.BootstrappedAt == "" {
+		t.Error("BootstrappedAt should be set")
+	}
+	if meta.BootstrapSession != "" {
+		t.Error("adopted service should have empty BootstrapSession")
+	}
+
+	// Verify CLAUDE.md reflog was written.
+	claudeMD := filepath.Join(dir, "..", "CLAUDE.md")
+	data, readErr := os.ReadFile(claudeMD)
+	if readErr == nil && len(data) > 0 {
+		if !strings.Contains(string(data), "appdev") {
+			t.Error("CLAUDE.md reflog should mention appdev")
+		}
+	}
+}
+
+func TestEngine_BootstrapComplete_AdoptionFastPath_MixedPlan_NoSkip(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvContainer, nil)
+
+	if _, err := eng.BootstrapStart("proj-1", "mixed plan"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	// Mixed plan: one existing, one new — should NOT fast-path.
+	_, err := eng.BootstrapCompletePlan([]BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true}},
+		{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "nodejs@22", IsExisting: false}},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+
+	resp, err := eng.BootstrapComplete(context.Background(), "provision", "Mixed plan provisioned", nil)
+	if err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
+	}
+
+	// Should advance to generate, NOT auto-complete.
+	if resp.Current == nil {
+		t.Fatal("Current should not be nil — mixed plan must not fast-path")
+	}
+	if resp.Current.Name != "generate" {
+		t.Errorf("Current.Name: want generate, got %s", resp.Current.Name)
+	}
+}
+
 func TestEngine_BootstrapSkip_Success(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

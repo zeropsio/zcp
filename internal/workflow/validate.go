@@ -106,6 +106,26 @@ func (p *ServicePlan) DependencyTypes() []string {
 	return types
 }
 
+// IsAllExisting returns true when every target runtime has IsExisting=true
+// and every dependency has resolution EXISTS. This signals a pure adoption
+// plan where no new services need to be created.
+func (p *ServicePlan) IsAllExisting() bool {
+	if p == nil || len(p.Targets) == 0 {
+		return false
+	}
+	for _, t := range p.Targets {
+		if !t.Runtime.IsExisting {
+			return false
+		}
+		for _, d := range t.Dependencies {
+			if d.Resolution != ResolutionExists {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // ValidatePlanHostname checks that a hostname matches Zerops constraints.
 // Delegates to platform.ValidateHostname for canonical validation rules.
 func ValidatePlanHostname(hostname string) error {

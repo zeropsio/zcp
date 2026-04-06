@@ -44,19 +44,39 @@ Route:
 
 When runtime services exist but ZCP doesn't know them (no ServiceMeta files), they need to be adopted before workflows (deploy, CI/CD) can manage them. Adoption registers them in ZCP without recreating or modifying them.
 
+**Adoption is fast:** After the plan is submitted, the provision step verifies services exist, mounts dev runtimes, discovers env vars, and auto-completes the remaining steps. No code generation or deployment happens — existing code and configuration are preserved.
+
 **Steps:**
 
 1. List all runtime services from discover result (exclude managed services — databases, caches, storage).
 
-2. For each runtime service, present to user with suggested mode. Adoption accepts ANY valid hostname — do not require `dev`/`stage` suffixes:
+2. For each runtime service, determine suggested mode. Adoption accepts ANY valid hostname — do not require `dev`/`stage` suffixes:
    - If two services form an obvious dev+stage pair (e.g., `apidev`+`apistage`, `web`+`webstage`, `backend`+`backendprod`) → suggest **standard** mode with explicit `stageHostname` if hostnames don't follow `{name}dev`/`{name}stage` convention
    - If a single service exists and user doesn't need a stage pair → suggest **dev** mode (works with any hostname: `api`, `backend`, `appdev`, etc.)
    - If a single service exists and user wants dev+stage → suggest **standard** with explicit `stageHostname`
    - If user wants the simplest setup → suggest **simple** mode (any hostname)
 
-3. Ask user to confirm: "These services already exist. I'll register them in ZCP so I can manage deploys, CI/CD, and configuration. I won't recreate or delete anything. OK?"
+3. **STOP — MANDATORY USER CONFIRMATION GATE**
 
-4. Submit plan with `isExisting: true` on each adopted runtime target:
+   Present to user and WAIT for explicit confirmation before proceeding:
+
+   "These services already exist. I'll register them in ZCP so I can manage deploys, CI/CD, and configuration. I won't recreate or delete anything.
+
+   Services:
+   - [hostname] ([type]) — mode: [standard/dev/simple]
+
+   Modes:
+   - **standard** — dev + stage pair (e.g., appdev + appstage)
+   - **dev** — single service, no stage pair
+   - **simple** — single service, auto-start
+
+   Enable public subdomain access? [list services that don't have it enabled]
+
+   OK?"
+
+   Do NOT proceed until user confirms. Do NOT auto-proceed. Do NOT assume consent.
+
+4. After user confirms, submit plan with `isExisting: true` on each adopted runtime target:
    ```
    zerops_workflow action="complete" step="discover" plan=[{
      runtime: {devHostname: "api", type: "go@1", isExisting: true, bootstrapMode: "simple"},
@@ -74,7 +94,9 @@ When runtime services exist but ZCP doesn't know them (no ServiceMeta files), th
 
 5. Managed services go as dependencies with `resolution: "EXISTS"` — no special handling needed.
 
-**Mixed plans**: You CAN combine `isExisting: true` (adopt) and `isExisting: false` (create new) targets in one plan. Each target follows its own path through subsequent steps.
+6. After plan submission, complete the provision step. For pure adoption plans (all targets `isExisting: true`, all deps `EXISTS`), the engine auto-completes generate, deploy, and close — adoption is done in 2 calls total.
+
+**Mixed plans**: You CAN combine `isExisting: true` (adopt) and `isExisting: false` (create new) targets in one plan. Each target follows its own path through subsequent steps. Fast path only applies when ALL targets are existing.
 
 #### Identify stack components
 

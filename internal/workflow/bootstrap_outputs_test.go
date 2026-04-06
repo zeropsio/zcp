@@ -867,6 +867,38 @@ func TestBuildTransitionMessage_IncludesDeployModelPrimer(t *testing.T) {
 	}
 }
 
+func TestBuildTransitionMessage_Adoption_NoHelloWorld(t *testing.T) {
+	t.Parallel()
+	state := &WorkflowState{
+		Bootstrap: &BootstrapState{
+			Plan: &ServicePlan{
+				Targets: []BootstrapTarget{
+					{
+						Runtime:      RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4", IsExisting: true},
+						Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@18", Resolution: "EXISTS"}},
+					},
+				},
+			},
+		},
+	}
+	msg := BuildTransitionMessage(state)
+	if strings.Contains(msg, "hello-world") {
+		t.Error("adoption transition should NOT mention hello-world verification server")
+	}
+	if strings.Contains(msg, "No application code") {
+		t.Error("adoption transition should NOT say 'No application code'")
+	}
+	if !strings.Contains(msg, "adopted") && !strings.Contains(msg, "Adopted") {
+		t.Error("adoption transition should mention adoption")
+	}
+	if !strings.Contains(msg, "appdev") {
+		t.Error("adoption transition should list service hostnames")
+	}
+	if !strings.Contains(msg, "develop") {
+		t.Error("adoption transition should mention develop workflow")
+	}
+}
+
 func TestWriteBootstrapOutputs_EnvironmentField(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -1046,9 +1078,16 @@ func TestWriteBootstrapOutputs_AdoptedService_EmptyBootstrapSession(t *testing.T
 				t.Fatalf("BootstrapCompletePlan: %v", err)
 			}
 
-			for _, step := range []string{"provision", "generate", "deploy", "close"} {
-				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
-					t.Fatalf("BootstrapComplete(%s): %v", step, err)
+			if tt.isExisting {
+				// Adoption fast path: provision auto-completes remaining steps.
+				if _, err := eng.BootstrapComplete(context.Background(), "provision", "All services exist and are running", nil); err != nil {
+					t.Fatalf("BootstrapComplete(provision): %v", err)
+				}
+			} else {
+				for _, step := range []string{"provision", "generate", "deploy", "close"} {
+					if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
+						t.Fatalf("BootstrapComplete(%s): %v", step, err)
+					}
 				}
 			}
 

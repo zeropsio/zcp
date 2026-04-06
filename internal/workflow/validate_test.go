@@ -643,6 +643,65 @@ func TestValidateBootstrapTargets_ManagedModeDefault_NON_HA(t *testing.T) {
 	}
 }
 
+func TestIsAllExisting(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		plan *ServicePlan
+		want bool
+	}{
+		{"nil_plan", nil, false},
+		{"empty_targets", &ServicePlan{}, false},
+		{"all_existing_all_exists", &ServicePlan{Targets: []BootstrapTarget{
+			{
+				Runtime:      RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
+				Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"}},
+			},
+		}}, true},
+		{"mixed_existing_and_new", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true}},
+			{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "go@1", IsExisting: false}},
+		}}, false},
+		{"existing_runtime_create_dep", &ServicePlan{Targets: []BootstrapTarget{
+			{
+				Runtime:      RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
+				Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"}},
+			},
+		}}, false},
+		{"existing_runtime_shared_dep", &ServicePlan{Targets: []BootstrapTarget{
+			{
+				Runtime:      RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
+				Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@16", Resolution: "SHARED"}},
+			},
+		}}, false},
+		{"existing_no_deps", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true}},
+		}}, true},
+		{"multiple_existing_multiple_exists_deps", &ServicePlan{Targets: []BootstrapTarget{
+			{
+				Runtime:      RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
+				Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"}},
+			},
+			{
+				Runtime:      RuntimeTarget{DevHostname: "apidev", Type: "go@1", IsExisting: true},
+				Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"}},
+			},
+		}}, true},
+		{"new_runtime_no_deps", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: false}},
+		}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := tt.plan.IsAllExisting()
+			if got != tt.want {
+				t.Errorf("IsAllExisting() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // RED phase test: ValidateBootstrapTargets should allow empty targets (managed-only projects)
 func TestValidateBootstrapTargets_ManagedOnlyEmptyTargets(t *testing.T) {
 	t.Parallel()
