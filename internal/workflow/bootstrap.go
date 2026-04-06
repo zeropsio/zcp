@@ -318,13 +318,13 @@ func (b *BootstrapState) PlanMode() string {
 
 // validateSkip checks whether a step can be skipped given the current plan.
 // discover/provision are always mandatory. generate/deploy/close are skippable
-// only when there are no runtime targets (managed-only fast path).
+// when there are no runtime targets (managed-only) or all targets are adopted (pure adoption).
 func validateSkip(plan *ServicePlan, name string) error {
 	switch name {
 	case StepDiscover, StepProvision:
 		return fmt.Errorf("skip step: %q is mandatory and cannot be skipped", name)
 	case stepGenerate, stepDeploy, stepClose:
-		if plan != nil && len(plan.Targets) > 0 {
+		if plan != nil && len(plan.Targets) > 0 && !plan.IsAllExisting() {
 			return fmt.Errorf("skip step: cannot skip %q — runtime services in plan require it", name)
 		}
 		return nil

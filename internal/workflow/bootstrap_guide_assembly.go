@@ -81,46 +81,17 @@ func BuildTransitionMessage(state *WorkflowState) string {
 
 	var sb strings.Builder
 	sb.WriteString(bootstrapCompleteMsg + "\n\n## Services\n\n")
-
-	for _, t := range state.Bootstrap.Plan.Targets {
-		mode := t.Runtime.EffectiveMode()
-		sb.WriteString(fmt.Sprintf("- **%s** (%s, %s mode)\n", t.Runtime.DevHostname, t.Runtime.Type, mode))
-		if mode == PlanModeStandard {
-			sb.WriteString(fmt.Sprintf("  Stage: **%s**\n", t.Runtime.StageHostname()))
-		}
-		for _, d := range t.Dependencies {
-			sb.WriteString(fmt.Sprintf("  - %s (%s)\n", d.Hostname, d.Type))
-		}
-	}
+	writeServiceList(&sb, state.Bootstrap.Plan)
 
 	sb.WriteString("\nInfrastructure is verified — services running with a verification server (hello-world). No application code has been written yet.\n\n")
-
-	// Deploy model primer — critical context the agent needs BEFORE entering develop workflow.
-	sb.WriteString("## Deploy Model (read before developing)\n\n")
-	sb.WriteString("- **Deploy = new container** — each deploy replaces the container. Only `deployFiles` content persists.\n")
-	sb.WriteString("- **Code on SSHFS mount** — write code to the local mount (`/var/www/{hostname}/`), not via SSH into the container.\n")
-	sb.WriteString("- **prepareCommands need `sudo`** — containers run as `zerops` user. Use `sudo apk add` / `sudo apt-get install`.\n")
-	sb.WriteString("- **Build ≠ Run** — build container has `build.base`, run container has `run.base`. Install runtime packages in `run.prepareCommands`.\n\n")
+	writeDeployModelPrimer(&sb)
 
 	sb.WriteString("To implement the user's application, start the develop workflow:\n")
 	sb.WriteString("`zerops_workflow action=\"start\" workflow=\"develop\"`\n\n")
 
-	// Router-based workflow offerings
 	sb.WriteString("## What's Next?\n\n")
 	sb.WriteString("Infrastructure is ready and verified. Choose your next workflow:\n\n")
-	offerings := routeFromBootstrapState(state)
-	for i, o := range offerings {
-		num := 'A' + rune(i)
-		sb.WriteString(fmt.Sprintf("**%c) %s**\n", num, titleCase(o.Workflow)))
-		if o.Hint != "" {
-			sb.WriteString(fmt.Sprintf("   → `%s`\n", o.Hint))
-		}
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString("**Other operations:**\n")
-	sb.WriteString("- Scale: `zerops_scale serviceHostname=\"...\"`\n")
-	sb.WriteString("- Env vars: `zerops_env action=\"set|delete\"` (reload after: `zerops_manage action=\"reload\"`)\n")
+	writeOfferingsFooter(&sb, state)
 
 	return sb.String()
 }
@@ -130,40 +101,49 @@ func BuildTransitionMessage(state *WorkflowState) string {
 func buildAdoptionTransitionMessage(state *WorkflowState) string {
 	var sb strings.Builder
 	sb.WriteString(bootstrapCompleteMsg + " Services adopted — existing code and configuration preserved.\n\n## Services\n\n")
+	writeServiceList(&sb, state.Bootstrap.Plan)
+	sb.WriteString("\n")
+	writeDeployModelPrimer(&sb)
+	sb.WriteString("## What's Next?\n\n")
+	writeOfferingsFooter(&sb, state)
 
-	for _, t := range state.Bootstrap.Plan.Targets {
+	return sb.String()
+}
+
+func writeServiceList(sb *strings.Builder, plan *ServicePlan) {
+	for _, t := range plan.Targets {
 		mode := t.Runtime.EffectiveMode()
-		sb.WriteString(fmt.Sprintf("- **%s** (%s, %s mode)\n", t.Runtime.DevHostname, t.Runtime.Type, mode))
+		fmt.Fprintf(sb, "- **%s** (%s, %s mode)\n", t.Runtime.DevHostname, t.Runtime.Type, mode)
 		if mode == PlanModeStandard {
-			sb.WriteString(fmt.Sprintf("  Stage: **%s**\n", t.Runtime.StageHostname()))
+			fmt.Fprintf(sb, "  Stage: **%s**\n", t.Runtime.StageHostname())
 		}
 		for _, d := range t.Dependencies {
-			sb.WriteString(fmt.Sprintf("  - %s (%s)\n", d.Hostname, d.Type))
+			fmt.Fprintf(sb, "  - %s (%s)\n", d.Hostname, d.Type)
 		}
 	}
+}
 
-	sb.WriteString("\n## Deploy Model (read before developing)\n\n")
+func writeDeployModelPrimer(sb *strings.Builder) {
+	sb.WriteString("## Deploy Model (read before developing)\n\n")
 	sb.WriteString("- **Deploy = new container** — each deploy replaces the container. Only `deployFiles` content persists.\n")
 	sb.WriteString("- **Code on SSHFS mount** — write code to the local mount (`/var/www/{hostname}/`), not via SSH into the container.\n")
 	sb.WriteString("- **prepareCommands need `sudo`** — containers run as `zerops` user. Use `sudo apk add` / `sudo apt-get install`.\n")
 	sb.WriteString("- **Build ≠ Run** — build container has `build.base`, run container has `run.base`. Install runtime packages in `run.prepareCommands`.\n\n")
+}
 
-	sb.WriteString("## What's Next?\n\n")
+func writeOfferingsFooter(sb *strings.Builder, state *WorkflowState) {
 	offerings := routeFromBootstrapState(state)
 	for i, o := range offerings {
 		num := 'A' + rune(i)
-		sb.WriteString(fmt.Sprintf("**%c) %s**\n", num, titleCase(o.Workflow)))
+		fmt.Fprintf(sb, "**%c) %s**\n", num, titleCase(o.Workflow))
 		if o.Hint != "" {
-			sb.WriteString(fmt.Sprintf("   → `%s`\n", o.Hint))
+			fmt.Fprintf(sb, "   → `%s`\n", o.Hint)
 		}
 		sb.WriteString("\n")
 	}
-
 	sb.WriteString("**Other operations:**\n")
 	sb.WriteString("- Scale: `zerops_scale serviceHostname=\"...\"`\n")
 	sb.WriteString("- Env vars: `zerops_env action=\"set|delete\"` (reload after: `zerops_manage action=\"reload\"`)\n")
-
-	return sb.String()
 }
 
 // routeFromBootstrapState generates workflow offerings based on bootstrap state.
@@ -184,7 +164,6 @@ func routeFromBootstrapState(state *WorkflowState) []FlowOffering {
 			Hint:     `zerops_workflow action="start" workflow="cicd"`,
 		},
 	}
-	// Append utilities at lower priority.
 	offerings = appendUtilities(offerings)
 	return offerings
 }

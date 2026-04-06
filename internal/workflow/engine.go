@@ -171,10 +171,10 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 		e.writeProvisionMetas(state)
 
 		// Fast path: pure adoption plans (all isExisting + all EXISTS deps)
-		// auto-complete remaining steps — generate/deploy/close are no-ops.
+		// skip remaining steps — generate/deploy/close are no-ops for adopted services.
 		if state.Bootstrap.Plan != nil && state.Bootstrap.Plan.IsAllExisting() {
 			for _, skip := range []string{StepGenerate, StepDeploy, StepClose} {
-				if err := state.Bootstrap.CompleteStep(skip, "all targets adopted — skipped"); err != nil {
+				if err := state.Bootstrap.SkipStep(skip, "all targets adopted"); err != nil {
 					return nil, fmt.Errorf("adoption fast path: %w", err)
 				}
 			}

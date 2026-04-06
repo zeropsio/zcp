@@ -41,7 +41,7 @@ func checkDeployPrepare(client platform.Client, projectID, stateDir string) work
 		var checks []workflow.StepCheck
 
 		// Find and parse zerops.yaml.
-		doc, parseErr := findAndParseZeropsYml(projectRoot, state.Targets)
+		doc, ymlDir, parseErr := findAndParseZeropsYml(projectRoot, state.Targets)
 		if parseErr != nil {
 			checks = append(checks, workflow.StepCheck{
 				Name: "zerops_yml_exists", Status: statusFail,
@@ -79,8 +79,11 @@ func checkDeployPrepare(client platform.Client, projectID, stateDir string) work
 					Name: t.Hostname + "_setup", Status: statusPass,
 				})
 
-				// Validate deployFiles paths exist.
-				checks = append(checks, validateDeployFiles(projectRoot, t.Hostname, entry)...)
+				// Validate deployFiles paths exist on source filesystem.
+				// Skip for stage — cross-deployed from dev, build artifacts don't exist on source.
+				if t.Role != workflow.DeployRoleStage {
+					checks = append(checks, validateDeployFiles(ymlDir, t.Hostname, entry)...)
+				}
 
 				// Validate env var references if entry has envVariables.
 				if len(entry.EnvVariables) > 0 && client != nil {
@@ -234,18 +237,20 @@ func envMapsEqual(a, b map[string]string) bool {
 }
 
 // findAndParseZeropsYml locates and parses zerops.yaml from project root or mount paths.
-func findAndParseZeropsYml(projectRoot string, targets []workflow.DeployTarget) (*ops.ZeropsYmlDoc, error) {
+// Returns the parsed doc and the directory where zerops.yaml was found.
+func findAndParseZeropsYml(projectRoot string, targets []workflow.DeployTarget) (*ops.ZeropsYmlDoc, string, error) {
 	// Try mount path for first target (container environment).
 	if len(targets) > 0 {
 		mountPath := filepath.Join(projectRoot, targets[0].Hostname)
 		if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
 			if doc, err := ops.ParseZeropsYml(mountPath); err == nil {
-				return doc, nil
+				return doc, mountPath, nil
 			}
 		}
 	}
 	// Fall back to project root (local environment).
-	return ops.ParseZeropsYml(projectRoot)
+	doc, err := ops.ParseZeropsYml(projectRoot)
+	return doc, projectRoot, err
 }
 
 // validateDeployFiles checks that cherry-picked deployFiles paths exist on the filesystem.
