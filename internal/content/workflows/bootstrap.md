@@ -237,15 +237,7 @@ envVariables:
 <section name="generate">
 ### Generate zerops.yaml and infrastructure verification server
 
-This step verifies that infrastructure works — nothing more. Regardless of what the user asked for (dashboard, API, blog, e-commerce, anything), you are writing a bare-minimum verification server that proves services are reachable and env vars resolve. The user's actual application is implemented AFTER bootstrap, in the develop workflow.
-
-> **Why verification-first — ALL modes, no exceptions.** Bootstrap and application development are deliberately separate phases. Bootstrap proves infrastructure is healthy: services start, env vars resolve, managed service connections work. Only then does the develop workflow implement the user's actual application on top of proven infrastructure. This separation applies equally to standard, dev, and simple modes — even when it seems like overhead for a "simple" setup. The benefits compound:
-> - **Fault isolation**: If the app fails in develop, you know infra is working — no mixed debugging. If verification fails in bootstrap, the problem is infra, not application code.
-> - **Universal flow**: Every mode follows the same two-phase pattern (bootstrap → develop), making the deployment process predictable and stable regardless of complexity.
-> - **Faster iteration**: Once infra is verified, develop iterations focus purely on application code — no re-verification of database connectivity or env var wiring.
-> - **Reduced blast radius**: Infrastructure problems are caught before application code exists. Application problems are caught where infra is already proven.
->
-> Never bypass this separation. Never write application logic in bootstrap, even for simple mode.
+This step verifies that infrastructure works — nothing more. Regardless of what the user asked for (dashboard, API, blog, e-commerce, anything), you are writing a bare-minimum verification server that proves services are reachable and env vars resolve. The user's actual application is implemented AFTER bootstrap, in the develop workflow. This applies to ALL modes — standard, dev, and simple. Never write application logic in bootstrap.
 
 Write a hello-world server with exactly three endpoints: `GET /`, `GET /health`, `GET /status`. No business logic, no UI, no features, no API beyond these three routes. The server should be under 50 lines of code.
 
@@ -858,7 +850,7 @@ The transition message includes:
 
 **Skip this step** only in impossible edge cases (no services at all). Normal projects always reach this step.
 
-Infrastructure is verified — ALL services (standard, dev, and simple) are running with a verification server only. No application code has been written — this is by design. To implement the user's application, start the develop workflow: `zerops_workflow action="start" workflow="develop"`. This applies to ALL modes — simple mode is no exception.
+Infrastructure is verified — services running with a verification server only. No application code has been written. To implement the user's application, start the develop workflow: `zerops_workflow action="start" workflow="develop"`
 </section>
 
 ---
