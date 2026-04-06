@@ -74,11 +74,9 @@ func configureGit(_ string) error {
 	return nil
 }
 
-// configureClaude writes ~/.claude.json and ~/.claude/settings.json for
-// headless Claude Code operation (skip onboarding, dark theme, global MCP server,
-// no permission prompts). On containers zcp init owns these files completely.
-// ~/.claude.json is composed from claude.json + mcp-config.json templates so the
-// MCP server definition has a single source of truth (mcp-config.json).
+// configureClaude writes ~/.claude.json and ~/.claude/settings.json.
+// On containers zcp init owns these files — ~/.claude.json is composed from
+// claude.json + mcp-config.json so the MCP server definition has one source of truth.
 func configureClaude(_ string) error {
 	home := resolveHome()
 
