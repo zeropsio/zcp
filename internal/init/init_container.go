@@ -74,31 +74,62 @@ func configureGit(_ string) error {
 }
 
 // configureClaude writes ~/.claude.json and ~/.claude/settings.json for
-// headless Claude Code operation (skip onboarding, dark theme, no permission prompts).
+// headless Claude Code operation (skip onboarding, dark theme, global MCP server,
+// no permission prompts). On containers zcp init owns these files completely.
+// ~/.claude.json is composed from claude.json + mcp-config.json templates so the
+// MCP server definition has a single source of truth (mcp-config.json).
 func configureClaude(_ string) error {
 	home := resolveHome()
 
-	files := []struct {
-		path     string
-		template string
-	}{
-		{filepath.Join(home, ".claude.json"), "claude.json"},
-		{filepath.Join(home, ".claude", "settings.json"), "claude-settings.json"},
+	// Compose ~/.claude.json: base config + MCP servers (single source of truth).
+	claudeJSON, err := buildClaudeJSON()
+	if err != nil {
+		return err
 	}
-	for _, f := range files {
-		tmpl, err := content.GetTemplate(f.template)
-		if err != nil {
-			return err
-		}
-		dir := filepath.Dir(f.path)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("mkdir %s: %w", dir, err)
-		}
-		if err := os.WriteFile(f.path, []byte(tmpl), 0644); err != nil { //nolint:gosec // G306: config files need to be readable
-			return fmt.Errorf("write %s: %w", f.path, err)
-		}
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), claudeJSON, 0644); err != nil { //nolint:gosec // G306: config files need to be readable
+		return fmt.Errorf("write .claude.json: %w", err)
+	}
+
+	// ~/.claude/settings.json — straight template write.
+	settingsTmpl, err := content.GetTemplate("claude-settings.json")
+	if err != nil {
+		return err
+	}
+	settingsDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", settingsDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(settingsTmpl), 0644); err != nil { //nolint:gosec // G306: config files need to be readable
+		return fmt.Errorf("write settings.json: %w", err)
 	}
 	return nil
+}
+
+// buildClaudeJSON merges the claude.json base template with mcpServers from
+// mcp-config.json so the MCP server definition is not duplicated across templates.
+func buildClaudeJSON() ([]byte, error) {
+	baseTmpl, err := content.GetTemplate("claude.json")
+	if err != nil {
+		return nil, err
+	}
+	mcpTmpl, err := content.GetTemplate("mcp-config.json")
+	if err != nil {
+		return nil, err
+	}
+
+	var base map[string]any
+	if err := json.Unmarshal([]byte(baseTmpl), &base); err != nil {
+		return nil, fmt.Errorf("parse claude.json: %w", err)
+	}
+	var mcp map[string]any
+	if err := json.Unmarshal([]byte(mcpTmpl), &mcp); err != nil {
+		return nil, fmt.Errorf("parse mcp-config.json: %w", err)
+	}
+
+	for k, v := range mcp {
+		base[k] = v
+	}
+	return json.Marshal(base)
 }
 
 // vsCodeWorkDir is the workspace root for VS Code terminal config.

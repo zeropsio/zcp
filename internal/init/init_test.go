@@ -266,10 +266,9 @@ func TestRun_ReportsSteps(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	// All five files should exist.
+	// Container mode: no project .mcp.json (MCP config is in ~/.claude.json).
 	files := []string{
 		filepath.Join(dir, "CLAUDE.md"),
-		filepath.Join(dir, ".mcp.json"),
 		filepath.Join(dir, ".claude", "settings.local.json"),
 		filepath.Join(homeDir, ".ssh", "config"),
 		filepath.Join(homeDir, ".config", "zerops", "aliases"),
@@ -278,6 +277,24 @@ func TestRun_ReportsSteps(t *testing.T) {
 		if _, err := os.Stat(f); os.IsNotExist(err) {
 			t.Errorf("expected file %s to exist", f)
 		}
+	}
+}
+
+func TestRun_Container_NoProjectMCPConfig(t *testing.T) {
+	// Not parallel — mutates HOME env var.
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	stubContainerCommands(t)
+
+	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	mcpPath := filepath.Join(dir, ".mcp.json")
+	if _, err := os.Stat(mcpPath); !os.IsNotExist(err) {
+		t.Error(".mcp.json should not be created in container mode (MCP config is global in ~/.claude.json)")
 	}
 }
 

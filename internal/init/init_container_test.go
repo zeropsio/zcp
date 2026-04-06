@@ -94,6 +94,8 @@ func TestContainerSteps_ClaudeConfigs(t *testing.T) {
 	}{
 		{"claude.json exists", filepath.Join(homeDir, ".claude.json"), "hasCompletedOnboarding"},
 		{"claude.json theme", filepath.Join(homeDir, ".claude.json"), "dark"},
+		{"claude.json has global MCP", filepath.Join(homeDir, ".claude.json"), "mcpServers"},
+		{"claude.json has zcp serve", filepath.Join(homeDir, ".claude.json"), "zcp"},
 		{"settings.json exists", filepath.Join(homeDir, ".claude", "settings.json"), "skipDangerousModePermissionPrompt"},
 	}
 	for _, tt := range tests {

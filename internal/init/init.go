@@ -43,10 +43,14 @@ func Run(baseDir string, rt runtime.Info) error {
 
 	steps := []step{
 		{"CLAUDE.md", generateCLAUDEMD},
-		{"MCP config", generateMCPConfig},
 		{"Permissions", generateSettingsLocal},
 		{"SSH config", func(_ string) error { return generateSSHConfig(rt) }},
 		{"Shell aliases", generateAliases},
+	}
+	// Local mode: MCP config in project dir (carries ZCP_API_KEY per-project).
+	// Container mode: MCP config in ~/.claude.json (global, survives cd into cloned repos).
+	if !rt.InContainer {
+		steps = append(steps, step{"MCP config", generateMCPConfig})
 	}
 	if rt.InContainer {
 		steps = append(steps, containerSteps()...)
