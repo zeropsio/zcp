@@ -246,10 +246,7 @@ Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific 
 
 **`setup: prod`** (cross-deployed from dev to stage — end-user production target):
 - Real `buildCommands` (dependency install with prod flags, asset compilation, binary compilation, etc.)
-- **`deployFiles` strategy** — choose based on how the framework uses its project tree at runtime:
-  - **Bundled artifact** (compiled binary, bundled JS, static output): list the specific output path(s). The build produces a small, self-contained artifact — enumerate it.
-  - **Full-framework runtime** (interpreted languages where the runtime reads source, config, templates, migrations, vendor dirs across the tree): use `deployFiles: [.]` with a `.deployignore` file that excludes build-only artifacts (source assets, test files, build configs, node_modules). Enumerating 10+ directories is fragile — one missed path silently breaks the deploy, and framework updates that add directories require manual list maintenance. Excluding the known-unnecessary is more robust than enumerating the known-necessary.
-  - The `.deployignore` file uses gitignore syntax and lives at the repo root. It ships with the recipe app — the end user gets the same exclusions.
+- Real `deployFiles` listing only what the runtime needs (not `.`) — verify completeness: every path your start command and framework touch at runtime MUST appear here
 - `healthCheck` (httpGet on app port + health path) — **required**; unresponsive containers get restarted
 - `deploy.readinessCheck` if `initCommands` contains migrations
 - `initCommands` for framework cache warming (Laravel `config:cache|route:cache|view:cache`, Rails `assets:precompile` if paths leak, Symfony `cache:warmup`) — **never** in buildCommands; those caches bake `/build/source/...` paths that break at `/var/www/...`
@@ -354,7 +351,7 @@ Description of why this change is needed.
 ### Pre-deploy checklist
 - [ ] Both `setup: dev` AND `setup: prod` present (generic names)
 - [ ] dev: `deployFiles: [.]`, no healthCheck, no readinessCheck
-- [ ] prod: real buildCommands, deployFiles strategy matches runtime model (bundled artifact → specific paths; full-framework → `[.]` + `.deployignore`), healthCheck + readinessCheck
+- [ ] prod: real buildCommands, specific deployFiles, healthCheck + readinessCheck
 - [ ] dev and prod envVariables differ on mode flags (APP_ENV/NODE_ENV/DEBUG/LOG_LEVEL)
 - [ ] envVariables has only cross-service refs + mode flags — no envSecrets re-referenced
 - [ ] All env var refs use names from `zerops_discover`, none guessed
@@ -511,7 +508,7 @@ If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix 
 
 **Step 6: Verify prod setup (already written at generate)**
 The prod setup block was written to zerops.yaml during the generate step. Before cross-deploying, verify it matches what a real user building from git will need:
-- `deployFiles` covers everything the runtime needs. If using `[.]` + `.deployignore`, verify the ignore file excludes only build-time artifacts. If cherry-picking specific paths, run `ls` on the mount and cross-reference — one missed path means DEPLOY_FAILED at first request.
+- `deployFiles` lists every path the start command and framework need at runtime — run `ls` on the mount and cross-reference. When cherry-picking (not using `.`), missing one path will DEPLOY_FAILED at first request.
 - `healthCheck` + `deploy.readinessCheck` are present (required for prod — unresponsive containers get restarted; broken builds are gated from traffic).
 - `initCommands` covers framework cache warming + migrations (NEVER in buildCommands — `/build/source/...` paths break at `/var/www/...`).
 - Mode flags differ from dev (APP_ENV/NODE_ENV/DEBUG/LOG_LEVEL).
