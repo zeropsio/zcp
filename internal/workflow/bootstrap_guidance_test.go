@@ -53,21 +53,39 @@ func TestResolveGuidance(t *testing.T) {
 			true,
 		},
 		{
-			"deploy_has_agent_prompt",
+			"deploy_has_platform_rules",
 			"deploy",
+			"Platform rules",
+			true,
+		},
+		{
+			"deploy_has_git_internal_note",
+			"deploy",
+			"handles git internally",
+			true,
+		},
+		{
+			"deploy_standard_has_agent_prompt",
+			"deploy-standard",
+			"Dev iteration",
+			true,
+		},
+		{
+			"deploy_dev_has_no_stage",
+			"deploy-dev",
+			"no stage",
+			true,
+		},
+		{
+			"deploy_simple_has_auto_start",
+			"deploy-simple",
+			"auto-starts",
+			true,
+		},
+		{
+			"deploy_agents_has_agent_prompt",
+			"deploy-agents",
 			"Service Bootstrap Agent Prompt",
-			true,
-		},
-		{
-			"deploy_has_manual_start_cycle",
-			"deploy",
-			"manual start cycle",
-			true,
-		},
-		{
-			"deploy_has_sshfs_note",
-			"deploy",
-			"already on the dev container",
 			true,
 		},
 		{
@@ -117,23 +135,27 @@ func TestResolveGuidance_GenerateStandard_NoDevStartCommand(t *testing.T) {
 func TestResolveGuidance_DeployLength(t *testing.T) {
 	t.Parallel()
 	guide := ResolveGuidance("deploy")
-	// The deploy section contains the full agent prompt (~170 lines) plus deploy flows.
-	// Must be >5000 chars to confirm the agent prompt wasn't truncated.
-	if len(guide) < 5000 {
-		t.Errorf("deploy guidance too short (%d chars), expected >5000 with full agent prompt", len(guide))
+	// The deploy base section contains overview + platform rules + common issues.
+	if len(guide) < 1000 {
+		t.Errorf("deploy base guidance too short (%d chars), expected >1000", len(guide))
+	}
+	// The deploy-agents section contains the full agent prompt (~170 lines).
+	agents := ResolveGuidance("deploy-agents")
+	if len(agents) < 5000 {
+		t.Errorf("deploy-agents guidance too short (%d chars), expected >5000 with full agent prompt", len(agents))
 	}
 }
 
-func TestResolveGuidance_DeployContainsCodeBlocksWithHashes(t *testing.T) {
+func TestResolveGuidance_DeployAgentsContainsCodeBlocksWithHashes(t *testing.T) {
 	t.Parallel()
-	guide := ResolveGuidance("deploy")
+	guide := ResolveGuidance("deploy-agents")
 	// The agent prompt template contains ## headings inside fenced code blocks.
 	// Old heading-based extraction would truncate here. Verify they survive.
 	if !strings.Contains(guide, "## Environment") {
-		t.Error("deploy guidance missing '## Environment' from agent prompt template")
+		t.Error("deploy-agents guidance missing '## Environment' from agent prompt template")
 	}
 	if !strings.Contains(guide, "## Tasks") {
-		t.Error("deploy guidance missing '## Tasks' from agent prompt template")
+		t.Error("deploy-agents guidance missing '## Tasks' from agent prompt template")
 	}
 }
 
@@ -259,11 +281,18 @@ func TestResolveProgressiveGuidance_DeployStandard(t *testing.T) {
 	}}
 	guide := ResolveProgressiveGuidance("deploy", plan, 0, EnvContainer)
 	if guide == "" {
-		t.Error("expected non-empty guidance for deploy step")
+		t.Fatal("expected non-empty guidance for deploy step")
 	}
-	// Standard mode should include deploy-overview and deploy-standard.
-	if !strings.Contains(guide, "deploy") {
-		t.Error("deploy guidance should contain deploy content")
+	// Should include base + standard mode sections.
+	if !strings.Contains(guide, "handles git internally") {
+		t.Error("deploy base section missing")
+	}
+	if !strings.Contains(guide, "Dev iteration") {
+		t.Error("deploy-standard should contain Dev iteration cycle")
+	}
+	// Should NOT include simple or dev mode sections.
+	if strings.Contains(guide, "Simple mode — deploy flow") {
+		t.Error("standard mode should not include simple mode deploy")
 	}
 }
 
@@ -274,7 +303,21 @@ func TestResolveProgressiveGuidance_DeploySimple(t *testing.T) {
 	}}
 	guide := ResolveProgressiveGuidance("deploy", plan, 0, EnvContainer)
 	if guide == "" {
-		t.Error("expected non-empty guidance for deploy step in simple mode")
+		t.Fatal("expected non-empty guidance for deploy step in simple mode")
+	}
+	// Should include base + simple mode sections.
+	if !strings.Contains(guide, "handles git internally") {
+		t.Error("deploy base section missing")
+	}
+	if !strings.Contains(guide, "Simple mode — deploy flow") {
+		t.Error("deploy-simple section missing")
+	}
+	if !strings.Contains(guide, "auto-starts") {
+		t.Error("deploy-simple should mention auto-starts")
+	}
+	// Should NOT include standard or dev mode sections.
+	if strings.Contains(guide, "Dev iteration: manual start cycle") {
+		t.Error("simple mode should not include standard dev iteration cycle")
 	}
 }
 
@@ -352,27 +395,19 @@ func TestResolveProgressiveGuidance_DevMode(t *testing.T) {
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for deploy step in dev mode")
 	}
-	// Consolidated deploy section contains dev-only mode inline.
+	// Should include base + dev-only mode section.
 	if !strings.Contains(guide, "Dev-only mode") {
-		t.Error("deploy guidance should contain 'Dev-only mode' inline note")
+		t.Error("deploy guidance should contain 'Dev-only mode' section")
+	}
+	if !strings.Contains(guide, "no stage") {
+		t.Error("deploy guidance should mention no stage for dev-only")
 	}
 	if !strings.Contains(guide, "zerops_deploy") {
 		t.Error("deploy guidance should reference zerops_deploy")
 	}
-}
-
-func TestResolveProgressiveGuidance_DevMode_HasDeployDevContent(t *testing.T) {
-	t.Parallel()
-	plan := &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "dev"}},
-	}}
-	guide := ResolveProgressiveGuidance("deploy", plan, 0, EnvContainer)
-	if guide == "" {
-		t.Fatal("expected non-empty guidance for deploy step in dev mode")
-	}
-	// Consolidated deploy section has dev-only mode note.
-	if !strings.Contains(guide, "no stage") {
-		t.Error("deploy guidance should mention no stage for dev-only")
+	// Should NOT include standard or simple mode sections.
+	if strings.Contains(guide, "Standard mode (dev+stage)") {
+		t.Error("dev mode should not include standard mode deploy")
 	}
 }
 
@@ -386,17 +421,16 @@ func TestResolveProgressiveGuidance_MixedStandardDev(t *testing.T) {
 	if guide == "" {
 		t.Fatal("expected non-empty guidance for mixed mode deploy")
 	}
-	// Consolidated deploy section covers all modes.
-	if !strings.Contains(guide, "Standard mode") {
-		t.Error("deploy guidance should contain standard mode content")
+	// Both standard and dev sections should be present.
+	if !strings.Contains(guide, "Standard mode (dev+stage)") {
+		t.Error("deploy guidance should contain standard mode section")
 	}
 	if !strings.Contains(guide, "Dev-only mode") {
-		t.Error("deploy guidance should contain dev-only mode content")
+		t.Error("deploy guidance should contain dev-only mode section")
 	}
-	// Deploy iteration heading should appear exactly once.
-	iterCount := strings.Count(guide, "### Dev iteration: manual start cycle")
-	if iterCount != 1 {
-		t.Errorf("deploy-iteration content should appear exactly once, got %d", iterCount)
+	// Should NOT include simple mode.
+	if strings.Contains(guide, "Simple mode — deploy flow") {
+		t.Error("mixed standard+dev should not include simple mode")
 	}
 }
 

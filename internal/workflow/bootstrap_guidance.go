@@ -65,11 +65,22 @@ func ResolveProgressiveGuidance(step string, plan *ServicePlan, failureCount int
 		}
 
 	case StepDeploy:
-		// Local mode replaces the entire deploy section — SSH content is irrelevant.
 		if env == EnvLocal {
+			// Local mode replaces the entire deploy section — SSH content is irrelevant.
 			sections = append(sections, ExtractSection(md, "deploy-local"))
 		} else {
+			// Base deploy overview (always).
 			sections = append(sections, ExtractSection(md, "deploy"))
+			// Mode-specific sections.
+			if modes[PlanModeStandard] {
+				sections = append(sections, ExtractSection(md, "deploy-standard"))
+			}
+			if modes[PlanModeDev] {
+				sections = append(sections, ExtractSection(md, "deploy-dev"))
+			}
+			if modes[PlanModeSimple] {
+				sections = append(sections, ExtractSection(md, "deploy-simple"))
+			}
 		}
 		// Conditional: agent orchestration for 3+ services.
 		if plan != nil && len(plan.Targets) >= 3 {

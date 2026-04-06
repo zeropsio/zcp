@@ -39,8 +39,8 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			workDir:   "/var/www",
 			wantParts: []string{
 				"test -d .git || git init -q -b main",
-				"git config user.email 'test@example.com'",
-				"git config user.name 'Test User'",
+				"git config user.email 'agent@zerops.io'",
+				"git config user.name 'Zerops Agent'",
 				"git add -A",
 				"git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy'",
 				"zcli push --service-id svc-123",
@@ -77,7 +77,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			},
 		},
 		{
-			name: "custom email and name in command",
+			name: "uses hardcoded deploy identity regardless of auth info",
 			authInfo: auth.Info{
 				Token:    "my-token",
 				APIHost:  "api.app-prg1.zerops.io",
@@ -88,8 +88,8 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			serviceID: "svc-100",
 			workDir:   "/var/www",
 			wantParts: []string{
-				"git config user.email 'deploy@company.io'",
-				"git config user.name 'Deploy Bot'",
+				"git config user.email 'agent@zerops.io'",
+				"git config user.name 'Zerops Agent'",
 			},
 		},
 	}
@@ -98,8 +98,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			id := GitIdentity{Name: tt.authInfo.FullName, Email: tt.authInfo.Email}
-			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, "", tt.includeGit, id)
+			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, "", tt.includeGit, DeployGitIdentity)
 
 			for _, part := range tt.wantParts {
 				if !contains(cmd, part) {

@@ -19,6 +19,11 @@ type GitIdentity struct {
 	Email string
 }
 
+// DeployGitIdentity is the hardcoded identity for internal deploy commits on containers.
+// These are infrastructure commits (not user-facing), so a fixed identity prevents
+// missing git config errors and keeps deploy history consistent.
+var DeployGitIdentity = GitIdentity{Name: "Zerops Agent", Email: "agent@zerops.io"}
+
 // shellQuote wraps a string in POSIX single quotes, escaping embedded single quotes.
 // This prevents shell injection from untrusted input (e.g., user names, emails).
 func shellQuote(s string) string {
@@ -64,9 +69,8 @@ func DeploySSH(
 		includeGit = true // self-deploy always preserves .git
 	}
 
-	id := GitIdentity{Name: authInfo.FullName, Email: authInfo.Email}
 	return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
-		sourceService, targetService, setup, workingDir, includeGit, id)
+		sourceService, targetService, setup, workingDir, includeGit, DeployGitIdentity)
 }
 
 func deploySSH(

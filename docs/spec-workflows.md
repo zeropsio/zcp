@@ -36,6 +36,20 @@ flowchart LR
 
 **The boundary is strict**: Bootstrap writes zerops.yaml + infrastructure verification server. The moment the agent needs to write application logic, it must be in develop flow. If the user says "create me an app for uploading photos in Bun", bootstrap creates Bun service + dependencies with a hello-world verification server, then develop flow implements the photo upload app.
 
+### Why Verification-First — The Foundational Principle
+
+The two-phase separation (bootstrap verification → develop application) is the foundational architectural decision of the workflow system. It applies to **ALL modes** — standard, dev, and simple — without exception, even when it appears as overhead for simple setups.
+
+**Fault isolation.** When bootstrap and application are separate, failures have unambiguous origin. If verification fails during bootstrap, the problem is infrastructure — service config, env vars, managed service connectivity. If the app fails during develop, infrastructure is already proven healthy. Without this separation, every failure requires diagnosing both layers simultaneously, which is exponentially harder for an AI agent.
+
+**Universal deployment flow.** By always following the same two-phase pattern, every mode behaves predictably. The deploy step's structure (deploy → verify → iterate) is identical regardless of whether it's standard mode with dev/stage pairs or simple mode with a single service. This universality makes the deployment flow stable and eliminates mode-specific edge cases.
+
+**Reduced blast radius.** Infrastructure problems are caught before any application code exists. The verification server is ~50 lines — when it fails, there are very few places the bug can hide. Once infra is proven, the develop workflow adds application complexity on a stable foundation.
+
+**Faster iteration in develop.** Once bootstrap completes, the develop workflow knows that env vars resolve, managed services connect, and the service can start and respond. Develop iterations focus purely on application logic — no re-verification of infrastructure plumbing.
+
+This principle must never be bypassed. An agent that writes application code during bootstrap (even for simple mode) violates this boundary and loses all four benefits above.
+
 ### ServiceMeta — The Evidence File
 
 ServiceMeta (`.zcp/state/services/{hostname}.json`) is the persistent evidence that a service is under ZCP management.
