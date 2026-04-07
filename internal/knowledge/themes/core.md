@@ -181,6 +181,7 @@ zerops[]:
 - **NEVER** use Docker `:latest` tag. REASON: cached and won't re-pull; always use specific version tags
 - **ALWAYS** use `--network=host` for Docker services. REASON: without it, container cannot receive traffic from Zerops routing
 - **ALWAYS** use `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` for Object Storage. REASON: MinIO backend doesn't support virtual-hosted style
+- **ALWAYS** set a region env var to `us-east-1` for Object Storage clients. REASON: Zerops does NOT auto-generate a region variable, but every S3 SDK requires one (MinIO ignores the value). Use whichever env var name the framework's S3 client reads for region
 
 ### Import Generation (dev/stage patterns)
 - **Standard mode:** create dev/stage pairs for runtimes. Naming: `{prefix}dev` and `{prefix}stage` (e.g., `appdev`/`appstage`, `apidev`/`apistage`). Dev mode: single `{prefix}dev`. Simple mode: single `{name}` with real start command

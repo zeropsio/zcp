@@ -795,6 +795,8 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 > - Does `setup: prod` have `deploy.readinessCheck`? Missing readinessCheck means broken builds get traffic.
 > - Are deployFiles complete for prod? (run `ls` and verify all dirs/files the start command needs are included)
 > - Are env vars correct for the framework? (production mode flags, service connection vars, secret references)
+> - If the app uses Object Storage: is a region env var set to `us-east-1`? (Zerops does NOT auto-generate a region, but every S3 SDK requires one — use whichever env var name the framework's S3 client reads)
+> - **Build-only vs runtime bases**: some bases exist ONLY in the build category and have no corresponding runtime type (they appear in `build.base` enums in the platform schema but not in `run.base`). A `run.base` must always be a valid runtime type. If a worker's `run.base` differs from its `build.base`, verify the `run.base` is a valid runtime type before flagging — the mismatch is often correct because the build base has no runtime equivalent.
 > - Is the comment quality good? (WHY not WHAT, no restating key names, no section-heading decorators like `# -- Section --`)
 >
 > **import.yaml review (all 6 environments):**
@@ -805,6 +807,7 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 > - Is `corePackage: SERIOUS` at project level (not verticalAutoscaling) in env 5?
 > - Are `envSecrets` per-service (not project level)?
 > - Is the scaling matrix correct across tiers?
+> - Do service type versions match the plan? If the research step chose a specific version, all 6 import.yaml files should use that same version consistently.
 >
 > **README review:**
 > - Does the integration-guide include numbered steps for code changes the agent made that any user would also need? (e.g., trusted proxy config, storage driver wiring). Demo-specific code (custom routes, views) does NOT belong — only changes that apply to any app on Zerops.
