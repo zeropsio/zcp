@@ -133,7 +133,7 @@ Create all workspace services from the recipe plan. This follows the same patter
 
 ### 1. Generate import.yaml
 
-Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}stage` pair. **Exception**: monorepo workers (same runtime as app) get only `{name}stage` — the app's dev container serves as the shared workspace for both processes. Polyglot workers (different runtime) get their own dev+stage pair.
+Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}stage` pair. **Exception**: shared-codebase workers (same runtime as app — one app, two processes like web + queue runner) get only `{name}stage` — the app's dev container runs both processes via SSH. No `workerdev` — it would be a zombie container running the same code with no worker process started. Separate-codebase workers (different runtime/language) get their own dev+stage pair.
 
 **Dev vs stage properties:**
 
@@ -296,11 +296,16 @@ Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific 
 
 **`setup: worker`** (showcase only — background job processor):
 
-Whether the worker shares the app's codebase or is a separate project depends on the runtime: **same base runtime type = monorepo** (e.g., both `php-nginx@8.4`), **different type = polyglot** (e.g., `bun@1.2` app + `python@3.12` worker). The system detects this from the plan targets and adjusts the workspace, deploy flow, and published repos automatically.
+Whether the worker shares the app's codebase depends on the runtime type:
 
-**Monorepo workers** (same runtime): write a `setup: worker` block in the SAME zerops.yaml alongside `dev` and `prod`. The worker setup shares the build pipeline but runs a different start command. During development, the agent starts both the web server and queue worker as separate SSH processes from the single `appdev` container — no `workerdev` needed.
+- **Shared codebase** (same runtime — e.g., both `php-nginx@8.4`): one app, two processes. The worker is just a different entry point (e.g., `php artisan queue:work`, `node worker.js`, `bundle exec sidekiq`). This is how most frameworks handle background jobs.
+- **Separate codebase** (different runtime — e.g., `bun@1.2` app + `python@3.12` worker): truly different projects that happen to work together.
 
-**Polyglot workers** (different runtime): the worker is a separate codebase with its own zerops.yaml containing `dev` and `prod` setups. The agent writes it to a separate mount (`/var/www/workerdev/`). No `setup: worker` in the app's zerops.yaml — each codebase has its own `dev`/`prod` pair.
+The system detects this from the plan targets and adjusts the workspace, deploy flow, and published repos automatically.
+
+**Shared-codebase workers**: write a `setup: worker` block in the SAME zerops.yaml alongside `dev` and `prod`. The worker setup shares the build pipeline but runs a different start command. During development, the agent starts both the web server and queue worker as separate SSH processes from the single `appdev` container — no `workerdev` service exists.
+
+**Separate-codebase workers**: the worker is a separate project with its own zerops.yaml containing `dev` and `prod` setups. The agent writes it to a separate mount (`/var/www/workerdev/`). No `setup: worker` in the app's zerops.yaml — each codebase has its own `dev`/`prod` pair.
 
 Worker setup conventions (apply to both patterns):
 - `start` is the framework's queue/job runner command. MANDATORY — workers have no implicit webserver.
@@ -552,11 +557,11 @@ Pass the appropriate host binding flag so it listens on `0.0.0.0` (e.g., `npx vi
 **This step is MANDATORY, not optional.** Without it, templates that reference build-pipeline outputs (Vite manifests, Webpack bundles) will 500 on the first page load. Do NOT work around missing assets by running `npm run build` on the dev container — that compiles static assets instead of using HMR, and doesn't prove the dev experience works. Do NOT replace framework asset helpers with inline CSS/JS — that disconnects the build pipeline.
 
 **2c. Worker dev process** (showcase only):
-- **Monorepo** (worker same runtime as app): start the queue worker as an SSH process on appdev:
+- **Shared codebase** (worker same runtime as app): start the queue worker as an SSH process on appdev — both processes run from the same container:
   ```bash
   ssh appdev "cd /var/www && {queue_worker_command} &"
   ```
-- **Polyglot** (worker different runtime): deploy the separate worker codebase:
+- **Separate codebase** (worker different runtime): deploy the separate worker codebase:
   ```
   zerops_deploy targetService="workerdev" setup="dev"
   ```
@@ -597,12 +602,12 @@ zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
 The `setup="prod"` maps hostname `appstage` to `setup: prod` in zerops.yaml. Stage builds from dev's source code with the prod config. Server auto-starts via the real `start` command (or Nginx for static).
 
 **Step 7: Deploy workerstage** (showcase only — skip for minimal)
-- **Monorepo**: cross-deploy from appdev with the worker setup:
+- **Shared codebase**: cross-deploy from appdev with the worker setup:
   ```
   zerops_deploy sourceService="appdev" targetService="workerstage" setup="worker"
   ```
   The `setup="worker"` maps to `setup: worker` in the shared zerops.yaml — same build pipeline, different start command.
-- **Polyglot**: cross-deploy from workerdev:
+- **Separate codebase**: cross-deploy from workerdev:
   ```
   zerops_deploy sourceService="workerdev" targetService="workerstage" setup="prod"
   ```
@@ -689,11 +694,12 @@ The 6 envs are **not interchangeable** — each exists to describe a different d
 
 Pass `envComments` keyed by env index (`"0"`..`"5"`). Each env carries a `service` map (keys match the hostnames that appear in THAT env's file) and an optional `project` comment. **Service key rule**: envs 0-1 carry the dev+stage pair, so keys are `"appdev"` and `"appstage"`; envs 2-5 collapse to a single runtime entry, so the key is the base hostname (`"app"`). Managed services (`"db"` etc.) keep the base hostname everywhere.
 
-**Showcase service keys — ALL runtime services get dev+stage in envs 0-1.** This means `"workerdev"` AND `"workerstage"` BOTH need comments in envs 0-1. The template generates these services automatically; omitting a comment key produces a service with no comment in the import.yaml, which degrades quality and risks failing the comment ratio check. Complete key list per env:
-- **Envs 0-1**: `"appdev"`, `"appstage"`, `"workerdev"`, `"workerstage"`, plus all managed services (`"db"`, `"cache"`, `"storage"`, `"search"`, etc.)
+**Showcase service keys — shared-codebase workers (same runtime as app) get only `workerstage` in envs 0-1 (no `workerdev` — appdev runs both processes).** Separate-codebase workers (different runtime) get both `workerdev` and `workerstage`. Omitting a comment key for a service that appears in the import.yaml produces a service with no comment, which degrades quality and risks failing the comment ratio check. Complete key list per env:
+- **Envs 0-1 (shared-codebase worker)**: `"appdev"`, `"appstage"`, `"workerstage"`, plus all managed services (`"db"`, `"cache"`, `"storage"`, `"search"`, etc.)
+- **Envs 0-1 (separate-codebase worker)**: `"appdev"`, `"appstage"`, `"workerdev"`, `"workerstage"`, plus all managed services
 - **Envs 2-5**: `"app"`, `"worker"`, plus all managed services
 
-Polyglot workers (different runtime) follow the same pattern. Every service that appears in a given env's import.yaml MUST have a comment explaining its role in THAT env.
+Every service that appears in a given env's import.yaml MUST have a comment explaining its role in THAT env.
 
 ```
 zerops_workflow action="generate-finalize" \

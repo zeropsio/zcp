@@ -32,16 +32,15 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 	b.WriteString("\nservices:\n")
 
 	for _, target := range plan.Targets {
-		// Runtime services in env 0-1 get a dev+stage pair — EXCEPT monorepo
-		// workers (same runtime as app) in NON-showcase tiers, which get stage
-		// only. The app's dev container serves as the shared workspace; the agent
-		// runs both the web server and worker as SSH processes from one mount.
-		// Showcase recipes always generate dev+stage for every runtime service —
-		// recipe deliverables show all services independently because end users
-		// importing the recipe won't SSH in to start workers manually.
+		// Runtime services in env 0-1 get a dev+stage pair — EXCEPT shared-
+		// codebase workers (same runtime as app), which get stage only. The
+		// app's dev container runs both the web server and worker as separate
+		// SSH processes from one mount — a separate workerdev would be a zombie
+		// container running the same code with no worker process started.
+		// Separate-codebase workers (different runtime) need their own dev+stage.
 		if IsRuntimeType(target.Type) && envIndex <= 1 {
-			if target.IsWorker && SharesAppCodebase(target, plan) && plan.Tier != RecipeTierShowcase {
-				// Monorepo worker (non-showcase): stage only (dev is shared with appdev).
+			if target.IsWorker && SharesAppCodebase(target, plan) {
+				// Shared codebase: stage only (appdev hosts both processes).
 				writeStageService(&b, plan, target, envComments.Service)
 			} else {
 				writeDevService(&b, plan, target, envComments.Service)
@@ -200,8 +199,8 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 }
 
 // writeRuntimeBuildFromGit writes the buildFromGit URL for recipe runtime services.
-// Polyglot workers (different runtime than app) point to {slug}-worker;
-// everything else (app, monorepo workers) points to {slug}-app.
+// Separate-codebase workers (different runtime than app) point to {slug}-worker;
+// everything else (app, shared-codebase workers) points to {slug}-app.
 func writeRuntimeBuildFromGit(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
 	if target.IsWorker && !SharesAppCodebase(target, plan) {
 		fmt.Fprintf(b, "    buildFromGit: %s%s-worker\n", RecipeAppRepoBase, plan.Slug)

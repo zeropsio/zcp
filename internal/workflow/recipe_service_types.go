@@ -64,11 +64,14 @@ func RecipeSetupForMode(mode string) string {
 }
 
 // SharesAppCodebase returns true when a worker target uses the same base runtime
-// as the primary app — meaning it runs from the same source code (monorepo).
-// When true: no workerdev service (appdev hosts both processes), zeropsSetup is
-// "worker" (a third setup in the shared zerops.yaml), buildFromGit points to {slug}-app.
-// When false (polyglot): worker gets its own dev+stage pair, its own zerops.yaml,
-// zeropsSetup is "prod", buildFromGit points to {slug}-worker.
+// as the primary app — same source code, different process entry point (e.g.,
+// "php artisan queue:work" vs the web server). One app, two processes.
+// When true: no workerdev service (appdev runs both processes via SSH), zeropsSetup
+// is "worker" (a third setup in the shared zerops.yaml), buildFromGit points to
+// {slug}-app.
+// When false (separate codebase — different runtime/language): worker gets its own
+// dev+stage pair, its own zerops.yaml, zeropsSetup is "prod", buildFromGit points
+// to {slug}-worker.
 func SharesAppCodebase(target RecipeTarget, plan *RecipePlan) bool {
 	if !target.IsWorker || plan == nil {
 		return false
@@ -81,17 +84,17 @@ func SharesAppCodebase(target RecipeTarget, plan *RecipePlan) bool {
 // recipeSetupName returns the zeropsSetup name for a recipe RUNTIME service.
 // The setup name depends on whether the worker shares the app codebase:
 //   - "dev"    → dev entry (env 0-1 SSHFS mount)
-//   - "worker" → monorepo worker in prod (shared zerops.yaml's worker setup)
-//   - "prod"   → HTTP app in prod, OR polyglot worker (own zerops.yaml's prod setup)
+//   - "worker" → shared-codebase worker in prod (shared zerops.yaml's worker setup)
+//   - "prod"   → HTTP app in prod, OR separate-codebase worker (own zerops.yaml's prod setup)
 func recipeSetupName(target RecipeTarget, isDev bool, plan *RecipePlan) string {
 	if isDev {
 		return RecipeSetupDev
 	}
-	// Monorepo worker: the shared zerops.yaml has a dedicated "worker" setup.
+	// Shared-codebase worker: the shared zerops.yaml has a dedicated "worker" setup.
 	if target.IsWorker && SharesAppCodebase(target, plan) {
 		return "worker"
 	}
-	// App, or polyglot worker (its own zerops.yaml's prod setup).
+	// App, or separate-codebase worker (its own zerops.yaml's prod setup).
 	return RecipeSetupProd
 }
 

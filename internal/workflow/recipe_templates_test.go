@@ -353,128 +353,112 @@ func TestGenerateEnvImportYAML_Env2Plus_ProdService(t *testing.T) {
 	}
 }
 
-func TestGenerateEnvImportYAML_Showcase_MonorepoWorker(t *testing.T) {
+// TestGenerateEnvImportYAML_SharedCodebaseWorker verifies that when a worker uses
+// the same runtime as the app (one app, two processes — e.g. web + queue:work),
+// env 0-1 get workerstage ONLY. No workerdev — appdev runs both processes via SSH.
+// This applies to ALL recipe tiers (showcase, minimal, etc.).
+func TestGenerateEnvImportYAML_SharedCodebaseWorker(t *testing.T) {
 	t.Parallel()
 
-	plan := testShowcasePlan() // worker is php-nginx@8.4, same as app = monorepo
-
-	t.Run("env_0_monorepo_workerdev_exists", func(t *testing.T) {
-		t.Parallel()
-		yaml := GenerateEnvImportYAML(plan, 0)
-
-		// Showcase monorepo worker: BOTH workerdev and workerstage in envs 0-1.
-		// Recipe deliverables show all services independently — users importing
-		// the recipe don't SSH in to start workers manually.
-		if !strings.Contains(yaml, "hostname: workerdev") {
-			t.Error("showcase monorepo worker must have workerdev")
-		}
-		if !strings.Contains(yaml, "hostname: workerstage") {
-			t.Error("expected workerstage hostname")
-		}
-		// workerdev uses zeropsSetup: dev (full source mount for dev).
-		workerdevBlock := extractServiceBlock(yaml, "workerdev")
-		if !strings.Contains(workerdevBlock, "zeropsSetup: dev") {
-			t.Error("expected zeropsSetup: dev on workerdev")
-		}
-		// workerstage uses zeropsSetup: worker (shared zerops.yaml's worker setup).
-		workerstageBlock := extractServiceBlock(yaml, "workerstage")
-		if !strings.Contains(workerstageBlock, "zeropsSetup: worker") {
-			t.Error("expected zeropsSetup: worker on workerstage")
-		}
-		// Workers must NOT have enableSubdomainAccess.
-		if strings.Contains(workerdevBlock, "enableSubdomainAccess") {
-			t.Error("workerdev must NOT have enableSubdomainAccess")
-		}
-		if strings.Contains(workerstageBlock, "enableSubdomainAccess") {
-			t.Error("workerstage must NOT have enableSubdomainAccess")
-		}
-		// Both use app repo (monorepo).
-		if !strings.Contains(workerdevBlock, "laravel-showcase-app") {
-			t.Error("workerdev should use app repo URL")
-		}
-		if !strings.Contains(workerstageBlock, "laravel-showcase-app") {
-			t.Error("workerstage should use app repo URL")
-		}
-	})
-
-	t.Run("env_2_monorepo_worker", func(t *testing.T) {
-		t.Parallel()
-		yaml := GenerateEnvImportYAML(plan, 2)
-
-		if !strings.Contains(yaml, "hostname: worker") {
-			t.Error("expected bare worker hostname in env 2")
-		}
-		// Monorepo worker in env 2+: zeropsSetup: worker (shared yaml).
-		if !strings.Contains(yaml, "zeropsSetup: worker") {
-			t.Error("expected zeropsSetup: worker")
-		}
-		// Same buildFromGit as app (monorepo).
-		if !strings.Contains(yaml, "laravel-showcase-app") {
-			t.Error("monorepo worker should use app repo URL")
-		}
-	})
-}
-
-// TestGenerateEnvImportYAML_NonShowcase_MonorepoWorker verifies that non-showcase
-// tiers keep the monorepo optimization: no workerdev, appdev hosts both processes.
-func TestGenerateEnvImportYAML_NonShowcase_MonorepoWorker(t *testing.T) {
-	t.Parallel()
-
-	plan := testShowcasePlan()
-	plan.Tier = RecipeTierMinimal // non-showcase
-	plan.Slug = "laravel-minimal"
-
-	yaml := GenerateEnvImportYAML(plan, 0)
-
-	// Non-showcase monorepo: NO workerdev (appdev is shared).
-	if strings.Contains(yaml, "hostname: workerdev") {
-		t.Error("non-showcase monorepo worker must NOT have workerdev — appdev is the shared dev workspace")
+	tiers := []struct {
+		name string
+		tier string
+		slug string
+	}{
+		{"showcase", RecipeTierShowcase, "laravel-showcase"},
+		{"minimal", RecipeTierMinimal, "laravel-minimal"},
 	}
-	if !strings.Contains(yaml, "hostname: workerstage") {
-		t.Error("expected workerstage hostname")
-	}
-	workerstageBlock := extractServiceBlock(yaml, "workerstage")
-	if !strings.Contains(workerstageBlock, "zeropsSetup: worker") {
-		t.Error("expected zeropsSetup: worker on workerstage")
+
+	for _, tier := range tiers {
+		t.Run(tier.name+"_env_0_no_workerdev", func(t *testing.T) {
+			t.Parallel()
+			plan := testShowcasePlan()
+			plan.Tier = tier.tier
+			plan.Slug = tier.slug
+			yaml := GenerateEnvImportYAML(plan, 0)
+
+			// Shared codebase: NO workerdev — appdev is the shared workspace.
+			if strings.Contains(yaml, "hostname: workerdev") {
+				t.Error("shared-codebase worker must NOT have workerdev — appdev runs both processes")
+			}
+			if !strings.Contains(yaml, "hostname: workerstage") {
+				t.Error("expected workerstage hostname")
+			}
+			// workerstage uses zeropsSetup: worker (shared zerops.yaml's worker setup).
+			workerstageBlock := extractServiceBlock(yaml, "workerstage")
+			if !strings.Contains(workerstageBlock, "zeropsSetup: worker") {
+				t.Error("expected zeropsSetup: worker on workerstage")
+			}
+			// Workers must NOT have enableSubdomainAccess.
+			if strings.Contains(workerstageBlock, "enableSubdomainAccess") {
+				t.Error("workerstage must NOT have enableSubdomainAccess")
+			}
+			// Shared codebase: same app repo.
+			if !strings.Contains(workerstageBlock, tier.slug+"-app") {
+				t.Error("shared-codebase workerstage should use app repo URL")
+			}
+		})
+
+		t.Run(tier.name+"_env_2_worker", func(t *testing.T) {
+			t.Parallel()
+			plan := testShowcasePlan()
+			plan.Tier = tier.tier
+			plan.Slug = tier.slug
+			yaml := GenerateEnvImportYAML(plan, 2)
+
+			if !strings.Contains(yaml, "hostname: worker") {
+				t.Error("expected bare worker hostname in env 2")
+			}
+			// Shared-codebase worker in env 2+: zeropsSetup: worker (shared yaml).
+			if !strings.Contains(yaml, "zeropsSetup: worker") {
+				t.Error("expected zeropsSetup: worker")
+			}
+			if !strings.Contains(yaml, tier.slug+"-app") {
+				t.Error("shared-codebase worker should use app repo URL")
+			}
+		})
 	}
 }
 
-func TestGenerateEnvImportYAML_Showcase_PolyglotWorker(t *testing.T) {
+// TestGenerateEnvImportYAML_SeparateCodebaseWorker verifies that when a worker uses
+// a different runtime than the app (separate codebase — e.g. bun app + python worker),
+// it gets its own dev+stage pair in env 0-1 because it needs its own container and mount.
+func TestGenerateEnvImportYAML_SeparateCodebaseWorker(t *testing.T) {
 	t.Parallel()
 
 	plan := testShowcasePlan()
-	// Override worker to different type = polyglot.
+	// Override worker to different type = separate codebase.
 	for i, t := range plan.Targets {
 		if t.IsWorker {
 			plan.Targets[i].Type = "python@3.12"
 		}
 	}
 
-	t.Run("env_0_polyglot_has_workerdev", func(t *testing.T) {
+	t.Run("env_0_has_workerdev", func(t *testing.T) {
 		t.Parallel()
 		yaml := GenerateEnvImportYAML(plan, 0)
 
-		// Polyglot: worker gets its own dev+stage pair.
+		// Separate codebase: worker gets its own dev+stage pair.
 		if !strings.Contains(yaml, "hostname: workerdev") {
-			t.Error("polyglot worker should have workerdev")
+			t.Error("separate-codebase worker should have workerdev")
 		}
 		if !strings.Contains(yaml, "hostname: workerstage") {
-			t.Error("polyglot worker should have workerstage")
+			t.Error("separate-codebase worker should have workerstage")
 		}
-		// Polyglot worker stage uses zeropsSetup: prod (its own zerops.yaml).
+		// Separate-codebase worker stage uses zeropsSetup: prod (its own zerops.yaml).
 		if !strings.Contains(yaml, "zeropsSetup: prod") {
-			t.Error("expected zeropsSetup: prod on polyglot workerstage")
+			t.Error("expected zeropsSetup: prod on separate-codebase workerstage")
 		}
 	})
 
-	t.Run("env_2_polyglot_worker", func(t *testing.T) {
+	t.Run("env_2_worker", func(t *testing.T) {
 		t.Parallel()
 		yaml := GenerateEnvImportYAML(plan, 2)
 
 		if !strings.Contains(yaml, "hostname: worker") {
 			t.Error("expected bare worker hostname in env 2")
 		}
-		// Polyglot worker: zeropsSetup: prod (own zerops.yaml).
+		// Separate-codebase worker: zeropsSetup: prod (own zerops.yaml).
 		lines := strings.Split(yaml, "\n")
 		inWorker := false
 		for _, line := range lines {
@@ -484,20 +468,20 @@ func TestGenerateEnvImportYAML_Showcase_PolyglotWorker(t *testing.T) {
 				inWorker = false
 			}
 			if inWorker && strings.Contains(line, "zeropsSetup: prod") {
-				// Good — polyglot worker uses prod setup from its own zerops.yaml.
+				// Good — separate-codebase worker uses prod setup from its own zerops.yaml.
 				return
 			}
 		}
-		t.Error("expected zeropsSetup: prod for polyglot worker in env 2")
+		t.Error("expected zeropsSetup: prod for separate-codebase worker in env 2")
 	})
 
-	t.Run("env_2_polyglot_buildFromGit", func(t *testing.T) {
+	t.Run("env_2_separate_codebase_buildFromGit", func(t *testing.T) {
 		t.Parallel()
 		yaml := GenerateEnvImportYAML(plan, 2)
 
-		// Polyglot worker should use {slug}-worker repo.
+		// Separate-codebase worker should use {slug}-worker repo.
 		if !strings.Contains(yaml, "laravel-showcase-worker") {
-			t.Error("polyglot worker should use -worker repo URL")
+			t.Error("separate-codebase worker should use -worker repo URL")
 		}
 	})
 }
@@ -615,9 +599,9 @@ func TestGenerateEnvImportYAML_DefaultCommentsForUncommentedServices(t *testing.
 	plan := testShowcasePlan() // no EnvComments
 	yaml := GenerateEnvImportYAML(plan, 0)
 
-	// workerdev should get a default comment even without agent input.
-	if !strings.Contains(yaml, "# Dev workspace for workerdev") {
-		t.Error("expected default comment for uncommented workerdev in env 0")
+	// Shared-codebase worker: no workerdev, only workerstage in env 0.
+	if strings.Contains(yaml, "hostname: workerdev") {
+		t.Error("shared-codebase worker must NOT have workerdev in env 0")
 	}
 	if !strings.Contains(yaml, "# Stage worker") {
 		t.Error("expected default comment for uncommented workerstage in env 0")
@@ -632,18 +616,21 @@ func TestGenerateEnvImportYAML_AgentCommentsOverrideDefaults(t *testing.T) {
 	plan.EnvComments = map[string]EnvComments{
 		"0": {
 			Service: map[string]string{
-				"workerdev":   "Agent-written workerdev comment.",
+				"appdev":      "Agent-written appdev comment.",
 				"workerstage": "Agent-written workerstage comment.",
 			},
 		},
 	}
 	yaml := GenerateEnvImportYAML(plan, 0)
 
-	if strings.Contains(yaml, "Dev workspace for workerdev") {
+	if strings.Contains(yaml, "Dev workspace — zeropsSetup:dev") {
 		t.Error("default comment should not appear when agent provides one")
 	}
-	if !strings.Contains(yaml, "Agent-written workerdev comment") {
-		t.Error("expected agent comment for workerdev")
+	if !strings.Contains(yaml, "Agent-written appdev comment") {
+		t.Error("expected agent comment for appdev")
+	}
+	if !strings.Contains(yaml, "Agent-written workerstage comment") {
+		t.Error("expected agent comment for workerstage")
 	}
 }
 
@@ -1213,10 +1200,10 @@ func TestRecipeSetupName(t *testing.T) {
 	}{
 		{"app_dev", appTarget, true, "dev"},
 		{"app_prod", appTarget, false, "prod"},
-		{"monorepo_worker_dev", monoWorker, true, "dev"},
-		{"monorepo_worker_stage", monoWorker, false, "worker"},
-		{"polyglot_worker_dev", polyWorker, true, "dev"},
-		{"polyglot_worker_stage", polyWorker, false, "prod"},
+		{"shared_codebase_worker_dev", monoWorker, true, "dev"},
+		{"shared_codebase_worker_stage", monoWorker, false, "worker"},
+		{"separate_codebase_worker_dev", polyWorker, true, "dev"},
+		{"separate_codebase_worker_stage", polyWorker, false, "prod"},
 	}
 
 	for _, tt := range tests {
