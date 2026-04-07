@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/auth"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
@@ -70,10 +73,18 @@ func main() {
 		}
 	}
 
+	// Ignore SIGPIPE: when Claude Code closes the stdio pipe, Go's default
+	// behavior kills the process on writes to fd 1/2. Converting SIGPIPE to
+	// EPIPE errors lets the MCP SDK shut down gracefully instead.
+	signal.Ignore(syscall.SIGPIPE)
+
 	// MCP server mode — starts immediately, no blocking update check.
+	crashLog := setupCrashLog()
 	if err := run(); err != nil {
+		logShutdown(crashLog, err)
 		log.Fatal(err)
 	}
+	logShutdown(crashLog, nil)
 }
 
 func printVersion() {
@@ -106,6 +117,48 @@ func runUpdate() {
 	}
 
 	fmt.Fprintln(os.Stderr, "Updated successfully. Restart ZCP to use the new version.")
+}
+
+// setupCrashLog opens ~/.zcp/serve.log for append, creating the directory if
+// needed. Returns nil if the log cannot be created (non-fatal).
+func setupCrashLog() io.WriteCloser {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Join(home, ".zcp")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "serve.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil
+	}
+	fmt.Fprintf(f, "[%s] zcp serve started (version=%s, pid=%d)\n",
+		time.Now().Format(time.RFC3339), server.Version, os.Getpid())
+	return f
+}
+
+// logShutdown writes a categorized shutdown reason to the crash log.
+func logShutdown(f io.WriteCloser, err error) {
+	if f == nil {
+		return
+	}
+	defer f.Close()
+
+	ts := time.Now().Format(time.RFC3339)
+	pid := os.Getpid()
+
+	switch {
+	case err == nil:
+		fmt.Fprintf(f, "[%s] clean shutdown (pid=%d)\n", ts, pid)
+	case errors.Is(err, io.EOF):
+		fmt.Fprintf(f, "[%s] shutdown: stdin closed (EOF) — client disconnected (pid=%d)\n", ts, pid)
+	case errors.Is(err, syscall.EPIPE):
+		fmt.Fprintf(f, "[%s] shutdown: broken pipe (EPIPE) — stdout closed by client (pid=%d)\n", ts, pid)
+	default:
+		fmt.Fprintf(f, "[%s] shutdown error: %v (pid=%d)\n", ts, pid, err)
+	}
 }
 
 func run() error {
