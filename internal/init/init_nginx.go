@@ -15,37 +15,15 @@ type NginxConfig struct {
 	PasswordHash string
 }
 
-// nginxOutputPath is the target path for the generated nginx config.
-// Tests override this to write to a temp directory.
-var nginxOutputPath = "/etc/nginx/nginx.conf"
+var (
+	defaultNginxOutputPath = "/etc/nginx/nginx.conf"
+	defaultNginxDirs       = []string{"/var/log/nginx", "/var/lib/nginx/tmp", "/var/lib/nginx/body", "/var/lib/nginx/proxy", "/var/lib/nginx/fastcgi", "/var/lib/nginx/uwsgi", "/var/lib/nginx/scgi"}
+	defaultNginxLogFiles   = []string{"/var/log/nginx/error.log", "/var/log/nginx/access.log"}
 
-// SetNginxOutputPath overrides the nginx config output path for testing.
-func SetNginxOutputPath(path string) { nginxOutputPath = path }
-
-// ResetNginxOutputPath restores the default nginx config output path.
-func ResetNginxOutputPath() { nginxOutputPath = "/etc/nginx/nginx.conf" }
-
-// nginxDirs are the directories that must exist before nginx can start.
-var nginxDirs = []string{"/var/log/nginx", "/var/lib/nginx/tmp", "/var/lib/nginx/body", "/var/lib/nginx/proxy", "/var/lib/nginx/fastcgi", "/var/lib/nginx/uwsgi", "/var/lib/nginx/scgi"}
-
-// SetNginxDirs overrides the nginx directories for testing.
-func SetNginxDirs(dirs []string) { nginxDirs = dirs }
-
-// ResetNginxDirs restores the default nginx directories.
-func ResetNginxDirs() {
-	nginxDirs = []string{"/var/log/nginx", "/var/lib/nginx/tmp", "/var/lib/nginx/body", "/var/lib/nginx/proxy", "/var/lib/nginx/fastcgi", "/var/lib/nginx/uwsgi", "/var/lib/nginx/scgi"}
-}
-
-// nginxLogFiles are pre-existing log files that need chmod for non-root access.
-var nginxLogFiles = []string{"/var/log/nginx/error.log", "/var/log/nginx/access.log"}
-
-// SetNginxLogFiles overrides the nginx log files for testing.
-func SetNginxLogFiles(files []string) { nginxLogFiles = files }
-
-// ResetNginxLogFiles restores the default nginx log files.
-func ResetNginxLogFiles() {
-	nginxLogFiles = []string{"/var/log/nginx/error.log", "/var/log/nginx/access.log"}
-}
+	nginxOutputPath = defaultNginxOutputPath
+	nginxDirs       = append([]string{}, defaultNginxDirs...)
+	nginxLogFiles   = append([]string{}, defaultNginxLogFiles...)
+)
 
 // RunNginx generates /etc/nginx/nginx.conf and creates required directories.
 // Authentication is enabled when VSCODE_PASSWORD env var is set.

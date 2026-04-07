@@ -13,12 +13,6 @@ const defaultSSHFSMountBase = "/var/www"
 // Tests override this to avoid writing to /var/www.
 var sshfsMountBase = defaultSSHFSMountBase
 
-// SetSSHFSMountBase overrides the SSHFS mount base directory for testing.
-func SetSSHFSMountBase(dir string) { sshfsMountBase = dir }
-
-// ResetSSHFSMountBase restores the default SSHFS mount base directory.
-func ResetSSHFSMountBase() { sshfsMountBase = defaultSSHFSMountBase }
-
 // RunSSHFS reads ZCP_SSHFS_HOSTNAMES env (comma-separated) and creates
 // SSHFS mounts for each hostname via zsc unit create.
 // Skips gracefully if the env var is not set.

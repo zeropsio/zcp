@@ -41,7 +41,7 @@ func Run(baseDir string, rt runtime.Info) error {
 	}
 	if rt.InContainer {
 		// Container: SSH config, git identity, Claude configs (incl. global MCP server).
-		steps = append(steps, step{"SSH config", func(_ string) error { return generateSSHConfig() }})
+		steps = append(steps, step{"SSH config", generateSSHConfig})
 		steps = append(steps, containerSteps()...)
 	} else {
 		// Local: project-scoped .mcp.json (carries ZCP_API_KEY per-project).
@@ -59,35 +59,31 @@ func Run(baseDir string, rt runtime.Info) error {
 	return nil
 }
 
-func generateCLAUDEMD(baseDir string) error {
-	tmpl, err := content.GetTemplate("claude.md")
+// writeTemplate reads a named template and writes it to path, creating parent dirs.
+func writeTemplate(templateName, path string) error {
+	tmpl, err := content.GetTemplate(templateName)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(baseDir, "CLAUDE.md"), []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+	return os.WriteFile(path, []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
+}
+
+func generateCLAUDEMD(baseDir string) error {
+	return writeTemplate("claude.md", filepath.Join(baseDir, "CLAUDE.md"))
 }
 
 func generateMCPConfig(baseDir string) error {
-	tmpl, err := content.GetTemplate("mcp-config.json")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(baseDir, ".mcp.json"), []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
+	return writeTemplate("mcp-config.json", filepath.Join(baseDir, ".mcp.json"))
 }
 
 func generateSettingsLocal(baseDir string) error {
-	tmpl, err := content.GetTemplate("settings-local.json")
-	if err != nil {
-		return err
-	}
-	dir := filepath.Join(baseDir, ".claude")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, "settings.local.json"), []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
+	return writeTemplate("settings-local.json", filepath.Join(baseDir, ".claude", "settings.local.json"))
 }
 
-func generateSSHConfig() error {
+func generateSSHConfig(_ string) error {
 	tmpl, err := content.GetTemplate("ssh-config")
 	if err != nil {
 		return err

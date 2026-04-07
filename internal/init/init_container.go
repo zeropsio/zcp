@@ -23,24 +23,6 @@ func defaultCommandRunner(name string, args ...string) error {
 	return cmd.Run()
 }
 
-// SetCommandRunner replaces the command runner for testing.
-func SetCommandRunner(fn func(string, ...string) error) { commandRunner = fn }
-
-// ResetCommandRunner restores the default command runner.
-func ResetCommandRunner() { commandRunner = defaultCommandRunner }
-
-// SetGitInitDir overrides the git init directory for testing.
-func SetGitInitDir(dir string) { gitInitDir = dir }
-
-// ResetGitInitDir restores the default git init directory.
-func ResetGitInitDir() { gitInitDir = "/var/www" }
-
-// SetVSCodeWorkDir overrides the VS Code workspace directory for testing.
-func SetVSCodeWorkDir(dir string) { vsCodeWorkDir = dir }
-
-// ResetVSCodeWorkDir restores the default VS Code workspace directory.
-func ResetVSCodeWorkDir() { vsCodeWorkDir = "/var/www" }
-
 // containerSteps returns init steps that only run inside Zerops containers.
 func containerSteps() []step {
 	steps := []step{
@@ -88,18 +70,7 @@ func configureClaude(_ string) error {
 		return fmt.Errorf("write .claude.json: %w", err)
 	}
 
-	settingsTmpl, err := content.GetTemplate("claude-settings.json")
-	if err != nil {
-		return err
-	}
-	settingsDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(settingsDir, 0755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", settingsDir, err)
-	}
-	if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(settingsTmpl), 0644); err != nil { //nolint:gosec // G306: config files need to be readable
-		return fmt.Errorf("write settings.json: %w", err)
-	}
-	return nil
+	return writeTemplate("claude-settings.json", filepath.Join(home, ".claude", "settings.json"))
 }
 
 // buildClaudeJSON merges the claude.json base template with mcpServers from
@@ -137,25 +108,11 @@ func configureVSCode(_ string) error {
 	home := resolveHome()
 
 	settingsPath := filepath.Join(home, ".local", "share", "code-server", "User", "settings.json")
-	files := []struct {
-		path     string
-		template string
-	}{
-		{settingsPath, "vscode-settings.json"},
-		{filepath.Join(vsCodeWorkDir, ".vscode", "terminals.json"), "vscode-terminals.json"},
+	if err := writeTemplate("vscode-settings.json", settingsPath); err != nil {
+		return err
 	}
-	for _, f := range files {
-		tmpl, err := content.GetTemplate(f.template)
-		if err != nil {
-			return err
-		}
-		dir := filepath.Dir(f.path)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("mkdir %s: %w", dir, err)
-		}
-		if err := os.WriteFile(f.path, []byte(tmpl), 0644); err != nil { //nolint:gosec // G306: config files need to be readable
-			return fmt.Errorf("write %s: %w", f.path, err)
-		}
+	if err := writeTemplate("vscode-terminals.json", filepath.Join(vsCodeWorkDir, ".vscode", "terminals.json")); err != nil {
+		return err
 	}
 
 	// Install Claude Code extension (idempotent — skips if already installed).
