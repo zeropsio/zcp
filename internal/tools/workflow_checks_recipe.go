@@ -120,12 +120,11 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 	}
 }
 
-// checkRecipeSetups validates zerops.yaml has both dev and prod setup entries.
-// Recipes write BOTH setups at generate time — single-write avoids drift between
-// the file that deploys and the README integration-guide fragment that documents
-// it. zerops.yaml uses generic names: `setup: dev` and `setup: prod`.
+// checkRecipeSetups validates zerops.yaml has all required setup entries.
+// Minimal recipes: dev + prod. Showcase recipes: dev + prod + worker.
+// zerops.yaml uses generic names (`setup: dev`, `setup: prod`, `setup: worker`).
 // The deploy tool's --setup param maps hostname→setup at cross-deploy time.
-func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, _ *workflow.RecipePlan) []workflow.StepCheck {
+func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, plan *workflow.RecipePlan) []workflow.StepCheck {
 	var checks []workflow.StepCheck
 
 	// Dev setup: try "dev" (correct), then legacy fallbacks.
@@ -169,7 +168,36 @@ func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, _ *workflow.Recip
 	// hiding iteration feedback from the agent.
 	checks = append(checks, checkRecipeDevProdDivergence(devEntry, prodEntry)...)
 
+	// Showcase recipes must have a worker setup (background job processor).
+	if planHasWorker(plan) {
+		workerEntry := doc.FindEntry(workflow.RecipeSetupWorker)
+		if workerEntry == nil {
+			checks = append(checks, workflow.StepCheck{
+				Name:   hostname + "_worker_setup",
+				Status: statusFail,
+				Detail: "plan has a worker target but zerops.yaml has no setup: worker — showcase recipes need 3 setups: dev + prod + worker",
+			})
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name: hostname + "_worker_setup", Status: statusPass,
+			})
+		}
+	}
+
 	return checks
+}
+
+// planHasWorker returns true if any recipe target is a worker.
+func planHasWorker(plan *workflow.RecipePlan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, t := range plan.Targets {
+		if t.IsWorker {
+			return true
+		}
+	}
+	return false
 }
 
 // checkRecipeDevProdDivergence flags dev and prod run.envVariables maps that

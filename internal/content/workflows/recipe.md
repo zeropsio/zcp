@@ -250,6 +250,8 @@ Files placed on the mount are already on the dev container — deploy doesn't "s
 
 **Type 3 (backend framework):** Full framework project. ORM-based migrations, template-rendered dashboard, framework CLI tools. Uses the framework's conventions throughout.
 
+**Type 4 (showcase):** Dashboard **SKELETON only** — feature controllers and views are **NOT** written during generate. Generate produces: layout with empty/placeholder partial slots (using the framework's standard include mechanism — partials, components, sub-templates, or imports) for each planned feature section, all routes (display + action endpoints pre-registered but returning placeholder responses), primary model + migration + factory + seeder with sample data, service connectivity panel, zerops.yaml (all 3 setups: dev + prod + worker), README with fragments, .env.example. **Stop here.** The deploy step dispatches a sub-agent to implement feature controllers and views against live services after appdev is verified. Writing feature code during generate means generating blind against disconnected services — producing code with no error handling, no XSS protection, and untested integrations. See "Showcase dashboard — file architecture" below.
+
 ### Two kinds of import.yaml (critical distinction)
 
 1. **Workspace import** (provision step) — creates the agent's dev/stage infrastructure. NO `zeropsSetup`, NO `buildFromGit`. Services use `startWithoutCode` (dev) or wait for deploy (stage).
@@ -333,13 +335,13 @@ The dashboard is the recipe's proof of work. Each provisioned service gets a fea
 
 A minimal recipe (app + db) has one feature section (database CRUD). A showcase recipe has one section per service. No section for services that aren't in the plan.
 
-The dashboard must work immediately after one-click deploy:
-- Seeder populates sample records on first deploy — no empty states ("No data yet" = broken recipe)
-- Search index is populated (`initCommands` runs the framework's index command after `db:seed`)
+The dashboard must work immediately after one-click deploy — **verify explicitly during deploy Step 3**:
+- Seeder populates sample records (15-25 items) on first deploy — no empty states. After dev deploy, open the dashboard and confirm seeded records appear in the database section. If the table is empty, the seeder failed silently — diagnose and fix before proceeding. Common cause: `zsc execOnce` marks the command as done even if it failed; check `zerops_logs` for seeder errors.
+- Search index is populated (`initCommands` runs the framework's index command after `db:seed`) — search must return results for seeded content immediately, not after a manual reindex
 - File storage is accessible on first visit (upload form works, no pre-configuration needed)
 
 **Type 4 (showcase):**
-Same endpoints as types 1-3. The additional services (cache, storage, search, worker) each add a feature section to the same dashboard page. The dashboard layout is a vertical stack of feature sections — one page, every service demonstrated.
+Same endpoints as types 1-3, but during the generate step only the **skeleton** is written — the layout has include slots for each feature section, routes are registered, but feature controllers return placeholder responses. The deploy step's sub-agent fills them in against live services. The additional services (cache, storage, search, worker) each add a feature section to the same dashboard page. The dashboard layout is a vertical stack of feature sections — one page, every service demonstrated.
 
 **Type 2a (static frontend):**
 - `GET /` — simple page showing framework name, greeting, timestamp, environment indicator
@@ -347,28 +349,40 @@ Same endpoints as types 1-3. The additional services (cache, storage, search, wo
 
 ### Dashboard style
 
-Minimalistic, functional, demonstrative. The dashboard exists to prove integrations work, not to look like a marketing page.
+Minimalistic, functional, demonstrative — but **polished**. Minimalistic does NOT mean unstyled browser defaults. The dashboard proves integrations work, not a marketing page, but it must be professional enough that a developer deploying the recipe isn't embarrassed by the output.
 
-- Plain HTML with minimal inline styles or the framework's scaffolded CSS (Tailwind if scaffolded, otherwise raw CSS)
-- No component libraries, no icon packs, no animations, no dark mode toggles
-- Each feature section: a heading, the interactive element, and the result — nothing else
-- System font stack, generous whitespace, monochrome palette (one accent color for status indicators)
+**Quality bar:**
+- **Styled form controls** — never raw browser-default `<input>` / `<select>` / `<button>`. Apply the framework's scaffolded CSS (Tailwind if scaffolded) or write clean styles: padding, border-radius, consistent sizing, focus ring, hover state on buttons
+- **Visual hierarchy** — section headings clearly delineated, consistent vertical rhythm between sections, data tables with proper headers, cell padding, and alternating row shading or border separators
+- **Status feedback** — success/error flash after form submissions (not silent page reload), loading indicator text for async operations, meaningful empty states ("No files uploaded yet" not a blank div)
+- **Readable data** — tables with aligned columns and comfortable padding, timestamps in human-readable relative form ("3 minutes ago"), IDs in monospace
+- System font stack, generous whitespace, monochrome palette with one accent color for interactive elements and status indicators
 - Mobile-responsive via simple CSS (single column on narrow screens), not a grid framework
-- No JavaScript frameworks for interactivity — vanilla JS for live search debounce, form submissions via standard POST (no fetch/XHR unless the feature specifically needs it, like live search)
 
-The visual benchmark: looks like a well-formatted diagnostic page, not a SaaS product landing page.
+**What to avoid:**
+- Component libraries, icon packs, animations, dark mode toggles
+- JavaScript frameworks for interactivity — vanilla JS for live search debounce, form submissions via standard POST (no fetch/XHR unless the feature specifically needs it, like live search)
+- Inline `<style>` blocks when a build pipeline (Tailwind/Vite) exists — use the pipeline
+
+**XSS protection (mandatory):** ALL dynamic content rendered in HTML must be escaped. Never inject user-provided or API-returned strings via `innerHTML` or JS template literals without escaping. Use `textContent` for JS-injected text, and the framework's template auto-escaping for server-rendered content (every major framework auto-escapes by default — never use the raw/unescaped output mode). File names from S3, article titles from DB, search results — all untrusted input.
+
+The visual benchmark: a well-formatted diagnostic page — clean, professional, usable. Not a SaaS landing page, but not a raw HTML form dump either.
 
 ### Showcase dashboard — file architecture
 
 When the dashboard has more than 2 feature sections (showcase recipes), each section lives in **separate files** — its own controller/handler and its own view/template/partial. The main dashboard layout includes them. This isolation lets the main agent build the skeleton first, deploy and verify the base app, then dispatch a sub-agent for feature implementation.
 
-**Generate step — main agent writes:**
-1. Dashboard layout with include/import slots for each feature section (slots can be empty/placeholder initially)
-2. All routes — display (GET) and action (POST for create, upload, dispatch)
-3. Primary model + migration + factory + seeder with sample records
-4. Service connectivity checks (the status panel at the top)
-5. zerops.yaml, README, .env.example (as specified in other sections)
-6. Git init + commit
+**Skeleton boundary — what goes where:**
+
+| Generate step (main agent) | Deploy step (sub-agent, after appdev verified) |
+|---|---|
+| Dashboard layout with empty partial/component slots per feature section | Feature section controllers/handlers (CacheController, StorageController, etc.) |
+| Placeholder text in each slot ("Section available after deploy") | Feature section views/templates/partials with interactive UI |
+| Primary model + migration + factory + seeder (15-25 records) | Feature-specific JavaScript (search debounce, file upload, polling) |
+| DashboardController with index, health, status endpoints | Feature-specific model traits/mixins (e.g., Searchable) |
+| Service connectivity panel (CONNECTED/DISCONNECTED per service) | |
+| All routes registered (GET + POST for every feature action) | |
+| zerops.yaml (all setups), README, .env.example | |
 
 **Deploy step — main agent deploys skeleton first:**
 Deploy appdev → start processes → verify. The skeleton (connectivity panel, seeded data, health endpoint) must work before adding feature sections. This catches zerops.yaml errors, missing extensions, env var typos, and migration issues BEFORE the sub-agent adds complexity.
@@ -378,10 +392,11 @@ The main agent dispatches ONE sub-agent with a brief containing:
 - Exact file paths to create (framework-conventional locations)
 - Installed packages relevant to each feature
 - What each section must demonstrate (from the service-to-feature mapping above)
-- The HTML/component contract (layout structure, CSS approach, include mechanism)
+- The **UX quality contract** from "Dashboard style" — styled controls (not browser defaults), visual hierarchy, status feedback after actions, XSS-safe dynamic content (`textContent` not `innerHTML`). Include the CSS approach (Tailwind classes if scaffolded, inline styles otherwise) and layout structure (how partials are included)
 - Pre-registered route paths for each feature's actions
+- Instruction to **test each feature against the live service** after writing it — the sub-agent has SSH access to appdev and all managed services (db, cache, storage, search) are reachable. After writing a controller+view, hit the endpoint via `curl` or the framework's test runner and verify it returns expected data. Fix issues immediately — this is the entire point of deferring to after deploy.
 
-The sub-agent writes all feature controllers and views sequentially. One sub-agent, all features.
+The sub-agent writes all feature controllers and views sequentially. One sub-agent, all features. Because the sub-agent runs against live services, it produces tested code with proper error handling — not blind template generation.
 
 **Deploy step — main agent resumes (after sub-agent):**
 1. Read back the feature files — verify they exist and aren't empty
@@ -529,10 +544,12 @@ Do NOT include:
 
 Recipes are read by both humans and AI agents. Write like a senior dev explaining their config to a colleague — not documentation, not tutorials.
 
-**Voice:**
+**Voice — three dimensions of a good comment:**
+1. **WHY this choice** + consequence: "CGO_ENABLED=0 produces a fully static binary — no C libraries linked at runtime" (not "Set CGO_ENABLED to 0")
+2. **HOW the platform works here** — contextual behavior that makes the file self-contained, so the reader never has to leave to understand what's happening: "project-level — propagates to all containers automatically", "priority 10 — starts before app containers so migrations don't hit an absent database", "buildFromGit clones this repo and runs the matching zeropsSetup's build pipeline". Include this whenever a field's effect isn't obvious from its name alone.
+3. **NOT the WHAT** — never restate the field name or its value. The reader can see `base: php@8.4`; they can't see that project envVariables propagate to child services.
+
 - Direct, concise, no filler ("Install production deps only" not "In this step we will install the production dependencies")
-- Explain the WHY and the consequence, not the WHAT ("CGO_ENABLED=0 produces a fully static binary — no C libraries linked at runtime" not "Set CGO_ENABLED to 0")
-- Mention Zerops-specific behavior when it differs from standard ("npm prune after build — runtime container doesn't re-install" not just "npm prune")
 - Use dashes for asides — not parentheses, not semicolons
 - One thought per comment line, flow naturally with the YAML structure
 
@@ -633,16 +650,23 @@ zerops_logs serviceHostname="appdev" limit=20
 **Step 4: Iterate if needed** (max 3 iterations)
 If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify. After any redeploy, repeat Step 2 (start ALL processes) before Step 3 (verify).
 
-**Step 4b: Showcase feature sections** (type 4 only — skip for minimal)
+**Step 4b: Showcase feature sections — MANDATORY for Type 4** (skip for minimal)
 
-After appdev is deployed and verified with the skeleton (connectivity panel, seeded data, health endpoint), dispatch the feature sub-agent. The sub-agent writes code on the appdev mount and can test against live services — database, cache, storage, search are all reachable. See "Showcase dashboard — file architecture" for the sub-agent brief format.
+After appdev is deployed and verified with the skeleton (connectivity panel, seeded data, health endpoint), dispatch the feature sub-agent. **This step is MANDATORY for Type 4 showcase recipes.** If you wrote feature controllers during the generate step, you skipped the live-service testing that makes showcase features reliable. The generate step produces a skeleton only — feature code is written HERE, against running services.
+
+The sub-agent writes code on the appdev mount and can test against live services — database, cache, storage, search are all reachable. See "Showcase dashboard — file architecture" for the sub-agent brief format.
 
 After the sub-agent finishes:
 1. Read back feature files — verify they exist and aren't empty
 2. Git add + commit on the mount
 3. Redeploy appdev: `zerops_deploy targetService="appdev" setup="dev"`
 4. Restart ALL processes (Step 2) — redeployment creates a fresh container
-5. Verify features work — each feature section should render and handle POST actions
+5. Verify features work:
+   - Each feature section renders with styled controls and proper visual hierarchy
+   - POST actions return success feedback (not 500 errors or silent reloads)
+   - Seeded data visible in database/search sections (tables populated, search returns results)
+   - File upload works and file list populates (S3 connectivity proven)
+   - Job dispatch shows processed result (queue + worker connectivity proven)
 
 If features fail: fix on mount, redeploy, re-verify (counts toward the 3-iteration limit).
 
@@ -823,7 +847,7 @@ zerops_workflow action="generate-finalize" \
 - **Project secret** — what the framework uses it for + why it must be shared across containers.
 
 **Comment style:**
-- Explain WHY, not WHAT. Don't restate the field name.
+- Explain WHY, not WHAT. Don't restate the field name. Include **contextual platform behavior** that makes the file self-contained — how fields interact, what propagates where, what happens at deploy time. The reader should never have to leave the file to understand it.
 - 2-3 sentences per service (aim for the upper end — single-sentence comments consistently fail the 30% ratio on first attempt). Lines auto-wrap at 80 chars.
 - No section-heading decorators (`# -- Title --`, `# === Foo ===`).
 - Dev-to-dev tone — like explaining your config to a colleague.

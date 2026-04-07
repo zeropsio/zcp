@@ -551,6 +551,177 @@ func TestExtractYAMLBlock(t *testing.T) {
 	}
 }
 
+func testShowcasePlan() *workflow.RecipePlan {
+	return &workflow.RecipePlan{
+		Framework:   "laravel",
+		Tier:        workflow.RecipeTierShowcase,
+		Slug:        "laravel-showcase",
+		RuntimeType: "php-nginx@8.4",
+		Research: workflow.ResearchData{
+			ServiceType:    "php-nginx",
+			PackageManager: "composer",
+			HTTPPort:       80,
+			BuildCommands:  []string{"composer install"},
+			DeployFiles:    []string{"."},
+			NeedsAppSecret: true,
+		},
+		Targets: []workflow.RecipeTarget{
+			{Hostname: "app", Type: "php-nginx@8.4"},
+			{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true},
+			{Hostname: "db", Type: "postgresql@18"},
+			{Hostname: "redis", Type: "valkey@7.2"},
+			{Hostname: "storage", Type: "object-storage"},
+			{Hostname: "search", Type: "meilisearch@1.20"},
+		},
+	}
+}
+
+func TestCheckRecipeGenerate_ShowcaseMissingWorkerSetup(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(dir, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Showcase zerops.yaml with dev+prod but NO worker setup.
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: php-nginx@8.4
+      buildCommands:
+        - composer install
+      deployFiles:
+        - .
+    run:
+      envVariables:
+        APP_ENV: local
+        APP_DEBUG: "true"
+      ports:
+        - port: 80
+          httpSupport: true
+  - setup: prod
+    build:
+      base: php-nginx@8.4
+      buildCommands:
+        - composer install --no-dev --optimize-autoloader
+      deployFiles:
+        - app
+        - vendor
+    run:
+      envVariables:
+        APP_ENV: production
+        APP_DEBUG: "false"
+      ports:
+        - port: 80
+          httpSupport: true
+`)
+	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
+
+	checker := checkRecipeGenerate(stateDir)
+	result, err := checker(context.Background(), testShowcasePlan(), testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Passed {
+		t.Error("expected checks to fail when showcase has no worker setup")
+	}
+	var sawWorkerFail bool
+	for _, c := range result.Checks {
+		if c.Name == "app_worker_setup" && c.Status == "fail" {
+			sawWorkerFail = true
+		}
+	}
+	if !sawWorkerFail {
+		t.Error("expected app_worker_setup fail check")
+	}
+}
+
+func TestCheckRecipeGenerate_ShowcaseWithWorkerSetup(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(dir, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Showcase zerops.yaml with all 3 setups: dev + prod + worker.
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: php-nginx@8.4
+      buildCommands:
+        - composer install
+      deployFiles:
+        - .
+    run:
+      envVariables:
+        APP_ENV: local
+        APP_DEBUG: "true"
+      ports:
+        - port: 80
+          httpSupport: true
+  - setup: prod
+    build:
+      base: php-nginx@8.4
+      buildCommands:
+        - composer install --no-dev --optimize-autoloader
+      deployFiles:
+        - app
+        - vendor
+    run:
+      envVariables:
+        APP_ENV: production
+        APP_DEBUG: "false"
+      ports:
+        - port: 80
+          httpSupport: true
+  - setup: worker
+    build:
+      base: php-nginx@8.4
+      buildCommands:
+        - composer install --no-dev --optimize-autoloader
+      deployFiles:
+        - app
+        - vendor
+    run:
+      envVariables:
+        APP_ENV: production
+        APP_DEBUG: "false"
+      start: php artisan queue:work
+`)
+	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
+
+	checker := checkRecipeGenerate(stateDir)
+	result, err := checker(context.Background(), testShowcasePlan(), testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var sawWorkerPass bool
+	for _, c := range result.Checks {
+		if c.Name == "app_worker_setup" {
+			if c.Status != "pass" {
+				t.Errorf("expected app_worker_setup to pass, got %q: %s", c.Status, c.Detail)
+			}
+			sawWorkerPass = true
+		}
+	}
+	if !sawWorkerPass {
+		t.Error("expected app_worker_setup check to be present")
+	}
+}
+
 // writeFile is a test helper to write a file.
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
