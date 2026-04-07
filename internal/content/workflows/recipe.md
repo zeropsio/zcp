@@ -266,7 +266,7 @@ zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`.
 2. Write zerops.yaml — YOU, not a sub-agent. Use the discovered env vars and schema from this guidance.
 3. Write app code:
    - **Types 1-3 (minimal)**: dashboard skeleton with feature sections, model + migration + seeder, routes, config changes. Write everything yourself — with only 1-2 feature sections (database CRUD, maybe cache) there's no benefit to sub-agents.
-   - **Type 4 (showcase)**: write the dashboard skeleton yourself (layout with include slots, connectivity panel, model + migration + seeder, all routes), then dispatch ONE sub-agent for all feature sections. The skeleton needs discovered env vars for connectivity checks; the feature sections use framework abstractions (DB/Cache/Storage facades) and don't need platform guidance. See "Showcase dashboard — file architecture" below.
+   - **Type 4 (showcase)**: write the dashboard skeleton yourself (layout with include slots, connectivity panel, model + migration + seeder, all routes). Do NOT dispatch the feature sub-agent yet — that happens in the deploy step after appdev is deployed and verified. See "Showcase dashboard — file architecture" below.
 4. Write README with extract fragments — YOU, not a sub-agent. The integration-guide fragment must contain the SAME zerops.yaml you just wrote in step 2 (read it back from disk, don't rewrite from memory). The intro must list ALL services from the plan, not just the database.
 5. Git init + commit
 
@@ -378,16 +378,20 @@ The visual benchmark: looks like a well-formatted diagnostic page, not a SaaS pr
 
 ### Showcase dashboard — file architecture
 
-When the dashboard has more than 2 feature sections (showcase recipes), each section lives in **separate files** — its own controller/handler and its own view/template/partial. The main dashboard layout includes them. This isolation lets the main agent build the skeleton first, then dispatch a sub-agent for feature implementation without file conflicts.
+When the dashboard has more than 2 feature sections (showcase recipes), each section lives in **separate files** — its own controller/handler and its own view/template/partial. The main dashboard layout includes them. This isolation lets the main agent build the skeleton first, deploy and verify the base app, then dispatch a sub-agent for feature implementation.
 
-**Main agent writes (sequential, before sub-agent):**
-1. Dashboard layout with include/import slots for each feature section
+**Generate step — main agent writes:**
+1. Dashboard layout with include/import slots for each feature section (slots can be empty/placeholder initially)
 2. All routes — display (GET) and action (POST for create, upload, dispatch)
 3. Primary model + migration + factory + seeder with sample records
 4. Service connectivity checks (the status panel at the top)
 5. zerops.yaml, README, .env.example (as specified in other sections)
+6. Git init + commit
 
-**Sub-agent implements (all features, one pass):**
+**Deploy step — main agent deploys skeleton first:**
+Deploy appdev → start processes → verify. The skeleton (connectivity panel, seeded data, health endpoint) must work before adding feature sections. This catches zerops.yaml errors, missing extensions, env var typos, and migration issues BEFORE the sub-agent adds complexity.
+
+**Deploy step — sub-agent implements features (after appdev verified):**
 The main agent dispatches ONE sub-agent with a brief containing:
 - Exact file paths to create (framework-conventional locations)
 - Installed packages relevant to each feature
@@ -397,12 +401,13 @@ The main agent dispatches ONE sub-agent with a brief containing:
 
 The sub-agent writes all feature controllers and views sequentially. One sub-agent, all features.
 
-**Main agent resumes (after sub-agent):**
+**Deploy step — main agent resumes (after sub-agent):**
 1. Read back the feature files — verify they exist and aren't empty
-2. Git add + commit
-3. Continue to deploy step
+2. Git add + commit on the mount
+3. Redeploy appdev (self-deploy) → restart processes → verify features work
+4. Continue to stage deployment (Step 5+) — stage gets the complete codebase
 
-For minimal recipes (1-2 feature sections), skip the sub-agent — the main agent writes everything directly.
+For minimal recipes (1-2 feature sections), skip the sub-agent — the main agent writes everything directly during generate and deploys once.
 
 ### Asset pipeline consistency
 
@@ -650,7 +655,22 @@ zerops_logs serviceHostname="appdev" limit=20
 **Step 4: Iterate if needed** (max 3 iterations)
 If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify. After any redeploy, repeat Step 2 (start ALL processes) before Step 3 (verify).
 
-### Stage deployment flow
+**Step 4b: Showcase feature sections** (type 4 only — skip for minimal)
+
+After appdev is deployed and verified with the skeleton (connectivity panel, seeded data, health endpoint), dispatch the feature sub-agent. The sub-agent writes code on the appdev mount and can test against live services — database, cache, storage, search are all reachable. See "Showcase dashboard — file architecture" for the sub-agent brief format.
+
+After the sub-agent finishes:
+1. Read back feature files — verify they exist and aren't empty
+2. Git add + commit on the mount
+3. Redeploy appdev: `zerops_deploy targetService="appdev" setup="dev"`
+4. Restart ALL processes (Step 2) — redeployment creates a fresh container
+5. Verify features work — each feature section should render and handle POST actions
+
+If features fail: fix on mount, redeploy, re-verify (counts toward the 3-iteration limit).
+
+### Stage deployment flow (after all appdev work is complete)
+
+Stage is the final product — deploy it once with the complete codebase (skeleton + features).
 
 **Step 5: Verify prod setup (already written at generate)**
 The prod setup block was written to zerops.yaml during the generate step. Before cross-deploying, verify it matches what a real user building from git will need:
