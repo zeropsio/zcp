@@ -1,5 +1,5 @@
 {
-  "generated": "2026-03-24T08:41:44Z",
+  "generated": "2026-04-07T09:36:21Z",
   "versions": [
     "alpine@3.17",
     "alpine@3.18",
@@ -16,8 +16,8 @@
     "clickhouse@25.3",
     "deno@1",
     "deno@2",
-    "deno@2.0.0",
     "docker@26.1",
+    "dotnet@10",
     "dotnet@6",
     "dotnet@7",
     "dotnet@8",
@@ -27,7 +27,6 @@
     "elixir@1.16",
     "gleam@1.5",
     "go@1",
-    "go@1.22",
     "java@17",
     "java@21",
     "kafka@3.9",
@@ -56,8 +55,6 @@
     "php@8.0",
     "php@8.1",
     "php@8.3",
-    "php@8.4",
-    "php@8.5",
     "postgresql@14",
     "postgresql@16",
     "postgresql@17",
