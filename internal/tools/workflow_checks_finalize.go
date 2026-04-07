@@ -326,23 +326,37 @@ func checkServiceStructure(doc importYAMLDoc, svcMap map[string]importService, p
 	}
 
 	// Env 0-1: runtime services must use dev/stage hostname pairs.
+	// Exception: shared-codebase workers get only {hostname}stage — no
+	// {hostname}dev because appdev runs both processes via SSH.
 	if envIndex <= 1 {
 		for _, target := range plan.Targets {
 			if !workflow.IsRuntimeType(target.Type) {
 				continue
 			}
-			devHost := target.Hostname + "dev"
+			sharedWorker := target.IsWorker && workflow.SharesAppCodebase(target, plan)
 			stageHost := target.Hostname + "stage"
-			if _, ok := svcMap[devHost]; !ok {
-				checks = append(checks, workflow.StepCheck{
-					Name: prefix + "_" + devHost + "_exists", Status: statusFail,
-					Detail: fmt.Sprintf("env 0-1 should have %q (dev service) — do NOT use bare hostname %q", devHost, target.Hostname),
-				})
-			}
 			if _, ok := svcMap[stageHost]; !ok {
 				checks = append(checks, workflow.StepCheck{
 					Name: prefix + "_" + stageHost + "_exists", Status: statusFail,
 					Detail: fmt.Sprintf("env 0-1 should have %q (stage service) — do NOT use bare hostname %q", stageHost, target.Hostname),
+				})
+			}
+			if sharedWorker {
+				// Shared-codebase worker: no dev service — appdev is the workspace.
+				devHost := target.Hostname + "dev"
+				if _, ok := svcMap[devHost]; ok {
+					checks = append(checks, workflow.StepCheck{
+						Name: prefix + "_" + devHost + "_absent", Status: statusFail,
+						Detail: fmt.Sprintf("shared-codebase worker must NOT have %q — appdev runs both processes via SSH", devHost),
+					})
+				}
+				continue
+			}
+			devHost := target.Hostname + "dev"
+			if _, ok := svcMap[devHost]; !ok {
+				checks = append(checks, workflow.StepCheck{
+					Name: prefix + "_" + devHost + "_exists", Status: statusFail,
+					Detail: fmt.Sprintf("env 0-1 should have %q (dev service) — do NOT use bare hostname %q", devHost, target.Hostname),
 				})
 			}
 		}
