@@ -3,9 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"maps"
 	"slices"
 	"strings"
 
@@ -217,7 +217,6 @@ func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 		Detail: "dev and prod setups in zerops.yaml have bit-identical run.envVariables — the dev container will behave exactly like prod (caches enabled, stack traces hidden). Differentiate the two setups using whichever env var your framework reads for its run mode",
 	}}
 }
-
 
 // findAndParseZeropsYml locates and parses zerops.yaml from project root or mount paths.
 // Returns the parsed doc and the directory where zerops.yaml was found.

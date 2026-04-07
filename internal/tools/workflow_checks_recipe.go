@@ -3,9 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"maps"
 	"regexp"
 	"strings"
 
@@ -195,7 +195,6 @@ func checkRecipeDevProdDivergence(devEntry, prodEntry *ops.ZeropsYmlEntry) []wor
 		Name: "dev_prod_env_divergence", Status: statusPass,
 	}}
 }
-
 
 // checkReadmeFragments validates README.md contains required fragment markers and quality.
 func checkReadmeFragments(content string) []workflow.StepCheck {
