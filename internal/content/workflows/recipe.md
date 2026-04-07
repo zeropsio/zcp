@@ -210,27 +210,35 @@ Record which env vars exist. **ONLY use variables that were actually discovered*
 
 ### Completion
 ```
-zerops_workflow action="complete" step="provision" attestation="Services created: {list}. Env vars discovered: {list}. Dev mounted at /var/www/appdev/"
+zerops_workflow action="complete" step="provision" attestation="Services created: {list}. Env vars cataloged for zerops.yaml wiring (not yet active as OS vars — activate after deploy): {list}. Dev mounted at /var/www/appdev/"
 ```
 </section>
 
 <section name="generate">
 ## Generate — App Code & Configuration
 
-Write the application code, zerops.yaml, and README with documentation fragments. All files are written to the **mounted dev filesystem** at `/var/www/appdev/`.
+### Container state during generate
+
+The dev service is RUNNING (via `startWithoutCode`) but zerops.yaml has NOT been deployed yet.
+
+| Available | NOT available (activates after `zerops_deploy`) |
+|-----------|------------------------------------------------|
+| Base image tools (runtime + package manager) | Secondary build bases (added in `buildCommands`) |
+| Platform vars (hostname, serviceId) | `run.envVariables` (cross-service references) |
+| SSHFS file access to `/var/www/` | Managed-service connectivity |
+| Implicit webservers auto-serve from mount | Correct app configuration |
+
+**Only scaffold commands are safe via SSH** — project creation, `git init`, file operations. These use the base image and need no env vars.
+
+**Do NOT run any command that bootstraps the framework** — no migrations, no cache warming, no health checks, no CLI tools that attempt service connections. They WILL fail because `run.envVariables` do not exist as OS env vars yet.
+
+**Connection errors during generate are expected, not code bugs.** If a command fails with "connection refused", "driver not found", or similar: do NOT fix code, do NOT create .env files, do NOT change drivers or hardcode credentials. Continue writing files. The deploy step activates env vars.
 
 ### WHERE to write files
 
 **SSHFS mount**: `/var/www/appdev/` — write all source code, zerops.yaml, and README here.
 **Use SSHFS for file operations**, SSH for commands that use the **base image's built-in tools** (e.g., `composer create-project` on php-nginx, `git init`).
 Files placed on the mount are already on the dev container — deploy doesn't "send" them, it triggers a build from what's already there.
-
-**What's available BEFORE deploy vs AFTER deploy:**
-- Before deploy: only tools baked into the service type's base image (PHP + Composer on `php-nginx`, Go on `go`, etc.). Secondary build bases (e.g., `nodejs@22` for Vite) are NOT available — they exist only in the build container during `buildCommands`.
-- Before deploy: **zerops.yaml `run.envVariables` do NOT exist yet.** Cross-service env vars (`DB_HOST`, `REDIS_HOST`, `AWS_*`, etc.) only activate when `zerops_deploy` runs the zerops.yaml through the platform. The `startWithoutCode` container has only platform-injected vars (hostname, serviceId, etc.).
-- After deploy: `buildCommands` ran in the build container (dependencies installed), `prepareCommands` ran on the runtime (secondary runtimes installed). Now `npm`, `node`, etc. are available via SSH. All `run.envVariables` are active as OS env vars.
-- **Do NOT run package manager commands for secondary runtimes before deploy** — they will fail. Write code and config to the mount, deploy, THEN use SSH for commands that need the secondary runtime.
-- **Do NOT run any command that needs service connectivity before deploy** — no migrations, no cache warming, no health checks, no artisan/CLI commands that bootstrap the framework and attempt service connections. For implicit-webserver types (php-nginx, php-apache), PHP-FPM serves files from the mount immediately — but without zerops.yaml env vars, the app runs with framework defaults (wrong DB driver, no Redis, no S3). Defer ALL verification to the deploy step.
 
 ### What to generate per recipe type
 
@@ -512,7 +520,7 @@ Recipes are read by both humans and AI agents. Write like a senior dev explainin
 <section name="deploy">
 ## Deploy — Build, Start & Verify
 
-Deploy follows the same flow as bootstrap standard mode. Deploy dev first, verify it works, then generate stage and deploy stage.
+`zerops_deploy` processes the zerops.yaml through the platform — this is when `run.envVariables` become OS env vars and cross-service references (`${hostname_varname}`) resolve to real values. Before this step, the dev container had no service connectivity. After this step, the app is fully configured.
 
 ### Dev deployment flow
 

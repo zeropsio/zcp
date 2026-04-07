@@ -69,6 +69,17 @@ Source Code
 
 **Critical**: `run.prepareCommands` executes BEFORE deploy files are at `/var/www`. Do NOT reference `/var/www/` paths in `run.prepareCommands`. Use `build.addToRunPrepare` to copy files to `/home/zerops/`, then reference `/home/zerops/` in `run.prepareCommands`.
 
+## Environment Variable Activation
+
+| Source | When active as OS env vars |
+|--------|---------------------------|
+| Platform-injected (hostname, serviceId, zeropsSubdomain) | At container start |
+| project.envVariables (import.yaml) | At service creation, inherited by all services |
+| run.envVariables (zerops.yaml) | **Only after deploy** processes zerops.yaml |
+| envSecrets (import.yaml per-service) | At container start |
+
+A `startWithoutCode` service is RUNNING but has only platform and project-level vars. `run.envVariables` (cross-service references like `${hostname_varname}`) do not exist as OS env vars until the zerops.yaml is deployed. Implicit-webserver types (php-nginx, php-apache) auto-serve from the filesystem — the app is reachable but runs without `run.envVariables`.
+
 ## Networking
 
 ```

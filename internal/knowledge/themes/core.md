@@ -159,7 +159,7 @@ zerops[]:
 
 **How they work:**
 - **project.envVariables** (import.yaml): inherited by all services in the project. Use for any value that should be the same everywhere — shared config, shared secrets (with `<@generateRandomString(...)>`), feature flags, etc. Changes via GUI, no redeploy needed.
-- **run.envVariables** (zerops.yaml): injected at deploy time. Support `${hostname_varname}` cross-service references. Changes take effect on next deploy.
+- **run.envVariables** (zerops.yaml): become OS env vars **only after deploy** — NOT present on `startWithoutCode` containers before first deploy. Support `${hostname_varname}` cross-service references. Changes take effect on next deploy.
 - **envSecrets** (import.yaml per-service, or GUI): injected directly as OS env vars at container start. Changes require a **service restart** (not just redeploy).
 
 **Critical rules:**
@@ -185,7 +185,7 @@ zerops[]:
 
 ### Import Generation (dev/stage patterns)
 - **Standard mode:** create dev/stage pairs for runtimes. Naming: `{prefix}dev` and `{prefix}stage` (e.g., `appdev`/`appstage`, `apidev`/`apistage`). Dev mode: single `{prefix}dev`. Simple mode: single `{name}` with real start command
-- **ALWAYS** set `startWithoutCode: true` ONLY on dev services (not stage). Simple mode: set on the single service. REASON: dev starts immediately; stage stays in READY_TO_DEPLOY until code arrives
+- **ALWAYS** set `startWithoutCode: true` ONLY on dev services (not stage). Simple mode: set on the single service. REASON: dev container starts RUNNING immediately but with only platform-injected vars — `run.envVariables` from zerops.yaml do not exist until first deploy. Stage stays in READY_TO_DEPLOY until code arrives
 - **ALWAYS** set `maxContainers: 1` for dev services. REASON: dev uses SSHFS; multiple containers cause file conflicts
 - **ONLY** set `zeropsSetup` in import.yaml when using `buildFromGit`. REASON: zeropsSetup requires buildFromGit (API rejects one without the other). For workspace deploys (no buildFromGit), use `zerops_deploy setup="..."` parameter instead
 - **ALWAYS** set `minRam` high enough for initial RAM spikes (autoscaling has ~10-20s reaction time). Dev needs higher than stage/prod (compilation on container)

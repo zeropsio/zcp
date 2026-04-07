@@ -42,8 +42,8 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 // formatEnvVarsForGuide formats discovered env vars as markdown for guide injection.
 func formatEnvVarsForGuide(envVars map[string][]string) string {
 	var sb strings.Builder
-	sb.WriteString("## Discovered Environment Variables\n\n")
-	sb.WriteString("**ONLY use these in zerops.yaml envVariables. Anything else = empty at runtime.**\n\n")
+	sb.WriteString("## Discovered Environment Variables (zerops.yaml wiring — not yet active)\n\n")
+	sb.WriteString("**Cross-service references for `run.envVariables` in zerops.yaml. NOT active as OS env vars on the dev container — they activate only after `zerops_deploy`.**\n\n")
 	for hostname, vars := range envVars {
 		sb.WriteString("**" + hostname + "**: ")
 		refs := make([]string, len(vars))
