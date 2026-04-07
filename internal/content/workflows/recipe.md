@@ -62,7 +62,7 @@ Your job is to extend this accumulated base with the NEW knowledge your tier add
   - Static frontends (type 2a): set `none` — no database
   - All others: typically postgresql
 - **Migration command**: framework-specific (e.g., `php artisan migrate`). Raw SQL for runtime hello world.
-- **Seed command**: optional data seeding
+- **Seed command**: data seeding command (mandatory for recipes with a database — the dashboard must show real data on first deploy, not empty states)
 
 ### Environment & Secrets
 - **Needs app secret**: does the framework require a generated secret key for encryption/sessions?
@@ -264,7 +264,9 @@ zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`.
 **Correct order:**
 1. Scaffold the project (composer create-project, npx create-next-app, etc.)
 2. Write zerops.yaml — YOU, not a sub-agent. Use the discovered env vars and schema from this guidance.
-3. Write app code (routes, controllers, views, config changes). Sub-agents OK here — app code doesn't need the injected platform guidance.
+3. Write app code:
+   - **Types 1-3 (minimal)**: dashboard skeleton with feature sections, model + migration + seeder, routes, config changes. Write everything yourself — with only 1-2 feature sections (database CRUD, maybe cache) there's no benefit to sub-agents.
+   - **Type 4 (showcase)**: write the dashboard skeleton yourself (layout with include slots, connectivity panel, model + migration + seeder, all routes), then dispatch ONE sub-agent for all feature sections. The skeleton needs discovered env vars for connectivity checks; the feature sections use framework abstractions (DB/Cache/Storage facades) and don't need platform guidance. See "Showcase dashboard — file architecture" below.
 4. Write README with extract fragments — YOU, not a sub-agent. The integration-guide fragment must contain the SAME zerops.yaml you just wrote in step 2 (read it back from disk, don't rewrite from memory). The intro must list ALL services from the plan, not just the database.
 5. Git init + commit
 
@@ -290,6 +292,7 @@ Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific 
 - `healthCheck` (httpGet on app port + health path) — **required**; unresponsive containers get restarted
 - `deploy.readinessCheck` if `initCommands` contains migrations
 - `initCommands` for framework cache warming (Laravel `config:cache|route:cache|view:cache`, Rails `assets:precompile` if paths leak, Symfony `cache:warmup`) — **never** in buildCommands; those caches bake `/build/source/...` paths that break at `/var/www/...`
+- **If a search engine is provisioned**: `initCommands` must include the framework's search index command (e.g., `php artisan scout:import "App\\Models\\Article"`) AFTER `db:seed`. The ORM's auto-index-on-create may work during seeding, but an explicit import is the safety net — if the seeder guard skips creation (records exist from a prior deploy) while the search index is empty, auto-indexing fires zero events and search returns nothing.
 - **NO `prepareCommands` installing secondary runtimes** unless the prod START command needs them at runtime (e.g., SSR with Node). If the secondary runtime is only for BUILD (e.g., nodejs for Vite asset compilation), it's already in `build.base` — adding it to `run.prepareCommands` wastes 30s+ on every container start for no benefit. The dev setup needs `prepareCommands` because the developer runs the dev server over SSH; prod does not.
 - Framework mode flags set to prod values (`APP_ENV: production`, `NODE_ENV: production`, `DEBUG: "false"`)
 - Same cross-service ref keys as dev — **only values on mode flags differ**
@@ -324,6 +327,8 @@ Worker setup conventions (apply to both patterns):
 
 If the framework scaffolds a `.env.example` file (e.g., `composer create-project`), **keep it** — it documents the expected environment variable keys for local development. Remove `.env` (contains generated secrets), but preserve `.env.example` with empty values as a reference for users running locally.
 
+Update `.env.example` to include ALL environment variables used in zerops.yaml `envVariables`. The scaffolded defaults cover standard framework keys but miss service-specific ones added for the recipe (e.g., `MEILISEARCH_HOST`, `SCOUT_DRIVER`, `AWS_ENDPOINT`). Add missing keys with sensible local defaults (e.g., `MEILISEARCH_HOST=http://localhost:7700`, `AWS_ENDPOINT=http://localhost:9000`). A user running locally with zcli VPN should be able to copy `.env.example` to `.env` and have every key present.
+
 ### Framework environment conventions
 
 Use the framework's **standard** environment names and values — don't invent new ones. Check the framework's documentation for the correct dev/production mode flag. Wrong env names cause subtle behavior differences (e.g., debug mode not activating, error pages not showing, optimizations not running). The runtime hello-world recipe loaded during research documents the base patterns.
@@ -332,14 +337,72 @@ If the framework has a "base URL" / "app URL" / "public URL" environment variabl
 
 ### Required endpoints
 
-**Types 1, 2b, 3, 4 (server-side):**
-- `GET /` — health dashboard (HTML, shows framework name + service connectivity)
+**Types 1, 2b, 3 (server-side):**
+- `GET /` — dashboard (HTML) with interactive feature sections proving each provisioned service works
 - `GET /health` or `GET /api/health` — JSON health endpoint
 - `GET /status` — JSON status with actual connectivity checks (DB ping, cache ping, latency)
+
+The dashboard is the recipe's proof of work. Each provisioned service gets a feature section that **exercises** the service — not just a connectivity dot, but a visible demonstration of the service doing real work. What to demonstrate derives from the plan targets:
+- **Database** — list seeded records, create-record form (proves ORM + migrations + CRUD)
+- **Cache** (if provisioned) — store a value with TTL, show cached vs fresh response (proves cache driver)
+- **Object storage** (if provisioned) — upload file, list uploaded files (proves S3 integration)
+- **Search engine** (if provisioned) — live search across seeded records (proves search driver + indexing)
+- **Queue + worker** (if provisioned) — dispatch-job button, show result (proves queue driver + worker)
+
+A minimal recipe (app + db) has one feature section (database CRUD). A showcase recipe has one section per service. No section for services that aren't in the plan.
+
+The dashboard must work immediately after one-click deploy:
+- Seeder populates sample records on first deploy — no empty states ("No data yet" = broken recipe)
+- Search index is populated (`initCommands` runs the framework's index command after `db:seed`)
+- File storage is accessible on first visit (upload form works, no pre-configuration needed)
+
+**Type 4 (showcase):**
+Same endpoints as types 1-3. The additional services (cache, storage, search, worker) each add a feature section to the same dashboard page. The dashboard layout is a vertical stack of feature sections — one page, every service demonstrated.
 
 **Type 2a (static frontend):**
 - `GET /` — simple page showing framework name, greeting, timestamp, environment indicator
 - No server-side health endpoint (static files only)
+
+### Dashboard style
+
+Minimalistic, functional, demonstrative. The dashboard exists to prove integrations work, not to look like a marketing page.
+
+- Plain HTML with minimal inline styles or the framework's scaffolded CSS (Tailwind if scaffolded, otherwise raw CSS)
+- No component libraries, no icon packs, no animations, no dark mode toggles
+- Each feature section: a heading, the interactive element, and the result — nothing else
+- System font stack, generous whitespace, monochrome palette (one accent color for status indicators)
+- Mobile-responsive via simple CSS (single column on narrow screens), not a grid framework
+- No JavaScript frameworks for interactivity — vanilla JS for live search debounce, form submissions via standard POST (no fetch/XHR unless the feature specifically needs it, like live search)
+
+The visual benchmark: looks like a well-formatted diagnostic page, not a SaaS product landing page.
+
+### Showcase dashboard — file architecture
+
+When the dashboard has more than 2 feature sections (showcase recipes), each section lives in **separate files** — its own controller/handler and its own view/template/partial. The main dashboard layout includes them. This isolation lets the main agent build the skeleton first, then dispatch a sub-agent for feature implementation without file conflicts.
+
+**Main agent writes (sequential, before sub-agent):**
+1. Dashboard layout with include/import slots for each feature section
+2. All routes — display (GET) and action (POST for create, upload, dispatch)
+3. Primary model + migration + factory + seeder with sample records
+4. Service connectivity checks (the status panel at the top)
+5. zerops.yaml, README, .env.example (as specified in other sections)
+
+**Sub-agent implements (all features, one pass):**
+The main agent dispatches ONE sub-agent with a brief containing:
+- Exact file paths to create (framework-conventional locations)
+- Installed packages relevant to each feature
+- What each section must demonstrate (from the service-to-feature mapping above)
+- The HTML/component contract (layout structure, CSS approach, include mechanism)
+- Pre-registered route paths for each feature's actions
+
+The sub-agent writes all feature controllers and views sequentially. One sub-agent, all features.
+
+**Main agent resumes (after sub-agent):**
+1. Read back the feature files — verify they exist and aren't empty
+2. Git add + commit
+3. Continue to deploy step
+
+For minimal recipes (1-2 feature sections), skip the sub-agent — the main agent writes everything directly.
 
 ### Asset pipeline consistency
 
@@ -422,7 +485,10 @@ Description of why this change is needed.
 - [ ] If prod `buildCommands` compiles assets, primary view loads them via framework asset helper (not inline CSS/JS)
 - [ ] If dev build base includes a secondary runtime for an asset pipeline, dev `buildCommands` includes the package manager install
 - [ ] README has all 3 extract fragments with proper markers
-- [ ] `.env.example` preserved (`.env` removed)
+- [ ] `.env.example` preserved (`.env` removed), updated with ALL env vars from zerops.yaml
+- [ ] Dashboard has interactive feature section per provisioned service (no connectivity-only dots)
+- [ ] Seeder creates sample data — dashboard shows real records on first deploy
+- [ ] If search engine provisioned: `initCommands` includes search index population after `db:seed`
 
 ### Completion
 ```
