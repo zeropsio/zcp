@@ -65,8 +65,9 @@ func writeTemplate(templateName, path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 	return os.WriteFile(path, []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
 }

@@ -10,12 +10,12 @@ func ResetCommandRunner()                               { commandRunner = defaul
 // Git init directory overrides.
 
 func SetGitInitDir(dir string) { gitInitDir = dir }
-func ResetGitInitDir()         { gitInitDir = "/var/www" }
+func ResetGitInitDir()         { gitInitDir = defaultGitInitDir }
 
 // VS Code workspace directory overrides.
 
 func SetVSCodeWorkDir(dir string) { vsCodeWorkDir = dir }
-func ResetVSCodeWorkDir()         { vsCodeWorkDir = "/var/www" }
+func ResetVSCodeWorkDir()         { vsCodeWorkDir = defaultVSCodeWorkDir }
 
 // Nginx config overrides.
 

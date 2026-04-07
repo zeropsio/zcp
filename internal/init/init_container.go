@@ -35,9 +35,9 @@ func containerSteps() []step {
 	return steps
 }
 
-// gitInitDir is the directory to initialize as a git repo.
-// Tests can override this to avoid writing to /var/www.
-var gitInitDir = "/var/www"
+const defaultGitInitDir = "/var/www"
+
+var gitInitDir = defaultGitInitDir
 
 // configureGit sets global git identity and initializes the workspace as a repo.
 // Idempotent: git config overwrites, git init on existing repo is a no-op.
@@ -98,9 +98,9 @@ func buildClaudeJSON() ([]byte, error) {
 	return json.Marshal(base)
 }
 
-// vsCodeWorkDir is the workspace root for VS Code terminal config.
-// Tests can override this to avoid writing to /var/www.
-var vsCodeWorkDir = "/var/www"
+const defaultVSCodeWorkDir = "/var/www"
+
+var vsCodeWorkDir = defaultVSCodeWorkDir
 
 // configureVSCode writes code-server user settings, terminal config, and
 // installs the Claude Code extension. Only called when ZCP_VSCODE=true.
