@@ -227,8 +227,10 @@ Files placed on the mount are already on the dev container — deploy doesn't "s
 
 **What's available BEFORE deploy vs AFTER deploy:**
 - Before deploy: only tools baked into the service type's base image (PHP + Composer on `php-nginx`, Go on `go`, etc.). Secondary build bases (e.g., `nodejs@22` for Vite) are NOT available — they exist only in the build container during `buildCommands`.
-- After deploy: `buildCommands` ran in the build container (dependencies installed), `prepareCommands` ran on the runtime (secondary runtimes installed). Now `npm`, `node`, etc. are available via SSH.
+- Before deploy: **zerops.yaml `run.envVariables` do NOT exist yet.** Cross-service env vars (`DB_HOST`, `REDIS_HOST`, `AWS_*`, etc.) only activate when `zerops_deploy` runs the zerops.yaml through the platform. The `startWithoutCode` container has only platform-injected vars (hostname, serviceId, etc.).
+- After deploy: `buildCommands` ran in the build container (dependencies installed), `prepareCommands` ran on the runtime (secondary runtimes installed). Now `npm`, `node`, etc. are available via SSH. All `run.envVariables` are active as OS env vars.
 - **Do NOT run package manager commands for secondary runtimes before deploy** — they will fail. Write code and config to the mount, deploy, THEN use SSH for commands that need the secondary runtime.
+- **Do NOT run any command that needs service connectivity before deploy** — no migrations, no cache warming, no health checks, no artisan/CLI commands that bootstrap the framework and attempt service connections. For implicit-webserver types (php-nginx, php-apache), PHP-FPM serves files from the mount immediately — but without zerops.yaml env vars, the app runs with framework defaults (wrong DB driver, no Redis, no S3). Defer ALL verification to the deploy step.
 
 ### What to generate per recipe type
 
