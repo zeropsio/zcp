@@ -242,7 +242,7 @@ func recipeIntroServiceList(plan *RecipePlan) string {
 		if kind == kindDatabase {
 			continue // already covered by DBDriver
 		}
-		names = append(names, serviceIntroLabel(t.Type, kind))
+		names = append(names, serviceIntroLabel(t.Type))
 	}
 	if len(names) == 0 {
 		return ""
@@ -254,7 +254,7 @@ func recipeIntroServiceList(plan *RecipePlan) string {
 }
 
 // serviceIntroLabel returns a human-readable label for a service type in the intro.
-func serviceIntroLabel(serviceType, kind string) string {
+func serviceIntroLabel(serviceType string) string {
 	base, _, _ := strings.Cut(strings.ToLower(serviceType), "@")
 	switch base {
 	case "valkey", "keydb":
