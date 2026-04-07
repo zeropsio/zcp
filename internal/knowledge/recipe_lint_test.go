@@ -55,15 +55,11 @@ func loadKnownVersions(t *testing.T) map[string]bool {
 			bases[base] = true
 		}
 	}
-	// Add @latest aliases for any base that has at least one active version.
+	// Add @latest aliases and base-type sentinels for any base with at least
+	// one active version. Base-type fallback catches edge cases where a recipe
+	// references a version the schema enums haven't added yet.
 	for base := range bases {
 		m[base+"@latest"] = true
-	}
-	// Accept any version of a known base type. Recipes may reference future
-	// versions (php@8.5) or more-specific versions (go@1.22) that aren't in
-	// the catalog yet. The lint validates the base type exists, not the exact
-	// version — the live platform validates exact versions at deploy time.
-	for base := range bases {
 		m["base:"+base] = true
 	}
 	// Platform aliases: the API uses "golang" but the catalog uses "go".

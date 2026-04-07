@@ -7,9 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/catalog"
-	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // defaultSnapshotPath is the committed snapshot location for test validation.
@@ -31,17 +29,7 @@ func runCatalog(args []string) {
 }
 
 func runCatalogSync() {
-	creds, err := auth.ResolveCredentials()
-	if err != nil {
-		log.Fatalf("auth: %v", err)
-	}
-
-	client, err := platform.NewZeropsClient(creds.Token, creds.APIHost)
-	if err != nil {
-		log.Fatalf("client: %v", err)
-	}
-
-	snap, err := catalog.Sync(context.Background(), client, defaultSnapshotPath)
+	snap, err := catalog.Sync(context.Background(), defaultSnapshotPath)
 	if err != nil {
 		log.Fatalf("catalog sync: %v", err)
 	}

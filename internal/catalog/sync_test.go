@@ -1,131 +1,88 @@
 package catalog
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
-func TestSync_WritesSnapshot(t *testing.T) {
+func TestMergeVersions_Deduplicates(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name           string
-		types          []platform.ServiceStackType
-		wantContains   []string
-		wantNotContain []string
-	}{
-		{
-			name: "active versions collected and specials added",
-			types: []platform.ServiceStackType{
-				{
-					Name:     "Node.js",
-					Category: "USER",
-					Versions: []platform.ServiceStackTypeVersion{
-						{Name: "nodejs@22", Status: "ACTIVE"},
-						{Name: "nodejs@20", Status: "ACTIVE"},
-						{Name: "nodejs@18", Status: "DEPRECATED"},
-					},
-				},
-				{
-					Name:     "Go",
-					Category: "USER",
-					Versions: []platform.ServiceStackTypeVersion{
-						{Name: "go@1", Status: "ACTIVE"},
-					},
-				},
-			},
-			wantContains:   []string{"nodejs@22", "nodejs@20", "go@1", "object-storage", "shared-storage", "static"},
-			wantNotContain: []string{"nodejs@18"},
+	schemas := &schema.Schemas{
+		ZeropsYml: &schema.ZeropsYmlSchema{
+			BuildBases: []string{"php@8.4", "nodejs@22", "go@1"},
+			RunBases:   []string{"php-nginx@8.4", "nodejs@22", "static"}, // nodejs@22 is a dupe
 		},
-		{
-			name:         "empty catalog still has specials",
-			types:        nil,
-			wantContains: []string{"object-storage", "shared-storage", "static"},
-		},
-		{
-			name: "deduplicates versions",
-			types: []platform.ServiceStackType{
-				{
-					Name:     "PHP",
-					Category: "USER",
-					Versions: []platform.ServiceStackTypeVersion{
-						{Name: "php@8.4", Status: "ACTIVE"},
-					},
-				},
-				{
-					Name:     "PHP Apache",
-					Category: "USER",
-					Versions: []platform.ServiceStackTypeVersion{
-						{Name: "php@8.4", Status: "ACTIVE"},
-					},
-				},
-			},
-			wantContains: []string{"php@8.4"},
+		ImportYml: &schema.ImportYmlSchema{
+			ServiceTypes: []string{"php-nginx@8.4", "postgresql@16", "static"}, // php-nginx@8.4 and static are dupes
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	versions := mergeVersions(schemas)
 
-			mock := platform.NewMock().WithServiceStackTypes(tt.types)
+	set := make(map[string]bool, len(versions))
+	for _, v := range versions {
+		if set[v] {
+			t.Errorf("duplicate version %q", v)
+		}
+		set[v] = true
+	}
 
-			outPath := filepath.Join(t.TempDir(), "active_versions.json")
-			snap, err := Sync(context.Background(), mock, outPath)
-			if err != nil {
-				t.Fatalf("Sync: %v", err)
-			}
+	want := []string{"php@8.4", "nodejs@22", "go@1", "php-nginx@8.4", "static", "postgresql@16"}
+	for _, w := range want {
+		if !set[w] {
+			t.Errorf("missing expected version %q", w)
+		}
+	}
+}
 
-			// Verify file was written and is valid JSON.
-			data, err := os.ReadFile(outPath)
-			if err != nil {
-				t.Fatalf("read snapshot: %v", err)
-			}
+func TestMergeVersions_NilSchemas(t *testing.T) {
+	t.Parallel()
 
-			var fromFile Snapshot
-			if err := json.Unmarshal(data, &fromFile); err != nil {
-				t.Fatalf("parse snapshot: %v", err)
-			}
+	schemas := &schema.Schemas{}
+	versions := mergeVersions(schemas)
+	if len(versions) != 0 {
+		t.Errorf("expected 0 versions from nil schemas, got %d", len(versions))
+	}
+}
 
-			// Verify timestamp is recent.
-			gen, err := time.Parse(time.RFC3339, snap.Generated)
-			if err != nil {
-				t.Fatalf("parse generated time: %v", err)
-			}
-			if time.Since(gen) > time.Minute {
-				t.Errorf("generated timestamp too old: %s", snap.Generated)
-			}
+func TestWriteSnapshot_ValidJSON(t *testing.T) {
+	t.Parallel()
 
-			// Verify expected versions present.
-			versionSet := make(map[string]bool, len(snap.Versions))
-			for _, v := range snap.Versions {
-				versionSet[v] = true
-			}
+	snap := &Snapshot{
+		Generated: time.Now().UTC().Format(time.RFC3339),
+		Versions:  []string{"go@1", "nodejs@22", "static"},
+	}
 
-			for _, want := range tt.wantContains {
-				if !versionSet[want] {
-					t.Errorf("missing expected version %q in %v", want, snap.Versions)
-				}
-			}
-			for _, notWant := range tt.wantNotContain {
-				if versionSet[notWant] {
-					t.Errorf("unexpected version %q in %v", notWant, snap.Versions)
-				}
-			}
+	outPath := filepath.Join(t.TempDir(), "active_versions.json")
+	if err := writeSnapshot(snap, outPath); err != nil {
+		t.Fatalf("writeSnapshot: %v", err)
+	}
 
-			// Verify sorted.
-			for i := 1; i < len(snap.Versions); i++ {
-				if snap.Versions[i] < snap.Versions[i-1] {
-					t.Errorf("versions not sorted: %q before %q", snap.Versions[i-1], snap.Versions[i])
-					break
-				}
-			}
-		})
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	var fromFile Snapshot
+	if err := json.Unmarshal(data, &fromFile); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if len(fromFile.Versions) != 3 {
+		t.Errorf("expected 3 versions, got %d", len(fromFile.Versions))
+	}
+
+	gen, err := time.Parse(time.RFC3339, fromFile.Generated)
+	if err != nil {
+		t.Fatalf("parse generated: %v", err)
+	}
+	if time.Since(gen) > time.Minute {
+		t.Errorf("generated timestamp too old: %s", fromFile.Generated)
 	}
 }

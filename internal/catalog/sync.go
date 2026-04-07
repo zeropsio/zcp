@@ -1,5 +1,5 @@
-// Package catalog provides API-driven version catalog management.
-// Used to generate offline snapshots of active platform versions for test validation.
+// Package catalog provides version catalog management from public Zerops JSON schemas.
+// Used to generate offline snapshots of valid platform versions for test validation.
 package catalog
 
 import (
@@ -9,55 +9,28 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
-	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/schema"
 )
 
-// Snapshot represents a point-in-time capture of active platform versions.
+// Snapshot represents a point-in-time capture of valid platform versions.
 type Snapshot struct {
 	Generated string   `json:"generated"`
 	Versions  []string `json:"versions"`
 }
 
-// specialTypes are service types not returned by the API catalog.
-var specialTypes = []string{"object-storage", "shared-storage", "static"}
-
-// internalPrefixes are version name prefixes for internal/system service types
-// that should be excluded from the recipe validation catalog.
-var internalPrefixes = []string{"prepare-", "prepare_"}
-
-// internalNames are exact version names for internal/system service types.
-var internalNames = map[string]bool{
-	"build_runtime":    true,
-	"core":             true,
-	"l7-http-balancer": true,
-	"runtime":          true,
-}
-
-// Sync fetches all ACTIVE service stack type versions from the platform API
-// and writes a sorted snapshot to the given path.
-func Sync(ctx context.Context, client platform.Client, outPath string) (*Snapshot, error) {
-	types, err := client.ListServiceStackTypes(ctx)
+// Sync fetches the public zerops.yaml and import.yaml JSON schemas, extracts
+// all valid version strings (build bases, run bases, service types), deduplicates
+// and sorts them, then writes the snapshot to outPath.
+// No authentication required — schemas are public endpoints.
+func Sync(ctx context.Context, outPath string) (*Snapshot, error) {
+	schemas, err := schema.FetchSchemas(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list service stack types: %w", err)
+		return nil, fmt.Errorf("fetch schemas: %w", err)
 	}
 
-	versions := activeVersions(types)
-
-	// Add special types not in API (deduplicated).
-	seen := make(map[string]bool, len(versions))
-	for _, v := range versions {
-		seen[v] = true
-	}
-	for _, st := range specialTypes {
-		if !seen[st] {
-			versions = append(versions, st)
-			seen[st] = true
-		}
-	}
-
+	versions := mergeVersions(schemas)
 	sort.Strings(versions)
 
 	snap := &Snapshot{
@@ -72,34 +45,30 @@ func Sync(ctx context.Context, client platform.Client, outPath string) (*Snapsho
 	return snap, nil
 }
 
-// activeVersions extracts all ACTIVE version names from the platform catalog,
-// excluding internal/system types.
-func activeVersions(types []platform.ServiceStackType) []string {
+// mergeVersions combines build bases, run bases, and import service types
+// into a single deduplicated list.
+func mergeVersions(schemas *schema.Schemas) []string {
 	seen := make(map[string]bool)
 	var versions []string
-	for _, st := range types {
-		for _, v := range st.Versions {
-			if v.Status != "ACTIVE" || seen[v.Name] || isInternal(v.Name) {
-				continue
-			}
-			seen[v.Name] = true
-			versions = append(versions, v.Name)
-		}
-	}
-	return versions
-}
 
-// isInternal returns true if the version name is an internal/system type.
-func isInternal(name string) bool {
-	if internalNames[name] {
-		return true
-	}
-	for _, prefix := range internalPrefixes {
-		if strings.HasPrefix(name, prefix) {
-			return true
+	add := func(values []string) {
+		for _, v := range values {
+			if v != "" && !seen[v] {
+				seen[v] = true
+				versions = append(versions, v)
+			}
 		}
 	}
-	return false
+
+	if schemas.ZeropsYml != nil {
+		add(schemas.ZeropsYml.BuildBases)
+		add(schemas.ZeropsYml.RunBases)
+	}
+	if schemas.ImportYml != nil {
+		add(schemas.ImportYml.ServiceTypes)
+	}
+
+	return versions
 }
 
 func writeSnapshot(snap *Snapshot, path string) error {
