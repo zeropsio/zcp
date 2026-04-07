@@ -247,6 +247,19 @@ Files placed on the mount are already on the dev container — deploy doesn't "s
 
 zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`. During workspace deploy, the `zerops_deploy` tool's `setup` parameter maps the service hostname to the correct setup name (e.g. `targetService="appdev" setup="dev"`). In recipe import.yaml, `zeropsSetup: dev`/`zeropsSetup: prod` does the same mapping for `buildFromGit` deploys.
 
+### Execution order — no sub-agents for zerops.yaml or README
+
+**Write zerops.yaml and README yourself (the main agent), sequentially.** Do NOT delegate them to sub-agents. Sub-agents lose the injected guidance (discovered env vars, zerops.yaml schema, comment ratio rules, prepareCommands constraints) and produce wrong output — showcase v1-v4 all failed on sub-agent-written zerops.yaml (wrong prepareCommands, 15% comment ratio, missing env vars) or README (incomplete intro, divergent zerops.yaml copy).
+
+**Correct order:**
+1. Scaffold the project (composer create-project, npx create-next-app, etc.)
+2. Write zerops.yaml — YOU, not a sub-agent. Use the discovered env vars and schema from this guidance.
+3. Write app code (routes, controllers, views, config changes). Sub-agents OK here — app code doesn't need the injected platform guidance.
+4. Write README with extract fragments — YOU, not a sub-agent. The integration-guide fragment must contain the SAME zerops.yaml you just wrote in step 2 (read it back from disk, don't rewrite from memory). The intro must list ALL services from the plan, not just the database.
+5. Git init + commit
+
+**Why this order matters:** zerops.yaml is the single source of truth. The README's integration-guide copies it verbatim. If two sub-agents write them independently, they diverge. If a sub-agent writes zerops.yaml without the injected guidance, it misses rules that only exist in this step's DetailedGuide.
+
 ### zerops.yaml — Write ALL setups at once
 
 Write the complete zerops.yaml with ALL setup entries in a single file. Minimal recipes have TWO setups (`dev` + `prod`). Showcase recipes have THREE (`dev` + `prod` + `worker`). The same file is the source of truth for the deploy step AND for the README integration-guide fragment — writing it once eliminates drift between what deploys and what the README documents. The deploy step will verify dev against the live service, then cross-deploy the already-written prod/worker configs to stage.
@@ -267,6 +280,7 @@ Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific 
 - `healthCheck` (httpGet on app port + health path) — **required**; unresponsive containers get restarted
 - `deploy.readinessCheck` if `initCommands` contains migrations
 - `initCommands` for framework cache warming (Laravel `config:cache|route:cache|view:cache`, Rails `assets:precompile` if paths leak, Symfony `cache:warmup`) — **never** in buildCommands; those caches bake `/build/source/...` paths that break at `/var/www/...`
+- **NO `prepareCommands` installing secondary runtimes** unless the prod START command needs them at runtime (e.g., SSR with Node). If the secondary runtime is only for BUILD (e.g., nodejs for Vite asset compilation), it's already in `build.base` — adding it to `run.prepareCommands` wastes 30s+ on every container start for no benefit. The dev setup needs `prepareCommands` because the developer runs the dev server over SSH; prod does not.
 - Framework mode flags set to prod values (`APP_ENV: production`, `NODE_ENV: production`, `DEBUG: "false"`)
 - Same cross-service ref keys as dev — **only values on mode flags differ**
 

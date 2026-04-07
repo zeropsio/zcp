@@ -96,6 +96,59 @@ func TestGenerateRecipeREADME_Showcase(t *testing.T) {
 	if !strings.Contains(readme, "Showcase") {
 		t.Error("expected README to mention showcase")
 	}
+	// Showcase intro must list ALL services, not just the DB.
+	for _, want := range []string{"MariaDB", "Valkey", "Meilisearch", "object storage"} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("showcase intro missing service %q", want)
+		}
+	}
+}
+
+func TestRecipeIntroServiceList(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		plan     *RecipePlan
+		wantSubs []string
+		wantNot  []string
+	}{
+		{
+			name:     "minimal DB only",
+			plan:     testMinimalPlan(),
+			wantSubs: []string{"connected to", "MariaDB"},
+			wantNot:  []string{"Valkey", "and"},
+		},
+		{
+			name:     "showcase lists all services",
+			plan:     testShowcasePlan(),
+			wantSubs: []string{"connected to", "MariaDB", "Valkey", "Meilisearch", "object storage"},
+		},
+		{
+			name: "no DB no services",
+			plan: &RecipePlan{
+				Research: ResearchData{DBDriver: recipeDBNone},
+				Targets:  []RecipeTarget{{Hostname: "app", Type: "nodejs@22"}},
+			},
+			wantSubs: []string{""}, // empty string = no service list
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := recipeIntroServiceList(tt.plan)
+			for _, want := range tt.wantSubs {
+				if !strings.Contains(got, want) {
+					t.Errorf("expected %q in %q", want, got)
+				}
+			}
+			for _, notWant := range tt.wantNot {
+				if strings.Contains(got, notWant) {
+					t.Errorf("unexpected %q in %q", notWant, got)
+				}
+			}
+		})
+	}
 }
 
 func TestGenerateRecipeREADME_HelloWorld(t *testing.T) {

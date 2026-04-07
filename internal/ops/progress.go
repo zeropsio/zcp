@@ -132,9 +132,10 @@ func pollBuild(
 
 // isBuildInProgress returns true only for known in-progress build states.
 // Unknown statuses are treated as terminal (fail-safe: stop polling immediately).
+// Full lifecycle: UPLOADING → WAITING_TO_BUILD → BUILDING → PREPARING_RUNTIME → WAITING_TO_DEPLOY → DEPLOYING → ACTIVE
 func isBuildInProgress(status string) bool {
 	switch status {
-	case "UPLOADING", "BUILDING", "DEPLOYING":
+	case "UPLOADING", "WAITING_TO_BUILD", "BUILDING", "PREPARING_RUNTIME", "WAITING_TO_DEPLOY", "DEPLOYING":
 		return true
 	default:
 		return false

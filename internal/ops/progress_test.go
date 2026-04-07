@@ -334,6 +334,45 @@ func TestPollBuild_UploadingThroughActive(t *testing.T) {
 	}
 }
 
+func TestPollBuild_FullLifecycleThroughActive(t *testing.T) {
+	t.Parallel()
+
+	// Full AppVersion lifecycle: UPLOADING → WAITING_TO_BUILD → BUILDING →
+	// PREPARING_RUNTIME → WAITING_TO_DEPLOY → DEPLOYING → ACTIVE.
+	// All intermediate states must be treated as in-progress.
+	seq := newBuildSequencer(
+		"UPLOADING", "WAITING_TO_BUILD", "WAITING_TO_BUILD",
+		statusBuilding, "PREPARING_RUNTIME", "WAITING_TO_DEPLOY",
+		"DEPLOYING", statusActive,
+	)
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != statusActive {
+		t.Errorf("status = %s, want ACTIVE", event.Status)
+	}
+}
+
+func TestPollBuild_WaitingToBuild_IsInProgress(t *testing.T) {
+	t.Parallel()
+
+	// WAITING_TO_BUILD occurs when a deploy is queued behind another build.
+	// The poller must wait, not treat it as terminal (which caused double deploys).
+	seq := newBuildSequencer("WAITING_TO_BUILD", "WAITING_TO_BUILD", statusBuilding, statusActive)
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.Status != statusActive {
+		t.Errorf("status = %s, want ACTIVE", event.Status)
+	}
+}
+
 func TestPollBuild_NoEventThenAppears(t *testing.T) {
 	t.Parallel()
 

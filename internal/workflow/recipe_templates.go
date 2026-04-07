@@ -69,11 +69,11 @@ func GenerateRecipeREADME(plan *RecipePlan) string {
 	pretty := recipePrettyName(plan.Slug, plan.Framework)
 	fmt.Fprintf(&b, "# %s %s Recipe\n\n", title, pretty)
 
-	// Intro with extract markers.
+	// Intro with extract markers — list ALL managed/utility services, not just DB.
 	b.WriteString("<!-- #ZEROPS_EXTRACT_START:intro# -->\n")
 	fmt.Fprintf(&b, "A [%s](%s) application", title, frameworkURL(plan.Framework))
-	if plan.Research.DBDriver != "" && plan.Research.DBDriver != recipeDBNone {
-		fmt.Fprintf(&b, " connected to %s,", dbDisplayName(plan.Research.DBDriver))
+	if svcList := recipeIntroServiceList(plan); svcList != "" {
+		fmt.Fprintf(&b, " %s,", svcList)
 	}
 	b.WriteString(" running on [Zerops](https://zerops.io) with six ready-made environment configurations")
 	b.WriteString(" \u2014 from AI agent and remote development to stage and highly-available production.\n")
@@ -222,6 +222,63 @@ func frameworkURL(framework string) string {
 		return u
 	}
 	return "https://zerops.io"
+}
+
+// recipeIntroServiceList builds the "connected to X, Y, and Z" phrase for the
+// recipe intro. Minimal recipes mention only the DB. Showcase recipes list all
+// managed/utility services so the intro reflects the full recipe capability.
+func recipeIntroServiceList(plan *RecipePlan) string {
+	var names []string
+	// DB from research.
+	if plan.Research.DBDriver != "" && plan.Research.DBDriver != recipeDBNone {
+		names = append(names, dbDisplayName(plan.Research.DBDriver))
+	}
+	// Additional services from plan targets (non-runtime, non-DB).
+	for _, t := range plan.Targets {
+		if IsRuntimeType(t.Type) {
+			continue
+		}
+		kind := serviceTypeKind(t.Type)
+		if kind == kindDatabase {
+			continue // already covered by DBDriver
+		}
+		names = append(names, serviceIntroLabel(t.Type, kind))
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	if len(names) == 1 {
+		return "connected to " + names[0]
+	}
+	return "connected to " + strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
+}
+
+// serviceIntroLabel returns a human-readable label for a service type in the intro.
+func serviceIntroLabel(serviceType, kind string) string {
+	base, _, _ := strings.Cut(strings.ToLower(serviceType), "@")
+	switch base {
+	case "valkey", "keydb":
+		return "[Valkey](https://valkey.io/) (Redis-compatible)"
+	case svcMeilisearch:
+		return "[Meilisearch](https://www.meilisearch.com/)"
+	case "elasticsearch":
+		return "[Elasticsearch](https://www.elastic.co/)"
+	case "qdrant":
+		return "[Qdrant](https://qdrant.tech/)"
+	case "typesense":
+		return "[Typesense](https://typesense.org/)"
+	case "object-storage":
+		return "S3-compatible object storage"
+	case "shared-storage":
+		return "shared storage"
+	case "nats":
+		return "[NATS](https://nats.io/)"
+	case "kafka":
+		return "[Kafka](https://kafka.apache.org/)"
+	case "mailpit":
+		return "[Mailpit](https://mailpit.axllent.org/)"
+	}
+	return base
 }
 
 // dbDisplayName returns a display name for a DB driver.
