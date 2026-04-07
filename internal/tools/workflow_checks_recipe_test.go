@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -548,6 +549,38 @@ func TestExtractYAMLBlock(t *testing.T) {
 				t.Errorf("extractYAMLBlock() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCheckZeropsYmlSize_OverLimit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// Write a zerops.yaml that exceeds 10KB.
+	bigYaml := "zerops:\n" + strings.Repeat("  # This is a very long comment line to pad the file size\n", 200)
+	writeFile(t, filepath.Join(dir, "zerops.yaml"), bigYaml)
+
+	checks := checkZeropsYmlSize(dir)
+	if len(checks) == 0 {
+		t.Fatal("expected check result")
+	}
+	if checks[0].Status != "fail" {
+		t.Errorf("expected fail for >10KB file, got %q: %s", checks[0].Status, checks[0].Detail)
+	}
+}
+
+func TestCheckZeropsYmlSize_UnderLimit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "zerops.yaml"), "zerops:\n  - setup: dev\n    build:\n      base: php@8.4\n")
+
+	checks := checkZeropsYmlSize(dir)
+	if len(checks) == 0 {
+		t.Fatal("expected check result")
+	}
+	if checks[0].Status != "pass" {
+		t.Errorf("expected pass for small file, got %q: %s", checks[0].Status, checks[0].Detail)
 	}
 }
 
