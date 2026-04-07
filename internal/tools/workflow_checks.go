@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -10,6 +11,22 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// projectRootFromState derives the project root from a state directory path.
+// Convention: stateDir = {projectRoot}/.zcp/state/
+func projectRootFromState(stateDir string) string {
+	return filepath.Dir(filepath.Dir(stateDir))
+}
+
+// checksAllPassed returns true if no check has statusFail.
+func checksAllPassed(checks []workflow.StepCheck) bool {
+	for i := range checks {
+		if checks[i].Status == statusFail {
+			return false
+		}
+	}
+	return true
+}
 
 const (
 	stepProvision     = "provision"

@@ -29,7 +29,7 @@ func cleanupImportYAML(stateDir string, mounts []workflow.AutoMountInfo, isConta
 		return
 	}
 
-	projectRoot := filepath.Dir(filepath.Dir(stateDir))
+	projectRoot := projectRootFromState(stateDir)
 
 	fileNames := []string{"import.yaml", "import.yml"}
 	var found string

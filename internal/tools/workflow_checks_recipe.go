@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"maps"
 	"regexp"
 	"strings"
 
@@ -32,7 +33,7 @@ func checkRecipeFinalizeFromState(stateDir string) workflow.RecipeStepChecker {
 		if state != nil && state.OutputDir != "" {
 			outputDir = state.OutputDir
 		} else if stateDir != "" {
-			outputDir = filepath.Dir(filepath.Dir(stateDir))
+			outputDir = projectRootFromState(stateDir)
 		}
 		checker := checkRecipeFinalize(outputDir)
 		return checker(ctx, plan, state)
@@ -53,7 +54,7 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 			return nil, nil
 		}
 
-		projectRoot := filepath.Dir(filepath.Dir(stateDir))
+		projectRoot := projectRootFromState(stateDir)
 
 		var checks []workflow.StepCheck
 
@@ -108,13 +109,7 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 			checks = append(checks, checkReadmeFragments(string(readmeContent))...)
 		}
 
-		allPassed := true
-		for i := range checks {
-			if checks[i].Status == statusFail {
-				allPassed = false
-				break
-			}
-		}
+		allPassed := checksAllPassed(checks)
 		summary := "recipe generate checks passed"
 		if !allPassed {
 			summary = "recipe generate checks failed"
@@ -189,7 +184,7 @@ func checkRecipeDevProdDivergence(devEntry, prodEntry *ops.ZeropsYmlEntry) []wor
 	if len(devEnv) == 0 || len(prodEnv) == 0 {
 		return nil
 	}
-	if recipeEnvMapsEqual(devEnv, prodEnv) {
+	if maps.Equal(devEnv, prodEnv) {
 		return []workflow.StepCheck{{
 			Name:   "dev_prod_env_divergence",
 			Status: statusFail,
@@ -201,18 +196,6 @@ func checkRecipeDevProdDivergence(devEntry, prodEntry *ops.ZeropsYmlEntry) []wor
 	}}
 }
 
-// recipeEnvMapsEqual reports whether two env var maps carry the same keys and values.
-func recipeEnvMapsEqual(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if bv, ok := b[k]; !ok || bv != v {
-			return false
-		}
-	}
-	return true
-}
 
 // checkReadmeFragments validates README.md contains required fragment markers and quality.
 func checkReadmeFragments(content string) []workflow.StepCheck {

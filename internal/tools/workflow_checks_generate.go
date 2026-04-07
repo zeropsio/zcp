@@ -26,7 +26,7 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 		}
 
 		// Derive project root from stateDir ({projectRoot}/.zcp/state/).
-		projectRoot := filepath.Dir(filepath.Dir(stateDir))
+		projectRoot := projectRootFromState(stateDir)
 
 		var checks []workflow.StepCheck
 
@@ -60,13 +60,7 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 			checks = append(checks, checkGenerateEntry(doc, hostname, target, state)...)
 		}
 
-		allPassed := true
-		for i := range checks {
-			if checks[i].Status == statusFail {
-				allPassed = false
-				break
-			}
-		}
+		allPassed := checksAllPassed(checks)
 		summary := "generate checks passed"
 		if !allPassed {
 			summary = "generate checks failed"

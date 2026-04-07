@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"maps"
 	"slices"
 	"strings"
 
@@ -36,7 +37,7 @@ func checkDeployPrepare(client platform.Client, projectID, stateDir string) work
 		}
 
 		// Derive project root from stateDir ({projectRoot}/.zcp/state/).
-		projectRoot := filepath.Dir(filepath.Dir(stateDir))
+		projectRoot := projectRootFromState(stateDir)
 
 		var checks []workflow.StepCheck
 
@@ -92,13 +93,7 @@ func checkDeployPrepare(client platform.Client, projectID, stateDir string) work
 			}
 		}
 
-		allPassed := true
-		for _, c := range checks {
-			if c.Status == statusFail {
-				allPassed = false
-				break
-			}
-		}
+		allPassed := checksAllPassed(checks)
 		summary := "prepare checks passed"
 		if !allPassed {
 			summary = "prepare checks failed"
@@ -211,7 +206,7 @@ func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 		return nil
 	}
 
-	if !envMapsEqual(devEnv, prodEnv) {
+	if !maps.Equal(devEnv, prodEnv) {
 		return []workflow.StepCheck{{
 			Name: "dev_prod_env_divergence", Status: statusPass,
 		}}
@@ -223,18 +218,6 @@ func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 	}}
 }
 
-// envMapsEqual reports whether two string maps carry the same keys and values.
-func envMapsEqual(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if bv, ok := b[k]; !ok || bv != v {
-			return false
-		}
-	}
-	return true
-}
 
 // findAndParseZeropsYml locates and parses zerops.yaml from project root or mount paths.
 // Returns the parsed doc and the directory where zerops.yaml was found.
