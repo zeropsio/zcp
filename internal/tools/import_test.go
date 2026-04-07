@@ -21,7 +21,7 @@ func TestImportTool_Content(t *testing.T) {
 			ProjectName: "myproject",
 			ServiceStacks: []platform.ImportedServiceStack{
 				{ID: "svc-1", Name: "api", Processes: []platform.Process{
-					{ID: "p-1", ActionName: "serviceStackImport", Status: "RUNNING"},
+					{ID: "p-1", ActionName: "serviceStackImport", Status: serviceStatusRunning},
 				}},
 			},
 		}).
@@ -195,7 +195,7 @@ func TestImportTool_WithWorkflowSession_Succeeds(t *testing.T) {
 			ProjectName: "myproject",
 			ServiceStacks: []platform.ImportedServiceStack{
 				{ID: "svc-1", Name: "api", Processes: []platform.Process{
-					{ID: "p-1", ActionName: "serviceStackImport", Status: "RUNNING"},
+					{ID: "p-1", ActionName: "serviceStackImport", Status: serviceStatusRunning},
 				}},
 			},
 		}).

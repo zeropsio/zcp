@@ -41,7 +41,7 @@ func TestCheckDeployResult_EmptyTargets_ReturnsNil(t *testing.T) {
 func TestCheckDeployResult_ServiceRunning_Passes(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "ACTIVE", SubdomainAccess: true},
+		{ID: "s1", Name: "appdev", Status: serviceStatusActive, SubdomainAccess: true},
 	})
 	state := &workflow.DeployState{
 		Targets: []workflow.DeployTarget{
@@ -79,7 +79,7 @@ func TestCheckDeployResult_ServiceNotFound_Fails(t *testing.T) {
 func TestCheckDeployResult_ReadyToDeploy_Fails(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "READY_TO_DEPLOY"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusReadyToDeploy},
 	})
 	state := &workflow.DeployState{
 		Targets: []workflow.DeployTarget{
@@ -110,7 +110,7 @@ func TestCheckDeployResult_NoSubdomain_Fails(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
 		{
-			ID: "s1", Name: "appdev", Status: "ACTIVE",
+			ID: "s1", Name: "appdev", Status: serviceStatusActive,
 			SubdomainAccess: false,
 			Ports:           []platform.Port{{Port: 3000}},
 		},

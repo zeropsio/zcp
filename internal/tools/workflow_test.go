@@ -986,8 +986,8 @@ func TestBootstrapProvision_AutoMount_ContainerEnv(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "svc-1", Name: "appdev", Status: "RUNNING"},
-		{ID: "svc-2", Name: "db", Status: "RUNNING"},
+		{ID: "svc-1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "svc-2", Name: "db", Status: serviceStatusRunning},
 	}).WithServiceEnv("svc-2", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
 	mounter := newTestMounter()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
@@ -1033,7 +1033,7 @@ func TestBootstrapProvision_AutoMount_ContainerEnv(t *testing.T) {
 	if resp.AutoMounts[0].Hostname != "appdev" {
 		t.Errorf("AutoMounts[0].Hostname = %q, want appdev", resp.AutoMounts[0].Hostname)
 	}
-	if resp.AutoMounts[0].Status != "MOUNTED" {
+	if resp.AutoMounts[0].Status != mountStatusMounted {
 		t.Errorf("AutoMounts[0].Status = %q, want MOUNTED", resp.AutoMounts[0].Status)
 	}
 	if resp.AutoMounts[0].MountPath == "" {
@@ -1050,7 +1050,7 @@ func TestBootstrapProvision_AutoMount_LocalEnv_NoMount(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "svc-1", Name: "appdev", Status: "RUNNING"},
+		{ID: "svc-1", Name: "appdev", Status: serviceStatusRunning},
 	})
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -1094,8 +1094,8 @@ func TestBootstrapProvision_AutoMount_MultipleTargets(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "svc-1", Name: "appdev", Status: "RUNNING"},
-		{ID: "svc-2", Name: "apidev", Status: "RUNNING"},
+		{ID: "svc-1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "svc-2", Name: "apidev", Status: serviceStatusRunning},
 	})
 	mounter := newTestMounter()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
@@ -1141,7 +1141,7 @@ func TestBootstrapProvision_AutoMount_MultipleTargets(t *testing.T) {
 	hostnames := map[string]bool{}
 	for _, am := range resp.AutoMounts {
 		hostnames[am.Hostname] = true
-		if am.Status != "MOUNTED" {
+		if am.Status != mountStatusMounted {
 			t.Errorf("AutoMount %s status = %q, want MOUNTED", am.Hostname, am.Status)
 		}
 	}
@@ -1154,7 +1154,7 @@ func TestBootstrapProvision_AutoMount_Failure_NonFatal(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "svc-1", Name: "appdev", Status: "RUNNING"},
+		{ID: "svc-1", Name: "appdev", Status: serviceStatusRunning},
 	})
 	mounter := newTestMounter()
 	mounter.mountErr = errors.New("mount: SSHFS unavailable")

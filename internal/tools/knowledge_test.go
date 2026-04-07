@@ -385,8 +385,8 @@ func testStackTypes() []platform.ServiceStackType {
 			Name:     "nodejs",
 			Category: "USER",
 			Versions: []platform.ServiceStackTypeVersion{
-				{Name: "nodejs@22", Status: "ACTIVE"},
-				{Name: "nodejs@24", Status: "ACTIVE"},
+				{Name: "nodejs@22", Status: serviceStatusActive},
+				{Name: "nodejs@24", Status: serviceStatusActive},
 			},
 		},
 	}

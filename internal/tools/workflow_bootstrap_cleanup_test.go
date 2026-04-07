@@ -31,7 +31,7 @@ func TestCleanupImportYAML(t *testing.T) {
 			fileName:    "import.yaml",
 			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
-				{Hostname: "weather", MountPath: "", Status: "MOUNTED"},
+				{Hostname: "weather", MountPath: "", Status: mountStatusMounted},
 			},
 			wantDeleted:  true,
 			wantCopiedTo: []string{"weather"},
@@ -42,7 +42,7 @@ func TestCleanupImportYAML(t *testing.T) {
 			fileName:    "import.yml",
 			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
-				{Hostname: "app", MountPath: "", Status: "MOUNTED"},
+				{Hostname: "app", MountPath: "", Status: mountStatusMounted},
 			},
 			wantDeleted:  true,
 			wantCopiedTo: []string{"app"},
@@ -53,7 +53,7 @@ func TestCleanupImportYAML(t *testing.T) {
 			fileName:    "import.yaml",
 			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
-				{Hostname: "weather", MountPath: "", Status: "MOUNTED"},
+				{Hostname: "weather", MountPath: "", Status: mountStatusMounted},
 			},
 			wantDeleted: false,
 		},
@@ -71,7 +71,7 @@ func TestCleanupImportYAML(t *testing.T) {
 			fileName:    "import.yaml",
 			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
-				{Hostname: "ok", MountPath: "", Status: "MOUNTED"},
+				{Hostname: "ok", MountPath: "", Status: mountStatusMounted},
 				{Hostname: "bad", Status: "FAILED", Error: "mount failed"},
 			},
 			wantDeleted:   true,
@@ -84,8 +84,8 @@ func TestCleanupImportYAML(t *testing.T) {
 			fileName:    "import.yaml",
 			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
-				{Hostname: "api", MountPath: "", Status: "MOUNTED"},
-				{Hostname: "web", MountPath: "", Status: "MOUNTED"},
+				{Hostname: "api", MountPath: "", Status: mountStatusMounted},
+				{Hostname: "web", MountPath: "", Status: mountStatusMounted},
 			},
 			wantDeleted:  true,
 			wantCopiedTo: []string{"api", "web"},
@@ -96,7 +96,7 @@ func TestCleanupImportYAML(t *testing.T) {
 			fileName:    "import.yaml",
 			isContainer: true,
 			mounts: []workflow.AutoMountInfo{
-				{Hostname: "broken", MountPath: "/nonexistent/path/broken", Status: "MOUNTED"},
+				{Hostname: "broken", MountPath: "/nonexistent/path/broken", Status: mountStatusMounted},
 			},
 			wantDeleted: false,
 		},
@@ -114,7 +114,7 @@ func TestCleanupImportYAML(t *testing.T) {
 			fileName:    "import.yaml",
 			isContainer: false,
 			mounts: []workflow.AutoMountInfo{
-				{Hostname: "app", MountPath: "", Status: "MOUNTED"},
+				{Hostname: "app", MountPath: "", Status: mountStatusMounted},
 			},
 			wantDeleted: false,
 		},
@@ -142,7 +142,7 @@ func TestCleanupImportYAML(t *testing.T) {
 			// Set up mount paths: /var/www/{hostname}/ simulated in temp dir.
 			mountBase := filepath.Join(root, "var", "www")
 			for i := range tt.mounts {
-				if tt.mounts[i].Status == "MOUNTED" && tt.mounts[i].MountPath == "" {
+				if tt.mounts[i].Status == mountStatusMounted && tt.mounts[i].MountPath == "" {
 					mountDir := filepath.Join(mountBase, tt.mounts[i].Hostname)
 					if err := os.MkdirAll(mountDir, 0o755); err != nil {
 						t.Fatal(err)

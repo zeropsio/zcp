@@ -19,7 +19,7 @@ func TestVerifyTool_RuntimeHealthy(t *testing.T) {
 	// All pass/skip → healthy.
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning},
 		})
 	fetcher := platform.NewMockLogFetcher()
 
@@ -50,7 +50,7 @@ func TestVerifyTool_ManagedHealthy(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: serviceStatusRunning},
 		})
 	fetcher := platform.NewMockLogFetcher()
 
@@ -84,7 +84,7 @@ func TestVerifyTool_RuntimeActive(t *testing.T) {
 	// ACTIVE is the real status returned by Zerops API for running services.
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "ACTIVE"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusActive},
 		})
 	fetcher := platform.NewMockLogFetcher()
 
@@ -139,7 +139,7 @@ func TestVerifyTool_GracefulLogError(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning},
 		}).
 		WithError("GetProjectLog", fmt.Errorf("log backend down"))
 	fetcher := platform.NewMockLogFetcher()
@@ -172,8 +172,8 @@ func TestVerifyTool_BatchMode(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}},
-			{ID: "svc-2", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}},
+			{ID: "svc-2", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: serviceStatusRunning},
 		})
 	fetcher := platform.NewMockLogFetcher()
 
@@ -204,8 +204,8 @@ func TestVerifyTool_SingleMode(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}},
-			{ID: "svc-2", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}},
+			{ID: "svc-2", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: serviceStatusRunning},
 		})
 	fetcher := platform.NewMockLogFetcher()
 

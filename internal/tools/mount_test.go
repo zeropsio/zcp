@@ -118,7 +118,7 @@ func TestMountTool_Mount(t *testing.T) {
 	if err := json.Unmarshal([]byte(getTextContent(t, result)), &parsed); err != nil {
 		t.Fatalf("parse result: %v", err)
 	}
-	if parsed.Status != "MOUNTED" {
+	if parsed.Status != mountStatusMounted {
 		t.Errorf("status = %s, want MOUNTED", parsed.Status)
 	}
 }

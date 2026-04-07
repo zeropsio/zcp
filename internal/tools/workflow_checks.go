@@ -79,7 +79,7 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 			// Stage may be newly imported (NEW/READY_TO_DEPLOY) or already running (RUNNING/ACTIVE).
 			// Mixed cases (existing dev + new stage) are valid for adoption scenarios.
 			if stage := target.Runtime.StageHostname(); stage != "" {
-				checks = append(checks, checkServiceStatusAny(svcMap, stage, "NEW", "READY_TO_DEPLOY", "RUNNING", "ACTIVE")...)
+				checks = append(checks, checkServiceStatusAny(svcMap, stage, serviceStatusNew, serviceStatusReadyToDeploy, serviceStatusRunning, serviceStatusActive)...)
 			}
 
 			// Check dependencies.
@@ -240,7 +240,7 @@ func checkDeploy(client platform.Client, fetcher platform.LogFetcher, projectID 
 
 // checkServiceRunning checks a service exists and is running (RUNNING or ACTIVE).
 func checkServiceRunning(svcMap map[string]platform.ServiceStack, hostname string) []workflow.StepCheck {
-	return checkServiceStatusAny(svcMap, hostname, "RUNNING", "ACTIVE")
+	return checkServiceStatusAny(svcMap, hostname, serviceStatusRunning, serviceStatusActive)
 }
 
 // checkServiceStatusAny checks a service exists with any of the expected statuses.

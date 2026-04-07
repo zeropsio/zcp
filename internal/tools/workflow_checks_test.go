@@ -12,9 +12,9 @@ import (
 func TestCheckProvision_AllServicesExist_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "appstage", Status: "NEW"},
-		{ID: "s3", Name: "db", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusNew},
+		{ID: "s3", Name: "db", Status: serviceStatusRunning},
 	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
 
 	plan := &workflow.ServicePlan{
@@ -42,9 +42,9 @@ func TestCheckProvision_AllServicesExist_Pass(t *testing.T) {
 func TestCheckProvision_ActiveStatus_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "ACTIVE"},
-		{ID: "s2", Name: "appstage", Status: "READY_TO_DEPLOY"},
-		{ID: "s3", Name: "db", Status: "ACTIVE"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusActive},
+		{ID: "s2", Name: "appstage", Status: serviceStatusReadyToDeploy},
+		{ID: "s3", Name: "db", Status: serviceStatusActive},
 	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
 
 	plan := &workflow.ServicePlan{
@@ -72,7 +72,7 @@ func TestCheckProvision_ActiveStatus_Pass(t *testing.T) {
 func TestCheckProvision_MissingService_Fail(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
 	})
 
 	plan := &workflow.ServicePlan{
@@ -107,8 +107,8 @@ func TestCheckProvision_MissingService_Fail(t *testing.T) {
 func TestCheckProvision_NoEnvVars_Fail(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "db", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "db", Status: serviceStatusRunning},
 	})
 	// db has no env vars configured
 
@@ -134,8 +134,8 @@ func TestCheckProvision_NoEnvVars_Fail(t *testing.T) {
 func TestCheckProvision_SharedStorage_SkipEnvCheck(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "files", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "files", Status: serviceStatusRunning},
 	})
 	// shared-storage has no env vars — should not be checked
 
@@ -164,8 +164,8 @@ func TestCheckProvision_SharedStorage_SkipEnvCheck(t *testing.T) {
 func TestCheckProvision_ObjectStorage_SkipEnvCheck(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "storage", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "storage", Status: serviceStatusRunning},
 	})
 
 	plan := &workflow.ServicePlan{
@@ -190,8 +190,8 @@ func TestCheckProvision_ObjectStorage_SkipEnvCheck(t *testing.T) {
 func TestCheckDeploy_AllActive_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
-		{ID: "s2", Name: "appstage", Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
+		{ID: "s2", Name: "appstage", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
 	})
 
 	plan := &workflow.ServicePlan{
@@ -238,7 +238,7 @@ func TestCheckDeploy_BuildFailed_Fail(t *testing.T) {
 func TestCheckDeploy_SubdomainNotEnabled_Fail(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: false},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: false},
 	})
 
 	plan := &workflow.ServicePlan{
@@ -344,9 +344,9 @@ func TestCheckProvision_StoresDiscoveredEnvVars(t *testing.T) {
 	}
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "appstage", Status: "NEW"},
-		{ID: "s3", Name: "db", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusNew},
+		{ID: "s3", Name: "db", Status: serviceStatusRunning},
 	}).WithServiceEnv("s3", []platform.EnvVar{
 		{Key: "connectionString", Content: "pg://..."},
 		{Key: "port", Content: "5432"},
@@ -384,9 +384,9 @@ func TestCheckProvision_StoresDiscoveredEnvVars(t *testing.T) {
 func TestCheckProvision_ExistingRuntime_StageActive_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "appstage", Status: "ACTIVE"},
-		{ID: "s3", Name: "cache", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusActive},
+		{ID: "s3", Name: "cache", Status: serviceStatusRunning},
 	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "port", Content: "6379"}})
 
 	plan := &workflow.ServicePlan{
@@ -414,9 +414,9 @@ func TestCheckProvision_ExistingRuntime_StageActive_Pass(t *testing.T) {
 func TestCheckProvision_ExistingRuntime_StageRunning_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "ACTIVE"},
-		{ID: "s2", Name: "appstage", Status: "RUNNING"},
-		{ID: "s3", Name: "queue", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusActive},
+		{ID: "s2", Name: "appstage", Status: serviceStatusRunning},
+		{ID: "s3", Name: "queue", Status: serviceStatusRunning},
 	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "connectionString", Content: "nats://..."}})
 
 	plan := &workflow.ServicePlan{
@@ -445,8 +445,8 @@ func TestCheckProvision_NewRuntime_StageActive_Pass(t *testing.T) {
 	t.Parallel()
 	// Stage can be ACTIVE even for new runtime (re-bootstrap or mixed adoption).
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "appstage", Status: "ACTIVE"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusActive},
 	})
 
 	plan := &workflow.ServicePlan{
@@ -485,9 +485,9 @@ func TestCheckProvision_ExistsDep_StoresEnvVars(t *testing.T) {
 	}
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "appstage", Status: "RUNNING"},
-		{ID: "s3", Name: "db", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusRunning},
+		{ID: "s3", Name: "db", Status: serviceStatusRunning},
 	}).WithServiceEnv("s3", []platform.EnvVar{
 		{Key: "connectionString", Content: "pg://..."},
 		{Key: "port", Content: "5432"},
@@ -527,8 +527,8 @@ func TestCheckProvision_ExistsDep_StoresEnvVars(t *testing.T) {
 func TestCheckProvision_ExistsDep_NoEnvVars_Fail(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "db", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "db", Status: serviceStatusRunning},
 	})
 	// db has no env vars — EXISTS dep should still require them.
 
@@ -581,10 +581,10 @@ func TestCheckProvision_MixedResolution_StoresBoth(t *testing.T) {
 	}
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "appstage", Status: "RUNNING"},
-		{ID: "s3", Name: "db", Status: "RUNNING"},
-		{ID: "s4", Name: "cache", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusRunning},
+		{ID: "s3", Name: "db", Status: serviceStatusRunning},
+		{ID: "s4", Name: "cache", Status: serviceStatusRunning},
 	}).WithServiceEnv("s3", []platform.EnvVar{
 		{Key: "connectionString", Content: "pg://..."},
 		{Key: "port", Content: "5432"},
@@ -628,8 +628,8 @@ func TestCheckProvision_MixedResolution_StoresBoth(t *testing.T) {
 func TestCheckProvision_SimpleMode_NoStage_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "db", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "db", Status: serviceStatusRunning},
 	}).WithServiceEnv("s2", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
 
 	plan := &workflow.ServicePlan{
@@ -657,8 +657,8 @@ func TestCheckProvision_SimpleMode_NoStage_Pass(t *testing.T) {
 func TestCheckProvision_DevMode_NoStage_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "db", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "db", Status: serviceStatusRunning},
 	}).WithServiceEnv("s2", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
 
 	plan := &workflow.ServicePlan{
@@ -686,7 +686,7 @@ func TestCheckProvision_DevMode_NoStage_Pass(t *testing.T) {
 func TestCheckDeploy_SimpleMode_NoStage_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING", Ports: []platform.Port{{Port: 8080}}, SubdomainAccess: true},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 8080}}, SubdomainAccess: true},
 	})
 
 	plan := &workflow.ServicePlan{
@@ -711,8 +711,8 @@ func TestCheckDeploy_SimpleMode_NoStage_Pass(t *testing.T) {
 func TestCheckDeploy_ExistingRuntime_StageRunning_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
-		{ID: "s2", Name: "appstage", Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
+		{ID: "s2", Name: "appstage", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
 	})
 
 	plan := &workflow.ServicePlan{
@@ -749,9 +749,9 @@ func TestCheckProvision_StoreEnvVarsError_Fail(t *testing.T) {
 	}
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "RUNNING"},
-		{ID: "s2", Name: "appstage", Status: "NEW"},
-		{ID: "s3", Name: "db", Status: "RUNNING"},
+		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
+		{ID: "s2", Name: "appstage", Status: serviceStatusNew},
+		{ID: "s3", Name: "db", Status: serviceStatusRunning},
 	}).WithServiceEnv("s3", []platform.EnvVar{
 		{Key: "connectionString", Content: "pg://..."},
 	})
@@ -811,7 +811,7 @@ func TestCheckProvision_TypeMismatch_Fail(t *testing.T) {
 			t.Parallel()
 			services := []platform.ServiceStack{
 				{
-					ID: "s1", Name: "appdev", Status: "RUNNING",
+					ID: "s1", Name: "appdev", Status: serviceStatusRunning,
 					ServiceStackTypeInfo: platform.ServiceTypeInfo{
 						ServiceStackTypeVersionName: tt.apiType,
 					},
@@ -820,7 +820,7 @@ func TestCheckProvision_TypeMismatch_Fail(t *testing.T) {
 			var deps []workflow.Dependency
 			if !tt.isRuntime {
 				services = append(services, platform.ServiceStack{
-					ID: "s2", Name: tt.depHostname, Status: "RUNNING",
+					ID: "s2", Name: tt.depHostname, Status: serviceStatusRunning,
 					ServiceStackTypeInfo: platform.ServiceTypeInfo{
 						ServiceStackTypeVersionName: tt.apiDepType,
 					},
@@ -871,19 +871,19 @@ func TestCheckProvision_TypeMatch_Pass(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
 		{
-			ID: "s1", Name: "appdev", Status: "RUNNING",
+			ID: "s1", Name: "appdev", Status: serviceStatusRunning,
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{
 				ServiceStackTypeVersionName: "nodejs@22",
 			},
 		},
 		{
-			ID: "s2", Name: "appstage", Status: "NEW",
+			ID: "s2", Name: "appstage", Status: serviceStatusNew,
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{
 				ServiceStackTypeVersionName: "nodejs@22",
 			},
 		},
 		{
-			ID: "s3", Name: "db", Status: "RUNNING",
+			ID: "s3", Name: "db", Status: serviceStatusRunning,
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{
 				ServiceStackTypeVersionName: "postgresql@16",
 			},

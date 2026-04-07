@@ -11,6 +11,14 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// Service status constants (from Zerops API).
+const (
+	serviceStatusRunning       = "RUNNING"
+	serviceStatusActive        = "ACTIVE"
+	serviceStatusNew           = "NEW"
+	serviceStatusReadyToDeploy = "READY_TO_DEPLOY"
+)
+
 // Shared status constants for process/build results.
 const (
 	actionStatus                 = "status"

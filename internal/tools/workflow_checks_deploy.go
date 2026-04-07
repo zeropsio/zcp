@@ -139,12 +139,12 @@ func checkDeployResult(client platform.Client, projectID string) workflow.Deploy
 			}
 
 			switch svc.Status {
-			case "RUNNING", "ACTIVE":
+			case serviceStatusRunning, serviceStatusActive:
 				checks = append(checks, workflow.StepCheck{
 					Name: t.Hostname + "_status", Status: statusPass,
 					Detail: svc.Status,
 				})
-			case "READY_TO_DEPLOY":
+			case serviceStatusReadyToDeploy:
 				checks = append(checks, workflow.StepCheck{
 					Name: t.Hostname + "_status", Status: statusFail,
 					Detail: "still READY_TO_DEPLOY — container didn't start. Check: start command, ports, env vars in zerops.yaml run section. Deploy creates new container, local files lost.",

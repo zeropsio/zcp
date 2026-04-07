@@ -17,7 +17,7 @@ func TestProcessTool_Status(t *testing.T) {
 		WithProcess(&platform.Process{
 			ID:         "proc-1",
 			ActionName: "stack.start",
-			Status:     "RUNNING",
+			Status:     serviceStatusRunning,
 			Created:    "2025-01-01T00:00:00Z",
 		})
 
@@ -34,8 +34,8 @@ func TestProcessTool_Status(t *testing.T) {
 	if err := json.Unmarshal([]byte(getTextContent(t, result)), &pr); err != nil {
 		t.Fatalf("failed to parse result: %v", err)
 	}
-	if pr.Status != "RUNNING" {
-		t.Errorf("status = %q, want %q", pr.Status, "RUNNING")
+	if pr.Status != serviceStatusRunning {
+		t.Errorf("status = %q, want %q", pr.Status, serviceStatusRunning)
 	}
 }
 
@@ -45,7 +45,7 @@ func TestProcessTool_Cancel(t *testing.T) {
 		WithProcess(&platform.Process{
 			ID:         "proc-1",
 			ActionName: "stack.start",
-			Status:     "RUNNING",
+			Status:     serviceStatusRunning,
 			Created:    "2025-01-01T00:00:00Z",
 		})
 
