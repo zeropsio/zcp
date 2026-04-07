@@ -80,7 +80,6 @@ func configureGit(_ string) error {
 func configureClaude(_ string) error {
 	home := resolveHome()
 
-	// Compose ~/.claude.json: base config + MCP servers (single source of truth).
 	claudeJSON, err := buildClaudeJSON()
 	if err != nil {
 		return err
@@ -89,7 +88,6 @@ func configureClaude(_ string) error {
 		return fmt.Errorf("write .claude.json: %w", err)
 	}
 
-	// ~/.claude/settings.json — straight template write.
 	settingsTmpl, err := content.GetTemplate("claude-settings.json")
 	if err != nil {
 		return err

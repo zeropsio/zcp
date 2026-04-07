@@ -25,14 +25,6 @@ type step struct {
 }
 
 // Run executes the init subcommand, generating configuration files in baseDir.
-// Steps:
-//  1. Generate CLAUDE.md in baseDir
-//  2. Configure MCP server in baseDir/.mcp.json (Claude Code project-scoped config)
-//  3. Configure permissions in baseDir/.claude/settings.local.json
-//  4. Configure SSH in $HOME/.ssh/config (container only, managed section)
-//  5. Install shell aliases in $HOME/.config/zerops/aliases + source from .bashrc
-//     6-9. Container-only: git config, Claude configs, VS Code settings (if InContainer)
-//
 // All steps are idempotent — re-running resets to defaults.
 func Run(baseDir string, rt runtime.Info) error {
 	// Ensure HOME is set — many tools (git, ssh) need it but Zerops
@@ -41,19 +33,19 @@ func Run(baseDir string, rt runtime.Info) error {
 		_ = os.Setenv("HOME", resolveHome())
 	}
 
+	// Shared steps (both local and container).
 	steps := []step{
 		{"CLAUDE.md", generateCLAUDEMD},
 		{"Permissions", generateSettingsLocal},
-		{"SSH config", func(_ string) error { return generateSSHConfig(rt) }},
 		{"Shell aliases", generateAliases},
 	}
-	// Local mode: MCP config in project dir (carries ZCP_API_KEY per-project).
-	// Container mode: MCP config in ~/.claude.json (global, survives cd into cloned repos).
-	if !rt.InContainer {
-		steps = append(steps, step{"MCP config", generateMCPConfig})
-	}
 	if rt.InContainer {
+		// Container: SSH config, git identity, Claude configs (incl. global MCP server).
+		steps = append(steps, step{"SSH config", func(_ string) error { return generateSSHConfig() }})
 		steps = append(steps, containerSteps()...)
+	} else {
+		// Local: project-scoped .mcp.json (carries ZCP_API_KEY per-project).
+		steps = append(steps, step{"MCP config", generateMCPConfig})
 	}
 
 	for _, s := range steps {
@@ -95,12 +87,7 @@ func generateSettingsLocal(baseDir string) error {
 	return os.WriteFile(filepath.Join(dir, "settings.local.json"), []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
 }
 
-func generateSSHConfig(rt runtime.Info) error {
-	if !rt.InContainer {
-		fmt.Fprintln(os.Stderr, "    (skipped — not in container, SSH config left unchanged)")
-		return nil
-	}
-
+func generateSSHConfig() error {
 	tmpl, err := content.GetTemplate("ssh-config")
 	if err != nil {
 		return err
