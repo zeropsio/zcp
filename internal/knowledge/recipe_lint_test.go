@@ -59,6 +59,20 @@ func loadKnownVersions(t *testing.T) map[string]bool {
 	for base := range bases {
 		m[base+"@latest"] = true
 	}
+	// Expand major-only versions to match more-specific recipe references.
+	// Catalog has "go@1" but recipes may reference "go@1.22". If "base@major"
+	// exists in the catalog, accept "base@major.minor" and "base@major.minor.patch".
+	for v := range m {
+		base, ver, ok := strings.Cut(v, "@")
+		if !ok {
+			continue
+		}
+		// Only expand short versions (no dots = major-only like "1", "2").
+		if !strings.Contains(ver, ".") && ver != "latest" {
+			// Mark this as an expandable prefix for the match check below.
+			m[base+"@"+ver+"."] = true // sentinel: "go@1." means go@1.x accepted
+		}
+	}
 	// Platform aliases: the API uses "golang" but the catalog uses "go".
 	typeAliases := map[string]string{
 		"golang": "go",
@@ -245,7 +259,19 @@ func TestRecipeLint(t *testing.T) {
 				knownVersions := loadKnownVersions(t)
 				versions := extractVersionRefs(content)
 				for _, v := range versions {
-					if !knownVersions[v] {
+					if knownVersions[v] {
+						continue
+					}
+					// Check prefix match: "go@1.22" matches if "go@1." sentinel exists.
+					base, ver, _ := strings.Cut(v, "@")
+					matched := false
+					if idx := strings.IndexByte(ver, '.'); idx > 0 {
+						prefix := base + "@" + ver[:idx] + "."
+						if knownVersions[prefix] {
+							matched = true
+						}
+					}
+					if !matched {
 						t.Errorf("unknown version %q — verify against platform catalog or run 'make catalog-sync'", v)
 					}
 				}
