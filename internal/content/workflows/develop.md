@@ -215,6 +215,14 @@ Before deploying, verify:
 4. **Environment variables must be resolved.** Run `zerops_discover includeEnvs=true` (keys only) and verify cross-referenced variable names exist. If values need inspection, add `includeEnvValues=true`.
 5. **NEVER hardcode credential values.** Always use `${hostname_varName}` references.
 
+### Environment variable lifecycle
+
+`envVariables` in zerops.yaml are **declarative config** — they are NOT active until deploy creates a new container. After editing envVariables:
+- Do NOT check with `printenv` via SSH — the old container still has old env vars
+- Do NOT use SSH to verify env var values before deploying
+- Validate by reading zerops.yaml itself (correct syntax, correct `${hostname_varName}` references)
+- Deploy activates them: `zerops_deploy` → new container → env vars injected as OS env vars
+
 Platform knowledge (YAML schemas, runtime rules) is included in this guide automatically.
 For framework-specific patterns: `zerops_knowledge recipe="{name}"`
 </section>

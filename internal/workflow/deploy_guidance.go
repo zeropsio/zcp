@@ -79,6 +79,7 @@ func buildPrepareGuide(state *DeployState, env Environment, stateDir string) str
 	if state.Mode == PlanModeStandard {
 		sb.WriteString("4. Stage entry: real `start:` command + `healthCheck` required\n")
 	}
+	sb.WriteString("5. **envVariables are NOT live until deploy.** Editing zerops.yaml does not activate env vars — they appear in the container only after `zerops_deploy`. Do NOT verify with `printenv` or SSH before deploying.\n")
 	sb.WriteString("\n")
 
 	// Development workflow — strategy and environment aware.
@@ -87,6 +88,7 @@ func buildPrepareGuide(state *DeployState, env Environment, stateDir string) str
 	// Platform rules.
 	sb.WriteString("### Platform rules\n")
 	sb.WriteString("- Deploy = new container — local files lost, only `deployFiles` content survives\n")
+	sb.WriteString("- envVariables = declarative config, NOT live until deploy. Never check with `printenv` before deploying.\n")
 	sb.WriteString("- `${hostname_varName}` typo = silent literal string, no error from platform\n")
 	sb.WriteString("- Build container ≠ run container — different environment\n")
 	if env == EnvContainer {
