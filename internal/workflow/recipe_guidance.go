@@ -122,29 +122,34 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		}
 
 	case RecipeStepGenerate:
-		// Recipe knowledge chain: inject knowledge from lower-tier recipes.
-		// Direct predecessor (e.g., minimal for showcase): full content.
-		// Earlier ancestors (e.g., hello-world for showcase): gotchas only.
-		// Replaces the old runtime-briefing-only injection with richer context.
+		// Recipe knowledge chain: the source of truth for "how to write zerops.yaml
+		// for this framework." Direct predecessor: full content (working zerops.yaml
+		// + gotchas). Earlier ancestors: gotchas only.
+		chainInjected := false
 		if plan != nil {
 			if chain := recipeKnowledgeChain(plan, kp); chain != "" {
 				parts = append(parts, chain)
+				chainInjected = true
 			}
 		}
 		// Discovered env vars: real variable names from provisioned services.
 		if len(discoveredEnvVars) > 0 {
 			parts = append(parts, formatEnvVarsForGuide(discoveredEnvVars))
 		}
-		// zerops.yaml field reference for writing config.
-		if s := getCoreSection(kp, "zerops.yaml Schema"); s != "" {
-			parts = append(parts, "## zerops.yaml Schema\n\n"+s)
+		// zerops.yaml Schema: ONLY when no chain predecessor (hello-world tier).
+		// When a chain recipe exists, its working zerops.yaml IS the schema —
+		// framework-specific and proven. Generic field reference adds nothing.
+		if !chainInjected {
+			if s := getCoreSection(kp, "zerops.yaml Schema"); s != "" {
+				parts = append(parts, "## zerops.yaml Schema\n\n"+s)
+			}
 		}
-		// Platform rules: lifecycle matrix (build vs run vs init), port ranges,
-		// env var levels, deploy semantics. Critical — the #1 recipe failure is
-		// putting a command in the wrong lifecycle phase.
-		if s := getCoreSection(kp, "Rules & Pitfalls"); s != "" {
-			parts = append(parts, "## Rules & Pitfalls\n\n"+s)
-		}
+		// Rules & Pitfalls: NOT injected here. The agent already received the full
+		// 13KB at provision (one step ago). The chain recipe demonstrates the rules
+		// in practice. Re-injecting would triple-teach the same lifecycle rules
+		// (recipe.md static text + chain example + R&P). If the agent needs a
+		// specific rule, zerops_knowledge is available for on-demand queries.
+		//
 		// Multi-base knowledge: injected ONLY when the recipe's primary runtime
 		// is non-JS yet its build pipeline runs a JS package manager. Most
 		// recipes (Node, Go, Rust, Python without JS assets) don't hit this and

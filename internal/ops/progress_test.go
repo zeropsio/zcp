@@ -696,6 +696,46 @@ func TestPollBuild_ImmediatePreparingRuntimeFailed(t *testing.T) {
 	}
 }
 
+// TestPollBuild_SkipsStartWithoutCodeEvent verifies that a pre-existing ACTIVE event
+// from startWithoutCode (Source="NONE", Build=nil) is ignored. The poll waits for
+// a real build event instead of returning the pre-existing one immediately.
+func TestPollBuild_SkipsStartWithoutCodeEvent(t *testing.T) {
+	t.Parallel()
+
+	// Simulate: first poll returns only the startWithoutCode ACTIVE (Source=NONE, no Build),
+	// second poll adds a new BUILDING event (real deploy),
+	// third poll shows the real deploy completed.
+	seq := &appVersionSequencer{
+		Mock: platform.NewMock(),
+		sequence: [][]platform.AppVersionEvent{
+			// Poll 1: only the pre-existing startWithoutCode event.
+			{{ID: "av-swc", ProjectID: "proj-1", ServiceStackID: "svc-1", Source: "NONE", Status: statusActive, Sequence: 1}},
+			// Poll 2: pre-existing + new build in progress.
+			{
+				{ID: "av-swc", ProjectID: "proj-1", ServiceStackID: "svc-1", Source: "NONE", Status: statusActive, Sequence: 1},
+				{ID: "av-build", ProjectID: "proj-1", ServiceStackID: "svc-1", Source: "CLI", Status: "BUILDING", Sequence: 2, Build: &platform.BuildInfo{}},
+			},
+			// Poll 3: pre-existing + new build completed.
+			{
+				{ID: "av-swc", ProjectID: "proj-1", ServiceStackID: "svc-1", Source: "NONE", Status: statusActive, Sequence: 1},
+				{ID: "av-build", ProjectID: "proj-1", ServiceStackID: "svc-1", Source: "CLI", Status: statusActive, Sequence: 2, Build: &platform.BuildInfo{}},
+			},
+		},
+	}
+	ctx := context.Background()
+
+	event, err := pollBuild(ctx, seq, "proj-1", "svc-1", nil, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.ID != "av-build" {
+		t.Errorf("event ID = %s, want av-build (should skip startWithoutCode av-swc)", event.ID)
+	}
+	if event.Sequence != 2 {
+		t.Errorf("sequence = %d, want 2", event.Sequence)
+	}
+}
+
 // TestPollProcess_PublicFunction verifies the public PollProcess uses defaults.
 func TestPollProcess_PublicFunction(t *testing.T) {
 	t.Parallel()

@@ -276,7 +276,9 @@ zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`.
 
 Write the complete zerops.yaml with ALL setup entries in a single file. Minimal recipes have TWO setups (`dev` + `prod`). Showcase recipes have THREE (`dev` + `prod` + `worker`). The same file is the source of truth for the deploy step AND for the README integration-guide fragment — writing it once eliminates drift between what deploys and what the README documents. The deploy step will verify dev against the live service, then cross-deploy the already-written prod/worker configs to stage.
 
-Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific conventions for each setup:
+Follow the injected chain recipe (working zerops.yaml from the predecessor) as the primary reference. For hello-world (no predecessor), follow the injected zerops.yaml Schema. Platform rules (lifecycle phases, deploy semantics) were taught at provision — use `zerops_knowledge` if you need to look up a specific rule.
+
+Recipe-specific conventions for each setup (platform rules from provision apply — these are ONLY the recipe-specific additions):
 
 **`setup: dev`** (self-deploy from SSHFS mount — agent iterates here):
 - `deployFiles: [.]` — **MANDATORY for self-deploy**; anything else destroys the source tree
@@ -287,41 +289,23 @@ Follow the injected **zerops.yaml Schema** for all field rules. Recipe-specific 
 - **Dev dependency pre-install**: if the build base includes a secondary runtime for an asset pipeline, dev `buildCommands` MUST include the dependency install step for that runtime's package manager. This ensures the dev container ships with dependencies pre-populated — the developer (or agent) can SSH in and immediately run the dev server without a manual install step first. Omit the asset compilation step — that's for prod only; dev uses the live dev server.
 
 **`setup: prod`** (cross-deployed from dev to stage — end-user production target):
-- Real `buildCommands` (dependency install with prod flags, asset compilation, binary compilation, etc.)
-- Real `deployFiles` listing only what the runtime needs (not `.`) — verify completeness: every path your start command and framework touch at runtime MUST appear here
-- `healthCheck` (httpGet on app port + health path) — **required**; unresponsive containers get restarted
-- `deploy.readinessCheck` if `initCommands` contains migrations
-- `initCommands` for framework cache warming (Laravel `config:cache|route:cache|view:cache`, Rails `assets:precompile` if paths leak, Symfony `cache:warmup`) — **never** in buildCommands; those caches bake `/build/source/...` paths that break at `/var/www/...`
+- Follow the chain recipe's prod setup as a baseline. Adapt to the current recipe's services and framework version.
 - **If a search engine is provisioned**: `initCommands` must include the framework's search index command (e.g., `php artisan scout:import "App\\Models\\Article"`) AFTER `db:seed`. The ORM's auto-index-on-create may work during seeding, but an explicit import is the safety net — if the seeder guard skips creation (records exist from a prior deploy) while the search index is empty, auto-indexing fires zero events and search returns nothing.
-- **NO `prepareCommands` installing secondary runtimes** unless the prod START command needs them at runtime (e.g., SSR with Node). If the secondary runtime is only for BUILD (e.g., nodejs for Vite asset compilation), it's already in `build.base` — adding it to `run.prepareCommands` wastes 30s+ on every container start for no benefit. The dev setup needs `prepareCommands` because the developer runs the dev server over SSH; prod does not.
-- Framework mode flags set to prod values (`APP_ENV: production`, `NODE_ENV: production`, `DEBUG: "false"`)
-- Same cross-service ref keys as dev — **only values on mode flags differ**
+- **NO `prepareCommands` installing secondary runtimes** unless the prod START command needs them at runtime (e.g., SSR with Node). If the secondary runtime is only for BUILD, it's in `build.base` — adding it to `run.prepareCommands` wastes 30s+ on every container start. Dev needs `prepareCommands` for the dev server; prod does not.
+- Framework mode flags set to prod values. Same cross-service ref keys as dev — **only mode flags differ**.
 
 **`setup: worker`** (showcase only — background job processor):
 
 Whether the worker shares the app's codebase depends on the runtime type:
 
-- **Shared codebase** (same runtime — e.g., both `php-nginx@8.4`): one app, two processes. The worker is just a different entry point (e.g., `php artisan queue:work`, `node worker.js`, `bundle exec sidekiq`). This is how most frameworks handle background jobs.
-- **Separate codebase** (different runtime — e.g., `bun@1.2` app + `python@3.12` worker): truly different projects that happen to work together.
+- **Shared codebase** (same runtime): one app, two processes. The worker is just a different entry point. Write a `setup: worker` block in the SAME zerops.yaml. During development, the agent starts both web server and queue worker as SSH processes from `appdev` — no `workerdev` service.
+- **Separate codebase** (different runtime): separate project with its own zerops.yaml (`dev`/`prod`). Written to a separate mount (`/var/www/workerdev/`).
 
-The system detects this from the plan targets and adjusts the workspace, deploy flow, and published repos automatically.
-
-**Shared-codebase workers**: write a `setup: worker` block in the SAME zerops.yaml alongside `dev` and `prod`. The worker setup shares the build pipeline but runs a different start command. During development, the agent starts both the web server and queue worker as separate SSH processes from the single `appdev` container — no `workerdev` service exists.
-
-**Separate-codebase workers**: the worker is a separate project with its own zerops.yaml containing `dev` and `prod` setups. The agent writes it to a separate mount (`/var/www/workerdev/`). No `setup: worker` in the app's zerops.yaml — each codebase has its own `dev`/`prod` pair.
-
-Worker setup conventions (apply to both patterns):
-- `start` is the framework's queue/job runner command. MANDATORY — workers have no implicit webserver.
-- **NO healthCheck, NO readinessCheck** — workers don't serve HTTP. They consume from a queue (Redis, NATS, RabbitMQ) and crash-restart is handled by the platform automatically.
-- **NO `ports` section** — workers don't bind any port.
-- `envVariables` shares the same cross-service refs as prod (DB, cache, queue connection vars) PLUS any worker-specific vars (concurrency, retry config). Mode flags match prod.
-- `initCommands` same as prod where applicable (migrations via `zsc execOnce`, cache warming).
-- Build section typically identical to prod (same dependencies, same compilation).
+Worker-specific: `start` is mandatory (queue runner command), NO healthCheck/readinessCheck/ports (workers don't serve HTTP). Build and envVariables typically match prod.
 
 **Shared across all setups:**
-- `envVariables:` contains ONLY cross-service references from `zerops_discover` + framework mode flags. **Do NOT add envSecrets** (framework secret keys) — they are already injected as OS env vars automatically by the platform.
-- Setup names are generic (`dev`/`prod`/`worker`). `zerops_deploy targetService=... setup=...` maps hostnames to setup names at deploy time.
-- dev and prod env maps must NOT be bit-identical — a structural check fails the generate step if they are, because it means the dev container behaves exactly like prod (caches enabled, stack traces hidden during iteration).
+- `envVariables:` contains ONLY cross-service references + mode flags. Do NOT re-add envSecrets — platform injects them automatically.
+- dev and prod env maps must NOT be bit-identical — a structural check fails if mode flags don't differ.
 
 ### .env.example preservation
 
@@ -331,9 +315,7 @@ Update `.env.example` to include ALL environment variables used in zerops.yaml `
 
 ### Framework environment conventions
 
-Use the framework's **standard** environment names and values — don't invent new ones. Check the framework's documentation for the correct dev/production mode flag. Wrong env names cause subtle behavior differences (e.g., debug mode not activating, error pages not showing, optimizations not running). The runtime hello-world recipe loaded during research documents the base patterns.
-
-If the framework has a "base URL" / "app URL" / "public URL" environment variable that controls absolute URL generation, set it to `${zeropsSubdomain}` in `run.envVariables`. Without it, the framework defaults to localhost and any feature producing absolute URLs (redirects, mail links, signed URLs, CSRF origin) breaks silently.
+Use the framework's **standard** environment names — don't invent new ones. If the framework has a "base URL" / "app URL" env var, set it to `${zeropsSubdomain}`. The chain recipe demonstrates the correct env var names for this framework.
 
 ### Required endpoints
 
@@ -480,15 +462,11 @@ Description of why this change is needed.
 - **zerops.yaml size limit**: Zerops rejects files over 10KB. Showcase recipes with 3 setups and full env var blocks approach this limit. Write concise comments from the start — short sentences that explain the WHY in ~50 chars, not multi-line paragraphs. Don't write verbose comments and plan to trim later; that wastes an iteration and degrades quality.
 
 ### Pre-deploy checklist
-- [ ] Both `setup: dev` AND `setup: prod` present (generic names)
-- [ ] Showcase: `setup: worker` present — no healthCheck, no ports, mandatory start command
-- [ ] dev: `deployFiles: [.]`, no healthCheck, no readinessCheck
-- [ ] prod: real buildCommands, specific deployFiles, healthCheck + readinessCheck
-- [ ] dev and prod envVariables differ on mode flags (APP_ENV/NODE_ENV/DEBUG/LOG_LEVEL)
-- [ ] envVariables has only cross-service refs + mode flags — no envSecrets re-referenced
+- [ ] Both `setup: dev` AND `setup: prod` present (generic names); showcase: `setup: worker` too
+- [ ] dev and prod envVariables differ on mode flags — structural check fails if identical
 - [ ] All env var refs use names from `zerops_discover`, none guessed
 - [ ] If prod `buildCommands` compiles assets, primary view loads them via framework asset helper (not inline CSS/JS)
-- [ ] If dev build base includes a secondary runtime for an asset pipeline, dev `buildCommands` includes the package manager install
+- [ ] If dev build base includes secondary runtime, dev `buildCommands` includes package manager install
 - [ ] README has all 3 extract fragments with proper markers
 - [ ] `.env.example` preserved (`.env` removed), updated with ALL env vars from zerops.yaml
 - [ ] Dashboard has interactive feature section per provisioned service (no connectivity-only dots)

@@ -101,7 +101,7 @@ func defaultMock() *platform.Mock {
 			{ID: "pe-1", ActionName: "start", Status: "FINISHED"},
 		}).
 		WithAppVersionEvents([]platform.AppVersionEvent{
-			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Status: "ACTIVE", Sequence: 1},
+			{ID: "av-1", ProjectID: "proj-1", ServiceStackID: "svc-1", Source: "CLI", Status: "ACTIVE", Sequence: 1, Build: &platform.BuildInfo{}},
 		}).
 		// Pre-register processes for manage tool polling.
 		WithProcess(&platform.Process{ID: "proc-start-svc-1", ActionName: "start", Status: "FINISHED"}).

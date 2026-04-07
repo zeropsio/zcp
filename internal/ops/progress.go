@@ -45,6 +45,9 @@ var defaultBuildPollConfig = pollConfig{
 
 // PollBuild polls SearchAppVersions for a service until build reaches terminal state.
 // Filters events by serviceStackID and checks the latest for ACTIVE or BUILD_FAILED.
+// Skips startWithoutCode events (Source="NONE", no build info) which are pre-existing
+// ACTIVE events that would cause the poll to return immediately without waiting for
+// the actual build.
 // onProgress may be nil (no notifications sent).
 func PollBuild(
 	ctx context.Context,
@@ -73,13 +76,20 @@ func pollBuild(
 			return nil, fmt.Errorf("poll build for service %s: %w", serviceStackID, err)
 		}
 
-		// Find latest event for this service.
+		// Find latest event for this service, skipping startWithoutCode events.
+		// startWithoutCode creates an ACTIVE event with Source="NONE" and no build
+		// info. Without filtering, pollBuild sees this pre-existing ACTIVE and
+		// returns immediately — thinking the deploy just succeeded.
 		var latest *platform.AppVersionEvent
 		for i := range events {
-			if events[i].ServiceStackID == serviceStackID {
-				if latest == nil || events[i].Sequence > latest.Sequence {
-					latest = &events[i]
-				}
+			if events[i].ServiceStackID != serviceStackID {
+				continue
+			}
+			if isStartWithoutCodeEvent(&events[i]) {
+				continue
+			}
+			if latest == nil || events[i].Sequence > latest.Sequence {
+				latest = &events[i]
 			}
 		}
 
@@ -128,6 +138,14 @@ func pollBuild(
 		case <-time.After(interval):
 		}
 	}
+}
+
+// isStartWithoutCodeEvent returns true if an AppVersionEvent was created by
+// startWithoutCode (no real build). These events have Source="NONE" and no
+// build pipeline info. They must be skipped during poll to avoid treating
+// a pre-existing ACTIVE as a successful deploy result.
+func isStartWithoutCodeEvent(ev *platform.AppVersionEvent) bool {
+	return ev.Source == "NONE" && ev.Build == nil
 }
 
 // isBuildInProgress returns true only for known in-progress build states.
