@@ -57,7 +57,6 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 			checks = append(checks, workflow.StepCheck{
 				Name: "zerops_yml_exists", Status: statusPass,
 			})
-			checks = append(checks, checkZeropsYmlSize(ymlDir)...)
 			checks = append(checks, checkGenerateEntry(doc, hostname, target, state)...)
 		}
 

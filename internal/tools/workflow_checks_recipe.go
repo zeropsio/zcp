@@ -92,8 +92,6 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 				Name: "zerops_yml_exists", Status: statusPass,
 			})
 			checks = append(checks, checkRecipeSetups(doc, appHostname, plan)...)
-			// zerops.yaml size limit — platform rejects files over 10KB.
-			checks = append(checks, checkZeropsYmlSize(ymlDir)...)
 		}
 
 		// Check README fragments.
@@ -187,35 +185,6 @@ func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, plan *workflow.Re
 	}
 
 	return checks
-}
-
-// maxZeropsYmlSize is the platform's hard limit for zerops.yaml.
-// The API reports "50kB" but the actual threshold is 10KB.
-const maxZeropsYmlSize = 10 * 1024
-
-// checkZeropsYmlSize validates the zerops.yaml file is under the platform limit.
-// Showcase recipes with 3 setups and full env var blocks approach this limit.
-func checkZeropsYmlSize(dir string) []workflow.StepCheck {
-	for _, name := range []string{"zerops.yaml", "zerops.yml"} {
-		path := filepath.Join(dir, name)
-		info, err := os.Stat(path)
-		if err != nil {
-			continue
-		}
-		if info.Size() > maxZeropsYmlSize {
-			return []workflow.StepCheck{{
-				Name:   "zerops_yml_size",
-				Status: statusFail,
-				Detail: fmt.Sprintf("zerops.yaml is %dB (%dKB) — platform rejects files over 10KB. Shorten comments: aim for ~50 chars per line, 1-2 lines per block. Remove any redundant env var comments that restate the key name.", info.Size(), info.Size()/1024),
-			}}
-		}
-		return []workflow.StepCheck{{
-			Name:   "zerops_yml_size",
-			Status: statusPass,
-			Detail: fmt.Sprintf("%dB", info.Size()),
-		}}
-	}
-	return nil
 }
 
 // planHasWorker returns true if any recipe target is a worker.

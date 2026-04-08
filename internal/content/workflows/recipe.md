@@ -474,7 +474,6 @@ Description of why this change is needed.
 - All env var references must use discovered variable names
 - Comments explain WHY, not WHAT (don't restate the key name)
 - Max 80 chars per comment line
-- **zerops.yaml size limit**: Zerops rejects files over 10KB. Showcase recipes with 3 setups and full env var blocks approach this limit. Write concise comments from the start — short sentences that explain the WHY in ~50 chars, not multi-line paragraphs. Don't write verbose comments and plan to trim later; that wastes an iteration and degrades quality.
 
 ### Pre-deploy checklist
 - [ ] Both `setup: dev` AND `setup: prod` present (generic names); showcase: `setup: worker` too
