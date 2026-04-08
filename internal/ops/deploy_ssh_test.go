@@ -296,8 +296,8 @@ func TestDeploy_SSHMode_WithRegion(t *testing.T) {
 		t.Fatalf("ssh calls = %d, want 1", len(ssh.calls))
 	}
 	cmd := ssh.calls[0].command
-	if !containsSubstring(cmd, "zcli login test-token") {
-		t.Errorf("SSH command should contain 'zcli login test-token', got: %s", cmd)
+	if !containsSubstring(cmd, "zcli login -- 'test-token'") {
+		t.Errorf("SSH command should contain 'zcli login -- test-token', got: %s", cmd)
 	}
 	if containsSubstring(cmd, "--zeropsRegion") {
 		t.Errorf("SSH command should NOT contain '--zeropsRegion', got: %s", cmd)

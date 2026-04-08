@@ -138,7 +138,7 @@ console.log("listening on " + server.port);
 	// Mirrors the logic in ops.buildSSHCommand().
 	buildDeployCmd := func(freshGit, includeGit bool) string {
 		var parts []string
-		parts = append(parts, fmt.Sprintf("zcli login %s", token))
+		parts = append(parts, fmt.Sprintf("zcli login -- '%s'", token))
 
 		gitInit := "git init -q && git config user.email 'test@test.com' && git config user.name 'test' && git add -A && git commit -q -m 'deploy'"
 

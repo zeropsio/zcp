@@ -166,7 +166,7 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	parts := make([]string, 0, 2)
 
 	// Login to zcli on the remote host.
-	loginCmd := fmt.Sprintf("zcli login %s", authInfo.Token)
+	loginCmd := fmt.Sprintf("zcli login -- %s", shellQuote(authInfo.Token))
 	parts = append(parts, loginCmd)
 
 	email := shellQuote(id.Email)

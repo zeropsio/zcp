@@ -107,7 +107,7 @@ func DeployLocal(
 	warnings := ValidateZeropsYml(workingDir, setupName, serviceType)
 
 	// 5. Login.
-	_, stderr, err := runner.Run(ctx, "zcli", "login", authInfo.Token)
+	_, stderr, err := runner.Run(ctx, "zcli", "login", "--", authInfo.Token)
 	if err != nil {
 		return nil, platform.NewPlatformError(
 			platform.ErrDeployFailed,
