@@ -22,10 +22,12 @@ func handleDeployStart(ctx context.Context, engine *workflow.Engine, client plat
 			"Run bootstrap first to create services")), nil, nil
 	}
 
-	// Prune stale metas from old bootstrap sessions whose services no longer exist.
+	// Prune stale metas and cache live services for potential auto-adopt.
+	var liveServices []platform.ServiceStack
 	if client != nil {
 		services, listErr := client.ListServices(ctx, projectID)
 		if listErr == nil {
+			liveServices = services
 			live := make(map[string]bool, len(services))
 			for _, svc := range services {
 				live[svc.Name] = true
@@ -45,7 +47,7 @@ func handleDeployStart(ctx context.Context, engine *workflow.Engine, client plat
 
 	if len(metas) == 0 {
 		// Auto-adopt: no metas exist but services may be live on platform.
-		if adopted := adoptUnmanagedServices(ctx, engine, client, projectID, cache, mounter, selfHostname); adopted {
+		if adopted := adoptUnmanagedServices(ctx, engine, client, liveServices, projectID, cache, mounter, selfHostname); adopted {
 			metas, err = workflow.ListServiceMetas(engine.StateDir())
 			if err != nil {
 				return convertError(platform.NewPlatformError(
@@ -224,16 +226,11 @@ func buildStrategyStatusNote(metas []*workflow.ServiceMeta) string {
 // Returns true if adoption occurred, false otherwise. Uses the same code path as manual
 // bootstrap adoption: BootstrapStart → BootstrapCompletePlan → BootstrapComplete("provision")
 // → fast path. Cleans up on failure to prevent orphaned sessions.
-func adoptUnmanagedServices(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, cache *ops.StackTypeCache, mounter ops.Mounter, selfHostname string) bool {
-	if client == nil || engine == nil {
+func adoptUnmanagedServices(ctx context.Context, engine *workflow.Engine, client platform.Client, services []platform.ServiceStack, projectID string, cache *ops.StackTypeCache, mounter ops.Mounter, selfHostname string) bool {
+	if engine == nil || len(services) == 0 {
 		return false
 	}
 	if engine.HasActiveSession() {
-		return false
-	}
-
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil || len(services) == 0 {
 		return false
 	}
 

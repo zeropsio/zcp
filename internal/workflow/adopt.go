@@ -62,7 +62,6 @@ func InferServicePairing(candidates []AdoptCandidate) []BootstrapTarget {
 		if isDev && base != "" {
 			stageHostname := base + "stage"
 			if _, stageExists := hostnames[stageHostname]; stageExists && !IsManagedService(hostnames[stageHostname]) {
-				// Standard pair found.
 				paired[stageHostname] = true
 				target := BootstrapTarget{
 					Runtime: RuntimeTarget{
@@ -80,7 +79,6 @@ func InferServicePairing(candidates []AdoptCandidate) []BootstrapTarget {
 			}
 		}
 
-		// No pair found — dev mode (standalone).
 		targets = append(targets, BootstrapTarget{
 			Runtime: RuntimeTarget{
 				DevHostname:   r.Hostname,
