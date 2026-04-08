@@ -122,6 +122,7 @@ zerops[]:
 
 | Command runs during | Lives in | Working dir | Access | Use for |
 |---|---|---|---|---|
+| Build image customization (once) | `build.prepareCommands` | `/build/source/` (build container) | Build container only — no services, no runtime env vars | Install OS packages, language extensions, or tools the build needs BEFORE buildCommands run. Cached in build base layer — only re-runs when prepareCommands change. |
 | Build pipeline (every build) | `build.buildCommands` | `/build/source/` (build container) | No deploy files at runtime paths, no services, no env vars from zerops.yaml run section | Dependency install, compilation, bundling, asset build, linting. Output goes to `deployFiles`. |
 | Runtime image customization (once) | `run.prepareCommands` | `/home/zerops/` (prepare phase, runtime container) | Deploy files NOT yet at `/var/www/` | Install OS packages, configure runtime. Use `addToRunPrepare` to ship build artifacts here. |
 | Every container start | `run.initCommands` | `/var/www/` (runtime container) | Full deploy files, env vars, cross-service connectivity | DB migrations (gate with `zsc execOnce`), framework cache warmup (`config:cache`, `cache:warmup`, etc.), anything that needs absolute paths under `/var/www/` or DB access |
@@ -137,7 +138,7 @@ zerops[]:
 - **NEVER** compile/cache configuration that embeds absolute paths during `buildCommands`. REASON: build container runs at `/build/source/`, runtime runs at `/var/www/`. Config caches that freeze paths like `storage_path()`, `base_path()`, `Rails.root`, `__dir__` at build time point to `/build/source/...` at runtime — first access crashes with "directory not found / permission denied". Move these to `run.initCommands` (framework examples: Laravel `artisan config:cache|route:cache|view:cache`, Rails `assets:precompile` if paths leak, Symfony `cache:warmup`)
 - **PREFER** `run.initCommands` over `buildCommands` for any step that: reads from `/var/www/`, writes runtime-resolvable caches, or needs database access. REASON: buildCommands run in an isolated build container without access to runtime filesystem, deploy files, or services. initCommands run per-container-start with the full runtime environment (deploy files at `/var/www/`, env vars, cross-service connectivity). Use `zsc execOnce ${appVersionId} -- <cmd>` to gate DB migrations so one container runs them while others wait
 - **ALWAYS** use `--no-cache-dir` for pip in containers. REASON: prevents wasted disk space on ephemeral containers
-- **ALWAYS** use `--ignore-platform-reqs` for Composer on Alpine. REASON: musl libc may not satisfy platform requirements checks
+- **NEVER** bypass package-manager platform checks to work around missing build dependencies. REASON: suppressing validation hides real problems that crash at runtime. Instead, install missing system packages or extensions in `build.prepareCommands` so the package manager validates everything properly. Build and runtime are separate containers — if a dependency is needed in both, install in both `build.prepareCommands` and `run.prepareCommands`
 
 ### Base Image & OS
 - **NEVER** use `apt-get` on Alpine. REASON: Alpine uses `apk`; apt-get doesn't exist
@@ -199,7 +200,6 @@ zerops[]:
 ### Build & Runtime
 - **ALWAYS** build compiled languages (Rust, Go, Java, .NET) with release/optimized flags for production. REASON: debug builds are dramatically slower and larger
 - **ALWAYS** use `CGO_ENABLED=0 go build` when unsure about CGO dependencies. REASON: produces static binary compatible with any container base (avoids glibc/musl mismatch)
-- **ALWAYS** use `sudo apk add --no-cache php84-<ext>` for Alpine PHP extensions. REASON: version prefix must match PHP major+minor; sudo required in build container
 - **ALWAYS** bind `0.0.0.0`, not `localhost` or `127.0.0.1`. Many frameworks default to localhost — override in config or env var. REASON: L7 LB routes to container VXLAN IP; localhost binding = 502
 - **ALWAYS** configure the framework's proxy trust setting (if it has one). REASON: Zerops L7 balancer terminates SSL and forwards via reverse proxy — frameworks that validate origin/CSRF headers will reject requests unless they trust the proxy. Check the framework's documentation for the specific setting
 
