@@ -21,12 +21,33 @@ type Engine struct {
 }
 
 // NewEngine creates a new workflow engine rooted at baseDir.
+// Auto-recovers the active session from disk if the previous process died
+// (MCP server restart). Updates the session PID to the current process.
 func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
-	return &Engine{
+	e := &Engine{
 		stateDir:    baseDir,
 		environment: env,
 		knowledge:   kp,
 	}
+	if savedID := loadActiveSession(baseDir); savedID != "" {
+		if state, err := LoadSessionByID(baseDir, savedID); err == nil {
+			// Only recover sessions from dead processes. If PID matches ours,
+			// another Engine in this process owns it (e.g. tests) — don't steal.
+			if state.PID != os.Getpid() && !isProcessAlive(state.PID) {
+				state.PID = os.Getpid()
+				state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+				if err := saveSessionState(baseDir, savedID, state); err == nil {
+					e.sessionID = savedID
+					_ = updateRegistryPID(baseDir, savedID, os.Getpid())
+					fmt.Fprintf(os.Stderr, "zcp: auto-recovered session %s from previous process\n", savedID)
+				}
+			}
+		} else {
+			// Session file gone (pruned or completed) — clean stale reference.
+			clearActiveSession(baseDir)
+		}
+	}
+	return e
 }
 
 // Environment returns the detected execution environment.
@@ -46,6 +67,7 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 					return nil, fmt.Errorf("start auto-reset: %w", err)
 				}
 				e.sessionID = ""
+				clearActiveSession(e.stateDir)
 			} else {
 				return nil, fmt.Errorf("start: active session %s, reset first", e.sessionID)
 			}
@@ -58,6 +80,7 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 	}
 	e.sessionID = state.SessionID
 	e.completedState = nil
+	persistActiveSession(e.stateDir, state.SessionID)
 	return state, nil
 }
 
@@ -69,6 +92,7 @@ func (e *Engine) Reset() error {
 	}
 	err := ResetSessionByID(e.stateDir, e.sessionID)
 	e.sessionID = ""
+	clearActiveSession(e.stateDir)
 	if err != nil {
 		return fmt.Errorf("reset session: %w", err)
 	}
@@ -193,6 +217,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 		}
 		e.completedState = state
 		e.sessionID = ""
+		clearActiveSession(e.stateDir)
 	} else if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete save: %w", err)
 	}
@@ -320,7 +345,12 @@ func (e *Engine) BootstrapStatus() (*BootstrapResponse, error) {
 }
 
 // Resume takes over an abandoned session (dead PID) by updating PID to current process.
+// Idempotent: if this engine already owns the session (e.g. auto-recovered at startup),
+// returns the current state without error.
 func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
+	if e.sessionID == sessionID {
+		return LoadSessionByID(e.stateDir, sessionID)
+	}
 	state, err := LoadSessionByID(e.stateDir, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("resume: %w", err)
@@ -336,6 +366,7 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 		return nil, fmt.Errorf("resume: %w", err)
 	}
 	e.sessionID = sessionID
+	persistActiveSession(e.stateDir, sessionID)
 	return state, nil
 }
 

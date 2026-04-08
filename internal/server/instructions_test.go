@@ -227,7 +227,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 
 // --- buildWorkflowHint tests ---
 
-func TestBuildWorkflowHint_DeadPID_PrunedNotShown(t *testing.T) {
+func TestBuildWorkflowHint_DeadPID_ShownAsResumable(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	entry := workflow.SessionEntry{
@@ -237,14 +237,23 @@ func TestBuildWorkflowHint_DeadPID_PrunedNotShown(t *testing.T) {
 	if err := workflow.RegisterSession(dir, entry); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
 	}
-	hint := buildWorkflowHint(dir)
-	if hint != "" {
-		t.Errorf("dead PID sessions should be pruned, not shown as resumable, got: %s", hint)
+	// Create session file so LoadSessionByID works.
+	if err := workflow.SaveSessionState(dir, "dead-session-abc", &workflow.WorkflowState{
+		SessionID: "dead-session-abc", PID: 9999999, Workflow: "bootstrap",
+	}); err != nil {
+		t.Fatalf("SaveSessionState: %v", err)
 	}
-	// Verify session was actually cleaned up from registry.
+	hint := buildWorkflowHint(dir)
+	if !strings.Contains(hint, "Resumable") {
+		t.Errorf("dead PID sessions should be shown as resumable, got: %s", hint)
+	}
+	if !strings.Contains(hint, "dead-session-abc") {
+		t.Errorf("hint should contain session ID, got: %s", hint)
+	}
+	// Session should NOT be pruned — still in registry.
 	sessions, _ := workflow.ListSessions(dir)
-	if len(sessions) != 0 {
-		t.Errorf("expected 0 sessions after pruning, got %d", len(sessions))
+	if len(sessions) != 1 {
+		t.Errorf("expected 1 session preserved, got %d", len(sessions))
 	}
 }
 

@@ -85,8 +85,8 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 }
 
 // buildWorkflowHint reads the registry and returns hints for all sessions.
-// Shows active workflow sessions. Dead-PID sessions are pruned (cleaned up)
-// rather than shown as resumable — prevents stale resume hints from misleading agents.
+// Dead-PID sessions are shown as resumable — the Engine auto-recovers them
+// on startup via the persisted active_session file.
 func buildWorkflowHint(stateDir string) string {
 	if stateDir == "" {
 		return ""
@@ -98,46 +98,47 @@ func buildWorkflowHint(stateDir string) string {
 
 	alive, dead := workflow.ClassifySessions(sessions)
 
-	// Prune dead sessions — they're from previous conversations and would
-	// mislead the agent into resuming stale workflows instead of starting fresh.
-	for _, s := range dead {
-		_ = workflow.ResetSessionByID(stateDir, s.SessionID)
-	}
-
 	var hints []string
+	// Show alive sessions as active.
 	for _, s := range alive {
-		hint := fmt.Sprintf("Active workflow: %s", s.Workflow)
-		if state, loadErr := workflow.LoadSessionByID(stateDir, s.SessionID); loadErr == nil {
-			switch s.Workflow {
-			case "bootstrap":
-				if state.Bootstrap != nil && state.Bootstrap.Active {
-					stepNum := state.Bootstrap.CurrentStep + 1
-					total := len(state.Bootstrap.Steps)
-					stepName := state.Bootstrap.CurrentStepName()
-					hint += fmt.Sprintf(" (step %d/%d: %s)", stepNum, total, stepName)
-				}
-			case "develop":
-				if state.Deploy != nil && state.Deploy.Active {
-					stepNum := state.Deploy.CurrentStep + 1
-					total := len(state.Deploy.Steps)
-					stepName := state.Deploy.CurrentStepName()
-					hint += fmt.Sprintf(" (step %d/%d: %s)", stepNum, total, stepName)
-				}
-			case "recipe":
-				if state.Recipe != nil && state.Recipe.Active {
-					stepNum := state.Recipe.CurrentStep + 1
-					total := len(state.Recipe.Steps)
-					stepName := state.Recipe.CurrentStepName()
-					hint += fmt.Sprintf(" (step %d/%d: %s)", stepNum, total, stepName)
-					if state.Recipe.Plan != nil {
-						hint += fmt.Sprintf(" [%s %s]", state.Recipe.Plan.Framework, state.Recipe.Plan.Tier)
-					}
-				}
-			}
-		}
-		hints = append(hints, hint)
+		hints = append(hints, buildSessionHint(stateDir, s, "Active"))
+	}
+	// Show dead sessions as resumable — don't delete them.
+	// Engine auto-recovery or explicit Resume will claim them.
+	for _, s := range dead {
+		hints = append(hints, buildSessionHint(stateDir, s, "Resumable"))
 	}
 	return strings.Join(hints, "\n")
+}
+
+// buildSessionHint formats a single session hint with step progress.
+func buildSessionHint(stateDir string, s workflow.SessionEntry, prefix string) string {
+	hint := fmt.Sprintf("%s workflow: %s | intent: %q | session: %s", prefix, s.Workflow, s.Intent, s.SessionID)
+	if prefix == "Resumable" {
+		hint += fmt.Sprintf("\n  → Call zerops_workflow action=\"resume\" sessionId=%q to continue.", s.SessionID)
+	}
+	state, loadErr := workflow.LoadSessionByID(stateDir, s.SessionID)
+	if loadErr != nil {
+		return hint
+	}
+	switch s.Workflow {
+	case "bootstrap":
+		if state.Bootstrap != nil && state.Bootstrap.Active {
+			hint += fmt.Sprintf(" (step %d/%d: %s)", state.Bootstrap.CurrentStep+1, len(state.Bootstrap.Steps), state.Bootstrap.CurrentStepName())
+		}
+	case "develop":
+		if state.Deploy != nil && state.Deploy.Active {
+			hint += fmt.Sprintf(" (step %d/%d: %s)", state.Deploy.CurrentStep+1, len(state.Deploy.Steps), state.Deploy.CurrentStepName())
+		}
+	case "recipe":
+		if state.Recipe != nil && state.Recipe.Active {
+			hint += fmt.Sprintf(" (step %d/%d: %s)", state.Recipe.CurrentStep+1, len(state.Recipe.Steps), state.Recipe.CurrentStepName())
+			if state.Recipe.Plan != nil {
+				hint += fmt.Sprintf(" [%s %s]", state.Recipe.Plan.Framework, state.Recipe.Plan.Tier)
+			}
+		}
+	}
+	return hint
 }
 
 // serviceClassification categorizes project services into three buckets.

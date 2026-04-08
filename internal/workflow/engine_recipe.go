@@ -85,6 +85,7 @@ func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, c
 		}
 		e.completedState = state
 		e.sessionID = ""
+		clearActiveSession(e.stateDir)
 	} else if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("recipe complete save: %w", err)
 	}
@@ -167,6 +168,7 @@ func (e *Engine) RecipeSkip(step, reason string) (*RecipeResponse, error) {
 		}
 		e.completedState = state
 		e.sessionID = ""
+		clearActiveSession(e.stateDir)
 	} else if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("recipe skip save: %w", err)
 	}

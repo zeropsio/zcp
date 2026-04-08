@@ -224,6 +224,42 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 	return state, nil
 }
 
+// activeSessionFileName is the file that persists the current session ID
+// across process restarts. Written on session start/resume, deleted on
+// session reset/completion. Enables auto-recovery when MCP server restarts.
+const activeSessionFileName = "active_session"
+
+// persistActiveSession writes the current session ID to disk.
+func persistActiveSession(stateDir, sessionID string) {
+	if stateDir == "" || sessionID == "" {
+		return
+	}
+	path := filepath.Join(stateDir, activeSessionFileName)
+	_ = os.MkdirAll(stateDir, 0o755)
+	_ = os.WriteFile(path, []byte(sessionID), 0o600)
+}
+
+// loadActiveSession reads the persisted session ID from disk.
+// Returns "" if the file doesn't exist or can't be read.
+func loadActiveSession(stateDir string) string {
+	if stateDir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(stateDir, activeSessionFileName))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// clearActiveSession removes the persisted session ID file.
+func clearActiveSession(stateDir string) {
+	if stateDir == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(stateDir, activeSessionFileName))
+}
+
 // generateSessionID creates a random session ID.
 func generateSessionID() (string, error) {
 	b := make([]byte, 8)

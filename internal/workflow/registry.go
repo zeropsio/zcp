@@ -66,6 +66,21 @@ func UnregisterSession(stateDir, sessionID string) error {
 	})
 }
 
+// updateRegistryPID updates the PID for a session in the registry.
+// Used during auto-recovery to claim a session from a dead process.
+func updateRegistryPID(stateDir, sessionID string, pid int) error {
+	return withRegistryLock(stateDir, func(reg *Registry) (*Registry, error) {
+		for i := range reg.Sessions {
+			if reg.Sessions[i].SessionID == sessionID {
+				reg.Sessions[i].PID = pid
+				reg.Sessions[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+				break
+			}
+		}
+		return reg, nil
+	})
+}
+
 // ListSessions returns all sessions from the registry (read-only, no pruning).
 func ListSessions(stateDir string) ([]SessionEntry, error) {
 	reg, err := readRegistryShared(stateDir)

@@ -38,7 +38,6 @@ func (m *mockSSHDeployer) ExecSSH(_ context.Context, _, _ string) ([]byte, error
 func startDevelopWorkflow(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 
-	// Write service meta so develop workflow can start.
 	stateDir := ".zcp/state"
 	meta := &workflow.ServiceMeta{
 		Hostname:       "app",
@@ -68,6 +67,9 @@ func startDevelopWorkflow(t *testing.T, session *mcp.ClientSession) {
 // setupTestServerWithDeploy creates a full MCP server with a mock SSH deployer.
 func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer) (*mcp.ClientSession, func()) {
 	t.Helper()
+	// Clear leftover active_session from previous runs to prevent
+	// Engine auto-recovery from claiming stale sessions during tests.
+	_ = os.Remove(".zcp/state/active_session")
 
 	authInfo := &auth.Info{
 		ProjectID:   "proj-1",
