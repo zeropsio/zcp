@@ -101,20 +101,24 @@ func buildWorkflowHint(stateDir string) string {
 	var hints []string
 	// Show alive sessions as active.
 	for _, s := range alive {
-		hints = append(hints, buildSessionHint(stateDir, s, "Active"))
+		hints = append(hints, buildSessionHint(stateDir, s, false))
 	}
 	// Show dead sessions as resumable — don't delete them.
 	// Engine auto-recovery or explicit Resume will claim them.
 	for _, s := range dead {
-		hints = append(hints, buildSessionHint(stateDir, s, "Resumable"))
+		hints = append(hints, buildSessionHint(stateDir, s, true))
 	}
 	return strings.Join(hints, "\n")
 }
 
 // buildSessionHint formats a single session hint with step progress.
-func buildSessionHint(stateDir string, s workflow.SessionEntry, prefix string) string {
+func buildSessionHint(stateDir string, s workflow.SessionEntry, resumable bool) string {
+	prefix := "Active"
+	if resumable {
+		prefix = "Resumable"
+	}
 	hint := fmt.Sprintf("%s workflow: %s | intent: %q | session: %s", prefix, s.Workflow, s.Intent, s.SessionID)
-	if prefix == "Resumable" {
+	if resumable {
 		hint += fmt.Sprintf("\n  → Call zerops_workflow action=\"resume\" sessionId=%q to continue.", s.SessionID)
 	}
 	state, loadErr := workflow.LoadSessionByID(stateDir, s.SessionID)

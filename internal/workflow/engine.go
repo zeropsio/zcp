@@ -34,11 +34,7 @@ func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 			// Only recover sessions from dead processes. If PID matches ours,
 			// another Engine in this process owns it (e.g. tests) — don't steal.
 			if state.PID != os.Getpid() && !isProcessAlive(state.PID) {
-				state.PID = os.Getpid()
-				state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-				if err := saveSessionState(baseDir, savedID, state); err == nil {
-					e.sessionID = savedID
-					_ = updateRegistryPID(baseDir, savedID, os.Getpid())
+				if err := e.claimSession(savedID, state); err == nil {
 					fmt.Fprintf(os.Stderr, "zcp: auto-recovered session %s from previous process\n", savedID)
 				}
 			}
@@ -48,6 +44,30 @@ func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 		}
 	}
 	return e
+}
+
+// setSessionID updates the in-memory session reference and persists it to disk.
+func (e *Engine) setSessionID(id string) {
+	e.sessionID = id
+	persistActiveSession(e.stateDir, id)
+}
+
+// clearSessionID clears the in-memory session reference and removes the disk file.
+func (e *Engine) clearSessionID() {
+	e.sessionID = ""
+	clearActiveSession(e.stateDir)
+}
+
+// claimSession takes ownership of a session: updates PID, saves state, updates registry.
+func (e *Engine) claimSession(sessionID string, state *WorkflowState) error {
+	state.PID = os.Getpid()
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
+		return err
+	}
+	e.setSessionID(sessionID)
+	_ = updateRegistryPID(e.stateDir, sessionID, os.Getpid())
+	return nil
 }
 
 // Environment returns the detected execution environment.
@@ -66,8 +86,7 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 				if err := ResetSessionByID(e.stateDir, e.sessionID); err != nil {
 					return nil, fmt.Errorf("start auto-reset: %w", err)
 				}
-				e.sessionID = ""
-				clearActiveSession(e.stateDir)
+				e.clearSessionID()
 			} else {
 				return nil, fmt.Errorf("start: active session %s, reset first", e.sessionID)
 			}
@@ -78,9 +97,8 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 	if err != nil {
 		return nil, fmt.Errorf("start: %w", err)
 	}
-	e.sessionID = state.SessionID
+	e.setSessionID(state.SessionID)
 	e.completedState = nil
-	persistActiveSession(e.stateDir, state.SessionID)
 	return state, nil
 }
 
@@ -91,8 +109,7 @@ func (e *Engine) Reset() error {
 		return nil
 	}
 	err := ResetSessionByID(e.stateDir, e.sessionID)
-	e.sessionID = ""
-	clearActiveSession(e.stateDir)
+	e.clearSessionID()
 	if err != nil {
 		return fmt.Errorf("reset session: %w", err)
 	}
@@ -216,8 +233,7 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 			fmt.Fprintf(os.Stderr, "zcp: cleanup completed session: %v\n", cleanupErr)
 		}
 		e.completedState = state
-		e.sessionID = ""
-		clearActiveSession(e.stateDir)
+		e.clearSessionID()
 	} else if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
 		return nil, fmt.Errorf("bootstrap complete save: %w", err)
 	}
@@ -358,15 +374,9 @@ func (e *Engine) Resume(sessionID string) (*WorkflowState, error) {
 	if isProcessAlive(state.PID) {
 		return nil, fmt.Errorf("resume: session %s still active (PID %d)", sessionID, state.PID)
 	}
-
-	state.PID = os.Getpid()
-	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-
-	if err := saveSessionState(e.stateDir, sessionID, state); err != nil {
+	if err := e.claimSession(sessionID, state); err != nil {
 		return nil, fmt.Errorf("resume: %w", err)
 	}
-	e.sessionID = sessionID
-	persistActiveSession(e.stateDir, sessionID)
 	return state, nil
 }
 

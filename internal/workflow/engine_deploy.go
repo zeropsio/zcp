@@ -62,8 +62,7 @@ func (e *Engine) DeployComplete(ctx context.Context, step, attestation string, c
 			fmt.Fprintf(os.Stderr, "zcp: cleanup completed deploy session: %v\n", cleanupErr)
 		}
 		e.completedState = state
-		e.sessionID = ""
-		clearActiveSession(e.stateDir)
+		e.clearSessionID()
 	} else if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("deploy complete save: %w", err)
 	}
@@ -96,8 +95,7 @@ func (e *Engine) DeploySkip(step, reason string) (*DeployResponse, error) {
 			fmt.Fprintf(os.Stderr, "zcp: cleanup skipped deploy session: %v\n", cleanupErr)
 		}
 		e.completedState = state
-		e.sessionID = ""
-		clearActiveSession(e.stateDir)
+		e.clearSessionID()
 	} else if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("deploy skip save: %w", err)
 	}
