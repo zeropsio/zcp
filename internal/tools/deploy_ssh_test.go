@@ -47,7 +47,7 @@ func TestDeployTool_SSHMode(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "builder",
@@ -99,7 +99,7 @@ func TestDeployTool_SelfDeploy_TargetOnly(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -158,7 +158,7 @@ func TestDeployTool_ActiveDeploy_WithBuildWarnings(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "builder",
@@ -216,7 +216,7 @@ func TestDeployTool_ActiveDeploy_NoBuildWarnings(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "builder",
@@ -258,7 +258,7 @@ func TestDeployTool_BuildFailed(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -317,7 +317,7 @@ func TestDeployTool_BuildFailed_WithBuildLogs(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -385,7 +385,7 @@ func TestDeployTool_SSHReadinessTimeout(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -440,7 +440,7 @@ func TestDeployTool_SelfDeploy_DevAwareResponse(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "appdev",
@@ -492,7 +492,7 @@ func TestDeployTool_CrossDeploy_StandardResponse(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "appdev",
@@ -523,7 +523,7 @@ func TestDeployTool_NoParams(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	// targetService is required — SDK validates and returns error for missing field.
 	err := callToolMayError(t, srv, "zerops_deploy", map[string]any{})
@@ -558,7 +558,7 @@ func TestDeployTool_SSHMode_Exit255PollsSuccessfully(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "builder",
@@ -593,7 +593,7 @@ func TestDeployTool_Error(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "builder",
@@ -635,7 +635,7 @@ func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, logFetcher, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -692,7 +692,7 @@ func TestDeployTool_UnknownBuildStatus_TreatedAsFailure(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -745,7 +745,7 @@ func TestDeployTool_DescriptionByEnvironment(t *testing.T) {
 			authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, tt.rtInfo, "")
+			RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, tt.rtInfo, "", testDeployEngine(t))
 
 			ctx := context.Background()
 			st, ct := mcp.NewInMemoryTransports()
@@ -787,6 +787,19 @@ func TestDeployTool_DescriptionByEnvironment(t *testing.T) {
 	}
 }
 
+// testDeployEngine creates an Engine with an active develop session for deploy tests.
+// Deploy requires an active workflow session (requireWorkflow guard).
+func testDeployEngine(t *testing.T) *workflow.Engine {
+	t.Helper()
+	dir := t.TempDir()
+	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+	targets := []workflow.DeployTarget{{Hostname: "test", Role: "dev", Status: "pending"}}
+	if _, err := eng.DeployStart("proj-test", "test deploy", targets, "dev"); err != nil {
+		t.Fatalf("DeployStart for test engine: %v", err)
+	}
+	return eng
+}
+
 // setupAdoptedService writes a ServiceMeta so the service is "known" to ZCP.
 func setupAdoptedService(t *testing.T, stateDir, hostname, stageHostname string) {
 	t.Helper()
@@ -819,7 +832,7 @@ func TestDeployTool_AdoptionGate_BlocksUnadoptedService(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "docs",
@@ -852,7 +865,7 @@ func TestDeployTool_AdoptionGate_AllowsAdoptedService(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "appdev",
@@ -881,7 +894,7 @@ func TestDeployTool_AdoptionGate_AllowsStageHostname(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"sourceService": "appdev",
@@ -905,7 +918,7 @@ func TestDeployTool_AdoptionGate_GitPush_BlocksUnadopted(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "docs",
@@ -935,7 +948,7 @@ func TestDeployTool_AdoptionGate_EmptyStateDir_Skips(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "")
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -962,7 +975,7 @@ func TestDeployTool_AdoptionGate_NoServicesDir_Skips(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t))
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
@@ -970,5 +983,32 @@ func TestDeployTool_AdoptionGate_NoServicesDir_Skips(t *testing.T) {
 
 	if result.IsError {
 		t.Errorf("expected success with no services dir, got error: %s", getTextContent(t, result))
+	}
+}
+
+func TestDeployTool_WorkflowGate_BlocksWithoutSession(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "app"}})
+	ssh := &stubSSH{output: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	// Engine with no active session — deploy should be blocked.
+	eng := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", eng)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "app",
+	})
+
+	if !result.IsError {
+		t.Fatal("expected error for deploy without active workflow session")
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "workflow") {
+		t.Errorf("error should mention workflow, got: %s", text)
 	}
 }

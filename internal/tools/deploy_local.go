@@ -7,6 +7,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // DeployLocalInput is the input type for zerops_deploy in local mode.
@@ -27,6 +28,7 @@ func RegisterDeployLocal(
 	authInfo *auth.Info,
 	logFetcher platform.LogFetcher,
 	stateDir string,
+	engine *workflow.Engine,
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_deploy",
@@ -38,6 +40,10 @@ func RegisterDeployLocal(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployLocalInput) (*mcp.CallToolResult, any, error) {
+		// Gate: deploy requires an active workflow session.
+		if blocked := requireWorkflow(engine); blocked != nil {
+			return blocked, nil, nil
+		}
 		// Gate: target must be adopted by ZCP.
 		if blocked := requireAdoption(stateDir, input.TargetService); blocked != nil {
 			return blocked, nil, nil

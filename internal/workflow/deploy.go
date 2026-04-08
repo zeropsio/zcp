@@ -299,7 +299,10 @@ func (d *DeployState) BuildResponse(sessionID, intent string, iteration int, env
 		resp.Current.DetailedGuide = d.buildGuide(detail.Name, iteration, env, stateDir)
 		resp.Message = fmt.Sprintf("Deploy step %d/%d: %s", d.CurrentStep+1, len(d.Steps), detail.Name)
 	} else {
-		resp.Message = "Deploy complete. All steps finished."
+		resp.Message = "Deploy complete.\n\n" +
+			"Start a new develop workflow for the next task:\n" +
+			"  zerops_workflow action=\"start\" workflow=\"develop\"\n\n" +
+			"Each workflow refreshes service state and provides current guidance."
 	}
 
 	return resp

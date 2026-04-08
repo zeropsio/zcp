@@ -88,10 +88,22 @@ func (e *Engine) DeploySkip(step, reason string) (*DeployResponse, error) {
 	}
 
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+	var cleanupErr error
+	if !state.Deploy.Active {
+		cleanupErr = ResetSessionByID(e.stateDir, state.SessionID)
+		if cleanupErr != nil {
+			fmt.Fprintf(os.Stderr, "zcp: cleanup skipped deploy session: %v\n", cleanupErr)
+		}
+		e.completedState = state
+		e.sessionID = ""
+	} else if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("deploy skip save: %w", err)
 	}
-	return state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.stateDir), nil
+	resp := state.Deploy.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.stateDir)
+	if cleanupErr != nil {
+		resp.Message += "\n\nWarning: session cleanup failed: " + cleanupErr.Error()
+	}
+	return resp, nil
 }
 
 // DeployStatus returns the current deploy progress with fresh guidance.

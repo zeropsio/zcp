@@ -101,9 +101,9 @@ func (s *Server) registerTools() {
 
 	// Mutating tools — deploy registration routes by environment.
 	if s.sshDeployer != nil {
-		tools.RegisterDeploySSH(s.server, s.client, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir)
+		tools.RegisterDeploySSH(s.server, s.client, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine)
 	} else {
-		tools.RegisterDeployLocal(s.server, s.client, projectID, s.authInfo, s.logFetcher, stateDir)
+		tools.RegisterDeployLocal(s.server, s.client, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine)
 	}
 	tools.RegisterExport(s.server, s.client, projectID)
 	tools.RegisterManage(s.server, s.client, projectID)

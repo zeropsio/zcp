@@ -6,12 +6,14 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // handleDeployStart reads service metas and creates a deploy session.
-func handleDeployStart(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+// When no metas exist but live services are found, auto-adopts them through the bootstrap engine.
+func handleDeployStart(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, input WorkflowInput, cache *ops.StackTypeCache, mounter ops.Mounter, selfHostname string) (*mcp.CallToolResult, any, error) {
 	metas, err := workflow.ListServiceMetas(engine.StateDir())
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -42,10 +44,22 @@ func handleDeployStart(ctx context.Context, engine *workflow.Engine, client plat
 	}
 
 	if len(metas) == 0 {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"No bootstrapped services found",
-			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
+		// Auto-adopt: no metas exist but services may be live on platform.
+		if adopted := adoptUnmanagedServices(ctx, engine, client, projectID, cache, mounter, selfHostname); adopted {
+			metas, err = workflow.ListServiceMetas(engine.StateDir())
+			if err != nil {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter,
+					fmt.Sprintf("Failed to read metas after auto-adopt: %v", err),
+					"")), nil, nil
+			}
+		}
+		if len(metas) == 0 {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				"No bootstrapped services found",
+				"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
+		}
 	}
 
 	// Filter to complete runtime services. Incomplete metas (bootstrap in progress)
@@ -204,4 +218,68 @@ func buildStrategyStatusNote(metas []*workflow.ServiceMeta) string {
 		return fmt.Sprintf("Strategy: %s. Change anytime via action=\"strategy\".", names[0])
 	}
 	return fmt.Sprintf("Strategies: %s. Change anytime via action=\"strategy\".", strings.Join(names, ", "))
+}
+
+// adoptUnmanagedServices auto-adopts existing platform services through the bootstrap engine.
+// Returns true if adoption occurred, false otherwise. Uses the same code path as manual
+// bootstrap adoption: BootstrapStart → BootstrapCompletePlan → BootstrapComplete("provision")
+// → fast path. Cleans up on failure to prevent orphaned sessions.
+func adoptUnmanagedServices(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, cache *ops.StackTypeCache, mounter ops.Mounter, selfHostname string) bool {
+	if client == nil || engine == nil {
+		return false
+	}
+	if engine.HasActiveSession() {
+		return false
+	}
+
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil || len(services) == 0 {
+		return false
+	}
+
+	// Build adoption candidates from live services.
+	var candidates []workflow.AdoptCandidate
+	for i := range services {
+		if services[i].IsSystem() {
+			continue
+		}
+		if selfHostname != "" && services[i].Name == selfHostname {
+			continue
+		}
+		candidates = append(candidates, workflow.AdoptCandidate{
+			Hostname: services[i].Name,
+			Type:     services[i].ServiceStackTypeInfo.ServiceStackTypeVersionName,
+		})
+	}
+
+	targets := workflow.InferServicePairing(candidates)
+	if len(targets) == 0 {
+		return false
+	}
+
+	// Fetch live types for plan validation.
+	var liveTypes []platform.ServiceStackType
+	if cache != nil {
+		liveTypes = cache.Get(ctx, client)
+	}
+
+	// Run bootstrap adoption: same engine path as manual bootstrap.
+	if _, err := engine.BootstrapStart(projectID, "Auto-adoption of existing services"); err != nil {
+		return false
+	}
+
+	if _, err := engine.BootstrapCompletePlan(targets, liveTypes, nil); err != nil {
+		_ = engine.Reset() // cleanup orphaned bootstrap session
+		return false
+	}
+
+	if _, err := engine.BootstrapComplete(ctx, "provision", "Auto-adopted: all services exist on platform", nil); err != nil {
+		_ = engine.Reset()
+		return false
+	}
+
+	// Auto-mount runtime services (best-effort, same as manual bootstrap).
+	autoMountTargets(ctx, client, projectID, mounter, engine)
+
+	return true
 }

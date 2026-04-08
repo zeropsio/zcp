@@ -139,11 +139,11 @@ func TestServer_Instructions_FitIn2KB(t *testing.T) {
 
 func TestServer_BaseInstructions_WorkflowDirective(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(baseInstructions, "Before ANY work") {
-		t.Error("baseInstructions should contain workflow directive")
+	if !strings.Contains(baseInstructions, "Every code task") {
+		t.Error("baseInstructions should contain workflow cycle directive")
 	}
-	if !strings.Contains(baseInstructions, `action="start"`) {
-		t.Error("baseInstructions should use tracked mode syntax")
+	if !strings.Contains(baseInstructions, `workflow="develop"`) {
+		t.Error("baseInstructions should reference develop workflow")
 	}
 	if !strings.Contains(baseInstructions, "bootstrap") {
 		t.Error("baseInstructions should mention bootstrap workflow")
@@ -176,9 +176,9 @@ func TestBuildInstructions_WithServices(t *testing.T) {
 	if !strings.Contains(inst, "Do NOT delete") {
 		t.Error("should contain anti-deletion warning")
 	}
-	// Unmanaged runtimes should show adoption hint.
-	if !strings.Contains(inst, "run bootstrap") {
-		t.Error("unmanaged runtime services should be labeled")
+	// Unmanaged runtimes should show auto-adopt hint.
+	if !strings.Contains(inst, "auto-adopted") {
+		t.Error("unmanaged runtime services should show auto-adopt label")
 	}
 }
 
@@ -194,13 +194,9 @@ func TestBuildInstructions_UnmanagedProject(t *testing.T) {
 	if !strings.Contains(inst, "Do NOT delete") {
 		t.Error("should contain anti-deletion warning")
 	}
-	// Should show adoption hint for unmanaged runtime.
-	if !strings.Contains(inst, "run bootstrap") {
-		t.Error("unmanaged runtime should be labeled")
-	}
-	// Should recommend bootstrap.
-	if !strings.Contains(inst, "bootstrap") {
-		t.Error("should mention bootstrap for adoption")
+	// Should show auto-adopt hint for unmanaged runtime.
+	if !strings.Contains(inst, "auto-adopted") {
+		t.Error("unmanaged runtime should have auto-adopt label")
 	}
 }
 

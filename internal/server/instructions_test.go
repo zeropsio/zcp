@@ -88,8 +88,8 @@ func TestClassifyServices_LabelFor(t *testing.T) {
 	if l := cls.labelFor("appstage"); l != "" {
 		t.Errorf("stage label = %q, want empty", l)
 	}
-	if l := cls.labelFor("apidev"); !strings.Contains(l, "run bootstrap") {
-		t.Errorf("unmanaged label = %q, want 'not managed'", l)
+	if l := cls.labelFor("apidev"); !strings.Contains(l, "auto-adopted") {
+		t.Errorf("unmanaged label = %q, want 'auto-adopted'", l)
 	}
 	if l := cls.labelFor("db"); l != "" {
 		t.Errorf("managed label = %q, want empty", l)
@@ -108,12 +108,9 @@ func TestBuildInstructions_UnmanagedRuntimes_HasAdoptionHint(t *testing.T) {
 	stateDir := t.TempDir()
 	result := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, stateDir)
 
-	// Must contain adoption hint for unmanaged services.
-	if !strings.Contains(result, "run bootstrap") {
-		t.Error("expected 'needs ZCP adoption' label for unbootstrapped runtimes")
-	}
-	if !strings.Contains(result, "adopt") {
-		t.Error("expected adoption hint in router offerings")
+	// Must contain auto-adopt messaging for unmanaged services.
+	if !strings.Contains(result, "auto-adopted") {
+		t.Error("expected 'auto-adopted' label for unbootstrapped runtimes")
 	}
 	// Must list services.
 	if !strings.Contains(result, "nodedev") {
@@ -150,9 +147,9 @@ func TestBuildInstructions_BootstrappedWithUnmanaged_BothVisible(t *testing.T) {
 	if !strings.Contains(result, "appdev") {
 		t.Error("expected bootstrapped service detail")
 	}
-	// Adoption hint for unmanaged runtime.
-	if !strings.Contains(result, "run bootstrap") {
-		t.Error("expected unmanaged label for apidev")
+	// Auto-adopt hint for unmanaged runtime.
+	if !strings.Contains(result, "auto-adopted") {
+		t.Error("expected auto-adopt label for apidev")
 	}
 	// Router offerings (no short-circuit).
 	if !strings.Contains(result, "Available workflows") {
@@ -230,7 +227,7 @@ func TestBuildProjectSummary_RouterIntegration(t *testing.T) {
 
 // --- buildWorkflowHint tests ---
 
-func TestBuildWorkflowHint_DeadPID_ShowsResumable(t *testing.T) {
+func TestBuildWorkflowHint_DeadPID_PrunedNotShown(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	entry := workflow.SessionEntry{
@@ -241,13 +238,13 @@ func TestBuildWorkflowHint_DeadPID_ShowsResumable(t *testing.T) {
 		t.Fatalf("RegisterSession: %v", err)
 	}
 	hint := buildWorkflowHint(dir)
-	if hint == "" {
-		t.Fatal("expected non-empty hint for dead PID session")
+	if hint != "" {
+		t.Errorf("dead PID sessions should be pruned, not shown as resumable, got: %s", hint)
 	}
-	for _, want := range []string{"Resumable", "dead-session-abc", `action="resume"`} {
-		if !strings.Contains(hint, want) {
-			t.Errorf("hint should contain %q, got: %s", want, hint)
-		}
+	// Verify session was actually cleaned up from registry.
+	sessions, _ := workflow.ListSessions(dir)
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions after pruning, got %d", len(sessions))
 	}
 }
 
@@ -285,7 +282,7 @@ func TestBuildWorkflowHint_NoSessions_ReturnsEmpty(t *testing.T) {
 
 func TestBaseInstructions_ContainsWorkflowDirective(t *testing.T) {
 	t.Parallel()
-	for _, want := range []string{"Before ANY work", "workflow", "debug", "bootstrap", "develop"} {
+	for _, want := range []string{"Every code task", "workflow", "bootstrap", "develop"} {
 		if !strings.Contains(baseInstructions, want) {
 			t.Errorf("baseInstructions should contain %q", want)
 		}
@@ -421,8 +418,8 @@ func TestOrientation_UnmanagedOnly(t *testing.T) {
 	if !strings.Contains(result, "Runtime services needing adoption") {
 		t.Errorf("unmanaged-only should show adoption section, got:\n%s", result)
 	}
-	if !strings.Contains(result, "isExisting=true") {
-		t.Errorf("adoption section should mention isExisting, got:\n%s", result)
+	if !strings.Contains(result, "Auto-adopted") {
+		t.Errorf("adoption section should mention auto-adopt, got:\n%s", result)
 	}
 }
 
@@ -476,10 +473,10 @@ func TestBuildProjectSummary_BadMetasDir_Graceful(t *testing.T) {
 
 // --- Base instruction content tests ---
 
-func TestBaseInstructions_HasAdoptionLine(t *testing.T) {
+func TestBaseInstructions_HasWorkflowCycle(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(baseInstructions, "adopt") {
-		t.Error("baseInstructions should mention adopting services")
+	if !strings.Contains(baseInstructions, "After deploy") {
+		t.Error("baseInstructions should mention starting new workflow after deploy")
 	}
 }
 

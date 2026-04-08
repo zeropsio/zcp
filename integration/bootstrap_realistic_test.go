@@ -122,7 +122,7 @@ func setupRealisticServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession
 	tools.RegisterImport(mcpSrv, mock, projectID, nil, nil, engine)
 	tools.RegisterProcess(mcpSrv, mock)
 	tools.RegisterMount(mcpSrv, mock, projectID, &nopMounter{}, runtime.Info{}, engine)
-	tools.RegisterDeploySSH(mcpSrv, mock, projectID, &nopSSH{}, authInfo, logFetcher, runtime.Info{}, "")
+	tools.RegisterDeploySSH(mcpSrv, mock, projectID, &nopSSH{}, authInfo, logFetcher, runtime.Info{}, "", engine)
 	tools.RegisterSubdomain(mcpSrv, mock, projectID)
 	tools.RegisterLogs(mcpSrv, mock, logFetcher, projectID)
 	tools.RegisterEvents(mcpSrv, mock, projectID)

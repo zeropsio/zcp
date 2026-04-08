@@ -15,13 +15,12 @@ import (
 const sshfsMountBase = "/var/www"
 
 const baseInstructions = `ZCP manages Zerops PaaS infrastructure.
-Before ANY work on service code (reading, debugging, fixing, deploying), start a workflow:
-  zerops_workflow action="start" workflow="..."
-  bootstrap — create/adopt infrastructure only (not the user's app)
-  develop — app development, deploying, fixing, investigating
-  recipe — create recipe repo files (6 env tiers)
-  cicd — set up CI/CD pipelines
-Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_deploy (manual), zerops_discover, zerops_knowledge`
+Every code task = one develop workflow. Start before ANY code changes:
+  zerops_workflow action="start" workflow="develop"
+The workflow refreshes service state, mounts, and guidance.
+After deploy, immediately start a new workflow for the next task.
+Other workflows: bootstrap (new infrastructure), recipe (6 env tiers), cicd (CI/CD pipelines).
+Direct tools (no workflow needed): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_discover, zerops_knowledge`
 
 const containerEnvironment = `
 Control plane container — manages OTHER services, does not serve traffic.
@@ -86,7 +85,8 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 }
 
 // buildWorkflowHint reads the registry and returns hints for all sessions.
-// Dead-PID sessions show as resumable with instructions. Returns empty on error.
+// Shows active workflow sessions. Dead-PID sessions are pruned (cleaned up)
+// rather than shown as resumable — prevents stale resume hints from misleading agents.
 func buildWorkflowHint(stateDir string) string {
 	if stateDir == "" {
 		return ""
@@ -97,6 +97,12 @@ func buildWorkflowHint(stateDir string) string {
 	}
 
 	alive, dead := workflow.ClassifySessions(sessions)
+
+	// Prune dead sessions — they're from previous conversations and would
+	// mislead the agent into resuming stale workflows instead of starting fresh.
+	for _, s := range dead {
+		_ = workflow.ResetSessionByID(stateDir, s.SessionID)
+	}
 
 	var hints []string
 	for _, s := range alive {
@@ -130,11 +136,6 @@ func buildWorkflowHint(stateDir string) string {
 			}
 		}
 		hints = append(hints, hint)
-	}
-	for _, s := range dead {
-		hints = append(hints, fmt.Sprintf(
-			"Resumable workflow: %s | intent: %q | session: %s\n  → Call zerops_workflow action=\"resume\" sessionId=\"%s\" to continue.",
-			s.Workflow, s.Intent, s.SessionID, s.SessionID))
 	}
 	return strings.Join(hints, "\n")
 }
@@ -227,7 +228,7 @@ func (c *serviceClassification) labelFor(hostname string) string {
 		return " — bootstrap incomplete" + mount
 	}
 	if slices.Contains(c.unmanagedNames, hostname) {
-		return " — run bootstrap (isExisting=true) before any work on this service" + mount
+		return " — auto-adopted on develop workflow start" + mount
 	}
 	return mount
 }

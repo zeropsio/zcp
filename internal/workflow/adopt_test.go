@@ -1,0 +1,168 @@
+package workflow
+
+import (
+	"testing"
+)
+
+func TestInferServicePairing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		candidates []AdoptCandidate
+		wantCount  int
+		wantModes  map[string]string // hostname → expected mode
+		wantStage  map[string]string // hostname → expected StageHostname
+	}{
+		{
+			name: "standard pair appdev+appstage",
+			candidates: []AdoptCandidate{
+				{Hostname: "appdev", Type: "bun@1.2"},
+				{Hostname: "appstage", Type: "bun@1.2"},
+				{Hostname: "db", Type: "postgresql@16"},
+			},
+			wantCount: 1,
+			wantModes: map[string]string{"appdev": PlanModeStandard},
+			wantStage: map[string]string{"appdev": "appstage"},
+		},
+		{
+			name: "single service dev mode",
+			candidates: []AdoptCandidate{
+				{Hostname: "api", Type: "go@1"},
+			},
+			wantCount: 1,
+			wantModes: map[string]string{"api": PlanModeDev},
+			wantStage: map[string]string{"api": ""},
+		},
+		{
+			name: "skip managed services",
+			candidates: []AdoptCandidate{
+				{Hostname: "db", Type: "postgresql@16"},
+				{Hostname: "cache", Type: "valkey@7.2"},
+			},
+			wantCount: 0,
+		},
+		{
+			name: "skip zcp type",
+			candidates: []AdoptCandidate{
+				{Hostname: "zcp", Type: "zcp@1"},
+				{Hostname: "appdev", Type: "nodejs@22"},
+			},
+			wantCount: 1,
+			wantModes: map[string]string{"appdev": PlanModeDev},
+		},
+		{
+			name: "multiple pairs",
+			candidates: []AdoptCandidate{
+				{Hostname: "webdev", Type: "nodejs@22"},
+				{Hostname: "webstage", Type: "nodejs@22"},
+				{Hostname: "apidev", Type: "go@1"},
+				{Hostname: "apistage", Type: "go@1"},
+			},
+			wantCount: 2,
+			wantModes: map[string]string{
+				"webdev": PlanModeStandard,
+				"apidev": PlanModeStandard,
+			},
+		},
+		{
+			name: "hostname dev alone no stage",
+			candidates: []AdoptCandidate{
+				{Hostname: "appdev", Type: "bun@1.2"},
+			},
+			wantCount: 1,
+			wantModes: map[string]string{"appdev": PlanModeDev},
+		},
+		{
+			name: "hostname is literally dev",
+			candidates: []AdoptCandidate{
+				{Hostname: "dev", Type: "nodejs@22"},
+			},
+			wantCount: 1,
+			wantModes: map[string]string{"dev": PlanModeDev},
+		},
+		{
+			name: "webstage alone no pair",
+			candidates: []AdoptCandidate{
+				{Hostname: "webstage", Type: "nodejs@22"},
+			},
+			wantCount: 1,
+			wantModes: map[string]string{"webstage": PlanModeDev},
+		},
+		{
+			name: "managed services become dependencies",
+			candidates: []AdoptCandidate{
+				{Hostname: "appdev", Type: "bun@1.2"},
+				{Hostname: "appstage", Type: "bun@1.2"},
+				{Hostname: "db", Type: "postgresql@16"},
+				{Hostname: "cache", Type: "valkey@7.2"},
+			},
+			wantCount: 1,
+			wantModes: map[string]string{"appdev": PlanModeStandard},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			targets := InferServicePairing(tt.candidates)
+
+			if len(targets) != tt.wantCount {
+				t.Fatalf("target count: want %d, got %d", tt.wantCount, len(targets))
+			}
+			if tt.wantCount == 0 {
+				return
+			}
+
+			for _, target := range targets {
+				hostname := target.Runtime.DevHostname
+				if wantMode, ok := tt.wantModes[hostname]; ok {
+					if target.Runtime.EffectiveMode() != wantMode {
+						t.Errorf("%s mode: want %s, got %s", hostname, wantMode, target.Runtime.EffectiveMode())
+					}
+				}
+				if wantStage, ok := tt.wantStage[hostname]; ok {
+					gotStage := target.Runtime.StageHostname()
+					if gotStage != wantStage {
+						t.Errorf("%s stage: want %q, got %q", hostname, wantStage, gotStage)
+					}
+				}
+				if !target.Runtime.IsExisting {
+					t.Errorf("%s: IsExisting should be true", hostname)
+				}
+			}
+
+			// Verify managed services appear as dependencies.
+			if tt.name == "managed services become dependencies" {
+				target := targets[0]
+				if len(target.Dependencies) != 2 {
+					t.Fatalf("dependencies: want 2, got %d", len(target.Dependencies))
+				}
+				for _, dep := range target.Dependencies {
+					if dep.Resolution != "EXISTS" {
+						t.Errorf("dependency %s resolution: want EXISTS, got %s", dep.Hostname, dep.Resolution)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestIsControlPlaneType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"zcp@1", true},
+		{"ZCP@2", true},
+		{"nodejs@22", false},
+		{"postgresql@16", false},
+	}
+	for _, tt := range tests {
+		if got := isControlPlaneType(tt.input); got != tt.want {
+			t.Errorf("isControlPlaneType(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}

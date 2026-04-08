@@ -55,10 +55,13 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 	if err != nil || len(metas) == 0 {
 		return
 	}
-	metaMap := make(map[string]bool, len(metas))
+	metaMap := make(map[string]bool, len(metas)*2)
 	for _, m := range metas {
 		if m.IsComplete() {
 			metaMap[m.Hostname] = true
+			if m.StageHostname != "" {
+				metaMap[m.StageHostname] = true
+			}
 		}
 	}
 	for i := range result.Services {

@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"testing"
 
+	"os"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -18,6 +20,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // mockSSHDeployer implements ops.SSHDeployer for integration tests.
@@ -28,6 +31,38 @@ type mockSSHDeployer struct {
 
 func (m *mockSSHDeployer) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
 	return m.output, m.err
+}
+
+// startDevelopWorkflow writes a service meta and starts a develop workflow via MCP.
+// Deploy requires an active workflow session (requireWorkflow guard).
+func startDevelopWorkflow(t *testing.T, session *mcp.ClientSession) {
+	t.Helper()
+
+	// Write service meta so develop workflow can start.
+	stateDir := ".zcp/state"
+	meta := &workflow.ServiceMeta{
+		Hostname:       "app",
+		Mode:           "simple",
+		BootstrappedAt: "2026-01-01",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatalf("write test meta: %v", err)
+	}
+	t.Cleanup(func() {
+		os.RemoveAll(".zcp")
+	})
+
+	// Start develop workflow via MCP.
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "zerops_workflow",
+		Arguments: map[string]any{"action": "start", "workflow": "develop", "intent": "integration test deploy"},
+	})
+	if err != nil {
+		t.Fatalf("start develop workflow: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("develop workflow start failed: %v", result.Content)
+	}
 }
 
 // setupTestServerWithDeploy creates a full MCP server with a mock SSH deployer.
@@ -71,12 +106,12 @@ func setupTestServerWithDeploy(t *testing.T, mock *platform.Mock, logFetcher pla
 }
 
 func TestIntegration_DeploySSHSelfDeploy(t *testing.T) {
-	t.Parallel()
-
 	mock := defaultMock()
 	deployer := &mockSSHDeployer{output: []byte("push ok")}
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()
+
+	startDevelopWorkflow(t, session)
 
 	// Step 1: Discover to find the service.
 	discoverText := callAndGetText(t, session, "zerops_discover", map[string]any{
@@ -136,12 +171,12 @@ func TestIntegration_DeploySSHSelfDeploy(t *testing.T) {
 }
 
 func TestIntegration_DeploySSHWithWorkingDir(t *testing.T) {
-	t.Parallel()
-
 	mock := defaultMock()
 	deployer := &mockSSHDeployer{output: []byte("push ok")}
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()
+
+	startDevelopWorkflow(t, session)
 
 	// Deploy with explicit workingDir.
 	deployText := callAndGetText(t, session, "zerops_deploy", map[string]any{

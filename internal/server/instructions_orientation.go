@@ -178,9 +178,8 @@ func writeUnmanagedRuntimesSection(b *strings.Builder, unmanaged []platform.Serv
 				svc.Status)
 		}
 	}
-	b.WriteString("BLOCKED: Do NOT deploy, push, or modify code on these services until registered.\n")
-	b.WriteString("Register them first (quick — just verifies the service, no deploy):\n")
-	b.WriteString("→ zerops_workflow action=\"start\" workflow=\"bootstrap\" (isExisting=true)\n\n")
+	b.WriteString("Auto-adopted on develop workflow start. No manual bootstrap needed.\n")
+	b.WriteString("→ zerops_workflow action=\"start\" workflow=\"develop\"\n\n")
 }
 
 // writeStrategySection writes strategy-specific guidance based on the dominant strategy.

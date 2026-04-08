@@ -9,6 +9,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // DeploySSHInput is the input type for zerops_deploy in SSH (container) mode.
@@ -33,6 +34,7 @@ func RegisterDeploySSH(
 	logFetcher platform.LogFetcher,
 	rtInfo runtime.Info,
 	stateDir string,
+	engine *workflow.Engine,
 ) {
 	desc := "Deploy code via SSH — blocks until build completes. "
 	if rtInfo.InContainer {
@@ -52,6 +54,10 @@ func RegisterDeploySSH(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
+		// Gate: deploy requires an active workflow session.
+		if blocked := requireWorkflow(engine); blocked != nil {
+			return blocked, nil, nil
+		}
 		// Gate: target (and source) must be adopted by ZCP.
 		if blocked := requireAdoption(stateDir, input.TargetService, input.SourceService); blocked != nil {
 			return blocked, nil, nil
