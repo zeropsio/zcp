@@ -15,6 +15,7 @@ Fill in all research fields by examining the framework's documentation and exist
 | **2a. Frontend static** | `{framework}-hello-world` | `react-hello-world` | Builds to HTML/CSS/JS, `run.base: static`. No DB. |
 | **2b. Frontend SSR** | `{framework}-hello-world` | `nextjs-hello-world` | SSR framework (Next.js, Nuxt, etc.) with DB. |
 | **3. Backend framework** | `{framework}-minimal` | `laravel-minimal` | Framework with ORM, migrations, templates. |
+| **4. Showcase** | `{framework}-showcase` | `laravel-showcase` | Full dashboard, 5+ feature sections, worker, all services. |
 
 ### Reference Loading
 Load knowledge from lower-tier recipes that already exist for your runtime and framework. Each tier builds on the previous:
@@ -110,10 +111,32 @@ This is your direct predecessor and starting point. **Do NOT load the hello-worl
 - **Storage driver**: object storage integration (S3-compatible)
 - **Search library**: search integration (e.g., Meilisearch, Elasticsearch)
 
+### Full-Stack vs API-First Classification
+
+Before defining showcase targets, classify the framework:
+
+**Full-stack** (has built-in view/template engine): The framework renders HTML directly. Dashboard uses the built-in engine. Single `app` service.
+Examples: Laravel/Blade, Rails/ERB, Django/Jinja2, Phoenix/HEEx.
+
+**API-first** (no built-in templating): The framework serves JSON. Dashboard is a lightweight Svelte SPA in a separate `app` service that calls the API. The API is a separate `api` service. Worker shares codebase with `api`.
+
+Classification rule: if the predecessor hello-world/minimal recipe renders HTML via a framework-integrated template engine, it is full-stack. If the predecessor only returns JSON or plain text, it is API-first.
+
 ### Showcase Targets
 Define workspace services for showcase recipe. All targets appear in all 6 environment tiers (the finalize step handles per-env scaling and mode differences):
+
+**Full-stack showcase targets:**
 - **app**: runtime service — HTTP-serving primary application
 - **worker**: background job processor (`isWorker: true`) — consumes from queue, no HTTP
+- **db**: primary database
+- **redis**: cache + sessions + queues (Valkey or KeyDB)
+- **storage**: S3-compatible object storage
+- **search**: search engine (Meilisearch, Elasticsearch, or Typesense)
+
+**API-first showcase targets** (dual-runtime):
+- **app**: lightweight static frontend — Svelte SPA (`role: "app"`, `type: static`)
+- **api**: JSON API backend — the showcased framework (`role: "api"`)
+- **worker**: background job processor (`isWorker: true`) — shares API codebase (same runtime)
 - **db**: primary database
 - **redis**: cache + sessions + queues (Valkey or KeyDB)
 - **storage**: S3-compatible object storage
@@ -236,7 +259,10 @@ The dev service is RUNNING (via `startWithoutCode`) but zerops.yaml has NOT been
 
 ### WHERE to write files
 
-**SSHFS mount**: `/var/www/appdev/` — write all source code, zerops.yaml, and README here.
+**Single-runtime** (full-stack): Write all source code, zerops.yaml, and README to `/var/www/appdev/`.
+
+**Dual-runtime** (API-first showcase): Write API code to `/var/www/apidev/` and frontend code to `/var/www/appdev/`. Each has its own zerops.yaml, package.json, and source tree. The API's README.md contains the integration guide (it documents the showcased framework).
+
 **Use SSHFS for file operations**, SSH for commands that use the **base image's built-in tools** (e.g., `composer create-project` on php-nginx, `git init`).
 Files placed on the mount are already on the dev container — deploy doesn't "send" them, it triggers a build from what's already there.
 
@@ -277,6 +303,16 @@ zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`.
 ### zerops.yaml — Write ALL setups at once
 
 Write the complete zerops.yaml with ALL setup entries in a single file. Minimal recipes have TWO setups (`dev` + `prod`). Showcase recipes have THREE (`dev` + `prod` + `worker`). The same file is the source of truth for the deploy step AND for the README integration-guide fragment — writing it once eliminates drift between what deploys and what the README documents. The deploy step will verify dev against the live service, then cross-deploy the already-written prod/worker configs to stage.
+
+**Dual-runtime zerops.yaml** (API-first showcase): Each runtime service has its own zerops.yaml in its own codebase root:
+- `/var/www/apidev/zerops.yaml` — 3 setups: dev, prod, worker (API + shared-codebase worker)
+- `/var/www/appdev/zerops.yaml` — 2 setups: dev, prod (frontend only)
+
+The frontend's `build.envVariables` constructs the API URL from known parts:
+```
+VITE_API_URL: https://api-${zeropsSubdomainHost}-3000.prg1.zerops.app
+```
+Components: hostname (`api`, defined in import.yaml) + `zeropsSubdomainHost` (project-level, resolved at build time) + port (from API's `run.ports`). The dev setup uses the dev hostname: `apidev-${zeropsSubdomainHost}-3000...`.
 
 Follow the injected chain recipe (working zerops.yaml from the predecessor) as the primary reference. For hello-world (no predecessor), follow the injected zerops.yaml Schema. Platform rules (lifecycle phases, deploy semantics) were taught at provision — use `zerops_knowledge` if you need to look up a specific rule.
 
@@ -601,6 +637,12 @@ zerops_deploy targetService="appdev" setup="dev"
 ```
 The `setup="dev"` parameter maps hostname `appdev` to `setup: dev` in zerops.yaml. This triggers a build from files already on the mount. Blocks until complete.
 
+**Step 1-API** (API-first showcase only): Deploy apidev FIRST — the API must be running before the frontend builds (the frontend bakes the API URL at build time):
+```
+zerops_deploy targetService="apidev" setup="dev"
+```
+Then deploy appdev after the API is verified (Step 3-API below).
+
 **Step 2: Start ALL dev processes (before any verification)**
 
 Every process the app needs to serve a page must be running before Step 3 (verify). This includes the primary server, asset dev servers, and worker processes. Start them all now:
@@ -613,6 +655,11 @@ Every process the app needs to serve a page must be running before Step 3 (verif
 - **Implicit-webserver runtimes** (php-nginx, php-apache, nginx): Skip — auto-starts.
 - **Static frontends** (type 2a): Skip — Nginx serves the built files.
 
+**2a-API** (API-first): Start the API server on apidev:
+```bash
+ssh apidev "cd /var/www && {api_start_command} &"
+```
+
 **2b. Asset dev server** (if the build pipeline uses a secondary runtime):
 If `run.prepareCommands` installs a secondary runtime (e.g., `sudo -E zsc install nodejs@22`) and the scaffold defines a dev server (e.g., `npm run dev` for Vite), start it now:
 ```bash
@@ -623,7 +670,7 @@ Pass the appropriate host binding flag so it listens on `0.0.0.0` (e.g., `npx vi
 **This step is MANDATORY, not optional.** Without it, templates that reference build-pipeline outputs (Vite manifests, Webpack bundles) will 500 on the first page load. Do NOT work around missing assets by running `npm run build` on the dev container — that compiles static assets instead of using HMR, and doesn't prove the dev experience works. Do NOT replace framework asset helpers with inline CSS/JS — that disconnects the build pipeline.
 
 **2c. Worker dev process** (showcase only):
-- **Shared codebase** (worker same runtime as app): start the queue worker as an SSH process on appdev — both processes run from the same container:
+- **Shared codebase** (worker same runtime as app): start the queue worker as an SSH process on appdev (or apidev for API-first) — both processes run from the same container:
   ```bash
   ssh appdev "cd /var/www && {queue_worker_command} &"
   ```
@@ -639,6 +686,15 @@ zerops_subdomain action="enable" serviceHostname="appdev"
 zerops_verify serviceHostname="appdev"
 ```
 Check: service RUNNING, subdomain returns 200, health endpoint responds (or page loads for static).
+
+**Step 3-API** (API-first): Enable and verify the API FIRST, then deploy and verify the frontend:
+```
+zerops_subdomain action="enable" serviceHostname="apidev"
+zerops_verify serviceHostname="apidev"
+```
+Verify `/api/health` returns 200 via curl. Then deploy appdev (Step 1) — the frontend builds with the API URL baked in. After appdev deploys, enable its subdomain and verify the dashboard loads and successfully fetches from the API.
+
+**CORS** (API-first): The API must set CORS headers allowing the frontend subdomain. Use the framework's standard CORS middleware (e.g., `@nestjs/cors`, `cors` for Express, `rs/cors` for Go). Allow the frontend's subdomain origin.
 
 For showcase, also verify the worker is running via logs (no HTTP endpoint):
 ```
@@ -656,10 +712,12 @@ After appdev is deployed and verified with the skeleton (connectivity panel, see
 
 The sub-agent writes code on the appdev mount and can test against live services — database, cache, storage, search are all reachable. See "Showcase dashboard — file architecture" for the sub-agent brief format.
 
+**API-first**: The sub-agent works on BOTH codebases — API endpoints in `/var/www/apidev/`, Svelte components in `/var/www/appdev/`. Include both mount paths in the sub-agent brief. The sub-agent adds API routes (controllers, services) and corresponding frontend components (Svelte pages that fetch from the API).
+
 After the sub-agent finishes:
 1. Read back feature files — verify they exist and aren't empty
-2. Git add + commit on the mount
-3. Redeploy appdev: `zerops_deploy targetService="appdev" setup="dev"`
+2. Git add + commit on the mount(s)
+3. Redeploy: `zerops_deploy targetService="appdev" setup="dev"` (API-first: also redeploy apidev)
 4. Restart ALL processes (Step 2) — redeployment creates a fresh container
 5. Verify features work:
    - Each feature section renders with styled controls and proper visual hierarchy
@@ -667,6 +725,7 @@ After the sub-agent finishes:
    - Seeded data visible in database/search sections (tables populated, search returns results)
    - File upload works and file list populates (S3 connectivity proven)
    - Job dispatch shows processed result (queue + worker connectivity proven)
+6. **Browser verification** (showcase): Use `agent-browser` to open the dashboard URL and visually confirm all feature sections render correctly, interactive controls work (file upload, job dispatch, search), and data displays. This catches issues curl cannot: blank renders, JS errors, broken fetch calls, CORS failures. Verify via agent-browser, not just curl.
 
 If features fail: fix on mount, redeploy, re-verify (counts toward the 3-iteration limit).
 
@@ -689,12 +748,21 @@ zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
 ```
 The `setup="prod"` maps hostname `appstage` to `setup: prod` in zerops.yaml. Stage builds from dev's source code with the prod config. Server auto-starts via the real `start` command (or Nginx for static).
 
+**Step 6-API** (API-first): Cross-deploy the API first, then the frontend (frontend builds with API URL baked in):
+```
+zerops_deploy sourceService="apidev" targetService="apistage" setup="prod"
+```
+
 **Step 7: Deploy workerstage** (showcase only — skip for minimal)
-- **Shared codebase**: cross-deploy from appdev with the worker setup:
+- **Shared codebase** (full-stack): cross-deploy from appdev with the worker setup:
   ```
   zerops_deploy sourceService="appdev" targetService="workerstage" setup="worker"
   ```
   The `setup="worker"` maps to `setup: worker` in the shared zerops.yaml — same build pipeline, different start command.
+- **Shared codebase** (API-first): cross-deploy from apidev (worker shares API codebase):
+  ```
+  zerops_deploy sourceService="apidev" targetService="workerstage" setup="worker"
+  ```
 - **Separate codebase**: cross-deploy from workerdev:
   ```
   zerops_deploy sourceService="workerdev" targetService="workerstage" setup="prod"
@@ -705,10 +773,18 @@ The `setup="prod"` maps hostname `appstage` to `setup: prod` in zerops.yaml. Sta
 ```
 zerops_subdomain action="enable" serviceHostname="appstage"
 ```
+API-first: also enable the API stage subdomain:
+```
+zerops_subdomain action="enable" serviceHostname="apistage"
+```
 
 **Step 9: Verify appstage**
 ```
 zerops_verify serviceHostname="appstage"
+```
+API-first: also verify the API stage:
+```
+zerops_verify serviceHostname="apistage"
 ```
 For showcase, also verify the worker is running:
 ```
@@ -783,9 +859,15 @@ The 6 envs are **not interchangeable** — each exists to describe a different d
 Pass `envComments` keyed by env index (`"0"`..`"5"`). Each env carries a `service` map (keys match the hostnames that appear in THAT env's file) and an optional `project` comment. **Service key rule**: envs 0-1 carry the dev+stage pair, so keys are `"appdev"` and `"appstage"`; envs 2-5 collapse to a single runtime entry, so the key is the base hostname (`"app"`). Managed services (`"db"` etc.) keep the base hostname everywhere.
 
 **Showcase service keys — shared-codebase workers (same runtime as app) get only `workerstage` in envs 0-1 (no `workerdev` — appdev runs both processes).** Separate-codebase workers (different runtime) get both `workerdev` and `workerstage`. Omitting a comment key for a service that appears in the import.yaml produces a service with no comment, which degrades quality and risks failing the comment ratio check. Complete key list per env:
+
+**Full-stack showcase:**
 - **Envs 0-1 (shared-codebase worker)**: `"appdev"`, `"appstage"`, `"workerstage"`, plus all managed services (`"db"`, `"cache"`, `"storage"`, `"search"`, etc.)
 - **Envs 0-1 (separate-codebase worker)**: `"appdev"`, `"appstage"`, `"workerdev"`, `"workerstage"`, plus all managed services
 - **Envs 2-5**: `"app"`, `"worker"`, plus all managed services
+
+**API-first showcase (dual-runtime):**
+- **Envs 0-1**: `"appdev"`, `"appstage"`, `"apidev"`, `"apistage"`, `"workerstage"`, plus all managed services
+- **Envs 2-5**: `"app"`, `"api"`, `"worker"`, plus all managed services
 
 Every service that appears in a given env's import.yaml MUST have a comment explaining its role in THAT env.
 
@@ -919,10 +1001,19 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 > - Is there clear separation: integration-guide = actionable steps, knowledge-base = awareness/gotchas?
 > - Are there exactly 3 extract fragments with proper markers?
 >
+> **Dual-runtime (API-first) additional checks:**
+> - Does the frontend successfully fetch from the API? (no CORS errors, data displays)
+> - Does each Svelte component call the correct API endpoint?
+> - Are both zerops.yaml files correct? (`/var/www/apidev/zerops.yaml` and `/var/www/appdev/zerops.yaml`)
+> - Does the frontend's `VITE_API_URL` build variable correctly construct the API URL?
+> - Do all 6 import.yaml files include BOTH `app` and `api` services with correct `buildFromGit` URLs and priority ordering?
+>
 > Report issues as: `[CRITICAL]` (breaks deploy), `[WRONG]` (incorrect but works), `[STYLE]` (quality improvement).
 
+**Browser verification** (showcase): After the code/config review, use `agent-browser` to open the live dashboard on both dev and stage subdomains. Visually confirm the dashboard renders correctly, all feature sections display data, and interactive elements work. This catches issues that code review and curl cannot: blank renders, JS errors, broken fetch calls, missing CSS.
+
 Apply any CRITICAL or WRONG fixes, then **redeploy** to verify the fixes work:
-- If zerops.yaml or app code changed: `zerops_deploy targetService="appdev" setup="dev"` then cross-deploy to stage
+- If zerops.yaml or app code changed: `zerops_deploy targetService="appdev" setup="dev"` (API-first: also redeploy apidev) then cross-deploy to stage
 - If only import.yaml (finalize output) changed: re-run finalize checks
 - Do NOT skip redeployment — the verification is meaningless if fixes aren't tested.
 
