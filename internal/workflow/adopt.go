@@ -48,35 +48,39 @@ func InferServicePairing(candidates []AdoptCandidate) []BootstrapTarget {
 		}
 	}
 
-	// Detect dev/stage pairs. A pair exists when both {base}dev and {base}stage
-	// are present in the runtime list (base must be non-empty).
-	paired := make(map[string]bool) // stage hostnames already claimed
-	var targets []BootstrapTarget
-
+	// Pass 1: identify all dev/stage pairs. A pair exists when both {base}dev
+	// and {base}stage are present in the runtime list (base must be non-empty).
+	// This must happen before target creation so API ordering doesn't matter.
+	paired := make(map[string]bool) // stage hostnames claimed by a dev service
 	for _, r := range runtimes {
-		if paired[r.Hostname] {
-			continue // already claimed as stage of another runtime
-		}
-
 		base, isDev := strings.CutSuffix(r.Hostname, "dev")
 		if isDev && base != "" {
 			stageHostname := base + "stage"
 			if _, stageExists := hostnames[stageHostname]; stageExists && !IsManagedService(hostnames[stageHostname]) {
 				paired[stageHostname] = true
-				target := BootstrapTarget{
-					Runtime: RuntimeTarget{
-						DevHostname:   r.Hostname,
-						Type:          r.Type,
-						IsExisting:    true,
-						BootstrapMode: PlanModeStandard,
-					},
-					Dependencies: deps,
-				}
-				// ExplicitStage only needed when auto-derive won't work.
-				// StageHostname() auto-derives from *dev suffix, which works here.
-				targets = append(targets, target)
-				continue
 			}
+		}
+	}
+
+	// Pass 2: create targets, skipping hostnames already claimed as stage.
+	var targets []BootstrapTarget
+	for _, r := range runtimes {
+		if paired[r.Hostname] {
+			continue
+		}
+
+		base, isDev := strings.CutSuffix(r.Hostname, "dev")
+		if isDev && base != "" && paired[base+"stage"] {
+			targets = append(targets, BootstrapTarget{
+				Runtime: RuntimeTarget{
+					DevHostname:   r.Hostname,
+					Type:          r.Type,
+					IsExisting:    true,
+					BootstrapMode: PlanModeStandard,
+				},
+				Dependencies: deps,
+			})
+			continue
 		}
 
 		targets = append(targets, BootstrapTarget{

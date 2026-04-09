@@ -90,6 +90,34 @@ func TestInferServicePairing(t *testing.T) {
 			wantModes: map[string]string{"webstage": PlanModeDev},
 		},
 		{
+			name: "stage before dev in API order",
+			candidates: []AdoptCandidate{
+				{Hostname: "appstage", Type: "bun@1.2"},
+				{Hostname: "appdev", Type: "bun@1.2"},
+				{Hostname: "db", Type: "postgresql@16"},
+			},
+			wantCount: 1,
+			wantModes: map[string]string{"appdev": PlanModeStandard},
+			wantStage: map[string]string{"appdev": "appstage"},
+		},
+		{
+			name: "stage before dev with extra runtime",
+			candidates: []AdoptCandidate{
+				{Hostname: "workerstage", Type: "php-nginx@8.4"},
+				{Hostname: "appstage", Type: "php-nginx@8.4"},
+				{Hostname: "appdev", Type: "php-nginx@8.4"},
+			},
+			wantCount: 2,
+			wantModes: map[string]string{
+				"appdev":      PlanModeStandard,
+				"workerstage": PlanModeDev,
+			},
+			wantStage: map[string]string{
+				"appdev":      "appstage",
+				"workerstage": "",
+			},
+		},
+		{
 			name: "managed services become dependencies",
 			candidates: []AdoptCandidate{
 				{Hostname: "appdev", Type: "bun@1.2"},

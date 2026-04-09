@@ -292,17 +292,14 @@ func writePushDevWorkflow(sb *strings.Builder, state *DeployState) {
 // --- helpers ---
 
 func writeTargetSummary(sb *strings.Builder, state *DeployState) {
-	for _, t := range state.Targets {
+	for i, t := range state.Targets {
 		if t.Role == DeployRoleStage {
-			continue // listed with dev
+			continue // listed with its dev target
 		}
 		fmt.Fprintf(sb, "- %s (%s)", t.Hostname, t.Role)
-		// Find paired stage.
-		for _, s := range state.Targets {
-			if s.Role == DeployRoleStage {
-				fmt.Fprintf(sb, " → %s (stage)", s.Hostname)
-				break
-			}
+		// Stage immediately follows its dev in the ordered target list.
+		if i+1 < len(state.Targets) && state.Targets[i+1].Role == DeployRoleStage {
+			fmt.Fprintf(sb, " → %s (stage)", state.Targets[i+1].Hostname)
 		}
 		sb.WriteString("\n")
 	}
