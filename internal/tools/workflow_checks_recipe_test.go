@@ -907,6 +907,106 @@ func TestCheckRecipeGenerate_SchemaFieldValidation(t *testing.T) {
 	}
 }
 
+const validZeropsYaml = `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+      deployFiles:
+        - .
+    run:
+      envVariables:
+        NODE_ENV: development
+      ports:
+        - port: 3000
+          httpSupport: true
+  - setup: prod
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+        - npm run build
+      deployFiles:
+        - dist
+    run:
+      envVariables:
+        NODE_ENV: production
+      ports:
+        - port: 3000
+          httpSupport: true
+`
+
+func TestCheckRecipeGenerate_DualRuntime(t *testing.T) {
+	t.Parallel()
+
+	plan := &workflow.RecipePlan{
+		Framework:   "nestjs",
+		Tier:        workflow.RecipeTierShowcase,
+		Slug:        "nestjs-showcase",
+		RuntimeType: "nodejs@22",
+		Research: workflow.ResearchData{
+			ServiceType:    "nodejs",
+			PackageManager: "npm",
+			HTTPPort:       3000,
+			BuildCommands:  []string{"npm ci"},
+			DeployFiles:    []string{"dist"},
+			StartCommand:   "node dist/main.js",
+		},
+		Targets: []workflow.RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+			{Hostname: "db", Type: "postgresql@17"},
+		},
+	}
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create separate dirs for app and api with zerops.yaml + README.
+	for _, hostname := range []string{"app", "api"} {
+		svcDir := filepath.Join(dir, hostname+"dev")
+		if err := os.MkdirAll(svcDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(svcDir, "zerops.yaml"), validZeropsYaml)
+		writeFile(t, filepath.Join(svcDir, "README.md"), validREADME)
+	}
+
+	checker := checkRecipeGenerate(stateDir, nil)
+	result, err := checker(context.Background(), plan, testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Both app and api zerops.yaml checks should exist.
+	var appYmlFound, apiYmlFound bool
+	for _, c := range result.Checks {
+		if c.Name == "app_zerops_yml_exists" {
+			appYmlFound = true
+			if c.Status != "pass" {
+				t.Errorf("app_zerops_yml_exists should pass, got %s: %s", c.Status, c.Detail)
+			}
+		}
+		if c.Name == "api_zerops_yml_exists" {
+			apiYmlFound = true
+			if c.Status != "pass" {
+				t.Errorf("api_zerops_yml_exists should pass, got %s: %s", c.Status, c.Detail)
+			}
+		}
+	}
+	if !appYmlFound {
+		t.Error("expected app_zerops_yml_exists check")
+	}
+	if !apiYmlFound {
+		t.Error("expected api_zerops_yml_exists check")
+	}
+}
+
 // writeFile is a test helper to write a file.
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()

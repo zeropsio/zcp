@@ -66,58 +66,61 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields) workf
 
 		var checks []workflow.StepCheck
 
-		// Find the app target (first target with role "app").
-		var appHostname string
+		// Collect ALL non-worker runtime targets (frontend + API in dual-runtime recipes).
+		var appTargets []workflow.RecipeTarget
 		for _, t := range plan.Targets {
 			if workflow.IsRuntimeType(t.Type) && !t.IsWorker {
-				appHostname = t.Hostname
-				break
+				appTargets = append(appTargets, t)
 			}
 		}
-		if appHostname == "" && len(plan.Targets) > 0 {
-			appHostname = plan.Targets[0].Hostname
+		if len(appTargets) == 0 && len(plan.Targets) > 0 {
+			appTargets = []workflow.RecipeTarget{plan.Targets[0]}
 		}
 
-		// Check zerops.yaml existence and structure.
-		// Try mount paths: {hostname}dev (standard mode), {hostname} (bare), then project root.
-		ymlDir := projectRoot
-		for _, candidate := range []string{appHostname + "dev", appHostname} {
-			mountPath := filepath.Join(projectRoot, candidate)
-			if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
-				ymlDir = mountPath
-				break
+		// Check zerops.yaml for each app target.
+		for _, appTarget := range appTargets {
+			hostname := appTarget.Hostname
+
+			// Try mount paths: {hostname}dev (standard mode), {hostname} (bare), then project root.
+			ymlDir := projectRoot
+			for _, candidate := range []string{hostname + "dev", hostname} {
+				mountPath := filepath.Join(projectRoot, candidate)
+				if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
+					ymlDir = mountPath
+					break
+				}
 			}
-		}
 
-		doc, parseErr := ops.ParseZeropsYml(ymlDir)
-		if parseErr != nil {
+			doc, parseErr := ops.ParseZeropsYml(ymlDir)
+			if parseErr != nil {
+				checks = append(checks, workflow.StepCheck{
+					Name: hostname + "_zerops_yml_exists", Status: statusFail,
+					Detail: fmt.Sprintf("zerops.yaml not found for %s: %v", hostname, parseErr),
+				})
+				continue
+			}
 			checks = append(checks, workflow.StepCheck{
-				Name: "zerops_yml_exists", Status: statusFail,
-				Detail: fmt.Sprintf("zerops.yaml not found: %v", parseErr),
+				Name: hostname + "_zerops_yml_exists", Status: statusPass,
 			})
-		} else {
-			checks = append(checks, workflow.StepCheck{
-				Name: "zerops_yml_exists", Status: statusPass,
-			})
-			checks = append(checks, checkRecipeSetups(doc, appHostname, plan)...)
+			checks = append(checks, checkRecipeSetups(doc, hostname, plan)...)
 
 			// Validate zerops.yaml fields against the live JSON schema.
 			checks = append(checks, checkZeropsYmlFields(ymlDir, validFields)...)
-		}
 
-		// Check README fragments.
-		readmePath := filepath.Join(ymlDir, "README.md")
-		readmeContent, readErr := os.ReadFile(readmePath)
-		if readErr != nil {
-			checks = append(checks, workflow.StepCheck{
-				Name: "readme_exists", Status: statusFail,
-				Detail: fmt.Sprintf("README.md not found at %s", readmePath),
-			})
-		} else {
-			checks = append(checks, workflow.StepCheck{
-				Name: "readme_exists", Status: statusPass,
-			})
-			checks = append(checks, checkReadmeFragments(string(readmeContent))...)
+			// Check README fragments for this target's codebase.
+			readmePath := filepath.Join(ymlDir, "README.md")
+			readmeContent, readErr := os.ReadFile(readmePath)
+			if readErr != nil {
+				checks = append(checks, workflow.StepCheck{
+					Name: hostname + "_readme_exists", Status: statusFail,
+					Detail: fmt.Sprintf("README.md not found at %s", readmePath),
+				})
+			} else {
+				checks = append(checks, workflow.StepCheck{
+					Name: hostname + "_readme_exists", Status: statusPass,
+				})
+				checks = append(checks, checkReadmeFragments(string(readmeContent))...)
+			}
 		}
 
 		allPassed := checksAllPassed(checks)

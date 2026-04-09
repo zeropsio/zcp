@@ -106,6 +106,10 @@ func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, 
 
 	fmt.Fprintf(b, "  - hostname: %s\n", devHost)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
+	// Priority: API services start before frontends.
+	if target.Role == RecipeRoleAPI {
+		b.WriteString("    priority: 5\n")
+	}
 	b.WriteString("    zeropsSetup: dev\n")
 	writeRuntimeBuildFromGit(b, plan, target)
 	// Non-worker runtimes serve HTTP and need a subdomain.
@@ -130,6 +134,10 @@ func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget
 
 	fmt.Fprintf(b, "  - hostname: %s\n", stageHost)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
+	// Priority: API services start before frontends.
+	if target.Role == RecipeRoleAPI {
+		b.WriteString("    priority: 5\n")
+	}
 	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target, false, plan))
 	writeRuntimeBuildFromGit(b, plan, target)
 	if !target.IsWorker {
@@ -148,9 +156,11 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 	fmt.Fprintf(b, "  - hostname: %s\n", target.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 
-	// Priority: non-runtime services start before app.
+	// Priority: managed services start first (10), API services before frontends (5).
 	if !IsRuntimeType(target.Type) {
 		b.WriteString("    priority: 10\n")
+	} else if target.Role == RecipeRoleAPI {
+		b.WriteString("    priority: 5\n")
 	}
 
 	// Mode: only managed services that support it.
@@ -199,14 +209,33 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 }
 
 // writeRuntimeBuildFromGit writes the buildFromGit URL for recipe runtime services.
-// Separate-codebase workers (different runtime than app) point to {slug}-worker;
-// everything else (app, shared-codebase workers) points to {slug}-app.
+// Separate-codebase workers → {slug}-worker. Role="api" targets → {slug}-api.
+// Shared-codebase workers inherit the repo of the service they share code with:
+// {slug}-api in dual-runtime recipes (worker shares API codebase), {slug}-app otherwise.
 func writeRuntimeBuildFromGit(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
-	if target.IsWorker && !SharesAppCodebase(target, plan) {
-		fmt.Fprintf(b, "    buildFromGit: %s%s-worker\n", RecipeAppRepoBase, plan.Slug)
-	} else {
-		fmt.Fprintf(b, "    buildFromGit: %s%s-app\n", RecipeAppRepoBase, plan.Slug)
+	suffix := "-app" // default: frontend or single app
+	switch {
+	case target.IsWorker && !SharesAppCodebase(target, plan):
+		suffix = "-worker"
+	case target.Role == RecipeRoleAPI:
+		suffix = "-api"
+	case target.IsWorker && SharesAppCodebase(target, plan) && planHasAPITarget(plan):
+		suffix = "-api" // worker shares the API codebase, not the frontend
 	}
+	fmt.Fprintf(b, "    buildFromGit: %s%s%s\n", RecipeAppRepoBase, plan.Slug, suffix)
+}
+
+// planHasAPITarget returns true if any target in the plan has Role="api".
+func planHasAPITarget(plan *RecipePlan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, t := range plan.Targets {
+		if t.Role == RecipeRoleAPI {
+			return true
+		}
+	}
+	return false
 }
 
 // writeAutoscaling writes the verticalAutoscaling block per tier.

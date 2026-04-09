@@ -3,6 +3,7 @@ package workflow
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -133,6 +134,36 @@ func TestOverlayRealAppREADME_SkipsWorkersAsAppTarget(t *testing.T) {
 	got := mountREADMEPathForPlan(plan)
 	wantSuffix := "/appdev/README.md"
 	if got == "" || got[len(got)-len(wantSuffix):] != wantSuffix {
+		t.Errorf("expected path ending in %q, got %q", wantSuffix, got)
+	}
+}
+
+func TestOverlayRealAppREADME_PrefersAPITarget(t *testing.T) {
+	// Not parallel — mutates recipeMountBaseOverride (package-level var).
+	plan := &RecipePlan{
+		Targets: []RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+		},
+	}
+	// mountREADMEPathForPlan should select "api" (Role: "api"), not "app".
+	got := mountREADMEPathForPlan(plan)
+	wantSuffix := "/apidev/README.md"
+	if got == "" || !strings.HasSuffix(got, wantSuffix) {
+		t.Errorf("expected path ending in %q, got %q", wantSuffix, got)
+	}
+}
+
+func TestOverlayRealAppREADME_FallsBackWithoutAPIRole(t *testing.T) {
+	// Not parallel — reads recipeMountBaseOverride (package-level var).
+	plan := &RecipePlan{
+		Targets: []RecipeTarget{
+			{Hostname: "app", Type: "nodejs@22"},
+		},
+	}
+	got := mountREADMEPathForPlan(plan)
+	wantSuffix := "/appdev/README.md"
+	if got == "" || !strings.HasSuffix(got, wantSuffix) {
 		t.Errorf("expected path ending in %q, got %q", wantSuffix, got)
 	}
 }

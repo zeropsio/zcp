@@ -326,22 +326,20 @@ func envDescription(plan *RecipePlan, envIndex int) string {
 
 // buildServiceIncludesList returns "It includes a dev service..., a staging service, and a database."
 // based on targets in the plan. All targets appear in all environments.
+// For dual-runtime recipes, each non-worker runtime gets its own dev+stage mention.
 func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 	var parts []string
-	runtimeSeen := false
 
 	for _, target := range plan.Targets {
-		if IsRuntimeType(target.Type) {
-			if !runtimeSeen {
-				runtimeSeen = true
-				if envIndex <= 1 {
-					parts = append(parts,
-						"a dev service with the code repository and necessary development tools",
-						"a staging service",
-					)
-				}
+		if IsRuntimeType(target.Type) && !target.IsWorker {
+			if envIndex <= 1 {
+				label := target.Hostname
+				parts = append(parts,
+					fmt.Sprintf("a %s dev service with the code repository and necessary development tools", label),
+					fmt.Sprintf("a %s staging service", label),
+				)
 			}
-		} else {
+		} else if !IsRuntimeType(target.Type) {
 			parts = append(parts, dataServiceIncludesLabel(target.Type))
 		}
 	}

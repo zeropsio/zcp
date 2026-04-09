@@ -55,6 +55,13 @@ const (
 	RecipeSetupWorker = "worker" // showcase only — background job processor, no HTTP
 )
 
+// RecipeRole values for repo routing and comment generation.
+// These do NOT affect template dispatch — type predicates remain authoritative.
+const (
+	RecipeRoleApp = "app" // frontend or single-app service (default)
+	RecipeRoleAPI = "api" // backend API service (dual-runtime recipes)
+)
+
 // RecipeSetupForMode maps a bootstrap plan mode to its canonical recipe setup name.
 // Standard and dev modes use the dev workspace entry; simple mode uses the prod entry.
 func RecipeSetupForMode(mode string) string {
@@ -65,11 +72,13 @@ func RecipeSetupForMode(mode string) string {
 }
 
 // SharesAppCodebase returns true when a worker target uses the same base runtime
-// as the primary app — same source code, different process entry point (e.g.,
+// as the primary app/API — same source code, different process entry point (e.g.,
 // "php artisan queue:work" vs the web server). One app, two processes.
+// In dual-runtime recipes (frontend + API), plan.RuntimeType is the API's runtime
+// — the worker shares the API codebase, not the frontend.
 // When true: no workerdev service (appdev runs both processes via SSH), zeropsSetup
 // is "worker" (a third setup in the shared zerops.yaml), buildFromGit points to
-// {slug}-app.
+// {slug}-app (or {slug}-api for dual-runtime).
 // When false (separate codebase — different runtime/language): worker gets its own
 // dev+stage pair, its own zerops.yaml, zeropsSetup is "prod", buildFromGit points
 // to {slug}-worker.

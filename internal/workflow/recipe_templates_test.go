@@ -48,6 +48,40 @@ func testShowcasePlan() *RecipePlan {
 	return plan
 }
 
+// testDualRuntimePlan returns a showcase plan with dual-runtime architecture:
+// a Svelte frontend (static) + NestJS API backend + shared-codebase worker.
+func testDualRuntimePlan() *RecipePlan {
+	return &RecipePlan{
+		Framework:   "nestjs",
+		Tier:        RecipeTierShowcase,
+		Slug:        "nestjs-showcase",
+		RuntimeType: "nodejs@22",
+		Research: ResearchData{
+			ServiceType:    "nodejs",
+			PackageManager: "npm",
+			HTTPPort:       3000,
+			BuildCommands:  []string{"npm ci", "npm run build"},
+			DeployFiles:    []string{"dist"},
+			StartCommand:   "node dist/main.js",
+			CacheLib:       "ioredis",
+			SessionDriver:  "redis",
+			QueueDriver:    "bullmq",
+			StorageDriver:  "s3",
+			SearchLib:      "meilisearch",
+			MailLib:        "nodemailer",
+		},
+		Targets: []RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+			{Hostname: "db", Type: "postgresql@17"},
+			{Hostname: "cache", Type: "valkey@7.2"},
+			{Hostname: "storage", Type: "object-storage"},
+			{Hostname: "search", Type: "meilisearch@1"},
+		},
+	}
+}
+
 func TestGenerateRecipeREADME_Minimal(t *testing.T) {
 	t.Parallel()
 
@@ -1265,5 +1299,171 @@ func TestGenerateEnvImportYAML_Showcase_Env5_HA(t *testing.T) {
 		if inMailpit && strings.Contains(line, "cpuMode: DEDICATED") {
 			t.Error("mailpit should NOT have cpuMode: DEDICATED in env 5")
 		}
+	}
+}
+
+func TestWriteRuntimeBuildFromGit_APIRole(t *testing.T) {
+	t.Parallel()
+
+	dualPlan := testDualRuntimePlan()
+	singlePlan := testShowcasePlan()
+
+	tests := []struct {
+		name   string
+		plan   *RecipePlan
+		target RecipeTarget
+		want   string
+	}{
+		{"frontend_app", dualPlan, RecipeTarget{Hostname: "app", Type: "static", Role: "app"}, "nestjs-showcase-app"},
+		{"api_backend", dualPlan, RecipeTarget{Hostname: "api", Type: "nodejs@22", Role: "api"}, "nestjs-showcase-api"},
+		{"shared_worker_dualruntime", dualPlan, RecipeTarget{Hostname: "worker", Type: "nodejs@22", IsWorker: true}, "nestjs-showcase-api"},
+		{"no_role_app", dualPlan, RecipeTarget{Hostname: "app", Type: "nodejs@22"}, "nestjs-showcase-app"},
+		{"shared_worker_singleapp", singlePlan, RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true}, "laravel-showcase-app"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var b strings.Builder
+			writeRuntimeBuildFromGit(&b, tt.plan, tt.target)
+			if !strings.Contains(b.String(), tt.want) {
+				t.Errorf("expected %q in %q", tt.want, b.String())
+			}
+		})
+	}
+}
+
+func TestGenerateEnvImportYAML_DualRuntime(t *testing.T) {
+	t.Parallel()
+
+	plan := testDualRuntimePlan()
+
+	for i := 0; i < EnvTierCount(); i++ {
+		t.Run(fmt.Sprintf("env_%d", i), func(t *testing.T) {
+			t.Parallel()
+			yaml := GenerateEnvImportYAML(plan, i)
+
+			if i <= 1 {
+				// Env 0-1: both app and api get dev+stage pairs.
+				for _, host := range []string{"appdev", "appstage", "apidev", "apistage"} {
+					if !strings.Contains(yaml, "hostname: "+host) {
+						t.Errorf("expected hostname %s in env %d", host, i)
+					}
+				}
+				// API dev/stage use -api repo.
+				apiDevBlock := extractServiceBlock(yaml, "apidev")
+				if !strings.Contains(apiDevBlock, "nestjs-showcase-api") {
+					t.Error("apidev should use -api repo URL")
+				}
+				// App dev/stage use -app repo.
+				appDevBlock := extractServiceBlock(yaml, "appdev")
+				if !strings.Contains(appDevBlock, "nestjs-showcase-app") {
+					t.Error("appdev should use -app repo URL")
+				}
+				// Shared-codebase worker uses -api repo (shares API codebase, not frontend).
+				workerBlock := extractServiceBlock(yaml, "workerstage")
+				if !strings.Contains(workerBlock, "nestjs-showcase-api") {
+					t.Errorf("workerstage should use -api repo URL (shares API codebase), got block: %q", workerBlock)
+				}
+			} else {
+				// Env 2+: bare hostnames.
+				if !strings.Contains(yaml, "hostname: app") {
+					t.Error("expected bare app hostname")
+				}
+				if !strings.Contains(yaml, "hostname: api") {
+					t.Error("expected bare api hostname")
+				}
+				// API uses -api repo.
+				apiBlock := extractServiceBlock(yaml, "api")
+				if !strings.Contains(apiBlock, "nestjs-showcase-api") {
+					t.Error("api should use -api repo URL in env 2+")
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateEnvImportYAML_APIPriority(t *testing.T) {
+	t.Parallel()
+
+	plan := testDualRuntimePlan()
+
+	// Check all env tiers for API priority.
+	for i := 0; i < EnvTierCount(); i++ {
+		t.Run(fmt.Sprintf("env_%d", i), func(t *testing.T) {
+			t.Parallel()
+			yaml := GenerateEnvImportYAML(plan, i)
+
+			var apiHost string
+			if i <= 1 {
+				apiHost = "apidev"
+			} else {
+				apiHost = "api"
+			}
+			apiBlock := extractServiceBlock(yaml, apiHost)
+			if !strings.Contains(apiBlock, "priority: 5") {
+				t.Errorf("expected priority: 5 on %s in env %d", apiHost, i)
+			}
+		})
+	}
+}
+
+func TestBuildServiceIncludesList_MultiRuntime(t *testing.T) {
+	t.Parallel()
+
+	plan := testDualRuntimePlan()
+
+	// Env 0-1: should mention both app and api dev+stage services.
+	got01 := buildServiceIncludesList(plan, 0)
+	for _, want := range []string{"app dev service", "app staging service", "api dev service", "api staging service"} {
+		if !strings.Contains(got01, want) {
+			t.Errorf("expected %q in env 0 includes list, got %q", want, got01)
+		}
+	}
+
+	// Env 2+: no dev/stage mention for runtimes, only data services.
+	got2 := buildServiceIncludesList(plan, 2)
+	if strings.Contains(got2, "dev service") {
+		t.Errorf("env 2 should not mention dev service, got %q", got2)
+	}
+}
+
+func TestValidateRecipePlan_DualRuntimeShowcase(t *testing.T) {
+	t.Parallel()
+
+	plan := RecipePlan{
+		Framework:   "nestjs",
+		Tier:        RecipeTierShowcase,
+		Slug:        "nestjs-showcase",
+		RuntimeType: "nodejs@22",
+		BuildBases:  []string{"nodejs@22"},
+		Research: ResearchData{
+			ServiceType:    "nodejs",
+			PackageManager: "npm",
+			HTTPPort:       3000,
+			BuildCommands:  []string{"npm ci"},
+			DeployFiles:    []string{"dist"},
+			StartCommand:   "node dist/main.js",
+			CacheLib:       "ioredis",
+			SessionDriver:  "redis",
+			QueueDriver:    "bullmq",
+			StorageDriver:  "s3",
+			SearchLib:      "meilisearch",
+			MailLib:        "nodemailer",
+			LoggingDriver:  "stderr",
+		},
+		Targets: []RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+			{Hostname: "db", Type: "postgresql@17"},
+			{Hostname: "cache", Type: "valkey@7.2"},
+			{Hostname: "storage", Type: "object-storage"},
+			{Hostname: "search", Type: "meilisearch@1"},
+		},
+	}
+
+	errs := ValidateRecipePlan(plan, nil, nil)
+	if len(errs) > 0 {
+		t.Errorf("dual-runtime showcase should be valid, got errors: %v", errs)
 	}
 }

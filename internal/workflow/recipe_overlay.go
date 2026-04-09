@@ -44,14 +44,21 @@ func OverlayRealAppREADME(files map[string]string, plan *RecipePlan) bool {
 	return true
 }
 
-// mountREADMEPathForPlan constructs the expected app README path on the mount
-// — the first non-worker runtime target's dev-suffixed hostname directory.
-// Returns "" if the plan has no non-worker runtime targets.
+// mountREADMEPathForPlan constructs the expected app README path on the mount.
+// Prefers the API target's README (documents the showcased framework in dual-runtime).
+// Falls back to first non-worker runtime target. Returns "" if none found.
 func mountREADMEPathForPlan(plan *RecipePlan) string {
 	base := recipeMountBase
 	if recipeMountBaseOverride != "" {
 		base = recipeMountBaseOverride
 	}
+	// Prefer API service README (documents the showcased framework).
+	for _, t := range plan.Targets {
+		if IsRuntimeType(t.Type) && !t.IsWorker && t.Role == RecipeRoleAPI {
+			return filepath.Join(base, t.Hostname+"dev", "README.md")
+		}
+	}
+	// Fall back to first non-worker runtime.
 	for _, t := range plan.Targets {
 		if IsRuntimeType(t.Type) && !t.IsWorker {
 			return filepath.Join(base, t.Hostname+"dev", "README.md")

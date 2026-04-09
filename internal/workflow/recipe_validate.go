@@ -161,6 +161,7 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 
 // validateShowcaseServices checks that showcase recipes include all required service kinds:
 // an HTTP app, a worker, and one each of database, cache, storage, search engine, mail catcher.
+// Dual-runtime showcases (frontend + API) have two non-worker runtimes — this is valid.
 func validateShowcaseServices(targets []RecipeTarget) []string {
 	requiredKinds := map[string]bool{
 		kindDatabase:     false,

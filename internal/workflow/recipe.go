@@ -70,13 +70,15 @@ type EnvComments struct {
 	Project string `json:"project,omitempty"`
 }
 
-// RecipeTarget defines a service in the recipe workspace. There is NO role
-// field — template dispatch uses type-capability predicates directly
-// (IsRuntimeType, IsManagedService, IsUtilityType, IsObjectStorageType, …).
+// RecipeTarget defines a service in the recipe workspace. Template dispatch
+// uses type-capability predicates (IsRuntimeType, IsManagedService, etc.).
+// The Role field is for repo routing and comment generation only — it does NOT
+// affect template dispatch.
 type RecipeTarget struct {
 	Hostname     string   `json:"hostname"               jsonschema:"Service hostname — lowercase alphanumeric, no hyphens or underscores (e.g. 'app', 'db', 'cache')."`
 	Type         string   `json:"type"                   jsonschema:"Zerops service type with version — pick the highest available version from the live catalog for each stack. Must exist in the live catalog."`
 	IsWorker     bool     `json:"isWorker,omitempty"     jsonschema:"Only meaningful for runtime types — set true for background/queue workers, false (default) for the HTTP-serving primary app. Ignored for managed/utility types (their rendering is fully determined by type)."`
+	Role         string   `json:"role,omitempty"         jsonschema:"Service role for repo routing: 'app' (frontend/default), 'api' (backend API), 'worker' (background processor). Empty for managed/utility services. Does NOT affect template dispatch — type predicates remain authoritative."`
 	Environments []string `json:"environments,omitempty"` // ignored — all targets appear in all environments
 }
 
