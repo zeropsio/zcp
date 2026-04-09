@@ -476,6 +476,7 @@ Description of why this change is needed.
 - Max 80 chars per comment line
 
 ### Pre-deploy checklist
+- [ ] `.gitignore` exists and covers build artifacts, dependencies, and env files (e.g. `dist/`, `node_modules/`, `vendor/`, `.env`, `*.pyc`). Framework CLIs may skip generating it — always verify before `git add`
 - [ ] Both `setup: dev` AND `setup: prod` present (generic names); showcase: `setup: worker` too
 - [ ] dev and prod envVariables differ on mode flags — structural check fails if identical
 - [ ] All env var refs use names from `zerops_discover`, none guessed
