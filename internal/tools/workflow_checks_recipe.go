@@ -10,14 +10,21 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // buildRecipeStepChecker returns a step checker for the given recipe step.
-func buildRecipeStepChecker(step, _, stateDir string) workflow.RecipeStepChecker {
+func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schemaCache *schema.Cache) workflow.RecipeStepChecker {
 	switch step {
 	case workflow.RecipeStepGenerate:
-		return checkRecipeGenerate(stateDir)
+		var validFields *schema.ValidFields
+		if schemaCache != nil {
+			if schemas := schemaCache.Get(ctx); schemas != nil && schemas.ZeropsYml != nil {
+				validFields = schema.ExtractValidFields(schemas.ZeropsYml)
+			}
+		}
+		return checkRecipeGenerate(stateDir, validFields)
 	case workflow.RecipeStepFinalize:
 		return checkRecipeFinalizeFromState(stateDir)
 	}
@@ -48,7 +55,8 @@ var requiredFragments = []string{"integration-guide", "knowledge-base", "intro"}
 
 // checkRecipeGenerate validates the generate step for recipe workflow.
 // Extends bootstrap's checkGenerate with recipe-specific fragment quality checks.
-func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
+// validFields, when non-nil, enables zerops.yaml field validation against the live JSON schema.
+func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields) workflow.RecipeStepChecker {
 	return func(_ context.Context, plan *workflow.RecipePlan, state *workflow.RecipeState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
@@ -92,6 +100,9 @@ func checkRecipeGenerate(stateDir string) workflow.RecipeStepChecker {
 				Name: "zerops_yml_exists", Status: statusPass,
 			})
 			checks = append(checks, checkRecipeSetups(doc, appHostname, plan)...)
+
+			// Validate zerops.yaml fields against the live JSON schema.
+			checks = append(checks, checkZeropsYmlFields(ymlDir, validFields)...)
 		}
 
 		// Check README fragments.
@@ -458,6 +469,38 @@ func nonEmptyLines(content string) []string {
 		}
 	}
 	return result
+}
+
+// checkZeropsYmlFields validates zerops.yaml field names against the live JSON schema.
+// Catches import.yaml-only fields (e.g. verticalAutoscaling) that agents
+// incorrectly add to zerops.yaml, and any other hallucinated field names.
+func checkZeropsYmlFields(ymlDir string, validFields *schema.ValidFields) []workflow.StepCheck {
+	if validFields == nil {
+		return nil
+	}
+
+	// Read raw content — ParseZeropsYml uses typed structs which silently drop unknown fields.
+	raw, err := ops.ReadZeropsYmlRaw(ymlDir)
+	if err != nil {
+		return nil // file-not-found already reported by the existence check
+	}
+
+	fieldErrs := schema.ValidateZeropsYmlRaw(raw, validFields)
+	if len(fieldErrs) == 0 {
+		return []workflow.StepCheck{{
+			Name: "zerops_yml_schema_fields", Status: statusPass,
+		}}
+	}
+
+	details := make([]string, len(fieldErrs))
+	for i, e := range fieldErrs {
+		details[i] = e.Error()
+	}
+	return []workflow.StepCheck{{
+		Name:   "zerops_yml_schema_fields",
+		Status: statusFail,
+		Detail: fmt.Sprintf("zerops.yaml contains fields not in the platform schema (these belong in import.yaml or don't exist): %s", strings.Join(details, "; ")),
+	}}
 }
 
 // uniqueStrings returns unique strings from a slice.

@@ -6,8 +6,18 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// Wrappers around schema functions for test use (tools_test can't access schema internals).
+func parseZeropsYmlSchemaForTest(data []byte) (*schema.ZeropsYmlSchema, error) {
+	return schema.ParseZeropsYmlSchema(data)
+}
+
+func extractValidFieldsForTest(s *schema.ZeropsYmlSchema) *schema.ValidFields {
+	return schema.ExtractValidFields(s)
+}
 
 func testRecipePlan() *workflow.RecipePlan {
 	return &workflow.RecipePlan{
@@ -142,7 +152,7 @@ func TestCheckRecipeGenerate_ValidMinimal(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir)
+	checker := checkRecipeGenerate(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -185,7 +195,7 @@ func TestCheckRecipeGenerate_MissingProdSetup(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir)
+	checker := checkRecipeGenerate(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -243,7 +253,7 @@ func TestCheckRecipeGenerate_DevProdBitIdentical(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir)
+	checker := checkRecipeGenerate(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -288,7 +298,7 @@ func TestCheckRecipeGenerate_MissingFragments(t *testing.T) {
 	// README without any fragments.
 	writeFile(t, filepath.Join(appDir, "README.md"), "# App\nJust a basic readme.")
 
-	checker := checkRecipeGenerate(stateDir)
+	checker := checkRecipeGenerate(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -365,7 +375,7 @@ zerops:
 `
 	writeFile(t, filepath.Join(appDir, "README.md"), readme)
 
-	checker := checkRecipeGenerate(stateDir)
+	checker := checkRecipeGenerate(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -431,7 +441,7 @@ zerops:
 `
 	writeFile(t, filepath.Join(appDir, "README.md"), readme)
 
-	checker := checkRecipeGenerate(stateDir)
+	checker := checkRecipeGenerate(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -623,7 +633,7 @@ func TestCheckRecipeGenerate_ShowcaseMissingWorkerSetup(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir)
+	checker := checkRecipeGenerate(stateDir, nil)
 	result, err := checker(context.Background(), testShowcasePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -702,7 +712,7 @@ func TestCheckRecipeGenerate_ShowcaseWithWorkerSetup(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir)
+	checker := checkRecipeGenerate(stateDir, nil)
 	result, err := checker(context.Background(), testShowcasePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -719,6 +729,181 @@ func TestCheckRecipeGenerate_ShowcaseWithWorkerSetup(t *testing.T) {
 	}
 	if !sawWorkerPass {
 		t.Error("expected app_worker_setup check to be present")
+	}
+}
+
+func TestCheckRecipeGenerate_SchemaFieldValidation(t *testing.T) {
+	t.Parallel()
+
+	// Build valid fields from the test schema.
+	schemaData, err := os.ReadFile("../../internal/schema/testdata/zerops_yml_schema.json")
+	if err != nil {
+		t.Fatalf("read schema: %v", err)
+	}
+	s, err := parseZeropsYmlSchemaForTest(schemaData)
+	if err != nil {
+		t.Fatalf("parse schema: %v", err)
+	}
+	vf := extractValidFieldsForTest(s)
+
+	tests := []struct {
+		name       string
+		yaml       string
+		wantStatus string
+	}{
+		{
+			name: "valid zerops.yaml passes",
+			yaml: `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm install
+      deployFiles: ./
+    run:
+      base: nodejs@22
+      envVariables:
+        NODE_ENV: development
+      ports:
+        - port: 3000
+  - setup: prod
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+        - npm run build
+      deployFiles:
+        - ./dist
+    run:
+      base: nodejs@22
+      start: node dist/main.js
+      envVariables:
+        NODE_ENV: production
+      ports:
+        - port: 3000
+`,
+			wantStatus: statusPass,
+		},
+		{
+			name: "verticalAutoscaling under run fails",
+			yaml: `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm install
+      deployFiles: ./
+    run:
+      base: nodejs@22
+      envVariables:
+        NODE_ENV: development
+      ports:
+        - port: 3000
+  - setup: prod
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+      deployFiles:
+        - ./dist
+    run:
+      base: nodejs@22
+      start: node dist/main.js
+      envVariables:
+        NODE_ENV: production
+      ports:
+        - port: 3000
+      verticalAutoscaling:
+        minRam: 0.25
+`,
+			wantStatus: statusFail,
+		},
+		{
+			name: "unknown top-level field fails",
+			yaml: `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm install
+      deployFiles: ./
+    run:
+      base: nodejs@22
+      envVariables:
+        NODE_ENV: development
+      ports:
+        - port: 3000
+    scaling:
+      min: 1
+  - setup: prod
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+      deployFiles:
+        - ./dist
+    run:
+      base: nodejs@22
+      start: node dist/main.js
+      envVariables:
+        NODE_ENV: production
+      ports:
+        - port: 3000
+`,
+			wantStatus: statusFail,
+		},
+	}
+
+	plan := &workflow.RecipePlan{
+		Framework:   "nestjs",
+		Tier:        workflow.RecipeTierMinimal,
+		Slug:        "nestjs-minimal",
+		RuntimeType: "nodejs@22",
+		Research: workflow.ResearchData{
+			ServiceType:    "nodejs",
+			PackageManager: "npm",
+			HTTPPort:       3000,
+		},
+		Targets: []workflow.RecipeTarget{
+			{Hostname: "app", Type: "nodejs@22"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			stateDir := filepath.Join(dir, ".zcp", "state")
+			if err := os.MkdirAll(stateDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			appDir := filepath.Join(dir, "app")
+			if err := os.MkdirAll(appDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(appDir, "zerops.yaml"), tt.yaml)
+			writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
+
+			checker := checkRecipeGenerate(stateDir, vf)
+			result, err := checker(context.Background(), plan, testRecipeState())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var found bool
+			for _, c := range result.Checks {
+				if c.Name == "zerops_yml_schema_fields" {
+					found = true
+					if c.Status != tt.wantStatus {
+						t.Errorf("zerops_yml_schema_fields status = %q, want %q (detail: %s)", c.Status, tt.wantStatus, c.Detail)
+					}
+				}
+			}
+			if !found {
+				t.Error("zerops_yml_schema_fields check not found in results")
+			}
+		})
 	}
 }
 

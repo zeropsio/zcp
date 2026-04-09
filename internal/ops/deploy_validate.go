@@ -175,6 +175,21 @@ func ParseZeropsYml(workingDir string) (*ZeropsYmlDoc, error) {
 	return &doc, nil
 }
 
+// ReadZeropsYmlRaw reads zerops.yaml (or zerops.yml fallback) and returns raw bytes.
+// Used for schema field validation — the typed ParseZeropsYml silently drops unknown fields.
+func ReadZeropsYmlRaw(workingDir string) ([]byte, error) {
+	ymlPath := filepath.Join(workingDir, "zerops.yaml")
+	data, err := os.ReadFile(ymlPath)
+	if err != nil {
+		ymlPath = filepath.Join(workingDir, "zerops.yml")
+		data, err = os.ReadFile(ymlPath)
+		if err != nil {
+			return nil, fmt.Errorf("zerops.yaml not found in %s", workingDir)
+		}
+	}
+	return data, nil
+}
+
 // FindEntry returns the entry matching hostname, or nil if not found.
 func (d *ZeropsYmlDoc) FindEntry(hostname string) *ZeropsYmlEntry {
 	for i := range d.Zerops {

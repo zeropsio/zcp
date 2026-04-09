@@ -60,7 +60,7 @@ func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client p
 			"Describe what was accomplished")), nil, nil
 	}
 
-	checker := buildRecipeStepChecker(input.Step, projectID, stateDir)
+	checker := buildRecipeStepChecker(ctx, input.Step, projectID, stateDir, schemaCache)
 
 	resp, err := engine.RecipeComplete(ctx, input.Step, input.Attestation, checker)
 	if err != nil {
