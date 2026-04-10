@@ -199,8 +199,9 @@ func pushRecipeCreate(cfg *Config, gh *GH, slug string, frags recipeFragments) P
 	// 5. Inject all fragments into README
 	updated := injectAllFragments(readme, frags)
 
-	// 6. Create branch
-	branch := fmt.Sprintf("%s/%s-%s", cfg.Push.Recipes.BranchPrefix, slug, today())
+	// 6. Create branch — date + short random suffix so a same-day second
+	// push of the same recipe doesn't hit "reference already exists".
+	branch := fmt.Sprintf("%s/%s-%s-%s", cfg.Push.Recipes.BranchPrefix, slug, today(), shortRand())
 	if err := gh.CreateBranch(branch); err != nil {
 		return PushResult{Slug: slug, Status: Error, Err: fmt.Errorf("create branch: %w", err)}
 	}

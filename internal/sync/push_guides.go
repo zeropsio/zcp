@@ -60,7 +60,10 @@ func PushGuides(cfg *Config, root, filter string, dryRun bool) ([]PushResult, er
 		return nil, fmt.Errorf("get HEAD SHA: %w", err)
 	}
 
-	branch := fmt.Sprintf("%s/guides-%s", cfg.Push.Guides.BranchPrefix, today())
+	// Branch name carries date + short random suffix so multiple pushes on
+	// the same day (e.g. landing two independent guide fixes) don't collide
+	// on GitHub's "reference already exists" rejection.
+	branch := fmt.Sprintf("%s/guides-%s-%s", cfg.Push.Guides.BranchPrefix, today(), shortRand())
 	if err := gh.CreateBranch(branch); err != nil {
 		return nil, fmt.Errorf("create branch: %w", err)
 	}
@@ -100,6 +103,22 @@ type guideFile struct {
 }
 
 func collectGuideFiles(guidesDir, decisionsDir, filter string) ([]guideFile, error) {
+	// Filter may be empty (collect all), a single slug, or a comma-separated
+	// list of slugs. Comma-separated support lets a single push command
+	// bundle multiple guides into one PR — which is required when two
+	// guides need to land on the same date-stamped branch (GitHub rejects
+	// duplicate branch creation).
+	var allowed map[string]struct{}
+	if filter != "" {
+		allowed = make(map[string]struct{})
+		for slug := range strings.SplitSeq(filter, ",") {
+			slug = strings.TrimSpace(slug)
+			if slug != "" {
+				allowed[slug] = struct{}{}
+			}
+		}
+	}
+
 	var files []guideFile
 
 	for _, dir := range []string{guidesDir, decisionsDir} {
@@ -115,8 +134,10 @@ func collectGuideFiles(guidesDir, decisionsDir, filter string) ([]guideFile, err
 				continue
 			}
 			slug := strings.TrimSuffix(entry.Name(), ".md")
-			if filter != "" && slug != filter {
-				continue
+			if allowed != nil {
+				if _, ok := allowed[slug]; !ok {
+					continue
+				}
 			}
 			files = append(files, guideFile{
 				slug: slug,
