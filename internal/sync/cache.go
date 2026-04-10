@@ -2,9 +2,8 @@ package sync
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -48,47 +47,35 @@ type CacheClearResult struct {
 func clearOne(baseURL, token, slug string) CacheClearResult {
 	url := baseURL + "/recipes/" + slug + "/cache/clear"
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, nil)
-	if err != nil {
-		return CacheClearResult{Slug: slug, Err: fmt.Errorf("build request: %w", err)}
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	_, err := doWithRetry(context.Background(), func(ctx context.Context) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req, nil
+	})
 
-	resp, err := http.DefaultClient.Do(req)
+	// Surface the HTTP status when available so callers can log it.
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) {
+		return CacheClearResult{Slug: slug, Status: statusErr.StatusCode, Err: err}
+	}
 	if err != nil {
 		return CacheClearResult{Slug: slug, Err: fmt.Errorf("request: %w", err)}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		return CacheClearResult{Slug: slug, Status: resp.StatusCode, Err: fmt.Errorf("HTTP %d", resp.StatusCode)}
-	}
-
-	return CacheClearResult{Slug: slug, Status: resp.StatusCode}
+	return CacheClearResult{Slug: slug, Status: http.StatusOK}
 }
 
 func fetchAllSlugs(cfg *Config) ([]string, error) {
 	apiURL := cfg.APIURL + "?filters%5BrecipeCategories%5D%5Bslug%5D%5B%24ne%5D=service-utility&pagination%5BpageSize%5D=100&fields%5B0%5D=slug"
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, apiURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
+	var apiResp APIResponse
+	err := fetchJSON(context.Background(), func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	}, &apiResp)
 	if err != nil {
 		return nil, fmt.Errorf("fetch recipe slugs: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	var apiResp APIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
 	var slugs []string

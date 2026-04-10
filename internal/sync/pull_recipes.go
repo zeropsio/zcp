@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -53,25 +52,12 @@ type extracts struct {
 func PullRecipes(cfg *Config, root, filter string, dryRun bool) ([]PullResult, error) {
 	apiURL := cfg.APIURL + "?filters%5BrecipeCategories%5D%5Bslug%5D%5B%24ne%5D=service-utility&populate%5BrecipeCategories%5D=true&populate%5BrecipeLanguageFrameworks%5D%5Bpopulate%5D=*&pagination%5BpageSize%5D=100"
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, apiURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
+	var apiResp APIResponse
+	err := fetchJSON(context.Background(), func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	}, &apiResp)
 	if err != nil {
 		return nil, fmt.Errorf("fetch recipes: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	var apiResp APIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
 	if len(apiResp.Data) == 0 {
