@@ -1000,14 +1000,14 @@ On top of that, `zerops_browser` auto-runs pkill recovery if it detects fork exh
 
 #### Non-negotiable rules
 
-1. **Stop all background dev processes BEFORE calling `zerops_browser`.** The processes you started in Step 2 (`npm run start:dev`, `ts-node worker`, `nohup` jobs on dev containers) are NOT needed for browser verification — you're verifying STAGE, not dev iteration. Kill them explicitly on every dev container, THEN call the tool. Restart them later only if you need more dev iteration after the walk. This is the single most important rule: the tool can recover from fork exhaustion once, but it cannot make your dev processes disappear.
+1. **Walk dev FIRST (while dev processes are running), THEN kill dev processes, THEN walk stage.** This is the only order that works. The dev walk verifies the subdomain the dev processes serve — killing them first would take down the very server you're trying to browse (a 502 response is your proof of wrong ordering). After the dev walk completes, kill every background dev process (`npm run dev`, `nest start --watch`, `ts-node worker`, nohup jobs) on every dev container to free the fork budget, then run the stage walk. Stage containers run their own processes and are not affected by the kill. **Do not reverse this order and do not merge the kill into the dev walk's pre-step.**
 2. **Use `zerops_browser` — never `agent-browser` as a Bash call.** The tool is the ONLY sanctioned path. Any raw `agent-browser` / `echo ... | agent-browser batch` command in a Bash tool call is a bug.
-3. **One `zerops_browser` call per subdomain.** Pass the URL + inner commands; the tool wraps open/errors/console/close. Run it once for appstage, then again for appdev. Do NOT pass multiple URLs or multiple open/close markers.
+3. **One `zerops_browser` call per subdomain.** Pass the URL + inner commands; the tool wraps open/errors/console/close. Do NOT pass multiple URLs or multiple open/close markers in one call.
 4. **Do not dispatch a sub-agent that calls `zerops_browser` while the main agent also has one in flight.** The verification sub-agent brief forbids browser usage entirely (the close step is split — see below); the main agent runs the browser walk itself.
-5. **If the tool returns `forkRecoveryAttempted: true`** — pkill already ran. Before retrying, find the process that burned the budget. Usually it's a dev process you forgot to kill on a dev container (`ssh {devHostname} "ps -ef | grep -E 'nest|vite|node dist|ts-node'"`). Kill it, then call the tool again.
+5. **If the tool returns `forkRecoveryAttempted: true`** — pkill already ran. Before retrying, find the process that burned the budget. For a STAGE walk, usually it's a dev process you forgot to kill after the dev walk (`ssh {devHostname} "ps -ef | grep -E 'nest|vite|node dist|ts-node'"`). For a DEV walk, the budget was already tight before the walk started — the usual cause is lingering subprocess trees from an earlier feature sub-agent or a previous browser session that wasn't reaped cleanly; run the manual pkill below and retry.
 6. **If a Bash call crashes with `fork failed: resource temporarily unavailable` or `pthread_create: Resource temporarily unavailable`** — something other than `zerops_browser` leaked processes. Recover manually:
    ```
-   pkill -9 -f "agent-browser-darwin" ; pkill -9 -f "agent-browser-chrome-"
+   pkill -9 -f "agent-browser-"
    ```
    Wait 1-2s for reaping. Never retry in a loop.
 
@@ -1030,14 +1030,33 @@ Do NOT pass `["open", ...]` or `["close"]` inside `commands` — the tool strips
 
 #### Canonical verification flow
 
+Three phases in strict order. **Do not reorder.**
+
+**Phase 1 — Dev walk (dev processes running, NO kill).** The dev subdomain serves whatever the dev processes started in Step 2 serve. Walk it while they're still up. This is the only phase where the dev container renders your dashboard in a browser:
+
 ```
-# Phase 1 (Bash): stop background dev processes on every dev container.
-# API-first recipes: both apidev AND appdev. Single-runtime: just appdev.
+zerops_browser(
+  url: "https://{appdev-subdomain}.prg1.zerops.app",
+  commands: [
+    ["snapshot", "-i", "-c"],
+    ["get", "text", "[data-connectivity]"],
+    ["get", "count", "[data-article-row]"],
+    ["find", "role", "button", "Submit", "click"],
+    ["get", "text", "[data-result]"]
+  ]
+)
+```
+
+If dev walk returns a 502 or connection failure, your dev processes aren't running (or they died). Diagnose via `ssh {devHostname} "ps -ef | grep -E 'nest|vite|node|ts-node'"` and restart per Step 2 before continuing.
+
+**Phase 2 — Kill dev processes (Bash).** Only now, after the dev walk has passed, free the fork budget. API-first recipes: both apidev AND appdev. Single-runtime: just appdev.
+
+```
 ssh apidev "pkill -f 'nest start' || true; pkill -f 'ts-node' || true; pkill -f 'node dist/worker' || true"
 ssh appdev "pkill -f 'vite' || true; pkill -f 'npm run dev' || true"
 ```
 
-Then call `zerops_browser` (MCP tool — NOT a Bash call):
+**Phase 3 — Stage walk (dev processes dead).** Walk the stage subdomain. Stage containers run their own processes and are completely unaffected by the dev kill:
 
 ```
 zerops_browser(
@@ -1052,28 +1071,27 @@ zerops_browser(
 )
 ```
 
-The tool will execute `[open url] + your commands + [errors] + [console] + [close]` as one batch and return structured JSON: `steps[]`, `errorsOutput`, `consoleOutput`, `durationMs`, `forkRecoveryAttempted`, `message`.
+The tool executes `[open url] + your commands + [errors] + [console] + [close]` as one batch and returns structured JSON: `steps[]`, `errorsOutput`, `consoleOutput`, `durationMs`, `forkRecoveryAttempted`, `message`.
 
-Repeat with the appdev subdomain URL if dev verification is also required. One tool call per URL — do NOT combine multiple URLs in one call.
-
-**Phase 3 (optional — only if more dev iteration is needed)**: restart the dev processes you killed in Phase 1. If you're advancing straight to stage deployment, skip this — the stage containers run their own processes, the dev containers are done.
+**If you need to re-iterate** after a stage walk found something: fix on the mount, redeploy dev (which needs dev processes — you must restart them via SSH since the kill in Phase 2 took them down), re-verify dev with the curl flow in deploy Step 3, then cross-deploy to stage, then repeat Phase 2 + Phase 3. Phase 1 does NOT need to run again for a re-iteration — one dev browser walk per close step is enough.
 
 **Report shape for a verification pass** (per subdomain walked):
 - Connectivity panel state (services connected with latencies)
 - Each feature section's render state (populated / empty / errored)
 - `errorsOutput` from the result (expected: empty)
 - `consoleOutput` from the result (expected: empty or benign info only)
-- `forkRecoveryAttempted` from the result (expected: false — true means you forgot to kill dev processes)
+- `forkRecoveryAttempted` from the result (expected: false — if true on the STAGE walk you didn't fully kill the dev processes in Phase 2; if true on the DEV walk something upstream was leaking before the walk started)
 
-**What to avoid** (all were seen in v4 or v5):
+**What to avoid** (all were seen in v4, v5, or v6):
 - Raw `agent-browser` / `echo ... | agent-browser batch` Bash calls — always use `zerops_browser` MCP tool
+- **Killing dev processes BEFORE the dev walk** — the dev subdomain then returns 502 because the dev processes ARE the dev server. This is the v6 regression. Phase 1 before Phase 2, always.
 - `["eval", "window.onerror = …"]` inside commands — use the auto-appended `["errors"]` / `["console"]` output instead
-- Running the browser walk while `nest start --watch` / `vite` / workers are still running on dev containers — guaranteed `forkRecoveryAttempted: true`
+- Running the STAGE walk while dev processes are still running on dev containers — guaranteed `forkRecoveryAttempted: true`
 - Passing `["open", ...]` or `["close"]` inside `commands` — the tool strips them; if you thought you needed them, you didn't
 - Dispatching a sub-agent that calls `zerops_browser` while the main agent also has a call in flight
 - Re-running the tool against the same URL repeatedly "just to be sure" — one call per URL per iteration
 
-If the browser walk reveals a problem curl missed: the batch has already closed the browser, so fix on mount, redeploy, and run the batch again (counts toward the 3-iteration limit). Do NOT advance to stage deployment until both appdev AND appstage verification passes show empty errors and populated sections.
+If a walk reveals a problem curl missed: the batch has already closed the browser, so fix on mount, redeploy, and run the affected phase again (counts toward the 3-iteration limit). Do NOT advance to publish until BOTH appdev AND appstage walks show empty errors and populated sections.
 
 ### Stage deployment flow (after all appdev work is complete)
 
@@ -1417,12 +1435,14 @@ After 1a completes and any redeployments have settled, the main agent performs t
 - The sub-agent and main agent can't share a `zerops_browser` session (the tool serializes calls through a process-wide mutex, but the real problem is state coordination, not locking); running two browser tracks blows the fork budget.
 - The main agent already has the full platform context it needs to act on what the browser shows.
 
-**Procedure** (reference Step 4c for the full `zerops_browser` rules and canonical flow):
+**Procedure — three phases, strict order** (reference Step 4c for the full `zerops_browser` rules and rationale):
 
-1. **Stop background dev processes on every dev container** (`ssh apidev "pkill -f 'nest start' …"` etc). Browser verification targets stage; the dev processes must not be competing for the fork budget.
-2. **Call `zerops_browser` for `appstage`** — ONE MCP tool call with the appstage URL and the inner commands that walk every feature section (at least one interactive control per section). The tool auto-wraps open/errors/console/close.
-3. **Call `zerops_browser` for `appdev`** (showcase only — confirms both dev and stage versions work; minimal recipes skip). Same shape.
-4. **Report the walk results** per subdomain: connectivity state, section render state, `errorsOutput` from the result, `consoleOutput` from the result, `forkRecoveryAttempted` (should be false).
+1. **Phase 1 — Dev walk (dev processes still running).** Call `zerops_browser` for `appdev` FIRST, before killing anything. The dev processes started in Step 2 ARE the dev server — if they're not running, `appdev` returns 502 and the walk is meaningless. This is the only moment you can verify the dev subdomain renders end-to-end. Showcase only; minimal recipes skip.
+2. **Phase 2 — Kill dev processes (Bash).** `ssh apidev "pkill -f 'nest start' || true; …"` and the same for `appdev`. Free the fork budget for the stage walk. Stage containers run their own processes — they are NOT affected by this kill.
+3. **Phase 3 — Stage walk (dev processes dead).** Call `zerops_browser` for `appstage` — ONE MCP tool call with the appstage URL and the inner commands that walk every feature section (at least one interactive control per section). The tool auto-wraps open/errors/console/close.
+4. **Report the walk results** per subdomain: connectivity state, section render state, `errorsOutput` from the result, `consoleOutput` from the result, `forkRecoveryAttempted` (should be false in both).
+
+**Why this order (v6 post-mortem)**: a previous version of this guidance told agents to kill dev processes before any browser walk. Agents dutifully killed them in Phase 1, then tried to walk appdev, and hit a 502 — the dev subdomain had no server behind it. They (correctly) reported the dev walk as impossible and advanced straight to stage. The fix is scoping the kill to the STAGE walk only: dev walk first, then kill, then stage walk.
 
 **If the browser walk reveals a problem:**
 - The tool has already closed the browser, so there's nothing to clean up.
