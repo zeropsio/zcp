@@ -228,7 +228,7 @@ zerops_env project=true action=set variables=[
 ]
 ```
 
-Substitute the API's actual HTTP port (3000 is NestJS default). Static frontends have no port segment. See the "Dual-runtime URL env-var pattern" section under "zerops.yaml — Write ALL setups at once" for the full consumption pattern (frontend `${RUNTIME_STAGE_API_URL}` in `build.envVariables`, API `${STAGE_FRONTEND_URL}` in `run.envVariables`).
+Substitute the API's actual HTTP port (3000 is NestJS default). Static frontends have no port segment. See the "Dual-runtime URL env-var pattern" section under "zerops.yaml — Write ALL setups at once" for the full consumption pattern (frontend `${STAGE_API_URL}` in `build.envVariables`, API `${STAGE_FRONTEND_URL}` in `run.envVariables`).
 
 The workspace MUST have these set before zerops.yaml is written — otherwise cross-service refs resolve to literal placeholder strings and every CORS/API-URL reference silently fails. The same values must also be passed as `projectEnvVariables` to `generate-finalize` at finalize time, with the env 0-1 / env 2-5 shape split applied — see the finalize step for details.
 
@@ -415,9 +415,9 @@ project:
 
 Port `3000` is the NestJS default — substitute your API's actual HTTP port (from `run.ports[0].port` in the API's zerops.yaml). Static frontends have no port segment.
 
-**Consuming in frontend zerops.yaml — `build.envVariables` with the `RUNTIME_` lift**:
+**Consuming in frontend zerops.yaml — direct project-var reference, no `RUNTIME_` prefix**:
 
-Project-level env vars are runtime-scope by default (available as OS env vars in every service's runtime container). To use them inside `build.envVariables`, reference with the `RUNTIME_` prefix, which lifts the runtime-scope var into the build container's env:
+Project-level env vars auto-inject into **both runtime AND build containers** as OS env vars. Inside zerops.yaml YAML interpolation they are referenced **directly by name** — there is **no `RUNTIME_` prefix** in either `run.envVariables` or `build.envVariables`. The `RUNTIME_` prefix is a different feature (lifting a *service-level* runtime var into that same service's build context); project vars live in project-scope, which is broader than service-scope, so no lifting is needed.
 
 ```yaml
 zerops:
@@ -425,7 +425,7 @@ zerops:
     build:
       base: nodejs@22
       envVariables:
-        VITE_API_URL: ${RUNTIME_STAGE_API_URL}   # bakes stage URL into the cross-deployed bundle
+        VITE_API_URL: ${STAGE_API_URL}           # bakes stage URL into the cross-deployed bundle
       buildCommands:
         - npm ci
         - npm run build
@@ -438,7 +438,7 @@ zerops:
     build:
       base: nodejs@22
       envVariables:
-        VITE_API_URL: ${RUNTIME_DEV_API_URL}     # bakes dev URL into the iteration bundle
+        VITE_API_URL: ${DEV_API_URL}             # bakes dev URL into the iteration bundle
       buildCommands:
         - npm install
       deployFiles: [.]
@@ -447,6 +447,17 @@ zerops:
 ```
 
 The same zerops.yaml works in every env: envs 0-1 use `setup: dev` (via `zeropsSetup: dev` on appdev) which reads `DEV_*`; every env uses `setup: prod` (via `zeropsSetup: prod` on appstage/app) which reads `STAGE_*`. The `setup: dev` block is never invoked in envs 2-5 (there's no appdev there), so the `DEV_*` reference is dormant there — safe.
+
+**Alternative shell-prefix pattern** (equivalent, also correct): compose the var in `buildCommands` instead of `build.envVariables`. Project vars are already OS env vars in the build container so the shell reads them directly:
+
+```yaml
+build:
+  buildCommands:
+    - npm ci
+    - VITE_API_URL=$STAGE_API_URL npm run build   # shell prefix, same result
+```
+
+Pick whichever reads cleaner for your build. The YAML-reference form is symmetric with the `run.envVariables` pattern below; the shell-prefix form is compact when the build is already a one-liner.
 
 **Consuming in API zerops.yaml — `run.envVariables` direct reference**:
 
@@ -511,13 +522,12 @@ zerops_workflow action="generate-finalize" \
 
 Do NOT hand-edit the 6 generated import.yaml files to add `project.envVariables` after the fact. A second `generate-finalize` call (for any reason — comment fix, check failure) re-renders from template and wipes manual edits. Always pass `projectEnvVariables` via the tool input; it's idempotent across reruns.
 
-**Deeper reference**: the platform's rules for lifting project-scope env vars into build context (`RUNTIME_` prefix), the full `${zeropsSubdomainHost}` URL format, and the workspace-vs-deliverable parity pattern are documented in the `environment-variables` knowledge guide. Fetch it via `zerops_knowledge scope="guide" query="environment-variables"` when you need the platform-level rules behind this pattern, not just the recipe-level instructions above.
+**Deeper reference**: the full platform env-var model (project-scope auto-inheritance into build and runtime, the `${zeropsSubdomainHost}` URL format, the workspace-vs-deliverable parity pattern) is documented in the `environment-variables` knowledge guide. Fetch it via `zerops_knowledge scope="guide" query="environment-variables"` when you need the platform rules behind this pattern, not just the recipe-level instructions above.
 
 **What NOT to do** (all seen in v4/v5):
 - Do NOT invent a `setup: stage` — there is no such thing. Stage uses `setup: prod`.
-- Do NOT set `RUNTIME_VITE_API_URL` on a source service (e.g. `appdev`) via `zerops_env` and expect it to propagate through cross-deploy to a different target. Cross-deploys build in the target's context, not the source's.
 - Do NOT write `project.envVariables` values that reference another service's `${hostname}_zeropsSubdomain` — use the `${zeropsSubdomainHost}` project-scope var and the constant URL format instead.
-- Do NOT create a service-level env var with the same name as a project-level env var — that's a shadow loop.
+- Do NOT create a service-level env var with the same name as a project-level env var — that's a shadow loop: the service-level reference `${APP_SECRET}` in `run.envVariables` resolves to the literal string `${APP_SECRET}` at container start because the platform interpolator sees the same-name service var first and can't recurse into the project var. Project vars auto-propagate to every service's runtime container anyway — re-referencing them under the same name is never useful. If you need the value under a DIFFERENT framework-conventional name, forward it: `FRONTEND_URL: ${STAGE_FRONTEND_URL}`. If you need it under the SAME name, just don't write the line — the project var is already there.
 
 Follow the injected chain recipe (working zerops.yaml from the predecessor) as the primary reference. For hello-world (no predecessor), follow the injected zerops.yaml Schema. Platform rules (lifecycle phases, deploy semantics) were taught at provision — use `zerops_knowledge` if you need to look up a specific rule.
 
@@ -532,6 +542,7 @@ Recipe-specific conventions for each setup (platform rules from provision apply 
 - Framework mode flags set to dev values (`APP_ENV: local`, `NODE_ENV: development`, `DEBUG: "true"`, verbose logging)
 - Same cross-service refs from `zerops_discover` as prod — only mode flags differ
 - **Dev dependency pre-install**: if the build base includes a secondary runtime for an asset pipeline, dev `buildCommands` MUST include the dependency install step for that runtime's package manager. This ensures the dev container ships with dependencies pre-populated — the developer (or agent) can SSH in and immediately run the dev server without a manual install step first. Omit the asset compilation step — that's for prod only; dev uses the live dev server.
+- **Dev-server host-check allow-list** — when the framework's dev server enforces an HTTP Host-header allow-list (most modern bundler-based dev servers do), the Zerops public dev subdomain must be on the allow-list or the dev server returns a "Blocked request / Invalid Host header" error to the browser. This is a framework-config concern, not a Zerops platform setting: the right key lives in the framework's dev-server config and has a different name per framework (e.g. one framework calls it `allowedHosts`, another `allowed-hosts`, another `disable-host-check`, etc.). **During research, look up the current host-check config for the framework's dev server in its official docs** and bake the correct setting into whichever config file the dev server reads (`vite.config.ts`, `webpack.config.js`, `angular.json`, `next.config.js`, etc.). Add `.zerops.app` as a wildcard suffix so both the `{hostname}dev-{subdomainHost}-{port}.prg1.zerops.app` URL and the (later) `{hostname}stage-{subdomainHost}.prg1.zerops.app` URL are accepted without per-URL churn. If the dev server has a separate "preview" mode with its own host-check (some Vite-family servers do), configure both. The symptom of a missed allow-list is a 403 or plain-text "Blocked request" response to the public dev subdomain with no HTML rendered.
 
 **`setup: prod`** (cross-deployed from dev to stage — end-user production target):
 - Follow the chain recipe's prod setup as a baseline. Adapt to the current recipe's services and framework version.
