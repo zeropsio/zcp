@@ -54,6 +54,17 @@ type RecipePlan struct {
 	// and project comments — envs differ (dev workspace vs small-prod vs HA prod)
 	// and the commentary has to match, so the agent writes one set per env.
 	EnvComments map[string]EnvComments `json:"envComments,omitempty"`
+	// Agent-authored project-level env vars baked into each env's import.yaml
+	// project.envVariables block at generate-finalize time. Keyed by env index
+	// ("0".."5"), value is a flat map of env var name → value. Values are
+	// emitted verbatim — interpolation markers like ${zeropsSubdomainHost} are
+	// preserved so the platform resolves them at project import time.
+	//
+	// Different envs can carry different maps: envs 0-1 (dev/stage pair)
+	// typically carry DEV_* and STAGE_* URL constants; envs 2-5 (single-slot)
+	// carry STAGE_* only. The agent owns the per-env shape — the template
+	// renders each env's map verbatim in sorted key order.
+	ProjectEnvVariables map[string]map[string]string `json:"projectEnvVariables,omitempty"`
 }
 
 // EnvComments holds the agent-authored comments for a single environment's

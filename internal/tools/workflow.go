@@ -39,6 +39,12 @@ type WorkflowInput struct {
 	// Recipe comment inputs — passed to generate-finalize to bake agent-authored
 	// per-env comments into the 6 import.yaml files, replacing per-file Edit.
 	EnvComments map[string]workflow.EnvComments `json:"envComments,omitempty" jsonschema:"Recipe generate-finalize only: per-env comments for all 6 import.yaml files. Keyed by env index as string ('0'..'5'). Each env has {service: {hostname: comment}, project: comment}. Service keys match the hostnames that appear in that env's file — envs 0-1 (dev/stage pair) take 'appdev' and 'appstage'; envs 2-5 take the base hostname 'app'. Each env's commentary should reflect what makes THAT env distinct (AI agent workspace / remote CDE / local validator / stage / small prod with minContainers / HA prod with DEDICATED CPU + corePackage)."`
+
+	// Recipe project-level env var inputs — passed to generate-finalize to bake
+	// agent-authored per-env project.envVariables declarations into all 6
+	// import.yaml files. Replaces the v5 anti-pattern of hand-editing generated
+	// files (which were re-wiped on every generate-finalize re-run).
+	ProjectEnvVariables map[string]map[string]string `json:"projectEnvVariables,omitempty" jsonschema:"Recipe generate-finalize only: per-env project-level envVariables for all 6 import.yaml files. Keyed by env index as string ('0'..'5'). Each env value is a flat {name: value} map baked into that env's project.envVariables block. Values may contain ${zeropsSubdomainHost} — the platform preprocessor resolves it at project import time. Different envs typically carry different shapes: envs 0-1 (dev/stage pair) carry DEV_* and STAGE_* URL constants derived from apidev/appdev/apistage/appstage hostnames; envs 2-5 (single-slot) carry STAGE_* only with hostnames api/app. Merge semantics: a non-empty map for an env REPLACES that env's prior map (atomic); an empty map CLEARS; omitting an env leaves it untouched. Refine one env at a time by passing only that env's key."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -120,7 +126,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir, mounter)
 	case "generate-finalize":
 		if detectActiveWorkflow(engine) == workflowRecipe {
-			return handleRecipeGenerateFinalize(engine, input.EnvComments)
+			return handleRecipeGenerateFinalize(engine, input.EnvComments, input.ProjectEnvVariables)
 		}
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

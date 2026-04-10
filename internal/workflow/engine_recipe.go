@@ -3,8 +3,10 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -197,6 +199,83 @@ func (e *Engine) RecipeSession() *RecipeState {
 		return nil
 	}
 	return state.Recipe
+}
+
+// envVarNameRegexp validates env var names. Matches the standard
+// [a-zA-Z_][a-zA-Z0-9_]* rule from POSIX / env-variables knowledge base.
+var envVarNameRegexp = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// UpdateRecipeProjectEnvVariables merges agent-authored per-env project env
+// vars into the recipe plan and persists the session. Merge semantics, per env:
+//
+//   - Passing a non-empty map for an env REPLACES that env's prior map
+//     (deterministic: the agent owns the full per-env shape). This differs
+//     from EnvComments.Service which is additive per key — project env var
+//     declarations are intentionally atomic per env.
+//   - Passing an empty map for an env CLEARS that env's entry entirely.
+//   - Omitting an env key leaves that env untouched, so the agent can refine
+//     one env at a time without restating the others.
+//   - Nil input is a no-op (matches UpdateRecipeComments).
+//
+// Validation:
+//   - Env keys must be "0".."5".
+//   - Var names must match [A-Za-z_][A-Za-z0-9_]* (POSIX env var names).
+//   - Empty var names are rejected.
+//
+// Values are not validated beyond string typing. Values often contain
+// ${zeropsSubdomainHost} which is resolved by the platform preprocessor
+// at project import time, not by this function.
+func (e *Engine) UpdateRecipeProjectEnvVariables(projectEnvVariables map[string]map[string]string) error {
+	if projectEnvVariables == nil {
+		return nil
+	}
+	// Validate up front so we never partially-persist invalid input.
+	for envKey, vars := range projectEnvVariables {
+		if !isValidEnvKey(envKey) {
+			return fmt.Errorf("update recipe project env variables: invalid env key %q (must be \"0\"..\"5\")", envKey)
+		}
+		for name := range vars {
+			if name == "" {
+				return fmt.Errorf("update recipe project env variables: env %q has empty variable name", envKey)
+			}
+			if !envVarNameRegexp.MatchString(name) {
+				return fmt.Errorf("update recipe project env variables: env %q variable name %q must match [A-Za-z_][A-Za-z0-9_]*", envKey, name)
+			}
+		}
+	}
+
+	state, err := e.loadState()
+	if err != nil {
+		return fmt.Errorf("update recipe project env variables load: %w", err)
+	}
+	if state.Recipe == nil || state.Recipe.Plan == nil {
+		return fmt.Errorf("update recipe project env variables: no active recipe plan")
+	}
+	plan := state.Recipe.Plan
+	if plan.ProjectEnvVariables == nil {
+		plan.ProjectEnvVariables = map[string]map[string]string{}
+	}
+	for envKey, vars := range projectEnvVariables {
+		if len(vars) == 0 {
+			delete(plan.ProjectEnvVariables, envKey)
+			continue
+		}
+		// Atomic replace — copy the map so callers can't mutate behind us.
+		cp := make(map[string]string, len(vars))
+		maps.Copy(cp, vars)
+		plan.ProjectEnvVariables[envKey] = cp
+	}
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return saveSessionState(e.stateDir, e.sessionID, state)
+}
+
+// isValidEnvKey returns true for the 6 known env tier indices as strings.
+func isValidEnvKey(k string) bool {
+	switch k {
+	case "0", "1", "2", "3", "4", "5":
+		return true
+	}
+	return false
 }
 
 // UpdateRecipeComments merges agent-authored per-env comments into the recipe

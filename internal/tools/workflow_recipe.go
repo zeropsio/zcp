@@ -133,9 +133,11 @@ func handleRecipeSkip(_ context.Context, engine *workflow.Engine, input Workflow
 
 // handleRecipeGenerateFinalize generates all recipe repo files using BuildFinalizeOutput.
 // Writes files to the recipe output directory and returns the list of files written.
-// When envComments is provided, it is merged into the plan and baked into the
-// generated import.yaml files — no per-file hand-editing required.
-func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[string]workflow.EnvComments) (*mcp.CallToolResult, any, error) {
+// When envComments or projectEnvVariables is provided, each is merged into the
+// plan and baked into the generated import.yaml files — no per-file hand-editing
+// required. Idempotent: calling with identical inputs produces byte-identical
+// output across runs (guarded by TestGenerateFinalize_Idempotent).
+func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[string]workflow.EnvComments, projectEnvVariables map[string]map[string]string) (*mcp.CallToolResult, any, error) {
 	session := engine.RecipeSession()
 	if session == nil {
 		return convertError(platform.NewPlatformError(
@@ -168,6 +170,22 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("persist comment inputs: %v", err),
+				"")), nil, nil
+		}
+		session = engine.RecipeSession()
+		plan = session.Plan
+	}
+
+	// Persist per-env project env var inputs. Atomic per-env replace: passing
+	// a non-empty map for an env replaces that env's prior map; empty map
+	// clears; omitted env untouched. This is how the agent declares URL
+	// constants (DEV_*, STAGE_*) once per recipe instead of hand-editing
+	// every re-generated import.yaml.
+	if projectEnvVariables != nil {
+		if err := engine.UpdateRecipeProjectEnvVariables(projectEnvVariables); err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("persist project env var inputs: %v", err),
 				"")), nil, nil
 		}
 		session = engine.RecipeSession()

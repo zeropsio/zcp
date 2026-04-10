@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -73,7 +74,15 @@ func writeEnvHeader(b *strings.Builder, plan *RecipePlan, envIndex int) {
 }
 
 // writeProjectSection writes the project: block with the agent-authored
-// project comment (if any) emitted above it.
+// project comment (if any) emitted above it. The project-level envVariables
+// block merges, in this order:
+//
+//  1. The shared-secret line, if plan.Research.NeedsAppSecret is set
+//     (always first — the secret is the most-referenced project-wide value).
+//  2. The per-env projectEnvVariables map (if any), emitted in sorted key
+//     order so diffs are stable across reruns.
+//
+// If both are absent, no envVariables: line is emitted at all (no empty block).
 func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int, projectComment string) {
 	projectName := fmt.Sprintf("%s-%s", plan.Slug, envTiers[envIndex].Suffix)
 
@@ -86,10 +95,38 @@ func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int, pro
 		b.WriteString("  corePackage: SERIOUS\n")
 	}
 
-	if plan.Research.NeedsAppSecret && plan.Research.AppSecretKey != "" {
-		b.WriteString("  envVariables:\n")
+	hasSecret := plan.Research.NeedsAppSecret && plan.Research.AppSecretKey != ""
+	envVars := projectEnvVariablesFor(plan, envIndex)
+
+	if !hasSecret && len(envVars) == 0 {
+		return
+	}
+
+	b.WriteString("  envVariables:\n")
+	if hasSecret {
 		fmt.Fprintf(b, "    %s: <@generateRandomString(<32>)>\n", plan.Research.AppSecretKey)
 	}
+
+	// Deterministic order — sort by name for diff stability. Values emitted
+	// verbatim so ${zeropsSubdomainHost} interpolation markers reach the
+	// generated file unchanged.
+	names := make([]string, 0, len(envVars))
+	for name := range envVars {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Fprintf(b, "    %s: %s\n", name, envVars[name])
+	}
+}
+
+// projectEnvVariablesFor returns the agent-supplied per-env project env vars
+// for an env index, with nil-safe defaults.
+func projectEnvVariablesFor(plan *RecipePlan, envIndex int) map[string]string {
+	if plan == nil || plan.ProjectEnvVariables == nil {
+		return nil
+	}
+	return plan.ProjectEnvVariables[strconv.Itoa(envIndex)]
 }
 
 // writeDevService writes a dev service block for env 0-1. Called only for
@@ -116,7 +153,7 @@ func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, 
 	if !target.IsWorker {
 		b.WriteString("    enableSubdomainAccess: true\n")
 	}
-	writeAutoscaling(b, target, 0) // env 0-1 share same scaling
+	writeDevAutoscaling(b, target)
 	b.WriteByte('\n')
 }
 
@@ -236,6 +273,29 @@ func planHasAPITarget(plan *RecipePlan) bool {
 		}
 	}
 	return false
+}
+
+// writeDevAutoscaling writes the verticalAutoscaling block for a dev-slot
+// runtime service in env 0-1. Dev containers host the agent's iteration
+// loop: npm install / composer install / pip install on a showcase-scale
+// dependency tree, plus a hot-reload process (nest --watch, bun --hot,
+// php artisan serve) that keeps the toolchain hot. 0.25 GB OOMs npm
+// install on any non-trivial package.json; 0.5 GB just barely survives
+// small recipes and dies on dual-runtime showcases. 1 GB is the defensible
+// floor for every runtime family we support. Stage slots keep the
+// lighter default — stage runs the built artifact, not the toolchain.
+//
+// This is also the fix for "type: static with dev nodejs override"
+// (dual-runtime frontend): the dev slot runs Node despite the prod
+// run.base being static, so it needs the runtime-family memory profile.
+// The fix works by predicate, not by special-casing the static type —
+// any target that reaches writeDevService gets the dev-slot profile
+// because writeDevService is only called for runtime targets (envIndex
+// <= 1 && IsRuntimeType(target.Type) check in GenerateEnvImportYAML).
+func writeDevAutoscaling(b *strings.Builder, target RecipeTarget) {
+	_ = target // reserved for future per-target tuning (e.g. heavier runtimes)
+	b.WriteString("    verticalAutoscaling:\n")
+	b.WriteString("      minRam: 1\n")
 }
 
 // writeAutoscaling writes the verticalAutoscaling block per tier.
