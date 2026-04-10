@@ -785,56 +785,44 @@ The prod setup block was written to zerops.yaml during the generate step. Before
 
 If anything is missing, edit zerops.yaml on the mount now — the change propagates to the README via the integration-guide fragment (which mirrors the file content).
 
-**Step 6: Deploy appstage from appdev (cross-deploy)**
-```
-zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
-```
-The `setup="prod"` maps hostname `appstage` to `setup: prod` in zerops.yaml. Stage builds from dev's source code with the prod config. Server auto-starts via the real `start` command (or Nginx for static).
+**Step 6: Cross-deploy ALL stage targets IN PARALLEL**
 
-**Step 6-API** (API-first): Cross-deploy the API first, then the frontend (frontend builds with API URL baked in):
+Once dev is verified, every `*stage` target is an independent cross-deploy — each targets a different container, runs a different build pipeline, and shares nothing with its siblings. **Dispatch all stage deploys in a single message as parallel tool calls.** Do NOT wait for one to finish before starting the next — that serializes ~2 minutes of work for zero benefit.
+
+What's independent and can run in parallel:
+
+- **Minimal single-runtime**: `appstage` only (nothing to parallelize).
+- **Showcase single-runtime**: `appstage` + `workerstage` (both cross-deploy from `appdev`, different setups). → 2 parallel calls.
+- **Minimal dual-runtime (API-first)**: `appstage` + `apistage`. → 2 parallel calls.
+- **Showcase dual-runtime (API-first)**: `appstage` + `apistage` + `workerstage`. → 3 parallel calls.
+
+Example call shape (dispatch these as parallel tool calls in ONE message):
+
 ```
 zerops_deploy sourceService="apidev" targetService="apistage" setup="prod"
+zerops_deploy sourceService="apidev" targetService="workerstage" setup="worker"
+zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
 ```
 
-**Step 7: Deploy workerstage** (showcase only — skip for minimal)
-- **Shared codebase** (full-stack): cross-deploy from appdev with the worker setup:
-  ```
-  zerops_deploy sourceService="appdev" targetService="workerstage" setup="worker"
-  ```
-  The `setup="worker"` maps to `setup: worker` in the shared zerops.yaml — same build pipeline, different start command.
-- **Shared codebase** (API-first): cross-deploy from apidev (worker shares API codebase):
-  ```
-  zerops_deploy sourceService="apidev" targetService="workerstage" setup="worker"
-  ```
-- **Separate codebase**: cross-deploy from workerdev:
-  ```
-  zerops_deploy sourceService="workerdev" targetService="workerstage" setup="prod"
-  ```
-  The worker has its own zerops.yaml with `setup: prod`.
+- `setup="prod"` maps to `setup: prod` in the target's zerops.yaml (server auto-starts via the real `start` command, or Nginx for static).
+- `setup="worker"` maps to `setup: worker` in the SAME zerops.yaml as the shared codebase — same build pipeline, different start command.
+- **Separate-codebase worker** (different runtime from the app): source is `workerdev`, setup is `prod` (its own zerops.yaml). Still parallel with the others.
 
-**Step 8: Enable stage subdomain**
+**Why this is safe**: cross-deploys don't mutate their source service, don't share build containers, and the platform schedules them on separate target containers. There is no ordering constraint between sibling stage targets. The only ordering constraints in this whole phase are (a) dev must be healthy before its stage cross-deploys (already satisfied by this point) and (b) the subdomain + verify calls below run AFTER the deploys return.
+
+**Step 7: Enable stage subdomains + verify — also in parallel**
+
+After all stage deploys return ACTIVE, dispatch the subdomain enables and verifies as parallel tool calls too — each targets a different service and has no dependency on the others.
+
 ```
 zerops_subdomain action="enable" serviceHostname="appstage"
-```
-API-first: also enable the API stage subdomain:
-```
-zerops_subdomain action="enable" serviceHostname="apistage"
-```
-
-**Step 9: Verify appstage**
-```
+zerops_subdomain action="enable" serviceHostname="apistage"     # API-first only
 zerops_verify serviceHostname="appstage"
-```
-API-first: also verify the API stage:
-```
-zerops_verify serviceHostname="apistage"
-```
-For showcase, also verify the worker is running:
-```
-zerops_logs serviceHostname="workerstage" limit=20
+zerops_verify serviceHostname="apistage"                         # API-first only
+zerops_logs serviceHostname="workerstage" limit=20               # showcase only (worker has no HTTP)
 ```
 
-**Step 10: Present URLs**
+**Step 8: Present URLs**
 
 ### Reading deploy failures — which phase failed, and where to look
 
