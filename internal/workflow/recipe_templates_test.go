@@ -1251,6 +1251,68 @@ func TestRecipeSetupName(t *testing.T) {
 	}
 }
 
+func TestTargetHostsSharedWorker(t *testing.T) {
+	t.Parallel()
+
+	// Single-app showcase: app hosts the worker.
+	singlePlan := &RecipePlan{
+		RuntimeType: "php-nginx@8.4",
+		Targets: []RecipeTarget{
+			{Hostname: "app", Type: "php-nginx@8.4"},
+			{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true},
+		},
+	}
+	// Dual-runtime showcase: api hosts the worker, frontend does NOT.
+	dualPlan := &RecipePlan{
+		RuntimeType: "nodejs@22",
+		Targets: []RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+		},
+	}
+	// Separate-codebase worker: no app target hosts it.
+	polyPlan := &RecipePlan{
+		RuntimeType: "php-nginx@8.4",
+		Targets: []RecipeTarget{
+			{Hostname: "app", Type: "php-nginx@8.4"},
+			{Hostname: "worker", Type: "python@3.12", IsWorker: true},
+		},
+	}
+	// No worker at all: no target hosts a worker.
+	minimalPlan := &RecipePlan{
+		RuntimeType: "php-nginx@8.4",
+		Targets: []RecipeTarget{
+			{Hostname: "app", Type: "php-nginx@8.4"},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		plan   *RecipePlan
+		target RecipeTarget
+		want   bool
+	}{
+		{"single_app_hosts_worker", singlePlan, RecipeTarget{Hostname: "app", Type: "php-nginx@8.4"}, true},
+		{"dual_frontend_does_not_host", dualPlan, RecipeTarget{Hostname: "app", Type: "static", Role: "app"}, false},
+		{"dual_api_hosts_worker", dualPlan, RecipeTarget{Hostname: "api", Type: "nodejs@22", Role: "api"}, true},
+		{"separate_codebase_app_does_not_host", polyPlan, RecipeTarget{Hostname: "app", Type: "php-nginx@8.4"}, false},
+		{"no_worker_target", minimalPlan, RecipeTarget{Hostname: "app", Type: "php-nginx@8.4"}, false},
+		{"worker_target_itself", singlePlan, RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true}, false},
+		{"nil_plan", nil, RecipeTarget{Hostname: "app", Type: "php-nginx@8.4"}, false},
+		{"non_runtime_target", singlePlan, RecipeTarget{Hostname: "db", Type: "postgresql@17"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := TargetHostsSharedWorker(tt.target, tt.plan)
+			if got != tt.want {
+				t.Errorf("TargetHostsSharedWorker(%s) = %v, want %v", tt.target.Hostname, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGenerateEnvImportYAML_Showcase_Env5_HA(t *testing.T) {
 	t.Parallel()
 

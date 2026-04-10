@@ -91,6 +91,29 @@ func SharesAppCodebase(target RecipeTarget, plan *RecipePlan) bool {
 	return appBase == workerBase
 }
 
+// TargetHostsSharedWorker returns true when the given non-worker runtime target's
+// zerops.yaml must contain a `setup: worker` block — i.e., when a worker target
+// in the plan shares THIS target's codebase (same base runtime). In dual-runtime
+// recipes this is the API target only, not the frontend. Separate-codebase workers
+// (different base runtime than any app target) have their own zerops.yaml and are
+// not hosted by any app target.
+func TargetHostsSharedWorker(target RecipeTarget, plan *RecipePlan) bool {
+	if plan == nil || target.IsWorker || !IsRuntimeType(target.Type) {
+		return false
+	}
+	targetBase, _, _ := strings.Cut(target.Type, "@")
+	for _, t := range plan.Targets {
+		if !t.IsWorker {
+			continue
+		}
+		workerBase, _, _ := strings.Cut(t.Type, "@")
+		if workerBase == targetBase {
+			return true
+		}
+	}
+	return false
+}
+
 // recipeSetupName returns the zeropsSetup name for a recipe RUNTIME service.
 // The setup name depends on whether the worker shares the app codebase:
 //   - "dev"    → dev entry (env 0-1 SSHFS mount)

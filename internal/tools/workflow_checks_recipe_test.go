@@ -907,12 +907,44 @@ func TestCheckRecipeGenerate_SchemaFieldValidation(t *testing.T) {
 	}
 }
 
-const validZeropsYaml = `zerops:
+// frontendZeropsYaml is a static-runtime dev+prod zerops.yaml — the kind a
+// dual-runtime frontend writes. It has NO worker setup, and must not be
+// required to have one.
+const frontendZeropsYaml = `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      envVariables:
+        VITE_API_URL: https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app
+      buildCommands:
+        - npm install
+        - npm run build
+      deployFiles:
+        - dist/~
+    run:
+      base: static
+  - setup: prod
+    build:
+      base: nodejs@22
+      envVariables:
+        VITE_API_URL: https://api-${zeropsSubdomainHost}-3000.prg1.zerops.app
+      buildCommands:
+        - npm ci
+        - npm run build
+      deployFiles:
+        - dist/~
+    run:
+      base: static
+`
+
+// apiZeropsYamlWithWorker is a nodejs dev+prod+worker zerops.yaml — the kind a
+// dual-runtime API (with shared-codebase BullMQ worker) writes.
+const apiZeropsYamlWithWorker = `zerops:
   - setup: dev
     build:
       base: nodejs@22
       buildCommands:
-        - npm ci
+        - npm install
       deployFiles:
         - .
     run:
@@ -935,6 +967,18 @@ const validZeropsYaml = `zerops:
       ports:
         - port: 3000
           httpSupport: true
+  - setup: worker
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+        - npm run build
+      deployFiles:
+        - dist
+    run:
+      envVariables:
+        NODE_ENV: production
+      start: node dist/worker.js
 `
 
 func TestCheckRecipeGenerate_DualRuntime(t *testing.T) {
@@ -967,15 +1011,19 @@ func TestCheckRecipeGenerate_DualRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create separate dirs for app and api with zerops.yaml + README.
-	for _, hostname := range []string{"app", "api"} {
-		svcDir := filepath.Join(dir, hostname+"dev")
-		if err := os.MkdirAll(svcDir, 0o755); err != nil {
+	// Each codebase gets the zerops.yaml it actually needs:
+	// frontend has no worker setup, API has one.
+	appDir := filepath.Join(dir, "appdev")
+	apiDir := filepath.Join(dir, "apidev")
+	for _, d := range []string{appDir, apiDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		writeFile(t, filepath.Join(svcDir, "zerops.yaml"), validZeropsYaml)
-		writeFile(t, filepath.Join(svcDir, "README.md"), validREADME)
 	}
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), frontendZeropsYaml)
+	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
+	writeFile(t, filepath.Join(apiDir, "zerops.yaml"), apiZeropsYamlWithWorker)
+	writeFile(t, filepath.Join(apiDir, "README.md"), validREADME)
 
 	checker := checkRecipeGenerate(stateDir, nil)
 	result, err := checker(context.Background(), plan, testRecipeState())
@@ -983,27 +1031,118 @@ func TestCheckRecipeGenerate_DualRuntime(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Both app and api zerops.yaml checks should exist.
-	var appYmlFound, apiYmlFound bool
+	// Both zerops.yaml files exist and both pass — the frontend must NOT be
+	// required to have a worker setup (regression guard for dual-runtime).
+	byName := map[string]workflow.StepCheck{}
 	for _, c := range result.Checks {
-		if c.Name == "app_zerops_yml_exists" {
-			appYmlFound = true
-			if c.Status != "pass" {
-				t.Errorf("app_zerops_yml_exists should pass, got %s: %s", c.Status, c.Detail)
-			}
+		byName[c.Name] = c
+	}
+
+	// app does NOT host the worker — no app_worker_setup check should exist.
+	if _, exists := byName["app_worker_setup"]; exists {
+		t.Error("frontend (static) must not be required to have setup: worker — worker shares API codebase")
+	}
+
+	// api hosts the worker — api_worker_setup must exist and pass.
+	if c, exists := byName["api_worker_setup"]; !exists {
+		t.Error("api_worker_setup check missing — API hosts the shared-codebase worker")
+	} else if c.Status != statusPass {
+		t.Errorf("api_worker_setup should pass, got %s: %s", c.Status, c.Detail)
+	}
+
+	// Both zerops.yaml existence checks must pass.
+	for _, name := range []string{"app_zerops_yml_exists", "api_zerops_yml_exists"} {
+		c, exists := byName[name]
+		if !exists {
+			t.Errorf("missing check %s", name)
+			continue
 		}
-		if c.Name == "api_zerops_yml_exists" {
-			apiYmlFound = true
-			if c.Status != "pass" {
-				t.Errorf("api_zerops_yml_exists should pass, got %s: %s", c.Status, c.Detail)
-			}
+		if c.Status != statusPass {
+			t.Errorf("%s should pass, got %s: %s", name, c.Status, c.Detail)
 		}
 	}
-	if !appYmlFound {
-		t.Error("expected app_zerops_yml_exists check")
+}
+
+// TestCheckRecipeGenerate_SingleAppShowcase_WorkerRequired guards the
+// backward-compatible path: single-app showcase (e.g. Laravel) where the
+// worker shares the app's codebase — the app's zerops.yaml must have a worker
+// setup.
+func TestCheckRecipeGenerate_SingleAppShowcase_WorkerRequired(t *testing.T) {
+	t.Parallel()
+
+	plan := &workflow.RecipePlan{
+		Framework:   "laravel",
+		Tier:        workflow.RecipeTierShowcase,
+		Slug:        "laravel-showcase",
+		RuntimeType: "php-nginx@8.4",
+		Research: workflow.ResearchData{
+			ServiceType:    "php-nginx",
+			PackageManager: "composer",
+			HTTPPort:       80,
+			BuildCommands:  []string{"composer install"},
+			DeployFiles:    []string{"."},
+			StartCommand:   "php artisan serve",
+		},
+		Targets: []workflow.RecipeTarget{
+			{Hostname: "app", Type: "php-nginx@8.4"},
+			{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true},
+			{Hostname: "db", Type: "mariadb@10.11"},
+		},
 	}
-	if !apiYmlFound {
-		t.Error("expected api_zerops_yml_exists check")
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// app's zerops.yaml has NO worker setup — the check must fail loudly so
+	// the agent knows to add one. This is the inverse of the dual-runtime
+	// case: here the app IS the worker's codebase host.
+	appDir := filepath.Join(dir, "appdev")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run:
+      envVariables:
+        APP_ENV: local
+      ports:
+        - port: 80
+  - setup: prod
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run:
+      envVariables:
+        APP_ENV: production
+      ports:
+        - port: 80
+`)
+	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
+
+	checker := checkRecipeGenerate(stateDir, nil)
+	result, err := checker(context.Background(), plan, testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var workerCheck *workflow.StepCheck
+	for i := range result.Checks {
+		if result.Checks[i].Name == "app_worker_setup" {
+			workerCheck = &result.Checks[i]
+			break
+		}
+	}
+	if workerCheck == nil {
+		t.Fatal("expected app_worker_setup check — app hosts the shared-codebase worker")
+	}
+	if workerCheck.Status != statusFail {
+		t.Errorf("app_worker_setup should fail when setup: worker is missing, got %s", workerCheck.Status)
 	}
 }
 

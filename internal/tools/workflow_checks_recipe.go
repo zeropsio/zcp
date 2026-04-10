@@ -102,7 +102,7 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields) workf
 			checks = append(checks, workflow.StepCheck{
 				Name: hostname + "_zerops_yml_exists", Status: statusPass,
 			})
-			checks = append(checks, checkRecipeSetups(doc, hostname, plan)...)
+			checks = append(checks, checkRecipeSetups(doc, appTarget, plan)...)
 
 			// Validate zerops.yaml fields against the live JSON schema.
 			checks = append(checks, checkZeropsYmlFields(ymlDir, validFields)...)
@@ -134,11 +134,16 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields) workf
 	}
 }
 
-// checkRecipeSetups validates zerops.yaml has all required setup entries.
-// Minimal recipes: dev + prod. Showcase recipes: dev + prod + worker.
+// checkRecipeSetups validates zerops.yaml has all required setup entries for
+// the given target. Every runtime target needs dev + prod. Only a target that
+// HOSTS a shared-codebase worker (worker.Type base matches target.Type base)
+// additionally needs a worker setup. In dual-runtime recipes, that's the API
+// target only — the frontend's zerops.yaml must NOT be forced to carry a
+// worker setup it does not own.
 // zerops.yaml uses generic names (`setup: dev`, `setup: prod`, `setup: worker`).
 // The deploy tool's --setup param maps hostname→setup at cross-deploy time.
-func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, plan *workflow.RecipePlan) []workflow.StepCheck {
+func checkRecipeSetups(doc *ops.ZeropsYmlDoc, target workflow.RecipeTarget, plan *workflow.RecipePlan) []workflow.StepCheck {
+	hostname := target.Hostname
 	var checks []workflow.StepCheck
 
 	// Dev setup: try "dev" (correct), then legacy fallbacks.
@@ -182,14 +187,17 @@ func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, plan *workflow.Re
 	// hiding iteration feedback from the agent.
 	checks = append(checks, checkRecipeDevProdDivergence(devEntry, prodEntry)...)
 
-	// Showcase recipes must have a worker setup (background job processor).
-	if planHasWorker(plan) {
+	// Worker setup: required ONLY when this target hosts a shared-codebase
+	// worker. In dual-runtime recipes the frontend does not host the worker —
+	// the API does. Forcing the frontend to carry a dummy worker block would
+	// leak an implementation detail of one codebase into an unrelated one.
+	if workflow.TargetHostsSharedWorker(target, plan) {
 		workerEntry := doc.FindEntry(workflow.RecipeSetupWorker)
 		if workerEntry == nil {
 			checks = append(checks, workflow.StepCheck{
 				Name:   hostname + "_worker_setup",
 				Status: statusFail,
-				Detail: "plan has a worker target but zerops.yaml has no setup: worker — showcase recipes need 3 setups: dev + prod + worker",
+				Detail: fmt.Sprintf("a worker target shares %s's codebase but %s/zerops.yaml has no setup: worker — the worker's build+start lives in the host codebase's zerops.yaml as a third setup", hostname, hostname),
 			})
 		} else {
 			checks = append(checks, workflow.StepCheck{
@@ -199,19 +207,6 @@ func checkRecipeSetups(doc *ops.ZeropsYmlDoc, hostname string, plan *workflow.Re
 	}
 
 	return checks
-}
-
-// planHasWorker returns true if any recipe target is a worker.
-func planHasWorker(plan *workflow.RecipePlan) bool {
-	if plan == nil {
-		return false
-	}
-	for _, t := range plan.Targets {
-		if t.IsWorker {
-			return true
-		}
-	}
-	return false
 }
 
 // checkRecipeDevProdDivergence flags dev and prod run.envVariables maps that

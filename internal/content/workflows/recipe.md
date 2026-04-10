@@ -266,6 +266,12 @@ The dev service is RUNNING (via `startWithoutCode`) but zerops.yaml has NOT been
 **Use SSHFS for file operations**, SSH for commands that use the **base image's built-in tools** (e.g., `composer create-project` on php-nginx, `git init`).
 Files placed on the mount are already on the dev container — deploy doesn't "send" them, it triggers a build from what's already there.
 
+**Scaffold each codebase in its own mount — never cross-contaminate.** Framework scaffolders (`sv create`, `npx create-vite`, `nest new`, `composer create-project`, `django-admin startproject`) write config files (`tsconfig.json`, `package.json`, `.npmrc`, `.vscode/`, `.gitignore`) into whatever directory they run from. Running a scaffold from the wrong container or the wrong working directory overwrites the host codebase's config silently. For dual-runtime:
+- `cd /var/www/apidev && nest new .` for the API — runs on the `apidev` service's SSH session
+- `cd /var/www/appdev && npm create vite@latest . -- --template svelte` for the frontend — runs on the `appdev` service's SSH session (if the static container lacks Node, scaffold files directly via SSHFS write instead of invoking a scaffolder on the container)
+
+Never scaffold into `/tmp` and copy — the scaffolder's footprint always includes hidden files you'll miss. Never run a frontend scaffolder from an API SSH session targeting the API mount — `sv create` invoked from `apidev` SSH will overwrite apidev's `tsconfig.json` and `package.json` even if you `cd` to a different directory first, because scaffolders trust the process working directory as the project root.
+
 ### What to generate per recipe type
 
 **Type 1 (runtime hello world):** Raw HTTP server with a single file. DB connection via standard library. Raw SQL migration for a `greetings` table. No framework, no ORM.
@@ -319,7 +325,7 @@ Follow the injected chain recipe (working zerops.yaml from the predecessor) as t
 Recipe-specific conventions for each setup (platform rules from provision apply — these are ONLY the recipe-specific additions):
 
 **`setup: dev`** (self-deploy from SSHFS mount — agent iterates here):
-- `deployFiles: [.]` — **MANDATORY for self-deploy**; anything else destroys the source tree
+- `deployFiles: [.]` — **MANDATORY for self-deploy on dynamic runtimes** (nodejs, python, php-nginx, go, rust, bun, ubuntu, …); anything else destroys the source tree. **Exception for `run.base: static`** — a static container serves only the compiled bundle, there is no runtime evaluation. A static dev setup MUST still run `npm run build` (or equivalent) and set `deployFiles: dist/~` (or the framework's output dir). The only difference between dev and prod for a static target is build-time env vars (e.g. `VITE_API_URL` pointing at the `apidev-…` hostname in dev, `api-…` in prod) — NOT whether the build happens.
 - `start: zsc noop --silent` — exception: omit `start` for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
 - **NO healthCheck, NO readinessCheck** — agent controls lifecycle; checks would restart the container during iteration
 - Framework mode flags set to dev values (`APP_ENV: local`, `NODE_ENV: development`, `DEBUG: "true"`, verbose logging)
@@ -719,15 +725,41 @@ After the sub-agent finishes:
 2. Git add + commit on the mount(s)
 3. Redeploy: `zerops_deploy targetService="appdev" setup="dev"` (API-first: also redeploy apidev)
 4. Restart ALL processes (Step 2) — redeployment creates a fresh container
-5. Verify features work:
-   - Each feature section renders with styled controls and proper visual hierarchy
-   - POST actions return success feedback (not 500 errors or silent reloads)
+5. HTTP-level feature verification (curl):
+   - Each feature endpoint returns the right status code and payload shape
+   - POST actions return success (not 500 errors)
    - Seeded data visible in database/search sections (tables populated, search returns results)
    - File upload works and file list populates (S3 connectivity proven)
    - Job dispatch shows processed result (queue + worker connectivity proven)
-6. **Browser verification** (showcase): Use `agent-browser` to open the dashboard URL and visually confirm all feature sections render correctly, interactive controls work (file upload, job dispatch, search), and data displays. This catches issues curl cannot: blank renders, JS errors, broken fetch calls, CORS failures. Verify via agent-browser, not just curl.
 
 If features fail: fix on mount, redeploy, re-verify (counts toward the 3-iteration limit).
+
+**Step 4c: Browser verification — MANDATORY for Type 4 showcase** (skip for minimal)
+
+curl proves the server responds. It does NOT prove the user sees what they should see. A showcase dashboard is a user-facing deliverable — if the feature sub-agent's code has a JS error, a broken fetch, a missing import, or a CORS failure, curl returns 200 while the dashboard renders blank. **Every showcase recipe must be browser-verified before moving to stage.**
+
+Use `agent-browser` (pre-installed in the ZCP container) to open the dashboard URL and walk through each feature section:
+
+```
+agent-browser open https://appdev-${subdomainHost}.prg1.zerops.app
+```
+
+Then interact with the page as a user would:
+- Confirm the connectivity panel shows all services as CONNECTED
+- Click into each feature section — confirm data displays, not spinners or placeholders
+- Submit a form in each section (create article, set cache key, upload file, dispatch job, run search) — confirm the result appears in the UI, not just a network 200
+- Open the browser console — there must be ZERO JavaScript errors and ZERO failed network requests
+- For dual-runtime (API-first): confirm the Network panel shows the SPA fetching from the API subdomain with 200 responses, not CORS-blocked preflights
+
+What browser verification catches that curl cannot:
+- JavaScript runtime errors (uncaught promise rejections, undefined method calls)
+- Broken fetch URLs (wrong port, wrong protocol, missing `/api` prefix)
+- CORS failures (API rejects the frontend origin)
+- Blank renders (component mounted but never populated)
+- Missing CSS (everything works but looks broken)
+- Stale build artifacts (user sees a version from before your last fix)
+
+If the browser shows a problem curl missed: fix on mount, redeploy, re-verify with agent-browser (counts toward the 3-iteration limit). Do NOT advance to stage deployment until browser verification passes.
 
 ### Stage deployment flow (after all appdev work is complete)
 
@@ -1010,7 +1042,7 @@ Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent 
 >
 > Report issues as: `[CRITICAL]` (breaks deploy), `[WRONG]` (incorrect but works), `[STYLE]` (quality improvement).
 
-**Browser verification** (showcase): After the code/config review, use `agent-browser` to open the live dashboard on both dev and stage subdomains. Visually confirm the dashboard renders correctly, all feature sections display data, and interactive elements work. This catches issues that code review and curl cannot: blank renders, JS errors, broken fetch calls, missing CSS.
+**Browser verification — MANDATORY for showcase** (skip for minimal): After the code/config review, the verification sub-agent MUST open the live dashboard in `agent-browser` on BOTH `appdev` and `appstage` subdomains and walk through every feature section. This is not optional and not a substitute for curl — it's the only check that catches what the user actually sees. The sub-agent's report MUST state, for each subdomain: connectivity panel status, each feature section's render state, JavaScript console errors (expected: zero), and failed network requests (expected: zero). A "looks fine to me" report without these specific observations is not acceptable.
 
 Apply any CRITICAL or WRONG fixes, then **redeploy** to verify the fixes work:
 - If zerops.yaml or app code changed: `zerops_deploy targetService="appdev" setup="dev"` (API-first: also redeploy apidev) then cross-deploy to stage
