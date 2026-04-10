@@ -69,10 +69,16 @@ func testShowcasePlan() *RecipePlan {
 }
 
 // testDualRuntimePlan returns a showcase plan with dual-runtime architecture:
-// a Svelte frontend (static) + NestJS API backend + shared-codebase worker
-// that explicitly names the API as its host (BullMQ-style in-process worker
-// pattern). Tests that exercise the separate-codebase 3-repo case mutate the
-// worker's SharesCodebaseWith to "" explicitly.
+// a static frontend + Node.js API backend + shared-codebase worker that
+// names the API as its host. The SharesCodebaseWith="api" value here is a
+// TEMPLATE-COVERAGE choice, not a real-world default recommendation — the
+// fixture exists to exercise the shared-codebase rendering path in the
+// import/zerops.yaml generators. In real recipes the worker codebase
+// decision is principle-based (see the "Worker codebase decision" block
+// in internal/content/workflows/recipe.md): generic queue libraries driven
+// from a custom entry point fail test 1 of the three-test rule and land
+// on SEPARATE. Tests that exercise the separate-codebase 3-repo case
+// mutate the worker's SharesCodebaseWith to "" explicitly.
 func testDualRuntimePlan() *RecipePlan {
 	return &RecipePlan{
 		Framework:   "nestjs",

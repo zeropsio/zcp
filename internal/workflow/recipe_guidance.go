@@ -68,13 +68,23 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		return ExtractSection(md, "research-minimal")
 
 	case RecipeStepGenerate:
-		// Generate: base + fragments guidance.
+		// Generate: base + (dashboard spec when needed) + (fragments deep-dive
+		// when needed). Hello-world slugs receive neither optional block —
+		// their dashboard is one endpoint and their README is one paragraph,
+		// so the 15KB of dashboard + fragments guidance is dead weight there.
 		var parts []string
 		if s := ExtractSection(md, "generate"); s != "" {
 			parts = append(parts, s)
 		}
-		if s := ExtractSection(md, "generate-fragments"); s != "" {
-			parts = append(parts, s)
+		if planNeedsDashboardSpec(plan) {
+			if s := ExtractSection(md, "generate-dashboard"); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		if planNeedsFragmentsDeepDive(plan) {
+			if s := ExtractSection(md, "generate-fragments"); s != "" {
+				parts = append(parts, s)
+			}
 		}
 		if len(parts) > 0 {
 			return strings.Join(parts, "\n\n---\n\n")
@@ -181,4 +191,37 @@ func buildRecipeIterationDelta(iteration int, lastAttestation string) string {
 		return ""
 	}
 	return BuildIterationDelta(RecipeStepDeploy, iteration, nil, lastAttestation)
+}
+
+// planNeedsDashboardSpec reports whether a plan should receive the dashboard
+// implementation spec (generate-dashboard section). Hello-world recipes have
+// a single welcome endpoint and no feature-section dashboard — injecting the
+// 10KB spec for them wastes context on every generate-step response.
+//
+// The gate is keyed on slug suffix because recipe tiers only distinguish
+// minimal from showcase; hello-world is a minimal-tier slug shape
+// (e.g. nodejs-hello-world, php-hello-world, react-static-hello-world).
+//
+// A nil plan defaults to TRUE — the research step has no plan yet and we
+// err on the side of injecting the spec so that the agent has it when
+// needed. This matches how the caller's nil-plan case works at the
+// research step: resolveRecipeGuidance(RecipeStepResearch, ..., nil).
+func planNeedsDashboardSpec(plan *RecipePlan) bool {
+	if plan == nil {
+		return true
+	}
+	return !strings.HasSuffix(plan.Slug, "-hello-world")
+}
+
+// planNeedsFragmentsDeepDive reports whether a plan should receive the
+// README fragment writing-style deep-dive (generate-fragments section).
+// Hello-world recipes have a simple 1-section README that the chain
+// recipe demonstrates in full — the 6KB deep-dive is dead weight.
+//
+// Same nil-plan default as planNeedsDashboardSpec: include when unknown.
+func planNeedsFragmentsDeepDive(plan *RecipePlan) bool {
+	if plan == nil {
+		return true
+	}
+	return !strings.HasSuffix(plan.Slug, "-hello-world")
 }
