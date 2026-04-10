@@ -269,7 +269,48 @@ Write a hello-world server with exactly three endpoints: `GET /`, `GET /health`,
 
 > **WHERE TO WRITE FILES**: Write ALL files (zerops.yaml, app code, configs) to the SSHFS mount path `/var/www/{hostname}/`. The mount paths are returned in the provision step's `autoMounts` response. `/var/www/` without the hostname suffix is the zcpx orchestrator's own filesystem — writing there has NO effect on the target service. Every file must go under `/var/www/{hostname}/`.
 
-**SSHFS mount is for source code only** — small file reads/writes (editing .go, .ts, .yaml files). Commands that generate many files (npm install, pip install, go mod download, composer install, bundle install, cargo build) MUST run via SSH on the container: `ssh {hostname} "cd /var/www && {install_command}"`. Running them locally through the SSHFS network mount is orders of magnitude slower.
+**SSHFS is a file bridge, not an execution environment.** The mount lets you read and write files on the target service's `/var/www/` from the zcp orchestrator — exactly what you want for editing code with Read/Edit/Write. It does NOT transplant the target's runtime, dependencies, or environment over to zcp.
+
+**Two execution surfaces, two roles — pick the right one for the tool.**
+
+| Surface | What lives there | What runs there |
+|---|---|---|
+| **Target container** (e.g. `apidev`, `appdev`) | The app's base image (correct Node/PHP/Go/… version), the dependency tree installed by `build.buildCommands`, `run.envVariables` including `${hostname_varName}` cross-service refs, private-network reachability to managed services (db, cache, storage, search), the dev container's own resource budget | Anything that IS part of the app's world: compilers, type-checkers, test runners, linters, framework CLIs, package managers, app-level curl/http against the running app or managed services |
+| **zcp orchestrator** | The platform API clients (`zerops_*` MCP tools), `agent-browser` (Chrome driver), the recipe output directory, git for recipe deliverables, the workflow state, Read/Edit/Write tools talking to SSHFS mounts | Anything that operates ON the app from outside: platform actions via MCP, browser automation against the app's PUBLIC subdomain URL, authoring/committing recipe deliverable files, filesystem inspection across mounts |
+
+The principle: **where is the tool's world?** If the tool IS the app's toolchain, it belongs on the target (because the target has the right version, deps, env, and reachability). If the tool operates on the app from outside (browser, platform API, deliverable authoring), it belongs on zcp by design — the target container doesn't have Chrome installed and shouldn't.
+
+**For target-side commands, always SSH — never run them on zcp via the mount:**
+
+```
+ssh {hostname} "cd /var/www && {command}"    # correct — runs where the app lives
+cd /var/www/{hostname} && {command}          # WRONG — runs on zcp against the mount
+```
+
+Why "run on zcp via the mount" is wrong even when it seems to work:
+- **Wrong runtime version** — zcp has whatever zcp happens to have, not the service's base image version.
+- **Wrong dependency tree** — any `node_modules`/`vendor`/`.venv` on zcp is accidental; the real tree was installed by `build.buildCommands` inside the target.
+- **Wrong environment** — `${hostname_varName}` cross-service refs are injected into the target at deploy time. zcp sees none of them, so a command that "runs" on zcp silently connects to the wrong DB, skips auth, or fails in subtly different ways.
+- **No managed-service reachability** — db/cache/storage/search are on the project's private network. zcp is not.
+- **Wrong process budget** — zcp's `nproc`/`pthread_create` budget is sized for orchestration, not compilation. Running compilers/test-runners/package-managers there exhausts it and produces `fork failed: resource temporarily unavailable` cascades that break unrelated later commands. **This is the loudest symptom, not the root problem.**
+
+Target-side commands (run via SSH), non-exhaustive:
+- Dependency installs: `npm install`, `npm ci`, `pip install`, `go mod download`, `composer install`, `bundle install`, `cargo fetch`, `pnpm install`, `yarn install`
+- Compilers / type-checkers: `npx tsc`, `npm run build`, `tsc --noEmit`, `svelte-check`, `npm run check`, `cargo build`, `go build`, `mvn compile`, `nest build`
+- Test runners: `jest`, `vitest`, `pytest`, `phpunit`, `go test`, `cargo test`, `rspec`
+- Linters / formatters: `eslint`, `prettier`, `ruff`, `pylint`, `phpstan`, `rubocop`, `golangci-lint`
+- Framework CLIs: `artisan`, `rails`, `manage.py`, `nest`, `ng`, `rake`
+- App-level `curl`/`node`/`python -c` used to ping the running app or managed services
+
+zcp-side commands (run directly):
+- `zerops_*` MCP tools (platform API)
+- `agent-browser` (drives Chrome against the target's PUBLIC subdomain URL — the target container doesn't have Chrome and shouldn't)
+- Read/Edit/Write against mounts, `ls`/`cat`/`head`/`tail`/`grep`/`rg`/`find` for filesystem inspection
+- `git status`/`add`/`commit` against the recipe output directory on zcp, or against the mount (the mount is the target's working tree)
+
+**If the target container doesn't have a tool you need** for an app-level command, the fix is almost always to add it to the service's `build.base` / `build.prepareCommands` / `build.buildCommands` (dev deps installed via `npm install`, not `npm ci --omit=dev`; base packages via `zsc install`; …) and redeploy — NOT to fall back to running the command on zcp. The dev setup is specifically designed to carry the full toolchain for this reason.
+
+**If you see `fork failed: resource temporarily unavailable` or `pthread_create: Resource temporarily unavailable`** from any Bash call, you've been running target commands on zcp via the mount. Stop, re-run them via `ssh {hostname} "…"`, and treat the failure as a wrong-container execution mistake, not a framework or platform bug.
 
 > **CRITICAL — self-deploying services MUST use `deployFiles: [.]`:** Containers are volatile. After deploy, ONLY `deployFiles` content survives. If a self-deploying service uses `[dist]`, `[app]`, or any build output path, all source files + zerops.yaml are DESTROYED. Further iteration becomes impossible. Any service that deploys to itself (dev services, simple mode services) MUST ALWAYS use `deployFiles: [.]`. No exceptions. Cross-deploy targets (stage) can use specific paths for compiled output because their source lives on the dev service.
 

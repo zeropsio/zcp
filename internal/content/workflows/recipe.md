@@ -447,7 +447,8 @@ The main agent dispatches ONE sub-agent with a brief containing:
 - What each section must demonstrate (from the service-to-feature mapping above)
 - The **UX quality contract** from "Dashboard style" — styled controls (not browser defaults), visual hierarchy, status feedback after actions, XSS-safe dynamic content (`textContent` not `innerHTML`). Include the CSS approach (Tailwind classes if scaffolded, inline styles otherwise) and layout structure (how partials are included)
 - Pre-registered route paths for each feature's actions
-- Instruction to **test each feature against the live service** after writing it — the sub-agent has SSH access to appdev and all managed services (db, cache, storage, search) are reachable. After writing a controller+view, hit the endpoint via `curl` or the framework's test runner and verify it returns expected data. Fix issues immediately — this is the entire point of deferring to after deploy.
+- **Where app-level commands run** — a hard rule, not a preference. The `{appDir}` path the sub-agent is given is an SSHFS mount on the zcp orchestrator, not a local directory. File edits against it are fine; **target-side commands (the app's own toolchain) MUST run via `ssh {devHostname} "cd /var/www && …"` on the target container**, never with `cd /var/www/{hostname} && …` on zcp. The principle is which container's world the tool belongs to: if it's the app's compiler / test runner / linter / package manager / framework CLI, it belongs on the target (correct runtime version, correct dependency tree, correct env vars, managed-service reachability, none of which zcp has). If it's `agent-browser`, `zerops_*`, or Read/Edit/Write against the mount, it belongs on zcp. Running `npx tsc`, `jest`, `npm install`, `svelte-check`, `eslint`, etc. from zcp against the mount is wrong even when it seems to work, and it exhausts zcp's fork budget producing `fork failed: resource temporarily unavailable` cascades. When in doubt, SSH.
+- Instruction to **test each feature against the live service** after writing it — the sub-agent has SSH access to appdev and all managed services (db, cache, storage, search) are reachable. After writing a controller+view, hit the endpoint via `ssh {devHostname} "curl -s localhost:{port}/…"` or the framework's test runner (also via SSH) and verify it returns expected data. Fix issues immediately — this is the entire point of deferring to after deploy.
 
 The sub-agent writes all feature controllers and views sequentially. One sub-agent, all features. Because the sub-agent runs against live services, it produces tested code with proper error handling — not blind template generation.
 
@@ -1084,6 +1085,23 @@ The brief below is split into three explicit halves: direct-fix scope (framework
 **Sub-agent prompt template:**
 
 > You are a {framework} expert reviewing the CODE of a Zerops recipe. You have deep knowledge of {framework} but NO knowledge of the Zerops platform beyond what's in this brief. Do NOT review platform config files (zerops.yaml, import.yaml) — the main agent has platform context and has already validated them against the live schema. Your job is to catch things only a {framework} expert catches.
+>
+> **CRITICAL — where commands run:** You are operating from the **zcp orchestrator container**, not from inside the app's dev container. The paths `{appDir}/` (and any other `/var/www/{hostname}/` path) are an **SSHFS network mount** — a file bridge to the target container's `/var/www/`, not a local directory. File reads/edits via the mount are fine and expected, but **app-level commands must run on the target container via SSH**, not on zcp against the mount.
+>
+> The principle is about **which container's world the tool belongs to**, not about how "heavy" the command is:
+>
+> - **Target-side (SSH)** — anything that IS part of the app's toolchain: compilers (`tsc`, `nest build`, `go build`), type-checkers (`svelte-check`, `tsc --noEmit`), test runners (`jest`, `vitest`, `pytest`, `phpunit`), linters (`eslint`, `prettier`, `phpstan`), package managers (`npm install`, `composer install`, `pip install`), framework CLIs (`artisan`, `nest`, `rails`), and app-level `curl`/`node`/`python -c` used to hit the running app or managed services.
+>   - Target-side means: the correct runtime version from the base image, the correct dependency tree installed by `build.buildCommands`, the correct env vars (including `${hostname_varName}` cross-service refs), and private-network reachability to managed services. zcp has none of these — a tool that "works" on zcp against the mount uses the wrong Node, wrong deps, wrong env, and can't reach the DB.
+> - **zcp-side (run directly)** — anything that operates ON the app from outside: `agent-browser` (drives Chrome against the target's public subdomain URL — the target container doesn't have Chrome), `zerops_*` MCP tools (platform API), Read/Edit/Write against the mount, `ls`/`cat`/`head`/`tail`/`grep`/`rg`/`find` for filesystem inspection, `git status`/`add`/`commit`.
+>
+> Correct shape for target-side commands:
+>
+> ```
+> ssh {hostname} "cd /var/www && {command}"   # correct — runs where the app lives
+> cd /var/www/{hostname} && {command}          # WRONG — runs on zcp against the mount
+> ```
+>
+> If you see `fork failed: resource temporarily unavailable` or `pthread_create: Resource temporarily unavailable` from any Bash call, you've been running target-side commands on zcp via the mount — zcp's process budget is sized for orchestration, not compilation, and it runs out fast. Stop, re-run them via `ssh {hostname} "…"`, and treat the failure as a wrong-container execution mistake, not a framework or platform bug.
 >
 > **Read and review (direct fixes allowed):**
 > - All source files in {appDir}/ — controllers, services, models, entities, migrations, modules, templates/views, client-side code, routes, middleware, guards, pipes, interceptors, event handlers
