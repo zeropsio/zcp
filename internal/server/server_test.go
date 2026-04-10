@@ -3,12 +3,15 @@ package server
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -79,6 +82,108 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	}
 	if !toolMap["zerops_deploy"] {
 		t.Error("zerops_deploy should be registered in local mode when sshDeployer is nil")
+	}
+}
+
+// stubBrowserRunner satisfies the ops browser runner interface for the
+// browser-gating test. Returns a scripted LookPath error.
+type stubBrowserRunner struct {
+	lookPathErr error
+}
+
+func (s *stubBrowserRunner) LookPath() (string, error) {
+	if s.lookPathErr != nil {
+		return "", s.lookPathErr
+	}
+	return "/usr/local/bin/agent-browser", nil
+}
+
+func (*stubBrowserRunner) Run(_ context.Context, _ string, _ time.Duration) (string, string, error) {
+	return "", "", nil
+}
+
+func (*stubBrowserRunner) RecoverFork(_ context.Context) {}
+
+// TestServer_BrowserToolGating locks the registration condition: zerops_browser
+// is exposed IFF running in a Zerops container AND agent-browser is on PATH.
+// Uses the ops runner override to simulate binary presence without requiring
+// agent-browser actually installed on the test machine.
+//
+// Non-parallel: overrides a package-level global in internal/ops. Go runs
+// non-parallel tests sequentially before parallel tests begin, so this will
+// not race the other parallel tests in this file.
+func TestServer_BrowserToolGating(t *testing.T) {
+	tests := []struct {
+		name     string
+		rt       runtime.Info
+		binErr   error
+		wantTool bool
+	}{
+		{
+			name:     "in container with agent-browser present",
+			rt:       runtime.Info{InContainer: true, ServiceID: "s1"},
+			binErr:   nil,
+			wantTool: true,
+		},
+		{
+			name:     "in container without agent-browser",
+			rt:       runtime.Info{InContainer: true, ServiceID: "s1"},
+			binErr:   errors.New("not found in PATH"),
+			wantTool: false,
+		},
+		{
+			name:     "local dev with agent-browser present",
+			rt:       runtime.Info{},
+			binErr:   nil,
+			wantTool: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restore := ops.OverrideBrowserRunnerForTest(&stubBrowserRunner{lookPathErr: tt.binErr})
+			defer restore()
+
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "p1", Name: "test"}).
+				WithServices(nil)
+			authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+			store, err := knowledge.GetEmbeddedStore()
+			if err != nil {
+				t.Fatalf("knowledge store: %v", err)
+			}
+			logFetcher := platform.NewMockLogFetcher()
+
+			srv := New(context.Background(), mock, authInfo, store, logFetcher, nil, nil, tt.rt)
+
+			ctx := context.Background()
+			st, ct := mcp.NewInMemoryTransports()
+			if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
+				t.Fatalf("server connect: %v", err)
+			}
+			client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			session, err := client.Connect(ctx, ct, nil)
+			if err != nil {
+				t.Fatalf("client connect: %v", err)
+			}
+			defer session.Close()
+
+			result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+			if err != nil {
+				t.Fatalf("list tools: %v", err)
+			}
+
+			found := false
+			for _, tool := range result.Tools {
+				if tool.Name == "zerops_browser" {
+					found = true
+					break
+				}
+			}
+			if found != tt.wantTool {
+				t.Errorf("zerops_browser registered = %v, want %v", found, tt.wantTool)
+			}
+		})
 	}
 }
 

@@ -113,6 +113,14 @@ func (s *Server) registerTools() {
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
 	tools.RegisterSubdomain(s.server, s.client, projectID)
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, wfEngine)
+
+	// Container-only: zerops_browser wraps agent-browser with a guaranteed
+	// open→work→close lifecycle. agent-browser is pre-installed in the ZCP
+	// container but absent from local dev machines, so the tool is gated on
+	// both container detection AND binary presence on PATH.
+	if s.rtInfo.InContainer && ops.AgentBrowserAvailable() {
+		tools.RegisterBrowser(s.server)
+	}
 }
 
 // Run starts the MCP server on stdio transport.
