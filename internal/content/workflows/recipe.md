@@ -749,19 +749,6 @@ If features fail: fix on mount, redeploy, re-verify (counts toward the 3-iterati
 
 curl proves the server responds. It does NOT prove the user sees what they should see. A showcase dashboard is a user-facing deliverable — if the feature sub-agent's code has a JS error, a broken fetch, a missing import, or a CORS failure, curl returns 200 while the dashboard renders blank. **Every showcase recipe must be browser-verified before moving to stage.**
 
-Use `agent-browser` (pre-installed in the ZCP container) to open the dashboard URL and walk through each feature section:
-
-```
-agent-browser open https://appdev-${subdomainHost}.prg1.zerops.app
-```
-
-Then interact with the page as a user would:
-- Confirm the connectivity panel shows all services as CONNECTED
-- Click into each feature section — confirm data displays, not spinners or placeholders
-- Submit a form in each section (create article, set cache key, upload file, dispatch job, run search) — confirm the result appears in the UI, not just a network 200
-- Open the browser console — there must be ZERO JavaScript errors and ZERO failed network requests
-- For dual-runtime (API-first): confirm the Network panel shows the SPA fetching from the API subdomain with 200 responses, not CORS-blocked preflights
-
 What browser verification catches that curl cannot:
 - JavaScript runtime errors (uncaught promise rejections, undefined method calls)
 - Broken fetch URLs (wrong port, wrong protocol, missing `/api` prefix)
@@ -770,7 +757,104 @@ What browser verification catches that curl cannot:
 - Missing CSS (everything works but looks broken)
 - Stale build artifacts (user sees a version from before your last fix)
 
-If the browser shows a problem curl missed: fix on mount, redeploy, re-verify with agent-browser (counts toward the 3-iteration limit). Do NOT advance to stage deployment until browser verification passes.
+#### agent-browser — process model you MUST understand first
+
+`agent-browser` (pre-installed in the ZCP container) is NOT a stateless CLI. It runs a **persistent daemon per session** that holds ONE Chrome instance. First `open` spawns ~10 processes (daemon + Chrome parent + GPU/network/storage/crashpad helpers + renderers). Every subsequent command (`get`, `click`, `snapshot`, `errors`, `console`, …) is a cheap CLI client talking to that daemon — ~150 ms each, no new Chrome.
+
+**This is great — until you forget to close.** If you don't run `agent-browser close`, the daemon + Chrome + ~10 helpers stay running in the background indefinitely. On the process-constrained zcp container this fills the fork budget and every subsequent `Bash` call returns `fork failed: resource temporarily unavailable`. **v4 hit this.** The fix below is non-negotiable: always close when done, and never run agent-browser in parallel with another agent-browser invocation on the same container.
+
+**Process hygiene rules:**
+
+1. **Always `agent-browser close` at the end** of every browser verification pass. Not optional.
+2. **One agent-browser session at a time per container.** Do NOT dispatch a sub-agent that uses agent-browser while the main agent also has a session open. If the feature sub-agent needs the browser, close yours first, let the sub-agent run, then reopen.
+3. **Do not invoke agent-browser in parallel tool calls.** Unlike `zerops_deploy`, a second `agent-browser` invocation either races the daemon or spawns a second Chrome — both bad on a constrained container. Serialize your agent-browser commands.
+4. **If you ever see `fork failed` from any Bash call** — it's agent-browser zombies. Recover with:
+   ```
+   pkill -9 -f "agent-browser-darwin" ; pkill -9 -f "agent-browser-chrome-"
+   ```
+   Then wait 1s and continue. Never try to "wait it out" — the processes don't reap themselves.
+5. **Do not open multiple tabs.** One URL per session. Navigate to appdev → verify → navigate to appstage → verify. Don't use `tab new`.
+
+#### Efficient command vocabulary (learn these INSTEAD of reaching for `eval`)
+
+Reach for these dedicated commands before writing any JavaScript in `eval` — they're faster, structured, and the output is designed for agents:
+
+| Need | Command | Notes |
+|---|---|---|
+| Did the page throw JS errors? | `agent-browser errors` | Empty output = zero errors. Add `--clear` to reset between steps. |
+| What did the page log? | `agent-browser console` | log/warn/error combined. `--clear` to reset. |
+| Interactive element tree with clickable refs | `agent-browser snapshot -i -c` | `-i` = interactive only, `-c` = compact. Yields `@e1`, `@e2` refs usable in `click`, `fill`, `get`. |
+| Text content of an element | `agent-browser get text <sel>` | Or `get text @e3` using a ref from snapshot. |
+| Element count | `agent-browser get count <sel>` | e.g. verify a table has ≥1 row. |
+| Is something visible / enabled / checked? | `agent-browser is visible <sel>` | Plus `is enabled`, `is checked`. |
+| Find by semantic locator | `agent-browser find role button "Submit" click` | Locators: `role`, `text`, `label`, `placeholder`, `testid`. Avoid brittle CSS. |
+| Capture network traffic | `agent-browser network har start` … interact … `network har stop ./net.har` | Full HAR. For a quick peek: `network requests --filter "api"`. |
+
+**Use `batch` mode** to run a multi-step verification in ONE daemon round-trip instead of N separate invocations. Pipe a JSON array of commands to stdin:
+
+```
+echo '[
+  ["open", "https://appdev-${subdomainHost}.prg1.zerops.app"],
+  ["errors", "--clear"],
+  ["console", "--clear"],
+  ["snapshot", "-i", "-c"],
+  ["get", "text", "[data-connectivity]"],
+  ["get", "count", "[data-article-row]"],
+  ["errors"],
+  ["console"]
+]' | agent-browser batch --json
+```
+
+`batch` stops on first error only with `--bail`; default is continue-all so you see every step's result.
+
+#### Canonical verification flow (follow this shape)
+
+```
+# 1. One open → navigate to the dashboard
+agent-browser open https://appdev-${subdomainHost}.prg1.zerops.app
+
+# 2. Clear any stale buffers so you only see THIS session's output
+agent-browser errors --clear
+agent-browser console --clear
+
+# 3. Structural snapshot — learn the @refs for interactive elements
+agent-browser snapshot -i -c
+
+# 4. Verify connectivity panel text and feature sections are populated
+agent-browser get text ".connectivity"         # or whatever selector your dashboard uses
+agent-browser get count "[data-article-row]"   # expect ≥1 (seeded data)
+
+# 5. Interact with one feature per section using refs from step 3
+agent-browser fill @e12 "hello"
+agent-browser click @e13
+
+# 6. After interacting, re-read errors + console + targeted text
+agent-browser errors
+agent-browser console
+agent-browser get text "[data-cache-result]"
+
+# 7. MANDATORY — close the browser before any other work
+agent-browser close
+```
+
+Then repeat the whole flow for `https://appstage-${subdomainHost}.prg1.zerops.app`.
+
+**Report shape for a verification pass (per subdomain):**
+- Connectivity panel state (services connected with latencies)
+- Each feature section's render state (populated / empty / errored)
+- `agent-browser errors` output (expected: empty)
+- `agent-browser console` output (expected: empty or benign info logs only)
+- Failed network URLs if any (`network requests --filter "api"` or HAR)
+
+**What to avoid** (all were seen in v4 or are obvious failure modes):
+- `agent-browser eval "window.onerror = …"` — use `errors` instead
+- `agent-browser eval "Array.from(document.querySelectorAll(…))"` — use `snapshot -i -c` + refs
+- Opening new tabs (`tab new`) — one URL per session, navigate in place
+- Running agent-browser from a sub-agent while the main agent's daemon is still running
+- Forgetting `close` at the end of the pass
+- Re-opening a URL repeatedly "just to be sure" — navigation is 1x per verification
+
+If the browser shows a problem curl missed: `close`, fix on mount, redeploy, reopen and re-verify (counts toward the 3-iteration limit). Do NOT advance to stage deployment until browser verification passes.
 
 ### Stage deployment flow (after all appdev work is complete)
 
@@ -1016,13 +1100,27 @@ The brief below is split into three explicit halves: direct-fix scope (framework
 > - Are framework asset helpers used correctly (not inline CSS/JS when a build pipeline exists)?
 >
 > **Browser walkthrough (showcase only — MANDATORY):**
-> Use `agent-browser` to open the live dashboard on BOTH `appdev` and `appstage` subdomains. For each: walk every feature section, interact with every control, open the browser console, check the network tab. Report, for each subdomain:
+> Use `agent-browser` to open the live dashboard on BOTH `appdev` and `appstage` subdomains. Before starting: read the "agent-browser — process model" and "Efficient command vocabulary" sections in the workflow's Step 4c — they explain the persistent-daemon model, the mandatory `close` step, and the dedicated commands (`errors`, `console`, `snapshot -i -c`, `get text`, `find`) you should use INSTEAD of reaching for `eval`. Key rules:
+>
+> - **One session at a time on the container.** Do NOT spawn a nested agent-browser invocation from inside this review — the main agent's daemon is already gone by the time you start, so you're fine, but don't leave yours running either.
+> - **Always `agent-browser close` at the end** of your verification pass, or the daemon + Chrome + ~10 helpers stay running and the next Bash call on this container will fail with `fork failed`.
+> - **Do NOT invoke agent-browser in parallel tool calls.** Serialize.
+> - **Prefer `batch` mode** for multi-step checks (`echo '[[...], [...]]' | agent-browser batch --json`) to cut round-trip overhead.
+> - **Use dedicated commands**, not `eval`:
+>   - `agent-browser errors` (JS runtime errors — empty = pass)
+>   - `agent-browser console` (console.log/warn/error buffer)
+>   - `agent-browser snapshot -i -c` (interactive accessibility tree with `@eN` refs)
+>   - `agent-browser get text <sel>` / `get count <sel>` / `is visible <sel>`
+>   - `agent-browser find role button "Submit" click` (semantic locators over CSS)
+>
+> For each of appdev and appstage: navigate, clear error/console buffers, snapshot, walk every feature section, interact with at least one control per section (fill a form, click a button), re-read errors + console, then `close`. Report, for each subdomain:
 > - Connectivity panel state (services connected, latencies)
 > - Each feature section's render state (populated, empty, errored)
-> - Console error count and exact messages (expected: zero)
-> - Failed network request count and exact URLs (expected: zero)
+> - `agent-browser errors` output (expected: empty)
+> - `agent-browser console` output (expected: empty or benign info only)
+> - Failed network URLs if any
 >
-> A "looks fine to me" report without these specific observations is not acceptable.
+> A "looks fine to me" report without these specific observations is not acceptable. If you see `fork failed` from any Bash call during your review, that's agent-browser zombies — run `pkill -9 -f "agent-browser-darwin" ; pkill -9 -f "agent-browser-chrome-"` and continue.
 >
 > **Symptom reporting (NO fixes):**
 > If anything in the browser walk points to a platform-level cause (wrong service URL, missing env var, CORS failure, container misrouting, deploy-layer issue), STOP and report the symptom. Do NOT propose `zerops.yaml`, `import.yaml`, or platform-config changes. The main agent has full Zerops context and will fix platform issues. Your report on a platform symptom should be shaped like: "appstage's console shows `Failed to fetch https://api-20fe-3000.prg1.zerops.app/status`. This URL appears to target a service named `api` which doesn't exist in the running environment (only `apidev` and `apistage` do). Platform root cause unclear — main agent to investigate."
