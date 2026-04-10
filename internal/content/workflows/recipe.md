@@ -1166,9 +1166,22 @@ Apply any CRITICAL or WRONG fixes, then **redeploy** to verify the fixes work:
 If the user did not explicitly request publishing (e.g. "create recipe" by itself), skip this section entirely and complete the close step. Publishing creates GitHub repos and opens PRs — side effects the user did not request.
 
 **Export archive** (for debugging/sharing):
+
+Single-runtime recipe (one codebase):
 ```
 zcp sync recipe export {outputDir} --app-dir /var/www/appdev --include-timeline
 ```
+
+Dual-runtime recipe (API-first — repeat `--app-dir` for every codebase, typically apidev + appdev; add a third for separate-codebase workers):
+```
+zcp sync recipe export {outputDir} \
+  --app-dir /var/www/apidev \
+  --app-dir /var/www/appdev \
+  --include-timeline
+```
+
+Each `--app-dir` is packed into its own subdirectory inside the archive (named by `basename`), so `apidev/` and `appdev/` land side by side next to the `environments/` folder. If two `--app-dir` values have the same basename, export fails with a duplicate error — rename one or pass a parent path.
+
 If TIMELINE.md is missing, the command returns a prompt — write the TIMELINE documenting the session, then run export again.
 
 **Create app repo and push source**:

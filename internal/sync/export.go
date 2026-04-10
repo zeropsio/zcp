@@ -53,9 +53,9 @@ var knownEnvFolders = []string{
 
 // ExportOpts configures the recipe export.
 type ExportOpts struct {
-	RecipeDir       string // recipe output dir (env folders + README)
-	AppDir          string // app source dir (SSHFS mount or local subdir), optional
-	IncludeTimeline bool   // prompt for TIMELINE.md if missing
+	RecipeDir       string   // recipe output dir (env folders + README)
+	AppDirs         []string // app source dirs (SSHFS mounts or local subdirs), optional — one per codebase
+	IncludeTimeline bool     // prompt for TIMELINE.md if missing
 }
 
 // ExportResult holds the outcome of an export operation.
@@ -69,7 +69,9 @@ type ExportResult struct {
 // ExportRecipe creates a .tar.gz archive combining:
 //   - Environment folders (from recipeDir, at root or in environments/ subdir)
 //     → always placed under environments/ in the archive
-//   - App source (from appDir, if provided) → placed under appdev/ (or dir basename)
+//   - App source (from each AppDirs entry, if provided) → each placed under
+//     its directory's basename (e.g. appdev/, apidev/, workerdev/). Dual-runtime
+//     recipes pass multiple dirs so the archive captures every codebase.
 //   - TIMELINE.md (from recipeDir root, if present)
 //   - README.md (from recipeDir root, if present)
 //
@@ -81,6 +83,18 @@ func ExportRecipe(opts ExportOpts) (*ExportResult, error) {
 	}
 	if info, err := os.Stat(recipeDir); err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("%s is not a directory", opts.RecipeDir)
+	}
+
+	// Reject duplicate app-dir basenames — each codebase gets its own
+	// {basename}/ prefix inside the archive, so two dirs with the same
+	// basename would silently clobber each other.
+	seen := make(map[string]string, len(opts.AppDirs))
+	for _, d := range opts.AppDirs {
+		name := filepath.Base(d)
+		if prev, ok := seen[name]; ok {
+			return nil, fmt.Errorf("duplicate app-dir basename %q: %s and %s", name, prev, d)
+		}
+		seen[name] = d
 	}
 
 	// Find environment folders — either at root or inside environments/.
@@ -145,14 +159,14 @@ func ExportRecipe(opts ExportOpts) (*ExportResult, error) {
 		}
 	}
 
-	// 3. Add app source dir if provided.
-	if opts.AppDir != "" {
-		appDir, absErr := filepath.Abs(opts.AppDir)
+	// 3. Add each app source dir — one archive subdir per codebase.
+	for _, rawAppDir := range opts.AppDirs {
+		appDir, absErr := filepath.Abs(rawAppDir)
 		if absErr != nil {
 			tw.Close()
 			gw.Close()
 			tmpFile.Close()
-			return nil, fmt.Errorf("resolve app dir: %w", absErr)
+			return nil, fmt.Errorf("resolve app dir %s: %w", rawAppDir, absErr)
 		}
 		appName := filepath.Base(appDir)
 		archiveAppDir := filepath.Join(archivePrefix, appName)
@@ -165,7 +179,7 @@ func ExportRecipe(opts ExportOpts) (*ExportResult, error) {
 			tw.Close()
 			gw.Close()
 			tmpFile.Close()
-			return nil, fmt.Errorf("export app dir: %w", err)
+			return nil, fmt.Errorf("export app dir %s: %w", rawAppDir, err)
 		}
 	}
 

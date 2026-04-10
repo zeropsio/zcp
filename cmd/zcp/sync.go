@@ -289,7 +289,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 
 	case "export":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe export <recipe-dir> [--app-dir <path>] [--include-timeline]")
+			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe export <recipe-dir> [--app-dir <path>]... [--include-timeline]")
 			os.Exit(1)
 		}
 		opts := sync.ExportOpts{RecipeDir: args[1]}
@@ -299,7 +299,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 				opts.IncludeTimeline = true
 			case "--app-dir":
 				if i+1 < len(args) {
-					opts.AppDir = args[i+1]
+					opts.AppDirs = append(opts.AppDirs, args[i+1])
 					i++
 				}
 			}
@@ -349,14 +349,16 @@ Subcommands:
 
 Flags:
   --dry-run              Show what would change without writing
-  --app-dir <path>       App source dir to include (e.g. /var/www/appdev)
+  --app-dir <path>       App source dir to include (repeatable for dual-runtime)
   --include-timeline     Prompt for TIMELINE.md if missing (export only)
 
 Examples:
   zcp sync recipe create-repo laravel-minimal
   zcp sync recipe push-app laravel-minimal /var/www/appdev
   zcp sync recipe publish laravel-minimal /var/www/zcprecipator/laravel-minimal
-  zcp sync recipe export /var/www/zcprecipator/laravel-minimal --app-dir /var/www/appdev`)
+  zcp sync recipe export /var/www/zcprecipator/laravel-minimal --app-dir /var/www/appdev
+  zcp sync recipe export /var/www/zcprecipator/nestjs-showcase \
+    --app-dir /var/www/apidev --app-dir /var/www/appdev --include-timeline`)
 }
 
 func printSyncUsage() {
