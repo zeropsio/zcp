@@ -129,12 +129,7 @@ func findTarget(plan *RecipePlan, hostname string) *RecipeTarget {
 //   - "dev"    → dev entry (env 0-1 SSHFS mount)
 //   - "worker" → shared-codebase worker in prod (shared zerops.yaml's worker setup)
 //   - "prod"   → HTTP app in prod, OR separate-codebase worker (own zerops.yaml's prod setup)
-//
-// plan is no longer needed since SharesAppCodebase reads the explicit
-// SharesCodebaseWith field directly off the target, but is kept in the
-// signature for call-site symmetry with the other template helpers that
-// still need plan context (e.g. writeRuntimeBuildFromGit).
-func recipeSetupName(target RecipeTarget, isDev bool, _ *RecipePlan) string {
+func recipeSetupName(target RecipeTarget, isDev bool) string {
 	if isDev {
 		return RecipeSetupDev
 	}

@@ -98,8 +98,8 @@ func (s *stubBrowserRunner) LookPath() (string, error) {
 	return "/usr/local/bin/agent-browser", nil
 }
 
-func (*stubBrowserRunner) Run(_ context.Context, _ string, _ time.Duration) (string, string, error) {
-	return "", "", nil
+func (*stubBrowserRunner) Run(_ context.Context, _ string, _ time.Duration) (string, string, bool, error) {
+	return "", "", false, nil
 }
 
 func (*stubBrowserRunner) RecoverFork(_ context.Context) {}

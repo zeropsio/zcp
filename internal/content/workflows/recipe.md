@@ -511,6 +511,8 @@ zerops_workflow action="generate-finalize" \
 
 Do NOT hand-edit the 6 generated import.yaml files to add `project.envVariables` after the fact. A second `generate-finalize` call (for any reason — comment fix, check failure) re-renders from template and wipes manual edits. Always pass `projectEnvVariables` via the tool input; it's idempotent across reruns.
 
+**Deeper reference**: the platform's rules for lifting project-scope env vars into build context (`RUNTIME_` prefix), the full `${zeropsSubdomainHost}` URL format, and the workspace-vs-deliverable parity pattern are documented in the `environment-variables` knowledge guide. Fetch it via `zerops_knowledge scope="guide" query="environment-variables"` when you need the platform-level rules behind this pattern, not just the recipe-level instructions above.
+
 **What NOT to do** (all seen in v4/v5):
 - Do NOT invent a `setup: stage` — there is no such thing. Stage uses `setup: prod`.
 - Do NOT set `RUNTIME_VITE_API_URL` on a source service (e.g. `appdev`) via `zerops_env` and expect it to propagate through cross-deploy to a different target. Cross-deploys build in the target's context, not the source's.
@@ -837,17 +839,28 @@ Recipes are read by both humans and AI agents. Write like a senior dev explainin
 
 ### Dev deployment flow
 
+**Execution order by recipe type — read this before following individual step numbers.**
+
+The step numbers below are reference labels, NOT a linear script. For dual-runtime (API-first) recipes the steps interleave because the frontend depends on the API being verified first:
+
+| Recipe type             | Order                                                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Single-runtime          | **Step 1 → Step 2 (2a/2b/2c) → Step 3 → Step 3a → Step 4 → Step 4b → Step 4c**                                                   |
+| Dual-runtime (API-first) | **Step 1-API → Step 2a-API → Step 3-API (verify apidev only) → Step 1 → Step 2 (2a/2b/2c) → Step 3 → Step 3a (BOTH containers) → Step 4 → Step 4b → Step 4c** |
+
+API-first teams: the steps labelled `-API` run FIRST; do not try to verify `appdev` (Step 3) before `appdev` has been deployed (Step 1). Step 3a runs once, at the end, reading logs from both `apidev` and `appdev` together.
+
 **Step 1: Deploy appdev (self-deploy)**
 ```
 zerops_deploy targetService="appdev" setup="dev"
 ```
 The `setup="dev"` parameter maps hostname `appdev` to `setup: dev` in zerops.yaml. This triggers a build from files already on the mount. Blocks until complete.
 
-**Step 1-API** (API-first showcase only): Deploy apidev FIRST — the API must be running before the frontend builds (the frontend bakes the API URL at build time):
+**Step 1-API** (API-first showcase only, runs BEFORE Step 1): Deploy apidev FIRST — the API must be running before the frontend builds (the frontend bakes the API URL at build time):
 ```
 zerops_deploy targetService="apidev" setup="dev"
 ```
-Then deploy appdev after the API is verified (Step 3-API below).
+After this completes, run Step 2a-API (start the API process) then Step 3-API (verify apidev); THEN return to Step 1 to deploy appdev.
 
 **Step 2: Start ALL dev processes (before any verification)**
 
@@ -887,14 +900,14 @@ Pass the appropriate host binding flag so it listens on `0.0.0.0` (e.g., `npx vi
   ssh workerdev "cd /var/www && {queue_worker_command} &"
   ```
 
-**Step 3: Enable subdomain and verify appdev**
+**Step 3: Enable subdomain and verify appdev** (single-runtime recipes — API-first recipes run Step 3-API first, see below, then return here)
 ```
 zerops_subdomain action="enable" serviceHostname="appdev"
 zerops_verify serviceHostname="appdev"
 ```
 Check: service RUNNING, subdomain returns 200, health endpoint responds (or page loads for static).
 
-**Step 3a: Verify `initCommands` actually ran — check logs, don't assume**
+**Step 3a: Verify `initCommands` actually ran — check logs, don't assume** (runs AFTER Step 3 and, for API-first, AFTER Step 3-API has verified apidev AND Step 3 has verified appdev)
 
 If `setup: dev` declares `initCommands` (migrate / seed / search-index), those commands ran during deploy activation — the platform invokes them on every fresh deploy, including the first one on an idle-start container. You MUST verify they ran and succeeded by reading the runtime logs, NOT by re-running them manually:
 
@@ -902,7 +915,12 @@ If `setup: dev` declares `initCommands` (migrate / seed / search-index), those c
 zerops_logs serviceHostname="appdev" limit=200 severity=INFO since=10m
 ```
 
-(For API-first: also fetch `zerops_logs serviceHostname="apidev" ...`.)
+**API-first recipes must fetch logs from BOTH containers** — the API typically owns the migration/seed commands and the frontend is often a static build with no initCommands at all:
+
+```
+zerops_logs serviceHostname="apidev" limit=200 severity=INFO since=10m
+zerops_logs serviceHostname="appdev" limit=200 severity=INFO since=10m
+```
 
 Look for the framework-specific output each command emits: migration applied rows, "20 articles seeded", "Meilisearch: indexed 20 documents", etc. Expected outcomes:
 
@@ -916,12 +934,12 @@ Look for the framework-specific output each command emits: migration applied row
 
 **Never "work around" missing output by running `npx ts-node migrate.ts && ... seed.ts` over SSH to populate the database manually.** That produces a recipe that appears to work in the workspace but ships broken to end users who never see your manual fix. If the initCommands truly didn't fire (rare — would be a platform bug), report it and stop; don't proceed with a hand-patched dataset.
 
-**Step 3-API** (API-first): Enable and verify the API FIRST, then deploy and verify the frontend:
+**Step 3-API** (API-first only, runs AFTER Step 1-API + Step 2a-API, BEFORE Step 1): Enable and verify the API FIRST — this is a checkpoint before the frontend deploy, not a late verification step:
 ```
 zerops_subdomain action="enable" serviceHostname="apidev"
 zerops_verify serviceHostname="apidev"
 ```
-Verify `/api/health` returns 200 via curl. Then deploy appdev (Step 1) — the frontend needs the API running before it can deploy (in build-time-baked configurations) or before it can be verified (in runtime-config configurations). After appdev deploys, enable its subdomain and verify the dashboard loads and successfully fetches from the API.
+Verify `/api/health` returns 200 via curl. THEN return to Step 1 to deploy appdev — the frontend needs the API running before it can deploy (in build-time-baked configurations) or before it can be verified (in runtime-config configurations). After appdev deploys, Step 2 (processes) → Step 3 (enable appdev subdomain + verify the dashboard loads and successfully fetches from the API) → Step 3a (logs from BOTH containers).
 
 **CORS** (API-first): The API must set CORS headers allowing the frontend subdomain. Use the framework's standard CORS middleware (e.g., `@nestjs/cors`, `cors` for Express, `rs/cors` for Go). Allow the frontend's subdomain origin.
 

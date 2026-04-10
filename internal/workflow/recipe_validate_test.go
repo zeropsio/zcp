@@ -355,6 +355,22 @@ func TestValidateRecipePlan_WorkerCodebaseRefs(t *testing.T) {
 			},
 			wantErr: "same base runtime",
 		},
+		{
+			// Guards Rule 5: worker's OWN type must be a runtime. Without
+			// this check, the base-runtime comparison produces a misleading
+			// error when the agent accidentally types a worker as a managed
+			// service.
+			name: "worker typed as managed service is rejected with precise error",
+			modify: func(p *RecipePlan) {
+				for i := range p.Targets {
+					if p.Targets[i].IsWorker {
+						p.Targets[i].Type = "postgresql@17"
+						p.Targets[i].SharesCodebaseWith = "app"
+					}
+				}
+			},
+			wantErr: "worker type",
+		},
 	}
 
 	for _, tt := range tests {
@@ -376,6 +392,53 @@ func TestValidateRecipePlan_WorkerCodebaseRefs(t *testing.T) {
 			}
 			if !found {
 				t.Errorf("expected error containing %q, got: %v", tt.wantErr, errs)
+			}
+		})
+	}
+}
+
+// TestValidateRecipePlan_MessagingHostnameEnforced locks the convention that
+// every showcase messaging broker must use hostname "queue". The hostname is
+// load-bearing for docs (themes/services.md), rendering tests
+// (NATSQueueRendering), and cross-service env refs in recipe.md — if an agent
+// names it "broker" or "nats" the whole downstream chain drifts.
+func TestValidateRecipePlan_MessagingHostnameEnforced(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		hostname string
+		wantErr  bool
+	}{
+		{"canonical queue hostname", "queue", false},
+		{"broker is rejected", "broker", true},
+		{"nats is rejected (even though type matches)", "nats", true},
+		{"msg is rejected", "msg", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			plan := validShowcasePlan()
+			for i := range plan.Targets {
+				if serviceTypeKind(plan.Targets[i].Type) == kindMessaging {
+					plan.Targets[i].Hostname = tt.hostname
+					break
+				}
+			}
+			errs := ValidateRecipePlan(plan, nil, nil)
+			hasHostnameErr := false
+			for _, e := range errs {
+				if strings.Contains(e, "messaging broker must use hostname") {
+					hasHostnameErr = true
+					break
+				}
+			}
+			if tt.wantErr && !hasHostnameErr {
+				t.Errorf("expected messaging hostname error for %q, got: %v", tt.hostname, errs)
+			}
+			if !tt.wantErr && hasHostnameErr {
+				t.Errorf("unexpected messaging hostname error for %q: %v", tt.hostname, errs)
 			}
 		})
 	}

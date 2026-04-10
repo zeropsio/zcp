@@ -167,7 +167,7 @@ func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget
 	stageHost := target.Hostname + "stage"
 	comment := serviceComments[stageHost]
 	if comment == "" {
-		comment = defaultStageComment(target, plan)
+		comment = defaultStageComment(target)
 	}
 	writeAgentCommentAtIndent(b, comment, "  ")
 
@@ -177,7 +177,7 @@ func writeStageService(b *strings.Builder, plan *RecipePlan, target RecipeTarget
 	if target.Role == RecipeRoleAPI {
 		b.WriteString("    priority: 5\n")
 	}
-	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target, false, plan))
+	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target, false))
 	writeRuntimeBuildFromGit(b, plan, target)
 	if !target.IsWorker {
 		b.WriteString("    enableSubdomainAccess: true\n")
@@ -213,7 +213,7 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 
 	// Recipe runtime services: zeropsSetup + buildFromGit.
 	if IsRuntimeType(target.Type) {
-		fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target, false, plan))
+		fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target, false))
 		writeRuntimeBuildFromGit(b, plan, target)
 	}
 
@@ -374,8 +374,8 @@ func defaultDevComment(target RecipeTarget) string {
 
 // defaultStageComment returns a computed comment for a stage service when the
 // agent didn't provide one. Derived from service properties, not framework-specific.
-func defaultStageComment(target RecipeTarget, plan *RecipePlan) string {
-	setup := recipeSetupName(target, false, plan)
+func defaultStageComment(target RecipeTarget) string {
+	setup := recipeSetupName(target, false)
 	if target.IsWorker {
 		return fmt.Sprintf("Stage worker — zeropsSetup:%s validates background job processing with production config.", setup)
 	}

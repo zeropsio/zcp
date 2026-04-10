@@ -176,7 +176,12 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 //     invalid — there's no codebase behind a worker to share with).
 //  4. The referenced target must be a runtime type (sharing with a database
 //     or object-storage makes no sense).
-//  5. The referenced target's base runtime must match this worker's base
+//  5. The WORKER's own type must be a runtime type. Without this check a
+//     mis-typed worker (e.g. IsWorker=true, Type="postgresql@17") would fall
+//     through to Rule 6's base-runtime comparison and produce a confusing
+//     "same base runtime" error instead of the accurate "worker type must
+//     be runtime" error.
+//  6. The referenced target's base runtime must match this worker's base
 //     runtime. You cannot share code between, e.g., a Node.js app and a Python
 //     worker — they're different codebases by definition.
 //
@@ -233,7 +238,17 @@ func validateWorkerCodebaseRefs(targets []RecipeTarget) []string {
 			continue
 		}
 
-		// Rule 5: base runtime must match (no cross-language sharing).
+		// Rule 5: worker's own type must be a runtime. Catches the "worker
+		// typed as a managed service" mistake with a precise error before
+		// Rule 6 produces a misleading base-runtime diff.
+		if !IsRuntimeType(t.Type) {
+			errs = append(errs, fmt.Sprintf(
+				"target[%d] %q: worker type %q is not a runtime type — workers must use runtime types (nodejs, php-nginx, python, ...)",
+				i, t.Hostname, t.Type))
+			continue
+		}
+
+		// Rule 6: base runtime must match (no cross-language sharing).
 		workerBase, _, _ := strings.Cut(t.Type, "@")
 		hostBase, _, _ := strings.Cut(host.Type, "@")
 		if workerBase != hostBase {
@@ -244,6 +259,14 @@ func validateWorkerCodebaseRefs(targets []RecipeTarget) []string {
 	}
 	return errs
 }
+
+// MessagingHostnameConvention is the required hostname for the showcase
+// messaging broker. Fixed to "queue" so the dashboard's "dispatch-a-job"
+// feature section, the cross-service env vars (${queue_hostname}, etc.),
+// and the themes/services.md documentation stay in lockstep. Any broker
+// type (nats/kafka/rabbitmq) is allowed but it must live at hostname
+// "queue" — the role is about topology, not technology.
+const MessagingHostnameConvention = "queue"
 
 // validateShowcaseServices checks that showcase recipes include all required service kinds:
 // an HTTP app, a worker, and one each of database, cache, storage, search engine, messaging.
@@ -256,6 +279,11 @@ func validateWorkerCodebaseRefs(targets []RecipeTarget) []string {
 // the cache service (Redis polymorphism) is no longer acceptable — it produced
 // fuzzy showcases where the dashboard demoed the "queue" section without a real
 // broker in the topology.
+//
+// The messaging broker MUST use hostname "queue". This convention is hard-
+// enforced here so documentation (themes/services.md), rendering tests
+// (NATSQueueRendering), and cross-service env references in recipe.md
+// cannot drift from what the validator accepts.
 func validateShowcaseServices(targets []RecipeTarget) []string {
 	requiredKinds := map[string]bool{
 		kindDatabase:     false,
@@ -266,6 +294,7 @@ func validateShowcaseServices(targets []RecipeTarget) []string {
 	}
 	hasApp, hasWorker := false, false
 
+	var errs []string
 	for _, t := range targets {
 		if IsRuntimeType(t.Type) {
 			if t.IsWorker {
@@ -274,12 +303,20 @@ func validateShowcaseServices(targets []RecipeTarget) []string {
 				hasApp = true
 			}
 		}
-		if kind := serviceTypeKind(t.Type); kind != "" {
+		kind := serviceTypeKind(t.Type)
+		if kind != "" {
 			requiredKinds[kind] = true
+		}
+		// Hard-enforce hostname convention for the messaging broker. The
+		// target.Hostname is compared against a fixed string because the
+		// rendering tests, themes docs, and env-var refs all assume it.
+		if kind == kindMessaging && t.Hostname != MessagingHostnameConvention {
+			errs = append(errs, fmt.Sprintf(
+				"showcase messaging broker must use hostname %q, got %q (type %q) — this is a documented convention enforced so env-var references and dashboard feature sections stay coherent",
+				MessagingHostnameConvention, t.Hostname, t.Type))
 		}
 	}
 
-	var errs []string
 	if !hasApp {
 		errs = append(errs, "showcase requires at least one runtime app target (isWorker=false)")
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
@@ -14,6 +15,17 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/server"
 )
+
+// browserAnnotationStub satisfies ops.browserRunner via the exported
+// override so the annotations test can register zerops_browser without
+// requiring agent-browser installed locally.
+type browserAnnotationStub struct{}
+
+func (browserAnnotationStub) LookPath() (string, error) { return "/fake/agent-browser", nil }
+func (browserAnnotationStub) Run(_ context.Context, _ string, _ time.Duration) (string, string, bool, error) {
+	return "", "", false, nil
+}
+func (browserAnnotationStub) RecoverFork(_ context.Context) {}
 
 // nopMounter satisfies ops.Mounter for annotation tests (never called).
 type nopMounter struct{}
@@ -286,6 +298,92 @@ func listAllTools(t *testing.T) map[string]*mcp.Tool {
 		toolMap[tool.Name] = tool
 	}
 	return toolMap
+}
+
+// TestAnnotations_BrowserTool locks the metadata for the container-only
+// zerops_browser tool. The tool is gated on InContainer + PATH, so the
+// default annotations test (which runs with runtime.Info{}) can never
+// see it. This dedicated test brings up a server with InContainer=true
+// and a stub runner, then asserts the same title/hint invariants the
+// general test enforces for every other tool.
+func TestAnnotations_BrowserTool(t *testing.T) {
+	// Not parallel: overrides ops.browserRun global. Sequential blocks
+	// run before the parallel group in this file.
+	restore := ops.OverrideBrowserRunnerForTest(browserAnnotationStub{})
+	defer restore()
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "test"}).
+		WithServices(nil)
+	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("knowledge store: %v", err)
+	}
+	logFetcher := platform.NewMockLogFetcher()
+
+	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{},
+		runtime.Info{InContainer: true, ServiceID: "s1"})
+
+	ctx := context.Background()
+	st, ct := mcp.NewInMemoryTransports()
+	if _, err := srv.MCPServer().Connect(ctx, st, nil); err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	session, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { session.Close() })
+
+	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+
+	var tool *mcp.Tool
+	for _, tl := range result.Tools {
+		if tl.Name == "zerops_browser" {
+			tool = tl
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatal("zerops_browser should be registered when InContainer=true and agent-browser is on PATH")
+	}
+
+	if tool.Description == "" {
+		t.Error("zerops_browser has empty description")
+	}
+	if tool.Annotations == nil {
+		t.Fatal("zerops_browser has nil annotations")
+	}
+	ann := tool.Annotations
+	if ann.Title != "Drive browser via agent-browser" {
+		t.Errorf("Title = %q, want %q", ann.Title, "Drive browser via agent-browser")
+	}
+	if ann.ReadOnlyHint {
+		t.Error("browser tool should not be marked ReadOnlyHint (it mutates Chrome state)")
+	}
+	if ann.IdempotentHint {
+		t.Error("browser tool should not be marked IdempotentHint (walks mutate page state)")
+	}
+	if ann.DestructiveHint == nil || *ann.DestructiveHint {
+		t.Errorf("DestructiveHint must be false (tool only drives browser, does not touch Zerops resources), got %v", ann.DestructiveHint)
+	}
+	if ann.OpenWorldHint == nil || !*ann.OpenWorldHint {
+		t.Errorf("OpenWorldHint must be true (browser walks arbitrary URLs), got %v", ann.OpenWorldHint)
+	}
+
+	// Description must mention the key safety points that agents rely on.
+	keywords := []string{"batch", "lifecycle", "close"}
+	desc := strings.ToLower(tool.Description)
+	for _, kw := range keywords {
+		if !strings.Contains(desc, kw) {
+			t.Errorf("description missing keyword %q:\n%s", kw, tool.Description)
+		}
+	}
 }
 
 func TestAnnotations_DeleteToolRequiresExplicitApproval(t *testing.T) {
