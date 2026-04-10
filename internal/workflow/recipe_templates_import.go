@@ -34,14 +34,16 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 
 	for _, target := range plan.Targets {
 		// Runtime services in env 0-1 get a dev+stage pair — EXCEPT shared-
-		// codebase workers (same runtime as app), which get stage only. The
-		// app's dev container runs both the web server and worker as separate
-		// SSH processes from one mount — a separate workerdev would be a zombie
-		// container running the same code with no worker process started.
-		// Separate-codebase workers (different runtime) need their own dev+stage.
+		// codebase workers (SharesCodebaseWith set), which get stage only.
+		// The host target's dev container runs both the web server and
+		// worker as separate SSH processes from one mount — a separate
+		// workerdev would be a zombie container running the same code with
+		// no worker process started. Separate-codebase workers (empty
+		// SharesCodebaseWith, which is the DEFAULT) get their own dev+stage
+		// regardless of whether the base runtime happens to match.
 		if IsRuntimeType(target.Type) && envIndex <= 1 {
-			if target.IsWorker && SharesAppCodebase(target, plan) {
-				// Shared codebase: stage only (appdev hosts both processes).
+			if SharesAppCodebase(target) {
+				// Shared codebase: stage only (host target's dev runs both processes).
 				writeStageService(&b, plan, target, envComments.Service)
 			} else {
 				writeDevService(&b, plan, target, envComments.Service)
@@ -246,33 +248,43 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 }
 
 // writeRuntimeBuildFromGit writes the buildFromGit URL for recipe runtime services.
-// Separate-codebase workers → {slug}-worker. Role="api" targets → {slug}-api.
-// Shared-codebase workers inherit the repo of the service they share code with:
-// {slug}-api in dual-runtime recipes (worker shares API codebase), {slug}-app otherwise.
+// Repo suffix is decided per target:
+//   - Shared-codebase worker (SharesCodebaseWith != "") → inherits the HOST
+//     target's suffix by looking it up in the plan. Host is the target named
+//     by SharesCodebaseWith; its own Role determines whether that suffix is
+//     -api (dual-runtime backend) or -app (single-app or full-stack).
+//   - Separate-codebase worker (IsWorker + empty SharesCodebaseWith) → -worker
+//     (its own repo with its own zerops.yaml and dev+prod setups).
+//   - Role="api" runtime → -api.
+//   - Everything else (frontend, single-app, utility host) → -app.
+//
+// Validation (validateWorkerCodebaseRefs) guarantees that a non-empty
+// SharesCodebaseWith resolves to a real non-worker runtime target with a
+// matching base runtime, so findTarget never returns nil for a worker that
+// passed validation.
 func writeRuntimeBuildFromGit(b *strings.Builder, plan *RecipePlan, target RecipeTarget) {
-	suffix := "-app" // default: frontend or single app
-	switch {
-	case target.IsWorker && !SharesAppCodebase(target, plan):
-		suffix = "-worker"
-	case target.Role == RecipeRoleAPI:
-		suffix = "-api"
-	case target.IsWorker && SharesAppCodebase(target, plan) && planHasAPITarget(plan):
-		suffix = "-api" // worker shares the API codebase, not the frontend
-	}
-	fmt.Fprintf(b, "    buildFromGit: %s%s%s\n", RecipeAppRepoBase, plan.Slug, suffix)
+	fmt.Fprintf(b, "    buildFromGit: %s%s%s\n", RecipeAppRepoBase, plan.Slug, runtimeRepoSuffix(plan, target))
 }
 
-// planHasAPITarget returns true if any target in the plan has Role="api".
-func planHasAPITarget(plan *RecipePlan) bool {
-	if plan == nil {
-		return false
-	}
-	for _, t := range plan.Targets {
-		if t.Role == RecipeRoleAPI {
-			return true
+// runtimeRepoSuffix returns the "-app"/"-api"/"-worker" repo suffix for a
+// runtime target. Factored out of writeRuntimeBuildFromGit so unit tests can
+// pin the decision table without re-parsing YAML.
+func runtimeRepoSuffix(plan *RecipePlan, target RecipeTarget) string {
+	switch {
+	case target.IsWorker && target.SharesCodebaseWith == "":
+		return "-worker"
+	case target.IsWorker && target.SharesCodebaseWith != "":
+		// Shared worker: inherit host target's suffix.
+		host := findTarget(plan, target.SharesCodebaseWith)
+		if host != nil && host.Role == RecipeRoleAPI {
+			return "-api"
 		}
+		return "-app"
+	case target.Role == RecipeRoleAPI:
+		return "-api"
+	default:
+		return "-app"
 	}
-	return false
 }
 
 // writeDevAutoscaling writes the verticalAutoscaling block for a dev-slot

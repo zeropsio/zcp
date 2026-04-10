@@ -38,7 +38,7 @@ zerops_knowledge recipe="{framework}-minimal"
 ```
 Skip this if building a minimal recipe (you ARE the minimal).
 
-Your job is to extend this accumulated base with the NEW knowledge your tier adds. For minimal: framework-specific additions on top of the hello-world (ORM, migrations, templates). For showcase: additional services on top of minimal (cache, queues, storage, search, mail, workers).
+Your job is to extend this accumulated base with the NEW knowledge your tier adds. For minimal: framework-specific additions on top of the hello-world (ORM, migrations, templates). For showcase: additional services on top of minimal (cache, NATS broker, storage, search, mail, workers).
 
 **Stop after loading.** Framework-specific discoveries (documentRoot, trusted-proxy, middleware) come from the framework's own docs, not Zerops knowledge. The generate step automatically injects the full predecessor recipe plus earlier ancestors' gotchas — you don't need to memorize everything from the research load.
 
@@ -90,7 +90,9 @@ Define workspace services based on recipe type:
 - **Type 2b (frontend SSR)**: app + db
 - **Type 3 (backend framework)**: app + db
 
-**Target fields**: just `hostname` (lowercase alphanumeric, e.g. `app`/`db`/`cache`) and `type` (service type from live catalog — pick the highest available version for each stack). The tool dispatches rendering directly on the type — no role classification needed. For runtime services, if it's a background/queue worker instead of the HTTP-serving primary app, set `isWorker: true`. Workers get a `worker` setup name and no subdomain; the primary app gets a `prod` setup and `enableSubdomainAccess`. For managed/utility services, `isWorker` is ignored.
+**Target fields**: `hostname` (lowercase alphanumeric, e.g. `app`/`db`/`cache`/`queue`), `type` (service type from live catalog — pick the highest available version for each stack), and optionally `role` (for repo routing in dual-runtime recipes: `app` or `api`). The tool dispatches rendering directly on the type — no role classification needed for template dispatch. For runtime services, if it's a background worker instead of the HTTP-serving primary app, set `isWorker: true`. Workers get a `worker` setup name (shared codebase) or `prod` (separate codebase — the default) and no subdomain; the primary app gets a `prod` setup and `enableSubdomainAccess`. For managed/utility services, `isWorker` is ignored.
+
+**Worker-only field** — `sharesCodebaseWith`: on a worker target, names the non-worker runtime target whose codebase this worker shares (Laravel Horizon-style one-repo-two-processes pattern). Empty (default) = separate codebase with its own repo. See the "Worker codebase decision" block in the showcase research section below. Only meaningful for showcase tier; minimal recipes have no worker.
 
 ### Submission
 Submit via:
@@ -111,9 +113,9 @@ zerops_knowledge recipe="{framework}-minimal"
 This is your direct predecessor and starting point. **Do NOT load the hello-world recipe.** The generate step automatically injects earlier ancestors' gotchas (hello-world tier) into your context — loading it manually wastes context with raw SQL patterns and different base images that don't apply to your framework. If you load it anyway, ignore its zerops.yaml patterns entirely; use only the minimal recipe's patterns as your template.
 
 ### Additional Showcase Fields
-- **Cache library**: Redis client library for the framework
+- **Cache library**: Redis client library for the framework (Valkey/KeyDB, used for cache + sessions ONLY — never queues)
 - **Session driver**: Redis-backed session configuration
-- **Queue driver**: queue/job system for the framework
+- **Queue driver**: the framework's client for the NATS broker. Default: a NATS client library for the runtime (`nats` for Node/Bun, `nats-py` for Python, `nats.go` for Go, `Rowem\Nats` or similar for PHP, etc.). **Exception**: frameworks with a first-class Redis-bound queue library where switching to NATS would be unidiomatic — Laravel Horizon, Rails Sidekiq, Django+Celery-with-Redis. In those exceptions the framework's own queue library still consumes from Redis via the framework's scheduler/dispatcher, BUT the showcase still provisions a NATS broker as the `queue` service because every showcase has a `kindMessaging` target. The messaging feature section on the dashboard uses NATS directly (pub/sub from the framework's NATS client) regardless of what the framework's own worker command polls.
 - **Storage driver**: object storage integration (S3-compatible)
 - **Search library**: search integration (e.g., Meilisearch, Elasticsearch)
 
@@ -133,20 +135,38 @@ Define workspace services for showcase recipe. All targets appear in all 6 envir
 
 **Full-stack showcase targets:**
 - **app**: runtime service — HTTP-serving primary application
-- **worker**: background job processor (`isWorker: true`) — consumes from queue, no HTTP
+- **worker**: background job processor (`isWorker: true`) — consumes from a broker, no HTTP. See "Worker codebase decision" below for `sharesCodebaseWith`.
 - **db**: primary database
-- **redis**: cache + sessions + queues (Valkey or KeyDB)
+- **redis**: cache + sessions (Valkey or KeyDB — **NOT** queues; the broker below is the queue)
+- **queue**: NATS broker (`type: nats@2.12`) — the messaging/queue layer the worker consumes from. Hostname is literally `queue` so env var references (`${queue_hostname}`, `${queue_port}`, `${queue_user}`, `${queue_password}`) read clean in the app and worker configs.
 - **storage**: S3-compatible object storage
 - **search**: search engine (Meilisearch, Elasticsearch, or Typesense)
 
 **API-first showcase targets** (dual-runtime):
 - **app**: lightweight static frontend — Svelte SPA (`role: "app"`, `type: static`)
 - **api**: JSON API backend — the showcased framework (`role: "api"`)
-- **worker**: background job processor (`isWorker: true`) — shares API codebase (same runtime)
+- **worker**: background job processor (`isWorker: true`). See "Worker codebase decision" below — default is SEPARATE codebase (own repo).
 - **db**: primary database
-- **redis**: cache + sessions + queues (Valkey or KeyDB)
+- **redis**: cache + sessions (Valkey or KeyDB — **NOT** queues)
+- **queue**: NATS broker (`type: nats@2.12`) — same as full-stack, the dedicated messaging layer
 - **storage**: S3-compatible object storage
 - **search**: search engine (Meilisearch, Elasticsearch, or Typesense)
+
+### Worker codebase decision
+
+Every showcase has a worker. The worker is always a separate **service**, but whether it is a separate **codebase** is an explicit research-step decision you must make and declare on the target via `sharesCodebaseWith`.
+
+**SEPARATE codebase (default — leave `sharesCodebaseWith` empty).** The worker is its own repo (`{slug}-worker`) with its own `zerops.yaml` containing `dev` + `prod` setups. The import gets its own `workerdev` + `workerstage` pair in envs 0-1 and a bare `worker` in envs 2-5. This is the right default for: any framework consuming from a standalone broker (NATS, Kafka, RabbitMQ) — that's now the entire showcase tier; Go / Rust / generic Python or Node services where workers are typically their own binaries; any architecture where the worker has its own release cadence, dependency set, or team ownership.
+
+**SHARED codebase (opt-in — set `sharesCodebaseWith: "{api or app hostname}"`).** One repo, two process entry points in one `zerops.yaml`: `dev`, `prod`, and a third `worker` setup. No `workerdev` service — the app's dev container hosts both processes via SSH (start the web server and the queue consumer side-by-side). The worker's base runtime MUST match the host target's (validation enforces this). This is idiomatic for:
+- **Laravel + Horizon** — `php artisan horizon` is part of the same app, same Composer tree, same container boundary. Set `sharesCodebaseWith: "app"` on the worker.
+- **Rails + Sidekiq** — `bundle exec sidekiq` shares the Rails app. `sharesCodebaseWith: "app"`.
+- **Django + Celery (in-process)** — when the Celery worker imports from the Django app directly. `sharesCodebaseWith: "app"`.
+- **NestJS + BullMQ (same-repo processor)** — if you're genuinely running the processor from the same NestJS codebase as the API. `sharesCodebaseWith: "api"`.
+
+**Rule of thumb**: if the worker and the app are compiled from the same `package.json` / `composer.json` / `pyproject.toml` / `go.mod` AND the worker is started by a command that loads the app's bootstrap (`artisan`, `rails runner`, `python manage.py`, `nest start`), then SHARED. If the worker has its own dependency manifest or its own entry point with no app bootstrap, then SEPARATE. When in doubt, choose SEPARATE — it's the lower-coupling choice and the default.
+
+**DO NOT** claim shared codebase just because the runtime matches. Cross-runtime sharing is rejected by validation; same-runtime-but-separate-repo is the 3-repo case (e.g. Svelte frontend + NestJS API + NestJS worker, three repos) and is fully supported — leave `sharesCodebaseWith` empty.
 
 ### Submission
 Submit via:
@@ -162,7 +182,7 @@ Create all workspace services from the recipe plan. This follows the same patter
 
 ### 1. Generate import.yaml
 
-Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}stage` pair. **Exception**: shared-codebase workers (same runtime as app — one app, two processes like web + queue runner) get only `{name}stage` — the app's dev container runs both processes via SSH. No `workerdev` — it would be a zombie container running the same code with no worker process started. Separate-codebase workers (different runtime/language) get their own dev+stage pair.
+Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}stage` pair. **Exception**: a worker target whose `sharesCodebaseWith` is set (shared-codebase worker — the research-step decision in the previous section) gets only `{name}stage`. The host target's dev container runs both processes via SSH. No `workerdev` — it would be a zombie container running the same code with no worker process started. Separate-codebase workers (`sharesCodebaseWith` empty — the default, including the 3-repo case where runtime matches but the repo does not) get their own dev+stage pair from their own `{slug}-worker` repo.
 
 **Dev vs stage properties:**
 
@@ -329,11 +349,22 @@ zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`.
 
 ### zerops.yaml — Write ALL setups at once
 
-Write the complete zerops.yaml with ALL setup entries in a single file. Minimal recipes have TWO setups (`dev` + `prod`). Showcase recipes have THREE (`dev` + `prod` + `worker`). The same file is the source of truth for the deploy step AND for the README integration-guide fragment — writing it once eliminates drift between what deploys and what the README documents. The deploy step will verify dev against the live service, then cross-deploy the already-written prod/worker configs to stage.
+Write the complete zerops.yaml with ALL setup entries in a single file. Minimal recipes have TWO setups (`dev` + `prod`). Showcase recipes with a **shared-codebase** worker (`sharesCodebaseWith` set — see research-showcase section) have THREE setups in the host target's zerops.yaml: `dev` + `prod` + `worker`. Showcase recipes with a **separate-codebase** worker (the default) have TWO setups per zerops.yaml (one for the app, one for the worker, each in its own repo). The same file is the source of truth for the deploy step AND for the README integration-guide fragment — writing it once eliminates drift between what deploys and what the README documents. The deploy step will verify dev against the live service, then cross-deploy the already-written prod (and worker, if shared) configs to stage.
 
-**Dual-runtime zerops.yaml** (API-first showcase): Each runtime service has its own zerops.yaml in its own codebase root:
-- `/var/www/apidev/zerops.yaml` — 3 setups: dev, prod, worker (API + shared-codebase worker)
-- `/var/www/appdev/zerops.yaml` — 2 setups: dev, prod (frontend only)
+**Per-codebase zerops.yaml** (showcase). The number of zerops.yaml files and their setup shape is driven by `sharesCodebaseWith`:
+
+- **Dual-runtime + shared worker** (`worker.sharesCodebaseWith == "api"`):
+  - `/var/www/apidev/zerops.yaml` — 3 setups: `dev`, `prod`, `worker` (API + the shared-codebase worker running from the same Node/PHP/Ruby project as the API)
+  - `/var/www/appdev/zerops.yaml` — 2 setups: `dev`, `prod` (static frontend only)
+- **Dual-runtime + separate worker** (3-repo case, `worker.sharesCodebaseWith == ""`):
+  - `/var/www/apidev/zerops.yaml` — 2 setups: `dev`, `prod`
+  - `/var/www/appdev/zerops.yaml` — 2 setups: `dev`, `prod`
+  - `/var/www/workerdev/zerops.yaml` — 2 setups: `dev`, `prod` (own repo, own dependency set)
+- **Single-app + shared worker** (Laravel/Rails/Django idiom, `worker.sharesCodebaseWith == "app"`):
+  - `/var/www/appdev/zerops.yaml` — 3 setups: `dev`, `prod`, `worker`
+- **Single-app + separate worker**:
+  - `/var/www/appdev/zerops.yaml` — 2 setups: `dev`, `prod`
+  - `/var/www/workerdev/zerops.yaml` — 2 setups: `dev`, `prod`
 
 #### Dual-runtime URL env-var pattern — the canonical solution
 
@@ -508,12 +539,12 @@ Recipe-specific conventions for each setup (platform rules from provision apply 
 
 **`setup: worker`** (showcase only — background job processor):
 
-Whether the worker shares the app's codebase depends on the runtime type:
+Whether the worker shares the app's codebase is the research-step decision declared via `sharesCodebaseWith` on the worker target. The two shapes are:
 
-- **Shared codebase** (same runtime): one app, two processes. The worker is just a different entry point. Write a `setup: worker` block in the SAME zerops.yaml. During development, the agent starts both web server and queue worker as SSH processes from `appdev` — no `workerdev` service.
-- **Separate codebase** (different runtime): separate project with its own zerops.yaml (`dev`/`prod`). Written to a separate mount (`/var/www/workerdev/`).
+- **Shared codebase** (`sharesCodebaseWith` set to the host target's hostname): one repo, two processes. The worker is just a different entry point. Write a `setup: worker` block in the SAME zerops.yaml as the host target (`appdev/zerops.yaml` for single-app, `apidev/zerops.yaml` for dual-runtime where the API is the host). During development, the agent starts both web server and queue consumer as SSH processes from the host target's dev container — no `workerdev` service exists.
+- **Separate codebase** (`sharesCodebaseWith` empty — DEFAULT): worker has its own repo (`{slug}-worker`) with its own zerops.yaml containing `dev` + `prod` setups. Mount path is `/var/www/workerdev/`. This is the default because most showcase workers consume from a standalone broker (NATS) and have no reason to be co-located with the HTTP app. Includes the 3-repo case (app static + api runtime + worker same-runtime-but-separate-repo).
 
-Worker-specific: `start` is mandatory (queue runner command), NO healthCheck/readinessCheck/ports (workers don't serve HTTP). Build and envVariables typically match prod.
+Worker-specific: `start` is mandatory (broker consumer command), NO healthCheck/readinessCheck/ports (workers don't serve HTTP). Build and envVariables typically match prod. For shared workers, the `worker` setup block inherits the host target's `build.base` and cache configuration; only the `start` command differs.
 
 **Shared across all setups:**
 - `envVariables:` contains ONLY cross-service references + mode flags. Do NOT re-add envSecrets — platform injects them automatically.
@@ -538,10 +569,10 @@ Use the framework's **standard** environment names — don't invent new ones. If
 
 The dashboard is the recipe's proof of work. Each provisioned service gets a feature section that **exercises** the service — not just a connectivity dot, but a visible demonstration of the service doing real work. What to demonstrate derives from the plan targets:
 - **Database** — list seeded records, create-record form (proves ORM + migrations + CRUD)
-- **Cache** (if provisioned) — store a value with TTL, show cached vs fresh response (proves cache driver)
+- **Cache** (if provisioned) — store a value with TTL, show cached vs fresh response (proves cache driver). **Cache is for cache + sessions only — the queue uses NATS, a separate broker service.**
 - **Object storage** (if provisioned) — upload file, list uploaded files (proves S3 integration)
 - **Search engine** (if provisioned) — live search across seeded records (proves search driver + indexing)
-- **Queue + worker** (if provisioned) — dispatch-job button, show result (proves queue driver + worker)
+- **Messaging broker + worker** (if provisioned) — NATS pub/sub + worker consumer. Dispatch-job button publishes a message to a NATS subject; the worker is subscribed to that subject and writes the processed result to a database table or to a status key the dashboard polls. Show: (a) message sent (timestamp + subject), (b) worker-processed result appearing in the dashboard within a second or two. This proves the full NATS → worker → result round-trip, not just a queue-driver integration test.
 
 A minimal recipe (app + db) has one feature section (database CRUD). A showcase recipe has one section per service. No section for services that aren't in the plan.
 
@@ -688,7 +719,7 @@ Description of why this change is needed.
 
 ### Pre-deploy checklist
 - [ ] `.gitignore` exists and covers build artifacts, dependencies, and env files (e.g. `dist/`, `node_modules/`, `vendor/`, `.env`, `*.pyc`). Framework CLIs may skip generating it — always verify before `git add`
-- [ ] Both `setup: dev` AND `setup: prod` present (generic names); showcase: `setup: worker` too
+- [ ] Both `setup: dev` AND `setup: prod` present (generic names). Showcase with a shared-codebase worker: add `setup: worker` in the host target's zerops.yaml (the target named by `sharesCodebaseWith`). Showcase with a separate-codebase worker (default): the worker's own zerops.yaml has its own `dev` + `prod` setups, nothing extra in the app's zerops.yaml.
 - [ ] dev and prod envVariables differ on mode flags — structural check fails if identical
 - [ ] All env var refs use names from `zerops_discover`, none guessed
 - [ ] If prod `buildCommands` compiles assets, primary view loads them via framework asset helper (not inline CSS/JS)
@@ -845,15 +876,16 @@ Pass the appropriate host binding flag so it listens on `0.0.0.0` (e.g., `npx vi
 **This step is MANDATORY, not optional.** Without it, templates that reference build-pipeline outputs (Vite manifests, Webpack bundles) will 500 on the first page load. Do NOT work around missing assets by running `npm run build` on the dev container — that compiles static assets instead of using HMR, and doesn't prove the dev experience works. Do NOT replace framework asset helpers with inline CSS/JS — that disconnects the build pipeline.
 
 **2c. Worker dev process** (showcase only):
-- **Shared codebase** (worker same runtime as app): start the queue worker as an SSH process on appdev (or apidev for API-first) — both processes run from the same container:
+- **Shared codebase** (`worker.sharesCodebaseWith` is set): start the queue consumer as an SSH process on the HOST target's dev container — both processes run from the same container, same code tree:
   ```bash
-  ssh appdev "cd /var/www && {queue_worker_command} &"
+  ssh {host_hostname}dev "cd /var/www && {queue_worker_command} &"
   ```
-- **Separate codebase** (worker different runtime): deploy the separate worker codebase:
+  `{host_hostname}` is the target named by `sharesCodebaseWith` — `appdev` for single-app recipes, `apidev` for dual-runtime recipes where the API hosts the worker.
+- **Separate codebase** (`worker.sharesCodebaseWith` empty — the default, including the 3-repo case): deploy the separate worker codebase to its own dev container, then start the process there:
   ```
   zerops_deploy targetService="workerdev" setup="dev"
+  ssh workerdev "cd /var/www && {queue_worker_command} &"
   ```
-  Then start the worker process via SSH on workerdev.
 
 **Step 3: Enable subdomain and verify appdev**
 ```
@@ -937,91 +969,91 @@ What browser verification catches that curl cannot:
 - Missing CSS (everything works but looks broken)
 - Stale build artifacts (user sees a version from before your last fix)
 
-#### agent-browser — process model + why v4 AND v5 both crashed
+#### Browser verification — use `zerops_browser`, never raw agent-browser
 
-`agent-browser` (pre-installed in the ZCP container) is NOT a stateless CLI. It runs a **persistent daemon per session** that holds ONE Chrome instance. First `open` spawns ~10 processes (daemon + Chrome parent + GPU/network/storage/crashpad helpers + renderers). Every subsequent command is a cheap CLI client talking to that daemon — ~150 ms each, no new Chrome.
+ZCP exposes a `zerops_browser` MCP tool that wraps `agent-browser` with a guaranteed lifecycle. It is the ONLY supported way to drive the browser from the recipe workflow. Raw `agent-browser` Bash calls are forbidden — they caused v4 and v5 to crash with `fork failed: resource temporarily unavailable` during browser verification (v5 crashed TWICE, once in the main agent and once in a sub-agent).
 
-**v4 and v5 both crashed** the zcp container with `fork failed: resource temporarily unavailable` during browser verification. v5 crashed TWICE in one session — once in the main agent, once in the verification sub-agent (which killed the chat). The v8.50.3 fix was "always close when done" — **necessary but not sufficient**. The actual root cause is fork-budget exhaustion:
+**Why the tool is mandatory** — the raw CLI has two failure modes the tool eliminates:
 
-- zcp's `nproc`/`pthread_create` budget is sized for orchestration, not for hosting Chrome.
-- Chrome's ~10 helper processes + the agent's **background dev processes** (`nest start --watch`, `ts-node src/worker.ts`, `npm run dev`, nohup jobs) + the MCP pipeline's own subprocess tree together peak above the per-user limit.
-- By the time you'd `close`, you're already over the limit. Closing afterwards is too late.
+1. **Lifecycle drift.** `agent-browser` runs a persistent daemon per session holding one Chrome instance (~10 child processes). If the batch is missing `close`, or the Bash call is killed before it runs, Chrome stays alive holding the fork budget. Every subsequent Bash call then crashes with "Resource temporarily unavailable" until pkill recovery. `zerops_browser` auto-wraps `[open url] + your commands + [errors] + [console] + [close]`, so the close is guaranteed — you literally cannot forget it.
+2. **Concurrency.** Two `agent-browser` invocations in parallel (or a sub-agent's call overlapping the main agent's) either race the daemon or spawn a second Chrome. The tool serializes all calls through a process-wide mutex, so concurrent MCP calls queue instead of dueling for the daemon.
 
-The v5 fix, verified structurally below: **stop the background dev processes BEFORE opening agent-browser**, run the whole verification as ONE `agent-browser batch` call (guaranteed open → work → close), and never nest sessions across sub-agents.
+On top of that, `zerops_browser` auto-runs pkill recovery if it detects fork exhaustion or a timeout, and returns `forkRecoveryAttempted: true` in the result so you know to investigate what burned the budget before retrying.
 
 #### Non-negotiable rules
 
-1. **Stop all background dev processes before opening agent-browser.** The processes you started in Step 2 (`npm run start:dev`, `ts-node worker`, `nohup` jobs on dev containers) are NOT needed for browser verification — you're verifying STAGE, not dev iteration. Kill them explicitly on every dev container, THEN open the browser. Restart them later only if you need more dev iteration after the walk.
-2. **Run verification as ONE `agent-browser batch` call** — never a sequence of individual `agent-browser open`/`get`/`close` Bash calls. `batch` takes a JSON array of commands on stdin and executes them through a single daemon round-trip. The first element is `open`, the last is `close`, so lifecycle is enforced by the call shape.
-3. **One session at a time per container.** Do NOT dispatch a sub-agent that uses agent-browser while the main agent also has one open. The verification sub-agent brief forbids agent-browser entirely (the brief is split — see the Close step below); the main agent runs the browser walk itself.
-4. **Do not invoke `agent-browser` in parallel tool calls.** A second invocation either races the daemon or spawns a second Chrome — both exceed the fork budget. Serialize.
-5. **Do not open multiple tabs.** One URL per batch. Run the batch once for appdev, then again for appstage.
-6. **If you ever see `fork failed: resource temporarily unavailable` or `pthread_create: Resource temporarily unavailable`** from ANY Bash call — the fork budget is exhausted. Recover:
+1. **Stop all background dev processes BEFORE calling `zerops_browser`.** The processes you started in Step 2 (`npm run start:dev`, `ts-node worker`, `nohup` jobs on dev containers) are NOT needed for browser verification — you're verifying STAGE, not dev iteration. Kill them explicitly on every dev container, THEN call the tool. Restart them later only if you need more dev iteration after the walk. This is the single most important rule: the tool can recover from fork exhaustion once, but it cannot make your dev processes disappear.
+2. **Use `zerops_browser` — never `agent-browser` as a Bash call.** The tool is the ONLY sanctioned path. Any raw `agent-browser` / `echo ... | agent-browser batch` command in a Bash tool call is a bug.
+3. **One `zerops_browser` call per subdomain.** Pass the URL + inner commands; the tool wraps open/errors/console/close. Run it once for appstage, then again for appdev. Do NOT pass multiple URLs or multiple open/close markers.
+4. **Do not dispatch a sub-agent that calls `zerops_browser` while the main agent also has one in flight.** The verification sub-agent brief forbids browser usage entirely (the close step is split — see below); the main agent runs the browser walk itself.
+5. **If the tool returns `forkRecoveryAttempted: true`** — pkill already ran. Before retrying, find the process that burned the budget. Usually it's a dev process you forgot to kill on a dev container (`ssh {devHostname} "ps -ef | grep -E 'nest|vite|node dist|ts-node'"`). Kill it, then call the tool again.
+6. **If a Bash call crashes with `fork failed: resource temporarily unavailable` or `pthread_create: Resource temporarily unavailable`** — something other than `zerops_browser` leaked processes. Recover manually:
    ```
    pkill -9 -f "agent-browser-darwin" ; pkill -9 -f "agent-browser-chrome-"
    ```
-   Then wait 1-2s for reaping and continue. Never retry in a loop — the processes don't reap themselves while the fork queue is full.
+   Wait 1-2s for reaping. Never retry in a loop.
 
-#### Efficient command vocabulary (use these INSIDE the batch — NOT `eval`)
+#### Efficient command vocabulary (use these INSIDE `commands` — NOT `eval`)
 
 Dedicated commands produce structured output designed for agents. Don't reach for `eval` / JavaScript unless none of these fit.
 
-| Need | Command (inside the batch JSON) | Notes |
+| Need | Command (inside the `commands` array) | Notes |
 |---|---|---|
-| Did the page throw JS errors? | `["errors"]` or `["errors", "--clear"]` | Empty output = zero errors. Clear between steps. |
-| What did the page log? | `["console"]` or `["console", "--clear"]` | log/warn/error combined. |
 | Interactive element tree with clickable refs | `["snapshot", "-i", "-c"]` | `-i` = interactive only, `-c` = compact. Yields `@e1`, `@e2` refs usable in `click`, `fill`, `get`. |
-| Text content of an element | `["get", "text", "<sel>"]` | Or `get text @e3` using a ref from snapshot. |
+| Text content of an element | `["get", "text", "<sel>"]` | Or `["get","text","@e3"]` using a ref from snapshot. |
 | Element count | `["get", "count", "<sel>"]` | e.g. verify a table has ≥1 row. |
 | Is something visible / enabled / checked? | `["is", "visible", "<sel>"]` | Plus `is enabled`, `is checked`. |
 | Find by semantic locator | `["find", "role", "button", "Submit", "click"]` | Locators: `role`, `text`, `label`, `placeholder`, `testid`. Avoid brittle CSS. |
-| Capture network traffic | `["network", "har", "start"]` … interact … `["network", "har", "stop", "./net.har"]` | Full HAR. For a quick peek: `["network", "requests", "--filter", "api"]`. |
+| Click / fill / type | `["click", "@e1"]`, `["fill", "@e2", "text"]`, `["type", "<sel>", "text"]` | Refs from snapshot. |
+| Wait for element or milliseconds | `["wait", "<sel>"]` or `["wait", "500"]` | Integer = ms. |
+| Capture network traffic | `["network", "har", "start"]` … interact … `["network", "har", "stop", "./net.har"]` | Full HAR. |
 
-#### Canonical batch-mode verification flow
+Do NOT pass `["open", ...]` or `["close"]` inside `commands` — the tool strips them and re-adds its own wrappers. `["errors"]` and `["console"]` are also auto-appended (you can still add extra `["errors","--clear"]` calls inside your flow if you want to checkpoint mid-walk).
 
-Follow this exact shape. Substitute `{hostname}` with the actual dev containers you started processes on, and `{url}` with the subdomain you're verifying.
+#### Canonical verification flow
 
 ```
-# Phase 1: stop background dev processes on every dev container you touched
-# (API-first recipes: both apidev AND appdev. Single-runtime: just appdev.)
+# Phase 1 (Bash): stop background dev processes on every dev container.
+# API-first recipes: both apidev AND appdev. Single-runtime: just appdev.
 ssh apidev "pkill -f 'nest start' || true; pkill -f 'ts-node' || true; pkill -f 'node dist/worker' || true"
 ssh appdev "pkill -f 'vite' || true; pkill -f 'npm run dev' || true"
-
-# Phase 2: one batch call — open, verify, close — all in one invocation
-echo '[
-  ["open", "https://{appstage-subdomain}.prg1.zerops.app"],
-  ["errors", "--clear"],
-  ["console", "--clear"],
-  ["snapshot", "-i", "-c"],
-  ["get", "text", "[data-connectivity]"],
-  ["get", "count", "[data-article-row]"],
-  ["find", "role", "button", "Submit", "click"],
-  ["get", "text", "[data-result]"],
-  ["errors"],
-  ["console"],
-  ["close"]
-]' | agent-browser batch --json
 ```
 
-Repeat Phase 2 with the appdev subdomain URL if dev verification is also required. Keep one batch per URL — do NOT combine multiple URLs in one batch unless you can guarantee the page state in between.
+Then call `zerops_browser` (MCP tool — NOT a Bash call):
+
+```
+zerops_browser(
+  url: "https://{appstage-subdomain}.prg1.zerops.app",
+  commands: [
+    ["snapshot", "-i", "-c"],
+    ["get", "text", "[data-connectivity]"],
+    ["get", "count", "[data-article-row]"],
+    ["find", "role", "button", "Submit", "click"],
+    ["get", "text", "[data-result]"]
+  ]
+)
+```
+
+The tool will execute `[open url] + your commands + [errors] + [console] + [close]` as one batch and return structured JSON: `steps[]`, `errorsOutput`, `consoleOutput`, `durationMs`, `forkRecoveryAttempted`, `message`.
+
+Repeat with the appdev subdomain URL if dev verification is also required. One tool call per URL — do NOT combine multiple URLs in one call.
 
 **Phase 3 (optional — only if more dev iteration is needed)**: restart the dev processes you killed in Phase 1. If you're advancing straight to stage deployment, skip this — the stage containers run their own processes, the dev containers are done.
 
 **Report shape for a verification pass** (per subdomain walked):
 - Connectivity panel state (services connected with latencies)
 - Each feature section's render state (populated / empty / errored)
-- Errors output from the final `["errors"]` step (expected: empty)
-- Console output from the final `["console"]` step (expected: empty or benign info only)
-- Failed network URLs if any (via HAR capture or `network requests --filter`)
+- `errorsOutput` from the result (expected: empty)
+- `consoleOutput` from the result (expected: empty or benign info only)
+- `forkRecoveryAttempted` from the result (expected: false — true means you forgot to kill dev processes)
 
 **What to avoid** (all were seen in v4 or v5):
-- `agent-browser open ...` as a standalone Bash call (daemon stays open if the batch doesn't close it) — always use `batch` with `close` as the last element
-- `agent-browser eval "window.onerror = …"` — use `["errors"]` inside the batch
-- Running the browser walk while `nest start --watch`/`vite`/workers are still running on dev containers — guaranteed fork exhaustion
-- Opening multiple tabs in one batch or across batches
-- Dispatching a sub-agent that calls agent-browser while the main agent also has a session
-- Forgetting `["close"]` as the last element of the batch
-- Re-opening the same URL repeatedly "just to be sure" — navigation is 1x per verification
+- Raw `agent-browser` / `echo ... | agent-browser batch` Bash calls — always use `zerops_browser` MCP tool
+- `["eval", "window.onerror = …"]` inside commands — use the auto-appended `["errors"]` / `["console"]` output instead
+- Running the browser walk while `nest start --watch` / `vite` / workers are still running on dev containers — guaranteed `forkRecoveryAttempted: true`
+- Passing `["open", ...]` or `["close"]` inside `commands` — the tool strips them; if you thought you needed them, you didn't
+- Dispatching a sub-agent that calls `zerops_browser` while the main agent also has a call in flight
+- Re-running the tool against the same URL repeatedly "just to be sure" — one call per URL per iteration
 
 If the browser walk reveals a problem curl missed: the batch has already closed the browser, so fix on mount, redeploy, and run the batch again (counts toward the 3-iteration limit). Do NOT advance to stage deployment until both appdev AND appstage verification passes show empty errors and populated sections.
 
@@ -1058,8 +1090,8 @@ zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
 ```
 
 - `setup="prod"` maps to `setup: prod` in the target's zerops.yaml (server auto-starts via the real `start` command, or Nginx for static).
-- `setup="worker"` maps to `setup: worker` in the SAME zerops.yaml as the shared codebase — same build pipeline, different start command.
-- **Separate-codebase worker** (different runtime from the app): source is `workerdev`, setup is `prod` (its own zerops.yaml). Still parallel with the others.
+- `setup="worker"` maps to `setup: worker` in the host target's zerops.yaml — used ONLY for a **shared-codebase worker** (`sharesCodebaseWith` is set). Source and target are the same host target (`appdev` / `apidev`), just a different setup name. Same build pipeline, different start command.
+- **Separate-codebase worker** (`sharesCodebaseWith` empty, including the 3-repo same-runtime case): source is `workerdev`, target is `workerstage`, setup is `prod` (its OWN zerops.yaml). Still parallel with the other cross-deploys.
 
 **Why this is safe**: cross-deploys don't mutate their source service, don't share build containers, and the platform schedules them on separate target containers. There is no ordering constraint between sibling stage targets. The only ordering constraints in this whole phase are (a) dev must be healthy before its stage cross-deploys (already satisfied by this point) and (b) the subdomain + verify calls below run AFTER the deploys return.
 
@@ -1142,7 +1174,7 @@ The 6 envs are **not interchangeable** — each exists to describe a different d
 
 Pass `envComments` keyed by env index (`"0"`..`"5"`). Each env carries a `service` map (keys match the hostnames that appear in THAT env's file) and an optional `project` comment. **Service key rule**: envs 0-1 carry the dev+stage pair, so keys are `"appdev"` and `"appstage"`; envs 2-5 collapse to a single runtime entry, so the key is the base hostname (`"app"`). Managed services (`"db"` etc.) keep the base hostname everywhere.
 
-**Showcase service keys — shared-codebase workers (same runtime as app) get only `workerstage` in envs 0-1 (no `workerdev` — appdev runs both processes).** Separate-codebase workers (different runtime) get both `workerdev` and `workerstage`. Omitting a comment key for a service that appears in the import.yaml produces a service with no comment, which degrades quality and risks failing the comment ratio check. Complete key list per env:
+**Showcase service keys — the key list depends on the worker's `sharesCodebaseWith`.** A shared-codebase worker (`sharesCodebaseWith` set) gets ONLY `workerstage` in envs 0-1 because the host target's dev container runs both processes. A separate-codebase worker (empty `sharesCodebaseWith` — the default, including the 3-repo case) gets both `workerdev` and `workerstage`. Omitting a comment key for a service that appears in the import.yaml produces a service with no comment, which degrades quality and risks failing the comment ratio check. Complete key list per env:
 
 **Full-stack showcase:**
 - **Envs 0-1 (shared-codebase worker)**: `"appdev"`, `"appstage"`, `"workerstage"`, plus all managed services (`"db"`, `"cache"`, `"storage"`, `"search"`, etc.)
@@ -1287,8 +1319,8 @@ zerops_workflow action="complete" step="finalize" attestation="Comments provided
 
 Recipe creation is complete. The close step has THREE parts, run in order:
 
-1. **1a — Static code review sub-agent (ALWAYS run, regardless of publish request).** A framework-expert sub-agent reviews the code, reports findings, applies fixes. NO browser walk inside this sub-agent — it never calls `agent-browser`.
-2. **1b — Main agent browser walk (ALWAYS run for showcase — skip for minimal).** After the sub-agent exits, the main agent performs the browser verification itself using the Step 4c batch-mode flow. This split is structural: browser work competes with dev processes and the sub-agent's tool calls for the zcp container's fork budget, and v5 proved that fork exhaustion kills everything in flight (the sub-agent's completed static review was nearly lost). Main agent runs single-threaded and the batch flow forces lifecycle close.
+1. **1a — Static code review sub-agent (ALWAYS run, regardless of publish request).** A framework-expert sub-agent reviews the code, reports findings, applies fixes. NO browser walk inside this sub-agent — it never calls `zerops_browser` or `agent-browser`.
+2. **1b — Main agent browser walk (ALWAYS run for showcase — skip for minimal).** After the sub-agent exits, the main agent performs the browser verification itself by calling the `zerops_browser` MCP tool (see Step 4c). This split is structural: browser work competes with dev processes and the sub-agent's tool calls for the zcp container's fork budget, and v5 proved that fork exhaustion kills everything in flight (the sub-agent's completed static review was nearly lost). Main agent runs single-threaded; `zerops_browser` auto-wraps lifecycle and auto-recovers from fork exhaustion.
 3. **2 — Export & publish (ONLY when the user explicitly asks).** If the user did not request publishing, stop after 1a + 1b and any fixes are applied.
 
 Do NOT skip 1a or 1b to save time. Do NOT publish without an explicit user request.
@@ -1311,7 +1343,7 @@ The brief below is split into three explicit halves: direct-fix scope (framework
 >
 > - **Target-side (SSH)** — anything that IS part of the app's toolchain: compilers (`tsc`, `nest build`, `go build`), type-checkers (`svelte-check`, `tsc --noEmit`), test runners (`jest`, `vitest`, `pytest`, `phpunit`), linters (`eslint`, `prettier`, `phpstan`), package managers (`npm install`, `composer install`, `pip install`), framework CLIs (`artisan`, `nest`, `rails`), and app-level `curl`/`node`/`python -c` used to hit the running app or managed services.
 >   - Target-side means: the correct runtime version from the base image, the correct dependency tree installed by `build.buildCommands`, the correct env vars (including `${hostname_varName}` cross-service refs), and private-network reachability to managed services. zcp has none of these — a tool that "works" on zcp against the mount uses the wrong Node, wrong deps, wrong env, and can't reach the DB.
-> - **zcp-side (run directly)** — anything that operates ON the app from outside: `agent-browser` (drives Chrome against the target's public subdomain URL — the target container doesn't have Chrome), `zerops_*` MCP tools (platform API), Read/Edit/Write against the mount, `ls`/`cat`/`head`/`tail`/`grep`/`rg`/`find` for filesystem inspection, `git status`/`add`/`commit`.
+> - **zcp-side (run directly)** — anything that operates ON the app from outside: `zerops_browser` MCP tool (drives Chrome against the target's public subdomain URL — the target container doesn't have Chrome; the tool is only available inside the ZCP container and is NOT accessible to you as a sub-agent anyway), other `zerops_*` MCP tools (platform API), Read/Edit/Write against the mount, `ls`/`cat`/`head`/`tail`/`grep`/`rg`/`find` for filesystem inspection, `git status`/`add`/`commit`.
 >
 > Correct shape for target-side commands:
 >
@@ -1336,7 +1368,7 @@ The brief below is split into three explicit halves: direct-fix scope (framework
 > - Does the test suite match what the code does?
 > - Are framework asset helpers used correctly (not inline CSS/JS when a build pipeline exists)?
 >
-> **Do NOT open `agent-browser`.** Browser verification is a separate phase run by the main agent after this static review completes. You have no reason to launch Chrome: you're a code reviewer, not a user-flow tester. If your review of the code raises a question that would require a browser to answer ("does this controller's error envelope actually reach the frontend?", "does the CORS middleware accept the appstage origin at runtime?"), report it as a `[SYMPTOM]` with the specific evidence you'd expect to see and stop — the main agent will verify it in the browser walk.
+> **Do NOT call `zerops_browser` or `agent-browser`.** Browser verification is a separate phase run by the main agent after this static review completes. You have no reason to launch Chrome: you're a code reviewer, not a user-flow tester. If your review of the code raises a question that would require a browser to answer ("does this controller's error envelope actually reach the frontend?", "does the CORS middleware accept the appstage origin at runtime?"), report it as a `[SYMPTOM]` with the specific evidence you'd expect to see and stop — the main agent will verify it in the browser walk.
 >
 > **Symptom reporting (NO fixes):**
 > If anything in the browser walk points to a platform-level cause (wrong service URL, missing env var, CORS failure, container misrouting, deploy-layer issue), STOP and report the symptom. Do NOT propose `zerops.yaml`, `import.yaml`, or platform-config changes. The main agent has full Zerops context and will fix platform issues. Your report on a platform symptom should be shaped like: "appstage's console shows `Failed to fetch https://api-20fe-3000.prg1.zerops.app/status`. This URL appears to target a service named `api` which doesn't exist in the running environment (only `apidev` and `apistage` do). Platform root cause unclear — main agent to investigate."
@@ -1364,28 +1396,28 @@ Apply any CRITICAL or WRONG fixes the sub-agent reported, then **redeploy** to v
 After 1a completes and any redeployments have settled, the main agent performs the browser verification itself using the batch-mode canonical flow documented in **Step 4c: Browser verification**. Do not delegate this to a sub-agent:
 
 - The sub-agent has no Zerops context — browser-observed symptoms with platform causes (wrong CORS origin, literal `${VAR}` in fetched JSON, missing env var) are harder to diagnose from inside a sub-agent.
-- The sub-agent and main agent can't share an `agent-browser` session, and running two sessions blows the fork budget.
+- The sub-agent and main agent can't share a `zerops_browser` session (the tool serializes calls through a process-wide mutex, but the real problem is state coordination, not locking); running two browser tracks blows the fork budget.
 - The main agent already has the full platform context it needs to act on what the browser shows.
 
-**Procedure** (reference Step 4c for the full batch-mode rules and canonical flow):
+**Procedure** (reference Step 4c for the full `zerops_browser` rules and canonical flow):
 
 1. **Stop background dev processes on every dev container** (`ssh apidev "pkill -f 'nest start' …"` etc). Browser verification targets stage; the dev processes must not be competing for the fork budget.
-2. **Run the canonical verification batch for `appstage`** — one `agent-browser batch` call from `open` through `close`. Walk every feature section with at least one interactive control per section. Read `errors` and `console` at the end.
-3. **Run the batch again for `appdev`** (showcase only — confirms both dev and stage versions work; minimal recipes skip). Same shape.
-4. **Report the walk results** per subdomain: connectivity state, section render state, final `errors` output, final `console` output, failed network URLs if any.
+2. **Call `zerops_browser` for `appstage`** — ONE MCP tool call with the appstage URL and the inner commands that walk every feature section (at least one interactive control per section). The tool auto-wraps open/errors/console/close.
+3. **Call `zerops_browser` for `appdev`** (showcase only — confirms both dev and stage versions work; minimal recipes skip). Same shape.
+4. **Report the walk results** per subdomain: connectivity state, section render state, `errorsOutput` from the result, `consoleOutput` from the result, `forkRecoveryAttempted` (should be false).
 
 **If the browser walk reveals a problem:**
-- The batch has already closed the browser (last element is `["close"]`), so there's nothing to clean up.
-- Fix on the mount, redeploy (the cross-deploy of any affected stage target), and run the batch again for the affected subdomain. This counts toward the 3-iteration close-step limit.
-- Do NOT advance to publish until BOTH subdomains pass cleanly (`errors` empty, all sections populated, all interactions return expected output).
+- The tool has already closed the browser, so there's nothing to clean up.
+- Fix on the mount, redeploy (the cross-deploy of any affected stage target), and re-call `zerops_browser` for the affected subdomain. This counts toward the 3-iteration close-step limit.
+- Do NOT advance to publish until BOTH subdomains return clean output (`errorsOutput` empty, all sections populated, all interactions return expected output, `forkRecoveryAttempted: false`).
 
-**If the browser walk crashes the session** (fork exhaustion, tool-call timeout, anything else):
-- Run the pkill recovery recipe from Step 4c: `pkill -9 -f "agent-browser-darwin" ; pkill -9 -f "agent-browser-chrome-"`.
-- Wait 2s for fork reaping.
-- Verify the crash didn't corrupt on-disk state: `git status` on both mounts should show only the sub-agent's 1a fixes (which are already committed per the 1a redeploy step).
-- Re-run the batch. If it crashes a second time with fork exhaustion, the dev processes were not fully killed in step 1 — explicitly list running processes on every dev container (`ssh {hostname} "ps -ef"`) and kill anything leaking fork budget, then retry.
+**If `zerops_browser` returns `forkRecoveryAttempted: true`:**
+- The tool already ran pkill recovery for you. Do NOT re-run it manually.
+- The root cause is almost always a dev process you forgot to kill on a dev container. Explicitly list running processes on every dev container (`ssh {hostname} "ps -ef"`) and kill anything leaking fork budget (`nest start`, `vite`, `ts-node`, `nohup` jobs).
+- Re-call `zerops_browser` once the processes are gone. If it comes back with `forkRecoveryAttempted: true` a second time, something outside your control is spawning processes — stop, investigate, and ask the user before retrying.
+- Verify on-disk state is intact: `git status` on both mounts should show only the sub-agent's 1a fixes (which are already committed per the 1a redeploy step).
 
-**Close-step advancement gate**: do NOT call `zerops_workflow action="complete" step="close"` until 1b's batch walks for all required subdomains have returned clean output AND any regressions they surfaced have been fixed and re-verified. Advancing while the browser walk was aborted or inconclusive is equivalent to not having done it.
+**Close-step advancement gate**: do NOT call `zerops_workflow action="complete" step="close"` until `zerops_browser` has returned clean output for all required subdomains AND any regressions it surfaced have been fixed and re-verified. Advancing while the browser walk was aborted or inconclusive is equivalent to not having done it.
 
 ### 2. Export & Publish (ONLY when the user asks)
 
@@ -1398,7 +1430,13 @@ Single-runtime recipe (one codebase):
 zcp sync recipe export {outputDir} --app-dir /var/www/appdev --include-timeline
 ```
 
-Dual-runtime recipe (API-first — repeat `--app-dir` for every codebase, typically apidev + appdev; add a third for separate-codebase workers):
+Dual-runtime recipe (API-first — repeat `--app-dir` for every distinct codebase). Which directories to include depends on `worker.sharesCodebaseWith`:
+
+- **Dual-runtime + shared worker** (worker shares the API): `apidev` + `appdev` (two `--app-dir`).
+- **Dual-runtime + separate worker** (3-repo case, default): `apidev` + `appdev` + `workerdev` (three `--app-dir`).
+- **Single-app + separate worker**: `appdev` + `workerdev` (two `--app-dir`).
+- **Single-app + shared worker** (Laravel/Rails/Django): `appdev` only (the worker lives in the same zerops.yaml).
+
 ```
 zcp sync recipe export {outputDir} \
   --app-dir /var/www/apidev \

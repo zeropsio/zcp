@@ -71,47 +71,57 @@ func RecipeSetupForMode(mode string) string {
 	return RecipeSetupDev
 }
 
-// SharesAppCodebase returns true when a worker target uses the same base runtime
-// as the primary app/API — same source code, different process entry point (e.g.,
-// "php artisan queue:work" vs the web server). One app, two processes.
-// In dual-runtime recipes (frontend + API), plan.RuntimeType is the API's runtime
-// — the worker shares the API codebase, not the frontend.
-// When true: no workerdev service (appdev runs both processes via SSH), zeropsSetup
-// is "worker" (a third setup in the shared zerops.yaml), buildFromGit points to
-// {slug}-app (or {slug}-api for dual-runtime).
-// When false (separate codebase — different runtime/language): worker gets its own
-// dev+stage pair, its own zerops.yaml, zeropsSetup is "prod", buildFromGit points
-// to {slug}-worker.
-func SharesAppCodebase(target RecipeTarget, plan *RecipePlan) bool {
-	if !target.IsWorker || plan == nil {
-		return false
-	}
-	appBase, _, _ := strings.Cut(plan.RuntimeType, "@")
-	workerBase, _, _ := strings.Cut(target.Type, "@")
-	return appBase == workerBase
+// SharesAppCodebase returns true when a worker target explicitly declares that
+// it shares its codebase with another runtime target via SharesCodebaseWith.
+//
+// Semantics:
+//   - true (shared codebase, opt-in): one repo, two processes (e.g. Laravel +
+//     Horizon, Rails + Sidekiq). No workerdev service — the app's dev container
+//     runs both processes via SSH. zeropsSetup is "worker" (a third setup in the
+//     host target's shared zerops.yaml). buildFromGit inherits the host target's
+//     repo (resolved by findTarget in writeRuntimeBuildFromGit).
+//   - false (separate codebase, DEFAULT): own repo, own zerops.yaml with dev+prod
+//     setups, own dev+stage service pair. buildFromGit points at {slug}-worker.
+//
+// The previous implementation used a runtime-match heuristic (same base runtime
+// ⇒ shared codebase) which made the 3-repo case (e.g. Svelte frontend + NestJS
+// API + NestJS worker in three separate repos with independent deploy lifecycles)
+// literally unexpressible. The explicit field flips the default to separate and
+// requires the agent to opt into sharing with a concrete hostname reference.
+func SharesAppCodebase(target RecipeTarget) bool {
+	return target.IsWorker && target.SharesCodebaseWith != ""
 }
 
 // TargetHostsSharedWorker returns true when the given non-worker runtime target's
-// zerops.yaml must contain a `setup: worker` block — i.e., when a worker target
-// in the plan shares THIS target's codebase (same base runtime). In dual-runtime
-// recipes this is the API target only, not the frontend. Separate-codebase workers
-// (different base runtime than any app target) have their own zerops.yaml and are
-// not hosted by any app target.
+// zerops.yaml must contain a `setup: worker` block — i.e., when at least one
+// worker target in the plan explicitly names THIS target in SharesCodebaseWith.
+// Separate-codebase workers have their own zerops.yaml and are not hosted by
+// any app target.
 func TargetHostsSharedWorker(target RecipeTarget, plan *RecipePlan) bool {
 	if plan == nil || target.IsWorker || !IsRuntimeType(target.Type) {
 		return false
 	}
-	targetBase, _, _ := strings.Cut(target.Type, "@")
 	for _, t := range plan.Targets {
-		if !t.IsWorker {
-			continue
-		}
-		workerBase, _, _ := strings.Cut(t.Type, "@")
-		if workerBase == targetBase {
+		if t.IsWorker && t.SharesCodebaseWith == target.Hostname {
 			return true
 		}
 	}
 	return false
+}
+
+// findTarget returns a pointer to the named target in the plan, or nil if absent.
+// Used by the template layer to resolve a shared worker's host target (for repo
+// suffix inheritance). Lookup is by exact hostname match.
+func findTarget(plan *RecipePlan, hostname string) *RecipeTarget {
+	if plan == nil || hostname == "" {
+		return nil
+	}
+	for i := range plan.Targets {
+		if plan.Targets[i].Hostname == hostname {
+			return &plan.Targets[i]
+		}
+	}
+	return nil
 }
 
 // recipeSetupName returns the zeropsSetup name for a recipe RUNTIME service.
@@ -119,12 +129,17 @@ func TargetHostsSharedWorker(target RecipeTarget, plan *RecipePlan) bool {
 //   - "dev"    → dev entry (env 0-1 SSHFS mount)
 //   - "worker" → shared-codebase worker in prod (shared zerops.yaml's worker setup)
 //   - "prod"   → HTTP app in prod, OR separate-codebase worker (own zerops.yaml's prod setup)
-func recipeSetupName(target RecipeTarget, isDev bool, plan *RecipePlan) string {
+//
+// plan is no longer needed since SharesAppCodebase reads the explicit
+// SharesCodebaseWith field directly off the target, but is kept in the
+// signature for call-site symmetry with the other template helpers that
+// still need plan context (e.g. writeRuntimeBuildFromGit).
+func recipeSetupName(target RecipeTarget, isDev bool, _ *RecipePlan) string {
 	if isDev {
 		return RecipeSetupDev
 	}
 	// Shared-codebase worker: the shared zerops.yaml has a dedicated "worker" setup.
-	if target.IsWorker && SharesAppCodebase(target, plan) {
+	if SharesAppCodebase(target) {
 		return "worker"
 	}
 	// App, or separate-codebase worker (its own zerops.yaml's prod setup).

@@ -577,9 +577,12 @@ func testShowcasePlan() *workflow.RecipePlan {
 		},
 		Targets: []workflow.RecipeTarget{
 			{Hostname: "app", Type: "php-nginx@8.4"},
-			{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true},
+			// Shared-codebase worker — idiomatic for Laravel (Horizon).
+			{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true, SharesCodebaseWith: "app"},
 			{Hostname: "db", Type: "postgresql@18"},
 			{Hostname: "redis", Type: "valkey@7.2"},
+			// Dedicated NATS broker — required kindMessaging service.
+			{Hostname: "queue", Type: "nats@2.12"},
 			{Hostname: "storage", Type: "object-storage"},
 			{Hostname: "search", Type: "meilisearch@1.20"},
 		},
@@ -1000,7 +1003,8 @@ func TestCheckRecipeGenerate_DualRuntime(t *testing.T) {
 		Targets: []workflow.RecipeTarget{
 			{Hostname: "app", Type: "static", Role: "app"},
 			{Hostname: "api", Type: "nodejs@22", Role: "api"},
-			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+			// Shared-codebase worker: explicitly names the API as host.
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true, SharesCodebaseWith: "api"},
 			{Hostname: "db", Type: "postgresql@17"},
 		},
 	}
@@ -1085,7 +1089,8 @@ func TestCheckRecipeGenerate_SingleAppShowcase_WorkerRequired(t *testing.T) {
 		},
 		Targets: []workflow.RecipeTarget{
 			{Hostname: "app", Type: "php-nginx@8.4"},
-			{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true},
+			// Explicit shared-codebase declaration: worker shares app's codebase.
+			{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true, SharesCodebaseWith: "app"},
 			{Hostname: "db", Type: "mariadb@10.11"},
 		},
 	}

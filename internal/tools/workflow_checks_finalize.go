@@ -333,7 +333,7 @@ func checkServiceStructure(doc importYAMLDoc, svcMap map[string]importService, p
 			if !workflow.IsRuntimeType(target.Type) {
 				continue
 			}
-			sharedWorker := target.IsWorker && workflow.SharesAppCodebase(target, plan)
+			sharedWorker := workflow.SharesAppCodebase(target)
 			stageHost := target.Hostname + "stage"
 			if _, ok := svcMap[stageHost]; !ok {
 				checks = append(checks, workflow.StepCheck{

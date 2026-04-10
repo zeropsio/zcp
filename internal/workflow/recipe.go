@@ -86,11 +86,27 @@ type EnvComments struct {
 // The Role field is for repo routing and comment generation only — it does NOT
 // affect template dispatch.
 type RecipeTarget struct {
-	Hostname     string   `json:"hostname"               jsonschema:"Service hostname — lowercase alphanumeric, no hyphens or underscores (e.g. 'app', 'db', 'cache')."`
-	Type         string   `json:"type"                   jsonschema:"Zerops service type with version — pick the highest available version from the live catalog for each stack. Must exist in the live catalog."`
-	IsWorker     bool     `json:"isWorker,omitempty"     jsonschema:"Only meaningful for runtime types — set true for background/queue workers, false (default) for the HTTP-serving primary app. Ignored for managed/utility types (their rendering is fully determined by type)."`
-	Role         string   `json:"role,omitempty"         jsonschema:"Service role for repo routing: 'app' (frontend/default), 'api' (backend API), 'worker' (background processor). Empty for managed/utility services. Does NOT affect template dispatch — type predicates remain authoritative."`
-	Environments []string `json:"environments,omitempty"` // ignored — all targets appear in all environments
+	Hostname string `json:"hostname"           jsonschema:"Service hostname — lowercase alphanumeric, no hyphens or underscores (e.g. 'app', 'db', 'cache')."`
+	Type     string `json:"type"               jsonschema:"Zerops service type with version — pick the highest available version from the live catalog for each stack. Must exist in the live catalog."`
+	IsWorker bool   `json:"isWorker,omitempty" jsonschema:"Only meaningful for runtime types — set true for background/queue workers, false (default) for the HTTP-serving primary app. Ignored for managed/utility types (their rendering is fully determined by type)."`
+	Role     string `json:"role,omitempty"     jsonschema:"Service role for repo routing: 'app' (frontend/default), 'api' (backend API), 'worker' (background processor). Empty for managed/utility services. Does NOT affect template dispatch — type predicates remain authoritative."`
+	// SharesCodebaseWith names another (non-worker) runtime target whose
+	// codebase this worker shares — one app, two processes. Only meaningful
+	// for workers. Empty (DEFAULT) means the worker is a SEPARATE codebase:
+	// its own repo, its own zerops.yaml, its own dev+stage pair. Non-empty
+	// means shared: no workerdev, the worker runs as a `setup: worker`
+	// block in the host target's zerops.yaml, buildFromGit inherits the
+	// host target's repo. Validation enforces: the referenced hostname
+	// exists, is a non-worker runtime target, and has a base runtime that
+	// matches this worker's base runtime (cross-language sharing is invalid).
+	//
+	// Worker codebase decision is a first-class research-step decision:
+	// separate is the default because most mature architectures deploy
+	// workers from their own repo; opt into sharing ONLY when the framework's
+	// queue library is tightly bound to the app boundary (Laravel Horizon,
+	// Rails Sidekiq, Django Celery in-process).
+	SharesCodebaseWith string   `json:"sharesCodebaseWith,omitempty" jsonschema:"OPTIONAL — only for workers (isWorker=true). Hostname of the non-worker runtime target whose codebase this worker shares (one repo, two processes). Empty (default) = separate codebase, own repo, own zerops.yaml, own dev+stage pair. Set to the app/api hostname ONLY when the framework's queue library runs as an in-process entry point of the app (Laravel Horizon, Rails Sidekiq, Django+Celery). Must reference an existing non-worker runtime target whose base runtime matches this worker's base runtime."`
+	Environments       []string `json:"environments,omitempty"` // ignored — all targets appear in all environments
 }
 
 // DecisionResults holds the 4 recipe decision tree outputs.

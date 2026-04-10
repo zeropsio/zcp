@@ -69,6 +69,7 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 
 ## Valkey
 **Type**: `valkey` (check live stacks for versions; MUST NOT use v8 — passes validation but fails import) | **Mode**: optional (default NON_HA), immutable
+**Use for**: **cache + sessions ONLY**. Do NOT use Valkey as a queue broker for Zerops showcases — the canonical queue broker is NATS (see `nats` below and `choose-queue` decision). Using Valkey for queues is a legacy polymorphism pattern (one service wearing three hats); the showcase tier separates concerns explicitly. Exception: Laravel Horizon, Rails Sidekiq, Django+Celery-with-Redis — frameworks with a first-class Redis-bound queue library can keep their queue on Valkey, BUT the showcase still provisions a NATS broker as a separate `queue` service for the messaging feature section on the dashboard.
 **Ports**: 6379 (RW), 6380 (RW TLS), 7000 (RO, HA only), 7001 (RO TLS, HA only)
 **Env**: `hostname`, `port`, `connectionString`, `portTls` — NO `user` or `password` (unauthenticated)
 **HA**: 1 master + 2 replicas. Zerops-specific: ports 6379/6380 on replicas forward to master (NOT native Valkey). Async replication.
@@ -130,12 +131,15 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 
 ## NATS
 **Type**: `nats` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
+**Use for**: **messaging / queue broker for every showcase recipe**. NATS is the canonical queue service for Zerops showcases — the `queue` target in the showcase service list. It is a dedicated broker, NOT a generic KV store or cache substitute. Pub/sub for fan-out, JetStream for persistent queues with delivery guarantees. Workers subscribe to subjects; dashboards publish test messages. The NATS connection is framework-agnostic, which is why it's a better default than a language-bound queue library.
+**Canonical hostname**: `queue` (literal) — keeps env var references readable: `${queue_hostname}`, `${queue_port}`, `${queue_user}`, `${queue_password}`. Do not name it `nats` in the showcase target list even though the type is `nats@2.12`.
 **Ports**: 4222 (client), 8222 (HTTP monitoring)
 **Env**: `hostname`, `user` (always `zerops`), `password`, `connectionString`
 **Config**: `JET_STREAM_ENABLED` (default 1), `MAX_PAYLOAD` (default 8 MB, max 64 MB)
 **Gotchas**: Config changes require restart. JetStream HA sync lag 1 min. Set `JET_STREAM_ENABLED=0` for core pub-sub only.
-**Wiring** (sample hostname: `nats`):
-**SECRETS**: `NATS_URL: nats://${nats_user}:${nats_password}@nats:4222` or `NATS_URL: ${nats_connectionString}`
+**Wiring** (sample hostname: `queue`):
+**VARS**: `NATS_HOST: ${queue_hostname}` `NATS_PORT: ${queue_port}`
+**SECRETS**: `NATS_USER: ${queue_user}` `NATS_PASS: ${queue_password}` — or the compact form `NATS_URL: ${queue_connectionString}`
 
 ## Meilisearch
 **Type**: `meilisearch` (check live stacks for versions) | **Mode**: optional (NON_HA only)

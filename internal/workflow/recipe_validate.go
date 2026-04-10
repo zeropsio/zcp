@@ -49,6 +49,12 @@ func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType, 
 	// Targets — validate against schema import service types when available.
 	errs = append(errs, validateTargets(plan.Targets, schemas)...)
 
+	// Worker codebase references — every SharesCodebaseWith must resolve to a
+	// valid host target. Runs unconditionally (applies to minimal tier too,
+	// even though workers are showcase-only — cheap to verify, and if a
+	// minimal plan sneaks in a worker, we still want a clean error).
+	errs = append(errs, validateWorkerCodebaseRefs(plan.Targets)...)
+
 	// Showcase-specific: enforce all required service kinds.
 	if plan.Tier == RecipeTierShowcase {
 		errs = append(errs, validateShowcaseServices(plan.Targets)...)
@@ -159,15 +165,104 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 	return errs
 }
 
+// validateWorkerCodebaseRefs enforces the semantics of RecipeTarget.SharesCodebaseWith.
+// Rules:
+//  1. SharesCodebaseWith is only meaningful for workers (IsWorker=true). If a
+//     non-worker target sets it, reject — the field has no meaning there and
+//     silently ignoring is a footgun (the agent will think it took effect).
+//  2. A non-empty SharesCodebaseWith must reference an existing target in the
+//     plan. Dangling references are rejected.
+//  3. The referenced target must NOT itself be a worker (chain sharing is
+//     invalid — there's no codebase behind a worker to share with).
+//  4. The referenced target must be a runtime type (sharing with a database
+//     or object-storage makes no sense).
+//  5. The referenced target's base runtime must match this worker's base
+//     runtime. You cannot share code between, e.g., a Node.js app and a Python
+//     worker — they're different codebases by definition.
+//
+// This is the single source of truth for "is this shared-codebase link valid?"
+// The template layer (runtimeRepoSuffix, TargetHostsSharedWorker) trusts the
+// validation result and never re-checks.
+func validateWorkerCodebaseRefs(targets []RecipeTarget) []string {
+	if len(targets) == 0 {
+		return nil
+	}
+
+	// Index targets by hostname for O(1) lookup. We build the index once per
+	// plan so a plan with N shared workers is still O(N) total.
+	byName := make(map[string]RecipeTarget, len(targets))
+	for _, t := range targets {
+		byName[t.Hostname] = t
+	}
+
+	var errs []string
+	for i, t := range targets {
+		// Rule 1: non-worker with SharesCodebaseWith set.
+		if !t.IsWorker && t.SharesCodebaseWith != "" {
+			errs = append(errs, fmt.Sprintf(
+				"target[%d] %q: sharesCodebaseWith is only valid on worker targets (isWorker=true)",
+				i, t.Hostname))
+			continue
+		}
+		if t.SharesCodebaseWith == "" {
+			continue // separate codebase — nothing to validate
+		}
+
+		// Rule 2: reference must exist.
+		host, ok := byName[t.SharesCodebaseWith]
+		if !ok {
+			errs = append(errs, fmt.Sprintf(
+				"target[%d] %q: sharesCodebaseWith references unknown target %q",
+				i, t.Hostname, t.SharesCodebaseWith))
+			continue
+		}
+
+		// Rule 3: host must not itself be a worker.
+		if host.IsWorker {
+			errs = append(errs, fmt.Sprintf(
+				"target[%d] %q: sharesCodebaseWith points at another worker %q — workers cannot host workers",
+				i, t.Hostname, host.Hostname))
+			continue
+		}
+
+		// Rule 4: host must be a runtime type.
+		if !IsRuntimeType(host.Type) {
+			errs = append(errs, fmt.Sprintf(
+				"target[%d] %q: sharesCodebaseWith points at non-runtime target %q (type %q) — only runtime targets host codebases",
+				i, t.Hostname, host.Hostname, host.Type))
+			continue
+		}
+
+		// Rule 5: base runtime must match (no cross-language sharing).
+		workerBase, _, _ := strings.Cut(t.Type, "@")
+		hostBase, _, _ := strings.Cut(host.Type, "@")
+		if workerBase != hostBase {
+			errs = append(errs, fmt.Sprintf(
+				"target[%d] %q: sharesCodebaseWith %q has base runtime %q but this worker is %q — shared codebases must use the same base runtime",
+				i, t.Hostname, host.Hostname, hostBase, workerBase))
+		}
+	}
+	return errs
+}
+
 // validateShowcaseServices checks that showcase recipes include all required service kinds:
-// an HTTP app, a worker, and one each of database, cache, storage, search engine, mail catcher.
+// an HTTP app, a worker, and one each of database, cache, storage, search engine, messaging.
 // Dual-runtime showcases (frontend + API) have two non-worker runtimes — this is valid.
+//
+// kindMessaging is required as of the NATS-first showcase rework: every showcase
+// now provisions a dedicated broker (NATS by default — see choose-queue knowledge
+// decision). The broker is the worker's queue source and also the test surface
+// for the "dispatch-a-job" feature on the dashboard. Collapsing messaging into
+// the cache service (Redis polymorphism) is no longer acceptable — it produced
+// fuzzy showcases where the dashboard demoed the "queue" section without a real
+// broker in the topology.
 func validateShowcaseServices(targets []RecipeTarget) []string {
 	requiredKinds := map[string]bool{
 		kindDatabase:     false,
 		kindCache:        false,
 		kindStorage:      false,
 		kindSearchEngine: false,
+		kindMessaging:    false,
 	}
 	hasApp, hasWorker := false, false
 

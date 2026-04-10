@@ -49,9 +49,15 @@ func validShowcasePlan() RecipePlan {
 	p.Research.MailLib = "smtp"
 	p.Targets = []RecipeTarget{
 		{Hostname: "app", Type: "php-nginx@8.4"},
-		{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true},
+		// Laravel default: shared-codebase worker (Horizon-style). Tests that
+		// need the separate-codebase 3-repo case should clone this fixture and
+		// clear SharesCodebaseWith (or build their own plan).
+		{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true, SharesCodebaseWith: "app"},
 		{Hostname: "db", Type: "mariadb@10.11"},
 		{Hostname: "cache", Type: "keydb@6"},
+		// NATS messaging broker — dedicated queue layer, not an overload of cache.
+		// Required for every showcase plan (validateShowcaseServices).
+		{Hostname: "queue", Type: "nats@2.12"},
 		{Hostname: "storage", Type: "object-storage"},
 		{Hostname: "search", Type: "meilisearch@1"},
 	}
@@ -227,6 +233,17 @@ func TestValidateRecipePlan_ShowcaseMissingServices(t *testing.T) {
 			}
 			p.Targets = filtered
 		}, "search engine"},
+		{"missing messaging broker", func(p *RecipePlan) {
+			// Remove the NATS target — validation must reject a showcase that
+			// overloads cache with queue responsibility.
+			var filtered []RecipeTarget
+			for _, t := range p.Targets {
+				if serviceTypeKind(t.Type) != "messaging" {
+					filtered = append(filtered, t)
+				}
+			}
+			p.Targets = filtered
+		}, "messaging"},
 		{"missing app (no non-worker runtime)", func(p *RecipePlan) {
 			var filtered []RecipeTarget
 			for _, t := range p.Targets {
@@ -259,6 +276,128 @@ func TestValidateRecipePlan_ShowcaseMissingServices(t *testing.T) {
 				t.Errorf("expected error containing %q, got: %v", tt.wantErr, errs)
 			}
 		})
+	}
+}
+
+// TestValidateRecipePlan_WorkerCodebaseRefs locks the semantics of the new
+// explicit SharesCodebaseWith field on RecipeTarget. The happy path is
+// covered by TestValidateRecipePlan_Valid + the 3-repo test; this table
+// enumerates every rejection rule.
+func TestValidateRecipePlan_WorkerCodebaseRefs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		modify  func(*RecipePlan)
+		wantErr string // substring that must appear in at least one error
+	}{
+		{
+			name: "sharesCodebaseWith on non-worker is rejected",
+			modify: func(p *RecipePlan) {
+				for i := range p.Targets {
+					if p.Targets[i].Hostname == "app" {
+						p.Targets[i].SharesCodebaseWith = "db" // nonsense but illustrative
+					}
+				}
+			},
+			wantErr: "only valid on worker targets",
+		},
+		{
+			name: "sharesCodebaseWith referencing unknown target is rejected",
+			modify: func(p *RecipePlan) {
+				for i := range p.Targets {
+					if p.Targets[i].IsWorker {
+						p.Targets[i].SharesCodebaseWith = "nonexistent"
+					}
+				}
+			},
+			wantErr: "unknown target",
+		},
+		{
+			name: "sharesCodebaseWith pointing at another worker is rejected",
+			modify: func(p *RecipePlan) {
+				// Add a second worker and make the first point at it.
+				p.Targets = append(p.Targets, RecipeTarget{
+					Hostname: "worker2", Type: "php-nginx@8.4", IsWorker: true,
+				})
+				for i := range p.Targets {
+					if p.Targets[i].Hostname == "worker" {
+						p.Targets[i].SharesCodebaseWith = "worker2"
+					}
+				}
+			},
+			wantErr: "workers cannot host workers",
+		},
+		{
+			name: "sharesCodebaseWith pointing at a managed service is rejected",
+			modify: func(p *RecipePlan) {
+				for i := range p.Targets {
+					if p.Targets[i].IsWorker {
+						p.Targets[i].SharesCodebaseWith = "db"
+					}
+				}
+			},
+			wantErr: "non-runtime target",
+		},
+		{
+			name: "sharesCodebaseWith with base-runtime mismatch is rejected",
+			modify: func(p *RecipePlan) {
+				// Add an API target with a different runtime, then point the
+				// (PHP) worker at it — base runtimes don't match.
+				p.Targets = append(p.Targets, RecipeTarget{
+					Hostname: "api", Type: "nodejs@22", Role: "api",
+				})
+				for i := range p.Targets {
+					if p.Targets[i].IsWorker {
+						p.Targets[i].SharesCodebaseWith = "api"
+					}
+				}
+			},
+			wantErr: "same base runtime",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			plan := validShowcasePlan()
+			tt.modify(&plan)
+
+			errs := ValidateRecipePlan(plan, nil, nil)
+			if len(errs) == 0 {
+				t.Fatalf("expected validation errors, got none")
+			}
+			found := false
+			for _, e := range errs {
+				if strings.Contains(e, tt.wantErr) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected error containing %q, got: %v", tt.wantErr, errs)
+			}
+		})
+	}
+}
+
+// TestValidateRecipePlan_SeparateCodebaseWorker locks the default behaviour:
+// a worker with empty SharesCodebaseWith is a SEPARATE codebase, and the
+// plan validates cleanly regardless of whether its base runtime matches any
+// other target. This is the inverse guard for the old runtime-match heuristic.
+func TestValidateRecipePlan_SeparateCodebaseWorker(t *testing.T) {
+	t.Parallel()
+
+	plan := validShowcasePlan()
+	// Default fixture has SharesCodebaseWith="app"; flip to separate.
+	for i := range plan.Targets {
+		if plan.Targets[i].IsWorker {
+			plan.Targets[i].SharesCodebaseWith = ""
+		}
+	}
+	errs := ValidateRecipePlan(plan, nil, nil)
+	if len(errs) > 0 {
+		t.Errorf("separate-codebase worker (same runtime as app) should validate cleanly, got: %v", errs)
 	}
 }
 

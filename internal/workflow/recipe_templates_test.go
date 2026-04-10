@@ -38,18 +38,41 @@ func testShowcasePlan() *RecipePlan {
 	plan := testMinimalPlan()
 	plan.Tier = RecipeTierShowcase
 	plan.Slug = "laravel-showcase"
+	// Laravel showcase pattern: Horizon-style shared-codebase worker. The
+	// worker explicitly declares SharesCodebaseWith="app" — one Composer
+	// project, two process entry points (web + horizon). This is the
+	// idiomatic Laravel/Rails/Django shape; other ecosystems default to
+	// separate (empty SharesCodebaseWith).
+	//
+	// A Laravel Horizon worker is the one exception where the queue consumer
+	// still targets Redis directly — Horizon is tightly bound to Redis. Even
+	// so, the showcase provisions a dedicated NATS broker for validation
+	// consistency: every showcase has a kindMessaging target, and the
+	// dashboard's messaging section exercises NATS regardless of what the
+	// worker itself polls. The Laravel recipe's worker command targets Redis;
+	// the "NATS feature section" uses a framework NATS client for pub/sub.
 	plan.Targets = append(plan.Targets,
 		RecipeTarget{Hostname: "redis", Type: "valkey@7.2"},
-		RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true},
+		RecipeTarget{Hostname: "queue", Type: "nats@2.12"},
+		RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true, SharesCodebaseWith: "app"},
 		RecipeTarget{Hostname: "storage", Type: "object-storage"},
 		RecipeTarget{Hostname: "mailpit", Type: "mailpit"},
 		RecipeTarget{Hostname: "search", Type: "meilisearch@1"},
 	)
+	// Research fields are required for showcase tier validation.
+	plan.Research.CacheLib = "redis"
+	plan.Research.SessionDriver = "redis"
+	plan.Research.QueueDriver = "horizon"
+	plan.Research.StorageDriver = "s3"
+	plan.Research.SearchLib = "meilisearch"
 	return plan
 }
 
 // testDualRuntimePlan returns a showcase plan with dual-runtime architecture:
-// a Svelte frontend (static) + NestJS API backend + shared-codebase worker.
+// a Svelte frontend (static) + NestJS API backend + shared-codebase worker
+// that explicitly names the API as its host (BullMQ-style in-process worker
+// pattern). Tests that exercise the separate-codebase 3-repo case mutate the
+// worker's SharesCodebaseWith to "" explicitly.
 func testDualRuntimePlan() *RecipePlan {
 	return &RecipePlan{
 		Framework:   "nestjs",
@@ -73,9 +96,11 @@ func testDualRuntimePlan() *RecipePlan {
 		Targets: []RecipeTarget{
 			{Hostname: "app", Type: "static", Role: "app"},
 			{Hostname: "api", Type: "nodejs@22", Role: "api"},
-			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true, SharesCodebaseWith: "api"},
 			{Hostname: "db", Type: "postgresql@17"},
 			{Hostname: "cache", Type: "valkey@7.2"},
+			// NATS broker — dedicated queue layer the worker consumes from.
+			{Hostname: "queue", Type: "nats@2.12"},
 			{Hostname: "storage", Type: "object-storage"},
 			{Hostname: "search", Type: "meilisearch@1"},
 		},
@@ -387,10 +412,11 @@ func TestGenerateEnvImportYAML_Env2Plus_ProdService(t *testing.T) {
 	}
 }
 
-// TestGenerateEnvImportYAML_SharedCodebaseWorker verifies that when a worker uses
-// the same runtime as the app (one app, two processes — e.g. web + queue:work),
-// env 0-1 get workerstage ONLY. No workerdev — appdev runs both processes via SSH.
-// This applies to ALL recipe tiers (showcase, minimal, etc.).
+// TestGenerateEnvImportYAML_SharedCodebaseWorker verifies that when a worker
+// declares SharesCodebaseWith pointing at an existing app target (one repo,
+// two processes — e.g. web + queue:work in the Laravel Horizon idiom), env 0-1
+// get workerstage ONLY. No workerdev — the host target's dev container runs
+// both processes via SSH. This applies to ALL recipe tiers (showcase, minimal).
 func TestGenerateEnvImportYAML_SharedCodebaseWorker(t *testing.T) {
 	t.Parallel()
 
@@ -454,17 +480,21 @@ func TestGenerateEnvImportYAML_SharedCodebaseWorker(t *testing.T) {
 	}
 }
 
-// TestGenerateEnvImportYAML_SeparateCodebaseWorker verifies that when a worker uses
-// a different runtime than the app (separate codebase — e.g. bun app + python worker),
-// it gets its own dev+stage pair in env 0-1 because it needs its own container and mount.
+// TestGenerateEnvImportYAML_SeparateCodebaseWorker verifies that when a worker
+// is a separate codebase (empty SharesCodebaseWith), it gets its own dev+stage
+// pair in env 0-1 because it needs its own container and mount. Uses a cross-
+// language case (php app + python worker) as the clearest example.
 func TestGenerateEnvImportYAML_SeparateCodebaseWorker(t *testing.T) {
 	t.Parallel()
 
 	plan := testShowcasePlan()
-	// Override worker to different type = separate codebase.
-	for i, t := range plan.Targets {
-		if t.IsWorker {
+	// Override worker to a different base runtime AND clear SharesCodebaseWith.
+	// (Clearing the field is load-bearing: the fixture sets it to "app" for the
+	// Laravel-Horizon idiom, but the separate-codebase case is the opposite.)
+	for i, tgt := range plan.Targets {
+		if tgt.IsWorker {
 			plan.Targets[i].Type = "python@3.12"
+			plan.Targets[i].SharesCodebaseWith = ""
 		}
 	}
 
@@ -1222,9 +1252,14 @@ func TestRecipeSetupName(t *testing.T) {
 	t.Parallel()
 
 	appTarget := RecipeTarget{Hostname: "app", Type: "php-nginx@8.4"}
-	monoWorker := RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true}
+	// Shared-codebase worker: explicitly names "app" as its host.
+	monoWorker := RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true, SharesCodebaseWith: "app"}
+	// Separate-codebase worker: empty SharesCodebaseWith (own repo, own zerops.yaml).
 	polyWorker := RecipeTarget{Hostname: "worker", Type: "python@3.12", IsWorker: true}
-	plan := &RecipePlan{RuntimeType: "php-nginx@8.4"}
+	plan := &RecipePlan{
+		RuntimeType: "php-nginx@8.4",
+		Targets:     []RecipeTarget{appTarget, monoWorker, polyWorker},
+	}
 
 	tests := []struct {
 		name   string
@@ -1254,12 +1289,12 @@ func TestRecipeSetupName(t *testing.T) {
 func TestTargetHostsSharedWorker(t *testing.T) {
 	t.Parallel()
 
-	// Single-app showcase: app hosts the worker.
+	// Single-app showcase: app hosts the worker (explicit share).
 	singlePlan := &RecipePlan{
 		RuntimeType: "php-nginx@8.4",
 		Targets: []RecipeTarget{
 			{Hostname: "app", Type: "php-nginx@8.4"},
-			{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true},
+			{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true, SharesCodebaseWith: "app"},
 		},
 	}
 	// Dual-runtime showcase: api hosts the worker, frontend does NOT.
@@ -1268,15 +1303,26 @@ func TestTargetHostsSharedWorker(t *testing.T) {
 		Targets: []RecipeTarget{
 			{Hostname: "app", Type: "static", Role: "app"},
 			{Hostname: "api", Type: "nodejs@22", Role: "api"},
-			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true, SharesCodebaseWith: "api"},
 		},
 	}
-	// Separate-codebase worker: no app target hosts it.
+	// Separate-codebase worker: empty SharesCodebaseWith, no app target hosts it.
 	polyPlan := &RecipePlan{
 		RuntimeType: "php-nginx@8.4",
 		Targets: []RecipeTarget{
 			{Hostname: "app", Type: "php-nginx@8.4"},
 			{Hostname: "worker", Type: "python@3.12", IsWorker: true},
+		},
+	}
+	// 3-repo case: app static + api nodejs + worker nodejs, worker is a
+	// SEPARATE repo (empty SharesCodebaseWith) even though runtime matches.
+	// This is the case the old heuristic could not express.
+	threeRepoPlan := &RecipePlan{
+		RuntimeType: "nodejs@22",
+		Targets: []RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true}, // empty = separate repo
 		},
 	}
 	// No worker at all: no target hosts a worker.
@@ -1297,6 +1343,12 @@ func TestTargetHostsSharedWorker(t *testing.T) {
 		{"dual_frontend_does_not_host", dualPlan, RecipeTarget{Hostname: "app", Type: "static", Role: "app"}, false},
 		{"dual_api_hosts_worker", dualPlan, RecipeTarget{Hostname: "api", Type: "nodejs@22", Role: "api"}, true},
 		{"separate_codebase_app_does_not_host", polyPlan, RecipeTarget{Hostname: "app", Type: "php-nginx@8.4"}, false},
+		// 3-repo case: api runtime matches worker runtime, BUT worker has empty
+		// SharesCodebaseWith — so api does NOT host a worker, even though the
+		// old heuristic would have claimed it did. This is the whole point of
+		// the explicit-field refactor.
+		{"three_repo_api_does_not_host", threeRepoPlan, RecipeTarget{Hostname: "api", Type: "nodejs@22", Role: "api"}, false},
+		{"three_repo_frontend_does_not_host", threeRepoPlan, RecipeTarget{Hostname: "app", Type: "static", Role: "app"}, false},
 		{"no_worker_target", minimalPlan, RecipeTarget{Hostname: "app", Type: "php-nginx@8.4"}, false},
 		{"worker_target_itself", singlePlan, RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true}, false},
 		{"nil_plan", nil, RecipeTarget{Hostname: "app", Type: "php-nginx@8.4"}, false},
@@ -1378,9 +1430,17 @@ func TestWriteRuntimeBuildFromGit_APIRole(t *testing.T) {
 	}{
 		{"frontend_app", dualPlan, RecipeTarget{Hostname: "app", Type: "static", Role: "app"}, "nestjs-showcase-app"},
 		{"api_backend", dualPlan, RecipeTarget{Hostname: "api", Type: "nodejs@22", Role: "api"}, "nestjs-showcase-api"},
-		{"shared_worker_dualruntime", dualPlan, RecipeTarget{Hostname: "worker", Type: "nodejs@22", IsWorker: true}, "nestjs-showcase-api"},
+		// Shared worker in dual-runtime: SharesCodebaseWith="api" → inherits -api suffix.
+		{"shared_worker_dualruntime", dualPlan, RecipeTarget{Hostname: "worker", Type: "nodejs@22", IsWorker: true, SharesCodebaseWith: "api"}, "nestjs-showcase-api"},
 		{"no_role_app", dualPlan, RecipeTarget{Hostname: "app", Type: "nodejs@22"}, "nestjs-showcase-app"},
-		{"shared_worker_singleapp", singlePlan, RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true}, "laravel-showcase-app"},
+		// Shared worker in single-app: SharesCodebaseWith="app" → inherits -app suffix.
+		{"shared_worker_singleapp", singlePlan, RecipeTarget{Hostname: "worker", Type: "php-nginx@8.4", IsWorker: true, SharesCodebaseWith: "app"}, "laravel-showcase-app"},
+		// Separate worker (3-repo case): empty SharesCodebaseWith → -worker suffix
+		// regardless of base-runtime match with the API. This case was literally
+		// unexpressible under the old runtime-match heuristic.
+		{"separate_worker_same_runtime", dualPlan, RecipeTarget{Hostname: "worker", Type: "nodejs@22", IsWorker: true}, "nestjs-showcase-worker"},
+		// Separate worker with a different runtime (cross-language): still -worker.
+		{"separate_worker_cross_runtime", singlePlan, RecipeTarget{Hostname: "worker", Type: "python@3.12", IsWorker: true}, "laravel-showcase-worker"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1516,9 +1576,11 @@ func TestValidateRecipePlan_DualRuntimeShowcase(t *testing.T) {
 		Targets: []RecipeTarget{
 			{Hostname: "app", Type: "static", Role: "app"},
 			{Hostname: "api", Type: "nodejs@22", Role: "api"},
-			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+			// NestJS BullMQ-style worker that shares API codebase.
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true, SharesCodebaseWith: "api"},
 			{Hostname: "db", Type: "postgresql@17"},
 			{Hostname: "cache", Type: "valkey@7.2"},
+			{Hostname: "queue", Type: "nats@2.12"},
 			{Hostname: "storage", Type: "object-storage"},
 			{Hostname: "search", Type: "meilisearch@1"},
 		},
@@ -1528,4 +1590,168 @@ func TestValidateRecipePlan_DualRuntimeShowcase(t *testing.T) {
 	if len(errs) > 0 {
 		t.Errorf("dual-runtime showcase should be valid, got errors: %v", errs)
 	}
+}
+
+// TestValidateRecipePlan_ThreeRepoShowcase locks the 3-repo case: app static
+// + api nodejs + worker nodejs, where the worker is a SEPARATE codebase even
+// though its base runtime matches the API. Expressible only because
+// SharesCodebaseWith is explicit rather than runtime-inferred.
+func TestValidateRecipePlan_ThreeRepoShowcase(t *testing.T) {
+	t.Parallel()
+
+	plan := RecipePlan{
+		Framework:   "nestjs",
+		Tier:        RecipeTierShowcase,
+		Slug:        "nestjs-showcase",
+		RuntimeType: "nodejs@22",
+		BuildBases:  []string{"nodejs@22"},
+		Research: ResearchData{
+			ServiceType:    "nodejs",
+			PackageManager: "npm",
+			HTTPPort:       3000,
+			BuildCommands:  []string{"npm ci"},
+			DeployFiles:    []string{"dist"},
+			StartCommand:   "node dist/main.js",
+			CacheLib:       "ioredis",
+			SessionDriver:  "redis",
+			QueueDriver:    "nats",
+			StorageDriver:  "s3",
+			SearchLib:      "meilisearch",
+			MailLib:        "nodemailer",
+			LoggingDriver:  "stderr",
+		},
+		Targets: []RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+			// Separate-codebase worker — same runtime as api but distinct repo.
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+			{Hostname: "db", Type: "postgresql@17"},
+			{Hostname: "cache", Type: "valkey@7.2"},
+			{Hostname: "queue", Type: "nats@2.12"},
+			{Hostname: "storage", Type: "object-storage"},
+			{Hostname: "search", Type: "meilisearch@1"},
+		},
+	}
+
+	errs := ValidateRecipePlan(plan, nil, nil)
+	if len(errs) > 0 {
+		t.Errorf("3-repo showcase should be valid, got errors: %v", errs)
+	}
+}
+
+// TestGenerateEnvImportYAML_NATSQueueRendering locks the NATS broker output
+// shape. NATS is the canonical showcase messaging service, wired with hostname
+// "queue" (the canonical literal — see themes/services.md) and type "nats@2.12".
+// Tests: it appears in every env, it renders as a managed service (priority: 10),
+// it gets mode: HA only in env 5, and the intro service list mentions NATS.
+func TestGenerateEnvImportYAML_NATSQueueRendering(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+
+	for _, envIdx := range []int{0, 1, 2, 3, 4, 5} {
+		t.Run(fmt.Sprintf("env_%d_has_queue", envIdx), func(t *testing.T) {
+			t.Parallel()
+			yaml := GenerateEnvImportYAML(plan, envIdx)
+			if !strings.Contains(yaml, "hostname: queue") {
+				t.Errorf("env %d must include hostname: queue (NATS broker)", envIdx)
+			}
+			if !strings.Contains(yaml, "type: nats@") {
+				t.Errorf("env %d queue service must be type: nats@..., got:\n%s", envIdx, yaml)
+			}
+			queueBlock := extractServiceBlock(yaml, "queue")
+			if !strings.Contains(queueBlock, "priority: 10") {
+				t.Errorf("env %d queue (managed service) must have priority: 10, got: %q", envIdx, queueBlock)
+			}
+		})
+	}
+
+	t.Run("env_5_queue_is_HA", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 5)
+		queueBlock := extractServiceBlock(yaml, "queue")
+		if !strings.Contains(queueBlock, "mode: HA") {
+			t.Errorf("env 5 queue must be mode: HA, got: %q", queueBlock)
+		}
+	})
+
+	t.Run("env_0_queue_is_NON_HA", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 0)
+		queueBlock := extractServiceBlock(yaml, "queue")
+		if !strings.Contains(queueBlock, "mode: NON_HA") {
+			t.Errorf("env 0 queue must be mode: NON_HA, got: %q", queueBlock)
+		}
+	})
+}
+
+// TestGenerateEnvImportYAML_ThreeRepoSeparateWorker verifies the template
+// output for the 3-repo case: the worker gets its own dev+stage pair, its
+// own -worker repo, and env 0-1 must emit workerdev+workerstage (not just
+// workerstage as shared-codebase workers do).
+func TestGenerateEnvImportYAML_ThreeRepoSeparateWorker(t *testing.T) {
+	t.Parallel()
+
+	plan := testDualRuntimePlan()
+	// Clear the shared flag to simulate the 3-repo case while keeping every
+	// other structural detail identical. This is the "worker Node.js matches
+	// api Node.js but is a separate repo" scenario.
+	for i := range plan.Targets {
+		if plan.Targets[i].IsWorker {
+			plan.Targets[i].SharesCodebaseWith = ""
+		}
+	}
+
+	t.Run("env_0_has_workerdev", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 0)
+		if !strings.Contains(yaml, "hostname: workerdev") {
+			t.Error("3-repo worker must have workerdev (own dev container)")
+		}
+		if !strings.Contains(yaml, "hostname: workerstage") {
+			t.Error("3-repo worker must have workerstage")
+		}
+	})
+
+	t.Run("env_0_worker_uses_worker_repo", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 0)
+		workerBlock := extractServiceBlock(yaml, "workerstage")
+		if !strings.Contains(workerBlock, "nestjs-showcase-worker") {
+			t.Errorf("3-repo workerstage should use -worker repo URL, got: %q", workerBlock)
+		}
+	})
+
+	t.Run("env_0_worker_uses_prod_setup", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 0)
+		workerBlock := extractServiceBlock(yaml, "workerstage")
+		// Separate-codebase worker runs its own zerops.yaml's prod setup,
+		// NOT a shared "worker" setup in api's yaml.
+		if !strings.Contains(workerBlock, "zeropsSetup: prod") {
+			t.Errorf("3-repo workerstage should use zeropsSetup: prod, got: %q", workerBlock)
+		}
+	})
+
+	t.Run("env_2_worker_uses_worker_repo", func(t *testing.T) {
+		t.Parallel()
+		yaml := GenerateEnvImportYAML(plan, 2)
+		workerBlock := extractServiceBlock(yaml, "worker")
+		if !strings.Contains(workerBlock, "nestjs-showcase-worker") {
+			t.Errorf("env 2 bare worker should use -worker repo, got: %q", workerBlock)
+		}
+	})
+
+	t.Run("env_2_api_is_not_worker_host", func(t *testing.T) {
+		t.Parallel()
+		// The API target's zerops.yaml should NOT need a `setup: worker` block
+		// because the worker is now a separate codebase. This is checked via
+		// TargetHostsSharedWorker at the workflow level; here we just verify
+		// the template output is consistent: no mention of a worker setup on
+		// the api service block.
+		apiTarget := RecipeTarget{Hostname: "api", Type: "nodejs@22", Role: "api"}
+		if TargetHostsSharedWorker(apiTarget, plan) {
+			t.Error("api should NOT host the worker in 3-repo case (worker is separate codebase)")
+		}
+	})
 }
