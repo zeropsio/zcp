@@ -20,11 +20,17 @@ Fill in all research fields by examining the framework's documentation and exist
 ### Reference Loading
 Load knowledge from lower-tier recipes that already exist for your runtime and framework. Each tier builds on the previous:
 
-**1. Hello-world** (platform knowledge): proven zerops.yaml patterns, runtime gotchas, base image details. One exists per runtime — match the base runtime, not the framework name:
+**1. Hello-world** (platform knowledge): proven zerops.yaml patterns, runtime gotchas, base image details.
+
 ```
-zerops_knowledge recipe="{runtime-base}-hello-world"
+zerops_knowledge recipe="{hello-world-slug}"
 ```
-Example: for a php-nginx framework, load `php-hello-world`. For a nodejs framework, load `nodejs-hello-world`.
+
+How to pick the slug:
+
+- **Dynamic-runtime frameworks** (backends, SSR): use the **runtime base**, not the framework name. Examples: php-nginx framework → `php-hello-world`; nodejs framework → `nodejs-hello-world`; bun → `bun-hello-world`; go → `go-hello-world`.
+- **Static-frontend frameworks** (SPAs, static-site generators): there is **no generic `static-hello-world`** — the runtime is Nginx with no framework context. Static hello-worlds are named by **framework**, typically `{framework}-static-hello-world` (e.g. `react-static-hello-world`, `vue-static-hello-world`, `angular-static-hello-world`, `nextjs-static-hello-world`, `sveltekit-static-hello-world`). A few legacy ones drop the `-static-` segment (e.g. `svelte-hello-world`). Pick the one matching the framework you're building.
+- **Dual-runtime (API-first) recipes**: load BOTH — the backend framework's runtime hello-world AND the frontend framework's static hello-world. The frontend static hello-world is what teaches the serve-only prod / toolchain-bearing dev pattern your frontend needs.
 
 **2. Minimal** (framework knowledge, if building a showcase): if a `{framework}-minimal` recipe exists, load it — it contains framework-specific gotchas, integration steps, and zerops.yaml patterns you should extend:
 ```
@@ -314,18 +320,23 @@ Write the complete zerops.yaml with ALL setup entries in a single file. Minimal 
 - `/var/www/apidev/zerops.yaml` — 3 setups: dev, prod, worker (API + shared-codebase worker)
 - `/var/www/appdev/zerops.yaml` — 2 setups: dev, prod (frontend only)
 
-The frontend's `build.envVariables` constructs the API URL from known parts:
-```
-VITE_API_URL: https://api-${zeropsSubdomainHost}-3000.prg1.zerops.app
-```
-Components: hostname (`api`, defined in import.yaml) + `zeropsSubdomainHost` (project-level, resolved at build time) + port (from API's `run.ports`). The dev setup uses the dev hostname: `apidev-${zeropsSubdomainHost}-3000...`.
+**How the frontend learns the API URL** — platform-level, framework-agnostic:
+
+In dual-runtime recipes, the frontend needs the API's public URL for the environment it's running in. The API's public URL differs per tier (env 0-1 pairs `appdev`/`apidev` and `appstage`/`apistage`; env 2-5 use single-container `app` and `api`). Zerops offers two places to supply per-environment values to a service:
+
+1. **Project-level env var** (`project.envVariables` in each environment's `import.yaml`) — every service in that project sees it; different environments supply different values. Use when all services in an env share the same value.
+2. **Service-level env var** (`envVariables` in the service's entry in `import.yaml`) — visible only to that service. Use when two services in the same environment need different values — e.g. env 0-1 where `appdev` points at `apidev` and `appstage` points at `apistage`.
+
+Whether the frontend reads the URL at **build time** (baked into the bundle, e.g. `import.meta.env.VITE_*`) or at **runtime** (config file, window global, server-side templating) is a **framework-level decision** that belongs in the recipe's per-recipe knowledge file, not in this workflow. When build-time baking is chosen, Zerops's `run.envReplace` can substitute a literal placeholder (e.g. `%%API_URL%%`) in the deployed bundle with the deploy-time value, so the same artifact serves different environments. See the chain-loaded predecessor recipe's knowledge for the specific pattern used by your framework — **do NOT invent a `setup: stage`** or any other new setup name; stage uses `prod`.
 
 Follow the injected chain recipe (working zerops.yaml from the predecessor) as the primary reference. For hello-world (no predecessor), follow the injected zerops.yaml Schema. Platform rules (lifecycle phases, deploy semantics) were taught at provision — use `zerops_knowledge` if you need to look up a specific rule.
 
 Recipe-specific conventions for each setup (platform rules from provision apply — these are ONLY the recipe-specific additions):
 
 **`setup: dev`** (self-deploy from SSHFS mount — agent iterates here):
-- `deployFiles: [.]` — **MANDATORY for self-deploy on dynamic runtimes** (nodejs, python, php-nginx, go, rust, bun, ubuntu, …); anything else destroys the source tree. **Exception for `run.base: static`** — a static container serves only the compiled bundle, there is no runtime evaluation. A static dev setup MUST still run `npm run build` (or equivalent) and set `deployFiles: dist/~` (or the framework's output dir). The only difference between dev and prod for a static target is build-time env vars (e.g. `VITE_API_URL` pointing at the `apidev-…` hostname in dev, `api-…` in prod) — NOT whether the build happens.
+- **`setup: dev` MUST give the agent a container that can host the framework's dev toolchain** — shell, package manager, and the framework's hot-reload process (`npm run dev`, `php artisan serve`, `bun --hot`, `cargo watch`, etc.). This is what makes the dev setup iterable over SSH.
+- **Dynamic runtimes** (nodejs, python, php-nginx, go, rust, bun, ubuntu, …): `run.base` is the same as prod and `deployFiles: [.]` preserves source across deploys — **MANDATORY**, anything else destroys the source tree.
+- **Serve-only runtimes** (`static`, standalone `nginx`, any future serve-only base): these host no toolchain — `run.base: static` is a **prod-only concern**. For the dev setup, pick a different `run.base` that CAN host the framework's dev toolchain — typically the same base that already exists under `build.base` for that setup (e.g. `nodejs@22` for a Vite/Svelte SPA whose prod is `static`). `run.base` may differ between setups inside the same zerops.yaml; the platform supports this and it's the intended pattern for serve-only prod artifacts. `deployFiles: [.]` still applies on dev regardless of `run.base` choice.
 - `start: zsc noop --silent` — exception: omit `start` for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
 - **NO healthCheck, NO readinessCheck** — agent controls lifecycle; checks would restart the container during iteration
 - Framework mode flags set to dev values (`APP_ENV: local`, `NODE_ENV: development`, `DEBUG: "true"`, verbose logging)
@@ -698,7 +709,7 @@ Check: service RUNNING, subdomain returns 200, health endpoint responds (or page
 zerops_subdomain action="enable" serviceHostname="apidev"
 zerops_verify serviceHostname="apidev"
 ```
-Verify `/api/health` returns 200 via curl. Then deploy appdev (Step 1) — the frontend builds with the API URL baked in. After appdev deploys, enable its subdomain and verify the dashboard loads and successfully fetches from the API.
+Verify `/api/health` returns 200 via curl. Then deploy appdev (Step 1) — the frontend needs the API running before it can deploy (in build-time-baked configurations) or before it can be verified (in runtime-config configurations). After appdev deploys, enable its subdomain and verify the dashboard loads and successfully fetches from the API.
 
 **CORS** (API-first): The API must set CORS headers allowing the frontend subdomain. Use the framework's standard CORS middleware (e.g., `@nestjs/cors`, `cors` for Express, `rs/cors` for Go). Allow the frontend's subdomain origin.
 
@@ -994,55 +1005,52 @@ Do NOT skip the sub-agent to save time. Do NOT publish without an explicit user 
 
 ### 1. Verification Sub-Agent (ALWAYS — mandatory)
 
-Spawn a sub-agent to perform a final review of the entire recipe. The sub-agent should act as a **{framework} expert** who has never seen this recipe before, reviewing it for correctness, completeness, and usability.
+Spawn a sub-agent as a **{framework} code expert** — not a Zerops platform expert. The sub-agent has NO Zerops context beyond what's in its brief: no injected guidance, no schema, no platform rules, no predecessor-recipe knowledge. Asking it to review platform config (zerops.yaml, import.yaml, zeropsSetup, envReplace, etc.) invites stale or hallucinated platform knowledge and framework-shaped "fixes" to platform problems. The main agent already owns platform config (injected guidance + live schema validation at finalize); the sub-agent's unique contribution is **framework-level code review** the main agent and automated checks cannot catch.
+
+The brief below is split into three explicit halves: direct-fix scope (framework code), symptom-only scope (observe and report; do NOT propose platform fixes), and out-of-scope (never touch).
 
 **Sub-agent prompt template:**
 
-> You are a {framework} expert reviewing a Zerops recipe. Read ALL files in {outputDir}/ and {appDir}/ and verify:
+> You are a {framework} expert reviewing the CODE of a Zerops recipe. You have deep knowledge of {framework} but NO knowledge of the Zerops platform beyond what's in this brief. Do NOT review platform config files (zerops.yaml, import.yaml) — the main agent has platform context and has already validated them against the live schema. Your job is to catch things only a {framework} expert catches.
 >
-> **App code review:**
-> - Does the app actually work? Check routes, views, config, migrations.
-> - Are framework conventions followed? (correct env mode flag, proxy trust configured, framework-idiomatic patterns)
-> - If `buildCommands` compiles assets, does the primary view load them via the framework's asset helper (not inline CSS/JS)?
-> - Is there dead code, unused dependencies, or missing files?
-> - Does `.env.example` exist with the right keys?
+> **Read and review (direct fixes allowed):**
+> - All source files in {appDir}/ — controllers, services, models, entities, migrations, modules, templates/views, client-side code, routes, middleware, guards, pipes, interceptors, event handlers
+> - Framework config: `tsconfig.json`, `nest-cli.json`, `vite.config.*`, `svelte.config.*`, `package.json` dependencies and scripts, lint config (but NOT the Zerops-managed `zerops.yaml`)
+> - `.env.example` — are all required keys present with framework-standard names?
+> - Test files — do they exercise the feature sections, or are they scaffold leftovers?
+> - README **framework sections** only — what the app does, how its code is wired. Do NOT review the README's zerops.yaml integration-guide fragment — that's platform content the main agent owns.
 >
-> **zerops.yaml review:**
-> - Do `setup: dev` and `setup: prod` entries have correct build/deploy/run config?
-> - Does `setup: prod` have `healthCheck` (httpGet on the health endpoint)? Missing healthCheck means unhealthy containers are never restarted.
-> - Does `setup: prod` have `deploy.readinessCheck`? Missing readinessCheck means broken builds get traffic.
-> - Are deployFiles complete for prod? (run `ls` and verify all dirs/files the start command needs are included)
-> - Are env vars correct for the framework? (production mode flags, service connection vars, secret references)
-> - If the app uses Object Storage: is a region env var set to `us-east-1`? (Zerops does NOT auto-generate a region, but every S3 SDK requires one — use whichever env var name the framework's S3 client reads)
-> - **Build-only vs runtime bases**: some bases exist ONLY in the build category and have no corresponding runtime type (they appear in `build.base` enums in the platform schema but not in `run.base`). A `run.base` must always be a valid runtime type. If a worker's `run.base` differs from its `build.base`, verify the `run.base` is a valid runtime type before flagging — the mismatch is often correct because the build base has no runtime equivalent.
-> - Is the comment quality good? (WHY not WHAT, no restating key names, no section-heading decorators like `# -- Section --`)
+> **Framework-expert review checklist:**
+> - Does the app actually work? Check routes, views, config, migrations, framework conventions (env mode flag, proxy trust, idiomatic patterns, DI order, middleware ordering, async boundaries, error propagation).
+> - Is there dead code, unused dependencies, missing imports, scaffold leftovers?
+> - Are framework security patterns followed? (XSS-safe templating, input validation, auth middleware order, secret handling)
+> - Does the test suite match what the code does?
+> - Are framework asset helpers used correctly (not inline CSS/JS when a build pipeline exists)?
 >
-> **import.yaml review (all 6 environments):**
-> - Do ALL runtime services have `buildFromGit` + `zeropsSetup`? (dev=`zeropsSetup: dev`, prod/stage=`zeropsSetup: prod`)
-> - Is there NO `startWithoutCode` anywhere? (that's workspace-only, never in recipe deliverables)
-> - Do ALL runtime services have `buildFromGit`?
-> - Are env 0-1 hostnames suffixed correctly? (`appdev`/`appstage`, NOT `appdev`/`app`)
-> - Is `corePackage: SERIOUS` at project level (not verticalAutoscaling) in env 5?
-> - Are `envSecrets` per-service (not project level)?
-> - Is the scaling matrix correct across tiers?
-> - Do service type versions match the plan? If the research step chose a specific version, all 6 import.yaml files should use that same version consistently.
+> **Browser walkthrough (showcase only — MANDATORY):**
+> Use `agent-browser` to open the live dashboard on BOTH `appdev` and `appstage` subdomains. For each: walk every feature section, interact with every control, open the browser console, check the network tab. Report, for each subdomain:
+> - Connectivity panel state (services connected, latencies)
+> - Each feature section's render state (populated, empty, errored)
+> - Console error count and exact messages (expected: zero)
+> - Failed network request count and exact URLs (expected: zero)
 >
-> **README review:**
-> - Does the integration-guide include numbered steps for code changes the agent made that any user would also need? (e.g., trusted proxy config, storage driver wiring). Demo-specific code (custom routes, views) does NOT belong — only changes that apply to any app on Zerops.
-> - Does the knowledge-base fragment contain ONLY irreducible content (not repeating zerops.yaml)?
-> - Is there clear separation: integration-guide = actionable steps, knowledge-base = awareness/gotchas?
-> - Are there exactly 3 extract fragments with proper markers?
+> A "looks fine to me" report without these specific observations is not acceptable.
 >
-> **Dual-runtime (API-first) additional checks:**
-> - Does the frontend successfully fetch from the API? (no CORS errors, data displays)
-> - Does each Svelte component call the correct API endpoint?
-> - Are both zerops.yaml files correct? (`/var/www/apidev/zerops.yaml` and `/var/www/appdev/zerops.yaml`)
-> - Does the frontend's `VITE_API_URL` build variable correctly construct the API URL?
-> - Do all 6 import.yaml files include BOTH `app` and `api` services with correct `buildFromGit` URLs and priority ordering?
+> **Symptom reporting (NO fixes):**
+> If anything in the browser walk points to a platform-level cause (wrong service URL, missing env var, CORS failure, container misrouting, deploy-layer issue), STOP and report the symptom. Do NOT propose `zerops.yaml`, `import.yaml`, or platform-config changes. The main agent has full Zerops context and will fix platform issues. Your report on a platform symptom should be shaped like: "appstage's console shows `Failed to fetch https://api-20fe-3000.prg1.zerops.app/status`. This URL appears to target a service named `api` which doesn't exist in the running environment (only `apidev` and `apistage` do). Platform root cause unclear — main agent to investigate."
 >
-> Report issues as: `[CRITICAL]` (breaks deploy), `[WRONG]` (incorrect but works), `[STYLE]` (quality improvement).
-
-**Browser verification — MANDATORY for showcase** (skip for minimal): After the code/config review, the verification sub-agent MUST open the live dashboard in `agent-browser` on BOTH `appdev` and `appstage` subdomains and walk through every feature section. This is not optional and not a substitute for curl — it's the only check that catches what the user actually sees. The sub-agent's report MUST state, for each subdomain: connectivity panel status, each feature section's render state, JavaScript console errors (expected: zero), and failed network requests (expected: zero). A "looks fine to me" report without these specific observations is not acceptable.
+> **Out of scope (do NOT review, do NOT propose fixes for):**
+> - `zerops.yaml` fields — `build.base`, `run.base`, `healthCheck`, `readinessCheck`, `deployFiles`, `buildFromGit`, `zeropsSetup`, `envReplace`, `envSecrets`, `cpuMode`, `mode`, `priority`, `verticalAutoscaling`, `minContainers`, `corePackage`, anything prefixed with `zsc`
+> - `import.yaml` fields — any of them, in any of the 6 environment files
+> - Service hostname naming, suffix conventions, env-tier progression
+> - Env var cross-service references (`${hostname_varname}`)
+> - Schema-level field validity
+> - Comment ratio or comment style in platform files
+> - Service type version choice
+> - Any Zerops platform primitive you haven't seen before — don't guess, don't invent new ones (e.g., don't suggest a new `setup:` name), don't suggest fixes that would introduce them
+>
+> Report issues as:
+>   `[CRITICAL]` (breaks the app), `[WRONG]` (incorrect code but works), `[STYLE]` (quality improvement), `[SYMPTOM]` (observed behavior that might have a platform cause — main agent to investigate, no fix proposed).
 
 Apply any CRITICAL or WRONG fixes, then **redeploy** to verify the fixes work:
 - If zerops.yaml or app code changed: `zerops_deploy targetService="appdev" setup="dev"` (API-first: also redeploy apidev) then cross-deploy to stage

@@ -469,6 +469,7 @@ zerops:
 - subdomainUrls from enable response are already full URLs — do NOT prepend https://.
 - Internal connections use http://, never https://.
 - Env var cross-references: `${hostname_varName}` (e.g. `${db_hostname}`, `${db_port}`). Variable names are platform-defined — ALWAYS use `zerops_discover includeEnvs=true` (keys only) to get actual names, never guess.
+- **Never self-reference an env var**: `FOO: ${FOO}` is always a tautology and always wrong. If a service needs a value it can't compute itself, supply it from **outside** the service's zerops.yaml — either at project level (`project.envVariables` in import.yaml — visible to every service) or at service level (the service's `envVariables:` block in import.yaml — visible only to that service). Then the service's zerops.yaml references the platform-injected key normally. Self-reference most often appears when an agent tries to "pipe" a value through zerops.yaml; the correct fix is to define it at the import.yaml layer, not inside zerops.yaml.
 - **NO .env files** — Zerops injects all envVariables/envSecrets as OS env vars at container start. Do NOT create `.env` files, use dotenv libraries, or add env-file-loading code.
 - 0.0.0.0 binding: app must listen on 0.0.0.0, not localhost or 127.0.0.1.
 
