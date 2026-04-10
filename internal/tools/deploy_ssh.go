@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -13,15 +14,31 @@ import (
 )
 
 // DeploySSHInput is the input type for zerops_deploy in SSH (container) mode.
+//
+// IncludeGit is FlexBool so stringified boolean forms go through
+// (same reasoning as DiscoverInput/EnvInput — see flexbool.go).
 type DeploySSHInput struct {
-	SourceService string `json:"sourceService,omitempty" jsonschema:"Hostname to deploy FROM. Omit for self-deploy (auto-inferred from targetService). Set for cross-deploy (e.g. dev→stage)."`
-	TargetService string `json:"targetService"           jsonschema:"Hostname of the service to deploy to."`
-	Setup         string `json:"setup,omitempty"         jsonschema:"zerops.yaml setup name to use. Required when setup name differs from hostname (e.g. setup=prod for hostname=appstage). Omit when setup name matches hostname."`
-	WorkingDir    string `json:"workingDir,omitempty"    jsonschema:"Container path for deploy. Default: /var/www. In container mode: omit entirely (always correct)."`
-	IncludeGit    bool   `json:"includeGit,omitempty"    jsonschema:"Include .git directory in the push (-g flag). Auto-forced for self-deploy."`
-	Strategy      string `json:"strategy,omitempty"      jsonschema:"Deploy strategy. Omit for default (zcli push to Zerops). Set to 'git-push' to push committed code to an external git remote. LLM should commit changes via SSH BEFORE calling git-push."`
-	RemoteURL     string `json:"remoteUrl,omitempty"     jsonschema:"Git remote URL (HTTPS). Required for strategy=git-push on first push. Omit on subsequent pushes if remote already configured."`
-	Branch        string `json:"branch,omitempty"        jsonschema:"Git branch name for git-push. Default: main."`
+	SourceService string   `json:"sourceService,omitempty"`
+	TargetService string   `json:"targetService"`
+	Setup         string   `json:"setup,omitempty"`
+	WorkingDir    string   `json:"workingDir,omitempty"`
+	IncludeGit    FlexBool `json:"includeGit,omitempty"`
+	Strategy      string   `json:"strategy,omitempty"`
+	RemoteURL     string   `json:"remoteUrl,omitempty"`
+	Branch        string   `json:"branch,omitempty"`
+}
+
+func deploySSHInputSchema() *jsonschema.Schema {
+	return objectSchema(map[string]*jsonschema.Schema{
+		"sourceService": {Type: "string", Description: "Hostname to deploy FROM. Omit for self-deploy (auto-inferred from targetService). Set for cross-deploy (e.g. dev→stage)."},
+		"targetService": {Type: "string", Description: "Hostname of the service to deploy to."},
+		"setup":         {Type: "string", Description: "zerops.yaml setup name to use. Required when setup name differs from hostname (e.g. setup=prod for hostname=appstage). Omit when setup name matches hostname."},
+		"workingDir":    {Type: "string", Description: "Container path for deploy. Default: /var/www. In container mode: omit entirely (always correct)."},
+		"includeGit":    flexBoolSchema("Include .git directory in the push (-g flag). Auto-forced for self-deploy."),
+		"strategy":      {Type: "string", Description: "Deploy strategy. Omit for default (zcli push to Zerops). Set to 'git-push' to push committed code to an external git remote. LLM should commit changes via SSH BEFORE calling git-push."},
+		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Required for strategy=git-push on first push. Omit on subsequent pushes if remote already configured."},
+		"branch":        {Type: "string", Description: "Git branch name for git-push. Default: main."},
+	}, "targetService")
 }
 
 // RegisterDeploySSH registers the zerops_deploy tool for SSH (container) mode.
@@ -49,6 +66,7 @@ func RegisterDeploySSH(
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_deploy",
 		Description: desc,
+		InputSchema: deploySSHInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),
@@ -79,7 +97,7 @@ func RegisterDeploySSH(
 
 		// Default: zcli push to Zerops.
 		result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
-			input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit)
+			input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit.Bool())
 		if err != nil {
 			return convertError(err), nil, nil
 		}

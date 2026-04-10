@@ -97,6 +97,76 @@ func TestDiscoverTool_WithEnvs(t *testing.T) {
 	}
 }
 
+// TestDiscoverTool_StringifiedBool is a regression test for the v7
+// post-mortem failure in LOG.txt line 9: an agent passed
+// includeEnvs="true" (stringified) and the MCP schema rejected the
+// call with a non-actionable "has type 'string', want 'boolean'"
+// error. After the FlexBool + explicit InputSchema change, both
+// forms must now pass through the full MCP pipeline to the handler.
+func TestDiscoverTool_StringifiedBool(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
+		}).
+		WithServiceEnv("svc-1", []platform.EnvVar{{Key: "PORT", Content: "3000"}})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDiscover(srv, mock, "proj-1", "")
+
+	// The key behaviour: both forms of the boolean must route to the same
+	// handler output. Table driven so new accepted forms (or rejected ones)
+	// slot in without a dedicated test.
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "native boolean", args: map[string]any{"service": "api", "includeEnvs": true}},
+		{name: "stringified lowercase", args: map[string]any{"service": "api", "includeEnvs": "true"}},
+		{name: "stringified uppercase", args: map[string]any{"service": "api", "includeEnvs": "TRUE"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := callTool(t, srv, "zerops_discover", tt.args)
+			if result.IsError {
+				t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+			}
+			var dr ops.DiscoverResult
+			if err := json.Unmarshal([]byte(getTextContent(t, result)), &dr); err != nil {
+				t.Fatalf("parse result: %v", err)
+			}
+			if len(dr.Services) != 1 {
+				t.Fatalf("expected 1 service, got %d", len(dr.Services))
+			}
+			if len(dr.Services[0].Envs) == 0 {
+				t.Error("includeEnvs was honoured — env list should be populated")
+			}
+		})
+	}
+}
+
+// TestDiscoverTool_BogusStringBoolRejected guards the other direction:
+// we do NOT want to silently coerce "yes" / "1" / "on" to true — those
+// forms aren't in the contract and accepting them hides real agent bugs.
+func TestDiscoverTool_BogusStringBoolRejected(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "api", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDiscover(srv, mock, "proj-1", "")
+
+	err := callToolMayError(t, srv, "zerops_discover", map[string]any{"service": "api", "includeEnvs": "yes"})
+	if err == nil {
+		t.Fatal("expected schema validation error for includeEnvs=\"yes\", got none")
+	}
+}
+
 func TestDiscoverTool_ServiceNotFound(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().

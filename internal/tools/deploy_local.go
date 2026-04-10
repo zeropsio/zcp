@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -12,11 +13,23 @@ import (
 
 // DeployLocalInput is the input type for zerops_deploy in local mode.
 // No sourceService — code lives locally, not on a remote service.
+//
+// IncludeGit is FlexBool so stringified boolean forms go through —
+// same reasoning as DiscoverInput/EnvInput.
 type DeployLocalInput struct {
-	TargetService string `json:"targetService"        jsonschema:"Hostname of the Zerops service to deploy to."`
-	Setup         string `json:"setup,omitempty"      jsonschema:"zerops.yaml setup name to use. Required when setup name differs from hostname (e.g. setup=prod for hostname=appstage). Omit when setup name matches hostname."`
-	WorkingDir    string `json:"workingDir,omitempty" jsonschema:"Local path to push from. Default: current directory."`
-	IncludeGit    bool   `json:"includeGit,omitempty" jsonschema:"Include .git directory in the push (-g flag)."`
+	TargetService string   `json:"targetService"`
+	Setup         string   `json:"setup,omitempty"`
+	WorkingDir    string   `json:"workingDir,omitempty"`
+	IncludeGit    FlexBool `json:"includeGit,omitempty"`
+}
+
+func deployLocalInputSchema() *jsonschema.Schema {
+	return objectSchema(map[string]*jsonschema.Schema{
+		"targetService": {Type: "string", Description: "Hostname of the Zerops service to deploy to."},
+		"setup":         {Type: "string", Description: "zerops.yaml setup name to use. Required when setup name differs from hostname (e.g. setup=prod for hostname=appstage). Omit when setup name matches hostname."},
+		"workingDir":    {Type: "string", Description: "Local path to push from. Default: current directory."},
+		"includeGit":    flexBoolSchema("Include .git directory in the push (-g flag)."),
+	}, "targetService")
 }
 
 // RegisterDeployLocal registers the zerops_deploy tool for local mode.
@@ -35,6 +48,7 @@ func RegisterDeployLocal(
 		Description: "Push local code to Zerops — blocks until build completes. " +
 			"Requires zerops.yaml and zcli installed. " +
 			"Set targetService to the Zerops service hostname.",
+		InputSchema: deployLocalInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",
 			DestructiveHint: boolPtr(true),
@@ -50,7 +64,7 @@ func RegisterDeployLocal(
 		}
 
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,
-			input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit)
+			input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit.Bool())
 		if err != nil {
 			return convertError(err), nil, nil
 		}
