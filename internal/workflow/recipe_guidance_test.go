@@ -550,14 +550,21 @@ func TestBuildGenerateRetryDelta_IsShort(t *testing.T) {
 }
 
 // TestBuildGenerateRetryDelta_ShapeSpecificBranches exercises each of the
-// four predicate-gated branches in buildGenerateRetryDelta. The Phase 10
-// retry delta adds a shape-specific bullet when the plan satisfies
+// four predicate-gated branches in buildGenerateRetryDelta. The retry
+// delta adds a shape-specific bullet when the plan satisfies
 // isDualRuntime, hasBundlerDevServer, hasSharedCodebaseWorker, or
-// hasMultiBaseBuildCommand — and must NOT add the bullet when the
+// needsMultiBaseGuidance — and must NOT add the bullet when the
 // predicate is false. TestBuildGenerateRetryDelta_IsShort only checks the
 // length cap and the always-on markers; this test guards against a
 // predicate misfire that would leak a wrong-shape reminder into the
 // narrowest recipe.
+//
+// Multi-base note: fullstack-showcase fixture has BuildCommands
+// `composer install + npm ci + npm run build` on a php-nginx primary →
+// needsMultiBaseGuidance fires. The older `hasMultiBaseBuildCommand`
+// predicate keyed on BuildBases (empty in fixtures) and never fired; the
+// unification means this test now asserts the multi-base bullet IS
+// present for fullstack-showcase.
 //
 // Each needle below is unique to its branch (checked against the function
 // body in recipe_guidance.go). If the text of any reminder is edited,
@@ -600,13 +607,15 @@ func TestBuildGenerateRetryDelta_ShapeSpecificBranches(t *testing.T) {
 		},
 		{
 			// fullstack-showcase: shared-codebase worker → setup: worker
-			// reminder fires. Not dual-runtime, framework isn't bundler,
-			// BuildBases is empty — the other three must stay out.
-			name: "fullstack-showcase/shared-worker-only",
+			// reminder fires. BuildCommands include `npm ci` on a php-nginx
+			// primary → needsMultiBaseGuidance fires → multi-base bullet
+			// also fires. Not dual-runtime, framework isn't bundler — those
+			// two must stay out.
+			name: "fullstack-showcase/shared-worker-and-multibase",
 			plan: fixtureForShape(ShapeFullStackShowcase),
-			must: []string{sharedWorkerNeedle},
+			must: []string{sharedWorkerNeedle, multiBaseNeedle},
 			mustNot: []string{
-				dualRuntimeNeedle, bundlerHostNeedle, multiBaseNeedle,
+				dualRuntimeNeedle, bundlerHostNeedle,
 			},
 		},
 		{
@@ -659,6 +668,165 @@ func TestBuildGuide_Generate_Iteration1_ReturnsDelta(t *testing.T) {
 	}
 	if !strings.Contains(delta, "Generate — Retry") {
 		t.Error("delta missing retry header")
+	}
+}
+
+// TestBuildDeployRetryDelta_IsShortAndShaped asserts that the deploy
+// retry delta stays under a generous cap across every shape and carries
+// the universal markers (tier escalation header, universal reminders,
+// source-of-truth pointer). Layer-by-layer correctness is covered by
+// TestBuildDeployRetryDelta_ShapeSpecificBranches below.
+func TestBuildDeployRetryDelta_IsShortAndShaped(t *testing.T) {
+	t.Parallel()
+	for _, shape := range []RecipeShape{
+		ShapeHelloWorld,
+		ShapeBackendMinimal,
+		ShapeFullStackShowcase,
+		ShapeDualRuntimeShowcase,
+	} {
+		t.Run(fmt.Sprint(shape), func(t *testing.T) {
+			t.Parallel()
+			plan := fixtureForShape(shape)
+			delta := buildDeployRetryDelta(plan, 1, "test attestation: deployed appdev, initCommands failed")
+			if delta == "" {
+				t.Fatal("delta should be non-empty")
+			}
+			const capBytes = 8 * 1024
+			if len(delta) > capBytes {
+				t.Errorf("shape %v deploy retry delta %d B > %d B cap", shape, len(delta), capBytes)
+			}
+			// Tier 1: bootstrap escalation ladder — ITERATION marker + PREVIOUS field.
+			if !strings.Contains(delta, "ITERATION 1") {
+				t.Errorf("shape %v deploy retry delta missing 'ITERATION 1' header", shape)
+			}
+			if !strings.Contains(delta, "test attestation") {
+				t.Errorf("shape %v deploy retry delta missing last-attestation passthrough", shape)
+			}
+			// Tier 2: universal reminders — every shape sees these.
+			for _, needle := range []string{
+				"Redeploy = fresh container",
+				"DEPLOY_FAILED",
+				"zsc execOnce",
+				"Source of truth",
+			} {
+				if !strings.Contains(delta, needle) {
+					t.Errorf("shape %v deploy retry delta missing universal needle %q", shape, needle)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildDeployRetryDelta_ShapeSpecificBranches exercises each of the
+// predicate-gated branches in buildDeployRetryDelta — dual-runtime
+// order, bundler port collision, shared-codebase worker, separate-
+// codebase worker, showcase sub-agent dispatch. Each needle is unique
+// to its branch. If the text of any reminder is edited, update both
+// places.
+func TestBuildDeployRetryDelta_ShapeSpecificBranches(t *testing.T) {
+	t.Parallel()
+
+	const (
+		dualRuntimeNeedle    = "Deploy order is non-negotiable"
+		bundlerHostNeedle    = "Bundler dev server port collision"
+		sharedWorkerNeedle   = "Shared-codebase worker"
+		separateWorkerNeedle = "Separate-codebase worker"
+		showcaseNeedle       = "Showcase sub-agent dispatch"
+	)
+
+	tests := []struct {
+		name    string
+		plan    *RecipePlan
+		must    []string
+		mustNot []string
+	}{
+		{
+			// hello-world: no worker, no dual-runtime, no bundler, not
+			// showcase — every shape-gated branch stays out.
+			name: "hello-world/no-shape-branches",
+			plan: fixtureForShape(ShapeHelloWorld),
+			mustNot: []string{
+				dualRuntimeNeedle, bundlerHostNeedle,
+				sharedWorkerNeedle, separateWorkerNeedle, showcaseNeedle,
+			},
+		},
+		{
+			// backend-minimal: same predicate profile as hello-world for
+			// deploy shape — no worker, no dual-runtime, no bundler.
+			name: "backend-minimal/no-shape-branches",
+			plan: fixtureForShape(ShapeBackendMinimal),
+			mustNot: []string{
+				dualRuntimeNeedle, bundlerHostNeedle,
+				sharedWorkerNeedle, separateWorkerNeedle, showcaseNeedle,
+			},
+		},
+		{
+			// fullstack-showcase: shared-codebase worker (laravel + Horizon
+			// pattern) + showcase. Not dual-runtime, framework isn't bundler.
+			name: "fullstack-showcase/shared-worker-plus-showcase",
+			plan: fixtureForShape(ShapeFullStackShowcase),
+			must: []string{sharedWorkerNeedle, showcaseNeedle},
+			mustNot: []string{
+				dualRuntimeNeedle, bundlerHostNeedle, separateWorkerNeedle,
+			},
+		},
+		{
+			// dual-runtime-showcase: dual-runtime + bundler (widened rule
+			// fires via dual-runtime + static frontend) + separate-codebase
+			// worker (fixture default) + showcase.
+			name: "dual-runtime-showcase/dual-bundler-separate-showcase",
+			plan: fixtureForShape(ShapeDualRuntimeShowcase),
+			must: []string{
+				dualRuntimeNeedle, bundlerHostNeedle,
+				separateWorkerNeedle, showcaseNeedle,
+			},
+			mustNot: []string{sharedWorkerNeedle},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			delta := buildDeployRetryDelta(tt.plan, 1, "prior attestation")
+			for _, needle := range tt.must {
+				if !strings.Contains(delta, needle) {
+					t.Errorf("delta missing required needle %q", needle)
+				}
+			}
+			for _, needle := range tt.mustNot {
+				if strings.Contains(delta, needle) {
+					t.Errorf("delta contains forbidden needle %q — predicate misfired", needle)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildDeployRetryDelta_TierEscalation asserts the delta still carries
+// the bootstrap iteration-tier escalation under its shape reminders.
+// iteration 1-2 carries the diagnose/fix tier-1 prose; iteration 3-4 the
+// systematic-check tier-2 prose; iteration 5+ the STOP-and-ask tier-3
+// prose. This guards against an accidental drop of the BuildIterationDelta
+// wrap.
+func TestBuildDeployRetryDelta_TierEscalation(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeHelloWorld)
+	cases := []struct {
+		iter   int
+		needle string
+	}{
+		{1, `DIAGNOSE: zerops_logs`},
+		{3, "PREVIOUS FIXES FAILED"},
+		{5, "STOP. Multiple fixes failed"},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("iter%d", tc.iter), func(t *testing.T) {
+			t.Parallel()
+			delta := buildDeployRetryDelta(plan, tc.iter, "test")
+			if !strings.Contains(delta, tc.needle) {
+				t.Errorf("iteration %d delta missing tier needle %q", tc.iter, tc.needle)
+			}
+		})
 	}
 }
 

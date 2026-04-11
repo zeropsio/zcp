@@ -58,7 +58,7 @@ var (
 		{Name: "dual-runtime-what-not-to-do", Predicate: isDualRuntime},
 		{Name: "setup-dev-rules"},
 		{Name: "serve-only-dev-override", Predicate: hasServeOnlyProd},
-		{Name: "dev-dep-preinstall", Predicate: hasMultiBaseBuildCommand},
+		{Name: "dev-dep-preinstall", Predicate: needsMultiBaseGuidance},
 		{Name: "dev-server-host-check", Predicate: hasBundlerDevServer},
 		{Name: "setup-prod-rules"},
 		{Name: "worker-setup-block", Predicate: hasWorker},

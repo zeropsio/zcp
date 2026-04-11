@@ -80,11 +80,6 @@ func TestPlanPredicates(t *testing.T) {
 		{"isShowcase/minimal", isShowcase, minimal, false},
 		{"isShowcase/hello", isShowcase, hello, false},
 		{"isShowcase/nil", isShowcase, nil, false},
-
-		// hasMultiBaseBuildCommand (fixtures don't set BuildBases — all false)
-		{"hasMultiBase/dual-runtime", hasMultiBaseBuildCommand, dual, false},
-		{"hasMultiBase/fullstack", hasMultiBaseBuildCommand, fullStack, false},
-		{"hasMultiBase/nil", hasMultiBaseBuildCommand, nil, false},
 	}
 
 	for _, tt := range tests {
@@ -113,30 +108,5 @@ func TestHasBundlerDevServer_PrefixMatch(t *testing.T) {
 		if hasBundlerDevServer(plan) {
 			t.Errorf("framework %q should NOT match bundler dev server list", fw)
 		}
-	}
-}
-
-// TestHasMultiBaseBuildCommand covers the field the shape fixtures leave
-// empty. Plans with BuildBases of length >= 2 should return true.
-func TestHasMultiBaseBuildCommand(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name  string
-		bases []string
-		want  bool
-	}{
-		{"empty", nil, false},
-		{"single", []string{"php@8.3"}, false},
-		{"two", []string{"php@8.3", "nodejs@22"}, true},
-		{"three", []string{"php@8.3", "nodejs@22", "static"}, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			plan := &RecipePlan{BuildBases: tc.bases}
-			if got := hasMultiBaseBuildCommand(plan); got != tc.want {
-				t.Errorf("got %v, want %v", got, tc.want)
-			}
-		})
 	}
 }

@@ -13,8 +13,11 @@ import (
 // Follows deploy's pattern: own method on RecipeState, not via assembleGuidance (which is bootstrap-only).
 func (r *RecipeState) buildGuide(step string, iteration int, kp knowledge.Provider) string {
 	// Iteration delta for deploy retries — replaces normal guidance.
+	// The delta layers shape-aware reminders (worker restart shape, dual-
+	// runtime order, bundler port collision) on top of the generic tier
+	// escalation.
 	if iteration > 0 && step == RecipeStepDeploy {
-		if delta := buildRecipeIterationDelta(iteration, r.lastAttestation()); delta != "" {
+		if delta := buildDeployRetryDelta(r.Plan, iteration, r.lastAttestation()); delta != "" {
 			return delta
 		}
 	}
@@ -204,13 +207,94 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 	return strings.Join(parts, "\n\n---\n\n")
 }
 
-// buildRecipeIterationDelta returns focused escalating recovery for recipe deploy iterations.
-// Reuses the same escalation tiers as bootstrap.
-func buildRecipeIterationDelta(iteration int, lastAttestation string) string {
+// buildDeployRetryDelta returns a focused delta for iteration > 0 at
+// deploy. Layered:
+//
+//  1. Generic tier escalation via BuildIterationDelta — preserves the
+//     bootstrap ladder (tier 1: diagnose+fix; tier 2: systematic check;
+//     tier 3: stop and ask user).
+//  2. Universal recipe-deploy retry reminders — fresh-container-on-
+//     redeploy, DEPLOY_FAILED metadata reading, the zsc execOnce burn-
+//     on-failure trap. Every recipe hits these regardless of shape.
+//  3. Dimension-gated shape reminders. Each of these corresponds to a
+//     real failure mode documented in the deploy section of recipe.md;
+//     the delta surfaces the pointer, the full guide remains the source
+//     of truth. Predicates keyed off recipe_plan_predicates.go.
+//
+// The dimensions covered:
+//
+//   - isDualRuntime — API-first deploy ordering (apidev before appdev)
+//     and Step 3a log-reading across both containers.
+//   - hasBundlerDevServer — bundler dev-server port collision (pgrep
+//     before starting a second instance).
+//   - hasSharedCodebaseWorker — worker dies with host on redeploy;
+//     restart the queue consumer via the host's SSH session; logs live
+//     on the host target's hostname.
+//   - hasSeparateCodebaseWorker — worker owns its own container and
+//     its own redeploy lifecycle; logs live on workerdev.
+//   - isShowcase — sub-agent dispatch is one-shot post-verification; do
+//     not respawn it inside the retry loop.
+//
+// Deliberately NOT hardcoded to specific frameworks or service
+// hostnames: the text refers to `{host}dev` / `workerdev` as shape
+// identifiers, not as literal plan values. The actual hostnames come
+// from the agent's plan.
+func buildDeployRetryDelta(plan *RecipePlan, iteration int, lastAttestation string) string {
 	if iteration == 0 {
 		return ""
 	}
-	return BuildIterationDelta(RecipeStepDeploy, iteration, nil, lastAttestation)
+
+	var sb strings.Builder
+
+	// Tier 1: generic escalation ladder (ITERATION n / PREVIOUS / tier guidance).
+	if base := BuildIterationDelta(RecipeStepDeploy, iteration, nil, lastAttestation); base != "" {
+		sb.WriteString(base)
+		sb.WriteString("\n\n")
+	}
+
+	// Tier 2: universal recipe-deploy reminders.
+	sb.WriteString("## Universal retry reminders\n\n")
+	sb.WriteString("- **Redeploy = fresh container.** Every background process you started via SSH (asset dev server, queue consumer, any framework watcher) is gone after a redeploy. Re-run Step 2 in full — start ALL dev processes — before re-verifying.\n")
+	sb.WriteString("- **Read `DEPLOY_FAILED` metadata, not buildLogs.** If the deploy response's status is `DEPLOY_FAILED`, the failing `initCommand` is named in `error.meta[].metadata.command`; its stderr is in runtime logs (`zerops_logs serviceHostname={service} severity=ERROR since=5m`), NOT in `buildLogs`.\n")
+	sb.WriteString("- **The `zsc execOnce` burn-on-failure trap.** `execOnce` keys on `${appVersionId}`; if the first attempt crashed the container mid-`initCommand`, the retry with the same version ID will silently SKIP the command, and you'll see no seed/migration output in the retry logs. Recovery: touch a source file (whitespace change is enough) to force a new `appVersionId`, then redeploy.\n")
+
+	// Shape-gated reminders. Each block is keyed off one predicate and
+	// surfaces a failure mode that the full deploy guide teaches but the
+	// generic tier ladder can't.
+	if isDualRuntime(plan) {
+		sb.WriteString("\n## Dual-runtime order\n\n")
+		sb.WriteString("- Deploy order is non-negotiable: `apidev` first, then verify it (subdomain enable + API health check 200), THEN deploy `appdev`. The frontend's build bakes the API URL into its bundle at build time — if the API is down or unverified when `appdev` builds, the bundle ships broken and the fix-redeploy loop restarts here.\n")
+		sb.WriteString("- Step 3a reads logs from BOTH `apidev` AND `appdev`. Migration and seed output typically live in the API container, not the frontend — look there when verifying `initCommands` ran.\n")
+	}
+
+	if hasBundlerDevServer(plan) {
+		sb.WriteString("\n## Bundler dev server port collision\n\n")
+		sb.WriteString("- Before starting the asset dev server, `pgrep` for an existing process. The first-deploy handler or a prior retry iteration may have left one running; a second instance silently falls back to an incremented port (Vite 5173 → 5174, webpack 8080 → 8081, etc.), and the public subdomain still routes to the original port. Symptom: new code doesn't take effect and the old behavior keeps appearing.\n")
+		sb.WriteString("- If you need to restart the dev server after a config change, `pkill` it first, then start once. Don't skip the kill step.\n")
+	}
+
+	if hasSharedCodebaseWorker(plan) {
+		sb.WriteString("\n## Shared-codebase worker\n\n")
+		sb.WriteString("- Your worker process runs as an SSH-launched background task on the host target's dev container (the target named by `worker.sharesCodebaseWith`). When you redeploy the host target, BOTH the web server and the queue consumer die. Restart them in the Step 2 sequence — primary server first, then the worker. Skipping the worker restart is a common retry trap because the redeploy response looks green.\n")
+		sb.WriteString("- Worker logs live in the HOST target's log stream (`zerops_logs serviceHostname={host target's dev hostname}`), not in a separate worker service. If you're searching for worker output on `workerdev`, you won't find it — there is no `workerdev` for this shape.\n")
+	}
+
+	if hasSeparateCodebaseWorker(plan) {
+		sb.WriteString("\n## Separate-codebase worker\n\n")
+		sb.WriteString("- `workerdev` is an independent container with its own zerops.yaml, its own mount, and its own redeploy lifecycle. Redeploying the app target does NOT touch the worker. Conversely, a fix applied only to the app won't reach the worker until you redeploy `workerdev` too.\n")
+		sb.WriteString("- After any `workerdev` redeploy, restart the queue consumer SSH process on `workerdev` — same Step 2c shape as the initial deploy. Worker logs live on `zerops_logs serviceHostname=workerdev`, not on the app's log stream.\n")
+	}
+
+	if isShowcase(plan) {
+		sb.WriteString("\n## Showcase sub-agent dispatch\n\n")
+		sb.WriteString("- The feature sub-agent (Step 4b) is dispatched exactly once, AFTER `appdev` verification passes. If you're retrying a pre-verification failure, you have not yet reached the sub-agent phase — fix the deploy/verify issue first. If you're retrying a post-dispatch failure, do NOT respawn the sub-agent inside the retry loop; fix feature code yourself on the mount, redeploy, and re-run verification.\n")
+		sb.WriteString("- The browser walk (Step 4c) runs AFTER the sub-agent completes. A pre-walk failure means the walk is not yet due; a walk failure means fix-on-mount + redeploy + re-walk, and that counts against the 3-iteration budget.\n")
+	}
+
+	sb.WriteString("\n## Source of truth\n\n")
+	sb.WriteString("The full Dev deployment flow block in this session's deploy guide is authoritative for step ordering and command shapes. This delta surfaces only the retry-specific failure modes — go back to the full guide if you need the step details.\n")
+
+	return sb.String()
 }
 
 // buildGenerateRetryDelta returns a focused delta for iteration > 0 at
@@ -251,7 +335,7 @@ func buildGenerateRetryDelta(plan *RecipePlan, lastAttestation string) string {
 	if hasSharedCodebaseWorker(plan) {
 		sb.WriteString("- Missing `setup: worker` block in the host target's zerops.yaml.\n")
 	}
-	if hasMultiBaseBuildCommand(plan) {
+	if needsMultiBaseGuidance(plan) {
 		sb.WriteString("- Dev `buildCommands` missing the secondary-runtime dependency install (asset pipeline).\n")
 	}
 

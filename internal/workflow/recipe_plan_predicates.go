@@ -45,9 +45,18 @@ func hasWorker(p *RecipePlan) bool {
 	return false
 }
 
-// hasSharedCodebaseWorker returns true when a worker shares its codebase
-// with another target. Drives the `setup: worker` block injection in the
-// generate section.
+// hasSharedCodebaseWorker returns true when at least one worker target
+// has SharesCodebaseWith set (i.e. the worker rides inside its host
+// target's codebase, resulting in a third `setup: worker` block in the
+// host's zerops.yaml rather than a separate worker repo).
+//
+// Not used to gate any catalog block — the worker-setup-block explains
+// both shapes inline (the block text is symmetric and fires on
+// hasWorker regardless of sharing). Consumed by buildGenerateRetryDelta
+// to decide whether the retry reminder should mention `setup: worker`.
+// The block-level shape distinction lives in prose (the authoritative
+// 4-row table in zerops-yaml-header), not in predicate gating — one
+// block per section keeps the duplication down.
 func hasSharedCodebaseWorker(p *RecipePlan) bool {
 	if p == nil {
 		return false
@@ -60,9 +69,16 @@ func hasSharedCodebaseWorker(p *RecipePlan) bool {
 	return false
 }
 
-// hasSeparateCodebaseWorker returns true for workers without a sharing host.
-// Drives the separate-codebase provisioning block at provision, and the
-// per-codebase README rule at generate.
+// hasSeparateCodebaseWorker returns true when at least one worker target
+// has SharesCodebaseWith empty (i.e. the worker owns its own repo with
+// its own zerops.yaml, typical for the 3-repo dual-runtime case and for
+// any worker consuming from a standalone broker).
+//
+// Consumed by buildDeployRetryDelta to decide which cross-deploy
+// sequence to remind the agent about. Not used to gate any catalog
+// block — see the note on hasSharedCodebaseWorker for why. The
+// authoritative shape enumeration lives in the 4-row table inside the
+// zerops-yaml-header block at generate.
 func hasSeparateCodebaseWorker(p *RecipePlan) bool {
 	if p == nil {
 		return false
@@ -202,13 +218,12 @@ func isShowcase(p *RecipePlan) bool {
 	return p != nil && p.Tier == RecipeTierShowcase
 }
 
-// hasMultiBaseBuildCommand returns true when the plan runs a compound
-// build that requires dev-dep pre-installation across multiple runtime
-// bases (e.g., a PHP runtime with a JS asset pipeline). Drives the
-// multi-base dev buildCommands rule at generate.
-func hasMultiBaseBuildCommand(p *RecipePlan) bool {
-	if p == nil || len(p.BuildBases) == 0 {
-		return false
-	}
-	return len(p.BuildBases) > 1
-}
+// Note on multi-base detection: the single source of truth is
+// needsMultiBaseGuidance in recipe_multibase.go, which keys on the plan's
+// actual BuildCommands (JS package-manager invocation in a non-JS primary
+// runtime). An earlier `hasMultiBaseBuildCommand` predicate that keyed on
+// len(BuildBases) > 1 was deleted — it could disagree with the
+// BuildCommands detector on the same plan (retry delta vs full-guide
+// divergence), and BuildBases is often unset at the time the guide needs
+// to decide whether to emit the block. All callers (catalog, retry delta)
+// go through needsMultiBaseGuidance.

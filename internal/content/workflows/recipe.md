@@ -64,7 +64,7 @@ Before defining showcase targets, classify the framework:
 **Full-stack** (has built-in view/template engine): The framework renders HTML directly. Dashboard uses the built-in engine. Single `app` service.
 Examples: Laravel/Blade, Rails/ERB, Django/Jinja2, Phoenix/HEEx.
 
-**API-first** (no built-in templating): The framework serves JSON. Dashboard is a lightweight Svelte SPA in a separate `app` service that calls the API. The API is a separate `api` service. Worker shares codebase with `api`.
+**API-first** (no built-in templating): The framework serves JSON. Dashboard is a lightweight Svelte SPA in a separate `app` service that calls the API. The API is a separate `api` service. Worker codebase (shared vs separate) is decided in the Worker codebase decision block below, independent of this classification.
 
 Classification rule: if the predecessor hello-world/minimal recipe renders HTML via a framework-integrated template engine, it is full-stack. If the predecessor only returns JSON or plain text, it is API-first.
 
@@ -265,7 +265,7 @@ Without zcp-side config: `git commit` on the mount fails with `fatal: detected d
 
 <block name="git-init-per-codebase">
 
-For a dual-runtime showcase with 3 codebases (apidev, appdev, workerdev), repeat both commands for each mount.
+**Multi-codebase plans**: repeat both git configuration commands (zcp-side `safe.directory` and container-side `safe.directory`) for **every** provisioned dev mount. One codebase = one mount = one invocation of each command. The number of mounts is driven by your `sharesCodebaseWith` decisions at research — the authoritative shape table lives under "zerops.yaml — Write ALL setups at once" in the generate section. Do not assume a specific mount count; iterate over the mounts your plan actually created.
 
 </block>
 
@@ -275,18 +275,17 @@ For a dual-runtime showcase with 3 codebases (apidev, appdev, workerdev), repeat
 
 Run `zerops_discover includeEnvs=true` AFTER services reach RUNNING. The response contains the real env var keys every managed service exposes. **You MUST use the names from this response, not guess them from training data.** Guessed names (`${search_apiKey}` when the real key is `${search_masterKey}`) fail silently — the platform interpolator treats unknown cross-service refs as literal strings, and your app sees `"${search_apiKey}"` as the value at runtime.
 
-**Catalog the output.** Record the list of env var keys for every managed service in the provision-step attestation so the generate step (which writes the zerops.yaml `run.envVariables` using these references) has the authoritative list. Example attestation shape:
+**Catalog the output.** Record the list of env var keys for every managed service in the provision-step attestation so the generate step (which writes the zerops.yaml `run.envVariables` using these references) has the authoritative list. Example attestation shape (fill placeholders from your actual plan):
 
 ```
-Services: apidev, apistage, appdev, appstage, workerdev, workerstage, db, redis, queue, storage, search.
+Services: {list every runtime dev/stage pair your plan provisioned}, {list every managed service hostname}.
 Env var catalog:
-  db: hostname, port, user, password, dbName, connectionString
-  redis: hostname, port, password, connectionString
-  queue: hostname, port, user, password, connectionString
-  storage: apiHost, apiUrl, accessKeyId, secretAccessKey, bucketName
-  search: hostname, port, masterKey, defaultAdminKey, defaultSearchKey
-Dev mounts: apidev, appdev, workerdev
+  {managedServiceHostname}: {env var keys returned by zerops_discover for this service}
+  …
+Dev mounts: {list every dev mount path from your plan}
 ```
+
+Do not copy the placeholder names verbatim — they are intentionally abstract. List the exact hostnames and keys your workspace reported. The shape of the list (number of dev/stage pairs, number of dev mounts) follows from your `sharesCodebaseWith` decisions: single-codebase plans have one dev mount, multi-codebase plans have one per `sharesCodebaseWith` group. The authoritative shape table lives under "zerops.yaml — Write ALL setups at once" in the generate section.
 
 If a managed service returns a set that surprises you (no `hostname`, or a `key` name you don't recognize), STOP and investigate — do not proceed with guessed names.
 
@@ -298,7 +297,7 @@ If a managed service returns a set that surprises you (no `hostname`, or a `key`
 
 ### Completion
 ```
-zerops_workflow action="complete" step="provision" attestation="Services created: {list}. Env vars cataloged for zerops.yaml wiring (not yet active as OS vars — activate after deploy): {list}. Dev mounted at /var/www/appdev/"
+zerops_workflow action="complete" step="provision" attestation="Services created: {list}. Env vars cataloged for zerops.yaml wiring (not yet active as OS vars — activate after deploy): {list}. Dev mounts: {list every dev mount path — one per codebase in your plan}"
 ```
 
 </block>
@@ -343,19 +342,24 @@ Files placed on the mount are already on the dev container — deploy doesn't "s
 
 ### WHERE to write files
 
-**Dual-runtime** (API-first showcase): write each codebase to its own mount. For a 3-repo showcase (frontend + API + separate worker), that's three distinct source trees:
+**Multi-codebase plans** (any plan where more than one dev mount exists): each codebase is an independent source tree with its own mount, its own zerops.yaml, its own README. The **number** of mounts, and what each one contains, follows from `sharesCodebaseWith`:
 
-- `/var/www/apidev/` — the API framework project (NestJS, Django, Rails, etc.)
-- `/var/www/appdev/` — the frontend SPA (Svelte, React, Vue, etc.)
-- `/var/www/workerdev/` — the worker project (may be a separate framework project or a minimal runtime script)
+- Two dev mounts when: (a) dual-runtime with a shared-codebase worker (the worker rides inside its host codebase), or (b) single-runtime with a separate-codebase worker (the worker owns its own repo).
+- Three dev mounts when: dual-runtime with a separate-codebase worker.
 
-**Each codebase needs its own README.md with all 3 extract fragments** (intro, integration-guide, knowledge-base). At publish time, each codebase is part of the recipe app repo, and the README you write is what a user exploring that codebase sees. The integration-guide fragment in each README contains THAT codebase's zerops.yaml, fully commented. The knowledge-base fragment in each README lists the gotchas specific to THAT codebase's role (e.g., the frontend README covers allowedHosts and dev-server runtime env vars; the API README covers CORS and ORM synchronize; the worker README covers NATS connection and job idempotency).
+The authoritative enumeration — which zerops.yaml files exist, how many setups each contains, and which `sharesCodebaseWith` pattern produces each shape — lives under "zerops.yaml — Write ALL setups at once" later in this generate section. Do not re-derive it here; read the shape table, identify your row, and act on it.
 
-**Scaffold each codebase in its own mount — never cross-contaminate.** Framework scaffolders (`sv create`, `npx create-vite`, `nest new`, `composer create-project`, `django-admin startproject`) write config files (`tsconfig.json`, `package.json`, `.npmrc`, `.vscode/`, `.gitignore`) into whatever directory they run from. Running a scaffold from the wrong container or the wrong working directory overwrites the host codebase's config silently. For dual-runtime:
-- `cd /var/www/apidev && nest new .` for the API — runs on the `apidev` service's SSH session
-- `cd /var/www/appdev && npm create vite@latest . -- --template svelte` for the frontend — runs on the `appdev` service's SSH session (if the static container lacks Node, scaffold files directly via SSHFS write instead of invoking a scaffolder on the container)
+**Each codebase gets its own README.md with all 3 extract fragments** (intro, integration-guide, knowledge-base). At publish time every codebase becomes a standalone recipe repo, and its README is the entry point for any user exploring it. The integration-guide fragment in each README contains **that codebase's** zerops.yaml, fully commented. The knowledge-base fragment lists the gotchas specific to **that codebase's** role — dev-server host-check lives in the frontend README, CORS and ORM-sync live in the API README, broker-connection and job-idempotency live in a separate-worker README, and so on.
 
-Never scaffold into `/tmp` and copy — the scaffolder's footprint always includes hidden files you'll miss. Never run a frontend scaffolder from an API SSH session targeting the API mount — `sv create` invoked from `apidev` SSH will overwrite apidev's `tsconfig.json` and `package.json` even if you `cd` to a different directory first, because scaffolders trust the process working directory as the project root.
+**Use SSHFS for file operations, SSH for commands that need the base image's built-in tools** (scaffolders, `git init`, compiled binaries). Files placed on a mount are already present in the dev container; deploy doesn't "send" them, it triggers a build from what is already on disk.
+
+**Scaffold each codebase inside its own mount — never cross-contaminate.** Framework scaffolders write config files (`tsconfig.json`, `package.json`, `.npmrc`, `.vscode/`, `.gitignore`, framework-specific dotfiles) into whatever directory they run from, and they trust the process working directory as the project root. Running a scaffolder from the wrong SSH session — or `cd`-ing inside one SSH session to a path that belongs to a different service — silently overwrites the other codebase's config. Rules that apply to every multi-codebase plan:
+
+1. SSH into the dev service whose mount you are about to scaffold. Scaffolding the API codebase means SSH to the API dev service; scaffolding the frontend means SSH to the frontend dev service; scaffolding a separate-codebase worker means SSH to the worker dev service.
+2. `cd /var/www/{that service's hostname}/` before invoking the scaffolder.
+3. If the target dev service's base image does not ship the scaffolder's runtime (common example: a static-base frontend service has no Node interpreter), write the scaffold files directly via SSHFS from the agent's host context instead of invoking the scaffolder on the container.
+4. Never scaffold into `/tmp` and copy — scaffolder footprints always include hidden files you will miss.
+5. Never invoke a scaffolder from one service's SSH session while `cd`'d into another service's mount. The process working directory wins, and the "wrong" codebase's config files will be overwritten even though the shell prompt looks correct.
 
 </block>
 
