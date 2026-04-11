@@ -68,18 +68,17 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		return ExtractSection(md, "research-minimal")
 
 	case RecipeStepGenerate:
-		// Generate: base + (dashboard spec when needed) + (fragments deep-dive
-		// when needed). Hello-world slugs receive neither optional block —
-		// their dashboard is one endpoint and their README is one paragraph,
-		// so the 15KB of dashboard + fragments guidance is dead weight there.
+		// Generate: base + (fragments deep-dive when needed). The dashboard
+		// spec that used to live in a separate `generate-dashboard` section
+		// has been merged into the deploy step's sub-agent brief — generate
+		// now carries only the inline skeleton-write guidance.
+		//
+		// Hello-world slugs skip the fragments deep-dive. Their README is one
+		// paragraph and the chain recipe demonstrates it in full; the 6 KB
+		// writing-style lecture is dead weight there.
 		var parts []string
 		if s := ExtractSection(md, "generate"); s != "" {
 			parts = append(parts, s)
-		}
-		if planNeedsDashboardSpec(plan) {
-			if s := ExtractSection(md, "generate-dashboard"); s != "" {
-				parts = append(parts, s)
-			}
 		}
 		if planNeedsFragmentsDeepDive(plan) {
 			if s := ExtractSection(md, "generate-fragments"); s != "" {
@@ -117,18 +116,28 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 	}
 	var parts []string
 
+	// Research, Deploy, and Finalize receive no knowledge injection:
+	//   - Research: agent fills a form from its own training data + on-demand
+	//     zerops_knowledge calls.
+	//   - Deploy: static guidance + the iteration loop cover the deploy flow.
+	//   - Finalize: agent calls generate-finalize with structured envComments
+	//     + projectEnvVariables — it does not hand-write YAML here. The
+	//     import.yaml Schema injection that used to live at finalize was
+	//     vestigial and Phase 7 of the reshuffle removed it.
 	switch step {
-	// Research: no knowledge injection. Agent fills a form about the framework
-	// using its own knowledge + on-demand zerops_knowledge calls.
-
 	case RecipeStepProvision:
 		// import.yaml field reference for writing service definitions.
 		if s := getCoreSection(kp, "import.yaml Schema"); s != "" {
 			parts = append(parts, "## import.yaml Schema\n\n"+s)
 		}
-		// Platform rules: hostname conventions, priority, mode immutability, etc.
-		if s := getCoreSection(kp, "Rules & Pitfalls"); s != "" {
-			parts = append(parts, "## Rules & Pitfalls\n\n"+s)
+		// Provision-phase rules: service creation, dev/stage patterns, hostname
+		// conventions, scaling/immutability, and the Env Vars H3. The Env Vars
+		// block is byte-identical to the copy injected at Generate — provision
+		// needs the rules when writing import.yaml; generate needs them when
+		// writing zerops.yaml. Duplication is sanctioned to keep each step's
+		// guidance self-contained.
+		if s := getCoreSection(kp, "Provision Rules"); s != "" {
+			parts = append(parts, "## Provision Rules\n\n"+s)
 		}
 
 	case RecipeStepGenerate:
@@ -154,11 +163,14 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 				parts = append(parts, "## zerops.yaml Schema\n\n"+s)
 			}
 		}
-		// Rules & Pitfalls: NOT injected here. The agent already received the full
-		// 13KB at provision (one step ago). The chain recipe demonstrates the rules
-		// in practice. Re-injecting would triple-teach the same lifecycle rules
-		// (recipe.md static text + chain example + R&P). If the agent needs a
-		// specific rule, zerops_knowledge is available for on-demand queries.
+		// Generate Rules (core.md lifecycle-phase H2) is intentionally NOT
+		// injected at generate. The chain recipe demonstrates the same rules
+		// in practice as a working zerops.yaml, and the agent already received
+		// the rules it needed at provision (the Provision Rules slice). Re-
+		// injecting at generate would triple-teach the same content (recipe.md
+		// static text + chain example + Generate Rules) for ~11 KB of response
+		// bloat. The agent can fetch a specific rule on demand via
+		// `zerops_knowledge scope="theme" query="core"` if it needs one.
 		//
 		// Multi-base knowledge: injected ONLY when the recipe's primary runtime
 		// is non-JS yet its build pipeline runs a JS package manager. Most
@@ -166,15 +178,6 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		// shouldn't be burdened with zsc install / startWithoutCode details.
 		if needsMultiBaseGuidance(plan) {
 			parts = append(parts, multiBaseGuidance())
-		}
-
-	// Deploy: no knowledge injection. Static guidance covers the deploy flow;
-	// the iteration loop catches issues via real build/runtime feedback.
-
-	case RecipeStepFinalize:
-		// import.yaml field reference for generating 6 environment-specific files.
-		if s := getCoreSection(kp, "import.yaml Schema"); s != "" {
-			parts = append(parts, "## import.yaml Schema\n\n"+s)
 		}
 	}
 
@@ -191,26 +194,6 @@ func buildRecipeIterationDelta(iteration int, lastAttestation string) string {
 		return ""
 	}
 	return BuildIterationDelta(RecipeStepDeploy, iteration, nil, lastAttestation)
-}
-
-// planNeedsDashboardSpec reports whether a plan should receive the dashboard
-// implementation spec (generate-dashboard section). Hello-world recipes have
-// a single welcome endpoint and no feature-section dashboard — injecting the
-// 10KB spec for them wastes context on every generate-step response.
-//
-// The gate is keyed on slug suffix because recipe tiers only distinguish
-// minimal from showcase; hello-world is a minimal-tier slug shape
-// (e.g. nodejs-hello-world, php-hello-world, react-static-hello-world).
-//
-// A nil plan defaults to TRUE — the research step has no plan yet and we
-// err on the side of injecting the spec so that the agent has it when
-// needed. This matches how the caller's nil-plan case works at the
-// research step: resolveRecipeGuidance(RecipeStepResearch, ..., nil).
-func planNeedsDashboardSpec(plan *RecipePlan) bool {
-	if plan == nil {
-		return true
-	}
-	return !strings.HasSuffix(plan.Slug, "-hello-world")
 }
 
 // planNeedsFragmentsDeepDive reports whether a plan should receive the

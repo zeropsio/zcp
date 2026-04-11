@@ -609,8 +609,11 @@ func TestBuildGuide_Generate_ContainsEnvVars(t *testing.T) {
 		"db": {"connectionString", "port"},
 	}
 	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, store)
-	if !strings.Contains(guide, "Discovered Environment Variables") {
-		t.Error("generate guide should contain discovered env vars section")
+	// Phase 3 renamed the injected section to match the attestation the
+	// provision step writes — the agent sees the same table shape at both
+	// provision (its own attestation) and generate (auto-injected).
+	if !strings.Contains(guide, "Discovered Managed-Service Env Var Catalog") {
+		t.Error("generate guide should contain discovered env var catalog section")
 	}
 	if !strings.Contains(guide, "${db_connectionString}") {
 		t.Error("generate guide should contain env var references")

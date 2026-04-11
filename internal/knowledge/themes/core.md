@@ -109,12 +109,69 @@ zerops[]:
 
 ---
 
-## Rules & Pitfalls
+## Provision Rules
 
-### Networking
-- **NEVER** listen on port 443 or 80 (exception: PHP uses 80). REASON: Zerops reserves 80/443 for SSL termination. Use 3000, 8080, etc.
-- **ALWAYS** use port range 10-65435. REASON: ports outside this range are reserved by the platform
-- **ALWAYS** set Cloudflare SSL to "Full (strict)" when using Cloudflare proxy. REASON: "Flexible" causes infinite redirect loops
+### Import & Service Creation
+- **ALWAYS** set explicit `mode: NON_HA` or `mode: HA` for managed services (DB, cache, shared-storage). Mode defaults to NON_HA if omitted. Set HA explicitly for production. IMMUTABLE
+- **NEVER** set `mode` for runtime services. REASON: `mode` is only for managed services. Runtime HA is achieved via `minContainers: 2+` (horizontal scaling)
+- **NEVER** set `minContainers`/`maxContainers` for managed services. REASON: managed services have fixed container counts (NON_HA=1, HA=3); setting these causes import failure
+- **NEVER** set `verticalAutoscaling` for shared-storage or object-storage. REASON: these service types don't support vertical scaling; setting it causes import failure
+- **ALWAYS** set `priority: 10` for databases/storage services. REASON: ensures they start before application services that depend on them
+- **ALWAYS** set `enableSubdomainAccess: true` in import.yaml AND call `zerops_subdomain action="enable"` once after the first deploy of each new service. REASON: the import flag marks intent; the subdomain API call activates the L7 route
+- **ALWAYS** prefer the **highest available version** from the live catalog for each service type, unless a specific version is required for compatibility. REASON: new projects should start on the latest stable release; older versions exist for migration/compatibility but should not be chosen by default. Example: if `postgresql@{14,16,17,18}` are available, use `postgresql@18`.
+- **ALWAYS** use `valkey@7.2` (not `valkey@8`). REASON: v8 passes dry-run validation but fails actual import
+- **NEVER** use Docker `:latest` tag. REASON: cached and won't re-pull; always use specific version tags
+- **ALWAYS** use `--network=host` for Docker services. REASON: without it, container cannot receive traffic from Zerops routing
+- **ALWAYS** use `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` for Object Storage. REASON: MinIO backend doesn't support virtual-hosted style
+- **ALWAYS** set a region env var to `us-east-1` for Object Storage clients. REASON: Zerops does NOT auto-generate a region variable, but every S3 SDK requires one (MinIO ignores the value). Use whichever env var name the framework's S3 client reads for region
+
+### Import Generation (dev/stage patterns)
+- **Standard mode:** create dev/stage pairs for runtimes. Naming: `{prefix}dev` and `{prefix}stage` (e.g., `appdev`/`appstage`, `apidev`/`apistage`). Dev mode: single `{prefix}dev`. Simple mode: single `{name}` with real start command
+- **ALWAYS** set `startWithoutCode: true` ONLY on dev services (not stage). Simple mode: set on the single service. REASON: dev container starts RUNNING immediately but with only platform-injected vars — `run.envVariables` from zerops.yaml do not exist until first deploy. Stage stays in READY_TO_DEPLOY until code arrives
+- **ALWAYS** set `maxContainers: 1` for dev services. REASON: dev uses SSHFS; multiple containers cause file conflicts
+- **ONLY** set `zeropsSetup` in import.yaml when using `buildFromGit`. REASON: zeropsSetup requires buildFromGit (API rejects one without the other). For workspace deploys (no buildFromGit), use `zerops_deploy setup="..."` parameter instead
+- **ALWAYS** set `minRam` high enough for initial RAM spikes (autoscaling has ~10-20s reaction time). Dev needs higher than stage/prod (compilation on container)
+- **Activating READY_TO_DEPLOY services**: re-import with `override: true` + `startWithoutCode: true` to transition the service to ACTIVE without deploying code first
+- **ALWAYS** use managed service hostname conventions: `db`, `cache`, `queue`, `search`, `storage`. REASON: standardizes cross-service references
+- **Shared secrets** (encryption/session keys): put in `project.envVariables` when multiple services in the same project share a database — they must share the key or encrypted data becomes unreadable across services. Use preprocessor: `<@generateRandomString(<32>)>`. **Per-service secrets**: put in service-level `envSecrets`. Determine which pattern applies based on what the framework uses the secret for (encryption = shared, API token = per-service).
+- **ALWAYS** use generic `setup:` names in zerops.yaml (`dev`, `prod`, `worker`). When deploying to a hostname that differs from the setup name, pass `setup="..."` to `zerops_deploy`. REASON: generic names work across all environments; `zeropsSetup` in recipe import.yaml + `--setup` in workspace deploy both handle the mapping
+- **ALWAYS** add `run.healthCheck` and `deploy.readinessCheck` ONLY to stage/prod entries, NEVER to dev. REASON: dev uses `zsc noop --silent`; healthCheck would restart the container during iteration
+- **DEBUG** DEPLOY_FAILED with empty runtime logs by temporarily removing `deploy.readinessCheck` and `run.healthCheck` from the setup, redeploying, then SSH-ing in and curling the health path directly (`ssh {host} "curl -s http://localhost{path}"`). REASON: the framework may be rendering a 500 error page with the full stack trace in the response body while writing nothing to stderr. With checks stripped, the container reaches ACTIVE and stays alive long enough to read the real error. Restore checks after fixing the bug.
+
+### Environment Variables — Three Levels
+
+**Where to put what:**
+
+| What | Where | Why |
+|------|-------|-----|
+| Anything shared across services | `project.envVariables` in import.yaml | Auto-inherited by every service. Use for shared config, shared secrets (with preprocessor), or any value that must be identical across services (e.g. encryption keys when sharing a DB). Do NOT re-reference in zerops.yaml (creates shadow). |
+| Cross-service wiring (DB creds, cache host) | `run.envVariables` in zerops.yaml | `${hostname_varname}` references resolve at deploy time. This is the ONLY place cross-service refs work. |
+| Per-service secrets (unique to one service) | `envSecrets` per-service in import.yaml | Blurred in GUI. Auto-injected as OS vars — do NOT re-reference in zerops.yaml. |
+
+**How they work:**
+- **project.envVariables** (import.yaml): inherited by all services in the project. Use for any value that should be the same everywhere — shared config, shared secrets (with `<@generateRandomString(...)>`), feature flags, etc. Changes via GUI, no redeploy needed.
+- **run.envVariables** (zerops.yaml): become OS env vars **only after deploy** — NOT present on `startWithoutCode` containers before first deploy. Support `${hostname_varname}` cross-service references. Changes take effect on next deploy.
+- **envSecrets** (import.yaml per-service, or GUI): injected directly as OS env vars at container start. Changes require a **service restart** (not just redeploy).
+
+**Critical rules:**
+- `${...}` syntax is ONLY for cross-service references in run.envVariables (`${db_hostname}`). Writing `MY_SECRET: ${MY_SECRET}` does NOT reference the envSecret — it creates a literal string.
+- import.yaml service level: ONLY `envSecrets` and `dotEnvSecrets`. No `envVariables` at service level (project-level only).
+- Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) — do NOT set these in import.yaml.
+- `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`.
+- **Self-URL variable**: most frameworks have an env var that controls absolute URL generation (redirects, signed URLs, mail links, CSRF origin validation). Set it to `${zeropsSubdomain}` in `run.envVariables` so the framework generates correct public URLs. Without it, the framework defaults to `localhost` and any feature producing absolute URLs breaks silently.
+
+### Hostname & Port Conventions
+- **ALWAYS** use port range 10-65435 when declaring `run.ports` in zerops.yaml. REASON: ports outside this range are reserved by the platform.
+- Service hostnames are IMMUTABLE — they become internal DNS names. Pick conventional names up front (`app`, `db`, `cache`, `queue`, `search`, `storage`). Lowercase alphanumeric only, no hyphens or underscores, max 40 chars.
+
+### Scaling & Platform
+- **NEVER** attempt to change HA/NON_HA mode after creation. REASON: mode is immutable; must delete and recreate service
+- **NEVER** attempt to change hostname after creation. REASON: hostname is immutable; it becomes the internal DNS name
+- **NEVER** expect disk to shrink. REASON: auto-scaling only increases disk; to reduce, recreate the service
+
+---
+
+## Generate Rules
 
 ### Build & Deploy
 
@@ -148,6 +205,14 @@ zerops[]:
 - **NEVER** set `run.base: alpine@*` for Go. REASON: causes glibc/musl mismatch for CGO-linked binaries -> 502. Omit `run.base` or use `run.base: go@latest`
 - **ALWAYS** use `os: ubuntu` for Deno and Gleam. REASON: these runtimes are not available on Alpine
 
+### Build & Runtime
+- **ALWAYS** build compiled languages (Rust, Go, Java, .NET) with release/optimized flags for production. REASON: debug builds are dramatically slower and larger
+- **ALWAYS** use `CGO_ENABLED=0 go build` when unsure about CGO dependencies. REASON: produces static binary compatible with any container base (avoids glibc/musl mismatch)
+- **ALWAYS** bind `0.0.0.0`, not `localhost` or `127.0.0.1`. Many frameworks default to localhost — override in config or env var. REASON: L7 LB routes to container VXLAN IP; localhost binding = 502
+- **ALWAYS** configure the framework's proxy trust setting (if it has one). REASON: Zerops L7 balancer terminates SSL and forwards via reverse proxy — frameworks that validate origin/CSRF headers will reject requests unless they trust the proxy. Check the framework's documentation for the specific setting
+- **NEVER** listen on port 443 or 80 (exception: PHP uses 80). REASON: Zerops reserves 80/443 for SSL termination. Use 3000, 8080, etc.
+- **ALWAYS** set Cloudflare SSL to "Full (strict)" when using Cloudflare proxy. REASON: "Flexible" causes infinite redirect loops
+
 ### Environment Variables — Three Levels
 
 **Where to put what:**
@@ -169,48 +234,6 @@ zerops[]:
 - Managed services auto-generate credentials (hostname, port, user, password, dbName, connectionString) — do NOT set these in import.yaml.
 - `zeropsSubdomain`: platform-injected full HTTPS URL (e.g. `https://app-1df2-3000.prg1.zerops.app`), created when `enableSubdomainAccess: true`.
 - **Self-URL variable**: most frameworks have an env var that controls absolute URL generation (redirects, signed URLs, mail links, CSRF origin validation). Set it to `${zeropsSubdomain}` in `run.envVariables` so the framework generates correct public URLs. Without it, the framework defaults to `localhost` and any feature producing absolute URLs breaks silently.
-
-### Import & Service Creation
-- **ALWAYS** set explicit `mode: NON_HA` or `mode: HA` for managed services (DB, cache, shared-storage). Mode defaults to NON_HA if omitted. Set HA explicitly for production. IMMUTABLE
-- **NEVER** set `mode` for runtime services. REASON: `mode` is only for managed services. Runtime HA is achieved via `minContainers: 2+` (horizontal scaling)
-- **NEVER** set `minContainers`/`maxContainers` for managed services. REASON: managed services have fixed container counts (NON_HA=1, HA=3); setting these causes import failure
-- **NEVER** set `verticalAutoscaling` for shared-storage or object-storage. REASON: these service types don't support vertical scaling; setting it causes import failure
-- **ALWAYS** set `priority: 10` for databases/storage services. REASON: ensures they start before application services that depend on them
-- **ALWAYS** set `enableSubdomainAccess: true` in import.yaml AND call `zerops_subdomain action="enable"` once after the first deploy of each new service. REASON: the import flag marks intent; the subdomain API call activates the L7 route
-- **ALWAYS** prefer the **highest available version** from the live catalog for each service type, unless a specific version is required for compatibility. REASON: new projects should start on the latest stable release; older versions exist for migration/compatibility but should not be chosen by default. Example: if `postgresql@{14,16,17,18}` are available, use `postgresql@18`.
-- **ALWAYS** use `valkey@7.2` (not `valkey@8`). REASON: v8 passes dry-run validation but fails actual import
-- **NEVER** use Docker `:latest` tag. REASON: cached and won't re-pull; always use specific version tags
-- **ALWAYS** use `--network=host` for Docker services. REASON: without it, container cannot receive traffic from Zerops routing
-- **ALWAYS** use `forcePathStyle: true` / `AWS_USE_PATH_STYLE_ENDPOINT: true` for Object Storage. REASON: MinIO backend doesn't support virtual-hosted style
-- **ALWAYS** set a region env var to `us-east-1` for Object Storage clients. REASON: Zerops does NOT auto-generate a region variable, but every S3 SDK requires one (MinIO ignores the value). Use whichever env var name the framework's S3 client reads for region
-
-### Import Generation (dev/stage patterns)
-- **Standard mode:** create dev/stage pairs for runtimes. Naming: `{prefix}dev` and `{prefix}stage` (e.g., `appdev`/`appstage`, `apidev`/`apistage`). Dev mode: single `{prefix}dev`. Simple mode: single `{name}` with real start command
-- **ALWAYS** set `startWithoutCode: true` ONLY on dev services (not stage). Simple mode: set on the single service. REASON: dev container starts RUNNING immediately but with only platform-injected vars — `run.envVariables` from zerops.yaml do not exist until first deploy. Stage stays in READY_TO_DEPLOY until code arrives
-- **ALWAYS** set `maxContainers: 1` for dev services. REASON: dev uses SSHFS; multiple containers cause file conflicts
-- **ONLY** set `zeropsSetup` in import.yaml when using `buildFromGit`. REASON: zeropsSetup requires buildFromGit (API rejects one without the other). For workspace deploys (no buildFromGit), use `zerops_deploy setup="..."` parameter instead
-- **ALWAYS** set `minRam` high enough for initial RAM spikes (autoscaling has ~10-20s reaction time). Dev needs higher than stage/prod (compilation on container)
-- **Activating READY_TO_DEPLOY services**: re-import with `override: true` + `startWithoutCode: true` to transition the service to ACTIVE without deploying code first
-- **ALWAYS** use managed service hostname conventions: `db`, `cache`, `queue`, `search`, `storage`. REASON: standardizes cross-service references
-- **Shared secrets** (encryption/session keys): put in `project.envVariables` when multiple services in the same project share a database — they must share the key or encrypted data becomes unreadable across services. Use preprocessor: `<@generateRandomString(<32>)>`. **Per-service secrets**: put in service-level `envSecrets`. Determine which pattern applies based on what the framework uses the secret for (encryption = shared, API token = per-service).
-- **ALWAYS** use generic `setup:` names in zerops.yaml (`dev`, `prod`, `worker`). When deploying to a hostname that differs from the setup name, pass `setup="..."` to `zerops_deploy`. REASON: generic names work across all environments; `zeropsSetup` in recipe import.yaml + `--setup` in workspace deploy both handle the mapping
-- **ALWAYS** add `run.healthCheck` and `deploy.readinessCheck` ONLY to stage/prod entries, NEVER to dev. REASON: dev uses `zsc noop --silent`; healthCheck would restart the container during iteration
-- **DEBUG** DEPLOY_FAILED with empty runtime logs by temporarily removing `deploy.readinessCheck` and `run.healthCheck` from the setup, redeploying, then SSH-ing in and curling the health path directly (`ssh {host} "curl -s http://localhost{path}"`). REASON: the framework may be rendering a 500 error page with the full stack trace in the response body while writing nothing to stderr. With checks stripped, the container reaches ACTIVE and stays alive long enough to read the real error. Restore checks after fixing the bug.
-
-### Build & Runtime
-- **ALWAYS** build compiled languages (Rust, Go, Java, .NET) with release/optimized flags for production. REASON: debug builds are dramatically slower and larger
-- **ALWAYS** use `CGO_ENABLED=0 go build` when unsure about CGO dependencies. REASON: produces static binary compatible with any container base (avoids glibc/musl mismatch)
-- **ALWAYS** bind `0.0.0.0`, not `localhost` or `127.0.0.1`. Many frameworks default to localhost — override in config or env var. REASON: L7 LB routes to container VXLAN IP; localhost binding = 502
-- **ALWAYS** configure the framework's proxy trust setting (if it has one). REASON: Zerops L7 balancer terminates SSL and forwards via reverse proxy — frameworks that validate origin/CSRF headers will reject requests unless they trust the proxy. Check the framework's documentation for the specific setting
-
-### Scaling & Platform
-- **NEVER** attempt to change HA/NON_HA mode after creation. REASON: mode is immutable; must delete and recreate service
-- **NEVER** attempt to change hostname after creation. REASON: hostname is immutable; it becomes the internal DNS name
-- **NEVER** expect disk to shrink. REASON: auto-scaling only increases disk; to reduce, recreate the service
-
----
-
-## Schema Rules
 
 ### Deploy Semantics
 - Without tilde: `dist` -> `/var/www/dist/` (directory preserved)
@@ -237,6 +260,10 @@ zerops[]:
   | Production (buildFromGit) | Platform from git | Recipe pattern | Compiled/prod start |
 
   Self-deploy with specific paths (e.g., `[app]`, `dist/~`) destroys source files + zerops.yaml after deploy, making iteration impossible. Only cross-deploy targets and git-based builds can use specific paths safely.
+
+---
+
+## Runtime Rules
 
 ### Cache Architecture (Two-Layer)
 - **Base layer**: OS + prepareCommands (invalidated only when prepareCommands change)

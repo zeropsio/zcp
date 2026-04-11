@@ -15,56 +15,41 @@ const recipeMountBase = "/var/www"
 // Production code leaves it empty and falls back to recipeMountBase.
 var recipeMountBaseOverride string
 
-// OverlayRealAppREADME replaces files["appdev/README.md"] with the real
-// README written by the agent during the generate step, if that README
-// exists on the SSHFS mount and passes basic validity checks. This removes
-// the long-standing TODO-scaffold footgun: the scaffold was always written
-// to the deliverable folder, the agent wrote the real README elsewhere
-// (on the mount), and the close-step sub-agent had to catch the mismatch.
+// OverlayRealREADMEs replaces per-codebase README scaffolds in the finalize
+// output with the real READMEs written by the agent during the generate step,
+// for every non-worker runtime target whose mount contains a valid README.
+// This removes the TODO-scaffold footgun: the scaffold was always written to
+// the deliverable folder, the agent wrote the real README(s) elsewhere (on
+// the mounts), and the close-step sub-agent had to catch the mismatch.
 //
-// Best-effort: if the real README cannot be read or fails validation, the
-// scaffold is left in place. Returns true if the overlay was applied.
-func OverlayRealAppREADME(files map[string]string, plan *RecipePlan) bool {
+// Best-effort: a mount that can't be read or whose README fails validation
+// keeps its scaffold in place. Returns the number of READMEs overlaid.
+func OverlayRealREADMEs(files map[string]string, plan *RecipePlan) int {
 	if plan == nil || files == nil {
-		return false
+		return 0
 	}
-	mountPath := mountREADMEPathForPlan(plan)
-	if mountPath == "" {
-		return false
-	}
-	data, err := os.ReadFile(mountPath)
-	if err != nil {
-		return false
-	}
-	content := string(data)
-	if !isValidAppREADME(content) {
-		return false
-	}
-	files["appdev/README.md"] = content
-	return true
-}
-
-// mountREADMEPathForPlan constructs the expected app README path on the mount.
-// Prefers the API target's README (documents the showcased framework in dual-runtime).
-// Falls back to first non-worker runtime target. Returns "" if none found.
-func mountREADMEPathForPlan(plan *RecipePlan) string {
 	base := recipeMountBase
 	if recipeMountBaseOverride != "" {
 		base = recipeMountBaseOverride
 	}
-	// Prefer API service README (documents the showcased framework).
+	overlaid := 0
 	for _, t := range plan.Targets {
-		if IsRuntimeType(t.Type) && !t.IsWorker && t.Role == RecipeRoleAPI {
-			return filepath.Join(base, t.Hostname+"dev", "README.md")
+		if !IsRuntimeType(t.Type) || t.IsWorker {
+			continue
 		}
-	}
-	// Fall back to first non-worker runtime.
-	for _, t := range plan.Targets {
-		if IsRuntimeType(t.Type) && !t.IsWorker {
-			return filepath.Join(base, t.Hostname+"dev", "README.md")
+		mountPath := filepath.Join(base, t.Hostname+"dev", "README.md")
+		data, err := os.ReadFile(mountPath)
+		if err != nil {
+			continue
 		}
+		content := string(data)
+		if !isValidAppREADME(content) {
+			continue
+		}
+		files[t.Hostname+"dev/README.md"] = content
+		overlaid++
 	}
-	return ""
+	return overlaid
 }
 
 // isValidAppREADME returns true only if the README contains all three

@@ -301,7 +301,8 @@ func TestRecipeBuildResponse_ShowcaseTier_ResearchGuidance(t *testing.T) {
 	t.Parallel()
 
 	// Showcase tier set at start (before plan exists) must deliver showcase-
-	// specific research guidance that tells the agent NOT to load hello-world.
+	// specific research guidance that tells the agent NOT to load hello-world
+	// and includes the base research section (worker decision, targets).
 	rs := NewRecipeState()
 	rs.Tier = RecipeTierShowcase
 	rs.Steps[0].Status = stepInProgress
@@ -315,16 +316,22 @@ func TestRecipeBuildResponse_ShowcaseTier_ResearchGuidance(t *testing.T) {
 	if !strings.Contains(guide, "Do NOT load the hello-world recipe") {
 		t.Error("showcase research guidance missing hello-world prohibition")
 	}
-	// The base research section should also be included (framework identity, etc.)
-	if !strings.Contains(guide, "Framework Identity") {
-		t.Error("showcase research guidance missing base 'Framework Identity' section")
+	// The base research-minimal section should also be included (type table,
+	// target fields, scaffold preservation). Post-reshuffle the old
+	// "Framework Identity" subsection is gone — the field descriptions live
+	// on the tool schema directly. Assert the base section's anchors.
+	if !strings.Contains(guide, "Worker codebase decision") {
+		t.Error("showcase research guidance missing 'Worker codebase decision' block")
+	}
+	if !strings.Contains(guide, "Scaffold preservation") {
+		t.Error("showcase research guidance missing base 'Scaffold preservation' rule from research-minimal")
 	}
 }
 
 func TestRecipeBuildResponse_MinimalTier_ResearchGuidance(t *testing.T) {
 	t.Parallel()
 
-	// Minimal tier should get the standard research guidance with hello-world loading.
+	// Minimal tier should get the compressed base research guidance.
 	rs := NewRecipeState()
 	rs.Tier = RecipeTierMinimal
 	rs.Steps[0].Status = stepInProgress
@@ -332,8 +339,15 @@ func TestRecipeBuildResponse_MinimalTier_ResearchGuidance(t *testing.T) {
 	resp := rs.BuildResponse("sess-min", "create minimal", 0, EnvLocal, nil)
 
 	guide := resp.Current.DetailedGuide
-	if !strings.Contains(guide, "Hello-world") {
-		t.Error("minimal research guidance missing hello-world reference loading")
+	// Post-reshuffle: the Reference Loading block and Framework Identity /
+	// Build & Deploy Pipeline / etc. subsections are gone. Assert the
+	// content that DID survive the trim: the recipe-type table and the
+	// scaffold preservation rule.
+	if !strings.Contains(guide, "Runtime hello world") {
+		t.Error("minimal research guidance missing recipe-type table")
+	}
+	if !strings.Contains(guide, "Scaffold preservation") {
+		t.Error("minimal research guidance missing scaffold preservation rule")
 	}
 }
 

@@ -195,10 +195,11 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 	// Generate all files from the plan.
 	files := workflow.BuildFinalizeOutput(plan)
 
-	// Overlay the real app README from the SSHFS mount if the agent wrote
-	// one during the generate step. Prevents the TODO scaffold from landing
-	// in the deliverable folder.
-	readmeOverlay := workflow.OverlayRealAppREADME(files, plan)
+	// Overlay real per-codebase READMEs from the SSHFS mounts if the agent
+	// wrote them during the generate step. Prevents TODO scaffolds from
+	// landing in the deliverable folder for any codebase whose README is
+	// already in place.
+	readmeOverlayCount := workflow.OverlayRealREADMEs(files, plan)
 
 	// Write files to disk.
 	var written []string
@@ -222,10 +223,10 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 	hasComments := len(plan.EnvComments) > 0
 	var message string
 	var readmeNote string
-	if readmeOverlay {
-		readmeNote = " App README overlaid from /var/www mount (real content, not scaffold)."
+	if readmeOverlayCount > 0 {
+		readmeNote = fmt.Sprintf(" %d README(s) overlaid from /var/www mounts (real content, not scaffold).", readmeOverlayCount)
 	} else {
-		readmeNote = " App README uses the TODO scaffold — write /var/www/{appHostname}dev/README.md during generate step and re-run generate-finalize to overlay it."
+		readmeNote = " App README uses the TODO scaffold — write /var/www/{hostname}dev/README.md for each codebase during generate step and re-run generate-finalize to overlay it."
 	}
 	if hasComments {
 		message = fmt.Sprintf("Regenerated %d recipe files with your per-env comments baked in. Review the output — do NOT edit these files by hand. To refine one env, call generate-finalize again with just that env's updated entry under envComments (merge semantics, rest left untouched).%s", len(written), readmeNote)

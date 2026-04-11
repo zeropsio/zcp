@@ -5,7 +5,7 @@ Create a Zerops recipe: a deployable reference implementation with 6 environment
 <section name="research-minimal">
 ## Research — Recipe Plan
 
-Fill in all research fields by examining the framework's documentation and existing recipes.
+Fill in all research fields by examining the framework's documentation and existing recipes. The `ResearchData` and `RecipeTarget` input schemas on `zerops_workflow` describe every field — read the tool's own schema for the authoritative field list. This section carries only the decisions the schema alone cannot express.
 
 ### What type of recipe?
 
@@ -17,82 +17,23 @@ Fill in all research fields by examining the framework's documentation and exist
 | **3. Backend framework** | `{framework}-minimal` | `laravel-minimal` | Framework with ORM, migrations, templates. |
 | **4. Showcase** | `{framework}-showcase` | `laravel-showcase` | Full dashboard, 5+ feature sections, worker, all services. |
 
-### Reference Loading
-Load knowledge from lower-tier recipes that already exist for your runtime and framework. Each tier builds on the previous:
-
-**1. Hello-world** (platform knowledge): proven zerops.yaml patterns, runtime gotchas, base image details.
-
-```
-zerops_knowledge recipe="{hello-world-slug}"
-```
-
-How to pick the slug:
-
-- **Dynamic-runtime frameworks** (backends, SSR): use the **runtime base**, not the framework name. Examples: php-nginx framework → `php-hello-world`; nodejs framework → `nodejs-hello-world`; bun → `bun-hello-world`; go → `go-hello-world`.
-- **Static-frontend frameworks** (SPAs, static-site generators): there is **no generic `static-hello-world`** — the runtime is Nginx with no framework context. Static hello-worlds are named by **framework**, typically `{framework}-static-hello-world` (e.g. `react-static-hello-world`, `vue-static-hello-world`, `angular-static-hello-world`, `nextjs-static-hello-world`, `sveltekit-static-hello-world`). A few legacy ones drop the `-static-` segment (e.g. `svelte-hello-world`). Pick the one matching the framework you're building.
-- **Dual-runtime (API-first) recipes**: load BOTH — the backend framework's runtime hello-world AND the frontend framework's static hello-world. The frontend static hello-world is what teaches the serve-only prod / toolchain-bearing dev pattern your frontend needs.
-
-**2. Minimal** (framework knowledge, if building a showcase): if a `{framework}-minimal` recipe exists, load it — it contains framework-specific gotchas, integration steps, and zerops.yaml patterns you should extend:
-```
-zerops_knowledge recipe="{framework}-minimal"
-```
-Skip this if building a minimal recipe (you ARE the minimal).
-
-Your job is to extend this accumulated base with the NEW knowledge your tier adds. For minimal: framework-specific additions on top of the hello-world (ORM, migrations, templates). For showcase: additional services on top of minimal (cache, NATS broker, storage, search, mail, workers).
-
-**Stop after loading.** Framework-specific discoveries (documentRoot, trusted-proxy, middleware) come from the framework's own docs, not Zerops knowledge. The generate step automatically injects the full predecessor recipe plus earlier ancestors' gotchas — you don't need to memorize everything from the research load.
-
-> **Note**: at the generate step, the system automatically injects knowledge from lower-tier recipes (full content from the direct predecessor, gotchas from earlier tiers). The research load is for filling the plan form — the system handles the rest.
-
-### Framework Identity
-- **Service type** (from available stacks): match against live catalog
-  - Runtime hello world: the bare runtime (e.g., `go@1`, `bun@1`)
-  - Frontend static: `static` for prod, but `nodejs@22` (or similar) for build base
-  - Frontend SSR: the SSR runtime (e.g., `nodejs@22`)
-  - Backend framework: the framework's runtime (e.g., `php-nginx@8.4`, `nodejs@22`)
-- **Package manager**: npm, yarn, pnpm, bun, composer, pip, cargo, go mod
-- **HTTP port**: the port the app listens on (not applicable for `run.base: static`)
-
-### Build & Deploy Pipeline
-- **Build commands**: ordered list (e.g., `npm install`, `npm run build`)
-- **Deploy files**: what to deploy (`.` for dev, build output dir for prod)
-  - Static frontend: build output (e.g., `dist/~`, `build/~`, `.next/~`)
-  - Runtime/framework: varies by language
-- **Start command**: the RUN command (not build).
-  - Leave **empty** for implicit webserver types (php-nginx, php-apache, nginx, static) — server auto-starts.
-  - Static frontends: empty (nginx serves the files)
-  - Runtime hello world: the app binary/entrypoint
-- **Cache strategy**: directories to cache between builds (e.g., `node_modules`, `vendor`)
-
-### Database & Migration
-- **DB driver**: mysql, postgresql, sqlite, mongodb, **none**
-  - Static frontends (type 2a): set `none` — no database
-  - All others: typically postgresql
-- **Migration command**: framework-specific (e.g., `php artisan migrate`). Raw SQL for runtime hello world.
-- **Seed command**: data seeding command (mandatory for recipes with a database — the dashboard must show real data on first deploy, not empty states)
-
-### Environment & Secrets
-- **Needs app secret**: does the framework require a generated secret key for encryption/sessions?
-- **Logging driver**: stderr (preferred), file, syslog
-
-### Decision Tree Resolution
-Resolve these 5 decisions (ZCP provides defaults, you may override with justification):
-1. **Web server**: builtin (Node/Go/Rust), nginx-sidecar (PHP), nginx-proxy (static)
-2. **Build base**: primary runtime; add `nodejs@22` to buildBases if the framework's scaffold includes a JS asset pipeline (Vite/Webpack/Mix). **The scaffold tells you this** — don't strip the JS pipeline to avoid adding nodejs; keep the scaffold intact and add the second build base.
-3. **OS**: ubuntu-22 (default), alpine (Go/Rust static binaries)
-4. **Dev tooling**: hot-reload (Node/Bun), watch (Python/PHP), manual (Go/Rust/Java), none (static)
-5. **Framework scaffold**: preserve what the framework's official scaffold emits (`composer create-project laravel/laravel`, `npx create-next-app`, `rails new`, `django-admin startproject`). "Minimal" in the recipe slug refers to **external services** (no Redis, no S3, DB-only), NOT to the framework's feature surface. Stripping Vite/Tailwind/ESM from a Laravel/Next.js scaffold makes the recipe non-representative: a user running the same scaffold locally will have those files and will expect them to deploy. Keep them.
+**Scaffold preservation (mandatory).** Preserve what the framework's official scaffold emits (`composer create-project laravel/laravel`, `npx create-next-app`, `rails new`, `django-admin startproject`). "Minimal" in the recipe slug refers to **external services** (no Redis, no S3, DB-only), NOT to the framework's feature surface. Stripping Vite / Tailwind / ESM from a Laravel or Next.js scaffold makes the recipe non-representative — a user running the same scaffold locally will have those files and will expect them to deploy. Keep them.
 
 ### Targets
+
 Define workspace services based on recipe type:
 - **Type 1 (runtime hello world)**: app + db
 - **Type 2a (frontend static)**: app only (NO database)
 - **Type 2b (frontend SSR)**: app + db
 - **Type 3 (backend framework)**: app + db
 
-**Target fields**: `hostname` (lowercase alphanumeric, e.g. `app`/`db`/`cache`/`queue`), `type` (service type from live catalog — pick the highest available version for each stack), and optionally `role` (for repo routing in dual-runtime recipes: `app` or `api`). The tool dispatches rendering directly on the type — no role classification needed for template dispatch. For runtime services, if it's a background worker instead of the HTTP-serving primary app, set `isWorker: true`. Workers get a `worker` setup name (shared codebase) or `prod` (separate codebase — the default) and no subdomain; the primary app gets a `prod` setup and `enableSubdomainAccess`. For managed/utility services, `isWorker` is ignored.
+**Target fields** — see the `RecipeTarget` input schema on `zerops_workflow` for field-level descriptions (`hostname`, `type`, `isWorker`, `role`, `sharesCodebaseWith`). The decisions you make while filling targets:
 
-**Worker-only field** — `sharesCodebaseWith`: on a worker target, names the non-worker runtime target whose codebase this worker shares (Laravel Horizon-style one-repo-two-processes pattern). Empty (default) = separate codebase with its own repo. See the "Worker codebase decision" block in the showcase research section below. Only meaningful for showcase tier; minimal recipes have no worker.
+- **Hostname** — lowercase alphanumeric only. Use conventional names (`app`, `db`, `cache`, `queue`, `search`, `storage`).
+- **Type** — pick the **highest available version** from `availableStacks` for each stack.
+- **isWorker: true** — set for background/queue workers (no HTTP). Ignored for managed/utility services.
+- **role** — `app` / `api` for dual-runtime repo routing. Empty for managed services.
+- **sharesCodebaseWith** — worker-only; see the Worker codebase decision block in the showcase research section. Minimal recipes have no worker.
 
 ### Submission
 Submit via:
@@ -104,20 +45,17 @@ zerops_workflow action="complete" step="research" recipePlan={...}
 <section name="research-showcase">
 ## Research — Showcase Recipe (Type 4)
 
-All base research fields (framework identity, build pipeline, database, environment, decision tree) apply — see the base research section below. This section adds showcase-specific fields and **overrides the reference loading**.
+The base recipe-type table and scaffold preservation rule from the research-minimal block apply here too. This section adds the showcase-only fields and the two showcase-specific decisions: full-stack vs API-first classification, and the worker codebase decision.
 
-**Reference loading — load ONE recipe only (this REPLACES the hello-world + minimal loading in the base section):**
+**Reference loading — load ONE recipe only:**
 ```
 zerops_knowledge recipe="{framework}-minimal"
 ```
 This is your direct predecessor and starting point. **Do NOT load the hello-world recipe.** The generate step automatically injects earlier ancestors' gotchas (hello-world tier) into your context — loading it manually wastes context with raw SQL patterns and different base images that don't apply to your framework. If you load it anyway, ignore its zerops.yaml patterns entirely; use only the minimal recipe's patterns as your template.
 
 ### Additional Showcase Fields
-- **Cache library**: Redis client library for the framework (Valkey/KeyDB, used for cache + sessions ONLY — never queues)
-- **Session driver**: Redis-backed session configuration
-- **Queue driver**: the framework's client for the NATS broker. Default: a NATS client library for the runtime (`nats` for Node/Bun, `nats-py` for Python, `nats.go` for Go, `Rowem\Nats` or similar for PHP, etc.). **Exception**: frameworks with a first-class Redis-bound queue library where switching to NATS would be unidiomatic — Laravel Horizon, Rails Sidekiq, Django+Celery-with-Redis. In those exceptions the framework's own queue library still consumes from Redis via the framework's scheduler/dispatcher, BUT the showcase still provisions a NATS broker as the `queue` service because every showcase has a `kindMessaging` target. The messaging feature section on the dashboard uses NATS directly (pub/sub from the framework's NATS client) regardless of what the framework's own worker command polls.
-- **Storage driver**: object storage integration (S3-compatible)
-- **Search library**: search integration (e.g., Meilisearch, Elasticsearch)
+
+Five showcase-only fields on the research plan: `cacheLib`, `sessionDriver`, `queueDriver`, `storageDriver`, `searchLib`. Each is the library the framework uses for that feature — pick whatever is idiomatic for the framework. The `queueDriver` value is the client library the framework uses to talk to the NATS broker (the showcase provisions NATS as the messaging layer regardless of what the framework's own queue library polls).
 
 ### Full-Stack vs API-First Classification
 
@@ -154,21 +92,21 @@ Define workspace services for showcase recipe. All targets appear in all 6 envir
 
 ### Worker codebase decision
 
-Every showcase has a worker. The worker is always a separate **service**, but whether it is a separate **codebase** is an explicit research-step decision you must make and declare on the target via `sharesCodebaseWith`.
+Every showcase has a worker. The worker is always a separate **service**; whether it's a separate **codebase** is a research-step decision on the target via `sharesCodebaseWith`.
 
-**SEPARATE codebase (default — leave `sharesCodebaseWith` empty).** The worker is its own repo (`{slug}-worker`) with its own `zerops.yaml` containing `dev` + `prod` setups. The import gets its own `workerdev` + `workerstage` pair in envs 0-1 and a bare `worker` in envs 2-5. SEPARATE is the default because it composes — it works even for frameworks that technically allow sharing. This is the normal shape for API-first showcases (static frontend + API + worker, three repos, worker and API on the same runtime base) and for any worker consuming from a standalone broker.
+**SEPARATE codebase (default)** — leave `sharesCodebaseWith` empty. Worker has its own repo, its own `zerops.yaml`, its own dev+stage pair. This is the normal shape for API-first showcases and any worker consuming from a standalone broker.
 
-**SHARED codebase (opt-in — set `sharesCodebaseWith: "{host hostname}"`).** One repo, two process entry points in one `zerops.yaml`: `dev`, `prod`, and a third `worker` setup. No `workerdev` service — the host target's dev container hosts both processes via SSH. The worker's base runtime MUST match the host target's (validation enforces this).
+**SHARED codebase (opt-in)** — set `sharesCodebaseWith: "{host hostname}"`. One repo, two process entry points in one `zerops.yaml` (the host target's zerops.yaml gets a third `setup: worker` block).
 
-Choose SHARED **only when ALL of the following hold**:
+Choose SHARED **only when ALL three tests pass**:
 
-1. **The worker command is the framework's own bundled CLI**, not a generic library call. The CLI ships with the framework and its entire purpose is to consume jobs inside the framework's bootstrapped process. Custom-authored entry points — anything of the form `{packageManager} start worker.{ext}`, `{runtime} worker.{ext}`, or any script you had to write yourself — are generic and do NOT qualify, even if they import the app's code.
-2. **The worker has no independent dependency manifest.** It imports the exact same versions of the exact same dependencies as the host target from the exact same manifest file. A separate `package.json` / `composer.json` / `pyproject.toml` / `go.mod` / `Cargo.toml` automatically disqualifies SHARED.
-3. **The worker cannot run without the app's bootstrap.** The job logic references app-level models, ORM bindings, or framework services that can only be instantiated after the framework has loaded the app's configuration graph. If you can imagine cleanly splitting the worker into its own repo by copying a handful of files, SHARED is the wrong choice.
+1. **The worker command is the framework's own bundled CLI**, not a generic library call. CLIs that ship with the framework and exist to run the framework's bootstrapped process. Custom entry points (`{packageManager} start worker.{ext}`, `{runtime} worker.{ext}`, any script you had to write) do NOT qualify.
+2. **No independent dependency manifest.** Separate `package.json` / `composer.json` / `pyproject.toml` / `go.mod` / `Cargo.toml` disqualifies SHARED.
+3. **Cannot run without the app's bootstrap.** Job logic references app-level models, ORM bindings, or framework services that need the framework's config graph.
 
-**When in doubt, SEPARATE.** Separate always works; shared only works inside the narrow slice defined by the three tests above. Generic queue libraries (anything you pull in as a dependency and drive from a script you wrote yourself) fail test 1 and land on SEPARATE — which is correct.
+**When in doubt, SEPARATE.** Generic queue libraries (BullMQ, agenda, etc.) fail test 1 and land on SEPARATE. Cross-runtime sharing is rejected by validation. The 3-repo case (frontend + API + worker, all separate repos, worker and API on the same runtime base) is fully supported — leave `sharesCodebaseWith` empty.
 
-**DO NOT** claim shared codebase just because the runtime matches. Cross-runtime sharing is rejected by validation. Same-runtime-but-separate-repo is the 3-repo case (a static frontend + an API + a worker, all three in their own repos, worker and API on the same runtime base) and is fully supported — leave `sharesCodebaseWith` empty and the provisioner wires up `workerdev` + `workerstage` from the worker's own repo.
+Provision and generate will use this decision to shape the import.yaml, the zerops.yaml files, and the deploy flow. You don't need to think about the mechanics now — just make the decision.
 
 ### Submission
 Submit via:
@@ -205,38 +143,21 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 **Workspace import MUST NOT contain a `project:` section.** The ZCP project already exists — the API rejects imports that include `project:`. Only `services:` is allowed here. (The 6 recipe **deliverable** imports written in the finalize step DO contain `project:` with `envVariables` + preprocessor — that's a different file for a different use case.)
 
-**Framework secrets**: If `needsAppSecret == true`, determine during research whether the secret is used for encryption/sessions (shared by services hitting the same DB) or is per-service.
-- **Shared** (used for encryption, CSRF, session signing — any secret that multiple services must agree on): do NOT add to workspace import (see above — no `project:` allowed). After services reach RUNNING, set the value at project level with `zerops_env` **using the same preprocessor expression the deliverable uses** — zcp expands it locally via the official zParser library before calling the platform API, producing byte-for-byte the same value that the platform's own preprocessor will produce at recipe-import time:
+**Framework secrets**: if `needsAppSecret == true`, decide where the secret lives.
+
+- **Shared** (encryption keys, CSRF secrets, session signing keys — anything multiple services must agree on): set at project level after provision completes:
   ```
   zerops_env project=true action=set variables=["{SECRET_KEY_NAME}=<@generateRandomString(<32>)>"]
   ```
-  Because zcp uses zParser (the same library the platform uses), the workspace value and the deliverable's `project.envVariables: <@generateRandomString(<32>)>` output values with identical length, alphabet, and byte-per-char encoding. A secret that boots the app at workspace time is guaranteed to boot it at recipe-import time. Services auto-restart so the new value takes effect.
+  Do NOT wrap the preprocessor expression in `base64:` / `hex:` — `zerops_env` rejects those shapes because frameworks accept the raw 32-char output directly. If your framework's docs show a `base64:` prefix on the secret, drop it. `zerops_env set` is upsert and auto-restarts affected services so the new value takes effect.
 
-  > **Do NOT prepend `base64:` to the preprocessor expression.** Many frameworks document their shared secret in base64 form (Laravel's `APP_KEY=base64:{44chars}`, etc.) because their `key:generate` outputs that shape. The preprocessor emits a 32-char string from a URL-safe 64-char alphabet (`[a-zA-Z0-9_-.]`), which frameworks accept **directly as the raw key** — Laravel's `Encrypter::supported()` checks `mb_strlen($key, '8bit') === 32`, other AES implementations do the same. Prepending `base64:` tells the framework to DECODE the suffix, turning 32 single-byte chars into ~24 bytes, failing the cipher's fixed-length check. **`zerops_env` rejects `base64:<@...>` and `hex:<@...>` shapes to catch this at set time** — if you see that rejection, drop the prefix.
+- **Per-service** (unique API tokens, webhook secrets): add to `envSecrets` in the import.yaml under that service.
 
-  `zerops_env set` is **upsert** — calling it with an existing key replaces the value cleanly. No delete+set dance needed if you want to change a secret. The response includes a `stored` list echoing what actually landed on the platform; read it to verify the final value shape matches your expectation (length, prefix, character set).
+For correlated secrets, encoded variants, or key pairs, call `zerops_preprocess` directly.
 
-  For correlated secrets, encoded variants, or key pairs, call `zerops_preprocess` directly — same library, exposes batch + setVar/getVar across keys.
-- **Per-service** (unique API tokens, webhook secrets): add as service-level `envSecrets` in import.yaml.
+**Dual-runtime URL constants** (API-first recipes only — skip for single-runtime): after services reach RUNNING, set project-level `DEV_*` + `STAGE_*` URL constants with `zerops_env project=true action=set` so the generate step can reference them in zerops.yaml. The full format, consumption pattern, and the `projectEnvVariables` handoff to finalize are documented in the generate step under "Dual-runtime URL env-var pattern" — set the same values now as will be passed there.
 
-**Dual-runtime URL constants** (API-first recipes only — skip for single-runtime): after provision completes and before the generate step writes any zerops.yaml, set the project-level URL constants that the frontend and API will reference. These are derived from the known hostnames + the platform-provided `${zeropsSubdomainHost}` env var. The workspace is an env 0-1 shape (dev-pair), so set both `DEV_*` and `STAGE_*`:
-
-```
-zerops_env project=true action=set variables=[
-  "DEV_API_URL=https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app",
-  "DEV_FRONTEND_URL=https://appdev-${zeropsSubdomainHost}.prg1.zerops.app",
-  "STAGE_API_URL=https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app",
-  "STAGE_FRONTEND_URL=https://appstage-${zeropsSubdomainHost}.prg1.zerops.app"
-]
-```
-
-Substitute your API's actual HTTP port (from `run.ports[0].port` in the API's zerops.yaml). Static frontends have no port segment. See the "Dual-runtime URL env-var pattern" section under "zerops.yaml — Write ALL setups at once" for the full consumption pattern (frontend `${STAGE_API_URL}` in `build.envVariables`, API `${STAGE_FRONTEND_URL}` in `run.envVariables`).
-
-The workspace MUST have these set before zerops.yaml is written — otherwise cross-service refs resolve to literal placeholder strings and every CORS/API-URL reference silently fails. The same values must also be passed as `projectEnvVariables` to `generate-finalize` at finalize time, with the env 0-1 / env 2-5 shape split applied — see the finalize step for details.
-
-Follow the injected **import.yaml Schema** for the three env var levels (project envVariables, service envSecrets, zerops.yaml run.envVariables).
-
-Follow the injected **import.yaml Schema** for all field rules (hostname conventions, priority, mode, preprocessor syntax). Recipe-specific validation:
+Follow the injected **import.yaml Schema** and **Provision Rules** for field rules (hostname conventions, priority, mode, env var levels, preprocessor syntax). Recipe-specific validation:
 
 | Check | What to verify |
 |-------|---------------|
@@ -261,18 +182,46 @@ zerops_mount action="mount" serviceHostname="appdev"
 
 This gives SSHFS access to `/var/www/appdev/` — all code writes go here.
 
+### 3a. Configure git on the mount (MANDATORY before first commit)
+
+SSHFS mounts surface the container's `/var/www/` to zcp as a root-owned directory. Git treats this as a security risk and refuses to operate on it — both on zcp (where you edit files) and inside the target container (where `zerops_deploy` runs `git push` on first deploy). You must configure both sides BEFORE any commit.
+
+**On zcp (once per mounted service)**:
+```
+git config --global --add safe.directory /var/www/{hostname}
+git config --global user.email "recipe@zerops.io"
+git config --global user.name "Zerops Recipe"
+```
+
+**On the target container (once per service, before first `zerops_deploy`)**:
+```
+ssh {hostname} "git config --global --add safe.directory /var/www && git config --global user.email 'recipe@zerops.io' && git config --global user.name 'Zerops Recipe'"
+```
+
+Without zcp-side config: `git commit` on the mount fails with `fatal: detected dubious ownership`. Without container-side config: `zerops_deploy` fails with `fatal: not in a git directory`. Both errors are 100% reproducing on first use — do not try to "commit without configuring and see what happens".
+
+For a dual-runtime showcase with 3 codebases (apidev, appdev, workerdev), repeat both commands for each mount.
+
 ### 4. Discover env vars (mandatory before generate — skip if no managed services)
 
-After services reach RUNNING, discover actual env vars:
+Run `zerops_discover includeEnvs=true` AFTER services reach RUNNING. The response contains the real env var keys every managed service exposes. **You MUST use the names from this response, not guess them from training data.** Guessed names (`${search_apiKey}` when the real key is `${search_masterKey}`) fail silently — the platform interpolator treats unknown cross-service refs as literal strings, and your app sees `"${search_apiKey}"` as the value at runtime.
+
+**Catalog the output.** Record the list of env var keys for every managed service in the provision-step attestation so the generate step (which writes the zerops.yaml `run.envVariables` using these references) has the authoritative list. Example attestation shape:
+
 ```
-zerops_discover includeEnvs=true
+Services: apidev, apistage, appdev, appstage, workerdev, workerstage, db, redis, queue, storage, search.
+Env var catalog:
+  db: hostname, port, user, password, dbName, connectionString
+  redis: hostname, port, password, connectionString
+  queue: hostname, port, user, password, connectionString
+  storage: apiHost, apiUrl, accessKeyId, secretAccessKey, bucketName
+  search: hostname, port, masterKey, defaultAdminKey, defaultSearchKey
+Dev mounts: apidev, appdev, workerdev
 ```
 
-Returns keys and annotations only (keys only — sufficient for validating env var names).
+If a managed service returns a set that surprises you (no `hostname`, or a `key` name you don't recognize), STOP and investigate — do not proceed with guessed names.
 
-**If the plan has no managed services** (type 2a static frontend): skip this step — there are no env vars to discover.
-
-Record which env vars exist. **ONLY use variables that were actually discovered** — guessing names causes silent runtime failures (`${...}` becomes a literal string, not an error). Service-specific variable names are in the injected service reference cards.
+**If the plan has no managed services** (type 2a static frontend): skip this step entirely.
 
 ### Completion
 ```
@@ -304,7 +253,13 @@ The dev service is RUNNING (via `startWithoutCode`) but zerops.yaml has NOT been
 
 **Single-runtime** (full-stack): Write all source code, zerops.yaml, and README to `/var/www/appdev/`.
 
-**Dual-runtime** (API-first showcase): Write API code to `/var/www/apidev/` and frontend code to `/var/www/appdev/`. Each has its own zerops.yaml, package.json, and source tree. The API's README.md contains the integration guide (it documents the showcased framework).
+**Dual-runtime** (API-first showcase): write each codebase to its own mount. For a 3-repo showcase (frontend + API + separate worker), that's three distinct source trees:
+
+- `/var/www/apidev/` — the API framework project (NestJS, Django, Rails, etc.)
+- `/var/www/appdev/` — the frontend SPA (Svelte, React, Vue, etc.)
+- `/var/www/workerdev/` — the worker project (may be a separate framework project or a minimal runtime script)
+
+**Each codebase needs its own README.md with all 3 extract fragments** (intro, integration-guide, knowledge-base). At publish time, each codebase is part of the recipe app repo, and the README you write is what a user exploring that codebase sees. The integration-guide fragment in each README contains THAT codebase's zerops.yaml, fully commented. The knowledge-base fragment in each README lists the gotchas specific to THAT codebase's role (e.g., the frontend README covers allowedHosts and dev-server runtime env vars; the API README covers CORS and ORM synchronize; the worker README covers NATS connection and job idempotency).
 
 **Use SSHFS for file operations**, SSH for commands that use the **base image's built-in tools** (e.g., `composer create-project` on php-nginx, `git init`).
 Files placed on the mount are already on the dev container — deploy doesn't "send" them, it triggers a build from what's already there.
@@ -401,6 +356,35 @@ project:
 
 Substitute `{apiPort}` with your API's actual HTTP port (from `run.ports[0].port` in the API's zerops.yaml). Static frontends have no port segment.
 
+**Dev-server runtime env vars — `setup: dev` needs `run.envVariables`**:
+
+Framework-bundled dev servers (Vite, webpack dev server, Next dev, Nuxt dev) read `process.env.VITE_*` / `process.env.NEXT_PUBLIC_*` / equivalent **at dev server startup**, not at build time. For `setup: dev`, the client-side env vars must be in `run.envVariables` — or they must be passed on the start command line (`VITE_API_URL=$DEV_API_URL npm run dev`). The `build.envVariables` placement is ONLY correct for `setup: prod` because prod builds bake the values into the bundle via a build step that doesn't exist in dev mode.
+
+```yaml
+zerops:
+  - setup: dev
+    run:
+      base: nodejs@22
+      envVariables:
+        # Client-side vars must be in run.envVariables so the Vite/webpack/
+        # Next dev server picks them up at startup. build.envVariables is
+        # build-time only and dev servers don't have a build step.
+        VITE_API_URL: ${DEV_API_URL}
+        NODE_ENV: development
+
+  - setup: prod
+    build:
+      base: nodejs@22
+      envVariables:
+        # Client-side vars in build.envVariables get baked into the bundle.
+        # This is the prod pattern — `npm run build` substitutes at build time.
+        VITE_API_URL: ${STAGE_API_URL}
+    run:
+      base: static
+```
+
+Symptom of the wrong placement: the frontend loads in the browser but every `fetch()` call returns HTML (the Vite dev server's own 404 page) instead of JSON. In the browser devtools, `console.log(import.meta.env.VITE_API_URL)` prints `undefined`. This is LOG2's session-breaking bug 15.
+
 **Consumption**: project-level env vars auto-inject into both runtime AND build containers. Reference them directly by name in zerops.yaml — `build.envVariables: VITE_API_URL: ${STAGE_API_URL}` bakes the stage URL into the cross-deployed bundle; `run.envVariables: FRONTEND_URL: ${STAGE_FRONTEND_URL}` forwards the value under a framework-conventional name for CORS. There is **no `RUNTIME_` prefix** on project vars — that prefix is a different feature (lifting a service-level runtime var into build), not applicable here. The full consumption model (including the shell-prefix alternative in `buildCommands`) lives in the `environment-variables` knowledge guide — fetch it via `zerops_knowledge scope="guide" query="environment-variables"` when you need the platform rules behind this pattern.
 
 The `setup: dev` block reads `DEV_*`; `setup: prod` reads `STAGE_*`. The same zerops.yaml works in every env: envs 2-5 never invoke `setup: dev` (there is no `appdev` there), so the `DEV_*` reference is dormant and safe.
@@ -477,9 +461,40 @@ If the scaffolder produced `.env.example`, **keep it** with empty values. Remove
 
 Use the framework's **standard** env var names — do not invent new ones. If the framework has a base/app URL env var, set it to `${zeropsSubdomain}`. The chain recipe shows the correct names.
 
-### Dashboard spec
+### Write the dashboard skeleton
 
-The dashboard endpoints, feature-section shape, style quality bar, skeleton-vs-feature-sub-agent boundary, and asset pipeline rule are delivered as a separate `generate-dashboard` block injected right after this section (showcase and non-hello-world minimal only). Read it before writing `GET /`, the feature sections, or the sub-agent brief. Hello-world slugs skip that block — a single welcome endpoint suffices and the chain recipe shows it.
+What you write now (main agent) vs what the sub-agent writes later (deploy step):
+
+| Now (generate — you write this) | Later (deploy sub-agent — do NOT write this now) |
+|---|---|
+| Layout template with empty partial/component slots per feature section | Feature-section controllers/handlers |
+| Placeholder text in each slot ("Section available after deploy") | Feature-section views with interactive UI |
+| Primary model + migration + factory + seeder (15-25 records) | Feature-specific JavaScript |
+| DashboardController with `/`, `/health`, `/status` endpoints returning real data | Feature-specific model mixins/traits |
+| Service connectivity panel (CONNECTED/DISCONNECTED per provisioned service) | |
+| All routes registered — GET + POST for every feature action, returning placeholder responses | |
+| `zerops.yaml` (every setup), each repo's `README.md` (all 3 fragments), `.env.example` | |
+
+Feature sections map to the plan's targets:
+
+- **Database** — list seeded records + create-record form route
+- **Cache** (if provisioned) — store-value-with-TTL route, cached-vs-fresh demonstration
+- **Object storage** — upload-file + list-files routes
+- **Search engine** — live search route over seeded records
+- **Messaging broker + worker** — dispatch-job POST that publishes to a NATS subject the worker consumes; status poll that reads the worker's result
+
+You write the routes (pre-registered with placeholder handlers) and the layout partials that WILL hold each section. The actual controllers and views that exercise the live services come later, when a framework-expert sub-agent runs at the deploy step against running containers.
+
+Endpoint requirements:
+
+- **Server-side (types 1, 2b, 3, 4)**: `GET /` (HTML dashboard), `GET /health` or `GET /api/health` (JSON), `GET /status` (JSON with connectivity checks — DB ping, cache ping, latency).
+- **Static frontend (type 2a)**: single `GET /` page with framework name, greeting, timestamp, environment indicator. No server-side health endpoint.
+
+For a single-feature minimal recipe you skip the skeleton/sub-agent split entirely — write everything inline in this step and move on.
+
+### Asset pipeline consistency
+
+If `buildCommands` compiles assets (JS, CSS, or both), the primary view/template MUST load the compiled outputs via the framework's standard asset inclusion mechanism. Inline `<style>` or `<script>` blocks that bypass the build output are forbidden when a build pipeline exists. A build step that produces assets nobody loads is dead code. To verify: if zerops.yaml prod `buildCommands` produces built CSS/JS, check that the primary view/template references them through the framework's asset helper. This is the generate-step corollary of research decision 5 (scaffold preservation).
 
 ### App README with extract fragments
 
@@ -605,135 +620,18 @@ Do NOT include:
 - No images
 - Plain text describing what the recipe demonstrates
 
-### Writing Style — Developer to Developer
+### Structural rules (hard)
 
-Recipes are read by both humans and AI agents. Write like a senior dev explaining their config to a colleague — not documentation, not tutorials.
+- **H3 headings inside markers, H2 outside.** Section headings like `## Integration Guide` stay OUTSIDE the extract markers; content INSIDE markers uses `###`.
+- **Blank line required after the start marker** for every fragment (intro, integration-guide, knowledge-base).
+- **Exactly three fragments per README**, in this order: `intro`, `integration-guide`, `knowledge-base`.
+- **Comment ratio in zerops.yaml code blocks must be >= 30%** — aim for 35% to clear the threshold comfortably on the first attempt. Agents consistently underestimate; writing to 30% lands at 25%.
+- **No placeholders** — `PLACEHOLDER_*`, `<your-...>`, `TODO`, etc.
+- **All env var references must use discovered variable names** — never guess.
+- **Comments explain WHY, not WHAT** — don't restate the key name.
+- **Max 80 chars per comment line**.
 
-**Voice — three dimensions of a good comment:**
-1. **WHY this choice** + consequence: "CGO_ENABLED=0 produces a fully static binary — no C libraries linked at runtime" (not "Set CGO_ENABLED to 0")
-2. **HOW the platform works here** — contextual behavior that makes the file self-contained, so the reader never has to leave to understand what's happening: "project-level — propagates to all containers automatically", "priority 10 — starts before app containers so migrations don't hit an absent database", "buildFromGit clones this repo and runs the matching zeropsSetup's build pipeline". Include this whenever a field's effect isn't obvious from its name alone.
-3. **NOT the WHAT** — never restate the field name or its value. The reader can see `base: php@8.4`; they can't see that project envVariables propagate to child services.
-
-- Direct, concise, no filler ("Install production deps only" not "In this step we will install the production dependencies")
-- Use dashes for asides — not parentheses, not semicolons
-- One thought per comment line, flow naturally with the YAML structure
-
-**Comment shape — match existing recipes exactly:**
-- 1-2 lines per comment block, ~50-60 chars wide (natural prose, not compressed)
-- Above the key, not inline (exception: short value annotations like `DB_NAME: db  # matches PostgreSQL hostname`)
-- Multi-line comments for decisions: explain the choice and its consequence in flowing sentences
-- Group a 2-3 line comment block before a logical section, then let the config breathe
-- Never exceed 70 chars per comment line (existing recipes peak at 75, average 53)
-
-**Example of correct style** (from go-hello-world):
-```yaml
-    # CGO_ENABLED=0 produces a fully static binary — no C compiler
-    # or system libraries linked at runtime. lib/pq is pure Go
-    # so this is safe and results in a portable artifact.
-    envVariables:
-      CGO_ENABLED: "0"
-    buildCommands:
-      # Download all module dependencies, then build both the
-      # app server and the database migration binary.
-      - go mod download
-```
-
-**Anti-patterns:**
-- Don't restate the key name ("# Set the build base" on `base: php@8.4`)
-- Don't write generic descriptions ("# This is the build section")
-- Don't add section-heading comments with decorators (`# -- Dev Runtime --`, `# === Database ===`, `# ----------`) — the YAML structure itself provides grouping. Comments explain decisions, not label sections.
-- Don't use "we" or "you" excessively
-- Don't explain YAML syntax itself
-- Don't write single-word comments ("# dependencies", "# port")
-- Don't compress to telegraphic style ("# static bin, no C" — write full sentences)
-
-**Metrics:**
-- Comment ratio: at least 30% of YAML config lines should have comment lines
-- Target ~50-60 chars per comment line, never exceed 70
-- Every non-obvious decision should have a reason
-</section>
-
-<section name="generate-dashboard">
-## Dashboard Implementation Spec
-
-Delivered for recipes that render a feature-section dashboard (showcase tier and multi-service minimal). Hello-world slugs skip this entire block — the chain recipe shows a single welcome endpoint and that is enough.
-
-### Required endpoints
-
-**Server-side (type 1 runtime hello-world, type 2b SSR frontend, type 3 backend framework, type 4 showcase):**
-- `GET /` — dashboard (HTML) with interactive feature sections proving each provisioned service works
-- `GET /health` or `GET /api/health` — JSON health endpoint
-- `GET /status` — JSON status with actual connectivity checks (DB ping, cache ping, latency)
-
-**Static frontend (type 2a):** a single `GET /` page showing framework name, greeting, timestamp, and environment indicator. No server-side health endpoint.
-
-### Feature sections — one per provisioned service
-
-Each provisioned service gets a section that **exercises** the service, not a connectivity dot:
-
-- **Database** — list seeded records + create-record form (proves ORM + migrations + CRUD)
-- **Cache** (if provisioned) — store a value with TTL, show cached-vs-fresh. Cache is for cache + sessions only; the queue uses NATS, a separate broker
-- **Object storage** (if provisioned) — upload file + list uploaded files (proves S3 integration)
-- **Search engine** (if provisioned) — live search across seeded records (proves indexing)
-- **Messaging broker + worker** (if provisioned) — NATS pub/sub + worker consumer. Dispatch-job button publishes to a NATS subject; the worker subscribes and writes the processed result to a database table or status key the dashboard polls. Show (a) message sent (timestamp + subject), (b) worker-processed result appearing within ~1s. Proves the full NATS → worker → result round-trip.
-
-Minimal recipes (app + db) have one feature section. Showcase recipes have one per service. No section for services not in the plan.
-
-### Dashboard must work on first deploy — verify at deploy Step 3
-
-- Seeder populates 15-25 sample records — no empty states. After dev deploy, open the dashboard and confirm seeded records appear. Empty table = silent seeder failure: check `zerops_logs`. Common cause: `zsc execOnce` marks the command done even on failure.
-- Search index populated — `initCommands` runs the framework's index command after `db:seed`. Search must return seeded content immediately, not after manual reindex.
-- File storage accessible on first visit — upload form works with no pre-configuration.
-
-### Dashboard style — quality bar
-
-Minimalistic, functional, demonstrative, **polished**. Minimalistic does NOT mean unstyled browser defaults — the dashboard must be professional enough that deploying it is not embarrassing.
-
-- **Styled form controls** — never raw browser-default `<input>` / `<select>` / `<button>`. Use scaffolded CSS (Tailwind if present) or clean inline: padding, border-radius, consistent sizing, focus ring, button hover
-- **Visual hierarchy** — section headings delineated, consistent vertical rhythm, tables with headers + cell padding + row shading
-- **Status feedback** — success/error flash after submissions (not silent reload), loading text for async ops, meaningful empty states
-- **Readable data** — aligned columns, relative timestamps ("3 minutes ago"), IDs in monospace
-- System font stack, generous whitespace, monochrome palette + ONE accent color, mobile-responsive via simple CSS
-
-**Avoid**: component libraries, icon packs, animations, dark-mode toggles, JS frameworks for interactivity (vanilla JS for debounce, standard POST otherwise), inline `<style>` alongside a build pipeline.
-
-**XSS protection (mandatory)**: ALL dynamic content must be escaped. `textContent` for JS-injected text; framework template auto-escaping for server-rendered content (never raw/unescaped mode). File names from S3, titles from DB, search results — all untrusted.
-
-### Skeleton boundary — generate vs deploy sub-agent (showcase)
-
-When the dashboard has more than 2 feature sections (showcase), each section lives in its own controller/handler + its own view/template/partial. The main agent writes the skeleton; the deploy step dispatches ONE sub-agent to fill the feature sections in after appdev is verified.
-
-| Generate step (main agent) | Deploy step (sub-agent, after appdev verified) |
-|---|---|
-| Dashboard layout with empty partial/component slots per feature section | Feature controllers/handlers (CacheController, StorageController, …) |
-| Placeholder text in each slot ("Section available after deploy") | Feature views/templates/partials with interactive UI |
-| Primary model + migration + factory + seeder (15-25 records) | Feature-specific JavaScript (search debounce, upload, polling) |
-| DashboardController with index, health, status endpoints | Feature-specific model traits/mixins |
-| Service connectivity panel (CONNECTED/DISCONNECTED per service) | |
-| All routes registered (GET + POST for every feature action) | |
-| zerops.yaml (all setups), README, .env.example | |
-
-**Why this boundary**: the main agent deploys the skeleton first, verifies it runs cleanly (connectivity panel, seeded data, health endpoint), and THEN dispatches the feature sub-agent. This catches zerops.yaml errors, missing extensions, env var typos, and migration issues BEFORE the sub-agent adds feature-section complexity. Minimal recipes (1-2 feature sections) skip the sub-agent entirely — the main agent writes everything directly during generate.
-
-### Sub-agent brief — what to include
-
-The main agent dispatches ONE sub-agent that writes all features sequentially. The brief must cover:
-
-- Exact file paths (framework-conventional locations)
-- Installed packages relevant to each feature
-- What each section must demonstrate (from the service-to-feature mapping above)
-- The UX quality contract above (styled controls, visual hierarchy, status feedback, XSS-safe dynamic content), the CSS approach (Tailwind if scaffolded, inline otherwise), and the partial-inclusion layout
-- Pre-registered route paths for each feature's actions
-- **Where app-level commands run** (hard rule): `{appDir}` is an SSHFS mount on the zcp orchestrator, not a local directory. File edits against it are fine; **target-side commands — the app's own toolchain — MUST run via `ssh {devHostname} "cd /var/www && …"` on the target container**. The principle: anything that belongs to the app's world (compiler, test runner, linter, package manager, framework CLI, type checker, app-level `curl`/interpreter hitting the running app or managed services) runs on the target via SSH. `agent-browser`, `zerops_*`, and Read/Edit/Write against the mount run on zcp. Running app-level commands from zcp against the mount uses zcp's runtime version, zcp's dependency tree, zcp's env vars, and has no managed-service reachability — it also exhausts zcp's fork budget and produces `fork failed: resource temporarily unavailable` cascades. When in doubt, SSH.
-- **Test each feature against the live service after writing it** — the sub-agent has SSH access to appdev and all managed services. After writing a controller + view, hit the endpoint via `ssh {devHostname} "curl -s localhost:{port}/…"` (or the framework's test runner over SSH) and verify the response. Fix issues immediately — this is the point of deferring to after deploy.
-
-**Main agent resumes after sub-agent**: read back feature files (verify they exist and aren't empty) → git add + commit on the mount → redeploy appdev → restart processes → verify features work → continue to stage deployment.
-
-### Asset pipeline consistency
-
-If `buildCommands` compiles assets (JS, CSS, or both), the primary view/template MUST load the compiled outputs via the framework's standard asset inclusion mechanism. Inline `<style>` or `<script>` blocks that bypass the build output are forbidden when a build pipeline exists.
-
-A build step that produces assets nobody loads is dead code: prod wastes build time on unused compilation, the dev server serves nothing, and the end user cloning the recipe sees a working build config with a template that does not use it — indistinguishable from a broken setup. To verify: if zerops.yaml prod `buildCommands` produces built CSS/JS, check that the primary view/template references them through the framework's asset helper (every framework with a build pipeline has one — it maps source assets to content-hashed output filenames). Inline styles alongside a build pipeline mean the pipeline is disconnected. This is the generate-step corollary of research decision 5 (scaffold preservation).
+Writing-style voice (the "developer to developer" tone, anti-patterns, correct-style example) lives at **finalize** under "Comment style" — read it there when you write `envComments`. The same voice applies to the zerops.yaml comments you write here.
 </section>
 
 <section name="deploy">
@@ -753,6 +651,8 @@ The step numbers below are reference labels, NOT a linear script. For dual-runti
 | Dual-runtime (API-first) | **Step 1-API → Step 2a-API → Step 3-API (verify apidev only) → Step 1 → Step 2 (2a/2b/2c) → Step 3 → Step 3a (BOTH containers) → Step 4 → Step 4b → Step 4c** |
 
 API-first teams: the steps labelled `-API` run FIRST; do not try to verify `appdev` (Step 3) before `appdev` has been deployed (Step 1). Step 3a runs once, at the end, reading logs from both `apidev` and `appdev` together.
+
+> **Parameter naming**: the deploy parameter is `targetService` (NOT `serviceHostname`). `serviceHostname` is used by `zerops_mount`, `zerops_subdomain`, `zerops_verify`, `zerops_logs`, and `zerops_env` — deploy is the exception. If you get `unexpected additional properties ["serviceHostname"]`, you used the wrong name.
 
 **Step 1: Deploy appdev (self-deploy)**
 ```
@@ -784,10 +684,21 @@ ssh apidev "cd /var/www && {api_start_command} &"
 ```
 
 **2b. Asset dev server** (if the build pipeline uses a secondary runtime):
-If `run.prepareCommands` installs a secondary runtime (e.g., `sudo -E zsc install nodejs@22`) and the scaffold defines a dev server (e.g., `npm run dev` for Vite), start it now:
+If `run.prepareCommands` installs a secondary runtime (e.g., `sudo -E zsc install nodejs@22`) and the scaffold defines a dev server (e.g., `npm run dev` for Vite), start it now.
+
+**Before starting, check if one is already running.** The deploy framework may have started the dev server on first deploy; launching a second instance via background SSH creates a port collision. The second instance silently falls back to an incremented port (Vite: 5173 → 5174), and the public subdomain doesn't route to the new port — it routes to the original.
+
+```bash
+ssh appdev "pgrep -f 'vite' || true"
+ssh appdev "pgrep -f 'npm run dev' || true"
+```
+
+If a process is already running, skip the start. If you need to restart (after a config change), kill first: `ssh appdev "pkill -f 'vite' || true"` then start once:
+
 ```bash
 ssh appdev "cd /var/www && {dev_server_command} &"
 ```
+
 Pass the appropriate host binding flag so it listens on `0.0.0.0` (e.g., `npx vite --host 0.0.0.0`). This applies even when the primary server auto-starts — the primary handles HTTP, but the asset dev server compiles CSS/JS.
 
 **This step is MANDATORY, not optional.** Without it, templates that reference build-pipeline outputs (Vite manifests, Webpack bundles) will 500 on the first page load. Do NOT work around missing assets by running `npm run build` on the dev container — that compiles static assets instead of using HMR, and doesn't prove the dev experience works. Do NOT replace framework asset helpers with inline CSS/JS — that disconnects the build pipeline.
@@ -838,6 +749,10 @@ Look for the framework-specific output each command emits: migration applied row
 
 **Never "work around" missing output by running `npx ts-node migrate.ts && ... seed.ts` over SSH to populate the database manually.** That produces a recipe that appears to work in the workspace but ships broken to end users who never see your manual fix. If the initCommands truly didn't fire (rare — would be a platform bug), report it and stop; don't proceed with a hand-patched dataset.
 
+**The `zsc execOnce` burn-on-failure trap**: `zsc execOnce` keys on `${appVersionId}`, which doesn't change between retries of the same deploy version. If the first attempt runs the seed, the seed crashes mid-insert, and the container dies — the next retry with the same `appVersionId` will NOT re-run the seed. The platform thinks it already ran. Symptom: the seeder output appears in the FIRST deploy's logs, then is absent on every subsequent retry, and the database contains partial data.
+
+Recovery: either (a) modify something that forces a new `appVersionId` (touch a source file, even a whitespace change, then redeploy — the new version ID makes `execOnce` re-fire), or (b) manually run the seed command via SSH once (`ssh {hostname} "cd /var/www && {seed_command}"`) then redeploy to verify the fix lands. Option (a) is preferred because it preserves the "never manually patch workspace state" rule; option (b) is the escape hatch when the seed depends on a schema that only exists after a successful initCommand run.
+
 **Step 3-API** (API-first only, runs AFTER Step 1-API + Step 2a-API, BEFORE Step 1): Enable and verify the API FIRST — this is a checkpoint before the frontend deploy, not a late verification step:
 ```
 zerops_subdomain action="enable" serviceHostname="apidev"
@@ -857,27 +772,69 @@ zerops_logs serviceHostname="appdev" limit=20
 **Step 4: Iterate if needed** (max 3 iterations)
 If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify. After any redeploy, repeat Step 2 (start ALL processes) before Step 3 (verify).
 
-**Step 4b: Showcase feature sections — MANDATORY for Type 4** (skip for minimal)
+**Step 4b: Dispatch the feature sub-agent (MANDATORY for Type 4 showcase)**
 
-After appdev is deployed and verified with the skeleton (connectivity panel, seeded data, health endpoint), dispatch the feature sub-agent. **This step is MANDATORY for Type 4 showcase recipes.** If you wrote feature controllers during the generate step, you skipped the live-service testing that makes showcase features reliable. The generate step produces a skeleton only — feature code is written HERE, against running services.
+After appdev is deployed and verified with the skeleton (connectivity panel, seeded data, health endpoint), dispatch ONE framework-expert sub-agent to fill in the feature sections. **This is where feature implementation happens — generate writes the skeleton only.** Writing feature code at generate means writing blind against disconnected services; the sub-agent writes against live services and can test each feature as it goes.
 
-The sub-agent writes code on the appdev mount and can test against live services — database, cache, storage, search are all reachable. See "Showcase dashboard — file architecture" for the sub-agent brief format.
+Minimal recipes (1-2 feature sections) skip the sub-agent entirely — the main agent writes features inline during generate.
 
-**API-first**: The sub-agent works on BOTH codebases — API endpoints in `/var/www/apidev/`, Svelte components in `/var/www/appdev/`. Include both mount paths in the sub-agent brief. The sub-agent adds API routes (controllers, services) and corresponding frontend components (Svelte pages that fetch from the API).
+**Sub-agent brief — required contents**:
 
-After the sub-agent finishes:
+- Exact file paths (framework-conventional locations for controllers, views, partials)
+- Installed packages relevant to each feature (from the plan's `cacheLib`, `storageDriver`, `searchLib` etc.)
+- Service-to-feature mapping (database/cache/storage/search/queue — one feature section per provisioned service, exercising that service)
+- **UX quality contract** (see below) — what the rendered dashboard must look like
+- Pre-registered route paths the sub-agent must fill (agent wrote them as stubs at generate)
+- **Where app-level commands run** (hard rule, see below)
+- Instruction to **test each feature against the live service immediately after writing** — the sub-agent has SSH access to appdev and every managed service is reachable. After writing a controller+view, hit the endpoint via `ssh {devHostname} "curl -s localhost:{port}/…"` (or the framework's test runner over SSH) and verify the response. Fix immediately; do not write ahead of verification.
+
+**API-first**: the sub-agent works on BOTH apidev AND appdev mounts (plus workerdev if the worker has a public-facing component). Include every mount path in the brief. The sub-agent adds API routes (controllers, services) and corresponding frontend components that fetch from the API.
+
+**Feature sections must EXERCISE each service, not just check connectivity**:
+
+- **Database** — list seeded records + create-record form (proves ORM + migrations + CRUD)
+- **Cache** (if provisioned) — store-a-value-with-TTL + cached-vs-fresh demonstration. Cache is for cache + sessions only; the queue uses NATS, a separate broker
+- **Object storage** (if provisioned) — upload-file + list-files routes (proves S3 integration)
+- **Search engine** (if provisioned) — live search over seeded records (proves indexing)
+- **Messaging broker + worker** (if provisioned) — dispatch-job POST that publishes to a NATS subject; worker consumes, writes result to a DB table the dashboard polls. Show (a) message sent (timestamp + subject), (b) worker-processed result appearing within ~1s. Proves the full NATS → worker → result round-trip
+
+The seeder populates 15-25 sample records so the dashboard shows real data on first deploy, not empty states. Search index is populated via the framework's search-import command in `initCommands` after `db:seed`.
+
+**UX quality contract** (what "dashboard style" means — include verbatim in the sub-agent brief):
+
+The dashboard must be **polished** — minimalistic does NOT mean unstyled browser defaults. A developer deploying this recipe should not be embarrassed.
+
+- **Styled form controls** — never raw browser-default `<input>` / `<select>` / `<button>`. Use scaffolded CSS (Tailwind if present) or clean inline styles: padding, border-radius, consistent sizing, focus ring, button hover
+- **Visual hierarchy** — section headings delineated, consistent vertical rhythm, tables with headers + cell padding + alternating row shading
+- **Status feedback** — success/error flash after submissions, loading text for async operations, meaningful empty states
+- **Readable data** — aligned columns, relative timestamps ("3 minutes ago"), monospace for IDs
+- System font stack, generous whitespace, monochrome palette + ONE accent color, mobile-responsive via simple CSS
+- **Avoid**: component libraries, icon packs, animations, dark-mode toggles, JS frameworks for interactivity, inline `<style>` alongside a build pipeline
+- **XSS protection (mandatory)**: all dynamic content escaped. `textContent` for JS-injected text; framework template auto-escaping for server-rendered content. Never use raw/unescaped output mode.
+
+**Where app-level commands run** (hard rule — include verbatim in the sub-agent brief):
+
+The sub-agent runs on the zcp orchestrator container. `{appDir}` is an SSHFS network mount — a bridge to the target container's `/var/www/`, not a local directory. File reads and edits through the mount are fine. **Target-side commands — anything in the app's own toolchain — MUST run via SSH on the target container**, not on zcp against the mount.
+
+The principle is WHICH CONTAINER'S WORLD the tool belongs to:
+
+- **SSH (target-side)** — compilers (`tsc`, `nest build`, `go build`), type-checkers (`svelte-check`, `tsc --noEmit`), test runners (`jest`, `vitest`, `pytest`, `phpunit`), linters (`eslint`, `prettier`), package managers (`npm install`, `composer install`), framework CLIs (`artisan`, `nest`, `rails`), and any app-level `curl`/`node`/`python -c` that hits the running app or managed services.
+- **Direct (zcp-side)** — `zerops_*` MCP tools, `zerops_browser`, Read/Edit/Write against the mount, `ls`/`cat`/`grep`/`find` against the mount, `git status`/`add`/`commit` (with the safe.directory config from provision).
+
+Correct shape:
+```
+ssh {hostname} "cd /var/www && {command}"   # correct — app's world
+cd /var/www/{hostname} && {command}          # WRONG — zcp against the mount
+```
+
+Running app-level commands on zcp uses the wrong runtime, the wrong dependencies, the wrong env vars, has no managed-service reachability, AND exhausts zcp's fork budget. Symptom: `fork failed: resource temporarily unavailable` cascades. Recovery is `pkill -9 -f "agent-browser-"` on zcp + waiting for process reaping; the real fix is to stop running target-side commands zcp-side.
+
+**After the sub-agent returns**:
 1. Read back feature files — verify they exist and aren't empty
-2. Git add + commit on the mount(s)
-3. Redeploy: `zerops_deploy targetService="appdev" setup="dev"` (API-first: also redeploy apidev)
-4. Restart ALL processes (Step 2) — redeployment creates a fresh container
-5. HTTP-level feature verification (curl):
-   - Each feature endpoint returns the right status code and payload shape
-   - POST actions return success (not 500 errors)
-   - Seeded data visible in database/search sections (tables populated, search returns results)
-   - File upload works and file list populates (S3 connectivity proven)
-   - Job dispatch shows processed result (queue + worker connectivity proven)
-
-If features fail: fix on mount, redeploy, re-verify (counts toward the 3-iteration limit).
+2. Git add + commit on every mount the sub-agent touched (apidev, appdev, workerdev as applicable)
+3. Redeploy each affected dev service — fresh container, all SSH processes died, restart them (Step 2)
+4. HTTP-level verification via curl on every feature endpoint
+5. If anything fails, fix on mount, iterate (counts toward the 3-iteration limit)
 
 **Step 4c: Browser verification — MANDATORY for Type 4 showcase** (skip for minimal)
 
@@ -893,14 +850,7 @@ What browser verification catches that curl cannot:
 
 #### Browser verification — use `zerops_browser`, never raw agent-browser
 
-ZCP exposes a `zerops_browser` MCP tool that wraps `agent-browser` with a guaranteed lifecycle. It is the ONLY supported way to drive the browser from the recipe workflow. Raw `agent-browser` Bash calls are forbidden — they caused v4 and v5 to crash with `fork failed: resource temporarily unavailable` during browser verification (v5 crashed TWICE, once in the main agent and once in a sub-agent).
-
-**Why the tool is mandatory** — the raw CLI has two failure modes the tool eliminates:
-
-1. **Lifecycle drift.** `agent-browser` runs a persistent daemon per session holding one Chrome instance (~10 child processes). If the batch is missing `close`, or the Bash call is killed before it runs, Chrome stays alive holding the fork budget. Every subsequent Bash call then crashes with "Resource temporarily unavailable" until pkill recovery. `zerops_browser` auto-wraps `[open url] + your commands + [errors] + [console] + [close]`, so the close is guaranteed — you literally cannot forget it.
-2. **Concurrency.** Two `agent-browser` invocations in parallel (or a sub-agent's call overlapping the main agent's) either race the daemon or spawn a second Chrome. The tool serializes all calls through a process-wide mutex, so concurrent MCP calls queue instead of dueling for the daemon.
-
-On top of that, `zerops_browser` auto-runs pkill recovery if it detects fork exhaustion or a timeout, and returns `forkRecoveryAttempted: true` in the result so you know to investigate what burned the budget before retrying.
+**Why `zerops_browser` is mandatory** — raw `agent-browser` CLI calls left Chrome running when a batch didn't close cleanly, exhausting the fork budget (crashed v4 and v5), and two parallel calls raced the persistent daemon. The tool auto-wraps `[open url] + your commands + [errors] + [console] + [close]` so close is guaranteed, serializes all calls through a process-wide mutex, and auto-runs pkill recovery on fork exhaustion. Never call `agent-browser` directly from Bash.
 
 #### Non-negotiable rules
 
@@ -1247,6 +1197,48 @@ Values are emitted verbatim; the platform resolves `${zeropsSubdomainHost}` at e
 - Root README: verify intro text matches what this recipe actually demonstrates
 - Env READMEs: descriptions are auto-generated from plan data — verify accuracy
 
+### Comment style (applies to both envComments and zerops.yaml fragments)
+
+Recipes are read by both humans and AI agents. Write like a senior dev explaining their config to a colleague — not documentation, not tutorials.
+
+**Voice — three dimensions of a good comment:**
+1. **WHY this choice** + consequence: "CGO_ENABLED=0 produces a fully static binary — no C libraries linked at runtime" (not "Set CGO_ENABLED to 0")
+2. **HOW the platform works here** — contextual behavior that makes the file self-contained, so the reader never has to leave to understand what's happening: "project-level — propagates to all containers automatically", "priority 10 — starts before app containers so migrations don't hit an absent database", "buildFromGit clones this repo and runs the matching zeropsSetup's build pipeline". Include this whenever a field's effect isn't obvious from its name alone.
+3. **NOT the WHAT** — never restate the field name or its value. The reader can see `base: php@8.4`; they can't see that project envVariables propagate to child services.
+
+- Direct, concise, no filler ("Install production deps only" not "In this step we will install the production dependencies")
+- Use dashes for asides — not parentheses, not semicolons
+- One thought per comment line, flow naturally with the YAML structure
+
+**Comment shape — match existing recipes exactly:**
+- 1-2 lines per comment block, ~50-60 chars wide (natural prose, not compressed)
+- Above the key, not inline (exception: short value annotations like `DB_NAME: db  # matches PostgreSQL hostname`)
+- Multi-line comments for decisions: explain the choice and its consequence in flowing sentences
+- Group a 2-3 line comment block before a logical section, then let the config breathe
+- Never exceed 70 chars per comment line (existing recipes peak at 75, average 53)
+
+**Example of correct style** (from go-hello-world):
+```yaml
+    # CGO_ENABLED=0 produces a fully static binary — no C compiler
+    # or system libraries linked at runtime. lib/pq is pure Go
+    # so this is safe and results in a portable artifact.
+    envVariables:
+      CGO_ENABLED: "0"
+    buildCommands:
+      # Download all module dependencies, then build both the
+      # app server and the database migration binary.
+      - go mod download
+```
+
+**Anti-patterns:**
+- Don't restate the key name ("# Set the build base" on `base: php@8.4`)
+- Don't write generic descriptions ("# This is the build section")
+- Don't add section-heading comments with decorators (`# -- Dev Runtime --`, `# === Database ===`, `# ----------`) — the YAML structure itself provides grouping. Comments explain decisions, not label sections.
+- Don't use "we" or "you" excessively
+- Don't explain YAML syntax itself
+- Don't write single-word comments ("# dependencies", "# port")
+- Don't compress to telegraphic style ("# static bin, no C" — write full sentences)
+
 ### Step 3: Complete
 
 ```
@@ -1333,33 +1325,13 @@ Apply any CRITICAL or WRONG fixes the sub-agent reported, then **redeploy** to v
 
 ### 1b. Main Agent Browser Walk (showcase only — MANDATORY; skip for minimal)
 
-After 1a completes and any redeployments have settled, the main agent performs the browser verification itself using the batch-mode canonical flow documented in **Step 4c: Browser verification**. Do not delegate this to a sub-agent:
+After 1a completes and any redeployments have settled, run the same 3-phase browser walk you ran at deploy Step 4c: Phase 1 (dev walk while dev processes are running) → Phase 2 (kill dev processes via SSH) → Phase 3 (stage walk after dev processes are dead). See deploy **Step 4c: Browser verification** for the full rules, the `zerops_browser` tool usage, the command vocabulary, and the `forkRecoveryAttempted` recovery procedure — they are unchanged at close.
 
-- The sub-agent has no Zerops context — browser-observed symptoms with platform causes (wrong CORS origin, literal `${VAR}` in fetched JSON, missing env var) are harder to diagnose from inside a sub-agent.
-- The sub-agent and main agent can't share a `zerops_browser` session (the tool serializes calls through a process-wide mutex, but the real problem is state coordination, not locking); running two browser tracks blows the fork budget.
-- The main agent already has the full platform context it needs to act on what the browser shows.
+**Close-specific rules** (on top of the deploy-step rules):
 
-**Procedure — three phases, strict order** (reference Step 4c for the full `zerops_browser` rules and rationale):
-
-1. **Phase 1 — Dev walk (dev processes still running).** Call `zerops_browser` for `appdev` FIRST, before killing anything. The dev processes started in Step 2 ARE the dev server — if they're not running, `appdev` returns 502 and the walk is meaningless. This is the only moment you can verify the dev subdomain renders end-to-end. Showcase only; minimal recipes skip.
-2. **Phase 2 — Kill dev processes (Bash).** `ssh apidev "pkill -f 'nest start' || true; …"` and the same for `appdev`. Free the fork budget for the stage walk. Stage containers run their own processes — they are NOT affected by this kill.
-3. **Phase 3 — Stage walk (dev processes dead).** Call `zerops_browser` for `appstage` — ONE MCP tool call with the appstage URL and the inner commands that walk every feature section (at least one interactive control per section). The tool auto-wraps open/errors/console/close.
-4. **Report the walk results** per subdomain: connectivity state, section render state, `errorsOutput` from the result, `consoleOutput` from the result, `forkRecoveryAttempted` (should be false in both).
-
-**Why this order (v6 post-mortem)**: a previous version of this guidance told agents to kill dev processes before any browser walk. Agents dutifully killed them in Phase 1, then tried to walk appdev, and hit a 502 — the dev subdomain had no server behind it. They (correctly) reported the dev walk as impossible and advanced straight to stage. The fix is scoping the kill to the STAGE walk only: dev walk first, then kill, then stage walk.
-
-**If the browser walk reveals a problem:**
-- The tool has already closed the browser, so there's nothing to clean up.
-- Fix on the mount, redeploy (the cross-deploy of any affected stage target), and re-call `zerops_browser` for the affected subdomain. This counts toward the 3-iteration close-step limit.
-- Do NOT advance to publish until BOTH subdomains return clean output (`errorsOutput` empty, all sections populated, all interactions return expected output, `forkRecoveryAttempted: false`).
-
-**If `zerops_browser` returns `forkRecoveryAttempted: true`:**
-- The tool already ran pkill recovery for you. Do NOT re-run it manually.
-- The root cause is almost always a dev process you forgot to kill on a dev container. Explicitly list running processes on every dev container (`ssh {hostname} "ps -ef"`) and kill anything leaking fork budget (`nest start`, `vite`, `ts-node`, `nohup` jobs).
-- Re-call `zerops_browser` once the processes are gone. If it comes back with `forkRecoveryAttempted: true` a second time, something outside your control is spawning processes — stop, investigate, and ask the user before retrying.
-- Verify on-disk state is intact: `git status` on both mounts should show only the sub-agent's 1a fixes (which are already committed per the 1a redeploy step).
-
-**Close-step advancement gate**: do NOT call `zerops_workflow action="complete" step="close"` until `zerops_browser` has returned clean output for all required subdomains AND any regressions it surfaced have been fixed and re-verified. Advancing while the browser walk was aborted or inconclusive is equivalent to not having done it.
+- Do NOT delegate browser work to a sub-agent. The 1a static review sub-agent explicitly forbids `zerops_browser` (v5 proved fork exhaustion during a sub-agent's browser walk kills the parent chat). Main agent runs single-threaded.
+- Do NOT call `zerops_workflow action="complete" step="close"` until `zerops_browser` has returned clean output (`errorsOutput` empty, all sections populated, `forkRecoveryAttempted: false`) for BOTH the dev walk AND the stage walk AND any regressions surfaced have been fixed and re-verified.
+- If a walk surfaces a problem: the tool has already closed the browser, so fix on mount, redeploy the affected target, re-call `zerops_browser` for the affected subdomain. This counts toward the 3-iteration close-step limit.
 
 ### 2. Export & Publish (ONLY when the user asks)
 
@@ -1391,11 +1363,15 @@ Each `--app-dir` is packed into its own subdirectory inside the archive (named b
 If TIMELINE.md is missing, the command returns a prompt — write the TIMELINE documenting the session, then run export again.
 
 **Create app repo and push source**:
+
+Currently the publish CLI creates a single `{slug}-app` repo. For a dual-runtime showcase, users land on one repo containing multiple codebases as top-level subdirectories (`apidev/`, `appdev/`, `workerdev/`):
+
 ```
 zcp sync recipe create-repo {slug}
-zcp sync recipe push-app {slug} /var/www/appdev
+zcp sync recipe push-app {slug} /var/www/{primary-mount}
 ```
-Creates `zerops-recipe-apps/{slug}-app` on GitHub, then pushes the app source code.
+
+Where `{primary-mount}` is the top-level mount that contains all codebases as subdirectories (typically `appdev` for a single-repo layout, or a wrapper directory created explicitly for publishing). Multi-repo publish (one GitHub repo per codebase) is tracked as a future CLI extension — the current scope publishes a single `{slug}-app` repo regardless of codebase count.
 
 **Publish environments** to `zeropsio/recipes`:
 ```

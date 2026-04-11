@@ -52,9 +52,18 @@ func BuildFinalizeOutput(plan *RecipePlan) map[string]string {
 		files[folder+"/README.md"] = GenerateEnvREADME(plan, i)
 	}
 
-	// App README scaffold (correct markers, deploy button, cover).
-	// Agent fills in integration-guide and knowledge-base content.
-	files["appdev/README.md"] = GenerateAppREADME(plan)
+	// Per-codebase README scaffolds. Each non-worker runtime target with its
+	// own codebase gets its own README at {hostname}dev/README.md so every
+	// codebase in a dual-runtime recipe has a matching landing doc. The agent
+	// fills in integration-guide and knowledge-base content for each. Shared-
+	// codebase workers (SharesCodebaseWith set) don't get their own README —
+	// the host target owns it.
+	for _, target := range plan.Targets {
+		if !IsRuntimeType(target.Type) || target.IsWorker {
+			continue
+		}
+		files[target.Hostname+"dev/README.md"] = GenerateAppREADME(plan)
+	}
 
 	return files
 }

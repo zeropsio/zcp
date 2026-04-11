@@ -49,14 +49,18 @@ func TestCore_H2Sections_ContainsSchemaAndExamples(t *testing.T) {
 		t.Fatalf("Get core: %v", err)
 	}
 	sections := doc.H2Sections()
-	for _, name := range []string{"import.yaml Schema", "zerops.yaml Schema", "Schema Rules"} {
+	// After the reshuffle the single "Rules & Pitfalls" / "Schema Rules" H2s
+	// were split into three lifecycle-phase blocks: Provision Rules, Generate
+	// Rules, Runtime Rules. Provision and Generate are injected per-step; each
+	// carries only the rules the agent needs at that moment.
+	for _, name := range []string{"import.yaml Schema", "zerops.yaml Schema", "Provision Rules", "Generate Rules", "Runtime Rules"} {
 		if _, ok := sections[name]; !ok {
 			t.Errorf("core.md missing H2 section %q", name)
 		}
 	}
 }
 
-func TestCore_H2Sections_ContainsSchemaRules(t *testing.T) {
+func TestCore_H2Sections_ContainsLifecycleRules(t *testing.T) {
 	t.Parallel()
 	store, err := GetEmbeddedStore()
 	if err != nil {
@@ -67,8 +71,10 @@ func TestCore_H2Sections_ContainsSchemaRules(t *testing.T) {
 		t.Fatalf("Get core: %v", err)
 	}
 	sections := doc.H2Sections()
-	if _, ok := sections["Schema Rules"]; !ok {
-		t.Error("core.md missing H2 section 'Schema Rules'")
+	for _, name := range []string{"Provision Rules", "Generate Rules", "Runtime Rules"} {
+		if _, ok := sections[name]; !ok {
+			t.Errorf("core.md missing H2 section %q", name)
+		}
 	}
 }
 
@@ -92,7 +98,7 @@ func TestCore_ImportYamlSchema_ContainsPreprocessorFunctions(t *testing.T) {
 	}
 }
 
-func TestCore_SchemaRules_ContainsDeployFilesAndTilde(t *testing.T) {
+func TestCore_GenerateRules_ContainsDeployFilesAndTilde(t *testing.T) {
 	t.Parallel()
 	store, err := GetEmbeddedStore()
 	if err != nil {
@@ -103,12 +109,15 @@ func TestCore_SchemaRules_ContainsDeployFilesAndTilde(t *testing.T) {
 		t.Fatalf("Get core: %v", err)
 	}
 	sections := doc.H2Sections()
-	rules, ok := sections["Schema Rules"]
+	// Deploy Semantics (tilde syntax, deployFiles invariant) is injected at
+	// Generate after the reshuffle — generate writes zerops.yaml and needs
+	// the rule in context there, not at provision.
+	rules, ok := sections["Generate Rules"]
 	if !ok {
-		t.Fatal("core.md missing H2 section 'Schema Rules'")
+		t.Fatal("core.md missing H2 section 'Generate Rules'")
 	}
 	if !strings.Contains(rules, "deployFiles") {
-		t.Error("'Schema Rules' should mention 'deployFiles'")
+		t.Error("'Generate Rules' should mention 'deployFiles'")
 	}
 }
 

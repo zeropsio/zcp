@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -39,20 +40,33 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 	})
 }
 
-// formatEnvVarsForGuide formats discovered env vars as markdown for guide injection.
+// formatEnvVarsForGuide formats discovered env vars as a markdown catalog table
+// for guide injection. Shape mirrors the attestation the provision step tells
+// the agent to write (Phase 3 reshuffle): one row per service, raw keys in one
+// column for attestation parity and cross-service reference forms in another
+// column for direct copy-paste into run.envVariables.
 func formatEnvVarsForGuide(envVars map[string][]string) string {
+	hostnames := make([]string, 0, len(envVars))
+	for h := range envVars {
+		hostnames = append(hostnames, h)
+	}
+	sort.Strings(hostnames)
+
 	var sb strings.Builder
-	sb.WriteString("## Discovered Environment Variables (zerops.yaml wiring — not yet active)\n\n")
-	sb.WriteString("**Cross-service references for `run.envVariables` in zerops.yaml. NOT active as OS env vars on the dev container — they activate only after `zerops_deploy`.**\n\n")
-	for hostname, vars := range envVars {
-		sb.WriteString("**" + hostname + "**: ")
+	sb.WriteString("## Discovered Managed-Service Env Var Catalog\n\n")
+	sb.WriteString("Recorded at provision via `zerops_discover includeEnvs=true`. **These are the authoritative names** — do not guess alternative spellings; unknown cross-service references resolve to literal strings at runtime and fail silently.\n\n")
+	sb.WriteString("| Service | Keys | Cross-service reference shape |\n")
+	sb.WriteString("|---|---|---|\n")
+	for _, hostname := range hostnames {
+		vars := envVars[hostname]
+		keys := strings.Join(vars, ", ")
 		refs := make([]string, len(vars))
 		for i, v := range vars {
 			refs[i] = "`${" + hostname + "_" + v + "}`"
 		}
-		sb.WriteString(strings.Join(refs, ", "))
-		sb.WriteString("\n\n")
+		fmt.Fprintf(&sb, "| `%s` | %s | %s |\n", hostname, keys, strings.Join(refs, " "))
 	}
+	sb.WriteString("\n**Usage**: reference these in `run.envVariables` of your app's zerops.yaml. They resolve at deploy time — they are NOT active as OS env vars on a dev container that was started with `startWithoutCode: true`.\n")
 	return sb.String()
 }
 

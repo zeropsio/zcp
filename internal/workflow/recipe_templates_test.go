@@ -822,7 +822,8 @@ func TestBuildFinalizeOutput_FileCount(t *testing.T) {
 	plan := testMinimalPlan()
 	files := BuildFinalizeOutput(plan)
 
-	// 1 main README + 6 * (import.yaml + README.md) + 1 app README = 14 files.
+	// 1 main README + 6 * (import.yaml + README.md) + 1 per-codebase README
+	// (single-runtime plan has one non-worker runtime target) = 14 files.
 	expectedCount := 1 + 6*2 + 1
 	if len(files) != expectedCount {
 		t.Errorf("expected %d files, got %d", expectedCount, len(files))
@@ -832,7 +833,7 @@ func TestBuildFinalizeOutput_FileCount(t *testing.T) {
 	if _, ok := files["README.md"]; !ok {
 		t.Error("missing main README.md")
 	}
-	// Check app README scaffold exists.
+	// Check app README scaffold exists (single-runtime plan uses "app" hostname).
 	if _, ok := files["appdev/README.md"]; !ok {
 		t.Error("missing appdev/README.md")
 	}
@@ -846,6 +847,34 @@ func TestBuildFinalizeOutput_FileCount(t *testing.T) {
 		if _, ok := files[folder+"/README.md"]; !ok {
 			t.Errorf("missing %s/README.md", folder)
 		}
+	}
+}
+
+// TestBuildFinalizeOutput_DualRuntimePerRepoREADMEs verifies Phase 9 of the
+// reshuffle: each non-worker runtime target in a dual-runtime recipe gets
+// its own README scaffold so per-codebase extract fragments work.
+func TestBuildFinalizeOutput_DualRuntimePerRepoREADMEs(t *testing.T) {
+	t.Parallel()
+
+	plan := testDualRuntimePlan()
+	files := BuildFinalizeOutput(plan)
+
+	// Frontend (app) and API (api) must each get a README scaffold.
+	if _, ok := files["appdev/README.md"]; !ok {
+		t.Error("missing appdev/README.md — dual-runtime plan must write per-codebase README")
+	}
+	if _, ok := files["apidev/README.md"]; !ok {
+		t.Error("missing apidev/README.md — dual-runtime plan must write per-codebase README")
+	}
+	// Worker is excluded from per-codebase scaffolding at this layer.
+	if _, ok := files["workerdev/README.md"]; ok {
+		t.Error("workerdev/README.md should not be scaffolded — workers are skipped in BuildFinalizeOutput")
+	}
+
+	// Total count: 1 main README + 6 * (import.yaml + README.md) + 2 per-codebase READMEs = 15.
+	expectedCount := 1 + 6*2 + 2
+	if len(files) != expectedCount {
+		t.Errorf("dual-runtime plan: expected %d files, got %d", expectedCount, len(files))
 	}
 }
 

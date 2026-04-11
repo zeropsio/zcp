@@ -9,6 +9,10 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+// flexBoolTrue is the JSON-literal "true" needle used in several branches
+// of UnmarshalJSON below. Extracted as a constant to satisfy goconst.
+const flexBoolTrue = "true"
+
 // FlexBool is a boolean field that tolerates both JSON `true`/`false`
 // values AND their string equivalents (`"true"`, `"false"`, and their
 // common case variants). This exists because some LLM agents serialize
@@ -45,7 +49,7 @@ func (f *FlexBool) UnmarshalJSON(data []byte) error {
 	}
 
 	// Native boolean values.
-	if s == "true" {
+	if s == flexBoolTrue {
 		*f = true
 		return nil
 	}
@@ -62,7 +66,7 @@ func (f *FlexBool) UnmarshalJSON(data []byte) error {
 	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
 		inner := strings.ToLower(s[1 : len(s)-1])
 		switch inner {
-		case "true":
+		case flexBoolTrue:
 			*f = true
 			return nil
 		case "false":
