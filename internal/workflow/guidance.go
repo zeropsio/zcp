@@ -139,18 +139,3 @@ func getCoreSection(kp knowledge.Provider, name string) string {
 	}
 	return ""
 }
-
-// getCoreSubsection extracts a specific H3 subsection from an H2 in the core
-// knowledge document. Used for surgical injection when the full H2 is too
-// broad — e.g., injecting only `verticalAutoscaling` instead of the entire
-// `import.yaml Schema` H2. Consumed by Phase 8 of the recipe size-reduction
-// refactor (on-demand schema pointer).
-//
-//nolint:unused // Infrastructure for Phase 8 (docs/implementation-recipe-size-reduction.md).
-func getCoreSubsection(kp knowledge.Provider, h2, h3 string) string {
-	doc, err := kp.Get("zerops://themes/core")
-	if err != nil {
-		return ""
-	}
-	return doc.H3Section(h2, h3)
-}

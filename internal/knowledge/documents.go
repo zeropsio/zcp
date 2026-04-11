@@ -34,49 +34,6 @@ func (d *Document) H2Sections() map[string]string {
 	return d.sections
 }
 
-// H3Section returns the body of a specific H3 subsection inside a specific H2.
-// The H3 heading is matched by prefix (trailing modifiers like " — notes"
-// after the target name are tolerated). Returns "" if either heading is not
-// found. Used for surgical injection when the full H2 is too broad — for
-// example, pulling just `verticalAutoscaling` from `import.yaml Schema`.
-func (d *Document) H3Section(h2, h3 string) string {
-	body, ok := d.H2Sections()[h2]
-	if !ok {
-		return ""
-	}
-	return extractH3(body, h3)
-}
-
-// extractH3 walks an H2-scoped body and returns the contents of the first
-// H3 whose heading text begins with `target`. The walk stops at the next
-// sibling H3, the next H2, or EOF.
-func extractH3(h2Body, target string) string {
-	lines := strings.Split(h2Body, "\n")
-	var out []string
-	inside := false
-	for _, l := range lines {
-		if rest, ok := strings.CutPrefix(l, "### "); ok {
-			if inside {
-				break
-			}
-			if strings.HasPrefix(rest, target) {
-				inside = true
-			}
-			continue
-		}
-		if strings.HasPrefix(l, "## ") {
-			if inside {
-				break
-			}
-			continue
-		}
-		if inside {
-			out = append(out, l)
-		}
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
-}
-
 // loadFromEmbedded walks the embedded filesystem and parses all markdown documents.
 func loadFromEmbedded() map[string]*Document {
 	docs := make(map[string]*Document)
