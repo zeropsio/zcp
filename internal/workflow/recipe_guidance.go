@@ -96,6 +96,11 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		body := ExtractSection(md, "provision")
 		return composeSection(body, recipeProvisionBlocks, plan)
 
+	case RecipeStepDeploy:
+		// Deploy: composed through predicate-gated blocks (Phase 7).
+		body := ExtractSection(md, "deploy")
+		return composeSection(body, recipeDeployBlocks, plan)
+
 	case RecipeStepFinalize:
 		return ExtractSection(md, "finalize")
 
@@ -103,8 +108,6 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		return ExtractSection(md, "close")
 
 	default:
-		// Deploy: use step name directly until Phase 7 routes it through
-		// composeSection.
 		return ExtractSection(md, step)
 	}
 }

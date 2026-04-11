@@ -796,7 +796,13 @@ Writing-style voice (the "developer to developer" tone, anti-patterns, correct-s
 <section name="deploy">
 ## Deploy — Build, Start & Verify
 
+<block name="deploy-framing">
+
 `zerops_deploy` processes the zerops.yaml through the platform — this is when `run.envVariables` become OS env vars and cross-service references (`${hostname_varname}`) resolve to real values. Before this step, the dev container had no service connectivity. After this step, the app is fully configured.
+
+</block>
+
+<block name="dev-deploy-flow-core">
 
 ### Dev deployment flow
 
@@ -931,6 +937,10 @@ zerops_logs serviceHostname="appdev" limit=20
 **Step 4: Iterate if needed** (max 3 iterations)
 If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify. After any redeploy, repeat Step 2 (start ALL processes) before Step 3 (verify).
 
+</block>
+
+<block name="dev-deploy-subagent-brief">
+
 **Step 4b: Dispatch the feature sub-agent (MANDATORY for Type 4 showcase)**
 
 After appdev is deployed and verified with the skeleton (connectivity panel, seeded data, health endpoint), dispatch ONE framework-expert sub-agent to fill in the feature sections. **This is where feature implementation happens — generate writes the skeleton only.** Writing feature code at generate means writing blind against disconnected services; the sub-agent writes against live services and can test each feature as it goes.
@@ -994,6 +1004,10 @@ Running app-level commands on zcp uses the wrong runtime, the wrong dependencies
 3. Redeploy each affected dev service — fresh container, all SSH processes died, restart them (Step 2)
 4. HTTP-level verification via curl on every feature endpoint
 5. If anything fails, fix on mount, iterate (counts toward the 3-iteration limit)
+
+</block>
+
+<block name="dev-deploy-browser-walk">
 
 **Step 4c: Browser verification — MANDATORY for Type 4 showcase** (skip for minimal)
 
@@ -1106,6 +1120,10 @@ The tool executes `[open url] + your commands + [errors] + [console] + [close]` 
 
 If a walk reveals a problem curl missed: the batch has already closed the browser, so fix on mount, redeploy, and run the affected phase again (counts toward the 3-iteration limit). Do NOT advance to publish until BOTH appdev AND appstage walks show empty errors and populated sections.
 
+</block>
+
+<block name="stage-deployment-flow">
+
 ### Stage deployment flow (after all appdev work is complete)
 
 Stage is the final product — deploy it once with the complete codebase (skeleton + features).
@@ -1158,6 +1176,10 @@ zerops_logs serviceHostname="workerstage" limit=20               # showcase only
 
 **Step 8: Present URLs**
 
+</block>
+
+<block name="reading-deploy-failures">
+
 ### Reading deploy failures — which phase failed, and where to look
 
 `zerops_deploy` returns `status` that tells you WHICH lifecycle phase failed. Each has a different fix location and a different log source:
@@ -1176,6 +1198,9 @@ zerops_logs serviceHostname="workerstage" limit=20               # showcase only
 ```
 This identifies *which* initCommand failed. For *why* it failed, fetch runtime logs on the target service — the stderr is there, not in buildLogs.
 
+</block>
+
+<block name="common-deployment-issues">
 
 ### Common deployment issues
 
@@ -1190,10 +1215,16 @@ This identifies *which* initCommand failed. For *why* it failed, fetch runtime l
 | Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |
 | Static site 404 | Wrong `documentRoot` | Match to actual build output directory |
 
+</block>
+
+<block name="deploy-completion">
+
 ### Completion
 ```
 zerops_workflow action="complete" step="deploy" attestation="Dev deployed at {dev_url}, stage deployed at {stage_url}. Both healthy."
 ```
+
+</block>
 </section>
 
 <section name="finalize">
