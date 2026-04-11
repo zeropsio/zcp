@@ -208,3 +208,39 @@ func TestRecipe_ResearchContent(t *testing.T) {
 		}
 	}
 }
+
+// TestRecipe_CloseMultiRepoPublish asserts the close step documents the
+// multi-repo publish shape after the --repo-suffix CLI addition landed.
+// The codebase count rule must be visible (so the agent iterates the plan
+// correctly) and the example must include all three shapes.
+func TestRecipe_CloseMultiRepoPublish(t *testing.T) {
+	t.Parallel()
+
+	closeBody := sectionContent(t, "close")
+
+	// The codebase count rule must be present.
+	for _, p := range []string{
+		"Codebase count rule",
+		"IsWorker: false",
+		"sharesCodebaseWith",
+		"--repo-suffix",
+	} {
+		if !strings.Contains(closeBody, p) {
+			t.Errorf("close missing multi-repo publish phrase %q", p)
+		}
+	}
+
+	// Path-A scope-limit language must be GONE — it predated the CLI fix.
+	// Only include phrases that ACTUALLY existed in recipe.md before this
+	// plan rewrote the close block; asserting phrases that never existed
+	// is a dead assertion that looks like a guard but catches nothing.
+	forbidden := []string{
+		"Currently the publish CLI creates a single",
+		"future CLI extension",
+	}
+	for _, f := range forbidden {
+		if strings.Contains(closeBody, f) {
+			t.Errorf("close still contains pre-fix scope-limit phrase %q — should be removed", f)
+		}
+	}
+}
