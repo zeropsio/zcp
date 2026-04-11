@@ -412,3 +412,67 @@ func TestResolveRecipeGuidance_Generate_NoFrameworkWorkerRuleThumb(t *testing.T)
 		}
 	}
 }
+
+// TestRecipeGenerate_HelloWorld_OmitsShowcaseBlocks asserts that hello-world
+// plans do not receive the dual-runtime / dashboard / worker blocks at
+// generate. Regression guard for Phase 5b predicate gating — a predicate
+// accidentally firing on hello-world would leak showcase-only content into
+// the narrowest recipe.
+func TestRecipeGenerate_HelloWorld_OmitsShowcaseBlocks(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeHelloWorld)
+	guide := resolveRecipeGuidance(RecipeStepGenerate, plan.Tier, plan)
+	// Use strings that are anchor-specific to their gated block; avoid
+	// substrings that legitimately appear in always-on prose (e.g.
+	// "setup: worker" is mentioned in pre-deploy-checklist unconditionally).
+	for _, shouldNotContain := range []string{
+		"Dual-runtime URL env-var pattern",
+		"Write the dashboard skeleton",
+		"showcase only — background job processor",
+		"each codebase needs its own README.md",
+		"Dev-server host-check allow-list",
+	} {
+		if strings.Contains(guide, shouldNotContain) {
+			t.Errorf("hello-world generate guide contains %q, should be omitted", shouldNotContain)
+		}
+	}
+}
+
+// TestRecipeGenerate_BackendMinimal_OmitsDualRuntimeContent asserts that
+// single-runtime minimal recipes (laravel-minimal fixture) do not receive
+// dual-runtime or bundler dev-server content.
+func TestRecipeGenerate_BackendMinimal_OmitsDualRuntimeContent(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeBackendMinimal)
+	guide := resolveRecipeGuidance(RecipeStepGenerate, plan.Tier, plan)
+	for _, shouldNotContain := range []string{
+		"Dual-runtime URL env-var pattern",
+		"Dev-server host-check allow-list",
+		"each codebase",
+	} {
+		if strings.Contains(guide, shouldNotContain) {
+			t.Errorf("backend-minimal generate guide contains %q", shouldNotContain)
+		}
+	}
+}
+
+// TestRecipeGenerate_DualRuntimeShowcase_IncludesAllRelevant asserts that the
+// widest shape (dual-runtime showcase) receives every shape-gated block
+// whose predicate it should satisfy. Companion to the hello-world omission
+// test: catches a predicate that accidentally returns false on the shape
+// that should trigger it.
+func TestRecipeGenerate_DualRuntimeShowcase_IncludesAllRelevant(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	guide := resolveRecipeGuidance(RecipeStepGenerate, plan.Tier, plan)
+	for _, mustContain := range []string{
+		"Dual-runtime URL env-var pattern",
+		"Dev-server host-check allow-list",
+		"Write the dashboard skeleton",
+		"each codebase",
+	} {
+		if !strings.Contains(guide, mustContain) {
+			t.Errorf("dual-runtime-showcase generate guide missing %q", mustContain)
+		}
+	}
+}

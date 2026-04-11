@@ -52,8 +52,11 @@ func TestPlanPredicates(t *testing.T) {
 		{"hasServeOnlyProd/minimal (php-nginx)", hasServeOnlyProd, minimal, false},
 		{"hasServeOnlyProd/hello world", hasServeOnlyProd, hello, false},
 
-		// hasBundlerDevServer
-		{"hasBundlerDev/nestjs (dual)", hasBundlerDevServer, dual, false}, // "nestjs" not in bundler list
+		// hasBundlerDevServer — matches primary framework prefix OR a
+		// dual-runtime recipe with a static frontend (the frontend is a
+		// bundler-based SPA in disguise, regardless of what p.Framework
+		// names the API as).
+		{"hasBundlerDev/nestjs (dual)", hasBundlerDevServer, dual, true}, // dual-runtime + static frontend → frontend is bundler-based
 		{"hasBundlerDev/laravel fullstack", hasBundlerDevServer, fullStack, false},
 		{"hasBundlerDev/laravel minimal", hasBundlerDevServer, minimal, false},
 		{"hasBundlerDev/nil", hasBundlerDevServer, nil, false},

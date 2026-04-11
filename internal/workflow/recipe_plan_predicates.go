@@ -108,6 +108,15 @@ func hasServeOnlyProd(p *RecipePlan) bool {
 // Angular CLI, Next.js dev). Drives the dev-server allow-list block at
 // generate and the Vite collision trap block at deploy.
 //
+// Two triggering cases:
+//  1. The primary framework matches a bundler prefix (single-runtime SPA,
+//     e.g. a svelte-showcase plan whose Framework is "svelte").
+//  2. A dual-runtime recipe whose API framework is a plain backend (NestJS,
+//     Express) but whose frontend target is static/serve-only — the
+//     frontend dev container still runs a bundler dev server (Vite,
+//     webpack) and needs the host-check allow-list even though
+//     p.Framework names the API.
+//
 // The framework list matches the set of recipes where LOG2 bug 15
 // (dev-server host-check) is reachable. Adding a new framework that uses a
 // bundler dev server requires extending `bundlerFrameworks` here.
@@ -121,7 +130,9 @@ func hasBundlerDevServer(p *RecipePlan) bool {
 			return true
 		}
 	}
-	return false
+	// Dual-runtime + static frontend: the frontend runs a bundler dev
+	// server regardless of what p.Framework names.
+	return isDualRuntime(p) && hasServeOnlyProd(p)
 }
 
 // bundlerFrameworks lists framework name prefixes whose dev servers enforce

@@ -19,32 +19,34 @@ var (
 
 	recipeProvisionBlocks []sectionBlock
 
-	// recipeGenerateBlocks — populated in Phase 5a (mechanical wrap, all
-	// predicates nil: every block emits, zero behavior change). Phase 5b
-	// switches predicates to real values (see recipe_plan_predicates.go)
-	// to gate dual-runtime / showcase / bundler content.
+	// recipeGenerateBlocks — Phase 5b sets real predicates. Shape-specific
+	// rules (dual-runtime URLs, dashboard skeleton, worker setup, bundler
+	// host-check, serve-only dev override, multi-base dev-deps) are gated
+	// on plan predicates from recipe_plan_predicates.go. Always-on blocks
+	// (container-state, execution-order, code-quality, etc.) keep a nil
+	// predicate — they apply regardless of recipe shape.
 	recipeGenerateBlocks = []sectionBlock{
 		{Name: "container-state"},
-		{Name: "where-to-write-files-single"},
-		{Name: "where-to-write-files-multi"},
-		{Name: "what-to-generate-showcase"},
+		{Name: "where-to-write-files-single", Predicate: func(p *RecipePlan) bool { return !hasMultipleCodebases(p) }},
+		{Name: "where-to-write-files-multi", Predicate: hasMultipleCodebases},
+		{Name: "what-to-generate-showcase", Predicate: isShowcase},
 		{Name: "two-kinds-of-import-yaml"},
 		{Name: "execution-order"},
 		{Name: "zerops-yaml-header"},
-		{Name: "dual-runtime-url-shapes"},
-		{Name: "dual-runtime-consumption"},
-		{Name: "project-env-vars-pointer"},
-		{Name: "dual-runtime-what-not-to-do"},
+		{Name: "dual-runtime-url-shapes", Predicate: isDualRuntime},
+		{Name: "dual-runtime-consumption", Predicate: isDualRuntime},
+		{Name: "project-env-vars-pointer", Predicate: isDualRuntime},
+		{Name: "dual-runtime-what-not-to-do", Predicate: isDualRuntime},
 		{Name: "setup-dev-rules"},
-		{Name: "serve-only-dev-override"},
-		{Name: "dev-dep-preinstall"},
-		{Name: "dev-server-host-check"},
+		{Name: "serve-only-dev-override", Predicate: hasServeOnlyProd},
+		{Name: "dev-dep-preinstall", Predicate: hasMultiBaseBuildCommand},
+		{Name: "dev-server-host-check", Predicate: hasBundlerDevServer},
 		{Name: "setup-prod-rules"},
-		{Name: "worker-setup-block"},
+		{Name: "worker-setup-block", Predicate: hasWorker},
 		{Name: "shared-across-setups"},
 		{Name: "env-example-preservation"},
 		{Name: "framework-env-conventions"},
-		{Name: "dashboard-skeleton"},
+		{Name: "dashboard-skeleton", Predicate: isShowcase},
 		{Name: "asset-pipeline-consistency"},
 		{Name: "readme-with-fragments"},
 		{Name: "code-quality"},
