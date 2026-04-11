@@ -52,14 +52,18 @@ func BuildFinalizeOutput(plan *RecipePlan) map[string]string {
 		files[folder+"/README.md"] = GenerateEnvREADME(plan, i)
 	}
 
-	// Per-codebase README scaffolds. Each non-worker runtime target with its
-	// own codebase gets its own README at {hostname}dev/README.md so every
-	// codebase in a dual-runtime recipe has a matching landing doc. The agent
-	// fills in integration-guide and knowledge-base content for each. Shared-
-	// codebase workers (SharesCodebaseWith set) don't get their own README —
-	// the host target owns it.
+	// Per-codebase README scaffolds. A target owns its own README iff EITHER:
+	//   (a) it's a non-worker runtime target, OR
+	//   (b) it's a worker with SharesCodebaseWith == "" (separate codebase).
+	// Shared-codebase workers (SharesCodebaseWith set) don't get their own
+	// README — the host target owns it. This matches the "codebase count
+	// rule" used by the multi-repo publish flow — see
+	// docs/implementation-multi-repo-publish.md.
 	for _, target := range plan.Targets {
-		if !IsRuntimeType(target.Type) || target.IsWorker {
+		if !IsRuntimeType(target.Type) {
+			continue
+		}
+		if target.IsWorker && target.SharesCodebaseWith != "" {
 			continue
 		}
 		files[target.Hostname+"dev/README.md"] = GenerateAppREADME(plan)

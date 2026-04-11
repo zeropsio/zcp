@@ -1395,3 +1395,66 @@ func TestTargetHostsSharedWorker(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildFinalizeOutput_SeparateWorkerHasOwnREADME asserts that a
+// separate-codebase worker gets its own {hostname}dev/README.md scaffolded
+// alongside the app/api READMEs. Before this test was added, the loop in
+// recipe_templates.go skipped all workers unconditionally — separate
+// workers ended up with a committable codebase but no landing doc. The
+// multi-repo publish CLI change exposed the gap; this test guards against
+// a revert.
+func TestBuildFinalizeOutput_SeparateWorkerHasOwnREADME(t *testing.T) {
+	t.Parallel()
+
+	// 3-codebase showcase: static frontend + nodejs API + separate nodejs worker.
+	plan := testDualRuntimePlan()
+	// Ensure the worker is separate-codebase (plan's default is shared).
+	for i := range plan.Targets {
+		if plan.Targets[i].IsWorker {
+			plan.Targets[i].SharesCodebaseWith = ""
+		}
+	}
+
+	files := BuildFinalizeOutput(plan)
+
+	for _, want := range []string{
+		"appdev/README.md",
+		"apidev/README.md",
+		"workerdev/README.md",
+	} {
+		if _, ok := files[want]; !ok {
+			keys := make([]string, 0, len(files))
+			for k := range files {
+				keys = append(keys, k)
+			}
+			t.Errorf("expected %q in finalize output, got keys: %v", want, keys)
+		}
+	}
+}
+
+// TestBuildFinalizeOutput_SharedWorkerHasNoREADME is the negative counterpart:
+// a shared-codebase worker MUST NOT get its own README — the host target owns
+// it. Catches a regression where the loop stops filtering shared workers.
+func TestBuildFinalizeOutput_SharedWorkerHasNoREADME(t *testing.T) {
+	t.Parallel()
+
+	plan := testDualRuntimePlan()
+	// Force shared: worker rides on the api codebase.
+	for i := range plan.Targets {
+		if plan.Targets[i].IsWorker {
+			plan.Targets[i].SharesCodebaseWith = "api"
+		}
+	}
+
+	files := BuildFinalizeOutput(plan)
+
+	if _, ok := files["workerdev/README.md"]; ok {
+		t.Errorf("shared-codebase worker should NOT get its own README, but workerdev/README.md was scaffolded")
+	}
+	// Host and frontend still get theirs.
+	for _, want := range []string{"appdev/README.md", "apidev/README.md"} {
+		if _, ok := files[want]; !ok {
+			t.Errorf("expected %q in finalize output", want)
+		}
+	}
+}
