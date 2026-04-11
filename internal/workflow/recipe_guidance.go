@@ -68,17 +68,18 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		return ExtractSection(md, "research-minimal")
 
 	case RecipeStepGenerate:
-		// Generate: base + (fragments deep-dive when needed). The dashboard
-		// spec that used to live in a separate `generate-dashboard` section
-		// has been merged into the deploy step's sub-agent brief — generate
-		// now carries only the inline skeleton-write guidance.
+		// Generate: composed base (Phase 5 predicate-gated blocks) +
+		// fragments deep-dive when needed. The dashboard spec that used to
+		// live in a separate `generate-dashboard` section has been merged
+		// into the deploy step's sub-agent brief — generate now carries
+		// only the inline skeleton-write guidance.
 		//
 		// Hello-world slugs skip the fragments deep-dive. Their README is one
 		// paragraph and the chain recipe demonstrates it in full; the 6 KB
 		// writing-style lecture is dead weight there.
 		var parts []string
-		if s := ExtractSection(md, "generate"); s != "" {
-			parts = append(parts, s)
+		if body := ExtractSection(md, "generate"); body != "" {
+			parts = append(parts, composeSection(body, recipeGenerateBlocks, plan))
 		}
 		if planNeedsFragmentsDeepDive(plan) {
 			if s := ExtractSection(md, "generate-fragments"); s != "" {

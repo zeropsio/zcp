@@ -232,6 +232,8 @@ zerops_workflow action="complete" step="provision" attestation="Services created
 <section name="generate">
 ## Generate — App Code & Configuration
 
+<block name="container-state">
+
 ### Container state during generate
 
 The dev service is RUNNING (via `startWithoutCode`) but zerops.yaml has NOT been deployed yet.
@@ -249,9 +251,20 @@ The dev service is RUNNING (via `startWithoutCode`) but zerops.yaml has NOT been
 
 **Connection errors during generate are expected, not code bugs.** If a command fails with "connection refused", "driver not found", or similar: do NOT fix code, do NOT create .env files, do NOT change drivers or hardcode credentials. Continue writing files. The deploy step activates env vars.
 
+</block>
+
+<block name="where-to-write-files-single">
+
 ### WHERE to write files
 
 **Single-runtime** (full-stack): Write all source code, zerops.yaml, and README to `/var/www/appdev/`.
+
+**Use SSHFS for file operations**, SSH for commands that use the **base image's built-in tools** (e.g., `composer create-project` on php-nginx, `git init`).
+Files placed on the mount are already on the dev container — deploy doesn't "send" them, it triggers a build from what's already there.
+
+</block>
+
+<block name="where-to-write-files-multi">
 
 **Dual-runtime** (API-first showcase): write each codebase to its own mount. For a 3-repo showcase (frontend + API + separate worker), that's three distinct source trees:
 
@@ -261,14 +274,15 @@ The dev service is RUNNING (via `startWithoutCode`) but zerops.yaml has NOT been
 
 **Each codebase needs its own README.md with all 3 extract fragments** (intro, integration-guide, knowledge-base). At publish time, each codebase is part of the recipe app repo, and the README you write is what a user exploring that codebase sees. The integration-guide fragment in each README contains THAT codebase's zerops.yaml, fully commented. The knowledge-base fragment in each README lists the gotchas specific to THAT codebase's role (e.g., the frontend README covers allowedHosts and dev-server runtime env vars; the API README covers CORS and ORM synchronize; the worker README covers NATS connection and job idempotency).
 
-**Use SSHFS for file operations**, SSH for commands that use the **base image's built-in tools** (e.g., `composer create-project` on php-nginx, `git init`).
-Files placed on the mount are already on the dev container — deploy doesn't "send" them, it triggers a build from what's already there.
-
 **Scaffold each codebase in its own mount — never cross-contaminate.** Framework scaffolders (`sv create`, `npx create-vite`, `nest new`, `composer create-project`, `django-admin startproject`) write config files (`tsconfig.json`, `package.json`, `.npmrc`, `.vscode/`, `.gitignore`) into whatever directory they run from. Running a scaffold from the wrong container or the wrong working directory overwrites the host codebase's config silently. For dual-runtime:
 - `cd /var/www/apidev && nest new .` for the API — runs on the `apidev` service's SSH session
 - `cd /var/www/appdev && npm create vite@latest . -- --template svelte` for the frontend — runs on the `appdev` service's SSH session (if the static container lacks Node, scaffold files directly via SSHFS write instead of invoking a scaffolder on the container)
 
 Never scaffold into `/tmp` and copy — the scaffolder's footprint always includes hidden files you'll miss. Never run a frontend scaffolder from an API SSH session targeting the API mount — `sv create` invoked from `apidev` SSH will overwrite apidev's `tsconfig.json` and `package.json` even if you `cd` to a different directory first, because scaffolders trust the process working directory as the project root.
+
+</block>
+
+<block name="what-to-generate-showcase">
 
 ### What to generate per recipe type
 
@@ -282,12 +296,20 @@ Never scaffold into `/tmp` and copy — the scaffolder's footprint always includ
 
 **Type 4 (showcase):** Dashboard **SKELETON only** — feature controllers and views are **NOT** written during generate. Generate produces: layout with empty/placeholder partial slots (using the framework's standard include mechanism — partials, components, sub-templates, or imports) for each planned feature section, all routes (display + action endpoints pre-registered but returning placeholder responses), primary model + migration + factory + seeder with sample data, service connectivity panel, zerops.yaml (all 3 setups: dev + prod + worker), README with fragments, .env.example. **Stop here.** The deploy step dispatches a sub-agent to implement feature controllers and views against live services after appdev is verified. Writing feature code during generate means generating blind against disconnected services — producing code with no error handling, no XSS protection, and untested integrations. See "Showcase dashboard — file architecture" below.
 
+</block>
+
+<block name="two-kinds-of-import-yaml">
+
 ### Two kinds of import.yaml (critical distinction)
 
 1. **Workspace import** (provision step) — creates the agent's dev/stage infrastructure. NO `zeropsSetup`, NO `buildFromGit`. Services use `startWithoutCode` (dev) or wait for deploy (stage).
 2. **Recipe import** (finalize step) — the 6 deliverable files for end users. Uses `zeropsSetup: dev`/`zeropsSetup: prod` + `buildFromGit` to map hostnames to setup names.
 
 zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`. During workspace deploy, the `zerops_deploy` tool's `setup` parameter maps the service hostname to the correct setup name (e.g. `targetService="appdev" setup="dev"`). In recipe import.yaml, `zeropsSetup: dev`/`zeropsSetup: prod` does the same mapping for `buildFromGit` deploys.
+
+</block>
+
+<block name="execution-order">
 
 ### Execution order — no sub-agents for zerops.yaml or README
 
@@ -303,6 +325,10 @@ zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`.
 5. Git init + commit
 
 **Why this order matters:** zerops.yaml is the single source of truth. The README's integration-guide copies it verbatim. If two sub-agents write them independently, they diverge. If a sub-agent writes zerops.yaml without the injected guidance, it misses rules that only exist in this step's DetailedGuide.
+
+</block>
+
+<block name="zerops-yaml-header">
 
 ### zerops.yaml — Write ALL setups at once
 
@@ -322,6 +348,10 @@ Write the complete zerops.yaml with ALL setup entries in a single file. Minimal 
 - **Single-app + separate worker**:
   - `/var/www/appdev/zerops.yaml` — 2 setups: `dev`, `prod`
   - `/var/www/workerdev/zerops.yaml` — 2 setups: `dev`, `prod`
+
+</block>
+
+<block name="dual-runtime-url-shapes">
 
 #### Dual-runtime URL env-var pattern — the canonical solution
 
@@ -355,6 +385,10 @@ project:
 ```
 
 Substitute `{apiPort}` with your API's actual HTTP port (from `run.ports[0].port` in the API's zerops.yaml). Static frontends have no port segment.
+
+</block>
+
+<block name="dual-runtime-consumption">
 
 **Dev-server runtime env vars — `setup: dev` needs `run.envVariables`**:
 
@@ -391,6 +425,10 @@ The `setup: dev` block reads `DEV_*`; `setup: prod` reads `STAGE_*`. The same ze
 
 **Workspace parity is set at the provision step**, not here — see the provision step's `zerops_env project=true action=set` invocation. By the time you reach generate, the workspace already has `DEV_*` + `STAGE_*` resolved. Single-runtime recipes skip this entirely — they don't cross services for URL baking.
 
+</block>
+
+<block name="project-env-vars-pointer">
+
 **For the 6 deliverable import.yaml files** (generated at finalize): pass `projectEnvVariables` as a first-class input to `zerops_workflow action="generate-finalize"` so the template re-renders the env 0-1 shape for envs 0-1 and the envs 2-5 shape for envs 2-5:
 
 ```
@@ -416,10 +454,18 @@ zerops_workflow action="generate-finalize" \
 
 Do NOT hand-edit the 6 generated files to add `project.envVariables` after the fact. A second `generate-finalize` call re-renders from template and wipes manual edits. Always pass `projectEnvVariables` via the tool input; it's idempotent across reruns.
 
+</block>
+
+<block name="dual-runtime-what-not-to-do">
+
 **What NOT to do**:
 - Do NOT invent a `setup: stage` — there is no such thing. Stage uses `setup: prod`.
 - Do NOT reference another service's `${hostname}_zeropsSubdomain` to build URLs. Use the `${zeropsSubdomainHost}` project-scope var and the constant URL format above.
 - Do NOT create a service-level env var with the same name as a project-level env var — that's a shadow loop (the platform interpolator sees the same-name service var first and resolves to the literal `${VAR_NAME}` string). Forward under a DIFFERENT name (e.g. `FRONTEND_URL: ${STAGE_FRONTEND_URL}`); if you want the project var under its own name, just don't write the line — it's already in the OS env.
+
+</block>
+
+<block name="setup-dev-rules">
 
 Follow the injected chain recipe (working zerops.yaml from the predecessor) as the primary reference. For hello-world (no predecessor), follow the injected zerops.yaml Schema. Platform rules (lifecycle phases, deploy semantics) were taught at provision — use `zerops_knowledge` if you need to look up a specific rule.
 
@@ -428,19 +474,42 @@ Recipe-specific conventions for each setup (platform rules from provision apply 
 **`setup: dev`** (self-deploy from SSHFS mount — agent iterates here):
 - **`setup: dev` MUST give the agent a container that can host the framework's dev toolchain** — shell, package manager, and the framework's hot-reload process (`npm run dev`, `php artisan serve`, `bun --hot`, `cargo watch`, etc.). This is what makes the dev setup iterable over SSH.
 - **Dynamic runtimes** (nodejs, python, php-nginx, go, rust, bun, ubuntu, …): `run.base` is the same as prod and `deployFiles: [.]` preserves source across deploys — **MANDATORY**, anything else destroys the source tree.
-- **Serve-only runtimes** (`static`, standalone `nginx`, any future serve-only base): these host no toolchain — `run.base: static` is a **prod-only concern**. For the dev setup, pick a different `run.base` that CAN host the framework's dev toolchain — typically the same base that already exists under `build.base` for that setup (e.g. `nodejs@22` for a Vite/Svelte SPA whose prod is `static`). `run.base` may differ between setups inside the same zerops.yaml; the platform supports this and it's the intended pattern for serve-only prod artifacts. `deployFiles: [.]` still applies on dev regardless of `run.base` choice.
 - `start: zsc noop --silent` — exception: omit `start` for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
 - **NO healthCheck, NO readinessCheck** — agent controls lifecycle; checks would restart the container during iteration
 - Framework mode flags set to dev values (`APP_ENV: local`, `NODE_ENV: development`, `DEBUG: "true"`, verbose logging)
 - Same cross-service refs from `zerops_discover` as prod — only mode flags differ
+
+</block>
+
+<block name="serve-only-dev-override">
+
+- **Serve-only runtimes** (`static`, standalone `nginx`, any future serve-only base): these host no toolchain — `run.base: static` is a **prod-only concern**. For the dev setup, pick a different `run.base` that CAN host the framework's dev toolchain — typically the same base that already exists under `build.base` for that setup (e.g. `nodejs@22` for a Vite/Svelte SPA whose prod is `static`). `run.base` may differ between setups inside the same zerops.yaml; the platform supports this and it's the intended pattern for serve-only prod artifacts. `deployFiles: [.]` still applies on dev regardless of `run.base` choice.
+
+</block>
+
+<block name="dev-dep-preinstall">
+
 - **Dev dependency pre-install**: if the build base includes a secondary runtime for an asset pipeline, dev `buildCommands` MUST include the dependency install step for that runtime's package manager. This ensures the dev container ships with dependencies pre-populated — the developer (or agent) can SSH in and immediately run the dev server without a manual install step first. Omit the asset compilation step — that's for prod only; dev uses the live dev server.
+
+</block>
+
+<block name="dev-server-host-check">
+
 - **Dev-server host-check allow-list** — when the framework's dev server enforces an HTTP Host-header allow-list (most modern bundler-based dev servers do), the Zerops public dev subdomain must be on the allow-list or the dev server returns a "Blocked request / Invalid Host header" error to the browser. This is a framework-config concern, not a Zerops platform setting: the right key lives in the framework's dev-server config and has a different name per framework (e.g. one framework calls it `allowedHosts`, another `allowed-hosts`, another `disable-host-check`, etc.). **During research, look up the current host-check config for the framework's dev server in its official docs** and bake the correct setting into whichever config file the dev server reads (`vite.config.ts`, `webpack.config.js`, `angular.json`, `next.config.js`, etc.). Add `.zerops.app` as a wildcard suffix so both the `{hostname}dev-{subdomainHost}-{port}.prg1.zerops.app` URL and the (later) `{hostname}stage-{subdomainHost}.prg1.zerops.app` URL are accepted without per-URL churn. If the dev server has a separate "preview" mode with its own host-check (some Vite-family servers do), configure both. The symptom of a missed allow-list is a 403 or plain-text "Blocked request" response to the public dev subdomain with no HTML rendered.
+
+</block>
+
+<block name="setup-prod-rules">
 
 **`setup: prod`** (cross-deployed from dev to stage — end-user production target):
 - Follow the chain recipe's prod setup as a baseline. Adapt to the current recipe's services and framework version.
 - **If a search engine is provisioned**: `initCommands` must include the framework's search-index import command AFTER `db:seed`. The ORM's auto-index-on-create may work during seeding, but an explicit import is the safety net — if the seeder guard skips creation (records exist from a prior deploy) while the search index is empty, auto-indexing fires zero events and search returns nothing.
 - **NO `prepareCommands` installing secondary runtimes** unless the prod START command needs them at runtime (e.g., SSR with Node). If the secondary runtime is only for BUILD, it's in `build.base` — adding it to `run.prepareCommands` wastes 30s+ on every container start. Dev needs `prepareCommands` for the dev server; prod does not.
 - Framework mode flags set to prod values. Same cross-service ref keys as dev — **only mode flags differ**.
+
+</block>
+
+<block name="worker-setup-block">
 
 **`setup: worker`** (showcase only — background job processor). Whether the worker shares the app's codebase is the research-step decision declared via `sharesCodebaseWith`. Two shapes:
 
@@ -449,17 +518,33 @@ Recipe-specific conventions for each setup (platform rules from provision apply 
 
 Worker rules: `start` mandatory (broker consumer command); NO healthCheck/readinessCheck/ports (workers don't serve HTTP); build + envVariables match prod; shared workers inherit the host target's `build.base` and cache — only `start` differs.
 
+</block>
+
+<block name="shared-across-setups">
+
 **Shared across all setups:**
 - `envVariables:` contains ONLY cross-service references + mode flags. Do NOT re-add envSecrets — platform injects them automatically.
 - dev and prod env maps must NOT be bit-identical — a structural check fails if mode flags don't differ.
+
+</block>
+
+<block name="env-example-preservation">
 
 ### .env.example preservation
 
 If the scaffolder produced `.env.example`, **keep it** with empty values. Remove `.env` (contains generated secrets). Update `.env.example` to cover every env var used in zerops.yaml `envVariables` (scaffolded defaults miss recipe-added keys like search host, object-storage endpoint) with sensible local defaults. A user running locally with zcli VPN should be able to copy `.env.example` → `.env` and have every key present.
 
+</block>
+
+<block name="framework-env-conventions">
+
 ### Framework environment conventions
 
 Use the framework's **standard** env var names — do not invent new ones. If the framework has a base/app URL env var, set it to `${zeropsSubdomain}`. The chain recipe shows the correct names.
+
+</block>
+
+<block name="dashboard-skeleton">
 
 ### Write the dashboard skeleton
 
@@ -492,9 +577,17 @@ Endpoint requirements:
 
 For a single-feature minimal recipe you skip the skeleton/sub-agent split entirely — write everything inline in this step and move on.
 
+</block>
+
+<block name="asset-pipeline-consistency">
+
 ### Asset pipeline consistency
 
 If `buildCommands` compiles assets (JS, CSS, or both), the primary view/template MUST load the compiled outputs via the framework's standard asset inclusion mechanism. Inline `<style>` or `<script>` blocks that bypass the build output are forbidden when a build pipeline exists. A build step that produces assets nobody loads is dead code. To verify: if zerops.yaml prod `buildCommands` produces built CSS/JS, check that the primary view/template references them through the framework's asset helper. This is the generate-step corollary of research decision 5 (scaffold preservation).
+
+</block>
+
+<block name="readme-with-fragments">
 
 ### App README with extract fragments
 
@@ -548,12 +641,20 @@ Description of why this change is needed.
 - **Intro content**: plain text, no headings, 1-3 lines
 - **Step 1** must be `### 1. Adding \`zerops.yaml\`` with a description paragraph before the code block (the API renders it as a section title)
 
+</block>
+
+<block name="code-quality">
+
 ### Code Quality
 - Comment ratio in zerops.yaml code blocks must be >= 0.3 — **aim for 35%** to clear the threshold comfortably on the first attempt. Agents consistently underestimate; writing to 30% lands at 25%.
 - No `PLACEHOLDER_*`, `<your-...>`, or `TODO` strings
 - All env var references must use discovered variable names
 - Comments explain WHY, not WHAT (don't restate the key name)
 - Max 80 chars per comment line
+
+</block>
+
+<block name="pre-deploy-checklist">
 
 ### Pre-deploy checklist
 - [ ] `.gitignore` exists and covers build artifacts, dependencies, and env files (e.g. `dist/`, `node_modules/`, `vendor/`, `.env`, `*.pyc`). Framework CLIs may skip generating it — always verify before `git add`
@@ -568,10 +669,16 @@ Description of why this change is needed.
 - [ ] Seeder creates sample data — dashboard shows real records on first deploy
 - [ ] If search engine provisioned: `initCommands` includes search index population after `db:seed`
 
+</block>
+
+<block name="completion">
+
 ### Completion
 ```
 zerops_workflow action="complete" step="generate" attestation="App code and zerops.yaml written to /var/www/appdev/. README with 3 fragments."
 ```
+
+</block>
 </section>
 
 <section name="generate-fragments">

@@ -15,12 +15,48 @@ type sectionBlock struct {
 // converted. Empty catalogs are a no-op: composeSection returns the raw
 // section body verbatim, so unconverted sections still work.
 var (
-	recipeResearchBlocks  []sectionBlock
+	recipeResearchBlocks []sectionBlock
+
 	recipeProvisionBlocks []sectionBlock
-	recipeGenerateBlocks  []sectionBlock
-	recipeDeployBlocks    []sectionBlock
-	recipeFinalizeBlocks  []sectionBlock
-	recipeCloseBlocks     []sectionBlock
+
+	// recipeGenerateBlocks — populated in Phase 5a (mechanical wrap, all
+	// predicates nil: every block emits, zero behavior change). Phase 5b
+	// switches predicates to real values (see recipe_plan_predicates.go)
+	// to gate dual-runtime / showcase / bundler content.
+	recipeGenerateBlocks = []sectionBlock{
+		{Name: "container-state"},
+		{Name: "where-to-write-files-single"},
+		{Name: "where-to-write-files-multi"},
+		{Name: "what-to-generate-showcase"},
+		{Name: "two-kinds-of-import-yaml"},
+		{Name: "execution-order"},
+		{Name: "zerops-yaml-header"},
+		{Name: "dual-runtime-url-shapes"},
+		{Name: "dual-runtime-consumption"},
+		{Name: "project-env-vars-pointer"},
+		{Name: "dual-runtime-what-not-to-do"},
+		{Name: "setup-dev-rules"},
+		{Name: "serve-only-dev-override"},
+		{Name: "dev-dep-preinstall"},
+		{Name: "dev-server-host-check"},
+		{Name: "setup-prod-rules"},
+		{Name: "worker-setup-block"},
+		{Name: "shared-across-setups"},
+		{Name: "env-example-preservation"},
+		{Name: "framework-env-conventions"},
+		{Name: "dashboard-skeleton"},
+		{Name: "asset-pipeline-consistency"},
+		{Name: "readme-with-fragments"},
+		{Name: "code-quality"},
+		{Name: "pre-deploy-checklist"},
+		{Name: "completion"},
+	}
+
+	recipeDeployBlocks []sectionBlock
+
+	recipeFinalizeBlocks []sectionBlock
+
+	recipeCloseBlocks []sectionBlock
 )
 
 // composeSection takes the raw body of a <section> and a catalog, extracts
@@ -38,8 +74,6 @@ var (
 // Consumed by Phase 5/6/7 of the recipe size-reduction refactor (each
 // section conversion routes through this function once its catalog is
 // populated).
-//
-//nolint:unused // Infrastructure for Phases 5-7 (docs/implementation-recipe-size-reduction.md).
 func composeSection(sectionBody string, catalog []sectionBlock, plan *RecipePlan) string {
 	if len(catalog) == 0 {
 		return sectionBody
