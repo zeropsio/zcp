@@ -72,14 +72,14 @@ var (
 		{Name: "completion"},
 	}
 
-	// recipeDeployBlocks — populated in Phase 7a (nil predicates). The
-	// sub-agent brief + browser walk chunks will be gated on isShowcase
-	// in Phase 7b; everything else is always-on.
+	// recipeDeployBlocks — Phase 7b gates the sub-agent brief and browser
+	// walk on isShowcase (minimal recipes skip both), saving ~10 KB per
+	// minimal session.
 	recipeDeployBlocks = []sectionBlock{
 		{Name: "deploy-framing"},
 		{Name: "dev-deploy-flow-core"},
-		{Name: "dev-deploy-subagent-brief"},
-		{Name: "dev-deploy-browser-walk"},
+		{Name: "dev-deploy-subagent-brief", Predicate: isShowcase},
+		{Name: "dev-deploy-browser-walk", Predicate: isShowcase},
 		{Name: "stage-deployment-flow"},
 		{Name: "reading-deploy-failures"},
 		{Name: "common-deployment-issues"},
