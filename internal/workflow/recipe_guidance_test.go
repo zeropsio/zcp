@@ -549,6 +549,99 @@ func TestBuildGenerateRetryDelta_IsShort(t *testing.T) {
 	}
 }
 
+// TestBuildGenerateRetryDelta_ShapeSpecificBranches exercises each of the
+// four predicate-gated branches in buildGenerateRetryDelta. The Phase 10
+// retry delta adds a shape-specific bullet when the plan satisfies
+// isDualRuntime, hasBundlerDevServer, hasSharedCodebaseWorker, or
+// hasMultiBaseBuildCommand — and must NOT add the bullet when the
+// predicate is false. TestBuildGenerateRetryDelta_IsShort only checks the
+// length cap and the always-on markers; this test guards against a
+// predicate misfire that would leak a wrong-shape reminder into the
+// narrowest recipe.
+//
+// Each needle below is unique to its branch (checked against the function
+// body in recipe_guidance.go). If the text of any reminder is edited,
+// update both places.
+func TestBuildGenerateRetryDelta_ShapeSpecificBranches(t *testing.T) {
+	t.Parallel()
+
+	const (
+		dualRuntimeNeedle  = "Dual-runtime URL references"
+		bundlerHostNeedle  = "Dev-server host-check not updated"
+		sharedWorkerNeedle = "Missing `setup: worker` block"
+		multiBaseNeedle    = "secondary-runtime dependency install"
+	)
+
+	tests := []struct {
+		name    string
+		plan    *RecipePlan
+		must    []string
+		mustNot []string
+	}{
+		{
+			// hello-world: no predicate fires — delta must contain only
+			// always-on reminders.
+			name: "hello-world/all-predicates-false",
+			plan: fixtureForShape(ShapeHelloWorld),
+			mustNot: []string{
+				dualRuntimeNeedle, bundlerHostNeedle,
+				sharedWorkerNeedle, multiBaseNeedle,
+			},
+		},
+		{
+			// backend-minimal: single runtime, no worker, no bundler — same
+			// as hello-world from the predicate perspective.
+			name: "backend-minimal/all-predicates-false",
+			plan: fixtureForShape(ShapeBackendMinimal),
+			mustNot: []string{
+				dualRuntimeNeedle, bundlerHostNeedle,
+				sharedWorkerNeedle, multiBaseNeedle,
+			},
+		},
+		{
+			// fullstack-showcase: shared-codebase worker → setup: worker
+			// reminder fires. Not dual-runtime, framework isn't bundler,
+			// BuildBases is empty — the other three must stay out.
+			name: "fullstack-showcase/shared-worker-only",
+			plan: fixtureForShape(ShapeFullStackShowcase),
+			must: []string{sharedWorkerNeedle},
+			mustNot: []string{
+				dualRuntimeNeedle, bundlerHostNeedle, multiBaseNeedle,
+			},
+		},
+		{
+			// dual-runtime-showcase: isDualRuntime fires. hasBundlerDevServer
+			// also fires via the widened rule (dual-runtime + static frontend
+			// → frontend runs a bundler dev server). The worker is SEPARATE
+			// codebase here (see fixtureForShape) so setup:worker does NOT
+			// fire. BuildBases is empty so multi-base does NOT fire.
+			name: "dual-runtime-showcase/dual-and-bundler",
+			plan: fixtureForShape(ShapeDualRuntimeShowcase),
+			must: []string{dualRuntimeNeedle, bundlerHostNeedle},
+			mustNot: []string{
+				sharedWorkerNeedle, multiBaseNeedle,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			delta := buildGenerateRetryDelta(tt.plan, "prior attestation")
+			for _, needle := range tt.must {
+				if !strings.Contains(delta, needle) {
+					t.Errorf("delta missing required needle %q", needle)
+				}
+			}
+			for _, needle := range tt.mustNot {
+				if strings.Contains(delta, needle) {
+					t.Errorf("delta contains forbidden needle %q — predicate misfired", needle)
+				}
+			}
+		})
+	}
+}
+
 // TestBuildGuide_Generate_Iteration1_ReturnsDelta asserts that calling
 // buildGuide with iteration > 0 returns the retry delta — substantially
 // smaller than the first-iteration full composition.
