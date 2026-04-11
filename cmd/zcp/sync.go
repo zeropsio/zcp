@@ -195,11 +195,18 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 	switch sub {
 	case "create-repo":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe create-repo <slug> [--dry-run]")
+			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe create-repo <slug> [--repo-suffix <name>] [--dry-run]")
 			os.Exit(1)
 		}
 		slug := args[1]
-		result, err := sync.CreateRecipeRepo(cfg, slug, dryRun)
+		suffix := ""
+		for i := 2; i < len(args); i++ {
+			if args[i] == "--repo-suffix" && i+1 < len(args) {
+				suffix = args[i+1]
+				i++
+			}
+		}
+		result, err := sync.CreateRecipeRepo(cfg, slug, suffix, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -275,12 +282,19 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 
 	case "push-app":
 		if len(args) < 3 {
-			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe push-app <slug> <app-dir> [--dry-run]")
+			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe push-app <slug> <app-dir> [--repo-suffix <name>] [--dry-run]")
 			os.Exit(1)
 		}
 		slug := args[1]
 		appDir := args[2]
-		result, err := sync.PushAppSource(cfg, slug, appDir, dryRun)
+		suffix := ""
+		for i := 3; i < len(args); i++ {
+			if args[i] == "--repo-suffix" && i+1 < len(args) {
+				suffix = args[i+1]
+				i++
+			}
+		}
+		result, err := sync.PushAppSource(cfg, slug, suffix, appDir, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -342,22 +356,33 @@ func printRecipeUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: zcp sync recipe <subcommand> [args] [flags]
 
 Subcommands:
-  create-repo <slug>                Create app repo in zerops-recipe-apps org
-  push-app <slug> <app-dir>         Push app source to the app repo
-  publish <slug> <source-dir>       Publish environments to zeropsio/recipes
-  export <recipe-dir>               Create .tar.gz archive of recipe output
+  create-repo <slug> [--repo-suffix <name>]            Create app repo in zerops-recipe-apps org (suffix defaults to "app")
+  push-app    <slug> <app-dir> [--repo-suffix <name>]  Push app source to the app repo (suffix must match create-repo)
+  publish     <slug> <source-dir>                      Publish environments to zeropsio/recipes
+  export      <recipe-dir>                             Create .tar.gz archive of recipe output
 
 Flags:
   --dry-run              Show what would change without writing
+  --repo-suffix <name>   Codebase suffix for create-repo/push-app (default "app")
   --app-dir <path>       App source dir to include (repeatable for dual-runtime)
   --include-timeline     Prompt for TIMELINE.md if missing (export only)
 
 Examples:
+  # Single-codebase recipe (backward compat — resolves to {slug}-app):
   zcp sync recipe create-repo laravel-minimal
-  zcp sync recipe push-app laravel-minimal /var/www/appdev
+  zcp sync recipe push-app    laravel-minimal /var/www/appdev
+
+  # Dual-runtime showcase with separate worker (3 repos):
+  zcp sync recipe create-repo nestjs-showcase --repo-suffix app
+  zcp sync recipe push-app    nestjs-showcase /var/www/appdev    --repo-suffix app
+  zcp sync recipe create-repo nestjs-showcase --repo-suffix api
+  zcp sync recipe push-app    nestjs-showcase /var/www/apidev    --repo-suffix api
+  zcp sync recipe create-repo nestjs-showcase --repo-suffix worker
+  zcp sync recipe push-app    nestjs-showcase /var/www/workerdev --repo-suffix worker
+
   zcp sync recipe publish laravel-minimal /var/www/zcprecipator/laravel-minimal
-  zcp sync recipe export /var/www/zcprecipator/laravel-minimal --app-dir /var/www/appdev
-  zcp sync recipe export /var/www/zcprecipator/nestjs-showcase \
+  zcp sync recipe export  /var/www/zcprecipator/laravel-minimal --app-dir /var/www/appdev
+  zcp sync recipe export  /var/www/zcprecipator/nestjs-showcase \
     --app-dir /var/www/apidev --app-dir /var/www/appdev --include-timeline`)
 }
 
