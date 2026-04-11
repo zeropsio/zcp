@@ -288,7 +288,6 @@ func TestRecipe_DetailedGuide_MonotonicityInvariant(t *testing.T) {
 		RecipeStepDeploy, RecipeStepFinalize, RecipeStepClose,
 	}
 	for _, step := range steps {
-		step := step
 		t.Run(step, func(t *testing.T) {
 			t.Parallel()
 			sizes := make([]int, len(shapes))
@@ -529,7 +528,6 @@ func TestBuildGenerateRetryDelta_IsShort(t *testing.T) {
 		ShapeFullStackShowcase,
 		ShapeDualRuntimeShowcase,
 	} {
-		shape := shape
 		t.Run(fmt.Sprint(shape), func(t *testing.T) {
 			t.Parallel()
 			plan := fixtureForShape(shape)

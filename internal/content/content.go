@@ -23,17 +23,17 @@ var templateFS embed.FS
 // workflow file once at first use and serves all subsequent reads from an
 // immutable map — zero behavior change, strict allocation reduction.
 var (
-	workflowCacheInit sync.Once
-	workflowCacheMu   sync.RWMutex
-	workflowCache     map[string]string
-	workflowCacheErr  error
+	workflowCacheInit    sync.Once
+	workflowCacheMu      sync.RWMutex
+	workflowCache        map[string]string
+	errWorkflowCacheInit error
 )
 
 func initWorkflowCache() {
 	cache := make(map[string]string)
 	entries, err := fs.ReadDir(workflowFS, "workflows")
 	if err != nil {
-		workflowCacheErr = err
+		errWorkflowCacheInit = err
 		return
 	}
 	for _, e := range entries {
@@ -42,7 +42,7 @@ func initWorkflowCache() {
 		}
 		b, err := workflowFS.ReadFile("workflows/" + e.Name())
 		if err != nil {
-			workflowCacheErr = err
+			errWorkflowCacheInit = err
 			return
 		}
 		name := strings.TrimSuffix(e.Name(), ".md")
@@ -57,8 +57,8 @@ func initWorkflowCache() {
 // The name should not include the .md extension or path prefix.
 func GetWorkflow(name string) (string, error) {
 	workflowCacheInit.Do(initWorkflowCache)
-	if workflowCacheErr != nil {
-		return "", workflowCacheErr
+	if errWorkflowCacheInit != nil {
+		return "", errWorkflowCacheInit
 	}
 	workflowCacheMu.RLock()
 	s, ok := workflowCache[name]

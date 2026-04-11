@@ -19,18 +19,18 @@ func TestGetWorkflow_CachedAcrossCalls(t *testing.T) {
 	workflowCacheMu.Lock()
 	workflowCacheInit = sync.Once{}
 	workflowCache = nil
-	workflowCacheErr = nil
+	errWorkflowCacheInit = nil
 	workflowCacheMu.Unlock()
 	t.Cleanup(func() {
 		workflowCacheMu.Lock()
 		workflowCacheInit = sync.Once{}
 		workflowCache = nil
-		workflowCacheErr = nil
+		errWorkflowCacheInit = nil
 		workflowCacheMu.Unlock()
 	})
 
 	// Prime the cache with many calls.
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		s, err := GetWorkflow("recipe")
 		if err != nil {
 			t.Fatalf("iteration %d: %v", i, err)
