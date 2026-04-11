@@ -371,7 +371,7 @@ Never scaffold into `/tmp` and copy — the scaffolder's footprint always includ
 
 **Type 3 (backend framework):** Full framework project. ORM-based migrations, template-rendered dashboard, framework CLI tools. Uses the framework's conventions throughout.
 
-**Type 4 (showcase):** Dashboard **SKELETON only** — feature controllers and views are **NOT** written during generate. Generate produces: layout with empty/placeholder partial slots (using the framework's standard include mechanism — partials, components, sub-templates, or imports) for each planned feature section, all routes (display + action endpoints pre-registered but returning placeholder responses), primary model + migration + factory + seeder with sample data, service connectivity panel, zerops.yaml (all 3 setups: dev + prod + worker), README with fragments, .env.example. **Stop here.** The deploy step dispatches a sub-agent to implement feature controllers and views against live services after appdev is verified. Writing feature code during generate means generating blind against disconnected services — producing code with no error handling, no XSS protection, and untested integrations. See "Showcase dashboard — file architecture" below.
+**Type 4 (showcase):** Dashboard **SKELETON only** — feature controllers and views are **NOT** written during generate. Generate produces: layout with empty/placeholder partial slots (using the framework's standard include mechanism — partials, components, sub-templates, or imports) for each planned feature section, all routes (display + action endpoints pre-registered but returning placeholder responses), primary model + migration + factory + seeder with sample data, service connectivity panel, zerops.yaml (setups depend on worker shape — shared-codebase worker adds `setup: worker` in the host target's file; separate-codebase worker has its own zerops.yaml with `dev` + `prod` — see "zerops.yaml — Write ALL setups at once" below for the full enumeration), README with fragments, .env.example. **Stop here.** The deploy step dispatches a sub-agent to implement feature controllers and views against live services after appdev is verified. Writing feature code during generate means generating blind against disconnected services — producing code with no error handling, no XSS protection, and untested integrations. See "Showcase dashboard — file architecture" below.
 
 </block>
 
@@ -396,7 +396,8 @@ zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`.
 1. Scaffold the project (composer create-project, npx create-next-app, etc.)
 2. Write zerops.yaml — YOU, not a sub-agent. Use the discovered env vars and schema from this guidance.
 3. Write app code:
-   - **Types 1-3 (minimal)**: dashboard skeleton with feature sections, model + migration + seeder, routes, config changes. Write everything yourself — with only 1-2 feature sections (database CRUD, maybe cache) there's no benefit to sub-agents.
+   - **Type 1 (runtime hello world)**: single-file HTTP server + DB migration, no framework, no dashboard. Write a minimal handler (e.g. `/` returns `"Hello from <framework>"`, `/greetings` returns SELECT-all from the `greetings` table) and the raw SQL migration. No routes table, no seeder beyond a migration INSERT, no feature sections.
+   - **Types 2b/3 (minimal with framework)**: dashboard skeleton with feature sections, model + migration + seeder, routes, config changes. Write everything yourself — with only 1-2 feature sections (database CRUD, maybe cache) there's no benefit to sub-agents.
    - **Type 4 (showcase)**: write the dashboard skeleton yourself (layout with include slots, connectivity panel, model + migration + seeder, all routes). Do NOT dispatch the feature sub-agent yet — that happens in the deploy step after appdev is deployed and verified. See "Showcase dashboard — file architecture" below.
 4. Write README with extract fragments — YOU, not a sub-agent. The integration-guide fragment must contain the SAME zerops.yaml you just wrote in step 2 (read it back from disk, don't rewrite from memory). The intro must list ALL services from the plan, not just the database.
 5. Git init + commit
@@ -731,8 +732,8 @@ Description of why this change is needed.
 - [ ] If dev build base includes secondary runtime, dev `buildCommands` includes package manager install
 - [ ] README has all 3 extract fragments with proper markers
 - [ ] `.env.example` preserved (`.env` removed), updated with ALL env vars from zerops.yaml
-- [ ] Dashboard has interactive feature section per provisioned service (no connectivity-only dots)
-- [ ] Seeder creates sample data — dashboard shows real records on first deploy
+- [ ] **(showcase only)** Dashboard has interactive feature section per provisioned service (no connectivity-only dots)
+- [ ] **(showcase only)** Seeder creates sample data — dashboard shows real records on first deploy
 - [ ] If search engine provisioned: `initCommands` includes search index population after `db:seed`
 
 </block>
