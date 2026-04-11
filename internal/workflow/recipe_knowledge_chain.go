@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -66,19 +67,29 @@ func recipeKnowledgeChain(plan *RecipePlan, kp knowledge.Provider) string {
 		}
 
 		if tierDelta == 1 {
-			// Direct predecessor: full content.
-			header := fmt.Sprintf("## %s Recipe Knowledge (full)\n\nThis %s recipe was built for the same framework. Its zerops.yaml patterns, gotchas, and integration steps apply directly.\n\n",
-				c.name, recipeTierOrder[c.rank])
-			parts = append(parts, header+content)
-		} else {
-			// Earlier ancestor: knowledge sections only (gotchas, base image).
-			knowledge := extractKnowledgeSections(content)
-			if knowledge == "" {
+			// Direct predecessor: Gotchas H2 + zerops.yaml template fence.
+			// Integration-step prose (trust proxy, bind 0.0.0.0, env var
+			// wiring) is dropped — it teaches existing-app integration, not
+			// from-scratch generation. The YAML fence carries the framework
+			// pattern; prose is noise for the generating agent.
+			extracted := extractForPredecessor(content)
+			if extracted == "" {
 				continue
 			}
-			header := fmt.Sprintf("## %s Platform Knowledge (gotchas only)\n\nPlatform-specific gotchas from the base runtime recipe. The zerops.yaml config is omitted — your recipe has its own.\n\n",
+			header := fmt.Sprintf("## %s Recipe Knowledge (predecessor)\n\nGotchas + zerops.yaml template from the direct predecessor recipe. Use the template as your starting point; adapt keys/services to your targets.\n\n",
 				c.name)
-			parts = append(parts, header+knowledge)
+			parts = append(parts, header+extracted)
+		} else {
+			// Earlier ancestor (tier delta ≥ 2): Gotchas only. Return empty
+			// if the recipe has no ## Gotchas H2 — do NOT emit title-intro
+			// filler as fake gotchas, which the old extractor did.
+			extracted := extractForAncestor(content)
+			if extracted == "" {
+				continue
+			}
+			header := fmt.Sprintf("## %s Platform Knowledge (ancestor gotchas)\n\nPlatform-specific gotchas from a more basic recipe in the same runtime. zerops.yaml config is omitted — your recipe has its own.\n\n",
+				c.name)
+			parts = append(parts, header+extracted)
 		}
 	}
 
@@ -139,35 +150,103 @@ func sortRelatedRecipes(candidates []relatedRecipe) {
 	}
 }
 
-// extractKnowledgeSections extracts knowledge content from a recipe — everything
-// before the first numbered integration step (## 1. Adding `zerops.yaml`).
-// This captures Gotchas, Base Image, and any other knowledge headers while
-// stripping the zerops.yaml configuration and integration steps.
-func extractKnowledgeSections(content string) string {
-	lines := strings.Split(content, "\n")
-	var out []string
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Stop at the first numbered section (integration steps).
-		if strings.HasPrefix(trimmed, "## 1.") || strings.HasPrefix(trimmed, "## 1 ") {
-			break
-		}
-
-		// Skip the recipe title (# Title) — the caller adds its own header.
-		if strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "## ") {
-			continue
-		}
-
-		out = append(out, line)
+// extractForPredecessor returns content relevant to a tier-delta-1 injection:
+// the Gotchas H2 plus the zerops.yaml code fence from "## 1. Adding
+// zerops.yaml". Integration-step prose (trust proxy, bind 0.0.0.0, env var
+// wiring) is dropped because it teaches existing-app integration, not
+// from-scratch generation.
+//
+// Returns empty string when neither Gotchas nor a YAML template can be
+// recovered. Callers must treat empty as "skip this predecessor entirely" —
+// not as "emit the original content as fallback", which would re-introduce
+// the integration prose noise.
+func extractForPredecessor(content string) string {
+	parts := []string{}
+	if g := extractH2Section(content, "Gotchas"); g != "" {
+		parts = append(parts, "## Gotchas\n\n"+g)
 	}
+	if tmpl := extractYAMLTemplate(content); tmpl != "" {
+		parts = append(parts, "## zerops.yaml template (from predecessor recipe)\n\n"+tmpl)
+	}
+	return strings.Join(parts, "\n\n")
+}
 
-	result := strings.TrimSpace(strings.Join(out, "\n"))
-	if result == "" {
+// extractForAncestor extracts only the Gotchas H2 from an ancestor recipe
+// (tier delta ≥ 2). Returns empty string when no Gotchas section exists —
+// the old "return everything before ## 1." rule emitted ~400 B of title-
+// intro filler for every hello-world recipe in the store that lacked a
+// ## Gotchas H2, which this function explicitly prevents.
+func extractForAncestor(content string) string {
+	g := extractH2Section(content, "Gotchas")
+	if g == "" {
 		return ""
 	}
-	return result
+	return "## Gotchas (from ancestor recipe)\n\n" + g
+}
+
+// extractH2Section returns the body of the first H2 matching the given
+// title (exact match after "## "). The walk stops at the next H2, the
+// next H1, or EOF. Returns empty when no match is found.
+func extractH2Section(content, title string) string {
+	lines := strings.Split(content, "\n")
+	inside := false
+	var out []string
+	for _, l := range lines {
+		if strings.HasPrefix(l, "## ") {
+			if inside {
+				break
+			}
+			if strings.TrimPrefix(l, "## ") == title {
+				inside = true
+			}
+			continue
+		}
+		if strings.HasPrefix(l, "# ") && !strings.HasPrefix(l, "## ") {
+			if inside {
+				break
+			}
+			continue
+		}
+		if inside {
+			out = append(out, l)
+		}
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// yamlFenceRe matches the first ```yaml or ```yml fenced code block.
+// Reluctant `.*?` caps the match to the nearest closing fence.
+var yamlFenceRe = regexp.MustCompile("(?s)```ya?ml\\s*\\n(.*?)\\n```")
+
+// extractYAMLTemplate finds the first "## 1. Adding `zerops.yaml`" H2 and
+// returns its first fenced yaml code block. Integration-step prose around
+// the fence is dropped; only the template body (rewrapped in a fence)
+// survives. Returns empty when neither the H2 nor a fence is found.
+func extractYAMLTemplate(content string) string {
+	lines := strings.Split(content, "\n")
+	inside := false
+	var h2Body strings.Builder
+	for _, l := range lines {
+		if strings.HasPrefix(l, "## 1.") || strings.HasPrefix(l, "## 1 ") {
+			inside = true
+			continue
+		}
+		if inside && strings.HasPrefix(l, "## ") {
+			break
+		}
+		if inside {
+			h2Body.WriteString(l)
+			h2Body.WriteByte('\n')
+		}
+	}
+	if h2Body.Len() == 0 {
+		return ""
+	}
+	m := yamlFenceRe.FindStringSubmatch(h2Body.String())
+	if m == nil {
+		return ""
+	}
+	return "```yaml\n" + m[1] + "\n```"
 }
 
 // normalizeRuntimeBase maps composite runtime names to their base recipe prefix.

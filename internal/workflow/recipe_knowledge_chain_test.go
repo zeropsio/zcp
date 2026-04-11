@@ -60,73 +60,97 @@ func TestRecipeTierRank(t *testing.T) {
 	}
 }
 
-func TestExtractKnowledgeSections(t *testing.T) {
+// TestExtractForPredecessor covers the direct-predecessor extractor: it must
+// return the Gotchas H2 body plus the zerops.yaml code fence from ## 1. —
+// and nothing else (integration-step prose is dropped).
+func TestExtractForPredecessor(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name    string
-		content string
-		want    string
-		absent  string
-	}{
-		{
-			name: "extracts_gotchas_before_zeropsyaml",
-			content: `# Bun Hello World on Zerops
-
-## Base Image
-
-Includes: Bun, npm, yarn, git, bunx.
+	const content = `# NestJS Minimal
 
 ## Gotchas
 
-- **BUN_INSTALL** — use ./.bun for caching.
-- **bunx** — use instead of npx.
+- **Trust proxy** — must be enabled at runtime.
+- **Vite dev host** — add .zerops.app to server.host config.
+
+## 1. Adding ` + "`zerops.yaml`" + `
+
+Open ` + "`zerops.yaml`" + ` in your editor and paste the template below, then adapt the build/run commands to your project.
+
+` + "```yaml\nzerops:\n  - setup: api\n    build:\n      base: nodejs@22\n    run:\n      base: nodejs@22\n```" + `
+
+## 2. Trust proxy and bind 0.0.0.0
+
+Open ` + "`main.ts`" + ` and add the following to your bootstrap function:
+
+` + "```ts\napp.set('trust proxy', true)\n```"
+
+	got := extractForPredecessor(content)
+
+	// Must contain the Gotchas H2 and both items.
+	if !strings.Contains(got, "## Gotchas") {
+		t.Error("expected Gotchas H2 in predecessor extract")
+	}
+	if !strings.Contains(got, "Trust proxy") {
+		t.Error("expected Gotchas bullet in extract")
+	}
+	// Must contain the zerops.yaml code fence.
+	if !strings.Contains(got, "```yaml") {
+		t.Error("expected yaml fence in extract")
+	}
+	if !strings.Contains(got, "setup: api") {
+		t.Error("expected yaml fence body in extract")
+	}
+	// Must NOT contain the trailing integration prose.
+	if strings.Contains(got, "## 2. Trust proxy") {
+		t.Error("integration step H2 should be dropped")
+	}
+	if strings.Contains(got, "app.set('trust proxy'") {
+		t.Error("integration TS fence should be dropped")
+	}
+}
+
+// TestExtractForAncestor_NoGotchas_ReturnsEmpty is the regression guard
+// against the old extractor's behavior of emitting "This recipe
+// demonstrates..." title-intro filler as if it were knowledge content.
+// Hello-world recipes commonly lack a ## Gotchas H2; those must yield
+// empty, not filler.
+func TestExtractForAncestor_NoGotchas_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	const content = `# Node.js Hello World
+
+A minimal Node.js app deployed to Zerops.
 
 ## 1. Adding zerops.yaml
 
-` + "```yaml\nzerops:\n  - setup: prod\n```",
-			want:   "## Gotchas",
-			absent: "zerops.yaml",
-		},
-		{
-			name:    "no_knowledge_sections",
-			content: "# PHP Hello World\n\n## 1. Adding `zerops.yaml`\n\n```yaml\nzerops:\n```",
-			want:    "",
-		},
-		{
-			name: "strips_title_keeps_sections",
-			content: `# Some Recipe
+` + "```yaml\nzerops:\n  - setup: app\n```"
 
-## Base Image
+	got := extractForAncestor(content)
+	if got != "" {
+		t.Errorf("expected empty ancestor extract for recipe with no Gotchas H2, got %q", got)
+	}
+}
 
-Has stuff.
+// TestExtractForAncestor_WithGotchas_ReturnsBody ensures a recipe that DOES
+// have a Gotchas H2 is surfaced to callers — the empty-on-missing behaviour
+// must not swallow valid ancestor knowledge.
+func TestExtractForAncestor_WithGotchas_ReturnsBody(t *testing.T) {
+	t.Parallel()
+	const content = `# PHP Hello World
 
 ## Gotchas
 
-- Gotcha 1
+- **PDO extension** — included in base image.
 
-## 1. Adding config
-`,
-			want:   "## Base Image",
-			absent: "# Some Recipe",
-		},
+## 1. Adding zerops.yaml
+
+` + "```yaml\nzerops:\n```"
+
+	got := extractForAncestor(content)
+	if !strings.Contains(got, "PDO extension") {
+		t.Errorf("expected Gotchas body in ancestor extract, got %q", got)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := extractKnowledgeSections(tt.content)
-			if tt.want == "" {
-				if got != "" {
-					t.Errorf("expected empty, got: %q", got)
-				}
-				return
-			}
-			if !strings.Contains(got, tt.want) {
-				t.Errorf("expected to contain %q, got: %q", tt.want, got)
-			}
-			if tt.absent != "" && strings.Contains(got, tt.absent) {
-				t.Errorf("should not contain %q, got: %q", tt.absent, got)
-			}
-		})
+	if strings.Contains(got, "## 1.") {
+		t.Error("zerops.yaml H2 should be dropped from ancestor extract")
 	}
 }
 
@@ -204,7 +228,7 @@ func TestFindRelatedRecipes(t *testing.T) {
 	}
 }
 
-func TestRecipeKnowledgeChain_ShowcaseGetsBoth(t *testing.T) {
+func TestRecipeKnowledgeChain_ShowcaseGetsPredecessorAndAncestor(t *testing.T) {
 	t.Parallel()
 	kp := &mockRecipeProvider{
 		recipes: map[string]string{
@@ -216,7 +240,7 @@ func TestRecipeKnowledgeChain_ShowcaseGetsBoth(t *testing.T) {
 
 ## 1. Adding zerops.yaml
 
-` + "```yaml\nzerops:\n  - setup: prod\n```",
+` + "```yaml\nzerops:\n  - setup: helloprod\n```",
 			"laravel-minimal": `# Laravel Minimal
 
 ## Gotchas
@@ -225,7 +249,14 @@ func TestRecipeKnowledgeChain_ShowcaseGetsBoth(t *testing.T) {
 
 ## 1. Adding zerops.yaml
 
-` + "```yaml\nzerops:\n  - setup: prod\n    build:\n      base: php@8.4\n```",
+Open ` + "`zerops.yaml`" + ` and paste:
+
+` + "```yaml\nzerops:\n  - setup: prod\n    build:\n      base: php@8.4\n```" + `
+
+## 2. Configure app
+
+Do stuff.
+`,
 		},
 	}
 	plan := &RecipePlan{
@@ -237,37 +268,39 @@ func TestRecipeKnowledgeChain_ShowcaseGetsBoth(t *testing.T) {
 
 	result := recipeKnowledgeChain(plan, kp)
 
-	// Should contain full minimal content.
+	// Predecessor (laravel-minimal): Gotchas + YAML template.
 	if !strings.Contains(result, "laravel-minimal") {
 		t.Error("expected laravel-minimal in chain")
 	}
-	if !strings.Contains(result, "No .env file") {
-		t.Error("expected minimal gotcha in full content")
+	if !strings.Contains(result, "(predecessor)") {
+		t.Error("expected '(predecessor)' label for direct predecessor")
 	}
-	if !strings.Contains(result, "(full)") {
-		t.Error("expected '(full)' label for direct predecessor")
+	if !strings.Contains(result, "No .env file") {
+		t.Error("expected predecessor gotcha body in chain")
+	}
+	if !strings.Contains(result, "setup: prod") {
+		t.Error("expected predecessor YAML template fence in chain")
+	}
+	if strings.Contains(result, "## 2. Configure app") {
+		t.Error("predecessor integration-step H2 should be dropped")
 	}
 
-	// Should contain hello-world gotchas only.
+	// Ancestor (php-hello-world): Gotchas only, no YAML.
 	if !strings.Contains(result, "php-hello-world") {
 		t.Error("expected php-hello-world in chain")
 	}
+	if !strings.Contains(result, "(ancestor gotchas)") {
+		t.Error("expected '(ancestor gotchas)' label for earlier ancestor")
+	}
 	if !strings.Contains(result, "PDO extension") {
-		t.Error("expected hello-world gotcha")
+		t.Error("expected ancestor gotcha body")
 	}
-	if !strings.Contains(result, "(gotchas only)") {
-		t.Error("expected '(gotchas only)' label for earlier ancestor")
-	}
-
-	// Minimal's full content includes its own zerops.yaml — that's expected.
-	// Hello-world's zerops.yaml should be stripped (only gotchas injected).
-	// Count: minimal has "setup: prod" in its full content, but hello-world's should be absent.
-	if strings.Count(result, "setup: prod") > 1 {
-		t.Error("hello-world zerops.yaml config should be stripped, but found multiple 'setup: prod' occurrences")
+	if strings.Contains(result, "setup: helloprod") {
+		t.Error("hello-world ancestor YAML should NOT be injected")
 	}
 }
 
-func TestRecipeKnowledgeChain_MinimalGetsHelloFull(t *testing.T) {
+func TestRecipeKnowledgeChain_MinimalGetsHelloPredecessor(t *testing.T) {
 	t.Parallel()
 	kp := &mockRecipeProvider{
 		recipes: map[string]string{
@@ -294,12 +327,15 @@ func TestRecipeKnowledgeChain_MinimalGetsHelloFull(t *testing.T) {
 	if !strings.Contains(result, "php-hello-world") {
 		t.Error("expected php-hello-world in chain")
 	}
-	if !strings.Contains(result, "(full)") {
-		t.Error("expected full content for direct predecessor")
+	if !strings.Contains(result, "(predecessor)") {
+		t.Error("expected predecessor label for tier-delta-1 recipe")
 	}
-	// Full content should include the zerops.yaml section.
+	// Predecessor extract pulls the YAML fence — the template content lands.
 	if !strings.Contains(result, "setup: prod") {
-		t.Error("expected zerops.yaml in full hello-world content")
+		t.Error("expected predecessor YAML fence in chain")
+	}
+	if !strings.Contains(result, "PDO extension") {
+		t.Error("expected predecessor Gotchas in chain")
 	}
 }
 
