@@ -17,23 +17,23 @@ type sectionBlock struct {
 var (
 	recipeResearchBlocks []sectionBlock
 
-	// recipeProvisionBlocks — populated in Phase 6a (mechanical wrap, all
-	// predicates nil: zero behavior change). Phase 6b switches predicates
-	// to real values for dual-runtime / managed-service / multi-codebase
-	// gating.
+	// recipeProvisionBlocks — Phase 6b wires real predicates on the
+	// shape-specific blocks. Always-on blocks (framing, standard mode,
+	// workspace restrictions, schema pointer, mount, git config,
+	// attestation) keep nil.
 	recipeProvisionBlocks = []sectionBlock{
 		{Name: "provision-framing"},
 		{Name: "import-yaml-standard-mode"},
-		{Name: "import-yaml-static-frontend"},
+		{Name: "import-yaml-static-frontend", Predicate: hasServeOnlyProd},
 		{Name: "import-yaml-workspace-restrictions"},
 		{Name: "import-yaml-framework-secrets"},
-		{Name: "import-yaml-dual-runtime"},
+		{Name: "import-yaml-dual-runtime", Predicate: isDualRuntime},
 		{Name: "import-yaml-schema-pointer"},
 		{Name: "import-services-step"},
 		{Name: "mount-dev-filesystem"},
 		{Name: "git-config-mount"},
-		{Name: "git-init-per-codebase"},
-		{Name: "env-var-discovery"},
+		{Name: "git-init-per-codebase", Predicate: hasMultipleCodebases},
+		{Name: "env-var-discovery", Predicate: hasManagedServiceCatalog},
 		{Name: "provision-attestation"},
 	}
 
