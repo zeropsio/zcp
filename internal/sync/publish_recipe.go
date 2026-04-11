@@ -39,6 +39,17 @@ func applyPlaceholders(content string, placeholders map[string]string) string {
 	return content
 }
 
+// repoNameForPublish computes the GitHub repo name for a recipe codebase.
+// The default suffix is "app" (backward compat with single-codebase recipes).
+// Multi-codebase recipes pass the hostname of the codebase owner as the
+// suffix (e.g. "api", "worker") to get distinct repos per codebase.
+func repoNameForPublish(slug, suffix string) string {
+	if suffix == "" {
+		suffix = "app"
+	}
+	return slug + "-" + suffix
+}
+
 // PublishRecipe publishes recipe environment files to zeropsio/recipes as a PR.
 // Fetches the _template from the recipes repo, applies placeholders, then
 // overlays the generated import.yaml files from the recipe output.
@@ -186,9 +197,11 @@ func fetchTemplateFiles(gh *GH, templateDir string) (map[string]string, error) {
 
 // PushAppSource pushes the app source directory to the recipe app repo.
 // Uses git to add remote + push. The app dir must have .git initialized.
-func PushAppSource(cfg *Config, slug, appDir string, dryRun bool) (PushResult, error) {
+// suffix selects which codebase is being pushed (e.g. "app", "api", "worker").
+// Empty suffix defaults to "app" for backward compat.
+func PushAppSource(cfg *Config, slug, suffix, appDir string, dryRun bool) (PushResult, error) {
 	org := cfg.Push.Recipes.Org
-	repoName := slug + "-app"
+	repoName := repoNameForPublish(slug, suffix)
 	fullRepo := org + "/" + repoName
 	repoURL := "https://github.com/" + fullRepo + ".git"
 
@@ -231,9 +244,11 @@ func runGit(dir string, args ...string) error {
 }
 
 // CreateRecipeRepo creates a new public repo in the recipe apps org.
-func CreateRecipeRepo(cfg *Config, slug string, dryRun bool) (PushResult, error) {
+// suffix selects the codebase name (e.g. "app", "api", "worker"). Empty
+// suffix defaults to "app" for backward compatibility with existing recipes.
+func CreateRecipeRepo(cfg *Config, slug, suffix string, dryRun bool) (PushResult, error) {
 	org := cfg.Push.Recipes.Org
-	repoName := slug + "-app"
+	repoName := repoNameForPublish(slug, suffix)
 	fullRepo := org + "/" + repoName
 
 	gh := &GH{}
