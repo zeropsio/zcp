@@ -341,6 +341,8 @@ Files placed on the mount are already on the dev container — deploy doesn't "s
 
 <block name="where-to-write-files-multi">
 
+### WHERE to write files
+
 **Dual-runtime** (API-first showcase): write each codebase to its own mount. For a 3-repo showcase (frontend + API + separate worker), that's three distinct source trees:
 
 - `/var/www/apidev/` — the API framework project (NestJS, Django, Rails, etc.)
@@ -939,9 +941,13 @@ Verify `/api/health` returns 200 via curl. THEN return to Step 1 to deploy appde
 
 **CORS** (API-first): The API must set CORS headers allowing the frontend subdomain. Use the framework's standard CORS middleware and allow the frontend's subdomain origin.
 
-For showcase, also verify the worker is running via logs (no HTTP endpoint):
+For showcase, also verify the worker is running via logs (no HTTP endpoint). The worker's log hostname depends on the recipe's `sharesCodebaseWith` shape:
+
+- **Shared-codebase worker** (`sharesCodebaseWith: app` or `sharesCodebaseWith: api`) — the worker runs in the HOST target's container, so its logs live there. Use `zerops_logs serviceHostname="appdev"` for an app-shared worker, `serviceHostname="apidev"` for an api-shared worker.
+- **Separate-codebase worker** (`sharesCodebaseWith: ""`, the default for dual-runtime API-first recipes) — the worker owns its own container. Use `zerops_logs serviceHostname="workerdev"`.
+
 ```
-zerops_logs serviceHostname="appdev" limit=20
+zerops_logs serviceHostname="{worker_hostname}" limit=20
 ```
 
 **Redeployment = fresh container.** If you fix code and redeploy during iteration, the platform creates a new container — ALL background processes (asset dev server, queue worker) are gone. Restart them before re-verifying. This applies to every redeploy, not just the first.
@@ -1549,16 +1555,48 @@ Each `--app-dir` is packed into its own subdirectory inside the archive (named b
 
 If TIMELINE.md is missing, the command returns a prompt — write the TIMELINE documenting the session, then run export again.
 
-**Create app repo and push source**:
+**Create app repo(s) and push source**:
 
-Currently the publish CLI creates a single `{slug}-app` repo. For a dual-runtime showcase, users land on one repo containing multiple codebases as top-level subdirectories (`apidev/`, `appdev/`, `workerdev/`):
+Each codebase in the recipe becomes its own GitHub repo under `zerops-recipe-apps/`. The number of `create-repo` + `push-app` pairs equals the number of codebases the plan has — NOT the number of services. Pass `--repo-suffix <hostname>` on both commands so every call lands on its own repo.
+
+**Codebase count rule** — one codebase exists per runtime target that owns its own source tree:
+- Every non-worker runtime target (`IsWorker: false`) owns a codebase.
+- Every worker target with empty `sharesCodebaseWith` owns a codebase (separate-codebase worker).
+- A worker with `sharesCodebaseWith` set owns NO codebase — it lives inside the host target's repo.
+
+The shape depends on the research-step worker decision:
+
+| Plan shape | Codebases | Publish calls |
+|---|---|---|
+| Single-runtime minimal (`app` + `db`) | 1 | `app` |
+| Single-runtime + shared worker (Laravel Horizon, Rails Sidekiq, Django+Celery) | 1 | `app` |
+| Single-runtime + separate worker | 2 | `app`, `worker` |
+| Dual-runtime + shared worker (worker in API) | 2 | `app`, `api` |
+| Dual-runtime + separate worker (3-repo showcase, API-first default) | 3 | `app`, `api`, `worker` |
+
+**Shape of each call pair** — the `--repo-suffix` MUST match the codebase owner's hostname, and the `push-app` path MUST be the mount for that codebase:
 
 ```
-zcp sync recipe create-repo {slug}
-zcp sync recipe push-app {slug} /var/www/{primary-mount}
+zcp sync recipe create-repo {slug} --repo-suffix {hostname}
+zcp sync recipe push-app    {slug} /var/www/{hostname}dev --repo-suffix {hostname}
 ```
 
-Where `{primary-mount}` is the top-level mount that contains all codebases as subdirectories (typically `appdev` for a single-repo layout, or a wrapper directory created explicitly for publishing). Multi-repo publish (one GitHub repo per codebase) is tracked as a future CLI extension — the current scope publishes a single `{slug}-app` repo regardless of codebase count.
+**Dispatch all pairs in parallel** — the 6 calls (for a 3-repo showcase) have no ordering constraint between each other. Run them as parallel tool calls in a single message. Example for `nestjs-showcase` (dual-runtime + separate worker):
+
+```
+zcp sync recipe create-repo nestjs-showcase --repo-suffix app
+zcp sync recipe push-app    nestjs-showcase /var/www/appdev    --repo-suffix app
+
+zcp sync recipe create-repo nestjs-showcase --repo-suffix api
+zcp sync recipe push-app    nestjs-showcase /var/www/apidev    --repo-suffix api
+
+zcp sync recipe create-repo nestjs-showcase --repo-suffix worker
+zcp sync recipe push-app    nestjs-showcase /var/www/workerdev --repo-suffix worker
+```
+
+Each repo ends up with its own `README.md` (the 3 fragments you wrote at generate for that codebase), its own `zerops.yaml`, and its own source tree — all three codebases were committed independently at generate.
+
+For a single-codebase recipe you can omit `--repo-suffix` entirely; the default is `app` and the result is `{slug}-app`.
 
 **Publish environments** to `zeropsio/recipes`:
 ```
