@@ -516,30 +516,7 @@ The `setup: dev` block reads `DEV_*`; `setup: prod` reads `STAGE_*`. The same ze
 
 <block name="project-env-vars-pointer">
 
-**For the 6 deliverable import.yaml files** (generated at finalize): pass `projectEnvVariables` as a first-class input to `zerops_workflow action="generate-finalize"` so the template re-renders the env 0-1 shape for envs 0-1 and the envs 2-5 shape for envs 2-5:
-
-```
-zerops_workflow action="generate-finalize" \
-  projectEnvVariables={
-    "0": {
-      "DEV_API_URL": "https://apidev-${zeropsSubdomainHost}-{apiPort}.prg1.zerops.app",
-      "DEV_FRONTEND_URL": "https://appdev-${zeropsSubdomainHost}.prg1.zerops.app",
-      "STAGE_API_URL": "https://apistage-${zeropsSubdomainHost}-{apiPort}.prg1.zerops.app",
-      "STAGE_FRONTEND_URL": "https://appstage-${zeropsSubdomainHost}.prg1.zerops.app"
-    },
-    "1": { /* identical to env 0 */ },
-    "2": {
-      "STAGE_API_URL": "https://api-${zeropsSubdomainHost}-{apiPort}.prg1.zerops.app",
-      "STAGE_FRONTEND_URL": "https://app-${zeropsSubdomainHost}.prg1.zerops.app"
-    },
-    "3": { /* identical to env 2 */ },
-    "4": { /* identical to env 2 */ },
-    "5": { /* identical to env 2 */ }
-  } \
-  envComments={...}
-```
-
-Do NOT hand-edit the 6 generated files to add `project.envVariables` after the fact. A second `generate-finalize` call re-renders from template and wipes manual edits. Always pass `projectEnvVariables` via the tool input; it's idempotent across reruns.
+**For the 6 deliverable import.yaml files**: pass `projectEnvVariables` as a first-class input to `zerops_workflow action="generate-finalize"` at finalize — the full per-env shape lives in finalize Step 1b. Do NOT hand-edit the generated files; re-running `generate-finalize` re-renders from template.
 
 </block>
 
@@ -1494,22 +1471,7 @@ The brief below is split into three explicit halves: direct-fix scope (framework
 
 > You are a {framework} expert reviewing the CODE of a Zerops recipe. You have deep knowledge of {framework} but NO knowledge of the Zerops platform beyond what's in this brief. Do NOT review platform config files (zerops.yaml, import.yaml) — the main agent has platform context and has already validated them against the live schema. Your job is to catch things only a {framework} expert catches.
 >
-> **CRITICAL — where commands run:** You are operating from the **zcp orchestrator container**, not from inside the app's dev container. The paths `{appDir}/` (and any other `/var/www/{hostname}/` path) are an **SSHFS network mount** — a file bridge to the target container's `/var/www/`, not a local directory. File reads/edits via the mount are fine and expected, but **app-level commands must run on the target container via SSH**, not on zcp against the mount.
->
-> The principle is about **which container's world the tool belongs to**, not about how "heavy" the command is:
->
-> - **Target-side (SSH)** — anything that IS part of the app's toolchain: compilers (`tsc`, `nest build`, `go build`), type-checkers (`svelte-check`, `tsc --noEmit`), test runners (`jest`, `vitest`, `pytest`, `phpunit`), linters (`eslint`, `prettier`, `phpstan`), package managers (`npm install`, `composer install`, `pip install`), framework CLIs (`artisan`, `nest`, `rails`), and app-level `curl`/`node`/`python -c` used to hit the running app or managed services.
->   - Target-side means: the correct runtime version from the base image, the correct dependency tree installed by `build.buildCommands`, the correct env vars (including `${hostname_varName}` cross-service refs), and private-network reachability to managed services. zcp has none of these — a tool that "works" on zcp against the mount uses the wrong Node, wrong deps, wrong env, and can't reach the DB.
-> - **zcp-side (run directly)** — anything that operates ON the app from outside: `zerops_browser` MCP tool (drives Chrome against the target's public subdomain URL — the target container doesn't have Chrome; the tool is only available inside the ZCP container and is NOT accessible to you as a sub-agent anyway), other `zerops_*` MCP tools (platform API), Read/Edit/Write against the mount, `ls`/`cat`/`head`/`tail`/`grep`/`rg`/`find` for filesystem inspection, `git status`/`add`/`commit`.
->
-> Correct shape for target-side commands:
->
-> ```
-> ssh {hostname} "cd /var/www && {command}"   # correct — runs where the app lives
-> cd /var/www/{hostname} && {command}          # WRONG — runs on zcp against the mount
-> ```
->
-> If you see `fork failed: resource temporarily unavailable` or `pthread_create: Resource temporarily unavailable` from any Bash call, you've been running target-side commands on zcp via the mount — zcp's process budget is sized for orchestration, not compilation, and it runs out fast. Stop, re-run them via `ssh {hostname} "…"`, and treat the failure as a wrong-container execution mistake, not a framework or platform bug.
+> **CRITICAL — where commands run:** you are on the zcp orchestrator, not the target container. `{appDir}` is an SSHFS mount. All target-side commands (compilers, test runners, linters, package managers, framework CLIs, app-level `curl`) MUST run via `ssh {hostname} "cd /var/www && ..."`, not against the mount. The deploy step's "Where app-level commands run" block has the full principle and command list — read it before starting if anything here is unclear. If you see `fork failed: resource temporarily unavailable` or `pthread_create: Resource temporarily unavailable`, you ran a target-side command on zcp via the mount.
 >
 > **Read and review (direct fixes allowed):**
 > - All source files in {appDir}/ — controllers, services, models, entities, migrations, modules, templates/views, client-side code, routes, middleware, guards, pipes, interceptors, event handlers
