@@ -17,7 +17,25 @@ type sectionBlock struct {
 var (
 	recipeResearchBlocks []sectionBlock
 
-	recipeProvisionBlocks []sectionBlock
+	// recipeProvisionBlocks — populated in Phase 6a (mechanical wrap, all
+	// predicates nil: zero behavior change). Phase 6b switches predicates
+	// to real values for dual-runtime / managed-service / multi-codebase
+	// gating.
+	recipeProvisionBlocks = []sectionBlock{
+		{Name: "provision-framing"},
+		{Name: "import-yaml-standard-mode"},
+		{Name: "import-yaml-static-frontend"},
+		{Name: "import-yaml-workspace-restrictions"},
+		{Name: "import-yaml-framework-secrets"},
+		{Name: "import-yaml-dual-runtime"},
+		{Name: "import-yaml-schema-pointer"},
+		{Name: "import-services-step"},
+		{Name: "mount-dev-filesystem"},
+		{Name: "git-config-mount"},
+		{Name: "git-init-per-codebase"},
+		{Name: "env-var-discovery"},
+		{Name: "provision-attestation"},
+	}
 
 	// recipeGenerateBlocks — Phase 5b sets real predicates. Shape-specific
 	// rules (dual-runtime URLs, dashboard skeleton, worker setup, bundler

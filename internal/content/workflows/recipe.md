@@ -118,7 +118,13 @@ zerops_workflow action="complete" step="research" recipePlan={...}
 <section name="provision">
 ## Provision — Create Workspace Services
 
+<block name="provision-framing">
+
 Create all workspace services from the recipe plan. This follows the same pattern as bootstrap — dev/stage pairs for the app runtime, with shared managed services.
+
+</block>
+
+<block name="import-yaml-standard-mode">
 
 ### 1. Generate import.yaml
 
@@ -137,11 +143,23 @@ Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}s
 
 Dev starts immediately with an empty container (RUNNING). Stage stays in READY_TO_DEPLOY until first deploy from dev.
 
+</block>
+
+<block name="import-yaml-static-frontend">
+
 **Static frontends (type 2a):** `run.base: static` serves via built-in Nginx — both dev and stage use `type: static`. Dev still gets `startWithoutCode: true` for the build container. The runtime for building is `nodejs@22` (or similar) as `build.base` in zerops.yaml, NOT as the service type.
 
 **If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair.
 
+</block>
+
+<block name="import-yaml-workspace-restrictions">
+
 **Workspace import MUST NOT contain a `project:` section.** The ZCP project already exists — the API rejects imports that include `project:`. Only `services:` is allowed here. (The 6 recipe **deliverable** imports written in the finalize step DO contain `project:` with `envVariables` + preprocessor — that's a different file for a different use case.)
+
+</block>
+
+<block name="import-yaml-framework-secrets">
 
 **Framework secrets**: if `needsAppSecret == true`, decide where the secret lives.
 
@@ -155,7 +173,15 @@ Dev starts immediately with an empty container (RUNNING). Stage stays in READY_T
 
 For correlated secrets, encoded variants, or key pairs, call `zerops_preprocess` directly.
 
+</block>
+
+<block name="import-yaml-dual-runtime">
+
 **Dual-runtime URL constants** (API-first recipes only — skip for single-runtime): after services reach RUNNING, set project-level `DEV_*` + `STAGE_*` URL constants with `zerops_env project=true action=set` so the generate step can reference them in zerops.yaml. The full format, consumption pattern, and the `projectEnvVariables` handoff to finalize are documented in the generate step under "Dual-runtime URL env-var pattern" — set the same values now as will be passed there.
+
+</block>
+
+<block name="import-yaml-schema-pointer">
 
 Follow the injected **import.yaml Schema** and **Provision Rules** for field rules (hostname conventions, priority, mode, env var levels, preprocessor syntax). Recipe-specific validation:
 
@@ -165,6 +191,10 @@ Follow the injected **import.yaml Schema** and **Provision Rules** for field rul
 | envSecrets | Per-service on app/worker, NOT at project level |
 | Service types | Match available stacks from research |
 
+</block>
+
+<block name="import-services-step">
+
 ### 2. Import services
 
 ```
@@ -172,6 +202,10 @@ zerops_import content="..."
 ```
 
 Wait for all services to reach RUNNING.
+
+</block>
+
+<block name="mount-dev-filesystem">
 
 ### 3. Mount dev filesystem
 
@@ -181,6 +215,10 @@ zerops_mount action="mount" serviceHostname="appdev"
 ```
 
 This gives SSHFS access to `/var/www/appdev/` — all code writes go here.
+
+</block>
+
+<block name="git-config-mount">
 
 ### 3a. Configure git on the mount (MANDATORY before first commit)
 
@@ -200,7 +238,15 @@ ssh {hostname} "git config --global --add safe.directory /var/www && git config 
 
 Without zcp-side config: `git commit` on the mount fails with `fatal: detected dubious ownership`. Without container-side config: `zerops_deploy` fails with `fatal: not in a git directory`. Both errors are 100% reproducing on first use — do not try to "commit without configuring and see what happens".
 
+</block>
+
+<block name="git-init-per-codebase">
+
 For a dual-runtime showcase with 3 codebases (apidev, appdev, workerdev), repeat both commands for each mount.
+
+</block>
+
+<block name="env-var-discovery">
 
 ### 4. Discover env vars (mandatory before generate — skip if no managed services)
 
@@ -223,10 +269,16 @@ If a managed service returns a set that surprises you (no `hostname`, or a `key`
 
 **If the plan has no managed services** (type 2a static frontend): skip this step entirely.
 
+</block>
+
+<block name="provision-attestation">
+
 ### Completion
 ```
 zerops_workflow action="complete" step="provision" attestation="Services created: {list}. Env vars cataloged for zerops.yaml wiring (not yet active as OS vars — activate after deploy): {list}. Dev mounted at /var/www/appdev/"
 ```
+
+</block>
 </section>
 
 <section name="generate">
