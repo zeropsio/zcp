@@ -110,47 +110,54 @@ func fixtureForShape(s RecipeShape) *RecipePlan {
 }
 
 // showcaseStepCaps are the per-shape, per-step byte caps for the recipe
-// detailedGuide. These are TARGETS — initial values are intentionally loose
-// through phases 0–10 and get tightened in Phase 11 based on measured
-// post-refactor numbers. Every shape must pass its own caps; the sweep
-// test runs subtests per shape.
+// detailedGuide, set in Phase 11 from measured post-P10 numbers +
+// ~1.5-2 KB headroom per cell. Each column is non-decreasing from narrow
+// (hello-world) to wide (dual-runtime-showcase) — the monotonicity
+// invariant test below enforces the caps are consistent with the fact
+// that wider shapes legitimately carry more content.
 //
-// Narrow shapes (hello-world) use smaller caps than wide shapes
-// (dual-runtime-showcase). The Phase 11 monotonicity invariant enforces
-// hello-world ≤ backend-minimal ≤ full-stack-showcase ≤ dual-runtime-showcase
-// for every step — catches predicate bugs that accidentally fire on narrow
-// plans.
+// Measured numbers (post-Phase-10, before these caps landed):
+//
+//	shape                  research provision generate deploy finalize close
+//	hello-world            2.7      16.1      16.1     18.2   15.5     12.0 KB
+//	backend-minimal        2.7      16.1      23.8     18.2   15.5     12.0
+//	fullstack-showcase     8.2      16.1      35.2     33.6   15.5     12.0
+//	dual-runtime-showcase  8.2      17.1      39.5     33.6   15.5     12.0
+//
+// Regression guard: if a predicate accidentally fires on hello-world, its
+// cap blows. If a new block is added without its predicate, its cap
+// blows. If content grows >1.5 KB in a section, its cap blows.
 var showcaseStepCaps = map[RecipeShape]map[string]int{
 	ShapeHelloWorld: {
-		RecipeStepResearch:  10 * 1024,
-		RecipeStepProvision: 22 * 1024,
-		RecipeStepGenerate:  56 * 1024,
-		RecipeStepDeploy:    36 * 1024,
-		RecipeStepFinalize:  16 * 1024,
+		RecipeStepResearch:  5 * 1024,
+		RecipeStepProvision: 18 * 1024,
+		RecipeStepGenerate:  18 * 1024,
+		RecipeStepDeploy:    20 * 1024,
+		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},
 	ShapeBackendMinimal: {
-		RecipeStepResearch:  10 * 1024,
-		RecipeStepProvision: 22 * 1024,
-		RecipeStepGenerate:  56 * 1024,
-		RecipeStepDeploy:    36 * 1024,
-		RecipeStepFinalize:  16 * 1024,
+		RecipeStepResearch:  5 * 1024,
+		RecipeStepProvision: 18 * 1024,
+		RecipeStepGenerate:  26 * 1024,
+		RecipeStepDeploy:    20 * 1024,
+		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},
 	ShapeFullStackShowcase: {
 		RecipeStepResearch:  10 * 1024,
-		RecipeStepProvision: 22 * 1024,
-		RecipeStepGenerate:  56 * 1024,
+		RecipeStepProvision: 18 * 1024,
+		RecipeStepGenerate:  37 * 1024,
 		RecipeStepDeploy:    36 * 1024,
-		RecipeStepFinalize:  16 * 1024,
+		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},
 	ShapeDualRuntimeShowcase: {
 		RecipeStepResearch:  10 * 1024,
-		RecipeStepProvision: 22 * 1024,
-		RecipeStepGenerate:  56 * 1024,
+		RecipeStepProvision: 19 * 1024,
+		RecipeStepGenerate:  42 * 1024,
 		RecipeStepDeploy:    36 * 1024,
-		RecipeStepFinalize:  16 * 1024,
+		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},
 }
@@ -247,6 +254,58 @@ func TestRecipe_DetailedGuide_ShowcaseEveryStepUnderCap(t *testing.T) {
 							sh.name, step, len(guide), float64(len(guide))/1024, capVal, float64(capVal)/1024)
 					}
 				})
+			}
+		})
+	}
+}
+
+// TestRecipe_DetailedGuide_MonotonicityInvariant enforces that each step's
+// guide size is non-decreasing as shapes widen:
+//
+//	hello-world ≤ backend-minimal ≤ fullstack-showcase ≤ dual-runtime-showcase
+//
+// A predicate bug that fires on the wrong shape breaks this invariant. If a
+// new block is added with a predicate that defaults to true on narrow
+// shapes, this test catches it. A failure points at either a predicate
+// mis-firing or a new always-on block that should have been gated.
+func TestRecipe_DetailedGuide_MonotonicityInvariant(t *testing.T) {
+	t.Parallel()
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("embedded store: %v", err)
+	}
+	shapes := []struct {
+		name  string
+		shape RecipeShape
+	}{
+		{"hello-world", ShapeHelloWorld},
+		{"backend-minimal", ShapeBackendMinimal},
+		{"fullstack-showcase", ShapeFullStackShowcase},
+		{"dual-runtime-showcase", ShapeDualRuntimeShowcase},
+	}
+	steps := []string{
+		RecipeStepResearch, RecipeStepProvision, RecipeStepGenerate,
+		RecipeStepDeploy, RecipeStepFinalize, RecipeStepClose,
+	}
+	for _, step := range steps {
+		step := step
+		t.Run(step, func(t *testing.T) {
+			t.Parallel()
+			sizes := make([]int, len(shapes))
+			for i, sh := range shapes {
+				plan := fixtureForShape(sh.shape)
+				rs := advanceShowcaseStateTo(step, plan)
+				resp := rs.BuildResponse("sess-mono-"+sh.name+"-"+step, "m", 0, EnvLocal, store)
+				if resp.Current == nil {
+					t.Fatalf("%s: no Current on response", sh.name)
+				}
+				sizes[i] = len(resp.Current.DetailedGuide)
+			}
+			for i := 1; i < len(shapes); i++ {
+				if sizes[i] < sizes[i-1] {
+					t.Errorf("monotonicity violated at step %q: %s=%d > %s=%d (wider shape must have ≥ content)",
+						step, shapes[i-1].name, sizes[i-1], shapes[i].name, sizes[i])
+				}
 			}
 		})
 	}
