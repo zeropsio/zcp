@@ -119,7 +119,7 @@ func assembleKnowledge(params GuidanceParams) string {
 
 	// Deploy: no knowledge injection. The 400+ line bootstrap.md deploy section
 	// already covers tilde syntax, deploy modes, path invariants, and common issues.
-	// Schema Rules would be ~40% duplication.
+	// The Generate Rules lifecycle block would be ~40% duplication.
 
 	if len(parts) == 0 {
 		return ""
@@ -138,4 +138,19 @@ func getCoreSection(kp knowledge.Provider, name string) string {
 		return s
 	}
 	return ""
+}
+
+// getCoreSubsection extracts a specific H3 subsection from an H2 in the core
+// knowledge document. Used for surgical injection when the full H2 is too
+// broad — e.g., injecting only `verticalAutoscaling` instead of the entire
+// `import.yaml Schema` H2. Consumed by Phase 8 of the recipe size-reduction
+// refactor (on-demand schema pointer).
+//
+//nolint:unused // Infrastructure for Phase 8 (docs/implementation-recipe-size-reduction.md).
+func getCoreSubsection(kp knowledge.Provider, h2, h3 string) string {
+	doc, err := kp.Get("zerops://themes/core")
+	if err != nil {
+		return ""
+	}
+	return doc.H3Section(h2, h3)
 }
