@@ -181,9 +181,32 @@ For correlated secrets, encoded variants, or key pairs, call `zerops_preprocess`
 
 </block>
 
-<block name="import-yaml-schema-pointer">
+<block name="provision-schema-inline">
 
-Follow the injected **import.yaml Schema** and **Provision Rules** for field rules (hostname conventions, priority, mode, env var levels, preprocessor syntax). Recipe-specific validation:
+### Workspace import.yaml fields you actually write here
+
+The workspace import creates service shells inside an existing project. These are the fields that apply:
+
+- `hostname` (string, max 40, [a-z0-9] only, immutable)
+- `type` (`<runtime>@<version>`, pick highest from `availableStacks`)
+- `mode` (`HA` | `NON_HA`, managed services only, immutable)
+- `priority` (int; db/storage: `10` so they start first)
+- `enableSubdomainAccess` (bool, true for publicly reachable dev services)
+- `startWithoutCode` (bool, dev services only — container starts RUNNING without a deploy)
+- `minContainers` (int, dev services = 1 — SSHFS needs single container)
+- `objectStorageSize` (int, GB, object-storage services only)
+- `verticalAutoscaling` (runtime + managed DB/cache; compiled runtimes need higher dev `minRam`)
+
+**Not at provision**:
+- `project:` block — the project already exists; API rejects.
+- Project-level `envVariables` — cannot be added via workspace import. Set them via `zerops_env set` when you know what keys the app needs, or bake them into the deliverable `import.yaml` files at finalize.
+- Service-level `envSecrets` / `dotEnvSecrets` — same reason. During iteration use `zerops_env set`; for the deliverable imports, finalize has the full set and writes them there.
+- `zeropsSetup` / `buildFromGit` — deliverable-only fields, not workspace.
+- Preprocessor functions (`<@generateRandomString>` etc.) — belong at finalize where the deliverable import is generated.
+
+**Need more**: `zerops_knowledge scope="theme" query="import.yaml Schema"` returns the full reference with every exotic field.
+
+Recipe-specific validation:
 
 | Check | What to verify |
 |-------|---------------|
@@ -377,6 +400,18 @@ zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`.
 5. Git init + commit
 
 **Why this order matters:** zerops.yaml is the single source of truth. The README's integration-guide copies it verbatim. If two sub-agents write them independently, they diverge. If a sub-agent writes zerops.yaml without the injected guidance, it misses rules that only exist in this step's DetailedGuide.
+
+</block>
+
+<block name="generate-schema-pointer">
+
+### zerops.yaml field reference
+
+The injected chain recipe's `## zerops.yaml template` section is the primary source: it's the same shape you're writing, for a recipe in the same framework family. For hello-world tiers (no chain predecessor) or exotic fields (buildFromGit, cache layers, per-environment overrides) not in the template, fetch the schema on demand:
+
+```
+zerops_knowledge scope="theme" query="zerops.yaml Schema"
+```
 
 </block>
 

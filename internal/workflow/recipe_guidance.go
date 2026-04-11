@@ -136,16 +136,18 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 	//     vestigial and Phase 7 of the reshuffle removed it.
 	switch step {
 	case RecipeStepProvision:
-		// import.yaml field reference for writing service definitions.
-		if s := getCoreSection(kp, "import.yaml Schema"); s != "" {
-			parts = append(parts, "## import.yaml Schema\n\n"+s)
-		}
 		// Provision-phase rules: service creation, dev/stage patterns, hostname
 		// conventions, scaling/immutability, and the Env Vars H3. The Env Vars
 		// block is byte-identical to the copy injected at Generate — provision
 		// needs the rules when writing import.yaml; generate needs them when
 		// writing zerops.yaml. Duplication is sanctioned to keep each step's
 		// guidance self-contained.
+		//
+		// import.yaml Schema is NO LONGER eager-injected as of Phase 8. The
+		// inline provision-schema-inline block in recipe.md covers the
+		// workspace-import field set the agent actually writes, and points at
+		// `zerops_knowledge scope="theme" query="import.yaml Schema"` for
+		// exotic fields.
 		if s := getCoreSection(kp, "Provision Rules"); s != "" {
 			parts = append(parts, "## Provision Rules\n\n"+s)
 		}
@@ -154,25 +156,21 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		// Recipe knowledge chain: the source of truth for "how to write zerops.yaml
 		// for this framework." Direct predecessor: full content (working zerops.yaml
 		// + gotchas). Earlier ancestors: gotchas only.
-		chainInjected := false
 		if plan != nil {
 			if chain := recipeKnowledgeChain(plan, kp); chain != "" {
 				parts = append(parts, chain)
-				chainInjected = true
 			}
 		}
 		// Discovered env vars: real variable names from provisioned services.
 		if len(discoveredEnvVars) > 0 {
 			parts = append(parts, formatEnvVarsForGuide(discoveredEnvVars))
 		}
-		// zerops.yaml Schema: ONLY when no chain predecessor (hello-world tier).
-		// When a chain recipe exists, its working zerops.yaml IS the schema —
-		// framework-specific and proven. Generic field reference adds nothing.
-		if !chainInjected {
-			if s := getCoreSection(kp, "zerops.yaml Schema"); s != "" {
-				parts = append(parts, "## zerops.yaml Schema\n\n"+s)
-			}
-		}
+		// zerops.yaml Schema injection has been removed as of Phase 8. Hello-
+		// world recipes (no chain predecessor) fall back to the inline
+		// generate-schema-pointer block in recipe.md, which names the
+		// zerops_knowledge call for on-demand retrieval. Recipes with a
+		// predecessor already have a working zerops.yaml from the chain.
+		//
 		// Generate Rules (core.md lifecycle-phase H2) is intentionally NOT
 		// injected at generate. The chain recipe demonstrates the same rules
 		// in practice as a working zerops.yaml, and the agent already received
