@@ -18,6 +18,15 @@ func (r *RecipeState) buildGuide(step string, iteration int, kp knowledge.Provid
 			return delta
 		}
 	}
+	// Iteration delta for generate retries — shape-aware, plan-specific.
+	// An iterating agent has already read the full generate composition;
+	// on retry they need a focused delta, not the full ~16-40 KB skeleton
+	// guide again. See buildGenerateRetryDelta for the format.
+	if iteration > 0 && step == RecipeStepGenerate {
+		if delta := buildGenerateRetryDelta(r.Plan, r.lastAttestation()); delta != "" {
+			return delta
+		}
+	}
 
 	// Static guidance from recipe.md.
 	guide := resolveRecipeGuidance(step, r.Tier, r.Plan)
@@ -202,6 +211,53 @@ func buildRecipeIterationDelta(iteration int, lastAttestation string) string {
 		return ""
 	}
 	return BuildIterationDelta(RecipeStepDeploy, iteration, nil, lastAttestation)
+}
+
+// buildGenerateRetryDelta returns a focused delta for iteration > 0 at
+// generate. The agent has already read the full generate composition once;
+// on retry they need (a) a reminder of what they attested to last time,
+// (b) shape-specific failure modes filtered through the plan's predicates,
+// and (c) a pointer back to the chain recipe as the source of truth for
+// zerops.yaml shape.
+//
+// Deliberately NOT using BuildIterationDelta — that's a generic escalation
+// emitter suited for deploy where "try again with more focus" is the right
+// posture. Generate retries benefit from shape-specific failure-mode
+// reminders keyed off recipe_plan_predicates.go.
+func buildGenerateRetryDelta(plan *RecipePlan, lastAttestation string) string {
+	var sb strings.Builder
+	sb.WriteString("## Generate — Retry\n\n")
+	sb.WriteString("You've already read the full generate guide this session. This is a focused delta.\n\n")
+
+	if lastAttestation != "" {
+		sb.WriteString("### What you attested to last iteration\n\n```\n")
+		sb.WriteString(lastAttestation)
+		sb.WriteString("\n```\n\n")
+	}
+
+	sb.WriteString("### Common retry causes\n\n")
+	sb.WriteString("- Comment ratio <30% in zerops.yaml — recount, aim for 35%.\n")
+	sb.WriteString("- Env var references used guessed names — the provision-step attestation has the authoritative list.\n")
+	sb.WriteString("- Missing `setup: dev` block for at least one deployable target.\n")
+	sb.WriteString("- dev and prod envVariables bit-identical — mode flags must differ (a structural check fails otherwise).\n")
+	sb.WriteString("- README missing one of the three extract fragments.\n")
+
+	if isDualRuntime(plan) {
+		sb.WriteString("- Dual-runtime URL references in `run.envVariables` using hardcoded hosts instead of `${STAGE_*}` / `${DEV_*}`.\n")
+	}
+	if hasBundlerDevServer(plan) {
+		sb.WriteString("- Dev-server host-check not updated — framework config still rejects `.zerops.app`.\n")
+	}
+	if hasSharedCodebaseWorker(plan) {
+		sb.WriteString("- Missing `setup: worker` block in the host target's zerops.yaml.\n")
+	}
+	if hasMultiBaseBuildCommand(plan) {
+		sb.WriteString("- Dev `buildCommands` missing the secondary-runtime dependency install (asset pipeline).\n")
+	}
+
+	sb.WriteString("\n### Source of truth\n\n")
+	sb.WriteString("The injected chain recipe's `## zerops.yaml template` section (from your first read-through this session) is authoritative for shape. Re-read it and diff against your output before submitting.\n")
+	return sb.String()
 }
 
 // planNeedsFragmentsDeepDive reports whether a plan should receive the

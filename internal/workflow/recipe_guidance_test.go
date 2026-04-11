@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -453,6 +454,61 @@ func TestRecipeGenerate_BackendMinimal_OmitsDualRuntimeContent(t *testing.T) {
 		if strings.Contains(guide, shouldNotContain) {
 			t.Errorf("backend-minimal generate guide contains %q", shouldNotContain)
 		}
+	}
+}
+
+// TestBuildGenerateRetryDelta_IsShort asserts that the Phase 10 retry
+// delta stays under 5 KB across every shape. The delta must be MUCH
+// smaller than the full generate composition (~16-40 KB depending on
+// shape) — it's the whole point of gating iteration > 0 through a delta
+// function instead of re-emitting the full guide.
+func TestBuildGenerateRetryDelta_IsShort(t *testing.T) {
+	t.Parallel()
+	for _, shape := range []RecipeShape{
+		ShapeHelloWorld,
+		ShapeBackendMinimal,
+		ShapeFullStackShowcase,
+		ShapeDualRuntimeShowcase,
+	} {
+		shape := shape
+		t.Run(fmt.Sprint(shape), func(t *testing.T) {
+			t.Parallel()
+			plan := fixtureForShape(shape)
+			delta := buildGenerateRetryDelta(plan, "test attestation: wrote zerops.yaml for app+api+worker")
+			if delta == "" {
+				t.Fatal("delta should be non-empty")
+			}
+			const capBytes = 5 * 1024
+			if len(delta) > capBytes {
+				t.Errorf("shape %v retry delta %d B > %d B cap", shape, len(delta), capBytes)
+			}
+			if !strings.Contains(delta, "Retry") {
+				t.Errorf("shape %v retry delta missing 'Retry' marker", shape)
+			}
+			if !strings.Contains(delta, "test attestation") {
+				t.Errorf("shape %v retry delta missing last-attestation passthrough", shape)
+			}
+		})
+	}
+}
+
+// TestBuildGuide_Generate_Iteration1_ReturnsDelta asserts that calling
+// buildGuide with iteration > 0 returns the retry delta — substantially
+// smaller than the first-iteration full composition.
+func TestBuildGuide_Generate_Iteration1_ReturnsDelta(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeBackendMinimal)
+	rs := advanceShowcaseStateTo(RecipeStepGenerate, plan)
+	full := rs.buildGuide(RecipeStepGenerate, 0, nil)
+	delta := rs.buildGuide(RecipeStepGenerate, 1, nil)
+	if len(delta) == 0 || len(full) == 0 {
+		t.Fatalf("empty guide: full=%d delta=%d", len(full), len(delta))
+	}
+	if len(delta) >= len(full) {
+		t.Errorf("delta %d B should be smaller than full %d B", len(delta), len(full))
+	}
+	if !strings.Contains(delta, "Generate — Retry") {
+		t.Error("delta missing retry header")
 	}
 }
 
