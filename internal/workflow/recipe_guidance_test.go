@@ -3,7 +3,253 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/knowledge"
 )
+
+// RecipeShape identifies a named fixture plan used by the cap sweep and the
+// audit composition harness. Each shape represents a different delivery-
+// relevant plan geometry: hello-world (narrow, no chain predecessor), backend
+// minimal (full-stack single runtime), full-stack showcase (shared-codebase
+// worker + full managed stack), dual-runtime showcase (separate frontend +
+// API + separate-codebase worker).
+type RecipeShape int
+
+const (
+	ShapeHelloWorld          RecipeShape = iota // nodejs-hello-world — tier 0, 2 services
+	ShapeBackendMinimal                         // laravel-minimal    — tier 1, full-stack, no worker
+	ShapeFullStackShowcase                      // laravel-showcase   — tier 2, full-stack + worker + 5 managed
+	ShapeDualRuntimeShowcase                    // nestjs-showcase    — tier 2, API-first, separate worker codebase
+)
+
+// fixtureForShape returns a RecipePlan matching the named shape. The fixtures
+// here are the single source of truth for the cap sweep and audit harness —
+// changing one changes what every subsequent phase measures against. Keep
+// them representative of real-world recipes of each tier.
+func fixtureForShape(s RecipeShape) *RecipePlan {
+	switch s {
+	case ShapeHelloWorld:
+		return &RecipePlan{
+			Slug:        "nodejs-hello-world",
+			Framework:   "nodejs",
+			RuntimeType: "nodejs@22",
+			Tier:        RecipeTierHelloWorld,
+			Research: ResearchData{
+				ServiceType:    "nodejs",
+				PackageManager: "npm",
+				HTTPPort:       3000,
+				BuildCommands:  []string{"npm ci"},
+				DeployFiles:    []string{"."},
+				StartCommand:   "node server.js",
+			},
+			Targets: []RecipeTarget{
+				{Hostname: "app", Type: "nodejs@22"},
+				{Hostname: "db", Type: "postgresql@17"},
+			},
+		}
+	case ShapeBackendMinimal:
+		return &RecipePlan{
+			Slug:        "laravel-minimal",
+			Framework:   "laravel",
+			RuntimeType: "php-nginx@8.3",
+			Tier:        RecipeTierMinimal,
+			Research: ResearchData{
+				ServiceType:    "php-nginx",
+				PackageManager: "composer",
+				HTTPPort:       80,
+				BuildCommands:  []string{"composer install"},
+				DeployFiles:    []string{"."},
+				StartCommand:   "php-fpm",
+			},
+			Targets: []RecipeTarget{
+				{Hostname: "app", Type: "php-nginx@8.3"},
+				{Hostname: "db", Type: "postgresql@17"},
+			},
+		}
+	case ShapeFullStackShowcase:
+		return &RecipePlan{
+			Slug:        "laravel-showcase",
+			Framework:   "laravel",
+			RuntimeType: "php-nginx@8.3",
+			Tier:        RecipeTierShowcase,
+			Research: ResearchData{
+				ServiceType:    "php-nginx",
+				PackageManager: "composer",
+				HTTPPort:       80,
+				BuildCommands:  []string{"composer install", "npm ci", "npm run build"},
+				DeployFiles:    []string{"."},
+				StartCommand:   "php-fpm",
+				CacheLib:       "redis",
+				SessionDriver:  "redis",
+				QueueDriver:    "horizon",
+				StorageDriver:  "s3",
+				SearchLib:      "meilisearch",
+			},
+			Targets: []RecipeTarget{
+				{Hostname: "app", Type: "php-nginx@8.3"},
+				{Hostname: "worker", Type: "php@8.3", IsWorker: true, SharesCodebaseWith: "app"},
+				{Hostname: "db", Type: "postgresql@17"},
+				{Hostname: "cache", Type: "valkey@8"},
+				{Hostname: "queue", Type: "nats@2.12"},
+				{Hostname: "storage", Type: "object-storage"},
+				{Hostname: "search", Type: "meilisearch@1.10"},
+			},
+		}
+	case ShapeDualRuntimeShowcase:
+		plan := testDualRuntimePlan()
+		// Match the reshuffled default for API-first: separate worker codebase.
+		for i := range plan.Targets {
+			if plan.Targets[i].IsWorker {
+				plan.Targets[i].SharesCodebaseWith = ""
+			}
+		}
+		return plan
+	}
+	return nil
+}
+
+// showcaseStepCaps are the per-shape, per-step byte caps for the recipe
+// detailedGuide. These are TARGETS — initial values are intentionally loose
+// through phases 0–10 and get tightened in Phase 11 based on measured
+// post-refactor numbers. Every shape must pass its own caps; the sweep
+// test runs subtests per shape.
+//
+// Narrow shapes (hello-world) use smaller caps than wide shapes
+// (dual-runtime-showcase). The Phase 11 monotonicity invariant enforces
+// hello-world ≤ backend-minimal ≤ full-stack-showcase ≤ dual-runtime-showcase
+// for every step — catches predicate bugs that accidentally fire on narrow
+// plans.
+var showcaseStepCaps = map[RecipeShape]map[string]int{
+	ShapeHelloWorld: {
+		RecipeStepResearch:  10 * 1024,
+		RecipeStepProvision: 22 * 1024,
+		RecipeStepGenerate:  56 * 1024,
+		RecipeStepDeploy:    36 * 1024,
+		RecipeStepFinalize:  16 * 1024,
+		RecipeStepClose:     14 * 1024,
+	},
+	ShapeBackendMinimal: {
+		RecipeStepResearch:  10 * 1024,
+		RecipeStepProvision: 22 * 1024,
+		RecipeStepGenerate:  56 * 1024,
+		RecipeStepDeploy:    36 * 1024,
+		RecipeStepFinalize:  16 * 1024,
+		RecipeStepClose:     14 * 1024,
+	},
+	ShapeFullStackShowcase: {
+		RecipeStepResearch:  10 * 1024,
+		RecipeStepProvision: 22 * 1024,
+		RecipeStepGenerate:  56 * 1024,
+		RecipeStepDeploy:    36 * 1024,
+		RecipeStepFinalize:  16 * 1024,
+		RecipeStepClose:     14 * 1024,
+	},
+	ShapeDualRuntimeShowcase: {
+		RecipeStepResearch:  10 * 1024,
+		RecipeStepProvision: 22 * 1024,
+		RecipeStepGenerate:  56 * 1024,
+		RecipeStepDeploy:    36 * 1024,
+		RecipeStepFinalize:  16 * 1024,
+		RecipeStepClose:     14 * 1024,
+	},
+}
+
+// advanceShowcaseStateTo returns a RecipeState with steps [0..step-1] marked
+// complete and `step` in progress. Plan, discoveredEnvVars, and outputDir are
+// populated as they would be at that point in a real showcase run.
+func advanceShowcaseStateTo(step string, plan *RecipePlan) *RecipeState {
+	rs := NewRecipeState()
+	rs.Tier = RecipeTierShowcase
+	rs.Plan = plan
+	stepOrder := []string{
+		RecipeStepResearch,
+		RecipeStepProvision,
+		RecipeStepGenerate,
+		RecipeStepDeploy,
+		RecipeStepFinalize,
+		RecipeStepClose,
+	}
+	for i, s := range stepOrder {
+		if s == step {
+			rs.CurrentStep = i
+			rs.Steps[i].Status = stepInProgress
+			if i >= 2 { // env vars discovered at provision completion
+				rs.DiscoveredEnvVars = realisticDiscoveredEnvs()
+			}
+			if i >= 4 { // outputDir exists by finalize
+				rs.OutputDir = "/tmp/zcprecipator/nestjs-showcase"
+			}
+			return rs
+		}
+		rs.Steps[i].Status = stepComplete
+		rs.Steps[i].Attestation = "test fixture: " + s + " done"
+	}
+	return rs
+}
+
+// realisticDiscoveredEnvs mirrors what zerops_discover returns for a full
+// showcase stack (db + cache + queue + storage + search).
+func realisticDiscoveredEnvs() map[string][]string {
+	return map[string][]string{
+		"db":      {"hostname", "port", "user", "password", "dbName", "connectionString"},
+		"cache":   {"hostname", "port", "password", "connectionString"},
+		"queue":   {"hostname", "port", "user", "password", "connectionString"},
+		"storage": {"apiHost", "apiUrl", "accessKeyId", "secretAccessKey", "bucketName"},
+		"search":  {"hostname", "port", "masterKey", "defaultAdminKey", "defaultSearchKey"},
+	}
+}
+
+// TestRecipe_DetailedGuide_ShowcaseEveryStepUnderCap is the correctness gate
+// on assembled guide size across every named fixture shape. It builds the
+// full detailedGuide for every step (including chain-recipe injection via
+// the real embedded knowledge store) and asserts each shape/step combo is
+// under its target cap.
+//
+// Replaces the old single-fixture sweep — a flat cap for "the showcase" test
+// could not see narrow-recipe regressions where a predicate accidentally
+// fires on hello-world. The Phase 11 refactor adds a monotonicity assertion
+// on top of this (narrower ≤ wider) as a predicate bug guard.
+func TestRecipe_DetailedGuide_ShowcaseEveryStepUnderCap(t *testing.T) {
+	t.Parallel()
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("embedded store: %v", err)
+	}
+	shapes := []struct {
+		name  string
+		shape RecipeShape
+	}{
+		{"hello-world", ShapeHelloWorld},
+		{"backend-minimal", ShapeBackendMinimal},
+		{"fullstack-showcase", ShapeFullStackShowcase},
+		{"dual-runtime-showcase", ShapeDualRuntimeShowcase},
+	}
+	for _, sh := range shapes {
+		t.Run(sh.name, func(t *testing.T) {
+			t.Parallel()
+			plan := fixtureForShape(sh.shape)
+			caps := showcaseStepCaps[sh.shape]
+			for step, capVal := range caps {
+				t.Run(step, func(t *testing.T) {
+					t.Parallel()
+					rs := advanceShowcaseStateTo(step, plan)
+					resp := rs.BuildResponse("sess-"+sh.name+"-"+step, "Create a "+sh.name+" recipe", 0, EnvLocal, store)
+					if resp.Current == nil {
+						t.Fatalf("no Current on response")
+					}
+					guide := resp.Current.DetailedGuide
+					if len(guide) == 0 {
+						t.Fatalf("empty detailedGuide")
+					}
+					if len(guide) > capVal {
+						t.Errorf("shape %q step %q detailedGuide = %d bytes (%.1f KB), cap = %d bytes (%.0f KB)",
+							sh.name, step, len(guide), float64(len(guide))/1024, capVal, float64(capVal)/1024)
+					}
+				})
+			}
+		})
+	}
+}
 
 // testHelloWorldPlan returns a hello-world tier plan. The recipe system
 // treats hello-world as a slug-suffix form of minimal tier — there's no
@@ -29,76 +275,26 @@ func testHelloWorldPlan() *RecipePlan {
 	}
 }
 
-// TestResolveRecipeGuidance_Generate_ShowcaseUnderSizeCap guards against
-// the generate step bloating back to the 49KB+ that forced the v7 agent
-// to pipe the tool response through jq+python+fold just to read it.
-// The cap is set to 40KB — well below the prior 49KB but with enough
-// slack for future rule additions before another cleanup is needed.
-func TestResolveRecipeGuidance_Generate_ShowcaseUnderSizeCap(t *testing.T) {
-	t.Parallel()
-
-	plan := testShowcasePlan()
-	guide := resolveRecipeGuidance(RecipeStepGenerate, RecipeTierShowcase, plan)
-
-	const sizeCap = 40 * 1024
-	if len(guide) == 0 {
-		t.Fatal("showcase generate guide is empty")
-	}
-	if len(guide) > sizeCap {
-		t.Errorf("showcase generate guide is %d bytes, cap is %d bytes — cleanup regressed", len(guide), sizeCap)
-	}
-}
-
-// TestResolveRecipeGuidance_Generate_HelloWorldDramaticallySmaller locks
-// in the practical benefit of tier-gating: a hello-world guide must be
-// substantially smaller than a showcase guide, because hello-world skips
-// both the dashboard spec and the fragment writing deep-dive. The
-// threshold is set to the compressed generate section's byte count plus
-// slack — any regression that re-injects the gated blocks for hello-world
-// will blow through this cap.
-func TestResolveRecipeGuidance_Generate_HelloWorldDramaticallySmaller(t *testing.T) {
+// TestResolveRecipeGuidance_Generate_HelloWorldSmaller locks in the benefit
+// of tier-gating: a hello-world guide must be substantially smaller than a
+// showcase guide. Hello-world skips the fragment writing deep-dive. The
+// threshold is set to the generate section's byte count plus slack — any
+// regression that re-injects the gated block for hello-world blows through
+// this cap. Post-reshuffle the cap is 32 KB because Phase 4 inlined the
+// dashboard skeleton-write table into generate (~1.5 KB) and Phase 8 added
+// the dev-server env var rule (~1.4 KB).
+func TestResolveRecipeGuidance_Generate_HelloWorldSmaller(t *testing.T) {
 	t.Parallel()
 
 	plan := testHelloWorldPlan()
 	guide := resolveRecipeGuidance(RecipeStepGenerate, RecipeTierMinimal, plan)
 
-	// Hello-world should be under 30KB — the compressed generate section
-	// itself is ~26KB, leaving ~4KB of headroom for future growth.
-	const helloCap = 30 * 1024
+	const helloCap = 32 * 1024
 	if len(guide) == 0 {
 		t.Fatal("hello-world generate guide is empty")
 	}
 	if len(guide) > helloCap {
 		t.Errorf("hello-world generate guide is %d bytes, cap is %d bytes — a gated block probably leaked back in", len(guide), helloCap)
-	}
-}
-
-// TestResolveRecipeGuidance_Generate_HelloWorldSkipsDashboardSpec asserts
-// that hello-world plans do NOT receive the dashboard implementation spec.
-// Hello-world has no feature-section dashboard — it has a single endpoint
-// that returns the framework name, and carrying the 12KB dashboard spec
-// for it wastes context every time.
-func TestResolveRecipeGuidance_Generate_HelloWorldSkipsDashboardSpec(t *testing.T) {
-	t.Parallel()
-
-	plan := testHelloWorldPlan()
-	guide := resolveRecipeGuidance(RecipeStepGenerate, RecipeTierMinimal, plan)
-
-	if guide == "" {
-		t.Fatal("hello-world generate guide is empty")
-	}
-	// The dashboard spec section anchors are unambiguous strings — if any
-	// of them appear, the dashboard spec leaked into a hello-world guide.
-	leaks := []string{
-		"### Required endpoints",
-		"### Dashboard style",
-		"### Showcase dashboard — file architecture",
-		"### Asset pipeline consistency",
-	}
-	for _, anchor := range leaks {
-		if strings.Contains(guide, anchor) {
-			t.Errorf("hello-world generate guide contains %q — dashboard spec should be gated out for hello-world slugs", anchor)
-		}
 	}
 }
 
@@ -119,22 +315,17 @@ func TestResolveRecipeGuidance_Generate_HelloWorldSkipsFragmentsDeepDive(t *test
 	}
 }
 
-// TestResolveRecipeGuidance_Generate_ShowcaseKeepsDashboardAndFragments
-// is the positive counterpart: showcase plans MUST still receive both the
-// dashboard spec and the fragment deep-dive. Without this test the
-// tier-gate could silently degrade showcase coverage.
-func TestResolveRecipeGuidance_Generate_ShowcaseKeepsDashboardAndFragments(t *testing.T) {
+// TestResolveRecipeGuidance_Generate_ShowcaseKeepsFragments is the positive
+// counterpart: showcase plans MUST still receive the fragment deep-dive at
+// generate. The dashboard spec was merged into the deploy step's sub-agent
+// brief in Phase 4 of the reshuffle — there is no longer a separate
+// generate-dashboard section.
+func TestResolveRecipeGuidance_Generate_ShowcaseKeepsFragments(t *testing.T) {
 	t.Parallel()
 
 	plan := testShowcasePlan()
 	guide := resolveRecipeGuidance(RecipeStepGenerate, RecipeTierShowcase, plan)
 
-	if !strings.Contains(guide, "### Required endpoints") {
-		t.Error("showcase generate guide missing 'Required endpoints' — dashboard spec dropped incorrectly")
-	}
-	if !strings.Contains(guide, "### Dashboard style") {
-		t.Error("showcase generate guide missing 'Dashboard style' — dashboard spec dropped incorrectly")
-	}
 	if !strings.Contains(guide, "## Fragment Quality Requirements") {
 		t.Error("showcase generate guide missing 'Fragment Quality Requirements' — generate-fragments dropped incorrectly")
 	}

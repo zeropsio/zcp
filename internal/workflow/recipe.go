@@ -12,8 +12,9 @@ const WorkflowRecipe = "recipe"
 
 // Recipe tier constants.
 const (
-	RecipeTierMinimal  = "minimal"  // type 3
-	RecipeTierShowcase = "showcase" // type 4
+	RecipeTierHelloWorld = "hello-world" // type 1-2 (runtime and frontend hello-worlds)
+	RecipeTierMinimal    = "minimal"     // type 3
+	RecipeTierShowcase   = "showcase"    // type 4
 )
 
 const recipeDBNone = "none"
