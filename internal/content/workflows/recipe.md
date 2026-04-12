@@ -30,7 +30,7 @@ Define workspace services based on recipe type:
 **Target fields** — see the `RecipeTarget` input schema on `zerops_workflow` for field-level descriptions (`hostname`, `type`, `isWorker`, `role`, `sharesCodebaseWith`). The decisions you make while filling targets:
 
 - **Hostname** — lowercase alphanumeric only. Use conventional names (`app`, `db`, `cache`, `queue`, `search`, `storage`).
-- **Type** — pick the **highest available version** from `availableStacks` for each stack.
+- **Type** — pick the **highest available version** from `availableStacks` for each stack. Must include the `@version` suffix (e.g. `nodejs@22`, not bare `nodejs`). The same versioned form is required for the top-level `runtimeType` field on the plan.
 - **isWorker: true** — set for background/queue workers (no HTTP). Ignored for managed/utility services.
 - **role** — `app` / `api` for dual-runtime repo routing. Empty for managed services.
 - **sharesCodebaseWith** — worker-only; see the Worker codebase decision block in the showcase research section. Minimal recipes have no worker.
