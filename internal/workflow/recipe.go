@@ -28,14 +28,44 @@ type RecipeState struct {
 	Plan              *RecipePlan         `json:"plan,omitempty"`
 	DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"`
 	OutputDir         string              `json:"outputDir,omitempty"`
+	// Phase C: guidance access and failure tracking for adaptive delivery.
+	GuidanceAccess  []GuidanceAccessEntry `json:"guidanceAccess,omitempty"`
+	FailurePatterns []FailurePattern      `json:"failurePatterns,omitempty"`
+}
+
+// GuidanceAccessEntry records a single zerops_guidance topic fetch.
+type GuidanceAccessEntry struct {
+	TopicID   string `json:"topicId"`
+	Step      string `json:"step"`
+	Timestamp string `json:"timestamp"`
+}
+
+// FailurePattern records a sub-step validation failure for adaptive retry.
+type FailurePattern struct {
+	SubStep   string   `json:"subStep"`
+	Issues    []string `json:"issues"`
+	Iteration int      `json:"iteration"`
+	Timestamp string   `json:"timestamp"`
 }
 
 // RecipeStep represents a single step in the recipe workflow.
 type RecipeStep struct {
+	Name           string          `json:"name"`
+	Status         string          `json:"status"` // pending, in_progress, complete, skipped
+	Attestation    string          `json:"attestation,omitempty"`
+	SkipReason     string          `json:"skipReason,omitempty"`
+	CompletedAt    string          `json:"completedAt,omitempty"`
+	SubSteps       []RecipeSubStep `json:"subSteps,omitempty"`
+	CurrentSubStep int             `json:"currentSubStep,omitempty"`
+}
+
+// RecipeSubStep tracks progress within a step at sub-task granularity.
+// Phase B: sub-steps let the engine validate intermediate work (e.g.,
+// zerops.yaml comment ratio) before the agent advances.
+type RecipeSubStep struct {
 	Name        string `json:"name"`
 	Status      string `json:"status"` // pending, in_progress, complete, skipped
 	Attestation string `json:"attestation,omitempty"`
-	SkipReason  string `json:"skipReason,omitempty"`
 	CompletedAt string `json:"completedAt,omitempty"`
 }
 

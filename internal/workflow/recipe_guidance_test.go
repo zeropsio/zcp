@@ -260,14 +260,21 @@ func TestRecipe_DetailedGuide_ShowcaseEveryStepUnderCap(t *testing.T) {
 }
 
 // TestRecipe_DetailedGuide_MonotonicityInvariant enforces that each step's
-// guide size is non-decreasing as shapes widen:
+// static guidance size is non-decreasing as shapes widen:
 //
 //	hello-world ≤ backend-minimal ≤ fullstack-showcase ≤ dual-runtime-showcase
 //
-// A predicate bug that fires on the wrong shape breaks this invariant. If a
-// new block is added with a predicate that defaults to true on narrow
-// shapes, this test catches it. A failure points at either a predicate
-// mis-firing or a new always-on block that should have been gated.
+// Phase A: skeleton steps (generate, deploy, finalize, close) are tested on
+// resolveRecipeGuidance (the skeleton + predicate filtering) rather than the
+// full BuildResponse (which includes knowledge injection). Knowledge injection
+// is shape-dependent and not necessarily monotonic — e.g. fullstack-showcase
+// has more discovered env vars than dual-runtime-showcase, but dual-runtime
+// has more topic markers in the skeleton. The skeleton's predicate filtering
+// is what monotonicity guards: a predicate bug that fires on the wrong shape
+// breaks the invariant.
+//
+// Non-skeleton steps (research, provision) are still tested on the full
+// BuildResponse because their guide IS the full composed content.
 func TestRecipe_DetailedGuide_MonotonicityInvariant(t *testing.T) {
 	t.Parallel()
 	store, err := knowledge.GetEmbeddedStore()
@@ -283,6 +290,13 @@ func TestRecipe_DetailedGuide_MonotonicityInvariant(t *testing.T) {
 		{"fullstack-showcase", ShapeFullStackShowcase},
 		{"dual-runtime-showcase", ShapeDualRuntimeShowcase},
 	}
+
+	// Skeleton steps: check monotonicity on resolveRecipeGuidance only.
+	skeletonSteps := map[string]bool{
+		RecipeStepGenerate: true, RecipeStepDeploy: true,
+		RecipeStepFinalize: true, RecipeStepClose: true,
+	}
+
 	steps := []string{
 		RecipeStepResearch, RecipeStepProvision, RecipeStepGenerate,
 		RecipeStepDeploy, RecipeStepFinalize, RecipeStepClose,
@@ -293,12 +307,19 @@ func TestRecipe_DetailedGuide_MonotonicityInvariant(t *testing.T) {
 			sizes := make([]int, len(shapes))
 			for i, sh := range shapes {
 				plan := fixtureForShape(sh.shape)
-				rs := advanceShowcaseStateTo(step, plan)
-				resp := rs.BuildResponse("sess-mono-"+sh.name+"-"+step, "m", 0, EnvLocal, store)
-				if resp.Current == nil {
-					t.Fatalf("%s: no Current on response", sh.name)
+				if skeletonSteps[step] {
+					// Skeleton: measure static guidance only.
+					guide := resolveRecipeGuidance(step, plan.Tier, plan)
+					sizes[i] = len(guide)
+				} else {
+					// Non-skeleton: measure full BuildResponse.
+					rs := advanceShowcaseStateTo(step, plan)
+					resp := rs.BuildResponse("sess-mono-"+sh.name+"-"+step, "m", 0, EnvLocal, store)
+					if resp.Current == nil {
+						t.Fatalf("%s: no Current on response", sh.name)
+					}
+					sizes[i] = len(resp.Current.DetailedGuide)
 				}
-				sizes[i] = len(resp.Current.DetailedGuide)
 			}
 			for i := 1; i < len(shapes); i++ {
 				if sizes[i] < sizes[i-1] {
@@ -374,19 +395,19 @@ func TestResolveRecipeGuidance_Generate_HelloWorldSkipsFragmentsDeepDive(t *test
 	}
 }
 
-// TestResolveRecipeGuidance_Generate_ShowcaseKeepsFragments is the positive
-// counterpart: showcase plans MUST still receive the fragment deep-dive at
-// generate. The dashboard spec was merged into the deploy step's sub-agent
-// brief in Phase 4 of the reshuffle — there is no longer a separate
-// generate-dashboard section.
+// TestResolveRecipeGuidance_Generate_ShowcaseKeepsFragments verifies that
+// showcase plans receive the skeleton with showcase-gated topic markers
+// (dashboard-skeleton, recipe-types). Phase A: the fragment deep-dive is
+// no longer inlined — it lives in a topic block fetched via zerops_guidance.
 func TestResolveRecipeGuidance_Generate_ShowcaseKeepsFragments(t *testing.T) {
 	t.Parallel()
 
 	plan := testShowcasePlan()
 	guide := resolveRecipeGuidance(RecipeStepGenerate, RecipeTierShowcase, plan)
 
-	if !strings.Contains(guide, "## Fragment Quality Requirements") {
-		t.Error("showcase generate guide missing 'Fragment Quality Requirements' — generate-fragments dropped incorrectly")
+	// With skeletons: check that showcase-gated topic markers are present.
+	if !strings.Contains(guide, "[topic: dashboard-skeleton]") {
+		t.Error("showcase generate skeleton missing '[topic: dashboard-skeleton]'")
 	}
 }
 
@@ -473,44 +494,39 @@ func TestResolveRecipeGuidance_Generate_NoFrameworkWorkerRuleThumb(t *testing.T)
 }
 
 // TestRecipeGenerate_HelloWorld_OmitsShowcaseBlocks asserts that hello-world
-// plans do not receive the dual-runtime / dashboard / worker blocks at
-// generate. Regression guard for Phase 5b predicate gating — a predicate
-// accidentally firing on hello-world would leak showcase-only content into
-// the narrowest recipe.
+// plans do not receive gated topic markers in the generate skeleton.
+// Phase A: with skeletons, this checks that predicate-gated [topic: ...]
+// markers are filtered out for hello-world.
 func TestRecipeGenerate_HelloWorld_OmitsShowcaseBlocks(t *testing.T) {
 	t.Parallel()
 	plan := fixtureForShape(ShapeHelloWorld)
 	guide := resolveRecipeGuidance(RecipeStepGenerate, plan.Tier, plan)
-	// Use strings that are anchor-specific to their gated block; avoid
-	// substrings that legitimately appear in always-on prose (e.g.
-	// "setup: worker" is mentioned in pre-deploy-checklist unconditionally).
+	// Gated topic markers that should be removed for hello-world:
 	for _, shouldNotContain := range []string{
-		"Dual-runtime URL env-var pattern",
-		"Write the dashboard skeleton",
-		"showcase only — background job processor",
-		"each codebase needs its own README.md",
-		"Dev-server host-check allow-list",
+		"[topic: dual-runtime-urls]",
+		"[topic: dashboard-skeleton]",
+		"[topic: worker-setup]",
+		"[topic: serve-only-dev]",
 	} {
 		if strings.Contains(guide, shouldNotContain) {
-			t.Errorf("hello-world generate guide contains %q, should be omitted", shouldNotContain)
+			t.Errorf("hello-world generate skeleton contains %q, should be omitted", shouldNotContain)
 		}
 	}
 }
 
 // TestRecipeGenerate_BackendMinimal_OmitsDualRuntimeContent asserts that
-// single-runtime minimal recipes (laravel-minimal fixture) do not receive
-// dual-runtime or bundler dev-server content.
+// single-runtime minimal recipes do not receive dual-runtime topic markers
+// in the generate skeleton.
 func TestRecipeGenerate_BackendMinimal_OmitsDualRuntimeContent(t *testing.T) {
 	t.Parallel()
 	plan := fixtureForShape(ShapeBackendMinimal)
 	guide := resolveRecipeGuidance(RecipeStepGenerate, plan.Tier, plan)
 	for _, shouldNotContain := range []string{
-		"Dual-runtime URL env-var pattern",
-		"Dev-server host-check allow-list",
-		"each codebase",
+		"[topic: dual-runtime-urls]",
+		"[topic: serve-only-dev]",
 	} {
 		if strings.Contains(guide, shouldNotContain) {
-			t.Errorf("backend-minimal generate guide contains %q", shouldNotContain)
+			t.Errorf("backend-minimal generate skeleton contains %q", shouldNotContain)
 		}
 	}
 }
@@ -653,8 +669,10 @@ func TestBuildGenerateRetryDelta_ShapeSpecificBranches(t *testing.T) {
 }
 
 // TestBuildGuide_Generate_Iteration1_ReturnsDelta asserts that calling
-// buildGuide with iteration > 0 returns the retry delta — substantially
-// smaller than the first-iteration full composition.
+// buildGuide with iteration > 0 returns the retry delta instead of the
+// skeleton. Phase A: with skeletons, the delta may be larger than the
+// compact skeleton — the invariant is that the delta DIFFERS from the
+// skeleton (it's a focused retry document, not the step's guide).
 func TestBuildGuide_Generate_Iteration1_ReturnsDelta(t *testing.T) {
 	t.Parallel()
 	plan := fixtureForShape(ShapeBackendMinimal)
@@ -664,11 +682,12 @@ func TestBuildGuide_Generate_Iteration1_ReturnsDelta(t *testing.T) {
 	if len(delta) == 0 || len(full) == 0 {
 		t.Fatalf("empty guide: full=%d delta=%d", len(full), len(delta))
 	}
-	if len(delta) >= len(full) {
-		t.Errorf("delta %d B should be smaller than full %d B", len(delta), len(full))
-	}
 	if !strings.Contains(delta, "Generate — Retry") {
 		t.Error("delta missing retry header")
+	}
+	// The delta must be a different document from the skeleton.
+	if delta == full {
+		t.Error("delta is identical to full guide — retry should return focused delta")
 	}
 }
 
@@ -834,22 +853,21 @@ func TestBuildDeployRetryDelta_TierEscalation(t *testing.T) {
 }
 
 // TestRecipeGenerate_DualRuntimeShowcase_IncludesAllRelevant asserts that the
-// widest shape (dual-runtime showcase) receives every shape-gated block
-// whose predicate it should satisfy. Companion to the hello-world omission
-// test: catches a predicate that accidentally returns false on the shape
-// that should trigger it.
+// widest shape (dual-runtime showcase) receives all shape-gated topic markers
+// in the generate skeleton. Phase A: checks topic markers instead of block
+// content.
 func TestRecipeGenerate_DualRuntimeShowcase_IncludesAllRelevant(t *testing.T) {
 	t.Parallel()
 	plan := fixtureForShape(ShapeDualRuntimeShowcase)
 	guide := resolveRecipeGuidance(RecipeStepGenerate, plan.Tier, plan)
 	for _, mustContain := range []string{
-		"Dual-runtime URL env-var pattern",
-		"Dev-server host-check allow-list",
-		"Write the dashboard skeleton",
-		"each codebase",
+		"[topic: dual-runtime-urls]",
+		"[topic: dashboard-skeleton]",
+		"[topic: zerops-yaml-rules]",
+		"[topic: where-to-write]",
 	} {
 		if !strings.Contains(guide, mustContain) {
-			t.Errorf("dual-runtime-showcase generate guide missing %q", mustContain)
+			t.Errorf("dual-runtime-showcase generate skeleton missing %q", mustContain)
 		}
 	}
 }

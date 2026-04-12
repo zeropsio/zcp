@@ -74,13 +74,19 @@ var (
 		{Name: "completion"},
 	}
 
-	// recipeDeployBlocks — Phase 7b gates the sub-agent brief and browser
-	// walk on isShowcase (minimal recipes skip both), saving ~10 KB per
-	// minimal session.
+	// recipeDeployBlocks — Phase A splits dev-deploy-flow-core into 5
+	// sub-blocks gated by plan shape. API-first steps, bundler dev-server,
+	// and worker process are now conditionally included, saving ~4 KB for
+	// narrow recipes that don't need them.
 	recipeDeployBlocks = []sectionBlock{
 		{Name: "deploy-framing"},
-		{Name: "dev-deploy-flow-core"},
+		{Name: "deploy-core-universal"},
+		{Name: "deploy-api-first", Predicate: isDualRuntime},
+		{Name: "deploy-asset-dev-server", Predicate: hasBundlerDevServer},
+		{Name: "deploy-worker-process", Predicate: hasWorker},
+		{Name: "deploy-target-verification"},
 		{Name: "dev-deploy-subagent-brief", Predicate: isShowcase},
+		{Name: "where-commands-run"},
 		{Name: "dev-deploy-browser-walk", Predicate: isShowcase},
 		{Name: "stage-deployment-flow"},
 		{Name: "reading-deploy-failures"},
@@ -88,9 +94,26 @@ var (
 		{Name: "deploy-completion"},
 	}
 
-	recipeFinalizeBlocks []sectionBlock
+	// recipeFinalizeBlocks — Phase A (progressive guidance) gates showcase
+	// service-key lists and dual-runtime projectEnvVariables on plan shape,
+	// saving ~3 KB for narrow recipes that don't need either.
+	recipeFinalizeBlocks = []sectionBlock{
+		{Name: "env-comment-rules"},
+		{Name: "showcase-service-keys", Predicate: isShowcase},
+		{Name: "project-env-vars", Predicate: isDualRuntime},
+		{Name: "review-readmes"},
+		{Name: "comment-style"},
+		{Name: "finalize-completion"},
+	}
 
-	recipeCloseBlocks []sectionBlock
+	// recipeCloseBlocks — Phase A gates the browser walk on isShowcase
+	// (minimal recipes skip the walk entirely, saving ~3 KB).
+	recipeCloseBlocks = []sectionBlock{
+		{Name: "code-review-subagent"},
+		{Name: "close-browser-walk", Predicate: isShowcase},
+		{Name: "export-publish"},
+		{Name: "close-completion"},
+	}
 )
 
 // composeSection takes the raw body of a <section> and a catalog, extracts

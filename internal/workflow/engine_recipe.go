@@ -36,9 +36,10 @@ func (e *Engine) RecipeStart(projectID, intent, tier string) (*RecipeResponse, e
 	return rs.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.knowledge), nil
 }
 
-// RecipeComplete completes the current recipe step.
+// RecipeComplete completes the current recipe step or sub-step.
+// If substep is non-empty, completes that sub-step within the current step.
 // If checker is non-nil and fails, the step stays and the agent receives failure details.
-func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, checker RecipeStepChecker) (*RecipeResponse, error) {
+func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, checker RecipeStepChecker, substep ...string) (*RecipeResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("recipe complete: %w", err)
@@ -50,6 +51,16 @@ func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, c
 	// Non-research steps require a plan from the research step.
 	if step != RecipeStepResearch && state.Recipe.Plan == nil {
 		return nil, fmt.Errorf("recipe complete: step %q requires plan from research step", step)
+	}
+
+	// Sub-step completion: if substep is provided, complete that sub-step
+	// within the current step rather than the full step.
+	subStepName := ""
+	if len(substep) > 0 {
+		subStepName = substep[0]
+	}
+	if subStepName != "" {
+		return e.recipeCompleteSubStep(ctx, state, step, subStepName, attestation)
 	}
 
 	var checkResult *StepCheckResult
@@ -102,6 +113,68 @@ func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, c
 		resp.Message += buildRecipeTransition(state.Recipe.Plan)
 	}
 
+	return resp, nil
+}
+
+// recipeCompleteSubStep completes a sub-step within the current step, validates
+// the agent's output, and returns guidance for the next sub-step.
+func (e *Engine) recipeCompleteSubStep(ctx context.Context, state *WorkflowState, step, subStepName, attestation string) (*RecipeResponse, error) {
+	rs := state.Recipe
+	if rs.CurrentStep >= len(rs.Steps) {
+		return nil, fmt.Errorf("recipe substep complete: all steps done")
+	}
+	currentStep := &rs.Steps[rs.CurrentStep]
+	if currentStep.Name != step {
+		return nil, fmt.Errorf("recipe substep complete: expected step %q, got %q", currentStep.Name, step)
+	}
+
+	// Initialize sub-steps on first sub-step completion if not already set.
+	if !currentStep.hasSubSteps() {
+		currentStep.SubSteps = initSubSteps(step, rs.Plan)
+		currentStep.CurrentSubStep = 0
+	}
+
+	// Run sub-step validator if available.
+	if validator := getSubStepValidator(subStepName); validator != nil {
+		result := validator(ctx, rs.Plan, rs)
+		if result != nil && !result.Passed {
+			// Record failure pattern for Phase C adaptive retry.
+			rs.FailurePatterns = append(rs.FailurePatterns, FailurePattern{
+				SubStep:   subStepName,
+				Issues:    result.Issues,
+				Iteration: state.Iteration,
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
+			if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+				return nil, fmt.Errorf("recipe substep save: %w", err)
+			}
+			resp := rs.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
+			resp.CheckResult = &StepCheckResult{
+				Passed:  false,
+				Summary: fmt.Sprintf("Sub-step %q validation failed: %s", subStepName, result.Guidance),
+			}
+			resp.Message = fmt.Sprintf("Sub-step %q: %d issues — fix and retry", subStepName, len(result.Issues))
+			return resp, nil
+		}
+	}
+
+	// Complete the sub-step.
+	nextSubStep, err := currentStep.completeSubStep(subStepName, attestation)
+	if err != nil {
+		return nil, fmt.Errorf("recipe substep complete: %w", err)
+	}
+
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+		return nil, fmt.Errorf("recipe substep save: %w", err)
+	}
+
+	resp := rs.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
+	if nextSubStep != "" {
+		resp.Message = fmt.Sprintf("Sub-step %q complete. Next: %s", subStepName, nextSubStep)
+	} else {
+		resp.Message = fmt.Sprintf("All sub-steps for %q complete. Call complete with step=%q to finish.", step, step)
+	}
 	return resp, nil
 }
 
@@ -199,6 +272,21 @@ func (e *Engine) RecipeSession() *RecipeState {
 		return nil
 	}
 	return state.Recipe
+}
+
+// RecordGuidanceAccess logs a topic fetch for Phase C adaptive delivery.
+// Best-effort — errors are silently ignored.
+func (e *Engine) RecordGuidanceAccess(topicID, step string) {
+	state, err := e.loadState()
+	if err != nil || state.Recipe == nil {
+		return
+	}
+	state.Recipe.GuidanceAccess = append(state.Recipe.GuidanceAccess, GuidanceAccessEntry{
+		TopicID:   topicID,
+		Step:      step,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+	_ = saveSessionState(e.stateDir, e.sessionID, state)
 }
 
 // envVarNameRegexp validates env var names. Matches the standard

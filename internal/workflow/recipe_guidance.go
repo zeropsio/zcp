@@ -13,21 +13,38 @@ import (
 // Follows deploy's pattern: own method on RecipeState, not via assembleGuidance (which is bootstrap-only).
 func (r *RecipeState) buildGuide(step string, iteration int, kp knowledge.Provider) string {
 	// Iteration delta for deploy retries — replaces normal guidance.
-	// The delta layers shape-aware reminders (worker restart shape, dual-
-	// runtime order, bundler port collision) on top of the generic tier
-	// escalation.
+	// Phase C: adaptive delta layers failure-pattern-specific guidance on
+	// top of the shape-aware reminders.
 	if iteration > 0 && step == RecipeStepDeploy {
+		if delta := r.buildAdaptiveRetryDelta(step, iteration); delta != "" {
+			return delta
+		}
+		// Fallback to non-adaptive deploy delta.
 		if delta := buildDeployRetryDelta(r.Plan, iteration, r.lastAttestation()); delta != "" {
 			return delta
 		}
 	}
-	// Iteration delta for generate retries — shape-aware, plan-specific.
-	// An iterating agent has already read the full generate composition;
-	// on retry they need a focused delta, not the full ~16-40 KB skeleton
-	// guide again. See buildGenerateRetryDelta for the format.
+	// Iteration delta for generate retries.
 	if iteration > 0 && step == RecipeStepGenerate {
+		if delta := r.buildAdaptiveRetryDelta(step, iteration); delta != "" {
+			return delta
+		}
 		if delta := buildGenerateRetryDelta(r.Plan, r.lastAttestation()); delta != "" {
 			return delta
+		}
+	}
+
+	// Sub-step guidance: if a sub-step is active, return focused guidance
+	// for that sub-step instead of the full skeleton.
+	if r.CurrentStep < len(r.Steps) {
+		currentStep := r.Steps[r.CurrentStep]
+		if currentStep.hasSubSteps() && !currentStep.allSubStepsComplete() {
+			if subGuide := r.buildSubStepGuide(step, currentStep.currentSubStepName()); subGuide != "" {
+				// Prepend a sub-step progress line.
+				progress := fmt.Sprintf("### Sub-step %d/%d: %s\n\n",
+					currentStep.CurrentSubStep+1, len(currentStep.SubSteps), currentStep.currentSubStepName())
+				return progress + subGuide
+			}
 		}
 	}
 
@@ -80,15 +97,12 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		return ExtractSection(md, "research-minimal")
 
 	case RecipeStepGenerate:
-		// Generate: composed base (Phase 5 predicate-gated blocks) +
-		// fragments deep-dive when needed. The dashboard spec that used to
-		// live in a separate `generate-dashboard` section has been merged
-		// into the deploy step's sub-agent brief — generate now carries
-		// only the inline skeleton-write guidance.
-		//
-		// Hello-world slugs skip the fragments deep-dive. Their README is one
-		// paragraph and the chain recipe demonstrates it in full; the 6 KB
-		// writing-style lecture is dead weight there.
+		// Phase A: return skeleton instead of composed blocks.
+		// The skeleton references topics; the agent fetches them via zerops_guidance.
+		if skeleton := ExtractSection(md, "generate-skeleton"); skeleton != "" {
+			return composeSkeleton(skeleton, recipeGenerateTopics, plan)
+		}
+		// Fallback: compose blocks as before (safety net during migration).
 		var parts []string
 		if body := ExtractSection(md, "generate"); body != "" {
 			parts = append(parts, composeSection(body, recipeGenerateBlocks, plan))
@@ -109,15 +123,28 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		return composeSection(body, recipeProvisionBlocks, plan)
 
 	case RecipeStepDeploy:
-		// Deploy: composed through predicate-gated blocks (Phase 7).
+		// Phase A: return skeleton instead of composed blocks.
+		if skeleton := ExtractSection(md, "deploy-skeleton"); skeleton != "" {
+			return composeSkeleton(skeleton, recipeDeployTopics, plan)
+		}
 		body := ExtractSection(md, "deploy")
 		return composeSection(body, recipeDeployBlocks, plan)
 
 	case RecipeStepFinalize:
-		return ExtractSection(md, "finalize")
+		// Phase A: return skeleton instead of composed blocks.
+		if skeleton := ExtractSection(md, "finalize-skeleton"); skeleton != "" {
+			return composeSkeleton(skeleton, recipeFinalizeTopics, plan)
+		}
+		body := ExtractSection(md, "finalize")
+		return composeSection(body, recipeFinalizeBlocks, plan)
 
 	case RecipeStepClose:
-		return ExtractSection(md, "close")
+		// Phase A: return skeleton instead of composed blocks.
+		if skeleton := ExtractSection(md, "close-skeleton"); skeleton != "" {
+			return composeSkeleton(skeleton, recipeCloseTopics, plan)
+		}
+		body := ExtractSection(md, "close")
+		return composeSection(body, recipeCloseBlocks, plan)
 
 	default:
 		return ExtractSection(md, step)
@@ -192,10 +219,12 @@ func assembleRecipeKnowledge(step string, plan *RecipePlan, discoveredEnvVars ma
 		// bloat. The agent can fetch a specific rule on demand via
 		// `zerops_knowledge scope="theme" query="core"` if it needs one.
 		//
-		// Multi-base knowledge: injected ONLY when the recipe's primary runtime
-		// is non-JS yet its build pipeline runs a JS package manager. Most
-		// recipes (Node, Go, Rust, Python without JS assets) don't hit this and
-		// shouldn't be burdened with zsc install / startWithoutCode details.
+		// Multi-base knowledge: platform-level explanation of build/run
+		// asymmetry, zsc install, and the startWithoutCode trap. This is
+		// complementary to the `multi-base-dev` topic (which covers the
+		// recipe.md instructional block about dev-dep preinstall). The
+		// knowledge snippet explains HOW the platform works; the topic
+		// block explains WHAT to write. Both are needed.
 		if needsMultiBaseGuidance(plan) {
 			parts = append(parts, multiBaseGuidance())
 		}
@@ -342,6 +371,187 @@ func buildGenerateRetryDelta(plan *RecipePlan, lastAttestation string) string {
 	sb.WriteString("\n### Source of truth\n\n")
 	sb.WriteString("The injected chain recipe's `## zerops.yaml template` section (from your first read-through this session) is authoritative for shape. Re-read it and diff against your output before submitting.\n")
 	return sb.String()
+}
+
+// buildAdaptiveRetryDelta returns a failure-pattern-aware retry delta.
+// Phase C: instead of generic retry reminders, surfaces the specific sub-step
+// failures the agent hit and the topics they missed. Returns "" if no
+// failure patterns are recorded (falls through to the non-adaptive delta).
+func (r *RecipeState) buildAdaptiveRetryDelta(step string, iteration int) string {
+	if len(r.FailurePatterns) == 0 {
+		return ""
+	}
+
+	// Filter to failures relevant to this step.
+	var relevant []FailurePattern
+	for _, fp := range r.FailurePatterns {
+		// Sub-step names implicitly belong to their parent step.
+		if subStepToTopic(step, fp.SubStep, r.Plan) != "" {
+			relevant = append(relevant, fp)
+		}
+	}
+	if len(relevant) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+
+	// Generic tier escalation.
+	if base := BuildIterationDelta(step, iteration, nil, r.lastAttestation()); base != "" {
+		sb.WriteString(base)
+		sb.WriteString("\n\n")
+	}
+
+	// Failure-specific guidance.
+	for _, fp := range relevant {
+		sb.WriteString(fmt.Sprintf("## Previous failure: %s\n\n", fp.SubStep))
+		for _, issue := range fp.Issues {
+			sb.WriteString(fmt.Sprintf("- %s\n", issue))
+		}
+		topicID := subStepToTopic(step, fp.SubStep, r.Plan)
+		if topicID != "" {
+			sb.WriteString(fmt.Sprintf("\nFetch updated rules: `zerops_guidance topic=%q`\n", topicID))
+		}
+	}
+
+	// Topics the agent didn't fetch but should have.
+	missing := r.missingCriticalTopics(step)
+	if len(missing) > 0 {
+		sb.WriteString("\n## Topics you may have missed\n\n")
+		for _, t := range missing {
+			sb.WriteString(fmt.Sprintf("- `zerops_guidance topic=%q` — %s\n", t.ID, t.Description))
+		}
+	}
+
+	return sb.String()
+}
+
+// missingCriticalTopics returns topics the agent should have fetched for
+// this step but didn't, based on GuidanceAccess records.
+func (r *RecipeState) missingCriticalTopics(step string) []*GuidanceTopic {
+	accessed := make(map[string]bool, len(r.GuidanceAccess))
+	for _, entry := range r.GuidanceAccess {
+		accessed[entry.TopicID] = true
+	}
+
+	topics := AllTopicsForStep(step)
+	var missing []*GuidanceTopic
+	for _, t := range topics {
+		if accessed[t.ID] {
+			continue
+		}
+		// Only suggest topics whose predicates fire for this plan.
+		if t.Predicate != nil && !t.Predicate(r.Plan) {
+			continue
+		}
+		missing = append(missing, t)
+	}
+	return missing
+}
+
+// buildSubStepGuide returns the relevant topic content for a sub-step.
+// This is the focused guidance the agent receives when working within
+// sub-step orchestration — pre-loaded topic content instead of requiring
+// the agent to call zerops_guidance manually.
+func (r *RecipeState) buildSubStepGuide(step, subStep string) string {
+	topicID := subStepToTopic(step, subStep, r.Plan)
+	if topicID == "" {
+		return ""
+	}
+	resolved, err := ResolveTopic(topicID, r.Plan)
+	if err != nil || resolved == "" {
+		return ""
+	}
+	return resolved
+}
+
+// Topic ID constants used in sub-step → topic mapping.
+const topicDeployFlow = "deploy-flow"
+
+// subStepToTopic maps a sub-step name to the primary topic the agent needs.
+// The plan is used for shape-dependent routing (e.g., app-code maps to
+// dashboard-skeleton for showcase, execution-order for other tiers).
+func subStepToTopic(step, subStep string, plan *RecipePlan) string {
+	switch step {
+	case RecipeStepGenerate:
+		switch subStep {
+		case SubStepScaffold:
+			return "where-to-write"
+		case SubStepZeropsYAML:
+			return "zerops-yaml-rules"
+		case SubStepAppCode:
+			if isShowcase(plan) {
+				return "dashboard-skeleton"
+			}
+			return "execution-order"
+		case SubStepReadme:
+			return "readme-fragments"
+		case SubStepSmokeTest:
+			return "smoke-test"
+		}
+	case RecipeStepDeploy:
+		switch subStep {
+		case SubStepDeployDev, SubStepStartProcs, SubStepInitCommands:
+			return topicDeployFlow
+		case SubStepVerifyDev:
+			return "deploy-target-verification"
+		case SubStepSubagent:
+			return "subagent-brief"
+		case SubStepBrowserWalk:
+			return "browser-walk"
+		case SubStepCrossDeploy:
+			return "stage-deploy"
+		case SubStepVerifyStage:
+			return "deploy-target-verification"
+		}
+	}
+	return ""
+}
+
+// composeSkeleton takes a skeleton template and filters [topic: id] markers
+// based on the topic registry's predicates against the plan. Lines containing
+// a topic reference whose predicate is false are removed. Numbered list items
+// are renumbered after filtering to avoid gaps. The skeleton is returned as a
+// compact, imperative document that lists execution steps and references
+// topics by ID.
+func composeSkeleton(skeleton string, topics []*GuidanceTopic, plan *RecipePlan) string {
+	// Build a predicate lookup for the topics relevant to this skeleton.
+	predicates := make(map[string]func(*RecipePlan) bool, len(topics))
+	for _, t := range topics {
+		predicates[t.ID] = t.Predicate
+	}
+
+	var out []string
+	for line := range strings.SplitSeq(skeleton, "\n") {
+		// Check if this line contains a [topic: ...] marker.
+		if idx := strings.Index(line, "[topic: "); idx >= 0 {
+			end := strings.Index(line[idx:], "]")
+			if end > 0 {
+				topicID := strings.TrimSpace(line[idx+8 : idx+end])
+				pred, known := predicates[topicID]
+				if known && pred != nil && !pred(plan) {
+					// Predicate is false — skip this line.
+					continue
+				}
+			}
+		}
+		out = append(out, line)
+	}
+
+	// Renumber top-level numbered list items (lines matching "N. ") to
+	// close gaps from filtered lines. Sub-items ("   - ...") are untouched.
+	n := 0
+	for i, line := range out {
+		if len(line) > 0 && line[0] >= '0' && line[0] <= '9' {
+			// Find the ". " after the number.
+			if dotIdx := strings.Index(line, ". "); dotIdx > 0 && dotIdx <= 2 {
+				n++
+				out[i] = fmt.Sprintf("%d%s", n, line[dotIdx:])
+			}
+		}
+	}
+
+	return strings.Join(out, "\n")
 }
 
 // planNeedsFragmentsDeepDive reports whether a plan should receive the

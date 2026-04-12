@@ -915,7 +915,7 @@ Writing-style voice (the "developer to developer" tone, anti-patterns, correct-s
 
 </block>
 
-<block name="dev-deploy-flow-core">
+<block name="deploy-core-universal">
 
 ### Dev deployment flow
 
@@ -939,12 +939,6 @@ zerops_deploy targetService="appdev" setup="dev"
 ```
 The `setup="dev"` parameter maps hostname `appdev` to `setup: dev` in zerops.yaml. This triggers a build from files already on the mount. Blocks until complete.
 
-**Step 1-API** (API-first showcase only, runs BEFORE Step 1): Deploy apidev FIRST — the API must be running before the frontend builds (the frontend bakes the API URL at build time):
-```
-zerops_deploy targetService="apidev" setup="dev"
-```
-After this completes, run Step 2a-API (start the API process) then Step 3-API (verify apidev); THEN return to Step 1 to deploy appdev.
-
 **Step 2: Start ALL dev processes (before any verification)**
 
 Every process the app needs to serve a page must be running before Step 3 (verify). This includes the primary server, asset dev servers, and worker processes. Start them all now:
@@ -957,62 +951,18 @@ Every process the app needs to serve a page must be running before Step 3 (verif
 - **Implicit-webserver runtimes** (php-nginx, php-apache, nginx): Skip — auto-starts.
 - **Static frontends** (type 2a): Skip — Nginx serves the built files.
 
-**2a-API** (API-first): Start the API server on apidev:
-```bash
-ssh apidev "cd /var/www && {api_start_command} &"
-```
-
-**2b. Asset dev server** (if the build pipeline uses a secondary runtime):
-If `run.prepareCommands` installs a secondary runtime (e.g., `sudo -E zsc install nodejs@22`) and the scaffold defines a dev server (e.g., `npm run dev` for Vite), start it now.
-
-**Before starting, check if one is already running.** The deploy framework may have started the dev server on first deploy; launching a second instance via background SSH creates a port collision. The second instance silently falls back to an incremented port (Vite: 5173 → 5174), and the public subdomain doesn't route to the new port — it routes to the original.
-
-```bash
-ssh appdev "pgrep -f 'vite' || true"
-ssh appdev "pgrep -f 'npm run dev' || true"
-```
-
-If a process is already running, skip the start. If you need to restart (after a config change), kill first: `ssh appdev "pkill -f 'vite' || true"` then start once:
-
-```bash
-ssh appdev "cd /var/www && {dev_server_command} &"
-```
-
-Pass the appropriate host binding flag so it listens on `0.0.0.0` (e.g., `npx vite --host 0.0.0.0`). This applies even when the primary server auto-starts — the primary handles HTTP, but the asset dev server compiles CSS/JS.
-
-**This step is MANDATORY, not optional.** Without it, templates that reference build-pipeline outputs (Vite manifests, Webpack bundles) will 500 on the first page load. Do NOT work around missing assets by running `npm run build` on the dev container — that compiles static assets instead of using HMR, and doesn't prove the dev experience works. Do NOT replace framework asset helpers with inline CSS/JS — that disconnects the build pipeline.
-
-**2c. Worker dev process** (showcase only):
-- **Shared codebase** (`worker.sharesCodebaseWith` is set): start the queue consumer as an SSH process on the HOST target's dev container — both processes run from the same container, same code tree:
-  ```bash
-  ssh {host_hostname}dev "cd /var/www && {queue_worker_command} &"
-  ```
-  `{host_hostname}` is the target named by `sharesCodebaseWith` — `appdev` for single-app recipes, `apidev` for dual-runtime recipes where the API hosts the worker.
-- **Separate codebase** (`worker.sharesCodebaseWith` empty — the default, including the 3-repo case): deploy the separate worker codebase to its own dev container, then start the process there:
-  ```
-  zerops_deploy targetService="workerdev" setup="dev"
-  ssh workerdev "cd /var/www && {queue_worker_command} &"
-  ```
-
-**Step 3: Enable subdomain and verify appdev** (single-runtime recipes — API-first recipes run Step 3-API first, see below, then return here)
+**Step 3: Enable subdomain and verify appdev**
 ```
 zerops_subdomain action="enable" serviceHostname="appdev"
 zerops_verify serviceHostname="appdev"
 ```
 Check: service RUNNING, subdomain returns 200, health endpoint responds (or page loads for static).
 
-**Step 3a: Verify `initCommands` actually ran — check logs, don't assume** (runs AFTER Step 3 and, for API-first, AFTER Step 3-API has verified apidev AND Step 3 has verified appdev)
+**Step 3a: Verify `initCommands` actually ran — check logs, don't assume** (runs AFTER Step 3)
 
 If `setup: dev` declares `initCommands` (migrate / seed / search-index), those commands ran during deploy activation — the platform invokes them on every fresh deploy, including the first one on an idle-start container. You MUST verify they ran and succeeded by reading the runtime logs, NOT by re-running them manually:
 
 ```
-zerops_logs serviceHostname="appdev" limit=200 severity=INFO since=10m
-```
-
-**API-first recipes must fetch logs from BOTH containers** — the API typically owns the migration/seed commands and the frontend is often a static build with no initCommands at all:
-
-```
-zerops_logs serviceHostname="apidev" limit=200 severity=INFO since=10m
 zerops_logs serviceHostname="appdev" limit=200 severity=INFO since=10m
 ```
 
@@ -1034,12 +984,85 @@ Recovery: either (a) modify something that forces a new `appVersionId` (touch a 
 
 **Post-deploy data verification**: after a successful deploy, verify the expected data actually exists — don't assume initCommands ran just because the deploy returned ACTIVE. If prior failed deploys burned the `execOnce` key, the successful deploy may skip those commands silently. Check: query the database for seeded records, verify the search index contains documents, confirm the cache is populated. If the data is missing, the `execOnce` key was burned — use recovery option (a) or (b) above.
 
+**Redeployment = fresh container.** If you fix code and redeploy during iteration, the platform creates a new container — ALL background processes (asset dev server, queue worker) are gone. Restart them before re-verifying. This applies to every redeploy, not just the first.
+
+**Step 4: Iterate if needed** (max 3 iterations)
+If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify. After any redeploy, repeat Step 2 (start ALL processes) before Step 3 (verify).
+
+</block>
+
+<block name="deploy-api-first">
+
+**Step 1-API** (API-first showcase only, runs BEFORE Step 1): Deploy apidev FIRST — the API must be running before the frontend builds (the frontend bakes the API URL at build time):
+```
+zerops_deploy targetService="apidev" setup="dev"
+```
+After this completes, run Step 2a-API (start the API process) then Step 3-API (verify apidev); THEN return to Step 1 to deploy appdev.
+
+**2a-API** (API-first): Start the API server on apidev:
+```bash
+ssh apidev "cd /var/www && {api_start_command} &"
+```
+
 **Step 3-API** (API-first only, runs AFTER Step 1-API + Step 2a-API, BEFORE Step 1): Enable and verify the API FIRST — this is a checkpoint before the frontend deploy, not a late verification step:
 ```
 zerops_subdomain action="enable" serviceHostname="apidev"
 zerops_verify serviceHostname="apidev"
 ```
 Verify `/api/health` returns 200 via curl. THEN return to Step 1 to deploy appdev — the frontend needs the API running before it can deploy (in build-time-baked configurations) or before it can be verified (in runtime-config configurations). After appdev deploys, Step 2 (processes) → Step 3 (enable appdev subdomain + verify the dashboard loads and successfully fetches from the API) → Step 3a (logs from BOTH containers).
+
+**API-first log reading**: API-first recipes must fetch logs from BOTH containers at Step 3a — the API typically owns the migration/seed commands and the frontend is often a static build with no initCommands at all:
+
+```
+zerops_logs serviceHostname="apidev" limit=200 severity=INFO since=10m
+zerops_logs serviceHostname="appdev" limit=200 severity=INFO since=10m
+```
+
+**CORS** (API-first): The API must set CORS headers allowing the frontend subdomain. Use the framework's standard CORS middleware and allow the frontend's subdomain origin.
+
+</block>
+
+<block name="deploy-asset-dev-server">
+
+**2b. Asset dev server** (if the build pipeline uses a secondary runtime):
+If `run.prepareCommands` installs a secondary runtime (e.g., `sudo -E zsc install nodejs@22`) and the scaffold defines a dev server (e.g., `npm run dev` for Vite), start it now.
+
+**Before starting, check if one is already running.** The deploy framework may have started the dev server on first deploy; launching a second instance via background SSH creates a port collision. The second instance silently falls back to an incremented port (Vite: 5173 → 5174), and the public subdomain doesn't route to the new port — it routes to the original.
+
+```bash
+ssh appdev "pgrep -f 'vite' || true"
+ssh appdev "pgrep -f 'npm run dev' || true"
+```
+
+If a process is already running, skip the start. If you need to restart (after a config change), kill first: `ssh appdev "pkill -f 'vite' || true"` then start once:
+
+```bash
+ssh appdev "cd /var/www && {dev_server_command} &"
+```
+
+Pass the appropriate host binding flag so it listens on `0.0.0.0` (e.g., `npx vite --host 0.0.0.0`). This applies even when the primary server auto-starts — the primary handles HTTP, but the asset dev server compiles CSS/JS.
+
+**This step is MANDATORY, not optional.** Without it, templates that reference build-pipeline outputs (Vite manifests, Webpack bundles) will 500 on the first page load. Do NOT work around missing assets by running `npm run build` on the dev container — that compiles static assets instead of using HMR, and doesn't prove the dev experience works. Do NOT replace framework asset helpers with inline CSS/JS — that disconnects the build pipeline.
+
+</block>
+
+<block name="deploy-worker-process">
+
+**2c. Worker dev process** (showcase only):
+- **Shared codebase** (`worker.sharesCodebaseWith` is set): start the queue consumer as an SSH process on the HOST target's dev container — both processes run from the same container, same code tree:
+  ```bash
+  ssh {host_hostname}dev "cd /var/www && {queue_worker_command} &"
+  ```
+  `{host_hostname}` is the target named by `sharesCodebaseWith` — `appdev` for single-app recipes, `apidev` for dual-runtime recipes where the API hosts the worker.
+- **Separate codebase** (`worker.sharesCodebaseWith` empty — the default, including the 3-repo case): deploy the separate worker codebase to its own dev container, then start the process there:
+  ```
+  zerops_deploy targetService="workerdev" setup="dev"
+  ssh workerdev "cd /var/www && {queue_worker_command} &"
+  ```
+
+</block>
+
+<block name="deploy-target-verification">
 
 **Verify ALL runtime targets — not just the primary app.** After completing dev deploys, every runtime target must be verified. HTTP targets use `zerops_verify` + `zerops_subdomain`; non-HTTP targets (workers) use `zerops_logs` to confirm the process started. Enumerate by plan shape:
 
@@ -1051,8 +1074,6 @@ Verify `/api/health` returns 200 via curl. THEN return to Step 1 to deploy appde
 
 Do not skip any target. A skipped verification means a broken target ships to stage undetected.
 
-**CORS** (API-first): The API must set CORS headers allowing the frontend subdomain. Use the framework's standard CORS middleware and allow the frontend's subdomain origin.
-
 For showcase, also verify the worker is running via logs (no HTTP endpoint). The worker's log hostname depends on the recipe's `sharesCodebaseWith` shape:
 
 - **Shared-codebase worker** (`sharesCodebaseWith: app` or `sharesCodebaseWith: api`) — the worker runs in the HOST target's container, so its logs live there. Use `zerops_logs serviceHostname="appdev"` for an app-shared worker, `serviceHostname="apidev"` for an api-shared worker.
@@ -1061,11 +1082,6 @@ For showcase, also verify the worker is running via logs (no HTTP endpoint). The
 ```
 zerops_logs serviceHostname="{worker_hostname}" limit=20
 ```
-
-**Redeployment = fresh container.** If you fix code and redeploy during iteration, the platform creates a new container — ALL background processes (asset dev server, queue worker) are gone. Restart them before re-verifying. This applies to every redeploy, not just the first.
-
-**Step 4: Iterate if needed** (max 3 iterations)
-If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix code on mount, kill previous server, restart via SSH, re-verify. After any redeploy, repeat Step 2 (start ALL processes) before Step 3 (verify).
 
 </block>
 
@@ -1123,7 +1139,20 @@ The dashboard must be **polished** — minimalistic does NOT mean unstyled brows
 - **Avoid**: component libraries, icon packs, animations, dark-mode toggles, JS frameworks for interactivity, inline `<style>` alongside a build pipeline
 - **XSS protection (mandatory)**: all dynamic content escaped. `textContent` for JS-injected text; framework template auto-escaping for server-rendered content. Never use raw/unescaped output mode.
 
-**Where app-level commands run** (hard rule — include verbatim in the sub-agent brief):
+For the full "where commands run" principle (SSH vs zcp-side), see the `where-commands-run` block below. Include it verbatim in the sub-agent brief.
+
+**After the sub-agent returns**:
+1. Read back feature files — verify they exist and aren't empty
+2. Git add + commit on every mount the sub-agent touched (apidev, appdev, workerdev as applicable)
+3. Redeploy each affected dev service — fresh container, all SSH processes died, restart them (Step 2)
+4. HTTP-level verification via curl on every feature endpoint
+5. If anything fails, fix on mount, iterate (counts toward the 3-iteration limit)
+
+</block>
+
+<block name="where-commands-run">
+
+**Where app-level commands run** (hard rule — include verbatim in sub-agent briefs):
 
 The sub-agent runs on the zcp orchestrator container. `{appDir}` is an SSHFS network mount — a bridge to the target container's `/var/www/`, not a local directory. File reads and edits through the mount are fine. **Target-side commands — anything in the app's own toolchain — MUST run via SSH on the target container**, not on zcp against the mount.
 
@@ -1139,13 +1168,6 @@ cd /var/www/{hostname} && {command}          # WRONG — zcp against the mount
 ```
 
 Running app-level commands on zcp uses the wrong runtime, the wrong dependencies, the wrong env vars, has no managed-service reachability, AND exhausts zcp's fork budget. Symptom: `fork failed: resource temporarily unavailable` cascades. Recovery is `pkill -9 -f "agent-browser-"` on zcp + waiting for process reaping; the real fix is to stop running target-side commands zcp-side.
-
-**After the sub-agent returns**:
-1. Read back feature files — verify they exist and aren't empty
-2. Git add + commit on every mount the sub-agent touched (apidev, appdev, workerdev as applicable)
-3. Redeploy each affected dev service — fresh container, all SSH processes died, restart them (Step 2)
-4. HTTP-level verification via curl on every feature endpoint
-5. If anything fails, fix on mount, iterate (counts toward the 3-iteration limit)
 
 </block>
 
@@ -1397,6 +1419,8 @@ Recipe files were **auto-generated** in the output directory when deploy complet
 
 The template emits YAML structure + scaling values only — all prose commentary comes from your `envComments` input. Editing files by hand means agents rewrite them from scratch and drop the auto-generated `zeropsSetup` + `buildFromGit` fields. **Pass structured per-env comments instead.** One call bakes all 6 files.
 
+<block name="env-comment-rules">
+
 ### Step 1: Write one tailored comment set per environment
 
 The 6 envs are **not interchangeable** — each exists to describe a different deployment context. Copying one comment block into all 6 defeats the purpose. Tailor each env's prose to what makes THAT env distinct:
@@ -1412,17 +1436,6 @@ The 6 envs are **not interchangeable** — each exists to describe a different d
 
 Pass `envComments` keyed by env index (`"0"`..`"5"`). Each env carries a `service` map (keys match the hostnames that appear in THAT env's file) and an optional `project` comment. **Service key rule**: envs 0-1 carry the dev+stage pair, so keys are `"appdev"` and `"appstage"`; envs 2-5 collapse to a single runtime entry, so the key is the base hostname (`"app"`). Managed services (`"db"` etc.) keep the base hostname everywhere.
 
-**Showcase service keys — the key list depends on the worker's `sharesCodebaseWith`.** A shared-codebase worker (`sharesCodebaseWith` set) gets ONLY `workerstage` in envs 0-1 because the host target's dev container runs both processes. A separate-codebase worker (empty `sharesCodebaseWith` — the default, including the 3-repo case) gets both `workerdev` and `workerstage`. Omitting a comment key for a service that appears in the import.yaml produces a service with no comment, which degrades quality and risks failing the comment ratio check. Complete key list per env:
-
-**Full-stack showcase:**
-- **Envs 0-1 (shared-codebase worker)**: `"appdev"`, `"appstage"`, `"workerstage"`, plus all managed services (`"db"`, `"cache"`, `"storage"`, `"search"`, etc.)
-- **Envs 0-1 (separate-codebase worker)**: `"appdev"`, `"appstage"`, `"workerdev"`, `"workerstage"`, plus all managed services
-- **Envs 2-5**: `"app"`, `"worker"`, plus all managed services
-
-**API-first showcase (dual-runtime):**
-- **Envs 0-1**: `"appdev"`, `"appstage"`, `"apidev"`, `"apistage"`, `"workerstage"`, plus all managed services
-- **Envs 2-5**: `"app"`, `"api"`, `"worker"`, plus all managed services
-
 Every service that appears in a given env's import.yaml MUST have a comment explaining its role in THAT env.
 
 ```
@@ -1430,54 +1443,56 @@ zerops_workflow action="generate-finalize" \
   envComments={
     "0": {
       "service": {
-        "appdev": "Development workspace for AI agents. zeropsSetup:dev deploys the full tree so the agent can SSH in and edit source over SSHFS — PHP reinterprets each request, no restart required. Subdomain gives the agent a URL to verify output.",
-        "appstage": "Staging slot — agent deploys here with zerops_deploy setup=prod to validate the production build (composer install --no-dev + runtime config:cache) before finishing the task.",
-        "db": "PostgreSQL — carries schema, sessions, cache, and queued jobs (all Laravel drivers default to 'database' in the minimal tier). Shared by appdev and appstage. NON_HA fine for dev/staging; priority 10 so db starts before the app containers."
+        "appdev": "Development workspace for AI agents. zeropsSetup:dev deploys the full source tree so the agent can SSH in and edit over SSHFS. Subdomain gives the agent a URL to verify output.",
+        "appstage": "Staging slot — agent deploys here with zerops_deploy setup=prod to validate the production build before finishing the task.",
+        "db": "{dbDisplayName} — carries schema and app data. Shared by appdev and appstage. NON_HA fine for dev/staging; priority 10 so db starts before the app containers."
       },
-      "project": "APP_KEY is Laravel's AES-256-CBC encryption key (32 bytes). Project-level so session cookies and encrypted DB attributes remain valid when the L7 balancer routes a request to any app container."
+      "project": "{appSecretKey} is the framework's encryption/signing key. Project-level so sessions remain valid when the L7 balancer routes a request to any app container."
     },
     "1": {
       "service": {
-        "appdev": "Remote development workspace — SSH or IDE-SSHFS into the dev container and edit source live. zeropsSetup:dev installs the full Composer dependency set so pint/phpunit/pail are available on the container. PHP interprets each request, no restart cycle.",
-        "appstage": "Staging for remote developers — zerops_deploy setup=prod mirrors what CI would build for production, letting you validate config:cache + route:cache before merging.",
-        "db": "PostgreSQL — same persistence layer as in env 0. NON_HA because remote dev environments are replaceable."
+        "appdev": "Remote development workspace — SSH or IDE-SSHFS into the dev container and edit source live. zeropsSetup:dev installs the full dependency set so dev tools are available on the container.",
+        "appstage": "Staging for remote developers — zerops_deploy setup=prod mirrors what CI would build for production.",
+        "db": "{dbDisplayName} — same persistence layer as in env 0. NON_HA because remote dev environments are replaceable."
       },
-      "project": "APP_KEY shared across containers (same rationale as env 0)."
+      "project": "{appSecretKey} shared across containers (same rationale as env 0)."
     },
     "2": {
       "service": {
-        "app": "Local-env validator — you develop against localhost on your machine (zcli vpn up to reach this Zerops Postgres), then push with zcli to this app container to verify the production build actually deploys cleanly before tagging a release.",
-        "db": "Managed Postgres reachable from your laptop via zcli VPN. Priority 10 so db starts before the app."
+        "app": "Local-env validator — develop against localhost on your machine (zcli vpn up to reach this managed database), then push with zcli to this app container to verify the production build deploys cleanly before tagging a release.",
+        "db": "Managed {dbDisplayName} reachable from your laptop via zcli VPN. Priority 10 so db starts before the app."
       },
-      "project": "APP_KEY shared across containers."
+      "project": "{appSecretKey} shared across containers."
     },
     "3": {
       "service": {
-        "app": "Staging — mirrors production config (composer install --no-dev + runtime cache warming) but runs on a single container with lower scaling. Public subdomain for QA and stakeholder review. Git integration or zcli push from CI triggers deploys.",
-        "db": "Postgres — single-node because staging data is replaceable."
+        "app": "Staging — mirrors production config (production dependency install + runtime optimizations) but runs on a single container with lower scaling. Public subdomain for QA and stakeholder review.",
+        "db": "{dbDisplayName} — single-node because staging data is replaceable."
       },
-      "project": "APP_KEY shared across containers."
+      "project": "{appSecretKey} shared across containers."
     },
     "4": {
       "service": {
         "app": "Small production — minContainers: 2 guarantees at least two app containers at all times, spreading load and keeping traffic flowing during rolling deploys and container replacement. Zerops autoscales RAM within verticalAutoscaling bounds.",
-        "db": "Postgres single-node. Consider HA mode (env 5) for higher durability."
+        "db": "{dbDisplayName} single-node."
       },
-      "project": "APP_KEY shared across containers — critical in production because sessions break if containers disagree on the key."
+      "project": "{appSecretKey} shared across containers — critical in production because sessions break if containers disagree on the key."
     },
     "5": {
       "service": {
         "app": "HA production. cpuMode: DEDICATED pins cores to this service so shared-tenant noise doesn't pollute request latency under sustained load. minContainers: 2 + autoscaling handles capacity; minFreeRamGB leaves 50% headroom for traffic spikes.",
-        "db": "Postgres HA — replicates data across multiple nodes so a single node failure causes no data loss or downtime. Dedicated CPU ensures DB ops don't compete with co-located workloads."
+        "db": "{dbDisplayName} HA — replicates data across multiple nodes so a single node failure causes no data loss or downtime. Dedicated CPU ensures DB ops don't compete with co-located workloads."
       },
-      "project": "APP_KEY shared across every app container — required for session validity behind the L7 balancer at HA scale. corePackage: SERIOUS moves the project balancer, logging, and metrics onto dedicated infrastructure (no shared-tenant overhead) — essential for consistent latency at production throughput."
+      "project": "{appSecretKey} shared across every app container — required for session validity behind the L7 balancer at HA scale. corePackage: SERIOUS moves the project balancer, logging, and metrics onto dedicated infrastructure (no shared-tenant overhead) — essential for consistent latency at production throughput."
     }
   }
 ```
 
+**Placeholders in the example above**: `{appSecretKey}` = the framework's secret key env var name (from research data: `APP_KEY`, `SECRET_KEY_BASE`, `SECRET_KEY`, etc.). `{dbDisplayName}` = the database display name (PostgreSQL, MariaDB, etc.). Replace with your recipe's actual values from the plan's research data.
+
 **What each env's commentary should cover:**
 - **Role in the dev lifecycle** (AI agent workspace / remote dev / local validator / staging / small prod / HA prod) — what this env exists for.
-- **What `zeropsSetup: dev` / `zeropsSetup: prod` does for THIS framework** (composer install + caches / bundle step / etc.) — where it's relevant.
+- **What `zeropsSetup: dev` / `zeropsSetup: prod` does for THIS framework** (dev dependency install / production build + cache warming / etc.) — where it's relevant.
 - **Scaling rationale** for fields only present in this env: `minContainers: 2` (envs 4-5), `cpuMode: DEDICATED` (env 5), `mode: HA` (env 5), `corePackage: SERIOUS` (env 5).
 - **Managed service role** — what THIS app uses it for (sessions/cache/queue/etc. in minimal tier collapsing to one DB).
 - **Project secret** — what the framework uses it for + why it must be shared across containers.
@@ -1487,10 +1502,30 @@ zerops_workflow action="generate-finalize" \
 - 2-3 sentences per service (aim for the upper end — single-sentence comments consistently fail the 30% ratio on first attempt). Lines auto-wrap at 80 chars.
 - No section-heading decorators (`# -- Title --`, `# === Foo ===`).
 - Dev-to-dev tone — like explaining your config to a colleague.
-- Reference framework commands where they add precision (`bun --hot`, `composer install --no-dev`, `config:cache`).
+- Reference framework commands where they add precision (e.g., the framework's dev start command, production dependency install flag, cache-warming CLI).
 - **Each env's import.yaml must be self-contained — do NOT reference other envs.** Each env is published as a standalone deploy target on zerops.io/recipes; users land on one env's page, click deploy, and never see the others. Phrases like "same as env 0", "Consider HA (env 5) for higher durability", "zsc execOnce is a no-op here but load-bearing in env 4" are meaningless out of context. Explain what THIS env does and why, without comparing to siblings.
 
 **Refining one env**: call `generate-finalize` again with only that env's entry under `envComments` — other envs are left untouched. Within an env, passing a service key with an empty string deletes its comment. Passing an empty project string leaves the existing project comment.
+
+</block>
+
+<block name="showcase-service-keys">
+
+**Showcase service keys — the key list depends on the worker's `sharesCodebaseWith`.** A shared-codebase worker (`sharesCodebaseWith` set) gets ONLY `workerstage` in envs 0-1 because the host target's dev container runs both processes. A separate-codebase worker (empty `sharesCodebaseWith` — the default, including the 3-repo case) gets both `workerdev` and `workerstage`. Omitting a comment key for a service that appears in the import.yaml produces a service with no comment, which degrades quality and risks failing the comment ratio check. Complete key list per env:
+
+**Full-stack showcase:**
+- **Envs 0-1 (shared-codebase worker)**: `"appdev"`, `"appstage"`, `"workerstage"`, plus all managed services (`"db"`, `"cache"`, `"storage"`, `"search"`, etc.)
+- **Envs 0-1 (separate-codebase worker)**: `"appdev"`, `"appstage"`, `"workerdev"`, `"workerstage"`, plus all managed services
+- **Envs 2-5**: `"app"`, `"worker"`, plus all managed services
+
+**API-first showcase (dual-runtime):**
+- **Envs 0-1 (shared-codebase worker)**: `"appdev"`, `"appstage"`, `"apidev"`, `"apistage"`, `"workerstage"`, plus all managed services
+- **Envs 0-1 (separate-codebase worker)**: `"appdev"`, `"appstage"`, `"apidev"`, `"apistage"`, `"workerdev"`, `"workerstage"`, plus all managed services
+- **Envs 2-5**: `"app"`, `"api"`, `"worker"`, plus all managed services
+
+</block>
+
+<block name="project-env-vars">
 
 ### Step 1b: Pass `projectEnvVariables` if the recipe needs project-level env vars (dual-runtime or any framework with cross-service URL constants)
 
@@ -1540,10 +1575,18 @@ zerops_workflow action="generate-finalize" \
 
 Values are emitted verbatim; the platform resolves `${zeropsSubdomainHost}` at end-user project-import time. Single-runtime recipes without cross-service URL constants can omit `projectEnvVariables` entirely — the template just renders the shared secret on its own (unchanged behavior).
 
+</block>
+
+<block name="review-readmes">
+
 ### Step 2: Review READMEs
 
 - Root README: verify intro text matches what this recipe actually demonstrates
 - Env READMEs: descriptions are auto-generated from plan data — verify accuracy
+
+</block>
+
+<block name="comment-style">
 
 ### Comment style (applies to both envComments and zerops.yaml fragments)
 
@@ -1587,11 +1630,17 @@ Recipes are read by both humans and AI agents. Write like a senior dev explainin
 - Don't write single-word comments ("# dependencies", "# port")
 - Don't compress to telegraphic style ("# static bin, no C" — write full sentences)
 
+</block>
+
+<block name="finalize-completion">
+
 ### Step 3: Complete
 
 ```
 zerops_workflow action="complete" step="finalize" attestation="Comments provided via generate-finalize; all 6 import.yaml files regenerated with comments baked in"
 ```
+
+</block>
 </section>
 
 <section name="close">
@@ -1604,6 +1653,8 @@ Recipe creation is complete. The close step has THREE parts, run in order:
 3. **2 — Export & publish (ONLY when the user explicitly asks).** If the user did not request publishing, stop after 1a + 1b and any fixes are applied.
 
 Do NOT skip 1a or 1b to save time. Do NOT publish without an explicit user request.
+
+<block name="code-review-subagent">
 
 ### 1a. Static Code Review Sub-Agent (ALWAYS — mandatory)
 
@@ -1656,6 +1707,10 @@ Apply any CRITICAL or WRONG fixes the sub-agent reported, then **redeploy** to v
 - If only import.yaml (finalize output) changed: re-run finalize checks
 - Do NOT skip redeployment — the browser walk in 1b is meaningless if fixes aren't tested.
 
+</block>
+
+<block name="close-browser-walk">
+
 ### 1b. Main Agent Browser Walk (showcase only — MANDATORY; skip for minimal)
 
 After 1a completes and any redeployments have settled, run the same 3-phase browser walk you ran at deploy Step 4c: Phase 1 (dev walk while dev processes are running) → Phase 2 (kill dev processes via SSH) → Phase 3 (stage walk after dev processes are dead). See deploy **Step 4c: Browser verification** for the full rules, the `zerops_browser` tool usage, the command vocabulary, and the `forkRecoveryAttempted` recovery procedure — they are unchanged at close.
@@ -1665,6 +1720,10 @@ After 1a completes and any redeployments have settled, run the same 3-phase brow
 - Do NOT delegate browser work to a sub-agent. The 1a static review sub-agent explicitly forbids `zerops_browser` (v5 proved fork exhaustion during a sub-agent's browser walk kills the parent chat). Main agent runs single-threaded.
 - Do NOT call `zerops_workflow action="complete" step="close"` until `zerops_browser` has returned clean output (`errorsOutput` empty, all sections populated, `forkRecoveryAttempted: false`) for BOTH the dev walk AND the stage walk AND any regressions surfaced have been fixed and re-verified.
 - If a walk surfaces a problem: the tool has already closed the browser, so fix on mount, redeploy the affected target, re-call `zerops_browser` for the affected subdomain. This counts toward the 3-iteration close-step limit.
+
+</block>
+
+<block name="export-publish">
 
 ### 2. Export & Publish (ONLY when the user asks)
 
@@ -1755,6 +1814,10 @@ zcp sync cache-clear {slug}
 zcp sync pull recipes {slug}
 ```
 
+</block>
+
+<block name="close-completion">
+
 ### 3. Completion
 ```
 zerops_workflow action="complete" step="close" attestation="Recipe verified by {framework} expert sub-agent, {N} issues found and fixed"
@@ -1764,4 +1827,99 @@ Or skip if not publishing now:
 ```
 zerops_workflow action="skip" step="close" reason="Will publish later"
 ```
+
+</block>
+</section>
+
+<section name="generate-skeleton">
+## Generate — App Code & Configuration
+
+### Constraints
+- Dev containers are RUNNING but env vars NOT active until deploy
+- Each codebase is independent — never cross-scaffold between mounts
+- Comment ratio >= 30% in zerops.yaml (aim 35%)
+
+### Execution order
+1. Scaffold each codebase on its mount [topic: where-to-write]
+2. Write zerops.yaml — YOU, not a sub-agent [topic: zerops-yaml-rules]
+   - Dual-runtime URL pattern applies [topic: dual-runtime-urls]
+   - Serve-only dev override [topic: serve-only-dev]
+   - Multi-base secondary runtime install [topic: multi-base-dev]
+   - Dev-server host-check allow-list [topic: dev-server-hostcheck]
+   - Worker setup shape [topic: worker-setup]
+3. Write app code — skeleton only for showcase [topic: dashboard-skeleton]
+   - What to generate per recipe type [topic: recipe-types]
+4. Write README per codebase with 3 fragments [topic: readme-fragments]
+5. Pre-deploy checklist + on-container smoke test [topic: smoke-test]
+   - Code quality and comment ratio [topic: code-quality]
+6. Git init + commit
+
+### Fetch guidance
+Call `zerops_guidance topic="{id}"` before each sub-task for detailed rules.
+All topics are filtered to your recipe shape — irrelevant content is excluded.
+</section>
+
+<section name="deploy-skeleton">
+## Deploy — Build, Start & Verify
+
+### Constraints
+- `zerops_deploy` triggers build from mount files — env vars resolve at deploy time
+- Redeployment = fresh container — ALL background processes die, restart everything
+- Max 3 iterations per step
+
+### Execution order
+1. Deploy appdev [topic: deploy-flow]
+   - API-first: deploy apidev FIRST [topic: deploy-api-first]
+2. Start ALL dev processes [topic: deploy-flow]
+   - Asset dev server [topic: deploy-asset-dev-server]
+   - Worker process [topic: deploy-worker-process]
+3. Enable subdomain + verify [topic: deploy-target-verification]
+4. Dispatch feature sub-agent (showcase) [topic: subagent-brief]
+   - Where commands run [topic: where-commands-run]
+5. Browser verification (showcase) [topic: browser-walk]
+6. Cross-deploy to stage [topic: stage-deploy]
+7. Handle failures [topic: deploy-failures]
+
+### Fetch guidance
+Call `zerops_guidance topic="{id}"` before each sub-task for detailed rules.
+All topics are filtered to your recipe shape — irrelevant content is excluded.
+</section>
+
+<section name="finalize-skeleton">
+## Finalize — Recipe Repository Files
+
+### Constraints
+- Do NOT edit import.yaml files by hand — use `generate-finalize` with structured input
+- Each env's import.yaml must be self-contained — do NOT reference other envs
+- Comment ratio >= 30% (aim 35%)
+
+### Execution order
+1. Write tailored comment set per environment via `generate-finalize` [topic: env-comments]
+   - Showcase service key lists [topic: showcase-service-keys]
+   - Dual-runtime projectEnvVariables [topic: project-env-vars]
+2. Review READMEs
+3. Apply comment writing style [topic: comment-style]
+4. Complete
+
+### Fetch guidance
+Call `zerops_guidance topic="{id}"` before each sub-task for detailed rules.
+</section>
+
+<section name="close-skeleton">
+## Close — Verify & Publish
+
+### Constraints
+- Do NOT skip code review (1a) or browser walk (1b)
+- Do NOT publish without explicit user request
+- Browser walk is main agent only — never delegate to sub-agent
+
+### Execution order
+1a. Static code review sub-agent [topic: code-review-agent]
+    - Where commands run [topic: where-commands-run]
+1b. Main agent browser walk (showcase only) [topic: close-browser-walk]
+2. Export & publish (only when asked) [topic: export-publish]
+3. Complete
+
+### Fetch guidance
+Call `zerops_guidance topic="{id}"` before each sub-task for detailed rules.
 </section>

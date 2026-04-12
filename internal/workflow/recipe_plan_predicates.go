@@ -177,7 +177,7 @@ func hasBundlerDevServer(p *RecipePlan) bool {
 	// Dual-runtime + static frontend: the frontend runs a bundler dev
 	// server regardless of what p.Framework names.
 	// Multi-base: secondary JS runtime implies a bundler dev server.
-	return isDualRuntime(p) && hasServeOnlyProd(p) || needsMultiBaseGuidance(p)
+	return (isDualRuntime(p) && hasServeOnlyProd(p)) || needsMultiBaseGuidance(p)
 }
 
 // bundlerFrameworks lists framework name prefixes whose dev servers enforce

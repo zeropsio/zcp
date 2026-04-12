@@ -62,7 +62,13 @@ func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client p
 
 	checker := buildRecipeStepChecker(ctx, input.Step, projectID, stateDir, schemaCache)
 
-	resp, err := engine.RecipeComplete(ctx, input.Step, input.Attestation, checker)
+	var resp *workflow.RecipeResponse
+	var err error
+	if input.SubStep != "" {
+		resp, err = engine.RecipeComplete(ctx, input.Step, input.Attestation, checker, input.SubStep)
+	} else {
+		resp, err = engine.RecipeComplete(ctx, input.Step, input.Attestation, checker)
+	}
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
