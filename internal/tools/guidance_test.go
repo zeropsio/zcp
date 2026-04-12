@@ -75,7 +75,7 @@ func TestGuidance_CommentStyle_ReturnsContent(t *testing.T) {
 		"topic": "comment-style",
 	})
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "Comment style") {
+	if !strings.Contains(text, "Comment writing style") {
 		t.Error("comment-style missing expected heading")
 	}
 }

@@ -138,6 +138,11 @@ var recipeGenerateTopics = []*GuidanceTopic{
 		Description: "On-container validation before deploy",
 		BlockNames:  []string{"on-container-smoke-test"},
 	},
+	{
+		ID: "comment-anti-patterns", Step: RecipeStepGenerate,
+		Description: "Comment formatting anti-patterns (separators, decorators)",
+		BlockNames:  []string{"comment-anti-patterns"},
+	},
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -191,6 +196,17 @@ var recipeDeployTopics = []*GuidanceTopic{
 		BlockNames:  []string{"dev-deploy-browser-walk"},
 	},
 	{
+		ID: "browser-commands", Step: RecipeStepDeploy,
+		Description: "Browser tool command vocabulary and anti-patterns",
+		Predicate:   isShowcase,
+		BlockNames:  []string{"browser-command-reference"},
+	},
+	{
+		ID: "deploy-execution-order", Step: RecipeStepDeploy,
+		Description: "Deploy step execution order by recipe type",
+		BlockNames:  []string{"deploy-execution-order"},
+	},
+	{
 		ID: "stage-deploy", Step: RecipeStepDeploy,
 		Description: "Stage cross-deploy flow",
 		BlockNames:  []string{"stage-deployment-flow"},
@@ -213,6 +229,11 @@ var recipeFinalizeTopics = []*GuidanceTopic{
 		BlockNames:  []string{"env-comment-rules"},
 	},
 	{
+		ID: "env-comments-example", Step: RecipeStepFinalize,
+		Description: "Complete env comment YAML example template",
+		BlockNames:  []string{"env-comments-example"},
+	},
+	{
 		ID: "showcase-service-keys", Step: RecipeStepFinalize,
 		Description: "Service key lists by worker shape",
 		Predicate:   isShowcase,
@@ -226,8 +247,8 @@ var recipeFinalizeTopics = []*GuidanceTopic{
 	},
 	{
 		ID: "comment-style", Step: RecipeStepFinalize,
-		Description: "Writing style reference",
-		BlockNames:  []string{"comment-style"},
+		Description: "Writing style reference for env comments",
+		BlockNames:  []string{"comment-voice"},
 	},
 }
 
@@ -336,9 +357,17 @@ var topicExpansionRules = map[string][]topicExpansion{
 	"zerops-yaml-rules": {
 		{TopicID: "dual-runtime-urls", Predicate: isDualRuntime},
 		{TopicID: "worker-setup", Predicate: hasWorker},
+		{TopicID: "comment-anti-patterns"},
 	},
 	"deploy-flow": {
 		{TopicID: "subagent-brief", Predicate: isShowcase},
+		{TopicID: "deploy-execution-order"},
+	},
+	"browser-walk": {
+		{TopicID: "browser-commands", Predicate: isShowcase},
+	},
+	"env-comments": {
+		{TopicID: "env-comments-example"},
 	},
 	"smoke-test": {
 		{TopicID: "code-quality"},

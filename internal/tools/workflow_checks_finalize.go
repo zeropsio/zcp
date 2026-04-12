@@ -144,6 +144,19 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 	prefix := folder + "_import"
 	var checks []workflow.StepCheck
 
+	// Duplicate YAML key check — raw text scan BEFORE Go map parse, which
+	// silently deduplicates (or errors, depending on yaml.v3 strictness).
+	if dupes := findDuplicateYAMLKeys(content); len(dupes) > 0 {
+		checks = append(checks, workflow.StepCheck{
+			Name: prefix + "_duplicate_keys", Status: statusFail,
+			Detail: fmt.Sprintf("duplicate YAML keys: %s", strings.Join(dupes, ", ")),
+		})
+	} else {
+		checks = append(checks, workflow.StepCheck{
+			Name: prefix + "_duplicate_keys", Status: statusPass,
+		})
+	}
+
 	// Parse YAML.
 	var doc importYAMLDoc
 	if err := yaml.Unmarshal([]byte(content), &doc); err != nil {
@@ -535,6 +548,96 @@ func checkCrossEnvReferences(content, prefix string) []workflow.StepCheck {
 	return []workflow.StepCheck{{
 		Name: prefix + "_cross_env_refs", Status: statusPass,
 	}}
+}
+
+// findDuplicateYAMLKeys scans raw YAML for repeated keys within the same
+// mapping scope. Go's yaml.Unmarshal silently deduplicates into maps,
+// hiding the problem. This function catches it before parsing.
+//
+// Scope tracking: each list item (`- `) at a given indent starts a new
+// mapping scope for its children. Keys like `type` or `hostname` across
+// different list items are NOT duplicates.
+func findDuplicateYAMLKeys(content string) []string {
+	// listScope tracks the current list-item sequence number at each indent
+	// level where a `- ` was seen. Keys below a list item inherit the
+	// parent's scope number, so `type:` at indent 4 under different
+	// `- hostname:` entries at indent 2 are separate.
+	listScope := make(map[int]int)
+
+	type scopeKey struct {
+		parentScope int
+		indent      int
+		key         string
+	}
+
+	seen := make(map[scopeKey]int)
+	dupeSet := make(map[string]bool)
+	var dupes []string
+
+	parentScopeFor := func(indent int) int {
+		// Find the nearest list-item scope at a strictly lower indent.
+		best := -1
+		bestScope := 0
+		for lvl, sc := range listScope {
+			if lvl < indent && lvl > best {
+				best = lvl
+				bestScope = sc
+			}
+		}
+		return bestScope
+	}
+
+	for line := range strings.SplitSeq(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+
+		// List item: bump scope at this indent, clear deeper scopes.
+		if strings.HasPrefix(trimmed, "- ") {
+			listScope[indent]++
+			for k := range listScope {
+				if k > indent {
+					delete(listScope, k)
+				}
+			}
+			// Extract key from "- key: value" pattern.
+			rest := trimmed[2:]
+			colonIdx := strings.IndexByte(rest, ':')
+			if colonIdx <= 0 {
+				continue
+			}
+			key := rest[:colonIdx]
+			if strings.ContainsAny(key, " \t") {
+				continue
+			}
+			sk := scopeKey{parentScope: listScope[indent], indent: indent, key: key}
+			seen[sk]++
+			if seen[sk] == 2 && !dupeSet[key] {
+				dupeSet[key] = true
+				dupes = append(dupes, key)
+			}
+			continue
+		}
+
+		colonIdx := strings.IndexByte(trimmed, ':')
+		if colonIdx <= 0 {
+			continue
+		}
+		key := trimmed[:colonIdx]
+		if strings.ContainsAny(key, " \t") {
+			continue
+		}
+
+		sk := scopeKey{parentScope: parentScopeFor(indent), indent: indent, key: key}
+		seen[sk]++
+		if seen[sk] == 2 && !dupeSet[key] {
+			dupeSet[key] = true
+			dupes = append(dupes, key)
+		}
+	}
+	return dupes
 }
 
 // findTargetType finds the service type for a hostname in the recipe plan.

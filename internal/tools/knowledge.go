@@ -121,10 +121,19 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			return textResult(result), nil, nil
 		}
 
-		// Mode 2: Search
+		// Mode 2: Search — with session-level cache to avoid redundant
+		// searches when Claude Code cancels parallel calls and retries.
 		if hasQuery {
+			cacheKey := fmt.Sprintf("query|%s|%d", input.Query, input.Limit)
+			if cached, ok := engine.GetKnowledgeCache(cacheKey); ok {
+				if r, ok := cached.(*mcp.CallToolResult); ok {
+					return r, nil, nil
+				}
+			}
 			results := store.Search(input.Query, input.Limit)
-			return jsonResult(results), nil, nil
+			result := jsonResult(results)
+			engine.SetKnowledgeCache(cacheKey, result)
+			return result, nil, nil
 		}
 
 		// Mode 3: Contextual briefing — filtered by session mode when available.

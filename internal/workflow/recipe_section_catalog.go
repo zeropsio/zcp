@@ -71,6 +71,7 @@ var (
 		{Name: "code-quality"},
 		{Name: "pre-deploy-checklist"},
 		{Name: "on-container-smoke-test"},
+		{Name: "comment-anti-patterns"},
 		{Name: "completion"},
 	}
 
@@ -80,6 +81,7 @@ var (
 	// narrow recipes that don't need them.
 	recipeDeployBlocks = []sectionBlock{
 		{Name: "deploy-framing"},
+		{Name: "deploy-execution-order"},
 		{Name: "deploy-core-universal"},
 		{Name: "deploy-api-first", Predicate: isDualRuntime},
 		{Name: "deploy-asset-dev-server", Predicate: hasBundlerDevServer},
@@ -88,6 +90,7 @@ var (
 		{Name: "dev-deploy-subagent-brief", Predicate: isShowcase},
 		{Name: "where-commands-run"},
 		{Name: "dev-deploy-browser-walk", Predicate: isShowcase},
+		{Name: "browser-command-reference", Predicate: isShowcase},
 		{Name: "stage-deployment-flow"},
 		{Name: "reading-deploy-failures"},
 		{Name: "common-deployment-issues"},
@@ -99,10 +102,11 @@ var (
 	// saving ~3 KB for narrow recipes that don't need either.
 	recipeFinalizeBlocks = []sectionBlock{
 		{Name: "env-comment-rules"},
+		{Name: "env-comments-example"},
 		{Name: "showcase-service-keys", Predicate: isShowcase},
 		{Name: "project-env-vars", Predicate: isDualRuntime},
 		{Name: "review-readmes"},
-		{Name: "comment-style"},
+		{Name: "comment-voice"},
 		{Name: "finalize-completion"},
 	}
 

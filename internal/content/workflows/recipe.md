@@ -836,6 +836,21 @@ The dev containers are live development environments — validate code ON the co
 
 </block>
 
+<block name="comment-anti-patterns">
+
+### Comment formatting anti-patterns
+
+These produce section-heading comments and decorators that label structure rather than explain decisions. The YAML structure itself provides grouping — comments explain WHY.
+
+- Don't add section-heading comments with decorators (`# -- Dev Runtime --`, `# === Database ===`, `# ----------`)
+- Don't restate the key name ("# Set the build base" on `base: php@8.4`)
+- Don't write generic descriptions ("# This is the build section")
+- Don't write single-word comments ("# dependencies", "# port")
+- Don't compress to telegraphic style ("# static bin, no C" — write full sentences)
+- Don't explain YAML syntax itself
+
+</block>
+
 <block name="completion">
 
 ### Completion
@@ -915,11 +930,11 @@ Writing-style voice (the "developer to developer" tone, anti-patterns, correct-s
 
 </block>
 
-<block name="deploy-core-universal">
+<block name="deploy-execution-order">
 
-### Dev deployment flow
+### Deploy execution order by recipe type
 
-**Execution order by recipe type — read this before following individual step numbers.**
+**Read this before following individual step numbers.**
 
 The step numbers below are reference labels, NOT a linear script. For dual-runtime (API-first) recipes the steps interleave because the frontend depends on the API being verified first:
 
@@ -932,6 +947,12 @@ The step numbers below are reference labels, NOT a linear script. For dual-runti
 API-first teams: the steps labelled `-API` run FIRST; do not try to verify `appdev` (Step 3) before `appdev` has been deployed (Step 1). Step 3a runs once, at the end, reading logs from both `apidev` and `appdev` together.
 
 > **Parameter naming**: the deploy parameter is `targetService` (NOT `serviceHostname`). `serviceHostname` is used by `zerops_mount`, `zerops_subdomain`, `zerops_verify`, `zerops_logs`, and `zerops_env` — deploy is the exception. If you get `unexpected additional properties ["serviceHostname"]`, you used the wrong name.
+
+</block>
+
+<block name="deploy-core-universal">
+
+### Dev deployment flow
 
 **Step 1: Deploy appdev (self-deploy)**
 ```
@@ -1115,6 +1136,8 @@ Minimal recipes (1-2 feature sections) skip the sub-agent entirely — the main 
 - **NATS (queue)**: credentials must be passed as separate connection options (`user`, `pass`), NOT embedded in the URL. URL-embedded credentials are silently ignored by most NATS client libraries.
 - **Object Storage (S3)**: requires `apiUrl`, `accessKeyId`, `secretAccessKey`, `bucketName` — NOT the `connectionString` format used by databases.
 
+**Dependency hygiene**: when adding packages, check the existing lockfile or package manifest for the major version of the framework's core package. Pin new packages from the same framework family to the same major version. Run the project's install command after each batch of package additions to catch peer-dependency conflicts immediately — do not wait for build.
+
 **API-first**: the sub-agent works on BOTH apidev AND appdev mounts (plus workerdev if the worker has a public-facing component). Include every mount path in the brief. The sub-agent adds API routes (controllers, services) and corresponding frontend components that fetch from the API.
 
 **Feature sections must EXERCISE each service, not just check connectivity**:
@@ -1202,23 +1225,6 @@ What browser verification catches that curl cannot:
    ```
    Wait 1-2s for reaping. Never retry in a loop.
 
-#### Efficient command vocabulary (use these INSIDE `commands` — NOT `eval`)
-
-Dedicated commands produce structured output designed for agents. Don't reach for `eval` / JavaScript unless none of these fit.
-
-| Need | Command (inside the `commands` array) | Notes |
-|---|---|---|
-| Interactive element tree with clickable refs | `["snapshot", "-i", "-c"]` | `-i` = interactive only, `-c` = compact. Yields `@e1`, `@e2` refs usable in `click`, `fill`, `get`. |
-| Text content of an element | `["get", "text", "<sel>"]` | Or `["get","text","@e3"]` using a ref from snapshot. |
-| Element count | `["get", "count", "<sel>"]` | e.g. verify a table has ≥1 row. |
-| Is something visible / enabled / checked? | `["is", "visible", "<sel>"]` | Plus `is enabled`, `is checked`. |
-| Find by semantic locator | `["find", "role", "button", "Submit", "click"]` | Locators: `role`, `text`, `label`, `placeholder`, `testid`. Avoid brittle CSS. |
-| Click / fill / type | `["click", "@e1"]`, `["fill", "@e2", "text"]`, `["type", "<sel>", "text"]` | Refs from snapshot. |
-| Wait for element or milliseconds | `["wait", "<sel>"]` or `["wait", "500"]` | Integer = ms. |
-| Capture network traffic | `["network", "har", "start"]` … interact … `["network", "har", "stop", "./net.har"]` | Full HAR. |
-
-Do NOT pass `["open", ...]` or `["close"]` inside `commands` — the tool strips them and re-adds its own wrappers. `["errors"]` and `["console"]` are also auto-appended (you can still add extra `["errors","--clear"]` calls inside your flow if you want to checkpoint mid-walk).
-
 #### Canonical verification flow
 
 Three phases in strict order. **Do not reorder.**
@@ -1273,7 +1279,31 @@ The tool executes `[open url] + your commands + [errors] + [console] + [close]` 
 - `consoleOutput` from the result (expected: empty or benign info only)
 - `forkRecoveryAttempted` from the result (expected: false — if true on the STAGE walk you didn't fully kill the dev processes in Phase 2; if true on the DEV walk something upstream was leaking before the walk started)
 
-**What to avoid** (all were seen in v4, v5, or v6):
+If a walk reveals a problem curl missed: the batch has already closed the browser, so fix on mount, redeploy, and run the affected phase again (counts toward the 3-iteration limit). Do NOT advance to publish until BOTH appdev AND appstage walks show empty errors and populated sections.
+
+</block>
+
+<block name="browser-command-reference">
+
+#### Browser command vocabulary (use these INSIDE `commands` — NOT `eval`)
+
+Dedicated commands produce structured output designed for agents. Don't reach for `eval` / JavaScript unless none of these fit.
+
+| Need | Command (inside the `commands` array) | Notes |
+|---|---|---|
+| Interactive element tree with clickable refs | `["snapshot", "-i", "-c"]` | `-i` = interactive only, `-c` = compact. Yields `@e1`, `@e2` refs usable in `click`, `fill`, `get`. |
+| Text content of an element | `["get", "text", "<sel>"]` | Or `["get","text","@e3"]` using a ref from snapshot. |
+| Element count | `["get", "count", "<sel>"]` | e.g. verify a table has ≥1 row. |
+| Is something visible / enabled / checked? | `["is", "visible", "<sel>"]` | Plus `is enabled`, `is checked`. |
+| Find by semantic locator | `["find", "role", "button", "Submit", "click"]` | Locators: `role`, `text`, `label`, `placeholder`, `testid`. Avoid brittle CSS. |
+| Click / fill / type | `["click", "@e1"]`, `["fill", "@e2", "text"]`, `["type", "<sel>", "text"]` | Refs from snapshot. |
+| Wait for element or milliseconds | `["wait", "<sel>"]` or `["wait", "500"]` | Integer = ms. |
+| Capture network traffic | `["network", "har", "start"]` … interact … `["network", "har", "stop", "./net.har"]` | Full HAR. |
+
+Do NOT pass `["open", ...]` or `["close"]` inside `commands` — the tool strips them and re-adds its own wrappers. `["errors"]` and `["console"]` are also auto-appended (you can still add extra `["errors","--clear"]` calls inside your flow if you want to checkpoint mid-walk).
+
+#### What to avoid (all were seen in v4, v5, or v6)
+
 - Raw `agent-browser` / `echo ... | agent-browser batch` Bash calls — always use `zerops_browser` MCP tool
 - **Killing dev processes BEFORE the dev walk** — the dev subdomain then returns 502 because the dev processes ARE the dev server. This is the v6 regression. Phase 1 before Phase 2, always.
 - `["eval", "window.onerror = …"]` inside commands — use the auto-appended `["errors"]` / `["console"]` output instead
@@ -1281,8 +1311,6 @@ The tool executes `[open url] + your commands + [errors] + [console] + [close]` 
 - Passing `["open", ...]` or `["close"]` inside `commands` — the tool strips them; if you thought you needed them, you didn't
 - Dispatching a sub-agent that calls `zerops_browser` while the main agent also has a call in flight
 - Re-running the tool against the same URL repeatedly "just to be sure" — one call per URL per iteration
-
-If a walk reveals a problem curl missed: the batch has already closed the browser, so fix on mount, redeploy, and run the affected phase again (counts toward the 3-iteration limit). Do NOT advance to publish until BOTH appdev AND appstage walks show empty errors and populated sections.
 
 </block>
 
@@ -1436,7 +1464,30 @@ The 6 envs are **not interchangeable** — each exists to describe a different d
 
 Pass `envComments` keyed by env index (`"0"`..`"5"`). Each env carries a `service` map (keys match the hostnames that appear in THAT env's file) and an optional `project` comment. **Service key rule**: envs 0-1 carry the dev+stage pair, so keys are `"appdev"` and `"appstage"`; envs 2-5 collapse to a single runtime entry, so the key is the base hostname (`"app"`). Managed services (`"db"` etc.) keep the base hostname everywhere.
 
-Every service that appears in a given env's import.yaml MUST have a comment explaining its role in THAT env.
+Every service that appears in a given env's import.yaml MUST have a comment explaining its role in THAT env. Fetch [topic: env-comments-example] for a complete per-env template.
+
+**What each env's commentary should cover:**
+- **Role in the dev lifecycle** (AI agent workspace / remote dev / local validator / staging / small prod / HA prod) — what this env exists for.
+- **What `zeropsSetup: dev` / `zeropsSetup: prod` does for THIS framework** (dev dependency install / production build + cache warming / etc.) — where it's relevant.
+- **Scaling rationale** for fields only present in this env: `minContainers: 2` (envs 4-5), `cpuMode: DEDICATED` (env 5), `mode: HA` (env 5), `corePackage: SERIOUS` (env 5).
+- **Managed service role** — what THIS app uses it for (sessions/cache/queue/etc. in minimal tier collapsing to one DB).
+- **Project secret** — what the framework uses it for + why it must be shared across containers.
+
+**Comment style:**
+- Explain WHY, not WHAT. Don't restate the field name. Include **contextual platform behavior** that makes the file self-contained — how fields interact, what propagates where, what happens at deploy time. The reader should never have to leave the file to understand it.
+- 2-3 sentences per service (aim for the upper end — single-sentence comments consistently fail the 30% ratio on first attempt). Lines auto-wrap at 80 chars.
+- No section-heading decorators (`# -- Title --`, `# === Foo ===`).
+- Dev-to-dev tone — like explaining your config to a colleague.
+- Reference framework commands where they add precision (e.g., the framework's dev start command, production dependency install flag, cache-warming CLI).
+- **Each env's import.yaml must be self-contained — do NOT reference other envs.** Each env is published as a standalone deploy target on zerops.io/recipes; users land on one env's page, click deploy, and never see the others. Phrases like "same as env 0", "Consider HA (env 5) for higher durability", "zsc execOnce is a no-op here but load-bearing in env 4" are meaningless out of context. Explain what THIS env does and why, without comparing to siblings.
+
+**Refining one env**: call `generate-finalize` again with only that env's entry under `envComments` — other envs are left untouched. Within an env, passing a service key with an empty string deletes its comment. Passing an empty project string leaves the existing project comment.
+
+</block>
+
+<block name="env-comments-example">
+
+### Complete env comment template
 
 ```
 zerops_workflow action="generate-finalize" \
@@ -1488,24 +1539,7 @@ zerops_workflow action="generate-finalize" \
   }
 ```
 
-**Placeholders in the example above**: `{appSecretKey}` = the framework's secret key env var name (from research data: `APP_KEY`, `SECRET_KEY_BASE`, `SECRET_KEY`, etc.). `{dbDisplayName}` = the database display name (PostgreSQL, MariaDB, etc.). Replace with your recipe's actual values from the plan's research data.
-
-**What each env's commentary should cover:**
-- **Role in the dev lifecycle** (AI agent workspace / remote dev / local validator / staging / small prod / HA prod) — what this env exists for.
-- **What `zeropsSetup: dev` / `zeropsSetup: prod` does for THIS framework** (dev dependency install / production build + cache warming / etc.) — where it's relevant.
-- **Scaling rationale** for fields only present in this env: `minContainers: 2` (envs 4-5), `cpuMode: DEDICATED` (env 5), `mode: HA` (env 5), `corePackage: SERIOUS` (env 5).
-- **Managed service role** — what THIS app uses it for (sessions/cache/queue/etc. in minimal tier collapsing to one DB).
-- **Project secret** — what the framework uses it for + why it must be shared across containers.
-
-**Comment style:**
-- Explain WHY, not WHAT. Don't restate the field name. Include **contextual platform behavior** that makes the file self-contained — how fields interact, what propagates where, what happens at deploy time. The reader should never have to leave the file to understand it.
-- 2-3 sentences per service (aim for the upper end — single-sentence comments consistently fail the 30% ratio on first attempt). Lines auto-wrap at 80 chars.
-- No section-heading decorators (`# -- Title --`, `# === Foo ===`).
-- Dev-to-dev tone — like explaining your config to a colleague.
-- Reference framework commands where they add precision (e.g., the framework's dev start command, production dependency install flag, cache-warming CLI).
-- **Each env's import.yaml must be self-contained — do NOT reference other envs.** Each env is published as a standalone deploy target on zerops.io/recipes; users land on one env's page, click deploy, and never see the others. Phrases like "same as env 0", "Consider HA (env 5) for higher durability", "zsc execOnce is a no-op here but load-bearing in env 4" are meaningless out of context. Explain what THIS env does and why, without comparing to siblings.
-
-**Refining one env**: call `generate-finalize` again with only that env's entry under `envComments` — other envs are left untouched. Within an env, passing a service key with an empty string deletes its comment. Passing an empty project string leaves the existing project comment.
+**Placeholders**: `{appSecretKey}` = the framework's secret key env var name (from research data: `APP_KEY`, `SECRET_KEY_BASE`, `SECRET_KEY`, etc.). `{dbDisplayName}` = the database display name (PostgreSQL, MariaDB, etc.). Replace with your recipe's actual values from the plan's research data.
 
 </block>
 
@@ -1586,9 +1620,9 @@ Values are emitted verbatim; the platform resolves `${zeropsSubdomainHost}` at e
 
 </block>
 
-<block name="comment-style">
+<block name="comment-voice">
 
-### Comment style (applies to both envComments and zerops.yaml fragments)
+### Comment writing style (applies to both envComments and zerops.yaml fragments)
 
 Recipes are read by both humans and AI agents. Write like a senior dev explaining their config to a colleague — not documentation, not tutorials.
 
@@ -1621,14 +1655,7 @@ Recipes are read by both humans and AI agents. Write like a senior dev explainin
       - go mod download
 ```
 
-**Anti-patterns:**
-- Don't restate the key name ("# Set the build base" on `base: php@8.4`)
-- Don't write generic descriptions ("# This is the build section")
-- Don't add section-heading comments with decorators (`# -- Dev Runtime --`, `# === Database ===`, `# ----------`) — the YAML structure itself provides grouping. Comments explain decisions, not label sections.
 - Don't use "we" or "you" excessively
-- Don't explain YAML syntax itself
-- Don't write single-word comments ("# dependencies", "# port")
-- Don't compress to telegraphic style ("# static bin, no C" — write full sentences)
 
 </block>
 
@@ -1842,6 +1869,7 @@ zerops_workflow action="skip" step="close" reason="Will publish later"
 ### Execution order
 1. Scaffold each codebase on its mount [topic: where-to-write]
 2. Write zerops.yaml — YOU, not a sub-agent [topic: zerops-yaml-rules]
+   - Comment formatting rules [topic: comment-anti-patterns]
    - Dual-runtime URL pattern applies [topic: dual-runtime-urls]
    - Serve-only dev override [topic: serve-only-dev]
    - Multi-base secondary runtime install [topic: multi-base-dev]

@@ -118,6 +118,9 @@ func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int, pro
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		if hasSecret && name == plan.Research.AppSecretKey {
+			continue // already emitted by template
+		}
 		fmt.Fprintf(b, "    %s: %s\n", name, envVars[name])
 	}
 }

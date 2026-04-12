@@ -18,6 +18,11 @@ type Engine struct {
 	completedState *WorkflowState // holds final state after session file is cleaned up
 	environment    Environment
 	knowledge      knowledge.Provider
+	// knowledgeCache caches zerops_knowledge query results for the session
+	// lifetime. Knowledge store content doesn't change within a session, so
+	// caching by query key avoids redundant searches (e.g. cancelled parallel
+	// calls retried by Claude Code).
+	knowledgeCache map[string]any
 }
 
 // NewEngine creates a new workflow engine rooted at baseDir.
@@ -55,7 +60,28 @@ func (e *Engine) setSessionID(id string) {
 // clearSessionID clears the in-memory session reference and removes the disk file.
 func (e *Engine) clearSessionID() {
 	e.sessionID = ""
+	e.knowledgeCache = nil
 	clearActiveSession(e.stateDir)
+}
+
+// GetKnowledgeCache returns a cached knowledge result, or (nil, false) if absent.
+func (e *Engine) GetKnowledgeCache(key string) (any, bool) {
+	if e == nil || e.knowledgeCache == nil {
+		return nil, false
+	}
+	v, ok := e.knowledgeCache[key]
+	return v, ok
+}
+
+// SetKnowledgeCache stores a knowledge result in the session-level cache.
+func (e *Engine) SetKnowledgeCache(key string, value any) {
+	if e == nil {
+		return
+	}
+	if e.knowledgeCache == nil {
+		e.knowledgeCache = make(map[string]any)
+	}
+	e.knowledgeCache[key] = value
 }
 
 // claimSession takes ownership of a session: updates PID, saves state, updates registry.

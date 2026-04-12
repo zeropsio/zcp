@@ -385,6 +385,76 @@ func TestCheckCrossEnvReferences(t *testing.T) {
 	}
 }
 
+func TestValidateImportYAML_DuplicateKeys(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+		wantOK  bool
+	}{
+		{
+			name: "no duplicates",
+			content: `project:
+  name: test-dev
+  envVariables:
+    APP_KEY: secret
+    APP_URL: https://example.com
+services:
+  - hostname: app
+    type: bun@1
+`,
+			wantOK: true,
+		},
+		{
+			name: "duplicate env var key",
+			content: `project:
+  name: test-dev
+  envVariables:
+    APP_KEY: secret
+    APP_URL: https://example.com
+    APP_KEY: other
+services:
+  - hostname: app
+    type: bun@1
+`,
+			wantOK: false,
+		},
+		{
+			name: "duplicate top-level key",
+			content: `project:
+  name: test-dev
+project:
+  name: test-dev2
+services:
+  - hostname: app
+    type: bun@1
+`,
+			wantOK: false,
+		},
+	}
+
+	plan := testFinalizePlan()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			checks := validateImportYAML(tt.content, plan, 0, "test")
+			hasDupeCheck := false
+			for _, c := range checks {
+				if c.Status == statusFail && strings.Contains(c.Name, "duplicate_keys") {
+					hasDupeCheck = true
+				}
+			}
+			if !tt.wantOK && !hasDupeCheck {
+				t.Errorf("expected duplicate_keys check to fail for %q", tt.name)
+			}
+			if tt.wantOK && hasDupeCheck {
+				t.Errorf("expected duplicate_keys check to pass for %q", tt.name)
+			}
+		})
+	}
+}
+
 func TestCheckRecipeFinalize_CommentRatio(t *testing.T) {
 	t.Parallel()
 

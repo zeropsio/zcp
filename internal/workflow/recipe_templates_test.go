@@ -1458,3 +1458,26 @@ func TestBuildFinalizeOutput_SharedWorkerHasNoREADME(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateEnvImportYAML_DuplicateAppSecretDedup(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+	plan.Research.NeedsAppSecret = true
+	plan.Research.AppSecretKey = "APP_KEY"
+	// Agent redundantly passes APP_KEY in projectEnvVariables — template
+	// should emit it only once (from the secret line, not from envVars).
+	plan.ProjectEnvVariables = map[string]map[string]string{
+		"0": {"APP_KEY": "<@generateRandomString(<32>)>", "APP_URL": "https://example.com"},
+	}
+
+	yaml := GenerateEnvImportYAML(plan, 0)
+	count := strings.Count(yaml, "APP_KEY:")
+	if count != 1 {
+		t.Errorf("expected exactly 1 occurrence of APP_KEY, got %d\n\nYAML:\n%s", count, yaml)
+	}
+	// APP_URL should still be present.
+	if !strings.Contains(yaml, "APP_URL:") {
+		t.Errorf("expected APP_URL to be present in YAML output")
+	}
+}

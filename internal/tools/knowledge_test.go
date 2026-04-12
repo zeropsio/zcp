@@ -620,3 +620,50 @@ func TestKnowledgeTool_RecipeWithModeOverride(t *testing.T) {
 		t.Error("standard mode recipe should point to dev setup block")
 	}
 }
+
+func TestKnowledgeTool_QueryCache_DeduplicatesCalls(t *testing.T) {
+	t.Parallel()
+
+	store := &countingKnowledgeStore{Store: testKnowledgeStore(t)}
+	engine := workflow.NewEngine(t.TempDir(), "", nil)
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, engine)
+
+	// First call — hits the store.
+	r1 := callTool(t, srv, "zerops_knowledge", map[string]any{"query": "postgresql", "limit": 3})
+	if r1.IsError {
+		t.Fatalf("first call failed: %s", getTextContent(t, r1))
+	}
+
+	// Second identical call — should be cached.
+	r2 := callTool(t, srv, "zerops_knowledge", map[string]any{"query": "postgresql", "limit": 3})
+	if r2.IsError {
+		t.Fatalf("second call failed: %s", getTextContent(t, r2))
+	}
+
+	if store.searchCount != 1 {
+		t.Errorf("expected store.Search called once (cached), got %d", store.searchCount)
+	}
+
+	// Different query — should hit the store again.
+	r3 := callTool(t, srv, "zerops_knowledge", map[string]any{"query": "valkey", "limit": 3})
+	if r3.IsError {
+		t.Fatalf("third call failed: %s", getTextContent(t, r3))
+	}
+
+	if store.searchCount != 2 {
+		t.Errorf("expected store.Search called twice (different query), got %d", store.searchCount)
+	}
+}
+
+// countingKnowledgeStore wraps a knowledge.Store and counts Search calls.
+type countingKnowledgeStore struct {
+	*knowledge.Store
+	searchCount int
+}
+
+func (c *countingKnowledgeStore) Search(query string, limit int) []knowledge.SearchResult {
+	c.searchCount++
+	return c.Store.Search(query, limit)
+}
