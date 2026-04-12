@@ -154,7 +154,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 	},
 	ShapeDualRuntimeShowcase: {
 		RecipeStepResearch:  10 * 1024,
-		RecipeStepProvision: 19 * 1024,
+		RecipeStepProvision: 23 * 1024,
 		RecipeStepGenerate:  42 * 1024,
 		RecipeStepDeploy:    36 * 1024,
 		RecipeStepFinalize:  18 * 1024,

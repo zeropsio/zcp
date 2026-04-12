@@ -103,6 +103,13 @@ var serveOnlyBases = map[string]struct{}{
 // hasServeOnlyProd returns true when any prod-facing (non-worker) target
 // runs on a serve-only base and therefore needs a dev-base override at
 // generate.
+//
+// Note: a serve-only prod target with build.base: nodejs@22 is NOT multi-base —
+// it's a single-base build (nodejs) with a different run.base (static/nginx).
+// The multi-base path (needsMultiBaseGuidance) covers cross-runtime builds
+// like php@8.3 + nodejs@22. The serve-only path covers same-runtime builds
+// where the prod container is serve-only and the dev container overrides to
+// the toolchain runtime.
 func hasServeOnlyProd(p *RecipePlan) bool {
 	if p == nil {
 		return false

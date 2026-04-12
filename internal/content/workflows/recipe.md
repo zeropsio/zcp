@@ -141,13 +141,30 @@ Recipes always use **standard mode**: each runtime gets a `{name}dev` + `{name}s
 
 **DO NOT add `zeropsSetup` or `buildFromGit` to the workspace import.** These fields require each other — `zeropsSetup` without `buildFromGit` causes API errors. The workspace deploys via `zerops_deploy` with the `setup` parameter instead.
 
+**Serve-only targets need a toolchain-capable service type for dev.** If the plan's
+target type is a serve-only base (static, nginx), the `{name}dev` service must use a
+different type that can host the framework's dev toolchain — typically the same runtime
+the zerops.yaml's `build.base` will use (e.g. `nodejs@22` for a Vite/Svelte SPA). The
+serve-only base is a prod-only concern (the zerops.yaml's `setup: prod` uses
+`run.base: static`); the dev container needs a shell, a package manager, and the dev
+server binary. The `{name}stage` service keeps the plan's target type because stage
+runs the prod setup via cross-deploy. Example: plan target `type: static` →
+`appdev type: nodejs@22` + `appstage type: static`.
+
 Dev starts immediately with an empty container (RUNNING). Stage stays in READY_TO_DEPLOY until first deploy from dev.
 
 </block>
 
 <block name="import-yaml-static-frontend">
 
-**Static frontends (type 2a):** `run.base: static` serves via built-in Nginx — both dev and stage use `type: static`. Dev still gets `startWithoutCode: true` for the build container. The runtime for building is `nodejs@22` (or similar) as `build.base` in zerops.yaml, NOT as the service type.
+**Static frontends (type 2a):** `run.base: static` serves via built-in Nginx — stage uses `type: static`. Dev still gets `startWithoutCode: true` for the build container. The runtime for building is `nodejs@22` (or similar) as `build.base` in zerops.yaml, NOT as the service type.
+
+**Service type for dev**: use the toolchain runtime (typically `nodejs@22` or `bun@1`)
+as the service type for `{name}dev`, not `static`. The dev container must host the
+framework's dev server (Vite, webpack, etc.) over SSH — a static/Nginx container
+has no shell, no package manager, and no Node. The `{name}stage` service keeps
+`type: static` because it runs `setup: prod` (cross-deploy from dev builds the
+bundle, Nginx serves it).
 
 **If the plan has NO database** (type 2a static frontend): the import.yaml only contains the app dev/stage pair.
 
@@ -178,6 +195,26 @@ For correlated secrets, encoded variants, or key pairs, call `zerops_preprocess`
 <block name="import-yaml-dual-runtime">
 
 **Dual-runtime URL constants** (API-first recipes only — skip for single-runtime): after services reach RUNNING, set project-level `DEV_*` + `STAGE_*` URL constants with `zerops_env project=true action=set` so the generate step can reference them in zerops.yaml. The full format, consumption pattern, and the `projectEnvVariables` handoff to finalize are documented in the generate step under "Dual-runtime URL env-var pattern" — set the same values now as will be passed there.
+
+**URL shape — port suffix rule.** Dynamic runtime services (nodejs, php-nginx, go, etc.)
+include the port in their subdomain URL: `https://{hostname}-${zeropsSubdomainHost}-{port}.prg1.zerops.app`.
+Serve-only/static services omit the port segment: `https://{hostname}-${zeropsSubdomainHost}.prg1.zerops.app`.
+The port comes from the target's `run.ports[0].port` in zerops.yaml — you're writing
+zerops.yaml at the next step but you already know the port from the plan's `httpPort`
+research field (e.g. 3000 for NestJS, 5173 for Vite dev, 80 for static). Set the URL
+constants with the correct port suffix NOW, at provision, to avoid costly re-sets later
+(each `zerops_env set` restarts all affected containers, killing any SSH-launched
+processes). Static frontends in dev mode (Vite on port 5173) use the dev server port,
+not port 80 — the dev setup overrides the static base with a toolchain runtime.
+
+The generate step's "Dual-runtime URL env-var pattern" section has the full 6-env
+breakdown (DEV_* + STAGE_* for envs 0-1, STAGE_* only for envs 2-5). At provision
+you only need the workspace pair: set DEV_* and STAGE_* with the correct port suffixes.
+
+**Batch all project-level env vars into a single `zerops_env set` call.** Each call
+restarts every container that reads project-level vars. Multiple calls in sequence
+trigger multiple cascading restarts, each killing any SSH-launched processes. Set
+JWT_SECRET, all DEV_* URLs, and all STAGE_* URLs in one invocation.
 
 </block>
 
@@ -260,6 +297,14 @@ ssh {hostname} "git config --global --add safe.directory /var/www && git config 
 ```
 
 Without zcp-side config: `git commit` on the mount fails with `fatal: detected dubious ownership`. Without container-side config: `zerops_deploy` fails with `fatal: not in a git directory`. Both errors are 100% reproducing on first use — do not try to "commit without configuring and see what happens".
+
+**Ownership fix after git init.** SSHFS-created files are owned by `root` (the MCP
+agent's user). The deploy process runs as `zerops` (uid 2023) inside the container and
+must be able to lock `.git/config`. After `git init` + first commit on the SSHFS mount,
+run `sudo chown -R zerops:zerops /var/www/.git` on each dev container via SSH. Without
+this, the first `zerops_deploy` fails with `fatal: could not lock config file
+.git/config: Permission denied`. Do this once per mount, immediately after the initial
+commit — subsequent SSHFS writes to tracked files don't touch `.git/` internals.
 
 </block>
 
@@ -555,6 +600,15 @@ Recipe-specific conventions for each setup (platform rules from provision apply 
 <block name="serve-only-dev-override">
 
 - **Serve-only runtimes** (`static`, standalone `nginx`, any future serve-only base): these host no toolchain — `run.base: static` is a **prod-only concern**. For the dev setup, pick a different `run.base` that CAN host the framework's dev toolchain — typically the same base that already exists under `build.base` for that setup (e.g. `nodejs@22` for a Vite/Svelte SPA whose prod is `static`). `run.base` may differ between setups inside the same zerops.yaml; the platform supports this and it's the intended pattern for serve-only prod artifacts. `deployFiles: [.]` still applies on dev regardless of `run.base` choice.
+
+- **Serve-only prod `deployFiles` — use the tilde suffix.** When `setup: prod` uses
+  `run.base: static` (or `nginx`), the build step compiles assets into a subdirectory
+  (e.g. `./dist/`). Nginx serves from `/var/www/`, so `deployFiles: ./dist` ships the
+  directory wrapper and files land at `/var/www/dist/index.html` — a 404 at root. The
+  tilde suffix (`./dist/~`) strips the parent directory prefix: files land directly at
+  `/var/www/index.html`. This is a platform convention, not documented in framework
+  guides. Always use `./dist/~` (or the equivalent output path) for static-base prod
+  setups.
 
 </block>
 
@@ -1197,6 +1251,13 @@ zerops_verify serviceHostname="apistage"                         # API-first onl
 zerops_logs serviceHostname="workerstage" limit=20               # showcase only (worker has no HTTP)
 ```
 
+**`zerops_verify` is mandatory for every runtime target after every deploy — dev and stage.**
+It runs a standardized check suite that catches readiness-probe misconfiguration, env-var
+binding failures, and container state inconsistencies that `curl` alone misses. Call it
+for every `{name}dev` after self-deploy, and for every `{name}stage` after cross-deploy.
+Worker targets without HTTP: skip `zerops_verify` (it checks HTTP endpoints), verify via
+`zerops_logs` instead.
+
 **Step 8: Present URLs**
 
 </block>
@@ -1237,6 +1298,8 @@ This identifies *which* initCommand failed. For *why* it failed, fetch runtime l
 | Stage deploy fails | zerops.yaml setup name doesn't match --setup param | Ensure `setup: prod` in zerops.yaml and `setup="prod"` in zerops_deploy |
 | Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |
 | Static site 404 | Wrong `documentRoot` | Match to actual build output directory |
+| Permission denied on `.git/config` | `.git/` created by root (SSHFS), deploy runs as `zerops` | `ssh {hostname} "sudo chown -R zerops:zerops /var/www/.git"` on each dev container before first deploy |
+| Env var not updating after zerops.yaml fix | Service-level env var (set via `zerops_env`) shadows zerops.yaml `run.envVariables` | Delete the service-level var (`zerops_env action="delete"`) before redeploying. Never use `zerops_env set serviceHostname=...` as a debugging shortcut for vars that belong in zerops.yaml — the service-level var takes precedence on every subsequent deploy, silently ignoring your zerops.yaml fix. Fix the zerops.yaml and redeploy; if you need to verify a value quickly, read it from logs after deploy, don't inject it as a service-level var. |
 
 </block>
 
