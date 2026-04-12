@@ -58,39 +58,46 @@ func recipeKnowledgeChain(plan *RecipePlan, kp knowledge.Provider) string {
 
 	var parts []string
 
-	for _, c := range candidates {
-		tierDelta := currentRank - c.rank // 1 = direct predecessor, 2+ = earlier ancestor
+	// Direct predecessor (tier delta 1): delegate selection to the shared
+	// helper so the floor check in the tools layer resolves the SAME
+	// predecessor this function emits. If this function chose one recipe
+	// and PredecessorGotchaStems chose another, the floor would compare
+	// against content the agent was never shown.
+	if _, content, ok := findDirectPredecessor(plan, kp); ok {
+		// Direct predecessor: Gotchas H2 + zerops.yaml template fence.
+		// Integration-step prose (trust proxy, bind 0.0.0.0, env var
+		// wiring) is dropped — it teaches existing-app integration, not
+		// from-scratch generation. The YAML fence carries the framework
+		// pattern; prose is noise for the generating agent.
+		if extracted := extractForPredecessor(content); extracted != "" {
+			// Use the predecessor's name for the header (re-find to avoid
+			// an extra field dance — findDirectPredecessor returns it).
+			name, _, _ := findDirectPredecessor(plan, kp)
+			header := fmt.Sprintf("## %s Recipe Knowledge (predecessor)\n\nGotchas + zerops.yaml template from the direct predecessor recipe. Use the template as your starting point; adapt keys/services to your targets.\n\n",
+				name)
+			parts = append(parts, header+extracted)
+		}
+	}
 
+	// Earlier ancestors (tier delta ≥ 2): Gotchas only. Skip any candidate
+	// at delta 1 — that's covered above. Return empty if the recipe has
+	// no ## Gotchas H2 — do NOT emit title-intro filler as fake gotchas,
+	// which the old extractor did.
+	for _, c := range candidates {
+		if currentRank-c.rank < 2 {
+			continue
+		}
 		content, err := kp.GetRecipe(c.name, "")
 		if err != nil || content == "" {
 			continue
 		}
-
-		if tierDelta == 1 {
-			// Direct predecessor: Gotchas H2 + zerops.yaml template fence.
-			// Integration-step prose (trust proxy, bind 0.0.0.0, env var
-			// wiring) is dropped — it teaches existing-app integration, not
-			// from-scratch generation. The YAML fence carries the framework
-			// pattern; prose is noise for the generating agent.
-			extracted := extractForPredecessor(content)
-			if extracted == "" {
-				continue
-			}
-			header := fmt.Sprintf("## %s Recipe Knowledge (predecessor)\n\nGotchas + zerops.yaml template from the direct predecessor recipe. Use the template as your starting point; adapt keys/services to your targets.\n\n",
-				c.name)
-			parts = append(parts, header+extracted)
-		} else {
-			// Earlier ancestor (tier delta ≥ 2): Gotchas only. Return empty
-			// if the recipe has no ## Gotchas H2 — do NOT emit title-intro
-			// filler as fake gotchas, which the old extractor did.
-			extracted := extractForAncestor(content)
-			if extracted == "" {
-				continue
-			}
-			header := fmt.Sprintf("## %s Platform Knowledge (ancestor gotchas)\n\nPlatform-specific gotchas from a more basic recipe in the same runtime. zerops.yaml config is omitted — your recipe has its own.\n\n",
-				c.name)
-			parts = append(parts, header+extracted)
+		extracted := extractForAncestor(content)
+		if extracted == "" {
+			continue
 		}
+		header := fmt.Sprintf("## %s Platform Knowledge (ancestor gotchas)\n\nPlatform-specific gotchas from a more basic recipe in the same runtime. zerops.yaml config is omitted — your recipe has its own.\n\n",
+			c.name)
+		parts = append(parts, header+extracted)
 	}
 
 	if len(parts) == 0 {
@@ -103,6 +110,38 @@ func recipeKnowledgeChain(plan *RecipePlan, kp knowledge.Provider) string {
 type relatedRecipe struct {
 	name string
 	rank int
+}
+
+// findDirectPredecessor resolves the direct predecessor recipe (tier delta
+// exactly 1) for the given plan and returns its name and content. Shared
+// by recipeKnowledgeChain (generate-step guidance injection) and
+// PredecessorGotchaStems (generate-step floor check) so both surfaces see
+// the same predecessor. If the plan has no predecessor — hello-world tier,
+// unknown slug, no framework match, or empty store — returns ("", "", false)
+// without error.
+func findDirectPredecessor(plan *RecipePlan, kp knowledge.Provider) (string, string, bool) {
+	if plan == nil || kp == nil {
+		return "", "", false
+	}
+	currentRank := recipeTierRank(plan.Slug)
+	if currentRank <= 0 {
+		return "", "", false
+	}
+	runtimeBase, _, _ := strings.Cut(plan.RuntimeType, "@")
+	runtimeBase = normalizeRuntimeBase(runtimeBase)
+	allRecipes := kp.ListRecipes()
+	candidates := findRelatedRecipes(allRecipes, plan.Framework, runtimeBase, plan.Slug)
+	for _, c := range candidates {
+		if currentRank-c.rank != 1 {
+			continue
+		}
+		content, err := kp.GetRecipe(c.name, "")
+		if err != nil || content == "" {
+			continue
+		}
+		return c.name, content, true
+	}
+	return "", "", false
 }
 
 // findRelatedRecipes searches the recipe store for recipes related to the

@@ -152,7 +152,7 @@ func TestCheckRecipeGenerate_ValidMinimal(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir, nil)
+	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -195,7 +195,7 @@ func TestCheckRecipeGenerate_MissingProdSetup(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir, nil)
+	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -253,7 +253,7 @@ func TestCheckRecipeGenerate_DevProdBitIdentical(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir, nil)
+	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -298,7 +298,7 @@ func TestCheckRecipeGenerate_MissingFragments(t *testing.T) {
 	// README without any fragments.
 	writeFile(t, filepath.Join(appDir, "README.md"), "# App\nJust a basic readme.")
 
-	checker := checkRecipeGenerate(stateDir, nil)
+	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -375,7 +375,7 @@ zerops:
 `
 	writeFile(t, filepath.Join(appDir, "README.md"), readme)
 
-	checker := checkRecipeGenerate(stateDir, nil)
+	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -441,7 +441,7 @@ zerops:
 `
 	writeFile(t, filepath.Join(appDir, "README.md"), readme)
 
-	checker := checkRecipeGenerate(stateDir, nil)
+	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -636,7 +636,7 @@ func TestCheckRecipeGenerate_ShowcaseMissingWorkerSetup(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir, nil)
+	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), testShowcasePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -715,7 +715,7 @@ func TestCheckRecipeGenerate_ShowcaseWithWorkerSetup(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir, nil)
+	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), testShowcasePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -888,7 +888,7 @@ func TestCheckRecipeGenerate_SchemaFieldValidation(t *testing.T) {
 			writeFile(t, filepath.Join(appDir, "zerops.yaml"), tt.yaml)
 			writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-			checker := checkRecipeGenerate(stateDir, vf)
+			checker := checkRecipeGenerate(stateDir, vf, nil)
 			result, err := checker(context.Background(), plan, testRecipeState())
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -1029,7 +1029,7 @@ func TestCheckRecipeGenerate_DualRuntime(t *testing.T) {
 	writeFile(t, filepath.Join(apiDir, "zerops.yaml"), apiZeropsYamlWithWorker)
 	writeFile(t, filepath.Join(apiDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir, nil)
+	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), plan, testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1130,7 +1130,7 @@ func TestCheckRecipeGenerate_SingleAppShowcase_WorkerRequired(t *testing.T) {
 `)
 	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
 
-	checker := checkRecipeGenerate(stateDir, nil)
+	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), plan, testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -890,6 +890,19 @@ Must contain:
 - `### Gotchas` section with at least 2 framework-specific pitfalls on Zerops
 - Zerops-specific behavior that differs from standard expectations (e.g., no .env file, base image contents, pdo extension availability)
 
+**The injected predecessor recipe's gotchas are a starting inventory, not the answer.** The generate step injects the direct predecessor recipe's `## Gotchas` section into your context so you have a working baseline. Treat it as a **floor, not a ceiling**:
+
+1. **Re-evaluate each predecessor gotcha** against this recipe's actual library and architecture choices. Keep the ones that still apply (same ORM, same runtime model, same framework idiom). Drop the ones that don't (e.g. swap TypeORM for Prisma → the `synchronize: true` gotcha is irrelevant; swap Express for Fastify → the trust-proxy gotcha doesn't apply).
+2. **Add net-new gotchas narrated from what actually happened during THIS build.** The predecessor covers only the services and patterns its own tier provisions — a hello-world has no managed services, a minimal usually has just a database. A showcase adds caches, queues, object storage, search engines, background workers, frontend build pipelines, cross-service env wiring. Every one of those is a surface where you made decisions, hit bugs, and worked around platform behavior. Write those up.
+3. **Each README's knowledge-base is validated against the predecessor baseline.** Showcase-tier runs fail if the knowledge-base fragment is mostly a clone of the predecessor — the check counts gotcha stems that don't match any predecessor stem and requires at least 2 per README. Cloning the predecessor gotchas verbatim (or with cosmetic rewording like "needs" → "requires") does not clear the floor.
+
+Sources of narratable gotchas from this session (use these as raw material):
+- **Managed services not in the predecessor** — cache connection patterns, queue client auth, S3 path-style, search index rebuilds. One per service is the minimum.
+- **Framework-library quirks discovered at generate time** — ESM/CJS mismatches, peer dep conflicts, build-time vs run-time env var boundaries.
+- **Deploy failures you fixed** — build output mismatches, stale build artifacts committed to git, readiness check timing, migration races, init-command gating.
+- **Feature-implementation decisions** — why you chose one client library over another, why a workaround exists, what the alternative would have broken.
+- **Platform behavior that surprised you** — not "what Zerops does" in general, but "what Zerops did differently from what I expected while building this specific recipe."
+
 **What belongs in knowledge-base vs integration-guide:**
 - If it's a **required code change** → integration-guide step (the user needs to do this)
 - If it's a **gotcha or quirk** the user should know about → knowledge-base (awareness, not action)
@@ -899,6 +912,7 @@ Do NOT include:
 - Config values already visible in zerops.yaml (don't re-explain what the comments already cover)
 - Platform universals (build/run separation, L7 routing, tilde behavior, autoscaling timing)
 - Generic framework knowledge (how the framework works, what build tools do)
+- **Verbatim paraphrases of the predecessor recipe's gotchas** — the predecessor is already in the injected chain; your job is to extend it, not mirror it.
 
 ### intro Fragment
 - 1-3 lines only
@@ -917,6 +931,7 @@ Do NOT include:
 - **All env var references must use discovered variable names** — never guess.
 - **Comments explain WHY, not WHAT** — don't restate the key name.
 - **Max 80 chars per comment line**.
+- **Numeric claims in comments must match the adjacent YAML value.** If a comment says "10 GB quota" and the next line is `objectStorageSize: 1`, the comment is lying — it lies to the reader, it lies to the agent who reads the recipe later as a predecessor, and the finalize check will reject it. The enforced patterns today are storage quota (`N GB` vs `objectStorageSize`) and container count (`minContainers N` vs `minContainers:`). Either write the real number, drop the number from the comment, or phrase it aspirationally ("1 GB default — bump via the GUI when usage grows"). Aspirational phrasing skips the check because it names a future value, not the current one. Non-numeric facts (`mode: HA`, `cpuMode: DEDICATED`, `corePackage: SERIOUS`) aren't linted yet but the same discipline applies — don't narrate a fact you haven't actually configured.
 
 Writing-style voice (the "developer to developer" tone, anti-patterns, correct-style example) lives at **finalize** under "Comment style" — read it there when you write `envComments`. The same voice applies to the zerops.yaml comments you write here.
 </section>

@@ -238,6 +238,12 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 	// Comment line width.
 	checks = append(checks, checkCommentWidth(content, prefix)...)
 
+	// Factual-claim linter: declarative numeric claims in comments
+	// ("10 GB quota", "minContainers 3") must match the adjacent YAML
+	// value in the same service block. Subjunctive phrasing ("bump to
+	// N GB when usage grows") is allowed. See checkFactualClaims.
+	checks = append(checks, checkFactualClaims(content, prefix)...)
+
 	// Section-heading comment patterns — labels, not explanations.
 	checks = append(checks, checkSectionHeadingComments(content, prefix)...)
 

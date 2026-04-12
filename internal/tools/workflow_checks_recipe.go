@@ -9,13 +9,18 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // buildRecipeStepChecker returns a step checker for the given recipe step.
-func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schemaCache *schema.Cache) workflow.RecipeStepChecker {
+// kp is the knowledge provider from the engine — used by generate-step
+// checks that need to read the injected chain recipe (e.g. the
+// predecessor-as-floor knowledge-base check). Pass nil in tests that
+// don't need chain access; checks that depend on it no-op gracefully.
+func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schemaCache *schema.Cache, kp knowledge.Provider) workflow.RecipeStepChecker {
 	switch step {
 	case workflow.RecipeStepGenerate:
 		var validFields *schema.ValidFields
@@ -24,7 +29,7 @@ func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schem
 				validFields = schema.ExtractValidFields(schemas.ZeropsYml)
 			}
 		}
-		return checkRecipeGenerate(stateDir, validFields)
+		return checkRecipeGenerate(stateDir, validFields, kp)
 	case workflow.RecipeStepFinalize:
 		return checkRecipeFinalizeFromState(stateDir)
 	}
@@ -56,7 +61,8 @@ var requiredFragments = []string{"integration-guide", "knowledge-base", "intro"}
 // checkRecipeGenerate validates the generate step for recipe workflow.
 // Extends bootstrap's checkGenerate with recipe-specific fragment quality checks.
 // validFields, when non-nil, enables zerops.yaml field validation against the live JSON schema.
-func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields) workflow.RecipeStepChecker {
+// kp, when non-nil, enables the predecessor-as-floor check on each codebase's README.
+func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp knowledge.Provider) workflow.RecipeStepChecker {
 	return func(_ context.Context, plan *workflow.RecipePlan, state *workflow.RecipeState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
@@ -65,6 +71,13 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields) workf
 		projectRoot := projectRootFromState(stateDir)
 
 		var checks []workflow.StepCheck
+
+		// Pre-resolve the predecessor recipe's gotcha stems once for the
+		// whole run — every codebase README on this plan compares against
+		// the same predecessor baseline, so we only hit the knowledge store
+		// once per check invocation. Empty when kp is nil (test context) or
+		// when there is no direct predecessor (hello-world tier).
+		predecessorStems := workflow.PredecessorGotchaStems(plan, kp)
 
 		// Collect ALL non-worker runtime targets (frontend + API in dual-runtime recipes).
 		var appTargets []workflow.RecipeTarget
@@ -120,6 +133,17 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields) workf
 					Name: hostname + "_readme_exists", Status: statusPass,
 				})
 				checks = append(checks, checkReadmeFragments(string(readmeContent))...)
+
+				// Predecessor-as-floor check: the showcase's knowledge-base
+				// must contain net-new gotchas, not clones of the injected
+				// predecessor recipe's Gotchas section. Per-target so a
+				// dual-runtime recipe can't pass by piling every new gotcha
+				// into the API README while the frontend clones only.
+				floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems)
+				for i := range floorChecks {
+					floorChecks[i].Name = hostname + "_" + floorChecks[i].Name
+				}
+				checks = append(checks, floorChecks...)
 			}
 		}
 
