@@ -817,11 +817,16 @@ The dev containers are live development environments — validate code ON the co
    ```
 
 3. **Start the dev server** — start the dev process and verify it binds to the expected port from the plan's research data. Connection errors to managed services are EXPECTED (env vars are not active yet). The goal is "process starts and binds to the port", not "app serves requests." If the process crashes immediately, this catches native binding mismatches, missing modules, and config errors.
-   ```
-   ssh {hostname}dev "cd /var/www && {startCommand} &"
-   sleep 3
-   ssh {hostname}dev "curl -s -o /dev/null -w '%{http_code}' http://localhost:{httpPort}/ || echo 'port not bound'"
-   ```
+   - **Implicit-webserver runtimes** (php-nginx, php-apache, nginx): Skip the start command — the webserver auto-starts when the container is in RUNNING state. Verify by curling the port directly:
+     ```
+     ssh {hostname}dev "curl -s -o /dev/null -w '%{http_code}' http://localhost:{httpPort}/"
+     ```
+   - **All other runtimes**: start the dev process explicitly:
+     ```
+     ssh {hostname}dev "cd /var/www && {startCommand} &"
+     sleep 3
+     ssh {hostname}dev "curl -s -o /dev/null -w '%{http_code}' http://localhost:{httpPort}/ || echo 'port not bound'"
+     ```
 
 **What's available vs what's not**: these commands use only the base image's tools (runtime + package manager). `run.envVariables` are NOT available yet — that's fine, the smoke test doesn't need them. The constraint "do not run commands that bootstrap the framework" means "don't connect to databases", NOT "don't validate your code compiles."
 
@@ -920,7 +925,8 @@ The step numbers below are reference labels, NOT a linear script. For dual-runti
 
 | Recipe type             | Order                                                                                                                            |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Single-runtime          | **Step 1 → Step 2 (2a/2b/2c) → Step 3 → Step 3a → Step 4 → Step 4b → Step 4c**                                                   |
+| Single-runtime (non-showcase) | **Step 1 → Step 2 (2a/2b/2c) → Step 3 → Step 3a → Step 4**                                                                |
+| Single-runtime (showcase) | **Step 1 → Step 2 (2a/2b/2c) → Step 3 → Step 3a → Step 4 → Step 4b → Step 4c**                                              |
 | Dual-runtime (API-first) | **Step 1-API → Step 2a-API → Step 3-API (verify apidev only) → Step 1 → Step 2 (2a/2b/2c) → Step 3 → Step 3a (BOTH containers) → Step 4 → Step 4b → Step 4c** |
 
 API-first teams: the steps labelled `-API` run FIRST; do not try to verify `appdev` (Step 3) before `appdev` has been deployed (Step 1). Step 3a runs once, at the end, reading logs from both `apidev` and `appdev` together.
@@ -1038,7 +1044,8 @@ Verify `/api/health` returns 200 via curl. THEN return to Step 1 to deploy appde
 **Verify ALL runtime targets — not just the primary app.** After completing dev deploys, every runtime target must be verified. HTTP targets use `zerops_verify` + `zerops_subdomain`; non-HTTP targets (workers) use `zerops_logs` to confirm the process started. Enumerate by plan shape:
 
 - **Single-runtime minimal**: `appdev` (HTTP — verify + subdomain)
-- **Single-runtime showcase**: `appdev` (HTTP) + `workerdev` (logs only — no HTTP endpoint)
+- **Single-runtime showcase (shared worker)**: `appdev` (HTTP — verify + subdomain; worker logs also live in `appdev` since the worker runs as a background process on the host target's container)
+- **Single-runtime showcase (separate worker)**: `appdev` (HTTP) + `workerdev` (logs only — no HTTP endpoint)
 - **Dual-runtime minimal**: `appdev` (HTTP) + `apidev` (HTTP)
 - **Dual-runtime showcase**: `appdev` (HTTP) + `apidev` (HTTP) + `workerdev` (logs only)
 

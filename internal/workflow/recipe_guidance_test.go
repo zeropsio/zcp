@@ -131,7 +131,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 	ShapeHelloWorld: {
 		RecipeStepResearch:  5 * 1024,
 		RecipeStepProvision: 18 * 1024,
-		RecipeStepGenerate:  20 * 1024,
+		RecipeStepGenerate:  22 * 1024,
 		RecipeStepDeploy:    24 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
@@ -139,7 +139,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 	ShapeBackendMinimal: {
 		RecipeStepResearch:  5 * 1024,
 		RecipeStepProvision: 18 * 1024,
-		RecipeStepGenerate:  28 * 1024,
+		RecipeStepGenerate:  30 * 1024,
 		RecipeStepDeploy:    24 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
@@ -147,7 +147,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 	ShapeFullStackShowcase: {
 		RecipeStepResearch:  10 * 1024,
 		RecipeStepProvision: 18 * 1024,
-		RecipeStepGenerate:  40 * 1024,
+		RecipeStepGenerate:  43 * 1024,
 		RecipeStepDeploy:    42 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
@@ -609,13 +609,14 @@ func TestBuildGenerateRetryDelta_ShapeSpecificBranches(t *testing.T) {
 			// fullstack-showcase: shared-codebase worker → setup: worker
 			// reminder fires. BuildCommands include `npm ci` on a php-nginx
 			// primary → needsMultiBaseGuidance fires → multi-base bullet
-			// also fires. Not dual-runtime, framework isn't bundler — those
-			// two must stay out.
-			name: "fullstack-showcase/shared-worker-and-multibase",
+			// fires AND hasBundlerDevServer fires (multi-base implies a
+			// secondary JS dev server needing host-check config). Not
+			// dual-runtime — that one must stay out.
+			name: "fullstack-showcase/shared-worker-and-multibase-and-bundler",
 			plan: fixtureForShape(ShapeFullStackShowcase),
-			must: []string{sharedWorkerNeedle, multiBaseNeedle},
+			must: []string{sharedWorkerNeedle, multiBaseNeedle, bundlerHostNeedle},
 			mustNot: []string{
-				dualRuntimeNeedle, bundlerHostNeedle,
+				dualRuntimeNeedle,
 			},
 		},
 		{
@@ -762,12 +763,14 @@ func TestBuildDeployRetryDelta_ShapeSpecificBranches(t *testing.T) {
 		},
 		{
 			// fullstack-showcase: shared-codebase worker (laravel + Horizon
-			// pattern) + showcase. Not dual-runtime, framework isn't bundler.
-			name: "fullstack-showcase/shared-worker-plus-showcase",
+			// pattern) + showcase + bundler dev server (multi-base: secondary
+			// JS runtime for asset compilation runs a dev server). Not
+			// dual-runtime.
+			name: "fullstack-showcase/shared-worker-bundler-plus-showcase",
 			plan: fixtureForShape(ShapeFullStackShowcase),
-			must: []string{sharedWorkerNeedle, showcaseNeedle},
+			must: []string{sharedWorkerNeedle, showcaseNeedle, bundlerHostNeedle},
 			mustNot: []string{
-				dualRuntimeNeedle, bundlerHostNeedle, separateWorkerNeedle,
+				dualRuntimeNeedle, separateWorkerNeedle,
 			},
 		},
 		{
