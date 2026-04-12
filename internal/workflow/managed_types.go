@@ -8,6 +8,7 @@ const (
 	svcPostgreSQL  = "postgresql"
 	svcMariaDB     = "mariadb"
 	svcMeilisearch = "meilisearch"
+	svcStatic      = "static"
 )
 
 // Service-kind constants — returned by serviceTypeKind and used by validation.

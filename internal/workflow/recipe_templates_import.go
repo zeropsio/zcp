@@ -144,7 +144,7 @@ func writeDevService(b *strings.Builder, plan *RecipePlan, target RecipeTarget, 
 	writeAgentCommentAtIndent(b, comment, "  ")
 
 	fmt.Fprintf(b, "  - hostname: %s\n", devHost)
-	fmt.Fprintf(b, "    type: %s\n", target.Type)
+	fmt.Fprintf(b, "    type: %s\n", devServiceType(target))
 	// Priority: API services start before frontends.
 	if target.Role == RecipeRoleAPI {
 		b.WriteString("    priority: 5\n")

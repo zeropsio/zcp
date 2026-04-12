@@ -14,7 +14,7 @@ func ResolveWebServer(runtimeType string, hasNativeHTTP bool) string {
 	}
 
 	// Static runtimes (nginx, static) use nginx-proxy.
-	if base == "nginx" || base == "static" {
+	if base == "nginx" || base == svcStatic {
 		return "nginx-proxy"
 	}
 

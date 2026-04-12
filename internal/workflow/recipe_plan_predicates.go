@@ -96,8 +96,25 @@ func hasSeparateCodebaseWorker(p *RecipePlan) bool {
 // prod target uses one of these must switch to a compile-capable base in
 // the setup:dev block or dev mode has nothing to run.
 var serveOnlyBases = map[string]struct{}{
-	"static": {},
-	"nginx":  {},
+	svcStatic: {},
+	"nginx":   {},
+}
+
+// isServeOnlyType returns true if the base of the service type is serve-only.
+func isServeOnlyType(serviceType string) bool {
+	base, _, _ := strings.Cut(serviceType, "@")
+	_, ok := serveOnlyBases[base]
+	return ok
+}
+
+// devServiceType returns the service type to use for a dev environment
+// (env 0-1). For serve-only targets with a DevBase set, returns DevBase.
+// For all others, returns the target's Type unchanged.
+func devServiceType(target RecipeTarget) string {
+	if target.DevBase != "" && isServeOnlyType(target.Type) {
+		return target.DevBase
+	}
+	return target.Type
 }
 
 // hasServeOnlyProd returns true when any prod-facing (non-worker) target

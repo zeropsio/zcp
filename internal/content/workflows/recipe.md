@@ -594,6 +594,8 @@ Recipe-specific conventions for each setup (platform rules from provision apply 
 - **NO healthCheck, NO readinessCheck** — agent controls lifecycle; checks would restart the container during iteration
 - Framework mode flags set to dev values (`APP_ENV: local`, `NODE_ENV: development`, `DEBUG: "true"`, verbose logging)
 - Same cross-service refs from `zerops_discover` as prod — only mode flags differ
+- **No `run.os` override by default** — the agent operates from zcp (which has full Ubuntu tooling via SSH proxy). The dev container needs only the runtime and its package manager — both are in the base image already. Omitting `run.os` means build and run use the same default OS, eliminating native binding mismatches entirely. Exception: if the on-container smoke test reveals a hard glibc-only dependency (the dev server crashes on the default OS), THEN add `run.os` with an appropriate OS AND add the package manager's rebuild command to `initCommands`. This is a reactive exception discovered during validation, not a proactive default.
+- **Dev ports for dev-server targets** — if `setup: dev` runs a dev server process (any framework with a bundler, HMR server, or dev-mode HTTP server on a non-standard port), `ports` MUST be declared with the dev server's port (from the plan's research data) and `httpSupport: true`. Without it, subdomain access cannot be enabled (`serviceStackIsNotHttp` error). This applies specifically when the dev setup's runtime differs from the prod setup's (e.g., prod is serve-only, dev runs a dev server on an explicit port).
 
 </block>
 
@@ -796,11 +798,44 @@ Description of why this change is needed.
 
 </block>
 
+<block name="on-container-smoke-test">
+
+### On-container smoke test
+
+The dev containers are live development environments — validate code ON the container before deploying. `zerops_deploy` triggers a full build cycle (30s–3min); catching dependency errors, type errors, and startup crashes on the container takes seconds.
+
+**Three validation steps** (derive every command from the plan's research data — package manager, compile command, start command, HTTP port):
+
+1. **Install dependencies on the container** — run the plan's package manager install command via SSH on each dev container. This catches hallucinated packages, version conflicts, and peer dependency mismatches in seconds instead of after a build cycle.
+   ```
+   ssh {hostname}dev "cd /var/www && {packageManagerInstallCommand}"
+   ```
+
+2. **Compile/check** (if the framework has a compilation step) — run the relevant compile or type-check command from the plan's research data. This catches type errors, syntax errors, and missing imports.
+   ```
+   ssh {hostname}dev "cd /var/www && {compileOrTypeCheckCommand}"
+   ```
+
+3. **Start the dev server** — start the dev process and verify it binds to the expected port from the plan's research data. Connection errors to managed services are EXPECTED (env vars are not active yet). The goal is "process starts and binds to the port", not "app serves requests." If the process crashes immediately, this catches native binding mismatches, missing modules, and config errors.
+   ```
+   ssh {hostname}dev "cd /var/www && {startCommand} &"
+   sleep 3
+   ssh {hostname}dev "curl -s -o /dev/null -w '%{http_code}' http://localhost:{httpPort}/ || echo 'port not bound'"
+   ```
+
+**What's available vs what's not**: these commands use only the base image's tools (runtime + package manager). `run.envVariables` are NOT available yet — that's fine, the smoke test doesn't need them. The constraint "do not run commands that bootstrap the framework" means "don't connect to databases", NOT "don't validate your code compiles."
+
+**Failure handling**: if the smoke test catches an error, fix it on the mount and re-run the failing step. Only proceed to `zerops_deploy` when all three steps pass. Do NOT commit and deploy hoping the build container will produce a different result — it won't.
+
+**Multi-codebase**: for plans with multiple dev mounts, run the smoke test on each container independently.
+
+</block>
+
 <block name="completion">
 
 ### Completion
 ```
-zerops_workflow action="complete" step="generate" attestation="App code and zerops.yaml written to /var/www/appdev/. README with 3 fragments."
+zerops_workflow action="complete" step="generate" attestation="App code and zerops.yaml written to dev mounts. On-container smoke test passed on all dev mounts. README with 3 fragments."
 ```
 
 </block>
@@ -991,12 +1026,23 @@ Look for the framework-specific output each command emits: migration applied row
 
 Recovery: either (a) modify something that forces a new `appVersionId` (touch a source file, even a whitespace change, then redeploy — the new version ID makes `execOnce` re-fire), or (b) manually run the seed command via SSH once (`ssh {hostname} "cd /var/www && {seed_command}"`) then redeploy to verify the fix lands. Option (a) is preferred because it preserves the "never manually patch workspace state" rule; option (b) is the escape hatch when the seed depends on a schema that only exists after a successful initCommand run.
 
+**Post-deploy data verification**: after a successful deploy, verify the expected data actually exists — don't assume initCommands ran just because the deploy returned ACTIVE. If prior failed deploys burned the `execOnce` key, the successful deploy may skip those commands silently. Check: query the database for seeded records, verify the search index contains documents, confirm the cache is populated. If the data is missing, the `execOnce` key was burned — use recovery option (a) or (b) above.
+
 **Step 3-API** (API-first only, runs AFTER Step 1-API + Step 2a-API, BEFORE Step 1): Enable and verify the API FIRST — this is a checkpoint before the frontend deploy, not a late verification step:
 ```
 zerops_subdomain action="enable" serviceHostname="apidev"
 zerops_verify serviceHostname="apidev"
 ```
 Verify `/api/health` returns 200 via curl. THEN return to Step 1 to deploy appdev — the frontend needs the API running before it can deploy (in build-time-baked configurations) or before it can be verified (in runtime-config configurations). After appdev deploys, Step 2 (processes) → Step 3 (enable appdev subdomain + verify the dashboard loads and successfully fetches from the API) → Step 3a (logs from BOTH containers).
+
+**Verify ALL runtime targets — not just the primary app.** After completing dev deploys, every runtime target must be verified. HTTP targets use `zerops_verify` + `zerops_subdomain`; non-HTTP targets (workers) use `zerops_logs` to confirm the process started. Enumerate by plan shape:
+
+- **Single-runtime minimal**: `appdev` (HTTP — verify + subdomain)
+- **Single-runtime showcase**: `appdev` (HTTP) + `workerdev` (logs only — no HTTP endpoint)
+- **Dual-runtime minimal**: `appdev` (HTTP) + `apidev` (HTTP)
+- **Dual-runtime showcase**: `appdev` (HTTP) + `apidev` (HTTP) + `workerdev` (logs only)
+
+Do not skip any target. A skipped verification means a broken target ships to stage undetected.
 
 **CORS** (API-first): The API must set CORS headers allowing the frontend subdomain. Use the framework's standard CORS middleware and allow the frontend's subdomain origin.
 
@@ -1022,6 +1068,12 @@ If verification fails: check logs (`zerops_logs serviceHostname="appdev"`), fix 
 
 After appdev is deployed and verified with the skeleton (connectivity panel, seeded data, health endpoint), dispatch ONE framework-expert sub-agent to fill in the feature sections. **This is where feature implementation happens — generate writes the skeleton only.** Writing feature code at generate means writing blind against disconnected services; the sub-agent writes against live services and can test each feature as it goes.
 
+**Before dispatching the subagent**: kill ALL dev server processes on every dev container. The subagent starts fresh — leftover processes holding ports cause contention (`fuser -k {port}/tcp` retry loops waste minutes). Run:
+```
+ssh {hostname}dev "pkill -f '{dev_server_process}' || true; fuser -k {httpPort}/tcp 2>/dev/null || true"
+```
+Do this for every dev container (appdev, apidev if dual-runtime).
+
 Minimal recipes (1-2 feature sections) skip the sub-agent entirely — the main agent writes features inline during generate.
 
 **Sub-agent brief — required contents**:
@@ -1032,7 +1084,13 @@ Minimal recipes (1-2 feature sections) skip the sub-agent entirely — the main 
 - **UX quality contract** (see below) — what the rendered dashboard must look like
 - Pre-registered route paths the sub-agent must fill (agent wrote them as stubs at generate)
 - **Where app-level commands run** (hard rule, see below)
+- **Port hygiene**: before starting any dev server, always kill any existing holder of the port first: `ssh {hostname}dev "fuser -k {httpPort}/tcp 2>/dev/null || true"`. This is a defensive measure against leftover processes from the main agent or prior subagent runs.
 - Instruction to **test each feature against the live service immediately after writing** — the sub-agent has SSH access to appdev and every managed service is reachable. After writing a controller+view, hit the endpoint via `ssh {devHostname} "curl -s localhost:{port}/…"` (or the framework's test runner over SSH) and verify the response. Fix immediately; do not write ahead of verification.
+
+**Managed service connection patterns** — before writing the subagent brief, use `zerops_knowledge query="connection pattern {serviceType}"` for every managed service in the plan (cache, queue, storage, search). Include the auth format, connection string construction, and known client-library pitfalls directly in the subagent brief. This is platform knowledge — how Zerops-provisioned services expose credentials — not framework knowledge. The subagent must write correct connection code from the start, not discover auth quirks through deploy failures. Key pitfalls to inject:
+- **Valkey/KeyDB (cache)**: no authentication — use `redis://hostname:port` without credentials. Do NOT reference `${cache_user}` or `${cache_password}`.
+- **NATS (queue)**: credentials must be passed as separate connection options (`user`, `pass`), NOT embedded in the URL. URL-embedded credentials are silently ignored by most NATS client libraries.
+- **Object Storage (S3)**: requires `apiUrl`, `accessKeyId`, `secretAccessKey`, `bucketName` — NOT the `connectionString` format used by databases.
 
 **API-first**: the sub-agent works on BOTH apidev AND appdev mounts (plus workerdev if the worker has a public-facing component). Include every mount path in the brief. The sub-agent adds API routes (controllers, services) and corresponding frontend components that fetch from the API.
 
@@ -1257,6 +1315,13 @@ binding failures, and container state inconsistencies that `curl` alone misses. 
 for every `{name}dev` after self-deploy, and for every `{name}stage` after cross-deploy.
 Worker targets without HTTP: skip `zerops_verify` (it checks HTTP endpoints), verify via
 `zerops_logs` instead.
+
+**Stage verification completeness by plan shape** (every target below must be verified):
+
+- **Single-runtime minimal**: `appstage` (verify + subdomain)
+- **Single-runtime showcase**: `appstage` (verify + subdomain) + `workerstage` (logs)
+- **Dual-runtime minimal**: `appstage` (verify + subdomain) + `apistage` (verify + subdomain)
+- **Dual-runtime showcase**: `appstage` + `apistage` (both verify + subdomain) + `workerstage` (logs)
 
 **Step 8: Present URLs**
 

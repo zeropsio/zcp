@@ -106,8 +106,15 @@ type RecipeTarget struct {
 	// workers from their own repo; opt into sharing ONLY when the framework's
 	// queue library is tightly bound to the app boundary (Laravel Horizon,
 	// Rails Sidekiq, Django Celery in-process).
-	SharesCodebaseWith string   `json:"sharesCodebaseWith,omitempty" jsonschema:"OPTIONAL — only for workers (isWorker=true). Hostname of the non-worker runtime target whose codebase this worker shares (one repo, two processes). Empty (default) = separate codebase, own repo, own zerops.yaml, own dev+stage pair. Set to the app/api hostname ONLY when the framework's queue library runs as an in-process entry point of the app (Laravel Horizon, Rails Sidekiq, Django+Celery). Must reference an existing non-worker runtime target whose base runtime matches this worker's base runtime."`
-	Environments       []string `json:"environments,omitempty"` // ignored — all targets appear in all environments
+	SharesCodebaseWith string `json:"sharesCodebaseWith,omitempty" jsonschema:"OPTIONAL — only for workers (isWorker=true). Hostname of the non-worker runtime target whose codebase this worker shares (one repo, two processes). Empty (default) = separate codebase, own repo, own zerops.yaml, own dev+stage pair. Set to the app/api hostname ONLY when the framework's queue library runs as an in-process entry point of the app (Laravel Horizon, Rails Sidekiq, Django+Celery). Must reference an existing non-worker runtime target whose base runtime matches this worker's base runtime."`
+	// DevBase overrides the service type for dev environments (env 0-1) when the
+	// prod type is serve-only (static, nginx). A serve-only runtime has no
+	// toolchain — it can't host a dev server, package manager, or compiler. The
+	// dev service must use a compile-capable runtime (e.g. nodejs@22 for a Vite
+	// SPA whose prod is static). Empty means "use Type as-is" (correct for all
+	// non-serve-only targets).
+	DevBase      string   `json:"devBase,omitempty"      jsonschema:"OPTIONAL — compile-capable runtime for dev environments when prod type is serve-only (static/nginx). E.g. 'nodejs@22' for a Vite SPA. Empty = use type as-is."`
+	Environments []string `json:"environments,omitempty"` // ignored — all targets appear in all environments
 }
 
 // DecisionResults holds the 4 recipe decision tree outputs.

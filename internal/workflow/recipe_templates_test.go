@@ -100,7 +100,7 @@ func testDualRuntimePlan() *RecipePlan {
 			MailLib:        "nodemailer",
 		},
 		Targets: []RecipeTarget{
-			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "app", Type: "static", Role: "app", DevBase: "nodejs@22"},
 			{Hostname: "api", Type: "nodejs@22", Role: "api"},
 			{Hostname: "worker", Type: "nodejs@22", IsWorker: true, SharesCodebaseWith: "api"},
 			{Hostname: "db", Type: "postgresql@17"},

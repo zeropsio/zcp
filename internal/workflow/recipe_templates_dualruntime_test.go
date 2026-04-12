@@ -527,3 +527,110 @@ func TestGenerateEnvImportYAML_ThreeRepoProjectEnvVariables(t *testing.T) {
 		}
 	}
 }
+
+// TestGenerateEnvImportYAML_ServeOnlyDevTypeOverride verifies that
+// serve-only targets (static, nginx) use DevBase as the service type
+// in dev environments (env 0-1) instead of the prod type. This prevents
+// the "type: static" dev service that can't host a dev server.
+func TestGenerateEnvImportYAML_ServeOnlyDevTypeOverride(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		prodType    string
+		devBase     string
+		wantDevType string
+	}{
+		{"static_with_nodejs_devbase", "static", "nodejs@22", "nodejs@22"},
+		{"nginx_with_nodejs_devbase", "nginx", "nodejs@22", "nodejs@22"},
+		{"runtime_without_devbase", "nodejs@22", "", "nodejs@22"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			plan := &RecipePlan{
+				Framework:   "test",
+				Tier:        RecipeTierMinimal,
+				Slug:        "test-minimal",
+				RuntimeType: "nodejs@22",
+				Research: ResearchData{
+					ServiceType:    "nodejs",
+					PackageManager: "npm",
+					HTTPPort:       3000,
+					BuildCommands:  []string{"npm ci"},
+					DeployFiles:    []string{"."},
+					StartCommand:   "node server.js",
+				},
+				Targets: []RecipeTarget{
+					{Hostname: "app", Type: tt.prodType, DevBase: tt.devBase},
+					{Hostname: "db", Type: "postgresql@17"},
+				},
+			}
+
+			yaml := GenerateEnvImportYAML(plan, 0)
+			appDevBlock := extractServiceBlock(yaml, "appdev")
+			wantLine := "type: " + tt.wantDevType
+			if !strings.Contains(appDevBlock, wantLine) {
+				t.Errorf("appdev should have %q, got block:\n%s", wantLine, appDevBlock)
+			}
+
+			// Stage service always uses the prod type.
+			appStageBlock := extractServiceBlock(yaml, "appstage")
+			stageLine := "type: " + tt.prodType
+			if !strings.Contains(appStageBlock, stageLine) {
+				t.Errorf("appstage should have %q, got block:\n%s", stageLine, appStageBlock)
+			}
+
+			// Env 2+ always uses the prod type (no dev/stage split).
+			yaml2 := GenerateEnvImportYAML(plan, 2)
+			appBlock := extractServiceBlock(yaml2, "app")
+			if !strings.Contains(appBlock, "type: "+tt.prodType) {
+				t.Errorf("env 2 app should have prod type %q, got block:\n%s", tt.prodType, appBlock)
+			}
+		})
+	}
+}
+
+// TestGenerateEnvImportYAML_DualRuntimeServeOnlyDevOverride verifies the
+// full dual-runtime case: the frontend has type:static with DevBase:nodejs@22,
+// and the dev service in env 0-1 must use nodejs@22 instead of static.
+func TestGenerateEnvImportYAML_DualRuntimeServeOnlyDevOverride(t *testing.T) {
+	t.Parallel()
+
+	plan := testDualRuntimePlan()
+	// Set DevBase on the static frontend target.
+	for i := range plan.Targets {
+		if plan.Targets[i].Type == "static" {
+			plan.Targets[i].DevBase = "nodejs@22"
+		}
+	}
+
+	for _, envIndex := range []int{0, 1} {
+		t.Run(fmt.Sprintf("env_%d", envIndex), func(t *testing.T) {
+			t.Parallel()
+			yaml := GenerateEnvImportYAML(plan, envIndex)
+
+			// appdev must use nodejs@22 (dev type), NOT static.
+			appDevBlock := extractServiceBlock(yaml, "appdev")
+			if strings.Contains(appDevBlock, "type: static") {
+				t.Error("appdev must NOT use type: static (serve-only can't host a dev server)")
+			}
+			if !strings.Contains(appDevBlock, "type: nodejs@22") {
+				t.Errorf("appdev must use type: nodejs@22 (dev override), got:\n%s", appDevBlock)
+			}
+
+			// appstage must still use static (prod type).
+			appStageBlock := extractServiceBlock(yaml, "appstage")
+			if !strings.Contains(appStageBlock, "type: static") {
+				t.Errorf("appstage must use type: static (prod type), got:\n%s", appStageBlock)
+			}
+
+			// apidev must still use nodejs@22 (its own type, no override).
+			apiDevBlock := extractServiceBlock(yaml, "apidev")
+			if !strings.Contains(apiDevBlock, "type: nodejs@22") {
+				t.Errorf("apidev must use type: nodejs@22, got:\n%s", apiDevBlock)
+			}
+		})
+	}
+}

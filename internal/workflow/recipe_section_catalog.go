@@ -70,6 +70,7 @@ var (
 		{Name: "readme-with-fragments"},
 		{Name: "code-quality"},
 		{Name: "pre-deploy-checklist"},
+		{Name: "on-container-smoke-test"},
 		{Name: "completion"},
 	}
 
