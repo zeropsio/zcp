@@ -578,3 +578,73 @@
 
 > This is a historical record. Verify current state via `zerops_discover`.
 <!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-12 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** cf2770d573f23b01
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-12 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** 59b4036bbd3d95fb
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-12 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** eeb9dee8151913b9
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-12 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** 10adc97b0231303d
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-12 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** bdcd0b2fa7ba1192
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-12 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** 129b5d0324c1afdf
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-12 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** 5a3024625ca2485e
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
