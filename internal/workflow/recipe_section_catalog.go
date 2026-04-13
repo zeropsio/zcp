@@ -68,7 +68,9 @@ var (
 		{Name: "dashboard-skeleton", Predicate: isShowcase},
 		{Name: "scaffold-subagent-brief", Predicate: func(p *RecipePlan) bool { return isShowcase(p) && hasMultipleCodebases(p) }},
 		{Name: "asset-pipeline-consistency"},
-		{Name: "readme-with-fragments"},
+		// readme-with-fragments moved to recipeDeployBlocks in v14 — READMEs
+		// are written during the post-verify `readmes` sub-step so the
+		// gotchas section narrates real debug experience.
 		{Name: "code-quality"},
 		{Name: "pre-deploy-checklist"},
 		{Name: "on-container-smoke-test"},
@@ -95,6 +97,9 @@ var (
 		{Name: "stage-deployment-flow"},
 		{Name: "reading-deploy-failures"},
 		{Name: "common-deployment-issues"},
+		// v14: README writing moved from generate to the post-verify
+		// readmes sub-step so gotchas narrate lived experience.
+		{Name: "readme-with-fragments"},
 		{Name: "deploy-completion"},
 	}
 

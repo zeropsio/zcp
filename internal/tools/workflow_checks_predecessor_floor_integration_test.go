@@ -128,7 +128,11 @@ func TestCheckRecipeGenerate_ShowcaseFloor_DualRuntime_MixedPassFail(t *testing.
 	writeFile(t, filepath.Join(apiDir, "zerops.yaml"), apiZeropsYamlWithWorker)
 	writeFile(t, filepath.Join(apiDir, "README.md"), apidevREADME)
 
-	checker := checkRecipeGenerate(stateDir, nil, kp)
+	// v14: predecessor-floor runs at the deploy step (inside
+	// checkRecipeDeployReadmes) — not at generate, because v14 defers
+	// README writing until after verify-stage so the gotchas section
+	// can narrate lived debug experience.
+	checker := checkRecipeDeployReadmes(stateDir, kp)
 	result, err := checker(context.Background(), plan, testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -252,7 +256,10 @@ func TestCheckRecipeGenerate_ShowcaseFloor_SeparateCodebaseWorker(t *testing.T) 
 	writeFile(t, filepath.Join(workerDir, "zerops.yaml"), workerZeropsYaml)
 	writeFile(t, filepath.Join(workerDir, "README.md"), workerdevREADME)
 
-	checker := checkRecipeGenerate(stateDir, nil, kp)
+	// v14: predecessor-floor runs at the deploy step via
+	// checkRecipeDeployReadmes, which iterates both appTargets and
+	// workerTargets for the floor loop.
+	checker := checkRecipeDeployReadmes(stateDir, kp)
 	result, err := checker(context.Background(), plan, testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -16,10 +16,17 @@ import (
 )
 
 // buildRecipeStepChecker returns a step checker for the given recipe step.
-// kp is the knowledge provider from the engine — used by generate-step
-// checks that need to read the injected chain recipe (e.g. the
+// kp is the knowledge provider from the engine — used by generate- and
+// deploy-step checks that need to read the injected chain recipe (e.g. the
 // predecessor-as-floor knowledge-base check). Pass nil in tests that
 // don't need chain access; checks that depend on it no-op gracefully.
+//
+// Deploy-step checker: fires on full-step completion and validates the
+// per-codebase READMEs written during the post-verify `readmes` sub-step.
+// v14 moved README content from generate → post-deploy so the gotchas
+// section can narrate debug experience rather than speculation; the
+// validation moved with it. Generate is now purely a zerops.yaml +
+// scaffold sanity check — no README content is inspected there.
 func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schemaCache *schema.Cache, kp knowledge.Provider) workflow.RecipeStepChecker {
 	switch step {
 	case workflow.RecipeStepGenerate:
@@ -30,6 +37,8 @@ func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schem
 			}
 		}
 		return checkRecipeGenerate(stateDir, validFields, kp)
+	case workflow.RecipeStepDeploy:
+		return checkRecipeDeployReadmes(stateDir, kp)
 	case workflow.RecipeStepFinalize:
 		return checkRecipeFinalizeFromState(stateDir)
 	}
@@ -72,12 +81,12 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 
 		var checks []workflow.StepCheck
 
-		// Pre-resolve the predecessor recipe's gotcha stems once for the
-		// whole run — every codebase README on this plan compares against
-		// the same predecessor baseline, so we only hit the knowledge store
-		// once per check invocation. Empty when kp is nil (test context) or
-		// when there is no direct predecessor (hello-world tier).
-		predecessorStems := workflow.PredecessorGotchaStems(plan, kp)
+		// kp is unused at generate time now that the predecessor-floor
+		// check moved to the deploy-step checker alongside the rest of
+		// the README content validation. Keeping the parameter so the
+		// signature matches buildRecipeStepChecker's switch — future
+		// generate-level checks that need knowledge access land here.
+		_ = kp
 
 		// Collect ALL non-worker runtime targets (frontend + API in dual-runtime recipes).
 		var appTargets []workflow.RecipeTarget
@@ -132,99 +141,36 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 			// Validate zerops.yaml fields against the live JSON schema.
 			checks = append(checks, checkZeropsYmlFields(ymlDir, validFields)...)
 
-			// Check README fragments for this target's codebase.
+			// README content validation — fragments, integration-guide
+			// code blocks, comment specificity, predecessor floor,
+			// authenticity — all move to the deploy-step checker. v14
+			// writes READMEs during the post-verify `readmes` sub-step so
+			// the gotchas section narrates real debug experience; the
+			// checker follows the content. See checkRecipeDeployReadmes.
+			//
+			// Additionally, v14 generate explicitly forbids README.md on
+			// the mount at generate-complete time: the scaffold sub-agent
+			// brief has README in its DO-NOT-WRITE list. Detect and
+			// surface so the agent deletes the scaffolder's stub before
+			// the checker re-runs.
 			readmePath := filepath.Join(ymlDir, "README.md")
-			readmeContent, readErr := os.ReadFile(readmePath)
-			if readErr != nil {
+			if _, err := os.Stat(readmePath); err == nil {
 				checks = append(checks, workflow.StepCheck{
-					Name: hostname + "_readme_exists", Status: statusFail,
-					Detail: fmt.Sprintf("README.md not found at %s", readmePath),
+					Name: hostname + "_no_premature_readme", Status: statusFail,
+					Detail: fmt.Sprintf("%s/README.md exists at generate-complete time — v14 moves README writing to the post-deploy `readmes` sub-step. Delete %s; the agent will write the real README after verify-stage using lived debug experience for the gotchas section.", hostname, readmePath),
 				})
 			} else {
 				checks = append(checks, workflow.StepCheck{
-					Name: hostname + "_readme_exists", Status: statusPass,
+					Name: hostname + "_no_premature_readme", Status: statusPass,
 				})
-				checks = append(checks, checkReadmeFragments(string(readmeContent))...)
-
-				// Comment specificity check on the integration guide's YAML
-				// block — showcase only. Companion to comment_ratio; fails
-				// on boilerplate-heavy comments even when the ratio passes.
-				if !appTarget.IsWorker {
-					if igContent := extractFragmentContent(string(readmeContent), "integration-guide"); igContent != "" {
-						if yamlBlock := extractYAMLBlock(igContent); yamlBlock != "" {
-							specChecks := checkCommentSpecificity(yamlBlock, plan)
-							for i := range specChecks {
-								specChecks[i].Name = hostname + "_" + specChecks[i].Name
-							}
-							checks = append(checks, specChecks...)
-						}
-					}
-				}
-
-				// Integration-guide code-block check: showcase READMEs must
-				// contain at least one non-YAML code block in the integration
-				// guide — application code a user adjusts to run on Zerops
-				// (trust proxy, bind 0.0.0.0, Vite config allowedHosts, etc.).
-				// The v12 audit found most READMEs were 95% zerops.yaml
-				// comments with only one real code-adjustment section; the
-				// floor forces every integration guide to earn its keep.
-				// Worker targets commonly have no user-facing code changes,
-				// so the check is scoped to non-worker targets.
-				if !appTarget.IsWorker {
-					codeChecks := checkIntegrationGuideCodeBlocks(string(readmeContent), plan)
-					for i := range codeChecks {
-						codeChecks[i].Name = hostname + "_" + codeChecks[i].Name
-					}
-					checks = append(checks, codeChecks...)
-				}
-
-				// Predecessor-as-floor check: the showcase's knowledge-base
-				// must contain net-new gotchas, not clones of the injected
-				// predecessor recipe's Gotchas section. Per-target so a
-				// dual-runtime recipe can't pass by piling every new gotcha
-				// into the API README while the frontend clones only.
-				floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems)
-				for i := range floorChecks {
-					floorChecks[i].Name = hostname + "_" + floorChecks[i].Name
-				}
-				checks = append(checks, floorChecks...)
 			}
 		}
 
-		// Per-worker-target predecessor-floor loop. Separate-codebase workers
-		// ship their own README; the appTargets loop above intentionally filters
-		// them out (`!t.IsWorker`) because the zerops.yaml + dev/prod setup
-		// shape checks are app-specific. The floor check is codebase-agnostic
-		// — any README with a knowledge-base fragment can be measured — so we
-		// run it here with the same per-hostname name prefixing the app loop uses.
-		for _, workerTarget := range workerTargets {
-			hostname := workerTarget.Hostname
-			ymlDir := projectRoot
-			for _, candidate := range []string{hostname + "dev", hostname} {
-				mountPath := filepath.Join(projectRoot, candidate)
-				if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
-					ymlDir = mountPath
-					break
-				}
-			}
-			readmePath := filepath.Join(ymlDir, "README.md")
-			readmeContent, readErr := os.ReadFile(readmePath)
-			if readErr != nil {
-				// Non-existence of a separate-codebase worker README is already
-				// a problem — but the existing appTargets loop reports missing
-				// app READMEs, and the same structural expectation applies here.
-				checks = append(checks, workflow.StepCheck{
-					Name: hostname + "_readme_exists", Status: statusFail,
-					Detail: fmt.Sprintf("README.md not found at %s", readmePath),
-				})
-				continue
-			}
-			floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems)
-			for i := range floorChecks {
-				floorChecks[i].Name = hostname + "_" + floorChecks[i].Name
-			}
-			checks = append(checks, floorChecks...)
-		}
+		// Legacy: the workerTargets predecessor-floor loop lived here in
+		// v13. It moved to checkRecipeDeployReadmes alongside the other
+		// README content checks — v14 READMEs don't exist until the
+		// post-deploy readmes sub-step.
+		_ = workerTargets
 
 		allPassed := checksAllPassed(checks)
 		summary := "recipe generate checks passed"
@@ -235,6 +181,124 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 			Passed: allPassed, Checks: checks, Summary: summary,
 		}, nil
 	}
+}
+
+// checkRecipeDeployReadmes validates per-codebase README content at
+// deploy-step completion. This used to live inside checkRecipeGenerate,
+// but v14 moved README writing out of generate entirely: the scaffold
+// sub-agent brief forbids READMEs, main-agent generate writes only
+// zerops.yaml + app code + smoke test, and the `readmes` sub-step at
+// the end of deploy is the only place READMEs get written. The check
+// path follows the content — fragments, integration-guide code blocks,
+// comment specificity, predecessor-floor, and knowledge-base authenticity
+// all fire here. Failing any of them holds the deploy step in-progress
+// so the agent can iterate on the README narration without rolling back
+// the infrastructure work.
+//
+// kp is the knowledge provider used to pull the direct-predecessor
+// recipe's gotcha stems for the predecessor-floor check. Nil kp in test
+// contexts no-ops that check gracefully.
+func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider) workflow.RecipeStepChecker {
+	return func(_ context.Context, plan *workflow.RecipePlan, _ *workflow.RecipeState) (*workflow.StepCheckResult, error) {
+		if plan == nil {
+			return nil, nil
+		}
+		projectRoot := projectRootFromState(stateDir)
+		predecessorStems := workflow.PredecessorGotchaStems(plan, kp)
+
+		var appTargets []workflow.RecipeTarget
+		for _, t := range plan.Targets {
+			if workflow.IsRuntimeType(t.Type) && !t.IsWorker {
+				appTargets = append(appTargets, t)
+			}
+		}
+		if len(appTargets) == 0 && len(plan.Targets) > 0 {
+			appTargets = []workflow.RecipeTarget{plan.Targets[0]}
+		}
+		var workerTargets []workflow.RecipeTarget
+		for _, t := range plan.Targets {
+			if workflow.IsRuntimeType(t.Type) && t.IsWorker && t.SharesCodebaseWith == "" {
+				workerTargets = append(workerTargets, t)
+			}
+		}
+
+		var checks []workflow.StepCheck
+
+		for _, target := range appTargets {
+			checks = append(checks, checkCodebaseReadme(projectRoot, target, plan, predecessorStems, false)...)
+		}
+		for _, target := range workerTargets {
+			checks = append(checks, checkCodebaseReadme(projectRoot, target, plan, predecessorStems, true)...)
+		}
+
+		allPassed := checksAllPassed(checks)
+		summary := "recipe deploy README checks passed"
+		if !allPassed {
+			summary = "recipe deploy README checks failed"
+		}
+		return &workflow.StepCheckResult{
+			Passed: allPassed, Checks: checks, Summary: summary,
+		}, nil
+	}
+}
+
+// checkCodebaseReadme runs every README content check against a single
+// codebase mount. workerOnly=true skips checks that don't apply to worker
+// codebases (integration-guide code-block floor, comment specificity — both
+// app-facing concerns). The predecessor-floor check runs on every codebase
+// regardless, so a dual-runtime recipe can't pile every net-new gotcha
+// into one README while the others clone the predecessor.
+func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan *workflow.RecipePlan, predecessorStems []string, workerOnly bool) []workflow.StepCheck {
+	hostname := target.Hostname
+	ymlDir := projectRoot
+	for _, candidate := range []string{hostname + "dev", hostname} {
+		mountPath := filepath.Join(projectRoot, candidate)
+		if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
+			ymlDir = mountPath
+			break
+		}
+	}
+
+	readmePath := filepath.Join(ymlDir, "README.md")
+	readmeContent, readErr := os.ReadFile(readmePath)
+	if readErr != nil {
+		return []workflow.StepCheck{{
+			Name:   hostname + "_readme_exists",
+			Status: statusFail,
+			Detail: fmt.Sprintf("README.md not found at %s — write it during the deploy `readmes` sub-step using the exact fragment markers shown in topic=\"readme-fragments\". The required markers are `<!-- #ZEROPS_EXTRACT_START:intro# -->` / `<!-- #ZEROPS_EXTRACT_END:intro# -->` (and the same pattern for `integration-guide` and `knowledge-base`). Do not invent your own marker syntax.", readmePath),
+		}}
+	}
+
+	var checks []workflow.StepCheck
+	checks = append(checks, workflow.StepCheck{
+		Name: hostname + "_readme_exists", Status: statusPass,
+	})
+	checks = append(checks, checkReadmeFragments(string(readmeContent))...)
+
+	if !workerOnly {
+		if igContent := extractFragmentContent(string(readmeContent), "integration-guide"); igContent != "" {
+			if yamlBlock := extractYAMLBlock(igContent); yamlBlock != "" {
+				specChecks := checkCommentSpecificity(yamlBlock, plan)
+				for i := range specChecks {
+					specChecks[i].Name = hostname + "_" + specChecks[i].Name
+				}
+				checks = append(checks, specChecks...)
+			}
+		}
+		codeChecks := checkIntegrationGuideCodeBlocks(string(readmeContent), plan)
+		for i := range codeChecks {
+			codeChecks[i].Name = hostname + "_" + codeChecks[i].Name
+		}
+		checks = append(checks, codeChecks...)
+	}
+
+	floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems)
+	for i := range floorChecks {
+		floorChecks[i].Name = hostname + "_" + floorChecks[i].Name
+	}
+	checks = append(checks, floorChecks...)
+
+	return checks
 }
 
 // checkRecipeSetups validates zerops.yaml has all required setup entries for
@@ -353,9 +417,14 @@ func checkReadmeFragments(content string) []workflow.StepCheck {
 				Name: "fragment_" + name, Status: statusPass,
 			})
 		} else {
-			detail := fmt.Sprintf("missing fragment markers for %q", name)
+			// Show the agent the literal marker format we are searching
+			// for. v14 debugging wasted 20 minutes on a run that invented
+			// `<!-- FRAGMENT:intro:start -->` from imagination because the
+			// error message said "missing" without specifying the shape.
+			expected := fmt.Sprintf("<!-- #ZEROPS_EXTRACT_START:%s# -->\n...content...\n<!-- #ZEROPS_EXTRACT_END:%s# -->", name, name)
+			detail := fmt.Sprintf("missing fragment markers for %q. Expected the EXACT literal markers (not a close approximation):\n%s\nSee `zerops_guidance topic=\"readme-fragments\"` for the full fragment writing rules.", name, expected)
 			if hasStart && !hasEnd {
-				detail = fmt.Sprintf("fragment %q has start marker but missing end marker", name)
+				detail = fmt.Sprintf("fragment %q has the `<!-- #ZEROPS_EXTRACT_START:%s# -->` marker but is missing the matching `<!-- #ZEROPS_EXTRACT_END:%s# -->` closer.", name, name, name)
 			}
 			checks = append(checks, workflow.StepCheck{
 				Name: "fragment_" + name, Status: statusFail,

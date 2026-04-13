@@ -707,11 +707,13 @@ The generate step ships an intentionally bare dashboard: **one page, one compone
 
 For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appdev/apidev/workerdev mounts, or any recipe with more than one codebase), writing every codebase sequentially in the main agent is slow. Dispatch scaffolding sub-agents in parallel, one per codebase — **with a strict brief that ships an intentionally bare health-dashboard-only skeleton.** Feature code is owned by a single feature sub-agent at deploy step 4b who writes API + frontend + worker as one unit so the contracts stay consistent. v10, v11, and v12 all shipped recurring API/frontend contract-mismatch bugs because parallel scaffold agents authored their halves of each feature independently; the single-author rule at step 4b eliminates the entire class.
 
-**Order of operations — main agent first, sub-agents second:**
+**Order of operations — scaffolds FIRST, main-agent work AFTER. This is the v14 order; do not fall back to v13.**
 
-1. **Main agent writes zerops.yaml for every codebase sequentially.** Platform config stays the main agent's responsibility.
-2. **Main agent writes the README skeleton for every codebase sequentially** — intro + integration-guide fragment (with the zerops.yaml verbatim) + empty knowledge-base placeholder. The main agent returns after deploy to narrate gotchas.
-3. **THEN dispatch scaffolding sub-agents in parallel, one per codebase**, each with the brief template below.
+1. **Dispatch scaffolding sub-agents in parallel, one per codebase**, each with the brief template below. Each sub-agent writes only its codebase's language-level scaffolding: framework init, health dashboard skeleton, service client wiring, migrations + 3-5 row seed. **No zerops.yaml. No README. No feature code.**
+2. **Main agent writes app code after scaffolds return** — this is the `app-code` sub-step. For showcase this is mostly ensuring cross-codebase shape is coherent (import paths, env var names, shared type stubs). The health dashboard itself came from the scaffold sub-agents.
+3. **Main agent runs the on-container smoke test** — `smoke-test` sub-step. Install dependencies, run the framework's compile/validate command. The point is to prove the install flow works **before** you commit the build commands to zerops.yaml.
+4. **Main agent writes zerops.yaml LAST** — `zerops-yaml` sub-step. Use the install flow you just validated under smoke-test as the source of truth for `buildCommands`, `cache`, and `deployFiles`. Earlier v13 ordering had you writing zerops.yaml from research-time assumptions, then discovering at deploy time that the real build needed different steps.
+5. **README is NOT written during generate.** The scaffold sub-agent brief below explicitly says DO NOT write README.md. Any README content on the mounts at generate-complete time is wrong — delete it before completing. The `readmes` sub-step at the end of deploy is the only place READMEs are written, and by then the agent has lived through the debug rounds that make the gotchas section honest.
 
 **Scaffold sub-agent brief — include verbatim (edit only the codebase-specific names and service list from the plan):**
 
@@ -748,6 +750,8 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 >
 > **DO NOT WRITE (any codebase):**
 >
+> - **`README.md`. Do not create it. Do not scaffold one.** Delete any README the framework scaffolder emits. The main agent writes READMEs at the very end of deploy, narrating real debug experience. If a README exists at generate-complete time, the checker fails and retries.
+> - **`zerops.yaml`. Do not create it.** The main agent writes it AFTER your scaffold returns, AFTER the on-container smoke test proves the install flow. If zerops.yaml exists at scaffold-return time the main agent will flag it and rewrite it.
 > - Item CRUD endpoints, item list components, create-item forms, item detail views
 > - Cache-demo routes, cached-vs-fresh components
 > - Search endpoints or search UI
@@ -772,61 +776,10 @@ If `buildCommands` compiles assets (JS, CSS, or both), the primary view/template
 
 </block>
 
-<block name="readme-with-fragments">
-
-### App README with extract fragments
-
-Write `README.md` at `/var/www/appdev/README.md` with three extract fragments. Use `prettyName` from the workflow response for titles (e.g., "Minimal", "Hello World", "Showcase"). **Critical formatting** — match this structure exactly:
-
-```markdown
-# {Framework} {PrettyName} Recipe App
-
-<!-- #ZEROPS_EXTRACT_START:intro# -->
-A minimal {Framework} application with a {DB} connection,
-demonstrating database connectivity, migrations, and a health endpoint.
-Used within [{Framework} {PrettyName} recipe](https://app.zerops.io/recipes/{slug}) for [Zerops](https://zerops.io) platform.
-<!-- #ZEROPS_EXTRACT_END:intro# -->
-
-⬇️ **Full recipe page and deploy with one-click**
-
-[![Deploy on Zerops](https://github.com/zeropsio/recipe-shared-assets/blob/main/deploy-button/light/deploy-button.svg)](https://app.zerops.io/recipes/{slug}?environment=small-production)
-
-![{framework} cover](https://github.com/zeropsio/recipe-shared-assets/blob/main/covers/svg/cover-{framework}.svg)
-
-## Integration Guide
-
-<!-- #ZEROPS_EXTRACT_START:integration-guide# -->
-
-### 1. Adding `zerops.yaml`
-The main configuration file — place at repository root. It tells Zerops how to build, deploy and run your app.
-
-\`\`\`yaml
-zerops:
-  ... (paste full zerops.yaml with comments)
-\`\`\`
-
-### 2. Step Title (if any code changes needed)
-Description of why this change is needed.
-
-<!-- #ZEROPS_EXTRACT_END:integration-guide# -->
-
-<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
-
-### Gotchas
-- **Gotcha 1** — explanation
-- **Gotcha 2** — explanation
-
-<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
-```
-
-**Rules:**
-- Section headings (`## Integration Guide`) go OUTSIDE markers — they're visible in the README but not extracted
-- Content INSIDE markers uses **H3** (`###`), not H2
-- **All fragments**: blank line required after the start marker (intro, integration-guide, knowledge-base)
-- **Intro content**: plain text, no headings, 1-3 lines
-- **Step 1** must be `### 1. Adding \`zerops.yaml\`` with a description paragraph before the code block (the API renders it as a section title)
-
-</block>
+<!-- v14: the readme-with-fragments block moved to the deploy section so
+     READMEs are written during the post-verify readmes sub-step, where
+     the gotchas section narrates real debug experience instead of
+     research-time speculation. Block content lives with its step. -->
 
 <block name="code-quality">
 
@@ -1514,11 +1467,82 @@ This identifies *which* initCommand failed. For *why* it failed, fetch runtime l
 
 </block>
 
+<block name="readme-with-fragments">
+
+### Per-codebase README with extract fragments (post-deploy `readmes` sub-step)
+
+**This is the `readmes` sub-step of deploy.** You land here after `verify-stage`, after every service is verified healthy on both dev and stage. READMEs are written now — not during generate — so the gotchas section narrates the debug rounds you just lived through. A speculative gotchas section written during generate is the root cause of the authenticity failures in v11/v12.
+
+Write one `README.md` per codebase mount. For a dual-runtime showcase that is three files: `/var/www/appdev/README.md`, `/var/www/apidev/README.md`, `/var/www/workerdev/README.md`. Use `prettyName` from the workflow response for titles (e.g., "Minimal", "Hello World", "Showcase"). **Critical formatting** — match this structure exactly. The literal `<!-- #ZEROPS_EXTRACT_START:name# -->` / `<!-- #ZEROPS_EXTRACT_END:name# -->` marker shape is enforced by the checker byte-for-byte. Invented variants like `<!-- FRAGMENT:intro:start -->` or `<!-- BEGIN:intro -->` are rejected.
+
+```markdown
+# {Framework} {PrettyName} Recipe App
+
+<!-- #ZEROPS_EXTRACT_START:intro# -->
+A minimal {Framework} application with a {DB} connection,
+demonstrating database connectivity, migrations, and a health endpoint.
+Used within [{Framework} {PrettyName} recipe](https://app.zerops.io/recipes/{slug}) for [Zerops](https://zerops.io) platform.
+<!-- #ZEROPS_EXTRACT_END:intro# -->
+
+⬇️ **Full recipe page and deploy with one-click**
+
+[![Deploy on Zerops](https://github.com/zeropsio/recipe-shared-assets/blob/main/deploy-button/light/deploy-button.svg)](https://app.zerops.io/recipes/{slug}?environment=small-production)
+
+![{framework} cover](https://github.com/zeropsio/recipe-shared-assets/blob/main/covers/svg/cover-{framework}.svg)
+
+## Integration Guide
+
+<!-- #ZEROPS_EXTRACT_START:integration-guide# -->
+
+### 1. Adding `zerops.yaml`
+The main configuration file — place at repository root. It tells Zerops how to build, deploy and run your app.
+
+\`\`\`yaml
+zerops:
+  ... (paste full zerops.yaml with comments — read it back from disk, do not rewrite from memory)
+\`\`\`
+
+### 2. Step Title (for each code adjustment you actually made)
+Describe the debug round that forced the change. Example: "Bind NestJS to 0.0.0.0" / "Add `allowedHosts: ['.zerops.app']` to vite.config.ts" / "Use `forcePathStyle: true` for MinIO S3 client". Each section is one real thing that broke and how you fixed it, with the code diff.
+
+\`\`\`typescript
+// the actual patch you applied
+\`\`\`
+
+<!-- #ZEROPS_EXTRACT_END:integration-guide# -->
+
+<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+
+### Gotchas
+- **Concrete failure mode 1** — the specific thing that broke, the error message, and the fix. Written from memory of the debug round, not from the predecessor recipe's gotchas list. Clones of the predecessor's stems fail the `knowledge_base_exceeds_predecessor` check.
+- **Concrete failure mode 2** — same. Showcase tier needs at least 3 net-new gotchas beyond the predecessor; authenticity check rejects synthetic scaffold-self-referential narration.
+
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+```
+
+**Rules:**
+- Section headings (`## Integration Guide`) go OUTSIDE markers — they're visible in the README but not extracted
+- Content INSIDE markers uses **H3** (`###`), not H2
+- **All fragments**: blank line required after the start marker (intro, integration-guide, knowledge-base)
+- **Intro content**: plain text, no headings, 1-3 lines
+- **Step 1** must be `### 1. Adding \`zerops.yaml\`` with a description paragraph before the code block (the API renders it as a section title)
+- **Worker codebase README** does not need the integration-guide code-block floor (workers rarely have user-facing code adjustments), but still needs all three fragments and the predecessor-floor gotchas.
+- **Fragment format is byte-literal.** The checker searches for `#ZEROPS_EXTRACT_START:{name}#` exactly. Do not guess.
+
+**Completion:**
+```
+zerops_workflow action="complete" step="deploy" substep="readmes" attestation="Wrote README for appdev/apidev/workerdev with fragments covering: NATS credential split (hit at 19:23 during start-processes), Vite allowedHosts (hit at 19:41 during verify-dev), MinIO forcePathStyle (hit at 19:55 during cross-deploy). Net-new gotchas per codebase >= 3."
+```
+
+After the sub-step completes, call the full deploy-step completion. The deploy-step checker runs every README content check (fragments, integration-guide code block floor, comment specificity, predecessor floor, knowledge-base authenticity) — iterate on the content until they all pass, then the deploy step closes.
+
+</block>
+
 <block name="deploy-completion">
 
 ### Completion
 ```
-zerops_workflow action="complete" step="deploy" attestation="Dev deployed at {dev_url}, stage deployed at {stage_url}. Both healthy."
+zerops_workflow action="complete" step="deploy" attestation="Dev deployed at {dev_url}, stage deployed at {stage_url}. Both healthy. READMEs narrate debug rounds."
 ```
 
 </block>

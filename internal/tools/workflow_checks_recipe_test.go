@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/schema"
@@ -286,7 +287,12 @@ func TestCheckRecipeGenerate_ValidMinimal(t *testing.T) {
         - port: 80
           httpSupport: true
 `)
-	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
+	// v14: README must NOT exist at generate-complete time. Writing
+	// READMEs is the post-deploy `readmes` sub-step's job so the
+	// gotchas section can narrate real debug experience. The
+	// `no_premature_readme` check fails this fixture if README exists.
+	// See TestCheckRecipeDeployReadmes_ValidFragments below for the
+	// equivalent test of the README content check at the deploy step.
 
 	checker := checkRecipeGenerate(stateDir, nil, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
@@ -303,6 +309,78 @@ func TestCheckRecipeGenerate_ValidMinimal(t *testing.T) {
 				t.Errorf("  %s: %s", c.Name, c.Detail)
 			}
 		}
+	}
+}
+
+// TestCheckRecipeGenerate_PrematureReadmeFails locks in the v14 rule:
+// README.md must not exist on the mount when generate completes. The
+// `no_premature_readme` check fails when a README is present because
+// generate-time READMEs forced agents to speculate about gotchas before
+// any debugging had happened, producing the synthetic-narrative failures
+// the authenticity floor kept catching.
+func TestCheckRecipeGenerate_PrematureReadmeFails(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(dir, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: php-nginx@8.4
+      buildCommands:
+        - composer install
+      deployFiles:
+        - .
+    run:
+      envVariables:
+        APP_ENV: local
+      ports:
+        - port: 80
+          httpSupport: true
+  - setup: prod
+    build:
+      base: php-nginx@8.4
+      buildCommands:
+        - composer install --no-dev
+      deployFiles:
+        - app
+        - vendor
+    run:
+      envVariables:
+        APP_ENV: production
+      ports:
+        - port: 80
+          httpSupport: true
+`)
+	writeFile(t, filepath.Join(appDir, "README.md"), validREADME)
+
+	checker := checkRecipeGenerate(stateDir, nil, nil)
+	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Passed {
+		t.Errorf("expected no_premature_readme to fail — README written at generate time")
+	}
+	found := false
+	for _, c := range result.Checks {
+		if c.Name == "app_no_premature_readme" && c.Status == "fail" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected app_no_premature_readme check to fail, checks: %+v", result.Checks)
 	}
 }
 
@@ -408,7 +486,7 @@ func TestCheckRecipeGenerate_DevProdBitIdentical(t *testing.T) {
 	}
 }
 
-func TestCheckRecipeGenerate_MissingFragments(t *testing.T) {
+func TestCheckRecipeDeployReadmes_MissingFragments(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -431,10 +509,11 @@ func TestCheckRecipeGenerate_MissingFragments(t *testing.T) {
       ports:
         - port: 80
 `)
-	// README without any fragments.
+	// README without any fragments — v14 runs content checks at the
+	// deploy step, not generate.
 	writeFile(t, filepath.Join(appDir, "README.md"), "# App\nJust a basic readme.")
 
-	checker := checkRecipeGenerate(stateDir, nil, nil)
+	checker := checkRecipeDeployReadmes(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -443,11 +522,17 @@ func TestCheckRecipeGenerate_MissingFragments(t *testing.T) {
 		t.Error("expected checks to fail when fragments are missing")
 	}
 
-	// Verify specific failures.
+	// Verify specific failures and that the new error message shows
+	// the literal marker format (the v14 fix that burned a run where
+	// the agent invented `<!-- FRAGMENT:intro:start -->`).
 	failedNames := make(map[string]bool)
+	var igDetail string
 	for _, c := range result.Checks {
 		if c.Status == "fail" {
 			failedNames[c.Name] = true
+			if c.Name == "fragment_integration-guide" {
+				igDetail = c.Detail
+			}
 		}
 	}
 	for _, name := range []string{"fragment_integration-guide", "fragment_knowledge-base", "fragment_intro"} {
@@ -455,9 +540,12 @@ func TestCheckRecipeGenerate_MissingFragments(t *testing.T) {
 			t.Errorf("expected %q to fail", name)
 		}
 	}
+	if !strings.Contains(igDetail, "#ZEROPS_EXTRACT_START:integration-guide#") {
+		t.Errorf("fragment error detail should show the literal marker format, got: %q", igDetail)
+	}
 }
 
-func TestCheckRecipeGenerate_LowCommentRatio(t *testing.T) {
+func TestCheckRecipeDeployReadmes_LowCommentRatio(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -511,7 +599,7 @@ zerops:
 `
 	writeFile(t, filepath.Join(appDir, "README.md"), readme)
 
-	checker := checkRecipeGenerate(stateDir, nil, nil)
+	checker := checkRecipeDeployReadmes(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -529,7 +617,7 @@ zerops:
 	t.Error("comment_ratio check not found")
 }
 
-func TestCheckRecipeGenerate_PlaceholderText(t *testing.T) {
+func TestCheckRecipeDeployReadmes_PlaceholderText(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -577,7 +665,7 @@ zerops:
 `
 	writeFile(t, filepath.Join(appDir, "README.md"), readme)
 
-	checker := checkRecipeGenerate(stateDir, nil, nil)
+	checker := checkRecipeDeployReadmes(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

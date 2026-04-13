@@ -28,14 +28,14 @@ func getSubStepValidator(subStepName string) SubStepValidator {
 	case SubStepZeropsYAML:
 		return validateZeropsYAML
 	case SubStepReadmes:
-		// Post-deploy readme narration — same fragment check as the old
-		// generate-time readme, but with authentic content because the
-		// agent just lived through the debug rounds.
-		return validateReadme
-	case SubStepReadme:
-		// Legacy generate-time readme substep — retained only for
-		// sessions persisted before the v14 reorder. New sessions
-		// never see this.
+		// Post-deploy readme narration. The attestation-level check here
+		// is lightweight (markers exist, each fragment has content) —
+		// the heavy content validation (fragments literal format,
+		// integration-guide code blocks, comment specificity,
+		// knowledge-base authenticity, predecessor-floor) runs at
+		// deploy-step completion via checkRecipeDeployReadmes. Splitting
+		// the checks lets the agent iterate on the sub-step quickly
+		// without the full content battery firing on every retry.
 		return validateReadme
 	case SubStepSubagent:
 		// Feature sub-agent dispatch at deploy step 4b. v11 shipped a

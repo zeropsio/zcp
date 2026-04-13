@@ -45,13 +45,6 @@ const (
 	SubStepCrossDeploy  = "cross-deploy"
 	SubStepVerifyStage  = "verify-stage"
 	SubStepReadmes      = "readmes"
-
-	// SubStepReadme is retained as an alias for backward compatibility
-	// with persisted session state files written under the old generate-
-	// time readme substep. New sessions never see it — generate no longer
-	// emits a readme sub-step and the post-deploy narrate step uses
-	// SubStepReadmes (plural).
-	SubStepReadme = "readme"
 )
 
 // initSubSteps returns the sub-step sequence for a step based on plan shape.

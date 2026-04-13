@@ -158,11 +158,9 @@ var recipeGenerateTopics = []*GuidanceTopic{
 		Description: "Build pipeline / view consistency",
 		BlockNames:  []string{"asset-pipeline-consistency"},
 	},
-	{
-		ID: "readme-fragments", Step: RecipeStepGenerate,
-		Description: "README structure with extract fragments",
-		BlockNames:  []string{"readme-with-fragments"},
-	},
+	// v14: readme-fragments moved to RecipeStepDeploy — see recipeDeployTopics
+	// below. README writing happens at the post-verify `readmes` sub-step so
+	// the gotchas section narrates lived debug experience.
 	{
 		ID: "code-quality", Step: RecipeStepGenerate,
 		Description: "Comment ratio, pre-deploy verification",
@@ -261,6 +259,19 @@ var recipeDeployTopics = []*GuidanceTopic{
 		ID: "deploy-failures", Step: RecipeStepDeploy,
 		Description: "Failure diagnosis reference",
 		BlockNames:  []string{"reading-deploy-failures", "common-deployment-issues"},
+	},
+	{
+		ID: "readme-fragments", Step: RecipeStepDeploy,
+		Description: "Per-codebase README structure with extract fragments (post-verify `readmes` sub-step)",
+		BlockNames:  []string{"readme-with-fragments"},
+		// Eager: the fragment marker format is enforced byte-literally by
+		// the deploy-step checker. v14 burned a run where the agent
+		// invented `<!-- FRAGMENT:intro:start -->` from imagination
+		// because it never fetched this topic and the error message
+		// didn't show the expected shape. Landing the block in context
+		// at deploy time means the agent always has the literal marker
+		// template when it reaches the `readmes` sub-step.
+		Eager: true,
 	},
 }
 

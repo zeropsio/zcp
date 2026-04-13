@@ -28,7 +28,7 @@ func TestGenerateSubSteps_V14Order(t *testing.T) {
 		}
 	}
 	for _, ss := range got {
-		if ss.Name == SubStepReadme || ss.Name == SubStepReadmes {
+		if ss.Name == SubStepReadmes || ss.Name == "readme" {
 			t.Errorf("generate must not include a readme sub-step (found %q); readmes move to post-deploy", ss.Name)
 		}
 	}
@@ -121,18 +121,13 @@ func TestDeploySubSteps_V14MinimalOrder(t *testing.T) {
 	}
 }
 
-// TestSubStepReadme_BackwardCompatAlias ensures the old generate-time
-// SubStepReadme constant still resolves through the validator dispatch.
-// Sessions persisted before the v14 reorder may load from disk with the
-// old sub-step name; the validator must still accept them so those
-// sessions can finish cleanly rather than erroring out.
-func TestSubStepReadme_BackwardCompatAlias(t *testing.T) {
+// TestSubStepReadmes_ValidatorWired ensures the deploy-phase readmes
+// sub-step still resolves through the validator dispatch after the
+// v8.64.0 cleanup that removed the legacy SubStepReadme alias.
+func TestSubStepReadmes_ValidatorWired(t *testing.T) {
 	t.Parallel()
-	if SubStepReadme == SubStepReadmes {
-		t.Errorf("SubStepReadme (%q) and SubStepReadmes (%q) must be distinct constants", SubStepReadme, SubStepReadmes)
-	}
-	if getSubStepValidator(SubStepReadme) == nil {
-		t.Errorf("legacy SubStepReadme must still route to a validator for persisted-session compatibility")
+	if getSubStepValidator(SubStepReadmes) == nil {
+		t.Errorf("SubStepReadmes must route to validateReadme for the post-deploy narration sub-step")
 	}
 }
 
