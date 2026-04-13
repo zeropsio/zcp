@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -185,10 +186,31 @@ func printPushResults(results []sync.PushResult) {
 	fmt.Fprintf(os.Stderr, "Pushed %d PRs (%d skipped)\n", created, skipped)
 }
 
+// isHelpArg matches the conventional --help / -h / help spellings that
+// agents and humans both try first. The sync subcommand tree was built
+// with a strict positional parser that had no help affordance, which
+// made agents exit-code-trip when they asked for help; this helper is
+// the minimum fix to let them discover usage without treating it as an
+// error.
+func isHelpArg(s string) bool {
+	return s == "--help" || s == "-h" || s == "help"
+}
+
+// argsContainHelp returns true if any element of args is a help flag.
+// Used by subcommand parsers to bail out of arg validation and dump
+// the subcommand's usage line cleanly.
+func argsContainHelp(args []string) bool {
+	return slices.ContainsFunc(args, isHelpArg)
+}
+
+//nolint:maintidx // pre-existing complexity; help/flag additions are targeted
 func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
-	if len(args) == 0 {
+	if len(args) == 0 || isHelpArg(args[0]) {
 		printRecipeUsage()
-		os.Exit(1)
+		if len(args) == 0 {
+			os.Exit(1)
+		}
+		return
 	}
 
 	sub := args[0]
@@ -302,22 +324,44 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		printRecipeResult(result)
 
 	case "export":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: zcp sync recipe export <recipe-dir> [--app-dir <path>]... [--include-timeline]")
-			os.Exit(1)
+		const exportUsage = "usage: zcp sync recipe export <recipe-dir> [--app-dir <path>]... [--include-timeline]"
+		// Two-pass arg parsing: flags may appear anywhere, positional
+		// args collected in order. Fixes the strict-ordering trap that
+		// made `export --include-timeline <dir>` fail with "is not a
+		// directory" (the flag was parsed as the positional dir).
+		if argsContainHelp(args[1:]) {
+			fmt.Fprintln(os.Stderr, exportUsage)
+			return
 		}
-		opts := sync.ExportOpts{RecipeDir: args[1]}
-		for i := 2; i < len(args); i++ {
+		var opts sync.ExportOpts
+		var positional []string
+		for i := 1; i < len(args); i++ {
 			switch args[i] {
 			case "--include-timeline":
 				opts.IncludeTimeline = true
 			case "--app-dir":
-				if i+1 < len(args) {
-					opts.AppDirs = append(opts.AppDirs, args[i+1])
-					i++
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "error: --app-dir requires a path value")
+					fmt.Fprintln(os.Stderr, exportUsage)
+					os.Exit(1)
 				}
+				opts.AppDirs = append(opts.AppDirs, args[i+1])
+				i++
+			default:
+				if strings.HasPrefix(args[i], "--") {
+					fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
+					fmt.Fprintln(os.Stderr, exportUsage)
+					os.Exit(1)
+				}
+				positional = append(positional, args[i])
 			}
 		}
+		if len(positional) != 1 {
+			fmt.Fprintf(os.Stderr, "error: expected exactly one <recipe-dir> argument, got %d\n", len(positional))
+			fmt.Fprintln(os.Stderr, exportUsage)
+			os.Exit(1)
+		}
+		opts.RecipeDir = positional[0]
 		result, err := sync.ExportRecipe(opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)

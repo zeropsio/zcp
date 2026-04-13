@@ -82,7 +82,10 @@ func ExportRecipe(opts ExportOpts) (*ExportResult, error) {
 		return nil, fmt.Errorf("resolve recipe dir: %w", err)
 	}
 	if info, err := os.Stat(recipeDir); err != nil || !info.IsDir() {
-		return nil, fmt.Errorf("%s is not a directory", opts.RecipeDir)
+		return nil, fmt.Errorf(
+			"recipe-dir %q does not exist or is not a directory — pass the absolute path to a generated recipe output (e.g. /var/www/zcprecipator/{slug}), not a bare slug. Usage: zcp sync recipe export <recipe-dir> [--app-dir <path>]... [--include-timeline]",
+			opts.RecipeDir,
+		)
 	}
 
 	// Reject duplicate app-dir basenames — each codebase gets its own
