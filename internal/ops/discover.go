@@ -146,9 +146,10 @@ func buildDetailedServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 		info.Ports = make([]map[string]any, len(svc.Ports))
 		for i, p := range svc.Ports {
 			info.Ports[i] = map[string]any{
-				"port":     p.Port,
-				"protocol": p.Protocol,
-				"public":   p.Public,
+				"port":        p.Port,
+				"protocol":    p.Protocol,
+				"public":      p.Public,
+				"httpSupport": p.HTTPSupport,
 			}
 		}
 	}

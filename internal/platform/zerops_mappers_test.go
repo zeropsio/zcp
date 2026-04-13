@@ -39,7 +39,7 @@ func TestMapEsServiceStack_PortMapping(t *testing.T) {
 				},
 			},
 			wantPorts: []Port{
-				{Port: 8080, Protocol: "tcp", Public: true},
+				{Port: 8080, Protocol: "tcp", Public: true, HTTPSupport: false},
 			},
 		},
 		{
@@ -53,7 +53,7 @@ func TestMapEsServiceStack_PortMapping(t *testing.T) {
 				},
 			},
 			wantPorts: []Port{
-				{Port: 3000, Protocol: "tcp", Public: true},
+				{Port: 3000, Protocol: "tcp", Public: true, HTTPSupport: true},
 			},
 		},
 		{
@@ -67,7 +67,7 @@ func TestMapEsServiceStack_PortMapping(t *testing.T) {
 				},
 			},
 			wantPorts: []Port{
-				{Port: 5432, Protocol: "tcp", Public: false},
+				{Port: 5432, Protocol: "tcp", Public: false, HTTPSupport: false},
 			},
 		},
 		{
@@ -87,8 +87,21 @@ func TestMapEsServiceStack_PortMapping(t *testing.T) {
 				},
 			},
 			wantPorts: []Port{
-				{Port: 80, Protocol: "tcp", Public: true},
-				{Port: 5432, Protocol: "tcp", Public: false},
+				{Port: 80, Protocol: "tcp", Public: true, HTTPSupport: true},
+				{Port: 5432, Protocol: "tcp", Public: false, HTTPSupport: false},
+			},
+		},
+		{
+			name: "http_support_null_routing",
+			sdkPorts: output.EsServiceStackPorts{
+				{
+					Port:     types.NewInt(9000),
+					Protocol: enum.ServicePortProtocolEnumTcp,
+					// HttpRouting not set (null) — HTTPSupport should be false
+				},
+			},
+			wantPorts: []Port{
+				{Port: 9000, Protocol: "tcp", Public: false, HTTPSupport: false},
 			},
 		},
 	}
@@ -115,6 +128,9 @@ func TestMapEsServiceStack_PortMapping(t *testing.T) {
 				}
 				if got.Public != want.Public {
 					t.Errorf("Ports[%d].Public = %v, want %v", i, got.Public, want.Public)
+				}
+				if got.HTTPSupport != want.HTTPSupport {
+					t.Errorf("Ports[%d].HTTPSupport = %v, want %v", i, got.HTTPSupport, want.HTTPSupport)
 				}
 			}
 		})
@@ -151,8 +167,8 @@ func TestMapFullServiceStack_PortMapping(t *testing.T) {
 				},
 			},
 			wantPorts: []Port{
-				{Port: 3000, Protocol: "tcp", Public: true},
-				{Port: 9090, Protocol: "udp", Public: false},
+				{Port: 3000, Protocol: "tcp", Public: true, HTTPSupport: true},
+				{Port: 9090, Protocol: "udp", Public: false, HTTPSupport: false},
 			},
 		},
 	}
@@ -179,6 +195,9 @@ func TestMapFullServiceStack_PortMapping(t *testing.T) {
 				}
 				if got.Public != want.Public {
 					t.Errorf("Ports[%d].Public = %v, want %v", i, got.Public, want.Public)
+				}
+				if got.HTTPSupport != want.HTTPSupport {
+					t.Errorf("Ports[%d].HTTPSupport = %v, want %v", i, got.HTTPSupport, want.HTTPSupport)
 				}
 			}
 		})

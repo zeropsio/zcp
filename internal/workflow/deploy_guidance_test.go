@@ -310,9 +310,106 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 	}
 }
 
+func TestClassifyForVerify(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		target DeployTarget
+		want   bool
+	}{
+		{
+			name:   "web_app_with_http_support",
+			target: DeployTarget{Hostname: "app", RuntimeType: "nodejs@22", HTTPSupport: true},
+			want:   true,
+		},
+		{
+			name:   "worker_no_http",
+			target: DeployTarget{Hostname: "worker", RuntimeType: "nodejs@22", HTTPSupport: false},
+			want:   false,
+		},
+		{
+			name:   "managed_service",
+			target: DeployTarget{Hostname: "db", RuntimeType: "postgresql@16", HTTPSupport: false},
+			want:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := classifyForVerify(tt.target)
+			if got != tt.want {
+				t.Errorf("classifyForVerify(%s) = %v, want %v", tt.target.Hostname, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildVerifyGuide_MixedTargets(t *testing.T) {
+	t.Parallel()
+	state := &DeployState{
+		Mode: PlanModeStandard,
+		Targets: []DeployTarget{
+			{Hostname: "app", RuntimeType: "nodejs@22", HTTPSupport: true, Role: DeployRoleDev},
+			{Hostname: "db", RuntimeType: "postgresql@16", HTTPSupport: false, Role: DeployRoleSimple},
+		},
+	}
+	guide := buildVerifyGuide(state)
+
+	if guide == "" {
+		t.Fatal("expected non-empty verify guidance")
+	}
+
+	// Web-facing service should get agent-browser verification.
+	wantContains := []string{
+		"agent-browser",
+		"app",
+		"Spawn verify agent",
+		"VERDICT",
+	}
+	for _, want := range wantContains {
+		if !strings.Contains(guide, want) {
+			t.Errorf("guide should contain %q for web-facing service\ngot:\n%s", want, guide)
+		}
+	}
+
+	// Non-web service should get direct zerops_verify, NOT agent-browser.
+	if !strings.Contains(guide, `zerops_verify serviceHostname="db"`) {
+		t.Errorf("guide should contain direct zerops_verify for non-web service\ngot:\n%s", guide)
+	}
+}
+
+func TestBuildVerifyGuide_NoWebTargets(t *testing.T) {
+	t.Parallel()
+	state := &DeployState{
+		Mode: PlanModeStandard,
+		Targets: []DeployTarget{
+			{Hostname: "worker", RuntimeType: "nodejs@22", HTTPSupport: false, Role: DeployRoleDev},
+		},
+	}
+	guide := buildVerifyGuide(state)
+
+	if guide == "" {
+		t.Fatal("expected non-empty verify guidance")
+	}
+
+	// Should have zerops_verify but NOT agent-browser.
+	if !strings.Contains(guide, "zerops_verify") {
+		t.Error("guide should mention zerops_verify")
+	}
+	if strings.Contains(guide, "agent-browser") {
+		t.Errorf("guide should NOT mention agent-browser when no web targets\ngot:\n%s", guide)
+	}
+}
+
 func TestBuildVerifyGuide_NonEmpty(t *testing.T) {
 	t.Parallel()
-	guide := buildVerifyGuide()
+	state := &DeployState{
+		Mode: PlanModeStandard,
+		Targets: []DeployTarget{
+			{Hostname: "appdev", Role: DeployRoleDev},
+		},
+	}
+	guide := buildVerifyGuide(state)
 	if guide == "" {
 		t.Fatal("expected non-empty verify guidance")
 	}

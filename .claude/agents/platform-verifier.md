@@ -140,6 +140,30 @@ cd /tmp/zcp-verify && go test -v -tags e2e -run TestSpecificClaim
 - {new verified facts to persist}
 ```
 
+## Browser Verification (agent-browser CLI)
+
+`agent-browser` is a browser automation CLI available via Bash. Use it for visual/functional
+verification of web-facing services — catching issues that HTTP-only checks miss (blank pages,
+broken SPAs, JS hydration failures, missing assets).
+
+**Key commands:**
+- `agent-browser open <url>` — navigate to URL
+- `agent-browser snapshot` — accessibility tree (AI-optimized, shows DOM structure with @ref selectors)
+- `agent-browser screenshot [path]` — take screenshot
+- `agent-browser eval <js>` — run JavaScript (e.g., check for console errors)
+- `which agent-browser` — check if installed (gracefully skip if not available)
+
+**When to use:**
+- After `zerops_verify` returns healthy for a web-facing service — confirm visual rendering
+- When `http_root` passes (200 OK) but the service might be an SPA with broken JS
+- When investigating deployment failures that logs don't explain
+- For adoption verification — check if existing service actually works
+
+**When NOT to use:**
+- Pure API services (JSON endpoints) — `zerops_verify` http_status check is sufficient
+- Worker services — no HTTP endpoint
+- Managed services — no web interface
+
 ## Safety Rules
 
 1. **Temporary services only.** If you create services via `zerops_import` for testing, use clearly named temp services (e.g., `tmpverify1`) and DELETE them after verification.

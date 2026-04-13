@@ -3,8 +3,6 @@ package workflow
 import (
 	"fmt"
 	"strings"
-
-	"github.com/zeropsio/zcp/internal/content"
 )
 
 // StrategyToSection maps deploy strategy constants to deploy.md section names.
@@ -185,19 +183,6 @@ func buildDeployGuide(state *DeployState, iteration int, env Environment, stateD
 	sb.WriteString("- Process killed (OOM) during SSH work → `zsc scale ram +2GiB 10m` before heavy ops (auto-reverts)\n")
 
 	return sb.String()
-}
-
-// buildVerifyGuide returns verify step guidance from deploy.md.
-func buildVerifyGuide() string {
-	md, err := content.GetWorkflow("develop")
-	if err != nil {
-		return "Run zerops_verify for each target service. Check health status."
-	}
-	section := ExtractSection(md, "deploy-verify")
-	if section == "" {
-		return "Run zerops_verify for each target service. Check health status."
-	}
-	return section
 }
 
 // buildKnowledgeMap returns compact knowledge pointers personalized to target runtime types.

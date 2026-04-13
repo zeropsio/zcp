@@ -158,9 +158,10 @@ func mapServicePorts(sdkPorts []output.ServicePort) []Port {
 		httpRouting, hrFilled := p.HttpRouting.Get()
 		public := (prFilled && portRouting.Native()) || (hrFilled && httpRouting.Native())
 		ports = append(ports, Port{
-			Port:     int(p.Port),
-			Protocol: p.Protocol.String(),
-			Public:   public,
+			Port:        int(p.Port),
+			Protocol:    p.Protocol.String(),
+			Public:      public,
+			HTTPSupport: hrFilled && httpRouting.Native(),
 		})
 	}
 	return ports

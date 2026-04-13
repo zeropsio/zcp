@@ -891,6 +891,19 @@ For managed services (DB, cache, storage): skip step 2 (no subdomain), just step
 
 **Do NOT deploy to stage until dev passes ALL checks.** Stage is for final validation, not debugging.
 
+**Browser verification for web-facing services:**
+
+If the service has `httpSupport: true` on any port (visible in `zerops_discover` output),
+spawn a verify agent for deeper visual verification after `zerops_verify` passes:
+
+Agent(model="sonnet", prompt=<Verify Agent Prompt — see develop workflow guidance>)
+
+The verify agent calls zerops_verify (infrastructure baseline), then uses agent-browser
+to check if the page actually renders. Its VERDICT determines pass/fail:
+- VERDICT: PASS → service verified
+- VERDICT: FAIL → enter iteration loop with agent's evidence
+- VERDICT: UNCERTAIN → fallback to zerops_verify result (current behavior)
+
 ### After completion — next iteration
 
 If the user asks for changes after initial bootstrap:

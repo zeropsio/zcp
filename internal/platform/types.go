@@ -58,9 +58,10 @@ func (s *ServiceStack) IsSystem() bool {
 
 // Port represents a service port.
 type Port struct {
-	Port     int    `json:"port"`
-	Protocol string `json:"protocol"`
-	Public   bool   `json:"public"`
+	Port        int    `json:"port"`
+	Protocol    string `json:"protocol"`
+	Public      bool   `json:"public"`
+	HTTPSupport bool   `json:"httpSupport"` // web server on this port (from zerops.yaml httpSupport)
 }
 
 // CustomAutoscaling contains scaling configuration.

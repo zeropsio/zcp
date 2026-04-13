@@ -165,13 +165,21 @@ func enrichTargetRuntimeTypes(ctx context.Context, client platform.Client, proje
 		return
 	}
 	typeMap := make(map[string]string, len(services))
+	httpMap := make(map[string]bool, len(services))
 	for _, svc := range services {
 		typeMap[svc.Name] = svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+		for _, p := range svc.Ports {
+			if p.HTTPSupport {
+				httpMap[svc.Name] = true
+				break
+			}
+		}
 	}
 	for i := range targets {
 		if rt, ok := typeMap[targets[i].Hostname]; ok {
 			targets[i].RuntimeType = rt
 		}
+		targets[i].HTTPSupport = httpMap[targets[i].Hostname]
 	}
 }
 

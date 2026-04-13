@@ -49,6 +49,7 @@ type DeployTarget struct {
 	Role        string `json:"role"`
 	Status      string `json:"status"`
 	Strategy    string `json:"strategy,omitempty"`
+	HTTPSupport bool   `json:"httpSupport,omitempty"`
 }
 
 // DeployResponse is returned from develop workflow actions.
@@ -317,7 +318,7 @@ func (d *DeployState) buildGuide(step string, iteration int, env Environment, st
 	case DeployStepExecute:
 		return buildDeployGuide(d, iteration, env, stateDir)
 	case DeployStepVerify:
-		return buildVerifyGuide()
+		return buildVerifyGuide(d)
 	}
 	return ""
 }
