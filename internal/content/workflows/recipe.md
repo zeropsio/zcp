@@ -673,36 +673,29 @@ Use the framework's **standard** env var names — do not invent new ones. If th
 
 <block name="dashboard-skeleton">
 
-### Write the dashboard skeleton
+### Write the dashboard skeleton — health page ONLY
 
-What you write now (main agent) vs what the sub-agent writes later (deploy step):
+The generate step ships an intentionally bare dashboard: **one page, one component, one job** — prove every managed service in the plan is reachable. No feature sections, no forms, no tables, no demos. The feature sub-agent at deploy step 4b owns everything else as a single coherent author.
 
-| Now (generate — you write this) | Later (deploy sub-agent — do NOT write this now) |
+**What the scaffold writes:**
+
+| Area | Contents |
 |---|---|
-| Layout template with empty partial/component slots per feature section | Feature-section controllers/handlers |
-| Placeholder text in each slot ("Section available after deploy") | Feature-section views with interactive UI |
-| Primary model + migration + factory + seeder (15-25 records) | Feature-specific JavaScript |
-| DashboardController with `/`, `/health`, `/status` endpoints returning real data | Feature-specific model mixins/traits |
-| Service connectivity panel (CONNECTED/DISCONNECTED per provisioned service) | |
-| All routes registered — GET + POST for every feature action, returning placeholder responses | |
-| `zerops.yaml` (every setup), each repo's `README.md` (all 3 fragments), `.env.example` | |
+| Frontend entry | `App.svelte` / equivalent — renders `<StatusPanel />` and literally nothing else |
+| Status panel component | Polls `GET /api/status` every 5s, renders one row per managed service (db, redis, nats, storage, search, …) with a colored dot (green/red/yellow) and the service name. No buttons, no forms, no other state |
+| API health route | `GET /api/health` — liveness probe, returns `{ ok: true }` |
+| API status route | `GET /api/status` — deep connectivity check, returns `{ db: "ok", redis: "ok", nats: "ok", storage: "ok", search: "ok" }` (one key per service in the plan). Implementation pings each service |
+| Service clients | Client initialization for every managed service in the plan: TypeORM datasource, Redis client, NATS connect, S3 client, Meilisearch client. Import and configure from env vars — do NOT build demo routes against them |
+| Migrations | Full schema for the primary data model — the feature sub-agent will add endpoints that query it |
+| Seed data | 3-5 rows of sample data so the feature sub-agent has something to render. NOT 15-25 — the feature sub-agent expands the seed when it builds the features that need more |
+| Worker (if separate codebase) | NATS connect + one no-op subscriber that logs the received message. No processing, no DB writes, no result storage |
+| `zerops.yaml`, `README.md`, `.env.example` | Per existing rules |
 
-Feature sections map to the plan's targets:
+**What the scaffold does NOT write:** item CRUD routes, cache-demo routes, search routes, jobs-dispatch routes, storage upload routes, and the frontend components that consume them. Every one of these belongs to the feature sub-agent, which will author API + frontend + worker changes as a single unit so the contracts stay consistent.
 
-- **Database** — list seeded records + create-record form route
-- **Cache** (if provisioned) — store-value-with-TTL route, cached-vs-fresh demonstration
-- **Object storage** — upload-file + list-files routes
-- **Search engine** — live search route over seeded records
-- **Messaging broker + worker** — dispatch-job POST that publishes to a NATS subject the worker consumes; status poll that reads the worker's result
+**Why this is narrower than it feels:** v11 and v12 both shipped with the scaffold overshooting into feature code and the main agent concluding step 4b was "already done." The only reliable way to prevent that is to ship a visibly empty dashboard — one green-dot panel — so there is nothing for the main agent to rationalize away. The health page also makes the deploy browser walk meaningful: either every dot is green or it isn't.
 
-You write the routes (pre-registered with placeholder handlers) and the layout partials that WILL hold each section. The actual controllers and views that exercise the live services come later, when a framework-expert sub-agent runs at the deploy step against running containers.
-
-Endpoint requirements:
-
-- **Server-side (types 1, 2b, 3, 4)**: `GET /` (HTML dashboard), `GET /health` or `GET /api/health` (JSON), `GET /status` (JSON with connectivity checks — DB ping, cache ping, latency).
-- **Static frontend (type 2a)**: single `GET /` page with framework name, greeting, timestamp, environment indicator. No server-side health endpoint.
-
-For a single-feature minimal recipe you skip the skeleton/sub-agent split entirely — write everything inline in this step and move on.
+**Minimal / hello-world tiers** skip the dashboard entirely — they follow their existing flow (inline feature, no sub-agent split).
 
 </block>
 
@@ -710,40 +703,62 @@ For a single-feature minimal recipe you skip the skeleton/sub-agent split entire
 
 ### Scaffolding sub-agent brief (multi-codebase recipes only)
 
-For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appdev/apidev/workerdev mounts, or any recipe with more than one codebase), writing every codebase sequentially in the main agent is prohibitively slow. The standard shortcut is to dispatch one scaffolding sub-agent per codebase in parallel — but without an explicit scope contract, scaffolding sub-agents overshoot into feature code and the feature sub-agent at deploy step 4b ends up with nothing left to do (or worse, gets skipped because "the scaffold looks complete"). v11 shipped a 78-line curl-in-a-button instead of a 191-line dashboard feature for exactly this reason.
+For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appdev/apidev/workerdev mounts, or any recipe with more than one codebase), writing every codebase sequentially in the main agent is slow. Dispatch scaffolding sub-agents in parallel, one per codebase — **with a strict brief that ships an intentionally bare health-dashboard-only skeleton.** Feature code is owned by a single feature sub-agent at deploy step 4b who writes API + frontend + worker as one unit so the contracts stay consistent. v10, v11, and v12 all shipped recurring API/frontend contract-mismatch bugs because parallel scaffold agents authored their halves of each feature independently; the single-author rule at step 4b eliminates the entire class.
 
 **Order of operations — main agent first, sub-agents second:**
 
-1. **Main agent writes zerops.yaml for every codebase sequentially.** zerops.yaml is platform config, not source code, and stays the main agent's responsibility. The schema-fetch + dev/prod split + worker setup shape are already part of this step's existing blocks.
-2. **Main agent writes the README skeleton for every codebase sequentially** — intro + integration-guide fragment (with the zerops.yaml verbatim) + empty knowledge-base placeholder. The main agent comes back after deploy to narrate the knowledge-base gotchas.
+1. **Main agent writes zerops.yaml for every codebase sequentially.** Platform config stays the main agent's responsibility.
+2. **Main agent writes the README skeleton for every codebase sequentially** — intro + integration-guide fragment (with the zerops.yaml verbatim) + empty knowledge-base placeholder. The main agent returns after deploy to narrate gotchas.
 3. **THEN dispatch scaffolding sub-agents in parallel, one per codebase**, each with the brief template below.
 
-**Scaffold sub-agent brief — include verbatim (edit only the codebase-specific names and service list):**
+**Scaffold sub-agent brief — include verbatim (edit only the codebase-specific names and service list from the plan):**
 
-> You are scaffolding a SKELETON, not features. Write only the structural shell needed for the container to start, the main agent to smoke-test connectivity, and the feature sub-agent at deploy step 4b to fill in the dashboard UX.
+> You are scaffolding a health-dashboard-only skeleton. **You write infrastructure. You do NOT write features.** A feature sub-agent runs later with SSH access to live services and authors every feature section end-to-end (API routes + frontend components + worker payloads as a single unit). Your job is to give that sub-agent a healthy, deployable, empty canvas to build on.
 >
-> **WRITE:**
+> **WRITE (frontend codebase):**
 >
-> - `package.json` / `composer.json` / `go.mod` / equivalent — production dependencies only
-> - Framework config (`tsconfig.json`, `vite.config`, framework's `.env.example`, eslint config if the framework's scaffolder normally emits one)
-> - Main entry point (`main.ts`, `App.svelte`, `index.html`, etc.) with the minimum framework boilerplate to start
-> - ONE health/status controller or route that returns `{ ok: true }` — proves the container reaches HTTP
-> - ONE list controller/route that returns the seeded database rows (if a database is in the plan) — proves the ORM + migration + seed wiring
-> - Entity / model files matching the plan's data shape. **Workers that share a database with the API MUST import the API's entity definitions, not invent their own** — phantom columns in worker-only entities are a v11 regression class.
-> - Minimum wiring for every managed service in the plan (cache, queue, storage, search) — import the client, read credentials from env vars, expose a connection for later use. Do NOT demonstrate features against those services.
-> - Main dashboard / App shell component that imports placeholder feature-section components and arranges them in a layout. Each placeholder renders `<h2>{section title}</h2>` + `<p>TODO: feature implementation</p>` and nothing else.
-> - Worker message consumer shell (if this codebase is a worker): subscribe to the plan's subject, log the received message, exit the handler. No real processing.
+> - `package.json` — production dependencies for the framework and any CSS tooling the scaffold would normally include
+> - Framework config (`vite.config.ts`, `tsconfig.json`, `.env.example`)
+> - `App.svelte` (or equivalent entry) that renders `<StatusPanel />` **and nothing else** — no routing, no layout with empty slots, no tabs, no nav. One component mounted.
+> - `StatusPanel.svelte` — polls `GET /api/status` every 5s, renders one row per managed service in the plan with a colored dot (green = "ok", yellow = "degraded", red = missing/error) and the service name. That's the whole UI. No forms, no buttons, no tables, no tabs.
+> - `main.ts` / `main.js` — framework bootstrap
 >
-> **DO NOT WRITE:**
+> **WRITE (API codebase):**
 >
-> - Feature section implementations — cache-demo forms, search UI with result tables, job-dispatch forms with history, upload forms with previews, live-updating status panels. These all belong to the feature sub-agent at deploy step 4b.
-> - Rich UX elements — styled forms with focus rings, submit-state badges, contextual hints explaining what a section demonstrates, error flashes, empty states, `$effect` hooks that auto-load data on mount, typed response interfaces, inline section-level styles. These belong to the feature sub-agent.
-> - Business logic beyond "list seeded records" and "POST creates a record." Worker handlers that mutate database state belong to the feature sub-agent.
-> - Integration code between codebases (CORS allow-lists, proxy rules, cross-codebase `types.ts` sharing) — the main agent resolves these during cross-codebase verification at deploy time.
+> - `package.json` with production dependencies for the framework, ORM, and every managed-service client in the plan (Redis, NATS, S3, Meilisearch, etc.)
+> - `GET /api/health` — liveness probe returning `{ ok: true }`. No service calls.
+> - `GET /api/status` — deep connectivity check. Returns a flat object with one key per service in the plan: `{ db: "ok", redis: "ok", nats: "ok", storage: "ok", search: "ok" }`. Each value is `"ok"` on successful ping, `"error"` otherwise. Exactly these keys; exactly these values.
+> - Service client initialization for **every** managed service in the plan, from env vars. Import and configure the client library, expose the client for later use.
+> - Migrations for the primary data model. Full schema — the feature sub-agent will add read/write endpoints against it.
+> - Seed data — 3 to 5 rows. **Not 15-25.** The feature sub-agent expands seeds as it implements features that need more.
+> - **No other routes.** No item CRUD. No cache-demo. No search. No jobs dispatch. No storage upload. If you are about to write any of these, stop and re-read this brief.
 >
-> **Why the split matters:** the feature sub-agent at deploy step 4b has SSH access to LIVE deployed services and tests each feature against running managed services as it writes. A scaffolding sub-agent writing features writes blind — the services aren't deployed yet when scaffold runs. Features written at scaffold time consistently ship as curl-in-a-button demos instead of dashboard features. If the scaffold brief is followed, the feature sub-agent will expand each placeholder section into a ~150-200 line feature component with typed interfaces, contextual hints, and visual feedback — the v7 gold-standard tier.
+> **WRITE (worker codebase, if separate):**
 >
-> **Reporting back:** when you finish, return a bulleted list of the files you wrote and the services you wired (by env var name). Do not summarize what "features" you implemented — you implemented zero. If the main agent reads your return value and thinks the dashboard is already complete, the brief was not followed.
+> - `package.json` with production dependencies for NATS and the database client
+> - NATS connection + one subject subscriber that logs the received message and returns. No job processing, no DB writes, no Redis writes, no result tables.
+> - Worker framework bootstrap (`NestFactory.createApplicationContext()` for NestJS, equivalent for other frameworks)
+> - Entity / model imports from the API codebase when the worker shares the database. Never invent worker-only column sets — v11 shipped phantom columns this way.
+>
+> **WRITE (every codebase):**
+>
+> - `.gitignore`, `.env.example`, framework lint config only if the framework's own scaffolder normally emits one
+>
+> **DO NOT WRITE (any codebase):**
+>
+> - Item CRUD endpoints, item list components, create-item forms, item detail views
+> - Cache-demo routes, cached-vs-fresh components
+> - Search endpoints or search UI
+> - Jobs-dispatch endpoints, jobs UI, jobs history tables, worker job processors
+> - Storage upload endpoints, file list components, upload forms
+> - Anything that calls a managed service beyond the one connectivity ping in `/api/status`
+> - Rich UX: styled forms, tables with headers, submit-state badges, contextual hints, error flashes, empty states, `$effect` hooks that auto-load data, typed response interfaces for feature payloads, inline section-level styles
+> - Routing, tabs, layouts with multiple sections, nav components, pagination
+> - CORS config, proxy rules, `types.ts` shared between codebases — the main agent resolves cross-codebase integration during verification
+>
+> **The dashboard you ship is one green-dot panel.** A reader looking at the deployed page should see five rows: `db • green`, `redis • green`, `nats • green`, `storage • green`, `search • green` (with the service names from the plan). That is the correct, expected, final output of the scaffold phase. The feature sub-agent at deploy step 4b builds every showcase section on top of this — owning API routes, frontend components, and worker payloads as a single coherent author — so the dashboard at close time is rich and feature-complete. If you are tempted to add a "small demo" or "minimal example" of any managed service, stop: that is the feature sub-agent's job.
+>
+> **Reporting back:** return a bulleted list of the files you wrote and the env var names you wired for each managed service. Do not claim you implemented any features. You didn't. If your return value makes the main agent think step 4b is already done, the brief was not followed.
 
 </block>
 
@@ -833,9 +848,9 @@ Description of why this change is needed.
 - [ ] If dev build base includes secondary runtime, dev `buildCommands` includes package manager install
 - [ ] README has all 3 extract fragments with proper markers
 - [ ] `.env.example` preserved (`.env` removed), updated with ALL env vars from zerops.yaml
-- [ ] **(showcase only)** Dashboard has interactive feature section per provisioned service (no connectivity-only dots)
-- [ ] **(showcase only)** Seeder creates sample data — dashboard shows real records on first deploy
-- [ ] If search engine provisioned: `initCommands` includes search index population after `db:seed`
+- [ ] **(showcase only)** Dashboard is the health-dashboard skeleton ONLY — `<StatusPanel />` rendering one dot per managed service, plus `/api/health` and `/api/status`. No item CRUD, no cache-demo, no search UI, no jobs dispatch, no storage upload. **Feature sections belong to the feature sub-agent at deploy step 4b.** If you find yourself writing ItemsList or JobsDemo at generate, stop — re-read `scaffold-subagent-brief`.
+- [ ] **(showcase only)** Seeder populates 3-5 rows of primary-model sample data. The feature sub-agent at deploy step 4b will expand seeds when it builds the features that need more.
+- [ ] **(showcase only)** Search index population goes into `initCommands` — but the feature sub-agent at deploy step 4b adds it, not the scaffold. The scaffold leaves search wiring initialized but no sync step.
 
 </block>
 
@@ -1166,11 +1181,13 @@ zerops_logs serviceHostname="{worker_hostname}" limit=20
 
 **Step 4b: Dispatch the feature sub-agent — enforced sub-step for Type 4 showcase**
 
-After appdev is deployed and verified with the skeleton (connectivity panel, seeded data, health endpoint), dispatch ONE framework-expert sub-agent to fill in the feature sections. **This is where feature implementation happens — generate writes the skeleton only.** Writing feature code at generate means writing blind against disconnected services; the sub-agent writes against live services and can test each feature as it goes.
+After the scaffold's health dashboard is deployed and every service dot is green, dispatch **ONE** framework-expert sub-agent as a single author that owns every feature section end-to-end: API routes, worker payloads, and frontend components as one coherent unit. This is where feature implementation happens. The scaffold at generate writes the health-dashboard-only skeleton (see `scaffold-subagent-brief`); the feature sub-agent writes **everything else**.
 
-**This is an enforced sub-step**, not a prose "MANDATORY" label: the deploy step cannot be marked complete without `zerops_workflow action="complete" step="deploy" substep="subagent" attestation="<description of what the feature sub-agent produced>"`. The validator rejects empty and boilerplate attestations; you must name the files the sub-agent wrote and the features it implemented.
+**Single author, not parallel authors.** v10, v11, and v12 all shipped the same recurring class of contract-mismatch bugs (frontend reading `.hits` while API returns `{ hits: [] }`, worker reading `payload.jobType` while API publishes `type`, etc.) because scaffold agents ran in parallel and each owned one slice of the contract. A single feature sub-agent authoring both sides of every API/worker/frontend contract eliminates the class entirely. Do NOT split this into multiple parallel feature sub-agents.
 
-**Do NOT read the existing scaffold code to decide whether this is needed** — it IS needed. Scaffold sub-agents at the generate step write intentionally narrow output (see the `scaffold-subagent-brief` topic); the dashboard UX — styled forms, tables with history, contextual hints, typed interfaces, error flashes, empty states, `$effect` hooks that auto-load data — is the feature sub-agent's job. If the scaffold looks "complete", the scaffold brief was not followed at generate; dispatch the feature sub-agent anyway to bring the dashboard up to quality. Skipping this step is how v11 shipped a scaffold as a dashboard (see docs/implementation-v11-findings.md for the v7-vs-v11 component comparison).
+**This is an enforced sub-step** — not a prose "MANDATORY" label. The deploy step's full-step complete is gated on `zerops_workflow action="complete" step="deploy" substep="subagent" attestation="<description of what the feature sub-agent produced>"`. The validator rejects empty and boilerplate attestations; the attestation must name the files the sub-agent wrote and the feature sections it implemented.
+
+**Do NOT read the existing scaffold code to decide whether this is needed.** The scaffold is deliberately bare — a single `StatusPanel` component showing five green dots, `/api/health`, `/api/status`, service client initializers, schema + small seed, and nothing else. If the deployed app looks feature-complete, the scaffold brief was not followed at generate; re-audit the scaffold output and dispatch the feature sub-agent to bring the dashboard up to quality.
 
 **Before dispatching the subagent**: kill ALL dev server processes on every dev container. The subagent starts fresh — leftover processes holding ports cause contention (`fuser -k {port}/tcp` retry loops waste minutes). Run:
 ```
@@ -1182,33 +1199,43 @@ Minimal recipes (1-2 feature sections) skip the sub-agent entirely — the main 
 
 **Sub-agent brief — required contents**:
 
-- Exact file paths (framework-conventional locations for controllers, views, partials)
-- Installed packages relevant to each feature (from the plan's `cacheLib`, `storageDriver`, `searchLib` etc.)
-- Service-to-feature mapping (database/cache/storage/search/queue — one feature section per provisioned service, exercising that service)
-- **UX quality contract** (see below) — what the rendered dashboard must look like
-- Pre-registered route paths the sub-agent must fill (agent wrote them as stubs at generate)
-- **Where app-level commands run** (hard rule, see below)
-- **Port hygiene**: before starting any dev server, always kill any existing holder of the port first: `ssh {hostname}dev "fuser -k {httpPort}/tcp 2>/dev/null || true"`. This is a defensive measure against leftover processes from the main agent or prior subagent runs.
-- Instruction to **test each feature against the live service immediately after writing** — the sub-agent has SSH access to appdev and every managed service is reachable. After writing a controller+view, hit the endpoint via `ssh {devHostname} "curl -s localhost:{port}/…"` (or the framework's test runner over SSH) and verify the response. Fix immediately; do not write ahead of verification.
+- Every mount path the sub-agent owns — **apidev AND appdev AND workerdev** (when a separate-codebase worker exists). The sub-agent writes to all three as a single unit so API routes, worker payloads, and frontend consumers stay in contract lock-step. This is non-negotiable and is the single biggest reason v10/v11/v12 shipped contract-mismatch bugs — parallel authors cannot keep contracts consistent.
+- The plan's managed-service list and which feature section each maps to
+- **Contract-first rule**: for every feature section, the sub-agent defines the API response shape FIRST, the worker payload shape FIRST (if a worker is involved), then implements the backend, then consumes the same exact shape on the frontend. Frontend and backend for the same feature are written as adjacent edits, not as separate passes.
+- **Seed expansion**: the scaffold left 3-5 rows. The sub-agent expands the seed to 15-25 records as part of implementing the features that need them.
+- **Search indexing**: if a search engine is provisioned, the sub-agent writes the search-sync step (after `db:seed`) in `initCommands` — the scaffold intentionally left this out.
+- **UX quality contract** (see below)
+- **Where app-level commands run** (hard rule, see below) — include verbatim
+- **Port hygiene**: before starting any dev server, kill any existing holder of the port first: `ssh {hostname}dev "fuser -k {httpPort}/tcp 2>/dev/null || true"`
+- **Verify each feature as you write it** — the sub-agent has SSH access to every dev container and every managed service is reachable. After each controller + frontend pair, hit the endpoint via `ssh {hostname}dev "curl -s localhost:{port}/..."` and verify the response shape matches what the frontend consumer expects. Fix immediately; do not write ahead of verification.
 
-**Managed service connection patterns** — before writing the subagent brief, use `zerops_knowledge query="connection pattern {serviceType}"` for every managed service in the plan (cache, queue, storage, search). Include the auth format, connection string construction, and known client-library pitfalls directly in the subagent brief. This is platform knowledge — how Zerops-provisioned services expose credentials — not framework knowledge. The subagent must write correct connection code from the start, not discover auth quirks through deploy failures. Key pitfalls to inject:
+**Managed service connection patterns** — before writing the sub-agent brief, use `zerops_knowledge query="connection pattern {serviceType}"` for every managed service in the plan. Include auth format, connection string construction, and known client-library pitfalls directly in the brief. Key pitfalls to inject:
 - **Valkey/KeyDB (cache)**: no authentication — use `redis://hostname:port` without credentials. Do NOT reference `${cache_user}` or `${cache_password}`.
 - **NATS (queue)**: credentials must be passed as separate connection options (`user`, `pass`), NOT embedded in the URL. URL-embedded credentials are silently ignored by most NATS client libraries.
 - **Object Storage (S3)**: requires `apiUrl`, `accessKeyId`, `secretAccessKey`, `bucketName` — NOT the `connectionString` format used by databases.
 
-**Dependency hygiene**: when adding packages, check the existing lockfile or package manifest for the major version of the framework's core package. Pin new packages from the same framework family to the same major version. Run the project's install command after each batch of package additions to catch peer-dependency conflicts immediately — do not wait for build.
+**Dependency hygiene**: when adding packages, check the existing lockfile for the major version of the framework's core package. Pin new packages from the same framework family to the same major version. Run the install command after each batch of package additions to catch peer-dependency conflicts immediately.
 
-**API-first**: the sub-agent works on BOTH apidev AND appdev mounts (plus workerdev if the worker has a public-facing component). Include every mount path in the brief. The sub-agent adds API routes (controllers, services) and corresponding frontend components that fetch from the API.
+**Feature sections the sub-agent owns end-to-end** — for each provisioned service, the sub-agent authors the API route, the backing logic, the worker payload (if applicable), AND the frontend component that consumes the response, as a **single edit session** (not as separate passes):
 
-**Feature sections must EXERCISE each service, not just check connectivity**:
+- **Database** — list seeded records + create-record form. Typed response interface, paginated table with headers and row shading, submit-state feedback on the form.
+- **Cache** (if provisioned) — store-a-value-with-TTL route + cached-vs-fresh demonstration showing timing. Cache is for cache + sessions only; the queue uses NATS, a separate broker.
+- **Object storage** (if provisioned) — upload-file (multipart) + list-files routes. Frontend form shows upload progress and a list of previously-uploaded files.
+- **Search engine** (if provisioned) — live search over seeded records. Frontend debounces input and renders the result array.
+- **Messaging broker + worker** (if provisioned) — dispatch-job POST publishes to a NATS subject; the worker (which the sub-agent implements) consumes, does simulated work, writes the result to a DB table or Redis key; the frontend polls the result endpoint and renders (a) dispatched timestamp, (b) processed timestamp, (c) result payload. This exercises the full NATS → worker → result round-trip.
 
-- **Database** — list seeded records + create-record form (proves ORM + migrations + CRUD)
-- **Cache** (if provisioned) — store-a-value-with-TTL + cached-vs-fresh demonstration. Cache is for cache + sessions only; the queue uses NATS, a separate broker
-- **Object storage** (if provisioned) — upload-file + list-files routes (proves S3 integration)
-- **Search engine** (if provisioned) — live search over seeded records (proves indexing)
-- **Messaging broker + worker** (if provisioned) — dispatch-job POST that publishes to a NATS subject; worker consumes, writes result to a DB table the dashboard polls. Show (a) message sent (timestamp + subject), (b) worker-processed result appearing within ~1s. Proves the full NATS → worker → result round-trip
+**Contract discipline — required in the sub-agent's dispatch prompt:**
 
-The seeder populates 15-25 sample records so the dashboard shows real data on first deploy, not empty states. Search index is populated via the framework's search-import command in `initCommands` after `db:seed`.
+> Before you write each feature section:
+> 1. Decide the exact JSON shape the API returns and write it as a TypeScript interface (or language equivalent) FIRST, above the controller.
+> 2. For sections with a worker: decide the exact payload shape the API publishes to NATS AND the exact result shape the worker writes back. Write both as shared types.
+> 3. Implement the API route using the interface as the return type.
+> 4. Implement the frontend consumer in the SAME edit session, referencing the same interface. Do not assume a response shape — read the interface you just wrote.
+> 5. Smoke-test over SSH immediately: `curl` the endpoint and compare the actual response against the interface. Fix any mismatch before moving to the next feature.
+>
+> Shared types live in the API codebase (`apidev/src/types/` or equivalent). The frontend imports them if both codebases share TypeScript, or copy-pastes the interface into the frontend codebase if not. Either way, the shape is written ONCE, at the top, and both sides consume it.
+>
+> Contract-mismatch bugs (frontend reads `.hits`, API returns `{ hits: [] }`; worker reads `payload.jobType`, API publishes `type`) are the single biggest reason recipe close-step reviews flag bugs. Writing the interface first and reading both sides through it eliminates this entire class.
 
 **UX quality contract** (what "dashboard style" means — include verbatim in the sub-agent brief):
 

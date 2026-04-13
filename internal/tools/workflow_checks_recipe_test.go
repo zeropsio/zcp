@@ -104,6 +104,142 @@ Laravel on Zerops uses PHP-FPM behind nginx.
 <!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
 `
 
+// TestCheckCommentSpecificity exercises the v13 comment-specificity floor,
+// the companion to the existing comment_ratio check. comment_ratio says
+// "comments are PRESENT"; specificity says "comments are LOAD-BEARING".
+// Generic lines like "npm ci for reproducible builds" pass ratio but
+// read as boilerplate that teaches nothing Zerops-specific.
+func TestCheckCommentSpecificity(t *testing.T) {
+	t.Parallel()
+	showcase := &workflow.RecipePlan{Tier: workflow.RecipeTierShowcase}
+	minimal := &workflow.RecipePlan{Tier: workflow.RecipeTierMinimal}
+
+	// Boilerplate comments — clear the ratio check, fail specificity.
+	boilerplate := `zerops:
+  # npm ci for reproducible builds
+  - setup: prod
+    # cache node_modules between builds
+    build:
+      # Node 22 base
+      base: nodejs@22
+      # install dependencies
+      buildCommands:
+        - npm ci
+`
+	// Real v12 API-style comments — specific, load-bearing.
+	loadBearing := `zerops:
+  - setup: prod
+    build:
+      # Node 22 provides native fetch and stable ESM support.
+      base: nodejs@22
+      buildCommands:
+        # Deterministic install — respects package-lock.json exactly,
+        # preventing phantom dependency drift between builds.
+        - npm ci
+    run:
+      initCommands:
+        # execOnce guarantees exactly-one execution across horizontal
+        # containers — migrations acquire advisory locks and must not race.
+        - zsc execOnce ${appVersionId} --retryUntilSuccessful -- node dist/migrate.js
+      envVariables:
+        # Credentials injected by Zerops at runtime from the managed
+        # PostgreSQL service — never hardcode connection strings.
+        DB_HOST: ${db_hostname}
+`
+
+	tests := []struct {
+		name       string
+		yaml       string
+		plan       *workflow.RecipePlan
+		wantLen    int
+		wantStatus string
+	}{
+		{"boilerplate fails specificity", boilerplate, showcase, 1, "fail"},
+		{"load-bearing passes", loadBearing, showcase, 1, "pass"},
+		{"minimal tier skipped", boilerplate, minimal, 0, ""},
+		{"nil plan skipped", boilerplate, nil, 0, ""},
+		{"no comments skipped", "zerops:\n  - setup: prod\n", showcase, 0, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := checkCommentSpecificity(tt.yaml, tt.plan)
+			if len(got) != tt.wantLen {
+				t.Fatalf("checks len = %d, want %d: %+v", len(got), tt.wantLen, got)
+			}
+			if tt.wantLen == 0 {
+				return
+			}
+			if got[0].Name != "comment_specificity" {
+				t.Errorf("check name = %q", got[0].Name)
+			}
+			if got[0].Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q; detail: %s", got[0].Status, tt.wantStatus, got[0].Detail)
+			}
+		})
+	}
+}
+
+// TestCheckIntegrationGuideCodeBlocks verifies the v13 integration-guide
+// code-block floor: showcase READMEs must contain at least one non-YAML
+// code block showing an actual application-code change a user makes to
+// their own code (trust proxy, bind 0.0.0.0, allowedHosts, etc.). The v12
+// audit found most READMEs were 95% zerops.yaml comments with only one
+// real code-adjustment section; this check forces every showcase
+// integration guide to document at least one concrete code change.
+func TestCheckIntegrationGuideCodeBlocks(t *testing.T) {
+	t.Parallel()
+	showcase := &workflow.RecipePlan{Tier: workflow.RecipeTierShowcase}
+	minimal := &workflow.RecipePlan{Tier: workflow.RecipeTierMinimal}
+
+	yamlOnly := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n\n" +
+		"### zerops.yaml\n\n```yaml\nzerops:\n  - setup: prod\n```\n" +
+		"\n<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
+	withTypescript := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n\n" +
+		"### zerops.yaml\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n" +
+		"### Trust Proxy\n\n```typescript\napp.set('trust proxy', true);\n```\n" +
+		"\n<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
+	withBash := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n\n" +
+		"### zerops.yaml\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n" +
+		"### First deploy\n\n```bash\nnpm install && npm run build\n```\n" +
+		"\n<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
+
+	tests := []struct {
+		name       string
+		content    string
+		plan       *workflow.RecipePlan
+		wantLen    int
+		wantStatus string
+	}{
+		{"showcase yaml-only fails", yamlOnly, showcase, 1, "fail"},
+		{"showcase with typescript passes", withTypescript, showcase, 1, "pass"},
+		{"showcase with bash passes", withBash, showcase, 1, "pass"},
+		{"minimal tier skipped (no check)", yamlOnly, minimal, 0, ""},
+		{"nil plan skipped", yamlOnly, nil, 0, ""},
+		{"no integration guide fragment skipped", "no fragment here", showcase, 0, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := checkIntegrationGuideCodeBlocks(tt.content, tt.plan)
+			if len(got) != tt.wantLen {
+				t.Fatalf("checks len = %d, want %d: %+v", len(got), tt.wantLen, got)
+			}
+			if tt.wantLen == 0 {
+				return
+			}
+			if got[0].Name != "integration_guide_code_adjustment" {
+				t.Errorf("check name = %q", got[0].Name)
+			}
+			if got[0].Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q; detail: %s", got[0].Status, tt.wantStatus, got[0].Detail)
+			}
+		})
+	}
+}
+
 func TestCheckRecipeGenerate_ValidMinimal(t *testing.T) {
 	t.Parallel()
 

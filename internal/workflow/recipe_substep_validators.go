@@ -63,14 +63,19 @@ func getSubStepValidator(subStepName string) SubStepValidator {
 const featureSubagentMinAttestationLen = 40
 
 // validateFeatureSubagent enforces the deploy-step sub-step "subagent"
-// (dispatch of the feature sub-agent). v11 shipped a scaffold-quality
-// frontend because the main agent read the existing scaffold code, decided
-// the features were "already complete", and skipped step 4b — the
-// "MANDATORY for Type 4 showcase" label was prose, not a forcing function.
+// (dispatch of the feature sub-agent). The scaffold at generate time ships
+// a deliberately bare health-dashboard-only skeleton — one StatusPanel
+// component showing service dots, /api/health, /api/status, client init,
+// schema + 3-5 row seed, nothing else. The feature sub-agent at deploy
+// step 4b is the single author that owns every showcase feature section
+// end-to-end: API routes, worker payloads, and frontend consumers as one
+// coherent unit. v10/v11/v12 all shipped the same class of contract-
+// mismatch bugs because parallel scaffold agents each owned one slice of
+// each contract. The single-author rule at step 4b eliminates the class.
 // The validator rejects empty/short attestations so deploy cannot complete
-// until the agent actually dispatches the sub-agent and describes what it
+// until the agent actually dispatches the sub-agent and narrates what it
 // produced. See docs/implementation-v11-findings.md for the v7-vs-v11
-// component comparison that motivated the fix.
+// component comparison that motivated the original fix.
 func validateFeatureSubagent(_ context.Context, _ *RecipePlan, _ *RecipeState, attestation string) *SubStepValidationResult {
 	trimmed := strings.TrimSpace(attestation)
 	if trimmed == "" {
@@ -78,19 +83,19 @@ func validateFeatureSubagent(_ context.Context, _ *RecipePlan, _ *RecipeState, a
 			Passed: false,
 			Issues: []string{"feature sub-agent attestation is empty — dispatch the sub-agent before completing this sub-step"},
 			Guidance: "## feature-subagent sub-step\n\n" +
-				"Type 4 showcase recipes require the feature sub-agent to fill in the dashboard UX even if the scaffold code looks complete. The scaffold brief at generate time is intentionally narrow (see `zerops_guidance topic=\"scaffold-subagent-brief\"`); the feature sub-agent's job is the rich UX — styled forms, tables with history, contextual hints, typed interfaces, error flashes, empty states, `$effect` hooks that auto-load data.\n\n" +
+				"The scaffold at generate time shipped a health-dashboard-only skeleton: one StatusPanel, /api/health, /api/status, client init, minimal seed. That is the correct, expected scaffold output. The feature sub-agent at deploy step 4b is where every showcase feature section is implemented — as a SINGLE author owning API routes, worker payloads, and frontend consumers end-to-end.\n\n" +
 				"Fetch the sub-agent brief: `zerops_guidance topic=\"subagent-brief\"`\n\n" +
-				"Dispatch the feature sub-agent via the Agent tool, then call `zerops_workflow action=\"complete\" step=\"deploy\" substep=\"subagent\" attestation=\"<describe the files it produced and what features it implemented>\"`.\n\n" +
-				"Do NOT skip this sub-step based on \"the scaffold code looks complete\" — v11 shipped a scaffold as a dashboard for exactly that reason. See docs/implementation-v11-findings.md.",
+				"Dispatch ONE feature sub-agent via the Agent tool (not parallel feature sub-agents — single author keeps contracts consistent), then call `zerops_workflow action=\"complete\" step=\"deploy\" substep=\"subagent\" attestation=\"<describe the files it produced and which feature sections it implemented>\"`.\n\n" +
+				"Do NOT skip this sub-step. The scaffold is bare by design — nothing for you to rationalize away.",
 		}
 	}
 	if len(trimmed) < featureSubagentMinAttestationLen {
 		return &SubStepValidationResult{
 			Passed: false,
-			Issues: []string{fmt.Sprintf("feature sub-agent attestation too short (%d chars, need >= %d) — name the files the sub-agent wrote and the features it implemented", len(trimmed), featureSubagentMinAttestationLen)},
+			Issues: []string{fmt.Sprintf("feature sub-agent attestation too short (%d chars, need >= %d) — name the files the sub-agent wrote and the feature sections it implemented", len(trimmed), featureSubagentMinAttestationLen)},
 			Guidance: "## feature-subagent sub-step\n\n" +
-				"A one-liner like \"already done\" or \"dispatched sub-agent\" is not enough. The attestation must describe what the feature sub-agent actually produced — the files it wrote, the features it implemented against live services. Example:\n\n" +
-				"> feature sub-agent added styled JobsSection.svelte with typed Task interface, dispatch form, refresh button, and pending-task badge\n\n" +
+				"A one-liner like \"already done\" or \"dispatched sub-agent\" is not enough. The attestation must describe what the feature sub-agent actually produced — the files it wrote, the feature sections it implemented, and the API/frontend contract pairs it authored. Example:\n\n" +
+				"> feature sub-agent wrote shared types.ts, then authored API routes + frontend consumers for items CRUD, cache-demo, search, jobs dispatch (with worker processor), and storage upload; expanded seed to 20 rows; added search-sync to initCommands\n\n" +
 				"This becomes part of the session log and the close-step review uses it to verify the deploy step ran to completion.",
 		}
 	}

@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -116,4 +117,45 @@ func (r *RecipeStep) allSubStepsComplete() bool {
 		return true
 	}
 	return r.CurrentSubStep >= len(r.SubSteps)
+}
+
+// enforceSubStepsComplete returns an error when the step has expected
+// sub-steps (for the given plan shape) that have not all been completed.
+// When expected sub-steps exist but r.SubSteps is empty, the agent never
+// called substep complete at all — the failure message names what was
+// expected so the agent knows where to start. When sub-steps exist but
+// are incomplete, the failure names the pending ones so retries are
+// targeted.
+//
+// This is the backbone of the v13 feature-subagent gate: v11 and v12 both
+// shipped scaffold-quality output because step 4b was a bullet in the
+// deploy guide, not a precondition for step completion.
+func (r *RecipeStep) enforceSubStepsComplete(stepName string, plan *RecipePlan) error {
+	expected := initSubSteps(stepName, plan)
+	if len(expected) == 0 {
+		return nil
+	}
+	if !r.hasSubSteps() {
+		names := make([]string, len(expected))
+		for i, e := range expected {
+			names[i] = e.Name
+		}
+		return fmt.Errorf(
+			"recipe complete step: %q has %d required sub-steps (%s) — call complete with substep=... for each before completing the full step",
+			stepName, len(expected), strings.Join(names, ", "),
+		)
+	}
+	if r.allSubStepsComplete() {
+		return nil
+	}
+	pending := make([]string, 0, len(r.SubSteps))
+	for _, ss := range r.SubSteps {
+		if ss.Status != stepComplete {
+			pending = append(pending, ss.Name)
+		}
+	}
+	return fmt.Errorf(
+		"recipe complete step: %q has %d pending sub-step(s): %s — complete each via substep= before completing the full step",
+		stepName, len(pending), strings.Join(pending, ", "),
+	)
 }

@@ -257,6 +257,22 @@ func (r *RecipeState) CompleteStep(name, attestation string) error {
 		return fmt.Errorf("recipe complete step: attestation too short (min %d chars)", minAttestationLen)
 	}
 
+	// Sub-step gate for showcase deploy. v11 and v12 both shipped
+	// scaffold-quality output because the main agent skipped step 4b
+	// (feature sub-agent dispatch) entirely — the sub-step was a bullet
+	// in guidance text, not a forcing function. Block full-step complete
+	// when the step has defined sub-steps that have not all been completed.
+	//
+	// Targeted narrowly to showcase + deploy: minimal recipes historically
+	// complete deploy without sub-steps; changing that here would ripple
+	// through every minimal-tier test. This gate is the surgical fix for
+	// the v11/v12 regression, not a general sub-step enforcement policy.
+	if name == RecipeStepDeploy && isShowcase(r.Plan) {
+		if err := r.Steps[r.CurrentStep].enforceSubStepsComplete(name, r.Plan); err != nil {
+			return err
+		}
+	}
+
 	r.Steps[r.CurrentStep].Status = stepComplete
 	r.Steps[r.CurrentStep].Attestation = attestation
 	r.Steps[r.CurrentStep].CompletedAt = time.Now().UTC().Format(time.RFC3339)

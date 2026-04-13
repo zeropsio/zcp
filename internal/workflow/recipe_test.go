@@ -142,6 +142,101 @@ func TestRecipeCompleteStep_NotActive(t *testing.T) {
 	}
 }
 
+// TestRecipeCompleteStep_ShowcaseDeploySubStepGate verifies that showcase-tier
+// recipes cannot complete the deploy step without first going through each
+// sub-step (including the feature sub-agent dispatch). v11 and v12 both shipped
+// scaffold-quality output because the main agent skipped step 4b entirely —
+// the sub-step was a bullet in guidance text, not a forcing function.
+func TestRecipeCompleteStep_ShowcaseDeploySubStepGate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		plan         *RecipePlan
+		initSubSteps bool
+		completeAll  bool
+		wantErr      bool
+		errContains  string
+	}{
+		{
+			name:         "showcase deploy without any sub-steps → blocked",
+			plan:         &RecipePlan{Tier: RecipeTierShowcase},
+			initSubSteps: false,
+			completeAll:  false,
+			wantErr:      true,
+			errContains:  "sub-step",
+		},
+		{
+			name:         "showcase deploy with sub-steps pending → blocked",
+			plan:         &RecipePlan{Tier: RecipeTierShowcase},
+			initSubSteps: true,
+			completeAll:  false,
+			wantErr:      true,
+			errContains:  "pending sub-step",
+		},
+		{
+			name:         "showcase deploy with all sub-steps complete → passes",
+			plan:         &RecipePlan{Tier: RecipeTierShowcase},
+			initSubSteps: true,
+			completeAll:  true,
+			wantErr:      false,
+		},
+		{
+			name:         "minimal deploy without sub-steps → passes (no enforcement)",
+			plan:         &RecipePlan{Tier: RecipeTierMinimal},
+			initSubSteps: false,
+			completeAll:  false,
+			wantErr:      false,
+		},
+		{
+			name:         "nil plan deploy → passes (test shape, no enforcement)",
+			plan:         nil,
+			initSubSteps: false,
+			completeAll:  false,
+			wantErr:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rs := NewRecipeState()
+			rs.Plan = tt.plan
+			// Advance to deploy step (index 3).
+			for i := range 3 {
+				rs.Steps[i].Status = stepComplete
+				rs.Steps[i].Attestation = "prior step"
+			}
+			rs.CurrentStep = 3
+			rs.Steps[3].Status = stepInProgress
+
+			if tt.initSubSteps {
+				rs.Steps[3].SubSteps = initSubSteps(RecipeStepDeploy, tt.plan)
+				if tt.completeAll {
+					for i := range rs.Steps[3].SubSteps {
+						rs.Steps[3].SubSteps[i].Status = stepComplete
+						rs.Steps[3].SubSteps[i].Attestation = "complete"
+					}
+					rs.Steps[3].CurrentSubStep = len(rs.Steps[3].SubSteps)
+				}
+			}
+
+			err := rs.CompleteStep(RecipeStepDeploy, "attestation for deploy step")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestRecipeSkipStep_CloseOnly(t *testing.T) {
 	t.Parallel()
 

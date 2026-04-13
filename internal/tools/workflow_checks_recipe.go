@@ -146,6 +146,38 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 				})
 				checks = append(checks, checkReadmeFragments(string(readmeContent))...)
 
+				// Comment specificity check on the integration guide's YAML
+				// block — showcase only. Companion to comment_ratio; fails
+				// on boilerplate-heavy comments even when the ratio passes.
+				if !appTarget.IsWorker {
+					if igContent := extractFragmentContent(string(readmeContent), "integration-guide"); igContent != "" {
+						if yamlBlock := extractYAMLBlock(igContent); yamlBlock != "" {
+							specChecks := checkCommentSpecificity(yamlBlock, plan)
+							for i := range specChecks {
+								specChecks[i].Name = hostname + "_" + specChecks[i].Name
+							}
+							checks = append(checks, specChecks...)
+						}
+					}
+				}
+
+				// Integration-guide code-block check: showcase READMEs must
+				// contain at least one non-YAML code block in the integration
+				// guide — application code a user adjusts to run on Zerops
+				// (trust proxy, bind 0.0.0.0, Vite config allowedHosts, etc.).
+				// The v12 audit found most READMEs were 95% zerops.yaml
+				// comments with only one real code-adjustment section; the
+				// floor forces every integration guide to earn its keep.
+				// Worker targets commonly have no user-facing code changes,
+				// so the check is scoped to non-worker targets.
+				if !appTarget.IsWorker {
+					codeChecks := checkIntegrationGuideCodeBlocks(string(readmeContent), plan)
+					for i := range codeChecks {
+						codeChecks[i].Name = hostname + "_" + codeChecks[i].Name
+					}
+					checks = append(checks, codeChecks...)
+				}
+
 				// Predecessor-as-floor check: the showcase's knowledge-base
 				// must contain net-new gotchas, not clones of the injected
 				// predecessor recipe's Gotchas section. Per-target so a
@@ -485,6 +517,96 @@ func extractFragmentContent(content, name string) string {
 	return strings.TrimSpace(content[contentStart:extractEnd])
 }
 
+// codeBlockFenceRe matches the opening fence of a fenced code block:
+// three backticks followed by an optional language tag on the same line.
+var codeBlockFenceRe = regexp.MustCompile("(?m)^\\s*```([a-zA-Z0-9+_-]*)")
+
+// nonYamlCodeLanguages are the language tags that count as "application
+// code adjustment" in an integration guide. YAML and variants are
+// explicitly excluded — every integration guide already has a zerops.yaml
+// block, and that alone doesn't show what the user needs to change in
+// their app code. Shell is accepted because some recipes document
+// setup commands (e.g. "run npm install before first deploy").
+var nonYamlCodeLanguages = map[string]bool{
+	"typescript": true,
+	"ts":         true,
+	"javascript": true,
+	"js":         true,
+	"jsx":        true,
+	"tsx":        true,
+	"svelte":     true,
+	"vue":        true,
+	"python":     true,
+	"py":         true,
+	"php":        true,
+	"go":         true,
+	"golang":     true,
+	"ruby":       true,
+	"rb":         true,
+	"rust":       true,
+	"rs":         true,
+	"java":       true,
+	"kotlin":     true,
+	"swift":      true,
+	"bash":       true,
+	"sh":         true,
+	"shell":      true,
+	"zsh":        true,
+	"dockerfile": true,
+	"nginx":      true,
+}
+
+// checkIntegrationGuideCodeBlocks verifies the integration guide contains
+// at least one non-YAML code block — real application code a user adjusts
+// to run on Zerops (trust proxy, host-check settings, framework-specific
+// bind-address changes). The v12 audit found most integration guides were
+// 95% zerops.yaml comments with only one real code-adjustment section;
+// the floor forces every integration guide to document at least one
+// concrete change the user makes to their own application code.
+//
+// Scoped to showcase tier: minimal recipes often have no application-side
+// changes to document and would fail the check for no good reason.
+func checkIntegrationGuideCodeBlocks(content string, plan *workflow.RecipePlan) []workflow.StepCheck {
+	if plan == nil || plan.Tier != workflow.RecipeTierShowcase {
+		return nil
+	}
+	igContent := extractFragmentContent(content, "integration-guide")
+	if igContent == "" {
+		return nil
+	}
+	matches := codeBlockFenceRe.FindAllStringSubmatch(igContent, -1)
+	if len(matches) == 0 {
+		return nil // checkReadmeFragments already reports "no yaml block"
+	}
+	// Each match opens a fence. The pairs alternate (open/close); the
+	// language tag only appears on the opener. We just count unique
+	// non-empty language tags that fall into the accepted set.
+	nonYaml := 0
+	var seenLangs []string
+	for _, m := range matches {
+		lang := strings.ToLower(strings.TrimSpace(m[1]))
+		if lang == "" {
+			continue // closing fence or untagged fence
+		}
+		if nonYamlCodeLanguages[lang] {
+			nonYaml++
+			seenLangs = append(seenLangs, lang)
+		}
+	}
+	if nonYaml == 0 {
+		return []workflow.StepCheck{{
+			Name:   "integration_guide_code_adjustment",
+			Status: statusFail,
+			Detail: "integration guide has zerops.yaml only — add at least one non-YAML code block showing an actual application-code change a user must make to run on Zerops. Examples: Express trust-proxy + 0.0.0.0 bind (typescript), Vite allowedHosts (js), Laravel CORS config (php), Django ALLOWED_HOSTS (py). The integration guide must document what the USER changes in their OWN code, not just the zerops.yaml they copy-paste.",
+		}}
+	}
+	return []workflow.StepCheck{{
+		Name:   "integration_guide_code_adjustment",
+		Status: statusPass,
+		Detail: fmt.Sprintf("%d non-YAML code block(s): %s", nonYaml, strings.Join(uniqueStrings(seenLangs), ", ")),
+	}}
+}
+
 // extractYAMLBlock extracts content from the first ```yaml ... ``` block.
 func extractYAMLBlock(content string) string {
 	start := strings.Index(content, "```yaml")
@@ -527,6 +649,104 @@ func commentRatio(yamlContent string) float64 {
 		return 0
 	}
 	return float64(comments) / float64(total)
+}
+
+// specificityMarkers are tokens that signal a comment is earning its
+// keep — it explains WHY, names a concrete platform behavior, or points
+// at a failure mode the reader would otherwise trip on. A comment
+// containing any of these is "specific"; comments without any marker are
+// boilerplate ("npm ci for reproducible builds" is the archetype — true
+// of every recipe, load-bearing on none).
+//
+// The list is intentionally coarse: we want to accept real comments
+// without stylistic hand-wringing, not grade them for prose quality.
+// Every v12 API zerops.yaml comment already clears this bar.
+var specificityMarkers = []string{
+	// causal / reasoning
+	"because", "so that", "otherwise", "prevents", "required", "ensures",
+	"needed", "must", "without",
+	// failure mode
+	"fails", "breaks", "crashes", "silent", "race", "502", "401", "cold start",
+	"blocked", "drops", "empty",
+	// platform constraints
+	"zerops", "execonce", "l7", "balancer", "httpsupport", "advisory lock",
+	"0.0.0.0", "subdomain", "reverse proxy", "terminates ssl", "trust proxy",
+	"vxlan", "${",
+	// framework×platform intersection signals
+	"build time", "build-time", "runtime", "os-level", "horizontal container",
+	"multi-container", "fresh container", "stateless", "bundle",
+}
+
+// commentSpecificityRatio measures how many comment lines in a zerops.yaml
+// block clear the specificity floor. A comment is specific when it
+// contains at least one specificityMarker (after lowercasing). The check
+// that consumes this ratio requires both an absolute floor (at least
+// minSpecificComments specific comments) and a proportional floor (at
+// least specificCommentRatio of all comments are specific).
+func commentSpecificityRatio(yamlContent string) (specific, total int, ratio float64) {
+	for line := range strings.SplitSeq(yamlContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		total++
+		lower := strings.ToLower(trimmed)
+		for _, marker := range specificityMarkers {
+			if strings.Contains(lower, marker) {
+				specific++
+				break
+			}
+		}
+	}
+	if total == 0 {
+		return 0, 0, 0
+	}
+	return specific, total, float64(specific) / float64(total)
+}
+
+// minSpecificComments is the absolute floor — even a very short
+// zerops.yaml must have at least this many non-boilerplate comments to
+// pass the specificity check.
+const minSpecificComments = 3
+
+// specificCommentRatio is the proportional floor — even a very long
+// zerops.yaml with many comments must have at least this fraction that
+// clear the specificity bar. Tuned low enough that v12 API's comments
+// easily pass; tight enough that copy-paste boilerplate fails.
+const specificCommentRatio = 0.25
+
+// checkCommentSpecificity is the companion to commentRatio. commentRatio
+// measures how many comments are PRESENT; specificity measures how many
+// are LOAD-BEARING. The v12 session had comments like "npm ci for
+// reproducible builds" and "cache node_modules between builds" that
+// pass the 30%-present ratio but read as generic boilerplate that could
+// appear in any recipe. A reader learning Zerops from the integration
+// guide needs to see comments that explain Zerops-specific constraints
+// — execOnce on multi-container deploys, L7 balancer behavior, the
+// $-interpolated credential injection, the tilde deployFiles suffix.
+func checkCommentSpecificity(yamlBlock string, plan *workflow.RecipePlan) []workflow.StepCheck {
+	if plan == nil || plan.Tier != workflow.RecipeTierShowcase {
+		return nil
+	}
+	specific, total, ratio := commentSpecificityRatio(yamlBlock)
+	if total == 0 {
+		return nil
+	}
+	if specific >= minSpecificComments && ratio >= specificCommentRatio {
+		return []workflow.StepCheck{{
+			Name:   "comment_specificity",
+			Status: statusPass,
+			Detail: fmt.Sprintf("%d of %d comments are specific (%.0f%%)", specific, total, ratio*100),
+		}}
+	}
+	return []workflow.StepCheck{{
+		Name:   "comment_specificity",
+		Status: statusFail,
+		Detail: fmt.Sprintf(
+			"comment specificity too low: %d of %d are specific (%.0f%%, need >= %d and >= %.0f%%). Specific means the comment explains WHY (because/so that/prevents/required/fails/breaks), or names a Zerops platform term (execOnce, L7 balancer, ${env_var}, httpSupport, 0.0.0.0, subdomain, advisory lock, trust proxy, cold start, build time, horizontal container). Generic lines like \"npm ci for reproducible builds\" or \"cache node_modules between builds\" pass the ratio check but teach the reader nothing Zerops-specific. Rewrite boilerplate comments to explain what would break without them.",
+			specific, total, ratio*100, minSpecificComments, specificCommentRatio*100,
+		),
+	}}
 }
 
 // nonEmptyLines returns non-empty lines from content.
