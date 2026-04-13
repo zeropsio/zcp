@@ -9,6 +9,55 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// TestRecipeStart_ModelGate covers the v14 client-model enforcement that
+// replaces v13's silent acceptance of any model. The recipe workflow
+// rejects non-Opus models (v13 shipped on Sonnet and doubled wall time)
+// and Opus variants without 1M context (the full guidance payload plus
+// code-writing context does not fit in 200k). Missing clientModel is
+// also rejected so the agent has to surface the requirement — we cannot
+// observe the actual running model from the server side, the gate has
+// to force the agent to report it.
+func TestRecipeStart_ModelGate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		clientModel string
+		wantError   bool
+	}{
+		{name: "accepted Opus 4.6 1m", clientModel: "claude-opus-4-6[1m]", wantError: false},
+		{name: "missing clientModel rejected", clientModel: "", wantError: true},
+		{name: "Sonnet rejected", clientModel: "claude-sonnet-4-6", wantError: true},
+		{name: "Sonnet 1m rejected", clientModel: "claude-sonnet-4-6[1m]", wantError: true},
+		{name: "Opus without 1m rejected", clientModel: "claude-opus-4-6", wantError: true},
+		{name: "plain opus alias rejected", clientModel: "opus", wantError: true},
+		{name: "Haiku rejected", clientModel: "claude-haiku-4-5", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+			engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
+			RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+
+			input := map[string]any{
+				"action":   "start",
+				"workflow": "recipe",
+				"intent":   "Create a Laravel minimal recipe",
+				"tier":     "minimal",
+			}
+			if tt.clientModel != "" {
+				input["clientModel"] = tt.clientModel
+			}
+			result := callTool(t, srv, "zerops_workflow", input)
+			if result.IsError != tt.wantError {
+				t.Errorf("clientModel=%q: IsError=%v, want %v (response: %s)", tt.clientModel, result.IsError, tt.wantError, getTextContent(t, result))
+			}
+		})
+	}
+}
+
 func TestRecipeStart_Success(t *testing.T) {
 	t.Parallel()
 
@@ -17,10 +66,11 @@ func TestRecipeStart_Success(t *testing.T) {
 	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "recipe",
-		"intent":   "Create a Laravel minimal recipe",
-		"tier":     "minimal",
+		"action":      "start",
+		"workflow":    "recipe",
+		"intent":      "Create a Laravel minimal recipe",
+		"tier":        "minimal",
+		"clientModel": "claude-opus-4-6[1m]",
 	})
 
 	if result.IsError {
@@ -55,9 +105,10 @@ func TestRecipeStart_DefaultTier(t *testing.T) {
 	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "recipe",
-		"intent":   "Create a recipe",
+		"action":      "start",
+		"workflow":    "recipe",
+		"intent":      "Create a recipe",
+		"clientModel": "claude-opus-4-6[1m]",
 	})
 
 	if result.IsError {
@@ -93,10 +144,11 @@ func TestRecipeComplete_Research(t *testing.T) {
 
 	// Start recipe session.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":   "start",
-		"workflow": "recipe",
-		"intent":   "Create a Laravel recipe",
-		"tier":     "minimal",
+		"action":      "start",
+		"workflow":    "recipe",
+		"intent":      "Create a Laravel recipe",
+		"tier":        "minimal",
+		"clientModel": "claude-opus-4-6[1m]",
 	})
 	if result.IsError {
 		t.Fatalf("start failed: %s", getTextContent(t, result))
@@ -170,7 +222,7 @@ func TestRecipeComplete_MissingPlan(t *testing.T) {
 
 	// Start.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "recipe", "intent": "test", "tier": "minimal",
+		"action": "start", "workflow": "recipe", "intent": "test", "tier": "minimal", "clientModel": "claude-opus-4-6[1m]",
 	})
 
 	// Complete research without plan.
@@ -252,7 +304,7 @@ func TestRecipeStatus(t *testing.T) {
 
 	// Start recipe.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "recipe", "intent": "test", "tier": "minimal",
+		"action": "start", "workflow": "recipe", "intent": "test", "tier": "minimal", "clientModel": "claude-opus-4-6[1m]",
 	})
 
 	// Get status.
@@ -311,7 +363,7 @@ func TestRecipeAutoReset_CompletedSession(t *testing.T) {
 
 	// Starting a new recipe should auto-reset the completed session.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "recipe", "intent": "new recipe", "tier": "showcase",
+		"action": "start", "workflow": "recipe", "intent": "new recipe", "tier": "showcase", "clientModel": "claude-opus-4-6[1m]",
 	})
 
 	if result.IsError {

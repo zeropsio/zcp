@@ -100,7 +100,11 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		// Phase A: return skeleton instead of composed blocks.
 		// The skeleton references topics; the agent fetches them via zerops_guidance.
 		if skeleton := ExtractSection(md, "generate-skeleton"); skeleton != "" {
-			return composeSkeleton(skeleton, recipeGenerateTopics, plan)
+			composed := composeSkeleton(skeleton, recipeGenerateTopics, plan)
+			if eager := InjectEagerTopics(recipeGenerateTopics, plan); eager != "" {
+				composed += "\n\n---\n\n" + eager
+			}
+			return composed
 		}
 		// Fallback: compose blocks as before (safety net during migration).
 		var parts []string
@@ -125,7 +129,11 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 	case RecipeStepDeploy:
 		// Phase A: return skeleton instead of composed blocks.
 		if skeleton := ExtractSection(md, "deploy-skeleton"); skeleton != "" {
-			return composeSkeleton(skeleton, recipeDeployTopics, plan)
+			composed := composeSkeleton(skeleton, recipeDeployTopics, plan)
+			if eager := InjectEagerTopics(recipeDeployTopics, plan); eager != "" {
+				composed += "\n\n---\n\n" + eager
+			}
+			return composed
 		}
 		body := ExtractSection(md, "deploy")
 		return composeSection(body, recipeDeployBlocks, plan)

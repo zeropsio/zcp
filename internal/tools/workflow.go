@@ -37,6 +37,13 @@ type WorkflowInput struct {
 	Tier        string                     `json:"tier,omitempty"        jsonschema:"Recipe tier: minimal or showcase (recipe workflow only)."`
 	RecipePlan  *workflow.RecipePlan       `json:"recipePlan,omitempty"  jsonschema:"Structured recipe plan for research step completion."`
 
+	// Recipe workflow only — the agent's self-reported model identifier from its
+	// own system prompt. Required at start for the recipe workflow because v13
+	// shipped on Sonnet/200k by accident and doubled wall time while regressing
+	// close-step severity. The agent must report its EXACT model ID (e.g.
+	// "claude-opus-4-6[1m]"), not an alias like "opus".
+	ClientModel string `json:"clientModel,omitempty" jsonschema:"Recipe workflow start only: the agent's exact model identifier from its own system prompt (e.g. 'claude-opus-4-6[1m]'). Required — recipe workflow rejects non-Opus models and Opus variants without 1M context."`
+
 	// Recipe comment inputs — passed to generate-finalize to bake agent-authored
 	// per-env comments into the 6 import.yaml files, replacing per-file Edit.
 	EnvComments map[string]workflow.EnvComments `json:"envComments,omitempty" jsonschema:"Recipe generate-finalize only: per-env comments for all 6 import.yaml files. Keyed by env index as string ('0'..'5'). Each env has {service: {hostname: comment}, project: comment}. Service keys match the hostnames that appear in that env's file — envs 0-1 (dev/stage pair) take 'appdev' and 'appstage'; envs 2-5 take the base hostname 'app'. Each env's commentary should reflect what makes THAT env distinct (AI agent workspace / remote CDE / local validator / stage / small prod with minContainers / HA prod with DEDICATED CPU + corePackage)."`

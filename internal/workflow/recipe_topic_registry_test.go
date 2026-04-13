@@ -163,6 +163,84 @@ func TestResolveTopic_UnknownTopic(t *testing.T) {
 	}
 }
 
+// TestInjectEagerTopics_GenerateShowcase covers the v14 eager-topic
+// promotion: topics that guard catastrophic-failure-class bugs are inlined
+// into the generate guide directly, so the agent does not need to fetch them
+// explicitly. v13 shipped with dev-server-hostcheck and scaffold-subagent-brief
+// as optional fetch topics; the Sonnet agent selected 10 other topics and
+// skipped both, then rediscovered Vite allowedHosts as a 403 mid-deploy and
+// composed scaffold briefs without the DO-NOT-WRITE list. The eager
+// injection makes those two topics arrive whether the agent fetches them
+// or not.
+func TestInjectEagerTopics_GenerateShowcase(t *testing.T) {
+	t.Parallel()
+
+	// A dual-runtime showcase with a static frontend target triggers
+	// hasBundlerDevServer (frontend runs a Vite dev server) and
+	// hasMultipleCodebases (scaffold-subagent-brief predicate). Both
+	// eager topics should resolve to non-empty content.
+	plan := &RecipePlan{
+		Framework: "nestjs",
+		Tier:      RecipeTierShowcase,
+		Slug:      "nestjs-showcase",
+		Targets: []RecipeTarget{
+			{Hostname: "api", Type: "nodejs@22", Role: RecipeRoleAPI},
+			{Hostname: "app", Type: "static", DevBase: "nodejs@22", Role: RecipeRoleApp},
+		},
+	}
+	got := InjectEagerTopics(recipeGenerateTopics, plan)
+	if got == "" {
+		t.Fatal("expected eager topic content for nestjs-showcase plan, got empty")
+	}
+
+	wants := []string{
+		"dev-server-hostcheck",    // topic ID must be referenced in header
+		"scaffold-subagent-brief", // topic ID must be referenced in header
+		"allowedHosts",            // content from dev-server-host-check block
+		"health-dashboard-only",   // content from scaffold-subagent-brief block
+	}
+	for _, w := range wants {
+		if !stringsContains(got, w) {
+			t.Errorf("eager injection missing %q.\nGot:\n%s", w, got)
+		}
+	}
+}
+
+// TestInjectEagerTopics_MinimalTierSkipsShowcaseTopics — scaffold-subagent-brief
+// is gated on isShowcase + hasMultipleCodebases. A minimal hello-world plan
+// fails both predicates and must not receive that eager injection. The
+// dev-server-hostcheck topic still fires if the framework is a bundler
+// framework, so this test uses a non-bundler framework to isolate the
+// minimal-tier case.
+func TestInjectEagerTopics_MinimalTierSkipsShowcaseTopics(t *testing.T) {
+	t.Parallel()
+	plan := &RecipePlan{
+		Framework: "nestjs",
+		Tier:      RecipeTierMinimal,
+		Slug:      "nestjs-hello-world",
+		Targets: []RecipeTarget{
+			{Hostname: "api", Type: "nodejs@22"},
+		},
+	}
+	got := InjectEagerTopics(recipeGenerateTopics, plan)
+	if stringsContains(got, "scaffold-subagent-brief") {
+		t.Errorf("minimal-tier plan should not receive scaffold-subagent-brief eager injection, got:\n%s", got)
+	}
+}
+
+func stringsContains(haystack, needle string) bool {
+	return len(needle) == 0 || indexOf(haystack, needle) >= 0
+}
+
+func indexOf(haystack, needle string) int {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return i
+		}
+	}
+	return -1
+}
+
 // ── helpers ──
 
 func blockNamesForStep(t *testing.T, step string) map[string]bool {

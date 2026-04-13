@@ -16,7 +16,7 @@ import (
 type RecipeCreateConfig struct {
 	MCPConfig  string        // Path to MCP config file
 	ResultsDir string        // Base directory for results output
-	Model      string        // Claude model to use (default: "sonnet")
+	Model      string        // Claude model to use (default: claude-opus-4-6[1m])
 	MaxTurns   int           // Max turns per recipe (default: 120)
 	Timeout    time.Duration // Timeout per recipe (default: 30 min)
 }

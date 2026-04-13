@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -14,8 +15,45 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// requiredRecipeModel is the only model identifier accepted for new recipe
+// workflow sessions. v13 shipped on Sonnet/200k and doubled wall time
+// (40.7 → 79.8 min) while regressing close-step severity from 5 WRONG to
+// 2 CRITICAL + 1 WRONG. The recipe workflow pulls ~80 KB of guidance topics,
+// ~30 KB of schemas, plus the agent's own code-writing context; 200k is not
+// enough to hold that plus the feature sub-agent brief plus debugging loops
+// without compaction. Keep this list minimal and explicit — any alias ("opus")
+// or variant without the [1m] suffix is rejected so the agent has to switch
+// client configuration rather than hope the server will tolerate a near-match.
+var recipeAllowedModels = map[string]struct{}{
+	"claude-opus-4-6[1m]": {},
+}
+
+// validateRecipeModel returns nil when the self-reported client model clears
+// the recipe workflow floor. Returns a platform error naming the required
+// value on any failure.
+func validateRecipeModel(clientModel string) error {
+	model := strings.TrimSpace(clientModel)
+	if model == "" {
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"clientModel is required for recipe workflow start",
+			"Pass clientModel=\"claude-opus-4-6[1m]\" — the agent's exact model ID from its own system prompt. The recipe workflow pulls ~80 KB of guidance plus the agent's code-writing context and requires Opus 4.6 at 1M tokens. Weaker models double wall time and regress close-step severity.")
+	}
+	if _, ok := recipeAllowedModels[model]; !ok {
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Recipe workflow requires claude-opus-4-6[1m] — got %q", model),
+			"Switch the client to Claude Opus 4.6 with the 1M-token context window. In Claude Code: /model claude-opus-4-6[1m]. In headless mode: --model claude-opus-4-6[1m]. Retry action=\"start\" after switching.")
+	}
+	return nil
+}
+
 // handleRecipeStart validates tier and creates a recipe session.
 func handleRecipeStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	if err := validateRecipeModel(input.ClientModel); err != nil {
+		return convertError(err), nil, nil
+	}
+
 	tier := input.Tier
 	if tier == "" {
 		tier = workflow.RecipeTierMinimal

@@ -12,7 +12,15 @@ import (
 )
 
 // defaultModel is the default Claude model for eval runs.
-const defaultModel = "sonnet"
+//
+// Recipe creation specifically requires Opus with the 1M-token context window:
+// the workflow pulls ~80 KB of guidance topics, ~30 KB of schemas, plus the
+// agent's own code-writing context. v13 shipped on Sonnet/200k by accident and
+// doubled the wall-clock time (40.7 → 79.8 min) plus regressed the close-step
+// severity from 5 WRONG → 2 CRITICAL + 1 WRONG. Do not lower this default —
+// override per-call when a weaker model is genuinely acceptable (e.g. simple
+// instruction evals, not recipe creation).
+const defaultModel = "claude-opus-4-6[1m]"
 
 // RecipeMetadata holds parsed recipe data used for prompt generation.
 type RecipeMetadata struct {

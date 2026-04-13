@@ -16,6 +16,19 @@ type GuidanceTopic struct {
 	Description string                 // one-line summary for skeleton references
 	Predicate   func(*RecipePlan) bool // nil = always available
 	BlockNames  []string               // <block> tags to extract and concatenate
+
+	// Eager promotes a topic from "fetch on demand" to "inlined into the
+	// step's detailedGuide". Set true for topics whose content prevents a
+	// catastrophic-failure-class bug that the agent will otherwise
+	// rediscover during deploy. v13 demonstrated that a flat list of
+	// optional fetch markers does not get fetched in priority order — the
+	// dev-server-hostcheck topic was offered, ignored, then rediscovered
+	// 45 minutes later as a 403 from the appdev subdomain. Eager topics
+	// land in context whether the agent fetches them or not.
+	//
+	// Use sparingly. Eager topics inflate the per-step guidance budget;
+	// only mark topics that have repeatedly cost a real recipe run.
+	Eager bool
 }
 
 // topicRegistry maps topic IDs to their definitions. Populated at init
@@ -100,6 +113,14 @@ var recipeGenerateTopics = []*GuidanceTopic{
 		Description: "Dev-server host-check allow-list",
 		Predicate:   hasBundlerDevServer,
 		BlockNames:  []string{"dev-server-host-check"},
+		// Eager: v7 documented this gotcha, v8-v12 inlined it via the
+		// chain-recipe predecessor for nestjs-minimal recipes, but v13
+		// (a fresh showcase from a runtime where the predecessor lacks
+		// the gotcha) re-discovered it as a 403 from appdev 45 minutes
+		// into deploy. Eager-injecting at generate time means the
+		// scaffold sub-agent brief includes the allowedHosts setting
+		// regardless of whether the agent fetches the topic explicitly.
+		Eager: true,
 	},
 	{
 		ID: "worker-setup", Step: RecipeStepGenerate,
@@ -118,6 +139,14 @@ var recipeGenerateTopics = []*GuidanceTopic{
 		Description: "Scope contract for scaffold sub-agents (multi-codebase only)",
 		Predicate:   func(p *RecipePlan) bool { return isShowcase(p) && hasMultipleCodebases(p) },
 		BlockNames:  []string{"scaffold-subagent-brief"},
+		// Eager: v13 fetched 10 generate topics but skipped this one and
+		// composed scaffold briefs from its own understanding instead.
+		// The brief contains the explicit DO-NOT-WRITE list that keeps
+		// the scaffold narrow — without it the sub-agents drift into
+		// writing item CRUD, cache demos, and search forms at scaffold
+		// time, which is the exact v10/v11 contract-mismatch failure mode
+		// the bare-baseline design exists to prevent.
+		Eager: true,
 	},
 	{
 		ID: "env-conventions", Step: RecipeStepGenerate,
@@ -189,6 +218,17 @@ var recipeDeployTopics = []*GuidanceTopic{
 		Description: "Feature sub-agent dispatch and brief",
 		Predicate:   isShowcase,
 		BlockNames:  []string{"dev-deploy-subagent-brief"},
+		// Eager: v13 fetched this topic exactly once at post-generate,
+		// then the main agent treated the platform rules inside it
+		// (NATS credentials must be split, Valkey has no auth,
+		// Meilisearch needs http:// prefix, S3 uses apiUrl not
+		// connectionString) as "instructions for the sub-agent I will
+		// dispatch later" — never dispatched, never applied them, and
+		// rediscovered the NATS credential trap as an Authorization
+		// Violation 30 minutes later. Eager-injecting at deploy keeps
+		// the rules in main-agent context where they actually need to
+		// be acted on.
+		Eager: true,
 	},
 	{
 		ID: "where-commands-run", Step: RecipeStepDeploy,
@@ -348,6 +388,40 @@ func ResolveTopic(topicID string, plan *RecipePlan) (string, error) {
 		}
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+// InjectEagerTopics returns the inlined content for every Eager topic in the
+// given list whose predicate matches the plan. Each topic is rendered as a
+// labeled section so the agent can tell which guidance came from which topic
+// (and so a future agent can still call zerops_guidance topic="X" if it
+// wants the canonical fetch path).
+//
+// Returns the empty string when no eager topics fire — callers should treat
+// that as "skip the divider" rather than emit a stray separator.
+//
+// Used by buildGuide in recipe_guidance.go to land catastrophic-failure-class
+// guidance directly in the step's detailedGuide instead of relying on the
+// agent to fetch a flat list of optional topic markers in priority order.
+func InjectEagerTopics(topics []*GuidanceTopic, plan *RecipePlan) string {
+	var parts []string
+	for _, t := range topics {
+		if !t.Eager {
+			continue
+		}
+		if t.Predicate != nil && !t.Predicate(plan) {
+			continue
+		}
+		body, err := ResolveTopic(t.ID, plan)
+		if err != nil || strings.TrimSpace(body) == "" {
+			continue
+		}
+		header := fmt.Sprintf("## Inlined: %s — `topic=\"%s\"`\n\n", t.Description, t.ID)
+		parts = append(parts, header+strings.TrimSpace(body))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n\n---\n\n")
 }
 
 // topicExpansion defines a related topic that should be suggested when the

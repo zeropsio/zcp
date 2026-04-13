@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // SubStepValidationResult holds the outcome of a sub-step validator.
@@ -72,11 +73,19 @@ const featureSubagentMinAttestationLen = 40
 // coherent unit. v10/v11/v12 all shipped the same class of contract-
 // mismatch bugs because parallel scaffold agents each owned one slice of
 // each contract. The single-author rule at step 4b eliminates the class.
-// The validator rejects empty/short attestations so deploy cannot complete
-// until the agent actually dispatches the sub-agent and narrates what it
-// produced. See docs/implementation-v11-findings.md for the v7-vs-v11
-// component comparison that motivated the original fix.
-func validateFeatureSubagent(_ context.Context, _ *RecipePlan, _ *RecipeState, attestation string) *SubStepValidationResult {
+//
+// The validator runs two gates. The attestation floor rejects empty and
+// boilerplate narration so the agent has to at least name what was
+// produced. The dispatch-artifact floor walks the codebase mounts for
+// source files written after the init-commands baseline and rejects
+// completion when too few exist or when their mtime spread is wider than
+// a single Agent tool call would produce. v13 shipped with the attestation
+// gate alone and demonstrated that a text field is cosmetic — the main
+// agent wrote every feature file inline over 40 minutes and typed a
+// "single author across all three codebases" narration into the
+// attestation field, satisfying the check. The mtime-spread floor closes
+// that hole structurally.
+func validateFeatureSubagent(_ context.Context, plan *RecipePlan, state *RecipeState, attestation string) *SubStepValidationResult {
 	trimmed := strings.TrimSpace(attestation)
 	if trimmed == "" {
 		return &SubStepValidationResult{
@@ -99,7 +108,58 @@ func validateFeatureSubagent(_ context.Context, _ *RecipePlan, _ *RecipeState, a
 				"This becomes part of the session log and the close-step review uses it to verify the deploy step ran to completion.",
 		}
 	}
+
+	// Dispatch-artifact floor: walk the codebase mounts for source files
+	// written after the init-commands baseline. A real sub-agent dispatch
+	// writes a coherent burst; the main agent inlining writes over many
+	// minutes has a wide mtime spread.
+	baseline := featureDispatchBaseline(state)
+	if baseline.IsZero() {
+		// No baseline — unit tests, replays, or states missing the
+		// init-commands substep. Cannot enforce structurally; the
+		// attestation floor is the only gate.
+		return &SubStepValidationResult{Passed: true}
+	}
+	artifacts := walkDispatchArtifacts(plan, baseline)
+	if artifacts.mountBase == "" || artifacts.count == 0 && isMountBaseMissing() {
+		// Tests / non-mount environments.
+		return &SubStepValidationResult{Passed: true}
+	}
+	if artifacts.count < minFeatureArtifacts {
+		return &SubStepValidationResult{
+			Passed: false,
+			Issues: []string{fmt.Sprintf("dispatch-artifact floor: found %d post-baseline source files under the codebase mounts, need >= %d — the feature sub-agent did not produce enough output", artifacts.count, minFeatureArtifacts)},
+			Guidance: "## feature-subagent sub-step — dispatch-artifact floor\n\n" +
+				fmt.Sprintf("The scaffold is bare by design and the feature sub-agent is where every showcase section is implemented. A complete feature sub-agent dispatch produces at least %d new source files under the codebase mounts — API routes + services + DTOs, worker consumers, frontend components. I found %d.\n\n", minFeatureArtifacts, artifacts.count) +
+				"Dispatch ONE feature sub-agent via the Agent tool with the brief from `zerops_guidance topic=\"subagent-brief\"`, let it actually write the files, then retry this substep completion.\n\n" +
+				"Baseline used: " + baseline.Format(time.RFC3339) + " (init-commands substep completion). Files written before this do not count.",
+		}
+	}
+	if spread := artifacts.newest.Sub(artifacts.oldest); spread > maxFeatureMTimeSpread {
+		sampleList := strings.Join(artifacts.samples, ", ")
+		return &SubStepValidationResult{
+			Passed: false,
+			Issues: []string{fmt.Sprintf("dispatch-artifact floor: %d post-baseline source files span %s of wall-clock (max %s) — the feature work was interleaved with debugging rather than dispatched as a single-author burst", artifacts.count, spread.Round(time.Second), maxFeatureMTimeSpread)},
+			Guidance: "## feature-subagent sub-step — dispatch-artifact floor\n\n" +
+				fmt.Sprintf("A single Agent tool call writing feature files produces a tight mtime burst — all files landed within a minute of each other. Your post-baseline files span %s, which is the signature of the main agent inlining the work across debugging rounds.\n\n", spread.Round(time.Second)) +
+				"This is the exact v13 regression pattern: attestation said \"single author across three codebases\" but no Agent tool was ever dispatched.\n\n" +
+				"Samples (5 of " + fmt.Sprintf("%d", artifacts.count) + "): " + sampleList + "\n\n" +
+				"Re-dispatch via the Agent tool using `zerops_guidance topic=\"subagent-brief\"` as the brief. The sub-agent will rewrite the same files in one burst, the mtime spread collapses, and this check passes. Do NOT hand-edit to backdate — the floor is structural, not textual.",
+		}
+	}
 	return &SubStepValidationResult{Passed: true}
+}
+
+// isMountBaseMissing reports whether the recipe mount base directory does
+// not exist, so the dispatch check can fall through cleanly in test
+// environments without mocking the entire mount fabric.
+func isMountBaseMissing() bool {
+	base := recipeMountBase
+	if recipeMountBaseOverride != "" {
+		base = recipeMountBaseOverride
+	}
+	_, err := os.Stat(base)
+	return err != nil
 }
 
 // validateZeropsYAML checks the zerops.yaml the agent wrote by reading from
