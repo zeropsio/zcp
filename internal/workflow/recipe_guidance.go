@@ -485,17 +485,15 @@ func subStepToTopic(step, subStep string, plan *RecipePlan) string {
 		switch subStep {
 		case SubStepScaffold:
 			return "where-to-write"
-		case SubStepZeropsYAML:
-			return "zerops-yaml-rules"
 		case SubStepAppCode:
 			if isShowcase(plan) {
 				return "dashboard-skeleton"
 			}
 			return "execution-order"
-		case SubStepReadme:
-			return "readme-fragments"
 		case SubStepSmokeTest:
 			return "smoke-test"
+		case SubStepZeropsYAML:
+			return "zerops-yaml-rules"
 		}
 	case RecipeStepDeploy:
 		switch subStep {
@@ -505,12 +503,18 @@ func subStepToTopic(step, subStep string, plan *RecipePlan) string {
 			return "deploy-target-verification"
 		case SubStepSubagent:
 			return "subagent-brief"
+		case SubStepSnapshotDev:
+			// Durability re-deploy: same flow as initial deploy-dev,
+			// but with the feature sub-agent's output now on-disk.
+			return topicDeployFlow
 		case SubStepBrowserWalk:
 			return "browser-walk"
 		case SubStepCrossDeploy:
 			return "stage-deploy"
 		case SubStepVerifyStage:
 			return "deploy-target-verification"
+		case SubStepReadmes:
+			return "readme-fragments"
 		}
 	}
 	return ""

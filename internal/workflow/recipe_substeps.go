@@ -7,20 +7,51 @@ import (
 )
 
 // Sub-step name constants for generate and deploy.
+//
+// v14 reordering notes:
+//   - generate drops `readme` and reorders to scaffold → app-code → smoke-test
+//     → zerops-yaml. The zerops.yaml is written LAST so buildCommands / cache
+//     paths reflect an install flow the agent has already observed under
+//     smoke-test — previous ordering had the agent writing zerops.yaml from
+//     research-time assumptions, then discovering during deploy that the
+//     actual install flow needed different steps.
+//   - readme moves out of generate entirely. The gotchas section cannot be
+//     written honestly until the agent has lived through a deploy; writing
+//     it at generate time forced the agent to speculate, which is the root
+//     cause the `knowledge_base_authenticity` check was chasing. With readme
+//     moved to the post-deploy narrate step the content is inherently
+//     authentic.
+//   - deploy gains `snapshot-dev` after the feature sub-agent: a re-deploy of
+//     the dev service that bakes the sub-agent's output into the deployed
+//     artifact. Durability, not reload — the dev server already hot-reloaded
+//     via SSHFS. If the container crashed before cross-deploy with no prior
+//     deployed artifact and no git remote, the feature code would be
+//     unrecoverable. The snapshot persists it.
+//   - deploy gains `readmes` at the very end: narrate per-codebase gotchas
+//     from the actual debug rounds the agent just lived through. Replaces
+//     generate-time readme.
 const (
 	SubStepScaffold     = "scaffold"
-	SubStepZeropsYAML   = "zerops-yaml"
 	SubStepAppCode      = "app-code"
-	SubStepReadme       = "readme"
 	SubStepSmokeTest    = "smoke-test"
+	SubStepZeropsYAML   = "zerops-yaml"
 	SubStepDeployDev    = "deploy-dev"
 	SubStepStartProcs   = "start-processes"
 	SubStepVerifyDev    = "verify-dev"
 	SubStepInitCommands = "init-commands"
 	SubStepSubagent     = "subagent"
+	SubStepSnapshotDev  = "snapshot-dev"
 	SubStepBrowserWalk  = "browser-walk"
 	SubStepCrossDeploy  = "cross-deploy"
 	SubStepVerifyStage  = "verify-stage"
+	SubStepReadmes      = "readmes"
+
+	// SubStepReadme is retained as an alias for backward compatibility
+	// with persisted session state files written under the old generate-
+	// time readme substep. New sessions never see it — generate no longer
+	// emits a readme sub-step and the post-deploy narrate step uses
+	// SubStepReadmes (plural).
+	SubStepReadme = "readme"
 )
 
 // initSubSteps returns the sub-step sequence for a step based on plan shape.
@@ -39,10 +70,9 @@ func initSubSteps(step string, plan *RecipePlan) []RecipeSubStep {
 func generateSubSteps() []RecipeSubStep {
 	names := []string{
 		SubStepScaffold,
-		SubStepZeropsYAML,
 		SubStepAppCode,
-		SubStepReadme,
 		SubStepSmokeTest,
+		SubStepZeropsYAML,
 	}
 	steps := make([]RecipeSubStep, len(names))
 	for i, n := range names {
@@ -60,9 +90,13 @@ func deploySubSteps(plan *RecipePlan) []RecipeSubStep {
 		SubStepInitCommands,
 	}
 	if isShowcase(plan) {
-		names = append(names, SubStepSubagent, SubStepBrowserWalk)
+		// Feature sub-agent → snapshot current code → browser walk. The
+		// snapshot step persists the sub-agent's output to appdev's
+		// deployed artifact so a mid-run container crash can't eat the
+		// work (there is no git remote at this phase).
+		names = append(names, SubStepSubagent, SubStepSnapshotDev, SubStepBrowserWalk)
 	}
-	names = append(names, SubStepCrossDeploy, SubStepVerifyStage)
+	names = append(names, SubStepCrossDeploy, SubStepVerifyStage, SubStepReadmes)
 
 	steps := make([]RecipeSubStep, len(names))
 	for i, n := range names {

@@ -437,21 +437,23 @@ zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`.
 
 <block name="execution-order">
 
-### Execution order — no sub-agents for zerops.yaml or README
+### Execution order — zerops.yaml written LAST, README deferred to post-deploy
 
-**Write zerops.yaml and README yourself (the main agent), sequentially.** Do NOT delegate them to sub-agents. Sub-agents lose the injected guidance (discovered env vars, zerops.yaml schema, comment ratio rules, prepareCommands constraints) and produce wrong output — showcase v1-v4 all failed on sub-agent-written zerops.yaml (wrong prepareCommands, 15% comment ratio, missing env vars) or README (incomplete intro, divergent zerops.yaml copy).
+**Generate step writes four things in this order. README is NOT one of them any more — it moves to after stage verification, when you have actual debug experience to narrate.**
 
 **Correct order:**
-1. Scaffold the project (composer create-project, npx create-next-app, etc.)
-2. Write zerops.yaml — YOU, not a sub-agent. Use the discovered env vars and schema from this guidance.
-3. Write app code:
+1. Scaffold the project (composer create-project, npx create-next-app, framework init, etc.) — for showcase multi-codebase plans dispatch scaffold sub-agents in parallel per the scaffold-subagent-brief topic; for everything else write yourself.
+2. Write app code:
    - **Type 1 (runtime hello world)**: single-file HTTP server + DB migration, no framework, no dashboard. Write a minimal handler (e.g. `/` returns `"Hello from <framework>"`, `/greetings` returns SELECT-all from the `greetings` table) and the raw SQL migration. No routes table, no seeder beyond a migration INSERT, no feature sections.
    - **Types 2b/3 (minimal with framework)**: dashboard skeleton with feature sections, model + migration + seeder, routes, config changes. Write everything yourself — with only 1-2 feature sections (database CRUD, maybe cache) there's no benefit to sub-agents.
-   - **Type 4 (showcase)**: write the dashboard skeleton yourself (layout with include slots, connectivity panel, model + migration + seeder, all routes). Do NOT dispatch the feature sub-agent yet — that happens in the deploy step after appdev is deployed and verified. See "Showcase dashboard — file architecture" below.
-4. Write README with extract fragments — YOU, not a sub-agent. The integration-guide fragment must contain the SAME zerops.yaml you just wrote in step 2 (read it back from disk, don't rewrite from memory). The intro must list ALL services from the plan, not just the database.
+   - **Type 4 (showcase)**: write the dashboard skeleton yourself OR via the scaffold sub-agents (layout with connectivity panel, model + migration + seeder, /api/health, /api/status, client init per managed service). Do NOT write feature sections yet — that is the feature sub-agent's job at deploy step 4b. See "Showcase dashboard — file architecture" below.
+3. On-container smoke test — run the framework's install + validate loop under each dev mount to prove the scaffold compiles and the install flow actually works. This happens BEFORE you commit to a zerops.yaml because step 4 derives `buildCommands`, `cache`, and `deployFiles` from what you observed here. Previous ordering had zerops.yaml written from research-time assumptions, then discovered at deploy-time that the real install flow needed different steps.
+4. Write zerops.yaml — YOU, not a sub-agent. Use the discovered env vars, schema, and the install flow you just validated in smoke-test. Sub-agents lose the injected guidance (discovered env vars, zerops.yaml schema, comment ratio rules, `prepareCommands` constraints) and produce wrong output — showcase v1-v4 all failed on sub-agent-written zerops.yaml.
 5. Git init + commit
 
-**Why this order matters:** zerops.yaml is the single source of truth. The README's integration-guide copies it verbatim. If two sub-agents write them independently, they diverge. If a sub-agent writes zerops.yaml without the injected guidance, it misses rules that only exist in this step's DetailedGuide.
+**README is NOT written here.** It moves to the post-deploy `readmes` sub-step, after `verify-stage`. That is the only place the gotchas section can be written honestly, because by then the agent has actually hit the framework's quirks. v11 and v12 wrote generate-time READMEs full of speculative gotchas that failed the authenticity check; the fix is narrating from lived experience, not moving the check.
+
+**Why this order matters:** zerops.yaml is the single source of truth for the integration-guide README fragment. Smoke-test-first means the buildCommands you commit to are the ones that actually worked. README-last means the knowledge-base fragment is authentic.
 
 </block>
 
@@ -1957,19 +1959,21 @@ zerops_workflow action="skip" step="close" reason="Will publish later"
 
 ### Execution order
 1. Scaffold each codebase on its mount [topic: where-to-write]
-2. Write zerops.yaml — YOU, not a sub-agent [topic: zerops-yaml-rules]
+   - What to generate per recipe type [topic: recipe-types]
+2. Write app code — skeleton only for showcase [topic: dashboard-skeleton]
+3. On-container smoke test — prove install + validate loop works BEFORE committing to zerops.yaml [topic: smoke-test]
+4. Write zerops.yaml — YOU, not a sub-agent [topic: zerops-yaml-rules]
    - Comment formatting rules [topic: comment-anti-patterns]
    - Dual-runtime URL pattern applies [topic: dual-runtime-urls]
    - Serve-only dev override [topic: serve-only-dev]
    - Multi-base secondary runtime install [topic: multi-base-dev]
    - Dev-server host-check allow-list [topic: dev-server-hostcheck]
    - Worker setup shape [topic: worker-setup]
-3. Write app code — skeleton only for showcase [topic: dashboard-skeleton]
-   - What to generate per recipe type [topic: recipe-types]
-4. Write README per codebase with 3 fragments [topic: readme-fragments]
-5. Pre-deploy checklist + on-container smoke test [topic: smoke-test]
    - Code quality and comment ratio [topic: code-quality]
-6. Git init + commit
+5. Git init + commit
+
+### Readme note
+READMEs are NOT written here. They move to the post-deploy `readmes` sub-step so the gotchas section narrates actual debug experience instead of research-time speculation. Do not preemptively draft the knowledge-base fragment.
 
 ### Fetch guidance
 Call `zerops_guidance topic="{id}"` before each sub-task for detailed rules.
@@ -1977,7 +1981,7 @@ All topics are filtered to your recipe shape — irrelevant content is excluded.
 </section>
 
 <section name="deploy-skeleton">
-## Deploy — Build, Start & Verify
+## Deploy — Build, Start, Verify & Narrate
 
 ### Constraints
 - `zerops_deploy` triggers build from mount files — env vars resolve at deploy time
@@ -1991,11 +1995,15 @@ All topics are filtered to your recipe shape — irrelevant content is excluded.
    - Asset dev server [topic: deploy-asset-dev-server]
    - Worker process [topic: deploy-worker-process]
 3. Enable subdomain + verify [topic: deploy-target-verification]
-4. Dispatch feature sub-agent (showcase) [topic: subagent-brief]
+4. Run init commands (migrations + seed)
+5. Dispatch feature sub-agent (showcase) [topic: subagent-brief]
    - Where commands run [topic: where-commands-run]
-5. Browser verification (showcase) [topic: browser-walk]
-6. Cross-deploy to stage [topic: stage-deploy]
-7. Handle failures [topic: deploy-failures]
+6. Snapshot dev (showcase) — re-deploy dev to persist feature-sub-agent output into the deployed artifact. Durability step: the SSHFS mount is live but uncommitted; a mid-run container crash before cross-deploy would eat the work. [topic: deploy-flow]
+7. Browser verification (showcase) [topic: browser-walk]
+8. Cross-deploy to stage [topic: stage-deploy]
+9. Verify stage [topic: deploy-target-verification]
+10. Write per-codebase READMEs — narrate gotchas from the debug rounds you just lived through [topic: readme-fragments]
+11. Handle failures [topic: deploy-failures]
 
 ### Fetch guidance
 Call `zerops_guidance topic="{id}"` before each sub-task for detailed rules.
