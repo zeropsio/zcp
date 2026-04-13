@@ -1105,9 +1105,14 @@ func TestGenerateEnvImportYAML_BaselineBelowCommentThreshold(t *testing.T) {
 	plan := testMinimalPlan()
 
 	// With no agent comments, the only comments the template emits are the
-	// env-header paragraph at the top of each file. The resulting comment
-	// ratio MUST stay below the 30% finalize threshold so the checker still
-	// forces the agent to contribute per-env service + project prose.
+	// env-header paragraph at the top of each file plus the 3-line APP_SECRET
+	// rationale above the project-level secret declaration (when a secret is
+	// present). The resulting comment ratio MUST stay below the 40% guardrail
+	// — service-level comments, per-env project comments, and other narration
+	// are still forced by other checks, so the comment-ratio finalize check
+	// is no longer the primary forcing function for envs 0–1, but the
+	// guardrail remains to prevent accidental template over-growth.
+	const baselineGuardrail = 0.40
 	for i := 0; i < EnvTierCount(); i++ {
 		yaml := GenerateEnvImportYAML(plan, i)
 		var commentLines, totalLines int
@@ -1125,9 +1130,9 @@ func TestGenerateEnvImportYAML_BaselineBelowCommentThreshold(t *testing.T) {
 			t.Fatalf("env %d: no content", i)
 		}
 		ratio := float64(commentLines) / float64(totalLines)
-		if ratio >= 0.30 {
-			t.Errorf("env %d: template baseline ratio %.0f%% meets 30%% threshold — agent won't be forced to add comments",
-				i, ratio*100)
+		if ratio >= baselineGuardrail {
+			t.Errorf("env %d: template baseline ratio %.0f%% exceeds %.0f%% guardrail — template is over-growing",
+				i, ratio*100, baselineGuardrail*100)
 		}
 	}
 }

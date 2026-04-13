@@ -106,6 +106,14 @@ func writeProjectSection(b *strings.Builder, plan *RecipePlan, envIndex int, pro
 
 	b.WriteString("  envVariables:\n")
 	if hasSecret {
+		// Auto-emit the rationale above the secret declaration. Agents have
+		// historically forgotten this comment (v9/v10/v11 shipped the secret
+		// without it); the template backstops the omission. The wording is
+		// framework-agnostic — AppSecretKey carries the framework-specific
+		// name (APP_KEY / APP_SECRET / SECRET_KEY_BASE / etc.).
+		fmt.Fprintf(b, "    # %s shared across every container behind the L7 balancer —\n", plan.Research.AppSecretKey)
+		b.WriteString("    # signed tokens and session cookies must verify everywhere, or\n")
+		b.WriteString("    # users see random 401s the moment a deploy rolls.\n")
 		fmt.Fprintf(b, "    %s: <@generateRandomString(<32>)>\n", plan.Research.AppSecretKey)
 	}
 

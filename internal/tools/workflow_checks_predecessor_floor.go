@@ -8,10 +8,12 @@ import (
 
 // minNetNewGotchas is the floor for showcase-tier knowledge-base fragments.
 // A showcase always adds managed services and architectural patterns that
-// the predecessor recipe does not cover; two net-new gotchas is the minimum
-// proof that the agent narrated something from the actual build instead of
-// re-stating the predecessor's baseline.
-const minNetNewGotchas = 2
+// the predecessor recipe does not cover; three net-new gotchas matches the
+// v7 gold-standard baseline (apidev had 3 clones + 3 net-new). The earlier
+// floor of 2 admitted v11's apidev with 4 clones + 2 net-new, which still
+// read as scaffold-quality commentary; 3 forces the agent to narrate at
+// least one additional build-specific gotcha.
+const minNetNewGotchas = 3
 
 // checkKnowledgeBaseExceedsPredecessor is the predecessor-as-floor check.
 // It reads the knowledge-base fragment from a codebase README, extracts

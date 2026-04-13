@@ -116,7 +116,7 @@ func TestCheckKnowledgeBaseExceedsPredecessor_EmptyPredecessorSkipped(t *testing
 }
 
 // TestCheckKnowledgeBaseExceedsPredecessor_OneNetNewIsTooFew — the floor for
-// showcase tier is two net-new stems. A single net-new gotcha alongside
+// showcase tier is three net-new stems. A single net-new gotcha alongside
 // three clones is not enough; the showcase added 4 managed services but has
 // commentary for one of them at best.
 func TestCheckKnowledgeBaseExceedsPredecessor_OneNetNewIsTooFew(t *testing.T) {
@@ -130,6 +130,28 @@ func TestCheckKnowledgeBaseExceedsPredecessor_OneNetNewIsTooFew(t *testing.T) {
 	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems)
 	if len(checks) == 0 || checks[0].Status != "fail" {
 		t.Errorf("expected fail with 1 net-new, got: %+v", checks)
+	}
+}
+
+// TestCheckKnowledgeBaseExceedsPredecessor_TwoNetNewNowFails replays v11's
+// apidev pattern: 4 clones of the predecessor + 2 net-new gotchas. At the
+// old floor of 2 this was a marginal pass; the v11 session analysis showed
+// the output still read as scaffold-quality rather than showcase-quality
+// because the narration stopped one gotcha short of the v7 baseline of 3.
+// Locks in the tightening from 2 → 3 so the regression cannot come back.
+func TestCheckKnowledgeBaseExceedsPredecessor_TwoNetNewNowFails(t *testing.T) {
+	t.Parallel()
+	readme := readmeWithGotchas(
+		"No `.env` files on Zerops",
+		"TypeORM `synchronize: true` in production",
+		"NestJS listens on `localhost` by default",
+		"`ts-node` needs devDependencies",
+		"CORS with dual-runtime frontend",
+		"S3 path-style addressing required",
+	)
+	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems)
+	if len(checks) == 0 || checks[0].Status != "fail" {
+		t.Errorf("expected fail with 2 net-new at new floor of 3, got: %+v", checks)
 	}
 }
 

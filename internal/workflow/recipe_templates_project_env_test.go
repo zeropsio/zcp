@@ -157,6 +157,65 @@ func TestGenerateEnvImportYAML_ProjectEnvVariables_SharedSecretFirst(t *testing.
 	}
 }
 
+// TestGenerateEnvImportYAML_AppSecretRationaleEmitted locks in the auto-emitted
+// rationale comment above the shared-secret line. The v9/v10/v11 releases all
+// shipped env 0 import.yaml with the secret declared but without the rationale
+// explaining why it must live at the project level. The template now backstops
+// the agent: whenever NeedsAppSecret is true, the template writes a fixed
+// 3-line comment above the secret declaration describing the L7-balancer
+// consequences. Keeps the auto-comment framework-agnostic by referencing
+// AppSecretKey (APP_KEY / APP_SECRET / SECRET_KEY_BASE).
+func TestGenerateEnvImportYAML_AppSecretRationaleEmitted(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan() // shared secret APP_KEY
+	yaml := GenerateEnvImportYAML(plan, 0)
+	block := envVariablesBlock(yaml)
+	if block == "" {
+		t.Fatalf("expected envVariables block, got none\nyaml:\n%s", yaml)
+	}
+
+	// The auto-rationale must appear exactly once and be immediately above
+	// the APP_KEY declaration line.
+	const rationaleAnchor = "shared across every container behind the L7 balancer"
+	if count := strings.Count(block, rationaleAnchor); count != 1 {
+		t.Errorf("expected exactly 1 rationale comment, got %d\nblock:\n%s", count, block)
+	}
+
+	rationaleIdx := strings.Index(block, rationaleAnchor)
+	appKeyIdx := strings.Index(block, "APP_KEY:")
+	if rationaleIdx == -1 || appKeyIdx == -1 {
+		t.Fatalf("rationale or APP_KEY missing\nblock:\n%s", block)
+	}
+	if rationaleIdx >= appKeyIdx {
+		t.Errorf("rationale must appear BEFORE APP_KEY line (rationale=%d, appKey=%d)\nblock:\n%s", rationaleIdx, appKeyIdx, block)
+	}
+
+	// Every rationale line must be a comment at the envVariables indent level (4 spaces + #).
+	if !strings.Contains(block, "    # APP_KEY") {
+		t.Errorf("rationale must name the framework-specific secret key (AppSecretKey=%q)\nblock:\n%s", plan.Research.AppSecretKey, block)
+	}
+}
+
+// TestGenerateEnvImportYAML_AppSecretRationaleNotEmittedWhenAbsent — the
+// rationale must not appear when NeedsAppSecret is false, because there is
+// no secret to explain.
+func TestGenerateEnvImportYAML_AppSecretRationaleNotEmittedWhenAbsent(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+	plan.Research.NeedsAppSecret = false
+	plan.Research.AppSecretKey = ""
+	plan.ProjectEnvVariables = map[string]map[string]string{
+		"0": {"DEV_API_URL": "https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app"},
+	}
+
+	yaml := GenerateEnvImportYAML(plan, 0)
+	if strings.Contains(yaml, "shared across every container behind the L7 balancer") {
+		t.Errorf("rationale must not be emitted when NeedsAppSecret=false\nyaml:\n%s", yaml)
+	}
+}
+
 func TestGenerateEnvImportYAML_ProjectEnvVariables_EmptyWhenAbsentAndNoSecret(t *testing.T) {
 	t.Parallel()
 

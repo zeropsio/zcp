@@ -90,6 +90,18 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 			appTargets = []workflow.RecipeTarget{plan.Targets[0]}
 		}
 
+		// Separate-codebase workers ship their own README and must also
+		// clear the predecessor-floor check. Shared-codebase workers
+		// (SharesCodebaseWith != "") live inside the host codebase and
+		// don't have a standalone README, so they're skipped — the host's
+		// README is already covered by the appTargets loop below.
+		var workerTargets []workflow.RecipeTarget
+		for _, t := range plan.Targets {
+			if workflow.IsRuntimeType(t.Type) && t.IsWorker && t.SharesCodebaseWith == "" {
+				workerTargets = append(workerTargets, t)
+			}
+		}
+
 		// Check zerops.yaml for each app target.
 		for _, appTarget := range appTargets {
 			hostname := appTarget.Hostname
@@ -145,6 +157,41 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 				}
 				checks = append(checks, floorChecks...)
 			}
+		}
+
+		// Per-worker-target predecessor-floor loop. Separate-codebase workers
+		// ship their own README; the appTargets loop above intentionally filters
+		// them out (`!t.IsWorker`) because the zerops.yaml + dev/prod setup
+		// shape checks are app-specific. The floor check is codebase-agnostic
+		// — any README with a knowledge-base fragment can be measured — so we
+		// run it here with the same per-hostname name prefixing the app loop uses.
+		for _, workerTarget := range workerTargets {
+			hostname := workerTarget.Hostname
+			ymlDir := projectRoot
+			for _, candidate := range []string{hostname + "dev", hostname} {
+				mountPath := filepath.Join(projectRoot, candidate)
+				if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
+					ymlDir = mountPath
+					break
+				}
+			}
+			readmePath := filepath.Join(ymlDir, "README.md")
+			readmeContent, readErr := os.ReadFile(readmePath)
+			if readErr != nil {
+				// Non-existence of a separate-codebase worker README is already
+				// a problem — but the existing appTargets loop reports missing
+				// app READMEs, and the same structural expectation applies here.
+				checks = append(checks, workflow.StepCheck{
+					Name: hostname + "_readme_exists", Status: statusFail,
+					Detail: fmt.Sprintf("README.md not found at %s", readmePath),
+				})
+				continue
+			}
+			floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems)
+			for i := range floorChecks {
+				floorChecks[i].Name = hostname + "_" + floorChecks[i].Name
+			}
+			checks = append(checks, floorChecks...)
 		}
 
 		allPassed := checksAllPassed(checks)

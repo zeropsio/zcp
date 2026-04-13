@@ -940,6 +940,35 @@ const frontendZeropsYaml = `zerops:
       base: static
 `
 
+// workerZeropsYaml is a nodejs dev+prod zerops.yaml — the kind a separate-
+// codebase worker (no shared host) writes. Used by the predecessor-floor
+// integration test that exercises the per-worker README check loop.
+const workerZeropsYaml = `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm install
+      deployFiles:
+        - .
+    run:
+      envVariables:
+        NODE_ENV: development
+      start: node dist/worker.js
+  - setup: prod
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+        - npm run build
+      deployFiles:
+        - dist
+    run:
+      envVariables:
+        NODE_ENV: production
+      start: node dist/worker.js
+`
+
 // apiZeropsYamlWithWorker is a nodejs dev+prod+worker zerops.yaml — the kind a
 // dual-runtime API (with shared-codebase BullMQ worker) writes.
 const apiZeropsYamlWithWorker = `zerops:

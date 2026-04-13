@@ -161,6 +161,211 @@ func TestCheckRecipeGenerate_ShowcaseFloor_DualRuntime_MixedPassFail(t *testing.
 	}
 }
 
+// TestCheckRecipeGenerate_ShowcaseFloor_SeparateCodebaseWorker — v11 shipped
+// a workerdev README that cloned "No .env files on Zerops" verbatim from the
+// predecessor and nothing caught it because the existing appTargets loop
+// explicitly filters workers out (`!t.IsWorker`). Separate-codebase workers
+// ship their own README and must also clear the predecessor-floor check.
+// The floor is 3, same as the app/api loop. Shared-codebase workers (where
+// `SharesCodebaseWith != ""`) don't have a standalone README and are skipped.
+func TestCheckRecipeGenerate_ShowcaseFloor_SeparateCodebaseWorker(t *testing.T) {
+	t.Parallel()
+
+	kp := &testKnowledgeProvider{
+		recipes: map[string]string{
+			"nestjs-minimal": `# Nest.js Minimal
+
+## Gotchas
+- **No ` + "`.env`" + ` files on Zerops** — platform injects OS env vars.
+- **TypeORM ` + "`synchronize: true`" + ` in production** — drops columns.
+- **NestJS listens on ` + "`localhost`" + ` by default** — bind 0.0.0.0.
+- **` + "`ts-node`" + ` needs devDependencies** — dev setup uses npm install.
+
+## 1. Adding ` + "`zerops.yaml`" + `
+
+` + "```yaml\nzerops:\n  - setup: prod\n    build:\n      base: nodejs@22\n```" + `
+`,
+		},
+	}
+
+	// Separate-codebase worker — SharesCodebaseWith is empty, so workerdev
+	// owns its own repo and README.
+	plan := &workflow.RecipePlan{
+		Framework:   "nestjs",
+		Tier:        workflow.RecipeTierShowcase,
+		Slug:        "nestjs-showcase",
+		RuntimeType: "nodejs@22",
+		Research: workflow.ResearchData{
+			ServiceType:    "nodejs",
+			PackageManager: "npm",
+			HTTPPort:       3000,
+			BuildCommands:  []string{"npm ci"},
+			DeployFiles:    []string{"dist"},
+			StartCommand:   "node dist/main.js",
+		},
+		Targets: []workflow.RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true}, // SharesCodebaseWith empty
+			{Hostname: "db", Type: "postgresql@17"},
+		},
+	}
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Healthy app + api READMEs (3 net-new each) so the final result's failure
+	// is attributable to the worker alone.
+	appdevREADME := readmeShellWith(frontendZeropsYaml,
+		"Static base only ships in prod — dev uses nodejs runtime.",
+		"VITE_* vars are baked at build time, not runtime.",
+		"Vite dev-server host check rejects unknown hosts — allow .zerops.app.",
+	)
+	apidevREADME := readmeShellWith(apiZeropsYamlWithWorker,
+		"Meilisearch SDK is ESM-only",
+		"MinIO needs `forcePathStyle: true` and an explicit region",
+		"CORS with dual-runtime frontend",
+	)
+	// workerdev README: 4 cloned stems, 0 net-new → must fail the floor.
+	workerdevREADME := readmeShellWith(workerZeropsYaml,
+		"No .env files on Zerops.",
+		"TypeORM `synchronize: true` must never run in the application process.",
+		"NestJS listens on `localhost` by default.",
+		"ts-node requires devDependencies.",
+	)
+
+	appDir := filepath.Join(dir, "appdev")
+	apiDir := filepath.Join(dir, "apidev")
+	workerDir := filepath.Join(dir, "workerdev")
+	for _, d := range []string{appDir, apiDir, workerDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), frontendZeropsYaml)
+	writeFile(t, filepath.Join(appDir, "README.md"), appdevREADME)
+	writeFile(t, filepath.Join(apiDir, "zerops.yaml"), apiZeropsYamlWithWorker)
+	writeFile(t, filepath.Join(apiDir, "README.md"), apidevREADME)
+	writeFile(t, filepath.Join(workerDir, "zerops.yaml"), workerZeropsYaml)
+	writeFile(t, filepath.Join(workerDir, "README.md"), workerdevREADME)
+
+	checker := checkRecipeGenerate(stateDir, nil, kp)
+	result, err := checker(context.Background(), plan, testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	byName := make(map[string]workflow.StepCheck, len(result.Checks))
+	for _, c := range result.Checks {
+		byName[c.Name] = c
+	}
+
+	workerCheck, ok := byName["worker_knowledge_base_exceeds_predecessor"]
+	if !ok {
+		t.Fatalf("missing worker_knowledge_base_exceeds_predecessor — separate-codebase worker was not included in the floor loop. Got checks: %v", checkNames(result.Checks))
+	}
+	if workerCheck.Status != statusFail {
+		t.Errorf("worker_knowledge_base_exceeds_predecessor should fail (all 4 stems clone the predecessor), got %s: %s", workerCheck.Status, workerCheck.Detail)
+	}
+
+	// App/api must still pass.
+	if c := byName["app_knowledge_base_exceeds_predecessor"]; c.Status != statusPass {
+		t.Errorf("app check should pass, got %s: %s", c.Status, c.Detail)
+	}
+	if c := byName["api_knowledge_base_exceeds_predecessor"]; c.Status != statusPass {
+		t.Errorf("api check should pass, got %s: %s", c.Status, c.Detail)
+	}
+
+	if result.Passed {
+		t.Error("expected overall fail because worker README cloned the predecessor, but result.Passed=true")
+	}
+}
+
+// TestCheckRecipeGenerate_ShowcaseFloor_SharedCodebaseWorkerSkipped — when
+// the worker target shares the host API's codebase (SharesCodebaseWith="api"),
+// it does not have its own README. The floor check must NOT emit a check
+// name for the shared worker; only the host codebase's README is checked
+// (that's what the existing app/api loop already covers).
+func TestCheckRecipeGenerate_ShowcaseFloor_SharedCodebaseWorkerSkipped(t *testing.T) {
+	t.Parallel()
+
+	kp := &testKnowledgeProvider{
+		recipes: map[string]string{
+			"nestjs-minimal": `# Nest.js Minimal
+
+## Gotchas
+- **No ` + "`.env`" + ` files on Zerops** — platform injects OS env vars.
+- **TypeORM ` + "`synchronize: true`" + ` in production** — drops columns.
+- **NestJS listens on ` + "`localhost`" + ` by default** — bind 0.0.0.0.
+- **` + "`ts-node`" + ` needs devDependencies** — dev setup uses npm install.
+`,
+		},
+	}
+
+	plan := &workflow.RecipePlan{
+		Framework:   "nestjs",
+		Tier:        workflow.RecipeTierShowcase,
+		Slug:        "nestjs-showcase",
+		RuntimeType: "nodejs@22",
+		Research: workflow.ResearchData{
+			ServiceType:   "nodejs",
+			HTTPPort:      3000,
+			BuildCommands: []string{"npm ci"},
+			DeployFiles:   []string{"dist"},
+			StartCommand:  "node dist/main.js",
+		},
+		Targets: []workflow.RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true, SharesCodebaseWith: "api"},
+		},
+	}
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	appdevREADME := readmeShellWith(frontendZeropsYaml,
+		"Static base only ships in prod.",
+		"VITE_* vars are baked at build time, not runtime.",
+		"Vite dev-server host check rejects unknown hosts.",
+	)
+	apidevREADME := readmeShellWith(apiZeropsYamlWithWorker,
+		"Meilisearch SDK is ESM-only",
+		"MinIO needs `forcePathStyle: true`",
+		"Worker shares the API's TypeORM entities",
+	)
+
+	appDir := filepath.Join(dir, "appdev")
+	apiDir := filepath.Join(dir, "apidev")
+	for _, d := range []string{appDir, apiDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), frontendZeropsYaml)
+	writeFile(t, filepath.Join(appDir, "README.md"), appdevREADME)
+	writeFile(t, filepath.Join(apiDir, "zerops.yaml"), apiZeropsYamlWithWorker)
+	writeFile(t, filepath.Join(apiDir, "README.md"), apidevREADME)
+
+	checker := checkRecipeGenerate(stateDir, nil, kp)
+	result, err := checker(context.Background(), plan, testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, c := range result.Checks {
+		if c.Name == "worker_knowledge_base_exceeds_predecessor" {
+			t.Errorf("shared-codebase worker should not emit a floor check (no standalone README), got %s: %s", c.Status, c.Detail)
+		}
+	}
+}
+
 // TestCheckRecipeGenerate_ShowcaseFloor_NilKPNoOp locks in the graceful
 // fall-through when no knowledge provider is available (e.g. the existing
 // non-showcase tests that pass nil). The check must emit nothing rather
