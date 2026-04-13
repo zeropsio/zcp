@@ -16,7 +16,10 @@ type SubStepValidationResult struct {
 }
 
 // SubStepValidator checks the agent's output at a sub-step boundary.
-type SubStepValidator func(ctx context.Context, plan *RecipePlan, state *RecipeState) *SubStepValidationResult
+// Receives the attestation so validators can reject empty or boilerplate
+// completions; receives plan + state for validators that walk the mounted
+// filesystem or inspect recipe shape.
+type SubStepValidator func(ctx context.Context, plan *RecipePlan, state *RecipeState, attestation string) *SubStepValidationResult
 
 // getSubStepValidator returns the validator for a sub-step, or nil if the
 // sub-step uses attestation-only completion (no automated check).
@@ -26,6 +29,14 @@ func getSubStepValidator(subStepName string) SubStepValidator {
 		return validateZeropsYAML
 	case SubStepReadme:
 		return validateReadme
+	case SubStepSubagent:
+		// Feature sub-agent dispatch at deploy step 4b. v11 shipped a
+		// scaffold-quality frontend because the main agent autonomously
+		// decided step 4b was "already done" and never dispatched the
+		// feature sub-agent. The validator forces a non-trivial attestation
+		// describing what the feature sub-agent produced, eliminating the
+		// "already done" escape.
+		return validateFeatureSubagent
 	case SubStepSmokeTest:
 		// Trust agent attestation — smoke test is interactive.
 		return nil
@@ -43,11 +54,54 @@ func getSubStepValidator(subStepName string) SubStepValidator {
 	}
 }
 
+// featureSubagentMinAttestationLen is the minimum attestation length the
+// feature-subagent sub-step accepts. Empty, one-word, and "already done"-
+// class attestations are rejected; anything above the floor must actually
+// name what the feature sub-agent produced. The number is a proxy, not a
+// perfect check — but it is sharp enough to block the v11 skip and force
+// the agent to narrate its dispatch.
+const featureSubagentMinAttestationLen = 40
+
+// validateFeatureSubagent enforces the deploy-step sub-step "subagent"
+// (dispatch of the feature sub-agent). v11 shipped a scaffold-quality
+// frontend because the main agent read the existing scaffold code, decided
+// the features were "already complete", and skipped step 4b — the
+// "MANDATORY for Type 4 showcase" label was prose, not a forcing function.
+// The validator rejects empty/short attestations so deploy cannot complete
+// until the agent actually dispatches the sub-agent and describes what it
+// produced. See docs/implementation-v11-findings.md for the v7-vs-v11
+// component comparison that motivated the fix.
+func validateFeatureSubagent(_ context.Context, _ *RecipePlan, _ *RecipeState, attestation string) *SubStepValidationResult {
+	trimmed := strings.TrimSpace(attestation)
+	if trimmed == "" {
+		return &SubStepValidationResult{
+			Passed: false,
+			Issues: []string{"feature sub-agent attestation is empty — dispatch the sub-agent before completing this sub-step"},
+			Guidance: "## feature-subagent sub-step\n\n" +
+				"Type 4 showcase recipes require the feature sub-agent to fill in the dashboard UX even if the scaffold code looks complete. The scaffold brief at generate time is intentionally narrow (see `zerops_guidance topic=\"scaffold-subagent-brief\"`); the feature sub-agent's job is the rich UX — styled forms, tables with history, contextual hints, typed interfaces, error flashes, empty states, `$effect` hooks that auto-load data.\n\n" +
+				"Fetch the sub-agent brief: `zerops_guidance topic=\"subagent-brief\"`\n\n" +
+				"Dispatch the feature sub-agent via the Agent tool, then call `zerops_workflow action=\"complete\" step=\"deploy\" substep=\"subagent\" attestation=\"<describe the files it produced and what features it implemented>\"`.\n\n" +
+				"Do NOT skip this sub-step based on \"the scaffold code looks complete\" — v11 shipped a scaffold as a dashboard for exactly that reason. See docs/implementation-v11-findings.md.",
+		}
+	}
+	if len(trimmed) < featureSubagentMinAttestationLen {
+		return &SubStepValidationResult{
+			Passed: false,
+			Issues: []string{fmt.Sprintf("feature sub-agent attestation too short (%d chars, need >= %d) — name the files the sub-agent wrote and the features it implemented", len(trimmed), featureSubagentMinAttestationLen)},
+			Guidance: "## feature-subagent sub-step\n\n" +
+				"A one-liner like \"already done\" or \"dispatched sub-agent\" is not enough. The attestation must describe what the feature sub-agent actually produced — the files it wrote, the features it implemented against live services. Example:\n\n" +
+				"> feature sub-agent added styled JobsSection.svelte with typed Task interface, dispatch form, refresh button, and pending-task badge\n\n" +
+				"This becomes part of the session log and the close-step review uses it to verify the deploy step ran to completion.",
+		}
+	}
+	return &SubStepValidationResult{Passed: true}
+}
+
 // validateZeropsYAML checks the zerops.yaml the agent wrote by reading from
 // SSHFS mounts. Checks: file exists, contains expected setup count, comment
 // ratio >= 30%, dev and prod envVariables differ. These are the most common
 // generate failures.
-func validateZeropsYAML(_ context.Context, plan *RecipePlan, _ *RecipeState) *SubStepValidationResult {
+func validateZeropsYAML(_ context.Context, plan *RecipePlan, _ *RecipeState, _ string) *SubStepValidationResult {
 	if plan == nil {
 		return nil
 	}
@@ -129,7 +183,7 @@ func validateZeropsYAML(_ context.Context, plan *RecipePlan, _ *RecipeState) *Su
 }
 
 // validateReadme checks the README the agent wrote.
-func validateReadme(_ context.Context, plan *RecipePlan, _ *RecipeState) *SubStepValidationResult {
+func validateReadme(_ context.Context, plan *RecipePlan, _ *RecipeState, _ string) *SubStepValidationResult {
 	if plan == nil {
 		return nil
 	}

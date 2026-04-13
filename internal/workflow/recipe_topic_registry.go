@@ -114,6 +114,12 @@ var recipeGenerateTopics = []*GuidanceTopic{
 		BlockNames:  []string{"dashboard-skeleton"},
 	},
 	{
+		ID: "scaffold-subagent-brief", Step: RecipeStepGenerate,
+		Description: "Scope contract for scaffold sub-agents (multi-codebase only)",
+		Predicate:   func(p *RecipePlan) bool { return isShowcase(p) && hasMultipleCodebases(p) },
+		BlockNames:  []string{"scaffold-subagent-brief"},
+	},
+	{
 		ID: "env-conventions", Step: RecipeStepGenerate,
 		Description: ".env.example and framework env var naming",
 		BlockNames:  []string{"env-example-preservation", "framework-env-conventions"},

@@ -706,6 +706,47 @@ For a single-feature minimal recipe you skip the skeleton/sub-agent split entire
 
 </block>
 
+<block name="scaffold-subagent-brief">
+
+### Scaffolding sub-agent brief (multi-codebase recipes only)
+
+For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appdev/apidev/workerdev mounts, or any recipe with more than one codebase), writing every codebase sequentially in the main agent is prohibitively slow. The standard shortcut is to dispatch one scaffolding sub-agent per codebase in parallel — but without an explicit scope contract, scaffolding sub-agents overshoot into feature code and the feature sub-agent at deploy step 4b ends up with nothing left to do (or worse, gets skipped because "the scaffold looks complete"). v11 shipped a 78-line curl-in-a-button instead of a 191-line dashboard feature for exactly this reason.
+
+**Order of operations — main agent first, sub-agents second:**
+
+1. **Main agent writes zerops.yaml for every codebase sequentially.** zerops.yaml is platform config, not source code, and stays the main agent's responsibility. The schema-fetch + dev/prod split + worker setup shape are already part of this step's existing blocks.
+2. **Main agent writes the README skeleton for every codebase sequentially** — intro + integration-guide fragment (with the zerops.yaml verbatim) + empty knowledge-base placeholder. The main agent comes back after deploy to narrate the knowledge-base gotchas.
+3. **THEN dispatch scaffolding sub-agents in parallel, one per codebase**, each with the brief template below.
+
+**Scaffold sub-agent brief — include verbatim (edit only the codebase-specific names and service list):**
+
+> You are scaffolding a SKELETON, not features. Write only the structural shell needed for the container to start, the main agent to smoke-test connectivity, and the feature sub-agent at deploy step 4b to fill in the dashboard UX.
+>
+> **WRITE:**
+>
+> - `package.json` / `composer.json` / `go.mod` / equivalent — production dependencies only
+> - Framework config (`tsconfig.json`, `vite.config`, framework's `.env.example`, eslint config if the framework's scaffolder normally emits one)
+> - Main entry point (`main.ts`, `App.svelte`, `index.html`, etc.) with the minimum framework boilerplate to start
+> - ONE health/status controller or route that returns `{ ok: true }` — proves the container reaches HTTP
+> - ONE list controller/route that returns the seeded database rows (if a database is in the plan) — proves the ORM + migration + seed wiring
+> - Entity / model files matching the plan's data shape. **Workers that share a database with the API MUST import the API's entity definitions, not invent their own** — phantom columns in worker-only entities are a v11 regression class.
+> - Minimum wiring for every managed service in the plan (cache, queue, storage, search) — import the client, read credentials from env vars, expose a connection for later use. Do NOT demonstrate features against those services.
+> - Main dashboard / App shell component that imports placeholder feature-section components and arranges them in a layout. Each placeholder renders `<h2>{section title}</h2>` + `<p>TODO: feature implementation</p>` and nothing else.
+> - Worker message consumer shell (if this codebase is a worker): subscribe to the plan's subject, log the received message, exit the handler. No real processing.
+>
+> **DO NOT WRITE:**
+>
+> - Feature section implementations — cache-demo forms, search UI with result tables, job-dispatch forms with history, upload forms with previews, live-updating status panels. These all belong to the feature sub-agent at deploy step 4b.
+> - Rich UX elements — styled forms with focus rings, submit-state badges, contextual hints explaining what a section demonstrates, error flashes, empty states, `$effect` hooks that auto-load data on mount, typed response interfaces, inline section-level styles. These belong to the feature sub-agent.
+> - Business logic beyond "list seeded records" and "POST creates a record." Worker handlers that mutate database state belong to the feature sub-agent.
+> - Integration code between codebases (CORS allow-lists, proxy rules, cross-codebase `types.ts` sharing) — the main agent resolves these during cross-codebase verification at deploy time.
+>
+> **Why the split matters:** the feature sub-agent at deploy step 4b has SSH access to LIVE deployed services and tests each feature against running managed services as it writes. A scaffolding sub-agent writing features writes blind — the services aren't deployed yet when scaffold runs. Features written at scaffold time consistently ship as curl-in-a-button demos instead of dashboard features. If the scaffold brief is followed, the feature sub-agent will expand each placeholder section into a ~150-200 line feature component with typed interfaces, contextual hints, and visual feedback — the v7 gold-standard tier.
+>
+> **Reporting back:** when you finish, return a bulleted list of the files you wrote and the services you wired (by env var name). Do not summarize what "features" you implemented — you implemented zero. If the main agent reads your return value and thinks the dashboard is already complete, the brief was not followed.
+
+</block>
+
 <block name="asset-pipeline-consistency">
 
 ### Asset pipeline consistency
@@ -1123,9 +1164,13 @@ zerops_logs serviceHostname="{worker_hostname}" limit=20
 
 <block name="dev-deploy-subagent-brief">
 
-**Step 4b: Dispatch the feature sub-agent (MANDATORY for Type 4 showcase)**
+**Step 4b: Dispatch the feature sub-agent — enforced sub-step for Type 4 showcase**
 
 After appdev is deployed and verified with the skeleton (connectivity panel, seeded data, health endpoint), dispatch ONE framework-expert sub-agent to fill in the feature sections. **This is where feature implementation happens — generate writes the skeleton only.** Writing feature code at generate means writing blind against disconnected services; the sub-agent writes against live services and can test each feature as it goes.
+
+**This is an enforced sub-step**, not a prose "MANDATORY" label: the deploy step cannot be marked complete without `zerops_workflow action="complete" step="deploy" substep="subagent" attestation="<description of what the feature sub-agent produced>"`. The validator rejects empty and boilerplate attestations; you must name the files the sub-agent wrote and the features it implemented.
+
+**Do NOT read the existing scaffold code to decide whether this is needed** — it IS needed. Scaffold sub-agents at the generate step write intentionally narrow output (see the `scaffold-subagent-brief` topic); the dashboard UX — styled forms, tables with history, contextual hints, typed interfaces, error flashes, empty states, `$effect` hooks that auto-load data — is the feature sub-agent's job. If the scaffold looks "complete", the scaffold brief was not followed at generate; dispatch the feature sub-agent anyway to bring the dashboard up to quality. Skipping this step is how v11 shipped a scaffold as a dashboard (see docs/implementation-v11-findings.md for the v7-vs-v11 component comparison).
 
 **Before dispatching the subagent**: kill ALL dev server processes on every dev container. The subagent starts fresh — leftover processes holding ports cause contention (`fuser -k {port}/tcp` retry loops waste minutes). Run:
 ```
@@ -1623,6 +1668,8 @@ zerops_workflow action="generate-finalize" \
 ```
 
 Values are emitted verbatim; the platform resolves `${zeropsSubdomainHost}` at end-user project-import time. Single-runtime recipes without cross-service URL constants can omit `projectEnvVariables` entirely — the template just renders the shared secret on its own (unchanged behavior).
+
+**Do not comment on the `{appSecretKey}` line yourself.** When `needsAppSecret == true`, the template auto-emits a 3-line rationale above the secret declaration (why it lives at project level: multi-container L7 balancer + signed-token verification must hold across deploy rolls). Your `envComments[i].Project` entry should cover the ENV-SPECIFIC context — AI-agent workspace, local-dev hybrid, small-prod scale, HA-prod scale — and any additional project-level vars you're declaring. Repeating the secret rationale in the agent-authored comment produces a duplicate block.
 
 </block>
 

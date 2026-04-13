@@ -136,7 +136,7 @@ func (e *Engine) recipeCompleteSubStep(ctx context.Context, state *WorkflowState
 
 	// Run sub-step validator if available.
 	if validator := getSubStepValidator(subStepName); validator != nil {
-		result := validator(ctx, rs.Plan, rs)
+		result := validator(ctx, rs.Plan, rs, attestation)
 		if result != nil && !result.Passed {
 			// Record failure pattern for Phase C adaptive retry.
 			rs.FailurePatterns = append(rs.FailurePatterns, FailurePattern{

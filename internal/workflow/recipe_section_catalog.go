@@ -66,6 +66,7 @@ var (
 		{Name: "env-example-preservation"},
 		{Name: "framework-env-conventions"},
 		{Name: "dashboard-skeleton", Predicate: isShowcase},
+		{Name: "scaffold-subagent-brief", Predicate: func(p *RecipePlan) bool { return isShowcase(p) && hasMultipleCodebases(p) }},
 		{Name: "asset-pipeline-consistency"},
 		{Name: "readme-with-fragments"},
 		{Name: "code-quality"},
