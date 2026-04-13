@@ -57,12 +57,6 @@ const verifyVerdictProtocol = `### Verdict protocol
 - **Malformed output / agent timeout** → treat as UNCERTAIN, fall back to zerops_verify
 `
 
-// classifyForVerify determines if a service needs browser-based verification.
-// Single condition: does any port have httpSupport (= web server running)?
-func classifyForVerify(t DeployTarget) bool {
-	return t.HTTPSupport
-}
-
 // buildVerifyGuide generates personalized verify guidance per target.
 // Web-facing services (HTTPSupport=true) get a verify agent prompt for visual/functional checks.
 // Non-web services get direct zerops_verify only.
@@ -74,7 +68,7 @@ func buildVerifyGuide(d *DeployState) string {
 	sb.WriteString("\n\n### Per-service verification\n\n")
 
 	for _, t := range d.Targets {
-		if classifyForVerify(t) {
+		if t.HTTPSupport {
 			writeAgentVerify(&sb, t)
 		} else {
 			writeDirectVerify(&sb, t)
@@ -92,9 +86,9 @@ func writeDirectVerify(sb *strings.Builder, t DeployTarget) {
 
 func writeAgentVerify(sb *strings.Builder, t DeployTarget) {
 	fmt.Fprintf(sb, "**%s** (%s, web-facing): Spawn verify agent:\n", t.Hostname, t.RuntimeType)
-	fmt.Fprintf(sb, "```\nAgent(model=\"sonnet\", prompt=\"\"\"\n")
+	sb.WriteString("```\nAgent(model=\"sonnet\", prompt=\"\"\"\n")
 	fmt.Fprintf(sb, verifyAgentTemplate, t.Hostname, t.RuntimeType, t.Hostname, t.Hostname)
-	fmt.Fprintf(sb, "\"\"\")\n```\n\n")
+	sb.WriteString("\"\"\")\n```\n\n")
 }
 
 func getVerifyBase() string {

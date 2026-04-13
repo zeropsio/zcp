@@ -90,10 +90,8 @@ func handleDeployStart(ctx context.Context, engine *workflow.Engine, client plat
 
 	targets, mode := workflow.BuildDeployTargets(runtimeMetas)
 
-	// Enrich targets with runtime types from live API (best-effort).
-	if client != nil {
-		enrichTargetRuntimeTypes(ctx, client, projectID, targets)
-	}
+	// Enrich targets with runtime types from already-fetched service data.
+	enrichTargetRuntimeTypes(liveServices, targets)
 
 	resp, err := engine.DeployStart(projectID, input.Intent, targets, mode)
 	if err != nil {
@@ -157,13 +155,9 @@ func handleDeploySkip(_ context.Context, engine *workflow.Engine, input Workflow
 	return jsonResult(resp), nil, nil
 }
 
-// enrichTargetRuntimeTypes populates RuntimeType on deploy targets from the live API.
-// Best-effort: failures are silently ignored (guidance falls back to generic pointers).
-func enrichTargetRuntimeTypes(ctx context.Context, client platform.Client, projectID string, targets []workflow.DeployTarget) {
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return
-	}
+// enrichTargetRuntimeTypes populates RuntimeType and HTTPSupport on deploy targets
+// from already-fetched service data. Accepts the service list to avoid redundant API calls.
+func enrichTargetRuntimeTypes(services []platform.ServiceStack, targets []workflow.DeployTarget) {
 	typeMap := make(map[string]string, len(services))
 	httpMap := make(map[string]bool, len(services))
 	for _, svc := range services {

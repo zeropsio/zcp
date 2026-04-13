@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -115,11 +114,10 @@ func TestEnrichTargetRuntimeTypes_HTTPSupport(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			mock := platform.NewMock().WithServices(tt.services)
 			targets := make([]workflow.DeployTarget, len(tt.targets))
 			copy(targets, tt.targets)
 
-			enrichTargetRuntimeTypes(context.Background(), mock, "proj-1", targets)
+			enrichTargetRuntimeTypes(tt.services, targets)
 
 			for _, tgt := range targets {
 				wantHTTP := tt.wantHTTP[tgt.Hostname]

@@ -310,40 +310,6 @@ func TestBuildDeployGuide_Personalized(t *testing.T) {
 	}
 }
 
-func TestClassifyForVerify(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name   string
-		target DeployTarget
-		want   bool
-	}{
-		{
-			name:   "web_app_with_http_support",
-			target: DeployTarget{Hostname: "app", RuntimeType: "nodejs@22", HTTPSupport: true},
-			want:   true,
-		},
-		{
-			name:   "worker_no_http",
-			target: DeployTarget{Hostname: "worker", RuntimeType: "nodejs@22", HTTPSupport: false},
-			want:   false,
-		},
-		{
-			name:   "managed_service",
-			target: DeployTarget{Hostname: "db", RuntimeType: "postgresql@16", HTTPSupport: false},
-			want:   false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := classifyForVerify(tt.target)
-			if got != tt.want {
-				t.Errorf("classifyForVerify(%s) = %v, want %v", tt.target.Hostname, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestBuildVerifyGuide_MixedTargets(t *testing.T) {
 	t.Parallel()
 	state := &DeployState{
