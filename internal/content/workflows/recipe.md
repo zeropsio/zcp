@@ -875,55 +875,68 @@ zerops_workflow action="complete" step="generate" attestation="App code and zero
 <section name="generate-fragments">
 ## Fragment Quality Requirements
 
+**Two separate outputs per codebase, two separate audiences — never collapse them.**
+
+| File | Audience | Published? | Scope |
+|------|----------|------------|-------|
+| `README.md` (fragments) | Integrator bringing their own codebase | ✅ extracted to zerops.io/recipes | "What must I change in MY app?" + "What Zerops trap will bite me?" |
+| `CLAUDE.md` | Anyone (human or Claude Code) cloning THIS repo | ❌ repo-local only | "How do I operate THIS dev container?" |
+
+Every container-trap, every "npx tsc resolves wrong", every "SSH into the dev container and run X" goes in CLAUDE.md. Every "Zerops L7 balancer terminates SSL" or "add trust-proxy to Express" goes in README.md. If you find yourself wondering which file a fact belongs in, ask: *"Would a reader who never touches this specific repo still care?"* Yes → README.md. No → CLAUDE.md.
+
+The fragment format below applies ONLY to README.md. CLAUDE.md has no fragments, no extraction rules, no authenticity scoring — see the "CLAUDE.md" section below for its guidance.
+
 ### integration-guide Fragment
 
-The integration guide answers: **"What must I change in my existing app to run it on Zerops?"** It targets a developer bringing their own codebase, not someone cloning the demo.
+The integration guide answers: **"What must I change in my existing app to run it on Zerops?"** It targets a developer bringing their own codebase, not someone cloning the demo. Platform-level truth only — no repo-operations trivia.
 
 Must contain (all inside the markers, using **H3** headings):
-- **`### zerops.yaml`** — complete config with ALL setups (`prod`, `dev`; `worker` if showcase). Setup names are generic (`prod`/`dev`), NOT hostname-specific. Every config line has an inline comment explaining WHY.
-- **Numbered integration steps** (if any) — `### 2. Step Title`, `### 3. Step Title`, etc. Code changes the agent made that any user bringing their own codebase would also need.
+- **`### 1. Adding \`zerops.yaml\``** — complete config with ALL setups (`prod`, `dev`; `worker` if the target hosts a shared-codebase worker). Setup names are generic (`prod`/`dev`), NOT hostname-specific. Every config line has an inline comment explaining WHY.
+- **Numbered integration steps** (`### 2. Step Title`, `### 3. Step Title`, ...) — each is a concrete code or config change the reader must apply to their own codebase. Each step MUST include a fenced code block (typescript, js, python, php, yaml...) showing the minimal diff.
 
 **What belongs in integration steps:**
-- Code-level changes the agent made that are required to work on Zerops (e.g., proxy trust configuration — without it, CSRF/origin validation breaks behind the L7 balancer)
-- Framework config file changes for the platform (e.g., wiring S3 credentials, configuring a Redis session/cache driver)
-- Any modification to app source that a user bringing their own app would also need to do
+- Platform-forced code changes: bind `0.0.0.0`, trust-proxy for Express, Vite `allowedHosts: ['.zerops.app']`, NATS client options, S3 `forcePathStyle`, etc.
+- Framework-config wiring for platform credentials (ORM env vars, cache adapter setup, object-storage client init).
+- Any single-line change a user would need to copy-paste when porting their own app.
 
 **What does NOT belong in integration steps:**
-- Demo-specific scaffolding (custom routes, dashboard views, sample controllers) — these exist only in the recipe app, a real user wouldn't replicate them
-- Config values already visible in zerops.yaml (the user can read those inline)
-- Generic framework setup (how to install the framework, what build tools do)
+- **Repo-operations content** — "how to SSH into the dev container", "how to restart the dev server after a crash", "sudo chown to fix SSHFS uid", "fuser -k to free a stuck port". That is CLAUDE.md territory, not the published recipe page.
+- Demo-specific scaffolding (custom routes, dashboard views, sample controllers) — these exist only in this recipe, a real integrator wouldn't replicate them.
+- Config values already visible in the zerops.yaml comments above.
+- Generic framework tutorials (how to install the framework, what build tools do).
+
+**Upper bound: 6 numbered steps per README.** Beyond 6 and you are either mixing repo-ops in (move them to CLAUDE.md) or not choosing ruthlessly (cut the least-impactful step). v15 appdev hit the sweet spot at 4.
 
 ### knowledge-base Fragment
 
-The knowledge base answers: **"What will bite me that I can't learn from the zerops.yaml comments or platform docs?"** Each item must be **irreducible** — not learnable from the integration-guide, platform docs, or general framework docs.
+The knowledge base answers: **"What symptom will I observe when this breaks, and what's the one-line cause?"** Each gotcha is a distinct failure-mode narration — NOT a second telling of the integration-guide items above.
 
 Must contain:
-- `### Gotchas` section with at least 2 framework-specific pitfalls on Zerops
-- Zerops-specific behavior that differs from standard expectations (e.g., no .env file, base image contents, pdo extension availability)
+- `### Gotchas` section with 3–6 bullets (hard floor: 3 authentic, 3 net-new vs predecessor; hard ceiling: 6 — pick ruthlessly)
+- Each bullet: `- **<stem>** — <body>` where `<stem>` names the symptom or the surprising behavior, `<body>` explains WHY in 1–3 sentences
 
-**The injected predecessor recipe's gotchas are a starting inventory, not the answer.** The generate step injects the direct predecessor recipe's `## Gotchas` section into your context so you have a working baseline. Treat it as a **floor, not a ceiling**:
+**Two hard dedup rules enforced by the checker:**
 
-1. **Re-evaluate each predecessor gotcha** against this recipe's actual library and architecture choices. Keep the ones that still apply (same ORM, same runtime model, same framework idiom). Drop the ones that don't (e.g. swap TypeORM for Prisma → the `synchronize: true` gotcha is irrelevant; swap Express for Fastify → the trust-proxy gotcha doesn't apply).
-2. **Add net-new gotchas narrated from what actually happened during THIS build.** The predecessor covers only the services and patterns its own tier provisions — a hello-world has no managed services, a minimal usually has just a database. A showcase adds caches, queues, object storage, search engines, background workers, frontend build pipelines, cross-service env wiring. Every one of those is a surface where you made decisions, hit bugs, and worked around platform behavior. Write those up.
-3. **Each README's knowledge-base is validated against the predecessor baseline.** Showcase-tier runs fail if the knowledge-base fragment is mostly a clone of the predecessor — the check counts gotcha stems that don't match any predecessor stem and requires at least 2 per README. Cloning the predecessor gotchas verbatim (or with cosmetic rewording like "needs" → "requires") does not clear the floor.
+1. **A gotcha must NOT restate an integration-guide heading in the same README.** If your gotcha stem normalizes to the same tokens as an IG heading (67%+ overlap after stopword strip), the `<codebase>_gotcha_distinct_from_guide` check fails. A gotcha that tells the reader what the guide already said is wasted publication surface.
+   - ❌ IG: "Add `.zerops.app` to Vite `allowedHosts`" + Gotcha: "Vite `allowedHosts` blocks Zerops subdomain" — fails.
+   - ✅ IG: "Add `.zerops.app` to Vite `allowedHosts`" + Gotcha: "Blocked subdomain returns plain-text HTTP 200 — health checks pass while the browser shows a blank page" — passes (the symptom-framed stem carries distinct tokens).
 
-Sources of narratable gotchas from this session (use these as raw material):
-- **Managed services not in the predecessor** — cache connection patterns, queue client auth, S3 path-style, search index rebuilds. One per service is the minimum.
-- **Framework-library quirks discovered at generate time** — ESM/CJS mismatches, peer dep conflicts, build-time vs run-time env var boundaries.
-- **Deploy failures you fixed** — build output mismatches, stale build artifacts committed to git, readiness check timing, migration races, init-command gating.
-- **Feature-implementation decisions** — why you chose one client library over another, why a workaround exists, what the alternative would have broken.
-- **Platform behavior that surprised you** — not "what Zerops does" in general, but "what Zerops did differently from what I expected while building this specific recipe."
+2. **A gotcha must NOT appear in more than one codebase's README.** If NATS credentials need separate `user`/`pass` options, that fact lives in ONE README (api by convention) and the others say "See apidev/README.md §Gotchas for NATS credential format." The `cross_readme_gotcha_uniqueness` check fails when any normalized stem appears in two+ READMEs.
 
-**What belongs in knowledge-base vs integration-guide:**
-- If it's a **required code change** → integration-guide step (the user needs to do this)
-- If it's a **gotcha or quirk** the user should know about → knowledge-base (awareness, not action)
-- If both: put the actionable step in integration-guide, put the "why it matters" explanation in knowledge-base. Example: trustProxies config is an integration step (action), but "CSRF fails without it because L7 terminates SSL" is a gotcha (awareness).
+**Good sources for genuine gotchas:**
+- Managed-service platform quirks: "Meilisearch connects over `http://` not `https://`", "Valkey has no auth, passing `password: ''` triggers NOAUTH handshake rejection".
+- Symptom-specific framework × platform intersections: "NATS `AUTHORIZATION_VIOLATION` with URL-embedded creds — the client silently ignores them".
+- `@nestjs/microservices` + Node `exports` map + missing `package.json` in `deployFiles` → `MODULE_NOT_FOUND` even though the package IS in `node_modules`.
+- Any symptom observable in the browser/logs that is not obvious from reading the guide.
 
-Do NOT include:
-- Config values already visible in zerops.yaml (don't re-explain what the comments already cover)
-- Platform universals (build/run separation, L7 routing, tilde behavior, autoscaling timing)
-- Generic framework knowledge (how the framework works, what build tools do)
-- **Verbatim paraphrases of the predecessor recipe's gotchas** — the predecessor is already in the injected chain; your job is to extend it, not mirror it.
+**The injected predecessor recipe's gotchas are a starting inventory, not the answer.** Re-evaluate each against this recipe's library choices — keep what still applies, drop what doesn't (swap TypeORM for Prisma → drop the `synchronize: true` gotcha), and narrate 3+ new ones from what YOU actually hit during THIS build.
+
+**Do NOT include:**
+- Config values already visible in the zerops.yaml comments (readers see them inline).
+- Platform universals (build/run separation, L7 routing, tilde behavior, autoscaling) — these live in Zerops docs.
+- **Repo-operations trivia** (npx tsc wrong-package, SSHFS uid, fuser -k, how to restart dev after crash) — **move these to CLAUDE.md** where they actually help the reader working in the cloned repo.
+- Generic framework knowledge (how the framework works, what build tools do).
+- Verbatim paraphrases of the predecessor recipe's gotchas.
 
 ### intro Fragment
 - 1-3 lines only
@@ -1473,7 +1486,14 @@ This identifies *which* initCommand failed. For *why* it failed, fetch runtime l
 
 **This is the `readmes` sub-step of deploy.** You land here after `verify-stage`, after every service is verified healthy on both dev and stage. READMEs are written now — not during generate — so the gotchas section narrates the debug rounds you just lived through. A speculative gotchas section written during generate is the root cause of the authenticity failures in v11/v12.
 
-Write one `README.md` per codebase mount. For a dual-runtime showcase that is three files: `/var/www/appdev/README.md`, `/var/www/apidev/README.md`, `/var/www/workerdev/README.md`. Use `prettyName` from the workflow response for titles (e.g., "Minimal", "Hello World", "Showcase"). **Critical formatting** — match this structure exactly. The literal `<!-- #ZEROPS_EXTRACT_START:name# -->` / `<!-- #ZEROPS_EXTRACT_END:name# -->` marker shape is enforced by the checker byte-for-byte. Invented variants like `<!-- FRAGMENT:intro:start -->` or `<!-- BEGIN:intro -->` are rejected.
+Write **two files per codebase mount**: `README.md` and `CLAUDE.md`. They have different audiences and neither substitutes for the other:
+
+- `README.md` — **published recipe-page content**. Fragments are extracted to zerops.io/recipes at finalize time. Audience: integrators porting their own codebase. Content: platform-forced code changes + symptom-framed gotchas. Fragment format enforced byte-literally.
+- `CLAUDE.md` — **repo-local dev-loop operations guide**. Not extracted, not published. Audience: anyone (human or Claude Code) who clones this codebase and needs to work in it. Content: SSH commands, dev server startup, migration/seed commands, container traps (SSHFS uid, npx tsc wrong-package, fuser -k for stuck ports), test commands. Plain markdown, no fragments, no rules other than "be useful."
+
+For a dual-runtime showcase, that is 6 files: `/var/www/appdev/{README.md,CLAUDE.md}`, `/var/www/apidev/{README.md,CLAUDE.md}`, `/var/www/workerdev/{README.md,CLAUDE.md}`. Use `prettyName` from the workflow response for titles (e.g., "Minimal", "Hello World", "Showcase").
+
+**Critical formatting for README.md** — match the structure below exactly. The literal `<!-- #ZEROPS_EXTRACT_START:name# -->` / `<!-- #ZEROPS_EXTRACT_END:name# -->` marker shape is enforced by the checker byte-for-byte. Invented variants like `<!-- FRAGMENT:intro:start -->` or `<!-- BEGIN:intro -->` are rejected.
 
 ```markdown
 # {Framework} {PrettyName} Recipe App
@@ -1514,27 +1534,69 @@ Describe the debug round that forced the change. Example: "Bind NestJS to 0.0.0.
 <!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
 
 ### Gotchas
-- **Concrete failure mode 1** — the specific thing that broke, the error message, and the fix. Written from memory of the debug round, not from the predecessor recipe's gotchas list. Clones of the predecessor's stems fail the `knowledge_base_exceeds_predecessor` check.
-- **Concrete failure mode 2** — same. Showcase tier needs at least 3 net-new gotchas beyond the predecessor; authenticity check rejects synthetic scaffold-self-referential narration.
+- **Concrete symptom 1** — exact error message, HTTP status, or observable misbehavior (e.g. "`AUTHORIZATION_VIOLATION` on first subscribe", "HTTP 200 with plain-text 'Blocked request' body", "`MODULE_NOT_FOUND` for package that IS in node_modules"). Written from memory of the debug round. Clones of the predecessor's stems fail the `knowledge_base_exceeds_predecessor` check; restatements of integration-guide items in THIS README fail the `gotcha_distinct_from_guide` check; facts that also appear in a sibling codebase's README fail `cross_readme_gotcha_uniqueness`.
+- **Concrete symptom 2** — same. Showcase tier needs at least 3 net-new gotchas beyond the predecessor AND 3 authentic (platform-anchored or failure-mode described), AND each stem must be cross-README unique.
 
 <!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
 ```
 
+**Then write `CLAUDE.md` next to it** — plain markdown, no fragments, no extraction rules. Template:
+
+```markdown
+# {Framework} {PrettyName} — Dev Operations
+
+Repo-local operations guide for anyone (human or Claude Code) working in this codebase after cloning. For the published recipe content (integration guide + platform gotchas), see README.md.
+
+## Dev loop
+
+SSH into the dev container: `zcli vpn up` then `ssh zerops@{hostname}dev`.
+
+Start the dev server: `<exact command, e.g. npm run start:dev>` (watches source, hot-reloads on change).
+
+If the container was redeployed, the dev server process is gone — re-SSH and start it again.
+
+## Migrations & seed
+
+Run manually: `<exact command>` — e.g. `npx ts-node src/migrate.ts` then `npx ts-node src/seed.ts`.
+
+On deploy, these run via `initCommands` wrapped with `zsc execOnce ${appVersionId}`. If the seeder crashed mid-insert and burned the key, touch any source file and redeploy to force a fresh `appVersionId`.
+
+## Container traps
+
+- **SSHFS ownership** — files land owned by `root`, container runs as `zerops` (uid 2023). `npm install` fails with `EACCES`. Fix: `sudo chown -R zerops:zerops /var/www/`.
+- **`npx tsc` resolves to deprecated tsc@2.0.4** — use `node_modules/.bin/tsc` instead.
+- **Port 3000 stuck after background command** — `fuser -k 3000/tcp` before restarting.
+- *(add any other container-ecosystem traps you hit during this build)*
+
+## Testing
+
+- Unit tests: `<command>`
+- Smoke check: `curl https://{hostname}dev-{projectId}-3000.prg1.zerops.app/health`
+
+## Useful references
+- README.md — what an integrator bringing their own codebase needs to change
+- zerops.yaml — build/run configuration with rationale comments
+```
+
 **Rules:**
-- Section headings (`## Integration Guide`) go OUTSIDE markers — they're visible in the README but not extracted
-- Content INSIDE markers uses **H3** (`###`), not H2
+- Section headings (`## Integration Guide`) go OUTSIDE markers in README.md — they're visible but not extracted
+- Content INSIDE fragment markers uses **H3** (`###`), not H2
 - **All fragments**: blank line required after the start marker (intro, integration-guide, knowledge-base)
 - **Intro content**: plain text, no headings, 1-3 lines
-- **Step 1** must be `### 1. Adding \`zerops.yaml\`` with a description paragraph before the code block (the API renders it as a section title)
-- **Worker codebase README** does not need the integration-guide code-block floor (workers rarely have user-facing code adjustments), but still needs all three fragments and the predecessor-floor gotchas.
+- **Step 1** of integration-guide must be `### 1. Adding \`zerops.yaml\`` with a description paragraph before the code block
+- **Worker codebase README** does not need the integration-guide code-block floor (workers rarely have user-facing code adjustments), but still needs all three fragments, the predecessor-floor gotchas, AND its own CLAUDE.md
 - **Fragment format is byte-literal.** The checker searches for `#ZEROPS_EXTRACT_START:{name}#` exactly. Do not guess.
+- **CLAUDE.md is required for every codebase, every tier.** No fragments, no minimum gotcha count, no authenticity scoring — just real repo-ops content (>= 300 bytes), no TODO/PLACEHOLDER markers.
+- **No fact appears in two README.md files.** If the fact applies to multiple codebases (NATS credentials, shared DB migration ownership), put it in exactly one README — by convention, the service most responsible for owning it (api for server-side wiring, app for frontend config) — and have the others cross-reference: `See apidev/README.md §Gotchas for NATS credential format.`
+- **No gotcha restates an integration-guide heading in the same README.** A gotcha must teach a symptom the guide did not cover. If your gotcha stem normalizes to the same tokens as an IG heading, rewrite it to focus on the observable symptom (error message, HTTP status, browser state) instead of the topic.
+- **Container-ops content (SSHFS uid fix, npx tsc trap, fuser -k, how to restart dev server)** goes in CLAUDE.md, NOT in README.md gotchas. README.md is for platform facts an integrator porting their own code cares about.
 
 **Completion:**
 ```
-zerops_workflow action="complete" step="deploy" substep="readmes" attestation="Wrote README for appdev/apidev/workerdev with fragments covering: NATS credential split (hit at 19:23 during start-processes), Vite allowedHosts (hit at 19:41 during verify-dev), MinIO forcePathStyle (hit at 19:55 during cross-deploy). Net-new gotchas per codebase >= 3."
+zerops_workflow action="complete" step="deploy" substep="readmes" attestation="Wrote README.md + CLAUDE.md for appdev/apidev/workerdev. README gotchas narrate: NATS credential split (apidev only, worker cross-refs), Vite allowedHosts symptom (appdev — Blocked request HTTP 200), MinIO forcePathStyle (apidev only). Net-new >= 3, cross-README unique, no restatements. CLAUDE.md covers SSH, dev server startup, migration commands, and the SSHFS/tsc/fuser traps hit during this build."
 ```
 
-After the sub-step completes, call the full deploy-step completion. The deploy-step checker runs every README content check (fragments, integration-guide code block floor, comment specificity, predecessor floor, knowledge-base authenticity) — iterate on the content until they all pass, then the deploy step closes.
+After the sub-step completes, call the full deploy-step completion. The deploy-step checker runs every README content check (fragments, integration-guide code block floor, comment specificity, predecessor floor, knowledge-base authenticity, cross-README dedup, gotcha-distinct-from-guide) AND the per-codebase CLAUDE.md existence check — iterate on the content until they all pass, then the deploy step closes.
 
 </block>
 

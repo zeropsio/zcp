@@ -223,13 +223,29 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider) workflow.R
 		}
 
 		var checks []workflow.StepCheck
+		// Collect the README content per hostname while iterating so the
+		// cross-README dedup check (below) can run without re-reading from
+		// disk. Worker and app codebases both contribute; both are subject
+		// to the uniqueness rule — a NATS fact in apidev's README cannot
+		// also appear in workerdev's.
+		readmesByHost := map[string]string{}
 
 		for _, target := range appTargets {
-			checks = append(checks, checkCodebaseReadme(projectRoot, target, plan, predecessorStems, false)...)
+			checks = append(checks, checkCodebaseReadme(projectRoot, target, plan, predecessorStems, false, readmesByHost)...)
 		}
 		for _, target := range workerTargets {
-			checks = append(checks, checkCodebaseReadme(projectRoot, target, plan, predecessorStems, true)...)
+			checks = append(checks, checkCodebaseReadme(projectRoot, target, plan, predecessorStems, true, readmesByHost)...)
 		}
+
+		// Cross-README gotcha-stem uniqueness: forces each distinct fact
+		// to live in exactly one codebase's published README. Without
+		// this check, each per-codebase authenticity floor rewarded the
+		// agent for stamping the same 3 gotchas into every README —
+		// v15's nestjs-showcase had NATS/SSHFS/execOnce appearing in both
+		// api + worker READMEs. Returns a single check name ("cross_
+		// readme_gotcha_uniqueness") so the failure is scoped to the
+		// whole recipe, not any one codebase.
+		checks = append(checks, checkCrossReadmeGotchaUniqueness(readmesByHost)...)
 
 		allPassed := checksAllPassed(checks)
 		summary := "recipe deploy README checks passed"
@@ -248,7 +264,12 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider) workflow.R
 // app-facing concerns). The predecessor-floor check runs on every codebase
 // regardless, so a dual-runtime recipe can't pile every net-new gotcha
 // into one README while the others clone the predecessor.
-func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan *workflow.RecipePlan, predecessorStems []string, workerOnly bool) []workflow.StepCheck {
+//
+// readmesByHost is an output map collected by checkRecipeDeployReadmes
+// so the cross-README dedup check can run once across all codebases
+// without re-reading files from disk. Passing it through here keeps the
+// filesystem walk shape identical to the existing iteration loop.
+func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan *workflow.RecipePlan, predecessorStems []string, workerOnly bool, readmesByHost map[string]string) []workflow.StepCheck {
 	hostname := target.Hostname
 	ymlDir := projectRoot
 	for _, candidate := range []string{hostname + "dev", hostname} {
@@ -262,11 +283,22 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 	readmePath := filepath.Join(ymlDir, "README.md")
 	readmeContent, readErr := os.ReadFile(readmePath)
 	if readErr != nil {
-		return []workflow.StepCheck{{
+		// Still run the CLAUDE.md check — a missing README.md does not
+		// imply CLAUDE.md is also missing, and reporting both failures
+		// on the same iteration surfaces the full picture instead of
+		// making the agent discover them one at a time.
+		claudeChecks := checkCLAUDEMdExists(projectRoot, target, plan)
+		checks := make([]workflow.StepCheck, 0, 1+len(claudeChecks))
+		checks = append(checks, workflow.StepCheck{
 			Name:   hostname + "_readme_exists",
 			Status: statusFail,
 			Detail: fmt.Sprintf("README.md not found at %s — write it during the deploy `readmes` sub-step using the exact fragment markers shown in topic=\"readme-fragments\". The required markers are `<!-- #ZEROPS_EXTRACT_START:intro# -->` / `<!-- #ZEROPS_EXTRACT_END:intro# -->` (and the same pattern for `integration-guide` and `knowledge-base`). Do not invent your own marker syntax.", readmePath),
-		}}
+		})
+		checks = append(checks, claudeChecks...)
+		return checks
+	}
+	if readmesByHost != nil {
+		readmesByHost[hostname] = string(readmeContent)
 	}
 
 	var checks []workflow.StepCheck
@@ -297,6 +329,19 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 		floorChecks[i].Name = hostname + "_" + floorChecks[i].Name
 	}
 	checks = append(checks, floorChecks...)
+
+	// Gotcha-restates-guide: a gotcha whose normalized stem matches an
+	// integration-guide H3 heading (other than the boilerplate zerops.yaml
+	// block) is restatement-bloat. Must be rewritten to focus on symptom,
+	// not topic, or deleted. Runs for every codebase — workers can restate
+	// their own guide items too.
+	checks = append(checks, checkGotchaRestatesGuide(hostname, string(readmeContent))...)
+
+	// CLAUDE.md: repo-local dev-loop operations guide. Lives alongside
+	// README.md on the mount, not extracted. Required for every tier
+	// because every recipe ships a dev container that needs a repo-local
+	// "how to work this" answer.
+	checks = append(checks, checkCLAUDEMdExists(projectRoot, target, plan)...)
 
 	return checks
 }

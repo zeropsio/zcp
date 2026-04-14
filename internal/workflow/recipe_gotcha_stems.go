@@ -121,6 +121,22 @@ func normalizeStem(s string) []string {
 	return out
 }
 
+// NormalizeStem exposes normalizeStem to callers outside this package. The
+// cross-README deduplication and gotcha-restates-guide checks in the tools
+// package need to normalize arbitrary strings (integration-guide headings,
+// cross-codebase stems) with the same tokeniser that drives the predecessor-
+// floor check, so the match surfaces stay consistent.
+func NormalizeStem(s string) []string {
+	return normalizeStem(s)
+}
+
+// StemsMatch exposes stemsMatch to the tools package for the cross-README
+// and gotcha-restates-guide checks. Same semantics as the internal matcher:
+// token-set intersection ≥ floor(min * 0.67), hard minimum 2 tokens.
+func StemsMatch(a, b []string) bool {
+	return stemsMatch(a, b)
+}
+
 // stemsMatch returns true when two normalized stems represent the same
 // gotcha topic. The rule: the shorter side's key-token set must share at
 // least floor(min(|A|,|B|) * 0.67) tokens with the longer side, with a
