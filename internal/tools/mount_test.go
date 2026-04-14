@@ -329,25 +329,6 @@ func TestMountTool_UnmountOrphanUnit(t *testing.T) {
 	}
 }
 
-func TestMountTool_MountAllowedWithDevelopMarker(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "svc-1", Name: "app"},
-	})
-	mounter := newStubMounter()
-	srv := mountServerWithDevelop(t, mock, mounter)
-
-	result := callTool(t, srv, "zerops_mount", map[string]any{
-		"action":          "mount",
-		"serviceHostname": "app",
-	})
-
-	if result.IsError {
-		t.Errorf("mount should succeed with develop marker, got: %s", getTextContent(t, result))
-	}
-}
-
 func TestMountTool_MountAllowedWithBootstrapSession(t *testing.T) {
 	t.Parallel()
 

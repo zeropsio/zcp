@@ -39,9 +39,6 @@ func TestWriteDevelopMarker_CreatesFile(t *testing.T) {
 			if err := json.Unmarshal(data, &marker); err != nil {
 				t.Fatalf("unmarshal marker: %v", err)
 			}
-			if marker.PID != os.Getpid() {
-				t.Errorf("PID = %d, want %d", marker.PID, os.Getpid())
-			}
 			if marker.ProjectID != tt.projectID {
 				t.Errorf("ProjectID = %s, want %s", marker.ProjectID, tt.projectID)
 			}
@@ -113,7 +110,7 @@ func TestCleanStaleDevelopMarkers_RemovesDead(t *testing.T) {
 
 	// Write a marker for a PID that doesn't exist.
 	deadPID := 999999
-	marker := DevelopMarker{PID: deadPID, ProjectID: "proj-1", CreatedAt: "2026-01-01T00:00:00Z"}
+	marker := DevelopMarker{ProjectID: "proj-1", CreatedAt: "2026-01-01T00:00:00Z"}
 	data, err := json.Marshal(marker)
 	if err != nil {
 		t.Fatalf("marshal marker: %v", err)
@@ -153,21 +150,3 @@ func TestCleanStaleDevelopMarkers_NoDir(t *testing.T) {
 	}
 }
 
-func TestRemoveDevelopMarker(t *testing.T) {
-	t.Parallel()
-
-	stateDir := t.TempDir()
-	if err := WriteDevelopMarker(stateDir, "proj-1", "test"); err != nil {
-		t.Fatalf("WriteDevelopMarker: %v", err)
-	}
-
-	if !HasDevelopMarker(stateDir) {
-		t.Fatal("marker should exist before remove")
-	}
-
-	RemoveDevelopMarker(stateDir)
-
-	if HasDevelopMarker(stateDir) {
-		t.Error("marker should be gone after remove")
-	}
-}

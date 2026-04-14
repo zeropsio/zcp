@@ -55,7 +55,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		}
 		if len(metas) == 0 {
 			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
+				platform.ErrPrerequisiteMissing,
 				"No bootstrapped services found",
 				"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
 		}
@@ -73,7 +73,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	}
 	if len(runtimeMetas) == 0 {
 		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
+			platform.ErrPrerequisiteMissing,
 			"No deployable runtime services found",
 			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
 	}
@@ -104,7 +104,8 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		}
 	}
 
-	// Write develop marker so mount/import gates pass for this process.
+	// Clean stale markers from dead processes, then write ours.
+	_ = workflow.CleanStaleDevelopMarkers(engine.StateDir())
 	if err := workflow.WriteDevelopMarker(engine.StateDir(), projectID, "develop"); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

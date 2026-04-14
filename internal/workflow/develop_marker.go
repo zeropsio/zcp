@@ -15,8 +15,8 @@ const developMarkerDir = "develop"
 // DevelopMarker is a lightweight per-process file indicating an active develop workflow.
 // Unlike sessions, markers are non-exclusive — multiple processes can have active develop
 // workflows simultaneously. Each process writes its own PID-keyed marker file.
+// The PID is encoded in the filename ({pid}.json), not in the JSON body.
 type DevelopMarker struct {
-	PID       int    `json:"pid"`
 	ProjectID string `json:"projectId"`
 	Intent    string `json:"intent,omitempty"`
 	CreatedAt string `json:"createdAt"`
@@ -34,7 +34,6 @@ func WriteDevelopMarker(stateDir, projectID, intent string) error {
 
 	pid := os.Getpid()
 	marker := DevelopMarker{
-		PID:       pid,
 		ProjectID: projectID,
 		Intent:    intent,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -89,11 +88,3 @@ func CleanStaleDevelopMarkers(stateDir string) error {
 	return nil
 }
 
-// RemoveDevelopMarker removes the develop marker for the current process.
-func RemoveDevelopMarker(stateDir string) {
-	if stateDir == "" {
-		return
-	}
-	path := filepath.Join(stateDir, developMarkerDir, fmt.Sprintf("%d.json", os.Getpid()))
-	_ = os.Remove(path)
-}
