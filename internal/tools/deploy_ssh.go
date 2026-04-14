@@ -13,6 +13,9 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// deployStrategyGitPush is the deploy tool strategy for git-push deploys.
+const deployStrategyGitPush = "git-push"
+
 // DeploySSHInput is the input type for zerops_deploy in SSH (container) mode.
 //
 // IncludeGit is FlexBool so stringified boolean forms go through
@@ -72,17 +75,25 @@ func RegisterDeploySSH(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
-		// Gate: deploy requires an active workflow session.
-		if blocked := requireWorkflow(engine); blocked != nil {
-			return blocked, nil, nil
-		}
 		// Gate: target (and source) must be adopted by ZCP.
 		if blocked := requireAdoption(stateDir, input.TargetService, input.SourceService); blocked != nil {
 			return blocked, nil, nil
 		}
 
+		// Pre-flight validation (harness) — skip for git-push (no zerops.yaml needed).
+		if input.Strategy != deployStrategyGitPush {
+			if pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, input.TargetService, input.Setup); pfErr != nil {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter,
+					fmt.Sprintf("Pre-flight validation error: %v", pfErr),
+					"Check zerops.yaml and service configuration")), nil, nil
+			} else if pfResult != nil && !pfResult.Passed {
+				return jsonResult(pfResult), nil, nil
+			}
+		}
+
 		// Validate strategy parameter.
-		if input.Strategy != "" && input.Strategy != "git-push" {
+		if input.Strategy != "" && input.Strategy != deployStrategyGitPush {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Invalid strategy %q", input.Strategy),
@@ -91,7 +102,7 @@ func RegisterDeploySSH(
 		}
 
 		// Route: git-push strategy pushes to external git remote, no Zerops build.
-		if input.Strategy == "git-push" {
+		if input.Strategy == deployStrategyGitPush {
 			return handleGitPush(ctx, sshDeployer, *authInfo, input)
 		}
 

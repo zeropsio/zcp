@@ -141,12 +141,12 @@ func TestWorkflowTool_Action_UnknownAction(t *testing.T) {
 	}
 }
 
-func TestWorkflowTool_Action_Start_Develop_Stateful(t *testing.T) {
+func TestWorkflowTool_Action_Start_Develop_ReturnsBriefing(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
-	// Write a complete service meta so deploy start finds targets.
+	// Write a complete service meta so briefing finds targets.
 	meta := &workflow.ServiceMeta{
 		Hostname:       "appdev",
 		Mode:           "standard",
@@ -170,22 +170,28 @@ func TestWorkflowTool_Action_Start_Develop_Stateful(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("unexpected error: %s", getTextContent(t, result))
 	}
-	// Develop is stateful — should create a session.
-	if !engine.HasActiveSession() {
-		t.Error("develop should create a session")
+	// Develop is stateless — should NOT create a session.
+	if engine.HasActiveSession() {
+		t.Error("develop should NOT create a session (stateless briefing)")
+	}
+	// Response should contain briefing content.
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "briefing") && !strings.Contains(text, "Briefing") && !strings.Contains(text, "appdev") {
+		t.Errorf("expected briefing response containing service info, got: %s", text[:min(len(text), 200)])
 	}
 }
 
-func TestWorkflowTool_Action_Start_Develop_ManualStrategy_CreatesSession(t *testing.T) {
+func TestWorkflowTool_Action_Start_Develop_ManualStrategy_ReturnsBriefing(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
 	meta := &workflow.ServiceMeta{
-		Hostname:       "appdev",
-		Mode:           "dev",
-		DeployStrategy: workflow.StrategyManual,
-		BootstrappedAt: "2026-03-04T12:00:00Z",
+		Hostname:          "appdev",
+		Mode:              "dev",
+		DeployStrategy:    workflow.StrategyManual,
+		StrategyConfirmed: true,
+		BootstrappedAt:    "2026-03-04T12:00:00Z",
 	}
 	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -203,9 +209,14 @@ func TestWorkflowTool_Action_Start_Develop_ManualStrategy_CreatesSession(t *test
 	if result.IsError {
 		t.Fatalf("manual strategy should not return error: %s", getTextContent(t, result))
 	}
-	// Per spec: manual strategy creates a session (strategy is informational, not a gate).
-	if !engine.HasActiveSession() {
-		t.Error("manual strategy should create a develop session (strategy is informational)")
+	// Develop is stateless — no session even with manual strategy.
+	if engine.HasActiveSession() {
+		t.Error("manual strategy should NOT create a session (stateless briefing)")
+	}
+	// Briefing should mention manual strategy.
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "manual") {
+		t.Errorf("expected briefing to reference manual strategy, got: %s", text[:min(len(text), 200)])
 	}
 }
 

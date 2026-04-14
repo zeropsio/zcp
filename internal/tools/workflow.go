@@ -121,8 +121,12 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleIterate(ctx, engine, client, cache)
 	case "complete":
 		active := detectActiveWorkflow(engine)
-		if active == workflowDevelop {
-			return handleDeployComplete(ctx, engine, client, projectID, stateDir, input)
+		// Develop workflow is stateless — no session to complete.
+		if isDevelopStep(input.Step) && active != workflowDevelop {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
+				"Use zerops_deploy to deploy, zerops_verify to verify")), nil, nil
 		}
 		if active == workflowRecipe {
 			return handleRecipeComplete(ctx, engine, client, cache, schemaCache, projectID, stateDir, input)
@@ -142,8 +146,11 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			"")), nil, nil
 	case "skip":
 		active := detectActiveWorkflow(engine)
-		if active == workflowDevelop {
-			return handleDeploySkip(ctx, engine, input)
+		if isDevelopStep(input.Step) && active != workflowDevelop {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
+				"Use zerops_deploy to deploy, zerops_verify to verify")), nil, nil
 		}
 		if active == workflowRecipe {
 			return handleRecipeSkip(ctx, engine, input)
@@ -151,9 +158,6 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleBootstrapSkip(ctx, engine, client, cache, input)
 	case "status":
 		active := detectActiveWorkflow(engine)
-		if active == workflowDevelop {
-			return handleDeployStatus(ctx, engine)
-		}
 		if active == workflowRecipe {
 			return handleRecipeStatus(ctx, engine)
 		}
@@ -211,9 +215,9 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return jsonResult(resp), nil, nil
 	}
 
-	// Develop workflow.
+	// Develop workflow — stateless briefing, no session created.
 	if input.Workflow == workflowDevelop {
-		return handleDeployStart(ctx, engine, client, projectID, input, cache, mounter, selfHostname)
+		return handleDevelopBriefing(ctx, engine, client, projectID, input, cache, mounter, selfHostname)
 	}
 
 	// Recipe workflow.
@@ -228,6 +232,11 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		"Valid workflows: bootstrap, develop, recipe, cicd, export")), nil, nil
 }
 
+// isDevelopStep returns true if the step name is a develop workflow step.
+func isDevelopStep(step string) bool {
+	return step == workflow.DeployStepPrepare || step == workflow.DeployStepExecute || step == workflow.DeployStepVerify
+}
+
 // detectActiveWorkflow returns the active workflow type from engine state.
 func detectActiveWorkflow(engine *workflow.Engine) string {
 	if !engine.HasActiveSession() {
@@ -236,9 +245,6 @@ func detectActiveWorkflow(engine *workflow.Engine) string {
 	state, err := engine.GetState()
 	if err != nil {
 		return ""
-	}
-	if state.Deploy != nil && state.Deploy.Active {
-		return workflowDevelop
 	}
 	if state.Recipe != nil && state.Recipe.Active {
 		return workflowRecipe
@@ -267,9 +273,6 @@ func handleIterate(ctx context.Context, engine *workflow.Engine, client platform
 			"Start a session first")), nil, nil
 	}
 	active := detectActiveWorkflow(engine)
-	if active == workflowDevelop {
-		return handleDeployStatus(ctx, engine)
-	}
 	if active == workflowRecipe {
 		return handleRecipeStatus(ctx, engine)
 	}
@@ -290,9 +293,6 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 			"Session may not exist or may still be active")), nil, nil
 	}
 	active := detectActiveWorkflow(engine)
-	if active == workflowDevelop {
-		return handleDeployStatus(ctx, engine)
-	}
 	if active == workflowRecipe {
 		return handleRecipeStatus(ctx, engine)
 	}

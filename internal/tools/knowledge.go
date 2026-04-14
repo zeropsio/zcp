@@ -40,9 +40,6 @@ func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) string {
 	if state.Bootstrap != nil {
 		return state.Bootstrap.PlanMode()
 	}
-	if state.Deploy != nil {
-		return state.Deploy.Mode
-	}
 	return ""
 }
 

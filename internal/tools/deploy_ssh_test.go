@@ -787,17 +787,11 @@ func TestDeployTool_DescriptionByEnvironment(t *testing.T) {
 	}
 }
 
-// testDeployEngine creates an Engine with an active develop session for deploy tests.
-// Deploy requires an active workflow session (requireWorkflow guard).
+// testDeployEngine creates an Engine for deploy tests.
 func testDeployEngine(t *testing.T) *workflow.Engine {
 	t.Helper()
 	dir := t.TempDir()
-	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
-	targets := []workflow.DeployTarget{{Hostname: "test", Role: "dev", Status: "pending"}}
-	if _, err := eng.DeployStart("proj-test", "test deploy", targets, "dev"); err != nil {
-		t.Fatalf("DeployStart for test engine: %v", err)
-	}
-	return eng
+	return workflow.NewEngine(dir, workflow.EnvContainer, nil)
 }
 
 // setupAdoptedService writes a ServiceMeta so the service is "known" to ZCP.
@@ -986,29 +980,39 @@ func TestDeployTool_AdoptionGate_NoServicesDir_Skips(t *testing.T) {
 	}
 }
 
-func TestDeployTool_WorkflowGate_BlocksWithoutSession(t *testing.T) {
+func TestDeployTool_PreFlight_BlocksWithoutZeropsYaml(t *testing.T) {
 	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := dir
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "app"}})
 	ssh := &stubSSH{output: []byte("ok")}
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
-	// Engine with no active session — deploy should be blocked.
-	eng := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+	// Write ServiceMeta so pre-flight activates, but no zerops.yaml.
+	meta := &workflow.ServiceMeta{
+		Hostname:       "app",
+		Mode:           "simple",
+		BootstrappedAt: "2026-01-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, "", eng)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, eng)
 
 	result := callTool(t, srv, "zerops_deploy", map[string]any{
 		"targetService": "app",
 	})
 
-	if !result.IsError {
-		t.Fatal("expected error for deploy without active workflow session")
-	}
+	// Pre-flight blocks (not IsError — returns structured result).
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "workflow") {
-		t.Errorf("error should mention workflow, got: %s", text)
+	if !strings.Contains(text, "zerops_yml_exists") && !strings.Contains(text, "zerops.yaml") {
+		t.Errorf("expected pre-flight to mention zerops.yaml, got: %s", text)
 	}
 }

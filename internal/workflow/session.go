@@ -106,9 +106,6 @@ func IterateSession(stateDir, sessionID string) (*WorkflowState, error) {
 	if state.Bootstrap != nil {
 		state.Bootstrap.ResetForIteration()
 	}
-	if state.Deploy != nil {
-		state.Deploy.ResetForIteration()
-	}
 	if state.Recipe != nil {
 		state.Recipe.ResetForIteration()
 	}

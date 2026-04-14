@@ -119,9 +119,8 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 	if e.sessionID != "" {
 		if existing, err := LoadSessionByID(e.stateDir, e.sessionID); err == nil {
 			bootstrapDone := existing.Bootstrap != nil && !existing.Bootstrap.Active
-			deployDone := existing.Deploy != nil && !existing.Deploy.Active
 			recipeDone := existing.Recipe != nil && !existing.Recipe.Active
-			if bootstrapDone || deployDone || recipeDone {
+			if bootstrapDone || recipeDone {
 				if err := ResetSessionByID(e.stateDir, e.sessionID); err != nil {
 					return nil, fmt.Errorf("start auto-reset: %w", err)
 				}
@@ -141,17 +140,21 @@ func (e *Engine) Start(projectID, workflowName, intent string) (*WorkflowState, 
 	return state, nil
 }
 
-// Reset clears the current session.
+// Reset clears the current session and removes incomplete ServiceMetas
+// left by the abandoned session. This prevents bootstrap limbo where
+// provisioned-but-not-completed services linger as orphaned metas.
 func (e *Engine) Reset() error {
 	e.completedState = nil
 	if e.sessionID == "" {
 		return nil
 	}
-	err := ResetSessionByID(e.stateDir, e.sessionID)
+	sessionID := e.sessionID
+	err := ResetSessionByID(e.stateDir, sessionID)
 	e.clearSessionID()
 	if err != nil {
 		return fmt.Errorf("reset session: %w", err)
 	}
+	cleanIncompleteMetasForSession(e.stateDir, sessionID)
 	return nil
 }
 

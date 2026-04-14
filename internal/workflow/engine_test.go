@@ -1282,33 +1282,6 @@ func TestEngine_BootstrapComplete_DeletesSessionFile(t *testing.T) {
 	}
 }
 
-func TestEngine_DeployComplete_DeletesSessionFile(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir, EnvLocal, nil)
-
-	targets := []DeployTarget{{Hostname: "appdev", Role: "local"}}
-	if _, err := eng.DeployStart("proj-1", "test", targets, "local"); err != nil {
-		t.Fatalf("DeployStart: %v", err)
-	}
-	sessionID := eng.SessionID()
-
-	steps := []string{DeployStepPrepare, DeployStepExecute, DeployStepVerify}
-	for _, step := range steps {
-		if _, err := eng.DeployComplete(context.Background(), step, "step completed successfully", nil); err != nil {
-			t.Fatalf("DeployComplete(%s): %v", step, err)
-		}
-	}
-
-	path := sessionFilePath(dir, sessionID)
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Errorf("session file should be deleted after deploy completion, stat err: %v", err)
-	}
-	if eng.SessionID() != "" {
-		t.Errorf("engine SessionID should be empty after deploy completion, got %q", eng.SessionID())
-	}
-}
-
 func TestEngine_BootstrapComplete_Partial_KeepsSessionFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1419,5 +1392,95 @@ func TestEngine_BootstrapComplete_CleanupWarningInResponse(t *testing.T) {
 	const wantSubstr = "Warning: session cleanup failed"
 	if !strings.Contains(resp.Message, wantSubstr) {
 		t.Errorf("response message should contain %q, got: %s", wantSubstr, resp.Message)
+	}
+}
+
+func TestReset_CleansIncompleteMetas(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		metas       []*ServiceMeta
+		wantRemoved []string // hostnames that should be deleted
+		wantKept    []string // hostnames that should survive
+	}{
+		{
+			name: "incomplete_meta_for_session_removed",
+			metas: []*ServiceMeta{
+				{Hostname: "appdev", BootstrapSession: "SESSION_ID", BootstrappedAt: ""},
+			},
+			wantRemoved: []string{"appdev"},
+		},
+		{
+			name: "complete_meta_kept",
+			metas: []*ServiceMeta{
+				{Hostname: "appdev", BootstrapSession: "SESSION_ID", BootstrappedAt: "2026-04-14T12:00:00Z"},
+			},
+			wantKept: []string{"appdev"},
+		},
+		{
+			name: "different_session_kept",
+			metas: []*ServiceMeta{
+				{Hostname: "appdev", BootstrapSession: "other-session", BootstrappedAt: ""},
+			},
+			wantKept: []string{"appdev"},
+		},
+		{
+			name: "mixed_complete_and_incomplete",
+			metas: []*ServiceMeta{
+				{Hostname: "appdev", BootstrapSession: "SESSION_ID", BootstrappedAt: "2026-04-14T12:00:00Z"},
+				{Hostname: "apidev", BootstrapSession: "SESSION_ID", BootstrappedAt: ""},
+			},
+			wantKept:    []string{"appdev"},
+			wantRemoved: []string{"apidev"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			eng := NewEngine(dir, EnvLocal, nil)
+
+			// Start a bootstrap to get a real session.
+			if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
+				t.Fatalf("BootstrapStart: %v", err)
+			}
+			sessionID := eng.SessionID()
+
+			// Write metas, replacing SESSION_ID placeholder with real session ID.
+			for _, m := range tt.metas {
+				meta := *m
+				if meta.BootstrapSession == "SESSION_ID" {
+					meta.BootstrapSession = sessionID
+				}
+				if err := WriteServiceMeta(dir, &meta); err != nil {
+					t.Fatalf("WriteServiceMeta(%s): %v", meta.Hostname, err)
+				}
+			}
+
+			// Reset — should clean incomplete metas for this session.
+			if err := eng.Reset(); err != nil {
+				t.Fatalf("Reset: %v", err)
+			}
+
+			for _, hostname := range tt.wantRemoved {
+				meta, err := ReadServiceMeta(dir, hostname)
+				if err != nil {
+					t.Fatalf("ReadServiceMeta(%s): %v", hostname, err)
+				}
+				if meta != nil {
+					t.Errorf("meta %q should have been removed by Reset", hostname)
+				}
+			}
+			for _, hostname := range tt.wantKept {
+				meta, err := ReadServiceMeta(dir, hostname)
+				if err != nil {
+					t.Fatalf("ReadServiceMeta(%s): %v", hostname, err)
+				}
+				if meta == nil {
+					t.Errorf("meta %q should have been kept by Reset", hostname)
+				}
+			}
+		})
 	}
 }

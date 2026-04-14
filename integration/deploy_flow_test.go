@@ -33,8 +33,9 @@ func (m *mockSSHDeployer) ExecSSH(_ context.Context, _, _ string) ([]byte, error
 	return m.output, m.err
 }
 
-// startDevelopWorkflow writes a service meta and starts a develop workflow via MCP.
-// Deploy requires an active workflow session (requireWorkflow guard).
+// startDevelopWorkflow writes a service meta, zerops.yaml, and starts a develop workflow via MCP.
+// Deploy requires an active workflow session (requireWorkflow guard) and pre-flight validation
+// requires zerops.yaml to exist.
 func startDevelopWorkflow(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 
@@ -47,8 +48,16 @@ func startDevelopWorkflow(t *testing.T, session *mcp.ClientSession) {
 	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
 		t.Fatalf("write test meta: %v", err)
 	}
+
+	// Write minimal zerops.yaml for pre-flight validation.
+	zeropsYaml := "zerops:\n  - setup: prod\n    build:\n      base: nodejs@22\n    run:\n      start: node index.js\n"
+	if err := os.WriteFile("zerops.yaml", []byte(zeropsYaml), 0o600); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+
 	t.Cleanup(func() {
 		os.RemoveAll(".zcp")
+		os.Remove("zerops.yaml")
 	})
 
 	// Start develop workflow via MCP.
@@ -218,8 +227,6 @@ func TestIntegration_DeployNotRegisteredWithoutDeployer(t *testing.T) {
 }
 
 func TestIntegration_DeployError(t *testing.T) {
-	t.Parallel()
-
 	mock := defaultMock()
 	deployer := &mockSSHDeployer{
 		output: []byte("error: push failed"),
@@ -228,11 +235,7 @@ func TestIntegration_DeployError(t *testing.T) {
 	session, cleanup := setupTestServerWithDeploy(t, mock, defaultLogFetcher(), deployer)
 	defer cleanup()
 
-	// Start workflow session (required by deploy guard).
-	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "develop",
-		"intent": "integration test",
-	})
+	startDevelopWorkflow(t, session)
 
 	result := callAndGetResult(t, session, "zerops_deploy", map[string]any{
 		"targetService": "app",

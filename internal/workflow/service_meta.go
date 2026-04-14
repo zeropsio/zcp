@@ -173,6 +173,24 @@ func IsKnownService(stateDir, hostname string) bool {
 	return false
 }
 
+// cleanIncompleteMetasForSession removes ServiceMeta files that were created
+// by the given session but never completed (BootstrappedAt is empty).
+// Best-effort — errors are silently ignored.
+func cleanIncompleteMetasForSession(stateDir, sessionID string) {
+	if stateDir == "" || sessionID == "" {
+		return
+	}
+	metas, err := ListServiceMetas(stateDir)
+	if err != nil {
+		return
+	}
+	for _, m := range metas {
+		if m.BootstrapSession == sessionID && !m.IsComplete() {
+			_ = DeleteServiceMeta(stateDir, m.Hostname)
+		}
+	}
+}
+
 // DeleteServiceMeta removes the service metadata file for the given hostname.
 // Returns nil if the file does not exist (idempotent).
 func DeleteServiceMeta(baseDir, hostname string) error {

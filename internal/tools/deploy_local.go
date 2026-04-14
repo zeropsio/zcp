@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -54,13 +55,19 @@ func RegisterDeployLocal(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployLocalInput) (*mcp.CallToolResult, any, error) {
-		// Gate: deploy requires an active workflow session.
-		if blocked := requireWorkflow(engine); blocked != nil {
-			return blocked, nil, nil
-		}
 		// Gate: target must be adopted by ZCP.
 		if blocked := requireAdoption(stateDir, input.TargetService); blocked != nil {
 			return blocked, nil, nil
+		}
+
+		// Pre-flight validation (harness).
+		if pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, input.TargetService, input.Setup); pfErr != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Pre-flight validation error: %v", pfErr),
+				"Check zerops.yaml and service configuration")), nil, nil
+		} else if pfResult != nil && !pfResult.Passed {
+			return jsonResult(pfResult), nil, nil
 		}
 
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,

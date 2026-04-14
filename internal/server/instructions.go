@@ -130,10 +130,6 @@ func buildSessionHint(stateDir string, s workflow.SessionEntry, resumable bool) 
 		if state.Bootstrap != nil && state.Bootstrap.Active {
 			hint += fmt.Sprintf(" (step %d/%d: %s)", state.Bootstrap.CurrentStep+1, len(state.Bootstrap.Steps), state.Bootstrap.CurrentStepName())
 		}
-	case "develop":
-		if state.Deploy != nil && state.Deploy.Active {
-			hint += fmt.Sprintf(" (step %d/%d: %s)", state.Deploy.CurrentStep+1, len(state.Deploy.Steps), state.Deploy.CurrentStepName())
-		}
 	case "recipe":
 		if state.Recipe != nil && state.Recipe.Active {
 			hint += fmt.Sprintf(" (step %d/%d: %s)", state.Recipe.CurrentStep+1, len(state.Recipe.Steps), state.Recipe.CurrentStepName())
