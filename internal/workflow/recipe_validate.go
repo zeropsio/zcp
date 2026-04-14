@@ -138,8 +138,10 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 	}
 
 	var svcTypeSet map[string]bool
+	var svcTypes []string
 	if schemas != nil && schemas.ImportYml != nil {
 		svcTypeSet = schemas.ImportYml.ServiceTypeSet()
+		svcTypes = schemas.ImportYml.ServiceTypes
 	}
 
 	var errs []string
@@ -161,8 +163,44 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 		if (IsManagedService(t.Type) || IsUtilityType(t.Type)) && serviceTypeKind(t.Type) == "" {
 			errs = append(errs, fmt.Sprintf("target[%d]: service type %q has no serviceTypeKind — add it to recipe_service_types.go (this is a tool bug, not an agent error)", i, t.Type))
 		}
+		// Latest-version preference for managed services. The agent must
+		// pick the highest available version of a managed service unless
+		// it documents a compatibility reason in TypePinReason. This
+		// catches the v14-class drift where the model picked
+		// postgresql@17 from a {14,16,17,18} catalog and froze the wrong
+		// type into all six environment imports. Runtimes are exempt —
+		// their version comes from framework compat negotiated during
+		// research, where forcing latest would cause more bugs than it
+		// solves (NestJS 10 doesn't run on Node 24, etc).
+		errs = append(errs, validateManagedVersionLatest(i, t, svcTypes)...)
 	}
 	return errs
+}
+
+// validateManagedVersionLatest enforces the "use latest managed version
+// unless pinned with a reason" rule. Skips when no schema is loaded
+// (no source of truth for "latest"), when the type is not a managed
+// service, when the type has no version suffix, when the version is
+// already an alias, or when the catalog reports no concrete versions
+// for this base — in any of those cases there is nothing to enforce.
+func validateManagedVersionLatest(i int, t RecipeTarget, serviceTypes []string) []string {
+	if serviceTypes == nil || !IsManagedService(t.Type) {
+		return nil
+	}
+	base, ver, hasV := strings.Cut(t.Type, "@")
+	if !hasV || ver == "" || isVersionAlias(ver) {
+		return nil
+	}
+	latest := latestManagedVersion(serviceTypes, base)
+	if latest == "" || latest == ver {
+		return nil
+	}
+	if strings.TrimSpace(t.TypePinReason) != "" {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"target[%d] %q: type %q pins an older version of %q — the catalog has %s@%s. Default rule for managed services is 'use the latest available version'. Either change type to %s@%s, or set typePinReason to one sentence explaining the compatibility constraint that requires this older version (framework lag, library incompatibility, etc.)",
+		i, t.Hostname, t.Type, base, base, latest, base, latest)}
 }
 
 // validateWorkerCodebaseRefs enforces the semantics of RecipeTarget.SharesCodebaseWith.

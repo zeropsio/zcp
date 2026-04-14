@@ -143,8 +143,22 @@ type RecipeTarget struct {
 	// dev service must use a compile-capable runtime (e.g. nodejs@22 for a Vite
 	// SPA whose prod is static). Empty means "use Type as-is" (correct for all
 	// non-serve-only targets).
-	DevBase      string   `json:"devBase,omitempty"      jsonschema:"OPTIONAL — compile-capable runtime for dev environments when prod type is serve-only (static/nginx). E.g. 'nodejs@22' for a Vite SPA. Empty = use type as-is."`
-	Environments []string `json:"environments,omitempty"` // ignored — all targets appear in all environments
+	DevBase string `json:"devBase,omitempty" jsonschema:"OPTIONAL — compile-capable runtime for dev environments when prod type is serve-only (static/nginx). E.g. 'nodejs@22' for a Vite SPA. Empty = use type as-is."`
+	// TypePinReason justifies pinning a non-latest version of a managed
+	// service. The rule for managed types (postgresql, valkey, nats,
+	// meilisearch, ...) is "use the highest available version unless you
+	// have a specific reason." When Type names a non-latest concrete
+	// version, validation rejects the plan unless TypePinReason explains
+	// why — empirically the model drifts to second-newest with no rationale
+	// (v14 picked postgresql@17 from {14,16,17,18}, the worst kind of
+	// silent regression because the catalog later shows the wrong type
+	// frozen into all six environment imports). Forcing a sentence of
+	// explanation makes the choice deliberate rather than accidental.
+	// Runtime types (nodejs, php-nginx, ...) are exempt because their
+	// version is dictated by framework compatibility windows that the
+	// agent already negotiates during research.
+	TypePinReason string   `json:"typePinReason,omitempty" jsonschema:"OPTIONAL — REQUIRED when 'type' pins a non-latest version of a managed service (postgresql, valkey, nats, meilisearch, ...). One concise sentence explaining WHY the older version is needed: framework compat constraint, ecosystem maturity, library lag. Default rule for managed services is 'use the latest available version' — pin reason is the documented escape hatch. Runtimes (nodejs, php-nginx, ...) are exempt, their version comes from research-step framework compat."`
+	Environments  []string `json:"environments,omitempty"` // ignored — all targets appear in all environments
 }
 
 // DecisionResults holds the 4 recipe decision tree outputs.

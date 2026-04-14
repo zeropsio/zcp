@@ -718,7 +718,7 @@ func TestValidateRecipePlan_SchemaTargetTypeValidation(t *testing.T) {
 	}{
 		{"valid targets", []RecipeTarget{
 			{Hostname: "app", Type: "php-nginx@8.4"},
-			{Hostname: "db", Type: "postgresql@16"},
+			{Hostname: "db", Type: "postgresql@18"},
 		}, false},
 		{"invalid target type", []RecipeTarget{
 			{Hostname: "app", Type: "foobar@1.0"},
@@ -743,6 +743,221 @@ func TestValidateRecipePlan_SchemaTargetTypeValidation(t *testing.T) {
 			}
 			if !tt.wantErr && hasTypeErr {
 				t.Errorf("unexpected target type error: %v", errs)
+			}
+		})
+	}
+}
+
+// TestValidateRecipePlan_LatestManagedVersion locks the rule that landed
+// after the v14 nestjs-showcase run shipped postgresql@17 in all six
+// generated environment imports while @18 was available in the catalog.
+// The model picked second-newest at research-step recipePlan submission
+// with no rationale, and finalize froze the wrong type into the deliverable.
+// The fix: every managed service target whose version is older than the
+// catalog latest must explain itself via TypePinReason — silent drift to
+// second-newest is the failure mode being prevented.
+func TestValidateRecipePlan_LatestManagedVersion(t *testing.T) {
+	t.Parallel()
+	schemas := loadTestSchemas(t)
+
+	tests := []struct {
+		name      string
+		target    RecipeTarget
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name:    "latest postgresql passes",
+			target:  RecipeTarget{Hostname: "db", Type: "postgresql@18"},
+			wantErr: false,
+		},
+		{
+			// The exact v14 failure mode — agent picked @17 with no
+			// rationale from a {14,16,17,18} catalog.
+			name:      "older postgresql without reason rejected",
+			target:    RecipeTarget{Hostname: "db", Type: "postgresql@17"},
+			wantErr:   true,
+			errSubstr: "pins an older version",
+		},
+		{
+			// Escape hatch: deliberate pin documented in TypePinReason
+			// must be accepted (otherwise the rule blocks legitimate
+			// compat constraints like "library X doesn't yet support 18").
+			name: "older postgresql with pin reason accepted",
+			target: RecipeTarget{
+				Hostname:      "db",
+				Type:          "postgresql@17",
+				TypePinReason: "node-postgres 9.x driver still throws on pg18 array_agg result shape",
+			},
+			wantErr: false,
+		},
+		{
+			// "latest" alias is itself the latest by definition — must
+			// never trigger the rule, regardless of catalog state.
+			name:    "postgresql@latest alias passes (when in schema)",
+			target:  RecipeTarget{Hostname: "db", Type: "postgresql@18"},
+			wantErr: false,
+		},
+		{
+			// meilisearch in test schema is {1.10, 1.20} — pinning 1.10
+			// without a reason is the same class of bug as postgresql@17.
+			name:      "older meilisearch without reason rejected",
+			target:    RecipeTarget{Hostname: "search", Type: "meilisearch@1.10"},
+			wantErr:   true,
+			errSubstr: "pins an older version",
+		},
+		{
+			name:    "latest meilisearch passes",
+			target:  RecipeTarget{Hostname: "search", Type: "meilisearch@1.20"},
+			wantErr: false,
+		},
+		{
+			// nats latest in test schema is 2.12. Older 2.10 must be
+			// rejected unless explained.
+			name:      "older nats without reason rejected",
+			target:    RecipeTarget{Hostname: "queue", Type: "nats@2.10"},
+			wantErr:   true,
+			errSubstr: "nats@2.12",
+		},
+		{
+			// Single-version base — keydb test schema has only @6, so
+			// "latest" and the only option are the same. No rule trip.
+			name:    "single-version base accepted",
+			target:  RecipeTarget{Hostname: "cache", Type: "keydb@6"},
+			wantErr: false,
+		},
+		{
+			// Utility services have no version suffix and no version
+			// catalog — the rule must not produce a false positive.
+			name:    "object-storage no version skipped",
+			target:  RecipeTarget{Hostname: "storage", Type: "object-storage"},
+			wantErr: false,
+		},
+		{
+			// Runtimes are exempt from the rule even when older — their
+			// version comes from framework compat negotiated at research
+			// time. nodejs test schema is {18,20,22,24}, agent picks 22
+			// for NestJS 10 compat, must not be flagged.
+			name:    "nodejs@22 runtime exempt even though @24 exists",
+			target:  RecipeTarget{Hostname: "api", Type: "nodejs@22"},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			plan := validMinimalPlan()
+			// Need a runtime target to keep the plan otherwise valid;
+			// add the test target alongside it.
+			plan.Targets = []RecipeTarget{
+				{Hostname: "app", Type: "php-nginx@8.4"},
+				tt.target,
+			}
+			errs := ValidateRecipePlan(plan, nil, schemas)
+			hasErr := false
+			for _, e := range errs {
+				if strings.Contains(e, "pins an older version") || strings.Contains(e, tt.errSubstr) {
+					hasErr = true
+					break
+				}
+			}
+			if tt.wantErr && !hasErr {
+				t.Errorf("expected latest-version error containing %q for %+v, got: %v", tt.errSubstr, tt.target, errs)
+			}
+			if !tt.wantErr && hasErr {
+				t.Errorf("unexpected latest-version error for %+v: %v", tt.target, errs)
+			}
+		})
+	}
+}
+
+// TestLatestManagedVersion exercises the version comparison helper directly
+// — covers the parsing edge cases the validator depends on (alias filtering,
+// "+suffix" stripping, single-version bases, mixed-format catalogs).
+func TestLatestManagedVersion(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		types []string
+		base  string
+		want  string
+	}{
+		{
+			name:  "postgresql 14-18 picks 18",
+			types: []string{"postgresql@14", "postgresql@16", "postgresql@17", "postgresql@18"},
+			base:  "postgresql",
+			want:  "18",
+		},
+		{
+			name:  "meilisearch 1.10 vs 1.20 picks 1.20",
+			types: []string{"meilisearch@1.10", "meilisearch@1.20"},
+			base:  "meilisearch",
+			want:  "1.20",
+		},
+		{
+			name: "version aliases ignored",
+			// 'latest' is not concrete, must not be returned as latest.
+			types: []string{"postgresql@17", "postgresql@18", "postgresql@latest"},
+			base:  "postgresql",
+			want:  "18",
+		},
+		{
+			name: "canary and nightly ignored",
+			// Pre-release channels must never outrank concrete versions.
+			types: []string{"bun@1.2", "bun@1.3", "bun@canary", "bun@nightly"},
+			base:  "bun",
+			want:  "1.3",
+		},
+		{
+			name: "patch versions sort numerically not lexically",
+			// "1.10" must rank above "1.2" — lexical sort would invert this.
+			types: []string{"foo@1.2", "foo@1.10"},
+			base:  "foo",
+			want:  "1.10",
+		},
+		{
+			name: "+suffix stripped before comparison",
+			// php-nginx bundles a secondary nginx version after '+'. The
+			// PHP version is what orders, the nginx tag is informational.
+			types: []string{"php-nginx@8.3+1.22", "php-nginx@8.4+1.22", "php-nginx@8.5+1.28"},
+			base:  "php-nginx",
+			want:  "8.5+1.28",
+		},
+		{
+			name:  "unknown base returns empty",
+			types: []string{"postgresql@18"},
+			base:  "mongodb",
+			want:  "",
+		},
+		{
+			name:  "single version base returns that version",
+			types: []string{"keydb@6"},
+			base:  "keydb",
+			want:  "6",
+		},
+		{
+			name: "non-numeric versions skipped",
+			// 'edge' is non-numeric and not in the alias list — parser
+			// returns nil components, helper skips silently.
+			types: []string{"foo@edge", "foo@1.0"},
+			base:  "foo",
+			want:  "1.0",
+		},
+		{
+			name:  "empty list returns empty",
+			types: nil,
+			base:  "postgresql",
+			want:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := latestManagedVersion(tt.types, tt.base)
+			if got != tt.want {
+				t.Errorf("latestManagedVersion(%v, %q) = %q, want %q", tt.types, tt.base, got, tt.want)
 			}
 		})
 	}
