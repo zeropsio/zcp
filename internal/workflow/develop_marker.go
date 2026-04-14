@@ -87,4 +87,3 @@ func CleanStaleDevelopMarkers(stateDir string) error {
 	}
 	return nil
 }
-

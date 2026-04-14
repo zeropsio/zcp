@@ -149,4 +149,3 @@ func TestCleanStaleDevelopMarkers_NoDir(t *testing.T) {
 		t.Errorf("should not error when dir missing: %v", err)
 	}
 }
-
