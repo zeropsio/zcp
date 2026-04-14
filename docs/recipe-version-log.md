@@ -1,0 +1,662 @@
+# Recipe Version Log
+
+Running record of every tracked `nestjs-showcase` build from v6 through v16 (and onward). Each version is an end-to-end recipe run the zcp workflow produced; comparing them head-to-head is how we diagnose regressions, validate fixes, and decide which knobs to turn next.
+
+The `nestjs-showcase` recipe is our canonical "hard run" — it exercises 3 separate codebases, 5 managed services, dual-runtime URL wiring, a worker subagent, and the full 6-environment tier ladder. Every sub-feature of the workflow either shows up here or doesn't ship.
+
+- [Why we log versions](#why-we-log-versions)
+- [How to explore a version](#how-to-explore-a-version)
+- [How to analyze a session](#how-to-analyze-a-session)
+- [How to evaluate content quality](#how-to-evaluate-content-quality)
+- [Rating methodology](#rating-methodology)
+- [Cross-version summary](#cross-version-summary)
+- [Per-version log](#per-version-log) — v6 through v16
+- [Adding a new version](#adding-a-new-version)
+
+---
+
+## Why we log versions
+
+1. **Regression detection.** When a version ships tighter session wall time but shallower gotchas, both facts belong in the same record so the trade-off is visible. A table with just "pass/fail" misses the shape of the change.
+2. **Trend tracking.** Some metrics drift gradually (README length compression from v10 onward) and some change in jumps (authenticity check added at v13). Seeing the whole ladder makes both legible.
+3. **Fix validation.** When a code change lands ("v8.67.0 dedup checks"), the next run either confirms the fix held or surfaces the next thing. Without the baseline numbers, "it got better" is anecdotal.
+4. **Institutional memory.** Compaction erases prior runs from agent context. The log is the durable artifact — future-you reading this after a compaction can pick up the state of the world in five minutes instead of re-auditing everything.
+
+The log is **additive**: every new version appends an entry. Older entries only get amended when analysis tooling improves and we want to backfill a metric we now collect.
+
+---
+
+## How to explore a version
+
+Every recipe run lands in `/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v{N}/` with a consistent shape:
+
+```
+nestjs-showcase-v{N}/
+├── README.md                     # root recipe README (published to zerops.io/recipes)
+├── TIMELINE.md                   # per-step narrative, agent-authored during the run
+├── SESSIONS_LOGS/                # (v8+) raw Claude Code stream-json logs
+│   ├── main-session.jsonl        # primary agent session (or nestjs-showcase-session.jsonl for v8)
+│   └── subagents/                # per-subagent session files
+│       ├── agent-{id}.jsonl
+│       └── agent-{id}.meta.json
+├── environments/                 # 6 env tier folders (published)
+│   ├── 0 — AI Agent/
+│   ├── 1 — Remote (CDE)/
+│   ├── 2 — Local/
+│   ├── 3 — Stage/
+│   ├── 4 — Small Production/
+│   └── 5 — Highly-available Production/
+│       ├── import.yaml
+│       └── README.md
+├── apidev/                       # NestJS API codebase
+│   ├── README.md                 # per-codebase README (published extract)
+│   ├── CLAUDE.md                 # (v16+) repo-local dev-loop guide
+│   ├── zerops.yaml
+│   └── src/
+├── appdev/                       # Svelte SPA frontend
+└── workerdev/                    # (v6+) separate-codebase NATS worker
+```
+
+### Starting points
+
+1. **`TIMELINE.md`** — always read this first. The agent narrates each of the 6 workflow steps (research → provision → generate → deploy → finalize → close), records key decisions, and usually lists the close-step code-review findings at the bottom. 80% of what you need is here.
+2. **Per-codebase `README.md`** — the published content. Integration guide + gotcha bullets under fragment markers. Reading this side-by-side with a prior version shows whether content regressed or improved.
+3. **Per-codebase `CLAUDE.md`** (v16+) — repo-local operations guide (dev-loop, migrations, container traps, testing). Separate from README per the v8.67.0 audience split.
+4. **`environments/{tier}/import.yaml`** — the published env manifests. Look at the comments: do they teach WHY or just narrate WHAT? Compare against v7's gold-standard comments.
+
+### Shell one-liners
+
+Count gotchas and integration-guide items per codebase:
+
+```bash
+awk '/#ZEROPS_EXTRACT_START:knowledge-base/{f=1;next} /#ZEROPS_EXTRACT_END:knowledge-base/{f=0} f && /^- \*\*/' {codebase}/README.md
+awk '/#ZEROPS_EXTRACT_START:integration-guide/{f=1;next} /#ZEROPS_EXTRACT_END:integration-guide/{f=0} f && /^### [0-9]/' {codebase}/README.md
+```
+
+Dump the content-metrics table across all versions in one go:
+
+```bash
+/Users/fxck/www/zcp/eval/scripts/version_metrics.sh
+```
+
+---
+
+## How to analyze a session
+
+For v8 onwards, every run captures raw Claude Code stream-json logs under `SESSIONS_LOGS/`. These are the ground-truth record of what tools the agent actually called, with timestamps and outputs — everything else in the run is a downstream summary.
+
+### The analyzer script
+
+`eval/scripts/analyze_bash_latency.py` is the canonical session analyzer. It reads a stream-json file, pairs every `Bash` tool invocation with its result, and reports:
+
+- Total bash calls, total bash time, long (>10s) and very-long (>60s) counts, interrupted / errored
+- Breakdown by pattern: SSH calls, dev-server starts, port kills, sleeps, curls (with per-bucket sum duration)
+- Failure-signature hits in stdout/stderr: `fork failed`, `EADDRINUSE`, `ECONNREFUSED`, `timeout`, `killed`, etc.
+- Top 20 longest bash calls, printed with duration + flags (BG / INT / ERR)
+- Multi-host SSH patterns (commands containing ≥2 distinct `ssh HOST` invocations)
+
+Run it:
+
+```bash
+python3 /Users/fxck/www/zcp/eval/scripts/analyze_bash_latency.py \
+  /Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v16/SESSIONS_LOGS/main-session.jsonl
+```
+
+Run it on every subagent too — the feature subagent is usually where hidden cost lives:
+
+```bash
+for f in /Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v16/SESSIONS_LOGS/subagents/*.jsonl; do
+  echo "=== $(basename $f) ==="
+  python3 /Users/fxck/www/zcp/eval/scripts/analyze_bash_latency.py "$f" | head -12
+done
+```
+
+### What to look for
+
+| Signal | What it tells you |
+|---|---|
+| **Very long (>60s) bash calls** | Usually dev-server starts that hit the 120s SSH-channel-hold bug. Zero is the goal. v11/v13/v15 had 4–6 each; v16 main-session had zero but v16 feature subagent still had two. |
+| **Errored bash calls** | Retry cost. v13 and v14 hit 17–18 each because of the SSH pkill+fuser `&&` chains failing on "nothing to kill". v16 main reduced to 9. |
+| **Dev-server starts sum duration** | The single biggest operational cost driver. v11: 541s, v15: 556s. Target is `zerops_dev_server`-based flows which cap at `waitSeconds` per call (default 15). |
+| **Port/process kill count** | Every kill is downstream of a prior orphaned dev-server. High kill count means the start pattern is leaking processes. |
+| **Multi-host SSH patterns** | Look for `ssh a && ssh b && ssh c` chains. When they error, the `&&` aborts mid-chain and the agent spends 2–3 retries figuring out why. Almost always pkill or fuser chains. |
+
+### The raw session log structure
+
+Each line is one event. Event types to care about:
+
+- `{"type":"assistant", ...}` — an assistant turn. The `message.content` array contains `text`, `tool_use`, or `thinking` blocks.
+- `{"type":"user", ...}` — a user turn. Tool results arrive here as `tool_result` blocks inside `message.content`, keyed to the originating `tool_use_id`.
+- `{"type":"queue-operation", ...}` — internal queue state; ignore for analysis.
+
+For a Bash call, the pair looks like:
+
+```
+assistant  message.content[]  → { type: "tool_use", name: "Bash", id: "toolu_01...", input: { command, description, timeout } }
+user       message.content[]  → { type: "tool_result", tool_use_id: "toolu_01...", content: "..." }
+           toolUseResult      → { stdout, stderr, interrupted, isImage, noOutputExpected }
+```
+
+Latency is `user.timestamp - assistant.timestamp` for the matching `tool_use_id`. The analyzer script does this automatically; for ad-hoc inspection use `jq`:
+
+```bash
+jq 'select(.type == "assistant") | .message.content[] | select(.type == "tool_use" and .name == "Bash") | .input.command' \
+  SESSIONS_LOGS/main-session.jsonl | head -30
+```
+
+### Session wall clock vs active time
+
+"Wall clock" = first to last assistant event timestamp. It includes user-think gaps. For the recipe workflow the agent is autonomous so wall ≈ active, but subagent runs can stall the parent while they work.
+
+```bash
+first=$(grep -m1 '"type":"assistant"' main-session.jsonl | grep -o '"timestamp":"[^"]*"' | head -1)
+last=$(grep '"type":"assistant"' main-session.jsonl | tail -1 | grep -o '"timestamp":"[^"]*"' | tail -1)
+echo "first=$first last=$last"
+```
+
+### Tool call mix
+
+The tool mix tells you which subsystems the agent leaned on:
+
+```bash
+grep -oE '"name":"[A-Za-z_][A-Za-z_]*"' main-session.jsonl | sort | uniq -c | sort -rn
+grep -oE '"name":"mcp__zerops__[a-z_]+"' main-session.jsonl | sort | uniq -c | sort -rn
+```
+
+A high `zerops_workflow` count (20+) is normal — every step has completion calls and subagent sync. A high `zerops_guidance` count (20+) means the agent is pulling guidance repeatedly; when the v14 eager-topic work landed, this dropped from 22 to ~10.
+
+---
+
+## How to evaluate content quality
+
+Counts are a proxy, not a rubric. The v15→v16 run shows this: v15 had MORE gotchas and IG items than v16, but v16 content was structurally cleaner. Quality evaluation requires reading.
+
+### README
+
+For each codebase README:
+
+1. **Does the intro fragment accurately name the managed services?** v16's root README shipped "connected to typeorm" — TypeORM is an ORM library, not a database. That's a factual bug in the published content, caught by running `dbDriver` validation at the source (v17 fix).
+2. **Do integration-guide items carry actual code?** Items like "Adding `zerops.yaml`" with the full YAML, or "Bind to 0.0.0.0" with the `app.listen(3000, '0.0.0.0')` diff. Prose-only IG items are thinner.
+3. **Are gotchas platform-anchored or framework-narration?**
+   - Authentic: names a Zerops mechanism (`zsc execOnce`, `${db_hostname}`, `readinessCheck`, `minContainers`, `deployFiles`) OR a concrete failure mode ("returns 502", "`AUTHORIZATION_VIOLATION`", "HTTP 200 with plain-text 'Blocked request'"). Even better if both — framework × platform intersection.
+   - Synthetic: architectural narration ("Shared database with the API"), credential descriptions ("NATS authentication"), scaffold-quirk documentation ("TypeORM afterInsert hooks don't fire during raw SQL seeding").
+4. **Are gotchas distinct from the integration-guide headings in the same README?** v15's appdev had 3 gotchas that restated 3 adjacent IG items word-for-word. The v8.67.0 `gotcha_distinct_from_guide` check now catches this.
+5. **Do gotchas duplicate across codebases?** v15 had NATS credentials in both apidev and workerdev, SSHFS ownership in both, `zsc execOnce` burn in both. Facts must live in exactly ONE README with others cross-referencing. Caught by `cross_readme_gotcha_uniqueness`.
+6. **Does the content belong in README at all?** Container-ops trivia (SSHFS uid fix, `npx tsc` wrong-package, `fuser -k` for stuck ports) belongs in CLAUDE.md. README is for a user porting their own code who doesn't care about your dev-loop.
+
+### CLAUDE.md (v16+)
+
+1. **Does it clear the byte floor?** v17 raised the floor to 1200 bytes. v16's 39–44 line files cleared the old 300-byte floor but were mostly template boilerplate.
+2. **Does it have custom sections beyond the template?** The template (Dev Loop / Migrations / Container Traps / Testing) is necessary but not sufficient. Good CLAUDE.md adds codebase-specific operational knowledge: how to add a new managed service, how to reset dev state without a redeploy, how to tail logs, how to drive a test request by hand.
+3. **Is the content framework-specific or generic?** Boilerplate ("ssh into the container, start the dev server, run migrations") fails the depth bar. Specific commands for THIS codebase pass.
+
+### Environment import.yaml comments
+
+This is where v7 → v16 regressed the most. The published env files go to `zeropsio/recipes` where a user lands on one tier's page and deploys. The comments there are the final-mile "why this decision" surface.
+
+Read the comments and ask: does each one explain what BREAKS if you flip the decision, or is it describing what the field does?
+
+- **Gold standard (v7)**: *"JWT_SECRET is project-scoped — at production scale this is critical because session-cookie validation fails if any container in the L7 pool disagrees on the signing key. Service-level envSecrets would force every container to be redeployed when the key rotates."* — explains the trade-off AND the operational consequence.
+- **Regression (v16)**: *"Small production — minContainers: 2 on runtime services enables zero-downtime rolling deploys. JWT_SECRET shared at project level ensures tokens verify across both containers."* — describes what the field does, doesn't explain the failure mode the project-level placement prevents.
+
+v17 enforces this via `{env}_import_comment_depth` — requires ≥35% of substantive comment blocks to contain a reasoning marker.
+
+---
+
+## Rating methodology
+
+Each version gets a letter grade based on FOUR dimensions. Grade the dimensions independently, then the overall rating is the lowest of the four (regressions in any one dimension sink the whole grade).
+
+### 1. Structural correctness (`S`)
+
+Does the recipe actually work end-to-end?
+
+- **A** — all 6 workflow steps completed, all services RUNNING, both dev and stage URLs load in a browser, feature sections exercise all managed services.
+- **B** — recipe completed but required extra iterations at one step (finalize retry for comment ratio, deploy retry for scaffold issue). Close-step review found ≤1 CRITICAL.
+- **C** — completed but with CRITICAL issues in production (contract mismatches, entity shape errors, silent double-processing). Code review caught ≥2 CRIT.
+- **D** — completed but the deliverable has a hard bug a user would hit on first run (wrong database name in intro, missing preprocessor directive, broken migration).
+- **F** — failed to complete. Workflow aborted, or manual intervention was needed.
+
+### 2. Content quality (`C`)
+
+Is the published content worth reading?
+
+- **A** — README gotchas are all authentic + unique across codebases + distinct from IG items. Env comments teach the WHY in ≥35% of blocks. CLAUDE.md files have ≥2 custom operational sections per codebase. Root README intro accurately names services.
+- **B** — content is mostly good but has 1–2 synthetic gotchas, or env comments score 25–35%, or one codebase's CLAUDE.md is thin.
+- **C** — multiple synthetic gotchas, cross-README duplication, env comments are pure narration, OR CLAUDE.md is stub-shaped. The content "works" but doesn't teach.
+- **D** — factual errors in published content (wrong service name, ORM-as-database, broken fragment marker). Would mislead a reader.
+- **F** — unpublishable. Fragment markers malformed, scaffold TODO markers left in, deliverable README is blank.
+
+### 3. Operational efficiency (`O`)
+
+How much time and agent effort did the run burn?
+
+- **A** — wall ≤ 90 min. Bash total ≤ 10 min. Zero very-long (>60s) bash calls. Dev-server sum ≤ 300s. Errored bash calls ≤ 10.
+- **B** — wall ≤ 120 min. Bash total ≤ 15 min. ≤2 very-long. Dev-server sum ≤ 500s. Errored ≤ 15.
+- **C** — wall ≤ 180 min. Bash total ≤ 20 min. ≤5 very-long. Dev-server sum ≤ 900s. Errored ≤ 20.
+- **D** — wall > 180 min OR very-long > 5 OR dev-server sum > 900s. Significant operational cost.
+- **F** — wall > 300 min OR session stalled / got stuck / timed out repeatedly.
+
+### 4. Workflow discipline (`W`)
+
+Did the agent follow the intended workflow shape?
+
+- **A** — All sub-steps used. Feature subagent fired at deploy.subagent. Browser verification ran at deploy.browser and close.browser. Code review ran with the correct prompt. Finalize was ≤2 iterations.
+- **B** — All required subagents ran but one sub-step was skipped OR finalize took 3+ iterations.
+- **C** — Missing feature subagent OR missing browser walk OR code review ran with narrow context.
+- **D** — Multiple sub-steps missed. Workflow shape improvised rather than followed.
+- **F** — Agent worked around the workflow instead of through it (raw deploy commands, manual README writing during generate, etc.).
+
+### Overall = min(S, C, O, W)
+
+Record all four dimensions in the version entry plus the minimum as the overall grade. This makes it clear which dimension is limiting each run.
+
+---
+
+## Cross-version summary
+
+### Content metrics
+
+README line counts (per codebase):
+
+| v | apidev | appdev | workerdev | gotchas (api/app/worker) | IG items (api/app/worker) |
+|---|---:|---:|---:|:-:|:-:|
+| v6 | 293 | 158 | — | 7 / 5 / — | 5 / 3 / — |
+| v7 | 271 | 168 | 167 | 6 / 5 / 4 | 4 / 3 / 3 |
+| v8 | 239 | 124 | 171 | 6 / 3 / 4 | 4 / 3 / 2 |
+| v9 | 245 | 126 | 196 | 6 / 4 / 4 | 3 / 3 / 3 |
+| v10 | 295 | 139 | 112 | 4 / 4 / 0 | 0 / 2 / 0 |
+| v11 | 246 | 105 | 162 | 6 / 3 / 4 | 4 / 2 / 2 |
+| v12 | 270 | 132 | 153 | 5 / 4 / 4 | 3 / 2 / 2 |
+| v13 | 232 | 138 | 155 | 6 / 5 / 5 | 3 / 3 / 3 |
+| v14 | 267 | 124 | 141 | 7 / 4 / 4 | 5 / 4 / 3 |
+| v15 | 281 | 123 | 166 | 6 / 4 / 4 | 6 / 4 / 3 |
+| v16 | 218 | 123 | 162 | 4 / 3 / 3 | 3 / 2 / 2 |
+
+**v7 remains the gold standard for gotcha depth** (Meilisearch ESM-only, auto-indexing skips on redeploy, NATS queue group for HA). v10 collapsed to 0 gotchas on apidev and workerdev due to a tooling regression that's since been fixed. v14/v15 peaked on IG item count. v16 is the most compressed but also the most structurally clean.
+
+### Session metrics (v8 onwards)
+
+| v | date | wall | asst events | tool calls | bash calls | bash total | very-long (>60s) | dev-server sum | errored |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| v8 | 2026-04-12 | 96 min | 313 | — | 62 | 4.7 min | 2 | 11s | 4 |
+| v9 | 2026-04-12 | 183 min | 297 | 199 | 54 | 5.0 min | 1 | 55s | 9 |
+| v10 | 2026-04-12 | 64 min | 269 | 171 | 68 | 8.6 min | 4 | 150s | 8 |
+| v11 | 2026-04-12→13 | 480 min | 286 | 174 | 72 | 21.1 min | 4 | 542s | 14 |
+| v12 | 2026-04-13 | 61 min | 247 | 155 | 40 | 6.4 min | 1 | 134s | 2 |
+| v13 | 2026-04-13 | 84 min | 489 | 273 | 108 | 19.0 min | 6 | 968s | 17 |
+| v14 | 2026-04-13 | 82 min | 313 | 196 | 90 | 12.7 min | 4 | 170s | 18 |
+| v15 | 2026-04-14 | 204 min | 326 | 203 | 63 | 17.0 min | 5 | 557s | 7 |
+| v16 | 2026-04-14 | 125 min | 370 | 233 | 78 | 7.5 min | **0** | 250s | 9 |
+
+**v16 is the first run with zero very-long bash calls on main-session** — the dev-server wait discipline finally held. But the feature subagent in v16 still hit 360s of 404s total on two dev-server starts that used the old SSH pattern. v17 ships `zerops_dev_server` as a dedicated MCP tool to eliminate this class of error entirely.
+
+### Milestones and regressions by version
+
+| v | context | key structural change |
+|---|---|---|
+| v6 | first 3-codebase run, no separate worker yet | first dual-runtime complete |
+| v7 | gold-standard content baseline | deep gotchas, full IG code blocks, env comments teach WHY |
+| v8 | first with SESSIONS_LOGS captured | content starts compressing, first CRITICAL in close review (status endpoint shape mismatch) |
+| v9 | first with separate codebase worker fully wired | 2 CRITICAL in close (worker migration creates uuid-ossp AFTER table, missing CreateJobResults migration) |
+| v10 | workflow broke — empty gotchas | apidev+workerdev gotcha sections EMPTY; represented content catastrophe (v8.54.0-era tooling bug) |
+| v11 | longest run on record | 8-hour wall clock, 541s dev-server sum; 2 CRITICAL close (worker entity mismatch) |
+| v12 | stability recovery | 61 min wall, 2 WRONG in close — fastest clean run |
+| v13 | Sonnet model + enforced subagent | 84 min wall but 108 bash calls, 6 very-long. First run with enforced feature-subagent subwk |
+| v14 | model gate, eager topics | feature subagent now enforced; close review 0 CRIT/0 WRONG (cleanest close ever) |
+| v15 | content quality regression | content peaked at 6/4/4 IG items but 5 WRONG in close (all dev-ops issues — npx tsc, SSHFS, Svelte curly, port 3000, Vite death) |
+| v16 | v8.67.0 structural rules landed | zero very-long bash, first run with CLAUDE.md split, content structurally cleanest; BUT 1 CRIT (StatusPanel queue→nats contract drift) + 6 WRONG in close |
+
+---
+
+## Per-version log
+
+### v6 — first full 3-codebase run
+
+- **Date**: 2026-04-10
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Model**: claude-opus-4-6 (pre-model-gate; inferred)
+- **Session logs**: none
+- **Wall / asst events**: unknown
+- **Bash metrics**: unknown
+
+**Content metrics** (apidev / appdev / workerdev):
+- README lines: 293 / 158 / — (workerdev README missing)
+- Gotchas: 7 / 5 / —
+- IG items: 5 / 3 / —
+
+**Close-step bugs**: TIMELINE doesn't enumerate them in the `[CRITICAL]/[WRONG]/[STYLE]` shape used later. Best-effort reconstruction from narrative: this run was a successful API-first run with 3 targets, dual-runtime URL pattern working, but workerdev scaffold README was never written (the agent only produced apidev + appdev READMEs).
+
+**Structural flags**: first run with a separate-codebase worker but workerdev README is MISSING. Classified as incomplete deliverable.
+
+**Rating**: S=B, C=C, O=?, W=C → **C**
+*Content baseline present but workerdev documentation gap; workflow didn't ensure all three codebases wrote their README.*
+
+---
+
+### v7 — gold standard for content
+
+- **Date**: 2026-04-11
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Model**: claude-opus-4-6 (pre-model-gate; inferred)
+- **Session logs**: none
+- **Wall / asst events**: unknown
+- **Bash metrics**: unknown
+
+**Content metrics** (apidev / appdev / workerdev):
+- README lines: 271 / 168 / 167 — **balanced, workerdev finally has a README**
+- Gotchas: 6 / 5 / 4 — mix of shallow (no `.env`) and deep (Meilisearch ESM-only, Auto-indexing skips, `<style>` blocks bypass build, Vite 8 ships Rolldown)
+- IG items: 4 / 3 / 3 — full integration guide with code blocks for CORS, TypeORM env reading, worker reconnect-forever, SIGTERM drain
+
+**Close-step bugs**: 0 CRIT / 3 WRONG (trust-proxy typing, async publish, dead StorageSection field) / 3 STYLE (scaffold test leftovers, prettier drift, JwtService manual instantiation). All fixed during close.
+
+**Env import.yaml comments**: Gold standard. JWT rotation rationale, queue-group load-balancing explanation, Meilisearch re-push for TypeORM save-hook skip case, MinIO region stub reasoning. Every comment explains a trade-off or consequence.
+
+**Structural flags**: first complete 3-codebase run with all READMEs written, all env tiers commented, all close-step fixes applied cleanly. This is the content target every subsequent version is measured against.
+
+**Rating**: S=A, C=**A**, O=?, W=A → **A**
+*v7 is the benchmark. Content depth has not been matched since. The `#zeropsPreprocessor=on` directive is present (not regressed until v10). Deep gotchas live in README where they belong.*
+
+---
+
+### v8 — first session logs, compression begins
+
+- **Date**: 2026-04-12
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Session logs**: `nestjs-showcase-session.jsonl` (different filename than later versions)
+- **Wall**: 07:18 → 08:54 = **96 min**
+- **Assistant events**: 313
+- **Bash metrics**: 62 calls / 4.7 min total / 2 very-long / 14 dev-server starts (but only 11s total — short probes, not hanging spawns) / 3 port kills / 4 errored
+
+**Content metrics**:
+- README lines: 239 / 124 / 171 — appdev starts compressing
+- Gotchas: 6 / 3 / 4
+- IG items: 4 / 3 / 2
+
+**Close-step bugs**: 1 CRIT (status endpoint shape mismatch — API returned `{db:{...}}` but frontend expected `{services:[{name,status,latency}]}`) + 2 WRONG (fetchApi header merge, XSS via `{@html}`) + 4 STYLE. Only the CRIT was fixed.
+
+**Notable**: first run where contract mismatch between scaffold authors surfaced in close review. This pattern repeated through v11 until v13's feature-subagent consolidation killed it.
+
+**Rating**: S=B, C=B, O=A, W=B → **B**
+*Content starts compressing from v7, CRITICAL in close, but session is fast (4.7 min bash, 96 min wall). Operations healthy.*
+
+---
+
+### v9 — worker migration sequencing bug
+
+- **Date**: 2026-04-12
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Session logs**: `main-session.jsonl`
+- **Wall**: 15:19 → 18:22 = **183 min**
+- **Assistant events**: 297, **Tool calls**: 199
+- **Bash metrics**: 54 calls / 5.0 min total / 1 very-long / 7 dev-server starts (54.8s sum) / 6 port kills / 9 errored
+
+**Content metrics**:
+- README lines: 245 / 126 / **196** — workerdev longest yet
+- Gotchas: 6 / 4 / 4
+- IG items: 3 / 3 / 3
+
+**Close-step bugs**: **2 CRITICAL** — (1) worker migration creates `uuid-ossp` extension AFTER the table that needs it; (2) API codebase missing `CreateJobResults` migration (only in worker). Plus WRONG on `$effect` initialization and `@types/multer` in dependencies.
+
+**Notable**: v9 was the run that exposed how much damage parallel scaffold authors can do when they don't agree on migration ownership. The fix landed in v14 as the "single-author feature subagent" rule — one agent writes both sides of every contract.
+
+**Rating**: S=C, C=B, O=C, W=B → **C**
+*Two CRITs in close, 183 min wall. Content is fine but the deploy was fragile.*
+
+---
+
+### v10 — content catastrophe
+
+- **Date**: 2026-04-12
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Session logs**: `main-session.jsonl`
+- **Wall**: 19:54 → 20:58 = **64 min** (fastest run on record by wall clock)
+- **Assistant events**: 269, **Tool calls**: 171
+- **Bash metrics**: 68 calls / 8.6 min total / 4 very-long / 2 dev-server starts but 150s sum (each one hit the 75s mark) / 1 port kill / 8 errored
+
+**Content metrics**:
+- README lines: 295 / 139 / 112
+- Gotchas: **4 / 4 / 0** — workerdev README has NO gotcha bullets
+- IG items: **0 / 2 / 0** — apidev AND workerdev have ZERO integration-guide items
+
+**Close-step bugs**: 3 WRONG (worker `@MessagePattern` vs API `emit()`, missing `start:prod` script, tsconfig strict). Plus 3 STYLE noted but not fixed.
+
+**Notable**: v10 is the content-catastrophe datapoint. The generate step emitted README scaffolds with empty knowledge-base AND empty integration-guide fragments for two of three codebases. This run is the justification for the `readme_fragments` byte-count + `knowledge_base_gotchas` checks added in v11.
+
+**Rating**: S=C, C=**F**, O=A, W=C → **F**
+*Empty fragments in published content is unshippable. The fast wall clock came from not writing the content the workflow requires.*
+
+---
+
+### v11 — longest run, 2 CRITs in close
+
+- **Date**: 2026-04-12 → 2026-04-13
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Session logs**: `main-session.jsonl`
+- **Wall**: 22:39 → 06:39 (next day) = **480 min (8 hours)**
+- **Assistant events**: 286, **Tool calls**: 174
+- **Bash metrics**: 72 calls / **21.1 min total** / 4 very-long / 6 dev-server starts (541s sum) / 10 port kills / 14 errored
+
+**Content metrics**:
+- README lines: 246 / 105 / 162
+- Gotchas: 6 / 3 / 4
+- IG items: 4 / 2 / 2
+
+**Close-step bugs**: **2 CRITICAL** — (1) worker entity.ts used UUID PK with wrong table name + phantom columns; (2) worker search.service.ts referenced non-existent `price`/`quantity` fields. Plus 4 WRONG — all contract mismatches between parallel scaffold authors (StatusPanel, FileStorage, App.svelte all reading different response shapes than API produces).
+
+**Notable**: The 8-hour wall clock came from the dev-server SSH-channel-hold pattern hit in chain: spawn → 120s wait → kill → retry → 120s wait → kill. Longest single bash call was **358.8s** (worker `ts-node src/worker.ts &` holding the SSH channel until two consecutive bash timeouts fired). This run is the single biggest justification for Tier 1 `zerops_dev_server`.
+
+**Rating**: S=C, C=C, O=**F**, W=C → **F**
+*Cost budget blown (8 hours, 21 min of bash time), 2 CRITs in close, content merely passable.*
+
+---
+
+### v12 — stability recovery
+
+- **Date**: 2026-04-13
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Session logs**: `main-session.jsonl`
+- **Wall**: 07:34 → 08:35 = **61 min** (new fastest)
+- **Assistant events**: 247, **Tool calls**: 155
+- **Bash metrics**: 40 calls / 6.4 min total / 1 very-long / 4 dev-server starts (134s sum) / 0 port kills / 2 errored
+
+**Content metrics**:
+- README lines: 270 / 132 / 153
+- Gotchas: 5 / 4 / 4
+- IG items: 3 / 2 / 2
+
+**Close-step bugs**: 5 WRONG (no CRIT) + 2 STYLE. Significant improvement from v11.
+
+**Notable**: v12 demonstrated that a recipe run CAN complete in under an hour. The content isn't as deep as v7 but structure is clean, close-step is contained, session cost is low. What changed between v11 and v12: the workflow's `readme_fragments` byte-count check was enforced, and the agent learned not to emit empty-fragment scaffolds.
+
+**Rating**: S=B, C=B, O=A, W=B → **B**
+*Clean recovery run. Nothing special, but nothing broken.*
+
+---
+
+### v13 — Sonnet model, enforced feature subagent, 6 very-long bash
+
+- **Date**: 2026-04-13
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Session logs**: `main-session.jsonl`
+- **Wall**: 09:38 → 11:02 = **84 min** — short on wall but 273 tool calls, 108 bash
+- **Assistant events**: 489 (highest, due to Sonnet model using more turns per decision)
+- **Tool calls**: 273
+- **Bash metrics**: 108 calls / 19.0 min total / **6 very-long (highest)** / 19 dev-server starts (968s sum — highest) / 9 port kills / 17 errored
+
+**Content metrics**:
+- README lines: 232 / 138 / 155
+- Gotchas: 6 / 5 / 5
+- IG items: 3 / 3 / 3
+
+**Close-step bugs**: 2 CRITICAL during deploy phase (allowedHosts blocked dev subdomain, NATS AUTHORIZATION_VIOLATION) + code review found 2 CRIT + 1 WRONG (no input validation on POST, ioredis status guard, Svelte fetch swallows errors).
+
+**Notable**: First run after v8.63.0 landed the enforced feature-subagent sub-step and the eager-topic injection. Predecessor-floor + authenticity checks ran for the first time — v13 TIMELINE notes "Generate check failures (2 iterations to resolve)". Also the first run where Sonnet model was intentionally used to pressure-test the workflow against a non-Opus model.
+
+**Rating**: S=C, C=B, O=D, W=A → **D**
+*Bash cost is severe (19 min, 6 very-long). Sonnet ran 489 assistant turns — almost 2x the typical — which magnified every dev-server start cost. But the workflow discipline held (feature subagent fired, predecessor floor enforced, close review caught bugs).*
+
+---
+
+### v14 — cleanest close-step on record
+
+- **Date**: 2026-04-13
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Session logs**: `main-session.jsonl`
+- **Wall**: 20:09 → 21:31 = **82 min**
+- **Assistant events**: 313, **Tool calls**: 196
+- **Bash metrics**: 90 calls / 12.7 min total / 4 very-long / 8 dev-server starts (170s sum — LOWEST for a run at this scale) / 3 port kills / 18 errored
+
+**Content metrics**:
+- README lines: 267 / 124 / 141
+- Gotchas: 7 / 4 / 4 — apidev highest gotcha count since v7
+- IG items: 5 / 4 / 3
+
+**Close-step bugs**: **0 CRITICAL, 0 WRONG, STYLE findings only**. Code review sub-agent (aa2978c96) found no contract bugs. This is the cleanest close step ever recorded.
+
+**Notable**: v14 represents what the workflow can do when all the structural rules are in place. Predecessor floor, authenticity check, enforced feature subagent, eager topics, and the model gate all held. The content isn't as deep as v7 on a per-gotcha basis but the close step is clean, the workflow discipline is A+.
+
+**Rating**: S=A, C=B, O=B, W=**A** → **B**
+*Best workflow discipline. Content is good but not v7-deep. Close step is spotless.*
+
+---
+
+### v15 — content peaks, dev-ops regression
+
+- **Date**: 2026-04-14
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Model**: claude-opus-4-6[1m]
+- **Session logs**: `main-session.jsonl`
+- **Wall**: 08:58 → 12:22 = **204 min**
+- **Assistant events**: 326, **Tool calls**: 203
+- **Bash metrics**: 63 calls / 17.0 min total / 5 very-long / 9 dev-server starts (557s sum — v11-level) / 7 port kills / 7 errored
+
+**Content metrics**:
+- README lines: 281 / 123 / 166 — apidev highest since v10's catastrophe
+- Gotchas: 6 / 4 / 4
+- IG items: **6 / 4 / 3** — highest IG count ever
+
+**Close-step bugs**: 0 CRITICAL + 5 WRONG + 2 STYLE. The 5 WRONG are all dev-ops issues leaked into the published content:
+1. `npx tsc` resolves to deprecated tsc@2.0.4 package
+2. SSHFS files owned by root, `npm install` EACCES
+3. Svelte curly braces in placeholder attribute
+4. Port 3000 EADDRINUSE after background command
+5. Vite dev server died on redeploy
+
+**Notable**: v15 is the "content regression that the v8.67.0 structural rules caught but had no way to prevent" run. The apidev README had 3 gotchas cloned from workerdev (NATS credentials, SSHFS ownership, `zsc execOnce` burn) and appdev had 3 gotchas that restated 3 adjacent IG items. The 5 WRONG in close are all repo-local dev-loop knowledge that the v8.67.0 rules later pushed into CLAUDE.md.
+
+**Rating**: S=B, C=**C**, O=D, W=B → **D**
+*204 min wall, 557s on dev-server starts, content content-regression. This is the run v8.67.0 was designed to prevent.*
+
+---
+
+### v16 — v8.67.0 structural rules land
+
+- **Date**: 2026-04-14
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Model**: claude-opus-4-6[1m]
+- **Session logs**: `main-session.jsonl` + 6 subagent logs
+- **Wall**: 14:38 → 16:44 = **125 min**
+- **Assistant events**: 370, **Tool calls**: 233
+- **Bash metrics**: 78 calls / 7.5 min total / **0 very-long** / 9 dev-server starts (250s sum — capped at ~30s each) / 5 port kills / 9 errored
+- **Subagents**: 6 (scaffold ×3, feature ×1, READMEs/CLAUDE.md ×1, code review ×1) — first run with dedicated README/CLAUDE writer subagent
+
+**Content metrics**:
+- README lines: 218 / 123 / 162 — most compressed since v8
+- Gotchas: 4 / 3 / 3 — lowest since v11
+- IG items: 3 / 2 / 2 — at the floor
+- **CLAUDE.md**: 42 / 39 / 44 lines per codebase (first run with separate CLAUDE.md)
+
+**Close-step bugs**: 1 CRITICAL + 6 WRONG + 3 STYLE. The CRITICAL is a contract drift: StatusPanel used key `"queue"` but API returns `"nats"` → the NATS dot always renders gray. Fixed post-review. The 6 WRONG include a NestJS major version mismatch (api v10 vs worker v11), missing `DB_PORT` default, pagination double-fetch, and three unused-dep findings (`bcryptjs`/`passport*`, `@types/multer`, `ioredis` in worker).
+
+**Notable**:
+- First run where **zero bash calls hit the 120s wall on main session**. The main agent learned the correct `ssh host "cmd &" && sleep N && ssh host "curl-health"` pattern. The feature subagent, however, still hit 240s + 120s on its two dev-server starts — that's the 360s hidden cost that motivated the v17 `zerops_dev_server` MCP tool.
+- First run where the **v8.67.0 deduplication and restates-guide checks forced content discipline** — 3 README iterations to satisfy `cross_readme_gotcha_uniqueness` + `gotcha_distinct_from_guide` + authenticity on worker (6/8 worker_knowledge_base_authenticity fails before recovery).
+- First run with **dedicated READMEs/CLAUDE.md subagent** (agent-ac823b1fe9d00b4f0). Main agent pre-classified gotchas by codebase in the brief, subagent wrote files, cross-README dedup never fired because the dedup was prevented at the brief level.
+- Root README intro shipped `"connected to typeorm"` — the agent set `plan.Research.DBDriver = "typeorm"` (an ORM library) and the root README generator rendered it as-is because `dbDisplayName` had no case for it. Caught in audit, fixed in v17 via first-principles `validateDBDriver` at research-complete time.
+- All 6 env import.yaml files shipped missing `#zeropsPreprocessor=on` directive despite using `<@generateRandomString(<32>)>`. The finalize check was dead-code-gated on `plan.Research.NeedsAppSecret` (false for NestJS) — fixed in v17 by de-nesting the check.
+
+**Rating**: S=B, C=**C**, O=B, W=B → **C**
+*Cleanest operational cost of any run. Structural rules held (dedup, restates, CLAUDE.md split). But content compression went too far — apidev is 218 lines vs v7's 271, IG items hit the floor at 2/2 for two codebases, and deep insights from v7 (queue group HA, ESM-only SDK, auto-indexing skip) stayed filtered out. Plus a real factual bug on the root README intro.*
+
+**This is the run that motivated v17** (the content pass shipped as v8.70.0):
+- `zerops_dev_server` MCP tool replaces the hand-rolled SSH+background+sleep pattern
+- `dbDriver` validation catches ORM-name-as-database-name at the source
+- Preprocessor check de-nested to fire unconditionally
+- Classifier `platformTerms` list expanded from ~30 → ~120 Zerops mechanism terms
+- Framework × platform intersection bonus admits the "ESM-only SDK" class of deep gotcha
+- CLAUDE.md depth bar raised (1200 bytes + ≥2 custom sections)
+- Worker production-correctness gotchas required (queue group + SIGTERM drain)
+- Env import.yaml "WHY not WHAT" comment depth rubric
+- Root README intro "connected to ..." must name plan-declared managed services
+
+---
+
+## Adding a new version
+
+When a new recipe run lands at `/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v{N}/`:
+
+1. **Run the content metrics script** to capture README/CLAUDE/gotcha/IG counts:
+   ```bash
+   /Users/fxck/www/zcp/eval/scripts/version_metrics.sh
+   ```
+
+2. **Run the session analyzer** on main + every subagent:
+   ```bash
+   python3 /Users/fxck/www/zcp/eval/scripts/analyze_bash_latency.py \
+     /Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v{N}/SESSIONS_LOGS/main-session.jsonl
+   ```
+
+3. **Compute wall clock** from first to last assistant event:
+   ```bash
+   f=/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v{N}/SESSIONS_LOGS/main-session.jsonl
+   grep -m1 '"type":"assistant"' $f | grep -o '"timestamp":"[^"]*"' | head -1
+   grep '"type":"assistant"' $f | tail -1 | grep -o '"timestamp":"[^"]*"' | tail -1
+   ```
+
+4. **Read `TIMELINE.md` end-to-end** — agent narrative, decisions, close-step findings.
+
+5. **Read every README.md side-by-side with v7** — evaluate gotcha authenticity, IG item depth, dedup state, fragment correctness.
+
+6. **Read every CLAUDE.md** (v16+) — check byte floor, custom section count beyond template, codebase-specificity.
+
+7. **Read one env import.yaml** (typically env 4 — Small Production) — evaluate comment depth against the WHY-not-WHAT rubric.
+
+8. **Grade each of S / C / O / W** independently (see [Rating methodology](#rating-methodology)). Overall = min.
+
+9. **Append a new entry** to the "Per-version log" section following the shape of v16 above. Include:
+   - Date, tier/shape, model, session logs path
+   - Wall clock, assistant events, tool calls
+   - Bash metrics (calls / total / very-long / dev-server sum / errored)
+   - Content metrics per codebase
+   - Close-step bugs (CRIT/WRONG/STYLE counts + actual findings list)
+   - Notable — what changed vs prior, what regressed, what improved
+   - Rating (S / C / O / W → overall) with a one-sentence justification
+
+10. **Update the "Cross-version summary" tables** — add the new row to both the content metrics table and the session metrics table.
+
+11. **Update the "Milestones and regressions" table** with a one-line entry naming the key structural change this version represents.
+
+12. **Commit** the doc change in its own commit so the version log has clean per-run history. Commit message shape:
+    ```
+    docs(recipe-log): v{N} entry — {one-line summary}
+    ```
+
+13. If this version surfaces a new class of regression, update `spec-recipe-quality-process.md` with the new check or rule being proposed, and link back to this doc's v{N} entry.
+
+---
+
+## Tooling references
+
+- **`eval/scripts/analyze_bash_latency.py`** — session-log bash latency + pattern analyzer
+- **`eval/scripts/version_metrics.sh`** — per-codebase content metrics table across all versions
+- **`eval/scripts/extract-tool-calls.py`** — stream-json → JSON summary of tool calls, knowledge queries, workflow actions, errors, retries
+- **`internal/tools/workflow_checks_*.go`** — the check suite enforcing content rules; read these to understand what WILL block a future run and why
+- **`internal/content/workflows/recipe.md`** — the agent-facing guidance; the rules here are what the next run will read
+- **`internal/workflow/recipe_gotcha_shape.go`** — the authenticity classifier (platformTerms, frameworkXPlatformTerms, failureModeTerms, scoring function)
+
+## Related docs
+
+- [spec-recipe-quality-process.md](spec-recipe-quality-process.md) — quality rules and how they're enforced
+- [spec-workflows.md](spec-workflows.md) — workflow step contracts, sub-step invariants, state model
+- [implementation-v9-findings.md](implementation-v9-findings.md), [implementation-v11-findings.md](implementation-v11-findings.md), [improvement-guide-v7-findings.md](improvement-guide-v7-findings.md), [improvement-guide-v8-findings.md](improvement-guide-v8-findings.md) — per-version deep-dives from the earlier phases; this log supersedes them as the ongoing record but they carry richer narrative for their individual runs
