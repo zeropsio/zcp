@@ -198,6 +198,16 @@ func TestInjectEagerTopics_GenerateShowcase(t *testing.T) {
 		"scaffold-subagent-brief", // topic ID must be referenced in header
 		"allowedHosts",            // content from dev-server-host-check block
 		"health-dashboard-only",   // content from scaffold-subagent-brief block
+		// v17 regression guard: scaffold sub-agents MUST be told that
+		// `/var/www/{hostname}/` is an SSHFS MOUNT on zcp and every
+		// executable command must ssh into the target container. v17
+		// failed because the brief lacked this and all three scaffold
+		// subagents ran `cd /var/www/{hostname} && npm install` on zcp,
+		// producing root-owned node_modules and broken absolute-path
+		// symlinks that required 16 min of recovery work over ssh.
+		"SSHFS network mount",
+		"Executable commands",
+		"write surface, not an execution surface",
 	}
 	for _, w := range wants {
 		if !stringsContains(got, w) {

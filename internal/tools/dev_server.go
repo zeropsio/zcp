@@ -30,8 +30,11 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, projectID string
 		Name: "zerops_dev_server",
 		Description: "Start, stop, probe, tail, or restart a long-running development server on a Zerops dev container. " +
 			"Replaces the hand-rolled `ssh host \"cmd &\"` + sleep + curl pattern that historically hit Bash's 120s timeout because the SSH channel stayed open on `&`-backgrounded commands. " +
-			"The tool detaches the process correctly (nohup + `< /dev/null` + disown), polls the health endpoint server-side in a single SSH round-trip, and returns structured {running, startMillis, healthStatus, logTail} so the agent can diagnose failures without a follow-up call. " +
-			"Prefer this tool over raw Bash + ssh for every dev-server lifecycle operation in the recipe workflow.",
+			"The tool launches the process via `ssh -T -n` + `setsid` with redirected stdio (all three are load-bearing), " +
+			"bounds every phase with a tight budget — spawn 8s, probe waitSeconds+5s, tail 5s — so a regression costs seconds not minutes, " +
+			"polls the health endpoint server-side in a single round-trip, and returns structured {running, startMillis, healthStatus, logTail, reason} " +
+			"with a specific reason code on failure (spawn_timeout, spawn_error, health_probe_*) so the agent can diagnose without a follow-up call. " +
+			"Prefer this tool over raw Bash + ssh for every dev-server lifecycle operation.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage dev server lifecycle",
 			IdempotentHint:  true,

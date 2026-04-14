@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"os"
 
@@ -30,6 +31,10 @@ type mockSSHDeployer struct {
 }
 
 func (m *mockSSHDeployer) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
+	return m.output, m.err
+}
+
+func (m *mockSSHDeployer) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return m.output, m.err
 }
 

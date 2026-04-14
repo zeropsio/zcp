@@ -400,13 +400,12 @@ The authoritative enumeration — which zerops.yaml files exist, how many setups
 
 **Use SSHFS for file operations, SSH for commands that need the base image's built-in tools** (scaffolders, `git init`, compiled binaries). Files placed on a mount are already present in the dev container; deploy doesn't "send" them, it triggers a build from what is already on disk.
 
-**Scaffold each codebase inside its own mount — never cross-contaminate.** Framework scaffolders write config files (`tsconfig.json`, `package.json`, `.npmrc`, `.vscode/`, `.gitignore`, framework-specific dotfiles) into whatever directory they run from, and they trust the process working directory as the project root. Running a scaffolder from the wrong SSH session — or `cd`-ing inside one SSH session to a path that belongs to a different service — silently overwrites the other codebase's config. Rules that apply to every multi-codebase plan:
+**Scaffold each codebase inside its own mount — never cross-contaminate.** Framework scaffolders write config files (`tsconfig.json`, `package.json`, `.npmrc`, `.vscode/`, `.gitignore`, framework-specific dotfiles) into whatever directory they run from, and they trust the process working directory as the project root. Running a scaffolder from the wrong SSH session — or pointing it at a path that belongs to a different service — silently overwrites the other codebase's config. Rules that apply to every multi-codebase plan:
 
-1. SSH into the dev service whose mount you are about to scaffold. Scaffolding the API codebase means SSH to the API dev service; scaffolding the frontend means SSH to the frontend dev service; scaffolding a separate-codebase worker means SSH to the worker dev service.
-2. `cd /var/www/{that service's hostname}/` before invoking the scaffolder.
-3. If the target dev service's base image does not ship the scaffolder's runtime (common example: a static-base frontend service has no Node interpreter), write the scaffold files directly via SSHFS from the agent's host context instead of invoking the scaffolder on the container.
-4. Never scaffold into `/tmp` and copy — scaffolder footprints always include hidden files you will miss.
-5. Never invoke a scaffolder from one service's SSH session while `cd`'d into another service's mount. The process working directory wins, and the "wrong" codebase's config files will be overwritten even though the shell prompt looks correct.
+1. SSH into the dev service whose codebase you are scaffolding. Scaffolding the API codebase means SSH to the API dev service; scaffolding the frontend means SSH to the frontend dev service; scaffolding a separate-codebase worker means SSH to the worker dev service. **Every scaffolder / install / build invocation happens inside that ssh session** — not on zcp against the SSHFS mount. From inside the container, the codebase lives at `/var/www` (the container's own path), not at `/var/www/{hostname}/` (which is the zcp-side mount path). So the correct shape is `ssh {hostname} "cd /var/www && <scaffolder>"`, NOT `cd /var/www/{hostname} && <scaffolder>` from zcp.
+2. If the target dev service's base image does not ship the scaffolder's runtime (common example: a static-base frontend service has no Node interpreter), write the scaffold files directly via Write/Edit against the SSHFS mount at `/var/www/{hostname}/` instead of invoking the scaffolder on the container. This is the ONLY safe zcp-side path — file writes via the mount, never execution.
+3. Never scaffold into `/tmp` and copy — scaffolder footprints always include hidden files you will miss.
+4. Never invoke a scaffolder from one service's SSH session while targeting a path that belongs to another service's codebase. The process working directory wins, and the "wrong" codebase's config files will be overwritten even though the shell prompt looks correct.
 
 </block>
 
@@ -720,6 +719,41 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 **Scaffold sub-agent brief — include verbatim (edit only the codebase-specific names and service list from the plan):**
 
 > You are scaffolding a health-dashboard-only skeleton. **You write infrastructure. You do NOT write features.** A feature sub-agent runs later with SSH access to live services and authors every feature section end-to-end (API routes + frontend components + worker payloads as a single unit). Your job is to give that sub-agent a healthy, deployable, empty canvas to build on.
+>
+> **⚠ CRITICAL: where commands run (read this FIRST, before writing any files)**
+>
+> You are running on the **zcp orchestrator container**, not on the target dev container. The path `/var/www/{hostname}/` on zcp is an **SSHFS network mount** — a bridge into the target container's `/var/www/`. It is a write surface, not an execution surface.
+>
+> **File writes** via Write/Edit/Read against `/var/www/{hostname}/` work correctly — you are editing the target container's filesystem through the mount. Do this for every source file, config, `package.json`, etc.
+>
+> **Executable commands** MUST run via SSH into the target container. Every `npm install`, `npm run build`, `tsc`, `vite build`, `nest build`, `npx`, `pnpm`, `yarn`, `composer`, `bundle`, `cargo`, `go build`, and `git init/add/commit` goes through:
+>
+> ```
+> ssh {hostname} "cd /var/www && <command>"
+> ```
+>
+> NOT through:
+>
+> ```
+> cd /var/www/{hostname} && <command>    # WRONG — runs on zcp against the mount
+> ```
+>
+> The reason this matters: zcp's uid/gid differs from the container's `zerops` user, the PATH is different, the node binary has a different ABI, and the mount is not a real filesystem for `.bin/` symlink resolution. Running `npm install` on zcp produces:
+>
+> 1. `node_modules/` owned by zcp-root instead of the container's `zerops` user — later operations on the container hit EACCES and need `sudo chown -R`
+> 2. Broken absolute-path symlinks in `node_modules/.bin/` that don't resolve inside the container — `sh: svelte-check: not found`, `sh: vite: not found`, `npx nest` returns ENOENT even though `node_modules/@nestjs/cli/` exists
+> 3. Native modules compiled against zcp's node binary that won't load on the container — mysterious `Error: Cannot find module` errors at runtime
+> 4. `.git/` owned by zcp-root so subsequent container-side git operations need `sudo chown` to work
+>
+> If your install or build logs show EACCES, "not found" for packages that are clearly installed, or ownership surprises, you are running commands on the wrong side of the boundary. Stop, re-read this section, and redo the failing step via `ssh {hostname}`.
+>
+> **Your normal workflow:**
+>
+> 1. Use Write/Edit to place files under `/var/www/{hostname}/` (the mount). No SSH needed.
+> 2. Use Bash with `ssh {hostname} "cd /var/www && <command>"` for every build / install / test / type-check.
+> 3. Do NOT `cd /var/www/{hostname}` in a Bash call. Ever.
+>
+> That's the complete rule — every deviation from it causes the symptoms above.
 >
 > **WRITE (frontend codebase):**
 >
@@ -1251,9 +1285,9 @@ Running app-level commands on zcp uses the wrong runtime, the wrong dependencies
 
 **Dev-server lifecycle is special — use `zerops_dev_server`, NOT raw SSH + `&`.**
 
-Starting a long-running dev server on a target container via `ssh host "cmd > log 2>&1 &"` holds the SSH channel open until Bash's 120s timeout fires, because the backgrounded child still owns the channel's stdout/stderr/stdin. Every prior recipe run hit this — v11 lost 358s on a single worker start, v15 lost 9 minutes across five calls, v16's feature sub-agent still burned 6 minutes on two starts that hit the 120s wall.
+Starting a long-running dev server on a target container via `ssh host "cmd > log 2>&1 &"` holds the SSH channel open until Bash's 120s timeout fires, because the backgrounded child still owns the channel's stdout/stderr/stdin. Every prior recipe run hit this — v11 lost 358s on a single worker start, v15 lost 9 minutes across five calls, v16's feature sub-agent still burned 6 minutes on two starts that hit the 120s wall. v17 tried a `nohup ... & disown` variant and hung for the full 300s ssh deadline before the tool timed out.
 
-The Tier 1 fix is a dedicated MCP tool: `zerops_dev_server`. Every dev-server start, stop, status probe, log tail, or restart goes through it. It detaches the process correctly (`nohup ... < /dev/null & disown`), polls the health endpoint server-side in a single SSH round-trip, and returns structured `{running, startMillis, healthStatus, logTail, reason}` so failures are diagnosable without a second call.
+The Tier 1 fix is a dedicated MCP tool: `zerops_dev_server`. Every dev-server start, stop, status probe, log tail, or restart goes through it. It launches the process via `ssh -T -n` + `setsid` with redirected stdio (all three are load-bearing: `-T` disables pty, `-n` closes client-side stdin, `setsid` moves the child into its own session/pgroup so sshd can close the channel the instant the outer shell exits). Every phase is bounded by a tight per-step budget — spawn 8s, probe waitSeconds+5s, tail 5s — so any future regression costs seconds not minutes. It polls the health endpoint server-side in a single SSH round-trip and returns structured `{running, startMillis, healthStatus, logTail, reason}` with a specific reason code on failure (`spawn_timeout`, `spawn_error`, `health_probe_timeout`, `health_probe_connection_refused`, `health_probe_http_<code>`) so failures are diagnosable without a second call.
 
 Correct shape:
 ```

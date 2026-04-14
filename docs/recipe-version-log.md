@@ -272,6 +272,7 @@ README line counts (per codebase):
 | v14 | 267 | 124 | 141 | 7 / 4 / 4 | 5 / 4 / 3 |
 | v15 | 281 | 123 | 166 | 6 / 4 / 4 | 6 / 4 / 3 |
 | v16 | 218 | 123 | 162 | 4 / 3 / 3 | 3 / 2 / 2 |
+| v17 | — | — | — | — (aborted) | — (aborted) |
 
 **v7 remains the gold standard for gotcha depth** (Meilisearch ESM-only, auto-indexing skips on redeploy, NATS queue group for HA). v10 collapsed to 0 gotchas on apidev and workerdev due to a tooling regression that's since been fixed. v14/v15 peaked on IG item count. v16 is the most compressed but also the most structurally clean.
 
@@ -288,6 +289,7 @@ README line counts (per codebase):
 | v14 | 2026-04-13 | 82 min | 313 | 196 | 90 | 12.7 min | 4 | 170s | 18 |
 | v15 | 2026-04-14 | 204 min | 326 | 203 | 63 | 17.0 min | 5 | 557s | 7 |
 | v16 | 2026-04-14 | 125 min | 370 | 233 | 78 | 7.5 min | **0** | 250s | 9 |
+| v17 | 2026-04-14 | **23 min (abort)** | 146 | 90 | 32 | 1.5 min | 0 | 6.4s | 9 |
 
 **v16 is the first run with zero very-long bash calls on main-session** — the dev-server wait discipline finally held. But the feature subagent in v16 still hit 360s of 404s total on two dev-server starts that used the old SSH pattern. v17 ships `zerops_dev_server` as a dedicated MCP tool to eliminate this class of error entirely.
 
@@ -306,6 +308,7 @@ README line counts (per codebase):
 | v14 | model gate, eager topics | feature subagent now enforced; close review 0 CRIT/0 WRONG (cleanest close ever) |
 | v15 | content quality regression | content peaked at 6/4/4 IG items but 5 WRONG in close (all dev-ops issues — npx tsc, SSHFS, Svelte curly, port 3000, Vite death) |
 | v16 | v8.67.0 structural rules landed | zero very-long bash, first run with CLAUDE.md split, content structurally cleanest; BUT 1 CRIT (StatusPanel queue→nats contract drift) + 6 WRONG in close |
+| v17 | v8.70.0 content pass + `zerops_dev_server` MCP tool | **first F-grade run — did not complete**. `zerops_dev_server` hung 300s on first call; scaffold sub-agents all ran commands zcp-side instead of ssh'ing into containers. User aborted at 23 min. |
 
 ---
 
@@ -589,6 +592,68 @@ README line counts (per codebase):
 - Worker production-correctness gotchas required (queue group + SIGTERM drain)
 - Env import.yaml "WHY not WHAT" comment depth rubric
 - Root README intro "connected to ..." must name plan-declared managed services
+
+---
+
+### v17 — F-grade: tool regression + scaffold sub-agent SSH regression
+
+- **Date**: 2026-04-14
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Model**: claude-opus-4-6[1m]
+- **Session logs**: `main-session.jsonl` + 3 scaffold subagent logs (no feature, no code-review, no close — run aborted)
+- **Wall**: 18:53:47 → 19:17:05 = **23 min (user abort)** — the fastest run on record for the wrong reason
+- **Assistant events**: 146, **Tool calls**: 90
+- **Bash metrics**: 32 calls / 1.5 min total / **0 very-long** / 4 dev-server starts (6.4s sum — all failed fast or were killed by context) / 0 port kills / 9 errored in main; subagents added 20 errored calls
+- **Subagents**: 3 scaffold (appdev / apidev / workerdev) — all completed "successfully" while running commands on the wrong host; no feature subagent, no code review, no close
+
+**Content metrics** (apidev / appdev / workerdev):
+- README lines: — / — / — (run aborted before generate)
+- Gotchas: — (never reached README generation)
+- IG items: — (never reached README generation)
+- CLAUDE.md: — (never reached README generation)
+
+**Close-step bugs**: N/A — run did not reach the close step. The two blocking bugs that aborted the run:
+
+1. **[TOOL REGRESSION]** `zerops_dev_server action=start hostname=apidev` hung for **exactly 300.05s** (the full `deployExecTimeout` ceiling in [internal/platform/deployer.go](../internal/platform/deployer.go)) and returned `dev_server start: spawn: ssh apidev: signal: killed`. The spawn shape in v8.70.0 used `nohup sh -c CMD > LOG 2>&1 < /dev/null & disown` — theoretically correct, empirically hung. Root-cause theories: non-interactive bash job control no-ops `disown`, ssh channel stayed open because backgrounded child inherited an fd, or the remote shell's exit path waited on a child process. The tool did not classify the failure — it surfaced `signal: killed` verbatim, which the agent interpreted as a transient ssh issue and retried. User aborted the retry at 19:17:05.
+
+2. **[PROMPT REGRESSION]** All three scaffold sub-agents ran commands **on the zcp orchestrator** instead of ssh'ing into their target containers. Every subagent bash call was `cd /var/www/{hostname} && <command>` with zero ssh calls across the three subagent logs. The scaffold-subagent-brief topic block in `recipe.md` said `Target mount: /var/www/appdev/` without explaining what a mount is or that executable commands must run inside the container via ssh. Downstream damage observed in the logs:
+   - `node_modules/.bin/svelte-check -> /var/svelte-check/bin/svelte-check` — **broken absolute-path symlinks** that don't resolve inside the container, owned by `root`
+   - `sh: vite: not found`, `sh: svelte-check: not found` — `.bin/` path resolution broke
+   - Main session had to `sudo rm -rf node_modules && npm install` over ssh to recover workerdev
+   - `.git/` dirs created zcp-side with wrong ownership — required `ssh {hostname} "sudo chown -R zerops:zerops /var/www/.git"` on all three containers
+
+**Operational breakdown of the 23 minutes**:
+- 00:00–03:00 — research, import, mount, env (healthy)
+- 03:00–07:00 — scaffold subagents run (3 min 48s total) while doing everything on the wrong host
+- 07:00–14:00 — main agent recovers from the scaffold damage over ssh: chown dances, `sudo rm -rf node_modules`, re-installs, debug of nest binary, `.vite-temp` permissions. **16 minutes of recovery work** on a run that should have had zero.
+- 14:00–17:30 — main agent completes generate, deploys all 3 services successfully
+- 17:30–22:30 — first `zerops_dev_server start apidev` hangs 300s
+- 22:30–23:20 — second `zerops_dev_server start` rejected by user abort
+
+**Notable**:
+- **First F-grade run** since the log was kept. Every prior run at least reached close step. v11's 8-hour cost was bad; v17's 23-minute abort is worse because nothing was learned about content or workflow discipline.
+- **First regression where the v17 flagship feature (`zerops_dev_server`) cost more than the v16 hand-rolled pattern** it was supposed to replace. v16 main-session had zero very-long bash calls; v17 had one 300s call. The tool's spawn-shape and per-call timeout were both wrong.
+- **First regression in scaffold subagent SSH discipline** since the log was kept. v6-v16 all had scaffold subagents ssh'ing correctly (implicitly or explicitly); v17 lost it because the brief wording was tightened to "Target mount" without the container-execution-boundary preamble.
+- **Hidden success**: the main agent's self-healing path (detect broken scaffold → chown → rm → reinstall over ssh) worked. If the scaffold regression had landed without the `zerops_dev_server` regression, the run would probably have completed 20-30 min late with damaged content. The combination of both regressions is what killed it.
+
+**Rating**: S=**F**, C=**F** (no content produced), O=F (aborted), W=F (workflow never reached deploy step) → **F**
+*Did not complete. The two independent regressions (tool + prompt) together produced the first abort in the tracked history.*
+
+**Fix shipped as v17.1 (after the abort, same day)**:
+- [internal/platform/deployer.go](../internal/platform/deployer.go) — added `sshArgsBg` (`-T -n -o BatchMode=yes -o ConnectTimeout=5`), `ExecSSHBackground(ctx, host, cmd, timeout)` with default-10s per-call deadline, and `platform.IsSpawnTimeout` classifier.
+- [internal/ops/dev_server_start.go](../internal/ops/dev_server_start.go) — new spawn shape:
+  ```
+  set -e; rm -f LOG || true; cd WORK; setsid sh -c CMD > LOG 2>&1 < /dev/null & echo "zcp-dev-server-spawned pid=$!"; exit 0
+  ```
+  Three bounded phases: spawn 8s, probe `waitSeconds+5s`, log-tail 5s. Worst-case cost of a future spawn regression: 8 seconds, not 300.
+- **Structured failure reasons**: `spawn_timeout`, `spawn_error`, `health_probe_timeout`, `health_probe_connection_refused`, `health_probe_http_<code>` — all documented on `DevServerResult.Reason`. Agents no longer see raw `signal: killed`.
+- **Spawn ack marker** (`zcp-dev-server-spawned pid=$!`) — the outer remote shell must print this right before `exit 0`. Its presence proves the shell reached the end of the script AND the backgrounded child's stdio redirects took effect. Missing marker becomes a diagnostic breadcrumb.
+- [internal/content/workflows/recipe.md](../internal/content/workflows/recipe.md) — scaffold-subagent-brief block prepended with a **⚠ CRITICAL: where commands run** section that explains SSHFS mount semantics, lists the four specific damage patterns (EACCES, broken `.bin/` symlinks, wrong node ABI, `.git` ownership), and gives the correct `ssh {hostname} "cd /var/www && ..."` shape with the wrong shape as a counter-example.
+- [internal/workflow/recipe_topic_registry_test.go](../internal/workflow/recipe_topic_registry_test.go) — eager-topic test now asserts `"SSHFS network mount"`, `"Executable commands"`, `"write surface, not an execution surface"` appear in the injected brief. v17 regression guard.
+- **8 SSHDeployer mocks updated** across ops/tools/integration to implement the new `ExecSSHBackground` method.
+- Tests written first (RED): spawn uses setsid + bg path + ack marker + tight timeout, spawn timeout returns `spawn_timeout`, spawn generic error returns `spawn_error`, missing ack handled gracefully, spawn ordering invariant (setsid < redirect < `&`).
+
+v17 is the shortest-lived and highest-signal run in the log. Two independent failure modes, both reproducible, both fixed by the next commit — the shortest recipe-log-to-fix loop on record.
 
 ---
 

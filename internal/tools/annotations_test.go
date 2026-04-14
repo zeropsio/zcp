@@ -49,6 +49,9 @@ func (*nopMounter) CleanupUnit(_ context.Context, _ string) error     { return n
 type nopSSH struct{}
 
 func (*nopSSH) ExecSSH(_ context.Context, _, _ string) ([]byte, error) { return nil, nil }
+func (*nopSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
+	return nil, nil
+}
 
 func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	t.Parallel()

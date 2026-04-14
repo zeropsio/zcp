@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
@@ -45,6 +46,10 @@ func (*nopMounter) CleanupUnit(_ context.Context, _ string) error     { return n
 type nopSSH struct{}
 
 func (*nopSSH) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
+	return []byte("push ok"), nil
+}
+
+func (*nopSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return []byte("push ok"), nil
 }
 

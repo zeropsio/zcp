@@ -25,6 +25,9 @@ type stubSSH struct {
 func (s *stubSSH) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
 	return s.output, s.err
 }
+func (s *stubSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
+	return s.output, s.err
+}
 
 func TestDeployTool_SSHMode(t *testing.T) {
 	t.Parallel()
@@ -358,6 +361,9 @@ func (s *stubSSHWithReadiness) ExecSSH(_ context.Context, _ string, command stri
 	if command == "true" {
 		return nil, s.readyErr
 	}
+	return s.deployOutput, s.deployErr
+}
+func (s *stubSSHWithReadiness) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
 	return s.deployOutput, s.deployErr
 }
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -13,16 +14,34 @@ import (
 type sshCall struct {
 	hostname string
 	command  string
+	// background is true when the call came through ExecSSHBackground.
+	background bool
+	// bgTimeout carries the timeout the caller passed to the background
+	// variant. Zero for foreground calls.
+	bgTimeout time.Duration
 }
 
 type mockSSHDeployer struct {
 	output []byte
 	err    error
-	calls  []sshCall
+	// bgOutput and bgErr override the defaults for background calls so
+	// tests can drive a spawn_timeout or spawn_error path independently
+	// from the foreground outputs.
+	bgOutput []byte
+	bgErr    error
+	calls    []sshCall
 }
 
 func (m *mockSSHDeployer) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
 	m.calls = append(m.calls, sshCall{hostname: hostname, command: command})
+	return m.output, m.err
+}
+
+func (m *mockSSHDeployer) ExecSSHBackground(_ context.Context, hostname, command string, timeout time.Duration) ([]byte, error) {
+	m.calls = append(m.calls, sshCall{hostname: hostname, command: command, background: true, bgTimeout: timeout})
+	if m.bgOutput != nil || m.bgErr != nil {
+		return m.bgOutput, m.bgErr
+	}
 	return m.output, m.err
 }
 
