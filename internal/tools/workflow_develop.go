@@ -104,6 +104,14 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		}
 	}
 
+	// Write develop marker so mount/import gates pass for this process.
+	if err := workflow.WriteDevelopMarker(engine.StateDir(), projectID, "develop"); err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Failed to write develop marker: %v", err),
+			"")), nil, nil
+	}
+
 	briefingText := workflow.BuildDevelopBriefing(targets, strategy, mode, engine.Environment(), engine.StateDir())
 
 	return jsonResult(workflow.DevelopBriefing{

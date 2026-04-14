@@ -76,24 +76,35 @@ func mountServer(mock platform.Client, mounter ops.Mounter) *mcp.Server {
 	return mountServerWithRT(mock, mounter, runtime.Info{}, nil)
 }
 
-func mountServerWithEngine(mock platform.Client, mounter ops.Mounter, engine *workflow.Engine) *mcp.Server {
-	return mountServerWithRT(mock, mounter, runtime.Info{}, engine)
-}
-
 func mountServerWithRT(mock platform.Client, mounter ops.Mounter, rtInfo runtime.Info, engine *workflow.Engine) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterMount(srv, mock, "proj-1", mounter, rtInfo, engine)
+	RegisterMount(srv, mock, "proj-1", mounter, rtInfo, "", engine)
 	return srv
 }
 
-// mountServerWithSession creates a server with an active bootstrap session for mount guard tests.
+// mountServerWithDevelop creates a server with a develop marker for workflow context tests.
+func mountServerWithDevelop(t *testing.T, mock platform.Client, mounter ops.Mounter) *mcp.Server {
+	t.Helper()
+	stateDir := t.TempDir()
+	if err := workflow.WriteDevelopMarker(stateDir, "proj-1", "test"); err != nil {
+		t.Fatalf("write develop marker: %v", err)
+	}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, stateDir, nil)
+	return srv
+}
+
+// mountServerWithSession creates a server with an active bootstrap session for workflow context tests.
 func mountServerWithSession(t *testing.T, mock platform.Client, mounter ops.Mounter) *mcp.Server {
 	t.Helper()
-	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+	stateDir := t.TempDir()
+	engine := workflow.NewEngine(stateDir, workflow.EnvContainer, nil)
 	if _, err := engine.BootstrapStart("proj-1", "test"); err != nil {
 		t.Fatalf("bootstrap start: %v", err)
 	}
-	return mountServerWithEngine(mock, mounter, engine)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, stateDir, engine)
+	return srv
 }
 
 func TestMountTool_Mount(t *testing.T) {
@@ -103,7 +114,7 @@ func TestMountTool_Mount(t *testing.T) {
 		{ID: "svc-1", Name: "app"},
 	})
 	mounter := newStubMounter()
-	srv := mountServerWithSession(t, mock, mounter)
+	srv := mountServerWithDevelop(t, mock, mounter)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
 		"action":          "mount",
@@ -318,6 +329,44 @@ func TestMountTool_UnmountOrphanUnit(t *testing.T) {
 	}
 }
 
+func TestMountTool_MountAllowedWithDevelopMarker(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "app"},
+	})
+	mounter := newStubMounter()
+	srv := mountServerWithDevelop(t, mock, mounter)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action":          "mount",
+		"serviceHostname": "app",
+	})
+
+	if result.IsError {
+		t.Errorf("mount should succeed with develop marker, got: %s", getTextContent(t, result))
+	}
+}
+
+func TestMountTool_MountAllowedWithBootstrapSession(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-1", Name: "app"},
+	})
+	mounter := newStubMounter()
+	srv := mountServerWithSession(t, mock, mounter)
+
+	result := callTool(t, srv, "zerops_mount", map[string]any{
+		"action":          "mount",
+		"serviceHostname": "app",
+	})
+
+	if result.IsError {
+		t.Errorf("mount should succeed with bootstrap session, got: %s", getTextContent(t, result))
+	}
+}
+
 func TestMountTool_MountBlockedWithoutWorkflow(t *testing.T) {
 	t.Parallel()
 
@@ -325,9 +374,9 @@ func TestMountTool_MountBlockedWithoutWorkflow(t *testing.T) {
 		{ID: "svc-1", Name: "app"},
 	})
 	mounter := newStubMounter()
-	// Engine without active session — mount should be blocked.
-	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
-	srv := mountServerWithEngine(mock, mounter, engine)
+	// stateDir with no develop marker and nil engine = no workflow context.
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, t.TempDir(), nil)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
 		"action":          "mount",
@@ -335,7 +384,7 @@ func TestMountTool_MountBlockedWithoutWorkflow(t *testing.T) {
 	})
 
 	if !result.IsError {
-		t.Error("mount action should be blocked without active workflow session")
+		t.Error("mount should be blocked without workflow context")
 	}
 	text := getTextContent(t, result)
 	if !strings.Contains(text, "workflow") {

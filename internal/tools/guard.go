@@ -10,22 +10,20 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// requireWorkflow checks that a workflow session is active.
-// Fails closed: returns error when engine is nil or no session exists.
-func requireWorkflow(engine *workflow.Engine) *mcp.CallToolResult {
-	if engine == nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrNotImplemented,
-			"Workflow engine unavailable — state directory could not be determined",
-			"Ensure ZCP runs from a valid working directory",
-		))
+// requireWorkflowContext checks that the agent is in an active workflow:
+// either a bootstrap/recipe session OR a develop marker for the current process.
+// Used by mount and import to ensure the agent has received knowledge before
+// performing infrastructure operations.
+func requireWorkflowContext(engine *workflow.Engine, stateDir string) *mcp.CallToolResult {
+	if engine != nil && engine.HasActiveSession() {
+		return nil
 	}
-	if engine.HasActiveSession() {
+	if workflow.HasDevelopMarker(stateDir) {
 		return nil
 	}
 	return convertError(platform.NewPlatformError(
 		platform.ErrWorkflowRequired,
-		"No active workflow session. This tool requires a workflow session.",
+		"No active workflow. This tool requires a workflow context.",
 		"Start a workflow: workflow=\"bootstrap\" (create/adopt infrastructure) or workflow=\"develop\" (develop/deploy/fix).",
 	))
 }

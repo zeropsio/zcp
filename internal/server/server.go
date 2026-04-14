@@ -110,10 +110,10 @@ func (s *Server) registerTools() {
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName)
-	tools.RegisterImport(s.server, s.client, projectID, stackCache, schemaCache, wfEngine)
+	tools.RegisterImport(s.server, s.client, projectID, stackCache, schemaCache, wfEngine, stateDir)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
 	tools.RegisterSubdomain(s.server, s.client, projectID)
-	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, wfEngine)
+	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine)
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed
 	// open→work→close lifecycle. agent-browser is pre-installed in the ZCP

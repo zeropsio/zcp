@@ -38,6 +38,33 @@ func TestBuildDevelopBriefing_PushGit_HasGitPushCommands(t *testing.T) {
 	if !strings.Contains(briefing, "git add") {
 		t.Error("push-git briefing should contain git commit instructions")
 	}
+	// Hostnames must be interpolated, not literal {dev} placeholders.
+	if strings.Contains(briefing, "{dev}") {
+		t.Error("push-git briefing must not contain literal {dev} placeholder — use real hostname")
+	}
+	if !strings.Contains(briefing, "ssh appdev") {
+		t.Error("push-git workflow should reference real hostname 'appdev' in SSH command")
+	}
+	if !strings.Contains(briefing, `targetService="appdev"`) {
+		t.Error("push-git workflow should reference real hostname 'appdev' in deploy command")
+	}
+}
+
+func TestBuildDevelopBriefing_PushGit_MultiTarget_AllListed(t *testing.T) {
+	t.Parallel()
+
+	targets := []BriefingTarget{
+		{Hostname: "apidev", Role: DeployRoleDev, RuntimeType: "nodejs@22", Strategy: StrategyPushGit},
+		{Hostname: "appdev", Role: DeployRoleDev, RuntimeType: "nodejs@22", Strategy: StrategyPushGit},
+	}
+	briefing := BuildDevelopBriefing(targets, StrategyPushGit, PlanModeDev, EnvContainer, "")
+
+	if !strings.Contains(briefing, `targetService="apidev"`) {
+		t.Error("close instructions should include apidev")
+	}
+	if !strings.Contains(briefing, `targetService="appdev"`) {
+		t.Error("close instructions should include appdev")
+	}
 }
 
 func TestBuildDevelopBriefing_Manual_InformsUser(t *testing.T) {

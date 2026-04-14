@@ -141,8 +141,10 @@ func BuildDevelopBriefing(targets []BriefingTarget, strategy, mode string, env E
 				fmt.Fprintf(&sb, "  - %s: `/var/www/%s/`\n", t.Hostname, t.Hostname)
 			}
 		}
+		sb.WriteString("- Mount recovery: if SSHFS mount becomes stale after deploy, use `zerops_mount action=\"mount\"` to remount\n")
 		sb.WriteString("- Agent Browser (agent-browser.dev) installed — use for browser-based testing/verification of deployed web apps\n")
 	}
+	sb.WriteString("- Service config changes (shared storage, scaling, nginx): use `zerops_import` with `override: true` to update existing services\n")
 	sb.WriteString("\n")
 
 	// Strategy note.
@@ -181,10 +183,7 @@ func writeBriefingDevWorkflow(sb *strings.Builder, targets []BriefingTarget, str
 
 	switch strategy {
 	case StrategyPushGit:
-		sb.WriteString("Edit code on the SSHFS mount. When ready:\n")
-		sb.WriteString("1. Commit: `ssh {dev} \"cd /var/www && git add -A && git commit -m 'description'\"`\n")
-		sb.WriteString("2. Push: `zerops_deploy targetService=\"{dev}\" setup=\"dev\" strategy=\"git-push\"`\n")
-		sb.WriteString("3. If CI/CD configured, stage deploys automatically.\n\n")
+		writeBriefingPushGitWorkflow(sb, targets)
 	case StrategyManual:
 		sb.WriteString("Edit code on the SSHFS mount. Tell the user when changes are ready to deploy.\n")
 		sb.WriteString("User controls deployment timing.\n\n")
@@ -195,6 +194,19 @@ func writeBriefingDevWorkflow(sb *strings.Builder, targets []BriefingTarget, str
 		} else {
 			writeBriefingPushDevWorkflow(sb, targets, mode)
 		}
+	}
+}
+
+func writeBriefingPushGitWorkflow(sb *strings.Builder, targets []BriefingTarget) {
+	for _, t := range targets {
+		if t.Role == DeployRoleStage {
+			continue
+		}
+		fmt.Fprintf(sb, "Edit code on `/var/www/%s/`. When ready:\n", t.Hostname)
+		fmt.Fprintf(sb, "1. Commit: `ssh %s \"cd /var/www && git add -A && git commit -m 'description'\"`\n", t.Hostname)
+		fmt.Fprintf(sb, "2. Push: `zerops_deploy targetService=\"%s\" strategy=\"git-push\"`\n", t.Hostname)
+		sb.WriteString("3. If CI/CD configured, stage deploys automatically.\n\n")
+		break // workflow section shows primary dev target; close instructions list all
 	}
 }
 
@@ -265,13 +277,15 @@ func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strat
 		writeBriefingDeployCommands(sb, targets, mode, env)
 	case StrategyPushGit:
 		sb.WriteString("When code changes are complete:\n")
+		step := 1
 		for _, t := range targets {
-			if t.Role == DeployRoleDev || t.Role == DeployRoleSimple {
-				fmt.Fprintf(sb, "1. Commit: `ssh %s \"cd /var/www && git add -A && git commit -m 'description'\"`\n", t.Hostname)
-				fmt.Fprintf(sb, "2. Push: `zerops_deploy targetService=\"%s\" strategy=\"git-push\"`\n", t.Hostname)
-				fmt.Fprintf(sb, "3. Verify: `zerops_verify serviceHostname=\"%s\"`\n", t.Hostname)
-				break
+			if t.Role == DeployRoleStage {
+				continue
 			}
+			fmt.Fprintf(sb, "%d. Commit: `ssh %s \"cd /var/www && git add -A && git commit -m 'description'\"`\n", step, t.Hostname)
+			step++
+			fmt.Fprintf(sb, "%d. Push: `zerops_deploy targetService=\"%s\" strategy=\"git-push\"`\n", step, t.Hostname)
+			step++
 		}
 	default:
 		sb.WriteString("When code changes are complete, deploy and verify:\n")

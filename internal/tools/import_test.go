@@ -32,7 +32,7 @@ func TestImportTool_Content(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t))
+	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t), "")
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
@@ -61,7 +61,7 @@ func TestImportTool_MissingContentAndFile(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t))
+	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t), "")
 
 	result := callTool(t, srv, "zerops_import", nil)
 
@@ -95,7 +95,7 @@ func TestImportTool_PollMultipleSuccess(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t))
+	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t), "")
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n  - hostname: db\n    type: postgresql@16\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
@@ -145,7 +145,7 @@ func TestImportTool_PollPartialFailure(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t))
+	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t), "")
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n  - hostname: db\n    type: postgresql@16\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
@@ -172,14 +172,15 @@ func TestImportTool_PollPartialFailure(t *testing.T) {
 func TestImportTool_NoWorkflowSession_Blocked(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
-	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
+	stateDir := t.TempDir()
+	engine := workflow.NewEngine(stateDir, workflow.EnvLocal, nil)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, engine)
+	RegisterImport(srv, mock, "proj-1", nil, nil, engine, stateDir)
 
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
 	if !result.IsError {
-		t.Error("expected IsError when no workflow session")
+		t.Error("expected IsError when no workflow context")
 	}
 	text := getTextContent(t, result)
 	if !strings.Contains(text, "WORKFLOW_REQUIRED") {
@@ -208,10 +209,38 @@ func TestImportTool_WithWorkflowSession_Succeeds(t *testing.T) {
 	}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, engine)
+	RegisterImport(srv, mock, "proj-1", nil, nil, engine, dir)
 
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
 	if result.IsError {
 		t.Errorf("unexpected IsError with active session: %s", getTextContent(t, result))
+	}
+}
+
+func TestImportTool_WithDevelopMarker_Succeeds(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "proj-1",
+			ProjectName: "myproject",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{ID: "svc-1", Name: "api", Processes: []platform.Process{
+					{ID: "p-1", ActionName: "serviceStackImport", Status: serviceStatusRunning},
+				}},
+			},
+		}).
+		WithProcess(&platform.Process{ID: "p-1", Status: statusFinished})
+
+	stateDir := t.TempDir()
+	if err := workflow.WriteDevelopMarker(stateDir, "proj-1", "test"); err != nil {
+		t.Fatalf("write develop marker: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterImport(srv, mock, "proj-1", nil, nil, nil, stateDir)
+
+	result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
+	if result.IsError {
+		t.Errorf("unexpected IsError with develop marker: %s", getTextContent(t, result))
 	}
 }

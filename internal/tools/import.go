@@ -18,16 +18,16 @@ type ImportInput struct {
 }
 
 // RegisterImport registers the zerops_import tool.
-func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine) {
+func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
-		Description: "REQUIRES active workflow session. Import services from YAML into the project. Validates service types, blocks until all processes complete. Returns final statuses (FINISHED/FAILED).",
+		Description: "REQUIRES active workflow (bootstrap or develop). Import services from YAML into the project. Validates service types, blocks until all processes complete. Returns final statuses (FINISHED/FAILED).",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Import services from YAML",
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ImportInput) (*mcp.CallToolResult, any, error) {
-		if blocked := requireWorkflow(engine); blocked != nil {
+		if blocked := requireWorkflowContext(engine, stateDir); blocked != nil {
 			return blocked, nil, nil
 		}
 		var liveTypes []platform.ServiceStackType

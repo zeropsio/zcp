@@ -648,3 +648,53 @@
 
 > This is a historical record. Verify current state via `zerops_discover`.
 <!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-13 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** 0198f0710db695dc
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-14 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** 555219b2083beab1
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-14 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** 3bda098468db61c4
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-14 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** ef8613f3d0b84164
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
+
+<!-- ZEROPS:REFLOG -->
+### 2026-04-14 — Bootstrap: Auto-adoption of existing services
+
+- **Runtime:** app (nodejs@22, dev)
+- **Dependencies:** db (postgresql@16)
+- **Session:** 84c78e65f6071514
+
+> This is a historical record. Verify current state via `zerops_discover`.
+<!-- /ZEROPS:REFLOG -->
