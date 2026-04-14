@@ -35,6 +35,8 @@ Define workspace services based on recipe type:
 - **role** — `app` / `api` for dual-runtime repo routing. Empty for managed services.
 - **sharesCodebaseWith** — worker-only; see the Worker codebase decision block in the showcase research section. Minimal recipes have no worker.
 
+**`research.dbDriver` is the DATABASE TYPE, not the ORM.** This field feeds the root README generator directly — whatever you write here lands on zerops.io/recipes as "connected to {dbDriver}". Valid values: `postgresql`, `mariadb`, `mysql`, `mongodb`, `sqlite`, `cockroachdb`, `clickhouse`, or `none` for recipes without a database. ORM / client-library names (`typeorm`, `prisma`, `sequelize`, `mongoose`, `eloquent`, `sqlalchemy`, `gorm`, `drizzle`, `kysely`, `knex`, ...) are rejected at research-complete time — v16's nestjs-showcase shipped with `dbDriver: "typeorm"` which leaked into the published recipe page as "A NestJS application connected to typeorm, Valkey, ...". The field name is misleading (it suggests an ORM) but the value is always a database name. Keep the ORM choice separate — it goes in the per-codebase README integration guide or CLAUDE.md.
+
 ### Submission
 Submit via:
 ```
@@ -1247,6 +1249,29 @@ cd /var/www/{hostname} && {command}          # WRONG — zcp against the mount
 
 Running app-level commands on zcp uses the wrong runtime, the wrong dependencies, the wrong env vars, has no managed-service reachability, AND exhausts zcp's fork budget. Symptom: `fork failed: resource temporarily unavailable` cascades. Recovery is `pkill -9 -f "agent-browser-"` on zcp + waiting for process reaping; the real fix is to stop running target-side commands zcp-side.
 
+**Dev-server lifecycle is special — use `zerops_dev_server`, NOT raw SSH + `&`.**
+
+Starting a long-running dev server on a target container via `ssh host "cmd > log 2>&1 &"` holds the SSH channel open until Bash's 120s timeout fires, because the backgrounded child still owns the channel's stdout/stderr/stdin. Every prior recipe run hit this — v11 lost 358s on a single worker start, v15 lost 9 minutes across five calls, v16's feature sub-agent still burned 6 minutes on two starts that hit the 120s wall.
+
+The Tier 1 fix is a dedicated MCP tool: `zerops_dev_server`. Every dev-server start, stop, status probe, log tail, or restart goes through it. It detaches the process correctly (`nohup ... < /dev/null & disown`), polls the health endpoint server-side in a single SSH round-trip, and returns structured `{running, startMillis, healthStatus, logTail, reason}` so failures are diagnosable without a second call.
+
+Correct shape:
+```
+zerops_dev_server action=start hostname=apidev command="npm run start:dev" port=3000 healthPath="/api/health"
+zerops_dev_server action=status hostname=apidev port=3000 healthPath="/api/health"
+zerops_dev_server action=logs   hostname=apidev lines=40
+zerops_dev_server action=stop   hostname=apidev port=3000
+zerops_dev_server action=restart hostname=apidev command="npm run start:dev" port=3000 healthPath="/api/health"
+```
+
+Anti-pattern to avoid (hits 120s timeout):
+```
+ssh apidev "cd /var/www && npm run start:dev > /tmp/nest.log 2>&1 &"    # WRONG — channel stays open
+ssh apidev "cd /var/www && npm run start:dev > /tmp/nest.log 2>&1 &" && sleep 8 && ssh apidev "curl -s http://localhost:3000/api/health"  # partial workaround; still leaves orphan on failure
+```
+
+The tool also eliminates the port-stuck / process-stuck recovery spirals that cost 5–10 SSH calls per run in v11/v13/v15 (pkill + fuser + retry dance). `action=stop` takes the same `port` + `command`/`processMatch` and tolerates "nothing to kill" as success.
+
 </block>
 
 <block name="dev-deploy-browser-walk">
@@ -1540,43 +1565,45 @@ Describe the debug round that forced the change. Example: "Bind NestJS to 0.0.0.
 <!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
 ```
 
-**Then write `CLAUDE.md` next to it** — plain markdown, no fragments, no extraction rules. Template:
+**Then write `CLAUDE.md` next to it** — plain markdown, no fragments, no extraction rules. The template below is the MINIMUM. A v17-compliant CLAUDE.md clears **1200 bytes** of substantive content AND carries **≥ 2 custom sections beyond the template** (Resetting dev state / Log tailing / Adding a managed service / Driving a test request — whatever operational knowledge you actually accumulated for this codebase):
 
 ```markdown
 # {Framework} {PrettyName} — Dev Operations
 
 Repo-local operations guide for anyone (human or Claude Code) working in this codebase after cloning. For the published recipe content (integration guide + platform gotchas), see README.md.
 
-## Dev loop
+## Dev Loop
 
 SSH into the dev container: `zcli vpn up` then `ssh zerops@{hostname}dev`.
+Start the dev server via `zerops_dev_server action=start hostname={hostname}dev command="<exact cmd>" port=<port> healthPath="<path>"` — do NOT hand-roll `ssh host "cmd &"` (hits the 120s SSH channel timeout).
+Source lives at `/var/www/` on the container, SSHFS-mounted from zcp at `/var/www/{hostname}dev/`.
 
-Start the dev server: `<exact command, e.g. npm run start:dev>` (watches source, hot-reloads on change).
-
-If the container was redeployed, the dev server process is gone — re-SSH and start it again.
-
-## Migrations & seed
+## Migrations & Seed
 
 Run manually: `<exact command>` — e.g. `npx ts-node src/migrate.ts` then `npx ts-node src/seed.ts`.
-
 On deploy, these run via `initCommands` wrapped with `zsc execOnce ${appVersionId}`. If the seeder crashed mid-insert and burned the key, touch any source file and redeploy to force a fresh `appVersionId`.
 
-## Container traps
+## Container Traps
 
 - **SSHFS ownership** — files land owned by `root`, container runs as `zerops` (uid 2023). `npm install` fails with `EACCES`. Fix: `sudo chown -R zerops:zerops /var/www/`.
 - **`npx tsc` resolves to deprecated tsc@2.0.4** — use `node_modules/.bin/tsc` instead.
-- **Port 3000 stuck after background command** — `fuser -k 3000/tcp` before restarting.
+- **Port 3000 stuck after background command** — `zerops_dev_server action=stop hostname={hostname}dev port=3000` (tolerates "nothing to kill").
 - *(add any other container-ecosystem traps you hit during this build)*
 
 ## Testing
 
 - Unit tests: `<command>`
-- Smoke check: `curl https://{hostname}dev-{projectId}-3000.prg1.zerops.app/health`
-
-## Useful references
-- README.md — what an integrator bringing their own codebase needs to change
-- zerops.yaml — build/run configuration with rationale comments
+- Smoke check: `zerops_dev_server action=status hostname={hostname}dev port=<port> healthPath="<path>"`
+- To exercise the full feature path: `<concrete curl sequence the agent actually ran>`
 ```
+
+**Now add at least 2 of these custom sections** (pick the ones that apply to this codebase):
+
+- **Resetting dev state** — how to drop/re-seed the database without a full redeploy (avoids the `appVersionId` rotation dance).
+- **Log tailing** — the exact log file path + `tail -f` command for each long-running process in this codebase, plus when to reach for `zerops_logs` instead.
+- **Driving a test job / endpoint** — a real curl (or psql / redis-cli / nats-cli) command sequence that exercises the feature path end-to-end on the dev container. For a worker, the exact NATS message shape + how to dispatch it from the API.
+- **Adding a new managed service** — the delta against this recipe's current zerops.yaml / import.yaml when the user wants to bolt on another dependency.
+- **Recovering from a burned `zsc execOnce` key** — the exact `touch` or file-mtime trick for THIS codebase's source tree, step by step.
 
 **Rules:**
 - Section headings (`## Integration Guide`) go OUTSIDE markers in README.md — they're visible but not extracted
@@ -1584,12 +1611,20 @@ On deploy, these run via `initCommands` wrapped with `zsc execOnce ${appVersionI
 - **All fragments**: blank line required after the start marker (intro, integration-guide, knowledge-base)
 - **Intro content**: plain text, no headings, 1-3 lines
 - **Step 1** of integration-guide must be `### 1. Adding \`zerops.yaml\`` with a description paragraph before the code block
-- **Worker codebase README** does not need the integration-guide code-block floor (workers rarely have user-facing code adjustments), but still needs all three fragments, the predecessor-floor gotchas, AND its own CLAUDE.md
+- **Worker codebase README** does not need the integration-guide code-block floor (workers rarely have user-facing code adjustments), but still needs all three fragments, the predecessor-floor gotchas, its own CLAUDE.md, AND the two production-correctness gotchas below.
 - **Fragment format is byte-literal.** The checker searches for `#ZEROPS_EXTRACT_START:{name}#` exactly. Do not guess.
-- **CLAUDE.md is required for every codebase, every tier.** No fragments, no minimum gotcha count, no authenticity scoring — just real repo-ops content (>= 300 bytes), no TODO/PLACEHOLDER markers.
+- **CLAUDE.md is required for every codebase, every tier.** Plain markdown, no fragments. **New v17 floors**: ≥ 1200 bytes of substantive content AND ≥ 2 custom sections beyond the template boilerplate (Dev Loop / Migrations / Container Traps / Testing). A 40-line file that only fills in the template fails the depth check.
 - **No fact appears in two README.md files.** If the fact applies to multiple codebases (NATS credentials, shared DB migration ownership), put it in exactly one README — by convention, the service most responsible for owning it (api for server-side wiring, app for frontend config) — and have the others cross-reference: `See apidev/README.md §Gotchas for NATS credential format.`
 - **No gotcha restates an integration-guide heading in the same README.** A gotcha must teach a symptom the guide did not cover. If your gotcha stem normalizes to the same tokens as an IG heading, rewrite it to focus on the observable symptom (error message, HTTP status, browser state) instead of the topic.
-- **Container-ops content (SSHFS uid fix, npx tsc trap, fuser -k, how to restart dev server)** goes in CLAUDE.md, NOT in README.md gotchas. README.md is for platform facts an integrator porting their own code cares about.
+- **Container-ops content (SSHFS uid fix, npx tsc trap, dev-server restart)** goes in CLAUDE.md, NOT in README.md gotchas. README.md is for platform facts an integrator porting their own code cares about.
+
+**Worker production-correctness gotchas (MANDATORY for every `isWorker: true` target with `sharesCodebaseWith` empty).** A separate-codebase worker README MUST carry gotchas covering BOTH of these production-correctness concerns — they are enforced at deploy-step completion by `{hostname}_worker_queue_group_gotcha` and `{hostname}_worker_shutdown_gotcha`:
+
+1. **Queue-group semantics under horizontal scaling.** Under Zerops `minContainers > 1`, a broker consumer without a queue group (NATS `queue: 'workers'`, Kafka consumer group, etc.) processes every message ONCE PER REPLICA — so a 2-container worker runs every job twice. A reader scaling out a fresh deployment will fill the database with duplicates and never know why. The gotcha stem must name the broker + "queue group" or "consumer group" + "minContainers" / "double-process" / "exactly once" / "per replica", and the body must show the exact client-library option that sets the group.
+
+2. **Graceful shutdown on SIGTERM.** Zerops sends SIGTERM to running containers during rolling deploys. A consumer that exits on SIGTERM without draining in-flight messages acks the batch, crashes, and loses the work. The gotcha stem must name SIGTERM or "graceful shutdown" or "in-flight" or "drain", and the body must show the concrete call sequence (catch SIGTERM → `nc.drain()` or equivalent → await → `process.exit(0)`).
+
+Both of these interact with Zerops-specific mechanisms (`minContainers` horizontal scaling, SIGTERM timing during rolling deploys) and belong in the PUBLISHED README, not CLAUDE.md — a porting user needs to know them before their first scaled deploy.
 
 **Completion:**
 ```
@@ -1624,6 +1659,8 @@ The template emits YAML structure + scaling values only — all prose commentary
 
 <block name="env-comment-rules">
 
+**Preprocessor directive** (applies to every env import.yaml that uses `<@...>`): when the finalize template emits `<@generateRandomString(<32>)>` or any other `<@` function, the file's FIRST non-empty line MUST be `#zeropsPreprocessor=on`. Without the directive, the Zerops import API imports the literal angle-bracket string as the env var value instead of running the preprocessor. The `{env}_preprocessor` check at finalize-complete enforces this whenever `<@` appears, regardless of whether the plan's `needsAppSecret` flag is set — v16 shipped all 6 files missing the directive because the check was wrongly gated on the flag.
+
 ### Step 1: Write one tailored comment set per environment
 
 The 6 envs are **not interchangeable** — each exists to describe a different deployment context. Copying one comment block into all 6 defeats the purpose. Tailor each env's prose to what makes THAT env distinct:
@@ -1655,6 +1692,19 @@ Every service that appears in a given env's import.yaml MUST have a comment expl
 - Dev-to-dev tone — like explaining your config to a colleague.
 - Reference framework commands where they add precision (e.g., the framework's dev start command, production dependency install flag, cache-warming CLI).
 - **Each env's import.yaml must be self-contained — do NOT reference other envs.** Each env is published as a standalone deploy target on zerops.io/recipes; users land on one env's page, click deploy, and never see the others. Phrases like "same as env 0", "Consider HA (env 5) for higher durability", "zsc execOnce is a no-op here but load-bearing in env 4" are meaningless out of context. Explain what THIS env does and why, without comparing to siblings.
+
+**The "WHY not WHAT" rubric is enforced by the `{env}_import_comment_depth` check.** Every env's import.yaml is scored on the fraction of comment blocks that contain at least one reasoning marker. A block passes when it contains any of:
+
+- **Consequence** — `because`, `otherwise`, `without`, `so that`, `means that`, `prevents`, `causes`, `leads to`, `results in`.
+- **Trade-off** — `instead of`, `rather than`, `in favor of`, `trade-off`.
+- **Constraint** — `must`, `required`, `cannot`, `forced`, `mandatory`, `never`, `always`, `guaranteed`.
+- **Operational consequence** — `rotation`, `rotate`, `redeploy`, `restart`, `scale`, `scaling`, `downtime`, `zero-downtime`, `rolling`, `fan-out`, `concurrent`, `race`, `lock`, `drain`.
+- **Framework × platform intersection** — `build time`, `build-time`, `runtime`, `cross-service`, `at startup`, `at runtime`, `at import time`, `at deploy time`.
+- **Decision framing** — `we chose`, `picked`, `default here`, `this tier`, `this env`, `matches prod`, `mirrors prod`.
+
+At least **35%** of substantive comment blocks (≥ 20 chars body, grouped across contiguous `#` lines) must hit one of these markers, with a hard floor of 2 reasoning blocks per env. Pure narration — "Small production — minContainers: 2 enables rolling deploys" — fails the check even though the sentence is grammatical and factual. Rewrite it to carry WHY: "minContainers: 2 **because** a single-container production pool can't roll deploys without a traffic gap." The difference is the reasoning marker forcing the comment to answer "what happens if we flip this decision".
+
+v16's env comments regressed to field narration because "describe what the field does" is the path of least resistance. The rubric exists to make reasoning comments cheaper to produce than narration ones, not to trick the agent into stuffing words. Each reasoning marker is a hook to explain what would go wrong if the decision flipped — anchor your comment on that, not on the field name.
 
 **Refining one env**: call `generate-finalize` again with only that env's entry under `envComments` — other envs are left untouched. Within an env, passing a service key with an empty string deletes its comment. Passing an empty project string leaves the existing project comment.
 

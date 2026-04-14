@@ -51,41 +51,198 @@ type GotchaEntry struct {
 // anchor a gotcha to the platform layer. Presence of any of these in the
 // body is strong evidence of an authentic platform/framework-intersection
 // gotcha rather than narration.
+//
+// Expanded in the v17 content pass: the v7 gold-standard set contained
+// deep insights like "Auto-indexing skips on redeploy seed runs" and
+// "NATS queue group mandatory for HA" that the original list did not
+// classify as authentic because it only covered ~30 terms. The fix is
+// to cover every Zerops mechanism name the agent is likely to reference
+// when describing a real platform × framework interaction.
 var platformTerms = []string{
+	// Core Zerops identity and routing layer
 	"zerops",
 	"l7 ",
 	"l7 balancer",
 	"balancer",
-	"execonce",
-	"zsc ",
-	"httpsupport",
-	"subdomain",
-	"0.0.0.0",
 	"vxlan",
+	"subdomain",
+	"reverse proxy",
+	"trust proxy",
+	"0.0.0.0",
+
+	// zerops.yaml shape — setup, base, build/run phases
+	"zerops.yaml",
 	"base:",
 	"setup: dev",
 	"setup: prod",
 	"setup: worker",
+	"zeropssetup",
+	"build.base",
+	"run.base",
+	"deployfiles",
+	"buildcommands",
+	"preparecommands",
 	"initcommands",
 	"readinesscheck",
 	"healthcheck",
-	"reverse proxy",
-	"trust proxy",
-	"cold start",
-	"dns resolution",
-	"path-style",
-	"virtual-hosted",
-	"advisory lock",
-	"os-level env",
-	"build time",
-	"build-time",
-	"deployfiles",
+	"httpsupport",
+	"httpget",
 	"node runtime",
 	"static base",
 	"static runtime",
 	"nginx",
+
+	// Deploy and container lifecycle primitives
+	"appversionid",
+	"execonce",
+	"zsc ",
+	"zsc execonce",
+	"retryuntilsuccessful",
+	"buildfromgit",
+	"cold start",
+	"container restart",
+	"deploy-time",
+	"deployment-time",
+
+	// Env var injection and cross-service references
+	"os-level env",
+	"project-level env",
+	"envsecrets",
+	"envvariables",
+	"${db_",
+	"${redis_",
+	"${queue_",
+	"${storage_",
+	"${search_",
+	"${cache_",
+	"_hostname}",
+	"_port}",
+	"_user}",
+	"_password}",
+	"_apiurl}",
+	"_accesskeyid}",
+	"_secretaccesskey}",
+	"_bucketname}",
+	"_masterkey}",
+	"_connectionstring}",
+	"cross-service",
+	"cross-service reference",
+	"service-level",
+	"project-level",
+
+	// Horizontal and vertical scaling
+	"mincontainers",
+	"maxcontainers",
+	"verticalautoscaling",
+	"verticalautoscale",
+	"minfreeramgb",
+	"horizontal",
+	"ha mode",
+	"non_ha",
+	"rolling deploy",
+	"rolling restart",
+	"drain connections",
+
+	// Managed service types (context-anchoring). We intentionally keep
+	// only Zerops-naming-specific values here — valkey is Zerops' own
+	// term, as is the vite-dev phrase. Bare service TYPE names like
+	// postgresql/nats/meilisearch/kafka are excluded: those are product
+	// names, not Zerops mechanisms, and their presence alone is not
+	// enough to anchor a gotcha to the platform layer.
 	"valkey",
+
+	// Integration pitfalls surfaced by Zerops' managed-service wiring
+	"dns resolution",
+	"path-style",
+	"virtual-hosted",
+	"advisory lock",
+	"queue group",
+	"noauth",
+	"authorization_violation",
+	"forcepathstyle",
+	"trustproxy",
+	"preprocessor",
+	"generaterandomstring",
+
+	// Build-time vs run-time distinction (important for SPA recipes)
+	"build time",
+	"build-time",
+	"runtime injection",
+	"build.envvariables",
+	"run.envvariables",
+	"import.meta.env",
+
+	// Dev loop specifics
 	"vite dev",
+	"startwithoutcode",
+	"startwithoutcode:",
+	"hot-reload",
+
+	// Production correctness vocabulary — these words anchor a gotcha
+	// to a concrete HA / concurrency / lifecycle concern.
+	"sigterm",
+	"graceful shutdown",
+	"in-flight",
+	"concurrent containers",
+	"race condition",
+	"double-process",
+	"double process",
+	"exactly once",
+	"at-most-once",
+	"reconnect",
+	"backoff",
+	"advisory lock contention",
+}
+
+// frameworkXPlatformTerms are framework library, SDK, and tool names
+// that on their own don't signal authenticity (a gotcha about "Meilisearch"
+// in isolation could easily be narration) but when combined with a
+// platform term in the same body indicate a genuine framework × platform
+// intersection insight. The v7 "Meilisearch SDK is ESM-only" and the
+// "Auto-indexing skips on redeploy seed runs" insights are the target
+// class here — deep framework-integration knowledge that the
+// predecessor-floor filter was wrongly penalizing in v16.
+var frameworkXPlatformTerms = []string{
+	"sdk",
+	"esm",
+	"commonjs",
+	"cjs",
+	"rolldown",
+	"rollup",
+	"webpack",
+	"esbuild",
+	"bundler",
+	"typeorm",
+	"sequelize",
+	"prisma",
+	"mongoose",
+	"activerecord",
+	"eloquent",
+	"sqlalchemy",
+	"gorm",
+	"diesel",
+	"hibernate",
+	"afterinsert",
+	"afterupdate",
+	"save hooks",
+	"save-hooks",
+	"entity manager",
+	"aws sdk",
+	"aws-sdk",
+	"putobject",
+	"listobjects",
+	"getobject",
+	"signaturev4",
+	"client library",
+	"peer dependency",
+	"peer-dependency",
+	"lockfile",
+	"package-lock",
+	"composer.json",
+	"pyproject",
+	"cargo.toml",
+	"swagger",
+	"openapi",
 }
 
 // failureModeTerms signal that a gotcha describes a concrete symptom the
@@ -165,25 +322,63 @@ var descriptivePatternSuffix = regexp.MustCompile(`(?i)\b(pattern|configuration|
 //
 // Scoring (authenticity points):
 //
-//   - +2 for any platform term in body or stem
-//   - +2 for any failure-mode term in body
+//   - +2 for the first distinct platform term match in body or stem
+//   - +1 for each additional distinct platform term (cap at +5 total)
+//   - +2 for any failure-mode term in body (negated by prevent/avoid markers)
+//   - +2 for framework × platform intersection — a framework/SDK/ORM
+//     term and a platform term co-occur in the same body. Catches the
+//     "Meilisearch SDK is ESM-only"-class deep insights the original
+//     scoring wrongly filtered out.
 //   - −1 for a synthetic opener in stem
 //   - −2 for a credential-description stem pattern
 //   - −2 for an obvious-restatement stem pattern
+//   - −2 for a descriptive-pattern suffix on the stem
 //
 // Score >= 1 → authentic. Score < 1 → synthetic. The cuts are tuned
-// against the v12 audit set.
+// against the v12 audit set plus the v17 expansion (framework × platform
+// intersections like "Meilisearch SDK is ESM-only" and "Auto-indexing
+// skips on redeploy seed runs").
 func ClassifyGotcha(stem, body string) GotchaShape {
 	stemLower := strings.ToLower(stem)
 	bodyLower := strings.ToLower(body)
 	combined := stemLower + " " + bodyLower
 
+	// Hard-synthetic overrides — stem shapes that are high-confidence
+	// narration regardless of what's in the body. A stem like "NATS
+	// authentication" or "Static base has no Node runtime" describes
+	// a design fact rather than a trap, and no amount of body text
+	// around it turns that into an authentic integration gotcha.
+	// These checks moved from score modifiers to hard overrides in
+	// the v17 pass because the expanded platformTerms list made it
+	// too easy to accumulate points on body mentions alone.
+	stemTrim := strings.TrimSpace(stem)
+	if credentialDescriptionPattern.MatchString(stemTrim) {
+		return ShapeSynthetic
+	}
+	if obviousRestatementPattern.MatchString(stem) {
+		return ShapeSynthetic
+	}
+	if descriptivePatternSuffix.MatchString(stem) {
+		return ShapeSynthetic
+	}
+
 	score := 0
 
+	// Platform terms — accumulate distinct matches, cap at +5 so a
+	// single gotcha that name-drops every Zerops mechanism doesn't
+	// dominate. First match is +2, each additional distinct match +1.
+	platformHits := 0
+	const maxPlatformScore = 5
 	for _, term := range platformTerms {
 		if strings.Contains(combined, term) {
-			score += 2
-			break
+			platformHits++
+		}
+	}
+	if platformHits > 0 {
+		score += 2
+		if platformHits > 1 {
+			bonus := min(platformHits-1, maxPlatformScore-2)
+			score += bonus
 		}
 	}
 
@@ -210,23 +405,23 @@ func ClassifyGotcha(stem, body string) GotchaShape {
 		}
 	}
 
-	for _, opener := range syntheticOpeners {
-		if strings.HasPrefix(stemLower, opener) {
-			score--
-			break
+	// Framework × platform intersection bonus — catches deep insights
+	// where a framework/SDK behavior interacts with a Zerops mechanism.
+	// Requires BOTH classes of terms to be present in the same gotcha.
+	if platformHits > 0 {
+		for _, term := range frameworkXPlatformTerms {
+			if strings.Contains(combined, term) {
+				score += 2
+				break
+			}
 		}
 	}
 
-	if credentialDescriptionPattern.MatchString(strings.TrimSpace(stem)) {
-		score -= 2
-	}
-
-	if obviousRestatementPattern.MatchString(stem) {
-		score -= 2
-	}
-
-	if descriptivePatternSuffix.MatchString(stem) {
-		score -= 2
+	for _, opener := range syntheticOpeners {
+		if strings.HasPrefix(stemLower, opener) {
+			score -= 2
+			break
+		}
 	}
 
 	if score >= 1 {

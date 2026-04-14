@@ -962,3 +962,68 @@ func TestLatestManagedVersion(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateRecipePlan_DBDriverRejectsORMs exercises the
+// research.dbDriver validation. v16's nestjs-showcase shipped
+// `dbDriver: "typeorm"` which leaked into the published root README
+// as "connected to typeorm" (TypeORM is an ORM library, not a
+// database). The validator now rejects ORM/client-library names at
+// research-complete time with a targeted error.
+func TestValidateRecipePlan_DBDriverRejectsORMs(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		driver string
+		bad    bool
+	}{
+		// Database names — valid.
+		{"postgresql accepted", "postgresql", false},
+		{"mariadb accepted", "mariadb", false},
+		{"mysql accepted", "mysql", false},
+		{"mongodb accepted", "mongodb", false},
+		{"none accepted", "none", false},
+		{"empty accepted", "", false},
+		// ORM library names — rejected.
+		{"typeorm rejected (v16 bug)", "typeorm", true},
+		{"prisma rejected", "prisma", true},
+		{"sequelize rejected", "sequelize", true},
+		{"mongoose rejected", "mongoose", true},
+		{"eloquent rejected", "eloquent", true},
+		{"sqlalchemy rejected", "sqlalchemy", true},
+		{"gorm rejected", "gorm", true},
+		// Query builders — rejected.
+		{"knex rejected", "knex", true},
+		{"kysely rejected", "kysely", true},
+		{"drizzle rejected", "drizzle", true},
+		// Unknown values — rejected with generic message.
+		{"garbage rejected", "asdf", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			plan := validMinimalPlan()
+			plan.Research.DBDriver = tc.driver
+			errs := ValidateRecipePlan(plan, nil, nil)
+			var dbDriverErr string
+			for _, e := range errs {
+				if strings.Contains(e, "research.dbDriver") {
+					dbDriverErr = e
+					break
+				}
+			}
+			if tc.bad && dbDriverErr == "" {
+				t.Errorf("expected dbDriver=%q to be rejected, got errs=%v", tc.driver, errs)
+			}
+			if !tc.bad && dbDriverErr != "" {
+				t.Errorf("expected dbDriver=%q to be accepted, got error: %s", tc.driver, dbDriverErr)
+			}
+			// v16-specific message contract: when rejecting typeorm,
+			// the error must name the ORM concept so the agent's retry
+			// knows what to fix.
+			if tc.driver == "typeorm" && !strings.Contains(dbDriverErr, "ORM") {
+				t.Errorf("typeorm error should mention 'ORM', got: %s", dbDriverErr)
+			}
+		})
+	}
+}

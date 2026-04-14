@@ -97,6 +97,41 @@ func TestClassifyGotcha(t *testing.T) {
 			body: "Zerops injects all environment variables as OS-level env vars. Creating a .env file with empty values will shadow the platform-injected values.",
 			want: ShapeAuthentic,
 		},
+		// ── v17 additions: deep framework × platform insights ──────
+		// These are the gotcha classes that v7 shipped but v16 filtered
+		// out. Each carries a real Zerops mechanism × framework-library
+		// interaction that a fresh integrator would hit but would not
+		// find in the predecessor recipe.
+		{
+			name: "real — auto-indexing skips on redeploy seed runs (v7 gold)",
+			stem: "Meilisearch search index stays empty after the second deploy",
+			body: "The seeder is gated by zsc execOnce ${appVersionId}, which skips the insert when the appVersionId has already been seen. TypeORM's save hooks only fire when rows are actually inserted, so the Meilisearch addDocuments sync never runs on a redeploy. Fix: write an idempotent indexing step that runs unconditionally in initCommands, separate from the seed.",
+			want: ShapeAuthentic,
+		},
+		{
+			name: "real — NATS queue group mandatory for HA (v7 gold)",
+			stem: "NATS subscription without a queue group double-processes under minContainers > 1",
+			body: "When a NATS consumer subscribes without the queue group option, every subscriber receives every message. On Zerops, minContainers: 2 on the worker means two containers each consume the same job, running it twice. Set the queue group option on the subscribe call so NATS distributes messages across replicas exactly once.",
+			want: ShapeAuthentic,
+		},
+		{
+			name: "real — Meilisearch SDK is ESM-only, breaks NestJS CJS build",
+			stem: "Meilisearch JS SDK is ESM-only",
+			body: "The official meilisearch client library is published ESM-only. NestJS's default CJS build fails with \"Cannot use import statement outside a module\" at runtime when bundled via nest build. Workarounds: use dynamic import(), switch NestJS output to ESM, or talk to Meilisearch over fetch() directly — the API surface is small enough that dropping the SDK is reasonable.",
+			want: ShapeAuthentic,
+		},
+		{
+			name: "real — SIGTERM drain for workers on Zerops",
+			stem: "Worker drops in-flight jobs on restart without SIGTERM drain",
+			body: "Zerops sends SIGTERM to running containers during rolling deploys. A NATS consumer that doesn't call drain() on SIGTERM acks the current batch then exits, losing any message that was in-flight at the time of the signal. The fix is a SIGTERM handler that calls nc.drain() and exits after the drain promise resolves.",
+			want: ShapeAuthentic,
+		},
+		{
+			name: "real — preprocessor directive required for <@generateRandomString>",
+			stem: "<@generateRandomString(<32>)> expands to the literal string without zeropsPreprocessor=on",
+			body: "The import.yaml preprocessor only runs when the file begins with #zeropsPreprocessor=on. Without the directive, Zerops imports the literal <@generateRandomString(<32>)> text as the env var value, leaving JWT_SECRET set to the literal angle-bracket string. The first auth request fails because the signed cookie verifies against a different key than the sign path used.",
+			want: ShapeAuthentic,
+		},
 	}
 
 	for _, tt := range tests {

@@ -238,6 +238,14 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 	// Comment line width.
 	checks = append(checks, checkCommentWidth(content, prefix)...)
 
+	// Comment depth rubric: grade comments on whether they explain
+	// WHY a decision was made, not just WHAT the field does. v7
+	// gold-standard comments carried production wisdom; v16 regressed
+	// to field narration. The rubric requires >= 35% of substantive
+	// comments to contain a reasoning marker (because, otherwise,
+	// without, rotation, rolling deploy, etc).
+	checks = append(checks, checkCommentDepth(content, prefix)...)
+
 	// Factual-claim linter: declarative numeric claims in comments
 	// ("10 GB quota", "minContainers 3") must match the adjacent YAML
 	// value in the same service block. Subjunctive phrasing ("bump to
@@ -264,19 +272,26 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 				Detail: "needsAppSecret=true but no project.envVariables found — shared secrets belong at project level, not per-service envSecrets",
 			})
 		}
+	}
 
-		// Preprocessor check when using generateRandomString.
-		if strings.Contains(content, "<@generateRandomString") {
-			if strings.Contains(content, "zeropsPreprocessor=on") {
-				checks = append(checks, workflow.StepCheck{
-					Name: prefix + "_preprocessor", Status: statusPass,
-				})
-			} else {
-				checks = append(checks, workflow.StepCheck{
-					Name: prefix + "_preprocessor", Status: statusFail,
-					Detail: "#zeropsPreprocessor=on required when using <@generateRandomString>",
-				})
-			}
+	// Preprocessor check — fires on ANY use of <@...> syntax, regardless of
+	// whether the plan has a framework secret. v16's nestjs-showcase hit this:
+	// the agent added JWT_SECRET with <@generateRandomString(<32>)> at project
+	// level even though NestJS has no framework secret (NeedsAppSecret=false),
+	// and the check was silently skipped because it was nested inside the
+	// NeedsAppSecret branch. Without the directive the Zerops import API may
+	// leave the literal "<@generateRandomString(<32>)>" string in the env var
+	// instead of generating a random value.
+	if strings.Contains(content, "<@") {
+		if strings.Contains(content, "zeropsPreprocessor=on") {
+			checks = append(checks, workflow.StepCheck{
+				Name: prefix + "_preprocessor", Status: statusPass,
+			})
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name: prefix + "_preprocessor", Status: statusFail,
+				Detail: "#zeropsPreprocessor=on required at the top of import.yaml when using <@...> preprocessor functions (generateRandomString, etc). Without the directive the literal <@...> string is imported verbatim instead of being expanded.",
+			})
 		}
 	}
 

@@ -117,6 +117,7 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 		{name: "zerops_env", title: "Manage environment variables", destructive: boolPtr(true)},
 		{name: "zerops_import", title: "Import services from YAML", destructive: boolPtr(true)},
 		{name: "zerops_mount", title: "Mount/unmount service filesystems", idempotent: true, destructive: boolPtr(false)},
+		{name: "zerops_dev_server", title: "Manage dev server lifecycle", idempotent: true, destructive: boolPtr(false)},
 	}
 
 	for _, tt := range tests {

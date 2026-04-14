@@ -103,6 +103,11 @@ func (s *Server) registerTools() {
 	// Mutating tools — deploy registration routes by environment.
 	if s.sshDeployer != nil {
 		tools.RegisterDeploySSH(s.server, s.client, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine)
+		// dev_server depends on the SSH deployer — it's the lifecycle
+		// primitive for background dev servers on target containers.
+		// Skipped in local-only mode where SSH to Zerops siblings is
+		// not available.
+		tools.RegisterDevServer(s.server, s.client, projectID, s.sshDeployer)
 	} else {
 		tools.RegisterDeployLocal(s.server, s.client, projectID, s.authInfo, s.logFetcher, stateDir, wfEngine)
 	}

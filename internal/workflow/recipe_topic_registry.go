@@ -230,8 +230,17 @@ var recipeDeployTopics = []*GuidanceTopic{
 	},
 	{
 		ID: "where-commands-run", Step: RecipeStepDeploy,
-		Description: "SSH vs zcp-side command execution model",
+		Description: "SSH vs zcp-side command execution model + zerops_dev_server lifecycle tool",
 		BlockNames:  []string{"where-commands-run"},
+		// Eager: the dev-server backgrounding pattern is the single
+		// biggest operational cost driver across every recipe run
+		// (v11: 541s, v15: 556s, v16: 249s — all hand-rolled SSH + `&`
+		// calls hitting the 120s bash timeout). The tool-based fix
+		// (`zerops_dev_server`) needs to land in context by default,
+		// not be discovered after hitting the timeout. Promoting this
+		// topic to eager inlines the SSH vs dev_server distinction
+		// whether the agent fetches it or not.
+		Eager: true,
 	},
 	{
 		ID: "browser-walk", Step: RecipeStepDeploy,

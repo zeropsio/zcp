@@ -402,6 +402,18 @@ func validateResearchFields(r ResearchData, tier, runtimeType string) []string {
 	if r.StartCommand == "" && !hasImplicitWebServer(runtimeType) {
 		errs = append(errs, "research.startCommand is required")
 	}
+	// dbDriver is the DATABASE name (postgresql / mariadb / mongodb / ...),
+	// not the client library or ORM. The generated root README intro
+	// renders this value directly via dbDisplayName; any non-database
+	// value leaks into published content as "connected to typeorm" or
+	// "connected to prisma" — factually wrong on the recipe page. v16
+	// nestjs-showcase shipped exactly this bug because the field name
+	// ("dbDriver") suggests an ORM. We reject ORM/client-library names
+	// at research-complete time with an actionable message naming the
+	// database you probably meant.
+	if err := validateDBDriver(r.DBDriver); err != "" {
+		errs = append(errs, err)
+	}
 
 	// Showcase-specific fields.
 	if tier == RecipeTierShowcase {
@@ -412,6 +424,49 @@ func validateResearchFields(r ResearchData, tier, runtimeType string) []string {
 	}
 
 	return errs
+}
+
+// validDBDrivers is the canonical set of database names accepted in
+// research.dbDriver. The generator's dbDisplayName only produces
+// pretty labels for the ones listed here; anything else renders as
+// the raw string (which is how v16's "typeorm" reached the published
+// root README). Reject at the source instead of linting downstream.
+//
+// This is the ONLY list that gates the field — there is no parallel
+// blacklist of ORM/library names. The positive check is complete:
+// if a value is not a recognized database, it is rejected. ORM
+// names, bundler names, and auth-library names all fall through
+// the allowlist uniformly, and the error message explains what the
+// field is for. A blacklist would duplicate the allowlist and rot
+// every time a new framework library ships.
+var validDBDrivers = map[string]bool{
+	"postgresql":  true,
+	"postgres":    true,
+	"pgsql":       true,
+	"mariadb":     true,
+	"mysql":       true,
+	"mongodb":     true,
+	"mongo":       true,
+	"sqlite":      true,
+	"cockroachdb": true,
+	"clickhouse":  true,
+	// Allowed sentinel values
+	"none": true,
+	"":     true, // empty is accepted; "none" is the explicit form
+}
+
+// validateDBDriver returns an error string when dbDriver is not a
+// recognized database name. Empty string means valid. The single
+// allowlist IS the rule — there is no ORM-name blacklist to curate.
+func validateDBDriver(driver string) string {
+	lower := strings.ToLower(strings.TrimSpace(driver))
+	if validDBDrivers[lower] {
+		return ""
+	}
+	return fmt.Sprintf(
+		"research.dbDriver = %q is not a recognized database name. Valid values: postgresql, mariadb, mysql, mongodb, sqlite, cockroachdb, clickhouse, or \"none\" for recipes without a database. The dbDriver field holds the managed database TYPE that Zerops provisions — NOT the ORM / client library / query builder you use to talk to it. The root README generator renders this value directly on the published recipe page as \"connected to %s\", so a non-database value (an ORM name like typeorm / prisma / sequelize / eloquent / sqlalchemy / gorm, or a query-builder name like knex / kysely / drizzle) leaks into zerops.io/recipes as a factual error. Pick the database the recipe provisions; keep your ORM choice in the per-codebase integration guide, not here.",
+		driver, driver,
+	)
 }
 
 // showcaseMissing returns the names of showcase-required fields that are empty.
