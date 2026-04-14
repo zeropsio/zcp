@@ -10,18 +10,10 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// PreFlightResult is the outcome of pre-deploy validation.
-// Returned as JSON to the LLM when validation fails, blocking deploy.
-type PreFlightResult struct {
-	Passed  bool                 `json:"passed"`
-	Checks  []workflow.StepCheck `json:"checks"`
-	Summary string               `json:"summary"`
-}
-
 // deployPreFlight validates zerops.yaml configuration BEFORE deploy execution.
 // This is the harness: it catches config errors that would cause silent deploy failures.
 // Returns nil when stateDir is empty (no state directory = skip validation).
-func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, targetHostname, setup string) (*PreFlightResult, error) {
+func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, targetHostname, setup string) (*workflow.StepCheckResult, error) {
 	if stateDir == "" {
 		return nil, nil //nolint:nilnil // nil,nil = skip validation when no state dir
 	}
@@ -47,7 +39,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 			Name: "zerops_yml_exists", Status: statusFail,
 			Detail: fmt.Sprintf("zerops.yaml not found or invalid: %v", parseErr),
 		})
-		return &PreFlightResult{
+		return &workflow.StepCheckResult{
 			Passed: false, Checks: checks, Summary: "zerops.yaml not found or invalid",
 		}, nil
 	}
@@ -67,7 +59,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 			Name: targetHostname + "_setup", Status: statusFail,
 			Detail: fmt.Sprintf("no setup entry %q found in zerops.yaml (also tried role %q, hostname %q)", tried, role, targetHostname),
 		})
-		return &PreFlightResult{
+		return &workflow.StepCheckResult{
 			Passed: false, Checks: checks,
 			Summary: fmt.Sprintf("no matching setup entry for %s", targetHostname),
 		}, nil
@@ -94,7 +86,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	if !allPassed {
 		summary = "pre-flight checks failed — fix issues before deploying"
 	}
-	return &PreFlightResult{
+	return &workflow.StepCheckResult{
 		Passed: allPassed, Checks: checks, Summary: summary,
 	}, nil
 }
@@ -105,17 +97,7 @@ func preflightRole(meta *workflow.ServiceMeta) string {
 	if mode == "" {
 		mode = workflow.PlanModeStandard
 	}
-	switch mode {
-	case workflow.PlanModeSimple:
-		return workflow.DeployRoleSimple
-	case workflow.PlanModeDev:
-		return workflow.DeployRoleDev
-	default:
-		if meta.StageHostname != "" {
-			return workflow.DeployRoleDev
-		}
-		return workflow.DeployRoleSimple
-	}
+	return workflow.RoleFromMode(mode, meta.StageHostname)
 }
 
 // resolveSetupEntry finds the zerops.yaml setup entry using priority:
@@ -138,8 +120,7 @@ func resolveSetupEntry(doc *ops.ZeropsYmlDoc, setup, role, hostname string) *ops
 	return doc.FindEntry(hostname)
 }
 
-// preflightEnvRefs validates env var references from the API.
-// Simplified version of validateDeployEnvRefs that doesn't need DeployTarget slice.
+// preflightEnvRefs validates env var references against live API data for a single target.
 func preflightEnvRefs(ctx context.Context, client platform.Client, projectID, hostname string, entry *ops.ZeropsYmlEntry) []workflow.StepCheck {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {

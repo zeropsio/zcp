@@ -120,14 +120,14 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "iterate":
 		return handleIterate(ctx, engine, client, cache)
 	case "complete":
-		active := detectActiveWorkflow(engine)
-		// Develop workflow is stateless — no session to complete.
-		if isDevelopStep(input.Step) && active != workflowDevelop {
+		// Develop is stateless — step-based completion is never valid.
+		if isDevelopStep(input.Step) {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
 				"Use zerops_deploy to deploy, zerops_verify to verify")), nil, nil
 		}
+		active := detectActiveWorkflow(engine)
 		if active == workflowRecipe {
 			return handleRecipeComplete(ctx, engine, client, cache, schemaCache, projectID, stateDir, input)
 		}
@@ -145,13 +145,14 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			"generate-finalize is only available during recipe workflow",
 			"")), nil, nil
 	case "skip":
-		active := detectActiveWorkflow(engine)
-		if isDevelopStep(input.Step) && active != workflowDevelop {
+		// Develop is stateless — step-based skipping is never valid.
+		if isDevelopStep(input.Step) {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
 				"Use zerops_deploy to deploy, zerops_verify to verify")), nil, nil
 		}
+		active := detectActiveWorkflow(engine)
 		if active == workflowRecipe {
 			return handleRecipeSkip(ctx, engine, input)
 		}

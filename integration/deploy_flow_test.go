@@ -34,8 +34,7 @@ func (m *mockSSHDeployer) ExecSSH(_ context.Context, _, _ string) ([]byte, error
 }
 
 // startDevelopWorkflow writes a service meta, zerops.yaml, and starts a develop workflow via MCP.
-// Deploy requires an active workflow session (requireWorkflow guard) and pre-flight validation
-// requires zerops.yaml to exist.
+// Pre-flight validation in zerops_deploy requires both the meta and zerops.yaml to exist.
 func startDevelopWorkflow(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 

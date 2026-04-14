@@ -46,7 +46,7 @@ func BuildBriefingTargets(metas []*ServiceMeta) ([]BriefingTarget, string) {
 
 		targets = append(targets, BriefingTarget{
 			Hostname: m.Hostname,
-			Role:     briefingRoleFromMode(metaMode, m.StageHostname),
+			Role:     RoleFromMode(metaMode, m.StageHostname),
 			Strategy: m.EffectiveStrategy(),
 		})
 
@@ -62,7 +62,9 @@ func BuildBriefingTargets(metas []*ServiceMeta) ([]BriefingTarget, string) {
 	return targets, mode
 }
 
-func briefingRoleFromMode(mode, stageHostname string) string {
+// RoleFromMode derives the deploy role from plan mode and stage pairing.
+// Used by both briefing target building and pre-flight role derivation.
+func RoleFromMode(mode, stageHostname string) string {
 	switch mode {
 	case PlanModeSimple:
 		return DeployRoleSimple
