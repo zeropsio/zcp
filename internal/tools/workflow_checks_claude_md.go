@@ -11,10 +11,36 @@ import (
 
 // minClaudeMdBytes is the minimum byte count for a substantive CLAUDE.md.
 // A shorter file is almost always a stub — "# TODO" or a single line of
-// placeholder. The floor is low enough that a genuinely small hello-world
-// dev-loop guide still clears it (~5 lines of SSH + start-server
-// commands), tight enough that trailing-newline stubs fail.
-const minClaudeMdBytes = 300
+// placeholder. Raised in the v16 content pass: 300 bytes produced ~39-line
+// CLAUDE.md files that hit the minimum and stopped, filling with
+// boilerplate "ssh in and start the dev server" narration. The bar now
+// demands enough volume for at least two sections of genuine repo-ops
+// content beyond the template header.
+const minClaudeMdBytes = 1200
+
+// minClaudeMdCustomSections is the number of H2/H3 headings a CLAUDE.md
+// must carry BEYOND the template boilerplate (Dev Loop / Migrations /
+// Container Traps / Testing). These extra sections force the agent to
+// document codebase-specific operational knowledge it would otherwise
+// omit: how to add a new managed service, how to reset the dev database,
+// how to tail logs, how to drive a test job by hand. Without the floor,
+// the agent settles for the four template headings and calls it done.
+const minClaudeMdCustomSections = 2
+
+// claudeMdTemplateHeadings are the boilerplate section headings that
+// appear in the CLAUDE.md template shipped with readme-fragments. These
+// are REQUIRED (verified by checkCLAUDEMdExists) but they don't count
+// toward the minCustomSections floor — the floor exists to force
+// content beyond the template.
+var claudeMdTemplateHeadings = map[string]bool{
+	"dev loop":              true,
+	"migrations & seed":     true,
+	"migrations and seed":   true,
+	"container traps":       true,
+	"testing":               true,
+	"testing / smoke check": true,
+	"smoke check":           true,
+}
 
 // checkCLAUDEMdExists verifies each codebase mount ships a CLAUDE.md
 // alongside README.md. The two files have distinct audiences and neither
@@ -62,7 +88,7 @@ func checkCLAUDEMdExists(projectRoot string, target workflow.RecipeTarget, plan 
 			Name:   checkName,
 			Status: statusFail,
 			Detail: fmt.Sprintf(
-				"CLAUDE.md not found at %s — every codebase must ship a repo-local dev-loop operations guide alongside README.md. README.md is PUBLISHED recipe content extracted to zerops.io/recipes (for integrators porting their own code). CLAUDE.md is REPO-LOCAL (for anyone, human or Claude Code, who clones this codebase to work in it). They have different audiences and neither substitutes for the other. Write CLAUDE.md during the deploy `readmes` sub-step alongside README.md. Contents: (1) how to SSH into the dev container, (2) exact command to start the dev server, (3) how to run migrations/seed manually, (4) container traps you hit (SSHFS uid fix, npx tsc wrong-package trap, fuser -k for stuck ports), (5) how to run tests. Use plain markdown — no fragment markers, no extraction rules. Fetch the template: zerops_guidance topic=\"claude-md\".",
+				"CLAUDE.md not found at %s — every codebase must ship a repo-local dev-loop operations guide alongside README.md. README.md is PUBLISHED recipe content extracted to zerops.io/recipes (for integrators porting their own code). CLAUDE.md is REPO-LOCAL (for anyone, human or Claude Code, who clones this codebase to work in it). They have different audiences and neither substitutes for the other. Write CLAUDE.md during the deploy `readmes` sub-step alongside README.md. Contents: (1) how to SSH into the dev container, (2) exact command to start the dev server, (3) how to run migrations/seed manually, (4) container traps you hit (SSHFS uid fix, npx tsc wrong-package trap, fuser -k for stuck ports), (5) how to run tests. Fetch the template via zerops_guidance topic=\"readme-fragments\" — the CLAUDE.md template is inside that block alongside the README fragments.",
 				path,
 			),
 		}}
@@ -73,7 +99,7 @@ func checkCLAUDEMdExists(projectRoot string, target workflow.RecipeTarget, plan 
 			Name:   checkName,
 			Status: statusFail,
 			Detail: fmt.Sprintf(
-				"%s is %d bytes — needs >= %d bytes of real repo-ops content. A stub like \"# CLAUDE.md\\nTODO\" is not enough. Narrate the dev loop you actually used during this build: the exact SSH command, the exact dev server startup line, the migration/seed commands, and any container traps you hit. Short is fine — tight narration beats padded boilerplate — but the file must actually carry the commands a returning developer needs to re-enter the workflow.",
+				"%s is %d bytes — needs >= %d bytes of substantive repo-ops content. Version 16's CLAUDE.md files cleared the old 300-byte floor with boilerplate (\"ssh into the container, start dev server, run migrations\") and stopped there. The bar is higher now: beyond the template headings (Dev Loop / Migrations / Container Traps / Testing), add codebase-specific operational sections the agent actually needs: how to add a new managed service, how to reset the dev database without a full redeploy, how to tail logs in each service, how to drive a test job or smoke a single endpoint by hand, how to recover from a burned `zsc execOnce` key. Be specific to THIS codebase's commands and ports.",
 				path, len(content), minClaudeMdBytes,
 			),
 		}}
@@ -88,7 +114,56 @@ func checkCLAUDEMdExists(projectRoot string, target workflow.RecipeTarget, plan 
 			),
 		}}
 	}
+
+	// Custom-section floor — enforce operational depth beyond template.
+	// Parse H2/H3 headings, drop the template boilerplate, count what's
+	// left. Fewer than minClaudeMdCustomSections means the agent wrote
+	// the template and stopped.
+	customSections := countClaudeMdCustomSections(content)
+	if customSections < minClaudeMdCustomSections {
+		return []workflow.StepCheck{{
+			Name:   checkName,
+			Status: statusFail,
+			Detail: fmt.Sprintf(
+				"%s has %d custom sections beyond the template boilerplate (Dev Loop / Migrations / Container Traps / Testing); needs at least %d. Add codebase-specific operational sections. Suggested: \"Adding a managed service\" (how to wire a new dependency without redeploying from scratch), \"Log Tailing\" (the exact `tail -f` paths for each process in this codebase), \"Resetting dev state\" (how to re-seed or drop tables without a redeploy cycle), \"Driving a test request\" (a real curl/grpcurl/psql command that exercises the feature path end-to-end on the dev container). Short sections are fine — a named section with 4 lines of specific commands beats a 20-line generic narration.",
+				path, customSections, minClaudeMdCustomSections,
+			),
+		}}
+	}
 	return []workflow.StepCheck{{
 		Name: checkName, Status: statusPass,
 	}}
+}
+
+// countClaudeMdCustomSections counts H2/H3 headings in a CLAUDE.md that
+// are NOT part of the boilerplate template (Dev Loop, Migrations,
+// Container Traps, Testing). Headings are matched case-insensitively and
+// trimmed of markdown decoration.
+func countClaudeMdCustomSections(content string) int {
+	custom := 0
+	for line := range strings.SplitSeq(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "## ") && !strings.HasPrefix(trimmed, "### ") {
+			continue
+		}
+		heading := strings.TrimLeft(trimmed, "# ")
+		// Strip trailing markdown emphasis and punctuation.
+		heading = strings.Trim(heading, " *_`.")
+		lower := strings.ToLower(heading)
+		if claudeMdTemplateHeadings[lower] {
+			continue
+		}
+		// Also skip variants with a leading number prefix like "## 1. Dev Loop".
+		for boilerplate := range claudeMdTemplateHeadings {
+			if strings.HasSuffix(lower, boilerplate) {
+				lower = "" // mark as template
+				break
+			}
+		}
+		if lower == "" {
+			continue
+		}
+		custom++
+	}
+	return custom
 }

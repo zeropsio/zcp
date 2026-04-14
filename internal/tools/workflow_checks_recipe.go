@@ -337,6 +337,15 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 	// their own guide items too.
 	checks = append(checks, checkGotchaRestatesGuide(hostname, string(readmeContent))...)
 
+	// Worker production correctness: separate-codebase worker targets must
+	// cover queue-group semantics and graceful shutdown in their README
+	// gotchas. These are Zerops-specific in their consequence (minContainers
+	// horizontal scaling triggers the queue-group bug; SIGTERM timing
+	// during rolling deploys triggers the shutdown bug) even though the
+	// remediation is framework-level. Shared-codebase workers skip this
+	// check; their operational knowledge lives in the host target README.
+	checks = append(checks, checkWorkerProductionCorrectness(hostname, string(readmeContent), target)...)
+
 	// CLAUDE.md: repo-local dev-loop operations guide. Lives alongside
 	// README.md on the mount, not extracted. Required for every tier
 	// because every recipe ships a dev container that needs a repo-local
