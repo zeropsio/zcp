@@ -50,6 +50,47 @@ func TestBuildDevelopBriefing_PushGit_HasGitPushCommands(t *testing.T) {
 	}
 }
 
+func TestBuildDevelopBriefing_PushGit_DecisionQuestion(t *testing.T) {
+	t.Parallel()
+
+	targets := []BriefingTarget{
+		{Hostname: "appdev", Role: DeployRoleDev, RuntimeType: "nodejs@22", Strategy: StrategyPushGit},
+	}
+	briefing := BuildDevelopBriefing(targets, StrategyPushGit, PlanModeDev, EnvContainer, "")
+
+	wantParts := []string{
+		"Ask the user",              // must ask, not assume
+		"push code to remote",       // option A
+		"CI/CD",                     // option B
+		"GIT_TOKEN",                 // prerequisite for push
+		".netrc",                    // auth mechanism
+		`workflow="cicd"`,           // route to CI/CD workflow
+	}
+	for _, part := range wantParts {
+		if !strings.Contains(briefing, part) {
+			t.Errorf("push-git briefing should contain %q", part)
+		}
+	}
+}
+
+func TestBuildDevelopBriefing_PushGit_Standard_SkipsStageInCommit(t *testing.T) {
+	t.Parallel()
+
+	targets := []BriefingTarget{
+		{Hostname: "appdev", Role: DeployRoleDev, RuntimeType: "nodejs@22", Strategy: StrategyPushGit},
+		{Hostname: "appstage", Role: DeployRoleStage, RuntimeType: "nodejs@22", Strategy: StrategyPushGit},
+	}
+	briefing := BuildDevelopBriefing(targets, StrategyPushGit, PlanModeStandard, EnvContainer, "")
+
+	// Only dev services should appear in commit/push steps (code lives on dev)
+	if !strings.Contains(briefing, "ssh appdev") {
+		t.Error("should reference dev hostname for commit")
+	}
+	if strings.Contains(briefing, "ssh appstage") {
+		t.Error("should NOT reference stage hostname for commit — code lives on dev")
+	}
+}
+
 func TestBuildDevelopBriefing_PushGit_MultiTarget_AllListed(t *testing.T) {
 	t.Parallel()
 

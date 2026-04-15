@@ -276,7 +276,14 @@ func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strat
 		sb.WriteString("Deploy commands for reference (user controls timing):\n")
 		writeBriefingDeployCommands(sb, targets, mode, env)
 	case StrategyPushGit:
-		sb.WriteString("When code changes are complete:\n")
+		sb.WriteString("When code changes are complete:\n\n")
+		sb.WriteString("**Ask the user:** Do you want to just push code to remote, or set up full CI/CD (automatic deploy on every push)?\n\n")
+		sb.WriteString("#### Option A: Push code to remote\n\n")
+		sb.WriteString("**Prerequisites:**\n")
+		sb.WriteString("- `GIT_TOKEN` project env var — GitHub fine-grained token (Contents: Read and write) or GitLab token (write_repository)\n")
+		sb.WriteString("- `.netrc` on the container for git auth:\n")
+		sb.WriteString("  `ssh {hostname} 'echo \"machine github.com login oauth2 password $GIT_TOKEN\" > ~/.netrc && chmod 600 ~/.netrc'`\n\n")
+		sb.WriteString("**Steps:**\n")
 		step := 1
 		for _, t := range targets {
 			if t.Role == DeployRoleStage {
@@ -287,6 +294,9 @@ func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strat
 			fmt.Fprintf(sb, "%d. Push: `zerops_deploy targetService=\"%s\" strategy=\"git-push\"`\n", step, t.Hostname)
 			step++
 		}
+		sb.WriteString("\n#### Option B: Full CI/CD\n\n")
+		sb.WriteString("Run: `zerops_workflow action=\"start\" workflow=\"cicd\"`\n")
+		sb.WriteString("This sets up automatic deploy on every git push (GitHub Actions with zcli).\n")
 	default:
 		sb.WriteString("When code changes are complete, deploy and verify:\n")
 		writeBriefingDeployCommands(sb, targets, mode, env)
