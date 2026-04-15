@@ -276,13 +276,21 @@ func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strat
 		sb.WriteString("Deploy commands for reference (user controls timing):\n")
 		writeBriefingDeployCommands(sb, targets, mode, env)
 	case StrategyPushGit:
+		// Find first dev hostname for prerequisite examples.
+		devHost := ""
+		for _, t := range targets {
+			if t.Role != DeployRoleStage {
+				devHost = t.Hostname
+				break
+			}
+		}
 		sb.WriteString("When code changes are complete:\n\n")
 		sb.WriteString("**Ask the user:** Do you want to just push code to remote, or set up full CI/CD (automatic deploy on every push)?\n\n")
 		sb.WriteString("#### Option A: Push code to remote\n\n")
 		sb.WriteString("**Prerequisites:**\n")
 		sb.WriteString("- `GIT_TOKEN` project env var — GitHub fine-grained token (Contents: Read and write) or GitLab token (write_repository)\n")
 		sb.WriteString("- `.netrc` on the container for git auth:\n")
-		sb.WriteString("  `ssh {hostname} 'echo \"machine github.com login oauth2 password $GIT_TOKEN\" > ~/.netrc && chmod 600 ~/.netrc'`\n\n")
+		fmt.Fprintf(sb, "  `ssh %s 'umask 077 && echo \"machine github.com login oauth2 password $GIT_TOKEN\" > ~/.netrc'`\n\n", devHost)
 		sb.WriteString("**Steps:**\n")
 		step := 1
 		for _, t := range targets {
