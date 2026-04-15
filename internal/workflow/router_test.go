@@ -219,6 +219,58 @@ func TestRoute_AlwaysIncludesUtilities(t *testing.T) {
 	}
 }
 
+func TestRoute_PushGit_DevelopHintMentionsGitPush(t *testing.T) {
+	t.Parallel()
+	input := RouterInput{
+		ServiceMetas: []*ServiceMeta{{
+			Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushGit,
+		}},
+		LiveServices: []string{"appdev"},
+	}
+	offerings := Route(input)
+	var developHint string
+	for _, o := range offerings {
+		if o.Workflow == "develop" {
+			developHint = o.Hint
+		}
+	}
+	if developHint == "" {
+		t.Fatal("expected develop offering")
+	}
+	// When push-git is dominant, the develop hint must tell the agent that
+	// pushing to a git remote requires starting this workflow first.
+	wantParts := []string{"git", "remote", "push"}
+	for _, part := range wantParts {
+		if !strings.Contains(strings.ToLower(developHint), part) {
+			t.Errorf("develop hint should mention %q for push-git strategy, got: %s", part, developHint)
+		}
+	}
+}
+
+func TestRoute_PushDev_DevelopHintNoGitMention(t *testing.T) {
+	t.Parallel()
+	input := RouterInput{
+		ServiceMetas: []*ServiceMeta{{
+			Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev,
+		}},
+		LiveServices: []string{"appdev"},
+	}
+	offerings := Route(input)
+	var developHint string
+	for _, o := range offerings {
+		if o.Workflow == "develop" {
+			developHint = o.Hint
+		}
+	}
+	if developHint == "" {
+		t.Fatal("expected develop offering")
+	}
+	// push-dev strategy should NOT have the git-specific hint.
+	if strings.Contains(strings.ToLower(developHint), "git remote") {
+		t.Errorf("push-dev develop hint should NOT mention git remote, got: %s", developHint)
+	}
+}
+
 func TestRoute_StaleMetaFiltering(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{

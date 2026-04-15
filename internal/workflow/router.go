@@ -139,11 +139,6 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 		}
 	}
 
-	// Always offer deploy — strategy is informational, resolved within flow.
-	offerings := []FlowOffering{{
-		Workflow: "develop", Priority: 1, Hint: `zerops_workflow action="start" workflow="develop"`,
-	}}
-
 	// Find dominant strategy for additional offerings.
 	var dominant string
 	var maxCount int
@@ -153,6 +148,15 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 			maxCount = c
 		}
 	}
+
+	// Always offer deploy — strategy-aware hint when push-git is dominant.
+	developHint := `zerops_workflow action="start" workflow="develop"`
+	if dominant == StrategyPushGit {
+		developHint += ` — REQUIRED before pushing code to a git remote (handles auth, GIT_TOKEN, push)`
+	}
+	offerings := []FlowOffering{{
+		Workflow: "develop", Priority: 1, Hint: developHint,
+	}}
 
 	if dominant == StrategyPushGit {
 		offerings = append(offerings,
