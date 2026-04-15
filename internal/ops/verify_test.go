@@ -578,45 +578,43 @@ func TestCheckHTTPRoot_Success(t *testing.T) {
 	}
 }
 
-func TestCheckHTTPRoot_Non200_Fail(t *testing.T) {
+// TestCheckHTTPRoot_NonFailingStatuses locks the "any non-5xx is a
+// pass" rule. Any response from the HTTP server proves it is listening
+// and serving HTTP — which is the only question http_root asks. 4xx
+// is legitimate for API-only services that don't route the root path.
+// 3xx is legitimate for frameworks that redirect / to /app or similar.
+// The rule change was made after every showcase run ever flagged apidev
+// as "degraded" because /api/health works but / returns 404.
+func TestCheckHTTPRoot_NonFailingStatuses(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name           string
 		handler        http.HandlerFunc
-		wantStatus     string
-		wantDetail     string
 		wantHTTPStatus int
 	}{
 		{
-			name: "502 Bad Gateway",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusBadGateway)
-				fmt.Fprint(w, "Bad Gateway")
-			},
-			wantStatus:     "fail",
-			wantDetail:     "HTTP 502",
-			wantHTTPStatus: 502,
-		},
-		{
-			name: "500 Internal Server Error",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprint(w, "Internal Server Error")
-			},
-			wantStatus:     "fail",
-			wantDetail:     "HTTP 500",
-			wantHTTPStatus: 500,
-		},
-		{
-			name: "404 Not Found",
+			name: "404 Not Found (API-only service with no root route)",
 			handler: func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNotFound)
 				fmt.Fprint(w, "Not Found")
 			},
-			wantStatus:     "fail",
-			wantDetail:     "HTTP 404",
 			wantHTTPStatus: 404,
+		},
+		{
+			name: "401 Unauthorized (auth-gated root)",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprint(w, "Unauthorized")
+			},
+			wantHTTPStatus: 401,
+		},
+		{
+			name: "405 Method Not Allowed",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			},
+			wantHTTPStatus: 405,
 		},
 	}
 
@@ -628,8 +626,66 @@ func TestCheckHTTPRoot_Non200_Fail(t *testing.T) {
 			defer srv.Close()
 
 			c := checkHTTPRoot(context.Background(), srv.Client(), srv.URL)
-			if c.Status != tt.wantStatus {
-				t.Errorf("status = %q, want %q", c.Status, tt.wantStatus)
+			if c.Status != CheckPass {
+				t.Errorf("status = %q, want pass (any HTTP response proves the server is alive)", c.Status)
+			}
+			if c.HTTPStatus != tt.wantHTTPStatus {
+				t.Errorf("httpStatus = %d, want %d", c.HTTPStatus, tt.wantHTTPStatus)
+			}
+		})
+	}
+}
+
+// TestCheckHTTPRoot_ServerError_Fail locks the other half of the rule:
+// 5xx responses DO fail the check. The server is reachable but broken.
+// This is the only status-based failure mode for http_root.
+func TestCheckHTTPRoot_ServerError_Fail(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		handler        http.HandlerFunc
+		wantDetail     string
+		wantHTTPStatus int
+	}{
+		{
+			name: "502 Bad Gateway",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadGateway)
+				fmt.Fprint(w, "Bad Gateway")
+			},
+			wantDetail:     "HTTP 502",
+			wantHTTPStatus: 502,
+		},
+		{
+			name: "500 Internal Server Error",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprint(w, "Internal Server Error")
+			},
+			wantDetail:     "HTTP 500",
+			wantHTTPStatus: 500,
+		},
+		{
+			name: "503 Service Unavailable",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+			},
+			wantDetail:     "HTTP 503",
+			wantHTTPStatus: 503,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := httptest.NewTLSServer(tt.handler)
+			defer srv.Close()
+
+			c := checkHTTPRoot(context.Background(), srv.Client(), srv.URL)
+			if c.Status != CheckFail {
+				t.Errorf("status = %q, want fail", c.Status)
 			}
 			if !strings.Contains(c.Detail, tt.wantDetail) {
 				t.Errorf("detail = %q, want to contain %q", c.Detail, tt.wantDetail)

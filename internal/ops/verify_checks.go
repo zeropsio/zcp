@@ -116,7 +116,17 @@ func checkStartupDetected(
 	return CheckResult{Name: name, Status: CheckPass}
 }
 
-// checkHTTPRoot performs GET / and expects a 2xx response.
+// checkHTTPRoot performs GET / and asks the question "is the HTTP server
+// responding at all?" — NOT "does / return a 2xx?". Any HTTP response
+// (2xx/3xx/4xx) proves the server is listening, binding the port, and
+// handling requests; only 5xx or a connection error means the server
+// is broken. Older versions of this check treated 404 as a failure,
+// which flagged every API-only service that only routes /api/* as
+// "degraded" in every single run — the root path is legitimately not
+// served by API scaffolds, and downgrading the whole service for it is
+// noise, not signal. The dedicated checkHTTPStatus against /status
+// carries the "is the health endpoint happy?" semantics; http_root
+// carries the weaker "is the HTTP listener alive?" semantics.
 func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckResult {
 	name := checkNameHTTPRoot
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -133,9 +143,14 @@ func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckRe
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 201))
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	// 2xx / 3xx / 4xx — any response proves the HTTP server is up and
+	// serving. 4xx means "you asked for something I don't have" which
+	// is still proof of life.
+	if resp.StatusCode < 500 {
 		return CheckResult{Name: name, Status: CheckPass, HTTPStatus: resp.StatusCode}
 	}
+	// 5xx — the server is reachable but broken. This is the only
+	// http_root outcome that downgrades the service to degraded.
 	detail := fmt.Sprintf("HTTP %d", resp.StatusCode)
 	if len(body) > 0 {
 		detail += ": " + truncateBody(body, 200)
