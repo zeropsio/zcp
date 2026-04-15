@@ -244,6 +244,7 @@ func TestValidateRecipePlan_DualRuntimeShowcase(t *testing.T) {
 			{Hostname: "storage", Type: "object-storage"},
 			{Hostname: "search", Type: "meilisearch@1"},
 		},
+		Features: validShowcaseFeatures(),
 	}
 
 	errs := ValidateRecipePlan(plan, nil, nil)
@@ -291,6 +292,7 @@ func TestValidateRecipePlan_ThreeRepoShowcase(t *testing.T) {
 			{Hostname: "storage", Type: "object-storage"},
 			{Hostname: "search", Type: "meilisearch@1"},
 		},
+		Features: validShowcaseFeatures(),
 	}
 
 	errs := ValidateRecipePlan(plan, nil, nil)

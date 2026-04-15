@@ -127,36 +127,44 @@ func fixtureForShape(s RecipeShape) *RecipePlan {
 // Regression guard: if a predicate accidentally fires on hello-world, its
 // cap blows. If a new block is added without its predicate, its cap
 // blows. If content grows >1.5 KB in a section, its cap blows.
+//
+// research cap bumps (post v18 — Features schema work): the feature
+// declaration guidance added ~1 KB to research-minimal and ~2 KB to
+// research-showcase (Features contract explainer + example). Caps
+// were raised from 5→7 KB (narrow) and 10→13 KB (wide). Other sections
+// gained smaller amounts (client-code-observable-failure,
+// init-script-loud-failure, feature-sweep blocks) — generate and
+// deploy caps bumped +2 KB each.
 var showcaseStepCaps = map[RecipeShape]map[string]int{
 	ShapeHelloWorld: {
-		RecipeStepResearch:  5 * 1024,
+		RecipeStepResearch:  7 * 1024,
 		RecipeStepProvision: 18 * 1024,
-		RecipeStepGenerate:  22 * 1024,
-		RecipeStepDeploy:    24 * 1024,
+		RecipeStepGenerate:  24 * 1024,
+		RecipeStepDeploy:    26 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},
 	ShapeBackendMinimal: {
-		RecipeStepResearch:  5 * 1024,
+		RecipeStepResearch:  7 * 1024,
 		RecipeStepProvision: 18 * 1024,
-		RecipeStepGenerate:  30 * 1024,
-		RecipeStepDeploy:    24 * 1024,
+		RecipeStepGenerate:  32 * 1024,
+		RecipeStepDeploy:    26 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},
 	ShapeFullStackShowcase: {
-		RecipeStepResearch:  10 * 1024,
+		RecipeStepResearch:  14 * 1024,
 		RecipeStepProvision: 18 * 1024,
-		RecipeStepGenerate:  43 * 1024,
-		RecipeStepDeploy:    42 * 1024,
+		RecipeStepGenerate:  45 * 1024,
+		RecipeStepDeploy:    44 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},
 	ShapeDualRuntimeShowcase: {
-		RecipeStepResearch:  10 * 1024,
+		RecipeStepResearch:  14 * 1024,
 		RecipeStepProvision: 23 * 1024,
-		RecipeStepGenerate:  46 * 1024,
-		RecipeStepDeploy:    42 * 1024,
+		RecipeStepGenerate:  48 * 1024,
+		RecipeStepDeploy:    44 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},

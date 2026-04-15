@@ -31,6 +31,7 @@ func validMinimalPlan() RecipePlan {
 		Targets: []RecipeTarget{
 			{Hostname: "app", Type: "php-nginx@8.4", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
+		Features: []RecipeFeature{validGreetingFeature()},
 	}
 }
 
@@ -61,6 +62,7 @@ func validShowcasePlan() RecipePlan {
 		{Hostname: "storage", Type: "object-storage"},
 		{Hostname: "search", Type: "meilisearch@1"},
 	}
+	p.Features = validShowcaseFeatures()
 	return p
 }
 

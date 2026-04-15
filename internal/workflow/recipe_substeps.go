@@ -31,20 +31,22 @@ import (
 //     from the actual debug rounds the agent just lived through. Replaces
 //     generate-time readme.
 const (
-	SubStepScaffold     = "scaffold"
-	SubStepAppCode      = "app-code"
-	SubStepSmokeTest    = "smoke-test"
-	SubStepZeropsYAML   = "zerops-yaml"
-	SubStepDeployDev    = "deploy-dev"
-	SubStepStartProcs   = "start-processes"
-	SubStepVerifyDev    = "verify-dev"
-	SubStepInitCommands = "init-commands"
-	SubStepSubagent     = "subagent"
-	SubStepSnapshotDev  = "snapshot-dev"
-	SubStepBrowserWalk  = "browser-walk"
-	SubStepCrossDeploy  = "cross-deploy"
-	SubStepVerifyStage  = "verify-stage"
-	SubStepReadmes      = "readmes"
+	SubStepScaffold          = "scaffold"
+	SubStepAppCode           = "app-code"
+	SubStepSmokeTest         = "smoke-test"
+	SubStepZeropsYAML        = "zerops-yaml"
+	SubStepDeployDev         = "deploy-dev"
+	SubStepStartProcs        = "start-processes"
+	SubStepVerifyDev         = "verify-dev"
+	SubStepInitCommands      = "init-commands"
+	SubStepSubagent          = "subagent"
+	SubStepSnapshotDev       = "snapshot-dev"
+	SubStepFeatureSweepDev   = "feature-sweep-dev"
+	SubStepBrowserWalk       = "browser-walk"
+	SubStepCrossDeploy       = "cross-deploy"
+	SubStepVerifyStage       = "verify-stage"
+	SubStepFeatureSweepStage = "feature-sweep-stage"
+	SubStepReadmes           = "readmes"
 )
 
 // initSubSteps returns the sub-step sequence for a step based on plan shape.
@@ -83,13 +85,23 @@ func deploySubSteps(plan *RecipePlan) []RecipeSubStep {
 		SubStepInitCommands,
 	}
 	if isShowcase(plan) {
-		// Feature sub-agent → snapshot current code → browser walk. The
-		// snapshot step persists the sub-agent's output to appdev's
-		// deployed artifact so a mid-run container crash can't eat the
-		// work (there is no git remote at this phase).
-		names = append(names, SubStepSubagent, SubStepSnapshotDev, SubStepBrowserWalk)
+		// Feature sub-agent → snapshot current code → feature sweep →
+		// browser walk. The snapshot step persists the sub-agent's
+		// output to appdev's deployed artifact so a mid-run container
+		// crash can't eat the work (there is no git remote at this
+		// phase). The feature sweep immediately after snapshot is the
+		// curl-level gate that catches the content-type trap on every
+		// declared api-surface feature before the browser walk runs —
+		// v18's search-returns-HTML bug would have failed here.
+		names = append(names, SubStepSubagent, SubStepSnapshotDev, SubStepFeatureSweepDev, SubStepBrowserWalk)
+	} else {
+		// Minimal (and hello-world) recipes: feature sweep runs right
+		// after init commands, since there is no feature sub-agent
+		// phase. Every declared api-surface feature must respond with
+		// 200 + application/json before cross-deploy proceeds.
+		names = append(names, SubStepFeatureSweepDev)
 	}
-	names = append(names, SubStepCrossDeploy, SubStepVerifyStage, SubStepReadmes)
+	names = append(names, SubStepCrossDeploy, SubStepVerifyStage, SubStepFeatureSweepStage, SubStepReadmes)
 
 	steps := make([]RecipeSubStep, len(names))
 	for i, n := range names {

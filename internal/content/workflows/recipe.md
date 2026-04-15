@@ -37,6 +37,18 @@ Define workspace services based on recipe type:
 
 **`research.dbDriver` is the DATABASE TYPE, not the ORM.** This field feeds the root README generator directly — whatever you write here lands on zerops.io/recipes as "connected to {dbDriver}". Valid values: `postgresql`, `mariadb`, `mysql`, `mongodb`, `sqlite`, `cockroachdb`, `clickhouse`, or `none` for recipes without a database. ORM / client-library names (`typeorm`, `prisma`, `sequelize`, `mongoose`, `eloquent`, `sqlalchemy`, `gorm`, `drizzle`, `kysely`, `knex`, ...) are rejected at research-complete time — v16's nestjs-showcase shipped with `dbDriver: "typeorm"` which leaked into the published recipe page as "A NestJS application connected to typeorm, Valkey, ...". The field name is misleading (it suggests an ORM) but the value is always a database name. Keep the ORM choice separate — it goes in the per-codebase README integration guide or CLAUDE.md.
 
+### Features — the declaration/verification contract
+
+`plan.features` lists every user-observable capability the recipe demonstrates. Generate scaffolds them, deploy curls each `healthCheck` and browser-walks each UI surface, close re-runs both. A feature not on the list cannot be verified; a feature on the list cannot be skipped.
+
+Each `RecipeFeature` carries `id` (lowercase slug, unique), `description` (≥10 chars), `surface` (one or more of `api`, `ui`, `worker`, `db`, `cache`, `storage`, `search`, `queue`, `mail`). Features with `api` surface require `healthCheck` (path starting with `/`). Features with `ui` surface require `uiTestId` (the scaffold's `data-feature` value), `interaction` (how the browser walk exercises it), and `mustObserve` (state change proving success — "no results" is a failure by default).
+
+Hello-world recipes declare one feature covering their single capability. Minimal recipes usually declare 1–3. Showcase recipes MUST cover every managed service in the plan — see the showcase research section for the coverage mandate.
+
+```json
+{"id":"greeting","description":"Fetch a greeting from the DB and render it.","surface":["api","ui","db"],"healthCheck":"/api/greeting","uiTestId":"greeting","interaction":"Open page; observe [data-feature=\"greeting\"] populate.","mustObserve":"[data-feature=\"greeting\"] [data-value] text is non-empty."}
+```
+
 ### Submission
 Submit via:
 ```
@@ -109,6 +121,20 @@ Choose SHARED **only when ALL three tests pass**:
 **When in doubt, SEPARATE.** Generic queue libraries (BullMQ, agenda, etc.) fail test 1 and land on SEPARATE. Cross-runtime sharing is rejected by validation. The 3-repo case (frontend + API + worker, all separate repos, worker and API on the same runtime base) is fully supported — leave `sharesCodebaseWith` empty.
 
 Provision and generate will use this decision to shape the import.yaml, the zerops.yaml files, and the deploy flow. You don't need to think about the mechanics now — just make the decision.
+
+### Showcase Features — coverage mandate
+
+See `research-minimal` for the `RecipeFeature` schema. Showcase adds a coverage mandate: the validator requires at least one feature per managed-service kind in the plan (`db`, `cache`, `storage`, `search`, `queue`, `mail` — whichever apply), plus the always-required `api` + `ui` surfaces, plus `worker` when a worker target exists. A standard showcase declares 5–6 features whose `surface` union covers `{api, ui, worker, db, cache, storage, search, queue}`. Typical entries:
+
+- `items-crud` — surface `[api, ui, db]`, healthCheck `/api/items`, interaction "fill title, click Submit, row count +1", mustObserve `[data-feature="items-crud"] [data-row] count increases by 1`
+- `cache-demo` — surface `[api, ui, cache]`, healthCheck `/api/cache`, interaction "click Write then Read", mustObserve `[data-result] text equals written value`
+- `storage-upload` — surface `[api, ui, storage]`, healthCheck `/api/files`, interaction "upload sample file", mustObserve `[data-file] count increases`
+- `search-items` — surface `[api, ui, search]`, healthCheck `/api/search`, interaction "type matching query, debounce 400ms", mustObserve `[data-hit] count > 0 for a known-matching query`
+- `jobs-dispatch` — surface `[api, ui, queue, worker]`, healthCheck `/api/jobs`, interaction "click Dispatch, poll result", mustObserve `[data-processed-at] non-empty within 5s`
+
+Each entry gets full fields (id, description, surface, healthCheck, uiTestId, interaction, mustObserve) in the submitted JSON — these bullets are a scaffold, not the submission format.
+
+**The validator rejects incomplete coverage** — missing `search` when meilisearch is in targets, missing `worker` when a worker target exists, missing `queue` when nats is in targets. Fix the gap at research; downstream layers consume this list verbatim.
 
 ### Submission
 Submit via:
@@ -532,9 +558,11 @@ Substitute `{apiPort}` with your API's actual HTTP port (from `run.ports[0].port
 
 <block name="dual-runtime-consumption">
 
-**Dev-server runtime env vars — `setup: dev` needs `run.envVariables`**:
+**Dual-runtime URL baking has TWO halves. Both must be correct or the stage frontend silently breaks.**
 
-Framework-bundled dev servers (Vite, webpack dev server, Next dev, Nuxt dev) read `process.env.VITE_*` / `process.env.NEXT_PUBLIC_*` / equivalent **at dev server startup**, not at build time. For `setup: dev`, the client-side env vars must be in `run.envVariables` — or they must be passed on the start command line (`VITE_API_URL=$DEV_API_URL npm run dev`). The `build.envVariables` placement is ONLY correct for `setup: prod` because prod builds bake the values into the bundle via a build step that doesn't exist in dev mode.
+### Half 1 — YAML half (env vars → bundle)
+
+Framework-bundled dev servers (Vite, webpack dev server, Next dev, Nuxt dev) read `process.env.VITE_*` / `process.env.NEXT_PUBLIC_*` / equivalent **at dev server startup**, not at build time. For `setup: dev`, the client-side env vars must be in `run.envVariables`. For `setup: prod` they belong in `build.envVariables` because prod builds bake the values into the bundle.
 
 ```yaml
 zerops:
@@ -559,13 +587,62 @@ zerops:
       base: static
 ```
 
-Symptom of the wrong placement: the frontend loads in the browser but every `fetch()` call returns HTML (the Vite dev server's own 404 page) instead of JSON. In the browser devtools, `console.log(import.meta.env.VITE_API_URL)` prints `undefined`. This is LOG2's session-breaking bug 15.
+### Half 2 — SOURCE CODE half (bundle actually reads the baked value)
+
+**Baking an env var into the bundle is useless if no file reads it.** v18 shipped a dual-runtime showcase that was YAML-perfect and source-code-broken: every Svelte component hardcoded `fetch('/api/items')` and the `VITE_API_URL` value was baked into a bundle variable nobody imported. Dev was rescued by Vite's proxy; stage served nginx's SPA `index.html` fallback for every `/api/*` request, returning HTTP 200 with `Content-Type: text/html`. The dashboard rendered, the API calls "succeeded" with HTML, and every consumer rendered as an empty state. No error surfaced anywhere.
+
+Every dual-runtime scaffold MUST include a **single API helper module** that reads the baked env var and prefixes every API call. Never `fetch('/api/...')` directly from a component.
+
+```ts
+// src/lib/api.ts (or equivalent for your framework)
+// Single helper: reads the baked env var, defaults to empty string
+// (so dev's Vite proxy handles the relative path unchanged).
+const BASE = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
+
+export async function api(path: string, init?: RequestInit): Promise<Response> {
+  const url = `${BASE}${path}`;
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`API ${res.status} ${res.statusText} ${path}: ${body.slice(0, 200)}`);
+  }
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.toLowerCase().includes("application/json")) {
+    throw new Error(`API ${path} returned non-JSON content-type ${ct} — likely SPA fallback, check VITE_API_URL baking`);
+  }
+  return res;
+}
+
+// Usage — components NEVER call fetch() directly:
+// const res = await api("/api/items");
+// const items = await res.json();
+```
+
+**Why the content-type check is mandatory.** nginx's `try_files ... /index.html` SPA fallback returns 200 with `text/html` for any unknown path. A bare `fetch('/api/items').then(r => r.json())` in an appstage container throws a silent `SyntaxError: Unexpected token '<'` that most frameworks catch into an empty-state render. The user sees a dashboard with zero items. The helper above surfaces the error visibly instead.
+
+**Anti-pattern — forbidden in every scaffolded client codebase**:
+
+```ts
+// WRONG — v18's exact bug:
+const res = await fetch("/api/items");
+const data = await res.json();
+items = data.items;             // undefined when res was HTML
+```
+
+- No `import.meta.env.VITE_API_URL` reader — env var is baked into the bundle and never used.
+- No `res.ok` check — 500 with a valid JSON error body slides past `try/catch` and `data.items` is undefined.
+- No content-type check — HTML fallback parses as "falsy JSON" or throws silently.
+- Template consumes `items.length` → Svelte crashes with `Cannot read properties of undefined`.
+
+The scaffold subagent's brief lists this as a mandatory structural rule — see `client-code-observable-failure` for the general form.
 
 **Consumption**: project-level env vars auto-inject into both runtime AND build containers. Reference them directly by name in zerops.yaml — `build.envVariables: VITE_API_URL: ${STAGE_API_URL}` bakes the stage URL into the cross-deployed bundle; `run.envVariables: FRONTEND_URL: ${STAGE_FRONTEND_URL}` forwards the value under a framework-conventional name for CORS. There is **no `RUNTIME_` prefix** on project vars — that prefix is a different feature (lifting a service-level runtime var into build), not applicable here. The full consumption model (including the shell-prefix alternative in `buildCommands`) lives in the `environment-variables` knowledge guide — fetch it via `zerops_knowledge scope="guide" query="environment-variables"` when you need the platform rules behind this pattern.
 
 The `setup: dev` block reads `DEV_*`; `setup: prod` reads `STAGE_*`. The same zerops.yaml works in every env: envs 2-5 never invoke `setup: dev` (there is no `appdev` there), so the `DEV_*` reference is dormant and safe.
 
 **Workspace parity is set at the provision step**, not here — see the provision step's `zerops_env project=true action=set` invocation. By the time you reach generate, the workspace already has `DEV_*` + `STAGE_*` resolved. Single-runtime recipes skip this entirely — they don't cross services for URL baking.
+
+**The deploy step enforces both halves.** The `feature-sweep-dev` and `feature-sweep-stage` sub-steps run a curl against every api-surface feature's HealthCheck and reject any response with `text/html` content-type — the exact symptom of a missing source-code half. A YAML-perfect recipe with the source-code half wrong will fail the sweep before it ever reaches the browser walk.
 
 </block>
 
@@ -759,18 +836,19 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 >
 > - `package.json` — production dependencies for the framework and any CSS tooling the scaffold would normally include
 > - Framework config (`vite.config.ts`, `tsconfig.json`, `.env.example`)
-> - `App.svelte` (or equivalent entry) that renders `<StatusPanel />` **and nothing else** — no routing, no layout with empty slots, no tabs, no nav. One component mounted.
-> - `StatusPanel.svelte` — polls `GET /api/status` every 5s, renders one row per managed service in the plan with a colored dot (green = "ok", yellow = "degraded", red = missing/error) and the service name. That's the whole UI. No forms, no buttons, no tables, no tabs.
+> - `src/lib/api.ts` (or equivalent) — **the single HTTP helper every component uses**. Reads `import.meta.env.VITE_API_URL` (framework equivalent), defaults to empty string so dev proxy works, enforces `res.ok` + content-type `application/json` on every call, throws with a descriptive error on failure. Components call `api("/api/status")` — NEVER `fetch("/api/status")` directly. This is the source-code half of the dual-runtime URL pattern (see `dual-runtime-consumption`) and is MANDATORY even when the scaffold only renders StatusPanel. Copy the pattern verbatim from `dual-runtime-consumption` — do not invent your own shape.
+> - `App.svelte` (or equivalent entry) that renders `<StatusPanel />` **and nothing else** — no routing, no layout with empty slots, no tabs, no nav. One component mounted. The outer wrapper carries `data-feature="status"` (or whatever `uiTestId` the plan's status feature declares) so the browser walk can locate it.
+> - `StatusPanel.svelte` — calls `api("/api/status")` via the helper (NOT `fetch()` directly) every 5s, renders one row per managed service in the plan with a colored dot (green = "ok", yellow = "degraded", red = missing/error) and the service name. Every row carries a `data-service="{name}"` hook. Three explicit render states: loading, error (visible red banner using `data-error`), populated. The outer element carries `data-feature="status"` (or the status feature's `uiTestId`). That's the whole UI. No forms, no buttons, no tables, no tabs.
 > - `main.ts` / `main.js` — framework bootstrap
 >
 > **WRITE (API codebase):**
 >
 > - `package.json` with production dependencies for the framework, ORM, and every managed-service client in the plan (Redis, NATS, S3, Meilisearch, etc.)
-> - `GET /api/health` — liveness probe returning `{ ok: true }`. No service calls.
-> - `GET /api/status` — deep connectivity check. Returns a flat object with one key per service in the plan: `{ db: "ok", redis: "ok", nats: "ok", storage: "ok", search: "ok" }`. Each value is `"ok"` on successful ping, `"error"` otherwise. Exactly these keys; exactly these values.
+> - `GET /api/health` — liveness probe returning `{ ok: true }` with `Content-Type: application/json`. No service calls.
+> - `GET /api/status` — deep connectivity check. Returns a flat object with one key per service in the plan: `{ db: "ok", redis: "ok", nats: "ok", storage: "ok", search: "ok" }` with `Content-Type: application/json`. Each value is `"ok"` on successful ping, `"error"` otherwise. Exactly these keys; exactly these values.
 > - Service client initialization for **every** managed service in the plan, from env vars. Import and configure the client library, expose the client for later use.
 > - Migrations for the primary data model. Full schema — the feature sub-agent will add read/write endpoints against it.
-> - Seed data — 3 to 5 rows. **Not 15-25.** The feature sub-agent expands seeds as it implements features that need more.
+> - **Seed script obeying the loud-failure rule** (see `init-script-loud-failure`). Seed 3-5 rows of primary-model data. If the plan provisions a search engine and the scaffold pre-wires a client for it, the seed must sync the seeded rows to the search index AND **`await` the completion signal** (e.g., Meilisearch `waitForTask`) before the script exits. No broad `try/catch` that logs and returns — seed failures must exit non-zero so `execOnce` records failure and the deploy sweep catches it. The feature sub-agent expands seeds as it implements features that need more.
 > - **No other routes.** No item CRUD. No cache-demo. No search. No jobs dispatch. No storage upload. If you are about to write any of these, stop and re-read this brief.
 >
 > **WRITE (worker codebase, if separate):**
@@ -794,7 +872,7 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 > - Jobs-dispatch endpoints, jobs UI, jobs history tables, worker job processors
 > - Storage upload endpoints, file list components, upload forms
 > - Anything that calls a managed service beyond the one connectivity ping in `/api/status`
-> - Rich UX: styled forms, tables with headers, submit-state badges, contextual hints, error flashes, empty states, `$effect` hooks that auto-load data, typed response interfaces for feature payloads, inline section-level styles
+> - Rich UX: feature-level forms, tables with headers, submit-state badges, contextual hints, `$effect` hooks that auto-load feature data, inline section-level styles. (The `api.ts` helper, the `data-feature="status"` wrapper on StatusPanel, the `data-error` slot, and the three-state render pattern from `client-code-observable-failure` ARE part of the scaffold — they are structural correctness, not "rich UX".)
 > - Routing, tabs, layouts with multiple sections, nav components, pagination
 > - CORS config, proxy rules, `types.ts` shared between codebases — the main agent resolves cross-codebase integration during verification
 >
@@ -825,6 +903,101 @@ If `buildCommands` compiles assets (JS, CSS, or both), the primary view/template
 - All env var references must use discovered variable names
 - Comments explain WHY, not WHAT (don't restate the key name)
 - Max 80 chars per comment line
+
+</block>
+
+<block name="init-script-loud-failure">
+
+### Init-phase scripts must fail loudly — no silent swallow
+
+**Init-phase scripts** are any executable run during container start from `initCommands` or the framework's equivalent boot hook: migrations, seeders, cache warmers, search-index syncers, one-shot provisioners. They run inside `execOnce` gates and their exit code is the deploy's proof of "infrastructure is ready before we serve traffic." Silent swallowing in these scripts turns deploy verification into a lie.
+
+**The rule (three parts):**
+
+1. **No broad `try/catch` that logs and continues.** If the catch block's only action is `console.error("… failed (non-fatal):")` followed by a return, delete it. Either the error is recoverable — in which case name the recovery inline — or it's fatal — in which case `throw` / `exit 1` / `panic`. "Non-fatal" labels on production-path init code are a bug pattern that v18 shipped: a Meilisearch sync failure was swallowed into a console.error, the seed exited 0, `execOnce` recorded success, the container served traffic, and the search feature was permanently broken because the index was never materialized.
+
+2. **Async-durable writes must block until side effects are observable.** If the SDK returns a task/future/promise with deferred completion semantics (Meilisearch `TaskInfo`, Elasticsearch bulk operations, Kafka producer `flush()`, S3 multipart `CompleteMultipartUpload`, Postgres `NOTIFY` handshake), the script must await the completion signal before exit. "The library returned a success object" is not the same as "the side effect is durable." Applied instances the scaffold subagent identifies during research:
+   - **Meilisearch**: `await client.index(...).addDocuments(docs)` returns a `TaskInfo` — follow with `await client.index(...).waitForTask(task.taskUid)` (or `client.waitForTask`, depending on SDK version). Same pattern for `updateSearchableAttributes` and `updateFilterableAttributes`.
+   - **Elasticsearch / OpenSearch**: bulk `refresh: "wait_for"` or explicit `indices.refresh()`.
+   - **Kafka / Pulsar producers**: `producer.flush()` before close.
+   - **Message brokers** requiring handshake (NATS JetStream ack, RabbitMQ confirms): await the ack / confirm before proceeding.
+
+3. **Lazy client libraries must be warmed.** If a client library connects lazily on first request, the init script must force the connection via a trivial round-trip (e.g. a ping, a tiny query, a zero-byte write with cleanup). Otherwise the first real request pays the connect cost AND surfaces connection errors to a user instead of to the script.
+
+**Script exit is the deploy's proof.** A seed or migration script that exits 0 is a promise that every side effect it attempts to produce has actually been produced. If the script cannot make that promise, it must exit non-zero. This is how the `feature-sweep-dev` sub-step becomes a meaningful gate: any script that silently skipped work will surface as a `text/html` response or 500 when the sweep hits that feature's endpoint.
+
+**Recovery belongs in runtime, not init.** If a managed service is genuinely optional (Meilisearch can be unavailable and the app should still boot), the recovery is a runtime health-check-gated re-sync triggered on first request, not a silent swallow in the init path. Init path commits to full correctness; runtime path carries the resilience.
+
+</block>
+
+<block name="client-code-observable-failure">
+
+### Scaffolded client code must surface failures visibly
+
+**Every `fetch` / `axios` / `request` / framework HTTP client call the scaffold writes** must treat a non-success response as a user-visible error state, not a silent empty render. A showcase is a demonstration of correct patterns — code that happens to work on the happy path and silently breaks on the sad path teaches users to write fragile code. Three rules the scaffold subagent enforces on every file it writes.
+
+1. **`res.ok` before `res.json()`.** Every fetch wrapper checks status before parsing the body. A 500 with a valid JSON error body does NOT trigger the outer `catch`; it slides past and pollutes the consumer store with undefined fields. Explicit check, explicit throw, explicit visible error.
+
+   ```ts
+   const res = await fetch(url);
+   if (!res.ok) throw new Error(`${url}: ${res.status} ${res.statusText}`);
+   ```
+
+2. **Content-type verification on JSON endpoints.** Every fetch that expects JSON must verify the response's content-type before calling `.json()`. `text/html` on a `/api/*` path means nginx SPA fallback (the v18 trap); any non-JSON content-type is a bug, not an empty result.
+
+   ```ts
+   const ct = res.headers.get("content-type") ?? "";
+   if (!ct.toLowerCase().includes("application/json")) {
+     throw new Error(`${url}: non-JSON content-type ${ct}`);
+   }
+   ```
+
+3. **Array-consuming stores default to `[]`, never `undefined`.** TypeScript does not save you: `data.hits` reads as `any` under common framework types and binds to a reactive store without a type error. The downstream template calls `.length` on undefined and the whole component crashes. Every store declaration names its default:
+
+   ```ts
+   let items: Item[] = $state([]);       // Svelte 5 runes
+   const [items, setItems] = useState<Item[]>([]);  // React
+   items: ref<Item[]>([]),               // Vue
+   ```
+
+   After the fetch, assign the exact shape from the API contract:
+
+   ```ts
+   const data = await res.json();
+   items = Array.isArray(data.items) ? data.items : [];  // defensive parse
+   ```
+
+4. **Three render states per async section, not two.** Every dashboard section that fetches data must explicitly handle:
+   - **Loading** (request in flight — spinner or skeleton)
+   - **Error** (request failed — visible red banner / toast with the error message)
+   - **Empty** (request succeeded but returned zero rows — "no results yet" text)
+   - **Populated** (normal render)
+
+   A scaffold that conflates "error" and "empty" into the same render path hides broken features. The error state must be explicit and visible so `zerops_browser` can observe it during the walk and the main agent can react.
+
+5. **`data-feature` test hooks on every feature section.** Every section the scaffold emits for a feature declared in `plan.Features` must carry a `data-feature="{feature.uiTestId}"` attribute on its outer wrapper. The browser walk uses this to locate the section deterministically. Without it, the walk either matches nothing or matches the wrong element and reports a false positive.
+
+   ```svelte
+   <!-- Svelte 5 example — use a div wrapper (not an HTML section tag) -->
+   <div data-feature="items-crud" class="feature-section">
+     <h2>Items</h2>
+     {#if loading}
+       <p>Loading…</p>
+     {:else if error}
+       <p class="error" data-error>{error}</p>
+     {:else if items.length === 0}
+       <p>No items yet.</p>
+     {:else}
+      <ul>
+        {#each items as item (item.id)}
+          <li data-row>{item.title}</li>
+        {/each}
+      </ul>
+     {/if}
+   </div>
+   ```
+
+The four states + the test hook are not optional polish — they are the observable surface the deploy feature sweep and browser walk target. A scaffold that omits them defeats verification.
 
 </block>
 
@@ -1203,15 +1376,19 @@ Minimal recipes (1-2 feature sections) skip the sub-agent entirely — the main 
 
 **Sub-agent brief — required contents**:
 
+- **The full `plan.Features` list, verbatim.** Every feature's `ID`, `Description`, `Surface`, `HealthCheck`, `UITestID`, `Interaction`, and `MustObserve` go into the dispatch prompt. The sub-agent is implementing exactly these features, no more, no less. The feature list is the contract the deploy sub-steps (feature-sweep-dev, browser-walk, feature-sweep-stage) and the close-step review all iterate against — if a feature is not on the list, the sub-agent MUST NOT invent it; if a feature IS on the list, the sub-agent MUST implement it end-to-end (API route + frontend consumer + worker consumer where the surface includes `worker`).
+- **Feature implementation rule**: for each feature `F`:
+  - If `F.surface` includes `api`: implement an endpoint at `F.healthCheck` that returns 200 with `Content-Type: application/json`. For features that read existing data the endpoint is GET and returns a JSON array/object; for write features it accepts POST with a JSON body. The feature-sweep-dev sub-step WILL curl this path and WILL reject any `text/html` response.
+  - If `F.surface` includes `ui`: emit a dashboard section wrapped in `<element data-feature="{F.uiTestId}">` with the four render states required by `client-code-observable-failure` (loading / error / empty / populated). The section's innards must contain whatever selectors the feature's `MustObserve` references (e.g., `[data-row]`, `[data-hit]`, `[data-result]`, `[data-error]`). All fetches go through `src/lib/api.ts` (the scaffold's helper) — the sub-agent NEVER calls `fetch()` directly from a component.
+  - If `F.surface` includes `worker`: implement the worker consumer, the publishing endpoint on the API, and the result write-back (DB row, cache key, whatever the feature's `MustObserve` poll reads). Worker code obeys the loud-failure rule: no swallow-and-continue around JetStream ack or database writes.
+  - If `F.surface` includes `search`: the search-sync step goes in `initCommands` (after `db:seed`) AND awaits task completion (Meilisearch `waitForTask` or equivalent). The scaffold intentionally left this out — the sub-agent adds it, not the scaffold.
 - Every mount path the sub-agent owns — **apidev AND appdev AND workerdev** (when a separate-codebase worker exists). The sub-agent writes to all three as a single unit so API routes, worker payloads, and frontend consumers stay in contract lock-step. This is non-negotiable and is the single biggest reason v10/v11/v12 shipped contract-mismatch bugs — parallel authors cannot keep contracts consistent.
-- The plan's managed-service list and which feature section each maps to
-- **Contract-first rule**: for every feature section, the sub-agent defines the API response shape FIRST, the worker payload shape FIRST (if a worker is involved), then implements the backend, then consumes the same exact shape on the frontend. Frontend and backend for the same feature are written as adjacent edits, not as separate passes.
-- **Seed expansion**: the scaffold left 3-5 rows. The sub-agent expands the seed to 15-25 records as part of implementing the features that need them.
-- **Search indexing**: if a search engine is provisioned, the sub-agent writes the search-sync step (after `db:seed`) in `initCommands` — the scaffold intentionally left this out.
+- **Contract-first rule**: for every feature section, the sub-agent defines the API response shape FIRST, the worker payload shape FIRST (if a worker is involved), then implements the backend, then consumes the same exact shape on the frontend via the `api.ts` helper. Frontend and backend for the same feature are written as adjacent edits, not as separate passes.
+- **Seed expansion**: the scaffold left 3-5 rows. The sub-agent expands the seed to 15-25 records as part of implementing the features that need them. Seed script still obeys `init-script-loud-failure`: no broad try/catch, async writes (search index sync, cache warmups) must await durability before the script exits.
 - **UX quality contract** (see below)
 - **Where app-level commands run** (hard rule, see below) — include verbatim
 - **Port hygiene**: before starting any dev server, kill any existing holder of the port first: `ssh {hostname}dev "fuser -k {httpPort}/tcp 2>/dev/null || true"`
-- **Verify each feature as you write it** — the sub-agent has SSH access to every dev container and every managed service is reachable. After each controller + frontend pair, hit the endpoint via `ssh {hostname}dev "curl -s localhost:{port}/..."` and verify the response shape matches what the frontend consumer expects. Fix immediately; do not write ahead of verification.
+- **Verify each feature as you write it** — the sub-agent has SSH access to every dev container and every managed service is reachable. After each controller + frontend pair, hit the endpoint via `ssh {hostname}dev "curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:{port}{F.healthCheck}"` and verify it returns `200 application/json`. If it returns `200 text/html`, the frontend hit the SPA fallback — check the `api.ts` helper is being used, not a bare `fetch()`. Fix immediately; do not write ahead of verification.
 
 **Managed service connection patterns** — before writing the sub-agent brief, use `zerops_knowledge query="connection pattern {serviceType}"` for every managed service in the plan. Include auth format, connection string construction, and known client-library pitfalls directly in the brief. Key pitfalls to inject:
 - **Valkey/KeyDB (cache)**: no authentication — use `redis://hostname:port` without credentials. Do NOT reference `${cache_user}` or `${cache_password}`.
@@ -1220,13 +1397,15 @@ Minimal recipes (1-2 feature sections) skip the sub-agent entirely — the main 
 
 **Dependency hygiene**: when adding packages, check the existing lockfile for the major version of the framework's core package. Pin new packages from the same framework family to the same major version. Run the install command after each batch of package additions to catch peer-dependency conflicts immediately.
 
-**Feature sections the sub-agent owns end-to-end** — for each provisioned service, the sub-agent authors the API route, the backing logic, the worker payload (if applicable), AND the frontend component that consumes the response, as a **single edit session** (not as separate passes):
+**Feature sections the sub-agent owns end-to-end** — iterate `plan.Features` and for each feature, author the API route, the backing logic, the worker payload (if applicable), AND the frontend component that consumes the response, as a **single edit session** (not as separate passes). The feature list is authoritative — the guidance below is a reference for the typical feature shapes a showcase plan declares, but the sub-agent implements whatever the plan declares and nothing else:
 
-- **Database** — list seeded records + create-record form. Typed response interface, paginated table with headers and row shading, submit-state feedback on the form.
-- **Cache** (if provisioned) — store-a-value-with-TTL route + cached-vs-fresh demonstration showing timing. Cache is for cache + sessions only; the queue uses NATS, a separate broker.
-- **Object storage** (if provisioned) — upload-file (multipart) + list-files routes. Frontend form shows upload progress and a list of previously-uploaded files.
-- **Search engine** (if provisioned) — live search over seeded records. Frontend debounces input and renders the result array.
-- **Messaging broker + worker** (if provisioned) — dispatch-job POST publishes to a NATS subject; the worker (which the sub-agent implements) consumes, does simulated work, writes the result to a DB table or Redis key; the frontend polls the result endpoint and renders (a) dispatched timestamp, (b) processed timestamp, (c) result payload. This exercises the full NATS → worker → result round-trip.
+- **Database feature** (surface includes `db`) — list seeded records + create-record form. Typed response interface, paginated table with headers and row shading, submit-state feedback. `data-feature="{uiTestId}"` wrapper, `data-row` on each row.
+- **Cache feature** (surface includes `cache`) — store-a-value-with-TTL route + cached-vs-fresh demonstration showing timing. Cache is for cache + sessions only; the queue uses NATS, a separate broker.
+- **Object storage feature** (surface includes `storage`) — upload-file (multipart) + list-files routes. Frontend form shows upload progress and a list of previously-uploaded files. `data-file` on each entry.
+- **Search feature** (surface includes `search`) — live search over seeded records. Frontend debounces input and renders the result array. `data-hit` on each result. Seed must `await` the search-index task completion (see `init-script-loud-failure`).
+- **Messaging broker + worker feature** (surface includes `queue` and/or `worker`) — dispatch-job POST publishes to a NATS subject; the worker consumes, does simulated work, writes the result to a DB table or Redis key; the frontend polls the result endpoint and renders (a) dispatched timestamp, (b) processed timestamp, (c) result payload. `data-processed-at`, `data-result`. This exercises the full NATS → worker → result round-trip.
+
+**Every feature section must satisfy `client-code-observable-failure`** — loading / error / empty / populated render states, `data-feature` wrapper, `data-error` slot, fetches via `api.ts` helper. These are not optional polish; they are the observable surface the deploy feature sweep and browser walk target.
 
 **Contract discipline — required in the sub-agent's dispatch prompt:**
 
@@ -1308,6 +1487,50 @@ The tool also eliminates the port-stuck / process-stuck recovery spirals that co
 
 </block>
 
+<block name="feature-sweep-dev">
+
+**Step 4c-pre: Feature sweep (dev) — MANDATORY gate, iterate `plan.Features`**
+
+Before running the browser walk, the deploy sub-step `feature-sweep-dev` enforces a curl-level contract over every feature the plan declared at research time. This is the single gate that catches the v18 nginx-SPA-fallback class of bug (`/api/*` returns 200 + `text/html` because the frontend hardcoded `fetch('/api/items')` and the `VITE_API_URL` baking was dead): the sweep runs `curl -w '%{http_code} %{content_type}'` against every api-surface feature's `HealthCheck` path and rejects any response whose content-type is not `application/json`.
+
+**How to run the sweep (iterate plan.Features):**
+
+```
+# For every feature F in plan.Features where F.surface contains "api":
+ssh {F.host}dev "curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:{F.port}{F.healthCheck}"
+```
+
+- `{F.host}` is the apidev hostname for api-role features; for single-runtime recipes it's `appdev`.
+- `{F.port}` is `plan.Research.HTTPPort` (the API's HTTP port).
+- `{F.healthCheck}` is the path string as declared — e.g. `/api/items`, `/api/search`.
+
+Capture the status and content-type per feature and **submit the attestation as one line per feature using the format `<featureId>: <status> <content-type>`**:
+
+```
+items-crud: 200 application/json
+cache-demo: 200 application/json
+storage-upload: 200 application/json
+search-items: 200 application/json
+jobs-dispatch: 200 application/json
+```
+
+**The validator enforces:** every api-surface feature ID from `plan.Features` appears on its own line; every matching line contains a 2xx status token; every matching line contains `application/json` (case-insensitive); and NO line contains `text/html` or any 4xx/5xx status. Any violation fails the sub-step — the agent must fix the failing feature and re-run the sweep before completing.
+
+**If a feature returns `text/html` under 200**: the frontend is hitting the SPA fallback. Check the source-code half of the dual-runtime URL pattern (`dual-runtime-consumption`): every `fetch()` must go through an `api()` helper that reads `import.meta.env.VITE_API_URL` (or framework equivalent). Do NOT attest success on a HTML response — the validator will reject it, and even if it didn't, the browser walk would render an empty dashboard and the recipe would ship broken.
+
+**If a feature returns 4xx/5xx**: the backend is broken. Check runtime logs (`zerops_logs serviceHostname={host}dev severity=ERROR since=5m`), fix the source, redeploy if needed, re-run the sweep. The sub-step gate is firm — "4 of 5 features pass" is not an acceptable attestation.
+
+**UI-only features** (surface contains `ui` but not `api`) are NOT part of the sweep — they are exercised in the browser walk below. Worker-only features (`worker` surface without `api`) are observed via the browser walk's result check or `zerops_logs` on the worker container.
+
+**Minimal recipes run this sub-step too.** The rule is tier-independent — every declared api-surface feature must sweep-green before cross-deploy. Minimal recipes usually have 1–2 features which makes the sweep trivially short.
+
+Submit:
+```
+zerops_workflow action="complete" step="deploy" substep="feature-sweep-dev" attestation="<one line per api-surface feature, as shown above>"
+```
+
+</block>
+
 <block name="dev-deploy-browser-walk">
 
 **Step 4c: Browser verification — MANDATORY for Type 4 showcase** (skip for minimal)
@@ -1339,24 +1562,44 @@ What browser verification catches that curl cannot:
    ```
    Wait 1-2s for reaping. Never retry in a loop.
 
-#### Canonical verification flow
+#### Canonical verification flow — iterate `plan.Features`
 
-Three phases in strict order. **Do not reorder.**
+Three phases in strict order. **Do not reorder.** Within each walk, the commands array is **built from the plan's feature list**, not from a hardcoded template. Every feature in `plan.Features` where `surface` contains `"ui"` must be exercised — no feature is optional, no walk is "generic."
 
-**Phase 1 — Dev walk (dev processes running, NO kill).** The dev subdomain serves whatever the dev processes started in Step 2 serve. Walk it while they're still up. This is the only phase where the dev container renders your dashboard in a browser:
+**Phase 1 — Dev walk (dev processes running, NO kill).** The dev subdomain serves whatever the dev processes started in Step 2 serve. Walk it while they're still up. This is the only phase where the dev container renders your dashboard in a browser.
+
+**Build the commands array by iterating `plan.Features`.** For each UI-surface feature, translate its `Interaction` into one or more `zerops_browser` commands and assert against `MustObserve`. A minimal per-feature sequence is:
+
+1. Locate the feature's section via its `UITestID`: `["get", "count", "[data-feature=\"{F.uiTestId}\"]"]` — must equal 1.
+2. Observe the initial state.
+3. Perform the `Interaction` — `fill`, `click`, `find`+`click` with `role` / `text`, `type` — whatever the interaction string prescribes.
+4. Assert `MustObserve` — use `get text`, `get count`, or `is visible` against the selector the feature declares.
+5. Capture any error banner: `["get", "text", "[data-feature=\"{F.uiTestId}\"] [data-error]"]` — must be empty string.
+
+Example for a feature `{id: "items-crud", uiTestId: "items-crud", interaction: "Fill title, click Submit, row count +1", mustObserve: "[data-feature=\"items-crud\"] [data-row] count increases by 1"}`:
 
 ```
 zerops_browser(
   url: "https://{appdev-subdomain}.prg1.zerops.app",
   commands: [
     ["snapshot", "-i", "-c"],
-    ["get", "text", "[data-connectivity]"],
-    ["get", "count", "[data-article-row]"],
+    # Locate the feature section
+    ["get", "count", "[data-feature=\"items-crud\"]"],
+    # Before state — row count
+    ["get", "count", "[data-feature=\"items-crud\"] [data-row]"],
+    # Interaction — fill title, click Submit
+    ["fill", "[data-feature=\"items-crud\"] input[name=\"title\"]", "browser walk test row"],
     ["find", "role", "button", "Submit", "click"],
-    ["get", "text", "[data-result]"]
+    ["wait", "500"],
+    # After state — row count (MustObserve: increased by 1)
+    ["get", "count", "[data-feature=\"items-crud\"] [data-row]"],
+    # Error state — must be empty
+    ["get", "text", "[data-feature=\"items-crud\"] [data-error]"]
   ]
 )
 ```
+
+Repeat one `zerops_browser` call per URL (dashboard subdomain). If the walk needs to span multiple URLs (rare — dual-runtime with separate frontend SPA routes) the rule is **one zerops_browser call per URL**; serialize if needed, do not batch multiple URLs in one call.
 
 If dev walk returns a 502 or connection failure, your dev processes aren't running (or they died). Diagnose via `ssh {devHostname} "ps -ef | grep -E 'nest|vite|node|ts-node'"` and restart per Step 2 before continuing.
 
@@ -1367,33 +1610,32 @@ ssh apidev "pkill -f 'nest start' || true; pkill -f 'ts-node' || true; pkill -f 
 ssh appdev "pkill -f 'vite' || true; pkill -f 'npm run dev' || true"
 ```
 
-**Phase 3 — Stage walk (dev processes dead).** Walk the stage subdomain. Stage containers run their own processes and are completely unaffected by the dev kill:
-
-```
-zerops_browser(
-  url: "https://{appstage-subdomain}.prg1.zerops.app",
-  commands: [
-    ["snapshot", "-i", "-c"],
-    ["get", "text", "[data-connectivity]"],
-    ["get", "count", "[data-article-row]"],
-    ["find", "role", "button", "Submit", "click"],
-    ["get", "text", "[data-result]"]
-  ]
-)
-```
+**Phase 3 — Stage walk (dev processes dead).** Walk the stage subdomain with the **same feature iteration** as Phase 1. Stage containers run their own processes and are completely unaffected by the dev kill. The commands array is re-generated from the same `plan.Features` — identical feature coverage, different URL.
 
 The tool executes `[open url] + your commands + [errors] + [console] + [close]` as one batch and returns structured JSON: `steps[]`, `errorsOutput`, `consoleOutput`, `durationMs`, `forkRecoveryAttempted`, `message`.
 
-**If you need to re-iterate** after a stage walk found something: fix on the mount, redeploy dev (which needs dev processes — you must restart them via SSH since the kill in Phase 2 took them down), re-verify dev with the curl flow in deploy Step 3, then cross-deploy to stage, then repeat Phase 2 + Phase 3. Phase 1 does NOT need to run again for a re-iteration — one dev browser walk per close step is enough.
+#### Per-feature pass criteria
+
+For each feature the walk iterated, **every** criterion below must hold. A walk only passes when all features pass:
+
+1. **Section located** — `[data-feature="{uiTestId}"]` count equals 1. Zero = scaffold didn't emit the test hook; multiple = ambiguous selector.
+2. **MustObserve satisfied** — the state change the feature declared is visible. If `MustObserve` names a count increase, the after-count must be strictly greater than the before-count. If it names a text pattern, the element's text must match. "Zero hits" / "empty state" is a **failure** unless the feature's `MustObserve` string explicitly permits it.
+3. **No `[data-error]` text** — the error banner (mandatory output of the `client-code-observable-failure` rule) must be empty after the interaction. A non-empty banner means the feature's fetch or logic raised an error the walk must surface.
+4. **No JS runtime error in `consoleOutput`** — the auto-appended `["console"]` output must contain no `Uncaught`, `TypeError`, `SyntaxError`, or `Unexpected token '<'`. The last one is the specific signal that a `res.json()` parsed HTML — same family as the v18 bug.
+5. **No network failure in `errorsOutput`** — no `net::ERR_*`, no failed-request lines targeting the feature's API path.
+6. **`forkRecoveryAttempted` is false** — any recovery firing means orphaned processes are leaking. See rule 5 in the non-negotiable list above.
+
+If ANY criterion fails for ANY feature, the walk fails. Fix the source on the mount, redeploy (which needs dev processes restarted via SSH since the kill in Phase 2 took them down), re-verify dev with the curl flow in deploy Step 3, re-run the feature-sweep-dev sub-step, then cross-deploy and repeat Phase 2 + Phase 3. This counts toward the 3-iteration limit.
 
 **Report shape for a verification pass** (per subdomain walked):
-- Connectivity panel state (services connected with latencies)
-- Each feature section's render state (populated / empty / errored)
+- **Per feature**: ID, before-state, interaction performed, after-state, MustObserve result (PASS/FAIL), error banner text (expected empty)
 - `errorsOutput` from the result (expected: empty)
 - `consoleOutput` from the result (expected: empty or benign info only)
-- `forkRecoveryAttempted` from the result (expected: false — if true on the STAGE walk you didn't fully kill the dev processes in Phase 2; if true on the DEV walk something upstream was leaking before the walk started)
+- `forkRecoveryAttempted` from the result (expected: false)
 
-If a walk reveals a problem curl missed: the batch has already closed the browser, so fix on mount, redeploy, and run the affected phase again (counts toward the 3-iteration limit). Do NOT advance to publish until BOTH appdev AND appstage walks show empty errors and populated sections.
+Do NOT advance to publish until BOTH appdev AND appstage walks show every feature PASS, empty errors, and no console noise.
+
+**Features with `surface` but no `ui` are NOT part of this walk.** Worker-only features are observed via a post-interaction check on their MustObserve selector (usually a result element populated by a polling frontend consumer). API-only features were swept at `feature-sweep-dev` / `feature-sweep-stage`. Every feature gets verified exactly once at the layer appropriate to its surface.
 
 </block>
 
@@ -1517,6 +1759,44 @@ Worker targets without HTTP: skip `zerops_verify` (it checks HTTP endpoints), ve
 {"error": {"code": "commandExec", "meta": [{"metadata": {"command": ["php artisan migrate --force"], "containerId": ["..."]}}]}}
 ```
 This identifies *which* initCommand failed. For *why* it failed, fetch runtime logs on the target service — the stderr is there, not in buildLogs.
+
+</block>
+
+<block name="feature-sweep-stage">
+
+**Step 7b: Feature sweep (stage) — MANDATORY gate after every cross-deploy**
+
+After `verify-stage` passes and every stage service is healthy, re-run the feature sweep against the **stage** endpoints. This is the second and final content-type gate — the stage bundle is built from the dev source (via cross-deploy), and the v18 bug class manifests specifically at stage because the `build.envVariables: VITE_API_URL: ${STAGE_API_URL}` bake is STAGE-specific. A dev-green sweep with a broken source-code half will still flip to `text/html` on stage.
+
+**How to run the stage sweep:**
+
+```
+# For every feature F in plan.Features where F.surface contains "api":
+curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' https://{F.host}stage-{subdomainHost}-{F.port}.prg1.zerops.app{F.healthCheck}
+```
+
+For static-base stage services (where the API is a DIFFERENT service), curl the API's subdomain — `apistage`, not `appstage`. The sweep targets the URL the frontend's bundle actually calls, which is whichever service's origin the baked `VITE_API_URL` (or equivalent) points at.
+
+Static-base appstage services still get swept for their UI-surface features (e.g., the dashboard returns the SPA index) but the api-surface features always route to the API service's origin — that's the whole point of `VITE_API_URL`. The sweep's feature list is unchanged between dev and stage; only the host+port change.
+
+**Submit the attestation in the same per-feature format as `feature-sweep-dev`**:
+
+```
+items-crud: 200 application/json
+cache-demo: 200 application/json
+storage-upload: 200 application/json
+search-items: 200 application/json
+jobs-dispatch: 200 application/json
+```
+
+Same validator, same contract — every declared api-surface feature ID must appear with a 2xx status and `application/json`. **Any `text/html` on a stage sweep is the v18 bug** — the frontend bundle is hitting the local SPA fallback instead of the API. Fix the source code's fetch helper (`dual-runtime-consumption`), redeploy the frontend, re-run the sweep.
+
+Submit:
+```
+zerops_workflow action="complete" step="deploy" substep="feature-sweep-stage" attestation="<one line per api-surface feature against stage URLs>"
+```
+
+Only after this sub-step passes do you proceed to the `readmes` sub-step. A stage sweep that still reports HTML is a **deploy-blocking** bug — the recipe cannot ship without the source-code half of the dual-runtime pattern working.
 
 </block>
 
@@ -1988,6 +2268,18 @@ The brief below is split into three explicit halves: direct-fix scope (framework
 > - Does the test suite match what the code does?
 > - Are framework asset helpers used correctly (not inline CSS/JS when a build pipeline exists)?
 >
+> **Silent-swallow antipattern scan (MANDATORY — introduced after v18's Meilisearch-silent-fail class bug):**
+> - **In init-phase scripts** (seed, migrate, cache warmup, any file run from `initCommands` or a `execOnce`-gated command): grep for `catch` blocks whose only action is a `console.error` / `log.error` / `fmt.Println` followed by `return`, `continue`, or implicit fallthrough. Every such catch is a `[CRITICAL]` issue — report it with the file path, line number, and the specific side effect that will be silently skipped. The rule is documented in `init-script-loud-failure`: init scripts must `throw` / `exit 1` / `panic` on any unexpected error, no "non-fatal" labels.
+> - **In client-side fetch wrappers** (every frontend component that issues an HTTP request): grep for `fetch(` calls without a `res.ok` check and for JSON parsers without a content-type verification. Every bare `const data = await res.json()` that doesn't check `res.ok` first is a `[WRONG]` issue. Every array-consuming store that lacks a `[]` default is a `[WRONG]` issue. The rule is documented in `client-code-observable-failure`.
+> - **Async-durable writes without `await` on completion**: Meilisearch `addDocuments` / `updateSearchableAttributes` without a following `waitForTask`, Kafka producer without `flush()`, Elasticsearch bulk without `refresh`. Every such call in an init-phase script is a `[CRITICAL]` issue.
+>
+> **Feature coverage scan (MANDATORY):**
+> - Read the plan's feature list (the main agent will include it in your brief). For each feature declared in `plan.Features`:
+>   - If `surface` includes `api`: grep for a matching endpoint at `healthCheck`. Missing = `[CRITICAL]`.
+>   - If `surface` includes `ui`: grep for `data-feature="{uiTestId}"` in the frontend sources. Missing = `[CRITICAL]`.
+>   - If `surface` includes `worker`: grep for a worker handler matching the feature's subject / queue. Missing = `[CRITICAL]`.
+> - Also grep for `data-feature="..."` attributes that are NOT in the declared feature list (extra features the sub-agent invented without a plan entry). Report as `[WRONG]` — the plan is authoritative; orphaned features are either undocumented scope creep or leftover from an earlier iteration that should be deleted.
+>
 > **Do NOT call `zerops_browser` or `agent-browser`.** Browser verification is a separate phase run by the main agent after this static review completes. You have no reason to launch Chrome: you're a code reviewer, not a user-flow tester. If your review of the code raises a question that would require a browser to answer ("does this controller's error envelope actually reach the frontend?", "does the CORS middleware accept the appstage origin at runtime?"), report it as a `[SYMPTOM]` with the specific evidence you'd expect to see and stop — the main agent will verify it in the browser walk.
 >
 > **Symptom reporting (NO fixes):**
@@ -2017,13 +2309,22 @@ Apply any CRITICAL or WRONG fixes the sub-agent reported, then **redeploy** to v
 
 ### 1b. Main Agent Browser Walk (showcase only — MANDATORY; skip for minimal)
 
-After 1a completes and any redeployments have settled, run the same 3-phase browser walk you ran at deploy Step 4c: Phase 1 (dev walk while dev processes are running) → Phase 2 (kill dev processes via SSH) → Phase 3 (stage walk after dev processes are dead). See deploy **Step 4c: Browser verification** for the full rules, the `zerops_browser` tool usage, the command vocabulary, and the `forkRecoveryAttempted` recovery procedure — they are unchanged at close.
+After 1a completes and any redeployments have settled, run the same 3-phase feature-iterating browser walk you ran at deploy Step 4c. The commands array is **re-built from `plan.Features`** — same feature list, same per-feature assertions, fresh browser state. See deploy **Step 4c: Browser verification — `dev-deploy-browser-walk`** for the iteration template, the per-feature pass criteria, and the command vocabulary. All of those rules apply unchanged at close.
 
 **Close-specific rules** (on top of the deploy-step rules):
 
+- **Rebuild the commands from `plan.Features` every time** — do not reuse a command array cached from the deploy walk. The sub-agent may have added data-feature hooks during its implementation pass; the close walk must read the live feature list to pick them up. A stale command array would silently skip features the sub-agent added after the first walk.
+- **Re-run the feature-sweep against stage URLs** before starting the browser walk. Code-review 1a may have caused a redeploy; the sweep must be re-green on every api-surface feature BEFORE the browser walk iterates the UI surfaces. The sweep is your curl-level gate; the walk is your user-level gate; both must pass at close.
 - Do NOT delegate browser work to a sub-agent. The 1a static review sub-agent explicitly forbids `zerops_browser` (v5 proved fork exhaustion during a sub-agent's browser walk kills the parent chat). Main agent runs single-threaded.
-- Do NOT call `zerops_workflow action="complete" step="close"` until `zerops_browser` has returned clean output (`errorsOutput` empty, all sections populated, `forkRecoveryAttempted: false`) for BOTH the dev walk AND the stage walk AND any regressions surfaced have been fixed and re-verified.
-- If a walk surfaces a problem: the tool has already closed the browser, so fix on mount, redeploy the affected target, re-call `zerops_browser` for the affected subdomain. This counts toward the 3-iteration close-step limit.
+- Do NOT call `zerops_workflow action="complete" step="close"` until every declared feature passes every criterion (MustObserve, error banner empty, no console errors, no network failures) on BOTH the dev walk AND the stage walk, AND any regressions surfaced have been fixed and re-verified.
+- If a walk surfaces a problem: the tool has already closed the browser, so fix on mount, redeploy the affected target, re-run the affected sweep, re-call `zerops_browser` for the affected subdomain. This counts toward the 3-iteration close-step limit.
+
+**Close-step pass requires ALL of the following** (belt-and-suspenders):
+1. Code review 1a: all `[CRITICAL]` / `[WRONG]` issues fixed, silent-swallow scan clean, feature coverage scan clean.
+2. Feature sweep (stage): every api-surface feature returns 2xx + `application/json`, no `text/html`.
+3. Browser walk (dev + stage): every UI-surface feature satisfies its `MustObserve`, every `[data-error]` banner empty, no JS console errors.
+
+Close proceeds only when every layer is green.
 
 </block>
 

@@ -72,6 +72,14 @@ var (
 		// are written during the post-verify `readmes` sub-step so the
 		// gotchas section narrates real debug experience.
 		{Name: "code-quality"},
+		// init-script-loud-failure and client-code-observable-failure are
+		// always-on structural rules the scaffold subagent must enforce
+		// on every file it writes. Introduced after v18 shipped a seed
+		// that silently swallowed a Meilisearch sync error and a frontend
+		// that hardcoded /api/* paths — both classes of bug are now
+		// blocked at generate time by these rules.
+		{Name: "init-script-loud-failure"},
+		{Name: "client-code-observable-failure"},
 		{Name: "pre-deploy-checklist"},
 		{Name: "on-container-smoke-test"},
 		{Name: "comment-anti-patterns"},
@@ -82,6 +90,13 @@ var (
 	// sub-blocks gated by plan shape. API-first steps, bundler dev-server,
 	// and worker process are now conditionally included, saving ~4 KB for
 	// narrow recipes that don't need them.
+	//
+	// feature-sweep-dev and feature-sweep-stage are tier-independent
+	// content-type gates added after v18 shipped a search feature that
+	// returned 200 + text/html (nginx SPA fallback) while the browser
+	// walk reported the dashboard as "rendered". Both sweeps iterate
+	// plan.Features and enforce `application/json` on every declared
+	// api-surface feature.
 	recipeDeployBlocks = []sectionBlock{
 		{Name: "deploy-framing"},
 		{Name: "deploy-execution-order"},
@@ -92,9 +107,11 @@ var (
 		{Name: "deploy-target-verification"},
 		{Name: "dev-deploy-subagent-brief", Predicate: isShowcase},
 		{Name: "where-commands-run"},
+		{Name: "feature-sweep-dev"},
 		{Name: "dev-deploy-browser-walk", Predicate: isShowcase},
 		{Name: "browser-command-reference", Predicate: isShowcase},
 		{Name: "stage-deployment-flow"},
+		{Name: "feature-sweep-stage"},
 		{Name: "reading-deploy-failures"},
 		{Name: "common-deployment-issues"},
 		// v14: README writing moved from generate to the post-verify

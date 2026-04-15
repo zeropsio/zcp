@@ -190,6 +190,17 @@ func TestRecipeComplete_Research(t *testing.T) {
 					"environments": []any{"0", "1", "2", "3", "4", "5"},
 				},
 			},
+			"features": []any{
+				map[string]any{
+					"id":          "greeting",
+					"description": "Fetch a greeting row from the database and render it.",
+					"surface":     []any{"api", "ui", "db"},
+					"healthCheck": "/api/greeting",
+					"uiTestId":    "greeting",
+					"interaction": "Open the page; observe the greeting section populate.",
+					"mustObserve": "[data-feature=\"greeting\"] [data-value] text non-empty.",
+				},
+			},
 		},
 	})
 	if result.IsError {
@@ -271,6 +282,7 @@ func TestRecipeSkip_CloseAllowed(t *testing.T) {
 		Targets: []workflow.RecipeTarget{
 			{Hostname: "app", Type: "bun@1", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
+		Features: minimalToolsTestFeatures(),
 	}
 	if _, err := engine.RecipeCompletePlan(plan, "research done for bun", nil, nil); err != nil {
 		t.Fatalf("complete plan: %v", err)
@@ -351,6 +363,7 @@ func TestRecipeAutoReset_CompletedSession(t *testing.T) {
 		Targets: []workflow.RecipeTarget{
 			{Hostname: "app", Type: "bun@1", Environments: []string{"0", "1", "2", "3", "4", "5"}},
 		},
+		Features: minimalToolsTestFeatures(),
 	}
 	if _, err := engine.RecipeCompletePlan(plan, "research done for testing", nil, nil); err != nil {
 		t.Fatal(err)
@@ -368,5 +381,23 @@ func TestRecipeAutoReset_CompletedSession(t *testing.T) {
 
 	if result.IsError {
 		t.Fatalf("auto-reset should allow new session: %s", getTextContent(t, result))
+	}
+}
+
+// minimalToolsTestFeatures returns the minimal valid feature set for
+// test fixtures that submit a recipe plan through the tool boundary.
+// Uses a single api+ui+db feature — the smallest shape that passes
+// validateFeatures for a minimal-tier bun recipe.
+func minimalToolsTestFeatures() []workflow.RecipeFeature {
+	return []workflow.RecipeFeature{
+		{
+			ID:          "greeting",
+			Description: "Fetch a greeting row from the database and render it.",
+			Surface:     []string{"api", "ui", "db"},
+			HealthCheck: "/api/greeting",
+			UITestID:    "greeting",
+			Interaction: "Open the page; observe the greeting section populate.",
+			MustObserve: "[data-feature=\"greeting\"] [data-value] text non-empty.",
+		},
 	}
 }

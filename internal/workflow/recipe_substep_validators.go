@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -25,6 +26,13 @@ type SubStepValidator func(ctx context.Context, plan *RecipePlan, state *RecipeS
 // sub-step uses attestation-only completion (no automated check).
 func getSubStepValidator(subStepName string) SubStepValidator {
 	switch subStepName {
+	case SubStepFeatureSweepDev, SubStepFeatureSweepStage:
+		// Feature sweep: iterate plan.Features and require every
+		// api-surface feature to appear in the attestation with
+		// 2xx status + application/json content-type. The v18
+		// nginx-SPA-fallback trap (text/html returned under a 200
+		// for /api/*) is caught here by the content-type assertion.
+		return validateFeatureSweep
 	case SubStepZeropsYAML:
 		return validateZeropsYAML
 	case SubStepReadmes:
@@ -206,6 +214,168 @@ func validateZeropsYAML(_ context.Context, plan *RecipePlan, _ *RecipeState, _ s
 		guidance.WriteString("- Comment ratio below 30%%: add WHY-not-WHAT comments above each key group, aim for 35%%\n")
 		guidance.WriteString("- Missing setup: verify both `setup: dev` and `setup: prod` exist\n")
 		guidance.WriteString("- Shared-codebase worker: host target's zerops.yaml needs `setup: worker` too\n")
+		return &SubStepValidationResult{
+			Passed:   false,
+			Issues:   issues,
+			Guidance: guidance.String(),
+		}
+	}
+
+	return &SubStepValidationResult{Passed: true}
+}
+
+// featureSweepStatusOKRegexp matches a 2xx HTTP status token in an
+// attestation line. Anchored to word boundaries so "1200" and "20000"
+// don't masquerade as "200".
+var featureSweepStatusOKRegexp = regexp.MustCompile(`\b2\d{2}\b`)
+
+// featureSweepBadStatusRegexp matches any 4xx or 5xx HTTP status token
+// in an attestation — the presence of ANY 4xx/5xx anywhere in the
+// attestation is a hard failure, because the sweep is supposed to
+// report success on every feature. If the agent is tempted to attest
+// "4 of 5 features returned 200, search returned 500", the attestation
+// is rejected and the agent must fix the 5xx feature before completing.
+var featureSweepBadStatusRegexp = regexp.MustCompile(`\b[45]\d{2}\b`)
+
+// featureSweepHTMLContentType is the anti-pattern the sweep rejects.
+// Presence of text/html anywhere in the attestation means an /api/*
+// request fell through to nginx's SPA index.html fallback (or equivalent).
+// This is the v18 search-broken-silently root symptom.
+const featureSweepHTMLContentType = "text/html"
+
+// featureSweepJSONContentType is the token the sweep requires per
+// api-surface feature. Content-type strings vary in casing and
+// parameter order (`application/json`, `application/json; charset=utf-8`,
+// `Application/JSON`) — the check is case-insensitive substring on the
+// attestation line for each feature ID.
+const featureSweepJSONContentType = "application/json"
+
+// validateFeatureSweep enforces the deploy-step feature-sweep sub-step.
+// Rules:
+//  1. If the plan declares zero api-surface features, pass automatically
+//     (hello-world recipes with no backend, pure static frontends).
+//  2. The attestation is split into lines; each api-surface feature ID
+//     must appear on at least one line.
+//  3. On the line(s) mentioning the feature ID, the sweep requires
+//     BOTH a 2xx status token AND the application/json content-type
+//     substring (case-insensitive). Missing either is a failure for
+//     that feature.
+//  4. The attestation as a whole must not contain text/html on any
+//     line that also mentions a feature ID — the nginx SPA fallback
+//     trap is caught here.
+//  5. The attestation as a whole must not contain any 4xx/5xx status
+//     token on any line that mentions a feature ID.
+//
+// The validator is attestation-based (the agent runs the curls;
+// the engine enforces the reporting contract) rather than executing
+// curl itself because the sub-step runs inside the MCP server which
+// has no network reachability to the dev containers (sshfs mounts,
+// not a TCP bridge). Forcing the per-feature line format is sharp
+// enough to block the v18 "I'll just attest success" escape hatch:
+// the agent cannot claim success for a feature it didn't actually
+// probe, because the report format names the feature and the status.
+func validateFeatureSweep(_ context.Context, plan *RecipePlan, _ *RecipeState, attestation string) *SubStepValidationResult {
+	if plan == nil || len(plan.Features) == 0 {
+		return &SubStepValidationResult{Passed: true}
+	}
+
+	// Collect the IDs whose sweep is required — only features with the
+	// api surface. UI-only features are observed later in the browser
+	// walk, not here.
+	var required []RecipeFeature
+	for _, f := range plan.Features {
+		if f.hasSurface(FeatureSurfaceAPI) {
+			required = append(required, f)
+		}
+	}
+	if len(required) == 0 {
+		return &SubStepValidationResult{Passed: true}
+	}
+
+	attLower := strings.ToLower(attestation)
+	lines := strings.Split(attestation, "\n")
+	linesLower := make([]string, len(lines))
+	for i, l := range lines {
+		linesLower[i] = strings.ToLower(l)
+	}
+
+	var issues []string
+
+	for _, f := range required {
+		idLower := strings.ToLower(f.ID)
+		// Find the lines mentioning this feature ID.
+		var matched []string
+		for i, ll := range linesLower {
+			if strings.Contains(ll, idLower) {
+				matched = append(matched, lines[i])
+			}
+		}
+		if len(matched) == 0 {
+			issues = append(issues, fmt.Sprintf("feature %q: not mentioned in sweep attestation — run curl against %q and include the feature id, status, and content-type in the attestation", f.ID, f.HealthCheck))
+			continue
+		}
+		// On the lines mentioning this feature, require 2xx + json.
+		has2xx := false
+		hasJSON := false
+		hasBad := false
+		hasHTML := false
+		for _, line := range matched {
+			lower := strings.ToLower(line)
+			if featureSweepStatusOKRegexp.MatchString(line) {
+				has2xx = true
+			}
+			if featureSweepBadStatusRegexp.MatchString(line) {
+				hasBad = true
+			}
+			if strings.Contains(lower, featureSweepJSONContentType) {
+				hasJSON = true
+			}
+			if strings.Contains(lower, featureSweepHTMLContentType) {
+				hasHTML = true
+			}
+		}
+		if hasBad {
+			issues = append(issues, fmt.Sprintf("feature %q: attestation reports a 4xx/5xx status for this feature — fix the backend before completing the sweep (do not attest success on a broken feature)", f.ID))
+			continue
+		}
+		if hasHTML {
+			issues = append(issues, fmt.Sprintf("feature %q: attestation reports text/html content-type — the /api path fell through to the nginx SPA fallback. Fix the frontend fetch to use the VITE_API_URL (or framework equivalent) before re-running the sweep", f.ID))
+			continue
+		}
+		if !has2xx {
+			issues = append(issues, fmt.Sprintf("feature %q: attestation missing a 2xx status token on the line mentioning this feature", f.ID))
+		}
+		if !hasJSON {
+			issues = append(issues, fmt.Sprintf("feature %q: attestation missing application/json content-type on the line mentioning this feature", f.ID))
+		}
+	}
+
+	// Global check — if text/html appears anywhere in the attestation,
+	// something in the sweep hit the SPA fallback even if the per-feature
+	// checks above didn't attribute it.
+	if strings.Contains(attLower, featureSweepHTMLContentType) && len(issues) == 0 {
+		issues = append(issues, "attestation contains text/html — at least one feature's curl fell through to an HTML fallback response. Identify which feature and fix before completing the sweep")
+	}
+
+	if len(issues) > 0 {
+		var guidance strings.Builder
+		guidance.WriteString("## feature-sweep sub-step validation failed\n\n")
+		for _, issue := range issues {
+			guidance.WriteString(fmt.Sprintf("- %s\n", issue))
+		}
+		guidance.WriteString("\n### How to run the sweep\n\n")
+		guidance.WriteString("For every feature with `api` in its surface, run curl against the HealthCheck path on the dev (or stage) service and report the status + content-type:\n\n")
+		guidance.WriteString("```\n")
+		guidance.WriteString("ssh {hostname}dev \"curl -sS -o /dev/null -w '%{http_code} %{content_type}\\n' http://localhost:{httpPort}{healthCheck}\"\n")
+		guidance.WriteString("```\n\n")
+		guidance.WriteString("Then submit the attestation as one line per feature using the format `<featureId>: <status> <content-type>`, e.g.:\n\n")
+		guidance.WriteString("```\n")
+		guidance.WriteString("items-crud: 200 application/json\n")
+		guidance.WriteString("cache-demo: 200 application/json\n")
+		guidance.WriteString("search-items: 200 application/json\n")
+		guidance.WriteString("```\n\n")
+		guidance.WriteString("The validator enforces: every api-surface feature appears on its own line, every line has a 2xx status and `application/json`, and NO line contains `text/html` or any 4xx/5xx status. The `text/html` check catches the nginx SPA-fallback trap (v18 search-broken-silently bug): static-base prod serves `index.html` for unknown `/api/*` paths with HTTP 200 and content-type `text/html`. That is a FAILED sweep — do not attest it as success.\n\n")
+		guidance.WriteString("If a feature genuinely returns an error, FIX it before completing the sub-step. The sub-step is a gate, not a progress marker.\n")
 		return &SubStepValidationResult{
 			Passed:   false,
 			Issues:   issues,

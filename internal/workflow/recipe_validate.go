@@ -63,6 +63,9 @@ func ValidateRecipePlan(plan RecipePlan, liveTypes []platform.ServiceStackType, 
 	// Research fields — required for all tiers.
 	errs = append(errs, validateResearchFields(plan.Research, plan.Tier, plan.RuntimeType)...)
 
+	// Features — the declaration/observation contract.
+	errs = append(errs, validateFeatures(plan.Features, plan.Tier, plan.Targets)...)
+
 	return errs
 }
 

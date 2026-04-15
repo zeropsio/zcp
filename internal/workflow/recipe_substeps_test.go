@@ -34,17 +34,23 @@ func TestGenerateSubSteps_V14Order(t *testing.T) {
 	}
 }
 
-// TestDeploySubSteps_V14ShowcaseOrder locks the v14 showcase deploy sequence:
+// TestDeploySubSteps_ShowcaseOrder locks the showcase deploy sequence:
 // dev-deploy → start-procs → verify-dev → init-commands → subagent →
-// snapshot-dev → browser-walk → cross-deploy → verify-stage → readmes.
-// Three critical invariants:
+// snapshot-dev → feature-sweep-dev → browser-walk → cross-deploy →
+// verify-stage → feature-sweep-stage → readmes. Critical invariants:
 //   - snapshot-dev sits IMMEDIATELY after subagent (durability: persist the
 //     feature sub-agent's output to the deployed artifact before any
 //     subsequent step that could end the dev container)
+//   - feature-sweep-dev sits IMMEDIATELY after snapshot-dev and BEFORE
+//     browser-walk, so the content-type trap is caught at the curl layer
+//     before the browser walk sees the HTML fallback as a blank render
+//   - feature-sweep-stage sits AFTER verify-stage and BEFORE readmes, so
+//     the stage build is re-verified against the feature contract before
+//     the readmes sub-step narrates gotchas
 //   - readmes is LAST (narrate gotchas from the debug rounds just experienced)
 //   - cross-deploy happens AFTER snapshot-dev and browser-walk so stage never
 //     runs without a verified dev snapshot behind it
-func TestDeploySubSteps_V14ShowcaseOrder(t *testing.T) {
+func TestDeploySubSteps_ShowcaseOrder(t *testing.T) {
 	t.Parallel()
 	plan := &RecipePlan{Tier: RecipeTierShowcase, Targets: []RecipeTarget{
 		{Hostname: "api", Type: "nodejs@22", Role: RecipeRoleAPI},
@@ -58,9 +64,11 @@ func TestDeploySubSteps_V14ShowcaseOrder(t *testing.T) {
 		SubStepInitCommands,
 		SubStepSubagent,
 		SubStepSnapshotDev,
+		SubStepFeatureSweepDev,
 		SubStepBrowserWalk,
 		SubStepCrossDeploy,
 		SubStepVerifyStage,
+		SubStepFeatureSweepStage,
 		SubStepReadmes,
 	}
 	if len(got) != len(want) {
@@ -75,23 +83,38 @@ func TestDeploySubSteps_V14ShowcaseOrder(t *testing.T) {
 	// Structural invariants that matter beyond exact ordering.
 	idxSubagent := indexOfSubStep(got, SubStepSubagent)
 	idxSnapshot := indexOfSubStep(got, SubStepSnapshotDev)
+	idxSweepDev := indexOfSubStep(got, SubStepFeatureSweepDev)
+	idxBrowserWalk := indexOfSubStep(got, SubStepBrowserWalk)
 	idxCrossDeploy := indexOfSubStep(got, SubStepCrossDeploy)
+	idxVerifyStage := indexOfSubStep(got, SubStepVerifyStage)
+	idxSweepStage := indexOfSubStep(got, SubStepFeatureSweepStage)
 	idxReadmes := indexOfSubStep(got, SubStepReadmes)
 	if idxSnapshot != idxSubagent+1 {
 		t.Errorf("snapshot-dev must sit immediately after subagent (durability): subagent=%d snapshot=%d", idxSubagent, idxSnapshot)
 	}
+	if idxSweepDev != idxSnapshot+1 {
+		t.Errorf("feature-sweep-dev must sit immediately after snapshot-dev: snapshot=%d sweep=%d", idxSnapshot, idxSweepDev)
+	}
+	if idxBrowserWalk <= idxSweepDev {
+		t.Errorf("browser-walk must happen after feature-sweep-dev: sweep=%d browser=%d", idxSweepDev, idxBrowserWalk)
+	}
 	if idxCrossDeploy <= idxSnapshot {
 		t.Errorf("cross-deploy must happen after snapshot-dev: snapshot=%d cross-deploy=%d", idxSnapshot, idxCrossDeploy)
+	}
+	if idxSweepStage <= idxVerifyStage {
+		t.Errorf("feature-sweep-stage must happen after verify-stage: verify=%d sweep=%d", idxVerifyStage, idxSweepStage)
 	}
 	if idxReadmes != len(got)-1 {
 		t.Errorf("readmes must be the final sub-step: idx=%d, last=%d", idxReadmes, len(got)-1)
 	}
 }
 
-// TestDeploySubSteps_V14MinimalOrder — minimal tier keeps no feature sub-agent
-// or snapshot step. readmes still runs at the end so the narrate-from-
-// experience invariant is tier-independent.
-func TestDeploySubSteps_V14MinimalOrder(t *testing.T) {
+// TestDeploySubSteps_MinimalOrder — minimal tier keeps no feature sub-agent
+// or browser-walk step. feature-sweep-dev still runs (minimal recipes
+// declare features too) right after init-commands; feature-sweep-stage
+// runs after verify-stage. readmes remains last so the
+// narrate-from-experience invariant is tier-independent.
+func TestDeploySubSteps_MinimalOrder(t *testing.T) {
 	t.Parallel()
 	plan := &RecipePlan{Tier: RecipeTierMinimal, Targets: []RecipeTarget{
 		{Hostname: "app", Type: "nodejs@22"},
@@ -102,8 +125,10 @@ func TestDeploySubSteps_V14MinimalOrder(t *testing.T) {
 		SubStepStartProcs,
 		SubStepVerifyDev,
 		SubStepInitCommands,
+		SubStepFeatureSweepDev,
 		SubStepCrossDeploy,
 		SubStepVerifyStage,
+		SubStepFeatureSweepStage,
 		SubStepReadmes,
 	}
 	if len(got) != len(want) {

@@ -96,6 +96,15 @@ type RecipePlan struct {
 	// carry STAGE_* only. The agent owns the per-env shape — the template
 	// renders each env's map verbatim in sorted key order.
 	ProjectEnvVariables map[string]map[string]string `json:"projectEnvVariables,omitempty"`
+	// Features is the declarative contract between plan and verification.
+	// Every capability the recipe demonstrates is declared here at research
+	// time; generate implements them; deploy curl-sweep, browser walk, and
+	// close-step feature-reverify all iterate this list. The list is the
+	// single source of truth that makes declared↔observed mismatches
+	// uncatchable silently — if a feature isn't declared it cannot be
+	// implemented, and if it is declared it cannot be skipped during
+	// verification. See recipe_features.go for the schema and validator.
+	Features []RecipeFeature `json:"features,omitempty" jsonschema:"REQUIRED — list of user-observable capabilities the recipe demonstrates. Each feature is the contract: declaration at research, implementation at generate, verification (curl sweep + browser walk + close re-verify) at deploy and close. Showcase recipes must cover every managed service kind in the plan (db, cache, storage, search, queue, mail) plus api + ui; minimal and hello-world recipes declare only what they demonstrate."`
 }
 
 // EnvComments holds the agent-authored comments for a single environment's
