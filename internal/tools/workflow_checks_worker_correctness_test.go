@@ -160,6 +160,130 @@ func TestCheckWorkerProductionCorrectness_SharedCodebaseSkipped(t *testing.T) {
 	}
 }
 
+// TestCheckWorkerDrainCodeBlock verifies the v18 regression: worker
+// READMEs must carry a fenced code block showing the SIGTERM → drain →
+// exit call sequence. v7's worker README had this as IG #3 with a
+// full typescript diff. v18's worker README referenced drain/close in
+// prose inside a gotcha but shipped zero code examples for the drain
+// sequence — a reader copy-pasting the gotcha has no reference code.
+func TestCheckWorkerDrainCodeBlock(t *testing.T) {
+	t.Parallel()
+	target := workflow.RecipeTarget{Hostname: "worker", Type: "nodejs@22", IsWorker: true}
+
+	// v18 workerdev regression: prose-only drain mention, no code.
+	v18Regression := `# Worker
+
+<!-- #ZEROPS_EXTRACT_START:integration-guide# -->
+
+### 1. Adding ` + "`zerops.yaml`" + `
+
+` + "```yaml" + `
+zerops:
+  - setup: prod
+` + "```" + `
+
+### 2. Pass NATS credentials as separate options
+
+` + "```typescript" + `
+const app = await NestFactory.createMicroservice(AppModule, {});
+` + "```" + `
+
+<!-- #ZEROPS_EXTRACT_END:integration-guide# -->
+
+<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+
+### Gotchas
+- **NATS queue group required under minContainers > 1** — under horizontal scaling, every replica processes every message.
+- **Graceful shutdown on SIGTERM prevents in-flight loss** — catch SIGTERM, call app.close() which triggers OnModuleDestroy, drain the NATS connection via nc.drain(), then exit. Without this, rolling deploys silently lose jobs.
+
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+`
+
+	// v7 worker-style: drain sequence in a fenced typescript block.
+	v7WithDrainCode := `# Worker
+
+<!-- #ZEROPS_EXTRACT_START:integration-guide# -->
+
+### 1. Adding ` + "`zerops.yaml`" + `
+
+` + "```yaml" + `
+zerops:
+  - setup: prod
+` + "```" + `
+
+### 3. Drain on SIGTERM
+
+` + "```typescript" + `
+const stop = async (signal: string) => {
+  await nc.drain();
+  await dataSource.destroy();
+  process.exit(0);
+};
+process.on('SIGTERM', () => void stop('SIGTERM'));
+` + "```" + `
+
+<!-- #ZEROPS_EXTRACT_END:integration-guide# -->
+
+<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+
+### Gotchas
+- **NATS queue group mandatory under minContainers > 1** — every replica processes every message otherwise.
+- **Graceful shutdown on SIGTERM** — drain in-flight messages before exit.
+
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+`
+
+	tests := []struct {
+		name    string
+		readme  string
+		target  workflow.RecipeTarget
+		want    string // "pass", "fail", or "" for skipped
+		wantSub string // substring in detail
+	}{
+		{"v18 prose-only drain fails", v18Regression, target, "fail", "drain"},
+		{"v7 drain code block passes", v7WithDrainCode, target, "pass", ""},
+		{
+			"shared-codebase worker skipped",
+			v18Regression,
+			workflow.RecipeTarget{Hostname: "worker", IsWorker: true, SharesCodebaseWith: "app"},
+			"",
+			"",
+		},
+		{
+			"non-worker skipped",
+			v18Regression,
+			workflow.RecipeTarget{Hostname: "api", IsWorker: false},
+			"",
+			"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := checkWorkerDrainCodeBlock("worker", tt.readme, tt.target)
+			if tt.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("expected no checks (skipped), got: %+v", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("checks len = %d, want 1: %+v", len(got), got)
+			}
+			if got[0].Name != "worker_drain_code_block" {
+				t.Errorf("check name = %q", got[0].Name)
+			}
+			if got[0].Status != tt.want {
+				t.Errorf("status = %q, want %q; detail: %s", got[0].Status, tt.want, got[0].Detail)
+			}
+			if tt.wantSub != "" && !strings.Contains(got[0].Detail, tt.wantSub) {
+				t.Errorf("detail %q missing expected substring %q", got[0].Detail, tt.wantSub)
+			}
+		})
+	}
+}
+
 func TestCheckWorkerProductionCorrectness_FailMessagesAreActionable(t *testing.T) {
 	t.Parallel()
 	target := workflow.RecipeTarget{Hostname: "worker", Type: "nodejs@22", IsWorker: true}

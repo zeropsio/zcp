@@ -273,6 +273,7 @@ README line counts (per codebase):
 | v15 | 281 | 123 | 166 | 6 / 4 / 4 | 6 / 4 / 3 |
 | v16 | 218 | 123 | 162 | 4 / 3 / 3 | 3 / 2 / 2 |
 | v17 | — | — | — | — (aborted) | — (aborted) |
+| v18 | 257 | 117 | 161 | 4 / 3 / 4 | 4 / 3 / 2 |
 
 **v7 remains the gold standard for gotcha depth** (Meilisearch ESM-only, auto-indexing skips on redeploy, NATS queue group for HA). v10 collapsed to 0 gotchas on apidev and workerdev due to a tooling regression that's since been fixed. v14/v15 peaked on IG item count. v16 is the most compressed but also the most structurally clean.
 
@@ -290,8 +291,11 @@ README line counts (per codebase):
 | v15 | 2026-04-14 | 204 min | 326 | 203 | 63 | 17.0 min | 5 | 557s | 7 |
 | v16 | 2026-04-14 | 125 min | 370 | 233 | 78 | 7.5 min | **0** | 250s | 9 |
 | v17 | 2026-04-14 | **23 min (abort)** | 146 | 90 | 32 | 1.5 min | 0 | 6.4s | 9 |
+| v18 | 2026-04-15 | **65 min** | 223 | 145 | 31 | **0.8 min** | **0** | **13s** | **0** |
 
 **v16 is the first run with zero very-long bash calls on main-session** — the dev-server wait discipline finally held. But the feature subagent in v16 still hit 360s of 404s total on two dev-server starts that used the old SSH pattern. v17 ships `zerops_dev_server` as a dedicated MCP tool to eliminate this class of error entirely.
+
+**v18 is the first run with zero very-long bash calls across main AND all subagents, AND zero errored bash calls on main.** Main bash total collapsed to 47.8s (0.8 min) — the previous record was v8's 4.7 min. Sum across main + 7 subagents: ~253s (4.2 min) / 1 errored / 0 very-long. Single `zerops_dev_server` bash probe at 13s vs v16's 250s sum. This is the full payoff from the v17.1 dev-server spawn-shape fix and the scaffold-subagent SSH preamble landing in recipe.md.
 
 ### Milestones and regressions by version
 
@@ -309,6 +313,7 @@ README line counts (per codebase):
 | v15 | content quality regression | content peaked at 6/4/4 IG items but 5 WRONG in close (all dev-ops issues — npx tsc, SSHFS, Svelte curly, port 3000, Vite death) |
 | v16 | v8.67.0 structural rules landed | zero very-long bash, first run with CLAUDE.md split, content structurally cleanest; BUT 1 CRIT (StatusPanel queue→nats contract drift) + 6 WRONG in close |
 | v17 | v8.70.0 content pass + `zerops_dev_server` MCP tool | **first F-grade run — did not complete**. `zerops_dev_server` hung 300s on first call; scaffold sub-agents all ran commands zcp-side instead of ssh'ing into containers. User aborted at 23 min. |
+| v18 | v17.1 fixes land — spawn-shape + SSH preamble | **first full-tree zero-very-long run**, 65 min wall, 0.8 min main bash, 0 errored main. All v17 regressions held fixed: `zerops_dev_server` stable (9 MCP calls, 13s bash probe), scaffold subagents ssh'd correctly, root README intro names real managed services, all 6 env yamls have `#zeropsPreprocessor=on`. Close step: 0 CRIT / 2 WRONG (both fixed). |
 
 ---
 
@@ -654,6 +659,69 @@ README line counts (per codebase):
 - Tests written first (RED): spawn uses setsid + bg path + ack marker + tight timeout, spawn timeout returns `spawn_timeout`, spawn generic error returns `spawn_error`, missing ack handled gracefully, spawn ordering invariant (setsid < redirect < `&`).
 
 v17 is the shortest-lived and highest-signal run in the log. Two independent failure modes, both reproducible, both fixed by the next commit — the shortest recipe-log-to-fix loop on record.
+
+---
+
+### v18 — v17.1 fixes hold, full-tree zero-very-long, cleanest operational run on record
+
+- **Date**: 2026-04-15
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Model**: claude-opus-4-6[1m]
+- **Session logs**: `main-session.jsonl` + 7 subagent logs
+- **Wall**: 07:06:56 → 08:12:13 = **65 min** (second-fastest complete run after v12's 61 min)
+- **Assistant events**: 223, **Tool calls**: 145
+- **Bash metrics (main)**: 31 calls / **0.8 min total** / **0 very-long** / 1 dev-server bash probe (13s) / 0 port kills / **0 errored**
+- **Bash metrics (main + 7 subagents)**: ~91 calls / ~4.2 min total / **0 very-long** / 13s dev-server sum / 0 port kills / 1 errored (one transient svelte scaffold check)
+- **Subagents** (7): scaffold×3 (apidev 54.8s / appdev 23.8s / workerdev 36.9s), feature×1 (65.1s / 33 bash), zerops.yaml block updater×1 (0.1s — new), README+CLAUDE writer×1 (0 bash — pure Write), code review×1 (25.0s)
+- **MCP tool mix**: 23 `zerops_workflow`, 14 `zerops_guidance`, 11 `zerops_deploy`, **9 `zerops_dev_server`**, 4 `zerops_verify`, 4 `zerops_subdomain`, 3 `zerops_mount`, 2 `zerops_logs`, 1 `zerops_browser`, 1 each of `zerops_knowledge` / `import` / `env` / `discover`
+
+**Content metrics** (apidev / appdev / workerdev):
+- README lines: 257 / 117 / 161 — apidev recovers toward v7's 271; appdev still compressed
+- Gotchas: 4 / 3 / 4
+- IG items: 4 / 3 / 2 — worker IG at the floor
+- **CLAUDE.md**: 79 / 41 / 49 lines (4134 / 2565 / 3340 bytes) — **all three clear the 1200-byte floor**, all three have ≥2 custom sections beyond the 4-section template:
+  - apidev: +Driving Test Requests, +Resetting Dev State
+  - appdev: +Log Tailing, +Adding a New API Endpoint Consumer
+  - workerdev: +Driving a Test Job, +Recovering from a Burned `zsc execOnce` Key
+- **Root README intro**: ✅ `"connected to PostgreSQL, Valkey (Redis-compatible), NATS, S3-compatible object storage, and Meilisearch"` — names real managed services. v17's `dbDriver` validation held.
+- **Preprocessor directive**: ✅ all 6 env import.yaml files carry `#zeropsPreprocessor=on` with `generateRandomString`. v17's de-nested check held.
+
+**Close-step bugs**: 0 CRITICAL / 2 WRONG / 4 STYLE (code review subagent a5a85c078):
+1. **WRONG** — `jobs.controller.ts` throws plain `Error` → HTTP 500 instead of `NotFoundException` → 404. Fixed in close.
+2. **WRONG** — `busboy` not declared as explicit dependency (pulled in transitively via `@nestjs/platform-express` but explicitly `require()`'d). Added to package.json in close.
+3. STYLE — no runtime validation on `POST /items` body (noted, acceptable for recipe demo)
+4. STYLE — Redis `lazyConnect` inconsistency
+5. STYLE — worker tsconfig less strict than API
+6. STYLE — unused Redis import in worker
+
+**Finalize-step issues** (both LOW, self-recovered):
+1. Env 3 (Stage) comment ratio at the 30% boundary — expanded with reasoning markers → 37%
+2. Env 4 (Small Prod) factual claim mismatch ("2GB vs 1GB storage") — removed incorrect number, described autoscaling behavior
+
+**Env comment quality spot-check (env 4 — Small Production)**: v7-grade. JWT rotation rationale is back: *"APP_SECRET shared across every container behind the L7 balancer — signed tokens and session cookies must verify everywhere, or users see random 401s the moment a deploy rolls."* NATS queue group gotcha tied to the code-level failure mode: *"minContainers: 2 — NATS queue group 'workers' is mandatory here because without it, each replica receives every message and processes jobs twice, filling the database with duplicates."* Postgres NON_HA: *"execOnce migrations handle the concurrent-container race safely."* Finalize reported apidev zerops.yaml comment ratio at 37% and worker at 44% — above the 35% bar.
+
+**Gotcha authenticity audit**:
+- **apidev (4/4 authentic)**: Valkey no-auth (platform + concrete `NOAUTH` failure), TypeORM sync col-drop + `zsc execOnce` (framework × platform), Meilisearch masterKey vs defaultSearchKey (Zerops env-var naming + 403 masquerade), pg `client.query() while executing` deprecation warning → pg@9 hard error.
+- **appdev (3/3 authentic)**: Vite `"Blocked request"` 200-plain-text (framework × platform, exact failure shape), `VITE_API_URL` undefined from `run.envVariables` vs `build.envVariables` (platform mechanism), `./dist/~` tilde mandatory for static (Zerops-specific deploy mechanism).
+- **workerdev (3/4 authentic)**: queue-group-under-minContainers ✓, SIGTERM graceful-drain + `OnModuleDestroy` ✓, "shares DB but not migrations" is architectural but names `QueryFailedError: column "x" does not exist` so passes the failure-mode bar, `AUTHORIZATION_VIOLATION` is a cross-ref to apidev IG rather than standalone content (correct dedup, thin as a standalone gotcha).
+
+**Head-to-head content comparison vs v7 (the gold standard)** — counting README + CLAUDE.md + YAML comments, not just README lines:
+
+- **apidev: net gain vs v7**. v18 total 336 lines (257 README + 79 CLAUDE.md) > v7's 271 README. YAML comment density higher (~60 vs ~50 lines) with new L7-balancer platform insights v7 didn't capture: NATS `user`/`pass`-must-be-separate-options (URL-embedded silently ignored → `AUTHORIZATION_VIOLATION`), `FRONTEND_URL` interpolator shadowing rule, explicit Valkey no-auth, `deployFiles is the ONLY bridge between build and run containers`. CLAUDE.md is net-new: full `zerops_dev_server` dev loop, SSHFS uid trap, `npx tsc`→tsc@2.0.4 trap, 6 endpoint test-request recipes, schema-reset-without-redeploy procedure. Real losses: Meilisearch SDK ESM-only gotcha (fetch() workaround), auto-indexing skips on redeploy seed runs. Two specific v7 gotchas gone; everything else is at or beyond v7.
+- **workerdev: roughly equal**. v18 total 210 lines (161 README + 49 CLAUDE.md) > v7's 167 README. Real losses: `reconnect: true, maxReconnectAttempts: -1` pattern fully gone, SIGTERM drain IG code example gone (the gotcha text remains), "no HTTP no healthCheck" teaching reduced to a YAML comment, internal watchdog suggestion gone. Real gains: queue group tied to a specific failure mode (`filling the database with duplicate results`), migration ownership rule with a named `QueryFailedError`, NATS credentials-via-options insight, CLAUDE.md full end-to-end test-job walkthrough + `execOnce` recovery procedure.
+- **appdev: real regression**. v18 total 158 lines (117 README + 41 CLAUDE.md) < v7's 168 README. **The only codebase where v18 is thinner than v7 even counting CLAUDE.md.** Lost: `run.base: static`-only-ships-in-prod teaching, Vite 8 ships Rolldown by default, `<style>` blocks bypassing build pipeline, `preview.allowedHosts` in addition to `server.allowedHosts`. IG #3 regressed from a full code block to prose-only. CLAUDE.md gains (Vite HMR-WS-through-L7 insight, test procedures, endpoint-consumer add procedure) don't fully compensate for four lost framework-depth gotchas.
+
+**Notable**:
+- **Full payoff from v17.1**: every regression that killed v17 stayed fixed. `zerops_dev_server` fired 9 times from the main agent across both apidev (`npm run start:dev`, port 3000) and appdev (`npx vite`, port 5173) with zero hangs. The single 13s bash call the analyzer flagged was a health-probe, not a spawn. v17's 300s timeout is gone.
+- **New workflow shape**: 7 subagents vs v16's 6. The addition is a **dedicated zerops.yaml block-updater subagent** (aba5c47a — 2 bash calls, 0.1s) separate from the README/CLAUDE writer (afee83e9 — 0 bash, pure Write). The main agent pre-classified content by codebase; the writer subagent never touched bash. This is the cleanest content-writing pipeline ever recorded.
+- **First run with CLAUDE.md apidev >4KB**. The 79-line apidev CLAUDE.md has two fully custom sections ("Driving Test Requests" with a curl walkthrough, "Resetting Dev State" with a `sudo rm -rf node_modules && npm install` recovery procedure) — these are exactly the repo-local operational details the v8.67.0 split was designed to capture. All three files clear the 1200-byte floor raised in v17.
+- **Single `zerops_browser` call at 07:37** — one snapshot + text fetch against appdev during deploy.browser. No close.browser walk visible. The rubric bar is both deploy.browser AND close.browser; only one fired. Minor W dock.
+- **Sonnet/Opus note**: ran on opus-4-6[1m] with 223 assistant events / 145 tool calls. v16 ran 370/233 and v13 ran 489/273. v18 is the lowest assistant-event-count for a complete run on record, despite doing MORE work (7 subagents vs 6, 3-codebase, all features implemented and tested). Less deliberation, more decisive tool choice — the workflow's sub-step orchestration is picking up the routing the model used to figure out mid-turn.
+- **Content picture once CLAUDE.md + YAML comments are counted**: apidev is a net gain over v7, workerdev is roughly equal with different trade-offs, appdev is the only real thinning. Gotcha counts (4/3/4) are below v7's (6/5/4) but that's the wrong metric — v18 moves platform-anchored knowledge into YAML comments and operational knowledge into CLAUDE.md, so README-only gotcha counts systematically undercount total depth from v16 onward. See "Head-to-head content comparison vs v7" above.
+- **Finalize took 2 iterations on LOW issues only** — no comment-ratio CRIT, no authenticity CRIT, no predecessor-floor fails. The content rules are now producing runs that pass the checks on first or second try rather than third or fourth.
+
+**Rating**: S=**A**, C=**A−**, O=**A**, W=**B** → **B**
+*Operationally the cleanest run on record — obliterates the A bar on wall clock, bash total, very-long count, dev-server sum, and errored count simultaneously. Content dimension hits every criterion on the A rubric (all gotchas authentic, no dedup, env comments ≥35%, CLAUDE.md ≥2 custom sections per codebase, root README intro accurate) and on apidev+workerdev is at or above v7 once YAML comments and CLAUDE.md are counted — the **A−** is because appdev specifically regressed versus v7 (lost Rolldown, `<style>` pipeline, preview.allowedHosts, and IG #3 code→prose) and because two v7 apidev gotchas (Meilisearch ESM-only, auto-index skip) are genuinely missing. Workflow dimension docked to B because only one `zerops_browser` call fired (deploy.browser yes, close.browser no). v18 validates the v17.1 spawn-shape and SSH-preamble fixes under production load and demonstrates that the operational cost class of problem (120s SSH holds, dev-server hangs, scaffold SSH misuse) is fully solved. What remains is appdev-specific content depth and restoring the worker reconnect-forever + SIGTERM IG code blocks.*
 
 ---
 

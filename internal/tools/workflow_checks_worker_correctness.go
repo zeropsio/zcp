@@ -109,6 +109,124 @@ func checkWorkerProductionCorrectness(hostname string, readmeContent string, tar
 	return checks
 }
 
+// checkWorkerDrainCodeBlock enforces that a separate-codebase worker
+// README carries a fenced code block showing the SIGTERM → drain → exit
+// call sequence. v7's worker README had this as IG #3 with a full
+// typescript diff; v18's worker README shipped the drain topic only as
+// prose inside a gotcha — correct content but no copy-paste reference.
+//
+// The existing `worker_shutdown_gotcha` check verifies the topic is
+// mentioned anywhere in the knowledge-base fragment. This complementary
+// check verifies the topic has concrete reference code: a fenced block
+// somewhere in the worker README (either the integration-guide or the
+// knowledge-base fragment) must contain a drain call AND a process/app
+// exit call, proving the reader has a copy-pasteable implementation.
+//
+// Detection is intentionally loose on language — drain sequences show
+// up as typescript in Node workers, go in Go workers, python in Celery
+// workers. The signal is: "a fenced block mentions draining and
+// exiting in the same block".
+func checkWorkerDrainCodeBlock(hostname string, readmeContent string, target workflow.RecipeTarget) []workflow.StepCheck {
+	if !target.IsWorker {
+		return nil
+	}
+	if target.SharesCodebaseWith != "" {
+		return nil
+	}
+	// Collect all fenced-block bodies from the whole README (both
+	// IG and knowledge-base fragments live inside it).
+	blocks := extractFencedBlockBodies(readmeContent)
+	for _, b := range blocks {
+		lower := strings.ToLower(b)
+		if !containsDrainCall(lower) {
+			continue
+		}
+		if !containsExitCall(lower) {
+			continue
+		}
+		return []workflow.StepCheck{{
+			Name:   hostname + "_drain_code_block",
+			Status: statusPass,
+		}}
+	}
+	return []workflow.StepCheck{{
+		Name:   hostname + "_drain_code_block",
+		Status: statusFail,
+		Detail: fmt.Sprintf(
+			"worker %q README has a drain-topic gotcha but no fenced code block showing the actual SIGTERM → drain → exit call sequence. Add an integration-guide step (e.g. \"### N. Drain on SIGTERM\") with a copy-pasteable code block: process.on('SIGTERM', stop); stop() { await nc.drain(); await dataSource.destroy(); process.exit(0); } — the exact call sequence the reader needs. The existing shutdown gotcha tells them to drain; this check ensures they have reference code to lift.",
+			hostname,
+		),
+	}}
+}
+
+// drainCallTokens identify a drain or close call inside a fenced
+// block — "drain(" covers nc.drain()/q.drain()/consumer.drain(),
+// "app.close" covers NestJS microservice shutdown, "graceful" catches
+// Go-style graceful shutdown helpers.
+var drainCallTokens = []string{
+	"drain(",
+	".drain ",
+	"app.close(",
+	"server.close(",
+	"graceful shutdown",
+	"gracefulshutdown",
+}
+
+// exitCallTokens identify a process/app exit call inside the same
+// fenced block — proves the block shows the call sequence, not just
+// the drain.
+var exitCallTokens = []string{
+	"process.exit",
+	"os.exit",
+	"exit(0)",
+	"exit(1)",
+	"return nil", // go-style: `if err := drain(); err != nil { ... } return nil`
+}
+
+func containsDrainCall(lowerBlock string) bool {
+	for _, token := range drainCallTokens {
+		if strings.Contains(lowerBlock, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsExitCall(lowerBlock string) bool {
+	for _, token := range exitCallTokens {
+		if strings.Contains(lowerBlock, token) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractFencedBlockBodies returns the body text of every fenced code
+// block in the content. Used by the drain-code-block check to walk
+// every block looking for a call sequence.
+func extractFencedBlockBodies(content string) []string {
+	var out []string
+	rest := content
+	for {
+		start := strings.Index(rest, "```")
+		if start < 0 {
+			return out
+		}
+		// Skip past the opening fence line (lang tag included).
+		lineEnd := strings.Index(rest[start:], "\n")
+		if lineEnd < 0 {
+			return out
+		}
+		bodyStart := start + lineEnd + 1
+		end := strings.Index(rest[bodyStart:], "```")
+		if end < 0 {
+			return out
+		}
+		out = append(out, rest[bodyStart:bodyStart+end])
+		rest = rest[bodyStart+end+3:]
+	}
+}
+
 // workerGotchaBodies extracts the body text for each gotcha bullet
 // in the knowledge-base fragment. Mirrors the stem extraction shape
 // used by the predecessor-floor check so the two walk the same

@@ -241,6 +241,97 @@ func TestCheckIntegrationGuideCodeBlocks(t *testing.T) {
 	}
 }
 
+// TestCheckIntegrationGuidePerItemCodeBlock verifies the v18 per-item
+// code-block floor: every H3 heading inside the integration-guide
+// fragment must carry at least one fenced code block in its section.
+// Catches the v18 appdev regression where IG step 3 ("Place VITE_API_URL
+// in build.envVariables for prod, run.envVariables for dev") was
+// prose-only while v7 had a code block.
+//
+// The existing `integration_guide_code_adjustment` check only enforces
+// ≥1 non-YAML block in the whole IG fragment — passes even if half the
+// H3 items are prose-only. This per-item floor makes the bar: recipe.md
+// already tells the agent to write one IG item per real code adjustment
+// with the diff. The check now enforces it.
+func TestCheckIntegrationGuidePerItemCodeBlock(t *testing.T) {
+	t.Parallel()
+	showcase := &workflow.RecipePlan{Tier: workflow.RecipeTierShowcase}
+	minimal := &workflow.RecipePlan{Tier: workflow.RecipeTierMinimal}
+
+	// v18 appdev-style: H3 #3 is prose-only. Should fail.
+	v18AppdevRegression := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n\n" +
+		"### 1. Adding `zerops.yaml`\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n" +
+		"### 2. Add `.zerops.app` to Vite's `allowedHosts`\n\n" +
+		"```typescript\nexport default defineConfig({ server: { allowedHosts: ['.zerops.app'] } });\n```\n\n" +
+		"### 3. Place `VITE_API_URL` in `build.envVariables` for prod, `run.envVariables` for dev\n\n" +
+		"Vite substitutes `import.meta.env.VITE_*` at build time but reads `process.env.VITE_*` at startup. " +
+		"Placing the URL in the wrong section causes `undefined` in the browser.\n\n" +
+		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
+
+	// v7 apidev-style: every H3 carries a code block. Should pass.
+	v7AllItemsCoded := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n\n" +
+		"### 1. Adding `zerops.yaml`\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n" +
+		"### 2. Trust proxy and bind 0.0.0.0\n\n" +
+		"```typescript\napp.set('trust proxy', true); await app.listen(3000, '0.0.0.0');\n```\n\n" +
+		"### 3. Enable CORS for the SPA\n\n" +
+		"```typescript\napp.enableCors({ origin: process.env.FRONTEND_URL });\n```\n\n" +
+		"### 4. TypeORM via env vars\n\n" +
+		"```typescript\nhost: process.env.DB_HOST, port: parseInt(process.env.DB_PORT ?? '5432', 10)\n```\n\n" +
+		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
+
+	// Single H3 with yaml only — legacy minimal recipe shape. Should
+	// pass (only one item, nothing to enforce per-item).
+	singleH3 := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n\n" +
+		"### 1. Adding `zerops.yaml`\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n" +
+		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
+
+	// Two H3s, second has a bash code block — passes (any language).
+	twoH3sBash := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n\n" +
+		"### 1. Adding `zerops.yaml`\n\n```yaml\nzerops:\n  - setup: prod\n```\n\n" +
+		"### 2. First deploy\n\n```bash\nzcli push\n```\n\n" +
+		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
+
+	tests := []struct {
+		name       string
+		content    string
+		plan       *workflow.RecipePlan
+		wantStatus string // "fail", "pass", or "" for skipped
+		wantItem   string // substring that must appear in the fail detail
+	}{
+		{"v18 appdev regression fails", v18AppdevRegression, showcase, "fail", "VITE_API_URL"},
+		{"v7 all-items-coded passes", v7AllItemsCoded, showcase, "pass", ""},
+		{"single H3 passes", singleH3, showcase, "pass", ""},
+		{"two H3s second has bash passes", twoH3sBash, showcase, "pass", ""},
+		{"minimal tier skipped", v18AppdevRegression, minimal, "", ""},
+		{"nil plan skipped", v18AppdevRegression, nil, "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := checkIntegrationGuidePerItemCodeBlock(tt.content, tt.plan)
+			if tt.wantStatus == "" {
+				if len(got) != 0 {
+					t.Fatalf("expected no checks (skipped), got: %+v", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("checks len = %d, want 1: %+v", len(got), got)
+			}
+			if got[0].Name != "integration_guide_per_item_code" {
+				t.Errorf("check name = %q, want integration_guide_per_item_code", got[0].Name)
+			}
+			if got[0].Status != tt.wantStatus {
+				t.Errorf("status = %q, want %q; detail: %s", got[0].Status, tt.wantStatus, got[0].Detail)
+			}
+			if tt.wantItem != "" && !strings.Contains(got[0].Detail, tt.wantItem) {
+				t.Errorf("detail %q missing expected substring %q", got[0].Detail, tt.wantItem)
+			}
+		})
+	}
+}
+
 func TestCheckRecipeGenerate_ValidMinimal(t *testing.T) {
 	t.Parallel()
 
