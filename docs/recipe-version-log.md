@@ -274,6 +274,7 @@ README line counts (per codebase):
 | v16 | 218 | 123 | 162 | 4 / 3 / 3 | 3 / 2 / 2 |
 | v17 | — | — | — | — (aborted) | — (aborted) |
 | v18 | 257 | 117 | 161 | 4 / 3 / 4 | 4 / 3 / 2 |
+| v19 | 237 | 149 | 144 | 4 / 3 / 3 | 4 / 3 / 2 |
 
 **v7 remains the gold standard for gotcha depth** (Meilisearch ESM-only, auto-indexing skips on redeploy, NATS queue group for HA). v10 collapsed to 0 gotchas on apidev and workerdev due to a tooling regression that's since been fixed. v14/v15 peaked on IG item count. v16 is the most compressed but also the most structurally clean.
 
@@ -292,6 +293,7 @@ README line counts (per codebase):
 | v16 | 2026-04-14 | 125 min | 370 | 233 | 78 | 7.5 min | **0** | 250s | 9 |
 | v17 | 2026-04-14 | **23 min (abort)** | 146 | 90 | 32 | 1.5 min | 0 | 6.4s | 9 |
 | v18 | 2026-04-15 | **65 min** | 223 | 145 | 31 | **0.8 min** | **0** | **13s** | **0** |
+| v19 | 2026-04-15 | 75 min | 262 | 174 | 37 | 1.0 min | **0** | 7s | 1 |
 
 **v16 is the first run with zero very-long bash calls on main-session** — the dev-server wait discipline finally held. But the feature subagent in v16 still hit 360s of 404s total on two dev-server starts that used the old SSH pattern. v17 ships `zerops_dev_server` as a dedicated MCP tool to eliminate this class of error entirely.
 
@@ -314,6 +316,7 @@ README line counts (per codebase):
 | v16 | v8.67.0 structural rules landed | zero very-long bash, first run with CLAUDE.md split, content structurally cleanest; BUT 1 CRIT (StatusPanel queue→nats contract drift) + 6 WRONG in close |
 | v17 | v8.70.0 content pass + `zerops_dev_server` MCP tool | **first F-grade run — did not complete**. `zerops_dev_server` hung 300s on first call; scaffold sub-agents all ran commands zcp-side instead of ssh'ing into containers. User aborted at 23 min. |
 | v18 | v17.1 fixes land — spawn-shape + SSH preamble | **first full-tree zero-very-long run**, 65 min wall, 0.8 min main bash, 0 errored main. All v17 regressions held fixed: `zerops_dev_server` stable (9 MCP calls, 13s bash probe), scaffold subagents ssh'd correctly, root README intro names real managed services, all 6 env yamls have `#zeropsPreprocessor=on`. Close step: 0 CRIT / 2 WRONG (both fixed). |
+| v19 | content-check infrastructure working + stale-major import class surfaces | 75 min wall, 1.0 min main bash, 0 very-long, 8 subagents (first run with **two** fix subagents during generate catching 4 MEDIUMs before publish). Content rules held: predecessor-clone dedup, restates-guide, yaml-in-sync, comment specificity — all caught at generate, all fixed before deploy. **First close-step CRIT from the stale-major import class** — `CacheModule` imported from `@nestjs/common/cache` (NestJS 8 path) in a NestJS 10 project. v19 post-mortem fixes shipped as v8.77.0: dev_server `NoHTTPProbe` mode with PID-liveness (no log-string matching), close-step browser-walk sub-step gate, installed-package verification rule in scaffold + feature briefs (framework-agnostic), `minContainers` two-axis semantics teaching, HA-vs-horizontal-scaling conflation purge. |
 
 ---
 
@@ -722,6 +725,66 @@ v17 is the shortest-lived and highest-signal run in the log. Two independent fai
 
 **Rating**: S=**A**, C=**A−**, O=**A**, W=**B** → **B**
 *Operationally the cleanest run on record — obliterates the A bar on wall clock, bash total, very-long count, dev-server sum, and errored count simultaneously. Content dimension hits every criterion on the A rubric (all gotchas authentic, no dedup, env comments ≥35%, CLAUDE.md ≥2 custom sections per codebase, root README intro accurate) and on apidev+workerdev is at or above v7 once YAML comments and CLAUDE.md are counted — the **A−** is because appdev specifically regressed versus v7 (lost Rolldown, `<style>` pipeline, preview.allowedHosts, and IG #3 code→prose) and because two v7 apidev gotchas (Meilisearch ESM-only, auto-index skip) are genuinely missing. Workflow dimension docked to B because only one `zerops_browser` call fired (deploy.browser yes, close.browser no). v18 validates the v17.1 spawn-shape and SSH-preamble fixes under production load and demonstrates that the operational cost class of problem (120s SSH holds, dev-server hangs, scaffold SSH misuse) is fully solved. What remains is appdev-specific content depth and restoring the worker reconnect-forever + SIGTERM IG code blocks.*
+
+---
+
+### v19 — content checks working, stale-major import class surfaces
+
+- **Date**: 2026-04-15
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Model**: claude-opus-4-6[1m]
+- **Session**: 2657f9b08f0d8325
+- **Session logs**: `main-session.jsonl` + 8 subagent logs
+- **Wall**: 11:43:54 → 12:59:03 = **75 min 9 s** (3rd-fastest complete run after v12's 61 min and v18's 65 min)
+- **Assistant events**: 262, **Tool calls**: 174
+- **Bash metrics (main)**: 37 calls / **1.0 min total** / **0 very-long** / 1 dev-server bash probe (7s) / 0 port kills / 1 errored
+- **Bash metrics (main + 8 subagents)**: ~92 calls / ~4.2 min total / **0 very-long** / 3 long (>10s, all scaffold `npm install` / `nest build` / `svelte-check`) / 6 errored (1 appdev scaffold tsc-driven fix, 4 feature subagent type-check iterations, 1 main-session tsc fix)
+- **Subagents** (8 — most ever): scaffold ×3 (apidev 59.1s / worker 51.1s / appdev 24.7s), feature ×1 (57.9s, 23 bash, 4 err — all type-check errors that drove fixes), README/CLAUDE writer ×1 (0.5s, pure Write), code review ×1 (0.3s, static Read/Grep only), **fix README check failures ×1** (NEW — 0.1s, 2 bash), **fix API README yaml block ×1** (NEW — 0s, 1 bash)
+- **MCP tool mix**: 28 `zerops_workflow`, 16 `zerops_guidance`, 13 `zerops_deploy`, 9 `zerops_dev_server`, 6 `zerops_verify`, 4 `zerops_subdomain`, 3 `zerops_mount`, 3 `zerops_logs`, 1 `zerops_browser` (deploy.browser only — close.browser silent), 1 each `zerops_knowledge` / `import` / `env` / `discover`
+
+**Content metrics** (apidev / appdev / workerdev):
+- README lines: 237 / 149 / 144
+- Gotchas: 4 / 3 / 3 — workerdev lost one vs v18's 4
+- IG items: 4 / 3 / 2
+- **CLAUDE.md**: 111 / 75 / 90 lines (4406 / 3566 / 4005 bytes) — **all three clear the 1200-byte floor AND all three grew vs v18**. Biggest gain: appdev 2565→3566 bytes (+1001), recovering the v18 regression.
+- **Root README intro**: ✅ names real managed services (`PostgreSQL, Valkey, NATS, S3-compatible object storage, and Meilisearch`). v17 `dbDriver` validation held for the second run.
+- **Preprocessor directive**: ✅ all 6 env import.yaml files carry `#zeropsPreprocessor=on`. v17 de-nested check held.
+
+**Generate-step MEDIUM fixes** (the story of this run) — v8.67.0 content checks caught **four** issues at generate time and routed each to either an inline fix or a dedicated fix subagent:
+1. **appdev gotcha restated an IG item** (`preview.allowedHosts ~ allowedHosts`) → `gotcha_distinct_from_guide` fired → replaced with the Vite re-optimization-flood gotcha.
+2. **apidev zerops.yaml comment specificity 12%** (below 30% floor) → 15+ comments rewritten with Zerops-specific platform terms.
+3. **apidev gotchas cloned from `nestjs-minimal` predecessor** (TypeORM synchronize, Meilisearch stale index) → `predecessor_floor` fired → replaced with two S3-specific gotchas (`forcePathStyle` `AccessDenied`, `S3_REGION` "Missing region in config").
+4. **apidev README yaml block out of sync** with the actual `zerops.yaml` → re-synced by a dedicated fix subagent (`aee2886184`).
+
+**Close-step bugs**: **1 CRITICAL + 2 WRONG + 4 STYLE** (code review subagent `ab0a4e7239`):
+1. **[CRITICAL]** `CacheModule` imported from `@nestjs/common/cache` — wrong import path for NestJS 10 (moved into `@nestjs/cache-manager` in a separate package) AND the module was unused. **First instance of the "stale-major import" class** in the log — agent wrote NestJS 8-era path from training-data memory. Removed during close.
+2. **[WRONG]** Worker NATS URL missing `nats://` protocol prefix — `nc.connect('host:port')` throws at boot. Added prefix.
+3. **[WRONG]** `files/:key` DELETE route cannot match S3 keys containing `/` (e.g. `uploads/img.png`). Changed to `:key(*)` wildcard.
+4-6. **[STYLE]** no runtime validation on `POST /items` body, Redis `lazyConnect` inconsistency, worker tsconfig less strict than API, unused Redis import in worker.
+
+All fixes compiled clean, redeployed to dev + stage, reverified. No regressions.
+
+**Finalize-step issues** (both LOW, self-recovered):
+1. Env 3 (Stage) storage comment claimed "2 GB" but `objectStorageSize: 1` — fixed to "1 GB" (numeric-claim check from recipe.md:1167 fired).
+2. Envs 3 and 5 comment ratios below 30% — expanded comments.
+
+**Notable**:
+- **First run where content checks saved the run at generate time rather than letting issues surface in close review.** v15 shipped 5 WRONG that were all content-side; v19 caught the equivalent class of 4 MEDIUMs before publish. The check infrastructure is now working as designed — predecessor-clone dedup, gotcha-distinct-from-guide, comment specificity, yaml-in-sync all fired at the right moment.
+- **First run with 8 subagents** (v18 had 7). The addition is two short-lived fix subagents dispatched during generate to clear check failures — `agent-ac20e21a` (fix README checks, 0.1s, 2 bash) and `agent-aee2886184` (fix API yaml block, 0s, 1 bash). Generate iteration at the sub-step level rather than "redo from scratch".
+- **First CRITICAL from the stale-major import class** (CacheModule NestJS 8 → 10 path move). Detected post-hoc by the framework-expert code review subagent at close time. The v19 post-mortem identified this as a symptom of the scaffold + feature subagent briefs having no directive to verify imports against the installed package. Fix landed as an **installed-package verification rule** in both briefs — framework-agnostic by design (verify against `node_modules/<pkg>/package.json`, `vendor/<pkg>/composer.json`, the module's `go.mod`, the `*.gemspec`, or whatever manifest exists for the installed stack — no per-version lookup table).
+- **Worker uses SSH-background pattern** (`nohup npx ts-node src/main.ts & disown` + sleep + cat) twice (12.7s + 3.1s) because `zerops_dev_server` required an HTTP port for its health probe. Worker has no HTTP surface, so the main agent bypassed the tool. **Fixed in the v8.77.0 release**: `zerops_dev_server` now accepts `NoHTTPProbe=true`, spawns via the same setsid + ack path, writes the real child PID to `<logFile>.pid` from inside the inner shell (`echo $$ > PIDFILE; exec CMD`), then decides liveness via `kill -0` — POSIX signal, no log-string matching, framework-agnostic.
+- **`close.browser` silent for the second run in a row** — `deploy.browser` fired (1 `zerops_browser` call at the dashboard verification step), but the close-time browser walk prose in recipe.md was skipped because nothing gated close-step complete on it. **Fixed in v8.77.0**: `SubStepCloseReview` + `SubStepCloseBrowserWalk` sub-step constants, `closeSubSteps()` returns them for showcase only, `CompleteStep` gate extended to `RecipeStepClose` for `isShowcase`. Minimal recipes skip the gate.
+- **Env-4 app comment thinness (caught in audit, not by the run)** — the `app` (static) service comment said "Nginx handles concurrent requests within a single container, so this is not horizontal scaling" and stopped there, silently dropping the HA / rolling-deploy reason the comment should have named alongside. Initial audit flagged this as a "contradiction"; user correction made the distinction crisp — a runtime service on envs 4-5 with `minContainers ≥ 2` serves **two independent axes** (throughput AND HA / rolling-deploy availability), and a service whose throughput fits in one container still wants ≥2 for the HA reason. The teaching block at recipe.md:2035 and the core.md / model.md knowledge themes were updated accordingly. This is the `minContainers` two-axis semantics fix shipped in v8.77.0.
+
+**Rating**: S=**B** (1 CRIT caught+fixed at close, 2 WRONG), C=**A** (all gotchas authentic, cross-codebase dedup held, CLAUDE.md floor+custom sections per codebase, intro names real services, 4 MEDIUMs caught at generate before publish), O=**A** (75 min wall ≤90, main bash 1.0 min, 0 very-long, dev-server 7s, 1 errored), W=**B** (close.browser silent for the 2nd run, generate took 2 fix subagents in addition to the inline edits) → **B**
+*Same letter as v18 but with a different shape. v18's B came from a clean close step and 0 CRIT; v19's B is docked for 1 CRIT in close review but lifts on the content dimension thanks to the generate-time check saves. This is the first run where the v8.67.0 rules visibly saved the run at generate time rather than letting the issues leak into close review. The CacheModule CRIT is not a content-check failure — it's a scaffold-author failure, and the post-mortem fix shipped as v8.77.0 is a structural answer (verify against installed packages) rather than a hardcoded per-framework lookup table.*
+
+**v19 post-mortem fixes shipped as v8.77.0** ([d7fb618](../internal/ops/dev_server.go)):
+- `zerops_dev_server` `NoHTTPProbe` mode — spawn → settle → `kill -0 <pid>` via SSH against pidfile written by the inner shell. Port validation relaxed to allow 0 only when `NoHTTPProbe=true`. New reasons: `post_spawn_exit`, `liveness_check_error`. Atomic-backed settle interval for race-safe parallel tests.
+- Close-step sub-step gate — `SubStepCloseReview` + `SubStepCloseBrowserWalk` constants, `closeSubSteps()` returns them for showcase, `CompleteStep` enforces for `RecipeStepClose`. Recipe.md close section now carries explicit `substep="..."` attestation call-outs.
+- `minContainers` two-axis teaching in recipe.md (env-comment-rules block), core.md, model.md — replica count serves both throughput AND HA/rolling-deploy availability; scoped to runtime services on envs 4-5 only; worker queue-group check error message + code comments no longer conflate "horizontal scaling" with `minContainers > 1`.
+- Installed-package verification rule in scaffold-subagent-brief and feature-subagent required-contents — verify imports / decorators / module wiring against the installed package's on-disk manifest before committing. Framework-agnostic by design.
+- 10 new tests (6 dev_server no-probe, 4 close sub-step gate). Full test suite green under `-race`, `make lint-local` clean.
 
 ---
 
