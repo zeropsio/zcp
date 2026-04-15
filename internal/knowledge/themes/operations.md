@@ -52,17 +52,23 @@ Services accessible by appending `.zerops`: `db.zerops`, `api.zerops`. Only one 
 
 **GitHub Actions:**
 ```yaml
-name: Deploy
-on: push
+name: Deploy to Zerops
+on:
+  push:
+    branches: [main]
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: zeropsio/actions@main
-        with:
-          access-token: ${{ secrets.ZEROPS_TOKEN }}
-          service-id: <service-id>
+      - name: Install zcli
+        run: |
+          curl -sSL https://zerops.io/zcli/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Deploy
+        run: zcli push --serviceId <service-id> --setup <setup-name>
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
 ```
 
 Include `ci skip` or `skip ci` in commit message to prevent triggering.

@@ -1,19 +1,44 @@
 # CI/CD Setup: Connect Git Repository to Zerops
 
-## How CI/CD Works
+## What Do You Need?
 
-Push code to a git remote → CI/CD deploys to Zerops service(s) automatically.
-Each target service needs its own deploy configuration (GitHub Actions step or GitLab webhook connection).
+Ask the user first:
+"Do you want to **just push code** to a remote repository, or set up **full CI/CD** (push triggers automatic deploy to Zerops)?"
 
-The CI/CD targets section above (if present) shows your dev → stage mapping from project configuration.
-If no targets are listed, use `zerops_discover` to identify services or ask the user for target service IDs.
+### Option A: Just push code to remote
+
+**Requirements:**
+- GitHub/GitLab personal access token with repository write access
+  - **GitHub:** Settings → Developer settings → Fine-grained tokens → select repo → Permissions: **Contents: Read and write**
+  - **GitLab:** User Settings → Access Tokens → Scope: **write_repository**
+
+That's all. Skip to **Git Authentication** section below.
+
+### Option B: Full CI/CD (push → automatic deploy)
+
+**Requirements — gather ALL of these before starting:**
+1. **Git push token** (same as Option A above) — for pushing code from the Zerops container to the remote
+2. **Zerops deploy token** — for CI/CD to deploy back to Zerops
+   - Use the existing ZCP API key (ask user: "Can I use the existing API key as the deploy token? It has full project access. For a scoped token, create one at https://app.zerops.io/settings/token-management")
+   - Or user creates a dedicated token at https://app.zerops.io/settings/token-management
+3. **GitHub repo secret `ZEROPS_TOKEN`** — store the deploy token as a secret
+   - Via `gh` CLI: `gh secret set ZEROPS_TOKEN --repo {owner}/{repo} --body "{zeropsToken}"`
+   - Or manually: repo **Settings** → **Secrets and variables** → **Actions** → **New repository secret** → Name: `ZEROPS_TOKEN`, Value: the deploy token
+4. **GitHub Actions permissions** — the repo must allow workflows to run
+   - **Settings** → **Actions** → **General** → **Actions permissions**: "Allow all actions" (or at minimum allow actions from the repository)
+   - **Settings** → **Actions** → **General** → **Workflow permissions**: "Read and write permissions"
+5. **Service ID** of the deploy target — get via `zerops_discover service="{targetHostname}"`
+
+Verify all prerequisites before generating the workflow file. This prevents the "push workflow → CI fails → fix permissions → push again" loop.
+
+---
 
 ## Choose Your Approach
 
 | Approach | When to use | How it works |
 |----------|------------|--------------|
-| **GitHub Actions (auto)** | Repo on GitHub + `gh` CLI available | Auto-generate workflow + set ZEROPS_TOKEN secret via `gh` |
-| **GitHub Actions (manual)** | Repo on GitHub | Workflow file in repo triggers `zeropsio/actions@main` |
+| **GitHub Actions (auto)** | Repo on GitHub + `gh` CLI available | Auto-set secret + generate workflow via `gh` |
+| **GitHub Actions (manual)** | Repo on GitHub | User manually adds secret + workflow file |
 | **GitHub webhook** | Repo on GitHub (alternative) | Zerops GUI webhook triggers build on push/tag |
 | **GitLab webhook** | Repo on GitLab | Zerops GUI webhook triggers build on push/tag |
 
@@ -23,42 +48,56 @@ If no targets are listed, use `zerops_discover` to identify services or ask the 
 
 ## GitHub Actions — Automated Setup
 
-**Prerequisites:** `gh` CLI installed and authenticated (`gh auth status` must succeed).
+**Prerequisites:** `gh` CLI installed and authenticated (`gh auth status` must succeed). All items from the requirements checklist above.
 
-### 1. Get service IDs
+### 1. Get service ID
 
 ```
-zerops_discover service="{stageHostname}"
+zerops_discover service="{targetHostname}"
 ```
-Note the `serviceId` field for each target.
+Note the `serviceId` field.
 
-### 2. Get or create Zerops deploy token
+### 2. Set GitHub secret
 
-**Option A — Use existing ZCP API key** (fastest, ask user first):
-"I can use the existing ZCP API key as the deploy token. This key has full project access. If you prefer a scoped token, go to https://app.zerops.io/settings/token-management to create one. Should I use the existing key?"
-
-If user approves, read the token from the MCP configuration (available as the current API key).
-
-**Option B — User provides a dedicated token:**
-"Go to: https://app.zerops.io/settings/token-management → **Generate** a new token. Paste it here."
-
-### 3. Set GitHub secret automatically
-
+If not already done during prerequisites:
 ```bash
 gh secret set ZEROPS_TOKEN --repo {owner}/{repo} --body "{zeropsToken}"
 ```
 
-### 4. Write workflow file and push
+### 3. Write workflow file and push
 
-Use the generated workflow YAML from the targets section above (or the template below).
-Write `.github/workflows/deploy.yml` on the container, commit, and push:
-
+Write `.github/workflows/deploy.yml` on the container:
 ```bash
 ssh {devHostname} "mkdir -p /var/www/.github/workflows"
 ```
 
-Write the generated YAML content to `.github/workflows/deploy.yml`, then:
+Content of `.github/workflows/deploy.yml`:
+```yaml
+name: Deploy to Zerops
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install zcli
+        run: |
+          curl -sSL https://zerops.io/zcli/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Deploy to {targetHostname}
+        run: zcli push --serviceId {serviceId} --setup {setup}
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+```
 
+**Important:**
+- `actions/checkout@v4` is required — `zcli push` sends the checked-out directory contents to Zerops
+- `--setup {setup}` selects which zerops.yaml entry to use (e.g. `prod` for stage services, `dev` for dev-only)
+- For multiple services, add one deploy step per target, each with its own `--serviceId` and `--setup`
+
+Commit and push:
 ```bash
 ssh {devHostname} "cd /var/www && git add -A && git commit -m 'ci: add deploy workflow'"
 ```
@@ -189,7 +228,7 @@ If push fails with authentication error:
 
 From `zerops_discover`:
 ```
-zerops_discover service="{stageHostname}"
+zerops_discover service="{targetHostname}"
 ```
 The `serviceId` field is needed for the workflow file.
 
@@ -205,7 +244,9 @@ Or: Zerops dashboard → service → three-dot menu → **Copy Service ID**
 "Go to: GitHub repo → **Settings** → **Secrets and variables** → **Actions**
  → **New repository secret**
  → Name: `ZEROPS_TOKEN`
- → Value: the Zerops token from step 2"
+ → Value: the Zerops token from step 2
+
+ Also verify: **Settings** → **Actions** → **General** → **Workflow permissions** is set to **Read and write permissions**."
 
 ### 4. Create workflow file
 
@@ -225,13 +266,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: zeropsio/actions@main
-        with:
-          access-token: ${{ secrets.ZEROPS_TOKEN }}
-          service-id: {stageServiceId}
+      - name: Install zcli
+        run: |
+          curl -sSL https://zerops.io/zcli/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Deploy to {targetHostname}
+        run: zcli push --serviceId {serviceId} --setup {setup}
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
 ```
 
-For multiple services, add one `zeropsio/actions` step per target service, each with its own `service-id`.
+For multiple services, add one deploy step per target, each with its own `--serviceId` and `--setup`.
 
 ### 5. Commit and push
 
@@ -310,7 +355,7 @@ GitLab uses the same GUI flow with GitLab OAuth instead of GitHub.
 After any CI/CD setup:
 
 ```
-zerops_events serviceHostname="{stageHostname}" limit=5
+zerops_events serviceHostname="{targetHostname}" limit=5
 ```
 
 **Check for build triggered** — look for `stack.build` process in RUNNING or FINISHED state.
@@ -321,19 +366,20 @@ zerops_events serviceHostname="{stageHostname}" limit=5
 - Webhook: verify connection in Zerops dashboard → Deploy tab → check integration status
 - Verify access token is valid (not expired)
 - Verify the push was to the monitored branch
+- Verify GitHub Actions permissions: repo Settings → Actions → General → Workflow permissions must be "Read and write"
 
 **If build fails:**
 ```
-zerops_logs serviceHostname="{stageHostname}" severity=error
+zerops_logs serviceHostname="{targetHostname}" severity=error
 ```
 Deploy creates a NEW container — local files from dev are NOT carried over. Only `deployFiles` content survives.
 
 **If build succeeds:**
 ```
-zerops_verify serviceHostname="{stageHostname}"
+zerops_verify serviceHostname="{targetHostname}"
 ```
 
-Present to user: stage URL, repo URL, explain: "Push to {branch} → automatic deploy to {stageHostname}."
+Present to user: stage URL, repo URL, explain: "Push to {branch} → automatic deploy to {targetHostname}."
 
 ---
 
@@ -343,6 +389,10 @@ Present to user: stage URL, repo URL, explain: "Push to {branch} → automatic d
 |---------|---------|
 | Push rejected (auth) | Recreate .netrc, verify GIT_TOKEN env var |
 | Push rejected (non-fast-forward) | `git pull --rebase` then push again |
+| zcli install fails in CI | Check network access, verify `curl` is available on runner |
+| `zcli: command not found` | Ensure install step has `echo "$HOME/.local/bin" >> $GITHUB_PATH` |
+| `Cannot find corresponding setup` | Add `--setup {name}` to the zcli push command (e.g. `--setup prod`) |
+| `ZEROPS_TOKEN` not available | Verify secret name matches exactly, check workflow permissions are Read and write |
 | Webhook not triggering | Check Zerops dashboard → Deploy → integration status, re-authorize if needed |
 | Actions not triggering | Verify `.github/workflows/` is on the correct branch, check Actions tab for errors |
 | Build timeout | Builds have 60-minute hard limit. Check build logs for slow steps. |

@@ -249,10 +249,14 @@ Skip this section if intent is B (buildFromGit only).
        runs-on: ubuntu-latest
        steps:
          - uses: actions/checkout@v4
-         - uses: zeropsio/actions@main
-           with:
-             access-token: ${{ secrets.ZEROPS_TOKEN }}
-             service-id: {serviceId}
+         - name: Install zcli
+           run: |
+             curl -sSL https://zerops.io/zcli/install.sh | sh
+             echo "$HOME/.local/bin" >> $GITHUB_PATH
+         - name: Deploy to {hostname}
+           run: zcli push --serviceId {serviceId} --setup {setup}
+           env:
+             ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
    ```
 
 4. **Commit and push:**

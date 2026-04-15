@@ -46,7 +46,7 @@ func TestBuildCICDContext(t *testing.T) {
 				})
 				return dir
 			},
-			want: "appdev -> appstage (stage deploy target)",
+			want: "appdev -> appstage (setup=prod)",
 		},
 		{
 			name: "IncludesGeneratedWorkflow",
@@ -61,7 +61,7 @@ func TestBuildCICDContext(t *testing.T) {
 				})
 				return dir
 			},
-			want: "zeropsio/actions@main",
+			want: "zcli push",
 		},
 		{
 			name: "NoStage",
@@ -70,12 +70,13 @@ func TestBuildCICDContext(t *testing.T) {
 				dir := t.TempDir()
 				writeMeta(t, dir, &workflow.ServiceMeta{
 					Hostname:       "apidev",
+					Mode:           workflow.PlanModeDev,
 					DeployStrategy: workflow.StrategyPushGit,
 					BootstrappedAt: "2026-01-01",
 				})
 				return dir
 			},
-			want: "apidev (direct deploy target)",
+			want: "apidev (setup=dev)",
 		},
 		{
 			name: "NoCICDServices",
@@ -125,6 +126,21 @@ func TestBuildCICDContext(t *testing.T) {
 				return ""
 			},
 			wantEmpty: true,
+		},
+		{
+			name: "SimpleMode",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				writeMeta(t, dir, &workflow.ServiceMeta{
+					Hostname:       "myapp",
+					Mode:           workflow.PlanModeSimple,
+					DeployStrategy: workflow.StrategyPushGit,
+					BootstrappedAt: "2026-01-01",
+				})
+				return dir
+			},
+			want: "myapp (setup=prod)",
 		},
 	}
 	for _, tt := range tests {

@@ -19,35 +19,39 @@ func TestGenerateGitHubActionsWorkflow(t *testing.T) {
 		{
 			name: "SingleService",
 			targets: []cicdTarget{
-				{ServiceID: "abc123", Hostname: "appstage"},
+				{ServiceID: "abc123", Hostname: "appstage", Setup: "prod"},
 			},
 			branch: "main",
 			wantParts: []string{
 				"name: Deploy to Zerops",
 				"branches: [main]",
-				"zeropsio/actions@main",
-				"service-id: abc123",
-				"# appstage",
+				"actions/checkout@v4",
+				"Install zcli",
+				"zerops.io/zcli/install.sh",
+				"GITHUB_PATH",
+				"Deploy to appstage",
+				"zcli push --serviceId abc123 --setup prod",
+				"ZEROPS_TOKEN",
 			},
 		},
 		{
 			name: "MultipleServices",
 			targets: []cicdTarget{
-				{ServiceID: "abc123", Hostname: "appstage"},
-				{ServiceID: "def456", Hostname: "apistage"},
+				{ServiceID: "abc123", Hostname: "appstage", Setup: "prod"},
+				{ServiceID: "def456", Hostname: "apistage", Setup: "prod"},
 			},
 			branch: "main",
 			wantParts: []string{
-				"service-id: abc123",
-				"service-id: def456",
-				"# appstage",
-				"# apistage",
+				"zcli push --serviceId abc123 --setup prod",
+				"zcli push --serviceId def456 --setup prod",
+				"Deploy to appstage",
+				"Deploy to apistage",
 			},
 		},
 		{
 			name: "CustomBranch",
 			targets: []cicdTarget{
-				{ServiceID: "abc123", Hostname: "appstage"},
+				{ServiceID: "abc123", Hostname: "appstage", Setup: "prod"},
 			},
 			branch: "production",
 			wantParts: []string{
@@ -63,11 +67,32 @@ func TestGenerateGitHubActionsWorkflow(t *testing.T) {
 		{
 			name: "DefaultBranch",
 			targets: []cicdTarget{
-				{ServiceID: "abc123", Hostname: "appstage"},
+				{ServiceID: "abc123", Hostname: "appstage", Setup: "prod"},
 			},
 			branch: "",
 			wantParts: []string{
 				"branches: [main]",
+			},
+		},
+		{
+			name: "PlaceholderServiceID",
+			targets: []cicdTarget{
+				{ServiceID: "", Hostname: "appstage", Setup: "prod"},
+			},
+			branch: "main",
+			wantParts: []string{
+				"zcli push --serviceId {SERVICE_ID} --setup prod",
+			},
+		},
+		{
+			name: "DevSetup",
+			targets: []cicdTarget{
+				{ServiceID: "abc123", Hostname: "apidev", Setup: "dev"},
+			},
+			branch: "main",
+			wantParts: []string{
+				"zcli push --serviceId abc123 --setup dev",
+				"Deploy to apidev",
 			},
 		},
 	}
@@ -90,6 +115,18 @@ func TestGenerateGitHubActionsWorkflow(t *testing.T) {
 	}
 }
 
+func TestGenerateGitHubActionsWorkflow_SingleInstall(t *testing.T) {
+	t.Parallel()
+	targets := []cicdTarget{
+		{ServiceID: "abc", Hostname: "appstage", Setup: "prod"},
+		{ServiceID: "def", Hostname: "apistage", Setup: "prod"},
+	}
+	got := generateGitHubActionsWorkflow(targets, "main")
+	if count := strings.Count(got, "Install zcli"); count != 1 {
+		t.Errorf("want exactly 1 install step, got %d in:\n%s", count, got)
+	}
+}
+
 func TestBuildCICDTargets(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -99,6 +136,7 @@ func TestBuildCICDTargets(t *testing.T) {
 		wantCount int
 		wantHost  string
 		wantID    string
+		wantSetup string
 	}{
 		{
 			name: "StageTarget",
@@ -108,6 +146,7 @@ func TestBuildCICDTargets(t *testing.T) {
 				writeMeta(t, dir, &workflow.ServiceMeta{
 					Hostname:       "appdev",
 					StageHostname:  "appstage",
+					Mode:           workflow.PlanModeStandard,
 					DeployStrategy: workflow.StrategyPushGit,
 					BootstrappedAt: "2026-01-01",
 				})
@@ -117,14 +156,16 @@ func TestBuildCICDTargets(t *testing.T) {
 			wantCount: 1,
 			wantHost:  "appstage",
 			wantID:    "svc-abc123",
+			wantSetup: "prod",
 		},
 		{
-			name: "DirectTarget",
+			name: "DirectTargetDevMode",
 			setup: func(t *testing.T) string {
 				t.Helper()
 				dir := t.TempDir()
 				writeMeta(t, dir, &workflow.ServiceMeta{
 					Hostname:       "apidev",
+					Mode:           workflow.PlanModeDev,
 					DeployStrategy: workflow.StrategyPushGit,
 					BootstrappedAt: "2026-01-01",
 				})
@@ -134,6 +175,26 @@ func TestBuildCICDTargets(t *testing.T) {
 			wantCount: 1,
 			wantHost:  "apidev",
 			wantID:    "svc-def456",
+			wantSetup: "dev",
+		},
+		{
+			name: "DirectTargetSimpleMode",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				writeMeta(t, dir, &workflow.ServiceMeta{
+					Hostname:       "myapp",
+					Mode:           workflow.PlanModeSimple,
+					DeployStrategy: workflow.StrategyPushGit,
+					BootstrappedAt: "2026-01-01",
+				})
+				return dir
+			},
+			services:  map[string]string{"myapp": "svc-ghi789"},
+			wantCount: 1,
+			wantHost:  "myapp",
+			wantID:    "svc-ghi789",
+			wantSetup: "prod",
 		},
 		{
 			name: "SkipNonPushGit",
@@ -163,10 +224,29 @@ func TestBuildCICDTargets(t *testing.T) {
 				})
 				return dir
 			},
-			services:  map[string]string{}, // no service IDs available
+			services:  map[string]string{},
 			wantCount: 1,
 			wantHost:  "appstage",
-			wantID:    "", // empty = placeholder
+			wantID:    "",
+			wantSetup: "prod",
+		},
+		{
+			name: "EmptyModeDefaultsProd",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				writeMeta(t, dir, &workflow.ServiceMeta{
+					Hostname:       "apidev",
+					DeployStrategy: workflow.StrategyPushGit,
+					BootstrappedAt: "2026-01-01",
+				})
+				return dir
+			},
+			services:  map[string]string{"apidev": "svc-xxx"},
+			wantCount: 1,
+			wantHost:  "apidev",
+			wantID:    "svc-xxx",
+			wantSetup: "prod",
 		},
 	}
 	for _, tt := range tests {
@@ -183,6 +263,9 @@ func TestBuildCICDTargets(t *testing.T) {
 				}
 				if targets[0].ServiceID != tt.wantID {
 					t.Errorf("want serviceID %q, got %q", tt.wantID, targets[0].ServiceID)
+				}
+				if targets[0].Setup != tt.wantSetup {
+					t.Errorf("want setup %q, got %q", tt.wantSetup, targets[0].Setup)
 				}
 			}
 		})
