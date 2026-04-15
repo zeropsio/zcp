@@ -345,11 +345,12 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 
 	// Worker production correctness: separate-codebase worker targets must
 	// cover queue-group semantics and graceful shutdown in their README
-	// gotchas. These are Zerops-specific in their consequence (minContainers
-	// horizontal scaling triggers the queue-group bug; SIGTERM timing
-	// during rolling deploys triggers the shutdown bug) even though the
-	// remediation is framework-level. Shared-codebase workers skip this
-	// check; their operational knowledge lives in the host target README.
+	// gotchas. These are Zerops-specific in their consequence (`minContainers
+	// > 1` replica count — whether for throughput or HA/rolling-deploy —
+	// triggers the queue-group bug; SIGTERM timing during rolling deploys
+	// triggers the shutdown bug) even though the remediation is framework-
+	// level. Shared-codebase workers skip this check; their operational
+	// knowledge lives in the host target README.
 	checks = append(checks, checkWorkerProductionCorrectness(hostname, string(readmeContent), target)...)
 	checks = append(checks, checkWorkerDrainCodeBlock(hostname, string(readmeContent), target)...)
 

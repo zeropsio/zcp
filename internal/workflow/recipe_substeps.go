@@ -47,16 +47,28 @@ const (
 	SubStepVerifyStage       = "verify-stage"
 	SubStepFeatureSweepStage = "feature-sweep-stage"
 	SubStepReadmes           = "readmes"
+	// Close-step sub-steps (showcase only). v18 and v19 both docked W
+	// because `close.browser` was prose-only in recipe.md — the agent
+	// read "MANDATORY browser walk" and skipped it because nothing gated
+	// close-step complete on it. Promoting both halves of close (static
+	// code review at 1a, main-agent browser walk at 1b) to enforced
+	// sub-steps converts the rubric-level expectation into a forcing
+	// function.
+	SubStepCloseReview      = "code-review"
+	SubStepCloseBrowserWalk = "close-browser-walk"
 )
 
 // initSubSteps returns the sub-step sequence for a step based on plan shape.
-// Only generate and deploy have sub-steps; other steps return nil.
+// Generate and deploy always have sub-steps; close has them for showcase only.
+// Other steps return nil.
 func initSubSteps(step string, plan *RecipePlan) []RecipeSubStep {
 	switch step {
 	case RecipeStepGenerate:
 		return generateSubSteps()
 	case RecipeStepDeploy:
 		return deploySubSteps(plan)
+	case RecipeStepClose:
+		return closeSubSteps(plan)
 	default:
 		return nil
 	}
@@ -103,6 +115,32 @@ func deploySubSteps(plan *RecipePlan) []RecipeSubStep {
 	}
 	names = append(names, SubStepCrossDeploy, SubStepVerifyStage, SubStepFeatureSweepStage, SubStepReadmes)
 
+	steps := make([]RecipeSubStep, len(names))
+	for i, n := range names {
+		steps[i] = RecipeSubStep{Name: n, Status: stepPending}
+	}
+	steps[0].Status = stepInProgress
+	return steps
+}
+
+// closeSubSteps returns the close-step sub-step sequence. Showcase recipes
+// get two gated sub-steps: code-review (static review sub-agent at 1a) and
+// close-browser-walk (main-agent browser iteration at 1b). The review runs
+// first because browser walk is the re-verify gate after any fix the review
+// caused a redeploy for. Minimal and hello-world recipes return empty — they
+// have no feature dashboard to walk and historically complete close without
+// sub-step tracking.
+//
+// v18 and v19 both shipped with `close.browser` never firing despite the
+// rubric listing it as a mandatory sub-step. Root cause: the old
+// initSubSteps returned nil for close, so enforceSubStepsComplete never
+// fired and the agent skipped the browser walk without consequence. This
+// function + the RecipeStepClose branch in CompleteStep closes the gap.
+func closeSubSteps(plan *RecipePlan) []RecipeSubStep {
+	if !isShowcase(plan) {
+		return nil
+	}
+	names := []string{SubStepCloseReview, SubStepCloseBrowserWalk}
 	steps := make([]RecipeSubStep, len(names))
 	for i, n := range names {
 		steps[i] = RecipeSubStep{Name: n, Status: stepPending}

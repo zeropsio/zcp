@@ -63,6 +63,17 @@ func (s *scriptSSH) next() ([]byte, error) {
 	return []byte(step.output), nil
 }
 
+// disableNoProbeSettleForTest zeroes the no-probe settle interval so
+// unit tests don't wait 3s per case for init-time crashes that will
+// never happen in a scripted scriptSSH queue. Uses atomic.Int64 under
+// the hood (storeNoProbeSettle) so parallel tests don't data-race the
+// settle-interval reader. Restored via t.Cleanup.
+func disableNoProbeSettleForTest(t *testing.T) {
+	t.Helper()
+	orig := storeNoProbeSettle(0)
+	t.Cleanup(func() { storeNoProbeSettle(orig) })
+}
+
 // mockClientWithServices returns a platform mock that reports the given
 // hostnames as existing services — enough for verifyDevServerTarget to
 // pass.
@@ -200,7 +211,7 @@ func TestDevServer_Start_SpawnTimeoutReturnsStructuredReason(t *testing.T) {
 	if result.Running {
 		t.Errorf("expected Running=false on spawn timeout, got %+v", result)
 	}
-	if result.Reason != "spawn_timeout" {
+	if result.Reason != reasonSpawnTimeout {
 		t.Errorf("Reason = %q, want %q", result.Reason, "spawn_timeout")
 	}
 	if !strings.Contains(result.Message, "did not detach") && !strings.Contains(result.Message, "spawn") {
@@ -594,6 +605,302 @@ func TestDevServer_UnknownAction(t *testing.T) {
 		})
 	if err == nil {
 		t.Fatal("expected error for unknown action")
+	}
+}
+
+// TestDevServer_Start_NoHTTPProbe_Success — the no-probe mode is the
+// v19 fix for services with no HTTP surface. A long-running consumer,
+// a cron runner, a sidecar writer — any background process that has
+// no port to curl — cannot be probed for readiness via an HTTP endpoint.
+// Before this mode, agents worked around the gap with raw `ssh host
+// "nohup ... & disown"` calls, bypassing the whole zerops_dev_server
+// tool and re-introducing the class of bugs the v17.1 spawn shape was
+// designed to eliminate.
+//
+// With NoHTTPProbe=true, the tool spawns the process through the same
+// bounded-timeout + setsid + ack-marker + pidfile path as a regular
+// start, skips the HTTP probe, and decides liveness structurally via
+// `kill -0 <pid>` against the pid recorded in the spawn pidfile —
+// framework-agnostic by design.
+func TestDevServer_Start_NoHTTPProbe_Success(t *testing.T) {
+	t.Parallel()
+	disableNoProbeSettleForTest(t)
+
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "zcp-dev-server-spawned pid=1234"}, // bg spawn ack
+		{output: "alive\n"},                         // liveness check (kill -0)
+		{output: "process started\nwaiting..."},     // log tail (diagnostic only)
+	}}
+
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
+		DevServerParams{
+			Action:      "start",
+			Hostname:    "workerdev",
+			Command:     "./bin/worker",
+			NoHTTPProbe: true, // no Port, no HealthPath — service has no HTTP surface
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if !result.Running {
+		t.Errorf("expected Running=true in no-probe mode when liveness=alive, got %+v", result)
+	}
+	if result.HealthStatus != 0 {
+		t.Errorf("expected HealthStatus=0 in no-probe mode (probe skipped), got %d", result.HealthStatus)
+	}
+	if result.Port != 0 {
+		t.Errorf("expected Port=0 in no-probe mode, got %d", result.Port)
+	}
+	if result.LogTail == "" {
+		t.Errorf("expected non-empty LogTail")
+	}
+	if result.Reason != "" {
+		t.Errorf("expected empty Reason on successful no-probe start, got %q", result.Reason)
+	}
+	// Message should explicitly tell the agent this was no-probe mode
+	// and point at zerops_logs for verification — agents should not
+	// conclude "Running=true" means "worker is processing work".
+	if !strings.Contains(strings.ToLower(result.Message), "no-probe") {
+		t.Errorf("expected Message to reference no-probe mode: %q", result.Message)
+	}
+	if !strings.Contains(strings.ToLower(result.Message), "zerops_logs") {
+		t.Errorf("expected Message to reference zerops_logs for verification: %q", result.Message)
+	}
+
+	// Exactly three SSH calls: spawn (background) + liveness check + log tail.
+	if len(ssh.calls) != 3 {
+		t.Fatalf("expected exactly 3 SSH calls (spawn + liveness + log tail), got %d: %+v", len(ssh.calls), ssh.calls)
+	}
+	if !ssh.calls[0].background {
+		t.Error("spawn call must use ExecSSHBackground")
+	}
+	if ssh.calls[1].background {
+		t.Error("liveness check call must be foreground ExecSSH")
+	}
+	if ssh.calls[2].background {
+		t.Error("log tail call must be foreground ExecSSH")
+	}
+	// The liveness check must read the pidfile and run kill -0 — no curl,
+	// no HTTP. This is the structural replacement for log-string matching.
+	if !strings.Contains(ssh.calls[1].command, "kill -0") {
+		t.Errorf("liveness check must use 'kill -0', got: %q", ssh.calls[1].command)
+	}
+	if !strings.Contains(ssh.calls[1].command, "cat ") {
+		t.Errorf("liveness check must read pidfile via cat, got: %q", ssh.calls[1].command)
+	}
+	if strings.Contains(ssh.calls[1].command, "curl") {
+		t.Errorf("liveness check must not curl — no HTTP in no-probe mode: %q", ssh.calls[1].command)
+	}
+	// The spawn command must include the pidfile write so the liveness
+	// check has a pid to probe. Write is `echo $$ > <logFile>.pid`.
+	if !strings.Contains(ssh.calls[0].command, ".pid") {
+		t.Errorf("spawn command must write pidfile (logFile.pid), got: %q", ssh.calls[0].command)
+	}
+	if !strings.Contains(ssh.calls[0].command, "echo $$") {
+		t.Errorf("spawn command must capture real child pid via 'echo $$' before exec, got: %q", ssh.calls[0].command)
+	}
+	if !strings.Contains(ssh.calls[0].command, "exec ") {
+		t.Errorf("spawn command must use 'exec' so the child shell PID becomes the command PID, got: %q", ssh.calls[0].command)
+	}
+}
+
+// TestDevServer_Start_NoHTTPProbe_AllowsZeroPort — validation must accept
+// Port=0 when NoHTTPProbe=true. The v19 worker flow had no HTTP surface
+// and passing Port=0 without NoHTTPProbe fails validation, which is why
+// the main agent gave up on the tool and hand-rolled SSH+background calls.
+func TestDevServer_Start_NoHTTPProbe_AllowsZeroPort(t *testing.T) {
+	t.Parallel()
+	disableNoProbeSettleForTest(t)
+
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "zcp-dev-server-spawned pid=7"},
+		{output: "alive\n"},
+		{output: "worker started"},
+	}}
+
+	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
+		DevServerParams{
+			Action:      "start",
+			Hostname:    "workerdev",
+			Command:     "./bin/worker",
+			Port:        0, // explicitly zero — service has no port
+			NoHTTPProbe: true,
+		})
+	if err != nil {
+		t.Fatalf("expected no validation error when NoHTTPProbe=true allows Port=0, got: %v", err)
+	}
+}
+
+// TestDevServer_Start_PortRequiredWithoutNoHTTPProbe — regression guard:
+// the default start path MUST still reject Port=0. Relaxing port validation
+// unconditionally would hide bugs in the common HTTP-service case.
+func TestDevServer_Start_PortRequiredWithoutNoHTTPProbe(t *testing.T) {
+	t.Parallel()
+
+	_, err := ExecuteDevServer(context.Background(), &scriptSSH{}, mockClientWithServices("apidev"), "p1",
+		DevServerParams{
+			Action:      "start",
+			Hostname:    "apidev",
+			Command:     "./bin/server",
+			Port:        0,
+			NoHTTPProbe: false, // default — probe required, port required
+		})
+	if err == nil {
+		t.Fatal("expected validation error for Port=0 when NoHTTPProbe=false")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "port") {
+		t.Errorf("expected error mentioning port, got: %v", err)
+	}
+}
+
+// TestDevServer_Start_NoHTTPProbe_SpawnTimeoutPropagates — spawn failures
+// in no-probe mode must still surface the structured spawn_* reasons.
+// The no-probe mode ONLY changes what happens AFTER a successful spawn.
+func TestDevServer_Start_NoHTTPProbe_SpawnTimeoutPropagates(t *testing.T) {
+	t.Parallel()
+	disableNoProbeSettleForTest(t)
+
+	timeoutErr := &platform.SSHExecError{
+		Hostname: "workerdev",
+		Output:   "",
+		Err:      context.DeadlineExceeded,
+	}
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "", err: timeoutErr}, // spawn times out
+		{output: ""},                  // fallback log tail
+	}}
+
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
+		DevServerParams{
+			Action:      "start",
+			Hostname:    "workerdev",
+			Command:     "./bin/worker",
+			NoHTTPProbe: true,
+		})
+	if err != nil {
+		t.Fatalf("expected structured result on spawn timeout, got error: %v", err)
+	}
+	if result.Running {
+		t.Errorf("expected Running=false on spawn timeout even in no-probe mode, got %+v", result)
+	}
+	if result.Reason != reasonSpawnTimeout {
+		t.Errorf("expected Reason=spawn_timeout on spawn timeout, got %q", result.Reason)
+	}
+}
+
+// TestDevServer_Start_NoHTTPProbe_DeadProcessAfterSettle — a process that
+// spawns successfully but exits during init must be reported as
+// Running=false. The liveness check uses kill(2) semantics: a process
+// that died during init (for ANY runtime-level reason — bad import,
+// missing dependency, broker auth failure, panic, uncaught exception,
+// syntax error) is dead by POSIX signal, and that's what the check
+// observes. No runtime-specific log-string matching.
+func TestDevServer_Start_NoHTTPProbe_DeadProcessAfterSettle(t *testing.T) {
+	t.Parallel()
+	disableNoProbeSettleForTest(t)
+
+	// Clean spawn ack, but the liveness check returns "dead" — the
+	// process exited during the settle interval.
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "zcp-dev-server-spawned pid=42"},
+		{output: "dead\n"},                                                // kill -0 returned non-zero
+		{output: "starting...\nfatal: something went wrong\nexit code 1"}, // log tail — agent can read details
+	}}
+
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
+		DevServerParams{
+			Action:      "start",
+			Hostname:    "workerdev",
+			Command:     "./bin/worker",
+			NoHTTPProbe: true,
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Running {
+		t.Errorf("expected Running=false when liveness check returns dead, got %+v", result)
+	}
+	if result.Reason != reasonPostSpawnExit {
+		t.Errorf("expected Reason=post_spawn_exit, got %q", result.Reason)
+	}
+	if result.LogTail == "" {
+		t.Errorf("expected LogTail populated so agent can diagnose the exit")
+	}
+}
+
+// TestDevServer_Start_NoHTTPProbe_MissingPidfileTreatedAsDead — if the
+// spawn succeeded (ack marker seen) but the pidfile was never written
+// (remote filesystem issue, shell quirk, or the inner shell crashed
+// before `echo $$ >` ran), the liveness check reads an empty pid and
+// returns "dead". This is the correct conservative behavior — we can't
+// prove the process is alive without a pid, so we report "not alive"
+// and let the agent dig into the log.
+func TestDevServer_Start_NoHTTPProbe_MissingPidfileTreatedAsDead(t *testing.T) {
+	t.Parallel()
+	disableNoProbeSettleForTest(t)
+
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "zcp-dev-server-spawned pid=99"}, // spawn ack
+		{output: "dead\n"},                        // liveness: cat failed, branch to "dead"
+		{output: ""},                              // empty log tail
+	}}
+
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
+		DevServerParams{
+			Action:      "start",
+			Hostname:    "workerdev",
+			Command:     "./bin/worker",
+			NoHTTPProbe: true,
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Running {
+		t.Errorf("expected Running=false when pidfile missing, got %+v", result)
+	}
+	if result.Reason != reasonPostSpawnExit {
+		t.Errorf("expected Reason=post_spawn_exit, got %q", result.Reason)
+	}
+}
+
+// TestDevServer_Start_NoHTTPProbe_LivenessCheckTransportError — if the
+// ssh call for the liveness check itself fails (connection drop,
+// handshake error), the tool must surface it as liveness_check_error so
+// the agent distinguishes "process definitely dead" from "we don't know
+// because ssh failed".
+func TestDevServer_Start_NoHTTPProbe_LivenessCheckTransportError(t *testing.T) {
+	t.Parallel()
+	disableNoProbeSettleForTest(t)
+
+	transportErr := &platform.SSHExecError{
+		Hostname: "workerdev",
+		Output:   "",
+		Err:      errors.New("ssh: connection reset"),
+	}
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "zcp-dev-server-spawned pid=42"},
+		{output: "", err: transportErr}, // liveness ssh errored
+		{output: "some log output"},     // tail still succeeds
+	}}
+
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("workerdev"), "p1",
+		DevServerParams{
+			Action:      "start",
+			Hostname:    "workerdev",
+			Command:     "./bin/worker",
+			NoHTTPProbe: true,
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Running {
+		t.Errorf("expected Running=false on liveness check transport error, got %+v", result)
+	}
+	if result.Reason != reasonLivenessCheckError {
+		t.Errorf("expected Reason=%s, got %q", reasonLivenessCheckError, result.Reason)
 	}
 }
 

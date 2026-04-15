@@ -795,6 +795,8 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 
 **Scaffold sub-agent brief — include verbatim (edit only the codebase-specific names and service list from the plan):**
 
+> **Verify every import, decorator, and module-wiring call against the installed package, not against memory.** Before committing an `import` line, an adapter registration, or any language-level symbol binding, open the package's on-disk manifest (`node_modules/<pkg>/package.json`, `vendor/<pkg>/composer.json`, `go.sum` + the module's `go.mod`, the gem's `*.gemspec`, etc.) and confirm the subpath / symbol you're about to reference is exported by the version actually installed. Training-data memory for library APIs is version-frozen and is the single biggest source of stale-path compile errors the code-review sub-agent has to reject at close time. The verification is mechanical and takes one file read — always cheaper than a close-step round-trip. **When in doubt, run the tool's own scaffolder against a scratch directory and copy its import shapes verbatim.** The installed version's own scaffolder is the authoritative source of current-major idioms.
+>
 > You are scaffolding a health-dashboard-only skeleton. **You write infrastructure. You do NOT write features.** A feature sub-agent runs later with SSH access to live services and authors every feature section end-to-end (API routes + frontend components + worker payloads as a single unit). Your job is to give that sub-agent a healthy, deployable, empty canvas to build on.
 >
 > **⚠ CRITICAL: where commands run (read this FIRST, before writing any files)**
@@ -1376,6 +1378,7 @@ Minimal recipes (1-2 feature sections) skip the sub-agent entirely — the main 
 
 **Sub-agent brief — required contents**:
 
+- **Installed-package verification rule (FIRST line of the dispatch prompt).** Open the prompt verbatim: *"Before writing any import, decorator, adapter registration, or module-wiring call, verify the symbol / subpath against the installed package on disk — read `node_modules/<pkg>/package.json` (Node), `vendor/<pkg>/composer.json` (PHP), the module's `go.mod` (Go), the `*.gemspec` (Ruby), or the equivalent manifest for this stack. Training-data memory for library APIs is version-frozen and will surface stale paths that compiled under prior majors but don't exist in the version installed here. The verification is one file read per package and is ALWAYS cheaper than a close-step review round-trip. When uncertain, run the installed tool's own scaffolder against a scratch directory and copy its import shapes verbatim — the installed version's scaffolder is authoritative."* The rule is framework-agnostic by design: no list of specific moves, no version table to maintain. The agent verifies against what's on disk every time.
 - **The full `plan.Features` list, verbatim.** Every feature's `ID`, `Description`, `Surface`, `HealthCheck`, `UITestID`, `Interaction`, and `MustObserve` go into the dispatch prompt. The sub-agent is implementing exactly these features, no more, no less. The feature list is the contract the deploy sub-steps (feature-sweep-dev, browser-walk, feature-sweep-stage) and the close-step review all iterate against — if a feature is not on the list, the sub-agent MUST NOT invent it; if a feature IS on the list, the sub-agent MUST implement it end-to-end (API route + frontend consumer + worker consumer where the surface includes `worker`).
 - **Feature implementation rule**: for each feature `F`:
   - If `F.surface` includes `api`: implement an endpoint at `F.healthCheck` that returns 200 with `Content-Type: application/json`. For features that read existing data the endpoint is GET and returns a JSON array/object; for write features it accepts POST with a JSON body. The feature-sweep-dev sub-step WILL curl this path and WILL reject any `text/html` response.
@@ -1934,11 +1937,11 @@ On deploy, these run via `initCommands` wrapped with `zsc execOnce ${appVersionI
 
 **Worker production-correctness gotchas (MANDATORY for every `isWorker: true` target with `sharesCodebaseWith` empty).** A separate-codebase worker README MUST carry gotchas covering BOTH of these production-correctness concerns — they are enforced at deploy-step completion by `{hostname}_worker_queue_group_gotcha` and `{hostname}_worker_shutdown_gotcha`:
 
-1. **Queue-group semantics under horizontal scaling.** Under Zerops `minContainers > 1`, a broker consumer without a queue group (NATS `queue: 'workers'`, Kafka consumer group, etc.) processes every message ONCE PER REPLICA — so a 2-container worker runs every job twice. A reader scaling out a fresh deployment will fill the database with duplicates and never know why. The gotcha stem must name the broker + "queue group" or "consumer group" + "minContainers" / "double-process" / "exactly once" / "per replica", and the body must show the exact client-library option that sets the group.
+1. **Queue-group semantics under `minContainers > 1`.** Whenever a runtime service runs more than one container — whether the replicas exist for throughput scaling OR for HA/rolling-deploy availability — a broker consumer without a queue group (NATS `queue: 'workers'`, Kafka consumer group, etc.) processes every message ONCE PER REPLICA, so a 2-container worker runs every job twice. A reader scaling out a fresh deployment will fill the database with duplicates and never know why. The gotcha stem must name the broker + "queue group" or "consumer group" + "minContainers" / "double-process" / "exactly once" / "per replica", and the body must show the exact client-library option that sets the group.
 
 2. **Graceful shutdown on SIGTERM.** Zerops sends SIGTERM to running containers during rolling deploys. A consumer that exits on SIGTERM without draining in-flight messages acks the batch, crashes, and loses the work. The gotcha stem must name SIGTERM or "graceful shutdown" or "in-flight" or "drain", and the body must show the concrete call sequence (catch SIGTERM → `nc.drain()` or equivalent → await → `process.exit(0)`).
 
-Both of these interact with Zerops-specific mechanisms (`minContainers` horizontal scaling, SIGTERM timing during rolling deploys) and belong in the PUBLISHED README, not CLAUDE.md — a porting user needs to know them before their first scaled deploy.
+Both of these interact with Zerops-specific mechanisms (`minContainers > 1` replica count — whether the replicas exist for throughput scaling or for HA / rolling-deploy availability, SIGTERM timing during rolling deploys) and belong in the PUBLISHED README, not CLAUDE.md — a porting user needs to know them before their first scaled deploy.
 
 **Per-item IG code-block floor (enforced by `{hostname}_integration_guide_per_item_code`).** Every H3 heading inside the `integration-guide` fragment must carry at least one fenced code block in its section — any language (typescript, javascript, python, go, bash, yaml for a non-zerops.yaml snippet). The v18 appdev regression shipped IG step 3 ("Place `VITE_API_URL` in `build.envVariables` for prod, `run.envVariables` for dev") as prose only, with no code. A reader can't lift prose — they can lift a diff. If a step is prose-only, fold its content into a neighbouring step that carries a code block, or delete it.
 
@@ -2011,7 +2014,7 @@ Every service that appears in a given env's import.yaml MUST have a comment expl
 **What each env's commentary should cover:**
 - **Role in the dev lifecycle** (AI agent workspace / remote dev / local validator / staging / small prod / HA prod) — what this env exists for.
 - **What `zeropsSetup: dev` / `zeropsSetup: prod` does for THIS framework** (dev dependency install / production build + cache warming / etc.) — where it's relevant.
-- **Scaling rationale** for fields only present in this env: `minContainers: 2` (envs 4-5), `cpuMode: DEDICATED` (env 5), `mode: HA` (env 5), `corePackage: SERIOUS` (env 5).
+- **Replica-count & scaling rationale** for fields only present in this env. `minContainers` is a **runtime-service field only** (never on managed services — they use `mode: HA` / `NON_HA`), and `minContainers ≥ 2` only appears on envs 4-5. On envs 0-3 runtime services stay at `minContainers: 1` — rolling-deploy blips are fine in non-prod, dev tiers can require a single container for SSHFS, and a second replica wastes the non-prod budget. On envs 4-5, `minContainers: 2` on a runtime service serves **two independent axes**: **(a) throughput** — one container can't serve the load — and **(b) HA / rolling-deploy availability** — a single-container pool drops traffic on every rolling deploy or container crash. Name whichever axis applies for this specific service. For a service whose throughput fits in one container (static SPA, light-traffic admin panel), (b) is the sole justification — but a comment that only says "no horizontal scaling needed" and stops there misleads the reader into thinking a single replica is safe. Other env-4/5-only fields: `cpuMode: DEDICATED` (env 5), `mode: HA` (env 5 managed services), `corePackage: SERIOUS` (env 5).
 - **Managed service role** — what THIS app uses it for (sessions/cache/queue/etc. in minimal tier collapsing to one DB).
 - **Project secret** — what the framework uses it for + why it must be shared across containers.
 
@@ -2033,6 +2036,8 @@ Every service that appears in a given env's import.yaml MUST have a comment expl
 - **Decision framing** — `we chose`, `picked`, `default here`, `this tier`, `this env`, `matches prod`, `mirrors prod`.
 
 At least **35%** of substantive comment blocks (≥ 20 chars body, grouped across contiguous `#` lines) must hit one of these markers, with a hard floor of 2 reasoning blocks per env. Pure narration — "Small production — minContainers: 2 enables rolling deploys" — fails the check even though the sentence is grammatical and factual. Rewrite it to carry WHY: "minContainers: 2 **because** a single-container production pool can't roll deploys without a traffic gap." The difference is the reasoning marker forcing the comment to answer "what happens if we flip this decision".
+
+**Two-axis reminder for `minContainers ≥ 2` on a runtime service (envs 4-5 only).** On a service with real throughput demand (API, worker, any runtime that takes traffic volume), the comment can name either axis first — throughput OR HA/rolling-deploy — but should usually name both. On a service whose throughput genuinely fits in a single container at this tier's expected load, the HA/rolling-deploy axis is the **sole** justification and the comment MUST name it. A comment that only explains why throughput scaling doesn't apply and stops there is **thin**: it answers why axis (a) is not the reason but silently drops the reason the field is ≥2 anyway. Rewrite to state the remaining reason explicitly — e.g. "minContainers: 2 — this runtime handles the tier's expected concurrent request volume in a single container, so this is not throughput scaling; it exists **because** a single replica drops traffic on every rolling deploy and on container crashes." The reasoning marker forces the HA reason to surface.
 
 v16's env comments regressed to field narration because "describe what the field does" is the path of least resistance. The rubric exists to make reasoning comments cheaper to produce than narration ones, not to trick the agent into stuffing words. Each reasoning marker is a hook to explain what would go wrong if the decision flipped — anchor your comment on that, not on the field name.
 
@@ -2238,6 +2243,8 @@ Recipe creation is complete. The close step has THREE parts, run in order:
 
 Do NOT skip 1a or 1b to save time. Do NOT publish without an explicit user request.
 
+**Showcase close is an enforced sub-step gate.** For showcase recipes, close step complete is gated on BOTH `substep="code-review"` AND `substep="close-browser-walk"` attestations — the same shape as the deploy step's feature sub-agent gate. Attempting to call `zerops_workflow action="complete" step="close"` without attesting both sub-steps returns `recipe complete step: "close" has N required sub-steps — call complete with substep= for each`. This is the v18/v19 regression fix: both runs shipped with `close.browser` silently skipped because nothing gated on it. Minimal recipes skip the gate entirely (no feature dashboard to walk).
+
 <block name="code-review-subagent">
 
 ### 1a. Static Code Review Sub-Agent (ALWAYS — mandatory)
@@ -2303,6 +2310,14 @@ Apply any CRITICAL or WRONG fixes the sub-agent reported, then **redeploy** to v
 - If only import.yaml (finalize output) changed: re-run finalize checks
 - Do NOT skip redeployment — the browser walk in 1b is meaningless if fixes aren't tested.
 
+**Close the 1a sub-step (showcase only).** After all CRITICAL / WRONG fixes are applied and the recipe has been redeployed:
+
+```
+zerops_workflow action="complete" step="close" substep="code-review" attestation="{framework} expert sub-agent reviewed N files, found X CRIT / Y WRONG / Z STYLE. All CRIT and WRONG fixed and redeployed. Silent-swallow scan: clean. Feature coverage scan: clean (all {N} declared features present)."
+```
+
+The attestation must name findings and fixes. Bare "review done" or "no issues found" attestations are rejected at the sub-step validator.
+
 </block>
 
 <block name="close-browser-walk">
@@ -2325,6 +2340,16 @@ After 1a completes and any redeployments have settled, run the same 3-phase feat
 3. Browser walk (dev + stage): every UI-surface feature satisfies its `MustObserve`, every `[data-error]` banner empty, no JS console errors.
 
 Close proceeds only when every layer is green.
+
+**Close the 1b sub-step (showcase only).** After the browser walk has iterated every feature clean on both dev AND stage:
+
+```
+zerops_workflow action="complete" step="close" substep="close-browser-walk" attestation="Browser walk iterated {N} features on dev AND stage. Every MustObserve satisfied. [data-error] empty across all sections. No JS console errors, no failed network requests. Rebuilt commands from plan.Features live — no cached array."
+```
+
+The attestation must name the feature count and explicitly state BOTH dev and stage walks passed. A walk that only covered one subdomain is rejected.
+
+Only after BOTH `substep="code-review"` AND `substep="close-browser-walk"` are attested can the agent call `zerops_workflow action="complete" step="close"` to finish the close step. Attempting the full-step complete without both substeps returns an error naming the pending ones — no silent skip possible.
 
 </block>
 

@@ -14,10 +14,11 @@ import (
 // the two production-correctness concerns that bite every scaled
 // worker deployment on Zerops:
 //
-//  1. Queue-group semantics under horizontal scaling — when
-//     minContainers > 1, a NATS (or Kafka, or any broker) consumer
-//     that doesn't specify a queue group processes every message N
-//     times, one per replica. v16's nestjs-showcase shipped without
+//  1. Queue-group semantics under `minContainers > 1` — whenever
+//     a worker runs more than one replica (for throughput scaling OR
+//     for HA / rolling-deploy availability), a NATS (or Kafka, or any
+//     broker) consumer that doesn't specify a queue group processes
+//     every message N times, one per replica. v16's nestjs-showcase shipped without
 //     this gotcha in the workerdev README; only the feature
 //     subagent's code review noticed "queue: 'worker'" was missing
 //     from the StatusPanel, and even then the README never mentioned
@@ -85,7 +86,7 @@ func checkWorkerProductionCorrectness(hostname string, readmeContent string, tar
 			Name:   hostname + "_worker_queue_group_gotcha",
 			Status: statusFail,
 			Detail: fmt.Sprintf(
-				"worker %q README has no gotcha covering queue-group semantics under horizontal scaling. Under Zerops `minContainers > 1`, a broker consumer that doesn't set a queue group (NATS `queue: 'workers'`, Kafka consumer group, etc.) processes every message ONCE PER REPLICA — so a 2-container worker runs every job twice. This is a production-correctness bug that only manifests after the first scale-out, and users cannot discover it from the scaffold alone. Add a gotcha describing the trap (stem naming the broker + 'queue group' or 'consumer group' + 'minContainers' / 'horizontal' / 'double-process') with the exact client-library option that sets it. The `queue: 'workers'` option in NestJS's createMicroservice, the `GroupID` in sarama / confluent-kafka, etc.",
+				"worker %q README has no gotcha covering queue-group semantics under `minContainers > 1`. Whenever a worker runs more than one replica — whether the replicas exist for throughput scaling or for HA / rolling-deploy availability — a broker consumer that doesn't set a queue group (NATS `queue: 'workers'`, Kafka consumer group, etc.) processes every message ONCE PER REPLICA, so a 2-container worker runs every job twice. This is a production-correctness bug that only manifests after the first scale-out, and users cannot discover it from the scaffold alone. Add a gotcha describing the trap (stem naming the broker + 'queue group' or 'consumer group' + 'minContainers' / 'per replica' / 'double-process') with the exact client-library option that sets it. The `queue: 'workers'` option in NestJS's createMicroservice, the `GroupID` in sarama / confluent-kafka, etc.",
 				hostname,
 			),
 		})

@@ -49,6 +49,15 @@ type DevServerResult struct {
 	//   health_probe_connection_refused  — curl got no response
 	//   health_probe_http_<code>  — server returned non-ready status
 	//   health_probe_unknown: <…> — unclassified; includes raw probe line
+	//   post_spawn_exit           — no-probe mode: spawn succeeded but
+	//                               `kill -0 <pid>` on the pidfile pid
+	//                               returned non-zero after the settle
+	//                               interval (process exited, or pidfile
+	//                               never written — both treated as dead)
+	//   liveness_check_error      — no-probe mode: the ssh call that
+	//                               ran the liveness check itself failed
+	//                               (transport error) — we cannot prove
+	//                               alive or dead, agent must investigate
 	//   connection_refused        — status-action: no HTTP response
 	//   http_<code>               — status-action: non-ready HTTP code
 	Reason string `json:"reason,omitempty"`
@@ -68,6 +77,15 @@ type DevServerParams struct {
 	LogLines     int
 	WorkDir      string
 	ProcessMatch string
+	// NoHTTPProbe skips the post-spawn health probe. Set true for worker
+	// services that have no HTTP port (NATS/Kafka consumers, disk-queue
+	// runners, cron-style processes). With NoHTTPProbe=true, Port becomes
+	// optional and the tool decides Running from the spawn ack marker plus
+	// a short post-spawn log-tail crash scan (detectPostSpawnCrash), not
+	// from an HTTP 2xx probe. Callers should follow up with zerops_logs to
+	// confirm the worker is actually consuming — the tool cannot verify
+	// liveness for a process without a readable endpoint.
+	NoHTTPProbe bool
 }
 
 // DevServer action names — kept as constants so callers and tests
@@ -78,6 +96,16 @@ const (
 	devServerActionStatus  = "status"
 	devServerActionLogs    = "logs"
 	devServerActionRestart = "restart"
+)
+
+// DevServerResult.Reason values. Declared as constants so assignments in
+// ops code and assertions in tests reference the same literal — linter
+// also enforces this via goconst.
+const (
+	reasonSpawnTimeout       = "spawn_timeout"
+	reasonSpawnError         = "spawn_error"
+	reasonPostSpawnExit      = "post_spawn_exit"
+	reasonLivenessCheckError = "liveness_check_error"
 )
 
 const (
@@ -193,10 +221,16 @@ func validateDevServerParams(p DevServerParams) error {
 				"Missing dev server command",
 				"Pass the exact shell command that starts the dev server, e.g. 'npm run start:dev' or 'vite --host 0.0.0.0'.")
 		}
-		if p.Port <= 0 || p.Port > 65535 {
+		if !p.NoHTTPProbe {
+			if p.Port <= 0 || p.Port > 65535 {
+				return platform.NewPlatformError(platform.ErrInvalidParameter,
+					fmt.Sprintf("Invalid port %d", p.Port),
+					"Pass the HTTP port the dev server listens on (e.g. 3000 for NestJS, 5173 for Vite). For services with no HTTP surface (NATS/queue workers, cron runners), set noHttpProbe=true to skip the health probe entirely.")
+			}
+		} else if p.Port < 0 || p.Port > 65535 {
 			return platform.NewPlatformError(platform.ErrInvalidParameter,
 				fmt.Sprintf("Invalid port %d", p.Port),
-				"Pass the HTTP port the dev server listens on (e.g. 3000 for NestJS, 5173 for Vite).")
+				"Port must be in 0..65535. Use 0 when noHttpProbe=true (the tool ignores it).")
 		}
 	}
 	return nil

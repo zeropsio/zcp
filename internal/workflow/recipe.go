@@ -295,6 +295,17 @@ func (r *RecipeState) CompleteStep(name, attestation string) error {
 			return err
 		}
 	}
+	// Sub-step gate for showcase close. v18 and v19 both shipped with
+	// `close.browser` silently skipped — the rubric listed it as mandatory
+	// but closeSubSteps returned nil, so the agent's close complete call
+	// passed without any attestation that the code review OR the browser
+	// walk actually ran. Same narrow scope as the deploy gate: showcase
+	// only, so minimal-tier close remains single-call (no sub-steps).
+	if name == RecipeStepClose && isShowcase(r.Plan) {
+		if err := r.Steps[r.CurrentStep].enforceSubStepsComplete(name, r.Plan); err != nil {
+			return err
+		}
+	}
 
 	r.Steps[r.CurrentStep].Status = stepComplete
 	r.Steps[r.CurrentStep].Attestation = attestation

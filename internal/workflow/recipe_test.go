@@ -147,6 +147,164 @@ func TestRecipeCompleteStep_NotActive(t *testing.T) {
 // sub-step (including the feature sub-agent dispatch). v11 and v12 both shipped
 // scaffold-quality output because the main agent skipped step 4b entirely —
 // the sub-step was a bullet in guidance text, not a forcing function.
+// TestRecipeCompleteStep_ShowcaseCloseSubStepGate — v19 regression guard.
+// v18 and v19 both shipped with only `deploy.browser` firing; `close.browser`
+// was prose-only in recipe.md and the agent skipped it because close-step
+// complete didn't enforce it. This test locks in the enforcement shape:
+// for showcase recipes, close step complete must fail when the close
+// sub-steps (code-review + close-browser-walk) are not attested, and must
+// pass when both are. Minimal recipes skip enforcement — they have no
+// feature dashboard to walk.
+func TestRecipeCompleteStep_ShowcaseCloseSubStepGate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		plan         *RecipePlan
+		initSubSteps bool
+		completeAll  bool
+		wantErr      bool
+		errContains  string
+	}{
+		{
+			name:         "showcase close without any sub-steps → blocked",
+			plan:         &RecipePlan{Tier: RecipeTierShowcase},
+			initSubSteps: false,
+			completeAll:  false,
+			wantErr:      true,
+			errContains:  "sub-step",
+		},
+		{
+			name:         "showcase close with sub-steps pending → blocked",
+			plan:         &RecipePlan{Tier: RecipeTierShowcase},
+			initSubSteps: true,
+			completeAll:  false,
+			wantErr:      true,
+			errContains:  "pending sub-step",
+		},
+		{
+			name:         "showcase close with all sub-steps complete → passes",
+			plan:         &RecipePlan{Tier: RecipeTierShowcase},
+			initSubSteps: true,
+			completeAll:  true,
+			wantErr:      false,
+		},
+		{
+			name:         "minimal close without sub-steps → passes (no enforcement)",
+			plan:         &RecipePlan{Tier: RecipeTierMinimal},
+			initSubSteps: false,
+			completeAll:  false,
+			wantErr:      false,
+		},
+		{
+			name:         "nil plan close → passes (test shape, no enforcement)",
+			plan:         nil,
+			initSubSteps: false,
+			completeAll:  false,
+			wantErr:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rs := NewRecipeState()
+			rs.Plan = tt.plan
+			// Advance to close step (index 5 — the last step).
+			for i := range 5 {
+				rs.Steps[i].Status = stepComplete
+				rs.Steps[i].Attestation = "prior step"
+			}
+			rs.CurrentStep = 5
+			rs.Steps[5].Status = stepInProgress
+
+			if tt.initSubSteps {
+				rs.Steps[5].SubSteps = initSubSteps(RecipeStepClose, tt.plan)
+				if tt.completeAll {
+					for i := range rs.Steps[5].SubSteps {
+						rs.Steps[5].SubSteps[i].Status = stepComplete
+						rs.Steps[5].SubSteps[i].Attestation = "complete"
+					}
+					rs.Steps[5].CurrentSubStep = len(rs.Steps[5].SubSteps)
+				}
+			}
+
+			err := rs.CompleteStep(RecipeStepClose, "attestation for close step")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestRecipeCloseSubSteps_ShowcaseIncludesBrowserWalk — structural assertion
+// that closeSubSteps returns exactly the sub-steps the v19 post-mortem said
+// should fire: the static code review (1a) and the close-time browser walk
+// (1b). Locked in so a future refactor can't silently drop either.
+func TestRecipeCloseSubSteps_ShowcaseIncludesBrowserWalk(t *testing.T) {
+	t.Parallel()
+
+	plan := &RecipePlan{Tier: RecipeTierShowcase}
+	substeps := initSubSteps(RecipeStepClose, plan)
+	if len(substeps) == 0 {
+		t.Fatal("expected close sub-steps for showcase, got none")
+	}
+	names := make(map[string]bool, len(substeps))
+	for _, ss := range substeps {
+		names[ss.Name] = true
+	}
+	if !names[SubStepCloseReview] {
+		t.Errorf("expected close sub-step %q in sequence", SubStepCloseReview)
+	}
+	if !names[SubStepCloseBrowserWalk] {
+		t.Errorf("expected close sub-step %q in sequence — this is the v18/v19 regression guard", SubStepCloseBrowserWalk)
+	}
+	// Code review must run before the browser walk — the walk re-verifies
+	// after any redeploy caused by code-review fixes.
+	reviewIdx := -1
+	walkIdx := -1
+	for i, ss := range substeps {
+		if ss.Name == SubStepCloseReview {
+			reviewIdx = i
+		}
+		if ss.Name == SubStepCloseBrowserWalk {
+			walkIdx = i
+		}
+	}
+	if reviewIdx >= 0 && walkIdx >= 0 && reviewIdx >= walkIdx {
+		t.Errorf("close sub-step order wrong: review (index %d) must come before browser walk (index %d)", reviewIdx, walkIdx)
+	}
+	// First sub-step should be in-progress after init.
+	if substeps[0].Status != stepInProgress {
+		t.Errorf("expected first close sub-step in-progress, got %q", substeps[0].Status)
+	}
+}
+
+// TestRecipeCloseSubSteps_MinimalEmpty — regression guard that minimal
+// recipes skip close sub-step enforcement entirely. Minimal recipes don't
+// have a feature dashboard so a browser walk has nothing to observe, and
+// their close step is historically lightweight.
+func TestRecipeCloseSubSteps_MinimalEmpty(t *testing.T) {
+	t.Parallel()
+
+	plan := &RecipePlan{Tier: RecipeTierMinimal}
+	if substeps := initSubSteps(RecipeStepClose, plan); len(substeps) != 0 {
+		t.Errorf("expected minimal close sub-steps empty, got %+v", substeps)
+	}
+	plan = &RecipePlan{Tier: RecipeTierHelloWorld}
+	if substeps := initSubSteps(RecipeStepClose, plan); len(substeps) != 0 {
+		t.Errorf("expected hello-world close sub-steps empty, got %+v", substeps)
+	}
+}
+
 func TestRecipeCompleteStep_ShowcaseDeploySubStepGate(t *testing.T) {
 	t.Parallel()
 

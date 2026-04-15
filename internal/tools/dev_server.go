@@ -13,13 +13,14 @@ type DevServerInput struct {
 	Action       string `json:"action"                 jsonschema:"Action to perform: start, stop, status, logs, restart. start spawns the dev-server command in the background and waits for the health endpoint to return 2xx. stop kills matching processes and frees the port. status probes the health endpoint without spawning anything. logs tails the dev-server log file. restart is stop+start."`
 	Hostname     string `json:"hostname"               jsonschema:"Target dev-container hostname (e.g. apidev, appdev, workerdev). Must exist in the current project."`
 	Command      string `json:"command,omitempty"      jsonschema:"Shell command that starts the dev server. Required for start and restart. Example: 'npm run start:dev', 'vite --host 0.0.0.0', 'PORT=3000 npm run dev'. Env assignments and pipes are supported. Unused by stop/status/logs."`
-	Port         int    `json:"port,omitempty"         jsonschema:"HTTP port the dev server listens on. Required for start/restart/status. Optional for stop (if set, fuser -k the port). Example: 3000 for NestJS, 5173 for Vite."`
-	HealthPath   string `json:"healthPath,omitempty"   jsonschema:"HTTP path to probe for readiness. Defaults to '/' if omitted. Example: '/api/health', '/health', '/'. Must return 2xx or 3xx to count as ready."`
+	Port         int    `json:"port,omitempty"         jsonschema:"HTTP port the dev server listens on. Required for start/restart/status UNLESS noHttpProbe=true. Optional for stop (if set, fuser -k the port). Example: 3000 for NestJS, 5173 for Vite."`
+	HealthPath   string `json:"healthPath,omitempty"   jsonschema:"HTTP path to probe for readiness. Defaults to '/' if omitted. Example: '/api/health', '/health', '/'. Must return 2xx or 3xx to count as ready. Ignored when noHttpProbe=true."`
 	LogFile      string `json:"logFile,omitempty"      jsonschema:"Absolute path to the log file on the target container. Defaults to /tmp/zcp-dev-server.log. Used by start/restart (written to), logs (read from). Reusing the same default across calls keeps the log stable between start and later tail operations."`
-	WaitSeconds  int    `json:"waitSeconds,omitempty"  jsonschema:"How long to wait for the health probe to succeed on start/restart. Default 15, max 45. Short enough to fit comfortably inside the 120s bash timeout with margin for two retries."`
+	WaitSeconds  int    `json:"waitSeconds,omitempty"  jsonschema:"How long to wait for the health probe to succeed on start/restart. Default 15, max 45. Short enough to fit comfortably inside the 120s bash timeout with margin for two retries. Ignored when noHttpProbe=true."`
 	LogLines     int    `json:"logLines,omitempty"     jsonschema:"Number of log lines to tail for the logs action. Default 40, max 500."`
 	WorkDir      string `json:"workDir,omitempty"      jsonschema:"Absolute working directory on the target container. Defaults to /var/www. The dev-server command runs with this as cwd."`
 	ProcessMatch string `json:"processMatch,omitempty" jsonschema:"pkill -f pattern for the stop action. If omitted, stop derives a match from the first token of command. Example: 'nest', 'vite', 'npm run'."`
+	NoHTTPProbe  bool   `json:"noHttpProbe,omitempty"  jsonschema:"Skip the HTTP health probe after spawning. Set true for worker services that have no HTTP port — NATS/Kafka consumers, disk-queue runners, cron-style processes. With noHttpProbe=true, 'port' becomes optional (pass 0 or omit), and the tool decides 'running' from the spawn ack marker plus a 3-second post-spawn log-tail crash scan (missing module, broker auth failure, panic, syntax error). This tool CANNOT verify a worker is actually consuming messages in no-probe mode — always follow up with zerops_logs to confirm the subscription loop is alive. Without this flag, start/restart require a valid port and run the HTTP probe phase."`
 }
 
 // RegisterDevServer registers the zerops_dev_server tool. The tool is
@@ -34,6 +35,7 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, projectID string
 			"bounds every phase with a tight budget — spawn 8s, probe waitSeconds+5s, tail 5s — so a regression costs seconds not minutes, " +
 			"polls the health endpoint server-side in a single round-trip, and returns structured {running, startMillis, healthStatus, logTail, reason} " +
 			"with a specific reason code on failure (spawn_timeout, spawn_error, health_probe_*) so the agent can diagnose without a follow-up call. " +
+			"For worker services with no HTTP port (NATS/queue consumers, cron runners), pass noHttpProbe=true — the tool spawns through the same bounded-timeout path, skips the HTTP probe, and scans the post-spawn log tail for crash markers instead (missing module, broker auth failure, panic). " +
 			"Prefer this tool over raw Bash + ssh for every dev-server lifecycle operation.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage dev server lifecycle",
@@ -52,6 +54,7 @@ func RegisterDevServer(srv *mcp.Server, client platform.Client, projectID string
 			LogLines:     input.LogLines,
 			WorkDir:      input.WorkDir,
 			ProcessMatch: input.ProcessMatch,
+			NoHTTPProbe:  input.NoHTTPProbe,
 		})
 		if err != nil {
 			return convertError(err), nil, nil
