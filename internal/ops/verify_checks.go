@@ -2,7 +2,6 @@ package ops
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -124,9 +123,10 @@ func checkStartupDetected(
 // which flagged every API-only service that only routes /api/* as
 // "degraded" in every single run — the root path is legitimately not
 // served by API scaffolds, and downgrading the whole service for it is
-// noise, not signal. The dedicated checkHTTPStatus against /status
-// carries the "is the health endpoint happy?" semantics; http_root
-// carries the weaker "is the HTTP listener alive?" semantics.
+// noise, not signal. Workflow-specific endpoint-shape checks
+// (recipe's feature-sweep, bootstrap's /status curl) live in the
+// workflow that knows the path — verify stays generic and only asks
+// the single question it's qualified to answer.
 func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckResult {
 	name := checkNameHTTPRoot
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -156,64 +156,6 @@ func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckRe
 		detail += ": " + truncateBody(body, 200)
 	}
 	return CheckResult{Name: name, Status: CheckFail, Detail: detail, HTTPStatus: resp.StatusCode}
-}
-
-func checkHTTPStatus(ctx context.Context, httpClient HTTPDoer, url string) CheckResult {
-	name := "http_status"
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}
-	}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 201))
-		detail := fmt.Sprintf("HTTP %d", resp.StatusCode)
-		if len(body) > 0 {
-			detail += ": " + truncateBody(body, 200)
-		}
-		return CheckResult{Name: name, Status: CheckFail, Detail: detail, HTTPStatus: resp.StatusCode}
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("read body: %v", err)}
-	}
-
-	// Try parsing as JSON with status field. Accept any 2xx with valid JSON
-	// regardless of the exact response shape — recipes use framework-native
-	// formats (e.g. {"status":"healthy"}) not the bootstrap spec.
-	var sr statusResponse
-	if err := json.Unmarshal(body, &sr); err != nil {
-		// Not JSON but HTTP 2xx — still a pass (might be HTML or plain text health page).
-		return CheckResult{Name: name, Status: CheckPass, Detail: fmt.Sprintf("HTTP %d (non-JSON)", resp.StatusCode), HTTPStatus: resp.StatusCode}
-	}
-
-	// Check status field if present — accept common healthy values.
-	if sr.Status != "" {
-		switch sr.Status {
-		case "ok", StatusHealthy, "up", "running", "pass":
-			// All good.
-		default:
-			return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("status: %s", sr.Status), HTTPStatus: resp.StatusCode}
-		}
-	}
-
-	// Check connections if present (bootstrap format).
-	for connName, conn := range sr.Connections {
-		if conn.Status != "" && conn.Status != "ok" && conn.Status != "connected" {
-			return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("connection '%s': %s", connName, conn.Status)}
-		}
-	}
-
-	return CheckResult{Name: name, Status: CheckPass, HTTPStatus: resp.StatusCode}
 }
 
 // truncateBody returns a string-truncated body with "..." if over max bytes.

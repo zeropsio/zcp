@@ -160,7 +160,7 @@ broken SPAs, JS hydration failures, missing assets).
 - For adoption verification — check if existing service actually works
 
 **When NOT to use:**
-- Pure API services (JSON endpoints) — `zerops_verify` http_status check is sufficient
+- Pure API services (JSON endpoints) — curl the known health path directly (e.g. `ssh {hostname}dev "curl -sS -w '%{http_code} %{content_type}\n' localhost:{port}/api/health"`). `zerops_verify` only does generic aliveness; it does NOT curl workflow-specific health paths.
 - Worker services — no HTTP endpoint
 - Managed services — no web interface
 

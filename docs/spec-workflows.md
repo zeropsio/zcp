@@ -370,8 +370,9 @@ Phase 3 — Cross-verify:
 | `service_running`: fail | Service not running | Check deploy status, `zerops_logs severity=error` |
 | `startup_detected`: fail | App crashed on start | `zerops_logs severity=error since=5m` |
 | `error_logs`: info | Advisory — errors found | Read detail. Infra noise → ignore. App errors → investigate. |
-| `http_root`: fail | Not responding on / | Check port, binding, start command |
-| `http_status`: fail | Dependency connectivity | Check env var mapping vs discovered vars |
+| `http_root`: fail | HTTP server returned 5xx or refused connection (4xx passes — proof-of-life check, not an endpoint contract check) | Check port, binding, start command, runtime logs |
+
+Workflow-specific endpoint-shape checks (`/api/health`, `/status`, Laravel `/up`, etc.) are NOT in `zerops_verify` — their paths are framework-dependent. Verify those paths with explicit `curl` commands in the workflow that knows them (bootstrap's `/status` curl, recipe's `feature-sweep-dev` sub-step iterating `plan.Features`).
 
 ### 2.7 Step 5: Close
 

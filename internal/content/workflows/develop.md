@@ -317,9 +317,8 @@ When `zerops_verify` returns "degraded" or "unhealthy", iterate — do not give 
 **Diagnosis from checks array:**
 - service_running: fail → service not running, check deploy status
 - startup_detected: fail → app crashed on start, check `zerops_logs severity="error" since="5m"`
-- no_error_logs / no_recent_errors: info → advisory, check detail for real errors vs noise
-- http_health: fail → endpoint broken, check `detail` for HTTP status
-- http_status: fail → managed service connectivity issue, check `detail` for which connection failed
+- error_logs: info → advisory, check detail for real errors vs noise
+- http_root: fail → HTTP server returned 5xx or didn't respond at all (4xx passes — any response proves the listener is alive). Check runtime logs for the real error. Workflow-specific endpoint-shape checks (is /api/status actually connected to the DB?) are NOT in zerops_verify — run them yourself: `ssh {hostname}dev "curl -sS -w '%{http_code} %{content_type}\n' localhost:{port}{healthPath}"` against the path your framework exposes.
 
 **Fix based on diagnosis:**
 - Build error → fix zerops.yaml (buildCommands, deployFiles, start)

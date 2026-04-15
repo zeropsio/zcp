@@ -41,18 +41,6 @@ type CheckResult struct {
 	HTTPStatus int    `json:"httpStatus,omitempty"` // HTTP status code (0 = N/A)
 }
 
-// statusResponse is the expected /status endpoint response (per bootstrap.md spec).
-// Contract: coupled with bootstrap.md /status spec. See CLAUDE.md Maintenance table.
-type statusResponse struct {
-	Service     string                      `json:"service"`
-	Status      string                      `json:"status"`
-	Connections map[string]connectionStatus `json:"connections"`
-}
-
-type connectionStatus struct {
-	Status string `json:"status"`
-}
-
 // isManagedCategory returns true if the API category represents a managed service.
 func isManagedCategory(categoryName string) bool {
 	switch categoryName {
@@ -149,7 +137,17 @@ func verifyService(
 		})
 	}
 
-	// Group B: HTTP checks.
+	// Group B: HTTP check (single probe — "is the HTTP server alive?").
+	// verify is a generic aliveness tool: it does NOT curl workflow-
+	// specific health paths because those paths are framework-dependent
+	// (recipes live at /api/status, bootstrap at /status, Laravel at
+	// /up, etc.). Workflow layers that know their paths iterate them
+	// themselves: the recipe workflow's feature-sweep-dev sub-step
+	// iterates plan.Features and curls each health path with a content-
+	// type contract; bootstrap's workflow guidance explicitly curls
+	// its /status endpoint. Those checks belong to the workflows, not
+	// to a generic "does this service respond?" probe. http_root asks
+	// the single question verify is qualified to answer.
 	needHTTP := rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeStatic
 	if needHTTP {
 		wg.Go(func() {
@@ -161,14 +159,8 @@ func verifyService(
 					skipDetail = "cannot resolve subdomain URL"
 				}
 				checks = append(checks, CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail})
-				if rc != RuntimeStatic {
-					checks = append(checks, CheckResult{Name: "http_status", Status: CheckSkip, Detail: skipDetail})
-				}
 			} else {
 				checks = append(checks, checkHTTPRoot(ctx, httpClient, subdomainURL+"/"))
-				if rc != RuntimeStatic {
-					checks = append(checks, checkHTTPStatus(ctx, httpClient, subdomainURL+"/status"))
-				}
 			}
 			mu.Lock()
 			httpChecks = checks
@@ -197,13 +189,11 @@ func skipChecksForClass(rc RuntimeClass) []CheckResult {
 			CheckResult{Name: "error_logs", Status: CheckSkip, Detail: skipDetail},
 			CheckResult{Name: "startup_detected", Status: CheckSkip, Detail: skipDetail},
 			CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail},
-			CheckResult{Name: "http_status", Status: CheckSkip, Detail: skipDetail},
 		)
 	case RuntimeImplicit:
 		checks = append(checks,
 			CheckResult{Name: "error_logs", Status: CheckSkip, Detail: skipDetail},
 			CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail},
-			CheckResult{Name: "http_status", Status: CheckSkip, Detail: skipDetail},
 		)
 	case RuntimeStatic:
 		checks = append(checks,

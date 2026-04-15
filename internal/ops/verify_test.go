@@ -184,17 +184,16 @@ func TestVerify_DynamicRuntime_AllChecks(t *testing.T) {
 	if result.Status != "healthy" {
 		t.Errorf("Status = %q, want %q", result.Status, "healthy")
 	}
-	// Dynamic: service_running, error_logs, startup_detected, http_root, http_status = 5
-	if len(result.Checks) != 5 {
-		t.Fatalf("Checks count = %d, want 5; checks: %v", len(result.Checks), checkNames(result.Checks))
+	// Dynamic: service_running, error_logs, startup_detected, http_root = 4
+	if len(result.Checks) != 4 {
+		t.Fatalf("Checks count = %d, want 4; checks: %v", len(result.Checks), checkNames(result.Checks))
 	}
 
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "error_logs", "pass")
 	findCheck(t, result, "startup_detected", "pass")
-	// HTTP checks skip (no subdomain).
+	// HTTP check skip (no subdomain).
 	findCheck(t, result, "http_root", "skip")
-	findCheck(t, result, "http_status", "skip")
 }
 
 func TestVerify_RuntimeStopped(t *testing.T) {
@@ -213,9 +212,9 @@ func TestVerify_RuntimeStopped(t *testing.T) {
 	if result.Status != "unhealthy" {
 		t.Errorf("Status = %q, want unhealthy", result.Status)
 	}
-	// Dynamic stopped: 5 checks (service_running fail + 4 skip)
-	if len(result.Checks) != 5 {
-		t.Fatalf("Checks count = %d, want 5; checks: %v", len(result.Checks), checkNames(result.Checks))
+	// Dynamic stopped: 4 checks (service_running fail + 3 skip)
+	if len(result.Checks) != 4 {
+		t.Fatalf("Checks count = %d, want 4; checks: %v", len(result.Checks), checkNames(result.Checks))
 	}
 	if result.Checks[0].Status != "fail" {
 		t.Errorf("service_running status = %q, want fail", result.Checks[0].Status)
@@ -306,14 +305,10 @@ func TestVerify_RuntimeNoSubdomain(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// No subdomain → HTTP checks skip, but service+logs pass
+	// No subdomain → http_root skips, but service+logs pass
 	httpRoot := findCheck(t, result, "http_root", "skip")
 	if !strings.Contains(httpRoot.Detail, "subdomain not enabled") {
 		t.Errorf("http_root detail = %q, want to contain 'subdomain not enabled'", httpRoot.Detail)
-	}
-	statusCheck := findCheck(t, result, "http_status", "skip")
-	if !strings.Contains(statusCheck.Detail, "subdomain not enabled") {
-		t.Errorf("http_status detail = %q, want to contain 'subdomain not enabled'", statusCheck.Detail)
 	}
 }
 
@@ -396,14 +391,13 @@ func TestVerify_ImplicitWebserver_SkipsStartup(t *testing.T) {
 	if result.Status != "healthy" {
 		t.Errorf("Status = %q, want healthy", result.Status)
 	}
-	// Implicit: service_running + error_logs + http_root + http_status = 4 checks (no startup)
-	if len(result.Checks) != 4 {
-		t.Fatalf("Checks count = %d, want 4; checks: %v", len(result.Checks), checkNames(result.Checks))
+	// Implicit: service_running + error_logs + http_root = 3 checks (no startup)
+	if len(result.Checks) != 3 {
+		t.Fatalf("Checks count = %d, want 3; checks: %v", len(result.Checks), checkNames(result.Checks))
 	}
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "error_logs", "pass")
-	findCheck(t, result, "http_root", "skip")   // no subdomain
-	findCheck(t, result, "http_status", "skip") // no subdomain
+	findCheck(t, result, "http_root", "skip") // no subdomain
 
 	// Verify startup_detected is NOT present.
 	for _, c := range result.Checks {
@@ -444,7 +438,7 @@ func TestVerify_WorkerRuntime_NoHTTPChecks(t *testing.T) {
 	// No HTTP checks or startup_detected for workers.
 	for _, c := range result.Checks {
 		switch c.Name {
-		case "http_root", "http_status", "startup_detected":
+		case "http_root", "startup_detected":
 			t.Errorf("check %q should not be present for worker runtime", c.Name)
 		}
 	}
@@ -752,113 +746,6 @@ func TestBatchLogChecks_LogBackendError_Skip(t *testing.T) {
 	}
 	if checks[0].Status != CheckSkip {
 		t.Errorf("status = %q, want skip", checks[0].Status)
-	}
-}
-
-func TestCheckHTTPStatus(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name           string
-		handler        http.HandlerFunc
-		wantStatus     string
-		wantDetail     string
-		wantHTTPStatus int
-	}{
-		{
-			name: "all connections ok",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				fmt.Fprint(w, `{"service":"app","status":"ok","connections":{"db":{"status":"ok"},"cache":{"status":"ok"}}}`)
-			},
-			wantStatus: "pass",
-		},
-		{
-			name: "connection error",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				fmt.Fprint(w, `{"service":"app","status":"ok","connections":{"db":{"status":"error"}}}`)
-			},
-			wantStatus: "fail",
-			wantDetail: "connection 'db': error",
-		},
-		{
-			name: "connections ok but missing top-level status — pass (framework may omit status field)",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				fmt.Fprint(w, `{"service":"app","connections":{"db":{"status":"ok"}}}`)
-			},
-			wantStatus: "pass",
-		},
-		{
-			name: "connections ok but top-level status error",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				fmt.Fprint(w, `{"service":"app","status":"error","connections":{"db":{"status":"ok"}}}`)
-			},
-			wantStatus: "fail",
-			wantDetail: "status: error",
-		},
-		{
-			name: "no connections, top-level ok",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				fmt.Fprint(w, `{"service":"app","status":"ok"}`)
-			},
-			wantStatus: "pass",
-		},
-		{
-			name: "no connections, top-level error",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				fmt.Fprint(w, `{"service":"app","status":"error"}`)
-			},
-			wantStatus: "fail",
-			wantDetail: "status: error",
-		},
-		{
-			name: "not JSON but 200 — passes (framework may return HTML health page)",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				fmt.Fprint(w, `<html>not found</html>`)
-			},
-			wantStatus:     "pass",
-			wantDetail:     "HTTP 200 (non-JSON)",
-			wantHTTPStatus: 200,
-		},
-		{
-			name: "HTTP 500 with body",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprint(w, `Internal Server Error`)
-			},
-			wantStatus:     "fail",
-			wantDetail:     "HTTP 500: Internal Server Error",
-			wantHTTPStatus: 500,
-		},
-		{
-			name: "HTTP 502 with HTML body",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusBadGateway)
-				fmt.Fprint(w, `<html><body>502 Bad Gateway</body></html>`)
-			},
-			wantStatus:     "fail",
-			wantDetail:     "HTTP 502: <html><body>502 Bad Gateway</body></html>",
-			wantHTTPStatus: 502,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			srv := httptest.NewTLSServer(tt.handler)
-			defer srv.Close()
-
-			c := checkHTTPStatus(context.Background(), srv.Client(), srv.URL)
-			if c.Status != tt.wantStatus {
-				t.Errorf("status = %q, want %q", c.Status, tt.wantStatus)
-			}
-			if tt.wantDetail != "" && !strings.Contains(c.Detail, tt.wantDetail) {
-				t.Errorf("detail = %q, want to contain %q", c.Detail, tt.wantDetail)
-			}
-			if tt.wantHTTPStatus != 0 && c.HTTPStatus != tt.wantHTTPStatus {
-				t.Errorf("httpStatus = %d, want %d", c.HTTPStatus, tt.wantHTTPStatus)
-			}
-		})
 	}
 }
 
