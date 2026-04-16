@@ -15,7 +15,7 @@ That's all. Skip to **Git Authentication** section below.
 
 ### Option B: Full CI/CD (push → automatic deploy)
 
-**GitHub fine-grained token permissions: Contents: Read and write + Actions secrets: Read and write + Workflows: Read and write**
+**GitHub fine-grained token permissions: Contents: Read and write + Secrets: Read and write + Workflows: Read and write**
 
 **Requirements — gather ALL of these before starting:**
 1. **Git push token with CI/CD permissions** — needs Contents + Secrets + Workflows (three permissions above) for pushing code AND creating the workflow file + setting secrets
@@ -129,7 +129,7 @@ For pushing code from a Zerops container to GitHub/GitLab, set a project-level t
  **For full CI/CD (Option B):**
  Same path, but three permissions:
  - **Contents: Read and write** (push code)
- - **Actions secrets: Read and write** (set ZEROPS_TOKEN secret)
+ - **Secrets: Read and write** (set ZEROPS_TOKEN secret)
  - **Workflows: Read and write** (create .github/workflows/deploy.yml)
 
  **GitLab alternative:** User Settings → Access Tokens → Scope: **write_repository**

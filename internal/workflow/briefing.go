@@ -304,7 +304,7 @@ func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strat
 			step++
 		}
 		sb.WriteString("\n#### Option B: Full CI/CD (push → automatic deploy)\n\n")
-		sb.WriteString("**GitHub fine-grained token:** Contents: Read and write + Actions secrets: Read and write + Workflows: Read and write\n")
+		sb.WriteString("**GitHub fine-grained token:** Contents: Read and write + Secrets: Read and write + Workflows: Read and write\n")
 		sb.WriteString("Set `GIT_TOKEN` with this token first, then run:\n")
 		sb.WriteString("`zerops_workflow action=\"start\" workflow=\"cicd\"`\n")
 	default:

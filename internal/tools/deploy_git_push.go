@@ -30,7 +30,7 @@ GitHub fine-grained token permissions: **Contents: Read and write** (that's all)
 3. Retry this zerops_deploy command
 
 **Option B: Full CI/CD (push → automatic deploy)**
-GitHub fine-grained token permissions: **Contents: Read and write** + **Actions secrets: Read and write** + **Workflows: Read and write**
+GitHub fine-grained token permissions: **Contents: Read and write** + **Secrets: Read and write** + **Workflows: Read and write**
 1. Create token with all three permissions above
 2. Set it: zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]
 3. Run: zerops_workflow action="start" workflow="cicd"`
