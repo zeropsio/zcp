@@ -24,8 +24,14 @@ import (
 // without compaction. Keep this list minimal and explicit — any alias ("opus")
 // or variant without the [1m] suffix is rejected so the agent has to switch
 // client configuration rather than hope the server will tolerate a near-match.
+// recipeAllowedModels is the accepted self-reported client model set
+// for recipe workflow start. Opus at 1M context only — either 4.6 or
+// 4.7. v13 shipped on Sonnet/200k and doubled wall time; variants
+// without the [1m] suffix cannot hold the ~80 KB guidance + schemas +
+// feature-subagent brief + code-writing context without compaction.
 var recipeAllowedModels = map[string]struct{}{
 	"claude-opus-4-6[1m]": {},
+	"claude-opus-4-7[1m]": {},
 }
 
 // validateRecipeModel returns nil when the self-reported client model clears
@@ -37,13 +43,13 @@ func validateRecipeModel(clientModel string) error {
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"clientModel is required for recipe workflow start",
-			"Pass clientModel=\"claude-opus-4-6[1m]\" — the agent's exact model ID from its own system prompt. The recipe workflow pulls ~80 KB of guidance plus the agent's code-writing context and requires Opus 4.6 at 1M tokens. Weaker models double wall time and regress close-step severity.")
+			"Pass clientModel=\"claude-opus-4-7[1m]\" (or \"claude-opus-4-6[1m]\") — the agent's exact model ID from its own system prompt. The recipe workflow pulls ~80 KB of guidance plus the agent's code-writing context and requires Opus at 1M tokens. Weaker models double wall time and regress close-step severity.")
 	}
 	if _, ok := recipeAllowedModels[model]; !ok {
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("Recipe workflow requires claude-opus-4-6[1m] — got %q", model),
-			"Switch the client to Claude Opus 4.6 with the 1M-token context window. In Claude Code: /model claude-opus-4-6[1m]. In headless mode: --model claude-opus-4-6[1m]. Retry action=\"start\" after switching.")
+			fmt.Sprintf("Recipe workflow requires claude-opus-4-7[1m] or claude-opus-4-6[1m] — got %q", model),
+			"Switch the client to Claude Opus 4.7 (or 4.6) with the 1M-token context window. In Claude Code: /model claude-opus-4-7[1m]. In headless mode: --model claude-opus-4-7[1m]. Retry action=\"start\" after switching.")
 	}
 	return nil
 }

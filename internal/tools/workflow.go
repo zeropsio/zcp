@@ -41,8 +41,8 @@ type WorkflowInput struct {
 	// own system prompt. Required at start for the recipe workflow because v13
 	// shipped on Sonnet/200k by accident and doubled wall time while regressing
 	// close-step severity. The agent must report its EXACT model ID (e.g.
-	// "claude-opus-4-6[1m]"), not an alias like "opus".
-	ClientModel string `json:"clientModel,omitempty" jsonschema:"Recipe workflow start only: the agent's exact model identifier from its own system prompt (e.g. 'claude-opus-4-6[1m]'). Required — recipe workflow rejects non-Opus models and Opus variants without 1M context."`
+	// "claude-opus-4-7[1m]" or "claude-opus-4-6[1m]"), not an alias like "opus".
+	ClientModel string `json:"clientModel,omitempty" jsonschema:"Recipe workflow start only: the agent's exact model identifier from its own system prompt (e.g. 'claude-opus-4-7[1m]' or 'claude-opus-4-6[1m]'). Required — recipe workflow rejects non-Opus models and Opus variants without 1M context."`
 
 	// Recipe comment inputs — passed to generate-finalize to bake agent-authored
 	// per-env comments into the 6 import.yaml files, replacing per-file Edit.

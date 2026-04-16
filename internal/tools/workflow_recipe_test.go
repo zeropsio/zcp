@@ -26,10 +26,12 @@ func TestRecipeStart_ModelGate(t *testing.T) {
 		wantError   bool
 	}{
 		{name: "accepted Opus 4.6 1m", clientModel: "claude-opus-4-6[1m]", wantError: false},
+		{name: "accepted Opus 4.7 1m", clientModel: "claude-opus-4-7[1m]", wantError: false},
 		{name: "missing clientModel rejected", clientModel: "", wantError: true},
 		{name: "Sonnet rejected", clientModel: "claude-sonnet-4-6", wantError: true},
 		{name: "Sonnet 1m rejected", clientModel: "claude-sonnet-4-6[1m]", wantError: true},
 		{name: "Opus without 1m rejected", clientModel: "claude-opus-4-6", wantError: true},
+		{name: "Opus 4.7 without 1m rejected", clientModel: "claude-opus-4-7", wantError: true},
 		{name: "plain opus alias rejected", clientModel: "opus", wantError: true},
 		{name: "Haiku rejected", clientModel: "claude-haiku-4-5", wantError: true},
 	}
