@@ -24,13 +24,16 @@ const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
 const gitPushSetupInstructions = `Ask the user: Do you want to just push code to the remote, or set up full CI/CD (automatic deploy on every push)?
 
 **Option A: Push code to remote**
-1. Create a GitHub fine-grained token (Contents: Read and write) or GitLab token (write_repository)
-2. Set it as project env var: zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]
+GitHub fine-grained token permissions: **Contents: Read and write** (that's all)
+1. GitHub → Settings → Developer settings → Fine-grained tokens → select repo
+2. Set it: zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]
 3. Retry this zerops_deploy command
 
-**Option B: Full CI/CD**
-Run: zerops_workflow action="start" workflow="cicd"
-This sets up automatic deploy on every git push (GitHub Actions with zcli).`
+**Option B: Full CI/CD (push → automatic deploy)**
+GitHub fine-grained token permissions: **Contents: Read and write** + **Actions secrets: Read and write** + **Workflows: Read and write**
+1. Create token with all three permissions above
+2. Set it: zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]
+3. Run: zerops_workflow action="start" workflow="cicd"`
 
 // handleGitPush executes the git-push strategy: push committed code to an
 // external git remote. No Zerops build is triggered — no pollDeployBuild.

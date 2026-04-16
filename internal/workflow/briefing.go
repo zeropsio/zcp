@@ -287,8 +287,9 @@ func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strat
 		sb.WriteString("When code changes are complete:\n\n")
 		sb.WriteString("**Ask the user:** Do you want to just push code to remote, or set up full CI/CD (automatic deploy on every push)?\n\n")
 		sb.WriteString("#### Option A: Push code to remote\n\n")
+		sb.WriteString("**GitHub fine-grained token:** Contents: Read and write (that's all)\n")
 		sb.WriteString("**Prerequisites:**\n")
-		sb.WriteString("- `GIT_TOKEN` project env var — GitHub fine-grained token (Contents: Read and write) or GitLab token (write_repository)\n")
+		sb.WriteString("- `GIT_TOKEN` project env var with the token above\n")
 		sb.WriteString("- `.netrc` on the container for git auth:\n")
 		fmt.Fprintf(sb, "  `ssh %s 'umask 077 && echo \"machine github.com login oauth2 password $GIT_TOKEN\" > ~/.netrc'`\n\n", devHost)
 		sb.WriteString("**Steps:**\n")
@@ -302,9 +303,10 @@ func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strat
 			fmt.Fprintf(sb, "%d. Push: `zerops_deploy targetService=\"%s\" strategy=\"git-push\"`\n", step, t.Hostname)
 			step++
 		}
-		sb.WriteString("\n#### Option B: Full CI/CD\n\n")
-		sb.WriteString("Run: `zerops_workflow action=\"start\" workflow=\"cicd\"`\n")
-		sb.WriteString("This sets up automatic deploy on every git push (GitHub Actions with zcli).\n")
+		sb.WriteString("\n#### Option B: Full CI/CD (push → automatic deploy)\n\n")
+		sb.WriteString("**GitHub fine-grained token:** Contents: Read and write + Actions secrets: Read and write + Workflows: Read and write\n")
+		sb.WriteString("Set `GIT_TOKEN` with this token first, then run:\n")
+		sb.WriteString("`zerops_workflow action=\"start\" workflow=\"cicd\"`\n")
 	default:
 		sb.WriteString("When code changes are complete, deploy and verify:\n")
 		writeBriefingDeployCommands(sb, targets, mode, env)

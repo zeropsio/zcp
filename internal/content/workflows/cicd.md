@@ -7,17 +7,18 @@ Ask the user first:
 
 ### Option A: Just push code to remote
 
-**Requirements:**
-- GitHub/GitLab personal access token with repository write access
-  - **GitHub:** Settings → Developer settings → Fine-grained tokens → select repo → Permissions: **Contents: Read and write**
-  - **GitLab:** User Settings → Access Tokens → Scope: **write_repository**
+**GitHub fine-grained token permissions: Contents: Read and write** (that's all)
+- GitHub → Settings → Developer settings → Fine-grained tokens → select repo → Permissions: **Contents: Read and write**
+- GitLab alternative: User Settings → Access Tokens → Scope: **write_repository**
 
 That's all. Skip to **Git Authentication** section below.
 
 ### Option B: Full CI/CD (push → automatic deploy)
 
+**GitHub fine-grained token permissions: Contents: Read and write + Actions secrets: Read and write + Workflows: Read and write**
+
 **Requirements — gather ALL of these before starting:**
-1. **Git push token** (same as Option A above) — for pushing code from the Zerops container to the remote
+1. **Git push token with CI/CD permissions** — needs Contents + Secrets + Workflows (three permissions above) for pushing code AND creating the workflow file + setting secrets
 2. **Zerops deploy token** — for CI/CD to deploy back to Zerops
    - Use the existing ZCP API key (ask user: "Can I use the existing API key as the deploy token? It has full project access. For a scoped token, create one at https://app.zerops.io/settings/token-management")
    - Or user creates a dedicated token at https://app.zerops.io/settings/token-management
@@ -119,18 +120,19 @@ Fall back to the manual GitHub Actions setup below.
 
 For pushing code from a Zerops container to GitHub/GitLab, set a project-level token:
 
-"I need a GitHub/GitLab token to push code.
+"I need a GitHub fine-grained token to push code.
 
- **For GitHub:**
- 1. GitHub → Settings → Developer settings → Fine-grained tokens
- 2. Select the target repository
- 3. Permissions: **Contents → Read and write**
- 4. Generate token
+ **For push-only (Option A):**
+ GitHub → Settings → Developer settings → Fine-grained tokens → select repo
+ Permissions: **Contents: Read and write**
 
- **For GitLab:**
- 1. GitLab → User Settings → Access Tokens
- 2. Scope: **write_repository**
- 3. Generate token
+ **For full CI/CD (Option B):**
+ Same path, but three permissions:
+ - **Contents: Read and write** (push code)
+ - **Actions secrets: Read and write** (set ZEROPS_TOKEN secret)
+ - **Workflows: Read and write** (create .github/workflows/deploy.yml)
+
+ **GitLab alternative:** User Settings → Access Tokens → Scope: **write_repository**
 
  Paste the token here — I'll store it as a project env var."
 
