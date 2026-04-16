@@ -124,12 +124,14 @@ var specificMechanismTokens = []string{
 	// indexes, etc.). These count as specific mechanisms.
 	"Valkey", "PostgreSQL", "Postgres", "NATS",
 	"Meilisearch", "Object Storage", "MinIO",
-	"Redis-compatible", "ioredis",
-	"keydb", "shared-storage", "object-storage",
-	// Migration / queue framework names that are Zerops-anchored when
-	// referenced alongside container lifecycle.
-	"TypeORM synchronize", "TypeORM migrationsRun",
-	"queue group", "queue: 'workers'", "queue: \"workers\"",
+	"Redis-compatible",
+	"shared-storage", "object-storage",
+	// Queue group is a NATS concept (broker-level load-balancing primitive
+	// across subscribers), not NestJS-specific. Kept as a platform-adjacent
+	// mechanism; framework-shaped literals like `queue: 'workers'` and ORM
+	// names (`TypeORM synchronize`) were removed because they bias the
+	// check toward Node recipes.
+	"queue group",
 }
 
 // envVarRefRe matches Zerops service-discovery env-var references like

@@ -247,6 +247,50 @@ func isShowcase(p *RecipePlan) bool {
 	return p != nil && p.Tier == RecipeTierShowcase
 }
 
+// CodebaseRole classifies a codebase hostname into one of four roles
+// used by per-codebase quality floors (see checkGotchaDepthFloor in
+// internal/tools). The mapping:
+//
+//   - CodebaseRoleWorker    — target.IsWorker is true
+//   - CodebaseRoleAPI       — target.Role == RecipeRoleAPI (dual-runtime API)
+//   - CodebaseRoleFrontend  — target.Role == RecipeRoleApp in a dual-runtime
+//     plan (static/SPA that talks to the api target)
+//   - CodebaseRoleFullstack — single-codebase non-worker; no role split
+//
+// Returns "" when the hostname doesn't match any target in the plan
+// (the caller then skips the floor check rather than guessing).
+func CodebaseRole(plan *RecipePlan, hostname string) string {
+	if plan == nil {
+		return ""
+	}
+	for _, t := range plan.Targets {
+		if t.Hostname != hostname {
+			continue
+		}
+		if t.IsWorker {
+			return CodebaseRoleWorker
+		}
+		if t.Role == RecipeRoleAPI {
+			return CodebaseRoleAPI
+		}
+		if t.Role == RecipeRoleApp && isDualRuntime(plan) {
+			return CodebaseRoleFrontend
+		}
+		return CodebaseRoleFullstack
+	}
+	return ""
+}
+
+// CodebaseRole string constants — stable wire form consumed by the
+// per-codebase gotcha depth floor check in internal/tools. Keep in
+// sync with gotchaFloorByRole there.
+const (
+	CodebaseRoleAPI       = "api"
+	CodebaseRoleFrontend  = "frontend"
+	CodebaseRoleWorker    = "worker"
+	CodebaseRoleFullstack = "fullstack"
+)
+
 // Note on multi-base detection: the single source of truth is
 // needsMultiBaseGuidance in recipe_multibase.go, which keys on the plan's
 // actual BuildCommands (JS package-manager invocation in a non-JS primary

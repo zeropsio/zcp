@@ -390,6 +390,14 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 	if kbBody := extractFragmentContent(string(readmeContent), "knowledge-base"); kbBody != "" {
 		checks = append(checks, checkCausalAnchor(kbBody, hostname)...)
 		checks = append(checks, checkServiceCoverage(kbBody, plan, hostname, target.IsWorker)...)
+
+		// Gotcha depth floor (v8.80): per-role minimum gotcha count.
+		// Pairs with causal-anchor + content-reality (downward pressure
+		// per gotcha) by adding upward pressure per codebase. v21
+		// compressed 26% of README content because there was no floor.
+		if role := workflow.CodebaseRole(plan, hostname); role != "" {
+			checks = append(checks, checkGotchaDepthFloor(kbBody, role, hostname)...)
+		}
 	}
 
 	// CLAUDE.md vs README consistency (v8.78): procedures in CLAUDE.md
@@ -401,6 +409,14 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 	// README forbade `synchronize: true` in production; CLAUDE.md
 	// reset-state used `ds.synchronize()` as a dev shortcut.
 	checks = append(checks, checkClaudeReadmeConsistency(string(readmeContent), string(claudeBody), hostname)...)
+
+	// Scaffold hygiene (v8.80): every codebase ships with `.gitignore`
+	// + `.env.example` and no build-output / node_modules / OS-cruft
+	// leaked into the published tree. Restores the deterministic gate
+	// the v21 run lacked — apidev scaffold dropped both hygiene files
+	// during per-codebase brief synthesis, causing 208 MB of
+	// node_modules to leak into the output.
+	checks = append(checks, checkScaffoldHygiene(ymlDir, hostname)...)
 
 	return checks
 }

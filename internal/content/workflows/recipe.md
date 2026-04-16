@@ -834,6 +834,24 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 >
 > That's the complete rule — every deviation from it causes the symptoms above.
 >
+> **Transcribe-from-scratch protocol (every codebase, BEFORE authoring from memory):**
+>
+> Run the framework's own scaffolder into a scratch directory on the target container and copy files from it. The installed scaffolder is authoritative for current-major idioms, hygiene file contents, and package wiring:
+>
+> ```
+> ssh {hostname} "cd /tmp && rm -rf scratch && npx @nestjs/cli new scratch --skip-git --package-manager npm"
+> # (or: npm create vite@latest scratch --yes / rails new scratch / composer create-project laravel/laravel scratch — pick the framework's own invocation)
+> ```
+>
+> Files to transcribe from `scratch/` (do NOT author from memory):
+> - Code-config: `tsconfig.json`, `tsconfig.build.json`, `nest-cli.json`, `vite.config.ts`, `svelte.config.js` (whichever the scaffolder emits for this framework)
+> - Hygiene: **`.gitignore`** (the scaffolder's ignore list is authoritative), **`.env.example`** (copy if emitted; otherwise write one from the codebase's `process.env` / `os.environ` reads)
+> - Lint config (if emitted): `.eslintrc.*`, `.prettierrc`, `.rubocop.yml`, etc.
+>
+> After transcription: `ssh {hostname} "rm -rf /tmp/scratch"`.
+>
+> v21 apidev + workerdev ran `nest new scratch` but copied only code-config files, leaving `.gitignore` behind — the apidev mount then swept up 208 MB of `node_modules` during `git add -A`. This explicit transcription list prevents that class of omission.
+>
 > **WRITE (frontend codebase):**
 >
 > - `package.json` — production dependencies for the framework and any CSS tooling the scaffold would normally include
@@ -862,7 +880,9 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 >
 > **WRITE (every codebase):**
 >
-> - `.gitignore`, `.env.example`, framework lint config only if the framework's own scaffolder normally emits one
+> - **`.gitignore` — mandatory.** Minimum content: `node_modules/`, the framework's build output directory (`dist/`, `build/`, `.next/`, `target/`, `public/build/`, etc.), `.env`, `.env.local`, `.DS_Store`. Copy the exact contents from the framework's own scaffolder (e.g. `nest new`, `npm create vite@latest`, `rails new`, `composer create-project laravel/laravel`) when one exists — that file is authoritative, don't hand-author from memory.
+> - **`.env.example` — mandatory.** List every environment variable the codebase reads from `process.env` / `os.environ` / `ENV[]` / equivalent, with a short comment per line explaining the shape. Blank file is acceptable ONLY when the codebase reads no env vars.
+> - Framework lint config (`.eslintrc.*`, `.rubocop.yml`, `.php-cs-fixer.php`, etc.) only if the framework's scaffolder normally emits one.
 >
 > **DO NOT WRITE (any codebase):**
 >
@@ -888,6 +908,8 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 > 2. **All commands ran via SSH, not zcp-side?** Scan your bash history for any `cd /var/www/{hostname}` followed by an executable command (npm/npx/nest/vite/tsc/...). If found, that step ran on zcp instead of the container. Re-do it via `ssh {hostname} "cd /var/www && <command>"` so the install/build artifacts have the right uid + ABI.
 > 3. **Did you write README.md or zerops.yaml?** Either is a brief violation. Delete and report only the language-level scaffolding you wrote.
 > 4. **Is the dashboard ONE panel?** If you shipped multiple feature sections, you exceeded the brief. The feature sub-agent owns features.
+> 5. **`.gitignore` + `.env.example` present?** Run `ssh {hostname} "ls -la /var/www/.gitignore /var/www/.env.example"`. Both must exist. `.gitignore` must list `node_modules/`, the framework's build output dir, and `.env`. If either is missing, write it before returning — the `scaffold_hygiene` deploy-step check rejects anything without these files, and the v21 apidev scaffold shipped 208 MB of `node_modules` into the published recipe because this check didn't exist.
+> 6. **No `node_modules/`, `dist/`, or `.DS_Store` on the mount at return time?** Scan with `ssh {hostname} "find /var/www -maxdepth 2 -name node_modules -o -name dist -o -name .DS_Store | head"`. The `node_modules/` inside the dev container is fine — `.gitignore` excludes it from any subsequent publish. Delete `.DS_Store` files; they have no legitimate place in the tree.
 >
 > List any deviations explicitly in your report so the main agent can validate. Silent self-correction is fine; surfacing the deviation lets the main agent learn whether the brief needs tightening.
 
@@ -1484,14 +1506,16 @@ For the full "where commands run" principle (SSH vs zcp-side), see the `where-co
 
 <block name="where-commands-run">
 
-**Where app-level commands run** (hard rule — include verbatim in sub-agent briefs):
+### ⚠ Where app-level commands run — applies to main agent AND every sub-agent
 
-The sub-agent runs on the zcp orchestrator container. `{appDir}` is an SSHFS network mount — a bridge to the target container's `/var/www/`, not a local directory. File reads and edits through the mount are fine. **Target-side commands — anything in the app's own toolchain — MUST run via SSH on the target container**, not on zcp against the mount.
+This rule governs the main agent's bash calls AND every sub-agent's bash calls. Include this block verbatim in every sub-agent brief; the main agent reads it here. The cost of a violation is identical in both roles (v21: 3 parallel 120 s git-add hangs from main-agent-side `cd /var/www/X && git add -A`).
+
+The zcp orchestrator container runs the main agent and every sub-agent. `/var/www/{hostname}/` on zcp is an **SSHFS network mount** — a bridge to the target container's own `/var/www/`, not a local directory. File reads and edits through the mount are correct (Write/Edit for source files, configs, `package.json`, etc., no SSH needed). **Executable commands — anything in the app's toolchain OR anything that traverses the tree (`git add -A`, `find`, build steps) — MUST run via SSH on the target container**, not on zcp against the mount.
 
 The principle is WHICH CONTAINER'S WORLD the tool belongs to:
 
-- **SSH (target-side)** — compilers (`tsc`, `nest build`, `go build`), type-checkers (`svelte-check`, `tsc --noEmit`), test runners (`jest`, `vitest`, `pytest`, `phpunit`), linters (`eslint`, `prettier`), package managers (`npm install`, `composer install`), framework CLIs (`artisan`, `nest`, `rails`), and any app-level `curl`/`node`/`python -c` that hits the running app or managed services.
-- **Direct (zcp-side)** — `zerops_*` MCP tools, `zerops_browser`, Read/Edit/Write against the mount, `ls`/`cat`/`grep`/`find` against the mount, `git status`/`add`/`commit` (with the safe.directory config from provision).
+- **SSH (target-side)** — compilers (`tsc`, `nest build`, `go build`), type-checkers (`svelte-check`, `tsc --noEmit`), test runners (`jest`, `vitest`, `pytest`, `phpunit`), linters (`eslint`, `prettier`), package managers (`npm install`, `composer install`, `pnpm install`, `yarn`, `bundle install`, `pip install`), framework CLIs (`artisan`, `nest`, `rails`, `rake`), app-level `curl`/`node`/`python -c` hits against the running app or managed services, AND every `git init`/`git add -A`/`git commit` that traverses the codebase tree (large trees over SSHFS hit the 120 s bash timeout — v21 lost 360 CPU-seconds to this exact pattern).
+- **Direct (zcp-side)** — `zerops_*` MCP tools, `zerops_browser`, Read/Edit/Write against the mount, `ls`/`cat`/`grep` against the mount for small reads. Whole-tree `git status` is fine when `node_modules/` is properly gitignored AND the `safe.directory` config from provision is in place; `git add -A` is not (traversal cost over SSHFS).
 
 Correct shape:
 ```
@@ -1499,7 +1523,15 @@ ssh {hostname} "cd /var/www && {command}"   # correct — app's world
 cd /var/www/{hostname} && {command}          # WRONG — zcp against the mount
 ```
 
-Running app-level commands on zcp uses the wrong runtime, the wrong dependencies, the wrong env vars, has no managed-service reachability, AND exhausts zcp's fork budget. Symptom: `fork failed: resource temporarily unavailable` cascades. Recovery is `pkill -9 -f "agent-browser-"` on zcp + waiting for process reaping; the real fix is to stop running target-side commands zcp-side.
+Running app-level or tree-traversing commands zcp-side uses the wrong runtime, the wrong dependencies, the wrong env vars, has no managed-service reachability, AND exhausts zcp's fork budget. Symptoms you'll hit on the wrong side of the boundary:
+
+1. **EACCES / root-owned `.git/` or `node_modules/`.** zcp runs as root; the container runs as `zerops` (uid 2023). Files created zcp-side are root-owned; subsequent container operations fail and need `sudo chown -R`.
+2. **Broken `.bin/` symlinks.** zcp-side `npm install` writes absolute-path symlinks in `node_modules/.bin/` that don't resolve inside the container — `sh: vite: not found`, `sh: svelte-check: not found`.
+3. **ABI mismatch.** Native modules compiled against zcp's node binary don't load on the container runtime.
+4. **120 s bash timeouts on `git add -A`.** SSHFS is network-bound; traversing a tree with `node_modules/` (tens of thousands of files, hundreds of MB) takes 2+ minutes over SSHFS while running in seconds natively inside the container.
+5. **Fork budget exhaustion.** `fork failed: resource temporarily unavailable` cascades when zcp hosts processes that should be on the container. Recovery: `pkill -9 -f "agent-browser-"` on zcp; the real fix is to stop running target-side commands zcp-side.
+
+If you see any of these symptoms, you are on the wrong side of the boundary. Stop, re-do the failing step via `ssh {hostname} "cd /var/www && ..."`.
 
 **Dev-server lifecycle is special — use `zerops_dev_server`, NOT raw SSH + `&`.**
 
@@ -1523,6 +1555,72 @@ ssh apidev "cd /var/www && npm run start:dev > /tmp/nest.log 2>&1 &" && sleep 8 
 ```
 
 The tool also eliminates the port-stuck / process-stuck recovery spirals that cost 5–10 SSH calls per run in v11/v13/v15 (pkill + fuser + retry dance). `action=stop` takes the same `port` + `command`/`processMatch` and tolerates "nothing to kill" as success.
+
+</block>
+
+<block name="writer-subagent-brief">
+
+### Writer sub-agent brief — README + CLAUDE.md composition (deploy step, `readmes` sub-step)
+
+When a recipe has ≥2 codebases each needing README.md + CLAUDE.md (showcase Type 4 and every dual-runtime/separate-worker plan), dispatch a dedicated writer sub-agent rather than composing inline. Rationale: by the `readmes` sub-step the main agent's context is already loaded with deploy debug history; packing 4–6 × (README + CLAUDE.md) writes plus 3–4 iteration rounds into main context burns the budget that matters for close-step critical-fix dispatch. v21's main agent absorbed this work inline and grew its `tool_use` input bytes by 190 KB over v20 — the writer-subagent pattern restores v18–v20's delegation shape.
+
+**Dispatch criterion**: multi-codebase recipe (showcase OR any recipe with ≥2 codebases).
+
+**Brief template** — include verbatim, substituting `{recipe_name}`, `{plan}`, `{debug_narrative}`:
+
+> You are the README + CLAUDE.md writer for the `{recipe_name}` recipe. Every codebase in `{plan.Codebases}` gets a README.md AND a CLAUDE.md, following the fragment/template rules in the deploy-step `readmes` brief. The main agent has deployed all services, run the browser walks, and survived the debug rounds — you have the debug narrative to draw on.
+>
+> **Input context**:
+> - Debug narrative (what broke, how it was fixed): `{debug_narrative}`
+> - Per-codebase gotcha pre-classification (so you don't re-dedup across READMEs): `{gotcha_classification}`
+> - Each codebase's zerops.yaml (for the YAML block in each README integration-guide)
+>
+> **Output**: 2 × `{len(codebases)}` files written via the Write tool. No Bash — the main agent handles git ops after you return. Return a bulleted list of files you wrote.
+>
+> **Rules**: see the full checker list in the deploy-step `readmes` brief. The checkers run automatically after you return; the main agent dispatches you again with failure details if iteration is needed. Do NOT gate your own return on checker pass — report what you wrote and the main agent reconciles against the checker output.
+>
+> **Scope hygiene**: write README.md + CLAUDE.md files ONLY. Do not touch zerops.yaml, package.json, src/*, or any infrastructure file — those are owned by earlier sub-agents.
+
+</block>
+
+<block name="fix-subagent-brief">
+
+### Fix sub-agent brief — scoped fix dispatch (any step with iterable checks)
+
+When a check failure's `detail` field is ≥2 KB of prose OR a cluster of ≥3 checks on the same artifact all fail in one iteration round, dispatch a scoped fix sub-agent rather than absorbing the fix into main context. Rationale: multi-KB failure details carry verbose recovery instructions; absorbing them into main context inflates the surviving budget for every subsequent step. v20 dispatched `Fix README knowledge-base format` + `Fix gotcha restatements and specificity` as emergent fix sub-agents; v21's main agent inlined both, paying the context cost through close step.
+
+**Dispatch criterion**: single check failure detail ≥2 KB, OR ≥3 checks on the same artifact in one iteration round.
+
+**Brief template**:
+
+> You are a fix sub-agent for the check failure(s) below. The recipe is partially complete; you are iterating on a specific artifact. Your scope:
+>
+> - Files you MAY edit: `{file_allowlist}`
+> - Files you MUST NOT edit: everything else
+> - Checks to pass: `{failed_check_names}`
+> - Failure details (verbatim from the checker): `{failure_details}`
+>
+> Read the current state of each file in the allowlist. Make the edits needed to pass the listed checks. Return only: (a) list of files edited, (b) one-sentence summary per file.
+>
+> Do NOT run any bash/git/deploy commands — the main agent dispatches you and handles re-verification on return. If you think a fix requires commands, describe what you'd run; the main agent decides whether to execute.
+
+</block>
+
+<block name="feature-subagent-mcp-schemas">
+
+### MCP tool schemas — inline for the feature sub-agent
+
+The feature sub-agent is dispatched with memory-frozen knowledge of MCP tool shapes that often lag the current schema. v21's feature sub-agent hit 6 `-32602 invalid params` errors across one 22-minute run because its brief didn't carry the exact parameter names + types. Include this block verbatim in every feature-subagent dispatch prompt:
+
+- `zerops_dev_server action=start|stop|restart|status|logs hostname={host} command="..." port={int} healthPath="/..." waitSeconds={int} noHttpProbe={bool} processMatch="..."`
+- `zerops_logs serviceHostname={host} lines={int}` — NOT `hostname` / `logLines`
+- `zerops_scale serviceHostname={host} minRam={float-GB} maxRam={float-GB} minFreeRamGB={float}` — NOT `ramGB`
+- `zerops_discover serviceHostname={host}` — returns the full env map
+- `zerops_subdomain action=enable|status|verify serviceHostname={host}`
+- `zerops_verify serviceHostname={host} port={int} path="/..."`
+- `zerops_browser action=snapshot|text|click|fill url="..." selector="..."`
+
+Parameter types are strict: `port` must be an integer (not a string), `noHttpProbe` a boolean, `waitSeconds`/`minRam` numeric. The MCP validator rejects type mismatches with `-32602 invalid params`. When a call is rejected, the expected shape is in the error message — apply the rename (`hostname` → `serviceHostname`, `logLines` → `lines`, `ramGB` → `minRam`) on the first retry; do NOT guess further.
 
 </block>
 

@@ -20,7 +20,18 @@ func stopDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams) (*De
 
 	var parts []string
 	if match != "" {
-		parts = append(parts, fmt.Sprintf("pkill -f %s 2>/dev/null || true", shellQuote(match)))
+		// --ignore-ancestors (procps ≥3.3.15) prevents pkill from killing
+		// its own sh -c invocation and the SSH session wrapping it — the
+		// shape that produced 6 exit-255 events in v21. The pgrep fallback
+		// filters $$ / $PPID so older procps / busybox pkill (no
+		// --ignore-ancestors support) still avoid the self-kill.
+		quoted := shellQuote(match)
+		parts = append(parts, fmt.Sprintf(
+			"(pkill --ignore-ancestors -f %s 2>/dev/null "+
+				"|| pgrep -f %s 2>/dev/null | grep -v -e \"^$$\" -e \"^$PPID\" | xargs -r kill 2>/dev/null) "+
+				"|| true",
+			quoted, quoted,
+		))
 	}
 	if p.Port > 0 && p.Port <= 65535 {
 		parts = append(parts, fmt.Sprintf("fuser -k %d/tcp 2>/dev/null || true", p.Port))
@@ -40,10 +51,37 @@ func stopDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams) (*De
 		Running:  false,
 	}
 	if err != nil {
+		// Exit 255 from ssh is the distinctive signature of pkill killing
+		// its own sh -c shell child / the SSH session wrapping it. The
+		// stop succeeded (the process tree is gone); surface a structured
+		// success instead of propagating a raw error the agent must
+		// reinterpret. Verified across 7 v20/v21 dev_server stop runs:
+		// every time pkill successfully killed a dev-server process tree
+		// that included its own shell, SSH returned exit 255.
+		if isSSHSelfKill(err) {
+			result.Reason = "ssh_self_killed"
+			result.Message = fmt.Sprintf(
+				"Dev server stopped on %s (matched %q). SSH session dropped because pkill matched its own shell child — this is expected when the dev command's process tree overlaps the sh/ssh session.",
+				p.Hostname, match,
+			)
+			return result, nil
+		}
 		return nil, fmt.Errorf("dev_server stop: %w", err)
 	}
 	result.Message = fmt.Sprintf("Dev server stopped on %s (matched %q).", p.Hostname, match)
 	return result, nil
+}
+
+// isSSHSelfKill returns true when the underlying error is SSH exit 255,
+// the distinctive signature of pkill killing its own ssh session. A
+// dev_server stop action that matches on a process name appearing in
+// its own shell invocation triggers this; the process is gone, the SSH
+// channel is just dropped.
+func isSSHSelfKill(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "exit status 255")
 }
 
 // statusDevServer probes the health endpoint and returns Running based on

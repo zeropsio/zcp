@@ -270,6 +270,23 @@ var recipeDeployTopics = []*GuidanceTopic{
 		BlockNames:  []string{"reading-deploy-failures", "common-deployment-issues"},
 	},
 	{
+		ID: "writer-subagent-brief", Step: RecipeStepDeploy,
+		Description: "Writer sub-agent dispatch brief for README+CLAUDE.md composition (multi-codebase)",
+		Predicate:   hasMultipleCodebases,
+		BlockNames:  []string{"writer-subagent-brief"},
+	},
+	{
+		ID: "fix-subagent-brief", Step: RecipeStepDeploy,
+		Description: "Fix sub-agent brief for scoped check-failure iteration",
+		BlockNames:  []string{"fix-subagent-brief"},
+	},
+	{
+		ID: "feature-subagent-mcp-schemas", Step: RecipeStepDeploy,
+		Description: "Exact MCP tool parameter names/types for feature sub-agent dispatch",
+		Predicate:   isShowcase,
+		BlockNames:  []string{"feature-subagent-mcp-schemas"},
+	},
+	{
 		ID: "readme-fragments", Step: RecipeStepDeploy,
 		Description: "Per-codebase README structure with extract fragments (post-verify `readmes` sub-step)",
 		BlockNames:  []string{"readme-with-fragments"},

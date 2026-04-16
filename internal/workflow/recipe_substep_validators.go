@@ -387,20 +387,61 @@ func validateFeatureSweep(_ context.Context, plan *RecipePlan, _ *RecipeState, a
 }
 
 // validateReadme checks the README the agent wrote.
-func validateReadme(_ context.Context, plan *RecipePlan, _ *RecipeState, _ string) *SubStepValidationResult {
+// readmeWriterAttestationRe matches attestation lines that name a
+// dispatched writer sub-agent OR an explicit single-codebase rationale
+// for inlining. Kept permissive to accommodate the agent's natural
+// phrasing — the validator's purpose is to create friction against
+// silently-inline composition, not to gatekeep exact wording. The
+// specific shapes accepted:
+//
+//   - "writer sub-agent" / "writer subagent" / "writer-subagent"
+//   - "writer-subagent-brief" / "via the writer brief"
+//   - "dispatched ... writer" / "Agent ... writer"
+//   - "single-codebase inline" / "single codebase inline" (explicit
+//     acknowledgment that no dispatch was appropriate)
+var readmeWriterAttestationRe = regexp.MustCompile(`(?i)(writer[\s\-]?sub[\s\-]?agent|dispatch.*writer|writer[\s\-]?brief|single[\s\-]?codebase[\s\-]?inline)`)
+
+// validateReadme gates the `readmes` sub-step attestation. For
+// multi-codebase recipes the attestation must reference a writer-
+// subagent dispatch (or explicitly claim the single-codebase inline
+// shortcut — which in a multi-codebase plan is a documented
+// deviation). Single-codebase recipes pass without the marker;
+// inlining a single README is an acceptable main-agent task.
+//
+// This is the v8.80 replacement for the previous always-pass gate.
+// §3.6d of v21 post-mortem: the deterministic-gate upgrade on the
+// §3.6 formalized writer-subagent pattern. zcp's MCP surface does
+// not observe Agent-tool dispatches directly, so the gate operates
+// on the attestation text — breakable by determined gaming (like
+// validateFeatureSubagent), but creates the friction that pushes
+// the agent toward the dispatch pattern instead of absorbing the
+// work inline.
+func validateReadme(_ context.Context, plan *RecipePlan, _ *RecipeState, attestation string) *SubStepValidationResult {
 	if plan == nil {
 		return nil
 	}
 
-	var guidance strings.Builder
-	guidance.WriteString("## readme sub-step validation\n\n")
-	guidance.WriteString("Verify your README contains all 3 extract fragments:\n")
-	guidance.WriteString("- integration-guide (with zerops.yaml code block)\n")
-	guidance.WriteString("- knowledge-base (gotchas and tips)\n")
-	guidance.WriteString("- intro (1-3 lines, no headings)\n\n")
-	guidance.WriteString("Re-read the readme-fragments topic for the full requirements.\n")
+	baseGuidance := "## readmes sub-step validation\n\n" +
+		"Verify every codebase README contains all 3 extract fragments:\n" +
+		"- integration-guide (with zerops.yaml code block)\n" +
+		"- knowledge-base (gotchas and tips)\n" +
+		"- intro (1-3 lines, no headings)\n\n" +
+		"Re-read the `readme-fragments` topic for the full requirements.\n"
 
-	// README validation is attestation-based at the sub-step level.
-	// The full-step checker does content verification.
+	if hasMultipleCodebases(plan) {
+		if !readmeWriterAttestationRe.MatchString(attestation) {
+			return &SubStepValidationResult{
+				Passed: false,
+				Issues: []string{"readmes sub-step attestation does not reference a writer sub-agent dispatch — for multi-codebase recipes the README + CLAUDE.md authoring should be delegated to a writer sub-agent, not absorbed into main context"},
+				Guidance: baseGuidance + "\n" +
+					"### Writer-subagent dispatch (v8.80 gate)\n\n" +
+					"This recipe has ≥2 codebases. Composing 2 × N READMEs + CLAUDE.md files inline in main context consumes budget needed for later steps — v21 absorbed this work and grew main-session tool_use input bytes by 190 KB over v20.\n\n" +
+					"Dispatch a writer sub-agent: fetch the brief (`zerops_guidance topic=\"writer-subagent-brief\"`), then dispatch via the Agent tool with a description matching `Write READMEs and CLAUDE.md` (any wording that includes \"writer\" + \"README\" is accepted by the gate).\n\n" +
+					"After the writer sub-agent returns, re-run this sub-step with an attestation that references the dispatch — for example: \"dispatched writer sub-agent; it wrote apidev/README.md + CLAUDE.md, appdev/README.md + CLAUDE.md, workerdev/README.md + CLAUDE.md (6 files); content-check iteration handled by main agent with fix sub-agents as needed.\"\n\n" +
+					"If you have a principled reason to inline for this run (e.g. very small codebases, blocked on sub-agent dispatch), include `single-codebase inline` in your attestation to acknowledge the deviation explicitly.\n",
+			}
+		}
+	}
+
 	return &SubStepValidationResult{Passed: true}
 }

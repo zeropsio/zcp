@@ -107,6 +107,14 @@ var (
 		{Name: "deploy-target-verification"},
 		{Name: "dev-deploy-subagent-brief", Predicate: isShowcase},
 		{Name: "where-commands-run"},
+		// v8.80 formalized sub-agent patterns. writer/fix-subagent-brief
+		// are available for multi-codebase and large-failure iterations
+		// respectively; feature-subagent-mcp-schemas inlines the exact
+		// MCP parameter names/types so the feature sub-agent doesn't
+		// round-trip on invalid-params rejections.
+		{Name: "writer-subagent-brief", Predicate: hasMultipleCodebases},
+		{Name: "fix-subagent-brief"},
+		{Name: "feature-subagent-mcp-schemas", Predicate: isShowcase},
 		{Name: "feature-sweep-dev"},
 		{Name: "dev-deploy-browser-walk", Predicate: isShowcase},
 		{Name: "browser-command-reference", Predicate: isShowcase},

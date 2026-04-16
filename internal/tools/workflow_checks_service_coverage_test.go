@@ -28,8 +28,8 @@ func TestServiceCoverage_API_FullCoverage_Pass(t *testing.T) {
 		workflow.RecipeTarget{Hostname: "search", Type: "meilisearch@1.20"},
 	)
 	kb := `### Gotchas
-- **TypeORM client.query deprecation** — pg driver floods logs.
-- **ioredis lazyConnect mandatory for Valkey** — empty AUTH rejection.
+- **PostgreSQL pool saturation under concurrent writes** — pg driver floods logs.
+- **Valkey lazyConnect mandatory without AUTH** — empty AUTH rejection.
 - **NATS credentials must be separate options** — AUTHORIZATION_VIOLATION otherwise.
 - **Object Storage forcePathStyle** — MinIO needs path style addressing.
 - **Meilisearch indexes ephemeral** — re-push on every deploy.
@@ -53,8 +53,8 @@ func TestServiceCoverage_API_MissingS3_Fail(t *testing.T) {
 		workflow.RecipeTarget{Hostname: "search", Type: "meilisearch@1.20"},
 	)
 	kb := `### Gotchas
-- **TypeORM client.query deprecation** — pg driver issue.
-- **ioredis lazyConnect mandatory for Valkey** — empty AUTH.
+- **PostgreSQL pool saturation under concurrent writes** — pg driver issue.
+- **Valkey lazyConnect mandatory without AUTH** — empty AUTH.
 - **NATS credentials must be separate options** — AUTHORIZATION_VIOLATION.
 - **Meilisearch indexes ephemeral** — re-push.
 `
@@ -153,6 +153,104 @@ func TestServiceCoverage_NoManagedServices_NoOp(t *testing.T) {
 	}
 	if checks[0].Status != statusPass {
 		t.Fatalf("no managed services → expected pass; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+}
+
+// TestServiceCoverage_TypeORM_DoesNotSatisfyDB — a gotcha that mentions
+// only ORM client-library names (TypeORM, Prisma) without a platform
+// service brand or Zerops env-var prefix must NOT satisfy db coverage.
+// Rationale: the reform is framework-agnostic; ORM names are Node-
+// ecosystem tokens that unfairly pass Node recipes and unfairly fail
+// Rails/Django/PHP recipes.
+func TestServiceCoverage_TypeORM_DoesNotSatisfyDB(t *testing.T) {
+	t.Parallel()
+	plan := showcasePlan(
+		workflow.RecipeTarget{Hostname: "apidev", Type: "nodejs@22", Role: "api"},
+		workflow.RecipeTarget{Hostname: "db", Type: "postgresql@18"},
+	)
+	kb := `### Gotchas
+- **TypeORM synchronize must be off in production** — Schema drift and deadlocks.
+- **Prisma migrate deploy is the only safe migration path** — every replica racing drop_if_exists deadlocks the pool.
+`
+	checks := checkServiceCoverage(kb, plan, "apidev", false)
+	if checks[0].Status != statusFail {
+		t.Fatalf("expected fail — only TypeORM/Prisma mentioned, no db brand or env-var; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+	if !strings.Contains(checks[0].Detail, "db") {
+		t.Fatalf("detail must name 'db': %s", checks[0].Detail)
+	}
+}
+
+// TestServiceCoverage_Ioredis_DoesNotSatisfyCache — ioredis client-
+// library name without Valkey/Redis brand or env-var must not satisfy
+// cache coverage.
+func TestServiceCoverage_Ioredis_DoesNotSatisfyCache(t *testing.T) {
+	t.Parallel()
+	plan := showcasePlan(
+		workflow.RecipeTarget{Hostname: "apidev", Type: "nodejs@22", Role: "api"},
+		workflow.RecipeTarget{Hostname: "redis", Type: "valkey@7.2"},
+	)
+	kb := `### Gotchas
+- **ioredis lazyConnect is mandatory** — connects synchronously on module load otherwise and crashes.
+`
+	checks := checkServiceCoverage(kb, plan, "apidev", false)
+	if checks[0].Status != statusFail {
+		t.Fatalf("expected fail — only ioredis mentioned, no cache brand or env-var; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+	if !strings.Contains(checks[0].Detail, "cache") {
+		t.Fatalf("detail must name 'cache': %s", checks[0].Detail)
+	}
+}
+
+// TestServiceCoverage_Keydb_DoesNotSatisfyCache — keydb is a Redis-
+// compatible fork but not a Zerops-managed service type (Zerops offers
+// valkey, not keydb). Must not satisfy cache coverage.
+func TestServiceCoverage_Keydb_DoesNotSatisfyCache(t *testing.T) {
+	t.Parallel()
+	plan := showcasePlan(
+		workflow.RecipeTarget{Hostname: "apidev", Type: "nodejs@22", Role: "api"},
+		workflow.RecipeTarget{Hostname: "cache", Type: "valkey@7.2"},
+	)
+	kb := `### Gotchas
+- **keydb fork cache semantics** — some commands behave differently, crashes on certain patterns.
+`
+	checks := checkServiceCoverage(kb, plan, "apidev", false)
+	if checks[0].Status != statusFail {
+		t.Fatalf("expected fail — only keydb mentioned, no Valkey/Redis brand or env-var; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+}
+
+// TestServiceCoverage_ValkeyBrand_SatisfiesCache — the service brand
+// itself (Valkey) satisfies cache coverage post-cleanup.
+func TestServiceCoverage_ValkeyBrand_SatisfiesCache(t *testing.T) {
+	t.Parallel()
+	plan := showcasePlan(
+		workflow.RecipeTarget{Hostname: "apidev", Type: "nodejs@22", Role: "api"},
+		workflow.RecipeTarget{Hostname: "cache", Type: "valkey@7.2"},
+	)
+	kb := `### Gotchas
+- **Valkey no-auth on Zerops requires empty-AUTH tolerance in client** — otherwise the client rejects and crashes.
+`
+	checks := checkServiceCoverage(kb, plan, "apidev", false)
+	if checks[0].Status != statusPass {
+		t.Fatalf("expected pass — Valkey brand mentioned; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+}
+
+// TestServiceCoverage_DbEnvVar_SatisfiesDb — ${db_hostname} env-var
+// prefix satisfies db coverage without needing a brand name.
+func TestServiceCoverage_DbEnvVar_SatisfiesDb(t *testing.T) {
+	t.Parallel()
+	plan := showcasePlan(
+		workflow.RecipeTarget{Hostname: "apidev", Type: "nodejs@22", Role: "api"},
+		workflow.RecipeTarget{Hostname: "db", Type: "postgresql@18"},
+	)
+	kb := `### Gotchas
+- **Use ${db_hostname} not localhost** — localhost points to the dev container, not the managed db; connection refused otherwise.
+`
+	checks := checkServiceCoverage(kb, plan, "apidev", false)
+	if checks[0].Status != statusPass {
+		t.Fatalf("expected pass — ${db_ env-var prefix mentioned; got %s — %s", checks[0].Status, checks[0].Detail)
 	}
 }
 

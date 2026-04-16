@@ -2,8 +2,10 @@ package tools
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -96,18 +98,52 @@ func serviceCategory(serviceType string) string {
 // categoryBrands lists the brand-name and env-var-prefix tokens that
 // signal a gotcha mentions a given category. Substring match,
 // case-insensitive.
+// categoryBrands lists only service brands (Zerops-managed service
+// types) + Zerops env-var-prefix tokens. ORM/client-library names
+// (TypeORM, Prisma, ioredis, keydb) are intentionally excluded: they
+// are framework-specific signals that unfairly pass Node recipes and
+// unfairly fail Rails/Django/PHP recipes. A gotcha that names only an
+// ORM without the underlying service is under-anchored.
 var categoryBrands = map[string][]string{
-	"db":      {"postgresql", "postgres", "mysql", "mariadb", "${db_", "${pg_", "${postgres_", "typeorm", "prisma", "${database_"},
-	"cache":   {"valkey", "redis", "keydb", "ioredis", "${redis_", "${cache_", "${valkey_"},
+	"db":      {"postgresql", "postgres", "mysql", "mariadb", "cockroachdb", "${db_", "${pg_", "${postgres_", "${database_"},
+	"cache":   {"valkey", "redis", "${redis_", "${cache_", "${valkey_"},
 	"queue":   {"nats", "kafka", "rabbitmq", "${queue_", "${nats_", "${kafka_", "${rabbitmq_"},
 	"storage": {"object storage", "object-storage", "minio", " s3 ", "s3-compatible", "${storage_", "${s3_", "${minio_"},
 	"search":  {"meilisearch", "elasticsearch", "typesense", "${search_", "${meilisearch_", "${elastic_"},
 	"mail":    {"mailpit", "mailhog", "smtp", "${mail_", "${smtp_"},
 }
 
+// brandWordRe returns a word-boundary matcher for alphabetic brand
+// tokens. `redis` must not match `ioredis`; `postgres` must not match
+// `postgresDB` without a word boundary. Env-var-prefix tokens starting
+// with `$` or containing spaces keep substring semantics because they
+// already carry unique punctuation. Cached to avoid recompiling per
+// gotcha.
+var brandWordReCache sync.Map
+
+func brandMatcher(brand string) *regexp.Regexp {
+	if cached, ok := brandWordReCache.Load(brand); ok {
+		if re, ok := cached.(*regexp.Regexp); ok {
+			return re
+		}
+	}
+	re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(brand) + `\b`)
+	brandWordReCache.Store(brand, re)
+	return re
+}
+
+func brandMentioned(lowered string, brand string) bool {
+	if strings.HasPrefix(brand, "${") || strings.Contains(brand, " ") {
+		// Punctuation-carrying tokens (env-var prefixes, multi-word
+		// brand names like "object storage") retain substring semantics.
+		return strings.Contains(lowered, brand)
+	}
+	return brandMatcher(brand).MatchString(lowered)
+}
+
 func categoryMentioned(lowered string, category string) bool {
 	for _, brand := range categoryBrands[category] {
-		if strings.Contains(lowered, brand) {
+		if brandMentioned(lowered, brand) {
 			return true
 		}
 	}

@@ -275,6 +275,7 @@ README line counts (per codebase):
 | v17 | — | — | — | — (aborted) | — (aborted) |
 | v18 | 257 | 117 | 161 | 4 / 3 / 4 | 4 / 3 / 2 |
 | v19 | 237 | 149 | 144 | 4 / 3 / 3 | 4 / 3 / 2 |
+| v20 | **349** | **231** | **267** | **7 / 6 / 6** | **6 / 5 / 5** |
 
 **v7 remains the gold standard for gotcha depth** (Meilisearch ESM-only, auto-indexing skips on redeploy, NATS queue group for HA). v10 collapsed to 0 gotchas on apidev and workerdev due to a tooling regression that's since been fixed. v14/v15 peaked on IG item count. v16 is the most compressed but also the most structurally clean.
 
@@ -294,6 +295,7 @@ README line counts (per codebase):
 | v17 | 2026-04-14 | **23 min (abort)** | 146 | 90 | 32 | 1.5 min | 0 | 6.4s | 9 |
 | v18 | 2026-04-15 | **65 min** | 223 | 145 | 31 | **0.8 min** | **0** | **13s** | **0** |
 | v19 | 2026-04-15 | 75 min | 262 | 174 | 37 | 1.0 min | **0** | 7s | 1 |
+| v20 | 2026-04-15 | 71 min | 294 | 177 | 33 | 2.3 min | **0** | ~50s | 7 |
 
 **v16 is the first run with zero very-long bash calls on main-session** — the dev-server wait discipline finally held. But the feature subagent in v16 still hit 360s of 404s total on two dev-server starts that used the old SSH pattern. v17 ships `zerops_dev_server` as a dedicated MCP tool to eliminate this class of error entirely.
 
@@ -317,6 +319,7 @@ README line counts (per codebase):
 | v17 | v8.70.0 content pass + `zerops_dev_server` MCP tool | **first F-grade run — did not complete**. `zerops_dev_server` hung 300s on first call; scaffold sub-agents all ran commands zcp-side instead of ssh'ing into containers. User aborted at 23 min. |
 | v18 | v17.1 fixes land — spawn-shape + SSH preamble | **first full-tree zero-very-long run**, 65 min wall, 0.8 min main bash, 0 errored main. All v17 regressions held fixed: `zerops_dev_server` stable (9 MCP calls, 13s bash probe), scaffold subagents ssh'd correctly, root README intro names real managed services, all 6 env yamls have `#zeropsPreprocessor=on`. Close step: 0 CRIT / 2 WRONG (both fixed). |
 | v19 | content-check infrastructure working + stale-major import class surfaces | 75 min wall, 1.0 min main bash, 0 very-long, 8 subagents (first run with **two** fix subagents during generate catching 4 MEDIUMs before publish). Content rules held: predecessor-clone dedup, restates-guide, yaml-in-sync, comment specificity — all caught at generate, all fixed before deploy. **First close-step CRIT from the stale-major import class** — `CacheModule` imported from `@nestjs/common/cache` (NestJS 8 path) in a NestJS 10 project. v19 post-mortem fixes shipped as v8.77.0: dev_server `NoHTTPProbe` mode with PID-liveness (no log-string matching), close-step browser-walk sub-step gate, installed-package verification rule in scaffold + feature briefs (framework-agnostic), `minContainers` two-axis semantics teaching, HA-vs-horizontal-scaling conflation purge. |
+| v20 | content peaks across the board + load-bearing reform surfaces | **first A-grade complete run in tracked history**. 71 min wall, 2.3 min main bash, 0 very-long, 10 subagents (new record), **first run since v16 with both deploy.browser AND close.browser** (v8.77 sub-step gate working), **first dedicated close-step critical-fix subagent** that re-deploys + re-verifies. Largest READMEs ever (349/231/267), peak gotcha counts (7/6/6), peak IG items (6/5/5). All v7 gold-standard worker gotchas restored. Env 4 comments at v7 quality with explicit two-axis `minContainers` teaching. BUT deep content read surfaces 7 classes of decorative-content drift the v8.67–v8.77 presence rules admitted: generic `.env` advice, predecessor-cloned apidev gotchas (synchronize/trust-proxy), `_nginx.json` topology mismatch in shipped vs documented, CLAUDE.md `synchronize()` against own README gotcha, watchdog declared but unimplemented, IG #2 leans on IG #1, env service comments share rolling-deploy template phrasing. v20 post-mortem fixes shipped as v8.79.0 — load-bearing content reform: 5 new per-codebase checks (content_reality, gotcha_causal_anchor, service_coverage, claude_readme_consistency, ig_per_item_standalone), 1 new finalize check (service_comment_uniqueness), predecessor-floor net-new enforcement rolled back to informational (predecessor overlap is fine for standalone recipes; service-coverage is the new authoritative gate). |
 
 ---
 
@@ -785,6 +788,88 @@ All fixes compiled clean, redeployed to dev + stage, reverified. No regressions.
 - `minContainers` two-axis teaching in recipe.md (env-comment-rules block), core.md, model.md — replica count serves both throughput AND HA/rolling-deploy availability; scoped to runtime services on envs 4-5 only; worker queue-group check error message + code comments no longer conflate "horizontal scaling" with `minContainers > 1`.
 - Installed-package verification rule in scaffold-subagent-brief and feature-subagent required-contents — verify imports / decorators / module wiring against the installed package's on-disk manifest before committing. Framework-agnostic by design.
 - 10 new tests (6 dev_server no-probe, 4 close sub-step gate). Full test suite green under `-race`, `make lint-local` clean.
+
+---
+
+### v20 — first A-grade complete run; load-bearing-content reform surfaces
+
+- **Date**: 2026-04-15
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Model**: claude-opus-4-6[1m]
+- **Session**: c5f46ef9-4ce7-4f75-8b5d-58cf2d5104da
+- **Session logs**: `main-session.jsonl` + 10 subagent logs (most ever)
+- **Wall**: 16:41:44 → 17:52:36 = **70 min 52 s** (3rd-fastest complete run after v12 61 m and v18 65 m)
+- **Assistant events**: 294, **Tool calls**: 177
+- **Bash metrics (main)**: 33 calls / **2.3 min total** / **0 very-long** / 7 errored / 1 dev-server bash probe (~30 s smoke-test pattern, not a hang)
+- **MCP tool mix**: 34 `zerops_workflow`, 12 `zerops_guidance`, 11 `zerops_deploy`, **10 `zerops_dev_server`**, **2 `zerops_browser` (deploy + close — first since v16)**, 6 `zerops_verify`, 4 `zerops_subdomain`, 4 `zerops_knowledge`, 3 `zerops_mount`, 3 `zerops_logs`, 1 each of `import` / `env` / `discover`
+- **Subagents (10 — new record)**: scaffold ×3 (apidev 55.9 s / appdev 30.2 s / workerdev 52.1 s), feature ×1 (70.7 s, 41 bash, 2 long, 0 err, 1 `zerops_dev_server` start), README/CLAUDE writer ×1 (0.2 s pure Write), yaml-block updater ×1 (0.1 s), generate-time fix ×2 (KB format fix 0 bash + gotcha-restatement fix 6 bash), code review ×1 (7 bash / 0.3 s), **close-step critical-fix ×1 (NEW — 4 bash / 12.9 s, ran 1 dev_server start to verify fix)**
+
+**Content metrics** (apidev / appdev / workerdev):
+
+- README lines: **349 / 231 / 267** — **largest ever** for all three (v7 gold was 271/168/167)
+- Gotchas: **7 / 6 / 6** — **highest ever**, matches/exceeds v7 (6/5/4) across every codebase
+- IG items: **6 / 5 / 5** — ties v15 peak
+- CLAUDE.md: 99 / 83 / 106 lines (3395 / 2786 / 3728 bytes) — all above 1200 floor, all 3+ custom sections beyond template
+- Root README intro: ✅ names real managed services (v17 `dbDriver` validation held for 3rd run)
+- Preprocessor directive: ✅ all 6 envs carry `#zeropsPreprocessor=on` (v17 de-nested check held)
+
+**v7 gold-standard gotchas restored.** workerdev: queue group, SIGTERM drain (4-step commented walkthrough), reconnect-forever (with `nc.closed()` handler that exits so Zerops restarts the container — detail v7 didn't even have), internal watchdog, worker-no-migrations, `createApplicationContext` vs `create` — **all six v7 worker deep gotchas back**. apidev restored Meilisearch re-push (the v7 auto-index-skip class). appdev gained six new deep Nginx/SPA gotchas (200-text/html on `/api`, `serviceStackIsNotHttp`, static build invisible, SPA fallback, dev-noop, static-no-shell).
+
+**Env 4 comments at v7 quality.** Two-axis `minContainers` teaching applied — the app-static comment explicitly distinguishes throughput from HA: *"minContainers: 2 because a single Nginx container drops traffic during rolling deploys, and static file serving has near-zero CPU cost per replica so the second container is essentially free."* That's the HA/rolling axis named as the reason when throughput doesn't apply — the v8.77 conflation purge is visibly shaping content. Env 5 adds DEDICATED CPU rationale + mode-immutability warning. Env 3 (Stage) ships a teaching line other envs miss: *"Queue group is configured even though only one replica exists, because adding minContainers: 2 later would silently double-process every job without it, and staging should match production subscription shape."*
+
+**Generate-step iterations** (3 README iterations):
+1. Missing `### Gotchas` heading (individual `###` per gotcha) — format check fired
+2. **6 gotchas restated IG items** + `api_comment_specificity 20%` — `gotcha_distinct_from_guide` + specificity floor fired
+3. Passed after symptom-focused stems + improved yaml block
+
+Generate-time fix subagents dispatched: KB format fix (0 bash, pure Write) + gotcha restatement fix (6 bash). Same sub-step iteration pattern v19 introduced.
+
+**Finalize iterations** (2): env 2 comment_depth 18% and env 3 comment_ratio 29% → rewritten with reasoning markers → passed.
+
+**Close-step bugs**: **3 CRITICAL / 6 WRONG / 3 STYLE** (code review subagent `a4651e22`):
+
+- **CRIT fixed** (by dedicated critical-fix subagent `ad6f7da` that rebuilt + redeployed + re-verified): StorageUpload bare fetch missing content-type guard; worker `jobs.service.ts:46` silent swallow (zombie job rows in `processing` state forever)
+- **CRIT accepted**: NATS fire-and-forget pub/sub (showcase limitation, documented)
+- **WRONG findings**: NATS `.info` health check unreliable, Redis `lazyConnect` never explicitly connected, empty-title update path, unsanitized filename, worker `parseInt` radix, dead `Item` entity. Partial fix coverage — TIMELINE doesn't enumerate which were fixed.
+
+Note: CRIT #1 (StorageUpload bare fetch) is arguably a STYLE/consistency issue mis-labeled CRIT — the fetch did check `res.ok`, the gap was content-type validation. The code review subagent was generous with severity labels in this run.
+
+**Notable**:
+
+- **First A-grade complete run in tracked history** (v7 was A but pre-session-logs era, acts as baseline not peer). All four dimensions cleared the A bar simultaneously.
+- **First run with `zerops_dev_server` stop returning `INVALID_PARAMETER` for no-probe-started workerdev** — the v8.77 no-probe start writes a pidfile, but the stop path doesn't read it; agent had to bypass with manual SSH. Real v8.77 follow-up gap.
+- **First run since v16 with both deploy.browser AND close.browser walks** — the v8.77 sub-step gate (`SubStepCloseBrowserWalk`) forced the close walk that v18 + v19 both silently skipped.
+- **First run with a dedicated close-step critical-fix subagent** — `ad6f7da` rebuilt both projects, redeployed, re-verified. Cleanest close-step fix loop ever recorded.
+- **Cleanest content-writing pipeline ever recorded** — README/CLAUDE writer subagent did pure `Write` (0 bash). Main agent pre-classified gotchas by codebase + service so the writer subagent never needed to disambiguate.
+- 10 `zerops_dev_server` MCP calls from main + 4 from feature subagent — no spawn-shape regressions, no 300 s hangs, the v17.1 fix held under the highest dev_server load any run has put on the tool.
+
+**Deep content read surfaces 7 classes of decorative-content drift** the v8.67–v8.77 presence rules admitted (full analysis in conversation; tl;dr):
+
+1. **Generic-platform leakage** — apidev gotcha "Do not commit `.env` files" is generic Node advice mis-anchored. Says ".env file overrides Zerops-managed values" — factually wrong on Zerops (the runtime never reads `.env` unless app code does); the failure mechanism it claims doesn't exist on the platform.
+2. **Predecessor clones** — apidev gotchas #5 (trust proxy) and #7 (`synchronize: true` off in production) are near-verbatim from `nestjs-minimal` predecessor. v19 specifically removed this class; v20 let them back in. *(Pushback in conversation: standalone recipes should ship the most-relevant predecessor gotchas — overlap is fine, gaps are the regression.)*
+3. **Topology drift** — appdev gotcha #1 (`200 OK` with text/html on `/api/*`) shows `_nginx.json` `proxy_pass` fix for an architecture the recipe doesn't ship. v20 actually uses absolute-URL via `VITE_API_URL: ${STAGE_API_URL}` + CORS — no `_nginx.json` exists. Reader copy-pasting the fix finds nothing to edit.
+4. **Cross-file inconsistency** — apidev CLAUDE.md "Resetting Dev State" calls `ds.synchronize()` while README gotcha #7 forbids `synchronize: true` in production. CLAUDE.md is the ambient context for ops; teaching a pattern the README warns against propagates into prod-affecting changes.
+5. **Reality-check gap** — workerdev gotcha #4 (no-health-check + watchdog) ships imperative prose ("Implement an internal watchdog…") with full `setInterval` code, but `lastActivity` and watchdog logic don't exist anywhere in src/. Reads like documentation; is a feature request.
+6. **Per-IG-item leaning** — apidev IG #2 ("Binding to `0.0.0.0`") is 3 sentences + 2 lines of code; the why lives in the comment block of the zerops.yaml shown in IG #1. Item leans on its neighbor.
+7. **Per-service env comment templating** — env 4 service comments share the "minContainers: 2 because rolling deploys" opening across app/api/worker. Each carries service-specific reasoning AFTER the templated opening, but the template lean is visible.
+
+**Rating**: S=**A** (all 6 steps, all services, both URLs, all 5 features, both browser walks, CRITs triaged), C=**A−** (peak content depth across all codebases, all gotchas authentic, env-4 gold comments — but 7 classes of decorative drift listed above), O=**A** (71 min wall, 2.3 min main bash, 0 very-long, dev-server sum ~50 s, 7 errored), W=**A** (10 subagents with clean role separation, feature + code review + critical-fix subagents fired, deploy.browser + close.browser both ran, 3 generate iterations check-driven, 2 finalize iterations) → **A−**
+
+*First A-grade complete run in the session-logged era. v7 was the content benchmark but is pre-session-logs; v20 is the first fully-instrumented run to match v7 on content AND clear every operational/workflow A-bar simultaneously. The A− is content dimension — peak counts but a careful read surfaces decorative drift that the presence-based rules admitted. The post-mortem reform is the v8.79 release.*
+
+**v20 post-mortem fixes shipped as v8.79.0** ([57de8dd](../internal/tools/workflow_checks_reality.go)) — "load-bearing content" reform. Every README/CLAUDE.md/env-comment artifact must now carry its own weight under its own rubric. Five new per-codebase checks at deploy step, one at finalize, predecessor-floor net-new enforcement rolled back:
+
+- **`<host>_content_reality`** — file paths and declared symbols in gotchas/IG/CLAUDE.md must exist in the codebase OR be framed as advisory ("Pattern to add if…", "Consider adding…"). Catches v20 `_nginx.json` mismatch and watchdog declared-but-unimplemented in one mechanism.
+- **`<host>_gotcha_causal_anchor`** — per-bullet rule: every gotcha must name a SPECIFIC Zerops mechanism (curated narrow list — NOT generic `container`/`envVariables`) AND describe a CONCRETE failure mode (HTTP code, quoted error, strong symptom verb). Catches v20 `.env` gotcha — the platform-anchor classifier scored it under v8.67 because `envVariables` matched, but it fails causal-anchor because no Zerops mechanism actually causes the claimed failure.
+- **`<host>_service_coverage`** — each managed service the codebase exercises must have ≥1 gotcha that names it (by brand or service-discovery env-var prefix). API codebases cover all categories; workers cover db + queue; static frontends exempt.
+- **`<host>_claude_readme_consistency`** — CLAUDE.md procedures must not use mechanisms README forbids in production OR must explicitly cross-reference (`dev only — see README gotcha`). Catches v20 `synchronize`-vs-README conflict in apidev.
+- **`<host>_ig_per_item_standalone`** — each `### N.` IG block must ship ≥1 code block AND name a platform anchor in its first prose paragraph. Catches v20 IG #2 leaning on IG #1.
+- **`<env>_service_comment_uniqueness`** (finalize step) — per-service env import.yaml lead-comment blocks must be distinguishable by content tokens (Jaccard ≥ 0.6 → fail). Catches templated copy-paste across services with only hostname swapped.
+- **Rollback**: `knowledge_base_exceeds_predecessor` net-new enforcement removed. The check now always passes when applicable and emits the count as informational. Standalone recipes are read in isolation; predecessor overlap is fine. `service_coverage` is the new authoritative gate for "this codebase covers enough categories".
+- 45 new tests RED-first across 5 new check files, 3 existing predecessor-floor tests updated to reflect rollback, 1 integration test assertions flipped. Full test suite green under `-race`, `make lint-local` clean (0 issues).
+- Brief updates in recipe.md: v8.78 enforcement subsection in knowledge-base Fragment, per-IG-item rule in integration-guide Fragment, cross-file consistency rule in CLAUDE.md template, per-service uniqueness rule in env-comments template, scaffold-subagent self-review checklist (verify imports against installed packages, all commands via SSH, no README/zerops.yaml, dashboard is one panel).
+
+The v8.79 reform is structural (no per-framework hardcoding, no per-recipe lookup tables) and addresses the meta-failure class v20 surfaced: presence-based rules can be satisfied by decorative content; load-bearing-ness is what the next reform must enforce per artifact.
 
 ---
 

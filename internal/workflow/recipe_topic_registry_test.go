@@ -154,6 +154,84 @@ func TestResolveTopic_BasicResolution(t *testing.T) {
 	}
 }
 
+// TestRecipeTopicRegistry_WhereCommandsRun_AppliesToMainAgent asserts
+// the where-commands-run block carries the main-agent-scope framing
+// plus the git-traversal example that the v21 post-mortem identified
+// as the root cause of the 3 parallel 120 s zcp-side git-add hangs.
+// A brief that only speaks to "the sub-agent" fails to govern the main
+// agent, which is the agent running git operations after scaffold.
+func TestRecipeTopicRegistry_WhereCommandsRun_AppliesToMainAgent(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	body, err := ResolveTopic("where-commands-run", plan)
+	if err != nil {
+		t.Fatalf("resolve where-commands-run: %v", err)
+	}
+	wants := []string{
+		"main agent",
+		"sub-agent",
+		"git add",
+		"SSHFS",
+		"EACCES",
+		"120",
+	}
+	for _, w := range wants {
+		if !stringsContains(body, w) {
+			t.Errorf("where-commands-run body missing %q", w)
+		}
+	}
+}
+
+// TestRecipeTopicRegistry_WriterSubagentBrief_Registered asserts the
+// writer-subagent-brief topic resolves to a brief that instructs the
+// sub-agent to use Write (not Bash) and scope to README + CLAUDE.md
+// files. §3.6 of v21 postmortem.
+func TestRecipeTopicRegistry_WriterSubagentBrief_Registered(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	body, err := ResolveTopic("writer-subagent-brief", plan)
+	if err != nil {
+		t.Fatalf("resolve writer-subagent-brief: %v", err)
+	}
+	for _, s := range []string{"README + CLAUDE.md writer", "No Bash", "Write tool"} {
+		if !stringsContains(body, s) {
+			t.Errorf("writer-subagent-brief body missing %q", s)
+		}
+	}
+}
+
+// TestRecipeTopicRegistry_FixSubagentBrief_Registered asserts the
+// fix-subagent-brief topic resolves and carries scope-restrictions.
+func TestRecipeTopicRegistry_FixSubagentBrief_Registered(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	body, err := ResolveTopic("fix-subagent-brief", plan)
+	if err != nil {
+		t.Fatalf("resolve fix-subagent-brief: %v", err)
+	}
+	for _, s := range []string{"Files you MAY edit", "Files you MUST NOT edit", "2 KB"} {
+		if !stringsContains(body, s) {
+			t.Errorf("fix-subagent-brief body missing %q", s)
+		}
+	}
+}
+
+// TestRecipeTopicRegistry_FeatureSubagentMCPSchemas_Registered — the
+// inlined MCP schema reference for the feature sub-agent. §3.6b.
+func TestRecipeTopicRegistry_FeatureSubagentMCPSchemas_Registered(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	body, err := ResolveTopic("feature-subagent-mcp-schemas", plan)
+	if err != nil {
+		t.Fatalf("resolve feature-subagent-mcp-schemas: %v", err)
+	}
+	for _, s := range []string{"serviceHostname", "waitSeconds", "noHttpProbe", "-32602 invalid params"} {
+		if !stringsContains(body, s) {
+			t.Errorf("feature-subagent-mcp-schemas body missing %q", s)
+		}
+	}
+}
+
 // TestResolveTopic_UnknownTopic verifies error on unknown topic.
 func TestResolveTopic_UnknownTopic(t *testing.T) {
 	t.Parallel()

@@ -469,8 +469,9 @@ func TestDevServer_Stop_ByCommand(t *testing.T) {
 	}
 	cmd := ssh.calls[0].command
 	// Must include pkill with the derived first-token match AND fuser on the port.
-	if !strings.Contains(cmd, "pkill -f") {
-		t.Errorf("expected pkill in stop command: %q", cmd)
+	// v8.80 adds --ignore-ancestors + pgrep-PPID fallback between `pkill` and `-f`.
+	if !strings.Contains(cmd, "pkill") || !strings.Contains(cmd, "-f 'npm'") {
+		t.Errorf("expected pkill -f with derived match in stop command: %q", cmd)
 	}
 	if !strings.Contains(cmd, "fuser -k 3000/tcp") {
 		t.Errorf("expected fuser on port 3000: %q", cmd)
@@ -478,6 +479,88 @@ func TestDevServer_Stop_ByCommand(t *testing.T) {
 	// Must tolerate "nothing to kill" with || true.
 	if !strings.Contains(cmd, "|| true") {
 		t.Errorf("expected '|| true' tolerance in stop command: %q", cmd)
+	}
+}
+
+// TestStopDevServer_PkillMatchesSelf_Returns255_ClassifiedAsSuccess — the
+// v21 post-mortem's §3.7a fix. `pkill -f <match>` issued over SSH kills
+// its own sh -c parent when the match string appears in the shell's
+// command line (e.g. `pkill -f nest` matches `sh -c "pkill -f nest; ..."`).
+// SSH then surfaces exit 255 ("connection terminated abnormally"). The
+// stop succeeded — the process tree is gone — so the tool must classify
+// this specific failure shape as a structured success, not propagate the
+// raw error.
+func TestStopDevServer_PkillMatchesSelf_Returns255_ClassifiedAsSuccess(t *testing.T) {
+	t.Parallel()
+	ssh := &scriptSSH{queue: []scriptStep{{output: "", err: errors.New("ssh apidev: exit status 255")}}}
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+		DevServerParams{
+			Action:   "stop",
+			Hostname: "apidev",
+			Command:  "npm run start:dev",
+			Port:     3000,
+		})
+	if err != nil {
+		t.Fatalf("ssh self-kill must be classified as success, got err: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.Running {
+		t.Error("expected Running=false on self-kill")
+	}
+	if result.Reason != "ssh_self_killed" {
+		t.Errorf("expected Reason=ssh_self_killed, got %q", result.Reason)
+	}
+	if !strings.Contains(result.Message, "SSH session") {
+		t.Errorf("message must explain SSH self-kill: %q", result.Message)
+	}
+}
+
+// TestStopDevServer_GenuineSSHFailure_PropagatesError — a non-255 SSH
+// error is a real failure (auth, DNS, target unreachable). Propagate it
+// so the caller can act.
+func TestStopDevServer_GenuineSSHFailure_PropagatesError(t *testing.T) {
+	t.Parallel()
+	ssh := &scriptSSH{queue: []scriptStep{{output: "", err: errors.New("ssh apidev: Permission denied (publickey)")}}}
+	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+		DevServerParams{
+			Action:   "stop",
+			Hostname: "apidev",
+			Command:  "npm run start:dev",
+			Port:     3000,
+		})
+	if err == nil {
+		t.Fatal("expected genuine ssh failure to propagate")
+	}
+	if strings.Contains(err.Error(), "ssh_self_killed") {
+		t.Errorf("permission-denied must not be classified as self-kill: %v", err)
+	}
+}
+
+// TestStopDevServer_PkillCommandIncludesIgnoreAncestors — the generated
+// shell command must use `pkill --ignore-ancestors` so modern procps
+// (≥3.3.15) doesn't kill the sh -c running pkill itself, plus a pgrep
+// fallback filtering $$ / $PPID for older procps on busybox.
+func TestStopDevServer_PkillCommandIncludesIgnoreAncestors(t *testing.T) {
+	t.Parallel()
+	ssh := &scriptSSH{queue: []scriptStep{{output: "stopped"}}}
+	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+		DevServerParams{
+			Action:   "stop",
+			Hostname: "apidev",
+			Command:  "npm run start:dev",
+			Port:     3000,
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cmd := ssh.calls[0].command
+	if !strings.Contains(cmd, "--ignore-ancestors") {
+		t.Errorf("stop command must carry --ignore-ancestors: %q", cmd)
+	}
+	if !strings.Contains(cmd, "pgrep") {
+		t.Errorf("stop command must carry pgrep fallback for older procps: %q", cmd)
 	}
 }
 

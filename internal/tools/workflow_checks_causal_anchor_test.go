@@ -138,3 +138,59 @@ func TestCausalAnchor_NoGotchas_NoOp(t *testing.T) {
 		t.Fatalf("empty content should no-op; got %d", len(checks))
 	}
 }
+
+// TestCausalAnchor_BareTypeORMSynchronize_Fail — after the framework-
+// token purge, `TypeORM synchronize` is no longer a Zerops mechanism.
+// A gotcha that names only it (no L7/execOnce/readinessCheck/${X_}/
+// brand) lacks the required specific-mechanism half of the rule.
+func TestCausalAnchor_BareTypeORMSynchronize_Fail(t *testing.T) {
+	t.Parallel()
+	kb := `### Gotchas
+- **TypeORM synchronize corrupts schema under concurrent startup** — Multiple replicas racing ALTER TABLE deadlock the database. The connection pool crashes with a generic error.
+`
+	checks := checkCausalAnchor(kb, "apidev")
+	if checks[0].Status != statusFail {
+		t.Fatalf("expected fail — TypeORM synchronize alone is no longer a Zerops mechanism; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+}
+
+// TestCausalAnchor_BareIoredis_Fail — ioredis is a Node client library,
+// not a Zerops mechanism. Must not satisfy the mechanism half alone.
+func TestCausalAnchor_BareIoredis_Fail(t *testing.T) {
+	t.Parallel()
+	kb := `### Gotchas
+- **ioredis lazyConnect required** — connects on module load otherwise and crashes with ECONNREFUSED.
+`
+	checks := checkCausalAnchor(kb, "apidev")
+	if checks[0].Status != statusFail {
+		t.Fatalf("expected fail — ioredis alone is not a Zerops mechanism; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+}
+
+// TestCausalAnchor_BareKeydb_Fail — keydb isn't a Zerops service type.
+// A concrete failure mode is present (crashes) — the bullet must still
+// fail because keydb no longer counts as a specific Zerops mechanism.
+func TestCausalAnchor_BareKeydb_Fail(t *testing.T) {
+	t.Parallel()
+	kb := `### Gotchas
+- **keydb compatibility gap** — some Redis commands crashes the fork.
+`
+	checks := checkCausalAnchor(kb, "apidev")
+	if checks[0].Status != statusFail {
+		t.Fatalf("expected fail — keydb alone is not a Zerops mechanism; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+}
+
+// TestCausalAnchor_QueueGroupStillAnchors_Pass — `queue group` is a
+// NATS concept (broker-level load balancing) and remains a Zerops-
+// anchored mechanism when paired with a concrete failure mode.
+func TestCausalAnchor_QueueGroupStillAnchors_Pass(t *testing.T) {
+	t.Parallel()
+	kb := `### Gotchas
+- **NATS queue group prevents duplicate processing** — Without a named queue group, every subscriber replica receives every message and drops the deduplication guarantee; jobs run twice, rate limiters break.
+`
+	checks := checkCausalAnchor(kb, "workerdev")
+	if checks[0].Status != statusPass {
+		t.Fatalf("expected pass — queue group is a kept NATS/Zerops mechanism; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+}
