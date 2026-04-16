@@ -4,6 +4,8 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -498,5 +500,81 @@ func TestServer_Connect(t *testing.T) {
 	// Verify connection is alive by pinging.
 	if err := session.Ping(ctx, nil); err != nil {
 		t.Fatalf("ping failed: %v", err)
+	}
+}
+
+func TestLogLevel_FromEnv(t *testing.T) {
+	tests := []struct {
+		env  string
+		want slog.Level
+	}{
+		{"debug", slog.LevelDebug},
+		{"info", slog.LevelInfo},
+		{"warn", slog.LevelWarn},
+		{"error", slog.LevelError},
+		{"INFO", slog.LevelInfo},
+		{"", slog.LevelDebug},
+		{"invalid", slog.LevelDebug},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.env, func(t *testing.T) {
+			t.Setenv("ZCP_LOG_LEVEL", tt.env)
+			if got := logLevel(); got != tt.want {
+				t.Errorf("logLevel(%q) = %v, want %v", tt.env, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestObserve_CountsToolCalls(t *testing.T) {
+	t.Parallel()
+
+	s := &Server{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	mw := s.observe()
+
+	nop := func(_ context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		return &mcp.CallToolResult{}, nil
+	}
+	handler := mw(nop)
+
+	// Tool calls are counted.
+	if _, err := handler(context.Background(), "tools/call", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler(context.Background(), "tools/call", nil); err != nil {
+		t.Fatal(err)
+	}
+	// Non-tool methods are not counted.
+	if _, err := handler(context.Background(), "tools/list", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handler(context.Background(), "initialize", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := s.CallCount(); got != 2 {
+		t.Errorf("CallCount() = %d, want 2", got)
+	}
+}
+
+func TestObserve_PassesThrough(t *testing.T) {
+	t.Parallel()
+
+	s := &Server{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	mw := s.observe()
+
+	sentinel := errors.New("handler error")
+	handler := mw(func(_ context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		return nil, sentinel
+	})
+
+	_, err := handler(context.Background(), "tools/call", nil)
+	if !errors.Is(err, sentinel) {
+		t.Errorf("middleware should pass through handler error, got %v", err)
 	}
 }

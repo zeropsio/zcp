@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -35,7 +37,12 @@ type Server struct {
 	sshDeployer ops.SSHDeployer
 	mounter     ops.Mounter
 	rtInfo      runtime.Info
+	logger      *slog.Logger
+	calls       atomic.Int64
 }
+
+// CallCount returns the number of tool calls served during this server's lifetime.
+func (s *Server) CallCount() int64 { return s.calls.Load() }
 
 // New creates a new ZCP MCP server with all tools registered.
 func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info) *Server {
@@ -45,12 +52,13 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		stateDir = filepath.Join(cwd, ".zcp", "state")
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
+
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
 		&mcp.ServerOptions{
 			Instructions: BuildInstructions(ctx, client, authInfo.ProjectID, rtInfo, stateDir),
-			KeepAlive:    30 * time.Second,
-			Logger:       slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
+			Logger:       logger,
 		},
 	)
 
@@ -63,8 +71,10 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		sshDeployer: sshDeployer,
 		mounter:     mounter,
 		rtInfo:      rtInfo,
+		logger:      logger,
 	}
 
+	srv.AddReceivingMiddleware(s.observe())
 	s.registerTools()
 	s.registerResources()
 	return s
@@ -137,4 +147,34 @@ func (s *Server) Run(ctx context.Context) error {
 // MCPServer returns the underlying MCP server (for testing).
 func (s *Server) MCPServer() *mcp.Server {
 	return s.server
+}
+
+// observe returns middleware that counts tool calls and logs timing at Info level.
+func (s *Server) observe() mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != "tools/call" {
+				return next(ctx, method, req)
+			}
+			s.calls.Add(1)
+			start := time.Now()
+			result, err := next(ctx, method, req)
+			s.logger.Info("tool call", "ms", time.Since(start).Milliseconds())
+			return result, err
+		}
+	}
+}
+
+// logLevel returns the slog level from ZCP_LOG_LEVEL env var (default: warn).
+func logLevel() slog.Level {
+	switch strings.ToLower(os.Getenv("ZCP_LOG_LEVEL")) {
+	case "warn":
+		return slog.LevelWarn
+	case "info":
+		return slog.LevelInfo
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelDebug
+	}
 }

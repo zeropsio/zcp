@@ -80,11 +80,14 @@ func main() {
 
 	// MCP server mode — starts immediately, no blocking update check.
 	crashLog := setupCrashLog()
-	if err := run(); err != nil {
-		logShutdown(crashLog, err)
+	startedAt := time.Now()
+
+	srv, err := run()
+	logShutdown(crashLog, err, startedAt, srv)
+
+	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatal(err)
 	}
-	logShutdown(crashLog, nil)
 }
 
 func printVersion() {
@@ -140,7 +143,9 @@ func setupCrashLog() io.WriteCloser {
 }
 
 // logShutdown writes a categorized shutdown reason to the crash log.
-func logShutdown(f io.WriteCloser, err error) {
+// Categories: client disconnected (stdin EOF), signal (SIGINT/SIGTERM),
+// stdin closed, broken pipe, or error with details.
+func logShutdown(f io.WriteCloser, err error, startedAt time.Time, srv *server.Server) {
 	if f == nil {
 		return
 	}
@@ -148,29 +153,41 @@ func logShutdown(f io.WriteCloser, err error) {
 
 	ts := time.Now().Format(time.RFC3339)
 	pid := os.Getpid()
+	uptime := time.Since(startedAt).Truncate(time.Second)
 
+	var calls int64
+	if srv != nil {
+		calls = srv.CallCount()
+	}
+
+	var reason string
 	switch {
 	case err == nil:
-		fmt.Fprintf(f, "[%s] clean shutdown (pid=%d)\n", ts, pid)
+		reason = "client disconnected"
+	case errors.Is(err, context.Canceled):
+		reason = "signal"
 	case errors.Is(err, io.EOF):
-		fmt.Fprintf(f, "[%s] shutdown: stdin closed (EOF) — client disconnected (pid=%d)\n", ts, pid)
+		reason = "stdin closed"
 	case errors.Is(err, syscall.EPIPE):
-		fmt.Fprintf(f, "[%s] shutdown: broken pipe (EPIPE) — stdout closed by client (pid=%d)\n", ts, pid)
+		reason = "broken pipe"
 	default:
-		fmt.Fprintf(f, "[%s] shutdown error: %v (pid=%d)\n", ts, pid, err)
+		reason = fmt.Sprintf("error: %v", err)
 	}
+
+	fmt.Fprintf(f, "[%s] shutdown: %s (pid=%d, uptime=%s, calls=%d)\n",
+		ts, reason, pid, uptime, calls)
 }
 
-func run() error {
+func run() (*server.Server, error) {
 	// Bootstrap: resolve credentials (env var or zcli) to create platform client.
 	creds, err := auth.ResolveCredentials()
 	if err != nil {
-		return fmt.Errorf("auth: %w", err)
+		return nil, fmt.Errorf("auth: %w", err)
 	}
 
 	client, err := platform.NewZeropsClient(creds.Token, creds.APIHost)
 	if err != nil {
-		return fmt.Errorf("create platform client: %w", err)
+		return nil, fmt.Errorf("create platform client: %w", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -179,7 +196,7 @@ func run() error {
 	// Full auth: validate token via API and discover project.
 	authInfo, err := auth.Resolve(ctx, client)
 	if err != nil {
-		return fmt.Errorf("auth: %w", err)
+		return nil, fmt.Errorf("auth: %w", err)
 	}
 
 	// Log fetcher for zerops_logs tool.
@@ -188,7 +205,7 @@ func run() error {
 	// Knowledge store for zerops_knowledge tool.
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {
-		return fmt.Errorf("knowledge store: %w", err)
+		return nil, fmt.Errorf("knowledge store: %w", err)
 	}
 
 	// Detect runtime environment (Zerops container vs local dev).
@@ -216,9 +233,9 @@ func run() error {
 		go update.Once(ctx, server.Version, os.Stderr)
 	}
 
-	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("server: %w", err)
+	err = srv.Run(ctx)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		return srv, fmt.Errorf("server: %w", err)
 	}
-
-	return nil
+	return srv, err
 }
