@@ -935,6 +935,98 @@ func TestDeployTool_AdoptionGate_GitPush_BlocksUnadopted(t *testing.T) {
 	}
 }
 
+// stubSSHWithCommands dispatches on command content for fine-grained test control.
+type stubSSHWithCommands struct {
+	tokenOutput []byte // output for GIT_TOKEN check command
+	tokenErr    error
+	pushOutput  []byte // output for everything else
+	pushErr     error
+}
+
+func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
+	if strings.Contains(command, "GIT_TOKEN") {
+		return s.tokenOutput, s.tokenErr
+	}
+	return s.pushOutput, s.pushErr
+}
+func (s *stubSSHWithCommands) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
+	return s.pushOutput, s.pushErr
+}
+
+func TestDeployTool_GitPush_MissingGitToken_ReturnsPrerequisites(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	setupAdoptedService(t, stateDir, "appdev", "")
+
+	mock := platform.NewMock()
+	// GIT_TOKEN check returns empty — token not set.
+	ssh := &stubSSHWithCommands{
+		tokenOutput: []byte(""),
+		pushOutput:  []byte("ok"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t))
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+
+	// Should NOT be an error — it's a structured "prerequisites missing" response.
+	text := getTextContent(t, result)
+
+	wantParts := []string{
+		"GIT_TOKEN",       // mentions the missing token
+		"Ask the user",    // decision question
+		"push code",       // option A context
+		"CI/CD",           // option B context
+		"zerops_env",      // how to set the token
+		"workflow=",       // route to CI/CD workflow (JSON-escaped quotes)
+		"cicd",            // CI/CD workflow name
+	}
+	for _, part := range wantParts {
+		if !strings.Contains(text, part) {
+			t.Errorf("git-push prerequisite response should contain %q, got:\n%s", part, text)
+		}
+	}
+}
+
+func TestDeployTool_GitPush_WithGitToken_Succeeds(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	setupAdoptedService(t, stateDir, "appdev", "")
+
+	mock := platform.NewMock()
+	// GIT_TOKEN check returns a token value — token is set.
+	ssh := &stubSSHWithCommands{
+		tokenOutput: []byte("ghp_abc123"),
+		pushOutput:  []byte("ok"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "test@test.com", FullName: "Test"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t))
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+
+	if result.IsError {
+		t.Fatalf("expected success when GIT_TOKEN exists, got error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "PUSHED") && !strings.Contains(text, "NOTHING_TO_PUSH") {
+		t.Errorf("expected push result status, got: %s", text)
+	}
+}
+
 func TestDeployTool_AdoptionGate_EmptyStateDir_Skips(t *testing.T) {
 	t.Parallel()
 

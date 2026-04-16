@@ -11,6 +11,27 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// gitPushPrerequisites is a structured response when GIT_TOKEN is missing.
+// Guides the agent through the decision question and setup steps.
+type gitPushPrerequisites struct {
+	Status       string `json:"status"`
+	Message      string `json:"message"`
+	Instructions string `json:"instructions"`
+}
+
+const gitTokenCheckCmd = `echo "$GIT_TOKEN"`
+
+const gitPushSetupInstructions = `Ask the user: Do you want to just push code to the remote, or set up full CI/CD (automatic deploy on every push)?
+
+**Option A: Push code to remote**
+1. Create a GitHub fine-grained token (Contents: Read and write) or GitLab token (write_repository)
+2. Set it as project env var: zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]
+3. Retry this zerops_deploy command
+
+**Option B: Full CI/CD**
+Run: zerops_workflow action="start" workflow="cicd"
+This sets up automatic deploy on every git push (GitHub Actions with zcli).`
+
 // handleGitPush executes the git-push strategy: push committed code to an
 // external git remote. No Zerops build is triggered — no pollDeployBuild.
 func handleGitPush(
@@ -42,6 +63,16 @@ func handleGitPush(
 	branch := input.Branch
 	if branch == "" {
 		branch = "main"
+	}
+
+	// Pre-flight: check GIT_TOKEN exists on the container.
+	tokenOut, err := sshDeployer.ExecSSH(ctx, hostname, gitTokenCheckCmd)
+	if err == nil && strings.TrimSpace(string(tokenOut)) == "" {
+		return jsonResult(&gitPushPrerequisites{
+			Status:       "PREREQUISITES_MISSING",
+			Message:      "GIT_TOKEN is not set. This project env var is required for pushing to a git remote.",
+			Instructions: gitPushSetupInstructions,
+		}), nil, nil
 	}
 
 	id := ops.GitIdentity{Name: authInfo.FullName, Email: authInfo.Email}
