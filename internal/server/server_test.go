@@ -541,10 +541,10 @@ func TestObserve_CountsToolCalls(t *testing.T) {
 	handler := mw(nop)
 
 	// Tool calls are counted.
-	if _, err := handler(context.Background(), "tools/call", nil); err != nil {
+	if _, err := handler(context.Background(), methodCallTool, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := handler(context.Background(), "tools/call", nil); err != nil {
+	if _, err := handler(context.Background(), methodCallTool, nil); err != nil {
 		t.Fatal(err)
 	}
 	// Non-tool methods are not counted.
@@ -573,7 +573,7 @@ func TestObserve_PassesThrough(t *testing.T) {
 		return nil, sentinel
 	})
 
-	_, err := handler(context.Background(), "tools/call", nil)
+	_, err := handler(context.Background(), methodCallTool, nil)
 	if !errors.Is(err, sentinel) {
 		t.Errorf("middleware should pass through handler error, got %v", err)
 	}

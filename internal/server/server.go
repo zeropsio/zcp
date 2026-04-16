@@ -149,11 +149,13 @@ func (s *Server) MCPServer() *mcp.Server {
 	return s.server
 }
 
+const methodCallTool = "tools/call"
+
 // observe returns middleware that counts tool calls and logs timing at Info level.
 func (s *Server) observe() mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			if method != "tools/call" {
+			if method != methodCallTool {
 				return next(ctx, method, req)
 			}
 			s.calls.Add(1)
@@ -165,7 +167,7 @@ func (s *Server) observe() mcp.Middleware {
 	}
 }
 
-// logLevel returns the slog level from ZCP_LOG_LEVEL env var (default: warn).
+// logLevel returns the slog level from ZCP_LOG_LEVEL env var (default: debug).
 func logLevel() slog.Level {
 	switch strings.ToLower(os.Getenv("ZCP_LOG_LEVEL")) {
 	case "warn":
