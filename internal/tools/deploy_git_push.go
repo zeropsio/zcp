@@ -19,7 +19,7 @@ type gitPushPrerequisites struct {
 	Instructions string `json:"instructions"`
 }
 
-const gitTokenCheckCmd = `echo "$GIT_TOKEN"`
+const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
 
 const gitPushSetupInstructions = `Ask the user: Do you want to just push code to the remote, or set up full CI/CD (automatic deploy on every push)?
 
@@ -67,9 +67,16 @@ func handleGitPush(
 
 	// Pre-flight: check GIT_TOKEN exists on the container.
 	tokenOut, err := sshDeployer.ExecSSH(ctx, hostname, gitTokenCheckCmd)
-	if err == nil && strings.TrimSpace(string(tokenOut)) == "" {
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrSSHDeployFailed,
+			fmt.Sprintf("cannot check GIT_TOKEN on %s: %s", hostname, err),
+			"Verify the container is running and SSH is accessible",
+		)), nil, nil
+	}
+	if strings.TrimSpace(string(tokenOut)) == "0" {
 		return jsonResult(&gitPushPrerequisites{
-			Status:       "PREREQUISITES_MISSING",
+			Status:       platform.ErrGitTokenMissing,
 			Message:      "GIT_TOKEN is not set. This project env var is required for pushing to a git remote.",
 			Instructions: gitPushSetupInstructions,
 		}), nil, nil

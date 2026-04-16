@@ -944,7 +944,8 @@ type stubSSHWithCommands struct {
 }
 
 func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
-	if strings.Contains(command, "GIT_TOKEN") {
+	// Match the GIT_TOKEN pre-flight check command (test -n ... && echo 1 || echo 0).
+	if strings.Contains(command, "GIT_TOKEN") && !strings.Contains(command, "netrc") {
 		return s.tokenOutput, s.tokenErr
 	}
 	return s.pushOutput, s.pushErr
@@ -960,9 +961,9 @@ func TestDeployTool_GitPush_MissingGitToken_ReturnsPrerequisites(t *testing.T) {
 	setupAdoptedService(t, stateDir, "appdev", "")
 
 	mock := platform.NewMock()
-	// GIT_TOKEN check returns empty — token not set.
+	// GIT_TOKEN check returns "0" — token not set.
 	ssh := &stubSSHWithCommands{
-		tokenOutput: []byte(""),
+		tokenOutput: []byte("0"),
 		pushOutput:  []byte("ok"),
 	}
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
@@ -980,13 +981,13 @@ func TestDeployTool_GitPush_MissingGitToken_ReturnsPrerequisites(t *testing.T) {
 	text := getTextContent(t, result)
 
 	wantParts := []string{
-		"GIT_TOKEN",       // mentions the missing token
-		"Ask the user",    // decision question
-		"push code",       // option A context
-		"CI/CD",           // option B context
-		"zerops_env",      // how to set the token
-		"workflow=",       // route to CI/CD workflow (JSON-escaped quotes)
-		"cicd",            // CI/CD workflow name
+		"GIT_TOKEN_MISSING", // uses platform error constant
+		"Ask the user",      // decision question
+		"push code",         // option A context
+		"CI/CD",             // option B context
+		"zerops_env",        // how to set the token
+		"workflow=",         // route to CI/CD workflow (JSON-escaped quotes)
+		"cicd",              // CI/CD workflow name
 	}
 	for _, part := range wantParts {
 		if !strings.Contains(text, part) {
@@ -1002,9 +1003,9 @@ func TestDeployTool_GitPush_WithGitToken_Succeeds(t *testing.T) {
 	setupAdoptedService(t, stateDir, "appdev", "")
 
 	mock := platform.NewMock()
-	// GIT_TOKEN check returns a token value — token is set.
+	// GIT_TOKEN check returns "1" — token is set.
 	ssh := &stubSSHWithCommands{
-		tokenOutput: []byte("ghp_abc123"),
+		tokenOutput: []byte("1"),
 		pushOutput:  []byte("ok"),
 	}
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "test@test.com", FullName: "Test"}
