@@ -37,9 +37,13 @@ func minimalTierPlan() *workflow.RecipePlan {
 
 // TestCheckKnowledgeBaseExceedsPredecessor_V10ClonePattern replays the exact
 // v10 apidev knowledge-base: four stems that all re-state the nestjs-minimal
-// predecessor gotchas with cosmetic rewording. The check must fail hard,
-// because the showcase provisions redis/queue/storage/search and has nothing
-// to say about any of them.
+// predecessor gotchas with cosmetic rewording. After the v8.78 rollback
+// of the predecessor-deduplication semantic, this case PASSES — recipes
+// are standalone artifacts and predecessor overlap is fine. The new
+// authoritative gate for "this codebase covers enough services" is
+// checkServiceCoverage; the v10 catastrophe (showcase ships redis/queue/
+// storage/search but says nothing about them) is now caught there
+// because those category mentions are missing, not here.
 func TestCheckKnowledgeBaseExceedsPredecessor_V10ClonePattern(t *testing.T) {
 	t.Parallel()
 	readme := readmeWithGotchas(
@@ -52,12 +56,12 @@ func TestCheckKnowledgeBaseExceedsPredecessor_V10ClonePattern(t *testing.T) {
 	if len(checks) == 0 {
 		t.Fatal("expected a check result, got none")
 	}
-	fail := checks[0]
-	if fail.Name != "knowledge_base_exceeds_predecessor" {
-		t.Errorf("check name = %q, want knowledge_base_exceeds_predecessor", fail.Name)
+	pass := checks[0]
+	if pass.Name != "knowledge_base_exceeds_predecessor" {
+		t.Errorf("check name = %q, want knowledge_base_exceeds_predecessor", pass.Name)
 	}
-	if fail.Status != "fail" {
-		t.Errorf("status = %q, want fail (all 4 stems clone the predecessor)", fail.Status)
+	if pass.Status != "pass" {
+		t.Errorf("status = %q, want pass — predecessor overlap is fine after v8.78 rollback; service-coverage is the new gate", pass.Status)
 	}
 }
 
@@ -115,11 +119,11 @@ func TestCheckKnowledgeBaseExceedsPredecessor_EmptyPredecessorSkipped(t *testing
 	}
 }
 
-// TestCheckKnowledgeBaseExceedsPredecessor_OneNetNewIsTooFew — the floor for
-// showcase tier is three net-new stems. A single net-new gotcha alongside
-// three clones is not enough; the showcase added 4 managed services but has
-// commentary for one of them at best.
-func TestCheckKnowledgeBaseExceedsPredecessor_OneNetNewIsTooFew(t *testing.T) {
+// TestCheckKnowledgeBaseExceedsPredecessor_OneNetNewPassesAfterRollback —
+// the v8.78 reform rolled back the net-new floor; predecessor overlap
+// is fine. A single net-new alongside three clones now passes here.
+// Service-coverage is the new gate for "are enough categories named".
+func TestCheckKnowledgeBaseExceedsPredecessor_OneNetNewPassesAfterRollback(t *testing.T) {
 	t.Parallel()
 	readme := readmeWithGotchas(
 		"No .env files on Zerops.",
@@ -128,18 +132,16 @@ func TestCheckKnowledgeBaseExceedsPredecessor_OneNetNewIsTooFew(t *testing.T) {
 		"Meilisearch SDK is ESM-only",
 	)
 	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems)
-	if len(checks) == 0 || checks[0].Status != "fail" {
-		t.Errorf("expected fail with 1 net-new, got: %+v", checks)
+	if len(checks) == 0 || checks[0].Status != "pass" {
+		t.Errorf("expected pass after rollback, got: %+v", checks)
 	}
 }
 
-// TestCheckKnowledgeBaseExceedsPredecessor_TwoNetNewNowFails replays v11's
-// apidev pattern: 4 clones of the predecessor + 2 net-new gotchas. At the
-// old floor of 2 this was a marginal pass; the v11 session analysis showed
-// the output still read as scaffold-quality rather than showcase-quality
-// because the narration stopped one gotcha short of the v7 baseline of 3.
-// Locks in the tightening from 2 → 3 so the regression cannot come back.
-func TestCheckKnowledgeBaseExceedsPredecessor_TwoNetNewNowFails(t *testing.T) {
+// TestCheckKnowledgeBaseExceedsPredecessor_TwoNetNewPassesAfterRollback —
+// v11's apidev pattern (4 predecessor clones + 2 net-new) now passes
+// here per the v8.78 rollback. checkServiceCoverage is responsible for
+// catching insufficient service category breadth.
+func TestCheckKnowledgeBaseExceedsPredecessor_TwoNetNewPassesAfterRollback(t *testing.T) {
 	t.Parallel()
 	readme := readmeWithGotchas(
 		"No `.env` files on Zerops",
@@ -150,8 +152,8 @@ func TestCheckKnowledgeBaseExceedsPredecessor_TwoNetNewNowFails(t *testing.T) {
 		"S3 path-style addressing required",
 	)
 	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems)
-	if len(checks) == 0 || checks[0].Status != "fail" {
-		t.Errorf("expected fail with 2 net-new at new floor of 3, got: %+v", checks)
+	if len(checks) == 0 || checks[0].Status != "pass" {
+		t.Errorf("expected pass after rollback, got: %+v", checks)
 	}
 }
 

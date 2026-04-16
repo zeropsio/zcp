@@ -147,8 +147,12 @@ func TestCheckRecipeGenerate_ShowcaseFloor_DualRuntime_MixedPassFail(t *testing.
 	if !ok {
 		t.Fatalf("missing api_knowledge_base_exceeds_predecessor — wiring did not reach apidev README. Got checks: %v", checkNames(result.Checks))
 	}
-	if apiCheck.Status != statusFail {
-		t.Errorf("api_knowledge_base_exceeds_predecessor should fail (all 4 stems clone the predecessor), got %s: %s", apiCheck.Status, apiCheck.Detail)
+	// v8.78 rollback: predecessor overlap is fine — the check now always
+	// passes (when applicable) and emits the count as informational.
+	// Service-coverage is the new authoritative gate for "this codebase
+	// covers enough categories".
+	if apiCheck.Status != statusPass {
+		t.Errorf("api_knowledge_base_exceeds_predecessor should pass after v8.78 rollback (predecessor overlap is fine), got %s: %s", apiCheck.Status, apiCheck.Detail)
 	}
 
 	appCheck, ok := byName["app_knowledge_base_exceeds_predecessor"]
@@ -156,12 +160,7 @@ func TestCheckRecipeGenerate_ShowcaseFloor_DualRuntime_MixedPassFail(t *testing.
 		t.Fatalf("missing app_knowledge_base_exceeds_predecessor — wiring did not reach appdev README")
 	}
 	if appCheck.Status != statusPass {
-		t.Errorf("app_knowledge_base_exceeds_predecessor should pass (3 net-new gotchas), got %s: %s", appCheck.Status, appCheck.Detail)
-	}
-
-	// Final result: must be overall fail because apidev cloned the predecessor.
-	if result.Passed {
-		t.Error("expected overall fail because apidev README cloned the predecessor, but result.Passed=true")
+		t.Errorf("app_knowledge_base_exceeds_predecessor should pass, got %s: %s", appCheck.Status, appCheck.Detail)
 	}
 }
 
@@ -274,20 +273,19 @@ func TestCheckRecipeGenerate_ShowcaseFloor_SeparateCodebaseWorker(t *testing.T) 
 	if !ok {
 		t.Fatalf("missing worker_knowledge_base_exceeds_predecessor — separate-codebase worker was not included in the floor loop. Got checks: %v", checkNames(result.Checks))
 	}
-	if workerCheck.Status != statusFail {
-		t.Errorf("worker_knowledge_base_exceeds_predecessor should fail (all 4 stems clone the predecessor), got %s: %s", workerCheck.Status, workerCheck.Detail)
+	// v8.78 rollback: predecessor overlap is fine. The wiring assertion
+	// above is what matters — the check fires for separate-codebase
+	// workers. Service-coverage handles the "worker covers db + queue"
+	// requirement separately.
+	if workerCheck.Status != statusPass {
+		t.Errorf("worker_knowledge_base_exceeds_predecessor should pass after v8.78 rollback, got %s: %s", workerCheck.Status, workerCheck.Detail)
 	}
 
-	// App/api must still pass.
 	if c := byName["app_knowledge_base_exceeds_predecessor"]; c.Status != statusPass {
 		t.Errorf("app check should pass, got %s: %s", c.Status, c.Detail)
 	}
 	if c := byName["api_knowledge_base_exceeds_predecessor"]; c.Status != statusPass {
 		t.Errorf("api check should pass, got %s: %s", c.Status, c.Detail)
-	}
-
-	if result.Passed {
-		t.Error("expected overall fail because worker README cloned the predecessor, but result.Passed=true")
 	}
 }
 

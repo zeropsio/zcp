@@ -7,14 +7,12 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// minNetNewGotchas is the floor for showcase-tier knowledge-base fragments.
-// A showcase always adds managed services and architectural patterns that
-// the predecessor recipe does not cover; three net-new gotchas matches the
-// v7 gold-standard baseline (apidev had 3 clones + 3 net-new). The earlier
-// floor of 2 admitted v11's apidev with 4 clones + 2 net-new, which still
-// read as scaffold-quality commentary; 3 forces the agent to narrate at
-// least one additional build-specific gotcha.
-const minNetNewGotchas = 3
+// minNetNewGotchas was the floor for showcase-tier knowledge-base
+// fragments before the v8.78 reform. The check is now informational
+// only — predecessor overlap is fine — and the constant is removed
+// to satisfy the unused-symbol lint. The new authoritative gate for
+// "this codebase ships enough gotchas" is checkServiceCoverage, which
+// requires at least one gotcha per managed-service category in the plan.
 
 // minAuthenticGotchas is the shape-classifier floor. Even when net-new
 // gotcha tokens don't overlap the predecessor, the content can still be
@@ -28,22 +26,26 @@ const minNetNewGotchas = 3
 // matter in the generate check.
 const minAuthenticGotchas = 3
 
-// checkKnowledgeBaseExceedsPredecessor is the predecessor-as-floor check.
-// It reads the knowledge-base fragment from a codebase README, extracts
-// the bolded gotcha stems, and counts how many don't match any stem in
-// the injected predecessor recipe's Gotchas section.
+// checkKnowledgeBaseExceedsPredecessor is the predecessor-overlap
+// inventory check. It reads the knowledge-base fragment from a codebase
+// README, extracts the bolded gotcha stems, and reports how many overlap
+// with the injected predecessor recipe's Gotchas section.
 //
-// The rule: for showcase-tier recipes, at least minNetNewGotchas stems
-// must be net-new. Predecessor stems are a starting inventory — the agent
-// may re-use the ones that still apply to the showcase's library and
-// architecture choices, drop the ones that don't, and MUST add narrated
-// gotchas for the services and patterns the predecessor doesn't cover.
+// v8.78 reform — this check no longer FAILS on predecessor overlap.
+// Standalone recipes are read in isolation; including the most-relevant
+// predecessor gotchas alongside net-new ones is correct, not a regression.
+// The check now always passes (when applicable) and emits the count as
+// informational detail. The authoritative gate for "this codebase covers
+// enough" is now checkServiceCoverage, which requires at least one gotcha
+// per managed-service category present in the plan — overlap is fine,
+// gaps are not.
 //
-// The check is a no-op for minimal/hello-world tiers (their predecessors
-// are small and forcing "net-new" at that level produces noise) and when
-// the predecessor has no extractable Gotchas section (no baseline means
-// nothing to compare against; the existing knowledge_base_gotchas check
-// still enforces that the section is present and non-empty).
+// Skipped for minimal/hello-world tiers and when the predecessor has no
+// extractable Gotchas section (the existing knowledge_base_gotchas check
+// still enforces section presence + non-emptiness).
+//
+// Authenticity classifier ride-along is unchanged — the synthetic-stem
+// floor still fires here.
 func checkKnowledgeBaseExceedsPredecessor(content string, plan *workflow.RecipePlan, predecessorStems []string) []workflow.StepCheck {
 	if plan == nil || plan.Tier != workflow.RecipeTierShowcase {
 		return nil
@@ -59,26 +61,15 @@ func checkKnowledgeBaseExceedsPredecessor(content string, plan *workflow.RecipeP
 	if len(emitted) == 0 {
 		return nil
 	}
-	var checks []workflow.StepCheck
 	netNew := workflow.CountNetNewGotchas(emitted, predecessorStems)
-	if netNew >= minNetNewGotchas {
-		checks = append(checks, workflow.StepCheck{
-			Name:   "knowledge_base_exceeds_predecessor",
-			Status: statusPass,
-			Detail: fmt.Sprintf("%d of %d gotchas are net-new vs predecessor", netNew, len(emitted)),
-		})
-	} else {
-		cloned := len(emitted) - netNew
-		checks = append(checks, workflow.StepCheck{
-			Name:   "knowledge_base_exceeds_predecessor",
-			Status: statusFail,
-			Detail: fmt.Sprintf(
-				"only %d net-new gotcha(s) (required %d) — %d of %d emitted stems clone the injected predecessor recipe. The predecessor's gotchas are a starting inventory, not the answer: re-evaluate each against this recipe's library and architecture choices (keep the ones that still apply, drop the ones that don't), then add gotchas narrated from THIS build — services and platform behaviors the predecessor doesn't cover, decisions you made, bugs you hit during generate/deploy.",
-				netNew, minNetNewGotchas, cloned, len(emitted),
-			),
-		})
-	}
-	checks = append(checks, checkKnowledgeBaseAuthenticity(kbContent)...)
+	authenticityChecks := checkKnowledgeBaseAuthenticity(kbContent)
+	checks := make([]workflow.StepCheck, 0, 1+len(authenticityChecks))
+	checks = append(checks, workflow.StepCheck{
+		Name:   "knowledge_base_exceeds_predecessor",
+		Status: statusPass,
+		Detail: fmt.Sprintf("%d of %d gotchas are net-new vs predecessor (overlap is fine — service-coverage check enforces category breadth)", netNew, len(emitted)),
+	})
+	checks = append(checks, authenticityChecks...)
 	return checks
 }
 

@@ -881,6 +881,15 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 > **The dashboard you ship is one green-dot panel.** A reader looking at the deployed page should see five rows: `db • green`, `redis • green`, `nats • green`, `storage • green`, `search • green` (with the service names from the plan). That is the correct, expected, final output of the scaffold phase. The feature sub-agent at deploy step 4b builds every showcase section on top of this — owning API routes, frontend components, and worker payloads as a single coherent author — so the dashboard at close time is rich and feature-complete. If you are tempted to add a "small demo" or "minimal example" of any managed service, stop: that is the feature sub-agent's job.
 >
 > **Reporting back:** return a bulleted list of the files you wrote and the env var names you wired for each managed service. Do not claim you implemented any features. You didn't. If your return value makes the main agent think step 4b is already done, the brief was not followed.
+>
+> **Self-review before reporting back (v8.78).** Before you return your file list, re-read your own output against the rules in this brief and flag any deviations. Specifically:
+>
+> 1. **Imports + decorators verified against installed packages?** Every `import` line you committed should map to a path that exists in `node_modules/<pkg>/package.json` exports (or the equivalent manifest for non-Node stacks). The stale-major class (NestJS 8 `CacheModule` import path used in a NestJS 10 project) cost v19 a close-step CRITICAL — verify, don't trust memory.
+> 2. **All commands ran via SSH, not zcp-side?** Scan your bash history for any `cd /var/www/{hostname}` followed by an executable command (npm/npx/nest/vite/tsc/...). If found, that step ran on zcp instead of the container. Re-do it via `ssh {hostname} "cd /var/www && <command>"` so the install/build artifacts have the right uid + ABI.
+> 3. **Did you write README.md or zerops.yaml?** Either is a brief violation. Delete and report only the language-level scaffolding you wrote.
+> 4. **Is the dashboard ONE panel?** If you shipped multiple feature sections, you exceeded the brief. The feature sub-agent owns features.
+>
+> List any deviations explicitly in your report so the main agent can validate. Silent self-correction is fine; surfacing the deviation lets the main agent learn whether the brief needs tightening.
 
 </block>
 
@@ -1118,6 +1127,14 @@ Must contain (all inside the markers, using **H3** headings):
 
 **Upper bound: 6 numbered steps per README.** Beyond 6 and you are either mixing repo-ops in (move them to CLAUDE.md) or not choosing ruthlessly (cut the least-impactful step). v15 appdev hit the sweet spot at 4.
 
+**Each IG item must stand alone (v8.78 enforcement — `<codebase>_ig_per_item_standalone`).** Aggregate IG-fragment floors invite leaning on neighbors — v20 apidev IG #2 ("Binding to `0.0.0.0`") was 3 sentences plus 2 lines of code; the explanation lived in the comment block of the zerops.yaml shown in IG #1. The reader of IG #2 had to back up to IG #1 to understand the why.
+
+Per-item rule:
+- ≥1 fenced code block (an IG item without code is prose narration, not an integration step)
+- The first prose paragraph (before the first code block) must contain at least one platform-anchor token — a Zerops actor (`Zerops`, `L7 balancer`, `runtime container`, `static base`, `SSHFS mount`), a Zerops mechanism (`zsc`, `execOnce`, `healthCheck`, `readinessCheck`, `subdomain`, `initCommands`, `deployFiles`, `httpSupport`, `enableSubdomainAccess`), or a service-discovery env-var pattern (`${X_hostname}`, `${X_password}`, etc.)
+
+If the why for this step is in another section, **copy the relevant sentence here** — items must teach independently.
+
 ### knowledge-base Fragment
 
 The knowledge base answers: **"What symptom will I observe when this breaks, and what's the one-line cause?"** Each gotcha is a distinct failure-mode narration — NOT a second telling of the integration-guide items above.
@@ -1140,14 +1157,33 @@ Must contain:
 - `@nestjs/microservices` + Node `exports` map + missing `package.json` in `deployFiles` → `MODULE_NOT_FOUND` even though the package IS in `node_modules`.
 - Any symptom observable in the browser/logs that is not obvious from reading the guide.
 
-**The injected predecessor recipe's gotchas are a starting inventory, not the answer.** Re-evaluate each against this recipe's library choices — keep what still applies, drop what doesn't (swap TypeORM for Prisma → drop the `synchronize: true` gotcha), and narrate 3+ new ones from what YOU actually hit during THIS build.
+**The injected predecessor recipe's gotchas are a starting inventory.** Re-evaluate each against this recipe's library choices — keep the ones that still apply (predecessor overlap is fine — recipes are read in isolation), drop the ones that don't (swap TypeORM for Prisma → drop the `synchronize: true` gotcha), and add gotchas narrated from THIS build for the services and platform behaviors the predecessor doesn't cover. The v8.78 `service_coverage` check is the new authoritative gate; the `exceeds_predecessor` check is now informational only.
 
 **Do NOT include:**
 - Config values already visible in the zerops.yaml comments (readers see them inline).
 - Platform universals (build/run separation, L7 routing, tilde behavior, autoscaling) — these live in Zerops docs.
 - **Repo-operations trivia** (npx tsc wrong-package, SSHFS uid, fuser -k, how to restart dev after crash) — **move these to CLAUDE.md** where they actually help the reader working in the cloned repo.
 - Generic framework knowledge (how the framework works, what build tools do).
-- Verbatim paraphrases of the predecessor recipe's gotchas.
+
+#### v8.78 enforcement — every gotcha must be load-bearing
+
+The v8.67–v8.77 reforms enforced presence (terms exist, fragments well-formed). v8.78 enforces **load-bearing-ness** per gotcha. A load-bearing gotcha is one where, if you removed it or replaced it with generic Node/PHP/Ruby advice, *something the reader needs to know would disappear*. Three structural rules, all enforced per-codebase:
+
+**1. Causal-anchor (`<codebase>_gotcha_causal_anchor`).** Every gotcha must satisfy BOTH halves:
+- (a) **Specific Zerops mechanism** — names a token from a curated narrow list (`L7 balancer`, `execOnce`, `readinessCheck`, `subdomain`, `${X_hostname}`, `httpSupport`, `serviceStackIsNotHttp`, `SSHFS mount`, `initCommands`, `deployFiles`, `minContainers`, `corePackage`, `mode: HA`/`NON_HA`, `static base`, plus managed-service brand names: `Valkey`, `PostgreSQL`, `NATS`, `Meilisearch`, `Object Storage`, `MinIO`). NOT generic terms like `container`, `service`, or bare `envVariables`.
+- (b) **Concrete failure mode** — an HTTP status code, a quoted error name in backticks (`AUTHORIZATION_VIOLATION`, `serviceStackIsNotHttp`, `QueryFailedError`), a named exception, or a strong symptom verb (`rejects`, `deadlocks`, `drops`, `crashes`, `times out`, `breaks`, `hangs`, `silently`, `forever`).
+
+A gotcha that names only generic platform terms (e.g. ".env file overrides Zerops-managed values" — which describes no platform-caused failure mechanism, since Zerops doesn't read `.env` files at runtime) is generic Node advice mis-anchored, not a Zerops gotcha.
+
+**2. Service coverage (`<codebase>_service_coverage`).** Each managed service the codebase exercises must have at least one gotcha that names it. Mention by brand (`PostgreSQL`/`Postgres`, `Valkey`/`Redis`, `NATS`, `Object Storage`/`MinIO`/`S3`, `Meilisearch`) OR by service-discovery env-var prefix (`${db_hostname}`, `${redis_password}`, etc.). For the API codebase: every managed-service category in the plan. For workers: db + queue. For static frontends: no requirement.
+
+**3. Reality (`<codebase>_content_reality`).** Every file path and every top-level code symbol named in a gotcha or IG bullet must EITHER exist in the codebase OR be framed as advisory in the surrounding prose. v20 had two violations of this:
+- appdev gotcha cited `_nginx.json` with `proxy_pass` as a fix, but `_nginx.json` was never shipped — a reader trying to apply the fix found nothing to edit.
+- workerdev gotcha imperatively said "Implement an internal watchdog" with full `setInterval` code declaring `lastActivity`, but no watchdog symbol existed in `src/`.
+
+If the artifact is implemented, name the file (`ships in src/watchdog.ts`). If it's a pattern the reader could adopt but the recipe doesn't ship, frame the prose as advisory: `Pattern to add if…`, `If your worker has long-running handlers…`, `Consider adding…`, `One approach…`. Either path passes; declarative-without-implementation fails.
+
+The `.env` gotcha class is the canonical decorative case — it scored under the v8.67 platform-terms classifier (mentions `envVariables` + `container`) but fails causal-anchor (no specific mechanism, no concrete failure). Generic Node advice ("don't commit `.env`") belongs in framework documentation, not in a Zerops gotcha — Zerops never reads `.env` at runtime regardless.
 
 ### intro Fragment
 - 1-3 lines only
@@ -1914,9 +1950,19 @@ On deploy, these run via `initCommands` wrapped with `zsc execOnce ${appVersionI
 - To exercise the full feature path: `<concrete curl sequence the agent actually ran>`
 ```
 
+**v8.78 cross-file consistency rule (`<codebase>_claude_readme_consistency`).** Procedures in CLAUDE.md must NOT use code-level mechanisms the README's Gotchas explicitly forbid for production. CLAUDE.md is the ambient context an agent reads when operating this codebase — if it teaches a pattern the README warns against, the agent will propagate that pattern into prod-affecting changes. The dev-loop is the prod-loop reduced to dev-scoped arguments — not a different path.
+
+The check parses README gotchas for "do not use X in production" / "X must be off" / "never use X" patterns and greps CLAUDE.md for the identifier. Two ways to pass:
+
+1. **Production-equivalent path (preferred).** If the README forbids `synchronize: true` in production, the CLAUDE.md reset-state procedure runs the real migrations down/up, not `ds.synchronize()`. Same code, dev-scoped arguments. Teaches the recovery path that translates to a production incident.
+
+2. **Explicit cross-reference.** If the dev shortcut is meaningfully faster than the prod-equivalent and you choose to ship it, add an explicit acknowledgment somewhere in CLAUDE.md: `(dev only — see README gotcha against synchronize in production)`. Whole-document marker; the check accepts a single cross-reference covering all uses.
+
+v20 apidev failed this rule: README gotcha #7 said `synchronize: true` must be off in production, while CLAUDE.md "Resetting Dev State" called `ds.synchronize()`. An agent reading both files in one pass got a micro-contradiction — and an agent that reached for CLAUDE.md without re-reading the README would propagate `synchronize` into a feature change.
+
 **Now add at least 2 of these custom sections** (pick the ones that apply to this codebase):
 
-- **Resetting dev state** — how to drop/re-seed the database without a full redeploy (avoids the `appVersionId` rotation dance).
+- **Resetting dev state** — how to drop/re-seed the database without a full redeploy (avoids the `appVersionId` rotation dance). Use the same mechanism the README endorses for production (real migrations down/up), not a shortcut that bypasses it.
 - **Log tailing** — the exact log file path + `tail -f` command for each long-running process in this codebase, plus when to reach for `zerops_logs` instead.
 - **Driving a test job / endpoint** — a real curl (or psql / redis-cli / nats-cli) command sequence that exercises the feature path end-to-end on the dev container. For a worker, the exact NATS message shape + how to dispatch it from the API.
 - **Adding a new managed service** — the delta against this recipe's current zerops.yaml / import.yaml when the user wants to bolt on another dependency.
@@ -2040,6 +2086,17 @@ At least **35%** of substantive comment blocks (≥ 20 chars body, grouped acros
 **Two-axis reminder for `minContainers ≥ 2` on a runtime service (envs 4-5 only).** On a service with real throughput demand (API, worker, any runtime that takes traffic volume), the comment can name either axis first — throughput OR HA/rolling-deploy — but should usually name both. On a service whose throughput genuinely fits in a single container at this tier's expected load, the HA/rolling-deploy axis is the **sole** justification and the comment MUST name it. A comment that only explains why throughput scaling doesn't apply and stops there is **thin**: it answers why axis (a) is not the reason but silently drops the reason the field is ≥2 anyway. Rewrite to state the remaining reason explicitly — e.g. "minContainers: 2 — this runtime handles the tier's expected concurrent request volume in a single container, so this is not throughput scaling; it exists **because** a single replica drops traffic on every rolling deploy and on container crashes." The reasoning marker forces the HA reason to surface.
 
 v16's env comments regressed to field narration because "describe what the field does" is the path of least resistance. The rubric exists to make reasoning comments cheaper to produce than narration ones, not to trick the agent into stuffing words. Each reasoning marker is a hook to explain what would go wrong if the decision flipped — anchor your comment on that, not on the field name.
+
+**Per-service uniqueness (v8.78 — `<env>_service_comment_uniqueness`).** Within a single env import.yaml, each service's lead-comment block must be distinguishable from every other service's by content tokens. The check computes pairwise Jaccard overlap on the rationale clauses (after stopword strip); pairs above 0.6 fail with both hostnames named.
+
+The failure shape this catches: agent copy-pastes the same rationale across services with only the hostname swapped. Each service must name a mechanism unique to that service in this recipe:
+
+- **Worker** rationales should name worker-specific mechanisms — `nc.drain()`, `queue: 'workers'`, "in-flight job", "queue group", "exactly-once delivery", "duplicate processing".
+- **API** rationales should name API-specific mechanisms — `readinessCheck`, `/api/health`, "request handoff", "L7 connection drain", route-level concerns.
+- **Static** (Nginx) rationales should name static-specific mechanisms — "Nginx", "asset serving", "static file serving", "free-replica economics", "near-zero CPU per replica".
+- **Managed services** (db / cache / queue / storage / search) — name the mode trade-off specific to THAT service: HA failover for db, ephemeral cache miss for cache, queue replay semantics for queue, persisted-across-restarts for storage, rebuilt-from-database for search.
+
+If you find yourself writing the same rationale shape across services, you have lost service-specificity — rewrite from each service's mechanism.
 
 **Refining one env**: call `generate-finalize` again with only that env's entry under `envComments` — other envs are left untouched. Within an env, passing a service key with an empty string deletes its comment. Passing an empty project string leaves the existing project comment.
 

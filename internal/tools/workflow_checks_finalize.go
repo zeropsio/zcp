@@ -46,6 +46,15 @@ func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
 				continue // file existence already checked above
 			}
 			checks = append(checks, validateImportYAML(string(data), plan, i, folder)...)
+
+			// Per-service comment uniqueness (v8.78): catch the
+			// "agent copy-pastes the same rationale to multiple
+			// services with only the hostname swapped" pattern.
+			// Lead-comment block of each service must be
+			// distinguishable by content tokens — Jaccard ≥ 0.6
+			// between any pair of services in the same env fails.
+			envName := fmt.Sprintf("env%d", i)
+			checks = append(checks, checkEnvCommentUniqueness(string(data), envName)...)
 		}
 
 		// Reject TODO scaffold markers in the app README deliverable — if the

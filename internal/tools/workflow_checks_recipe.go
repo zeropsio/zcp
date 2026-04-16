@@ -328,6 +328,13 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 			perItemChecks[i].Name = hostname + "_" + perItemChecks[i].Name
 		}
 		checks = append(checks, perItemChecks...)
+
+		// Per-IG-item standalone (v8.78): each `### N.` block must
+		// stand alone with its own code block + platform-anchor in the
+		// first prose paragraph. v20 apidev IG #2 ("Binding to
+		// 0.0.0.0") leaned on IG #1's zerops.yaml comments for the
+		// why; this rule forces every block to teach independently.
+		checks = append(checks, checkPerIGItemStandalone(string(readmeContent), hostname)...)
 	}
 
 	floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems)
@@ -359,6 +366,41 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 	// because every recipe ships a dev container that needs a repo-local
 	// "how to work this" answer.
 	checks = append(checks, checkCLAUDEMdExists(projectRoot, target, plan)...)
+
+	// Reality-check (v8.78): every file path and every declared symbol
+	// referenced in README knowledge-base/integration-guide and CLAUDE.md
+	// must either exist in the codebase OR be framed as advisory in the
+	// surrounding prose. Catches the v20 class of "we documented behavior
+	// we didn't ship" — appdev gotcha cited `_nginx.json` proxy fix that
+	// wasn't shipped, workerdev watchdog gotcha imperatively prescribed a
+	// `setInterval` watchdog that no symbol in src/ implemented. Reads
+	// CLAUDE.md from the same mount as README.md.
+	claudePath := filepath.Join(ymlDir, "CLAUDE.md")
+	claudeBody, _ := os.ReadFile(claudePath)
+	checks = append(checks, checkContentReality(ymlDir, hostname, string(readmeContent), string(claudeBody))...)
+
+	// Causal-anchor (v8.78): every gotcha must be load-bearing — name a
+	// SPECIFIC Zerops mechanism (not generic "container"/"envVariables")
+	// AND describe a CONCRETE failure mode (HTTP code, quoted error,
+	// strong symptom verb). Catches the v20 class of generic-platform
+	// advice mis-anchored as Zerops gotcha — e.g. ".env file in repo
+	// overrides Zerops-managed values" which mentions envVariables but
+	// describes no platform-caused failure mode. Per-bullet enforcement:
+	// every gotcha must pass, not just a quorum.
+	if kbBody := extractFragmentContent(string(readmeContent), "knowledge-base"); kbBody != "" {
+		checks = append(checks, checkCausalAnchor(kbBody, hostname)...)
+		checks = append(checks, checkServiceCoverage(kbBody, plan, hostname, target.IsWorker)...)
+	}
+
+	// CLAUDE.md vs README consistency (v8.78): procedures in CLAUDE.md
+	// must not use code-level mechanisms the README's gotchas
+	// explicitly forbid for production. CLAUDE.md is the ambient
+	// context an agent reads when operating the codebase; if it
+	// teaches a pattern the README warns against, the agent will
+	// propagate it into prod-affecting changes. v20 apidev had this:
+	// README forbade `synchronize: true` in production; CLAUDE.md
+	// reset-state used `ds.synchronize()` as a dev shortcut.
+	checks = append(checks, checkClaudeReadmeConsistency(string(readmeContent), string(claudeBody), hostname)...)
 
 	return checks
 }
